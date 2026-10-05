@@ -350,6 +350,9 @@ pub struct Node {
     pub(crate) border_collapse: BorderCollapseValue,
     /// Computed border sides retained for collapsed-border conflict resolution.
     pub(crate) computed_border: Option<Sides<ComputedBorder>>,
+    /// Border sides a collapsed-border table cell paints after conflict
+    /// resolution (CSS 2.1 §17.6.2.1); `None` outside the collapsing model.
+    pub(crate) collapsed_border: Option<Sides<ComputedBorder>>,
     /// Computed `border-spacing` used by the separate-border table layout.
     pub(crate) border_spacing: ComputedBorderSpacing,
     /// Computed `break-before` value consumed by column fragmentation.
@@ -454,6 +457,7 @@ impl Node {
             table_layout: TableLayoutValue::Auto,
             border_collapse: BorderCollapseValue::Separate,
             computed_border: None,
+            collapsed_border: None,
             border_spacing: ComputedBorderSpacing {
                 horizontal: raikiri_style::ComputedLength(0.0),
                 vertical: raikiri_style::ComputedLength(0.0),
@@ -491,6 +495,7 @@ impl Node {
             table_layout: TableLayoutValue::Auto,
             border_collapse: BorderCollapseValue::Separate,
             computed_border: None,
+            collapsed_border: None,
             border_spacing: ComputedBorderSpacing {
                 horizontal: raikiri_style::ComputedLength(0.0),
                 vertical: raikiri_style::ComputedLength(0.0),
@@ -532,6 +537,7 @@ impl Node {
             table_layout: TableLayoutValue::Auto,
             border_collapse: BorderCollapseValue::Separate,
             computed_border: None,
+            collapsed_border: None,
             border_spacing: ComputedBorderSpacing {
                 horizontal: raikiri_style::ComputedLength(0.0),
                 vertical: raikiri_style::ComputedLength(0.0),
@@ -568,6 +574,7 @@ impl Node {
             table_layout: TableLayoutValue::Auto,
             border_collapse: BorderCollapseValue::Separate,
             computed_border: None,
+            collapsed_border: None,
             border_spacing: ComputedBorderSpacing {
                 horizontal: raikiri_style::ComputedLength(0.0),
                 vertical: raikiri_style::ComputedLength(0.0),
@@ -601,6 +608,7 @@ impl Node {
             table_layout: TableLayoutValue::Auto,
             border_collapse: BorderCollapseValue::Separate,
             computed_border: None,
+            collapsed_border: None,
             border_spacing: ComputedBorderSpacing {
                 horizontal: raikiri_style::ComputedLength(0.0),
                 vertical: raikiri_style::ComputedLength(0.0),
@@ -636,6 +644,7 @@ impl Node {
             table_layout: TableLayoutValue::Auto,
             border_collapse: BorderCollapseValue::Separate,
             computed_border: None,
+            collapsed_border: None,
             border_spacing: ComputedBorderSpacing {
                 horizontal: raikiri_style::ComputedLength(0.0),
                 vertical: raikiri_style::ComputedLength(0.0),
@@ -690,6 +699,13 @@ impl Node {
     #[inline]
     pub fn in_ifc_subtree(&self) -> bool {
         self.flags.contains(NodeFlags::IN_IFC_SUBTREE)
+    }
+
+    /// The border sides this table cell paints after collapsed-border
+    /// conflict resolution, when its table uses `border-collapse: collapse`.
+    #[doc(hidden)]
+    pub fn collapsed_border(&self) -> Option<&Sides<ComputedBorder>> {
+        self.collapsed_border.as_ref()
     }
 
     /// Lines of the last performed layout of an ifc root, if any.

@@ -33,7 +33,7 @@
 
 use raikiri_style::ComputedBorder;
 use raikiri_style::property::{
-    BorderCollapseValue, BorderStyle, DisplayValue, TableLayoutValue, WritingMode,
+    BorderCollapseValue, BorderStyle, DisplayValue, Sides, TableLayoutValue, WritingMode,
 };
 use taffy::style::{CompactLength, Dimension};
 use taffy::style_helpers::{TaffyMaxContent, TaffyMinContent};
@@ -235,7 +235,9 @@ fn compute_table_layout_checked(
     let table_layout = doc.nodes[table_idx].table_layout;
     let collapse = doc.nodes[table_idx].border_collapse == BorderCollapseValue::Collapse;
     if collapse && !grid.rows.is_empty() && grid.n_cols > 0 {
+        resolve_collapsed_row_borders(doc, &grid);
         resolve_collapsed_cell_borders(doc, &grid);
+        resolve_collapsed_table_edges(doc, &grid, table_idx);
     }
     let vertical_writing = is_vertical_writing_mode(table_writing_mode(doc, table_idx));
 
@@ -1763,7 +1765,12 @@ fn border_candidate(
     node_id: usize,
     side: CellBorderSide,
 ) -> Option<CollapsedBorderCandidate> {
-    let borders = doc.nodes[node_id].computed_border.as_ref()?;
+    // An earlier resolution step may already have replaced a side.
+    let node = &doc.nodes[node_id];
+    let borders = node
+        .collapsed_border
+        .as_ref()
+        .or(node.computed_border.as_ref())?;
     let (border, taffy_width) = match side {
         CellBorderSide::Top => (borders.top, doc.nodes[node_id].style.border.top),
         CellBorderSide::Right => (borders.right, doc.nodes[node_id].style.border.right),
@@ -1830,6 +1837,42 @@ fn collapsed_border_winner(
     }
 }
 
+/// The side of `sides` facing `side`.
+fn border_side(sides: &mut Sides<ComputedBorder>, side: CellBorderSide) -> &mut ComputedBorder {
+    match side {
+        CellBorderSide::Top => &mut sides.top,
+        CellBorderSide::Right => &mut sides.right,
+        CellBorderSide::Bottom => &mut sides.bottom,
+        CellBorderSide::Left => &mut sides.left,
+    }
+}
+
+/// Give `node_id`'s `side` the used collapsed border `border`: its layout
+/// width and the style and color it paints.
+fn set_collapsed_side(
+    doc: &mut Document,
+    node_id: usize,
+    side: CellBorderSide,
+    border: ComputedBorder,
+    taffy_width: LengthPercentage,
+) {
+    let node = &mut doc.nodes[node_id];
+    match side {
+        CellBorderSide::Top => node.style.border.top = taffy_width,
+        CellBorderSide::Right => node.style.border.right = taffy_width,
+        CellBorderSide::Bottom => node.style.border.bottom = taffy_width,
+        CellBorderSide::Left => node.style.border.left = taffy_width,
+    }
+    let Some(computed) = node.computed_border else {
+        return;
+    };
+    let painted = node.collapsed_border.get_or_insert(computed);
+    *border_side(painted, side) = border;
+}
+
+/// Resolve the shared border between two adjacent cells. Both cells take the
+/// winner's width, and both paint the winner's style and color, so the later
+/// cell no longer paints its losing border over the winning one.
 fn resolve_collapsed_border_pair(
     doc: &mut Document,
     leading_id: usize,
@@ -1843,19 +1886,21 @@ fn resolve_collapsed_border_pair(
     ) else {
         return;
     };
-    let width = collapsed_border_winner(leading, trailing).taffy_width;
-    match leading_side {
-        CellBorderSide::Top => doc.nodes[leading_id].style.border.top = width,
-        CellBorderSide::Right => doc.nodes[leading_id].style.border.right = width,
-        CellBorderSide::Bottom => doc.nodes[leading_id].style.border.bottom = width,
-        CellBorderSide::Left => doc.nodes[leading_id].style.border.left = width,
-    }
-    match trailing_side {
-        CellBorderSide::Top => doc.nodes[trailing_id].style.border.top = width,
-        CellBorderSide::Right => doc.nodes[trailing_id].style.border.right = width,
-        CellBorderSide::Bottom => doc.nodes[trailing_id].style.border.bottom = width,
-        CellBorderSide::Left => doc.nodes[trailing_id].style.border.left = width,
-    }
+    let winner = collapsed_border_winner(leading, trailing);
+    set_collapsed_side(
+        doc,
+        leading_id,
+        leading_side,
+        winner.border,
+        winner.taffy_width,
+    );
+    set_collapsed_side(
+        doc,
+        trailing_id,
+        trailing_side,
+        winner.border,
+        winner.taffy_width,
+    );
 }
 
 fn resolve_collapsed_cell_borders(doc: &mut Document, grid: &TableGrid) {
@@ -1895,6 +1940,105 @@ fn resolve_collapsed_cell_borders(doc: &mut Document, grid: &TableGrid) {
                     CellBorderSide::Top,
                 );
             }
+        }
+    }
+}
+
+/// Resolve each cell's sides against the borders of the rows they lie on
+/// (CSS 2.1 §17.6.2.1): its top against its first row, its bottom against
+/// its last row, and an edge cell's left and right against its row. A cell
+/// wins ties over a row. Rows then paint nothing themselves; their borders
+/// live on in the cells that took them.
+fn resolve_collapsed_row_borders(doc: &mut Document, grid: &TableGrid) {
+    let last_col = grid.n_cols;
+    for index in 0..grid.cells.len() {
+        let cell = &grid.cells[index];
+        let first_row = grid.rows.get(usize::from(cell.row)).copied();
+        let last_row = grid
+            .rows
+            .get(usize::from(cell.row + cell.row_span).saturating_sub(1))
+            .copied();
+        let node_id = cell.node_id;
+        let sides = [
+            (first_row, CellBorderSide::Top),
+            (last_row, CellBorderSide::Bottom),
+            (
+                first_row.filter(|_| cell.col_start == 0),
+                CellBorderSide::Left,
+            ),
+            (
+                first_row.filter(|_| cell.col_start + cell.col_span == last_col),
+                CellBorderSide::Right,
+            ),
+        ];
+        for (row, side) in sides {
+            let Some(row) = row else {
+                continue;
+            };
+            let (Some(own), Some(row_border)) = (
+                border_candidate(doc, node_id, side),
+                border_candidate(doc, row, side),
+            ) else {
+                continue;
+            };
+            let winner = collapsed_border_winner(own, row_border);
+            set_collapsed_side(doc, node_id, side, winner.border, winner.taffy_width);
+        }
+    }
+    for &row in &grid.rows {
+        if let Some(computed) = doc.nodes[row].computed_border {
+            doc.nodes[row].collapsed_border = Some(Sides {
+                top: computed.top.without_line(),
+                right: computed.right.without_line(),
+                bottom: computed.bottom.without_line(),
+                left: computed.left.without_line(),
+            });
+        }
+    }
+}
+
+/// Resolve each edge cell's outer side against the table's own border on
+/// that side (CSS 2.1 §17.6.2.1). A cell wins ties over the table. When the
+/// table's border wins, the table paints that edge, so the cell's side takes
+/// no width and paints nothing.
+fn resolve_collapsed_table_edges(doc: &mut Document, grid: &TableGrid, table_idx: usize) {
+    let last_row = grid.rows.len() as u16;
+    let last_col = grid.n_cols;
+    for index in 0..grid.cells.len() {
+        let cell = &grid.cells[index];
+        let (node_id, sides) = (
+            cell.node_id,
+            [
+                (cell.row == 0, CellBorderSide::Top),
+                (cell.row + cell.row_span == last_row, CellBorderSide::Bottom),
+                (cell.col_start == 0, CellBorderSide::Left),
+                (
+                    cell.col_start + cell.col_span == last_col,
+                    CellBorderSide::Right,
+                ),
+            ],
+        );
+        for (on_edge, side) in sides {
+            if !on_edge {
+                continue;
+            }
+            let (Some(own), Some(table)) = (
+                border_candidate(doc, node_id, side),
+                border_candidate(doc, table_idx, side),
+            ) else {
+                continue;
+            };
+            let winner = collapsed_border_winner(own, table);
+            if winner.border == own.border && winner.taffy_width == own.taffy_width {
+                continue;
+            }
+            set_collapsed_side(
+                doc,
+                node_id,
+                side,
+                own.border.without_line(),
+                LengthPercentage::length(0.0),
+            );
         }
     }
 }

@@ -4090,6 +4090,12 @@ pub(crate) fn paint_document_impl(
                             scene.pop_layer();
                         }
                     }
+                    // A collapsed-border table cell paints the borders that
+                    // won conflict resolution with its neighbours and table.
+                    let painted_border = document
+                        .get_node(node_id)
+                        .and_then(|node| node.collapsed_border())
+                        .unwrap_or(&cv.border);
                     // An opaque background that uses the same solid color as
                     // every border side already paints the complete visible
                     // union in `paint_element_background`; avoid compositing
@@ -4104,10 +4110,10 @@ pub(crate) fn paint_document_impl(
                                 | raikiri_style::property::VisualBox::ContentBox
                         )
                         && [
-                            &cv.border.top,
-                            &cv.border.right,
-                            &cv.border.bottom,
-                            &cv.border.left,
+                            &painted_border.top,
+                            &painted_border.right,
+                            &painted_border.bottom,
+                            &painted_border.left,
                         ]
                         .iter()
                         .all(|side| {
@@ -4123,7 +4129,7 @@ pub(crate) fn paint_document_impl(
                             paint_height,
                             paint_x,
                             paint_y,
-                            &cv.border,
+                            painted_border,
                             cv.color,
                             false,
                         );
@@ -4134,7 +4140,7 @@ pub(crate) fn paint_document_impl(
                             paint_height,
                             paint_x,
                             paint_y,
-                            &cv.border,
+                            painted_border,
                             cv.color,
                             &paint_border_radius,
                         );
