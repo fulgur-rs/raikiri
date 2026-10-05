@@ -217,8 +217,12 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         PropertyValue::PaddingBlock(pair) => expand_padding_block(pair, push_longhand),
         PropertyValue::Border(sides) => expand_border(sides, push_longhand),
         PropertyValue::BorderCssWide(kw) => expand_border_css_wide(kw, push_longhand),
+        PropertyValue::BorderTop(sides) => expand_border_top(sides, push_longhand),
+        PropertyValue::BorderTopCssWide(kw) => expand_border_top_css_wide(kw, push_longhand),
         PropertyValue::BorderRight(sides) => expand_border_right(sides, push_longhand),
         PropertyValue::BorderRightCssWide(kw) => expand_border_right_css_wide(kw, push_longhand),
+        PropertyValue::BorderBottom(sides) => expand_border_bottom(sides, push_longhand),
+        PropertyValue::BorderBottomCssWide(kw) => expand_border_bottom_css_wide(kw, push_longhand),
         PropertyValue::BorderLeft(sides) => expand_border_left(sides, push_longhand),
         PropertyValue::BorderLeftCssWide(kw) => expand_border_left_css_wide(kw, push_longhand),
         PropertyValue::BorderStyle(sides) => expand_border_style(sides, push_longhand),
@@ -565,10 +569,20 @@ fn expand_deferred(
             PropertyKey::BorderLeftStyle,
             PropertyKey::BorderLeftColor,
         ],
+        PropertyKey::BorderTop => &[
+            PropertyKey::BorderTopWidth,
+            PropertyKey::BorderTopStyle,
+            PropertyKey::BorderTopColor,
+        ],
         PropertyKey::BorderRight => &[
             PropertyKey::BorderRightWidth,
             PropertyKey::BorderRightStyle,
             PropertyKey::BorderRightColor,
+        ],
+        PropertyKey::BorderBottom => &[
+            PropertyKey::BorderBottomWidth,
+            PropertyKey::BorderBottomStyle,
+            PropertyKey::BorderBottomColor,
         ],
         PropertyKey::BorderLeft => &[
             PropertyKey::BorderLeftWidth,
@@ -769,6 +783,21 @@ pub(crate) fn expand_border(sides: Sides<Border>, mut push: impl FnMut(PropertyV
     push(PropertyValue::BorderLeftColor(sides.left.color));
 }
 
+/// Expand `border-top: <line-width> || <line-style> || <color>` into three
+/// top-side longhands.
+///
+/// CSS Backgrounds 3 §3.4 <https://www.w3.org/TR/css-backgrounds-3/#border-shorthands>
+/// defines the single-side shorthand as setting its three sub-properties as if
+/// expanded in place (see [`expand_shorthand_into`]). Order is width, style, color —
+/// the per-side order [`expand_border`] uses — so declaration ordering is preserved
+/// and later longhands in the same block win per CSS Cascading 4 §6.1 order of appearance.
+#[inline(never)]
+pub(crate) fn expand_border_top(border: Border, mut push: impl FnMut(PropertyValue)) {
+    push(PropertyValue::BorderTopWidth(border.width));
+    push(PropertyValue::BorderTopStyle(border.style));
+    push(PropertyValue::BorderTopColor(border.color));
+}
+
 /// Expand `border-right: <line-width> || <line-style> || <color>` into three
 /// right-side longhands.
 ///
@@ -782,6 +811,21 @@ pub(crate) fn expand_border_right(border: Border, mut push: impl FnMut(PropertyV
     push(PropertyValue::BorderRightWidth(border.width));
     push(PropertyValue::BorderRightStyle(border.style));
     push(PropertyValue::BorderRightColor(border.color));
+}
+
+/// Expand `border-bottom: <line-width> || <line-style> || <color>` into three
+/// bottom-side longhands.
+///
+/// CSS Backgrounds 3 §3.4 <https://www.w3.org/TR/css-backgrounds-3/#border-shorthands>
+/// defines the single-side shorthand as setting its three sub-properties as if
+/// expanded in place (see [`expand_shorthand_into`]). Order is width, style, color —
+/// the per-side order [`expand_border`] uses — so declaration ordering is preserved
+/// and later longhands in the same block win per CSS Cascading 4 §6.1 order of appearance.
+#[inline(never)]
+pub(crate) fn expand_border_bottom(border: Border, mut push: impl FnMut(PropertyValue)) {
+    push(PropertyValue::BorderBottomWidth(border.width));
+    push(PropertyValue::BorderBottomStyle(border.style));
+    push(PropertyValue::BorderBottomColor(border.color));
 }
 
 /// Expand `border-left: <line-width> || <line-style> || <color>` into three
@@ -823,6 +867,18 @@ pub(crate) fn expand_border_css_wide(
     push(PropertyValue::BorderLeftColorCssWide(kw));
 }
 
+/// Expand `border-top: <css-wide-keyword>` into three top-side longhand CSS-wide
+/// markers (see [`expand_border_top`] for ordering).
+#[inline(never)]
+pub(crate) fn expand_border_top_css_wide(
+    kw: crate::property::CssWideKeyword,
+    mut push: impl FnMut(PropertyValue),
+) {
+    push(PropertyValue::BorderTopWidthCssWide(kw));
+    push(PropertyValue::BorderTopStyleCssWide(kw));
+    push(PropertyValue::BorderTopColorCssWide(kw));
+}
+
 /// Expand `border-right: <css-wide-keyword>` into three right-side longhand CSS-wide
 /// markers (see [`expand_border_right`] for ordering).
 #[inline(never)]
@@ -833,6 +889,18 @@ pub(crate) fn expand_border_right_css_wide(
     push(PropertyValue::BorderRightWidthCssWide(kw));
     push(PropertyValue::BorderRightStyleCssWide(kw));
     push(PropertyValue::BorderRightColorCssWide(kw));
+}
+
+/// Expand `border-bottom: <css-wide-keyword>` into three bottom-side longhand CSS-wide
+/// markers (see [`expand_border_bottom`] for ordering).
+#[inline(never)]
+pub(crate) fn expand_border_bottom_css_wide(
+    kw: crate::property::CssWideKeyword,
+    mut push: impl FnMut(PropertyValue),
+) {
+    push(PropertyValue::BorderBottomWidthCssWide(kw));
+    push(PropertyValue::BorderBottomStyleCssWide(kw));
+    push(PropertyValue::BorderBottomColorCssWide(kw));
 }
 
 /// Expand `border-left: <css-wide-keyword>` into three left-side longhand CSS-wide
@@ -1217,6 +1285,8 @@ mod tests {
         let decls = parse_block(
             "margin: 1px; padding: 2px; border: 3px solid red; outline: auto 2px red; \
              margin-top: 4px; padding-left: 5px; border-top-width: 6px; \
+             border-top: 1px solid; border-right: 2px dashed; border-bottom: blue; \
+             border-left: thick; \
              text-decoration: underline overline; color: red; font-size: 10px; \
              font: italic small-caps bold 12px/1.5 serif",
         );
@@ -1233,7 +1303,10 @@ mod tests {
                     PropertyKey::Margin
                         | PropertyKey::Padding
                         | PropertyKey::Border
+                        | PropertyKey::BorderTop
                         | PropertyKey::BorderRight
+                        | PropertyKey::BorderBottom
+                        | PropertyKey::BorderLeft
                         | PropertyKey::BorderStyle
                         | PropertyKey::BorderWidth
                         | PropertyKey::BorderColor
@@ -1292,11 +1365,35 @@ mod tests {
                 ],
             ),
             (
+                PropertyKey::BorderTop,
+                &[
+                    PropertyKey::BorderTopWidth,
+                    PropertyKey::BorderTopStyle,
+                    PropertyKey::BorderTopColor,
+                ],
+            ),
+            (
                 PropertyKey::BorderRight,
                 &[
                     PropertyKey::BorderRightWidth,
                     PropertyKey::BorderRightStyle,
                     PropertyKey::BorderRightColor,
+                ],
+            ),
+            (
+                PropertyKey::BorderBottom,
+                &[
+                    PropertyKey::BorderBottomWidth,
+                    PropertyKey::BorderBottomStyle,
+                    PropertyKey::BorderBottomColor,
+                ],
+            ),
+            (
+                PropertyKey::BorderLeft,
+                &[
+                    PropertyKey::BorderLeftWidth,
+                    PropertyKey::BorderLeftStyle,
+                    PropertyKey::BorderLeftColor,
                 ],
             ),
             (

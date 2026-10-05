@@ -18,13 +18,14 @@ use crate::resolve::{
     calc_ch_factor, used_line_height_length,
 };
 use crate::rule::{
-    expand_background, expand_border, expand_border_color, expand_border_css_wide,
-    expand_border_left, expand_border_left_css_wide, expand_border_right,
-    expand_border_right_css_wide, expand_border_style, expand_border_width, expand_flex,
-    expand_flex_flow, expand_font, expand_gap, expand_grid_column, expand_grid_row, expand_margin,
-    expand_margin_block, expand_margin_inline, expand_outline, expand_overflow, expand_padding,
-    expand_padding_block, expand_padding_inline, expand_place_content, expand_place_items,
-    expand_place_self, expand_text_decoration,
+    expand_background, expand_border, expand_border_bottom, expand_border_bottom_css_wide,
+    expand_border_color, expand_border_css_wide, expand_border_left, expand_border_left_css_wide,
+    expand_border_right, expand_border_right_css_wide, expand_border_style, expand_border_top,
+    expand_border_top_css_wide, expand_border_width, expand_flex, expand_flex_flow, expand_font,
+    expand_gap, expand_grid_column, expand_grid_row, expand_margin, expand_margin_block,
+    expand_margin_inline, expand_outline, expand_overflow, expand_padding, expand_padding_block,
+    expand_padding_inline, expand_place_content, expand_place_items, expand_place_self,
+    expand_text_decoration,
 };
 use crate::ruletree::Origin;
 use crate::specified::{INITIAL_BORDER, SpecifiedValues};
@@ -1509,8 +1510,14 @@ pub(crate) fn resolve_against_inherited(
         PropertyValue::BorderCssWide(kw) => {
             PropertyValue::Border(resolve_border_page_sides(kw, inherited))
         }
+        PropertyValue::BorderTopCssWide(kw) => {
+            PropertyValue::BorderTop(resolve_border_page_side(kw, inherited, true, false, false))
+        }
         PropertyValue::BorderRightCssWide(kw) => {
             PropertyValue::BorderRight(resolve_border_page_side(kw, inherited, false, true, false))
+        }
+        PropertyValue::BorderBottomCssWide(kw) => {
+            PropertyValue::BorderBottom(resolve_border_page_side(kw, inherited, false, false, true))
         }
         PropertyValue::BorderLeftCssWide(kw) => {
             PropertyValue::BorderLeft(resolve_border_page_side(kw, inherited, false, false, false))
@@ -1653,7 +1660,9 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::BorderBottomColor(_)
         | PropertyValue::BorderLeftColor(_)
         | PropertyValue::Border(_)
+        | PropertyValue::BorderTop(_)
         | PropertyValue::BorderRight(_)
+        | PropertyValue::BorderBottom(_)
         | PropertyValue::BorderLeft(_)
         // `border-style` / `border-width` / `border-color` shorthands —
         // same "nothing for phase 2 to resolve" shape as `Border` above
@@ -2221,13 +2230,23 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // Keep it panic-free for direct callers that bypass that phase.
         PropertyValue::TextDecorationThicknessInherit => {}
         PropertyValue::Border(sides) => expand_border(sides, |v| apply_value(v, target)),
+        PropertyValue::BorderTop(border) => expand_border_top(border, |v| apply_value(v, target)),
         PropertyValue::BorderRight(border) => {
             expand_border_right(border, |v| apply_value(v, target))
         }
+        PropertyValue::BorderBottom(border) => {
+            expand_border_bottom(border, |v| apply_value(v, target))
+        }
         PropertyValue::BorderLeft(border) => expand_border_left(border, |v| apply_value(v, target)),
         PropertyValue::BorderCssWide(kw) => expand_border_css_wide(kw, |v| apply_value(v, target)),
+        PropertyValue::BorderTopCssWide(kw) => {
+            expand_border_top_css_wide(kw, |v| apply_value(v, target))
+        }
         PropertyValue::BorderRightCssWide(kw) => {
             expand_border_right_css_wide(kw, |v| apply_value(v, target))
+        }
+        PropertyValue::BorderBottomCssWide(kw) => {
+            expand_border_bottom_css_wide(kw, |v| apply_value(v, target))
         }
         PropertyValue::BorderLeftCssWide(kw) => {
             expand_border_left_css_wide(kw, |v| apply_value(v, target))
