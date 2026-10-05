@@ -1,8 +1,9 @@
 //! Paint the lines of a block laid out by the shodo inline engine.
 //!
 //! The lines live on the block's node (`Node::ifc_lines`). Glyph positions
-//! come from `GlyphRunView::glyph_origin`, which is relative to the block's
-//! content box; the caller supplies that origin in page coordinates. The
+//! come from `raikiri_dom::PositionedLines`, relative to the block's content
+//! box, the same positions the page text runs report; the caller supplies
+//! that origin in page coordinates. The
 //! painter supports horizontal and vertical normal-flow lines; other geometry
 //! such as vertical fragmentation and decorations remains horizontal-only.
 
@@ -14,12 +15,12 @@ use anyrender::filters::{Filter, FilterEffect};
 use anyrender::{Glyph as AnyrenderGlyph, PaintScene};
 use kurbo::{Affine, Rect};
 use peniko::{Fill, Mix};
-use raikiri_dom::Document;
 use raikiri_dom::generated_content::{computed_for_id, generated_origin};
+use raikiri_dom::{Document, PositionedLines, cumulative_offset};
 use raikiri_style::CascadeResult;
 use raikiri_style::property::TextShadowColor;
 use shodo::Fragment;
-use shodo::geometry::{BaselineKind, PhysicalConverter, PhysicalSize, WritingMode};
+use shodo::geometry::{BaselineKind, PhysicalConverter, WritingMode};
 use shodo::hit::{LineLayout, TextPosition};
 use shodo::node::NodeId;
 use std::collections::HashMap;
@@ -108,32 +109,6 @@ struct RunDraw<'a> {
     offset: (f32, f32),
 }
 
-/// The sum of the relative offsets of `node` and its ancestors up to the ifc
-/// root (the root excluded). An offset moves an inline element together with
-/// everything inside it.
-fn cumulative_offset(
-    document: &Document,
-    root_id: usize,
-    offsets: &[(usize, (f32, f32))],
-    node: usize,
-) -> (f32, f32) {
-    let (mut dx, mut dy) = (0.0, 0.0);
-    // A pseudo-element moves with its element.
-    let node = generated_origin(node).map_or(node, |(element, _)| element);
-    let mut current = Some(node);
-    while let Some(id) = current {
-        if id == root_id {
-            break;
-        }
-        if let Some((_, (x, y))) = offsets.iter().find(|(owner, _)| *owner == id) {
-            dx += x;
-            dy += y;
-        }
-        current = document.parent_of(id);
-    }
-    (dx, dy)
-}
-
 /// Draw the glyph runs of an ifc root.
 ///
 /// Per line, underlines and overlines of every run come first, then the
@@ -150,86 +125,31 @@ pub(crate) fn draw_ifc_lines(
     fragmentainer: Option<usize>,
     custom_highlights: &[crate::TextHighlightRange],
 ) {
-    let Some(root_node) = document.get_node(root_id) else {
+    let Some(positioned) = PositionedLines::new(document, cascade, root_id, fragmentainer) else {
         return;
     };
-    let Some(lines) = root_node.ifc_lines() else {
-        return;
-    };
-    let writing_mode = root_node
-        .ifc_writing_mode()
-        .unwrap_or(WritingMode::HorizontalTb);
-    let physical_content_size = root_node
-        .ifc_physical_content_size()
-        .unwrap_or(PhysicalSize::default());
-    // Lines split across columns are drawn where their column puts them:
-    // the first line of a range at the range's offset. Without a split every
-    // line stays where it was laid out.
-    let mut line_offsets: Vec<Option<(f32, f32)>> = vec![None; lines.len()];
-    match document
-        .get_node(root_id)
-        .and_then(|n| n.ifc_multicol_fragments())
-    {
-        Some(fragments) => {
-            for fragment in fragments {
-                if fragmentainer.is_some_and(|requested| requested != fragment.fragmentainer) {
-                    continue;
-                }
-                let Some(first) = lines.get(fragment.line_start) else {
-                    continue;
-                };
-                let dy = fragment.y - first.block_offset();
-                let end = fragment.line_end.min(lines.len());
-                for offset in &mut line_offsets[fragment.line_start.min(end)..end] {
-                    *offset = Some((
-                        if fragmentainer.is_some() {
-                            0.0
-                        } else {
-                            fragment.x
-                        },
-                        dy,
-                    ));
-                }
-            }
-        }
-        None => line_offsets.fill(Some((0.0, 0.0))),
-    }
-    // Lines that pagination moved down with a block before them.
-    let shifts = document
-        .get_node(root_id)
-        .map(|n| n.ifc_line_shifts())
-        .unwrap_or_default();
-    for (offset, shift) in line_offsets.iter_mut().zip(&shifts) {
-        if let Some((_, dy)) = offset {
-            *dy += shift;
-        }
-    }
+    let writing_mode = positioned.writing_mode;
+    let shifts = &positioned.shifts;
     let base = position;
-    let size = root_node.ifc_size().unwrap_or((0.0, 0.0));
-    let mut converter_size = physical_content_size;
-    if writing_mode == WritingMode::HorizontalTb {
-        converter_size.width = size.0;
-    }
+    let size = positioned.size;
     let vertical = writing_mode != WritingMode::HorizontalTb;
     let pieces = document
         .get_node(root_id)
         .and_then(|node| node.ifc_inline_boxes())
         .unwrap_or_default();
-    let mut pieces_by_line = vec![Vec::new(); lines.len()];
+    let mut pieces_by_line = vec![Vec::new(); positioned.all_lines().len()];
     for piece in pieces {
         if let Some(line_pieces) = pieces_by_line.get_mut(piece.line) {
             line_pieces.push(piece);
         }
     }
-    let offsets = document
-        .get_node(root_id)
-        .map(|node| node.ifc_relative_offsets())
-        .unwrap_or_default();
-    let hit_layout = (!custom_highlights.is_empty()).then(|| LineLayout::new(lines));
-    for (line_index, line) in lines.iter().enumerate() {
-        let Some((column_x, column_y)) = line_offsets[line_index] else {
-            continue;
-        };
+    let offsets = positioned.offsets;
+    let hit_layout =
+        (!custom_highlights.is_empty()).then(|| LineLayout::new(positioned.all_lines()));
+    for positioned_line in positioned.lines() {
+        let line_index = positioned_line.index;
+        let line = positioned_line.line;
+        let (column_x, column_y) = positioned_line.offset;
         let position = IfcPosition {
             x: base.x + column_x,
             y: base.y + column_y,
@@ -277,34 +197,22 @@ pub(crate) fn draw_ifc_lines(
         let shifts = baseline_shifts(document, line);
         let mut contexts: HashMap<usize, DecorationContext> = HashMap::new();
         let mut runs: Vec<RunDraw<'_>> = Vec::new();
-        let converter = PhysicalConverter::new(writing_mode, line.used_direction(), converter_size);
-        for fragment in line.fragments() {
-            let Fragment::GlyphRun(run) = fragment else {
-                continue;
-            };
-            // The paint owner is a text node; its computed color is the
-            // inherited one.
-            let Some(owner) = run.node() else { continue };
-            let owner = owner.0 as usize;
+        let converter = positioned_line.converter;
+        for positioned_run in positioned_line.runs {
+            let run = positioned_run.run;
+            let owner = positioned_run.owner;
             let Some(cv) = computed_for_id(cascade, owner) else {
-                continue;
+                continue; // cov:ignore: the enumerator keeps only runs with computed values.
             };
-            let Some(font) = run.font_data() else {
-                continue;
-            };
-            let _ = font;
-            let glyphs: Vec<AnyrenderGlyph> = run
-                .glyphs()
-                .enumerate()
-                .filter_map(|(index, glyph)| {
-                    let (inline, block) = run.glyph_origin(index)?;
-                    let (x, y) = converter.point(inline, block + line.block_offset());
-                    Some(AnyrenderGlyph { id: glyph.id, x, y })
+            let glyphs: Vec<AnyrenderGlyph> = positioned_run
+                .glyphs
+                .iter()
+                .map(|glyph| AnyrenderGlyph {
+                    id: glyph.id,
+                    x: glyph.x,
+                    y: glyph.y,
                 })
                 .collect();
-            if glyphs.is_empty() {
-                continue;
-            }
             // The run spans from its leftmost glyph origin to the right end
             // of its rightmost advance, in either direction.
             let mut first_x = f64::INFINITY;
@@ -313,7 +221,7 @@ pub(crate) fn draw_ifc_lines(
                 first_x = first_x.min(f64::from(glyph.x));
                 last_x = last_x.max(f64::from(glyph.x) + f64::from(shaped.advance));
             }
-            let offset = cumulative_offset(document, root_id, offsets, owner);
+            let offset = positioned_run.offset;
             let decorations = contexts
                 .entry(owner)
                 .or_insert_with(|| {

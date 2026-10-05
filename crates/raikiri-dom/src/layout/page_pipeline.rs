@@ -841,13 +841,8 @@ pub(crate) fn page_fragments_from_slices(
     page_fragments_from_slices_with_page_geometry(document, cascade, page_box, slices, &geometries)
 }
 
-/// Project slices using one resolved geometry record for each page.
-///
-/// `page_geometries` is producer-owned resolved metadata. A missing page index
-/// falls back to `page_box` and the supplied cascade for compatibility, but a
-/// page-aware caller should provide every emitted page explicitly. Item
-/// rectangles remain relative to each page's `content_box` origin; consumers
-/// add `content_box.x/y` exactly once when placing them on the physical page.
+/// The page placements of [`project_slices`].
+#[cfg(test)]
 pub(crate) fn page_fragments_from_slices_with_page_geometry(
     document: &Document,
     cascade: &CascadeResult,
@@ -855,6 +850,25 @@ pub(crate) fn page_fragments_from_slices_with_page_geometry(
     slices: &[PageSlice],
     page_geometries: &[PageFragmentPageGeometry],
 ) -> Vec<PageFragment> {
+    project_slices(document, cascade, page_box, slices, page_geometries).0
+}
+
+/// Project slices using one resolved geometry record for each page, and
+/// also return the paragraphs laid out by the inline engine, in document
+/// order, at their content-box origins in the shared flow space.
+///
+/// `page_geometries` is producer-owned resolved metadata. A missing page index
+/// falls back to `page_box` and the supplied cascade for compatibility, but a
+/// page-aware caller should provide every emitted page explicitly. Item
+/// rectangles remain relative to each page's `content_box` origin; consumers
+/// add `content_box.x/y` exactly once when placing them on the physical page.
+pub(crate) fn project_slices(
+    document: &Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    slices: &[PageSlice],
+    page_geometries: &[PageFragmentPageGeometry],
+) -> (Vec<PageFragment>, Vec<ProjectedTextRoot>) {
     let fallback_geometry = resolve_page_fragment_geometry(cascade, page_box, 0);
     let mut ordered_slices: Vec<&PageSlice> = slices.iter().collect();
     ordered_slices.sort_by(|left, right| {
@@ -879,12 +893,22 @@ pub(crate) fn page_fragments_from_slices_with_page_geometry(
         })
         .collect();
 
-    if pages.is_empty() {
-        return pages;
+    // Each page's slice of the shared flow space: from its origin to the next
+    // page's origin, or its content height for the last page.
+    for (page_slot, page) in pages.iter_mut().enumerate() {
+        let page_start = page.content_origin_y;
+        let page_end = ordered_slices
+            .get(page_slot + 1)
+            .map(|next| next.content_origin_y)
+            .filter(|next| next.is_finite() && *next > page_start)
+            .unwrap_or(page_start + page.content_box.height);
+        page.flow_range = (page_start.is_finite() && page_end.is_finite() && page_end > page_start)
+            .then_some((page_start, page_end));
     }
 
+    let mut text_roots = Vec::new();
     let Some(body_id) = find_body(document) else {
-        return pages;
+        return (pages, text_roots);
     };
 
     // Collect absolute post-pagination coordinates.  The arena index is the
@@ -945,13 +969,19 @@ pub(crate) fn page_fragments_from_slices_with_page_geometry(
             // The content-box origin of a paragraph laid out by the inline
             // engine: its text nodes have no layout of their own, and their
             // lines are measured from here. A root is visited before its text.
-            ifc_origin.insert(
-                node_id,
-                (
-                    abs_x + layout.border.left + layout.padding.left,
-                    abs_y + layout.border.top + layout.padding.top,
-                ),
+            let origin = (
+                abs_x + layout.border.left + layout.padding.left,
+                abs_y + layout.border.top + layout.padding.top,
             );
+            ifc_origin.insert(node_id, origin);
+            if origin.0.is_finite() && origin.1.is_finite() {
+                text_roots.push(ProjectedTextRoot {
+                    node: node_id,
+                    x: origin.0,
+                    y: origin.1,
+                    is_repeat,
+                });
+            }
             let mut bounds_by_node: HashMap<usize, BoxRect> = HashMap::new();
             for piece in node.ifc_inline_boxes().unwrap_or_default() {
                 bounds_by_node
@@ -1070,22 +1100,10 @@ pub(crate) fn page_fragments_from_slices_with_page_geometry(
                 PageFragmentLineRange::new(0, u32::try_from(metrics.len()).unwrap_or(u32::MAX))
             })
         });
-        for (page_slot, slice) in ordered_slices.iter().enumerate() {
-            let page_start = slice.content_origin_y;
-            let page_end = ordered_slices
-                .get(page_slot + 1)
-                .map(|next| next.content_origin_y)
-                .filter(|next| next.is_finite() && *next > page_start)
-                .unwrap_or_else(|| {
-                    page_start
-                        + pages
-                            .get(page_slot)
-                            .map(|page| page.content_box.height)
-                            .unwrap_or(0.0)
-                });
-            if !page_start.is_finite() || !page_end.is_finite() || page_end <= page_start {
+        for (page_slot, page) in pages.iter().enumerate() {
+            let Some((page_start, page_end)) = page.flow_range else {
                 continue;
-            }
+            };
             if source.is_repeat {
                 placements.push((
                     page_slot,
@@ -1142,7 +1160,7 @@ pub(crate) fn page_fragments_from_slices_with_page_geometry(
         }
     }
 
-    pages
+    (pages, text_roots)
 }
 
 /// Collect deterministic page-local link events from page snapshots.
@@ -1317,8 +1335,7 @@ fn line_range_for_page(
     for (index, (line_top, line_bottom)) in line_metrics.iter().copied().enumerate() {
         let top = text_abs_y + line_top;
         let bottom = text_abs_y + line_bottom;
-        let center = (top + bottom) * 0.5;
-        if !center.is_finite() || center < page_start - 0.001 || center >= page_end - 0.001 {
+        if !line_center_on_page(top, bottom, page_start, page_end) {
             continue;
         }
         let index = index as u32;
@@ -1326,6 +1343,14 @@ fn line_range_for_page(
         end = index.saturating_add(1);
     }
     first.map(|start| PageFragmentLineRange::new(start, end))
+}
+
+/// Whether a line from `top` to `bottom` in the shared flow space belongs to
+/// the page whose slice runs from `page_start` to `page_end`: the page that
+/// holds the line's center. A line therefore belongs to exactly one page.
+pub(crate) fn line_center_on_page(top: f32, bottom: f32, page_start: f32, page_end: f32) -> bool {
+    let center = (top + bottom) * 0.5;
+    center.is_finite() && center >= page_start - 0.001 && center < page_end - 0.001
 }
 
 fn finite_nonnegative(value: f32) -> f32 {

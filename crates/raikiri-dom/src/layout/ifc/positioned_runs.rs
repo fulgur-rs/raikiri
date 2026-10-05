@@ -1,0 +1,245 @@
+//! Where the glyphs of an ifc root's lines are drawn.
+//!
+//! The painter and the page text runs both read glyph positions from here, so
+//! the two cannot place a glyph differently. Positions are relative to the
+//! root's content-box origin; each consumer adds its own page origin.
+
+use crate::Document;
+use crate::generated_content::{computed_for_id, generated_origin};
+use raikiri_style::CascadeResult;
+use raikiri_style::property::Visibility;
+use shodo::Fragment;
+use shodo::geometry::{PhysicalConverter, PhysicalSize, WritingMode};
+
+/// One glyph of a run, at its outline origin.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LineGlyph {
+    /// Glyph id in the run's font.
+    pub id: u32,
+    /// Horizontal position from the line's origin.
+    pub x: f32,
+    /// Vertical position from the line's origin.
+    pub y: f32,
+}
+
+/// A glyph run the painter draws, with its glyph positions.
+#[derive(Clone, Debug)]
+pub struct PositionedRun<'a> {
+    /// The run as shodo laid it out.
+    pub run: shodo::GlyphRunView<'a>,
+    /// The node the run is painted for: a text node, the id of a generated
+    /// text, or an element that supplied text of its own.
+    pub owner: usize,
+    /// Glyph positions in the run's glyph order, never empty.
+    pub glyphs: Vec<LineGlyph>,
+    /// The sum of the relative offsets of the run's inline ancestors, which
+    /// move it after its line is laid out.
+    pub offset: (f32, f32),
+}
+
+/// One line of an ifc root and the runs drawn on it.
+#[derive(Clone, Debug)]
+pub struct PositionedLine<'a> {
+    /// Index of the line in the paragraph.
+    pub index: usize,
+    /// The line as shodo laid it out.
+    pub line: &'a shodo::Line,
+    /// Where the line's origin lies from the root's content-box origin: the
+    /// offset of its column plus the distance pagination moved it down.
+    pub offset: (f32, f32),
+    /// Converts the line's logical coordinates to physical ones.
+    pub converter: PhysicalConverter,
+    /// The runs with a computed style, a font and at least one glyph.
+    pub runs: Vec<PositionedRun<'a>>,
+}
+
+/// The lines of an ifc root, with what positions their glyphs.
+#[derive(Debug)]
+pub struct PositionedLines<'a> {
+    document: &'a Document,
+    cascade: &'a CascadeResult,
+    root_id: usize,
+    lines: &'a [shodo::Line],
+    /// The root's writing mode.
+    pub writing_mode: WritingMode,
+    /// Content width the lines were broken at, and their total height.
+    pub size: (f32, f32),
+    converter_size: PhysicalSize,
+    line_offsets: Vec<Option<(f32, f32)>>,
+    /// How far pagination moved each line down, by line index.
+    pub shifts: Vec<f32>,
+    /// Paint offsets of the relatively positioned inline elements.
+    pub offsets: &'a [(usize, (f32, f32))],
+}
+
+impl<'a> PositionedLines<'a> {
+    /// The lines of `root_id`, or `None` when it has none.
+    ///
+    /// With `fragmentainer`, only the lines of that column are kept, each at
+    /// the block offset of its column and at the column's inline start.
+    /// Without it, lines split across columns sit where their column puts
+    /// them; lines that are not split stay where they were laid out.
+    pub fn new(
+        document: &'a Document,
+        cascade: &'a CascadeResult,
+        root_id: usize,
+        fragmentainer: Option<usize>,
+    ) -> Option<Self> {
+        let root_node = document.get_node(root_id)?;
+        let lines = root_node.ifc_lines()?;
+        let writing_mode = root_node
+            .ifc_writing_mode()
+            .unwrap_or(WritingMode::HorizontalTb);
+        let physical_content_size = root_node
+            .ifc_physical_content_size()
+            .unwrap_or(PhysicalSize::default());
+        // Lines split across columns are drawn where their column puts them:
+        // the first line of a range at the range's offset. Without a split
+        // every line stays where it was laid out.
+        let mut line_offsets: Vec<Option<(f32, f32)>> = vec![None; lines.len()];
+        match root_node.ifc_multicol_fragments() {
+            Some(fragments) => {
+                for fragment in fragments {
+                    if fragmentainer.is_some_and(|requested| requested != fragment.fragmentainer) {
+                        continue;
+                    }
+                    let Some(first) = lines.get(fragment.line_start) else {
+                        continue;
+                    };
+                    let dy = fragment.y - first.block_offset();
+                    let end = fragment.line_end.min(lines.len());
+                    for offset in &mut line_offsets[fragment.line_start.min(end)..end] {
+                        *offset = Some((
+                            if fragmentainer.is_some() {
+                                0.0
+                            } else {
+                                fragment.x
+                            },
+                            dy,
+                        ));
+                    }
+                }
+            }
+            None => line_offsets.fill(Some((0.0, 0.0))),
+        }
+        // Lines that pagination moved down with a block before them.
+        let shifts = root_node.ifc_line_shifts();
+        for (offset, shift) in line_offsets.iter_mut().zip(&shifts) {
+            if let Some((_, dy)) = offset {
+                *dy += shift;
+            }
+        }
+        let size = root_node.ifc_size().unwrap_or((0.0, 0.0));
+        let mut converter_size = physical_content_size;
+        if writing_mode == WritingMode::HorizontalTb {
+            converter_size.width = size.0;
+        }
+        Some(Self {
+            document,
+            cascade,
+            root_id,
+            lines,
+            writing_mode,
+            size,
+            converter_size,
+            line_offsets,
+            shifts,
+            offsets: root_node.ifc_relative_offsets(),
+        })
+    }
+
+    /// Every line of the root, including those of other columns.
+    pub fn all_lines(&self) -> &'a [shodo::Line] {
+        self.lines
+    }
+
+    /// The lines to draw, in order, with their runs.
+    pub fn lines(&self) -> impl Iterator<Item = PositionedLine<'a>> + '_ {
+        self.lines
+            .iter()
+            .enumerate()
+            .filter_map(move |(index, line)| {
+                let offset = self.line_offsets[index]?;
+                Some(self.line(index, line, offset))
+            })
+    }
+
+    fn line(&self, index: usize, line: &'a shodo::Line, offset: (f32, f32)) -> PositionedLine<'a> {
+        let converter = PhysicalConverter::new(
+            self.writing_mode,
+            line.used_direction(),
+            self.converter_size,
+        );
+        let mut runs = Vec::new();
+        for fragment in line.fragments() {
+            let Fragment::GlyphRun(run) = fragment else {
+                continue;
+            };
+            // The paint owner is a text node; its computed color is the
+            // inherited one.
+            let Some(owner) = run.node() else { continue };
+            let owner = owner.0 as usize;
+            // Text inherits `visibility` from its element; hidden and
+            // collapsed text is laid out but not painted (CSS 2.1 §11.2).
+            let visible = computed_for_id(self.cascade, owner)
+                .is_some_and(|style| style.visibility == Visibility::Visible);
+            if !visible || run.font_data().is_none() {
+                continue;
+            }
+            let glyphs: Vec<LineGlyph> = run
+                .glyphs()
+                .enumerate()
+                .filter_map(|(glyph_index, glyph)| {
+                    let (inline, block) = run.glyph_origin(glyph_index)?;
+                    let (x, y) = converter.point(inline, block + line.block_offset());
+                    Some(LineGlyph { id: glyph.id, x, y })
+                })
+                .collect();
+            // A run without glyphs draws nothing.
+            if !glyphs.is_empty() {
+                runs.push(PositionedRun {
+                    run,
+                    owner,
+                    glyphs,
+                    offset: cumulative_offset(self.document, self.root_id, self.offsets, owner),
+                });
+            }
+        }
+        PositionedLine {
+            index,
+            line,
+            offset,
+            converter,
+            runs,
+        }
+    }
+}
+
+/// The sum of the relative offsets of `node` and its ancestors up to the ifc
+/// root (the root excluded). An offset moves an inline element together with
+/// everything inside it.
+pub fn cumulative_offset(
+    document: &Document,
+    root_id: usize,
+    offsets: &[(usize, (f32, f32))],
+    node: usize,
+) -> (f32, f32) {
+    let (mut dx, mut dy) = (0.0, 0.0);
+    // A pseudo-element moves with its element.
+    let node = generated_origin(node).map_or(node, |(element, _)| element);
+    let mut current = Some(node);
+    while let Some(id) = current {
+        if id == root_id {
+            break;
+        }
+        if let Some((_, (x, y))) = offsets.iter().find(|(owner, _)| *owner == id) {
+            dx += x;
+            dy += y;
+        }
+        current = document.parent_of(id);
+    }
+    (dx, dy)
+}
+
+#[cfg(test)]
+mod tests;

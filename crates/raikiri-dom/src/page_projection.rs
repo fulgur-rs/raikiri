@@ -2,25 +2,29 @@
 
 pub(crate) mod fragment;
 pub(crate) mod records;
+pub(crate) mod text_runs;
 
 use crate::{Document, Fragment, PageContentInsets, PageMargins, PageSlice};
 use raikiri_style::CascadeResult;
 use raikiri_traits::{NodeId, PageBox, PaintRect};
 use records::{
     PageFragment, PageFragmentEvent, PageFragmentInsets, PageFragmentOrientation,
-    PageFragmentPageGeometry, PageFragmentRect,
+    PageFragmentPageGeometry, PageFragmentRect, ProjectedTextRoot,
 };
 
 #[derive(Debug, Default, Clone)]
 pub(crate) struct PageProjection {
     pages: Vec<PageFragment>,
     links: Vec<Vec<(NodeId, String, Vec<PaintRect>)>>,
+    /// Paragraphs laid out by the inline engine, in document order.
+    text_roots: Vec<ProjectedTextRoot>,
 }
 
 impl PageProjection {
     pub(crate) fn clear(&mut self) {
         self.pages.clear();
         self.links.clear();
+        self.text_roots.clear();
     }
 }
 
@@ -62,13 +66,8 @@ impl Document {
                 )
             })
             .collect();
-        let pages = crate::layout::page_fragments_from_slices_with_page_geometry(
-            self,
-            cascade,
-            fallback_page_box,
-            slices,
-            &geometries,
-        );
+        let (pages, text_roots) =
+            crate::layout::project_slices(self, cascade, fallback_page_box, slices, &geometries);
         let events = crate::layout::page_fragment_events_from_pages(self, &pages);
         let mut links: Vec<Vec<(NodeId, String, Vec<PaintRect>)>> =
             pages.iter().map(|_| Vec::new()).collect();
@@ -97,7 +96,11 @@ impl Document {
                 None => entries.push((link.anchor_node_id, target.to_owned(), vec![quad])),
             }
         }
-        self.page_projection = PageProjection { pages, links };
+        self.page_projection = PageProjection {
+            pages,
+            links,
+            text_roots,
+        };
     }
 
     /// Borrow the final placements on one page.

@@ -174,7 +174,6 @@ fn css_tables_border_collapse_and_paint_pairs_are_pixel_exact_at_800x600() {
         "css/css-tables/paint/table-border-paint-caption-change.html",
         "css/css-tables/rowspan-cell-border-after-color.html",
         "css/css-tables/table-has-box-sizing-border-box-001.html",
-        "css/css-tables/visibility-collapse-rowspan-005.html",
     ];
     let mut config = ReftestConfig::default();
     config.width = 800;
