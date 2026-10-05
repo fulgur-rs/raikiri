@@ -397,7 +397,9 @@ mod min_content_tests {
 
     /// The border box of `wrapper` and of its float ancestor, for a
     /// `width:min-content` wrapper around a block of Ahem text.
-    fn min_content_rects(float: bool) -> ((f32, f32, f32, f32), (f32, f32, f32, f32)) {
+    type Rect = (f32, f32, f32, f32);
+
+    fn min_content_rects(float: bool) -> (Rect, Rect) {
         let mut doc = crate::Document::new();
         let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
         let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
