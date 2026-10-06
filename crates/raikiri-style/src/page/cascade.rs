@@ -640,6 +640,7 @@ pub fn cascade_page_with_media_context(
     for rule in &rule_tree.page_rules {
         if rule
             .media_condition
+            .as_ref()
             .is_some_and(|condition| !condition.matches(media_context))
         {
             continue;

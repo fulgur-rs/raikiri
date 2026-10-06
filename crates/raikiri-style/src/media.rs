@@ -1,6 +1,13 @@
-//! Media-query context and the small media-type subset used by the cascade.
+//! Media-query context, and the Media Queries 4 parser and evaluator used by
+//! the cascade.
 
-use cssparser::{Parser, ParserInput};
+use std::sync::Arc;
+
+use cssparser::{ParseError, Parser, ParserInput, Token};
+
+use crate::computed::INITIAL_FONT_SIZE_PX;
+use crate::property::{Length, parse_length_allow_negative};
+use crate::resolve::{ComputedLength, ResolveContext, resolve_length};
 
 /// The media type selected for a cascade evaluation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -85,15 +92,278 @@ const PRINT_MEDIA: u8 = 1;
 const SCREEN_MEDIA: u8 = 2;
 const ALL_MEDIA: u8 = PRINT_MEDIA | SCREEN_MEDIA;
 
-/// A parsed media query with the small media-type and viewport-feature subset
-/// used by the cascade.
+const fn media_bit(media_type: MediaType) -> u8 {
+    match media_type {
+        MediaType::Print => PRINT_MEDIA,
+        MediaType::Screen => SCREEN_MEDIA,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Syntax tree and evaluation
+// ---------------------------------------------------------------------------
+
+/// Kleene's three-valued AND (Media Queries 4 §3.1); `None` is "unknown".
+const fn kleene_and(left: Option<bool>, right: Option<bool>) -> Option<bool> {
+    match (left, right) {
+        (Some(false), _) | (_, Some(false)) => Some(false),
+        (Some(true), Some(true)) => Some(true),
+        _ => None,
+    }
+}
+
+const fn kleene_not(value: Option<bool>) -> Option<bool> {
+    match value {
+        Some(value) => Some(!value),
+        None => None,
+    }
+}
+
+const fn kleene_or(left: Option<bool>, right: Option<bool>) -> Option<bool> {
+    kleene_not(kleene_and(kleene_not(left), kleene_not(right)))
+}
+
+/// A boolean condition over leaves of type `L`, evaluated with three-valued
+/// logic.
+///
+/// `Unknown` stands for a `<general-enclosed>` term or a feature this engine
+/// does not evaluate; MQ4 §3.2 gives both the value "unknown".
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Condition<L> {
+    Not(Box<Self>),
+    And(Vec<Self>),
+    Or(Vec<Self>),
+    Leaf(L),
+    Unknown,
+}
+
+impl<L> Condition<L> {
+    fn all(head: Self, rest: Vec<Self>) -> Self {
+        if rest.is_empty() {
+            head
+        } else {
+            Self::And(std::iter::once(head).chain(rest).collect())
+        }
+    }
+
+    fn any(head: Self, rest: Vec<Self>) -> Self {
+        if rest.is_empty() {
+            head
+        } else {
+            Self::Or(std::iter::once(head).chain(rest).collect())
+        }
+    }
+
+    fn eval(&self, leaf: &impl Fn(&L) -> Option<bool>) -> Option<bool> {
+        match self {
+            Self::Not(inner) => kleene_not(inner.eval(leaf)),
+            // `None` is a third truth value here, not an early exit.
+            Self::And(terms) => terms
+                .iter()
+                .map(|term| term.eval(leaf))
+                .reduce(kleene_and)
+                .unwrap_or(Some(true)),
+            Self::Or(terms) => terms
+                .iter()
+                .map(|term| term.eval(leaf))
+                .reduce(kleene_or)
+                .unwrap_or(Some(false)),
+            Self::Leaf(value) => leaf(value),
+            Self::Unknown => None,
+        }
+    }
+
+    /// Every value this condition can take, assuming each leaf can be either
+    /// true or false.
+    fn outcomes(&self) -> Outcomes {
+        match self {
+            Self::Not(inner) => inner.outcomes().map(kleene_not),
+            Self::And(terms) => terms.iter().fold(Outcomes::TRUE, |acc, term| {
+                acc.zip(term.outcomes(), kleene_and)
+            }),
+            Self::Or(terms) => terms.iter().fold(Outcomes::FALSE, |acc, term| {
+                acc.zip(term.outcomes(), kleene_or)
+            }),
+            Self::Leaf(_) => Outcomes::EITHER,
+            Self::Unknown => Outcomes::UNKNOWN,
+        }
+    }
+}
+
+/// A set of three-valued results, used to drop queries that can never match.
+///
+/// [`parse_media_prelude`] returns `None` for a list that matches in no
+/// context, and callers skip such `@media` blocks entirely, so a query that is
+/// always false or unknown has to be recognised while parsing.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Outcomes(u8);
+
+impl Outcomes {
+    const VALUES: [Option<bool>; 3] = [Some(true), Some(false), None];
+    const TRUE: Self = Self(1);
+    const FALSE: Self = Self(2);
+    const UNKNOWN: Self = Self(4);
+    const EITHER: Self = Self(1 | 2);
+
+    const fn of(value: Option<bool>) -> Self {
+        match value {
+            Some(true) => Self::TRUE,
+            Some(false) => Self::FALSE,
+            None => Self::UNKNOWN,
+        }
+    }
+
+    fn contains(self, value: Option<bool>) -> bool {
+        self.0 & Self::of(value).0 != 0
+    }
+
+    fn values(self) -> impl Iterator<Item = Option<bool>> {
+        Self::VALUES
+            .into_iter()
+            .filter(move |value| self.contains(*value))
+    }
+
+    /// Apply `op` to every pair of values from `self` and `other`.
+    fn zip(self, other: Self, op: impl Fn(Option<bool>, Option<bool>) -> Option<bool>) -> Self {
+        let mut result = Self(0);
+        for left in self.values() {
+            for right in other.values() {
+                result.0 |= Self::of(op(left, right)).0;
+            }
+        }
+        result
+    }
+
+    fn map(self, op: impl Fn(Option<bool>) -> Option<bool>) -> Self {
+        self.zip(Self::TRUE, |value, _| op(value))
+    }
+}
+
+/// The viewport dimension a range feature tests.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Axis {
+    Width,
+    Height,
+}
+
+/// A range comparison, read as `<viewport value> <cmp> <px>`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Cmp {
+    Lt,
+    Le,
+    Eq,
+    Ge,
+    Gt,
+}
+
+impl Cmp {
+    /// The same comparison with its operands swapped: `a < b` is `b > a`.
+    const fn flipped(self) -> Self {
+        match self {
+            Self::Lt => Self::Gt,
+            Self::Le => Self::Ge,
+            Self::Eq => Self::Eq,
+            Self::Ge => Self::Le,
+            Self::Gt => Self::Lt,
+        }
+    }
+}
+
+/// A `width` / `height` test, normalised from the plain, boolean, and range
+/// forms of MQ4 §4.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ViewportFeature {
+    axis: Axis,
+    cmp: Cmp,
+    px: f32,
+}
+
+impl ViewportFeature {
+    fn matches(self, context: &MediaContext) -> bool {
+        let value = match self.axis {
+            Axis::Width => context.viewport_width,
+            Axis::Height => context.viewport_height,
+        } as f32;
+        match self.cmp {
+            Cmp::Lt => value < self.px,
+            Cmp::Le => value <= self.px,
+            Cmp::Eq => value == self.px,
+            Cmp::Ge => value >= self.px,
+            Cmp::Gt => value > self.px,
+        }
+    }
+}
+
+type FeatureCondition = Condition<ViewportFeature>;
+
+/// One entry of a `<media-query-list>`.
+#[derive(Clone, Debug, PartialEq)]
+enum MediaQuery {
+    /// `<media-condition>`
+    Condition(FeatureCondition),
+    /// `[ not | only ]? <media-type> [ and <media-condition-without-or> ]?`
+    Typed {
+        negated: bool,
+        media_mask: u8,
+        condition: Option<FeatureCondition>,
+    },
+}
+
+impl MediaQuery {
+    /// Evaluate the query. An unknown result is `not all` (MQ4 §3.2).
+    fn matches(&self, context: &MediaContext) -> bool {
+        let feature = |feature: &ViewportFeature| Some(feature.matches(context));
+        let value = match self {
+            Self::Condition(condition) => condition.eval(&feature),
+            Self::Typed {
+                negated,
+                media_mask,
+                condition,
+            } => {
+                let type_matches = Some(media_mask & media_bit(context.media_type) != 0);
+                let condition = condition.as_ref().map_or(Some(true), |c| c.eval(&feature));
+                let value = kleene_and(type_matches, condition);
+                if *negated { kleene_not(value) } else { value }
+            }
+        };
+        value == Some(true)
+    }
+
+    fn can_match(&self) -> bool {
+        let outcomes = match self {
+            Self::Condition(condition) => condition.outcomes(),
+            Self::Typed {
+                negated,
+                media_mask,
+                condition,
+            } => {
+                let type_outcomes = match *media_mask {
+                    0 => Outcomes::FALSE,
+                    ALL_MEDIA => Outcomes::TRUE,
+                    _ => Outcomes::EITHER,
+                };
+                let condition = condition
+                    .as_ref()
+                    .map_or(Outcomes::TRUE, Condition::outcomes);
+                let outcomes = type_outcomes.zip(condition, kleene_and);
+                if *negated {
+                    outcomes.map(kleene_not)
+                } else {
+                    outcomes
+                }
+            }
+        };
+        outcomes.contains(Some(true))
+    }
+}
+
+/// The condition guarding a rule: every nested `@media` list must match.
+///
+/// Each list holds only the queries that can match in some context; queries
+/// that are malformed or always `not all` are dropped while parsing.
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct MediaCondition {
-    media_mask: u8,
-    min_width: Option<u32>,
-    max_width: Option<u32>,
-    min_height: Option<u32>,
-    max_height: Option<u32>,
+    lists: Arc<[Vec<MediaQuery>]>,
 }
 
 /// A parsed qualified rule that is guarded by a media condition.
@@ -105,208 +375,394 @@ pub(crate) struct MediaRule {
     pub(crate) condition: MediaCondition,
 }
 
-const fn max_bound(left: Option<u32>, right: Option<u32>) -> Option<u32> {
-    match (left, right) {
-        (Some(left), Some(right)) => Some(if left > right { left } else { right }),
-        (Some(value), None) | (None, Some(value)) => Some(value),
-        (None, None) => None,
-    }
-}
-
-const fn min_bound(left: Option<u32>, right: Option<u32>) -> Option<u32> {
-    match (left, right) {
-        (Some(left), Some(right)) => Some(if left < right { left } else { right }),
-        (Some(value), None) | (None, Some(value)) => Some(value),
-        (None, None) => None,
-    }
-}
-
 impl MediaCondition {
-    pub(crate) const fn is_empty(self) -> bool {
-        self.media_mask == 0
-            || matches!((self.min_width, self.max_width), (Some(min), Some(max)) if min > max)
-            || matches!((self.min_height, self.max_height), (Some(min), Some(max)) if min > max)
+    pub(crate) fn is_empty(&self) -> bool {
+        self.lists.iter().any(Vec::is_empty)
     }
 
-    pub(crate) const fn matches(self, context: &MediaContext) -> bool {
-        let bit = match context.media_type {
-            MediaType::Print => PRINT_MEDIA,
-            MediaType::Screen => SCREEN_MEDIA,
-        };
-        if self.media_mask & bit == 0 {
-            return false;
-        }
-        let width = context.viewport_width;
-        let height = context.viewport_height;
-        if let Some(min) = self.min_width
-            && width < min
-        {
-            return false;
-        }
-        if let Some(max) = self.max_width
-            && width > max
-        {
-            return false;
-        }
-        if let Some(min) = self.min_height
-            && height < min
-        {
-            return false;
-        }
-        if let Some(max) = self.max_height
-            && height > max
-        {
-            return false;
-        }
-        true
+    pub(crate) fn matches(&self, context: &MediaContext) -> bool {
+        self.lists
+            .iter()
+            .all(|list| list.iter().any(|query| query.matches(context)))
     }
 
-    pub(crate) const fn intersect(self, other: Self) -> Self {
+    pub(crate) fn intersect(&self, other: &Self) -> Self {
         Self {
-            media_mask: self.media_mask & other.media_mask,
-            min_width: max_bound(self.min_width, other.min_width),
-            max_width: min_bound(self.max_width, other.max_width),
-            min_height: max_bound(self.min_height, other.min_height),
-            max_height: min_bound(self.max_height, other.max_height),
+            lists: self
+                .lists
+                .iter()
+                .chain(other.lists.iter())
+                .cloned()
+                .collect(),
         }
     }
 }
 
-fn parse_media_length(value: &str) -> Option<u32> {
-    let value = value.trim().to_ascii_lowercase();
-    let number_end = value
-        .find(|character: char| {
-            !(character.is_ascii_digit() || matches!(character, '+' | '-' | '.'))
-        })
-        .unwrap_or(value.len());
-    let number = value[..number_end].parse::<f64>().ok()?;
-    let unit = &value[number_end..];
-    let multiplier = match unit {
-        "" | "px" => 1.0,
-        "in" => 96.0,
-        "cm" => 96.0 / 2.54,
-        "mm" => 96.0 / 25.4,
-        "pt" => 96.0 / 72.0,
-        "pc" => 16.0,
-        "q" => 96.0 / 101.6,
-        _ => return None,
-    };
-    let pixels = number * multiplier;
-    (pixels.is_finite() && pixels >= 0.0 && pixels <= u32::MAX as f64)
-        .then_some(pixels.round() as u32)
-}
-
-fn parse_feature_query(source: &str) -> Option<MediaCondition> {
-    if source.contains(',') {
-        return None;
-    }
-    let parts: Vec<_> = source.split("and").map(str::trim).collect();
-    if parts.is_empty() {
-        return None;
-    }
-    let mut media_mask = ALL_MEDIA;
-    let mut index = 0;
-    if !parts[0].starts_with('(') {
-        media_mask = match parts[0].to_ascii_lowercase().as_str() {
-            "all" => ALL_MEDIA,
-            "print" => PRINT_MEDIA,
-            "screen" => SCREEN_MEDIA,
-            _ => return None,
-        };
-        index = 1;
-    }
-    let mut condition = MediaCondition {
-        media_mask,
-        min_width: None,
-        max_width: None,
-        min_height: None,
-        max_height: None,
-    };
-    let mut saw_feature = false;
-    for part in &parts[index..] {
-        let inner = part.strip_prefix('(')?.strip_suffix(')')?;
-        let (name, value) = inner.split_once(':')?;
-        let pixels = parse_media_length(value)?;
-        match name.trim().to_ascii_lowercase().as_str() {
-            "width" => {
-                condition.min_width = Some(pixels);
-                condition.max_width = Some(pixels);
-            }
-            "height" => {
-                condition.min_height = Some(pixels);
-                condition.max_height = Some(pixels);
-            }
-            "min-width" => condition.min_width = Some(pixels),
-            "max-width" => condition.max_width = Some(pixels),
-            "min-height" => condition.min_height = Some(pixels),
-            "max-height" => condition.max_height = Some(pixels),
-            _ => return None,
-        }
-        saw_feature = true;
-    }
-    saw_feature.then_some(condition)
-}
-
-/// Parse the intentionally small media-query subset supported by this pass.
+/// Parse an `@media` prelude.
 ///
-/// In addition to `all`, `print`, and `screen`, a single query may contain
-/// `min/max-width` and `min/max-height` features with absolute CSS lengths.
-/// Media-type-only queries support `not` and `only`, including in comma lists.
-/// Modifiers combined with features remain unsupported: `not` must negate the
-/// entire query, which cannot be represented by flipping only the media mask.
-pub(crate) fn parse_media_condition(source: &str) -> Option<MediaCondition> {
-    if let Some(condition) = parse_feature_query(source.trim()) {
-        return Some(condition);
-    }
+/// Returns `None` when the list is invalid as a whole (an empty entry or a
+/// tokenizer error token) or when none of its queries can match.
+pub(crate) fn parse_media_prelude(source: &str) -> Option<MediaCondition> {
     let mut input = ParserInput::new(source);
     let mut parser = Parser::new(&mut input);
-    let alternatives = parser
-        .parse_comma_separated::<_, u8, ()>(|query| {
-            let start = query.position();
-            query
-                .expect_no_error_token()
-                .map_err(|_| query.new_custom_error(()))?;
-            let raw = query.slice(start..query.position());
+    let list = parse_media_query_list(&mut parser).ok()?;
+    (!list.is_empty()).then(|| MediaCondition {
+        lists: Arc::from([list]),
+    })
+}
 
-            let mut alternative_input = ParserInput::new(raw);
-            let mut alternative = Parser::new(&mut alternative_input);
-            if alternative.expect_exhausted().is_ok() {
-                return Err(query.new_custom_error(()));
-            }
+// ---------------------------------------------------------------------------
+// Grammar (Media Queries 4 §3)
+//
+// One function per production; each quotes the production it parses. The
+// helpers below stand for the grammar's combinators: `first_of` is `|`,
+// `optional` is `?`, `zero_or_more` is `*`, and `parens` is `( ... )`.
+// ---------------------------------------------------------------------------
 
-            let Ok(mut name) = alternative.expect_ident().map(|name| name.to_string()) else {
-                return Ok(0);
-            };
-            let negated = name.eq_ignore_ascii_case("not");
-            if negated || name.eq_ignore_ascii_case("only") {
-                let Ok(media_type) = alternative.expect_ident() else {
-                    return Ok(0);
-                };
-                name = media_type.to_string();
-            }
-            if alternative.expect_exhausted().is_err() {
-                return Ok(0);
-            }
-            let mask = match name.to_ascii_lowercase().as_str() {
-                "all" => ALL_MEDIA,
-                "print" => PRINT_MEDIA,
-                "screen" => SCREEN_MEDIA,
-                // Reserved identifiers are invalid, even after negation.
-                "not" | "only" | "and" | "or" | "layer" => return Ok(0),
-                _ => 0,
-            };
-            Ok(if negated { ALL_MEDIA & !mask } else { mask })
-        })
-        .ok()?;
-    let mask = alternatives
+type PResult<'i, T> = Result<T, ParseError<'i, ()>>;
+type Production<'i, T> = fn(&mut Parser<'i, '_>) -> PResult<'i, T>;
+
+/// `A | B | ...`: the first alternative that parses.
+fn first_of<'i, T>(
+    input: &mut Parser<'i, '_>,
+    alternatives: &[Production<'i, T>],
+) -> PResult<'i, T> {
+    let mut error = input.new_custom_error(());
+    for alternative in alternatives {
+        match input.try_parse(|input| alternative(input)) {
+            Ok(value) => return Ok(value),
+            Err(err) => error = err,
+        }
+    }
+    Err(error)
+}
+
+/// `A?`
+fn optional<'i, T>(input: &mut Parser<'i, '_>, production: Production<'i, T>) -> Option<T> {
+    input.try_parse(|input| production(input)).ok()
+}
+
+/// `A*`
+fn zero_or_more<'i, T>(input: &mut Parser<'i, '_>, production: Production<'i, T>) -> Vec<T> {
+    std::iter::from_fn(|| optional(input, production)).collect()
+}
+
+/// `( A )`: a parenthesised block whose contents are exactly `A`.
+fn parens<'i, T>(input: &mut Parser<'i, '_>, production: Production<'i, T>) -> PResult<'i, T> {
+    input.expect_parenthesis_block()?;
+    input.parse_nested_block(production)
+}
+
+/// A keyword, matched ASCII case-insensitively.
+fn keyword<'i>(input: &mut Parser<'i, '_>, name: &'static str) -> PResult<'i, ()> {
+    Ok(input.expect_ident_matching(name)?)
+}
+
+/// `<media-query-list> = <media-query>#`
+///
+/// A malformed `<media-query>` becomes `not all` (MQ4 §3.2) and is dropped
+/// together with queries that can never match. An empty entry or a tokenizer
+/// error token invalidates the whole list instead.
+fn parse_media_query_list<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, Vec<MediaQuery>> {
+    let queries = input.parse_comma_separated(|input| {
+        if input.is_exhausted() {
+            return Err(input.new_custom_error(()));
+        }
+        let start = input.state();
+        input.expect_no_error_token()?;
+        input.reset(&start);
+        let query = optional(input, parse_media_query);
+        while input.next().is_ok() {}
+        Ok(query)
+    })?;
+    Ok(queries
         .into_iter()
-        .fold(0, |mask, alternative| mask | alternative);
-    (mask != 0).then_some(MediaCondition {
-        media_mask: mask,
-        min_width: None,
-        max_width: None,
-        min_height: None,
-        max_height: None,
+        .flatten()
+        .filter(MediaQuery::can_match)
+        .collect())
+}
+
+/// `<media-query> = <media-condition>
+///                | [ not | only ]? <media-type> [ and <media-condition-without-or> ]?`
+fn parse_media_query<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, MediaQuery> {
+    first_of(
+        input,
+        &[
+            |input| {
+                input
+                    .parse_entirely(parse_media_condition)
+                    .map(MediaQuery::Condition)
+            },
+            |input| input.parse_entirely(parse_typed_media_query),
+        ],
+    )
+}
+
+/// `[ not | only ]? <media-type> [ and <media-condition-without-or> ]?`
+fn parse_typed_media_query<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, MediaQuery> {
+    let negated = optional(input, |input| {
+        first_of(
+            input,
+            &[
+                |input| keyword(input, "not").map(|()| true),
+                |input| keyword(input, "only").map(|()| false),
+            ],
+        )
+    });
+    let media_mask = parse_media_type(input)?;
+    let condition = optional(input, |input| {
+        keyword(input, "and")?;
+        parse_media_condition_without_or(input)
+    });
+    Ok(MediaQuery::Typed {
+        negated: negated == Some(true),
+        media_mask,
+        condition,
+    })
+}
+
+/// `<media-type> = <ident>`, excluding `only`, `not`, `and`, `or`, and
+/// `layer` (MQ4 §3). An unknown media type is valid but matches nothing.
+fn parse_media_type<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, u8> {
+    let location = input.current_source_location();
+    let name = input.expect_ident()?;
+    match name.to_ascii_lowercase().as_str() {
+        "all" => Ok(ALL_MEDIA),
+        "print" => Ok(PRINT_MEDIA),
+        "screen" => Ok(SCREEN_MEDIA),
+        "only" | "not" | "and" | "or" | "layer" => Err(location.new_custom_error(())),
+        _ => Ok(0),
+    }
+}
+
+/// `<media-condition> = <media-not> | <media-in-parens> [ <media-and>* | <media-or>* ]`
+fn parse_media_condition<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, FeatureCondition> {
+    first_of(
+        input,
+        &[parse_media_not, |input| {
+            let head = parse_media_in_parens(input)?;
+            let and = zero_or_more(input, parse_media_and);
+            if !and.is_empty() {
+                return Ok(Condition::all(head, and));
+            }
+            Ok(Condition::any(head, zero_or_more(input, parse_media_or)))
+        }],
+    )
+}
+
+/// `<media-condition-without-or> = <media-not> | <media-in-parens> <media-and>*`
+fn parse_media_condition_without_or<'i>(
+    input: &mut Parser<'i, '_>,
+) -> PResult<'i, FeatureCondition> {
+    first_of(
+        input,
+        &[parse_media_not, |input| {
+            let head = parse_media_in_parens(input)?;
+            Ok(Condition::all(head, zero_or_more(input, parse_media_and)))
+        }],
+    )
+}
+
+/// `<media-not> = not <media-in-parens>`
+fn parse_media_not<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, FeatureCondition> {
+    keyword(input, "not")?;
+    Ok(Condition::Not(Box::new(parse_media_in_parens(input)?)))
+}
+
+/// `<media-and> = and <media-in-parens>`
+fn parse_media_and<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, FeatureCondition> {
+    keyword(input, "and")?;
+    parse_media_in_parens(input)
+}
+
+/// `<media-or> = or <media-in-parens>`
+fn parse_media_or<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, FeatureCondition> {
+    keyword(input, "or")?;
+    parse_media_in_parens(input)
+}
+
+/// `<media-in-parens> = ( <media-condition> ) | ( <media-feature> ) | <general-enclosed>`
+fn parse_media_in_parens<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, FeatureCondition> {
+    first_of(
+        input,
+        &[
+            |input| parens(input, parse_media_condition),
+            |input| parens(input, parse_media_feature),
+            |input| parse_general_enclosed(input).map(|()| Condition::Unknown),
+        ],
+    )
+}
+
+/// `<general-enclosed> = [ <function-token> <any-value>? ) ] | [ ( <any-value>? ) ]`
+///
+/// Error tokens are already rejected for the whole query list, so any block
+/// contents are an `<any-value>?`.
+fn parse_general_enclosed<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, ()> {
+    let location = input.current_source_location();
+    match input.next()? {
+        Token::Function(_) | Token::ParenthesisBlock => {}
+        _ => return Err(location.new_custom_error(())),
+    }
+    input.parse_nested_block(|input| {
+        while input.next().is_ok() {}
+        Ok(())
+    })
+}
+
+/// `<media-feature> = [ <mf-plain> | <mf-boolean> | <mf-range> ]`
+///
+/// `<mf-boolean>` is tried last because it is a prefix of the other forms.
+/// Only `width` and `height` are evaluated; any other feature, or a value of
+/// the wrong type, falls through to `<general-enclosed>` and is unknown.
+fn parse_media_feature<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, FeatureCondition> {
+    first_of(
+        input,
+        &[
+            |input| parse_mf_plain(input).map(Condition::Leaf),
+            |input| parse_mf_range(input),
+            |input| parse_mf_boolean(input).map(Condition::Leaf),
+        ],
+    )
+}
+
+/// `<mf-plain> = <mf-name> : <mf-value>`, with the `min-` / `max-` prefixes.
+fn parse_mf_plain<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, ViewportFeature> {
+    let location = input.current_source_location();
+    let name = input.expect_ident()?.to_ascii_lowercase();
+    let (cmp, name) = if let Some(name) = name.strip_prefix("min-") {
+        (Cmp::Ge, name)
+    } else if let Some(name) = name.strip_prefix("max-") {
+        (Cmp::Le, name)
+    } else {
+        (Cmp::Eq, name.as_str())
+    };
+    let axis = axis_named(name).ok_or_else(|| location.new_custom_error(()))?;
+    input.expect_colon()?;
+    let px = parse_mf_value(input)?;
+    Ok(ViewportFeature { axis, cmp, px })
+}
+
+/// `<mf-boolean> = <mf-name>`: true when the value is not zero.
+fn parse_mf_boolean<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, ViewportFeature> {
+    let axis = parse_mf_name(input)?;
+    Ok(ViewportFeature {
+        axis,
+        cmp: Cmp::Gt,
+        px: 0.0,
+    })
+}
+
+/// `<mf-range> = <mf-name> <mf-comparison> <mf-value>
+///             | <mf-value> <mf-comparison> <mf-name>
+///             | <mf-value> <mf-lt> <mf-name> <mf-lt> <mf-value>
+///             | <mf-value> <mf-gt> <mf-name> <mf-gt> <mf-value>`
+///
+/// The two-sided forms are tried first because the second form is their
+/// prefix.
+fn parse_mf_range<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, FeatureCondition> {
+    first_of(
+        input,
+        &[
+            |input| {
+                let low = parse_mf_value(input)?;
+                let first = parse_mf_lt_or_gt(input)?;
+                let axis = parse_mf_name(input)?;
+                let second = parse_mf_lt_or_gt(input)?;
+                let high = parse_mf_value(input)?;
+                if matches!(first, Cmp::Lt | Cmp::Le) != matches!(second, Cmp::Lt | Cmp::Le) {
+                    return Err(input.new_custom_error(()));
+                }
+                Ok(Condition::And(vec![
+                    Condition::Leaf(ViewportFeature {
+                        axis,
+                        cmp: first.flipped(),
+                        px: low,
+                    }),
+                    Condition::Leaf(ViewportFeature {
+                        axis,
+                        cmp: second,
+                        px: high,
+                    }),
+                ]))
+            },
+            |input| {
+                let axis = parse_mf_name(input)?;
+                let cmp = parse_mf_comparison(input)?;
+                let px = parse_mf_value(input)?;
+                Ok(Condition::Leaf(ViewportFeature { axis, cmp, px }))
+            },
+            |input| {
+                let px = parse_mf_value(input)?;
+                let cmp = parse_mf_comparison(input)?;
+                let axis = parse_mf_name(input)?;
+                Ok(Condition::Leaf(ViewportFeature {
+                    axis,
+                    cmp: cmp.flipped(),
+                    px,
+                }))
+            },
+        ],
+    )
+}
+
+/// `<mf-name> = <ident>`, limited to the range features evaluated here.
+fn parse_mf_name<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, Axis> {
+    let location = input.current_source_location();
+    let name = input.expect_ident()?;
+    axis_named(&name.to_ascii_lowercase()).ok_or_else(|| location.new_custom_error(()))
+}
+
+fn axis_named(name: &str) -> Option<Axis> {
+    match name {
+        "width" => Some(Axis::Width),
+        "height" => Some(Axis::Height),
+        _ => None,
+    }
+}
+
+/// `<mf-value>`, limited to the `<length>` that `width` and `height` take.
+///
+/// Relative units resolve against the initial font size (MQ4 §1.3); `lh` and
+/// `rlh` need a line height that has no initial length, so they are unknown.
+fn parse_mf_value<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, f32> {
+    let location = input.current_source_location();
+    let initial = ComputedLength(INITIAL_FONT_SIZE_PX);
+    match parse_length_allow_negative(input) {
+        Some(Length::Lh(_) | Length::Rlh(_)) | None => Err(location.new_custom_error(())),
+        Some(length) => Ok(resolve_length(length, initial, None, &ResolveContext::new(initial)).0),
+    }
+}
+
+/// `<mf-comparison> = <mf-lt> | <mf-gt> | <mf-eq>`
+fn parse_mf_comparison<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, Cmp> {
+    first_of(
+        input,
+        &[parse_mf_lt_or_gt, |input| {
+            input.expect_delim('=')?;
+            Ok(Cmp::Eq)
+        }],
+    )
+}
+
+/// `<mf-lt> = '<' '='?` and `<mf-gt> = '>' '='?`, with no space before `=`.
+fn parse_mf_lt_or_gt<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, Cmp> {
+    let location = input.current_source_location();
+    let less = match input.next()? {
+        Token::Delim('<') => true,
+        Token::Delim('>') => false,
+        _ => return Err(location.new_custom_error(())),
+    };
+    let or_equal = input
+        .try_parse(|input| match input.next_including_whitespace() {
+            Ok(Token::Delim('=')) => Ok(()),
+            _ => Err(()),
+        })
+        .is_ok();
+    Ok(match (less, or_equal) {
+        (true, false) => Cmp::Lt,
+        (true, true) => Cmp::Le,
+        (false, false) => Cmp::Gt,
+        (false, true) => Cmp::Ge,
     })
 }
 
