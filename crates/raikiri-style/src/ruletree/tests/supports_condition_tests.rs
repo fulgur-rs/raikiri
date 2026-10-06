@@ -1,7 +1,7 @@
 use super::*;
 
 fn supports_condition(source: &str) -> bool {
-    crate::supports::supports_condition(source, &NamespaceContext::new(""))
+    crate::supports::supports_condition(source, &SupportsContext::new("", &[]))
 }
 
 #[test]
@@ -334,7 +334,7 @@ fn namespace_checks_keep_header_statements_and_ignore_unrelated_values() {
         let source = format!("{statement} @namespace svg 'urn:svg';");
         assert!(crate::supports::supports_condition(
             "selector(svg|a)",
-            &NamespaceContext::new(&source)
+            &SupportsContext::new(&source, &[])
         ));
     }
     let mut tree = RuleTree::empty();
@@ -355,4 +355,67 @@ fn namespace_checks_keep_header_statements_and_ignore_unrelated_values() {
     ] {
         assert!(supports_condition(condition), "{condition}");
     }
+}
+
+#[test]
+fn consumer_property_conditions_use_the_registered_grammar() {
+    let registrations = [
+        ConsumerPropertyRegistration::integer("bookmark-level"),
+        ConsumerPropertyRegistration::integer_or_none("bookmark-state"),
+        ConsumerPropertyRegistration::text("bookmark-label"),
+    ];
+    for (declaration, expected) in [
+        ("bookmark-level: 1", true),
+        ("BOOKMARK-LEVEL: -2 !important", true),
+        ("bookmark-level: var(--level)", true),
+        ("bookmark-state: none", true),
+        ("bookmark-state: -3", true),
+        ("bookmark-label: \"Chapter\"", true),
+        ("bookmark-level: none", false),
+        ("bookmark-level: 1.5", false),
+        ("bookmark-state: invalid", false),
+        ("bookmark-label:", false),
+    ] {
+        let mut input = ParserInput::new(declaration);
+        let mut parser = Parser::new(&mut input);
+        let ordinary =
+            parse_declaration_block_with_consumer_properties(&mut parser, &registrations);
+        assert_eq!(!ordinary.is_empty(), expected, "{declaration}");
+        for (condition, matches) in [
+            (format!("({declaration})"), expected),
+            (format!("not ({declaration})"), !expected),
+            (format!("(({declaration})) AND (color: red)"), expected),
+        ] {
+            let mut tree = RuleTree::empty_with_consumer_properties(&registrations);
+            tree.add_stylesheet(
+                &format!("@supports {condition} {{ p {{ color: red }} }}"),
+                Origin::Author,
+            );
+            assert_eq!(
+                tree.style_rules().len(),
+                usize::from(matches),
+                "{condition}"
+            );
+        }
+    }
+}
+
+#[test]
+fn consumer_supports_context_is_isolated_and_survives_nested_queries() {
+    let registrations = [ConsumerPropertyRegistration::integer("bookmark-level")];
+    let source = "@supports (bookmark-level: 1) { p { color: red } @supports (bookmark-level: 2) { div { color: blue } } }";
+    let mut registered = RuleTree::empty_with_consumer_properties(&registrations);
+    registered.add_stylesheet(source, Origin::Author);
+    assert_eq!(registered.style_rules().len(), 2);
+    let mut unregistered = RuleTree::empty();
+    unregistered.add_stylesheet(source, Origin::Author);
+    assert!(unregistered.style_rules().is_empty());
+
+    let registrations = [ConsumerPropertyRegistration::integer("color")];
+    let mut tree = RuleTree::empty_with_consumer_properties(&registrations);
+    tree.add_stylesheet(
+        "@supports (color: 1) { p { color: red } } @supports (color: red) { div { color: blue } }",
+        Origin::Author,
+    );
+    assert_eq!(tree.style_rules().len(), 2);
 }

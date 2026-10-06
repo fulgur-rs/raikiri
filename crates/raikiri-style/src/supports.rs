@@ -5,9 +5,11 @@ use selectors::parser::{Component, ParseRelative, Selector, SelectorList};
 
 use crate::RaikiriSelectorImpl;
 use crate::condition::Condition;
+use crate::consumer::ConsumerPropertyRegistration;
 use crate::grammar::{PResult, first_of, keyword, parens, zero_or_more};
 use crate::property::parse_value;
-use crate::ruletree::{NamespaceContext, NamespacedSelectorParser, is_supported_selector_list};
+use crate::rule::parse_registered_consumer_value;
+use crate::ruletree::{NamespacedSelectorParser, SupportsContext, is_supported_selector_list};
 
 type SupportsCondition = Condition<bool>;
 
@@ -15,7 +17,7 @@ type SupportsCondition = Condition<bool>;
 const MAX_SUPPORTS_NESTING_DEPTH: usize = 128;
 
 /// Evaluate a complete feature query; invalid syntax never matches.
-pub(crate) fn supports_condition(source: &str, namespaces: &NamespaceContext<'_>) -> bool {
+pub(crate) fn supports_condition(source: &str, namespaces: &SupportsContext<'_>) -> bool {
     namespaces.invalid_prefix.set(false);
     let mut input = ParserInput::new(source);
     let mut parser = Parser::new(&mut input);
@@ -37,7 +39,7 @@ pub(crate) fn supports_condition(source: &str, namespaces: &NamespaceContext<'_>
 fn validate_component_values<'i>(
     input: &mut Parser<'i, '_>,
     depth: usize,
-    namespaces: &NamespaceContext<'_>,
+    namespaces: &SupportsContext<'_>,
     in_selector: bool,
 ) -> PResult<'i, ()> {
     while !input.is_exhausted() {
@@ -89,7 +91,7 @@ fn validate_component_values<'i>(
 ///                      | <supports-in-parens> [ or <supports-in-parens> ]*`
 fn parse_supports_condition<'i>(
     input: &mut Parser<'i, '_>,
-    namespaces: &NamespaceContext<'_>,
+    namespaces: &SupportsContext<'_>,
 ) -> PResult<'i, SupportsCondition> {
     first_of(
         input,
@@ -110,7 +112,7 @@ fn parse_supports_condition<'i>(
 /// Negation of one parenthesised condition or feature.
 fn parse_supports_not<'i>(
     input: &mut Parser<'i, '_>,
-    namespaces: &NamespaceContext<'_>,
+    namespaces: &SupportsContext<'_>,
 ) -> PResult<'i, SupportsCondition> {
     keyword(input, "not")?;
     Ok(Condition::Not(Box::new(parse_supports_in_parens(
@@ -121,7 +123,7 @@ fn parse_supports_not<'i>(
 /// One conjunction operand, including its operator.
 fn parse_supports_and<'i>(
     input: &mut Parser<'i, '_>,
-    namespaces: &NamespaceContext<'_>,
+    namespaces: &SupportsContext<'_>,
 ) -> PResult<'i, SupportsCondition> {
     keyword(input, "and")?;
     parse_supports_in_parens(input, namespaces)
@@ -130,7 +132,7 @@ fn parse_supports_and<'i>(
 /// One disjunction operand, including its operator.
 fn parse_supports_or<'i>(
     input: &mut Parser<'i, '_>,
-    namespaces: &NamespaceContext<'_>,
+    namespaces: &SupportsContext<'_>,
 ) -> PResult<'i, SupportsCondition> {
     keyword(input, "or")?;
     parse_supports_in_parens(input, namespaces)
@@ -139,7 +141,7 @@ fn parse_supports_or<'i>(
 /// A parenthesised condition, a feature, or a forward-compatible block.
 fn parse_supports_in_parens<'i>(
     input: &mut Parser<'i, '_>,
-    namespaces: &NamespaceContext<'_>,
+    namespaces: &SupportsContext<'_>,
 ) -> PResult<'i, SupportsCondition> {
     first_of(
         input,
@@ -154,23 +156,33 @@ fn parse_supports_in_parens<'i>(
 /// A declaration test or a `selector()` test (CSS Conditional Rules 4 §2).
 fn parse_supports_feature<'i>(
     input: &mut Parser<'i, '_>,
-    namespaces: &NamespaceContext<'_>,
+    namespaces: &SupportsContext<'_>,
 ) -> PResult<'i, SupportsCondition> {
     first_of(
         input,
         &[
-            &|input| parens(input, parse_supports_declaration).map(Condition::Leaf),
+            &|input| {
+                parens(input, |input| {
+                    parse_supports_declaration(input, namespaces.consumer_properties)
+                })
+                .map(Condition::Leaf)
+            },
             &|input| parse_supports_selector(input, namespaces).map(Condition::Leaf),
         ],
     )
 }
 
 /// Parse one supported declaration, including an optional importance marker.
-fn parse_supports_declaration<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, bool> {
+fn parse_supports_declaration<'i>(
+    input: &mut Parser<'i, '_>,
+    consumer_properties: &[ConsumerPropertyRegistration],
+) -> PResult<'i, bool> {
     let name = input.expect_ident_cloned()?;
     input.expect_colon()?;
     input.parse_until_before(Delimiter::Bang, |input| {
-        parse_value(&name, input).ok_or_else(|| input.new_custom_error(()))?;
+        parse_registered_consumer_value(&name, input, consumer_properties)
+            .or_else(|| parse_value(&name, input))
+            .ok_or_else(|| input.new_custom_error(()))?;
         Ok(())
     })?;
     let _ = input.try_parse(cssparser::parse_important);
@@ -181,7 +193,7 @@ fn parse_supports_declaration<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, boo
 /// Test one complex selector, rejecting unsupported forgiving branches too.
 fn parse_supports_selector<'i>(
     input: &mut Parser<'i, '_>,
-    namespaces: &NamespaceContext<'_>,
+    namespaces: &SupportsContext<'_>,
 ) -> PResult<'i, bool> {
     input.expect_function_matching("selector")?;
     input.parse_nested_block(|input| {

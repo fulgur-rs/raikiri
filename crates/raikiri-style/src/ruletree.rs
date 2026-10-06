@@ -41,12 +41,12 @@ use crate::{Atom, PseudoClass, PseudoElem, RaikiriSelectorImpl, RaikiriSelectorP
 /// supported condition must expose its qualified rules to the normal cascade.
 /// This small source pass handles declaration conditions and `not`/`and`/`or`
 /// combinations while preserving unsupported blocks verbatim for inspection.
-fn expand_supports(source: &str) -> String {
-    let namespaces = NamespaceContext::new(source);
-    expand_supports_with_namespaces(source, &namespaces)
+fn expand_supports(source: &str, consumer_properties: &[ConsumerPropertyRegistration]) -> String {
+    let namespaces = SupportsContext::new(source, consumer_properties);
+    expand_supports_with_context(source, &namespaces)
 }
 
-fn expand_supports_with_namespaces(source: &str, namespaces: &NamespaceContext<'_>) -> String {
+fn expand_supports_with_context(source: &str, namespaces: &SupportsContext<'_>) -> String {
     let mut output = String::with_capacity(source.len());
     let mut plain_start = 0;
     let mut cursor = 0;
@@ -66,7 +66,7 @@ fn expand_supports_with_namespaces(source: &str, namespaces: &NamespaceContext<'
         if supports_condition(condition, namespaces) && !body.trim_start().starts_with('@') {
             // Keep the opaque record for inspection, and prepend its qualified
             // rules as ordinary stylesheet input for the cascade.
-            output.push_str(&expand_supports_with_namespaces(body, namespaces));
+            output.push_str(&expand_supports_with_context(body, namespaces));
             output.push_str(&source[start..=close]);
         } else {
             output.push_str(&source[start..=close]);
@@ -1271,7 +1271,8 @@ impl RuleTree {
         origin: Origin,
         condition: Option<&MediaCondition>,
     ) {
-        let Ok(source) = expand_css_nesting(&expand_supports(source)) else {
+        let Ok(source) = expand_css_nesting(&expand_supports(source, &self.consumer_properties))
+        else {
             return;
         };
         for (layer_order, chunk) in expand_cascade_layers(&source) {
@@ -2261,17 +2262,22 @@ enum QualifiedPrelude {
 /// retains other at-rules as opaque records without applying their semantics.
 pub(crate) type NamespaceMap = HashMap<Atom, Atom>;
 
-/// Namespace lookup for a stylesheet's feature queries, populated only on demand.
-pub(crate) struct NamespaceContext<'s> {
+/// Stylesheet inputs for feature queries, with namespace lookup populated on demand.
+pub(crate) struct SupportsContext<'s> {
     source: &'s str,
+    pub(crate) consumer_properties: &'s [ConsumerPropertyRegistration],
     namespaces: OnceCell<NamespaceMap>,
     pub(crate) invalid_prefix: Cell<bool>,
 }
 
-impl<'s> NamespaceContext<'s> {
-    pub(crate) fn new(source: &'s str) -> Self {
+impl<'s> SupportsContext<'s> {
+    pub(crate) fn new(
+        source: &'s str,
+        consumer_properties: &'s [ConsumerPropertyRegistration],
+    ) -> Self {
         Self {
             source,
+            consumer_properties,
             namespaces: OnceCell::new(),
             invalid_prefix: Cell::new(false),
         }
