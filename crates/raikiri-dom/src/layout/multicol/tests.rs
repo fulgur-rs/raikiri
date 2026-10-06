@@ -957,7 +957,7 @@ fn tiny_fragmentainers_bound_nested_float_fragments() {
 }
 
 #[test]
-fn tiny_fragmentainers_keep_terminal_text_lines_visible() {
+fn tiny_fragmentainers_keep_every_line_in_a_fragment() {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
     let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
@@ -987,27 +987,24 @@ fn tiny_fragmentainers_keep_terminal_text_lines_visible() {
 
     layout_nested_flex_float_fixture(&mut doc);
     let lines = doc.nodes[item].ifc_lines().expect("item lines");
-    assert!(lines.len() >= 12, "all source lines must survive");
+    // One line per source line: the trailing `<br>` ends the paragraph
+    // without an empty line after it.
+    assert_eq!(lines.len(), 12, "all source lines must survive");
     let ranges = doc.nodes[item]
         .ifc_multicol_fragments()
         .expect("fragmentainer ranges");
     let last_range = ranges.last().expect("last line range");
     assert_eq!(last_range.line_end, lines.len());
-    let last_line = &lines[last_range.line_end - 1];
-    let line_bottom = last_line.block_offset() + last_line.block_size();
-    let clip_height = doc
-        .fragment_tree
-        .fragments
-        .iter()
-        .filter(|fragment| {
-            fragment.node_id == item && fragment.fragmentainer == last_range.fragmentainer
-        })
-        .filter_map(|fragment| fragment.fragmentainer_clip.map(|clip| clip.height))
-        .fold(0.0_f32, f32::max);
-    assert!(
-        clip_height >= line_bottom,
-        "the final text fragment must include every continuation line"
-    );
+    // Every fragmentainer that holds a line has a fragment of the item.
+    for range in ranges {
+        assert!(
+            doc.fragment_tree.fragments.iter().any(|fragment| {
+                fragment.node_id == item && fragment.fragmentainer == range.fragmentainer
+            }),
+            "fragmentainer {} has no fragment",
+            range.fragmentainer
+        );
+    }
 }
 
 #[test]

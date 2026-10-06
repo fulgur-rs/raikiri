@@ -882,16 +882,11 @@ fn commit_fragmented_float(
 
 /// The `clear` of the cleared `<br>` that ends `line`, if any.
 fn cleared_break(line: &shodo::Line, cleared: &[(usize, taffy::Clear)]) -> Option<taffy::Clear> {
-    if cleared.is_empty() {
-        return None;
-    }
-    line.fragments().find_map(|fragment| match fragment {
-        shodo::Fragment::InlineBox(piece) => cleared
-            .iter()
-            .find(|(node, _)| *node == piece.node.0 as usize)
-            .map(|(_, clear)| *clear),
-        _ => None,
-    })
+    let node = line.forced_break()?.node.0 as usize;
+    cleared
+        .iter()
+        .find(|(cleared, _)| *cleared == node)
+        .map(|(_, clear)| *clear)
 }
 
 /// Move every box that sits inside relatively positioned inline elements of

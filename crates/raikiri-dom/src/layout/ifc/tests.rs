@@ -372,15 +372,19 @@ fn quirks_mode_mixed_lines_keep_wrapped_images_in_their_direct_positions() {
 }
 
 #[test]
-fn quirks_mode_a_forced_break_keeps_its_line_strut() {
+fn quirks_mode_a_forced_break_after_an_image_adds_no_strut() {
     use raikiri_traits::QuirksMode;
+    // `<img><br>x`: in quirks mode the image line is as tall as the image, as
+    // without the break, and only the text line gets the root's strut
+    // (Chromium: the image at 0 and the text line at 2px).
     let empty = image_line_geometry(QuirksMode::Quirks, None, "baseline", false);
     let mixed = image_line_geometry(QuirksMode::Quirks, None, "baseline", true);
-    assert_eq!(mixed.1.len(), 2);
-    assert!(mixed.1[0] > empty.1[0], "{mixed:?} vs {empty:?}");
-    assert!(mixed.0 > empty.0, "{mixed:?} vs {empty:?}");
+    assert_eq!(mixed.1, [2.0, 20.0], "{mixed:?}");
+    assert_eq!(mixed.1[0], empty.1[0]);
+    assert_eq!(mixed.0, empty.0);
+    // In standards mode the root's strut holds the image line open.
     let standards = image_line_geometry(QuirksMode::NoQuirks, None, "baseline", true);
-    assert_eq!(mixed.1[0], standards.1[0]);
+    assert_eq!(standards.1[0], 20.0, "{standards:?}");
 }
 
 #[test]
