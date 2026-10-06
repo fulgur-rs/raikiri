@@ -31,6 +31,31 @@ fn media_context_selects_print_and_screen_rules() {
 }
 
 #[test]
+fn media_modifiers_select_rules_and_conjoin_nested_conditions() {
+    for css in [
+        "p { color: blue } @media not screen { p { color: red } }",
+        "p { color: blue } @media only print { p { color: red } }",
+        "p { color: blue } @media not all, only print { p { color: red } }",
+        "p { color: blue } @media not screen { @media only print { p { color: red } } }",
+    ] {
+        let (_, element, result) = context_cascade_doc(css, MediaContext::print());
+        assert_eq!(result.computed[element].color, RED, "{css}");
+        let (_, element, result) = context_cascade_doc(css, MediaContext::screen());
+        assert_eq!(result.computed[element].color, BLUE, "{css}");
+    }
+
+    let css = "p { color: red } @media not print { p { color: blue } }";
+    let (_, element, result) = context_cascade_doc(css, MediaContext::screen());
+    assert_eq!(result.computed[element].color, BLUE);
+
+    let css = "p { color: blue } @media not screen { @media only screen { p { color: red } } }";
+    for context in [MediaContext::print(), MediaContext::screen()] {
+        let (_, element, result) = context_cascade_doc(css, context);
+        assert_eq!(result.computed[element].color, BLUE);
+    }
+}
+
+#[test]
 fn media_all_matches_both_contexts_and_default_is_print() {
     let css = "@media all { p { color: red } }";
     let (_, element, default_result) = context_cascade_doc(css, MediaContext::default());

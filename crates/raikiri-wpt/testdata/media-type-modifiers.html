@@ -1,0 +1,22 @@
+<!doctype html>
+<title>Media type modifiers in print output</title>
+<link rel="match" href="media-type-modifiers-ref.html">
+<style>
+  div { width: 100px; height: 20px; background: red; }
+  @media not screen { .negated { background: green; } }
+  @media only print { .only { background: green; } }
+  @media not all, only print { .list { background: green; } }
+  @media not screen {
+    @media only print { .nested { background: green; } }
+  }
+  @media not unknown-medium { .unknown { background: green; } }
+  @media not print { div { background: red; } }
+  @media only screen { div { background: red; } }
+  @media not only screen { div { background: red; } }
+  @media not layer { div { background: red; } }
+</style>
+<div class="negated"></div>
+<div class="only"></div>
+<div class="list"></div>
+<div class="nested"></div>
+<div class="unknown"></div>

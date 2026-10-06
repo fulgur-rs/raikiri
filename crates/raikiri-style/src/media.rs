@@ -251,7 +251,9 @@ fn parse_feature_query(source: &str) -> Option<MediaCondition> {
 ///
 /// In addition to `all`, `print`, and `screen`, a single query may contain
 /// `min/max-width` and `min/max-height` features with absolute CSS lengths.
-/// Comma-separated lists retain the historical media-type-only behavior.
+/// Media-type-only queries support `not` and `only`, including in comma lists.
+/// Modifiers combined with features remain unsupported: `not` must negate the
+/// entire query, which cannot be represented by flipping only the media mask.
 pub(crate) fn parse_media_condition(source: &str) -> Option<MediaCondition> {
     if let Some(condition) = parse_feature_query(source.trim()) {
         return Some(condition);
@@ -272,18 +274,28 @@ pub(crate) fn parse_media_condition(source: &str) -> Option<MediaCondition> {
                 return Err(query.new_custom_error(()));
             }
 
-            let Ok(name) = alternative.expect_ident().map(|name| name.to_string()) else {
+            let Ok(mut name) = alternative.expect_ident().map(|name| name.to_string()) else {
                 return Ok(0);
             };
+            let negated = name.eq_ignore_ascii_case("not");
+            if negated || name.eq_ignore_ascii_case("only") {
+                let Ok(media_type) = alternative.expect_ident() else {
+                    return Ok(0);
+                };
+                name = media_type.to_string();
+            }
             if alternative.expect_exhausted().is_err() {
                 return Ok(0);
             }
-            Ok(match name.to_ascii_lowercase().as_str() {
+            let mask = match name.to_ascii_lowercase().as_str() {
                 "all" => ALL_MEDIA,
                 "print" => PRINT_MEDIA,
                 "screen" => SCREEN_MEDIA,
+                // Reserved identifiers are invalid, even after negation.
+                "not" | "only" | "and" | "or" | "layer" => return Ok(0),
                 _ => 0,
-            })
+            };
+            Ok(if negated { ALL_MEDIA & !mask } else { mask })
         })
         .ok()?;
     let mask = alternatives
@@ -299,89 +311,4 @@ pub(crate) fn parse_media_condition(source: &str) -> Option<MediaCondition> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn context_constructors_and_default() {
-        assert_eq!(MediaContext::default(), MediaContext::print());
-        assert_eq!(MediaContext::print().media_type(), MediaType::Print);
-        assert_eq!(MediaContext::screen().media_type(), MediaType::Screen);
-        assert_eq!(MediaContext::new(MediaType::Screen), MediaContext::screen());
-    }
-
-    #[test]
-    fn default_print_viewport_matches_wpt_page_area() {
-        let context = MediaContext::print();
-        assert_eq!(context.viewport_width(), 384);
-        assert_eq!(context.viewport_height(), 192);
-    }
-
-    #[test]
-    fn parses_viewport_features() {
-        let condition = parse_media_condition(
-            "(min-width: 4in) and (max-width: 5in) and (min-height: 2in) and (max-height: 3in)",
-        )
-        .unwrap();
-        assert!(condition.matches(&MediaContext::print()));
-        assert!(!condition.matches(&MediaContext::with_viewport(MediaType::Screen, 800, 600,)));
-    }
-
-    #[test]
-    fn parses_exact_viewport_features() {
-        let condition = parse_media_condition("(width: 100px) and (height: 100px)").unwrap();
-        assert!(condition.matches(&MediaContext::with_viewport(MediaType::Print, 100, 100,)));
-        assert!(!condition.matches(&MediaContext::print()));
-    }
-
-    #[test]
-    fn parses_media_type_with_viewport_features() {
-        let condition = parse_media_condition("print and (min-width: 300px)").unwrap();
-        assert!(condition.matches(&MediaContext::print()));
-        assert!(!condition.matches(&MediaContext::screen()));
-    }
-
-    #[test]
-    fn rejects_unsupported_viewport_features() {
-        assert_eq!(parse_media_condition("(orientation: landscape)"), None);
-        assert_eq!(parse_media_condition("screen and (color)"), None);
-    }
-
-    #[test]
-    fn parses_supported_media_alternatives() {
-        let condition = parse_media_condition("print, projection, screen").unwrap();
-        assert!(condition.matches(&MediaContext::print()));
-        assert!(condition.matches(&MediaContext::screen()));
-        assert_eq!(parse_media_condition("projection"), None);
-    }
-
-    #[test]
-    fn rejects_features_and_extra_tokens() {
-        assert_eq!(parse_media_condition("screen and (color)"), None);
-        assert_eq!(parse_media_condition("not print"), None);
-        assert_eq!(parse_media_condition("print screen"), None);
-        assert!(parse_media_condition("screen, (min-width: 1px), print").is_some());
-    }
-
-    #[test]
-    fn nested_commas_and_tokenizer_errors_do_not_leak_supported_names() {
-        assert_eq!(parse_media_condition("projection(foo, screen"), None);
-        assert_eq!(parse_media_condition("print, url(\"bad\n\")"), None);
-        let condition = parse_media_condition("print, (min-width: 1px, 2px)").unwrap();
-        assert!(condition.matches(&MediaContext::print()));
-    }
-
-    #[test]
-    fn rejects_empty_media_alternatives() {
-        assert_eq!(parse_media_condition("print,"), None);
-        assert_eq!(parse_media_condition(", print"), None);
-        assert_eq!(parse_media_condition("print,,screen"), None);
-        assert_eq!(parse_media_condition("print, /* comment */"), None);
-    }
-
-    #[test]
-    fn comments_and_escaped_names_are_tokenized() {
-        let condition = parse_media_condition(" /* before */ \\70 rint /*,*/ ").unwrap();
-        assert!(condition.matches(&MediaContext::print()));
-    }
-}
+mod tests;
