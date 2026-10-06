@@ -2964,3 +2964,25 @@ fn single_pass_raw_component_values_match_the_two_pass_check() {
     // The corpus exercises both outcomes.
     assert!(accepted > 0 && accepted < sources.len(), "{accepted}");
 }
+
+#[test]
+fn namespace_with_a_block_is_retained_as_an_opaque_record() {
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "@namespace svg url(http://www.w3.org/2000/svg) { a: b } p { color: red }",
+        Origin::Author,
+    );
+    let records = tree.opaque_at_rules();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].name, "namespace");
+    assert!(matches!(&records[0].body, AtRuleBody::Block(body) if body.trim() == "a: b"));
+    assert_eq!(tree.style_rules().len(), 1);
+
+    // A block with a tokenizer error token is not retained.
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "@namespace svg url(http://www.w3.org/2000/svg) { a: \"bad\n } p { color: red }",
+        Origin::Author,
+    );
+    assert!(tree.opaque_at_rules().is_empty());
+}
