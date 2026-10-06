@@ -292,3 +292,26 @@ fn negative_lengths_are_valid_and_false_in_the_negative_range() {
     assert!(!matches_in("(width = -1px)", MediaType::Print, 0, 0));
     assert!(!matches_in("(width < -1px)", MediaType::Print, 0, 0));
 }
+
+#[test]
+fn error_tokens_anywhere_invalidate_the_list() {
+    // An error token invalidates the whole list wherever it appears: at the
+    // top level, inside a feature, or nested inside `<general-enclosed>`.
+    for source in [
+        "print, url(\"bad\n\")",
+        "print, (min-width: \"bad\n)",
+        "print, (foo [\"bad\n])",
+        "print, (min-width: 1px) or (foo (bar \"bad\n))",
+        "print, screen )",
+    ] {
+        assert_eq!(parse_media_prelude(source), None, "{source:?}");
+    }
+    // The same lists without the error token keep `print`.
+    for source in [
+        "print, (foo [bar])",
+        "print, (min-width: 1px) or (foo (bar baz))",
+    ] {
+        let condition = parse_media_prelude(source).unwrap();
+        assert!(condition.matches(&MediaContext::print()), "{source:?}");
+    }
+}
