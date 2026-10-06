@@ -404,6 +404,82 @@ fn body_text_with_a_margin_matches_paint() {
     assert_eq!(page.text_runs()[0].origin.0, content.x + 20.0);
 }
 
+/// The box fragment of the element with id `id` on the first page.
+fn box_rect(result: &DocumentLayout, id: &str) -> raikiri_html::PaintRect {
+    let page = result.pages().next().expect("page");
+    let node = by_id(&page, id);
+    let fragment = page
+        .fragments()
+        .find(|fragment| fragment.node() == node && fragment.kind() == FragmentKind::Box)
+        .unwrap_or_else(|| panic!("no box fragment for {id}"));
+    assert_eq!(fragment.paint_rect(), fragment.rect());
+    fragment.rect()
+}
+
+#[test]
+fn ua_body_margin_places_block_content_like_the_painter() {
+    let result = lay_out(
+        "<p id='p'>para</p><div id='full' style='width: 100%; height: 5px'></div>",
+        "p { margin: 0 }",
+    );
+    assert!(check(&result) > 0);
+    let page = result.pages().next().expect("page");
+    let content = page.geometry().content_box;
+    let p = box_rect(&result, "p");
+    assert_eq!((p.x, p.width), (content.x + 8.0, content.width - 16.0));
+    let full = box_rect(&result, "full");
+    assert_eq!(
+        (full.x, full.width),
+        (content.x + 8.0, content.width - 16.0)
+    );
+    assert_eq!(page.text_runs()[0].origin.0, content.x + 8.0);
+}
+
+#[test]
+fn ua_body_margin_places_direct_body_text_with_or_without_a_background() {
+    for css in ["", "body { background-color: rgb(255, 255, 0) }"] {
+        let result = lay_out("text directly in the body", css);
+        assert!(check(&result) > 0);
+        let page = result.pages().next().expect("page");
+        let content = page.geometry().content_box;
+        assert_eq!(page.text_runs()[0].origin.0, content.x + 8.0, "{css:?}");
+    }
+}
+
+#[test]
+fn zero_and_percentage_body_margins_place_content_like_the_painter() {
+    for (css, margin) in [("body { margin: 0 }", 0.0), ("body { margin: 0 10% }", 0.1)] {
+        let result = lay_out("<p id='p'>para</p>", css);
+        assert!(check(&result) > 0);
+        let page = result.pages().next().expect("page");
+        let content = page.geometry().content_box;
+        let inset = content.width * margin;
+        let p = box_rect(&result, "p");
+        assert!((p.x - (content.x + inset)).abs() < 1e-3, "{css}: {p:?}");
+        assert!(
+            (p.width - (content.width - 2.0 * inset)).abs() < 1e-3,
+            "{css}: {p:?}"
+        );
+        assert!((page.text_runs()[0].origin.0 - p.x).abs() < 1e-3, "{css}");
+    }
+}
+
+#[test]
+fn right_to_left_body_margin_keeps_content_off_the_right_edge() {
+    let result = lay_out(
+        "<div id='box' style='width: 50px; height: 5px'></div><p>\u{5d0}\u{5d1}</p>",
+        "body { direction: rtl; margin: 0 20px 0 4px }",
+    );
+    assert!(check(&result) > 0);
+    let page = result.pages().next().expect("page");
+    let content = page.geometry().content_box;
+    let right = content.x + content.width - 20.0;
+    let block = box_rect(&result, "box");
+    assert_eq!(block.x + block.width, right);
+    let run = &page.text_runs()[0];
+    assert!((run.origin.0 + run.advance - right).abs() < 1e-3, "{run:?}");
+}
+
 #[test]
 fn right_to_left_runs_match_paint_left_to_right() {
     let result = lay_out(
@@ -672,11 +748,14 @@ fn paint_rects_follow_the_body_margin_like_the_painter() {
     let flow = fragment("flow");
     let abs = fragment("abs");
 
-    // The body's own box and its absolute child stay in layout space; its
-    // in-flow child moves right by the body's left margin.
-    assert_eq!(body.paint_rect().x, body.rect().x);
-    assert_eq!(flow.paint_rect().x, flow.rect().x + 20.0);
-    assert_eq!(abs.paint_rect().x, abs.rect().x);
+    // Layout already places the in-flow child inside the body's left margin,
+    // while the absolute child keeps its offset from the page content box.
+    let content = page.geometry().content_box;
+    assert_eq!(body.paint_rect(), body.rect());
+    assert_eq!(flow.paint_rect(), flow.rect());
+    assert_eq!(abs.paint_rect(), abs.rect());
+    assert_eq!(flow.rect().x, content.x + 20.0);
+    assert_eq!(abs.rect().x, content.x + 30.0);
 
     // The painter fills both backgrounds exactly at their paint rects.
     let fills = filled(&page, result.page_count() as u32);

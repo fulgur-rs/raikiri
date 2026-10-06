@@ -303,6 +303,9 @@ pub struct Document {
     /// Cascade generation used by the most recent successful layout. Resolved
     /// order projections and Grid row placements are valid only for this run.
     pub(crate) layout_cascade_generation: Option<u64>,
+    /// Used left and right margins of `<body>` that the most recent layout
+    /// carried as inline padding of the synthetic body root.
+    pub(crate) body_inline_margins: (f32, f32),
     /// Dirty flag for the IS_IN_DOCUMENT bit. Any tree mutation primitive
     /// (append_* / attach_child / insert_child_before / detach_from_parent /
     /// reparent_children / retain_children) sets it. Observation APIs
@@ -475,6 +478,7 @@ impl Document {
             layout_dirty: false,
             ifc: None,
             layout_cascade_generation: None,
+            body_inline_margins: (0.0, 0.0),
             // Node::new_document() sets IS_IN_DOCUMENT=true on the initial root,
             // consistent with an attached root. There are no templates or
             // detached nodes yet, so the flag is not dirty.
@@ -796,6 +800,21 @@ impl Document {
     /// a parent, so a contents fragment root still reports `None`).
     pub fn parent_of(&self, child: usize) -> Option<usize> {
         self.nodes.get(child)?.parent
+    }
+
+    /// Used left and right margins of `<body>`, in CSS pixels, as of the most
+    /// recent layout.
+    ///
+    /// Layout lays `<body>` out as the root box spanning the page content
+    /// width and carries these margins as extra inline padding of that root,
+    /// so the body's `unrounded_layout.padding` includes them and its
+    /// content already sits inside them. A consumer that needs the body's
+    /// own border box insets the root box by these values; one that needs
+    /// the authored padding subtracts them from the laid-out padding. Both
+    /// are 0 before the first layout.
+    #[doc(hidden)]
+    pub fn body_inline_margins(&self) -> (f32, f32) {
+        self.body_inline_margins
     }
 
     /// Fragments emitted by the most recent layout pass.

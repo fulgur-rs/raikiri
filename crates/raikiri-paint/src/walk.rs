@@ -3282,11 +3282,6 @@ pub(crate) fn paint_document_impl(
     // value through its inline-level gate. Except for pathological input
     // overriding body with `display: inline`, its accuracy does not matter.
     let body_font_size = cascade.computed[body_id].font_size.px();
-    // The synthetic body root does not expose its root margin in descendant
-    // coordinates.  Direct text and ordinary flow children are therefore
-    // seeded with the authored horizontal body origin below; fixed/absolute
-    // children keep their own containing-block coordinates.
-    let body_margin_left = raikiri_dom::body_paint_margin_left(document, cascade, body_id);
     // The paint walk starts at `<body>` because the html box itself is not a
     // paint item here. Seed the context with html's originating decoration so
     // root-element lines still propagate through the body subtree.
@@ -3391,7 +3386,10 @@ pub(crate) fn paint_document_impl(
         let Some(body) = document.get_node(body_id) else {
             return;
         };
-        let right_padding = body.unrounded_layout.padding.right.max(0.0);
+        // The root's padding also carries the body's horizontal margins;
+        // only the authored padding is part of the body box.
+        let right_padding =
+            (body.unrounded_layout.padding.right - document.body_inline_margins().1).max(0.0);
         if right_padding > 0.0 {
             let content_end = body
                 .children
@@ -4577,17 +4575,10 @@ pub(crate) fn paint_document_impl(
                     // origin comes from the taffy layout's border and padding
                     // (the text child's `location`), not from
                     // `used_padding_for_paint`, which places the element's own
-                    // generated content. `<body>` shifts its direct text by the
-                    // body's left margin, so a body root shifts its lines too.
-                    let body_shift = if node_id == body_id {
-                        body_margin_left
-                    } else {
-                        0.0
-                    };
+                    // generated content.
                     let content_x = child_parent_x
                         + page_offset_x
                         + child_transform_x
-                        + body_shift
                         + layout.border.left
                         + layout.padding.left;
                     let content_y = child_parent_y
@@ -4673,18 +4664,6 @@ pub(crate) fn paint_document_impl(
                     let is_direct_text = document
                         .get_node(child)
                         .is_some_and(|node| node.kind() == NodeKind::Text);
-                    let body_child_margin_offset = if node_id == body_id
-                        && (is_direct_text
-                            || matches!(
-                                cascade.computed[child].position,
-                                PositionValue::Static
-                                    | PositionValue::Relative
-                                    | PositionValue::Sticky
-                            )) {
-                        body_margin_left
-                    } else {
-                        0.0
-                    };
                     let generated_text_shift = if is_direct_text { before_advance } else { 0.0 };
                     let inline_generated_offset = inline_offsets
                         .iter()
@@ -4701,7 +4680,6 @@ pub(crate) fn paint_document_impl(
                     stack.push(PaintFrame::Visit {
                         node_id: child,
                         parent_abs_x: child_parent_x
-                            + body_child_margin_offset
                             + generated_text_shift
                             + inline_generated_offset,
                         parent_abs_y: child_parent_y + vertical_generated_offset,

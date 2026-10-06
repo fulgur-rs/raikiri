@@ -445,52 +445,37 @@ fn paint_single_page_uses_page_background_color_before_document_canvas() {
 }
 
 #[test]
-fn paint_body_origin_fallbacks_cover_auto_and_computed_margins() {
-    fn paint_body(style: Option<&str>, force_auto_computed_margin: bool) -> Scene {
+fn an_auto_body_margin_places_direct_text_like_a_zero_margin() {
+    fn first_glyph_x(style: &str) -> f64 {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
         // The body is a block box whatever else its style says.
-        let style = format!("display:block;{}", style.unwrap_or(""));
+        let style = format!("display:block;{style}");
         let body = doc.append_element(Some(html), "body", Style::default(), Some(&style));
         doc.append_text(body, "direct body text");
         let rules = build_rule_tree(&doc);
-        let mut cascade = cascade(&doc, &rules).expect("cascade Ok");
-        if force_auto_computed_margin {
-            cascade.computed[body].margin.left =
-                raikiri_style::resolve::ComputedLengthPercentageOrAuto::Auto;
-        }
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
         layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
         let mut scene = Scene::new();
         paint_single_page(&mut scene, &doc, &cascade, PageBox::A4).expect("paint succeeds");
         scene
+            .commands
+            .iter()
+            .find_map(|command| match command {
+                RenderCommand::GlyphRun(run) => run
+                    .glyphs
+                    .first()
+                    .map(|glyph| (run.transform * kurbo::Point::new(f64::from(glyph.x), 0.0)).x),
+                _ => None,
+            })
+            .expect("a glyph run")
     }
 
-    // An authored `auto` margin takes the non-UA branch but has no finite
-    // used value, exercising its zero fallback.
-    let auto_scene = paint_body(Some("margin-left:auto;background-color:red"), false);
-    assert!(
-        auto_scene
-            .commands
-            .iter()
-            .any(|command| matches!(command, RenderCommand::GlyphRun(_)))
-    );
-
-    // With no authored margin, direct text plus a body canvas background
-    // takes the computed-value fallback branch.
-    let computed_scene = paint_body(Some("background-color:red"), true);
-    assert!(
-        computed_scene
-            .commands
-            .iter()
-            .any(|command| matches!(command, RenderCommand::GlyphRun(_)))
-    );
-    let computed_px_scene = paint_body(Some("background-color:red"), false);
-    assert!(
-        computed_px_scene
-            .commands
-            .iter()
-            .any(|command| matches!(command, RenderCommand::GlyphRun(_)))
-    );
+    // The used value of an `auto` margin on a block whose width is `auto` is
+    // zero (CSS 2.1 section 10.3.3).
+    let zero = first_glyph_x("margin-left:0;background-color:red");
+    assert_eq!(first_glyph_x("margin-left:auto;background-color:red"), zero);
+    assert_eq!(first_glyph_x("margin-left:12px"), zero + 12.0);
 }
 
 #[test]

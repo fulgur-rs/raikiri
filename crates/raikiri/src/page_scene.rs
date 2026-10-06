@@ -460,7 +460,10 @@ fn first_in_flow_top_margin(
 
 /// Extra page-absolute offset contributed by `<html>`/`<body>` margins.
 ///
-/// Horizontally margins never collapse, so the x extra is the plain sum.
+/// Horizontally margins never collapse. Layout already places the body's
+/// content inside the body's own left margin (the synthetic body root carries
+/// its horizontal margins as inline padding), so the x extra is the `<html>`
+/// left margin alone.
 /// Vertically adjoining margins collapse (see [`collapse_margins`]), so the y
 /// extra is the collapsed `<html>`/`<body>`/first-child value minus the first
 /// child's own margin, which keeps the first child's page-absolute position
@@ -487,10 +490,6 @@ fn body_margin_offsets(
     } else {
         0.0
     };
-    let body_left = cascade
-        .computed
-        .get(body_idx)
-        .map_or(0.0, |computed| used_margin_px(computed.margin.left, basis));
     let body_top = cascade
         .computed
         .get(body_idx)
@@ -507,7 +506,7 @@ fn body_margin_offsets(
         let barrier = has_top_barrier(cascade, idx, basis);
         (left, top, barrier)
     });
-    let left_extra = html_left + body_left;
+    let left_extra = html_left;
     if html_has_barrier {
         return (left_extra, html_top + body_top);
     }
@@ -542,16 +541,20 @@ fn body_margin_offsets(
 ///
 /// # Fragment coordinate semantics
 ///
-/// [`Fragment`] uses Pt relative to the body content area. The body itself
-/// has `(x, y) = (0, 0)` and page dimensions as its size. Descendants use
-/// body-relative coordinates accumulated as
+/// [`Fragment`] uses Pt relative to the body content area. The synthetic
+/// body root spans the page content width at `(0, 0)` and carries the body's
+/// horizontal margins as inline padding, so descendants already sit inside
+/// the body's left margin; the body's own fragment is that root box inset
+/// horizontally by the body's left and right margins, its border box.
+/// Descendants use body-relative coordinates accumulated as
 /// `parent_abs + node.unrounded_layout.location`, in the same DFS stack order
 /// as `raikiri_paint::walk::paint_document`.
 ///
-/// `body_offset_pt` is the body's position relative to the page-absolute
+/// `body_offset_pt` is the body root's position relative to the page-absolute
 /// origin, including `@page` margins, `@page` border/padding insets, and the
-/// `<html>`/`<body>` element margins. Horizontally margins never collapse
-/// (CSS 2.1 section 8.3.1), so the x offset is the plain sum. Vertically
+/// `<html>`/`<body>` element margins outside the body root: horizontally the
+/// `<html>` left margin (margins never collapse, CSS 2.1 section 8.3.1).
+/// Vertically
 /// adjoining margins collapse to the largest positive plus the most negative
 /// (CSS 2.1 section 8.3.1), so the y offset is the collapsed value minus the
 /// first in-flow child's own top margin (single level only; deeper chains,
@@ -615,6 +618,9 @@ pub fn build_page_scene_for_page_named(
     let content_width = margins.content_width(page_box).max(0.0);
     let (body_left_extra, body_top_extra) =
         body_margin_offsets(dom, cascade, body_arena_idx, html_arena_idx, content_width);
+    // The body's border box is the synthetic root, which spans the page
+    // content width, inset by the margins layout moved into its padding.
+    let body_inline_margins = dom.body_inline_margins();
 
     let mut node_ids: Vec<NodeId> = Vec::new();
     let mut fragments: BTreeMap<NodeId, Vec<Fragment>> = BTreeMap::new();
@@ -698,7 +704,15 @@ pub fn build_page_scene_for_page_named(
                 } else {
                     Vec::new()
                 };
-                if pieces.is_empty() {
+                if is_body {
+                    let (left, right) = body_inline_margins;
+                    vec![(
+                        abs_x + left,
+                        abs_y,
+                        (layout.size.width - left - right).max(0.0),
+                        layout.size.height,
+                    )]
+                } else if pieces.is_empty() {
                     vec![(abs_x, abs_y, layout.size.width, layout.size.height)]
                 } else {
                     pieces

@@ -281,9 +281,6 @@ pub(crate) struct PageFragmentItem {
     /// Optional line range for a text placement (`start..end`, end exclusive).
     /// Non-text placements leave this as `None`.
     pub(crate) line_range: Option<PageFragmentLineRange>,
-    /// Horizontal offset from layout space to paint space: the body's left
-    /// paint margin for content the painter moves with it, otherwise 0.
-    pub(crate) paint_offset_x: f32,
     /// Top of the whole border box, before the page cut it, in the same
     /// coordinates as `rect.y`; negative when the box starts on an earlier
     /// page.
@@ -399,7 +396,6 @@ impl PageFragmentItem {
             fragment_count,
             is_repeat,
             line_range: None,
-            paint_offset_x: 0.0,
             box_y: rect.y,
             box_height: rect.height,
         }
@@ -409,12 +405,6 @@ impl PageFragmentItem {
     pub(crate) fn with_box_extent(mut self, box_y: f32, box_height: f32) -> Self {
         self.box_y = box_y;
         self.box_height = box_height;
-        self
-    }
-
-    /// Set the layout-to-paint horizontal offset of this placement.
-    pub(crate) fn with_paint_offset_x(mut self, paint_offset_x: f32) -> Self {
-        self.paint_offset_x = paint_offset_x;
         self
     }
 

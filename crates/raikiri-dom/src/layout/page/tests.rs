@@ -1168,36 +1168,112 @@ fn ratio_only_svg_intrinsic_probes_and_calc_width_are_measured() {
     }
 }
 
-#[test]
-fn body_paint_shift_moves_only_in_flow_content_inside_the_body() {
+/// Lay out a body with `body_style` holding one empty block child and an
+/// absolutely positioned child, returning the page content width and the
+/// body, block and absolute child's layouts.
+fn lay_out_body_with_children(
+    body_style: &str,
+) -> (f32, taffy::Layout, taffy::Layout, taffy::Layout) {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let flow = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
-    let nested = doc.append_element(Some(flow), "p", Style::default(), Some("display:block"));
-    let fixed = doc.append_element(
+    let body = doc.append_element(Some(html), "body", Style::default(), Some(body_style));
+    let flow = doc.append_element(
         Some(body),
         "div",
         Style::default(),
-        Some("display:block;position:fixed"),
+        Some("display:block;height:10px"),
     );
-    let text = doc.append_text(body, "direct");
+    let abs = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;position:absolute;top:50px;width:10px;height:10px"),
+    );
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
+    let content_width = page_margins(&cr, PageBox::A4).content_width(PageBox::A4);
+    (
+        content_width,
+        doc.nodes[body].unrounded_layout,
+        doc.nodes[flow].unrounded_layout,
+        doc.nodes[abs].unrounded_layout,
+    )
+}
 
-    let shift = |node| body_paint_shift(&doc, &cr, body, 20.0, node);
-    assert_eq!(shift(body), 0.0, "the body's own box stays put");
-    assert_eq!(shift(flow), 20.0);
-    assert_eq!(
-        shift(nested),
-        20.0,
-        "descendants move with their in-flow ancestor"
+#[test]
+fn body_inline_margins_place_and_narrow_the_body_content() {
+    let (width, body, flow, abs) = lay_out_body_with_children("display:block;margin:0 10px 0 30px");
+    assert_eq!(flow.location.x, 30.0);
+    assert_eq!(flow.size.width, width - 40.0);
+    // The static position of an out-of-flow child starts at the same edge.
+    assert_eq!(abs.location.x, 30.0);
+    // The synthetic root keeps the page content width.
+    assert_eq!(body.size.width, width);
+    assert_eq!((body.padding.left, body.padding.right), (30.0, 10.0));
+    assert_eq!((body.margin.left, body.margin.right), (0.0, 0.0));
+}
+
+#[test]
+fn body_inline_margins_add_to_padding_and_resolve_percentages() {
+    let (width, _, flow, _) =
+        lay_out_body_with_children("display:block;margin:0 10%;padding:0 5px 0 2px");
+    let margin = width * 0.1;
+    assert!((flow.location.x - (margin + 2.0)).abs() < 1e-3);
+    assert!((flow.size.width - (width - 2.0 * margin - 7.0)).abs() < 1e-3);
+}
+
+#[test]
+fn content_box_body_border_box_spans_the_page_content_width() {
+    let (width, body, flow, _) =
+        lay_out_body_with_children("display:block;margin:0 20px;border:0 solid;border-width:0 3px");
+    assert_eq!(body.size.width, width);
+    assert_eq!(flow.location.x, 23.0);
+    assert_eq!(flow.size.width, width - 46.0);
+}
+
+#[test]
+fn body_inline_margins_ignore_auto_and_negative_values() {
+    let (width, _, flow, _) =
+        lay_out_body_with_children("display:block;margin-left:auto;margin-right:-20px");
+    assert_eq!(flow.location.x, 0.0);
+    assert_eq!(flow.size.width, width);
+}
+
+#[test]
+fn border_box_body_takes_its_inline_margins_out_of_the_content_box() {
+    let (width, body, flow, _) =
+        lay_out_body_with_children("display:block;box-sizing:border-box;margin:0 20px");
+    assert_eq!(body.size.width, width);
+    assert_eq!(flow.location.x, 20.0);
+    assert_eq!(flow.size.width, width - 40.0);
+}
+
+#[test]
+fn body_inline_margins_keep_absolute_offsets_against_the_page() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0 20px"),
     );
-    assert_eq!(shift(text), 20.0, "direct text moves");
-    assert_eq!(shift(fixed), 0.0, "a fixed child keeps its own coordinates");
-    assert_eq!(shift(head), 0.0, "nodes outside the body stay put");
-    assert_eq!(body_paint_shift(&doc, &cr, body, 0.0, flow), 0.0);
+    let abs = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;position:absolute;right:0;width:50%;height:10px"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
+    let width = page_margins(&cr, PageBox::A4).content_width(PageBox::A4);
+    let layout = doc.nodes[abs].unrounded_layout;
+    assert_eq!(layout.size.width, width / 2.0);
+    assert_eq!(layout.location.x, width / 2.0);
 }
