@@ -10,6 +10,7 @@
 
 use cssparser::{Parser, ParserInput, SourceLocation, StyleSheetParser, Token};
 use selectors::parser::{ParseRelative, Parser as SelectorParser, Selector, SelectorList};
+use std::cell::OnceCell;
 use std::collections::HashMap;
 
 use crate::consumer::ConsumerPropertyRegistration;
@@ -19,9 +20,10 @@ use crate::media::{MediaCondition, MediaContext, MediaRule, parse_media_prelude}
 use crate::page::{
     PageBlockBody, PageRule, PageSelector, parse_page_declaration_block, parse_page_prelude,
 };
-use crate::property::{CssColor, PropertyValue, parse_value};
+use crate::property::{CssColor, PropertyValue};
 use crate::rule::{Declaration, StyleRule, parse_declaration_block_with_consumer_properties};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
+use crate::supports::supports_condition;
 use crate::{Atom, PseudoClass, PseudoElem, RaikiriSelectorImpl, RaikiriSelectorParser};
 
 /// Flatten the subset of cascade layers that the rule parser can evaluate.
@@ -39,7 +41,12 @@ use crate::{Atom, PseudoClass, PseudoElem, RaikiriSelectorImpl, RaikiriSelectorP
 /// supported condition must expose its qualified rules to the normal cascade.
 /// This small source pass handles declaration conditions and `not`/`and`/`or`
 /// combinations while preserving unsupported blocks verbatim for inspection.
-fn expand_supports(source: &str) -> String {
+fn expand_supports(source: &str, consumer_properties: &[ConsumerPropertyRegistration]) -> String {
+    let namespaces = SupportsContext::new(source, consumer_properties);
+    expand_supports_with_context(source, &namespaces)
+}
+
+fn expand_supports_with_context(source: &str, namespaces: &SupportsContext<'_>) -> String {
     let mut output = String::with_capacity(source.len());
     let mut plain_start = 0;
     let mut cursor = 0;
@@ -56,10 +63,10 @@ fn expand_supports(source: &str) -> String {
         output.push_str(&source[plain_start..start]);
         let condition = &source[start + 9..delimiter_index];
         let body = &source[delimiter_index + 1..close];
-        if supports_condition(condition) && !body.trim_start().starts_with('@') {
+        if supports_condition(condition, namespaces) && !body.trim_start().starts_with('@') {
             // Keep the opaque record for inspection, and prepend its qualified
             // rules as ordinary stylesheet input for the cascade.
-            output.push_str(&expand_supports(body));
+            output.push_str(&expand_supports_with_context(body, namespaces));
             output.push_str(&source[start..=close]);
         } else {
             output.push_str(&source[start..=close]);
@@ -477,56 +484,6 @@ fn split_top_level_selector_list(
         result.push(item.to_owned());
     }
     Ok(result)
-}
-
-fn supports_condition(raw: &str) -> bool {
-    let condition = raw.trim();
-    if let Some(rest) = condition.strip_prefix("not ") {
-        return !supports_condition(rest);
-    }
-    if let Some((left, right)) = split_supports_operator(condition, " or ") {
-        return supports_condition(left) || supports_condition(right);
-    }
-    if let Some((left, right)) = split_supports_operator(condition, " and ") {
-        return supports_condition(left) && supports_condition(right);
-    }
-    let condition = condition
-        .strip_prefix('(')
-        .and_then(|value| value.strip_suffix(')'))
-        .map(str::trim)
-        .unwrap_or(condition);
-    let Some((name, value)) = condition.split_once(':') else {
-        return false;
-    };
-    let name = name.trim();
-    let value = value.trim();
-    if name.is_empty() || value.is_empty() {
-        return false;
-    }
-    let mut input = ParserInput::new(value);
-    let mut parser = Parser::new(&mut input);
-    parser
-        .parse_entirely(|input| {
-            parse_value(name, input).ok_or_else(|| input.new_custom_error::<_, ()>(()))
-        })
-        .is_ok()
-}
-
-fn split_supports_operator<'a>(value: &'a str, operator: &str) -> Option<(&'a str, &'a str)> {
-    let mut depth = 0_u32;
-    let mut index = 0;
-    while index + operator.len() <= value.len() {
-        match value.as_bytes()[index] {
-            b'(' => depth = depth.saturating_add(1),
-            b')' => depth = depth.saturating_sub(1),
-            _ => {}
-        }
-        if depth == 0 && value.as_bytes()[index..].starts_with(operator.as_bytes()) {
-            return Some((&value[..index], &value[index + operator.len()..]));
-        }
-        index += 1;
-    }
-    None
 }
 
 /// Advance one byte, or one escape, inside a CSS string opened by
@@ -1314,7 +1271,8 @@ impl RuleTree {
         origin: Origin,
         condition: Option<&MediaCondition>,
     ) {
-        let Ok(source) = expand_css_nesting(&expand_supports(source)) else {
+        let Ok(source) = expand_css_nesting(&expand_supports(source, &self.consumer_properties))
+        else {
             return;
         };
         for (layer_order, chunk) in expand_cascade_layers(&source) {
@@ -2302,10 +2260,157 @@ enum QualifiedPrelude {
 
 /// `StyleSheetParser` implementation. Accepts qualified rules and `@page`;
 /// retains other at-rules as opaque records without applying their semantics.
-type NamespaceMap = HashMap<Atom, Atom>;
+pub(crate) type NamespaceMap = HashMap<Atom, Atom>;
 
-struct NamespacedSelectorParser<'a> {
-    namespaces: &'a NamespaceMap,
+/// Stylesheet inputs for feature queries, with namespace lookup populated on demand.
+pub(crate) struct SupportsContext<'s> {
+    source: &'s str,
+    pub(crate) consumer_properties: &'s [ConsumerPropertyRegistration],
+    namespaces: OnceCell<NamespaceMap>,
+}
+
+impl<'s> SupportsContext<'s> {
+    pub(crate) fn new(
+        source: &'s str,
+        consumer_properties: &'s [ConsumerPropertyRegistration],
+    ) -> Self {
+        Self {
+            source,
+            consumer_properties,
+            namespaces: OnceCell::new(),
+        }
+    }
+
+    pub(crate) fn get(&self) -> &NamespaceMap {
+        self.namespaces
+            .get_or_init(|| parse_stylesheet_namespaces(self.source))
+    }
+}
+
+/// Parse the namespace syntax shared by rule parsing and feature queries.
+fn parse_namespace_prelude<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<(Option<Atom>, Atom), cssparser::ParseError<'i, ()>> {
+    let prefix = input
+        .try_parse(|input| input.expect_ident_cloned())
+        .ok()
+        .map(|prefix| Atom::from(prefix.as_ref()));
+    let uri = input
+        .expect_url_or_string()
+        .map(|uri| Atom::from(uri.as_ref()))
+        .map_err(|_| input.new_custom_error(()))?;
+    Ok((prefix, uri))
+}
+
+/// Retain only top-level namespace declarations for the feature-query context.
+fn parse_stylesheet_namespaces(source: &str) -> NamespaceMap {
+    enum Prelude {
+        Namespace(Option<Atom>, Atom),
+        Header,
+        Layer,
+        Group,
+    }
+    struct NamespaceParser {
+        namespaces: NamespaceMap,
+    }
+    impl<'i> cssparser::AtRuleParser<'i> for NamespaceParser {
+        type Prelude = Prelude;
+        type AtRule = bool;
+        type Error = ();
+        fn parse_prelude<'t>(
+            &mut self,
+            name: cssparser::CowRcStr<'i>,
+            input: &mut Parser<'i, 't>,
+        ) -> Result<Self::Prelude, cssparser::ParseError<'i, ()>> {
+            if name.eq_ignore_ascii_case("namespace") {
+                let (prefix, uri) = parse_namespace_prelude(input)?;
+                return Ok(Prelude::Namespace(prefix, uri));
+            }
+            let prelude = match name.to_ascii_lowercase().as_str() {
+                "charset" | "import" => Prelude::Header,
+                "layer" => Prelude::Layer,
+                "media" | "supports" | "page" | "font-face" | "counter-style" => Prelude::Group,
+                _ => return Err(input.new_custom_error(())),
+            };
+            while input.next().is_ok() {}
+            Ok(prelude)
+        }
+        fn rule_without_block(
+            &mut self,
+            prelude: Self::Prelude,
+            _start: &cssparser::ParserState,
+        ) -> Result<bool, ()> {
+            match prelude {
+                Prelude::Namespace(prefix, uri) => {
+                    self.namespaces
+                        .insert(prefix.unwrap_or_else(|| Atom::from("")), uri);
+                    Ok(true)
+                }
+                Prelude::Header | Prelude::Layer => Ok(true),
+                Prelude::Group => Err(()),
+            }
+        }
+        fn parse_block<'t>(
+            &mut self,
+            prelude: Self::Prelude,
+            _start: &cssparser::ParserState,
+            input: &mut Parser<'i, 't>,
+        ) -> Result<bool, cssparser::ParseError<'i, ()>> {
+            match prelude {
+                Prelude::Group | Prelude::Layer => {
+                    while input.next().is_ok() {}
+                    Ok(false)
+                }
+                Prelude::Namespace(..) | Prelude::Header => Err(input.new_custom_error(())),
+            }
+        }
+    }
+    impl<'i> cssparser::QualifiedRuleParser<'i> for NamespaceParser {
+        type Prelude = ();
+        type QualifiedRule = bool;
+        type Error = ();
+        fn parse_prelude<'t>(
+            &mut self,
+            input: &mut Parser<'i, 't>,
+        ) -> Result<(), cssparser::ParseError<'i, ()>> {
+            if input.try_parse(parse_custom_highlight_prelude).is_ok() {
+                return Ok(());
+            }
+            SelectorList::parse(
+                &NamespacedSelectorParser {
+                    namespaces: &self.namespaces,
+                },
+                input,
+                ParseRelative::No,
+            )
+            .map(|_| ())
+            .map_err(|_| input.new_custom_error(()))
+        }
+        fn parse_block<'t>(
+            &mut self,
+            _prelude: (),
+            _start: &cssparser::ParserState,
+            input: &mut Parser<'i, 't>,
+        ) -> Result<bool, cssparser::ParseError<'i, ()>> {
+            while input.next().is_ok() {}
+            Ok(false)
+        }
+    }
+    let mut input = ParserInput::new(source);
+    let mut parser = Parser::new(&mut input);
+    let mut rule_parser = NamespaceParser {
+        namespaces: NamespaceMap::new(),
+    };
+    for item in StyleSheetParser::new(&mut parser, &mut rule_parser) {
+        if matches!(item, Ok(false)) {
+            break;
+        }
+    }
+    rule_parser.namespaces
+}
+
+pub(crate) struct NamespacedSelectorParser<'a> {
+    pub(crate) namespaces: &'a NamespaceMap,
 }
 
 impl<'i, 'a> SelectorParser<'i> for NamespacedSelectorParser<'a> {
@@ -2379,22 +2484,11 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
             return parse_page_prelude(input).map(ParsedAtRulePrelude::Page);
         }
         if name.eq_ignore_ascii_case("namespace") {
-            let prefix = input
-                .try_parse(|input| {
-                    input
-                        .expect_ident()
-                        .map(|prefix| prefix.as_ref().to_owned())
-                })
-                .ok()
-                .map(|prefix| Atom::from(prefix.as_str()));
-            let uri = input
-                .expect_url()
-                .map(|uri| Atom::from(uri.as_ref()))
-                .map_err(|_| input.new_custom_error(()))?;
-            let prelude = match &prefix {
-                Some(prefix) => format!(" {} url({})", prefix.0.as_str(), uri.0.as_str()),
-                None => format!(" url({})", uri.0.as_str()),
-            };
+            let start = input.position();
+            let (prefix, uri) = parse_namespace_prelude(input)?;
+            input.expect_exhausted()?;
+            consume_raw_component_values(input, self.source)?;
+            let prelude = input.slice(start..input.position()).to_owned();
             return Ok(ParsedAtRulePrelude::Namespace {
                 prefix,
                 uri,
@@ -2590,7 +2684,8 @@ impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for StyleRuleParser<'s, 'b> 
     }
 }
 
-fn parse_custom_highlight_prelude<'i, 't>(
+/// Parse the standalone custom-highlight selector supported by style rules.
+pub(crate) fn parse_custom_highlight_prelude<'i, 't>(
     input: &mut Parser<'i, 't>,
 ) -> Result<String, cssparser::ParseError<'i, ()>> {
     input.expect_colon()?;
@@ -2751,7 +2846,7 @@ fn parse_custom_highlight_prelude<'i, 't>(
 /// `compound_matches`'s `_ => false` safety net still rejects isolated
 /// `Component::PseudoElement` safely (see the `::before`/`::after` section above
 /// and the docs of `selector_matches_pseudo_element` itself).
-fn is_supported_selector_list(list: &SelectorList<RaikiriSelectorImpl>) -> bool {
+pub(crate) fn is_supported_selector_list(list: &SelectorList<RaikiriSelectorImpl>) -> bool {
     list.slice()
         .iter()
         .all(|selector| is_supported_selector(selector, true))
