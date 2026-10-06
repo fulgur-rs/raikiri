@@ -1418,29 +1418,40 @@ impl RuleTree {
                     page_order = page_order.wrapping_add(1);
                     rule_order = rule_order.wrapping_add(1);
                 }
-                ParsedRule::OpaqueAtRule(mut record) => {
-                    record.source_order = rule_order;
-                    set_at_rule_origin(&mut record, origin);
-                    if record.name.eq_ignore_ascii_case("media") {
-                        collect_media_style_rules(
-                            &record,
-                            condition,
-                            &mut self.media_rules,
-                            &mut style_order,
-                            &mut self.page_rules,
-                            &mut page_order,
-                            layer_order,
-                            &self.consumer_properties,
-                        );
+                ParsedRule::Media(record, local_condition, items) => {
+                    if let Some(local_condition) = local_condition {
+                        let media_condition = match condition {
+                            Some(sheet_condition) => sheet_condition.intersect(&local_condition),
+                            None => local_condition,
+                        };
+                        if !media_condition.is_empty() {
+                            let mut sink = MediaSink {
+                                style_rules: &mut self.media_rules,
+                                style_order: &mut style_order,
+                                page_rules: &mut self.page_rules,
+                                page_order: &mut page_order,
+                                layer_order,
+                                origin,
+                            };
+                            add_media_items(items, &media_condition, &mut sink);
+                        }
                     }
-                    let index = self.opaque_at_rules.len();
-                    self.opaque_at_rules.push(record);
-                    self.rules.push(CssRule {
-                        source_order: rule_order,
+                    push_at_rule(
+                        &mut self.opaque_at_rules,
+                        &mut self.rules,
+                        record,
                         origin,
-                        kind: CssRuleKind::AtRule { index },
-                    });
-                    rule_order = rule_order.wrapping_add(1);
+                        &mut rule_order,
+                    );
+                }
+                ParsedRule::OpaqueAtRule(record) => {
+                    push_at_rule(
+                        &mut self.opaque_at_rules,
+                        &mut self.rules,
+                        record,
+                        origin,
+                        &mut rule_order,
+                    );
                 }
             }
         }
@@ -2034,141 +2045,204 @@ fn set_at_rule_origin(record: &mut AtRuleRecord, origin: Origin) {
     }
 }
 
-fn parse_media_style_rule(
-    record: &QualifiedRuleRecord,
-    consumer_properties: &[ConsumerPropertyRegistration],
-) -> Option<StyleRule> {
-    let mut input = ParserInput::new(&record.prelude);
-    let mut parser = Parser::new(&mut input);
-    let selectors = parser
-        .parse_entirely(|input| {
-            SelectorList::parse(&RaikiriSelectorParser, input, ParseRelative::No)
-        })
-        .ok()?;
-    if !is_supported_selector_list(&selectors) {
-        return None;
-    }
-
-    let mut input = ParserInput::new(&record.body);
-    let mut parser = Parser::new(&mut input);
-    Some(StyleRule {
-        selectors,
-        declarations: parse_declaration_block_with_consumer_properties(
-            &mut parser,
-            consumer_properties,
-        ),
-        source_order: 0,
-        origin: record.origin,
-    })
+/// Retain a top-level at-rule in the opaque view and the cross-kind order.
+fn push_at_rule(
+    opaque_at_rules: &mut Vec<AtRuleRecord>,
+    rules: &mut Vec<CssRule>,
+    mut record: AtRuleRecord,
+    origin: Origin,
+    rule_order: &mut u32,
+) {
+    record.source_order = *rule_order;
+    set_at_rule_origin(&mut record, origin);
+    let index = opaque_at_rules.len();
+    opaque_at_rules.push(record);
+    rules.push(CssRule {
+        source_order: *rule_order,
+        origin,
+        kind: CssRuleKind::AtRule { index },
+    });
+    *rule_order = rule_order.wrapping_add(1);
 }
 
-// Style and page outputs share one walk to preserve source order.
-#[allow(clippy::too_many_arguments)]
-fn collect_media_style_rules(
-    record: &AtRuleRecord,
-    parent_condition: Option<&MediaCondition>,
-    out: &mut Vec<MediaRule>,
-    style_order: &mut u32,
-    page_out: &mut Vec<PageRule>,
-    page_order: &mut u32,
-    layer_order: u32,
+/// Executable content of an `@media` block.
+///
+/// Parsed straight from the block with the error recovery of top-level rules,
+/// so an invalid declaration or rule inside the block drops only itself.
+enum MediaItem {
+    Style(StyleRule),
+    Page(PageSelector, PageBlockBody),
+    /// A nested `@media`; `None` when its query list does not parse.
+    Media(Option<MediaCondition>, Vec<MediaItem>),
+}
+
+enum MediaItemPrelude {
+    Media(Option<MediaCondition>),
+    Page(PageSelector),
+}
+
+/// Rule-list parser for the executable content of an `@media` block. Style
+/// rules, nested `@media`, and `@page` execute; other at-rules are skipped,
+/// since an unknown wrapper may have a completely different grammar.
+struct MediaRuleParser<'s, 'b> {
+    depth: usize,
+    source: &'s str,
+    consumer_properties: &'b [ConsumerPropertyRegistration],
+}
+
+fn parse_media_items(
+    input: &mut Parser<'_, '_>,
+    source: &str,
+    depth: usize,
     consumer_properties: &[ConsumerPropertyRegistration],
-) {
-    let Some(local_condition) = parse_media_prelude(&record.prelude) else {
-        return;
+) -> Vec<MediaItem> {
+    let mut rule_parser = MediaRuleParser {
+        depth,
+        source,
+        consumer_properties,
     };
-    let condition = match parent_condition {
-        Some(parent) => parent.intersect(&local_condition),
-        None => local_condition,
-    };
-    if condition.is_empty() {
-        return;
+    StyleSheetParser::new(input, &mut rule_parser)
+        .flatten()
+        .collect()
+}
+
+impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for MediaRuleParser<'s, 'b> {
+    type Prelude = MediaItemPrelude;
+    type AtRule = MediaItem;
+    type Error = ();
+
+    fn parse_prelude<'t>(
+        &mut self,
+        name: cssparser::CowRcStr<'i>,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<Self::Prelude, cssparser::ParseError<'i, Self::Error>> {
+        if name.eq_ignore_ascii_case("media") {
+            let prelude = consume_raw_component_values(input, self.source)?;
+            return Ok(MediaItemPrelude::Media(parse_media_prelude(&prelude)));
+        }
+        if name.eq_ignore_ascii_case("page") {
+            return parse_page_prelude(input).map(MediaItemPrelude::Page);
+        }
+        Err(input.new_custom_error(()))
     }
 
-    for child in &record.children {
-        match child {
-            RuleNode::Qualified(qualified) => {
-                let Some(mut rule) = parse_media_style_rule(qualified, consumer_properties) else {
-                    continue;
+    fn parse_block<'t>(
+        &mut self,
+        prelude: Self::Prelude,
+        _start: &cssparser::ParserState,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<Self::AtRule, cssparser::ParseError<'i, Self::Error>> {
+        let item = match prelude {
+            MediaItemPrelude::Media(condition) => {
+                let items = if self.depth < MAX_OPAQUE_RULE_NESTING_DEPTH {
+                    parse_media_items(input, self.source, self.depth + 1, self.consumer_properties)
+                } else {
+                    Vec::new()
                 };
-                rule.source_order = *style_order;
-                *style_order = style_order.wrapping_add(1);
-                out.push(MediaRule {
+                MediaItem::Media(condition, items)
+            }
+            MediaItemPrelude::Page(selector) => {
+                MediaItem::Page(selector, parse_page_declaration_block(input))
+            }
+        };
+        if !nested_block_has_closing_brace(self.source, input) {
+            return Err(input.new_custom_error(()));
+        }
+        Ok(item)
+    }
+}
+
+impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for MediaRuleParser<'s, 'b> {
+    type Prelude = SelectorList<RaikiriSelectorImpl>;
+    type QualifiedRule = MediaItem;
+    type Error = ();
+
+    fn parse_prelude<'t>(
+        &mut self,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<Self::Prelude, cssparser::ParseError<'i, Self::Error>> {
+        SelectorList::parse(&RaikiriSelectorParser, input, ParseRelative::No)
+            .map_err(|_| input.new_custom_error(()))
+    }
+
+    fn parse_block<'t>(
+        &mut self,
+        selectors: Self::Prelude,
+        _start: &cssparser::ParserState,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<Self::QualifiedRule, cssparser::ParseError<'i, Self::Error>> {
+        let declarations =
+            parse_declaration_block_with_consumer_properties(input, self.consumer_properties);
+        if !nested_block_has_closing_brace(self.source, input) {
+            return Err(input.new_custom_error(()));
+        }
+        Ok(MediaItem::Style(StyleRule {
+            selectors,
+            declarations,
+            source_order: 0,
+            origin: Origin::Author,
+        }))
+    }
+}
+
+/// Output views and counters that `@media` content is added to.
+struct MediaSink<'a> {
+    style_rules: &'a mut Vec<MediaRule>,
+    style_order: &'a mut u32,
+    page_rules: &'a mut Vec<PageRule>,
+    page_order: &'a mut u32,
+    layer_order: u32,
+    origin: Origin,
+}
+
+/// Add the content of one `@media` block guarded by `condition`, in source
+/// order. Nested blocks intersect their condition with it.
+fn add_media_items(items: Vec<MediaItem>, condition: &MediaCondition, sink: &mut MediaSink<'_>) {
+    for item in items {
+        match item {
+            MediaItem::Style(mut rule) => {
+                if !is_supported_selector_list(&rule.selectors) {
+                    continue;
+                }
+                rule.source_order = *sink.style_order;
+                rule.origin = sink.origin;
+                *sink.style_order = sink.style_order.wrapping_add(1);
+                sink.style_rules.push(MediaRule {
                     rule,
                     condition: condition.clone(),
                 });
             }
-            RuleNode::AtRule(nested) if nested.name.eq_ignore_ascii_case("media") => {
-                collect_media_style_rules(
-                    nested,
-                    Some(&condition),
-                    out,
-                    style_order,
-                    page_out,
-                    page_order,
-                    layer_order,
-                    consumer_properties,
-                );
+            MediaItem::Media(Some(local), items) => {
+                let nested = condition.intersect(&local);
+                if !nested.is_empty() {
+                    add_media_items(items, &nested, sink);
+                }
             }
-            RuleNode::AtRule(nested) if nested.name.eq_ignore_ascii_case("page") => {
-                let Some(page_rule) =
-                    parse_media_page_rule(nested, condition.clone(), *page_order, layer_order)
-                else {
-                    continue;
-                };
-                *page_order = page_order.wrapping_add(1);
-                page_out.push(page_rule);
+            MediaItem::Media(None, _) => {}
+            MediaItem::Page(selector, body) => {
+                let PageBlockBody {
+                    declarations,
+                    size_declarations,
+                    marks_declarations,
+                    bleed_declarations,
+                    margin_box_rules,
+                } = body;
+                sink.page_rules.push(PageRule {
+                    selector,
+                    declarations,
+                    size_declarations,
+                    marks_declarations,
+                    bleed_declarations,
+                    margin_box_rules,
+                    source_order: *sink.page_order,
+                    layer_order: sink.layer_order,
+                    origin: sink.origin,
+                    media_condition: Some(condition.clone()),
+                });
+                *sink.page_order = sink.page_order.wrapping_add(1);
             }
-            // An unknown wrapper may have a completely different grammar. Do
-            // not accidentally execute its descendants as ordinary CSS rules.
-            RuleNode::AtRule(_) => {}
         }
     }
-}
-
-/// Parse a `@page` rule nested in `@media` into a media-guarded [`PageRule`].
-///
-/// The nested record comes from the opaque `@media` child view, so its prelude
-/// and body are raw strings. The prelude is reparsed with
-/// [`parse_page_prelude`] and the body with [`parse_page_declaration_block`],
-/// the same parsers the top-level `@page` path uses. An unparsable prelude or
-/// a statement body without a block drops the rule, matching the top-level
-/// silent-drop policy for invalid `@page` rules.
-fn parse_media_page_rule(
-    record: &AtRuleRecord,
-    condition: MediaCondition,
-    source_order: u32,
-    layer_order: u32,
-) -> Option<PageRule> {
-    let AtRuleBody::Block(body) = &record.body else {
-        return None;
-    };
-    let mut prelude_input = ParserInput::new(&record.prelude);
-    let mut prelude_parser = Parser::new(&mut prelude_input);
-    let selector = prelude_parser
-        .parse_entirely(|input| parse_page_prelude(input))
-        .ok()?;
-    let mut body_input = ParserInput::new(body);
-    let mut body_parser = Parser::new(&mut body_input);
-    let PageBlockBody {
-        declarations,
-        size_declarations,
-        marks_declarations,
-        bleed_declarations,
-        margin_box_rules,
-    } = parse_page_declaration_block(&mut body_parser);
-    Some(PageRule {
-        selector,
-        declarations,
-        size_declarations,
-        marks_declarations,
-        bleed_declarations,
-        margin_box_rules,
-        source_order,
-        layer_order,
-        origin: record.origin,
-        media_condition: Some(condition),
-    })
 }
 
 /// Intermediate at-rule prelude emitted by [`StyleRuleParser`].
@@ -2187,6 +2261,12 @@ enum ParsedAtRulePrelude {
         name: String,
         prelude: String,
     },
+    /// `@media`, with its query list parsed once (`None` when it is invalid).
+    Media {
+        name: String,
+        prelude: String,
+        condition: Option<MediaCondition>,
+    },
 }
 
 /// Top-level parsed rule shape emitted by [`StyleRuleParser`].
@@ -2202,6 +2282,9 @@ enum ParsedRule {
     },
     Page(PageSelector, PageBlockBody),
     OpaqueAtRule(AtRuleRecord),
+    /// `@media`: its inspection record, its query list, and its executable
+    /// content.
+    Media(AtRuleRecord, Option<MediaCondition>, Vec<MediaItem>),
 }
 
 enum QualifiedPrelude {
@@ -2315,6 +2398,15 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
         // end of the current rule list. Consume component values rather than
         // rejecting the at-rule, retaining comments and whitespace from the
         // original source through `slice`.
+        if name.eq_ignore_ascii_case("media") {
+            let prelude = consume_raw_component_values(input, self.source)?;
+            let condition = parse_media_prelude(&prelude);
+            return Ok(ParsedAtRulePrelude::Media {
+                name: name.to_string(),
+                prelude,
+                condition,
+            });
+        }
         Ok(ParsedAtRulePrelude::Opaque {
             name: name.to_string(),
             prelude: consume_raw_component_values(input, self.source)?,
@@ -2344,7 +2436,8 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
                     origin: Origin::Author,
                 }))
             }
-            ParsedAtRulePrelude::Opaque { name, prelude } => {
+            ParsedAtRulePrelude::Opaque { name, prelude }
+            | ParsedAtRulePrelude::Media { name, prelude, .. } => {
                 Ok(ParsedRule::OpaqueAtRule(AtRuleRecord {
                     name,
                     prelude,
@@ -2390,6 +2483,34 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
                     source_order: 0,
                     origin: Origin::Author,
                 }))
+            }
+            ParsedAtRulePrelude::Media {
+                name,
+                prelude,
+                condition,
+            } => {
+                // The executable rules come straight from the block, with
+                // the error recovery of top-level rules. The inspection view
+                // is built from the block text as for other at-rules, but the
+                // block is retained even when its text holds a tokenizer
+                // error token, because its executable rules no longer depend
+                // on that view.
+                let start = input.position();
+                let items = parse_media_items(input, self.source, 0, self.consumer_properties);
+                let body = input.slice_from(start).to_owned();
+                if !nested_block_has_closing_brace(self.source, input) {
+                    return Err(input.new_custom_error(()));
+                }
+                let children = parse_nested_rule_nodes(&body, self.opaque_body_budget);
+                let record = AtRuleRecord {
+                    name,
+                    prelude,
+                    body: AtRuleBody::Block(body),
+                    children,
+                    source_order: 0,
+                    origin: Origin::Author,
+                };
+                Ok(ParsedRule::Media(record, condition, items))
             }
             ParsedAtRulePrelude::Opaque { name, prelude } => {
                 let body = consume_raw_component_values(input, self.source)?;

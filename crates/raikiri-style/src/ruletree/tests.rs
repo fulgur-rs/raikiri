@@ -2986,3 +2986,45 @@ fn namespace_with_a_block_is_retained_as_an_opaque_record() {
     );
     assert!(tree.opaque_at_rules().is_empty());
 }
+
+#[test]
+fn error_tokens_inside_media_drop_only_the_bad_declaration() {
+    for bad in ["content: \"oops\n", "background: url(bad url)"] {
+        let rules = format!("p {{ color: red; {bad}; }} div {{ color: blue }}");
+        let mut flat = RuleTree::empty();
+        flat.add_stylesheet(&rules, Origin::Author);
+        let flat_shape: Vec<_> = flat
+            .style_rules()
+            .iter()
+            .map(|rule| rule.declarations.len())
+            .collect();
+        assert_eq!(flat_shape.len(), 2, "{bad:?}");
+
+        for wrapped in [
+            format!("@media print {{ {rules} }}"),
+            format!("@media all {{ @media print {{ {rules} }} }}"),
+        ] {
+            let mut tree = RuleTree::empty();
+            tree.add_stylesheet(&wrapped, Origin::Author);
+            let media_shape: Vec<_> = tree
+                .media_rules
+                .iter()
+                .map(|media| media.rule.declarations.len())
+                .collect();
+            assert_eq!(media_shape, flat_shape, "{wrapped:?}");
+            // The block stays in the inspection view as well.
+            assert_eq!(tree.opaque_at_rules().len(), 1, "{wrapped:?}");
+        }
+    }
+}
+
+#[test]
+fn error_tokens_inside_media_keep_page_rules() {
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "@media print { @page { margin: 1in; content: \"oops\n; } p { color: red } }",
+        Origin::Author,
+    );
+    assert_eq!(tree.page_rules.len(), 1);
+    assert_eq!(tree.media_rules.len(), 1);
+}
