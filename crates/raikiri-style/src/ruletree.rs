@@ -178,13 +178,10 @@ fn next_css_top_level_construct(source: &str, from: usize) -> Option<(u8, usize)
             continue;
         }
         if let Some(delimiter) = quote {
-            if byte == b'\\' {
-                index = index.saturating_add(2);
-            } else {
-                if byte == delimiter {
-                    quote = None;
-                }
-                index += 1;
+            let (next, ended) = step_in_css_string(bytes, index, delimiter);
+            index = next;
+            if ended {
+                quote = None;
             }
             continue;
         }
@@ -401,20 +398,26 @@ fn split_on_nesting_selector<'a>(
     let mut quote = None;
     while index < bytes.len() {
         let byte = bytes[index];
-        if byte == b'\\' {
-            index = index.saturating_add(2);
+        if let Some(delimiter) = quote {
+            let (next, ended) = step_in_css_string(bytes, index, delimiter);
+            index = next;
+            if ended {
+                quote = None;
+            }
             continue;
         }
-        match quote {
-            Some(delimiter) if byte == delimiter => quote = None,
-            Some(_) => {}
-            None if byte == b'\'' || byte == b'"' => quote = Some(byte),
-            None if byte == b'&' => {
+        match byte {
+            b'\\' => {
+                index = index.saturating_add(2);
+                continue;
+            }
+            b'\'' | b'"' => quote = Some(byte),
+            b'&' => {
                 budget.consume_items(1)?;
                 pieces.push(&selector[start..index]);
                 start = index + 1;
             }
-            None => {}
+            _ => {}
         }
         index += 1;
     }
@@ -438,13 +441,10 @@ fn split_top_level_selector_list(
     while index < bytes.len() {
         let byte = bytes[index];
         if let Some(delimiter) = quote {
-            if byte == b'\\' {
-                index = index.saturating_add(2);
-            } else {
-                if byte == delimiter {
-                    quote = None;
-                }
-                index += 1;
+            let (next, ended) = step_in_css_string(bytes, index, delimiter);
+            index = next;
+            if ended {
+                quote = None;
             }
             continue;
         }
@@ -529,6 +529,26 @@ fn split_supports_operator<'a>(value: &'a str, operator: &str) -> Option<(&'a st
     None
 }
 
+/// Advance one byte, or one escape, inside a CSS string opened by
+/// `delimiter`, and report whether the string ended.
+///
+/// CSS Syntax 3 §4.3.5 (consume a string token): a backslash escapes the
+/// next code point, including a newline (`\r\n` counts as one), and the
+/// string ends at the matching delimiter or at an unescaped newline, which
+/// makes it a bad-string token. The text passes below must end strings
+/// where the tokenizer does, or an unterminated string hides the rest of the
+/// stylesheet from them.
+fn step_in_css_string(bytes: &[u8], index: usize, delimiter: u8) -> (usize, bool) {
+    match bytes[index] {
+        b'\\' => {
+            let crlf = bytes.get(index + 1) == Some(&b'\r') && bytes.get(index + 2) == Some(&b'\n');
+            (index.saturating_add(if crlf { 3 } else { 2 }), false)
+        }
+        b'\n' | b'\r' | b'\x0C' => (index + 1, true),
+        byte => (index + 1, byte == delimiter),
+    }
+}
+
 fn find_top_level_at_rule(source: &str, from: usize, name: &str) -> Option<usize> {
     let bytes = source.as_bytes();
     let mut index = from;
@@ -547,13 +567,10 @@ fn find_top_level_at_rule(source: &str, from: usize, name: &str) -> Option<usize
             continue;
         }
         if let Some(delimiter) = quote {
-            if byte == b'\\' {
-                index = index.saturating_add(2);
-            } else {
-                if byte == delimiter {
-                    quote = None;
-                }
-                index += 1;
+            let (next, ended) = step_in_css_string(bytes, index, delimiter);
+            index = next;
+            if ended {
+                quote = None;
             }
             continue;
         }
@@ -689,13 +706,10 @@ fn find_top_level_layer(source: &str, from: usize) -> Option<usize> {
             continue;
         }
         if let Some(delimiter) = quote {
-            if byte == b'\\' {
-                index = index.saturating_add(2);
-            } else {
-                if byte == delimiter {
-                    quote = None;
-                }
-                index += 1;
+            let (next, ended) = step_in_css_string(bytes, index, delimiter);
+            index = next;
+            if ended {
+                quote = None;
             }
             continue;
         }
@@ -747,13 +761,10 @@ fn find_layer_delimiter(source: &str, from: usize) -> Option<(u8, usize)> {
             continue;
         }
         if let Some(delimiter) = quote {
-            if byte == b'\\' {
-                index = index.saturating_add(2);
-            } else {
-                if byte == delimiter {
-                    quote = None;
-                }
-                index += 1;
+            let (next, ended) = step_in_css_string(bytes, index, delimiter);
+            index = next;
+            if ended {
+                quote = None;
             }
             continue;
         }
@@ -790,13 +801,10 @@ fn matching_brace(source: &str, open: usize) -> Option<usize> {
             continue;
         }
         if let Some(delimiter) = quote {
-            if byte == b'\\' {
-                index = index.saturating_add(2);
-            } else {
-                if byte == delimiter {
-                    quote = None;
-                }
-                index += 1;
+            let (next, ended) = step_in_css_string(bytes, index, delimiter);
+            index = next;
+            if ended {
+                quote = None;
             }
             continue;
         }
