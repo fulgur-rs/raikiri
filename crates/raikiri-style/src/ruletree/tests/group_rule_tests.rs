@@ -452,6 +452,7 @@ fn group_depth_and_unclosed_blocks_do_not_execute_partial_content() {
     for source in [
         "@supports (color:red) {p {color:red}",
         "@supports (color:red) {p {color:red",
+        "@supports (color:red) {u {color:blue} @layer a {p {color:red}}",
     ] {
         let mut tree = RuleTree::empty();
         tree.add_stylesheet(source, Origin::Author);
