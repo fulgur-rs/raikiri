@@ -269,3 +269,46 @@ fn line_space_is_relative_to_the_content_box_and_never_wider_than_it() {
         }
     );
 }
+
+#[test]
+fn text_overflow_ellipsis_truncates_only_overflowing_horizontal_lines() {
+    let truncated = |css: &str, text: &str| {
+        let (root, mut cx) = root_of(css, text);
+        let mut lines = break_lines(&root, &mut cx, 50.0);
+        apply_text_overflow(&root, &mut lines, &mut cx, 50.0);
+        lines
+            .lines
+            .iter()
+            .map(|line| {
+                line.fragments()
+                    .filter_map(|fragment| match fragment {
+                        shodo::Fragment::GlyphRun(run) => Some(run.is_ellipsis()),
+                        _ => None,
+                    })
+                    .any(|ellipsis| ellipsis)
+            })
+            .collect::<Vec<_>>()
+    };
+    let nowrap = "white-space:nowrap;overflow:hidden;text-overflow:ellipsis";
+    assert_eq!(truncated(nowrap, "aaaaaaaaaa"), vec![true]);
+    assert_eq!(truncated(nowrap, "aaaa"), vec![false]);
+    // The second line fits; only the long word overflows.
+    assert_eq!(
+        truncated("overflow:hidden;text-overflow:ellipsis", "aaaaaaaa bb"),
+        vec![true, false]
+    );
+    // Visible overflow and `clip` leave the lines alone.
+    assert_eq!(
+        truncated("white-space:nowrap;text-overflow:ellipsis", "aaaaaaaaaa"),
+        vec![false]
+    );
+    assert_eq!(
+        truncated("white-space:nowrap;overflow:hidden", "aaaaaaaaaa"),
+        vec![false]
+    );
+    // Vertical lines are not truncated.
+    assert_eq!(
+        truncated(&format!("{nowrap};writing-mode:vertical-rl"), "aaaaaaaaaa"),
+        vec![false]
+    );
+}
