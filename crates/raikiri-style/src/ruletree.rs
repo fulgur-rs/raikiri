@@ -556,15 +556,124 @@ fn find_top_level_at_rule(source: &str, from: usize, name: &str) -> Option<usize
     None
 }
 
-fn expand_cascade_layers(source: &str) -> Vec<(u32, String)> {
+struct LayerSource {
+    position: usize,
+    name: String,
+    body: Option<String>,
+}
+
+/// Find layers exposed by supported conditions without flattening their styles.
+struct SupportedLayerParser<'s, 'b> {
+    source: &'s str,
+    context: &'b SupportsContext<'b>,
+    inside_supports: bool,
+    depth: usize,
+}
+
+enum SupportedLayerPrelude {
+    Supports(bool),
+    Layer(String),
+}
+
+impl<'i> cssparser::AtRuleParser<'i> for SupportedLayerParser<'_, '_> {
+    type Prelude = SupportedLayerPrelude;
+    type AtRule = Vec<LayerSource>;
+    type Error = ();
+
+    fn parse_prelude<'t>(
+        &mut self,
+        name: cssparser::CowRcStr<'i>,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<Self::Prelude, cssparser::ParseError<'i, ()>> {
+        if name.eq_ignore_ascii_case("supports") {
+            let prelude = consume_raw_component_values(input, self.source)?;
+            return Ok(SupportedLayerPrelude::Supports(supports_condition(
+                &prelude,
+                self.context,
+            )));
+        }
+        if self.inside_supports && name.eq_ignore_ascii_case("layer") {
+            return consume_raw_component_values(input, self.source)
+                .map(|name| SupportedLayerPrelude::Layer(name.trim().to_owned()));
+        }
+        Err(input.new_custom_error(()))
+    }
+
+    fn rule_without_block(
+        &mut self,
+        prelude: Self::Prelude,
+        start: &cssparser::ParserState,
+    ) -> Result<Self::AtRule, ()> {
+        match prelude {
+            SupportedLayerPrelude::Layer(name) => Ok(vec![LayerSource {
+                position: start.position().byte_index(),
+                name,
+                body: None,
+            }]),
+            SupportedLayerPrelude::Supports(_) => Err(()),
+        }
+    }
+
+    fn parse_block<'t>(
+        &mut self,
+        prelude: Self::Prelude,
+        start: &cssparser::ParserState,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<Self::AtRule, cssparser::ParseError<'i, ()>> {
+        let layers = match prelude {
+            SupportedLayerPrelude::Supports(true) if self.depth < MAX_OPAQUE_RULE_NESTING_DEPTH => {
+                let mut parser = SupportedLayerParser {
+                    source: self.source,
+                    context: self.context,
+                    inside_supports: true,
+                    depth: self.depth + usize::from(self.inside_supports),
+                };
+                StyleSheetParser::new(input, &mut parser)
+                    .flatten()
+                    .flatten()
+                    .collect()
+            }
+            SupportedLayerPrelude::Layer(name) if !name.is_empty() => {
+                let body_start = input.position();
+                // Skip tokens without validating declarations; the executable
+                // parser must recover from invalid declarations in this body.
+                while input.next_including_whitespace_and_comments().is_ok() {}
+                vec![LayerSource {
+                    position: start.position().byte_index(),
+                    name,
+                    body: Some(input.slice_from(body_start).to_owned()),
+                }]
+            }
+            _ => {
+                while input.next().is_ok() {}
+                Vec::new()
+            }
+        };
+        if !nested_block_has_closing_brace(self.source, input) {
+            return Err(input.new_custom_error(()));
+        }
+        Ok(layers)
+    }
+}
+
+impl<'i> cssparser::QualifiedRuleParser<'i> for SupportedLayerParser<'_, '_> {
+    type Prelude = ();
+    type QualifiedRule = Vec<LayerSource>;
+    type Error = ();
+}
+
+fn expand_cascade_layers(
+    source: &str,
+    supports_context: Option<&SupportsContext<'_>>,
+) -> Vec<(u32, String)> {
     let mut cursor = 0;
     let mut plain_start = 0;
     let mut unlayered = String::with_capacity(source.len());
-    let mut blocks: Vec<(String, String)> = Vec::new();
-    let mut declared_order = Vec::new();
+    let mut layers = Vec::new();
     let mut found_layer = false;
+    let mut nested_layers = false;
 
-    while let Some(start) = find_top_level_layer(source, cursor) {
+    while let Some(start) = find_top_level_layer(source, cursor, &mut nested_layers) {
         unlayered.push_str(&source[plain_start..start]);
         let prelude_start = start + "@layer".len();
         let Some((delimiter, delimiter_index)) = find_layer_delimiter(source, prelude_start) else {
@@ -574,15 +683,11 @@ fn expand_cascade_layers(source: &str) -> Vec<(u32, String)> {
         let prelude = source[prelude_start..delimiter_index].trim();
         match delimiter {
             b';' => {
-                for name in prelude
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|name| !name.is_empty())
-                {
-                    if !declared_order.iter().any(|existing| existing == name) {
-                        declared_order.push(name.to_owned());
-                    }
-                }
+                layers.push(LayerSource {
+                    position: start,
+                    name: prelude.to_owned(),
+                    body: None,
+                });
                 cursor = delimiter_index + 1;
                 plain_start = cursor;
                 found_layer = true;
@@ -593,10 +698,11 @@ fn expand_cascade_layers(source: &str) -> Vec<(u32, String)> {
                     break;
                 };
                 if !prelude.is_empty() {
-                    blocks.push((
-                        prelude.to_owned(),
-                        source[delimiter_index + 1..close].to_owned(),
-                    ));
+                    layers.push(LayerSource {
+                        position: start,
+                        name: prelude.to_owned(),
+                        body: Some(source[delimiter_index + 1..close].to_owned()),
+                    });
                     found_layer = true;
                     cursor = close + 1;
                     plain_start = cursor;
@@ -613,22 +719,52 @@ fn expand_cascade_layers(source: &str) -> Vec<(u32, String)> {
         }
     }
 
-    if !found_layer {
+    if nested_layers && let Some(context) = supports_context {
+        let mut input = ParserInput::new(source);
+        let mut input = Parser::new(&mut input);
+        let mut parser = SupportedLayerParser {
+            source,
+            context,
+            inside_supports: false,
+            depth: 0,
+        };
+        layers.extend(
+            StyleSheetParser::new(&mut input, &mut parser)
+                .flatten()
+                .flatten(),
+        );
+    }
+    if !found_layer && layers.is_empty() {
         return vec![(u32::MAX, source.to_owned())];
     }
     unlayered.push_str(&source[plain_start..]);
 
-    let mut order = declared_order;
-    for (name, _) in &blocks {
-        if !order.iter().any(|existing| existing == name) {
-            order.push(name.clone());
+    layers.sort_by_key(|layer| layer.position);
+    let mut order = Vec::new();
+    for layer in layers.iter().filter(|layer| layer.body.is_none()) {
+        for name in layer
+            .name
+            .split(',')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        {
+            if !order.iter().any(|existing| existing == name) {
+                order.push(name.to_owned());
+            }
+        }
+    }
+    for layer in layers.iter().filter(|layer| layer.body.is_some()) {
+        if !order.contains(&layer.name) {
+            order.push(layer.name.clone());
         }
     }
     let mut chunks = Vec::with_capacity(order.len() + 1);
     for (layer_order, name) in order.into_iter().enumerate() {
         let mut body = String::new();
-        for (block_name, block_body) in &blocks {
-            if block_name == &name {
+        for layer in &layers {
+            if layer.name == name
+                && let Some(block_body) = &layer.body
+            {
                 body.push_str(block_body);
                 body.push('\n');
             }
@@ -639,7 +775,7 @@ fn expand_cascade_layers(source: &str) -> Vec<(u32, String)> {
     chunks
 }
 
-fn find_top_level_layer(source: &str, from: usize) -> Option<usize> {
+fn find_top_level_layer(source: &str, from: usize, nested_layers: &mut bool) -> Option<usize> {
     let bytes = source.as_bytes();
     let mut index = from;
     let mut depth = 0_u32;
@@ -677,16 +813,19 @@ fn find_top_level_layer(source: &str, from: usize) -> Option<usize> {
         match byte {
             b'{' => depth = depth.saturating_add(1),
             b'}' => depth = depth.saturating_sub(1),
-            b'@' if depth == 0
-                && bytes
-                    .get(index..index + "@layer".len())
-                    .is_some_and(|candidate| candidate.eq_ignore_ascii_case(b"@layer"))
+            b'@' if bytes
+                .get(index..index + "@layer".len())
+                .is_some_and(|candidate| candidate.eq_ignore_ascii_case(b"@layer"))
                 && source
                     .as_bytes()
                     .get(index + "@layer".len())
                     .is_none_or(|next| !next.is_ascii_alphanumeric() && *next != b'-') =>
             {
-                return Some(index);
+                if depth == 0 {
+                    return Some(index);
+                }
+                *nested_layers = true;
+                index += 1;
             }
             _ => {}
         }
@@ -1271,11 +1410,11 @@ impl RuleTree {
         };
         let consumer_properties = self.consumer_properties.clone();
         let supports_context = SupportsContext::new(&source, &consumer_properties);
-        for (layer_order, chunk) in expand_cascade_layers(&source) {
+        for (layer_order, chunk) in expand_cascade_layers(&source, Some(&supports_context)) {
             self.add_stylesheet_chunk(&chunk, origin, layer_order, condition, &supports_context);
         }
         let registration_source = expand_supports(&source, &self.consumer_properties);
-        for (_, chunk) in expand_cascade_layers(&registration_source) {
+        for (_, chunk) in expand_cascade_layers(&registration_source, None) {
             self.add_descriptor_registrations(&chunk, origin, condition);
         }
     }

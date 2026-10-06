@@ -113,6 +113,14 @@ fn conditional_groups_reach_cascade_only_when_all_conditions_match() {
 }
 
 #[test]
+fn layers_inside_supports_do_not_override_unlayered_styles() {
+    let css = "p {color:blue} @supports (color:red) {div {color:blue} \
+        @layer a {p {color:red}}}";
+    let (_, element, result) = context_cascade_doc(css, MediaContext::print());
+    assert_eq!(result.computed[element].color, BLUE);
+}
+
+#[test]
 fn media_comma_list_and_invalid_features_are_safe() {
     let css = "@media print, projection { p { color: red } }";
     let (_, element, print_result) = context_cascade_doc(css, MediaContext::print());

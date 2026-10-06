@@ -60,6 +60,146 @@ fn supports_inside_flattened_layers_execute_as_groups() {
 }
 
 #[test]
+fn existing_layers_inside_supports_keep_styles_pages_and_precedence() {
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "p {color:blue} @supports (color:red) {div {color:blue} \
+         @layer a {p {color:red} @page {margin:1in}}}",
+        Origin::Author,
+    );
+    assert_eq!(tree.style_rules().len(), 3);
+    assert_eq!(tree.page_rules.len(), 1);
+    assert_eq!(tree.page_rules[0].layer_order, 0);
+    assert_eq!(
+        tree.style_rules()
+            .iter()
+            .map(selector_text)
+            .collect::<Vec<_>>(),
+        ["p", "p", "div"]
+    );
+    assert!(matches!(
+        tree.style_rules()[0].declarations[0].value(),
+        PropertyValue::Color(CssColor {
+            r: 255,
+            g: 0,
+            b: 0,
+            a: 255
+        })
+    ));
+}
+
+#[test]
+fn supported_layers_keep_existing_name_order_and_wrapper_isolation() {
+    for (source, selectors) in [
+        (
+            "@supports (color:red) {u {color:blue} @layer a {la {color:red}}} \
+             @layer b {lb {color:green}}",
+            vec!["la", "lb", "u"],
+        ),
+        (
+            "@layer b {lb {color:green}} \
+             @supports (color:red) {u {color:blue} @layer a {la {color:red}}}",
+            vec!["lb", "la", "u"],
+        ),
+        (
+            "@layer b,a; @supports (color:red) {u {color:blue} @layer a {la {color:red}}} \
+             @layer b {lb {color:green}}",
+            vec!["lb", "la", "u"],
+        ),
+        (
+            "@layer a {la {color:red}} \
+             @supports (color:red) {u {color:blue} @layer a {lb {color:green}}}",
+            vec!["la", "lb", "u"],
+        ),
+        (
+            "@supports (display:invalid) {u {color:blue} @layer a {hidden {color:red}}} \
+             @layer b {lb {color:green}}",
+            vec!["lb"],
+        ),
+        (
+            "@supports (color:red) {u {color:blue} \
+             @future {@layer a {hidden {color:red}}} \
+             @media print {@layer a {hidden {color:red}}}}",
+            vec!["u"],
+        ),
+    ] {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(source, Origin::Author);
+        assert_eq!(
+            tree.style_rules()
+                .iter()
+                .map(selector_text)
+                .collect::<Vec<_>>(),
+            selectors,
+            "{source}"
+        );
+        assert!(tree.media_rules.is_empty(), "{source}");
+    }
+}
+
+#[test]
+fn supported_layer_statements_order_later_blocks_only_when_true() {
+    for (condition, selectors) in [
+        ("(color:red)", ["lb", "la"]),
+        ("(display:invalid)", ["la", "lb"]),
+    ] {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            &format!(
+                "@supports {condition} {{@layer b,a;}} \
+                @layer a {{la {{color:red}}}} @layer b {{lb {{color:blue}}}}"
+            ),
+            Origin::Author,
+        );
+        assert_eq!(
+            tree.style_rules()
+                .iter()
+                .map(selector_text)
+                .collect::<Vec<_>>(),
+            selectors
+        );
+    }
+}
+
+#[test]
+fn supported_layer_extraction_keeps_declaration_recovery_and_depth_limits() {
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "@supports (color:red) {u {color:blue} \
+         @layer a {p {color:red;content:\"oops\n;} div {color:blue}}}",
+        Origin::Author,
+    );
+    assert_eq!(
+        tree.style_rules()
+            .iter()
+            .map(selector_text)
+            .collect::<Vec<_>>(),
+        ["p", "div", "u"]
+    );
+    assert!(
+        tree.style_rules()
+            .iter()
+            .all(|rule| rule.declarations.len() == 1)
+    );
+
+    let depth = MAX_OPAQUE_RULE_NESTING_DEPTH + 2;
+    let source = format!(
+        "{}@layer a {{hidden {{color:red}}}}{} div {{color:blue}}",
+        "@supports (color:red) {".repeat(depth),
+        "}".repeat(depth)
+    );
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(&source, Origin::Author);
+    assert_eq!(
+        tree.style_rules()
+            .iter()
+            .map(selector_text)
+            .collect::<Vec<_>>(),
+        ["div"]
+    );
+}
+
+#[test]
 fn mixed_groups_intersect_local_and_stylesheet_media() {
     let mut tree = RuleTree::empty();
     tree.add_stylesheet_with_media(
@@ -106,6 +246,7 @@ fn statement_groups_do_not_hide_following_blocks() {
         "@supports (color:red); @supports (color:red) {p {color:red}}",
         "@supports (color:red) {@supports (color:red); p {color:red}}",
         "@media print {@supports (color:red); @supports (color:red) {p {color:red}}}",
+        "@supports (color:red); @supports (color:red) {@layer a {p {color:red}}}",
     ] {
         let mut tree = RuleTree::empty();
         tree.add_stylesheet(source, Origin::Author);
