@@ -610,14 +610,22 @@ fn hanging_punctuation(
     node: usize,
 ) -> Result<s::HangingPunctuation, IfcError> {
     Ok(match value {
-        p::HangingPunctuation::None => s::HangingPunctuation::default(),
-        p::HangingPunctuation::First => s::HangingPunctuation {
-            first: true,
-            ..s::HangingPunctuation::default()
-        },
-        p::HangingPunctuation::Last => s::HangingPunctuation {
-            last: true,
-            ..s::HangingPunctuation::default()
+        p::HangingPunctuation::None
+        | p::HangingPunctuation::First
+        | p::HangingPunctuation::Last
+        | p::HangingPunctuation::ForceEnd
+        | p::HangingPunctuation::AllowEnd
+        | p::HangingPunctuation::FirstLast
+        | p::HangingPunctuation::FirstForceEnd
+        | p::HangingPunctuation::FirstAllowEnd
+        | p::HangingPunctuation::ForceEndLast
+        | p::HangingPunctuation::AllowEndLast
+        | p::HangingPunctuation::FirstForceEndLast
+        | p::HangingPunctuation::FirstAllowEndLast => s::HangingPunctuation {
+            first: value.first(),
+            last: value.last(),
+            force_end: value.force_end(),
+            allow_end: value.allow_end(),
         },
         // `HangingPunctuation` is `#[non_exhaustive]` across crates; a value
         // added later stays out of the paragraph until it is mapped here.

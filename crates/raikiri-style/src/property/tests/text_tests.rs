@@ -786,7 +786,7 @@ fn text_align_key_maps_to_text_align_property_key() {
 // ── hanging-punctuation (CSS Text 3 §8.2.1) ──
 
 #[test]
-fn hanging_punctuation_parse_implemented_subset() {
+fn hanging_punctuation_preserves_existing_single_keyword_values() {
     assert_eq!(
         parse_entire("none", "hanging-punctuation"),
         Some(PropertyValue::HangingPunctuation(HangingPunctuation::None))
@@ -798,7 +798,7 @@ fn hanging_punctuation_parse_implemented_subset() {
 }
 
 #[test]
-fn hanging_punctuation_is_case_insensitive_and_rejects_deferred_values() {
+fn hanging_punctuation_is_case_insensitive_and_rejects_invalid_values() {
     assert_eq!(
         parse_entire("FIRST", "hanging-punctuation"),
         Some(PropertyValue::HangingPunctuation(HangingPunctuation::First))
@@ -807,7 +807,7 @@ fn hanging_punctuation_is_case_insensitive_and_rejects_deferred_values() {
         parse_entire("last", "hanging-punctuation"),
         Some(PropertyValue::HangingPunctuation(HangingPunctuation::Last))
     );
-    assert_eq!(parse_entire("allow-end", "hanging-punctuation"), None);
+    assert_eq!(parse_entire("unknown", "hanging-punctuation"), None);
     assert_eq!(parse_entire("none first", "hanging-punctuation"), None);
 }
 
@@ -839,6 +839,53 @@ fn hanging_punctuation_serializes_keywords() {
         serialize_value(&PropertyValue::HangingPunctuation(HangingPunctuation::Last)),
         Some("last".to_owned())
     );
+}
+
+#[test]
+fn hanging_punctuation_full_grammar_round_trips_in_canonical_order() {
+    for (css, canonical) in [
+        ("none", "none"),
+        ("first", "first"),
+        ("last", "last"),
+        ("force-end", "force-end"),
+        ("allow-end", "allow-end"),
+        ("last first", "first last"),
+        ("force-end FIRST", "first force-end"),
+        ("FIRST allow-end", "first allow-end"),
+        ("last force-end", "force-end last"),
+        ("last ALLOW-END", "allow-end last"),
+        ("last force-end first", "first force-end last"),
+        ("allow-end last first", "first allow-end last"),
+    ] {
+        let value = parse_entire(css, "hanging-punctuation");
+        assert!(value.is_some(), "valid grammar rejected: {css}");
+        let value = value.unwrap();
+        assert_eq!(serialize_value(&value), Some(canonical.to_owned()), "{css}");
+        assert_eq!(parse_entire(canonical, "hanging-punctuation"), Some(value));
+    }
+}
+
+#[test]
+fn hanging_punctuation_rejects_duplicate_conflicting_and_none_combinations() {
+    for css in [
+        "",
+        "none first",
+        "last none",
+        "none none",
+        "first first",
+        "last last",
+        "allow-end allow-end",
+        "force-end force-end",
+        "force-end allow-end",
+        "first allow-end force-end last",
+        "first last first",
+        "first unknown",
+        "first, last",
+        "first 1",
+        "first initial",
+    ] {
+        assert_eq!(parse_entire(css, "hanging-punctuation"), None, "{css}");
+    }
 }
 
 // ── text-autospace (CSS Text 4) ──
@@ -5550,6 +5597,83 @@ fn word_space_transform_preserves_the_five_computed_values() {
             parse_entire(invalid, "word-space-transform"),
             None,
             "{invalid} should be rejected",
+        );
+    }
+}
+
+#[test]
+fn hanging_punctuation_three_keyword_sets_accept_every_permutation() {
+    for end in ["force-end", "allow-end"] {
+        let expected = parse_entire(&format!("first {end} last"), "hanging-punctuation").unwrap();
+        for words in [
+            ["first", end, "last"],
+            ["first", "last", end],
+            [end, "first", "last"],
+            [end, "last", "first"],
+            ["last", "first", end],
+            ["last", end, "first"],
+        ] {
+            assert_eq!(
+                parse_entire(&words.join(" "), "hanging-punctuation"),
+                Some(expected.clone())
+            );
+        }
+    }
+    assert_eq!(
+        parse_entire("FiRsT/**/LaSt", "hanging-punctuation"),
+        parse_entire("first last", "hanging-punctuation")
+    );
+}
+
+#[test]
+fn hanging_punctuation_important_declarations_preserve_all_twelve_states() {
+    for css in [
+        "none",
+        "first",
+        "last",
+        "force-end",
+        "allow-end",
+        "first last",
+        "first force-end",
+        "first allow-end",
+        "force-end last",
+        "allow-end last",
+        "first force-end last",
+        "first allow-end last",
+    ] {
+        let source = format!("hanging-punctuation:{css} !important;color:red");
+        let mut input = cssparser::ParserInput::new(&source);
+        let mut parser = cssparser::Parser::new(&mut input);
+        let declarations = crate::rule::parse_declaration_block(&mut parser);
+        assert_eq!(declarations.len(), 2, "{css}");
+        assert!(declarations[0].important, "{css}");
+        assert_eq!(
+            declarations[0].value,
+            parse_entire(css, "hanging-punctuation").unwrap(),
+            "{css}"
+        );
+        assert!(!declarations[1].important);
+    }
+}
+
+#[test]
+fn hanging_punctuation_declarations_reject_invalid_important_suffixes() {
+    for css in [
+        "first !garbage",
+        "none !important first",
+        "first last !important garbage",
+        "none first !important",
+        "first force-end allow-end !important",
+        "first 1",
+    ] {
+        let source = format!("hanging-punctuation:{css};color:red");
+        let mut input = cssparser::ParserInput::new(&source);
+        let mut parser = cssparser::Parser::new(&mut input);
+        let declarations = crate::rule::parse_declaration_block(&mut parser);
+        assert_eq!(declarations.len(), 1, "{css}");
+        assert!(
+            matches!(declarations[0].value, PropertyValue::Color(_)),
+            "{css}"
         );
     }
 }

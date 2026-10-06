@@ -502,7 +502,7 @@ pub struct ComputedValues {
     /// same resolver.
     pub text_align: TextAlign,
     /// `hanging-punctuation`. **inherited**, initial `none` (CSS Text 3
-    /// §8.2.1). The consumer currently uses the `first` subset.
+    /// §8.2.1). The full keyword set is preserved for the layout consumer.
     pub hanging_punctuation: HangingPunctuation,
     /// `text-autospace` (CSS Text 4). **Inherited**; initial: `normal`.
     /// The keyword/flag set is preserved for the inline text layout consumer.
