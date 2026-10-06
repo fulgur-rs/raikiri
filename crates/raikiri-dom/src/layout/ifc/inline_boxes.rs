@@ -98,5 +98,33 @@ pub(crate) fn inline_box_pieces(
     pieces
 }
 
+/// The node of each line's ending forced break, with a box that spans the
+/// line's block extent at its inline start and has no inline size. A `<br>`
+/// takes part in the paragraph as a break, not as a box of its own; this is
+/// where it is placed.
+pub(crate) fn forced_break_boxes(
+    lines: &[Line],
+    writing_mode: WritingMode,
+    content_size: PhysicalSize,
+) -> Vec<(usize, BoxRect)> {
+    lines
+        .iter()
+        .filter_map(|line| {
+            let node = line.forced_break()?.node.0 as usize;
+            let axes = IfcAxes::new(writing_mode, line.used_direction());
+            let rect = LogicalRect {
+                inline_start: 0.0,
+                block_start: 0.0,
+                inline_size: 0.0,
+                block_size: line.block_size(),
+            };
+            Some((
+                node,
+                physical(rect, line.block_offset(), axes, content_size),
+            ))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests;

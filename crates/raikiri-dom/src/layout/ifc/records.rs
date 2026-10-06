@@ -3,7 +3,7 @@
 
 use super::boxes::commit_child_layout;
 use super::flow::FlowGeometry;
-use super::inline_boxes::{BoxRect, InlineBoxPiece, inline_box_pieces};
+use super::inline_boxes::{BoxRect, InlineBoxPiece, forced_break_boxes, inline_box_pieces};
 use super::root::IfcRoot;
 use crate::Document;
 use raikiri_traits::NodeKind;
@@ -66,6 +66,10 @@ pub(crate) fn record_inline_boxes(
             .entry(*node)
             .and_modify(|current| *current = union(*current, *border_box))
             .or_insert(*border_box);
+    }
+    // A `<br>` has no box on its line: it is placed where the line it ends is.
+    for (node, rect) in forced_break_boxes(lines, ifc.writing_mode, geometry.content_size) {
+        boxes.entry(node).or_insert(rect);
     }
     for element in inline_elements(tree, root, ifc) {
         let rect = boxes.get(&element).copied();
