@@ -842,13 +842,23 @@ fn break_word_breaks_a_long_word() {
 }
 
 #[test]
-fn text_emphasis_paints_nothing_extra() {
+fn text_emphasis_draws_one_mark_over_each_letter() {
     let on = painted_root("width:100px;text-emphasis-style:dot", |doc, root| {
         doc.append_text(root, "abc");
     });
-    assert!(!ink(&on).is_empty());
-    assert_eq!(ink(&on), [(67, 0, 512), (68, 640, 512), (69, 1280, 512)]);
-    assert_eq!(on.commands.len(), 2);
+    // The marks take room over the text, so the baseline moves down from 8px
+    // to 13px; one mark (glyph 221) is drawn above each 10px letter.
+    assert_eq!(
+        ink(&on),
+        [
+            (67, 0, 832),
+            (68, 640, 832),
+            (69, 1280, 832),
+            (221, 160, 256),
+            (221, 800, 256),
+            (221, 1440, 256)
+        ]
+    );
 }
 
 #[test]
