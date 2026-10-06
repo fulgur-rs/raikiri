@@ -684,32 +684,29 @@ pub(crate) fn project_ifc_builder_with(
                     // line-height differs from that box's is not honored on a
                     // line of its own.
                     builder.push_forced_break(NodeId(id as u64));
-                    if let Some(error) = builder.error() {
-                        return Err(IfcError::Limit(error));
+                } else {
+                    builder.open_inline(NodeId(id as u64), &inline_style, edges);
+                    push_generated(
+                        &mut builder,
+                        doc,
+                        cascade,
+                        id,
+                        PseudoElem::Before,
+                        fonts,
+                        counters,
+                    )?;
+                    if tag == "wbr" {
+                        builder.push_text(
+                            TextSource::Generated {
+                                node: NodeId(id as u64),
+                            },
+                            "\u{200B}",
+                        );
                     }
-                    continue;
+                    stack.push(Step::Close);
+                    stack.push(Step::After(id));
+                    stack.extend(node.children.iter().rev().map(|&child| Step::Enter(child)));
                 }
-                builder.open_inline(NodeId(id as u64), &inline_style, edges);
-                push_generated(
-                    &mut builder,
-                    doc,
-                    cascade,
-                    id,
-                    PseudoElem::Before,
-                    fonts,
-                    counters,
-                )?;
-                if tag == "wbr" {
-                    builder.push_text(
-                        TextSource::Generated {
-                            node: NodeId(id as u64),
-                        },
-                        "\u{200B}",
-                    );
-                }
-                stack.push(Step::Close);
-                stack.push(Step::After(id));
-                stack.extend(node.children.iter().rev().map(|&child| Step::Enter(child)));
             }
             _ => {
                 return Err(IfcError::Unsupported {
