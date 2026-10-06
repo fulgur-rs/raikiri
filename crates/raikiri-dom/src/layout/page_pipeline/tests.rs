@@ -6681,6 +6681,36 @@ fn a_cleared_line_break_moves_the_next_line_below_the_float() {
 }
 
 #[test]
+fn a_cleared_line_break_inside_an_inline_element_moves_the_next_line() {
+    let (mut doc, cascade, root) = paragraph_of(|doc, root| {
+        doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;float:left;width:20px;height:30px"),
+        );
+        let span = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("display:inline;padding-right:2px;border-right:1px solid"),
+        );
+        doc.append_text(span, "aa");
+        doc.append_element(
+            Some(span),
+            "br",
+            Style::default(),
+            Some("display:inline;clear:left"),
+        );
+        doc.append_text(span, "bb");
+    });
+    lay_out(&mut doc, &cascade);
+    let lines = &stored_lines(&doc, root).lines;
+    // The line the break ends reports it, so the next line clears the float.
+    assert_eq!(lines[1].block_offset(), 30.0);
+}
+
+#[test]
 fn logical_float_sides_and_clears_are_placed() {
     // The bridge maps the logical sides to none on both paths: such a box is
     // not floated and does not clear.

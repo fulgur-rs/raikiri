@@ -487,3 +487,47 @@ fn quirks_mode_generated_text_keeps_only_its_own_inline_strut() {
     // strut alone sets the line height; the root and the span add none.
     assert_eq!(line.block_size(), 10.0);
 }
+
+#[test]
+fn a_line_break_is_placed_on_the_line_it_ends() {
+    use taffy::Style;
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0;font-size:20px;line-height:20px"),
+    );
+    doc.append_text(body, "aa");
+    let first = doc.append_element(Some(body), "br", Style::default(), None::<&str>);
+    doc.append_text(body, "bbbb");
+    let span = doc.append_element(
+        Some(body),
+        "span",
+        Style::default(),
+        Some("line-height:40px"),
+    );
+    let second = doc.append_element(Some(span), "br", Style::default(), None::<&str>);
+    doc.append_text(body, "c");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cascade, raikiri_traits::PageBox::A4).expect("layout");
+    let heights: Vec<f32> = doc.nodes[body]
+        .ifc_lines()
+        .expect("body lines")
+        .iter()
+        .map(shodo::Line::block_size)
+        .collect();
+    let first_layout = doc.nodes[first].unrounded_layout;
+    assert_eq!(first_layout.location.y, 0.0);
+    assert_eq!(first_layout.size.height, heights[0]);
+    // The second break is located relative to its span's box on the second
+    // line; together they put it at the top of that line.
+    let second_layout = doc.nodes[second].unrounded_layout;
+    let span_y = doc.nodes[span].unrounded_layout.location.y;
+    assert_eq!(span_y + second_layout.location.y, heights[0]);
+    assert_eq!(second_layout.size.height, heights[1]);
+    assert_eq!(second_layout.size.width, 0.0);
+}
