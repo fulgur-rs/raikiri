@@ -2268,3 +2268,34 @@ fn apply_computed_to_style_bridges_min_content_width_to_taffy() {
     assert_eq!(doc.nodes[width].style.size.width, Dimension::min_content());
     assert_eq!(doc.nodes[inline].style.size.width, Dimension::min_content());
 }
+
+#[test]
+fn a_multicol_container_establishes_a_block_formatting_context() {
+    // CSS Multi-column Layout 1, 2: the first child's top margin stays
+    // inside the multicol container instead of collapsing with its own.
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let multicol = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;column-count:1;width:200px"),
+    );
+    let child = doc.append_element(
+        Some(multicol),
+        "div",
+        Style::default(),
+        Some("display:block;height:20px;margin-top:15px"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
+
+    assert_eq!(doc.nodes[multicol].style.display, Display::FlowRoot);
+    assert_eq!(doc.nodes[multicol].unrounded_layout.location.y, 0.0);
+    assert_eq!(doc.nodes[child].unrounded_layout.location.y, 15.0);
+    assert_eq!(doc.nodes[multicol].unrounded_layout.size.height, 35.0);
+}
