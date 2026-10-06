@@ -304,7 +304,8 @@ fn run_source(document: &Document, owner: usize) -> Option<RunSource> {
 /// more than one glyph).
 fn ellipsis_text(glyphs: usize, periods: bool) -> (&'static str, Vec<Range<usize>>) {
     if glyphs == 1 && !periods {
-        return ("\u{2026}", vec![0..3]);
+        // The ellipsis character is three bytes long.
+        return ("\u{2026}", std::iter::once(0..3).collect());
     }
     let count = glyphs.clamp(1, 3);
     let ranges = (0..glyphs).map(|index| {
