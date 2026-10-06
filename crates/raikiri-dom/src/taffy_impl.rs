@@ -132,8 +132,8 @@ fn ifc_all_insets(style: &Style, parent_inline_size: Option<f32>) -> taffy::Rect
 }
 
 /// Taffy child iterator: filter nodes with `is_in_document() == false`
-/// (such as a detached `<template>` contents fragment) from the raw arena
-/// children.
+/// (such as a detached `<template>` contents fragment) and whitespace-only
+/// text nodes, which generate no box, from the raw arena children.
 ///
 /// The taffy layout tree is the web-spec “flat tree,” so layout must treat
 /// template contents as nonexistent. Skipping them only at paint time would
@@ -142,7 +142,6 @@ fn ifc_all_insets(style: &Style, parent_inline_size: Option<f32>) -> taffy::Rect
 /// filter only on the taffy path rather than changing that contract.
 pub struct TaffyChildIter<'a> {
     doc: &'a Document,
-    parent: NodeId,
     inner: core::slice::Iter<'a, usize>,
 }
 
@@ -151,17 +150,22 @@ impl TaffyChildIter<'_> {
         doc.nodes[usize::from(parent)].layout_children()
     }
 
-    fn includes(doc: &Document, parent: NodeId, child: usize) -> bool {
+    fn includes(doc: &Document, child: usize) -> bool {
         if !doc.nodes[child].is_in_document() {
             return false;
         }
-        // CSS Flexbox §4: anonymous flex items are not generated for
-        // whitespace-only text nodes. The same filtering is needed for Grid,
-        // whose item collection also excludes inter-element source whitespace.
-        let parent_node = &doc.nodes[usize::from(parent)];
-        if !matches!(parent_node.style.display, Display::Flex | Display::Grid) {
-            return true;
-        }
+        // Whitespace-only text generates no box of its own:
+        // - CSS Flexbox §4 and CSS Grid §6: no anonymous item is generated
+        //   for a whitespace-only text run, whatever its `white-space`.
+        // - CSS 2.1 §9.2.1.1 and §16.6.1: in a block container, a
+        //   whitespace-only run between block-level boxes collapses away and
+        //   generates no anonymous block box, so it must not separate the
+        //   adjoining margins of its siblings (CSS 2.1 §8.3.1). White space
+        //   that `white-space` preserves forms a line instead; such text makes
+        //   its container a paragraph root (see `needs_ifc_layout` in
+        //   `layout::ifc::assign`), whose children taffy never visits, so
+        //   every whitespace-only text child that reaches this point has
+        //   collapsed away.
         !matches!(
             &doc.nodes[child].data,
             NodeData::Text(text)
@@ -177,9 +181,8 @@ impl Iterator for TaffyChildIter<'_> {
     type Item = NodeId;
     fn next(&mut self) -> Option<Self::Item> {
         let doc = self.doc;
-        let parent = self.parent;
         for &child in self.inner.by_ref() {
-            if Self::includes(doc, parent, child) {
+            if Self::includes(doc, child) {
                 return Some(NodeId::from(child));
             }
         }
@@ -193,7 +196,6 @@ impl TraversePartialTree for Document {
     fn child_ids(&self, node_id: NodeId) -> Self::ChildIter<'_> {
         TaffyChildIter {
             doc: self,
-            parent: node_id,
             inner: TaffyChildIter::children(self, node_id).iter(),
         }
     }
@@ -202,7 +204,7 @@ impl TraversePartialTree for Document {
         // Must match the filter: count only in-document children.
         TaffyChildIter::children(self, node_id)
             .iter()
-            .filter(|&&c| TaffyChildIter::includes(self, node_id, c))
+            .filter(|&&c| TaffyChildIter::includes(self, c))
             .count()
     }
 
@@ -211,7 +213,7 @@ impl TraversePartialTree for Document {
         let idx = TaffyChildIter::children(self, node_id)
             .iter()
             .copied()
-            .filter(|&c| TaffyChildIter::includes(self, node_id, c))
+            .filter(|&c| TaffyChildIter::includes(self, c))
             .nth(index)
             .expect("get_child_id: index out of range");
         NodeId::from(idx)
@@ -1408,7 +1410,7 @@ impl LayoutGridContainer for Document {
         let children = TaffyChildIter::children(self, node_id)
             .iter()
             .copied()
-            .filter(|&child| TaffyChildIter::includes(self, node_id, child))
+            .filter(|&child| TaffyChildIter::includes(self, child))
             .filter(|&child| {
                 let style = &self.nodes[child].style;
                 style.box_generation_mode() != BoxGenerationMode::None
