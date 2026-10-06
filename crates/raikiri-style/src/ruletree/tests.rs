@@ -3077,3 +3077,68 @@ fn media_content_edge_cases() {
     tree.add_stylesheet(&source, Origin::Author);
     assert!(tree.media_rules.is_empty());
 }
+
+#[test]
+fn unterminated_strings_end_at_newlines_in_text_passes() {
+    // CSS Syntax 3 §4.3.5: an unescaped newline ends a string (bad-string),
+    // so only the declaration holding it is invalid, wherever the rules sit.
+    let rules = "p { color: red; content: \"oops\n; } div { color: blue }";
+    let cases = [
+        ("top level", rules.to_owned(), 2),
+        (
+            "@supports",
+            format!("@supports (color: red) {{ {rules} }}"),
+            2,
+        ),
+        ("@layer", format!("@layer base {{ {rules} }}"), 2),
+        ("nesting", format!("section {{ {rules} }}"), 2),
+        (
+            "@supports after it",
+            format!("{rules} @supports (color: red) {{ em {{ color: green }} }}"),
+            3,
+        ),
+        (
+            "@layer after it",
+            format!("{rules} @layer base {{ em {{ color: green }} }}"),
+            3,
+        ),
+    ];
+    for (name, css, count) in cases {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(&css, Origin::Author);
+        let shape: Vec<_> = tree
+            .style_rules()
+            .iter()
+            .map(|rule| rule.declarations.len())
+            .collect();
+        assert_eq!(shape, vec![1; count], "{name}");
+    }
+}
+
+#[test]
+fn escaped_newlines_continue_strings_in_text_passes() {
+    // A backslash before a newline continues the string, so the brace after
+    // it is string content, not the end of the block.
+    for newline in ["\n", "\r\n", "\x0C"] {
+        let css = format!(
+            "@supports (color: red) {{ p {{ content: \"a\\{newline}}}\"; color: red }} }} div {{ color: blue }}"
+        );
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(&css, Origin::Author);
+        assert_eq!(tree.style_rules().len(), 2, "{newline:?}");
+    }
+}
+
+#[test]
+fn step_in_css_string_follows_the_tokenizer() {
+    let step = |text: &str, index| step_in_css_string(text.as_bytes(), index, b'"');
+    assert_eq!(step("a\"", 0), (1, false));
+    assert_eq!(step("a\"", 1), (2, true));
+    assert_eq!(step("\n", 0), (1, true));
+    assert_eq!(step("\r", 0), (1, true));
+    assert_eq!(step("\x0C", 0), (1, true));
+    assert_eq!(step("\\\"", 0), (2, false));
+    assert_eq!(step("\\\n", 0), (2, false));
+    assert_eq!(step("\\\r\n", 0), (3, false));
+    assert_eq!(step("'", 0), (1, false));
+}
