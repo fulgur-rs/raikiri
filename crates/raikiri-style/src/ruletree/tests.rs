@@ -3143,5 +3143,6 @@ fn step_in_css_string_follows_the_tokenizer() {
     assert_eq!(step("'", 0), (1, false));
 }
 
+mod descriptor_rule_tests;
 mod group_rule_tests;
 mod supports_condition_tests;
