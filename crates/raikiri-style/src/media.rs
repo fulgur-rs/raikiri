@@ -320,8 +320,8 @@ fn parse_media_query<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, MediaQuery> 
     first_of(
         input,
         &[
-            |input| input.parse_entirely(parse_typed_media_query),
-            |input| {
+            &|input| input.parse_entirely(parse_typed_media_query),
+            &|input| {
                 input
                     .parse_entirely(parse_media_condition)
                     .map(MediaQuery::Condition)
@@ -335,10 +335,9 @@ fn parse_typed_media_query<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, MediaQ
     let negated = optional(input, |input| {
         first_of(
             input,
-            &[
-                |input| keyword(input, "not").map(|()| true),
-                |input| keyword(input, "only").map(|()| false),
-            ],
+            &[&|input| keyword(input, "not").map(|()| true), &|input| {
+                keyword(input, "only").map(|()| false)
+            }],
         )
     });
     let media_mask = parse_media_type(input)?;
@@ -371,7 +370,7 @@ fn parse_media_type<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, u8> {
 fn parse_media_condition<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, FeatureCondition> {
     first_of(
         input,
-        &[parse_media_not, |input| {
+        &[&parse_media_not, &|input| {
             let head = parse_media_in_parens(input)?;
             let and = zero_or_more(input, parse_media_and);
             if !and.is_empty() {
@@ -388,7 +387,7 @@ fn parse_media_condition_without_or<'i>(
 ) -> PResult<'i, FeatureCondition> {
     first_of(
         input,
-        &[parse_media_not, |input| {
+        &[&parse_media_not, &|input| {
             let head = parse_media_in_parens(input)?;
             Ok(Condition::all(head, zero_or_more(input, parse_media_and)))
         }],
@@ -422,9 +421,9 @@ fn parse_media_in_parens<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, FeatureC
     first_of(
         input,
         &[
-            |input| parens(input, parse_media_feature),
-            |input| parens(input, parse_media_condition),
-            |input| parse_general_enclosed(input).map(|()| Condition::Unknown),
+            &|input| parens(input, parse_media_feature),
+            &|input| parens(input, parse_media_condition),
+            &|input| parse_general_enclosed(input).map(|()| Condition::Unknown),
         ],
     )
 }
@@ -451,9 +450,9 @@ fn parse_media_feature<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, FeatureCon
     first_of(
         input,
         &[
-            |input| parse_mf_plain(input).map(Condition::Leaf),
-            |input| parse_mf_range(input),
-            |input| parse_mf_boolean(input).map(Condition::Leaf),
+            &|input| parse_mf_plain(input).map(Condition::Leaf),
+            &|input| parse_mf_range(input),
+            &|input| parse_mf_boolean(input).map(Condition::Leaf),
         ],
     )
 }
@@ -497,7 +496,7 @@ fn parse_mf_range<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, FeatureConditio
     first_of(
         input,
         &[
-            |input| {
+            &|input| {
                 let low = parse_mf_value(input)?;
                 let first = parse_mf_lt_or_gt(input)?;
                 let axis = parse_mf_name(input)?;
@@ -519,13 +518,13 @@ fn parse_mf_range<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, FeatureConditio
                     }),
                 ]))
             },
-            |input| {
+            &|input| {
                 let axis = parse_mf_name(input)?;
                 let cmp = parse_mf_comparison(input)?;
                 let px = parse_mf_value(input)?;
                 Ok(Condition::Leaf(ViewportFeature { axis, cmp, px }))
             },
-            |input| {
+            &|input| {
                 let px = parse_mf_value(input)?;
                 let cmp = parse_mf_comparison(input)?;
                 let axis = parse_mf_name(input)?;
@@ -567,7 +566,7 @@ fn parse_mf_value<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, f32> {
 fn parse_mf_comparison<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, Cmp> {
     first_of(
         input,
-        &[parse_mf_lt_or_gt, |input| {
+        &[&parse_mf_lt_or_gt, &|input| {
             input.expect_delim('=')?;
             Ok(Cmp::Eq)
         }],
