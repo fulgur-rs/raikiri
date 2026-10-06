@@ -15,9 +15,7 @@ use super::style;
 use crate::Document;
 use crate::generated_content::{generated_node_id, generated_text, is_in_flow_generated_text};
 use crate::target::{CounterSnapshot, CounterSnapshotLimitExceeded};
-use raikiri_style::property::{
-    ClearValue, Direction, DisplayValue, FloatValue, PositionValue, WhiteSpaceCollapse,
-};
+use raikiri_style::property::{ClearValue, Direction, DisplayValue, FloatValue, PositionValue};
 use raikiri_style::{CascadeResult, ComputedTextIndent, ComputedValues, PseudoElem};
 use raikiri_traits::NodeKind;
 use shodo::font::FontCollection;
@@ -130,125 +128,6 @@ fn line_height_quirk(doc: &Document) -> bool {
         doc.quirks_mode(),
         raikiri_traits::QuirksMode::Quirks | raikiri_traits::QuirksMode::LimitedQuirks
     )
-}
-
-fn has_noncollapsed_text(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
-    let Some(text) = doc.get_node(id).and_then(|node| node.text_content()) else {
-        return false;
-    };
-    let collapsed = cascade.computed.get(id).is_none_or(|cv| {
-        matches!(
-            cv.effective_white_space_collapse,
-            WhiteSpaceCollapse::Collapse | WhiteSpaceCollapse::Discard
-        )
-    });
-    let only_white_space = text
-        .chars()
-        .all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{c}'));
-    !(collapsed && only_white_space)
-}
-
-/// Whether this inline box contains text itself, excluding descendant boxes.
-fn has_direct_inline_text(doc: &Document, cascade: &CascadeResult, element: usize) -> bool {
-    let Some(node) = doc.get_node(element) else {
-        return false;
-    };
-    let mut stack = node.children.clone();
-    while let Some(id) = stack.pop() {
-        let Some(child) = doc.get_node(id).filter(|child| child.is_in_document()) else {
-            continue;
-        };
-        match child.kind() {
-            NodeKind::Text if has_noncollapsed_text(doc, cascade, id) => return true,
-            NodeKind::Element => {
-                let Some(cv) = cascade.computed.get(id) else {
-                    continue;
-                };
-                if cv.display == DisplayValue::Contents {
-                    stack.extend(child.children.iter().copied());
-                } else if cv.display != DisplayValue::None && child.tag_name() == Some("br") {
-                    return true;
-                }
-            }
-            _ => {}
-        }
-    }
-    false
-}
-
-/// Whether the inline content of `element` that belongs to this paragraph
-/// holds text other than collapsed white space. Atomic inlines, floats,
-/// out-of-flow boxes and block children lay out their own content, so their
-/// text is not counted. A `<br>` and generated text count as text, which keeps
-/// the strut wherever the content is not plainly text-free.
-fn has_paragraph_text(doc: &Document, cascade: &CascadeResult, element: usize) -> bool {
-    if has_in_flow_generated_text(cascade, element) {
-        return true;
-    }
-    let Some(node) = doc.get_node(element) else {
-        return false;
-    };
-    let mut stack: Vec<usize> = node.children.clone();
-    while let Some(id) = stack.pop() {
-        let Some(child) = doc.get_node(id) else {
-            continue;
-        };
-        if !child.is_in_document() {
-            continue;
-        }
-        match child.kind() {
-            NodeKind::Text => {
-                if has_noncollapsed_text(doc, cascade, id) {
-                    return true;
-                }
-            }
-            NodeKind::Element => {
-                let Some(cv) = cascade.computed.get(id) else {
-                    continue;
-                };
-                if matches!(
-                    cv.display,
-                    DisplayValue::None | DisplayValue::TableColumn | DisplayValue::TableColumnGroup
-                ) || child.is_non_rendered_html_element()
-                    || box_kind(cascade, doc, id).is_some()
-                {
-                    continue;
-                }
-                if child.tag_name() == Some("br") || has_in_flow_generated_text(cascade, id) {
-                    return true;
-                }
-                stack.extend(child.children.iter().copied());
-            }
-            _ => {}
-        }
-    }
-    false
-}
-
-/// Remove an empty paragraph root from line height calculation in quirks and
-/// limited-quirks mode (Quirks Mode Standard, 3.3-3.4). Text presence is
-/// decided for the entire paragraph, across its lines.
-fn apply_line_height_quirk(doc: &Document, has_text: bool, style: &mut shodo::style::InlineStyle) {
-    if line_height_quirk(doc) && !has_text {
-        style.font_size = 0.0;
-        style.line_height = shodo::style::LineHeight::Px(0.0);
-    }
-}
-
-/// Remove an empty inline child's strut while retaining the font metrics its
-/// replaced descendants use for vertical alignment.
-fn apply_inline_line_height_quirk(
-    doc: &Document,
-    has_text: bool,
-    paragraph_has_text: bool,
-    style: &mut shodo::style::InlineStyle,
-) {
-    if line_height_quirk(doc) && !has_text {
-        if !paragraph_has_text {
-            style.font_size = 0.0;
-        }
-        style.line_height = shodo::style::LineHeight::Px(0.0);
-    }
 }
 
 /// The counters of the document, computed once per layout pass and only when
@@ -538,7 +417,8 @@ pub(crate) fn project_ifc_text_builder(
     // reading `unicode-bidi`.
     let (options, indent) = style::line_options(cv, text, fonts)?;
     let root_style = styled(doc, cascade, cv, text, fonts)?;
-    let paragraph_style = style::paragraph_style(cv, text, root_style)?;
+    let mut paragraph_style = style::paragraph_style(cv, text, root_style)?;
+    paragraph_style.line_height_quirk = line_height_quirk(doc);
     let writing_mode = paragraph_style.writing_mode;
     let mut builder = ParagraphBuilder::new(&paragraph_style, limits);
     let cleared_breaks = Vec::new();
@@ -622,10 +502,11 @@ pub(crate) fn project_ifc_builder_with(
     // The cascade has already resolved `inherit`, `match-parent`, and
     // `-internal-center` in the computed `text-align` values.
     let (options, indent) = style::line_options(root_cv, root, fonts)?;
-    let paragraph_has_text = has_paragraph_text(doc, cascade, root);
-    let mut root_style = styled(doc, cascade, root_cv, root, fonts)?;
-    apply_line_height_quirk(doc, paragraph_has_text, &mut root_style);
-    let paragraph_style = style::paragraph_style(root_cv, root, root_style)?;
+    let root_style = styled(doc, cascade, root_cv, root, fonts)?;
+    let mut paragraph_style = style::paragraph_style(root_cv, root, root_style)?;
+    // The engine applies the line height calculation quirk per line, to the
+    // root and to every inline box (Quirks Mode Standard, 3.3-3.4).
+    paragraph_style.line_height_quirk = line_height_quirk(doc);
     let writing_mode = paragraph_style.writing_mode;
     let mut builder = ParagraphBuilder::new(&paragraph_style, limits);
     let mut boxes = Vec::new();
@@ -773,19 +654,7 @@ pub(crate) fn project_ifc_builder_with(
                     return Err(unsupported("only inline-level boxes are projected"));
                 }
                 let edges = style::inline_edges(cv, id, fonts)?;
-                let mut inline_style = styled(doc, cascade, cv, id, fonts)?;
-                if edges.border.inline_start == 0.0
-                    && edges.border.inline_end == 0.0
-                    && edges.padding.inline_start == 0.0
-                    && edges.padding.inline_end == 0.0
-                {
-                    apply_inline_line_height_quirk(
-                        doc,
-                        has_direct_inline_text(doc, cascade, id),
-                        paragraph_has_text,
-                        &mut inline_style,
-                    );
-                }
+                let inline_style = styled(doc, cascade, cv, id, fonts)?;
                 // The eligibility check keeps every offset that is not a plain
                 // length out of the paragraph.
                 if cv.position == PositionValue::Relative {

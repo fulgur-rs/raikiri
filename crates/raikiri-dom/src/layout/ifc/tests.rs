@@ -372,7 +372,7 @@ fn quirks_mode_mixed_lines_keep_wrapped_images_in_their_direct_positions() {
 }
 
 #[test]
-fn quirks_mode_uses_paragraph_text_across_lines() {
+fn quirks_mode_a_forced_break_keeps_its_line_strut() {
     use raikiri_traits::QuirksMode;
     let empty = image_line_geometry(QuirksMode::Quirks, None, "baseline", false);
     let mixed = image_line_geometry(QuirksMode::Quirks, None, "baseline", true);
@@ -436,9 +436,12 @@ fn nested_inline_line_height(mode: raikiri_traits::QuirksMode, inner_css: &str) 
 #[test]
 fn quirks_mode_parent_inline_without_direct_text_has_no_strut() {
     use raikiri_traits::QuirksMode;
+    // Neither the root nor the outer span directly contains text on the
+    // line, so only the inner box's 10px strut counts (Quirks Mode Standard,
+    // 3.3-3.4: the block's own line-height is ignored).
     assert_eq!(
         nested_inline_line_height(QuirksMode::Quirks, "line-height:10px"),
-        20.0
+        10.0
     );
     assert_eq!(
         nested_inline_line_height(QuirksMode::NoQuirks, "line-height:10px"),
@@ -476,5 +479,7 @@ fn quirks_mode_generated_text_keeps_only_its_own_inline_strut() {
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
     layout_single_page(&mut doc, &cascade, raikiri_traits::PageBox::A4).expect("layout");
     let line = &doc.nodes[body].ifc_lines().expect("lines")[0];
-    assert_eq!(line.block_size(), 20.0);
+    // Only the generated text's own box directly contains text, so its 10px
+    // strut alone sets the line height; the root and the span add none.
+    assert_eq!(line.block_size(), 10.0);
 }
