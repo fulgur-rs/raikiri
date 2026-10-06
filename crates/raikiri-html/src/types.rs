@@ -30,6 +30,12 @@ pub struct UncascadedDocument {
     /// The raikiri umbrella crate cascades them as Author-origin stylesheets via
     /// `build_cascaded`.
     pub stylesheet_sources: Vec<String>,
+    /// The `media` attribute of the element that produced each entry of
+    /// `stylesheet_sources`: entry `i` applies to `stylesheet_sources[i]`.
+    /// `None`, or a missing entry, means the element had no `media`
+    /// attribute, so the stylesheet applies to all media. Read entries with
+    /// [`UncascadedDocument::stylesheet_media_at`].
+    pub stylesheet_media: Vec<Option<String>>,
     /// Nonfatal html5ever parse errors, retained as warnings.
     /// The higher-level orchestrator (the raikiri umbrella crate) merges them into
     /// `RenderSummary.warnings` through `Document`.
@@ -38,6 +44,13 @@ pub struct UncascadedDocument {
     /// `QuirksMode`. The cascade may use this for selector behavior and special
     /// rules.
     pub quirks_mode: raikiri_traits::QuirksMode,
+}
+
+impl UncascadedDocument {
+    /// The `media` attribute recorded for `stylesheet_sources[index]`, if any.
+    pub fn stylesheet_media_at(&self, index: usize) -> Option<&str> {
+        self.stylesheet_media.get(index).and_then(Option::as_deref)
+    }
 }
 
 /// Options passed to the parse phase.

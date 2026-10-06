@@ -373,7 +373,7 @@ fn cascade_from_candidates<D: StyleDom>(
         non_ua_margin_sides,
         authored_writing_modes,
         page,
-        counter_styles: rule_tree.counter_styles().clone(),
+        counter_styles: rule_tree.counter_styles_for(media_context),
         page_values,
         pseudo,
     })

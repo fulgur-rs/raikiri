@@ -59,7 +59,7 @@ pub fn render_screen_url(
     let page_query = PageContextQuery::default();
     let font_face_tree = raikiri::build_rule_tree(&uncascaded);
     let (fonts, bundled_only) = wpt_document_fonts(
-        font_face_tree.font_faces(),
+        &font_face_tree.font_faces_for(&media_context),
         Some(&NetworkFontLoader {
             provider,
             base_url: &base_url,

@@ -198,8 +198,10 @@ fn finish_document(
 /// - `Document::stylesheets()` (UA CSS / extra stylesheets) is a separate
 ///   bucket, so these cascade before head stylesheets. Imports in extra
 ///   stylesheets expand before this post-processing pass.
-/// - **`disabled` / `media` / `crossorigin` / `integrity`**:
-///   See the `sink::collect_external_stylesheet_hrefs` documentation.
+/// - **`disabled` / `crossorigin` / `integrity`**:
+///   See the `sink::collect_external_stylesheet_hrefs` documentation. The
+///   `media` attribute is recorded in `doc.stylesheet_media` and evaluated by
+///   the cascade.
 /// - **`<base>` search scope and href handling**:
 ///   See the `sink::find_document_base_href` documentation. Document-level
 ///   security policy for the frozen base URL algorithm is not implemented here.
@@ -226,29 +228,34 @@ fn fetch_external_stylesheets(
     // Rebuild it in the order of the original head elements so a fetched link
     // does not silently move after every inline style.
     let head_sources = crate::sink::collect_head_stylesheet_sources(&doc.dom);
-    let mut inline_sources = std::mem::take(&mut doc.stylesheet_sources).into_iter();
+    let inline_media = std::mem::take(&mut doc.stylesheet_media);
+    let mut inline_sources = std::mem::take(&mut doc.stylesheet_sources)
+        .into_iter()
+        .enumerate()
+        .map(|(index, css)| (css, inline_media.get(index).cloned().flatten()));
     if head_sources.is_empty() {
         // Preserve the generic `parse_with_sink` contract for a consumer sink
         // that supplies stylesheet_sources without a normal HTML `<head>`.
-        doc.stylesheet_sources = inline_sources
-            .map(|css| {
-                expand_stylesheet_imports_with_budget(
+        (doc.stylesheet_sources, doc.stylesheet_media) = inline_sources
+            .map(|(css, media)| {
+                let css = expand_stylesheet_imports_with_budget(
                     &css,
                     effective_base.as_ref(),
                     None,
                     Some(network),
                     &mut doc.warnings,
                     import_budget,
-                )
+                );
+                (css, media)
             })
-            .collect();
+            .unzip();
         return;
     }
     let mut ordered_sources = Vec::new();
     for source in head_sources {
         match source {
             crate::sink::HeadStylesheetSource::Inline { .. } => {
-                if let Some(css) = inline_sources.next() {
+                if let Some((css, media)) = inline_sources.next() {
                     let expanded = expand_stylesheet_imports_with_budget(
                         &css,
                         effective_base.as_ref(),
@@ -257,7 +264,7 @@ fn fetch_external_stylesheets(
                         &mut doc.warnings,
                         import_budget,
                     );
-                    ordered_sources.push(expanded);
+                    ordered_sources.push((expanded, media));
                 }
             }
             crate::sink::HeadStylesheetSource::External { node_id, href } => {
@@ -291,7 +298,8 @@ fn fetch_external_stylesheets(
                                 &mut doc.warnings,
                                 import_budget,
                             );
-                            ordered_sources.push(expanded);
+                            let media = crate::sink::stylesheet_media_attribute(&doc.dom, node_id);
+                            ordered_sources.push((expanded, media));
                         }
                     }
                     Err(NetworkError::PolicyViolation(violation)) => {
@@ -340,17 +348,18 @@ fn fetch_external_stylesheets(
     }
     // Defensive: preserve any inline projection that did not have a matching
     // collector entry if the sink projection changes in the future.
-    ordered_sources.extend(inline_sources.map(|css| {
-        expand_stylesheet_imports_with_budget(
+    ordered_sources.extend(inline_sources.map(|(css, media)| {
+        let css = expand_stylesheet_imports_with_budget(
             &css,
             effective_base.as_ref(),
             None,
             Some(network),
             &mut doc.warnings,
             import_budget,
-        )
+        );
+        (css, media)
     }));
-    doc.stylesheet_sources = ordered_sources;
+    (doc.stylesheet_sources, doc.stylesheet_media) = ordered_sources.into_iter().unzip();
 }
 
 /// Resolve the document's effective base URL for stylesheet, font, and replaced-resource fetches.

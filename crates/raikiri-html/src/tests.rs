@@ -175,6 +175,80 @@ mod external_link_stylesheet_fetch_tests {
         }
     }
 
+    struct MediaSheetProvider;
+
+    impl NetworkProvider for MediaSheetProvider {
+        fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
+            let css = match request.url.path() {
+                "/print.css" => {
+                    "@font-face { font-family: 'PrintFont'; src: url('/p.ttf'); } \
+                     @layer base { p { display: inline } } \
+                     @page { margin: 1in }"
+                }
+                "/screen.css" => {
+                    "@font-face { font-family: 'ScreenFont'; src: url('/s.ttf'); } \
+                     span { display: block }"
+                }
+                _ => return Err(NetworkError::Other("not found".to_owned())),
+            };
+            Ok(FetchOutcome::Body(FetchedResource {
+                bytes: bytes::Bytes::from(css),
+                content_type: Some("text/css".to_owned()),
+                final_url: request.url,
+                encoding: None,
+            }))
+        }
+    }
+
+    #[test]
+    fn link_media_attribute_guards_the_fetched_stylesheet() {
+        let provider = MediaSheetProvider;
+        let opts = ParseOptions {
+            extra_stylesheets: &[],
+            network: Some(&provider as &dyn NetworkProvider),
+            base_url: Some(url::Url::parse("https://page.example/index.html").unwrap()),
+        };
+        let html = br#"<html><head>
+                <link rel="stylesheet" href="print.css" media="print">
+                <style>em { display: block }</style>
+                <link rel="stylesheet" href="screen.css" media="screen and (min-width: 1px)">
+                </head><body><p>x</p><span>y</span></body></html>"#;
+        let uncascaded = parse(&html[..], &opts).expect("parse ok");
+        assert_eq!(uncascaded.stylesheet_sources.len(), 3);
+        assert_eq!(
+            uncascaded.stylesheet_media,
+            [
+                Some("print".to_owned()),
+                None,
+                Some("screen and (min-width: 1px)".to_owned()),
+            ]
+        );
+
+        let tree = crate::cascade::build_rule_tree(&uncascaded);
+        let print = raikiri_style::MediaContext::print();
+        let screen = raikiri_style::MediaContext::screen();
+        let print_faces = tree.font_faces_for(&print);
+        let screen_faces = tree.font_faces_for(&screen);
+        assert!(print_faces.get("PrintFont").is_some());
+        assert!(print_faces.get("ScreenFont").is_none());
+        assert!(screen_faces.get("PrintFont").is_none());
+        assert!(screen_faces.get("ScreenFont").is_some());
+        // The layered rule and `@page` survive inside the print-only sheet.
+        assert_eq!(tree.page_rules.len(), 1);
+
+        let display = |context: &raikiri_style::MediaContext, tag: &str| {
+            let id = find_first_by_tag(&uncascaded.dom, tag).unwrap();
+            let result =
+                raikiri_style::cascade_with_media_context(&uncascaded.dom, &tree, context).unwrap();
+            result.computed[id.0 as usize].display
+        };
+        use raikiri_style::DisplayValue;
+        assert_eq!(display(&print, "p"), DisplayValue::Inline);
+        assert_eq!(display(&screen, "p"), DisplayValue::Block);
+        assert_eq!(display(&print, "span"), DisplayValue::Inline);
+        assert_eq!(display(&screen, "span"), DisplayValue::Block);
+    }
+
     #[test]
     fn parse_expands_inline_and_external_imports_with_request_kinds_and_redirect_base() {
         let provider = ImportProvider {

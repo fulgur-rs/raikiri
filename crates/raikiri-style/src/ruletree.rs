@@ -13,9 +13,9 @@ use selectors::parser::{ParseRelative, Parser as SelectorParser, Selector, Selec
 use std::collections::HashMap;
 
 use crate::consumer::ConsumerPropertyRegistration;
-use crate::counter_style::{CounterStyleRegistry, parse_counter_style_rules};
-use crate::font_face::{FontFaceRegistry, parse_font_face_rules};
-use crate::media::{MediaCondition, MediaRule, parse_media_prelude};
+use crate::counter_style::{CounterStyleRegistry, CounterStyleRule, parse_counter_style_rules};
+use crate::font_face::{FontFaceRegistry, FontFaceRule, parse_font_face_rules};
+use crate::media::{MediaCondition, MediaContext, MediaRule, parse_media_prelude};
 use crate::page::{
     PageBlockBody, PageRule, PageSelector, parse_page_declaration_block, parse_page_prelude,
 };
@@ -1035,6 +1035,11 @@ pub struct RuleTree {
     /// This intentionally uses a separate pass from the `style_rules` parser (see
     /// "RuleTree integration" in the [`crate::font_face`] module docs; the same design as [`crate::counter_style`]).
     pub(crate) font_faces: FontFaceRegistry,
+    /// Every `@counter-style` and `@font-face` registration in insertion order,
+    /// including those from stylesheets with a media condition, so the
+    /// registries can be rebuilt for one media context.
+    counter_style_log: Vec<Registration<CounterStyleRule>>,
+    font_face_log: Vec<Registration<FontFaceRule>>,
     /// Generic records for at-rules that do not use the `@page` compatibility
     /// view.
     ///
@@ -1142,6 +1147,34 @@ impl RuleTree {
         &self.font_faces
     }
 
+    /// The `@font-face` registry for one media context.
+    ///
+    /// Unlike [`RuleTree::font_faces`], which holds only rules from
+    /// stylesheets without a media condition, this also includes rules from
+    /// stylesheets added through [`RuleTree::add_stylesheet_with_media`] whose
+    /// media query list matches `context`.
+    pub fn font_faces_for(&self, context: &MediaContext) -> FontFaceRegistry {
+        replay(
+            &self.font_face_log,
+            &self.font_faces,
+            context,
+            FontFaceRegistry::new,
+            |registry, rule, origin| registry.insert_with_origin(rule, origin),
+        )
+    }
+
+    /// The `@counter-style` registry for one media context; see
+    /// [`RuleTree::font_faces_for`].
+    pub fn counter_styles_for(&self, context: &MediaContext) -> CounterStyleRegistry {
+        replay(
+            &self.counter_style_log,
+            &self.counter_styles,
+            context,
+            CounterStyleRegistry::new,
+            |registry, rule, origin| registry.insert_with_origin(rule, origin),
+        )
+    }
+
     /// Generic retained records for at-rules outside the `@page`
     /// compatibility view.
     ///
@@ -1177,6 +1210,8 @@ impl RuleTree {
             page_rules: Vec::new(),
             counter_styles: CounterStyleRegistry::new(),
             font_faces: FontFaceRegistry::new(),
+            counter_style_log: Vec::new(),
+            font_face_log: Vec::new(),
             opaque_at_rules: Vec::new(),
             media_rules: Vec::new(),
             next_style_order: 0,
@@ -1236,15 +1271,56 @@ impl RuleTree {
     /// limit is discarded before any of its rules are added to this tree.
     ///
     pub fn add_stylesheet(&mut self, source: &str, origin: Origin) {
+        self.add_conditional_stylesheet(source, origin, None);
+    }
+
+    /// Parse a stylesheet that applies only where its media query list matches,
+    /// such as the `media` attribute of `<link rel=stylesheet>` or `<style>`.
+    ///
+    /// `None`, an empty string, or whitespace means the stylesheet always
+    /// applies (HTML Standard: an omitted or empty `media` attribute is `all`).
+    /// Otherwise every rule in the stylesheet, including `@page`,
+    /// `@font-face`, and `@counter-style`, is guarded by the list, as if the
+    /// whole stylesheet were nested in `@media`. A list that matches in no
+    /// context adds nothing.
+    ///
+    /// Style rules from a guarded stylesheet live in the media-guarded view,
+    /// like rules nested in `@media`, so they are absent from
+    /// [`RuleTree::style_rules`] and [`RuleTree::rules`]. Use
+    /// [`RuleTree::font_faces_for`] and [`RuleTree::counter_styles_for`] to
+    /// read the registries for one media context.
+    pub fn add_stylesheet_with_media(&mut self, source: &str, origin: Origin, media: Option<&str>) {
+        let condition = match media.map(str::trim) {
+            None | Some("") => None,
+            Some(media) => match parse_media_prelude(media) {
+                Some(condition) => Some(condition),
+                None => return,
+            },
+        };
+        self.add_conditional_stylesheet(source, origin, condition.as_ref());
+    }
+
+    fn add_conditional_stylesheet(
+        &mut self,
+        source: &str,
+        origin: Origin,
+        condition: Option<&MediaCondition>,
+    ) {
         let Ok(source) = expand_css_nesting(&expand_supports(source)) else {
             return;
         };
         for (layer_order, chunk) in expand_cascade_layers(&source) {
-            self.add_stylesheet_chunk(&chunk, origin, layer_order);
+            self.add_stylesheet_chunk(&chunk, origin, layer_order, condition);
         }
     }
 
-    fn add_stylesheet_chunk(&mut self, source: &str, origin: Origin, layer_order: u32) {
+    fn add_stylesheet_chunk(
+        &mut self,
+        source: &str,
+        origin: Origin,
+        layer_order: u32,
+        condition: Option<&MediaCondition>,
+    ) {
         let mut input = ParserInput::new(source);
         let mut parser = Parser::new(&mut input);
         let mut namespaces = NamespaceMap::new();
@@ -1285,19 +1361,27 @@ impl RuleTree {
                     if !is_supported_selector_list(&selectors) {
                         continue;
                     }
-                    let index = self.style_rules.len();
-                    self.style_rules.push(StyleRule {
+                    let rule = StyleRule {
                         selectors,
                         declarations,
                         source_order: style_order,
                         origin,
-                    });
+                    };
+                    style_order = style_order.wrapping_add(1);
+                    if let Some(condition) = condition {
+                        self.media_rules.push(MediaRule {
+                            rule,
+                            condition: condition.clone(),
+                        });
+                        continue;
+                    }
+                    let index = self.style_rules.len();
+                    self.style_rules.push(rule);
                     self.rules.push(CssRule {
                         source_order: rule_order,
                         origin,
                         kind: CssRuleKind::Style { index },
                     });
-                    style_order = style_order.wrapping_add(1);
                     rule_order = rule_order.wrapping_add(1);
                 }
                 ParsedRule::CustomHighlight { name, color } => {
@@ -1324,7 +1408,7 @@ impl RuleTree {
                         source_order: page_order,
                         layer_order,
                         origin,
-                        media_condition: None,
+                        media_condition: condition.cloned(),
                     });
                     self.rules.push(CssRule {
                         source_order: rule_order,
@@ -1340,7 +1424,7 @@ impl RuleTree {
                     if record.name.eq_ignore_ascii_case("media") {
                         collect_media_style_rules(
                             &record,
-                            None,
+                            condition,
                             &mut self.media_rules,
                             &mut style_order,
                             &mut self.page_rules,
@@ -1361,13 +1445,73 @@ impl RuleTree {
             }
         }
         for rule in parse_counter_style_rules(source) {
-            self.counter_styles.insert_with_origin(rule, origin);
+            if condition.is_none() {
+                self.counter_styles.insert_with_origin(rule.clone(), origin);
+            }
+            self.counter_style_log
+                .push(Registration::new(rule, origin, condition));
         }
         for rule in parse_font_face_rules(source) {
-            self.font_faces.insert_with_origin(rule, origin);
+            if condition.is_none() {
+                self.font_faces.insert_with_origin(rule.clone(), origin);
+            }
+            self.font_face_log
+                .push(Registration::new(rule, origin, condition));
         }
         self.next_style_order = style_order;
     }
+}
+
+/// One registry insertion, kept so a registry can be rebuilt for a media
+/// context.
+struct Registration<R> {
+    rule: R,
+    origin: Origin,
+    condition: Option<MediaCondition>,
+}
+
+impl<R> Registration<R> {
+    fn new(rule: R, origin: Origin, condition: Option<&MediaCondition>) -> Self {
+        Self {
+            rule,
+            origin,
+            condition: condition.cloned(),
+        }
+    }
+}
+
+/// Rebuild a registry from `log`, keeping the registrations whose condition
+/// matches `context`. Replaying in insertion order preserves the registry's
+/// same-name precedence. When no registration is conditional, the
+/// unconditional registry is already the answer.
+fn replay<R: Clone, Registry: Clone>(
+    log: &[Registration<R>],
+    unconditional: &Registry,
+    context: &MediaContext,
+    new: fn() -> Registry,
+    insert: fn(&mut Registry, R, Origin),
+) -> Registry {
+    if log
+        .iter()
+        .all(|registration| registration.condition.is_none())
+    {
+        return unconditional.clone();
+    }
+    let mut registry = new();
+    for registration in log {
+        if registration
+            .condition
+            .as_ref()
+            .is_none_or(|condition| condition.matches(context))
+        {
+            insert(
+                &mut registry,
+                registration.rule.clone(),
+                registration.origin,
+            );
+        }
+    }
+    registry
 }
 
 /// Walk the DOM via DFS and gather text from all `<style>` elements as Author

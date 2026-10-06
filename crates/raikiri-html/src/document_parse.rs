@@ -171,11 +171,12 @@ pub fn parse_html_with_limits<R: Read>(
     first_page.is_first = true;
     first_page.is_right = true;
     let rule_tree = build_rule_tree(&uncascaded);
-    let font_faces = rule_tree.font_faces().clone();
+    let media_context = raikiri_style::MediaContext::default();
+    let font_faces = rule_tree.font_faces_for(&media_context);
     let cascade = raikiri_style::cascade_with_media_context_for_page(
         &uncascaded.dom,
         &rule_tree,
-        &raikiri_style::MediaContext::default(),
+        &media_context,
         &first_page,
     )
     .expect("cascade は常に Ok のはず");

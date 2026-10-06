@@ -2766,3 +2766,144 @@ fn build_rule_tree_counter_styles_across_multiple_style_elements_last_wins() {
         .expect("thumbs registered");
     assert_eq!(rule.symbols.len(), 2);
 }
+
+const MEDIA_SHEET: &str = r#"
+@font-face { font-family: 'Ahem'; src: url('/fonts/Ahem.ttf'); }
+@counter-style thumbs { system: cyclic; symbols: "*"; }
+@page { margin: 1in }
+p { color: red }
+@media (min-width: 1px) { div { color: blue } }
+"#;
+
+#[test]
+fn stylesheet_media_guards_every_rule_kind() {
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet("h1 { color: green }", Origin::Author);
+    tree.add_stylesheet_with_media(MEDIA_SHEET, Origin::Author, Some("print"));
+
+    // Style rules join the media-guarded view and keep the shared order.
+    assert_eq!(tree.style_rules().len(), 1);
+    assert!(
+        tree.rules()
+            .iter()
+            .all(|rule| !matches!(rule.kind, CssRuleKind::Style { index } if index > 0))
+    );
+    let orders: Vec<_> = tree
+        .media_rules
+        .iter()
+        .map(|m| m.rule.source_order)
+        .collect();
+    assert_eq!(orders, [1, 2]);
+    let print = MediaContext::print();
+    let screen = MediaContext::screen();
+    assert!(tree.media_rules.iter().all(|m| m.condition.matches(&print)));
+    assert!(
+        tree.media_rules
+            .iter()
+            .all(|m| !m.condition.matches(&screen))
+    );
+
+    // `@page` carries the stylesheet condition.
+    assert_eq!(tree.page_rules.len(), 1);
+    let page_condition = tree.page_rules[0].media_condition.as_ref().unwrap();
+    assert!(page_condition.matches(&print));
+    assert!(!page_condition.matches(&screen));
+
+    // Registries hold the rules only for a matching context.
+    assert!(tree.font_faces().get("Ahem").is_none());
+    assert!(tree.font_faces_for(&print).get("Ahem").is_some());
+    assert!(tree.font_faces_for(&screen).get("Ahem").is_none());
+    assert!(tree.counter_styles().get("thumbs").is_none());
+    assert!(tree.counter_styles_for(&print).get("thumbs").is_some());
+    assert!(tree.counter_styles_for(&screen).get("thumbs").is_none());
+}
+
+#[test]
+fn nested_media_intersects_with_stylesheet_media() {
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet_with_media(
+        "@media (min-width: 500px) { p { color: red } }",
+        Origin::Author,
+        Some("print"),
+    );
+    assert_eq!(tree.media_rules.len(), 1);
+    let condition = &tree.media_rules[0].condition;
+    assert!(condition.matches(&MediaContext::with_viewport(
+        crate::media::MediaType::Print,
+        600,
+        100
+    )));
+    assert!(!condition.matches(&MediaContext::with_viewport(
+        crate::media::MediaType::Screen,
+        600,
+        100
+    )));
+    assert!(!condition.matches(&MediaContext::print()));
+}
+
+#[test]
+fn layered_and_supports_rules_keep_stylesheet_media() {
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet_with_media(
+        "@layer base { p { color: red } } @supports (color: red) { div { color: blue } }",
+        Origin::Author,
+        Some("print"),
+    );
+    assert!(tree.style_rules().is_empty());
+    assert_eq!(tree.media_rules.len(), 2);
+    assert!(
+        tree.media_rules
+            .iter()
+            .all(|m| m.condition.matches(&MediaContext::print())
+                && !m.condition.matches(&MediaContext::screen()))
+    );
+}
+
+#[test]
+fn empty_stylesheet_media_means_all() {
+    for media in [None, Some(""), Some("  \t")] {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet_with_media(MEDIA_SHEET, Origin::Author, media);
+        assert_eq!(tree.style_rules().len(), 1, "{media:?}");
+        assert!(tree.page_rules[0].media_condition.is_none(), "{media:?}");
+        assert!(tree.font_faces().get("Ahem").is_some(), "{media:?}");
+    }
+}
+
+#[test]
+fn never_matching_stylesheet_media_adds_nothing() {
+    for media in ["not all", "(hover: hover)", "print,"] {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet_with_media(MEDIA_SHEET, Origin::Author, Some(media));
+        assert!(tree.style_rules().is_empty(), "{media}");
+        assert!(tree.media_rules.is_empty(), "{media}");
+        assert!(tree.page_rules.is_empty(), "{media}");
+        assert!(tree.rules().is_empty(), "{media}");
+        assert!(
+            tree.font_faces_for(&MediaContext::print()).is_empty(),
+            "{media}"
+        );
+        assert!(
+            tree.counter_styles_for(&MediaContext::print()).is_empty(),
+            "{media}"
+        );
+    }
+}
+
+#[test]
+fn registry_replay_keeps_insertion_precedence() {
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "@font-face { font-family: 'Ahem'; src: url('/first.ttf'); }",
+        Origin::Author,
+    );
+    tree.add_stylesheet_with_media(
+        "@font-face { font-family: 'Ahem'; src: url('/print.ttf'); }",
+        Origin::Author,
+        Some("print"),
+    );
+    let print = tree.font_faces_for(&MediaContext::print());
+    let screen = tree.font_faces_for(&MediaContext::screen());
+    assert_ne!(print.get("Ahem"), screen.get("Ahem"));
+    assert_eq!(screen.get("Ahem"), tree.font_faces().get("Ahem"));
+}
