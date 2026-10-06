@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use cssparser::{ParseError, Parser, ParserInput, Token};
+use cssparser::{ParseError, Parser, ParserInput, Token, match_ignore_ascii_case};
 
 use crate::computed::INITIAL_FONT_SIZE_PX;
 use crate::property::{Length, parse_length_allow_negative};
@@ -468,11 +468,12 @@ fn parse_media_query_list<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, Vec<Med
         if input.is_exhausted() {
             return Err(input.new_custom_error(()));
         }
-        let start = input.state();
-        input.expect_no_error_token()?;
-        input.reset(&start);
         let query = optional(input, parse_media_query);
-        while input.next().is_ok() {}
+        // Whatever the query did not consume, including all of it when it
+        // failed, is skipped here; an error token anywhere invalidates the
+        // list. A parsed query can only have consumed error tokens inside
+        // `<general-enclosed>`, which rejects them as well.
+        input.expect_no_error_token()?;
         Ok(query)
     })?;
     Ok(queries
@@ -484,16 +485,20 @@ fn parse_media_query_list<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, Vec<Med
 
 /// `<media-query> = <media-condition>
 ///                | [ not | only ]? <media-type> [ and <media-condition-without-or> ]?`
+///
+/// The typed form is tried first because it is the common case. No input
+/// matches both: the typed form starts with an identifier that is not
+/// followed by a parenthesis, a condition with a parenthesis or `not (`.
 fn parse_media_query<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, MediaQuery> {
     first_of(
         input,
         &[
+            |input| input.parse_entirely(parse_typed_media_query),
             |input| {
                 input
                     .parse_entirely(parse_media_condition)
                     .map(MediaQuery::Condition)
             },
-            |input| input.parse_entirely(parse_typed_media_query),
         ],
     )
 }
@@ -526,7 +531,7 @@ fn parse_typed_media_query<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, MediaQ
 fn parse_media_type<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, u8> {
     let location = input.current_source_location();
     let name = input.expect_ident()?;
-    match name.to_ascii_lowercase().as_str() {
+    match_ignore_ascii_case! { name,
         "all" => Ok(ALL_MEDIA),
         "print" => Ok(PRINT_MEDIA),
         "screen" => Ok(SCREEN_MEDIA),
@@ -582,12 +587,16 @@ fn parse_media_or<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, FeatureConditio
 }
 
 /// `<media-in-parens> = ( <media-condition> ) | ( <media-feature> ) | <general-enclosed>`
+///
+/// `( <media-feature> )` is tried first because it is the common case. No
+/// input matches both parenthesised forms: a feature starts with a feature
+/// name or a value, a condition with `not` or another parenthesis.
 fn parse_media_in_parens<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, FeatureCondition> {
     first_of(
         input,
         &[
-            |input| parens(input, parse_media_condition),
             |input| parens(input, parse_media_feature),
+            |input| parens(input, parse_media_condition),
             |input| parse_general_enclosed(input).map(|()| Condition::Unknown),
         ],
     )
@@ -595,18 +604,15 @@ fn parse_media_in_parens<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, FeatureC
 
 /// `<general-enclosed> = [ <function-token> <any-value>? ) ] | [ ( <any-value>? ) ]`
 ///
-/// Error tokens are already rejected for the whole query list, so any block
-/// contents are an `<any-value>?`.
+/// `<any-value>` excludes tokenizer error tokens, so the block contents are
+/// rejected if they hold one at any depth.
 fn parse_general_enclosed<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, ()> {
     let location = input.current_source_location();
     match input.next()? {
         Token::Function(_) | Token::ParenthesisBlock => {}
         _ => return Err(location.new_custom_error(())),
     }
-    input.parse_nested_block(|input| {
-        while input.next().is_ok() {}
-        Ok(())
-    })
+    input.parse_nested_block(|input| Ok(input.expect_no_error_token()?))
 }
 
 /// `<media-feature> = [ <mf-plain> | <mf-boolean> | <mf-range> ]`
@@ -628,15 +634,16 @@ fn parse_media_feature<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, FeatureCon
 /// `<mf-plain> = <mf-name> : <mf-value>`, with the `min-` / `max-` prefixes.
 fn parse_mf_plain<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, ViewportFeature> {
     let location = input.current_source_location();
-    let name = input.expect_ident()?.to_ascii_lowercase();
-    let (cmp, name) = if let Some(name) = name.strip_prefix("min-") {
-        (Cmp::Ge, name)
-    } else if let Some(name) = name.strip_prefix("max-") {
-        (Cmp::Le, name)
-    } else {
-        (Cmp::Eq, name.as_str())
+    let name = input.expect_ident()?;
+    let (cmp, axis) = match_ignore_ascii_case! { name,
+        "width" => (Cmp::Eq, Axis::Width),
+        "min-width" => (Cmp::Ge, Axis::Width),
+        "max-width" => (Cmp::Le, Axis::Width),
+        "height" => (Cmp::Eq, Axis::Height),
+        "min-height" => (Cmp::Ge, Axis::Height),
+        "max-height" => (Cmp::Le, Axis::Height),
+        _ => return Err(location.new_custom_error(())),
     };
-    let axis = axis_named(name).ok_or_else(|| location.new_custom_error(()))?;
     input.expect_colon()?;
     let px = parse_mf_value(input)?;
     Ok(ViewportFeature { axis, cmp, px })
@@ -709,14 +716,10 @@ fn parse_mf_range<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, FeatureConditio
 fn parse_mf_name<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, Axis> {
     let location = input.current_source_location();
     let name = input.expect_ident()?;
-    axis_named(&name.to_ascii_lowercase()).ok_or_else(|| location.new_custom_error(()))
-}
-
-fn axis_named(name: &str) -> Option<Axis> {
-    match name {
-        "width" => Some(Axis::Width),
-        "height" => Some(Axis::Height),
-        _ => None,
+    match_ignore_ascii_case! { name,
+        "width" => Ok(Axis::Width),
+        "height" => Ok(Axis::Height),
+        _ => Err(location.new_custom_error(())),
     }
 }
 
