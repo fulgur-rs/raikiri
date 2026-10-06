@@ -494,6 +494,7 @@ pub fn build_page_scene_for_page_named(
             if !node.is_in_document()
                 || node.is_non_rendered_html_element()
                 || node.is_display_none()
+                || node.is_hidden_by_text_overflow()
             {
                 continue;
             }

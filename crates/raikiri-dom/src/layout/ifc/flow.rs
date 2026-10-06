@@ -251,10 +251,21 @@ pub(crate) fn apply_text_overflow(
     cx: &mut LayoutContext,
     available: f32,
 ) {
+    truncate_lines(root, &mut lines.lines, cx, available);
+}
+
+/// [`apply_text_overflow`] on a shared line list. A line already truncated
+/// is left as it is.
+pub(crate) fn truncate_lines(
+    root: &IfcRoot,
+    lines: &mut std::sync::Arc<Vec<shodo::Line>>,
+    cx: &mut LayoutContext,
+    available: f32,
+) {
     if !root.ellipsis || root.writing_mode != WritingMode::HorizontalTb {
         return;
     }
-    for line in std::sync::Arc::make_mut(&mut lines.lines) {
+    for line in std::sync::Arc::make_mut(lines) {
         line.truncate_with_ellipsis(cx, available);
     }
 }

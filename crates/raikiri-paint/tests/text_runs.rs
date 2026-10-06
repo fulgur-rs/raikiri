@@ -786,3 +786,36 @@ fn paint_rects_follow_the_body_margin_like_the_painter() {
         .expect("the paragraph's run");
     assert!((run.origin.0 - (flow.paint_rect().x + 4.0)).abs() < 1e-3);
 }
+
+#[test]
+fn ellipsis_runs_match_paint_and_name_their_block() {
+    let result = lay_out(
+        "<p id=\"p\">aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</p>",
+        "#p { width: 100px; white-space: nowrap; overflow: hidden; \
+         text-overflow: ellipsis; color: rgb(0, 0, 255) }",
+    );
+    assert_runs_match_paint(&result);
+    let page = result.pages().next().expect("page");
+    let runs = page.text_runs();
+    let ellipsis = runs
+        .iter()
+        .find(|run| matches!(run.source, RunSource::Ellipsis(_)))
+        .expect("an ellipsis run");
+    let RunSource::Ellipsis(block) = ellipsis.source else {
+        unreachable!();
+    };
+    assert_eq!(page.dom().attr(block, "id"), Some("p"));
+    // Ahem has U+2026, so the ellipsis is one glyph.
+    assert_eq!(ellipsis.text, "\u{2026}");
+    assert_eq!(ellipsis.glyphs.len(), 1);
+    assert_eq!(ellipsis.glyphs[0].text_range, 0..3);
+    assert_eq!(
+        (ellipsis.color.r, ellipsis.color.g, ellipsis.color.b),
+        (0, 0, 255)
+    );
+    let text = runs
+        .iter()
+        .find(|run| matches!(run.source, RunSource::Text(_)))
+        .expect("the kept text");
+    assert!(text.origin.0 < ellipsis.origin.0);
+}

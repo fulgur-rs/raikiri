@@ -37,3 +37,17 @@ fn variations_keep_their_axis_and_value() {
         }
     );
 }
+
+#[test]
+fn ellipsis_text_is_one_ellipsis_or_one_period_per_glyph() {
+    assert_eq!(ellipsis_text(1, false), ("\u{2026}", vec![0..3]));
+    assert_eq!(ellipsis_text(3, false), ("...", vec![0..1, 1..2, 2..3]));
+    // A period of a fallback split across fonts is a run of its own.
+    assert_eq!(ellipsis_text(1, true), (".", vec![0..1]));
+    assert_eq!(ellipsis_text(2, true), ("..", vec![0..1, 1..2]));
+    // Extra glyphs share the last period.
+    assert_eq!(
+        ellipsis_text(4, false),
+        ("...", vec![0..1, 1..2, 2..3, 2..3])
+    );
+}

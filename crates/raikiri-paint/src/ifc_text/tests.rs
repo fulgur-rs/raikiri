@@ -2647,3 +2647,44 @@ fn ellipsis_is_painted_in_the_root_style() {
     assert!(!placed.is_empty());
     assert!(placed.iter().all(|g| g.3 != blue));
 }
+
+#[test]
+fn atomic_inlines_past_the_ellipsis_are_not_painted() {
+    use kurbo::Shape;
+    let blue_boxes = |text_after: &str| {
+        let text_after = text_after.to_owned();
+        let (mut doc, cascade, _) = paragraph(
+            "width:50px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis",
+            |doc, root| {
+                doc.append_text(root, &text_after);
+                doc.append_element(
+                    Some(root),
+                    "span",
+                    Style::default(),
+                    Some(
+                        "display:inline-block;width:10px;height:10px;background-color:rgb(0,0,255)",
+                    ),
+                );
+                doc.append_text(root, "bb");
+            },
+        );
+        lay_out(&mut doc, &cascade);
+        let mut scene = Scene::new();
+        crate::paint_single_page(&mut scene, &doc, &cascade, PageBox::A4).expect("paint");
+        scene
+            .commands
+            .iter()
+            .filter(|command| match command {
+                RenderCommand::Fill(fill) => {
+                    fill.brush == solid(0, 0, 255) && fill.shape.bounding_box().width() <= 10.0
+                }
+                _ => false,
+            })
+            .count()
+    };
+    // The box fits before the ellipsis when the text before it is short.
+    assert_eq!(blue_boxes("a"), 1);
+    // The box would end past the ellipsis, inside the 50px box: it is
+    // dropped with the text after it instead of showing under the ellipsis.
+    assert_eq!(blue_boxes("aaaa"), 0);
+}

@@ -307,7 +307,10 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         }
     }
 
-    let lines = std::sync::Arc::new(all_lines);
+    let mut lines = std::sync::Arc::new(all_lines);
+    if perform {
+        truncate_for_text_overflow(tree, &root, &mut lines, geometry.width);
+    }
     let result = IfcLines {
         width: geometry.width,
         lines: lines.clone(),
@@ -323,6 +326,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
     };
     if perform {
         place_atomics(tree, &lines, &atomic_outputs, geometry, root.rtl);
+        hide_truncated_atomics(tree, &lines, &atomic_outputs);
         offset_boxes_inside_relative_inlines(tree, idx, &root);
         super::records::record_inline_boxes(tree, idx, &root, &lines, &geometry);
     }
@@ -421,7 +425,7 @@ fn run_boxes(
     local: bool,
     bottom_margin_escapes: bool,
 ) -> IfcLines {
-    let outcome = run_boxes_segment(
+    let mut outcome = run_boxes_segment(
         tree,
         root,
         geometry,
@@ -435,6 +439,7 @@ fn run_boxes(
         false,
     );
     if perform {
+        truncate_for_text_overflow(tree, root, &mut outcome.lines.lines, geometry.width);
         place_atomics(
             tree,
             &outcome.lines.lines,
@@ -442,6 +447,7 @@ fn run_boxes(
             geometry,
             root.rtl,
         );
+        hide_truncated_atomics(tree, &outcome.lines.lines, &outcome.atomic_outputs);
         offset_boxes_inside_relative_inlines(tree, idx, root);
         super::records::record_inline_boxes(tree, idx, root, &outcome.lines.lines, &geometry);
     }
@@ -1580,6 +1586,41 @@ fn box_sizing_height_adjustment(tree: &Document, node: usize, basis: f32) -> f32
 
 /// Store the final layout of every atomic inline at its fragment in the
 /// accepted lines.
+/// Truncate the performed lines for `text-overflow: ellipsis` before the
+/// boxes on them are placed, so placement sees what remains on each line.
+fn truncate_for_text_overflow(
+    tree: &mut Document,
+    root: &IfcRoot,
+    lines: &mut std::sync::Arc<Vec<shodo::Line>>,
+    width: f32,
+) {
+    if !root.ellipsis {
+        return;
+    }
+    with_state(tree, |state| {
+        super::flow::truncate_lines(root, lines, &mut state.layout_cx, width);
+    });
+}
+
+/// Mark the atomic inlines an ellipsis removed from their lines, and clear
+/// the mark on those still on a line, so paint skips only hidden ones.
+fn hide_truncated_atomics(
+    tree: &mut Document,
+    lines: &[shodo::Line],
+    outputs: &[(usize, taffy::LayoutOutput)],
+) {
+    for &(node, _) in outputs {
+        let on_a_line = lines.iter().any(|line| {
+            line.fragments().any(|fragment| {
+                matches!(fragment, shodo::Fragment::Atomic(atomic) if atomic.node.0 as usize == node)
+            })
+        });
+        tree.nodes[node]
+            .flags
+            .set(crate::node::NodeFlags::HIDDEN_BY_TEXT_OVERFLOW, !on_a_line);
+    }
+}
+
 fn place_atomics(
     tree: &mut Document,
     lines: &[shodo::Line],

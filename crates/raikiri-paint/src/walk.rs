@@ -3676,7 +3676,9 @@ pub(crate) fn paint_document_impl(
         }
         match node.kind() {
             NodeKind::Element => {
-                if node.is_display_none() {
+                // An atomic inline an ellipsis removed from its line is not
+                // painted (CSS Overflow 3 §5.1).
+                if node.is_display_none() || node.is_hidden_by_text_overflow() {
                     continue;
                 }
                 let layout = node_layout;

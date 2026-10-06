@@ -132,7 +132,7 @@ impl Document {
             }
             match node.kind() {
                 NodeKind::Element => {
-                    if node.is_display_none() {
+                    if node.is_display_none() || node.is_hidden_by_text_overflow() {
                         continue;
                     }
                     let Some(cv) = cascade.computed.get(node_id) else {
@@ -232,7 +232,8 @@ impl Document {
                     return false; // cov:ignore: ancestor ids come from the arena
                 };
                 if !node.is_in_document()
-                    || (node.kind() == NodeKind::Element && node.is_display_none())
+                    || (node.kind() == NodeKind::Element
+                        && (node.is_display_none() || node.is_hidden_by_text_overflow()))
                 {
                     return false;
                 }
@@ -303,7 +304,7 @@ fn push_paragraph<'a>(
             continue;
         }
         match node.kind() {
-            NodeKind::Element if !node.is_display_none() => {
+            NodeKind::Element if !node.is_display_none() && !node.is_hidden_by_text_overflow() => {
                 elements.push(node_id);
                 stack.extend(node.children.iter().rev().copied());
             }

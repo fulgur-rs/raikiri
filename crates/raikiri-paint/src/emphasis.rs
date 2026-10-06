@@ -78,13 +78,15 @@ fn families(style: &ComputedValues) -> String {
 /// Draw the emphasis marks of one horizontal glyph run.
 ///
 /// `glyphs` are the run's glyph positions in line coordinates, drawn at
-/// `origin` in page coordinates; `text_color` is used for `currentcolor`.
+/// `origin` in page coordinates, and `baseline` is the run's baseline in the
+/// same coordinates; `text_color` is used for `currentcolor`.
 pub(crate) fn draw_marks(
     scene: &mut impl PaintScene,
     document: &Document,
     run: &shodo::GlyphRunView<'_>,
     glyphs: &[AnyrenderGlyph],
     origin: (f32, f32),
+    baseline: f32,
     style: &ComputedValues,
     text_color: Color,
 ) {
@@ -111,19 +113,21 @@ pub(crate) fn draw_marks(
         // rightmost advance, in either direction.
         let mut start = f32::INFINITY;
         let mut end = f32::NEG_INFINITY;
-        let mut baseline = None;
+        let mut found = false;
         for ((glyph, advance), offset) in glyphs.iter().zip(&advances).zip(&offsets) {
             if !cluster.text_range.contains(offset) {
                 continue;
             }
             start = start.min(glyph.x);
             end = end.max(glyph.x + advance);
-            baseline.get_or_insert(glyph.y);
+            found = true;
         }
-        let Some(baseline) = baseline else {
+        if !found {
             continue; // cov:ignore: every cluster of a run has a glyph in that run.
-        };
+        }
         let center = origin.0 + (start + end) / 2.0;
+        // The mark is placed from the run's baseline, not from a glyph's
+        // origin, which carries the glyph's own vertical offset.
         let text_baseline = origin.1 + baseline;
         // The mark's em box starts `offset` from the baseline toward its side.
         let mark_baseline = if mark.line_over {
