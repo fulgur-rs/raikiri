@@ -3,9 +3,11 @@
 
 use std::sync::Arc;
 
-use cssparser::{ParseError, Parser, ParserInput, Token, match_ignore_ascii_case};
+use cssparser::{Parser, ParserInput, Token, match_ignore_ascii_case};
 
 use crate::computed::INITIAL_FONT_SIZE_PX;
+use crate::condition::{Condition, Outcomes, kleene_and, kleene_not};
+use crate::grammar::{PResult, first_of, keyword, optional, parens, zero_or_more};
 use crate::property::{Length, parse_length_allow_negative};
 use crate::resolve::{ComputedLength, ResolveContext, resolve_length};
 
@@ -102,142 +104,6 @@ const fn media_bit(media_type: MediaType) -> u8 {
 // ---------------------------------------------------------------------------
 // Syntax tree and evaluation
 // ---------------------------------------------------------------------------
-
-/// Kleene's three-valued AND (Media Queries 4 §3.1); `None` is "unknown".
-const fn kleene_and(left: Option<bool>, right: Option<bool>) -> Option<bool> {
-    match (left, right) {
-        (Some(false), _) | (_, Some(false)) => Some(false),
-        (Some(true), Some(true)) => Some(true),
-        _ => None,
-    }
-}
-
-const fn kleene_not(value: Option<bool>) -> Option<bool> {
-    match value {
-        Some(value) => Some(!value),
-        None => None,
-    }
-}
-
-const fn kleene_or(left: Option<bool>, right: Option<bool>) -> Option<bool> {
-    kleene_not(kleene_and(kleene_not(left), kleene_not(right)))
-}
-
-/// A boolean condition over leaves of type `L`, evaluated with three-valued
-/// logic.
-///
-/// `Unknown` stands for a `<general-enclosed>` term or a feature this engine
-/// does not evaluate; MQ4 §3.2 gives both the value "unknown".
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) enum Condition<L> {
-    Not(Box<Self>),
-    And(Vec<Self>),
-    Or(Vec<Self>),
-    Leaf(L),
-    Unknown,
-}
-
-impl<L> Condition<L> {
-    fn all(head: Self, rest: Vec<Self>) -> Self {
-        if rest.is_empty() {
-            head
-        } else {
-            Self::And(std::iter::once(head).chain(rest).collect())
-        }
-    }
-
-    fn any(head: Self, rest: Vec<Self>) -> Self {
-        if rest.is_empty() {
-            head
-        } else {
-            Self::Or(std::iter::once(head).chain(rest).collect())
-        }
-    }
-
-    fn eval(&self, leaf: &impl Fn(&L) -> Option<bool>) -> Option<bool> {
-        match self {
-            Self::Not(inner) => kleene_not(inner.eval(leaf)),
-            // `None` is a third truth value here, not an early exit.
-            Self::And(terms) => terms
-                .iter()
-                .map(|term| term.eval(leaf))
-                .reduce(kleene_and)
-                .unwrap_or(Some(true)),
-            Self::Or(terms) => terms
-                .iter()
-                .map(|term| term.eval(leaf))
-                .reduce(kleene_or)
-                .unwrap_or(Some(false)),
-            Self::Leaf(value) => leaf(value),
-            Self::Unknown => None,
-        }
-    }
-
-    /// Every value this condition can take, assuming each leaf can be either
-    /// true or false.
-    fn outcomes(&self) -> Outcomes {
-        match self {
-            Self::Not(inner) => inner.outcomes().map(kleene_not),
-            Self::And(terms) => terms.iter().fold(Outcomes::TRUE, |acc, term| {
-                acc.zip(term.outcomes(), kleene_and)
-            }),
-            Self::Or(terms) => terms.iter().fold(Outcomes::FALSE, |acc, term| {
-                acc.zip(term.outcomes(), kleene_or)
-            }),
-            Self::Leaf(_) => Outcomes::EITHER,
-            Self::Unknown => Outcomes::UNKNOWN,
-        }
-    }
-}
-
-/// A set of three-valued results, used to drop queries that can never match.
-///
-/// [`parse_media_prelude`] returns `None` for a list that matches in no
-/// context, and callers skip such `@media` blocks entirely, so a query that is
-/// always false or unknown has to be recognised while parsing.
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct Outcomes(u8);
-
-impl Outcomes {
-    const VALUES: [Option<bool>; 3] = [Some(true), Some(false), None];
-    const TRUE: Self = Self(1);
-    const FALSE: Self = Self(2);
-    const UNKNOWN: Self = Self(4);
-    const EITHER: Self = Self(1 | 2);
-
-    const fn of(value: Option<bool>) -> Self {
-        match value {
-            Some(true) => Self::TRUE,
-            Some(false) => Self::FALSE,
-            None => Self::UNKNOWN,
-        }
-    }
-
-    fn contains(self, value: Option<bool>) -> bool {
-        self.0 & Self::of(value).0 != 0
-    }
-
-    fn values(self) -> impl Iterator<Item = Option<bool>> {
-        Self::VALUES
-            .into_iter()
-            .filter(move |value| self.contains(*value))
-    }
-
-    /// Apply `op` to every pair of values from `self` and `other`.
-    fn zip(self, other: Self, op: impl Fn(Option<bool>, Option<bool>) -> Option<bool>) -> Self {
-        let mut result = Self(0);
-        for left in self.values() {
-            for right in other.values() {
-                result.0 |= Self::of(op(left, right)).0;
-            }
-        }
-        result
-    }
-
-    fn map(self, op: impl Fn(Option<bool>) -> Option<bool>) -> Self {
-        self.zip(Self::TRUE, |value, _| op(value))
-    }
-}
 
 /// The viewport dimension a range feature tests.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -415,48 +281,9 @@ pub(crate) fn parse_media_prelude(source: &str) -> Option<MediaCondition> {
 // Grammar (Media Queries 4 §3)
 //
 // One function per production; each quotes the production it parses. The
-// helpers below stand for the grammar's combinators: `first_of` is `|`,
+// shared grammar helpers stand for the grammar's combinators: `first_of` is `|`,
 // `optional` is `?`, `zero_or_more` is `*`, and `parens` is `( ... )`.
 // ---------------------------------------------------------------------------
-
-type PResult<'i, T> = Result<T, ParseError<'i, ()>>;
-type Production<'i, T> = fn(&mut Parser<'i, '_>) -> PResult<'i, T>;
-
-/// `A | B | ...`: the first alternative that parses.
-fn first_of<'i, T>(
-    input: &mut Parser<'i, '_>,
-    alternatives: &[Production<'i, T>],
-) -> PResult<'i, T> {
-    let mut error = input.new_custom_error(());
-    for alternative in alternatives {
-        match input.try_parse(|input| alternative(input)) {
-            Ok(value) => return Ok(value),
-            Err(err) => error = err,
-        }
-    }
-    Err(error)
-}
-
-/// `A?`
-fn optional<'i, T>(input: &mut Parser<'i, '_>, production: Production<'i, T>) -> Option<T> {
-    input.try_parse(|input| production(input)).ok()
-}
-
-/// `A*`
-fn zero_or_more<'i, T>(input: &mut Parser<'i, '_>, production: Production<'i, T>) -> Vec<T> {
-    std::iter::from_fn(|| optional(input, production)).collect()
-}
-
-/// `( A )`: a parenthesised block whose contents are exactly `A`.
-fn parens<'i, T>(input: &mut Parser<'i, '_>, production: Production<'i, T>) -> PResult<'i, T> {
-    input.expect_parenthesis_block()?;
-    input.parse_nested_block(production)
-}
-
-/// A keyword, matched ASCII case-insensitively.
-fn keyword<'i>(input: &mut Parser<'i, '_>, name: &'static str) -> PResult<'i, ()> {
-    Ok(input.expect_ident_matching(name)?)
-}
 
 /// `<media-query-list> = <media-query>#`
 ///
