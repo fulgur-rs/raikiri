@@ -210,9 +210,16 @@ pub(crate) fn apply_computed_to_style(
         }
         doc.nodes[idx].has_logical_min_block_size = cv.min_block_size.is_some()
             && matches!(cv.break_inside, raikiri_style::property::BreakInside::Avoid);
+        let is_multicol_container = doc.nodes[idx].multicol.is_some();
         let style = &mut doc.nodes[idx].style;
         bridge_direction(style, cv);
         bridge_display(style, cv);
+        // CSS Multi-column Layout 1, 2: a multi-column container establishes
+        // a new block formatting context, so the margins of its children do
+        // not collapse with its own and it avoids floats, as a flow root does.
+        if is_multicol_container && style.display == Display::Block {
+            style.display = Display::FlowRoot;
+        }
         bridge_position(style, cv, &mut doc.layout_warnings);
         bridge_overflow(style, cv);
         bridge_float(style, cv);

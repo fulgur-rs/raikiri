@@ -1735,3 +1735,31 @@ fn a_counter_snapshot_error_during_build_preserves_its_limit() {
         }
     ));
 }
+
+#[test]
+fn only_white_space_that_white_space_keeps_makes_a_root() {
+    // CSS Text 3, 4.1 and CSS 2.1, 9.4.2: preserved white space forms a line
+    // box, collapsible white space alone does not.
+    let cases = [
+        ("white-space:pre", "\n", true),
+        ("white-space:pre", "  ", true),
+        ("white-space:pre", "", false),
+        ("white-space:pre-wrap", "\t", true),
+        ("white-space:break-spaces", " ", true),
+        ("white-space-collapse:preserve-spaces", " ", true),
+        ("white-space:pre-line", "\n", true),
+        ("white-space:pre-line", " \r ", true),
+        ("white-space:pre-line", "  \t", false),
+        ("white-space-collapse:discard", "\n", false),
+        ("white-space:nowrap", "\n", false),
+        ("", " \n\t\r\u{000c}", false),
+    ];
+    for (css, text, root) in cases {
+        let mut fixture = block_fixture(css, |doc, root| {
+            doc.append_text(root, text);
+        });
+        enable(&mut fixture);
+        assign(&mut fixture);
+        assert_eq!(is_root(&fixture, fixture.root), root, "{css} {text:?}");
+    }
+}

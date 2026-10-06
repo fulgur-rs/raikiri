@@ -10,7 +10,9 @@ use super::root::{IfcBuildMode, IfcRoot, IfcState};
 use super::style;
 use crate::Document;
 use crate::node::NodeFlags;
-use raikiri_style::property::{ColumnCountValue, DisplayValue, PositionValue, WritingMode};
+use raikiri_style::property::{
+    ColumnCountValue, DisplayValue, PositionValue, WhiteSpaceCollapse, WritingMode,
+};
 use raikiri_style::{CascadeResult, ComputedColumnWidth};
 use raikiri_traits::{LayoutError, NodeKind};
 use rayon::prelude::*;
@@ -186,10 +188,7 @@ fn needs_ifc_layout(
         }
         match node.kind() {
             NodeKind::Text => {
-                if node
-                    .text_content()
-                    .is_some_and(|text| text.chars().any(|c| !c.is_ascii_whitespace()))
-                {
+                if text_makes_a_line(doc, cascade, id) {
                     return true;
                 }
             }
@@ -474,6 +473,32 @@ fn is_ruby_multicol_flex_projection(doc: &Document, cascade: &CascadeResult, idx
     }
 
     true
+}
+
+/// Whether the text node `id` puts something on a line: a character other
+/// than white space, or white space its `white-space-collapse` value keeps
+/// (CSS Text 3, 4.1). Collapsible white space alone is removed, and a
+/// whitespace-only run between blocks generates no anonymous block box (CSS
+/// 2.1, 9.2.1.1 and 16.6.1). Preserved white space forms a line box that is
+/// not zero-height (CSS 2.1, 9.4.2): any white space under `preserve`,
+/// `preserve-spaces` and `break-spaces`, and a segment break under
+/// `preserve-breaks`.
+fn text_makes_a_line(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
+    let Some(text) = doc.nodes[id].text_content() else {
+        return false; // cov:ignore: callers pass text nodes, which always hold character data.
+    };
+    if text.chars().any(|c| !is_css_whitespace(c)) {
+        return true;
+    }
+    if text.is_empty() {
+        return false;
+    }
+    match cascade.computed[id].effective_white_space_collapse {
+        WhiteSpaceCollapse::Collapse | WhiteSpaceCollapse::Discard => false,
+        WhiteSpaceCollapse::PreserveBreaks => text.contains(['\n', '\r']),
+        // `preserve`, `preserve-spaces` and `break-spaces`.
+        _ => true,
+    }
 }
 
 fn is_css_whitespace(c: char) -> bool {
