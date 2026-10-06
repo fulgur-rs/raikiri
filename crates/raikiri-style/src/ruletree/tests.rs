@@ -3028,3 +3028,52 @@ fn error_tokens_inside_media_keep_page_rules() {
     assert_eq!(tree.page_rules.len(), 1);
     assert_eq!(tree.media_rules.len(), 1);
 }
+
+#[test]
+fn media_content_edge_cases() {
+    // An unsupported selector is dropped without consuming source order.
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "@media print { div:hover { color: red } p { color: blue } }",
+        Origin::Author,
+    );
+    assert_eq!(tree.media_rules.len(), 1);
+    assert_eq!(tree.media_rules[0].rule.source_order, 0);
+
+    // A nested list that can never match executes nothing, but its siblings do.
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "@media print { @media not all { p { color: red } } div { color: blue } }",
+        Origin::Author,
+    );
+    assert_eq!(tree.media_rules.len(), 1);
+
+    // The statement form is retained but executes nothing.
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet("@media print; p { color: red }", Origin::Author);
+    assert_eq!(tree.opaque_at_rules().len(), 1);
+    assert!(tree.media_rules.is_empty());
+    assert_eq!(tree.style_rules().len(), 1);
+
+    // Unterminated blocks are dropped, as at the top level.
+    for source in [
+        "@media print { p { color: red }",
+        "@media print { p { color: red",
+    ] {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(source, Origin::Author);
+        assert!(tree.media_rules.is_empty(), "{source:?}");
+        assert!(tree.opaque_at_rules().is_empty(), "{source:?}");
+    }
+
+    // Content nested deeper than the bound is not executed.
+    let depth = MAX_OPAQUE_RULE_NESTING_DEPTH + 2;
+    let source = format!(
+        "{}p {{ color: red }}{}",
+        "@media print { ".repeat(depth),
+        " }".repeat(depth)
+    );
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(&source, Origin::Author);
+    assert!(tree.media_rules.is_empty());
+}
