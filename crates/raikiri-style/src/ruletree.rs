@@ -1756,25 +1756,21 @@ fn leading_charset_prelude(source: &str) -> Option<String> {
     None
 }
 
+/// Consume the rest of `input` as raw component values and return their text.
+///
+/// `source` is the string `input` was created from; block-closing checks read
+/// it by byte position. A tokenizer error token or a block that is not closed
+/// by its own delimiter anywhere in the values rejects them. The walk enters
+/// nested blocks directly, so the values are tokenized once.
 fn consume_raw_component_values<'i, 't>(
     input: &mut Parser<'i, 't>,
+    source: &str,
 ) -> Result<String, cssparser::ParseError<'i, ()>> {
     let start = input.position();
-    loop {
-        let token_is_error = match input.next_including_whitespace_and_comments() {
-            Ok(token) => token.is_parse_error(),
-            Err(_) => break,
-        };
-        if token_is_error {
-            return Err(input.new_custom_error(()));
-        }
+    if !parse_component_values(input, source, None, 0) {
+        return Err(input.new_custom_error(()));
     }
-    let raw = input.slice(start..input.position()).to_owned();
-    if css_component_values_are_balanced(&raw) {
-        Ok(raw)
-    } else {
-        Err(input.new_custom_error(()))
-    }
+    Ok(input.slice(start..input.position()).to_owned())
 }
 
 /// Validate one component-value list with cssparser's own tokenization.
@@ -1906,7 +1902,10 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for RawRuleParser<'s, 'b> {
         name: cssparser::CowRcStr<'i>,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::Prelude, cssparser::ParseError<'i, Self::Error>> {
-        Ok((name.to_string(), consume_raw_component_values(input)?))
+        Ok((
+            name.to_string(),
+            consume_raw_component_values(input, self.source)?,
+        ))
     }
 
     fn rule_without_block(
@@ -1930,7 +1929,7 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for RawRuleParser<'s, 'b> {
         _start: &cssparser::ParserState,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::AtRule, cssparser::ParseError<'i, Self::Error>> {
-        let body = consume_raw_component_values(input)?;
+        let body = consume_raw_component_values(input, self.source)?;
         if !nested_block_has_closing_brace(self.source, input) {
             return Err(input.new_custom_error(()));
         }
@@ -1963,7 +1962,7 @@ impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for RawRuleParser<'s, 'b> {
         &mut self,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::Prelude, cssparser::ParseError<'i, Self::Error>> {
-        consume_raw_component_values(input)
+        consume_raw_component_values(input, self.source)
     }
 
     fn parse_block<'t>(
@@ -1972,7 +1971,7 @@ impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for RawRuleParser<'s, 'b> {
         _start: &cssparser::ParserState,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::QualifiedRule, cssparser::ParseError<'i, Self::Error>> {
-        let body = consume_raw_component_values(input)?;
+        let body = consume_raw_component_values(input, self.source)?;
         if !nested_block_has_closing_brace(self.source, input) {
             return Err(input.new_custom_error(()));
         }
@@ -2318,7 +2317,7 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
         // original source through `slice`.
         Ok(ParsedAtRulePrelude::Opaque {
             name: name.to_string(),
-            prelude: consume_raw_component_values(input)?,
+            prelude: consume_raw_component_values(input, self.source)?,
         })
     }
 
@@ -2379,7 +2378,7 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
                 Ok(ParsedRule::Page(selector, body))
             }
             ParsedAtRulePrelude::Namespace { prelude, .. } => {
-                let body = consume_raw_component_values(input)?;
+                let body = consume_raw_component_values(input, self.source)?;
                 if !nested_block_has_closing_brace(self.source, input) {
                     return Err(input.new_custom_error(()));
                 }
@@ -2393,7 +2392,7 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
                 }))
             }
             ParsedAtRulePrelude::Opaque { name, prelude } => {
-                let body = consume_raw_component_values(input)?;
+                let body = consume_raw_component_values(input, self.source)?;
                 if !nested_block_has_closing_brace(self.source, input) {
                     return Err(input.new_custom_error(()));
                 }

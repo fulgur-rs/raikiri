@@ -2907,3 +2907,60 @@ fn registry_replay_keeps_insertion_precedence() {
     assert_ne!(print.get("Ahem"), screen.get("Ahem"));
     assert_eq!(screen.get("Ahem"), tree.font_faces().get("Ahem"));
 }
+
+/// The previous two-pass implementation of `consume_raw_component_values`:
+/// collect the top-level tokens, then re-tokenize the text to check nested
+/// blocks.
+fn two_pass_raw_component_values(source: &str) -> Option<String> {
+    let mut input = ParserInput::new(source);
+    let mut parser = Parser::new(&mut input);
+    let start = parser.position();
+    while let Ok(token) = parser.next_including_whitespace_and_comments() {
+        if token.is_parse_error() {
+            return None;
+        }
+    }
+    let raw = parser.slice(start..parser.position()).to_owned();
+    css_component_values_are_balanced(&raw).then_some(raw)
+}
+
+#[test]
+fn single_pass_raw_component_values_match_the_two_pass_check() {
+    let deep = MAX_OPAQUE_RULE_NESTING_DEPTH + 3;
+    let mut sources: Vec<String> = [
+        "",
+        "  /* c */ a b c ",
+        "x: url(\"bad\n)",
+        "a { b: c }",
+        "a { b: c",
+        "f(a, [b, {c}])",
+        "f(a, [b, {c})",
+        "f(a, [b, {c}]",
+        "p { content: \"oops\n; } q { }",
+        "p { background: url(bad url) }",
+        "url(foo{bar) baz",
+        "a ) b",
+        "a ] b",
+        "a } b",
+        "{ ( }",
+        "( { ) }",
+    ]
+    .iter()
+    .map(|s| (*s).to_owned())
+    .collect();
+    sources.push(format!("{}x{}", "(".repeat(deep), ")".repeat(deep)));
+    sources.push(format!("{}x{}", "(".repeat(deep), ")".repeat(deep - 1)));
+    sources.push(format!("{}\"bad\n{}", "(".repeat(deep), ")".repeat(deep)));
+    sources.push(format!("{}x ]{}", "(".repeat(deep), ")".repeat(deep)));
+    sources.push(format!("{}\"bad\n{}", "[".repeat(3), "]".repeat(3)));
+    let mut accepted = 0;
+    for source in &sources {
+        let mut input = ParserInput::new(source);
+        let mut parser = Parser::new(&mut input);
+        let single = consume_raw_component_values(&mut parser, source).ok();
+        assert_eq!(single, two_pass_raw_component_values(source), "{source:?}");
+        accepted += usize::from(single.is_some());
+    }
+    // The corpus exercises both outcomes.
+    assert!(accepted > 0 && accepted < sources.len(), "{accepted}");
+}
