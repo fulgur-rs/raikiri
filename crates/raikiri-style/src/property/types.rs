@@ -4789,8 +4789,8 @@ pub enum TextEmphasisShape {
 /// Parsed and computed `text-emphasis-style` value.
 ///
 /// The value is inherited and has initial value `none`. Shape/fill components
-/// are retained so computed style can serialize the canonical keyword form;
-/// emphasis painting is out of scope. [`Self::DefaultShape`] is a transient
+/// are retained so computed style can serialize the canonical keyword form.
+/// [`Self::DefaultShape`] is a transient
 /// specified-value marker and is resolved before it reaches computed style.
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -9732,8 +9732,8 @@ pub enum PropertyValue {
     /// Appended to preserve existing variant discriminants.
     WordSpaceTransform(WordSpaceTransform),
     /// `text-emphasis-style` — inherited, initial `none` (CSS Text Decoration 4).
-    /// Shape/fill and string values are preserved as computed data; emphasis
-    /// painting is out of scope. Appended to preserve existing variant tags.
+    /// Shape/fill and string values are preserved as computed data.
+    /// Appended to preserve existing variant tags.
     TextEmphasisStyle(TextEmphasisStyle),
     /// `text-emphasis-color` — inherited, initial `currentColor`.
     /// Appended to preserve existing variant tags.

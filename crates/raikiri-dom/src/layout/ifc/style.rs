@@ -529,10 +529,6 @@ pub(crate) fn inline_style(
 /// empty string and a keyword this engine does not know yet produce no marks.
 /// The engine lays the marks out; the painter draws them.
 fn text_emphasis(cv: &ComputedValues) -> Option<s::TextEmphasis> {
-    let vertical = matches!(
-        cv.cssom_writing_mode,
-        p::WritingMode::VerticalRl | p::WritingMode::VerticalLr
-    );
     let (shape, filled) = match &cv.text_emphasis_style {
         p::TextEmphasisStyle::None => return None,
         p::TextEmphasisStyle::Shape { fill, shape } => {
@@ -546,21 +542,12 @@ fn text_emphasis(cv: &ComputedValues) -> Option<s::TextEmphasis> {
             };
             (shape, *fill == p::TextEmphasisFill::Filled)
         }
-        // A fill without a shape is a circle in horizontal and a sesame in
-        // vertical writing (CSS Text Decoration 3 §3.1).
-        p::TextEmphasisStyle::DefaultShape { fill } => (
-            if vertical {
-                s::TextEmphasisShape::Sesame
-            } else {
-                s::TextEmphasisShape::Circle
-            },
-            *fill == p::TextEmphasisFill::Filled,
-        ),
         // A string mark uses its first character.
         p::TextEmphasisStyle::String(text) => {
             (s::TextEmphasisShape::Custom(text.chars().next()?), true)
         }
-        _ => return None, // cov:ignore: every current style is matched above.
+        // A fill-only value is resolved to a shape before computed style.
+        _ => return None, // cov:ignore: every computed style is matched above.
     };
     let (over, right) = match cv.text_emphasis_position {
         p::TextEmphasisPosition::Position {

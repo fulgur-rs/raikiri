@@ -181,7 +181,7 @@ impl<'a> PositionedLines<'a> {
             let owner = match run.node() {
                 Some(node) => node.0 as usize,
                 None if run.is_ellipsis() => self.root_id,
-                None => continue,
+                None => continue, // cov:ignore: only the ellipsis run has no node.
             };
             // Text inherits `visibility` from its element; hidden and
             // collapsed text is laid out but not painted (CSS 2.1 §11.2).

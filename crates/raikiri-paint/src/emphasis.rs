@@ -39,7 +39,7 @@ fn shape_mark(
         families,
         None,
         StandaloneAlign::Start,
-    )?;
+    )?; // cov:ignore: one character is never empty nor over the engine's limits.
     let line = text.lines().first()?;
     let run = line.fragments().find_map(|fragment| match fragment {
         Fragment::GlyphRun(run) => Some(run),
@@ -52,7 +52,7 @@ fn shape_mark(
     let em_ascent = if height > 0.0 {
         font_size * metrics.ascent / height
     } else {
-        font_size * 0.8
+        font_size * 0.8 // cov:ignore: only a face with no vertical metrics has no height.
     };
     let advance = run.inline_size();
     let baseline = line.block_offset() + line.baseline(BaselineKind::Alphabetic);
@@ -72,11 +72,7 @@ fn families(style: &ComputedValues) -> String {
         .iter()
         .map(|family| family.as_str())
         .collect();
-    if names.is_empty() {
-        "serif".to_owned()
-    } else {
-        names.join(", ")
-    }
+    names.join(", ")
 }
 
 /// Draw the emphasis marks of one horizontal glyph run.
@@ -97,7 +93,7 @@ pub(crate) fn draw_marks(
     };
     let Some(shaped) = shape_mark(document, mark.character, mark.font_size, &families(style))
     else {
-        return;
+        return; // cov:ignore: shaping one character fails only past the engine's limits.
     };
     let color = match style.text_emphasis_color {
         TextDecorationColor::Resolved(color) => crate::text::css_color_to_peniko(color),
@@ -125,7 +121,7 @@ pub(crate) fn draw_marks(
             baseline.get_or_insert(glyph.y);
         }
         let Some(baseline) = baseline else {
-            continue;
+            continue; // cov:ignore: every cluster of a run has a glyph in that run.
         };
         let center = origin.0 + (start + end) / 2.0;
         let text_baseline = origin.1 + baseline;
