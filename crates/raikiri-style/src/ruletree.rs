@@ -19,9 +19,10 @@ use crate::media::{MediaCondition, MediaContext, MediaRule, parse_media_prelude}
 use crate::page::{
     PageBlockBody, PageRule, PageSelector, parse_page_declaration_block, parse_page_prelude,
 };
-use crate::property::{CssColor, PropertyValue, parse_value};
+use crate::property::{CssColor, PropertyValue};
 use crate::rule::{Declaration, StyleRule, parse_declaration_block_with_consumer_properties};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
+use crate::supports::supports_condition;
 use crate::{Atom, PseudoClass, PseudoElem, RaikiriSelectorImpl, RaikiriSelectorParser};
 
 /// Flatten the subset of cascade layers that the rule parser can evaluate.
@@ -477,56 +478,6 @@ fn split_top_level_selector_list(
         result.push(item.to_owned());
     }
     Ok(result)
-}
-
-fn supports_condition(raw: &str) -> bool {
-    let condition = raw.trim();
-    if let Some(rest) = condition.strip_prefix("not ") {
-        return !supports_condition(rest);
-    }
-    if let Some((left, right)) = split_supports_operator(condition, " or ") {
-        return supports_condition(left) || supports_condition(right);
-    }
-    if let Some((left, right)) = split_supports_operator(condition, " and ") {
-        return supports_condition(left) && supports_condition(right);
-    }
-    let condition = condition
-        .strip_prefix('(')
-        .and_then(|value| value.strip_suffix(')'))
-        .map(str::trim)
-        .unwrap_or(condition);
-    let Some((name, value)) = condition.split_once(':') else {
-        return false;
-    };
-    let name = name.trim();
-    let value = value.trim();
-    if name.is_empty() || value.is_empty() {
-        return false;
-    }
-    let mut input = ParserInput::new(value);
-    let mut parser = Parser::new(&mut input);
-    parser
-        .parse_entirely(|input| {
-            parse_value(name, input).ok_or_else(|| input.new_custom_error::<_, ()>(()))
-        })
-        .is_ok()
-}
-
-fn split_supports_operator<'a>(value: &'a str, operator: &str) -> Option<(&'a str, &'a str)> {
-    let mut depth = 0_u32;
-    let mut index = 0;
-    while index + operator.len() <= value.len() {
-        match value.as_bytes()[index] {
-            b'(' => depth = depth.saturating_add(1),
-            b')' => depth = depth.saturating_sub(1),
-            _ => {}
-        }
-        if depth == 0 && value.as_bytes()[index..].starts_with(operator.as_bytes()) {
-            return Some((&value[..index], &value[index + operator.len()..]));
-        }
-        index += 1;
-    }
-    None
 }
 
 /// Advance one byte, or one escape, inside a CSS string opened by
@@ -2751,7 +2702,7 @@ fn parse_custom_highlight_prelude<'i, 't>(
 /// `compound_matches`'s `_ => false` safety net still rejects isolated
 /// `Component::PseudoElement` safely (see the `::before`/`::after` section above
 /// and the docs of `selector_matches_pseudo_element` itself).
-fn is_supported_selector_list(list: &SelectorList<RaikiriSelectorImpl>) -> bool {
+pub(crate) fn is_supported_selector_list(list: &SelectorList<RaikiriSelectorImpl>) -> bool {
     list.slice()
         .iter()
         .all(|selector| is_supported_selector(selector, true))

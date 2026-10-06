@@ -69,6 +69,7 @@ pub use font_face::{
 
 mod condition;
 mod grammar;
+mod supports;
 
 pub mod media;
 pub use media::{MediaContext, MediaType};

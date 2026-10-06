@@ -3142,3 +3142,5 @@ fn step_in_css_string_follows_the_tokenizer() {
     assert_eq!(step("\\\r\n", 0), (3, false));
     assert_eq!(step("'", 0), (1, false));
 }
+
+mod supports_condition_tests;
