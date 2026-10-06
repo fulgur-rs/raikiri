@@ -192,21 +192,13 @@ impl TextRunOmission {
 
 /// What every paragraph of one document shares when its runs are placed.
 struct RunContext {
-    /// The body element and its paint margin, when the document has a body.
-    body: Option<(usize, f32)>,
     /// Nodes placed through the fragment tree of a multicol container.
     fragmented: HashSet<usize>,
 }
 
 impl RunContext {
-    fn new(document: &Document, cascade: &CascadeResult) -> Self {
+    fn new(document: &Document) -> Self {
         Self {
-            body: crate::layout::find_body(document).map(|body| {
-                (
-                    body,
-                    crate::layout::body_paint_margin_left(document, cascade, body),
-                )
-            }),
             fragmented: document
                 .layout_fragments()
                 .iter()
@@ -402,25 +394,7 @@ fn glyph_run<'a>(
     })
 }
 
-/// How far the painter moves `root` right for the body's left margin
-/// ([`crate::layout::body_paint_margin_left`]): the body's own lines, and
-/// the content of its direct text and static, relative and sticky children
-/// ([`crate::layout::body_paint_shift`], which also places fragments).
-fn body_shift(
-    document: &Document,
-    cascade: &CascadeResult,
-    (body, margin): (usize, f32),
-    root: usize,
-) -> f32 {
-    if root == body {
-        margin
-    } else {
-        crate::layout::body_paint_shift(document, cascade, body, margin, root)
-    }
-}
-
-/// Append the runs of `root` that belong to `page`; `body` is the body
-/// element and its paint margin, when the document has a body.
+/// Append the runs of `root` that belong to `page`.
 fn root_runs<'a>(
     document: &'a Document,
     cascade: &'a CascadeResult,
@@ -441,10 +415,7 @@ fn root_runs<'a>(
     let positioned = PositionedLines::new(document, cascade, root.node, None)?;
     // A repeated paragraph sits at the same place on every page; any other
     // is placed in its page's slice of the flow.
-    let shift = context
-        .body
-        .map_or(0.0, |body| body_shift(document, cascade, body, root.node));
-    let x = page.content_box.x + root.x + shift;
+    let x = page.content_box.x + root.x;
     let y = page.content_box.y + root.y - flow_range.map_or(0.0, |(start, _)| start);
     for line in positioned.lines() {
         if let Some((start, end)) = flow_range {
@@ -474,7 +445,7 @@ impl Document {
     ) -> Vec<PositionedGlyphRun<'a>> {
         let mut runs = Vec::new();
         let projection = &self.page_projection;
-        let context = RunContext::new(self, cascade);
+        let context = RunContext::new(self);
         let pages = projection.pages.iter();
         for page in pages.filter(|page| page.page_index == page_index) {
             for root in &projection.text_roots {
@@ -488,7 +459,7 @@ impl Document {
     /// with the reason.
     #[doc(hidden)]
     pub fn omitted_text_run_roots(&self, cascade: &CascadeResult) -> Vec<(NodeId, &'static str)> {
-        let context = RunContext::new(self, cascade);
+        let context = RunContext::new(self);
         self.page_projection
             .text_roots
             .iter()

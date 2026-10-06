@@ -187,23 +187,28 @@ pub fn layout_single_page(
     // Step 2b: resolve `ch` lengths of box properties with the inline
     // engine's fonts before taffy sizes the boxes.
     prepare_ch_box_values_before_taffy(document, cascade);
-    // Establish the foundational multicolumn fragmentainer projection after
-    // text shaping, so direct text can be split by its actual line count.
-    // cov:ignore: exercised by the ignored foundation WPT run; default coverage skips ignored reftests.
-    prepare_multicol_layout(document, cascade, content_width);
-
     // Step 3: <body> lookup
     let body_id = find_body(document).ok_or_else(|| LayoutError::Internal {
         message: "no <body> element found (fragment parse not supported yet)".to_string(),
     })?;
+    let body_insets = BodyInlineInsets::resolve(document, cascade, body_id, content_width);
+
+    // Establish the foundational multicolumn fragmentainer projection after
+    // text shaping, so direct text can be split by its actual line count.
+    // Boxes with an `auto` width chain up to the body take the body's content
+    // width, which its horizontal margins, padding and borders narrow.
+    // cov:ignore: exercised by the ignored foundation WPT run; default coverage skips ignored reftests.
+    prepare_multicol_layout(document, cascade, body_insets.content_width(content_width));
 
     // The minimal UA sheet contributes the usual 8px body margin.  The body
     // is also used as the synthetic page root, so feeding that UA margin into
     // taffy would apply it twice to ordinary element children.  Keep the
-    // computed value for the page cursor/paint walk and remove only the exact
-    // UA-origin sides from the synthetic root style.  The origin metadata is
-    // needed because an authored `margin: 8px` is otherwise indistinguishable
-    // from the UA rule after value computation.
+    // computed value for the page cursor and remove only the exact UA-origin
+    // vertical sides from the synthetic root style.  The origin
+    // metadata is needed because an authored `margin: 8px` is otherwise
+    // indistinguishable from the UA rule after value computation.  The
+    // horizontal margins, UA or authored, become inline padding of the root
+    // after Step 4 (`move_body_inline_margins_into_padding`).
     {
         let used = cascade.computed[body_id].margin;
         let style_margin = &mut document.nodes[body_id].style.margin;
@@ -212,20 +217,15 @@ pub fn layout_single_page(
         if is_ua_default(used.top) && !non_ua.is_some_and(|sides| sides.top) {
             style_margin.top = LengthPercentageAuto::length(0.0);
         }
-        if is_ua_default(used.right) && !non_ua.is_some_and(|sides| sides.right) {
-            style_margin.right = LengthPercentageAuto::length(0.0);
-        }
         if is_ua_default(used.bottom) && !non_ua.is_some_and(|sides| sides.bottom) {
             style_margin.bottom = LengthPercentageAuto::length(0.0);
-        }
-        if is_ua_default(used.left) && !non_ua.is_some_and(|sides| sides.left) {
-            style_margin.left = LengthPercentageAuto::length(0.0);
         }
     }
 
     // Step 4: force body.style.size to the page content box, not the full paper size.
     // Page margins are painted/represented outside this taffy root.
     apply_page_content_box_to_body(document, body_id, page_box, margins, insets);
+    move_body_inline_margins_into_padding(document, body_id, body_insets, content_width);
     // CSS 2.1 §10.3.7 absolute width:auto shrink-to-fit needs no pre-pass:
     // taffy already shrink-wraps direct-body and nested absolute boxes alike.
     // See the §10.3.7 note on the layout helpers for the removed fill override.
@@ -1086,10 +1086,6 @@ pub(crate) fn project_slices(
     }
     nodes.sort_by_key(|node| node.node_id);
 
-    // Content the painter moves right by the body's left margin is placed
-    // there in paint space too.
-    let body_margin = super::find_body(document)
-        .map(|body| (body, super::body_paint_margin_left(document, cascade, body)));
     for source in nodes {
         let kind = match source.node_kind {
             NodeKind::Text => PageFragmentKind::Text,
@@ -1149,9 +1145,6 @@ pub(crate) fn project_slices(
             }
         }
         let fragment_count = placements.len() as u32;
-        let paint_offset_x = body_margin.map_or(0.0, |(body, margin)| {
-            super::body_paint_shift(document, cascade, body, margin, source.node_id.0 as usize)
-        });
         for (fragment_index, (page_slot, y, fragment_height, line_range, box_y)) in
             placements.into_iter().enumerate()
         {
@@ -1167,7 +1160,6 @@ pub(crate) fn project_slices(
                 source.is_repeat,
             )
             .with_page_index(page.page_index)
-            .with_paint_offset_x(paint_offset_x)
             .with_box_extent(box_y, source.height);
             page.items.push(match line_range {
                 Some(range) => item.with_line_range(range),

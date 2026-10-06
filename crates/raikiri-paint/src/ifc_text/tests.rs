@@ -429,8 +429,9 @@ fn ifc_glyph_positions_at_the_default_size_match_to_the_pixel() {
 
 #[test]
 fn a_body_root_takes_the_body_left_margin_like_its_text() {
-    // `<body>` itself is the paragraph root: the walk shifts a body's direct
-    // text by the body's left margin, so the lines must be shifted too.
+    // `<body>` itself is the paragraph root: its lines start inside the
+    // body's left margin, which layout carries as inline padding of the
+    // synthetic body root.
     let build = || {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));

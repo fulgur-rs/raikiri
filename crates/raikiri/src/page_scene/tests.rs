@@ -56,8 +56,17 @@ fn build_page_scene_populates_metadata_from_hello_world() {
     // No @page margin, but the UA sheet keeps `body { margin: 8px }`.
     // The hello-world `<p>` has its top margin zeroed by the quirks-mode
     // collapsing quirk (HTML LS section 15.3.9), so the vertical collapse is
-    // max(0, 8, 0) = 8 and the horizontal offset is the plain 8px sum.
-    assert_eq!(scene.body_offset_pt, (8.0, 8.0));
+    // max(0, 8, 0) = 8. Horizontally layout already places the body's
+    // content inside its 8px left margin, so only `<html>`'s margin (0) is
+    // left for the offset.
+    assert_eq!(scene.body_offset_pt, (0.0, 8.0));
+    // The body's own fragment is its border box, inset by its margins.
+    let body = scene
+        .body_id
+        .and_then(|id| scene.fragments.get(&id))
+        .and_then(|fragments| fragments.first())
+        .expect("body fragment");
+    assert_eq!((body.x, body.width), (8.0, PageBox::A4.width - 16.0));
     // Page metadata reflects A4
     assert_eq!(
         scene.page_metadata.size,
@@ -167,14 +176,14 @@ fn body_margin_horizontal_sum_and_vertical_collapse() {
     for (html, expected_offset, expected_frag, expected_abs) in [
         (
             "<div id=o style='margin:10px; width:10px; height:10px'></div>",
-            (8.0, 0.0),
-            (10.0, 10.0),
+            (0.0, 0.0),
+            (18.0, 10.0),
             (18.0, 10.0),
         ),
         (
             "<div id=b style='width:10px; height:10px'></div>",
-            (8.0, 8.0),
-            (0.0, 0.0),
+            (0.0, 8.0),
+            (8.0, 0.0),
             (8.0, 8.0),
         ),
     ] {
@@ -231,7 +240,7 @@ fn body_margin_lone_5px_collapses_to_8px() {
     let mut dom = uncascaded.dom;
     raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
     let scene = build_page_scene(&dom, &cascade, PageBox::A4);
-    assert_eq!(scene.body_offset_pt, (8.0, 3.0));
+    assert_eq!(scene.body_offset_pt, (0.0, 3.0));
     let idx = (0..dom.node_count())
         .find(|&i| dom.element_attribute(i, "id") == Some("a"))
         .expect("probe resolves");
@@ -240,7 +249,7 @@ fn body_margin_lone_5px_collapses_to_8px() {
         .get(&NodeId::new(idx as u64))
         .and_then(|v| v.first())
         .expect("probe has a fragment");
-    assert_eq!((frag.x, frag.y), (5.0, 5.0));
+    assert_eq!((frag.x, frag.y), (13.0, 5.0));
     assert_eq!(
         (
             frag.x + scene.body_offset_pt.0,

@@ -34,8 +34,9 @@ test font で、`X` が 1em×1em の solid square と定義され、"most other 
 characters" (英字・数字・comma 含む) が同 glyph を共有、space (U+0020) が
 唯一の documented transparent 例外である (Ahem spec
 https://web-platform-tests.org/writing-tests/ahem.html)。実際 PNG は 2 つの
-solid red block (`Hello,` 6-em + `world!` 6-em) が 20px margin offset + space
-1-em gap で並ぶ形。
+solid red block (`Hello,` 6-em + `world!` 6-em) が space 1-em gap で並ぶ形。
+offset は左が UA の `body { margin: 8px }` + `<p>` の 20px margin = 28px、上は
+両者が collapse した 20px。
 注: "hello-world" という fixture name は semantic なもので、実際の visual
 rendering は WPT-style em-box red square 列 (space のみ gap) であり、認識可能な
 letterform ではない。過去の system serif 版とは bitmap が異なる (2026-07-18 に

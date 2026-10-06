@@ -1,102 +1,113 @@
 use super::*;
-/// How far the painter moves the in-flow content of `<body>` right for the
-/// body's left margin, which the synthetic body root does not expose in its
-/// descendants' layout coordinates.
+
+/// Carry the used left and right margins of `<body>` into its layout as
+/// extra inline padding of the synthetic body root.
 ///
-/// An authored left margin is applied as the used length; the UA margin only
-/// when the body holds nothing but direct text and has a canvas background.
-/// The painter adds this to the body's direct text and to its static,
-/// relative and sticky children; fixed and absolute children keep their own
-/// containing-block coordinates.
-#[doc(hidden)]
-pub fn body_paint_margin_left(document: &Document, cascade: &CascadeResult, body_id: usize) -> f32 {
-    let body_has_element_child = document.get_node(body_id).is_some_and(|body| {
-        body.children.iter().any(|&child_id| {
-            document
-                .get_node(child_id)
-                .is_some_and(|child| child.kind() == NodeKind::Element)
-        })
-    });
-    let body_has_canvas_background = {
-        let body = &cascade.computed[body_id];
-        body.background_color.a != 0 || !matches!(body.background_image, BackgroundImage::None)
-    };
-    let body_has_direct_text = document.get_node(body_id).is_some_and(|body| {
-        // An ifc body root hides its text children from layout, so their
-        // heights stay 0; the root's own box stands in for them.
-        (body.is_ifc_root() && body.unrounded_layout.size.height > 0.0)
-            || body.children.iter().any(|&child_id| {
-                document.get_node(child_id).is_some_and(|child| {
-                    child.kind() == NodeKind::Text && child.unrounded_layout.size.height > 0.0
-                })
-            })
-    });
-    let body_has_non_ua_margin = cascade
-        .non_ua_margin_sides
-        .get(body_id)
-        .is_some_and(|sides| sides.left);
-    if body_has_non_ua_margin
-        || (body_has_direct_text && !body_has_element_child && body_has_canvas_background)
-    {
-        if body_has_non_ua_margin {
-            match document
-                .layout_style(body_id)
-                .map(|style| style.margin.left.into_raw())
-            {
-                Some(raw) if raw.tag() == CompactLength::LENGTH_TAG && raw.value().is_finite() => {
-                    raw.value().max(0.0)
-                }
-                _ => 0.0,
-            }
-        } else {
-            match cascade.computed[body_id].margin.left {
-                ComputedLengthPercentageOrAuto::Px(value) if value.is_finite() => value.max(0.0),
-                _ => 0.0,
-            }
-        }
-    } else {
-        0.0
+/// The body is laid out as the taffy root, sized to the page content box so
+/// that it also stands in for the initial containing block: absolutely
+/// positioned children of a static body resolve their offsets and
+/// percentages against it (CSS 2.1 §10.1). Taffy ignores the margins of a
+/// root, so the body's horizontal margins (`body { margin: 8px }` from the UA
+/// sheet, HTML §15.3.3, or an authored value) would otherwise not affect
+/// where its content sits. Horizontal margins never collapse, and the
+/// content edge of a block lies `margin + border + padding` inside its
+/// containing block whichever order the three are summed in, so moving the
+/// margins into the padding places the body's text, in-flow children and the
+/// static position of its out-of-flow children exactly where the margin
+/// would, and shrinks their available inline size by both margins, while the
+/// root keeps spanning the page content width. Run it after
+/// [`apply_page_content_box_to_body`], which gives the root a definite width
+/// equal to the page content width: with `box-sizing: border-box` that is
+/// already the border box, and with `content-box` the width becomes
+/// [`BodyInlineInsets::content_width`], so in both cases the border box is
+/// the page content width, as for the margin box of a block whose width is
+/// `auto`. The moved margins are recorded for
+/// [`Document::body_inline_margins`].
+///
+/// The insets resolve against the page content width `content_width`, the
+/// width of the body's containing block (CSS 2.1 §8.3); an `auto` margin is
+/// 0, as for any block whose width is `auto` (§10.3.3). Negative margins are
+/// clamped to 0 because padding cannot be negative. The vertical margins stay
+/// as they are: the page flow handles them, including margin collapsing.
+///
+/// The body's own box spans the full page content width, so its border and
+/// background are not inset by the margins.
+pub(crate) fn move_body_inline_margins_into_padding(
+    doc: &mut Document,
+    body_id: usize,
+    insets: BodyInlineInsets,
+    content_width: f32,
+) {
+    let style = &mut doc.nodes[body_id].style;
+    let padding_left = insets.padding_left + insets.margin_left;
+    let padding_right = insets.padding_right + insets.margin_right;
+    style.padding.left = LengthPercentage::length(padding_left);
+    style.padding.right = LengthPercentage::length(padding_right);
+    style.margin.left = LengthPercentageAuto::length(0.0);
+    style.margin.right = LengthPercentageAuto::length(0.0);
+    if style.box_sizing == TaffyBoxSizing::ContentBox {
+        style.size.width = Dimension::length(insets.content_width(content_width));
     }
+    doc.body_inline_margins = (insets.margin_left, insets.margin_right);
 }
 
-/// How far the painter moves `node` right for the body's left paint margin
-/// `margin` ([`body_paint_margin_left`]).
-///
-/// The body's direct text and its static, relative and sticky children move,
-/// together with everything inside them. The body's own box does not move,
-/// and fixed and absolute children of the body keep their containing-block
-/// coordinates, as do nodes outside the body.
-pub(crate) fn body_paint_shift(
-    document: &Document,
-    cascade: &CascadeResult,
-    body: usize,
-    margin: f32,
-    node: usize,
-) -> f32 {
-    if margin == 0.0 || node == body {
-        return 0.0;
-    }
-    // The child of the body that `node` lies in.
-    let mut current = node;
-    loop {
-        match document.parent_of(current) {
-            Some(parent) if parent == body => break,
-            Some(parent) => current = parent,
-            None => return 0.0,
+/// Used horizontal margins, padding and borders of `<body>`, resolved against
+/// the page content width (see [`move_body_inline_margins_into_padding`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct BodyInlineInsets {
+    pub(crate) margin_left: f32,
+    pub(crate) margin_right: f32,
+    pub(crate) padding_left: f32,
+    pub(crate) padding_right: f32,
+    /// Left plus right border width.
+    pub(crate) border: f32,
+}
+
+impl BodyInlineInsets {
+    /// Resolve the insets from the body's bridged style, falling back to the
+    /// computed margins for values the style cannot express as a length or
+    /// percentage. `auto` and negative margins are 0, as are negative
+    /// paddings and borders.
+    pub(crate) fn resolve(
+        doc: &Document,
+        cascade: &CascadeResult,
+        body_id: usize,
+        content_width: f32,
+    ) -> Self {
+        let computed = &cascade.computed[body_id];
+        let style = &doc.nodes[body_id].style;
+        let margin = |style_value: LengthPercentageAuto,
+                      computed_value: ComputedLengthPercentageOrAuto| {
+            used_style_length_percentage_auto(style_value, content_width)
+                .or_else(|| used_computed_length_percentage_or_auto(computed_value, content_width))
+                .unwrap_or(0.0)
+                .max(0.0)
+        };
+        let used = |value: LengthPercentage| {
+            used_style_length_percentage(value, content_width)
+                .unwrap_or(0.0)
+                .max(0.0)
+        };
+        Self {
+            margin_left: margin(style.margin.left, computed.margin.left),
+            margin_right: margin(style.margin.right, computed.margin.right),
+            padding_left: used(style.padding.left),
+            padding_right: used(style.padding.right),
+            border: used(style.border.left) + used(style.border.right),
         }
     }
-    let direct_text = document
-        .get_node(current)
-        .is_some_and(|child| child.kind() == NodeKind::Text);
-    let in_flow = cascade.computed.get(current).is_some_and(|cv| {
-        matches!(
-            cv.position,
-            raikiri_style::property::PositionValue::Static
-                | raikiri_style::property::PositionValue::Relative
-                | raikiri_style::property::PositionValue::Sticky
-        )
-    });
-    if direct_text || in_flow { margin } else { 0.0 }
+
+    /// Width of the body's content box when its margin box spans
+    /// `content_width`.
+    pub(crate) fn content_width(self, content_width: f32) -> f32 {
+        (content_width
+            - self.margin_left
+            - self.margin_right
+            - self.padding_left
+            - self.padding_right
+            - self.border)
+            .max(0.0)
+    }
 }
 
 /// Walk the Document arena with DFS and return the arena index of the first `<body>` element.
