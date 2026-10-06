@@ -156,8 +156,8 @@ pub fn build_rule_tree_with_consumer_properties(
 
     // Add the head/body inline styles and fetched head links collected through
     // raikiri-html's template-inert filter during parsing as Author stylesheets.
-    for source in &doc.stylesheet_sources {
-        tree.add_stylesheet(source, Origin::Author);
+    for (index, source) in doc.stylesheet_sources.iter().enumerate() {
+        tree.add_stylesheet_with_media(source, Origin::Author, doc.stylesheet_media_at(index));
     }
 
     tree

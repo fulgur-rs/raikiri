@@ -1031,3 +1031,35 @@ fn div_direction_reflects_dir_attribute_via_ua_css() {
         );
     }
 }
+
+#[test]
+fn style_media_attribute_guards_the_stylesheet() {
+    let html = r#"<html><head>
+        <style media="screen">p { display: inline }</style>
+        <style media="">span { display: block }</style>
+        </head><body><p>Hi</p><span>x</span>
+        <style media="print">div { display: inline }</style><div>y</div>
+        </body></html>"#;
+    let doc = parse_html(html);
+    assert_eq!(
+        doc.stylesheet_media,
+        [
+            Some("screen".to_owned()),
+            Some(String::new()),
+            Some("print".to_owned())
+        ]
+    );
+    let p = find_by_tag(&doc.dom, "p").expect("<p> exists").0 as usize;
+    let span = find_by_tag(&doc.dom, "span").expect("<span> exists").0 as usize;
+    let div = find_by_tag(&doc.dom, "div").expect("<div> exists").0 as usize;
+
+    let print = build_cascaded(&doc);
+    assert_eq!(print.computed[p].display, DisplayValue::Block);
+    assert_eq!(print.computed[span].display, DisplayValue::Block);
+    assert_eq!(print.computed[div].display, DisplayValue::Inline);
+
+    let screen = build_cascaded_with_media_context(&doc, &MediaContext::screen());
+    assert_eq!(screen.computed[p].display, DisplayValue::Inline);
+    assert_eq!(screen.computed[span].display, DisplayValue::Block);
+    assert_eq!(screen.computed[div].display, DisplayValue::Block);
+}

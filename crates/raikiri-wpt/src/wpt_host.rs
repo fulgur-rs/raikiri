@@ -16,7 +16,7 @@ use raikiri_js::runtime::{BoxGeometry, DocumentHost, DomRect, HostError, Positio
 use raikiri_style::property::DisplayValue;
 
 use crate::reftest::{
-    LiveWptSetup, live_wpt_stylesheet_sources_in_subtree, parse_wpt_inner_html_fragment,
+    LiveWptSetup, live_wpt_stylesheets_in_subtree, parse_wpt_inner_html_fragment,
     update_live_wpt_stylesheet_sources,
 };
 
@@ -82,6 +82,8 @@ pub(crate) struct WptDocumentHost {
     computed_styles: Option<Vec<raikiri_style::ComputedValues>>,
     /// `<style>` sources connected at the last flush, in tree order.
     style_sources: Vec<String>,
+    /// The `media` attribute of each entry of `style_sources`.
+    style_media: Vec<Option<String>>,
     /// Descendant content extents per arena index, rebuilt on every `flush`.
     /// Each entry is the union of descendant border-box right/bottom edges,
     /// or negative infinity when no descendant has a fragment. The scroll
@@ -118,7 +120,9 @@ fn expand_live_style_sources(
 impl WptDocumentHost {
     pub(crate) fn new(setup: LiveWptSetup, wpt_root: &Path) -> Self {
         let root = setup.uncascaded.dom.root_index();
-        let raw = live_wpt_stylesheet_sources_in_subtree(&setup.uncascaded.dom, root);
+        let (raw, style_media) = live_wpt_stylesheets_in_subtree(&setup.uncascaded.dom, root)
+            .into_iter()
+            .unzip();
         let style_sources =
             expand_live_style_sources(raw, setup.document_base_url.as_ref(), wpt_root);
         Self {
@@ -129,6 +133,7 @@ impl WptDocumentHost {
             page_scene: None,
             computed_styles: None,
             style_sources,
+            style_media,
             scroll_content_extents: Vec::new(),
             #[cfg(test)]
             flushes: Default::default(),
@@ -210,15 +215,20 @@ impl WptDocumentHost {
     /// sheets follow in tree order.
     fn resync_stylesheets(&mut self) {
         let root = self.setup.uncascaded.dom.root_index();
-        let raw = live_wpt_stylesheet_sources_in_subtree(&self.setup.uncascaded.dom, root);
+        let (raw, media): (Vec<_>, Vec<_>) =
+            live_wpt_stylesheets_in_subtree(&self.setup.uncascaded.dom, root)
+                .into_iter()
+                .unzip();
         let current =
             expand_live_style_sources(raw, self.setup.document_base_url.as_ref(), &self.wpt_root);
-        if current != self.style_sources {
+        if current != self.style_sources || media != self.style_media {
             let previous = std::mem::replace(&mut self.style_sources, current.clone());
+            self.style_media = media.clone();
             update_live_wpt_stylesheet_sources(
                 &mut self.setup,
                 &previous,
                 &current,
+                &media,
                 &self.wpt_root,
             );
         }

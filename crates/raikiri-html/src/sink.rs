@@ -140,10 +140,12 @@ impl TreeSink for RaikiriTreeSink {
         // is_in_document() gate.
         document.mark_in_document_flags();
 
-        let stylesheet_sources = extract_inline_stylesheets(&document);
+        let (stylesheet_sources, stylesheet_media) =
+            extract_inline_stylesheets(&document).into_iter().unzip();
         UncascadedDocument {
             dom: document,
             stylesheet_sources,
+            stylesheet_media,
             warnings,
             quirks_mode,
         }
@@ -538,11 +540,19 @@ fn inline_stylesheet_has_content(doc: &Document, node_id: raikiri_traits::NodeId
     })
 }
 
-fn extract_inline_stylesheets(doc: &Document) -> Vec<String> {
+/// Inline stylesheet text paired with the `<style>` element's `media`
+/// attribute.
+fn extract_inline_stylesheets(doc: &Document) -> Vec<(String, Option<String>)> {
+    let inline = |node_id| {
+        (
+            inline_stylesheet_text(doc, node_id),
+            stylesheet_media_attribute(doc, node_id),
+        )
+    };
     let mut sources = collect_head_stylesheet_sources(doc)
         .into_iter()
         .filter_map(|source| match source {
-            HeadStylesheetSource::Inline { node_id } => Some(inline_stylesheet_text(doc, node_id)),
+            HeadStylesheetSource::Inline { node_id } => Some(inline(node_id)),
             HeadStylesheetSource::External { .. } => None,
         })
         .collect::<Vec<_>>();
@@ -553,9 +563,26 @@ fn extract_inline_stylesheets(doc: &Document) -> Vec<String> {
     sources.extend(
         collect_body_inline_stylesheet_ids(doc)
             .into_iter()
-            .map(|node_id| inline_stylesheet_text(doc, node_id)),
+            .map(inline),
     );
     sources
+}
+
+/// The `media` attribute of a `<style>` or `<link>` element.
+///
+/// HTML Standard §4.2.4 and §4.2.6: the attribute is a media query list that
+/// says which media the stylesheet applies to; when it is omitted the
+/// stylesheet applies to all media. The cascade evaluates it.
+pub(crate) fn stylesheet_media_attribute(
+    doc: &Document,
+    node_id: raikiri_traits::NodeId,
+) -> Option<String> {
+    use raikiri_traits::{Dom, Element, Node};
+
+    doc.node(node_id)?
+        .as_element()?
+        .attr("media")
+        .map(ToOwned::to_owned)
 }
 
 fn collect_body_inline_stylesheet_ids(doc: &Document) -> Vec<raikiri_traits::NodeId> {
@@ -726,8 +753,10 @@ pub(crate) fn collect_external_stylesheet_hrefs(
 /// case-insensitive) and `type` is absent, empty, or `text/css`
 /// (case-insensitive, ignoring MIME parameters).
 /// This implements only the relevant external-resource-link checks from
-/// HTML Standard §4.2.4 (The link element). `media`, `crossorigin`,
-/// `integrity`, and `disabled` remain out of scope (see `collect_external_stylesheet_hrefs`).
+/// HTML Standard §4.2.4 (The link element). `crossorigin`, `integrity`, and
+/// `disabled` remain out of scope (see `collect_external_stylesheet_hrefs`).
+/// `media` does not decide whether the sheet is fetched; it is recorded with
+/// the sheet (see [`stylesheet_media_attribute`]) and evaluated by the cascade.
 ///
 /// An empty `type` attribute (`type=""`) means no type was specified, just
 /// as if the attribute were absent. The gate checks whether a MIME **value**

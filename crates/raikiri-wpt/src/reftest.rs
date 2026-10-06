@@ -1782,7 +1782,7 @@ pub(crate) fn prepare_wpt_live_document(
     let font_loader = WptFontLoader::discover(page_base.as_deref())
         .or_else(|| WptFontLoader::discover(wpt_root.as_deref()));
     let (fonts, _) = wpt_document_fonts(
-        font_face_tree.font_faces(),
+        &font_face_tree.font_faces_for(&media_context),
         font_loader
             .as_ref()
             .map(|loader| loader as &dyn raikiri_dom::FontFaceLoader),
@@ -1862,10 +1862,23 @@ fn live_stylesheet_has_content(document: &raikiri_dom::Document, node_id: usize)
     })
 }
 
+#[cfg(test)]
 pub(crate) fn live_wpt_stylesheet_sources_in_subtree(
     document: &raikiri_dom::Document,
     target: usize,
 ) -> Vec<String> {
+    live_wpt_stylesheets_in_subtree(document, target)
+        .into_iter()
+        .map(|(source, _)| source)
+        .collect()
+}
+
+/// Connected `<style>` text in tree order, each paired with the element's
+/// `media` attribute.
+pub(crate) fn live_wpt_stylesheets_in_subtree(
+    document: &raikiri_dom::Document,
+    target: usize,
+) -> Vec<(String, Option<String>)> {
     let Some(target_node) = document.get_node(target) else {
         return Vec::new();
     };
@@ -1884,7 +1897,8 @@ pub(crate) fn live_wpt_stylesheet_sources_in_subtree(
             if live_stylesheet_has_content(document, node_id) {
                 let source = live_stylesheet_text(document, node_id);
                 if !source.is_empty() {
-                    sources.push(source);
+                    let media = document.element_attribute(node_id, "media");
+                    sources.push((source, media.map(ToOwned::to_owned)));
                 }
             }
             // `<style>` contents are CSS text, not nested HTML elements.
@@ -1899,17 +1913,26 @@ pub(crate) fn update_live_wpt_stylesheet_sources(
     setup: &mut LiveWptSetup,
     previous_sources: &[String],
     current_sources: &[String],
+    current_media: &[Option<String>],
     wpt_root: &Path,
 ) {
-    if previous_sources == current_sources {
-        return;
-    }
     // Preserve parser-loaded `<link>` sheets: they are the author entries that
     // did not come from connected `<style>` elements. Removing the previous
     // inline sheets in multiset order leaves them in their original order.
-    let mut remaining = setup.uncascaded.stylesheet_sources.clone();
+    // Each remaining sheet keeps its `media` attribute, so the two parallel
+    // vectors stay aligned.
+    let mut remaining: Vec<(String, Option<String>)> = setup
+        .uncascaded
+        .stylesheet_sources
+        .iter()
+        .enumerate()
+        .map(|(index, source)| {
+            let media = setup.uncascaded.stylesheet_media_at(index);
+            (source.clone(), media.map(ToOwned::to_owned))
+        })
+        .collect();
     for previous in previous_sources {
-        if let Some(index) = remaining.iter().position(|source| source == previous) {
+        if let Some(index) = remaining.iter().position(|(source, _)| source == previous) {
             remaining.remove(index);
         }
     }
@@ -1917,19 +1940,27 @@ pub(crate) fn update_live_wpt_stylesheet_sources(
     // at the end, so a script-connected `<style>` preceding an existing sheet
     // never matched document order. Rebuilding from the current tree order
     // fixes that; link sheets stay untouched at the front.
-    let mut stylesheet_sources = remaining;
-    stylesheet_sources.extend(current_sources.iter().cloned());
-    if setup.uncascaded.stylesheet_sources == stylesheet_sources {
+    remaining.extend(
+        current_sources
+            .iter()
+            .enumerate()
+            .map(|(index, source)| (source.clone(), current_media.get(index).cloned().flatten())),
+    );
+    let (stylesheet_sources, stylesheet_media): (Vec<_>, Vec<_>) = remaining.into_iter().unzip();
+    if setup.uncascaded.stylesheet_sources == stylesheet_sources
+        && setup.uncascaded.stylesheet_media == stylesheet_media
+    {
         return;
     }
     setup.uncascaded.stylesheet_sources = stylesheet_sources;
+    setup.uncascaded.stylesheet_media = stylesheet_media;
     setup.font_face_tree = raikiri::build_rule_tree(&setup.uncascaded);
     let font_loader = WptFontLoader::discover(setup.page_resource_base.as_deref())
         .or_else(|| WptFontLoader::discover(Some(wpt_root)));
     // The installed fonts stand in when the WPT fonts are missing, so this
     // cannot fail.
     if let Ok((fonts, _)) = wpt_document_fonts(
-        setup.font_face_tree.font_faces(),
+        &setup.font_face_tree.font_faces_for(&setup.media_context),
         font_loader
             .as_ref()
             .map(|loader| loader as &dyn raikiri_dom::FontFaceLoader),
@@ -2166,7 +2197,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
     // the WPT fonts, under their authored family names.
     let font_face_tree = raikiri::build_rule_tree(&uncascaded);
     let (fonts, bundled_only) = wpt_document_fonts(
-        font_face_tree.font_faces(),
+        &font_face_tree.font_faces_for(&media_context),
         resources.font_loader,
         resources.require_inline_fonts,
     )?;
