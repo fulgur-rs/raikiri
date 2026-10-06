@@ -671,11 +671,24 @@ fn same_url_concurrent_fetches_share_one_provider_request() {
     );
 }
 
+/// A fresh process budget with the production limits. Tests that hold or
+/// inspect decoder slots use their own budget: the process-wide one is shared
+/// by every test running in parallel in this binary, so another test's decode
+/// could otherwise hold a slot these tests expect to be free.
+fn isolated_process_budget() -> Arc<ProcessImageBudget> {
+    Arc::new(ProcessImageBudget::new(
+        PROCESS_MAX_RETAINED_DECODED_BYTES,
+        PROCESS_MAX_CONCURRENT_IMAGE_DECODES,
+    ))
+}
+
 #[test]
 fn unrelated_urls_proceed_without_global_serialization() {
     let bytes = png_bytes(1, 1);
     let provider = CountingPngProvider::new(bytes);
-    let resources = RenderResources::new().network_provider(&provider);
+    let resources = RenderResources::new()
+        .network_provider(&provider)
+        .with_test_process_budget(isolated_process_budget());
     let held: Vec<_> = (0..3)
         .map(|_| resources.process_budget.try_acquire().expect("slot free"))
         .collect();
@@ -912,7 +925,8 @@ fn decode_timeout_zero_discards_and_reports_policy_timeout() {
     let policy = ZeroDecodeTimeoutPolicy;
     let resources = RenderResources::new()
         .network_provider(&provider)
-        .network_policy(&policy);
+        .network_policy(&policy)
+        .with_test_process_budget(isolated_process_budget());
     let url = Url::parse("https://images.test/timeout.png").unwrap();
     let warnings = Arc::new(Mutex::new(Vec::new()));
     resources.fetch_background_image(url.clone(), &warnings, None);
@@ -1126,7 +1140,9 @@ fn abort_during_fetch_reports_abort_without_caching() {
 fn abort_during_decode_wait_reports_abort() {
     let bytes = png_bytes(1, 1);
     let provider = CountingPngProvider::with_delay(bytes, Duration::from_millis(50));
-    let resources = RenderResources::new().network_provider(&provider);
+    let resources = RenderResources::new()
+        .network_provider(&provider)
+        .with_test_process_budget(isolated_process_budget());
     let held = resources.process_budget.try_acquire().expect("slot free");
     let held2 = resources.process_budget.try_acquire().expect("slot free");
     let held3 = resources.process_budget.try_acquire().expect("slot free");
