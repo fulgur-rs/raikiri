@@ -13,8 +13,10 @@ use std::cell::OnceCell;
 use std::collections::HashMap;
 
 use crate::consumer::ConsumerPropertyRegistration;
-use crate::counter_style::{CounterStyleRegistry, CounterStyleRule, parse_counter_style_rules};
-use crate::font_face::{FontFaceRegistry, FontFaceRule, parse_font_face_rules};
+use crate::counter_style::{
+    CounterStyleRegistry, CounterStyleRule, parse_counter_style_rule, parse_counter_style_rule_name,
+};
+use crate::font_face::{FontFaceRegistry, FontFaceRule, parse_font_face_rule};
 use crate::media::{MediaCondition, MediaContext, MediaRule, parse_media_prelude};
 use crate::page::{
     PageBlockBody, PageRule, PageSelector, parse_page_declaration_block, parse_page_prelude,
@@ -24,47 +26,6 @@ use crate::rule::{Declaration, StyleRule, parse_declaration_block_with_consumer_
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
 use crate::supports::supports_condition;
 use crate::{Atom, PseudoClass, PseudoElem, RaikiriSelectorImpl, RaikiriSelectorParser};
-
-/// Expose supported blocks to the standalone descriptor collectors.
-///
-/// Executable style and page rules are parsed directly by the group-rule parser.
-/// The font and counter collectors still require their rules at the top level.
-fn expand_supports(source: &str, consumer_properties: &[ConsumerPropertyRegistration]) -> String {
-    let namespaces = SupportsContext::new(source, consumer_properties);
-    expand_supports_with_context(source, &namespaces)
-}
-
-fn expand_supports_with_context(source: &str, namespaces: &SupportsContext<'_>) -> String {
-    let mut output = String::with_capacity(source.len());
-    let mut plain_start = 0;
-    let mut cursor = 0;
-    while let Some(start) = find_top_level_at_rule(source, cursor, "supports") {
-        let Some((delimiter, delimiter_index)) = find_layer_delimiter(source, start + 9) else {
-            break;
-        };
-        if delimiter != b'{' {
-            break;
-        }
-        let Some(close) = matching_brace(source, delimiter_index) else {
-            break;
-        };
-        output.push_str(&source[plain_start..start]);
-        let condition = &source[start + 9..delimiter_index];
-        let body = &source[delimiter_index + 1..close];
-        if supports_condition(condition, namespaces) && !body.trim_start().starts_with('@') {
-            // Keep the opaque record for inspection, and prepend its qualified
-            // rules as ordinary stylesheet input for the cascade.
-            output.push_str(&expand_supports_with_context(body, namespaces));
-            output.push_str(&source[start..=close]);
-        } else {
-            output.push_str(&source[start..=close]);
-        }
-        cursor = close + 1;
-        plain_start = cursor;
-    }
-    output.push_str(&source[plain_start..]);
-    output
-}
 
 /// Expand qualified CSS nesting into the flat selector rules understood by the
 /// rule tree. The parser intentionally keeps this pass source-based: it handles
@@ -500,62 +461,6 @@ fn step_in_css_string(bytes: &[u8], index: usize, delimiter: u8) -> (usize, bool
     }
 }
 
-fn find_top_level_at_rule(source: &str, from: usize, name: &str) -> Option<usize> {
-    let bytes = source.as_bytes();
-    let mut index = from;
-    let mut depth = 0_u32;
-    let mut quote = None;
-    let mut comment = false;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if comment {
-            if byte == b'*' && bytes.get(index + 1) == Some(&b'/') {
-                comment = false;
-                index += 2;
-            } else {
-                index += 1;
-            }
-            continue;
-        }
-        if let Some(delimiter) = quote {
-            let (next, ended) = step_in_css_string(bytes, index, delimiter);
-            index = next;
-            if ended {
-                quote = None;
-            }
-            continue;
-        }
-        if byte == b'/' && bytes.get(index + 1) == Some(&b'*') {
-            comment = true;
-            index += 2;
-            continue;
-        }
-        if byte == b'\'' || byte == b'"' {
-            quote = Some(byte);
-            index += 1;
-            continue;
-        }
-        match byte {
-            b'{' => depth = depth.saturating_add(1),
-            b'}' => depth = depth.saturating_sub(1),
-            b'@' if depth == 0
-                && bytes[index + 1..].len() >= name.len()
-                && bytes[index + 1..]
-                    .get(..name.len())
-                    .is_some_and(|candidate| candidate.eq_ignore_ascii_case(name.as_bytes()))
-                && bytes
-                    .get(index + 1 + name.len())
-                    .is_none_or(|next| !next.is_ascii_alphanumeric() && *next != b'-') =>
-            {
-                return Some(index);
-            }
-            _ => {}
-        }
-        index += 1;
-    }
-    None
-}
-
 struct LayerSource {
     position: usize,
     name: String,
@@ -664,7 +569,7 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for SupportedLayerParser<'_, '_> {
 
 fn expand_cascade_layers(
     source: &str,
-    supports_context: Option<&SupportsContext<'_>>,
+    supports_context: &SupportsContext<'_>,
 ) -> Vec<(u32, String)> {
     let mut cursor = 0;
     let mut plain_start = 0;
@@ -719,12 +624,12 @@ fn expand_cascade_layers(
         }
     }
 
-    if nested_layers && let Some(context) = supports_context {
+    if nested_layers {
         let mut input = ParserInput::new(source);
         let mut input = Parser::new(&mut input);
         let mut parser = SupportedLayerParser {
             source,
-            context,
+            context: supports_context,
             inside_supports: false,
             depth: 0,
         };
@@ -1119,23 +1024,16 @@ pub struct RuleTree {
     pub(crate) counter_styles: CounterStyleRegistry,
     /// Registry mapping `@font-face` family names to rules.
     ///
-    /// Each call to [`RuleTree::add_stylesheet`], regardless of origin, separately
-    /// runs [`crate::font_face::parse_font_face_rules`] over the same text again,
-    /// then passes each resulting [`crate::font_face::FontFaceRule`]
-    /// with the call's `origin` to
-    /// [`FontFaceRegistry::insert_with_origin`]. The registry itself tracks origins
-    /// and resolves same-name rule precedence (see the resolution table in the
-    /// [`FontFaceRegistry`] type docs): it directly implements standard cascade
-    /// precedence (origin first, then source order within an origin) by comparing
-    /// ranks based on [`crate::cascade::cascade_rank`].
-    /// The caller (`add_stylesheet`) need not filter by origin.
-    /// The registry performs that resolution directly.
-    ///
-    /// This intentionally uses a separate pass from the `style_rules` parser (see
-    /// "RuleTree integration" in the [`crate::font_face`] module docs; the same design as [`crate::counter_style`]).
+    /// Stylesheet and conditional group parsing passes each valid
+    /// [`crate::font_face::FontFaceRule`] with its origin to
+    /// [`FontFaceRegistry::insert_with_origin`]. The registry resolves same-name
+    /// precedence by origin, then source order, using
+    /// [`crate::cascade::cascade_rank`].
+    /// Only rules without a media condition populate this view. Use
+    /// [`RuleTree::font_faces_for`] to include matching conditional rules.
     pub(crate) font_faces: FontFaceRegistry,
     /// Every `@counter-style` and `@font-face` registration in insertion order,
-    /// including those from stylesheets with a media condition, so the
+    /// including those from stylesheets and groups with a media condition, so the
     /// registries can be rebuilt for one media context.
     counter_style_log: Vec<Registration<CounterStyleRule>>,
     font_face_log: Vec<Registration<FontFaceRule>>,
@@ -1250,8 +1148,8 @@ impl RuleTree {
     ///
     /// Unlike [`RuleTree::font_faces`], which holds only rules from
     /// stylesheets without a media condition, this also includes rules from
-    /// stylesheets added through [`RuleTree::add_stylesheet_with_media`] whose
-    /// media query list matches `context`.
+    /// stylesheets added through [`RuleTree::add_stylesheet_with_media`] and
+    /// rules nested in `@media` whose combined query lists match `context`.
     pub fn font_faces_for(&self, context: &MediaContext) -> FontFaceRegistry {
         replay(
             &self.font_face_log,
@@ -1352,10 +1250,11 @@ impl RuleTree {
     ///   are not applied by the cascade. Supported `@supports` descendants
     ///   populate the executable views at their source position, and `@media`
     ///   descendants carry the intersected conditions of their containing groups.
-    /// - For every `@counter-style` at-rule, regardless of `origin`,
-    ///   [`crate::counter_style::parse_counter_style_rules`] independently parses
-    ///   the same `source` a second time, then passes each resulting rule and
-    ///   the call's `origin` to [`CounterStyleRegistry::insert_with_origin`].
+    /// - Valid `@font-face` and `@counter-style` rules are collected while
+    ///   parsing top-level and conditional groups. Their media conditions
+    ///   are retained for [`RuleTree::font_faces_for`] and
+    ///   [`RuleTree::counter_styles_for`]. Each resulting counter rule and
+    ///   the call's `origin` are passed to [`CounterStyleRegistry::insert_with_origin`].
     ///
     ///   CSS Counter Styles L3 §3 says same-name `@counter-style` winners are chosen
     ///   "according to standard cascade rules" (origin first; UA always loses to
@@ -1411,12 +1310,8 @@ impl RuleTree {
         };
         let consumer_properties = self.consumer_properties.clone();
         let supports_context = SupportsContext::new(&source, &consumer_properties);
-        for (layer_order, chunk) in expand_cascade_layers(&source, Some(&supports_context)) {
+        for (layer_order, chunk) in expand_cascade_layers(&source, &supports_context) {
             self.add_stylesheet_chunk(&chunk, origin, layer_order, condition, &supports_context);
-        }
-        let registration_source = expand_supports(&source, &self.consumer_properties);
-        for (_, chunk) in expand_cascade_layers(&registration_source, None) {
-            self.add_descriptor_registrations(&chunk, origin, condition);
         }
     }
 
@@ -1441,6 +1336,12 @@ impl RuleTree {
         let mut style_order = self.next_style_order;
         let mut page_order = self.page_rules.len() as u32;
         let mut rule_order = self.rules.len() as u32;
+        let mut registrations = DescriptorSink {
+            font_faces: &mut self.font_faces,
+            counter_styles: &mut self.counter_styles,
+            font_face_log: &mut self.font_face_log,
+            counter_style_log: &mut self.counter_style_log,
+        };
         if let Some(prelude) = leading_charset_prelude(source) {
             let index = self.opaque_at_rules.len();
             self.opaque_at_rules.push(AtRuleRecord {
@@ -1540,6 +1441,7 @@ impl RuleTree {
                         page_order: &mut page_order,
                         layer_order,
                         origin,
+                        registrations: &mut registrations,
                     };
                     add_group(local_condition, items, condition, false, &mut sink);
                     push_at_rule(
@@ -1559,32 +1461,73 @@ impl RuleTree {
                         &mut rule_order,
                     );
                 }
+                ParsedRule::Descriptor { record, rule } => {
+                    if let Some(rule) = rule {
+                        registrations.register(*rule, origin, condition);
+                    }
+                    if let Some(record) = record {
+                        push_at_rule(
+                            &mut self.opaque_at_rules,
+                            &mut self.rules,
+                            record,
+                            origin,
+                            &mut rule_order,
+                        );
+                    }
+                }
             }
         }
         self.next_style_order = style_order;
     }
+}
 
-    fn add_descriptor_registrations(
+struct DescriptorSink<'a> {
+    font_faces: &'a mut FontFaceRegistry,
+    counter_styles: &'a mut CounterStyleRegistry,
+    font_face_log: &'a mut Vec<Registration<FontFaceRule>>,
+    counter_style_log: &'a mut Vec<Registration<CounterStyleRule>>,
+}
+
+impl DescriptorSink<'_> {
+    fn register(
         &mut self,
-        source: &str,
+        rule: DescriptorRule,
         origin: Origin,
         condition: Option<&MediaCondition>,
     ) {
-        for rule in parse_counter_style_rules(source) {
-            if condition.is_none() {
-                self.counter_styles.insert_with_origin(rule.clone(), origin);
-            }
-            self.counter_style_log
-                .push(Registration::new(rule, origin, condition));
-        }
-        for rule in parse_font_face_rules(source) {
-            if condition.is_none() {
-                self.font_faces.insert_with_origin(rule.clone(), origin);
-            }
-            self.font_face_log
-                .push(Registration::new(rule, origin, condition));
+        match rule {
+            DescriptorRule::FontFace(rule) => register_rule(
+                rule,
+                origin,
+                condition,
+                self.font_faces,
+                self.font_face_log,
+                FontFaceRegistry::insert_with_origin,
+            ),
+            DescriptorRule::CounterStyle(rule) => register_rule(
+                rule,
+                origin,
+                condition,
+                self.counter_styles,
+                self.counter_style_log,
+                CounterStyleRegistry::insert_with_origin,
+            ),
         }
     }
+}
+
+fn register_rule<R: Clone, Registry>(
+    rule: R,
+    origin: Origin,
+    condition: Option<&MediaCondition>,
+    registry: &mut Registry,
+    log: &mut Vec<Registration<R>>,
+    insert: fn(&mut Registry, R, Origin),
+) {
+    if condition.is_none() {
+        insert(registry, rule.clone(), origin);
+    }
+    log.push(Registration::new(rule, origin, condition));
 }
 
 /// One registry insertion, kept so a registry can be rebuilt for a media
@@ -2194,11 +2137,50 @@ enum GroupItem {
     },
     Page(PageSelector, PageBlockBody),
     Group(GroupCondition, Vec<GroupItem>),
+    Descriptor(Box<DescriptorRule>),
 }
 
 enum GroupItemPrelude {
     Group(GroupCondition),
     Page(PageSelector),
+    Descriptor(DescriptorPrelude),
+}
+
+enum DescriptorPrelude {
+    FontFace,
+    CounterStyle(smol_str::SmolStr),
+}
+
+enum DescriptorRule {
+    FontFace(FontFaceRule),
+    CounterStyle(CounterStyleRule),
+}
+
+fn parse_descriptor_prelude<'i>(
+    name: &str,
+    input: &mut Parser<'i, '_>,
+) -> Result<Option<DescriptorPrelude>, cssparser::ParseError<'i, ()>> {
+    if name.eq_ignore_ascii_case("font-face") {
+        input.expect_exhausted()?;
+        Ok(Some(DescriptorPrelude::FontFace))
+    } else if name.eq_ignore_ascii_case("counter-style") {
+        parse_counter_style_rule_name(input).map(|name| Some(DescriptorPrelude::CounterStyle(name)))
+    } else {
+        Ok(None)
+    }
+}
+
+fn parse_descriptor_block(
+    prelude: DescriptorPrelude,
+    input: &mut Parser<'_, '_>,
+) -> Option<Box<DescriptorRule>> {
+    match prelude {
+        DescriptorPrelude::FontFace => parse_font_face_rule(input).map(DescriptorRule::FontFace),
+        DescriptorPrelude::CounterStyle(name) => {
+            parse_counter_style_rule(name, input).map(DescriptorRule::CounterStyle)
+        }
+    }
+    .map(Box::new)
 }
 
 /// Parse the conditional preludes shared by top-level and nested groups.
@@ -2264,6 +2246,9 @@ impl<'i> cssparser::AtRuleParser<'i> for GroupRuleParser<'_, '_> {
         if name.eq_ignore_ascii_case("page") {
             return parse_page_prelude(input).map(GroupItemPrelude::Page);
         }
+        if let Some(prelude) = parse_descriptor_prelude(&name, input)? {
+            return Ok(GroupItemPrelude::Descriptor(prelude));
+        }
         Err(input.new_custom_error(()))
     }
 
@@ -2291,6 +2276,9 @@ impl<'i> cssparser::AtRuleParser<'i> for GroupRuleParser<'_, '_> {
             GroupItemPrelude::Page(selector) => {
                 GroupItem::Page(selector, parse_page_declaration_block(input))
             }
+            GroupItemPrelude::Descriptor(prelude) => GroupItem::Descriptor(
+                parse_descriptor_block(prelude, input).ok_or_else(|| input.new_custom_error(()))?,
+            ),
         };
         if !nested_block_has_closing_brace(self.source, input) {
             return Err(input.new_custom_error(()));
@@ -2366,7 +2354,7 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for GroupRuleParser<'_, '_> {
 }
 
 /// Output views and shared ordering counters for executable group content.
-struct GroupSink<'a> {
+struct GroupSink<'a, 'r> {
     style_rules: &'a mut Vec<StyleRule>,
     media_rules: &'a mut Vec<MediaRule>,
     custom_highlight_styles: &'a mut HashMap<String, CssColor>,
@@ -2377,6 +2365,7 @@ struct GroupSink<'a> {
     page_order: &'a mut u32,
     layer_order: u32,
     origin: Origin,
+    registrations: &'a mut DescriptorSink<'r>,
 }
 
 fn add_group(
@@ -2384,7 +2373,7 @@ fn add_group(
     items: Vec<GroupItem>,
     condition: Option<&MediaCondition>,
     in_media: bool,
-    sink: &mut GroupSink<'_>,
+    sink: &mut GroupSink<'_, '_>,
 ) {
     match local {
         GroupCondition::Supports(true) => add_group_items(items, condition, in_media, sink),
@@ -2406,7 +2395,7 @@ fn add_group_items(
     items: Vec<GroupItem>,
     condition: Option<&MediaCondition>,
     in_media: bool,
-    sink: &mut GroupSink<'_>,
+    sink: &mut GroupSink<'_, '_>,
 ) {
     for item in items {
         match item {
@@ -2442,6 +2431,9 @@ fn add_group_items(
                 }
             }
             GroupItem::Group(local, items) => add_group(local, items, condition, in_media, sink),
+            GroupItem::Descriptor(rule) => {
+                sink.registrations.register(*rule, sink.origin, condition)
+            }
             GroupItem::Page(selector, body) => {
                 let PageBlockBody {
                     declarations,
@@ -2499,6 +2491,11 @@ enum ParsedAtRulePrelude {
         prelude: String,
         condition: GroupCondition,
     },
+    Descriptor {
+        name: String,
+        prelude: String,
+        descriptor: DescriptorPrelude,
+    },
 }
 
 /// Top-level parsed rule shape emitted by [`StyleRuleParser`].
@@ -2516,6 +2513,10 @@ enum ParsedRule {
     OpaqueAtRule(AtRuleRecord),
     /// A conditional group: its inspection record, condition, and executable content.
     Group(AtRuleRecord, GroupCondition, Vec<GroupItem>),
+    Descriptor {
+        record: Option<AtRuleRecord>,
+        rule: Option<Box<DescriptorRule>>,
+    },
 }
 
 enum QualifiedPrelude {
@@ -2775,6 +2776,17 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
                 condition,
             });
         }
+        let start = input.position();
+        if let Ok(Some(descriptor)) =
+            input.try_parse(|input| parse_descriptor_prelude(&name, input))
+        {
+            consume_raw_component_values(input, self.source)?;
+            return Ok(ParsedAtRulePrelude::Descriptor {
+                name: name.to_string(),
+                prelude: input.slice_from(start).to_owned(),
+                descriptor,
+            });
+        }
         Ok(ParsedAtRulePrelude::Opaque {
             name: name.to_string(),
             prelude: consume_raw_component_values(input, self.source)?,
@@ -2805,7 +2817,8 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
                 }))
             }
             ParsedAtRulePrelude::Opaque { name, prelude }
-            | ParsedAtRulePrelude::Group { name, prelude, .. } => {
+            | ParsedAtRulePrelude::Group { name, prelude, .. }
+            | ParsedAtRulePrelude::Descriptor { name, prelude, .. } => {
                 Ok(ParsedRule::OpaqueAtRule(AtRuleRecord {
                     name,
                     prelude,
@@ -2900,6 +2913,33 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
                     source_order: 0,
                     origin: Origin::Author,
                 }))
+            }
+            ParsedAtRulePrelude::Descriptor {
+                name,
+                prelude,
+                descriptor,
+            } => {
+                // Descriptor recovery can still produce a valid registration
+                // when malformed raw values or EOF prevent an inspection record.
+                let start = input.position();
+                let rule = parse_descriptor_block(descriptor, input);
+                let body = input.slice_from(start).to_owned();
+                let record = if nested_block_has_closing_brace(self.source, input)
+                    && css_component_values_are_balanced(&body)
+                {
+                    let children = parse_nested_rule_nodes(&body, self.opaque_body_budget);
+                    Some(AtRuleRecord {
+                        name,
+                        prelude,
+                        body: AtRuleBody::Block(body),
+                        children,
+                        source_order: 0,
+                        origin: Origin::Author,
+                    })
+                } else {
+                    None
+                };
+                Ok(ParsedRule::Descriptor { record, rule })
             }
         }
     }
