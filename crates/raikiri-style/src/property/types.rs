@@ -6419,6 +6419,30 @@ css_keywords!(TableLayoutValue {
     Fixed => "fixed",
 });
 
+/// The value of the `text-overflow` property.
+///
+/// CSS Overflow 3 §5.1 "Inline Overflow Ellipsis: the text-overflow property"
+/// <https://www.w3.org/TR/css-overflow-3/#text-overflow>.
+/// Value: `clip | ellipsis`; Initial: `clip`; Applies to: block containers;
+/// Inherited: **no**; Computed value: "as specified".
+///
+/// Only the one-value keyword form is accepted. The `<string>` and two-value
+/// forms (CSS Overflow 4) are rejected at parse time, so such a declaration
+/// does not apply.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextOverflowValue {
+    /// `clip` — spec initial value: overflowing inline content is clipped.
+    Clip,
+    /// `ellipsis` — overflowing inline content is replaced by an ellipsis.
+    Ellipsis,
+}
+
+css_keywords!(TextOverflowValue {
+    Clip => "clip",
+    Ellipsis => "ellipsis",
+});
+
 /// The value of the `border-collapse` property.
 ///
 /// CSS Tables 3 §6 "Borders"
@@ -9764,6 +9788,11 @@ pub enum PropertyValue {
     /// [`Self::InlineSize`] onto the perpendicular physical axis.
     /// Appended to preserve existing variant discriminants.
     BlockSize(LengthOrAuto),
+    /// `text-overflow: clip | ellipsis` — **non-inherited**, initial:
+    /// [`TextOverflowValue::Clip`] (CSS Overflow 3 §5.1; see
+    /// [`TextOverflowValue`]). Computed value: the specified keyword.
+    /// Appended to preserve existing variant discriminants.
+    TextOverflow(TextOverflowValue),
 }
 
 /// Property key: the discriminant used to select a winner for each property in
@@ -10336,6 +10365,8 @@ pub enum PropertyKey {
     // Logical preferred sizes; appended to preserve existing key slots.
     InlineSize,
     BlockSize,
+    // CSS Overflow 3 text-overflow; appended to preserve existing key slots.
+    TextOverflow,
 }
 
 impl PropertyValue {
@@ -10607,6 +10638,7 @@ impl PropertyValue {
             PropertyValue::FontFeatureSettings(_) => PropertyKey::FontFeatureSettings,
             PropertyValue::InlineSize(_) => PropertyKey::InlineSize,
             PropertyValue::BlockSize(_) => PropertyKey::BlockSize,
+            PropertyValue::TextOverflow(_) => PropertyKey::TextOverflow,
         }
     }
 }
@@ -11655,6 +11687,7 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "height" => PropertyKey::Height,
         "inline-size" => PropertyKey::InlineSize,
         "block-size" => PropertyKey::BlockSize,
+        "text-overflow" => PropertyKey::TextOverflow,
         "max-width" => PropertyKey::MaxWidth,
         "max-height" => PropertyKey::MaxHeight,
         "min-width" => PropertyKey::MinWidth,

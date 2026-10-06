@@ -954,6 +954,9 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // follows sibling `parse_float`; the caller's `expect_exhausted`
         // (`rule.rs::DeclParser`) drops any remaining tokens.
         "table-layout" => parse_table_layout(input).map(PropertyValue::TableLayout),
+        // CSS Overflow 3 §5.1 text-overflow. grammar: `clip | ellipsis`
+        // (initial `clip`, not inherited).
+        "text-overflow" => parse_text_overflow(input).map(PropertyValue::TextOverflow),
         // CSS Tables 3 §6 border-collapse. grammar: `collapse | separate`
         // <https://www.w3.org/TR/css-tables-3/#border-collapse-property>
         // (initial `separate`, inherited). Uses the same matching rules

@@ -307,6 +307,22 @@ pub(crate) fn draw_ifc_lines(
                 glyph_transform,
                 draw.glyphs.clone().into_iter(),
             );
+            // Emphasis marks sit over or under their characters; vertical
+            // runs need rotated placement, which is not drawn yet.
+            if !vertical {
+                crate::emphasis::draw_marks(
+                    scene,
+                    document,
+                    &draw.run,
+                    &draw.glyphs,
+                    (
+                        position.x + draw.offset.0,
+                        position.y + position.shift_y + draw.offset.1,
+                    ),
+                    owner_style,
+                    draw.color,
+                );
+            }
         }
         if !vertical {
             draw_decorations(scene, &runs, DecorationPhase::AfterGlyphs);

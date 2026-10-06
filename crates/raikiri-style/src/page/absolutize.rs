@@ -600,6 +600,7 @@ pub(super) fn absolutize_in_page_context(
         // `filter`'s computed value is as specified: embedded lengths stay untouched.
         | PropertyValue::Filter(_)
         | PropertyValue::TableLayout(_)
+        | PropertyValue::TextOverflow(_)
         | PropertyValue::BorderCollapse(_)
         | PropertyValue::CaptionSide(_)
         | PropertyValue::EmptyCells(_)) => v,

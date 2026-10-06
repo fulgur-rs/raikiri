@@ -2006,6 +2006,7 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::TransformOrigin(..)
         | PropertyValue::Filter(_)
         | PropertyValue::TableLayout(_)
+        | PropertyValue::TextOverflow(_)
         | PropertyValue::BorderCollapse(_)
         // `border-spacing` (CSS Tables 3 §6.1): absolutizing `<length>{1,2}`
         // needs the declaring node's own font-size, so it belongs in phase 3
@@ -2451,6 +2452,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         }
         PropertyValue::Filter(v) => target.filter = v,
         PropertyValue::TableLayout(v) => target.table_layout = v,
+        PropertyValue::TextOverflow(v) => target.text_overflow = v,
         PropertyValue::BorderCollapse(v) => target.border_collapse = v,
         PropertyValue::BorderSpacing(v) => target.border_spacing = v,
         PropertyValue::CaptionSide(v) => target.caption_side = v,

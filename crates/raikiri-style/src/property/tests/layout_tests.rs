@@ -2574,6 +2574,31 @@ fn table_layout_key_maps_to_table_layout_property_key() {
     assert_eq!(v.key(), PropertyKey::TableLayout);
 }
 
+// ── text-overflow (CSS Overflow 3 §5.1) ───────────────────────────────
+
+#[test]
+fn text_overflow_accepts_clip_and_ellipsis() {
+    assert_eq!(
+        parse("clip", "text-overflow"),
+        Some(PropertyValue::TextOverflow(TextOverflowValue::Clip))
+    );
+    assert_eq!(
+        parse("Ellipsis", "text-overflow"),
+        Some(PropertyValue::TextOverflow(TextOverflowValue::Ellipsis))
+    );
+    assert_eq!(
+        PropertyValue::TextOverflow(TextOverflowValue::Clip).key(),
+        PropertyKey::TextOverflow
+    );
+}
+
+#[test]
+fn text_overflow_rejects_strings_and_two_values() {
+    assert_eq!(parse("\"…\"", "text-overflow"), None);
+    assert_eq!(parse_entire("clip ellipsis", "text-overflow"), None);
+    assert_eq!(parse("fade", "text-overflow"), None);
+}
+
 // ── border-collapse (CSS Tables 3 §6) ─────────────────────────────────
 //
 // Check the grammar (`collapse | separate`) in WPT

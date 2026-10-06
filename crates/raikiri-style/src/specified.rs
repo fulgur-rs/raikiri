@@ -49,11 +49,11 @@ use crate::property::{
     TextCombineUpright, TextDecorationColor, TextDecorationInset, TextDecorationLine,
     TextDecorationSkipInk, TextDecorationSkipSpaces, TextDecorationStyle, TextDecorationThickness,
     TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisShape, TextEmphasisStyle,
-    TextEmphasisVEdge, TextIndentLength, TextJustify, TextOrientation, TextShadowItem,
-    TextSpacingTrim, TextTransform, TextUnderlineOffset, TextUnderlinePosition, TextWrapMode,
-    TextWrapStyle, TransformFunction, UnicodeBidi, VerticalAlign, Visibility, VisualBox,
-    WhiteSpace, WhiteSpaceCollapse, WordBreak, WordSpaceTransform, WordSpacingValue, WritingMode,
-    ZIndexValue, empty_box_shadow_list, empty_content_list, empty_counter_entries,
+    TextEmphasisVEdge, TextIndentLength, TextJustify, TextOrientation, TextOverflowValue,
+    TextShadowItem, TextSpacingTrim, TextTransform, TextUnderlineOffset, TextUnderlinePosition,
+    TextWrapMode, TextWrapStyle, TransformFunction, UnicodeBidi, VerticalAlign, Visibility,
+    VisualBox, WhiteSpace, WhiteSpaceCollapse, WordBreak, WordSpaceTransform, WordSpacingValue,
+    WritingMode, ZIndexValue, empty_box_shadow_list, empty_content_list, empty_counter_entries,
     empty_filter_list, empty_quotes_entries, empty_string_set_entries, empty_text_shadow_list,
     empty_transform_list, initial_font_family, initial_grid_auto_track_list,
     resolve_display_for_float, resolve_overflow, resolve_text_align_internal_center,
@@ -651,6 +651,10 @@ pub struct SpecifiedValues {
     /// [`crate::computed::ComputedValues::table_layout`], in the same computed-equivalent
     /// category as [`Self::float`].
     pub table_layout: TableLayoutValue,
+    /// **Specified** `text-overflow`; **non-inherited**, initially [`TextOverflowValue::Clip`]
+    /// (CSS Overflow 3 §5.1). The computed value is the specified keyword, as for
+    /// [`Self::table_layout`].
+    pub text_overflow: TextOverflowValue,
     /// **Specified** `border-collapse`; **inherited**, initially
     /// [`BorderCollapseValue::Separate`] (CSS Tables 3 §6
     /// <https://www.w3.org/TR/css-tables-3/#border-collapse-property>). Its computed value is the
@@ -1008,6 +1012,8 @@ impl SpecifiedValues {
             filter: empty_filter_list(),
             // CSS Tables 3 §4: table-layout is initially `auto` and is not inherited.
             table_layout: TableLayoutValue::Auto,
+            // CSS Overflow 3 §5.1: text-overflow is initially `clip` and is not inherited.
+            text_overflow: TextOverflowValue::Clip,
             // CSS Tables 3 §6: border-collapse is initially `separate`. For nodes with a parent,
             // `Self::inherit_from` replaces it with the inherited value.
             border_collapse: BorderCollapseValue::Separate,
@@ -1398,7 +1404,9 @@ impl SpecifiedValues {
             // non-inherited (CSS Tables 3 §4 "Inherited: no"), initially
             // `auto`: without a winner, the child always reverts to this value, as for float.
             table_layout: TableLayoutValue::Auto,
-            // Only table_layout belongs in the non-inherited group. border_collapse is inherited
+            // non-inherited (CSS Overflow 3 §5.1), initially `clip`.
+            text_overflow: TextOverflowValue::Clip,
+            // Only table_layout and text_overflow belong in the non-inherited group. border_collapse is inherited
             // and was seeded in the inherited section above, like visibility.
         }
     }
@@ -2331,6 +2339,7 @@ impl SpecifiedValues {
             // need resolution. Pass through this node's winner or the initial value used as its
             // non-inherited seed.
             table_layout: self.table_layout,
+            text_overflow: self.text_overflow,
             // The computed value is the specified keyword (see BorderCollapseValue docs);
             // likewise, pass through this node's winner or the inherited parent value.
             border_collapse: self.border_collapse,

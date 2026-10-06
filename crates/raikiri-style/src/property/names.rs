@@ -219,6 +219,7 @@ pub fn supported_property_names() -> &'static [&'static str] {
         "text-indent",
         "text-justify",
         "text-orientation",
+        "text-overflow",
         "text-shadow",
         "text-spacing",
         "text-spacing-trim",
