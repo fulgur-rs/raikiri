@@ -519,8 +519,87 @@ pub(crate) fn inline_style(
         text_orientation,
         text_combine_upright,
         hanging_punctuation: Some(hanging_punctuation(cv.hanging_punctuation, node)?),
+        text_emphasis: text_emphasis(cv),
         ..Default::default()
     })
+}
+
+/// The engine's emphasis marks for the computed `text-emphasis-style` and
+/// `text-emphasis-position` (CSS Text Decoration 3 §3.1, §3.3). `none`, an
+/// empty string and a keyword this engine does not know yet produce no marks.
+/// The engine lays the marks out; the painter draws them.
+fn text_emphasis(cv: &ComputedValues) -> Option<s::TextEmphasis> {
+    let (shape, filled) = match &cv.text_emphasis_style {
+        p::TextEmphasisStyle::None => return None,
+        p::TextEmphasisStyle::Shape { fill, shape } => {
+            let shape = match shape {
+                p::TextEmphasisShape::Dot => s::TextEmphasisShape::Dot,
+                p::TextEmphasisShape::Circle => s::TextEmphasisShape::Circle,
+                p::TextEmphasisShape::DoubleCircle => s::TextEmphasisShape::DoubleCircle,
+                p::TextEmphasisShape::Triangle => s::TextEmphasisShape::Triangle,
+                p::TextEmphasisShape::Sesame => s::TextEmphasisShape::Sesame,
+                _ => return None, // cov:ignore: every current shape is matched above.
+            };
+            (shape, *fill == p::TextEmphasisFill::Filled)
+        }
+        // A string mark uses its first character.
+        p::TextEmphasisStyle::String(text) => {
+            (s::TextEmphasisShape::Custom(text.chars().next()?), true)
+        }
+        // A fill-only value is resolved to a shape before computed style.
+        _ => return None, // cov:ignore: every computed style is matched above.
+    };
+    let (over, right) = match cv.text_emphasis_position {
+        p::TextEmphasisPosition::Position {
+            vertical,
+            horizontal,
+        } => (
+            vertical == p::TextEmphasisVEdge::Over,
+            horizontal != Some(p::TextEmphasisHEdge::Left),
+        ),
+        // `auto` is `over right` until the content language is known; see
+        // `resolve_auto_emphasis_position`.
+        _ => (true, true),
+    };
+    let position = match (over, right) {
+        (true, true) => s::TextEmphasisPosition::OverRight,
+        (false, true) => s::TextEmphasisPosition::UnderRight,
+        (true, false) => s::TextEmphasisPosition::OverLeft,
+        (false, false) => s::TextEmphasisPosition::UnderLeft,
+    };
+    Some(s::TextEmphasis {
+        shape,
+        filled,
+        position,
+    })
+}
+
+/// Whether the lines of a block container with style `cv` end in an ellipsis
+/// where they overflow it: `text-overflow: ellipsis` takes effect only when
+/// the inline axis overflow is not `visible` (CSS Overflow 3 §5.1).
+pub(crate) fn ends_in_ellipsis(cv: &ComputedValues) -> bool {
+    cv.text_overflow == p::TextOverflowValue::Ellipsis && cv.overflow.x != p::OverflowValue::Visible
+}
+
+/// Resolve `text-emphasis-position: auto` against the content language:
+/// marks go under horizontal Chinese text and over right otherwise
+/// (CSS Text Decoration 4 §3.4). Vertical text keeps them on the right.
+pub(crate) fn resolve_auto_emphasis_position(cv: &ComputedValues, inline: &mut s::InlineStyle) {
+    if !matches!(cv.text_emphasis_position, p::TextEmphasisPosition::Auto)
+        || matches!(
+            cv.cssom_writing_mode,
+            p::WritingMode::VerticalRl | p::WritingMode::VerticalLr
+        )
+    {
+        return;
+    }
+    let chinese = inline
+        .lang
+        .as_deref()
+        .is_some_and(|lang| lang == "zh" || lang.starts_with("zh-"));
+    if let (true, Some(emphasis)) = (chinese, inline.text_emphasis.as_mut()) {
+        emphasis.position = s::TextEmphasisPosition::UnderRight;
+    }
 }
 
 /// The shodo hanging-punctuation flags of a computed `hanging-punctuation`

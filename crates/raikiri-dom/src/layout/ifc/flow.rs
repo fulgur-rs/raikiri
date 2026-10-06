@@ -241,6 +241,35 @@ pub(crate) fn place_lines(
     }
 }
 
+/// End each horizontal line that overflows `available` in an ellipsis when
+/// `root` has `text-overflow: ellipsis` (CSS Overflow 3 §5.1). The engine
+/// drops the content past the ellipsis and leaves the line's metrics alone;
+/// the root's overflow clip trims inline boxes the ellipsis cuts.
+pub(crate) fn apply_text_overflow(
+    root: &IfcRoot,
+    lines: &mut IfcLines,
+    cx: &mut LayoutContext,
+    available: f32,
+) {
+    truncate_lines(root, &mut lines.lines, cx, available);
+}
+
+/// [`apply_text_overflow`] on a shared line list. A line already truncated
+/// is left as it is.
+pub(crate) fn truncate_lines(
+    root: &IfcRoot,
+    lines: &mut std::sync::Arc<Vec<shodo::Line>>,
+    cx: &mut LayoutContext,
+    available: f32,
+) {
+    if !root.ellipsis || root.writing_mode != WritingMode::HorizontalTb {
+        return;
+    }
+    for line in std::sync::Arc::make_mut(lines) {
+        line.truncate_with_ellipsis(cx, available);
+    }
+}
+
 pub(crate) fn first_baseline(lines: &IfcLines) -> Option<f32> {
     lines
         .lines
@@ -310,7 +339,8 @@ pub(crate) fn rebreak_roots(doc: &mut Document, cascade: &CascadeResult, max_adv
         {
             continue;
         }
-        let lines = break_lines(root, &mut state.layout_cx, width);
+        let mut lines = break_lines(root, &mut state.layout_cx, width);
+        apply_text_overflow(root, &mut lines, &mut state.layout_cx, width);
         let ifc = root.without_lines();
         root.lines = Some(lines);
         // The inline elements follow the new lines; the root's box keeps the

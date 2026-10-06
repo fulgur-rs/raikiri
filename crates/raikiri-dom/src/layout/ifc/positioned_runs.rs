@@ -176,9 +176,13 @@ impl<'a> PositionedLines<'a> {
                 continue;
             };
             // The paint owner is a text node; its computed color is the
-            // inherited one.
-            let Some(owner) = run.node() else { continue };
-            let owner = owner.0 as usize;
+            // inherited one. A `text-overflow` ellipsis has no node and is
+            // painted in the root's style (CSS Overflow 3 §5.1).
+            let owner = match run.node() {
+                Some(node) => node.0 as usize,
+                None if run.is_ellipsis() => self.root_id,
+                None => continue, // cov:ignore: only the ellipsis run has no node.
+            };
             // Text inherits `visibility` from its element; hidden and
             // collapsed text is laid out but not painted (CSS 2.1 §11.2).
             let visible = computed_for_id(self.cascade, owner)

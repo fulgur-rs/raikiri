@@ -3088,7 +3088,7 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
 /// determines the classification.
 // Includes page-only inherit markers, which are resolved before this
 // phase and therefore remain unchanged here.
-const PHASE_3_PASS_THROUGH_VARIANTS: usize = 164;
+const PHASE_3_PASS_THROUGH_VARIANTS: usize = 165;
 /// Number of corpus variants transformed by page-context resolution.
 /// This is derived from the corpus size and the pass-through count.
 fn phase_3_transformed_variants() -> usize {
@@ -3732,6 +3732,7 @@ property_key_samples! {
     // arm through a transform) is visible (`Isolation` sibling comment
     // above uses the same rationale).
     TableLayout => PropertyValue::TableLayout(TableLayoutValue::Fixed),
+    TextOverflow => PropertyValue::TextOverflow(crate::property::TextOverflowValue::Ellipsis),
     // CSS Tables 3 §6 border-collapse — non-initial (`collapse`, not
     // `separate`), same rationale as `TableLayout` above.
     BorderCollapse => PropertyValue::BorderCollapse(BorderCollapseValue::Collapse),
@@ -4175,6 +4176,7 @@ property_value_variant_registry! {
     Transform,
     Filter,
     TableLayout,
+    TextOverflow,
     BorderCollapse,
     BorderSpacing,
     CaptionSide,
@@ -4886,6 +4888,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             // `f32`) — always `None` (`Isolation`/`MixBlendMode` sibling arms
             // above use the same reasoning).
             | PropertyValue::TableLayout(_)
+            | PropertyValue::TextOverflow(_)
             | PropertyValue::BorderCollapse(_)
             | PropertyValue::CaptionSide(_)
             | PropertyValue::EmptyCells(_) => None,

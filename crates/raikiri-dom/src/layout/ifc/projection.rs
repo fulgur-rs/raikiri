@@ -61,6 +61,8 @@ pub(crate) struct ProjectedIfc {
     pub(crate) cleared_breaks: Vec<(usize, taffy::Clear)>,
     /// The root is a fixed box: its containing block is the page area.
     pub(crate) fixed: bool,
+    /// The root's lines end in an ellipsis where they overflow it.
+    pub(crate) ellipsis: bool,
 }
 
 /// Whether `node` or one of its ancestors has an authored vertical writing
@@ -100,6 +102,7 @@ fn styled(
 ) -> Result<shodo::style::InlineStyle, IfcError> {
     let mut inline = style::inline_style(cv, node, fonts)?;
     inline.lang = language_of(doc, node);
+    style::resolve_auto_emphasis_position(cv, &mut inline);
     if under_vertical_writing(doc, cascade, node) {
         inline.text_autospace = shodo::style::TextAutospace::NoAutospace;
     }
@@ -325,6 +328,8 @@ pub(crate) struct ProjectedBuilder {
     pub(crate) cleared_breaks: Vec<(usize, taffy::Clear)>,
     /// The root is a fixed box: its containing block is the page area.
     pub(crate) fixed: bool,
+    /// The root's lines end in an ellipsis where they overflow it.
+    pub(crate) ellipsis: bool,
 }
 
 impl ProjectedBuilder {
@@ -348,6 +353,7 @@ impl ProjectedBuilder {
             offsets: self.offsets,
             cleared_breaks: self.cleared_breaks,
             fixed: self.fixed,
+            ellipsis: self.ellipsis,
         })
     }
 }
@@ -442,6 +448,8 @@ pub(crate) fn project_ifc_text_builder(
         offsets: Vec::new(),
         cleared_breaks,
         fixed: false,
+        // An anonymous flex or grid item has no overflow of its own.
+        ellipsis: false,
     })
 }
 
@@ -724,6 +732,7 @@ pub(crate) fn project_ifc_builder_with(
         offsets,
         cleared_breaks,
         fixed: root_cv.position == PositionValue::Fixed,
+        ellipsis: style::ends_in_ellipsis(root_cv),
     })
 }
 

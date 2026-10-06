@@ -476,6 +476,7 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         | PropertyValue::Transform(_)
         | PropertyValue::Filter(_)
         | PropertyValue::TableLayout(_)
+        | PropertyValue::TextOverflow(_)
         | PropertyValue::BorderCollapse(_)
         | PropertyValue::BorderSpacing(_)
         | PropertyValue::CaptionSide(_)

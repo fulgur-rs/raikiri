@@ -2883,6 +2883,19 @@ fn table_layout_does_not_inherit_from_parent_element() {
 }
 
 #[test]
+fn text_overflow_does_not_inherit_from_parent_element() {
+    // CSS Overflow 3 §5.1: text-overflow is **non-inherited**.
+    use crate::property::TextOverflowValue;
+    let mut doc = TestDoc::new();
+    let div = doc.push_element(0, "div", Some("text-overflow: ellipsis"));
+    let span = doc.push_element(div, "span", None);
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(r.computed[div].text_overflow, TextOverflowValue::Ellipsis);
+    assert_eq!(r.computed[span].text_overflow, TextOverflowValue::Clip);
+}
+
+#[test]
 fn border_collapse_wired_through_cascade_from_inline_style() {
     use crate::property::BorderCollapseValue;
     let cv = cascade_doc("", "table", Some("border-collapse: collapse"));

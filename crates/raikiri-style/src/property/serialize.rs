@@ -578,6 +578,7 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::Transform(..)
         | PropertyValue::Filter(..)
         | PropertyValue::TableLayout(..)
+        | PropertyValue::TextOverflow(..)
         | PropertyValue::BorderCollapse(..)
         | PropertyValue::BorderSpacing(..)
         | PropertyValue::CaptionSide(..)

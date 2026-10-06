@@ -628,6 +628,7 @@ fn non_initial_parent() -> ComputedValues {
         // CSS Tables 3 §4: table-layout is non-inherited, so use a value
         // different from the initial `auto` (as required for non_initial_parent).
         table_layout: TableLayoutValue::Fixed,
+        text_overflow: crate::property::TextOverflowValue::Ellipsis,
         // CSS Tables 3 §6: border-collapse is inherited, so use a value
         // different from the initial `separate` (as above).
         border_collapse: BorderCollapseValue::Collapse,

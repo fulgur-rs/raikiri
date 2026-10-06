@@ -28,10 +28,10 @@ use crate::property::{
     TableLayoutValue, TextAlign, TextAlignLast, TextAutospace, TextCombineUpright,
     TextDecorationColor, TextDecorationLine, TextDecorationSkipInk, TextDecorationSkipSpaces,
     TextDecorationStyle, TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisStyle,
-    TextEmphasisVEdge, TextJustify, TextOrientation, TextSpacingTrim, TextTransform,
-    TextUnderlinePosition, TextWrapMode, TextWrapStyle, UnicodeBidi, VerticalAlign, Visibility,
-    VisualBox, WhiteSpace, WhiteSpaceCollapse, WordBreak, WordSpaceTransform, WritingMode,
-    ZIndexValue, empty_content_list, empty_counter_entries, empty_filter_list,
+    TextEmphasisVEdge, TextJustify, TextOrientation, TextOverflowValue, TextSpacingTrim,
+    TextTransform, TextUnderlinePosition, TextWrapMode, TextWrapStyle, UnicodeBidi, VerticalAlign,
+    Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse, WordBreak, WordSpaceTransform,
+    WritingMode, ZIndexValue, empty_content_list, empty_counter_entries, empty_filter_list,
     empty_quotes_entries, empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
@@ -1693,6 +1693,10 @@ pub struct ComputedValues {
     /// bridge) — same split [`Self::float`] doc describes for float
     /// positioning.
     pub table_layout: TableLayoutValue,
+    /// `text-overflow`. **non-inherited**, initial: [`TextOverflowValue::Clip`]
+    /// (CSS Overflow 3 §5.1). Computed value = specified keyword. Inline
+    /// layout reads it on block containers whose `overflow` is not `visible`.
+    pub text_overflow: TextOverflowValue,
     /// `border-collapse`. **inherited**, initial:
     /// [`BorderCollapseValue::Separate`] (CSS Tables 3 §6 "Borders"
     /// <https://www.w3.org/TR/css-tables-3/#border-collapse-property>,
@@ -2129,6 +2133,8 @@ impl ComputedValues {
             // CSS Tables 3 §4: initial table-layout is `auto`
             // (not inherited).
             table_layout: TableLayoutValue::Auto,
+            // CSS Overflow 3 §5.1: initial text-overflow is `clip` (not inherited).
+            text_overflow: TextOverflowValue::Clip,
             // CSS Tables 3 §6: initial border-collapse is `separate`
             // (inherited; used to seed the root).
             border_collapse: BorderCollapseValue::Separate,

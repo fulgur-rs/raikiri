@@ -1611,3 +1611,40 @@ css/css-text/text-transform/text-transform-fullwidth-006.html
 css/css-text/text-transform/text-transform-fullwidth-007.html
 # --- css-text text-transform Unicode wide/narrow compatibility mapping exact 800x600 PASS-only (+1) ---
 css/css-text/text-transform/text-transform-fullwidth-010.html
+# --- css-overflow/css-ui text-overflow clip|ellipsis exact 800x600 PASS-only (+27) ---
+css/css-overflow/line-clamp/line-clamp-auto-010.html
+css/css-overflow/line-clamp/webkit-line-clamp-037.html
+css/css-overflow/overflow-ellipsis-dynamic-001.html
+css/css-overflow/text-overflow-ellipsis-001.html
+css/css-overflow/text-overflow-ellipsis-003.html
+css/css-overflow/text-overflow-ellipsis-changing-scroll.html
+css/css-overflow/text-overflow-ellipsis-rtl-001.html
+css/css-ui/parsing/text-overflow-valid.html
+css/css-ui/text-overflow-001.html
+css/css-ui/text-overflow-002.html
+css/css-ui/text-overflow-003.html
+css/css-ui/text-overflow-005.html
+css/css-ui/text-overflow-007.html
+css/css-ui/text-overflow-008.html
+css/css-ui/text-overflow-009.html
+css/css-ui/text-overflow-011.html
+css/css-ui/text-overflow-012.html
+css/css-ui/text-overflow-014.html
+css/css-ui/text-overflow-020.html
+css/css-ui/text-overflow-022.html
+css/css-ui/text-overflow-025.html
+css/css-ui/text-overflow-027.html
+css/css-ui/text-overflow-028.html
+css/css-ui/text-overflow-029.html
+css/css-ui/text-overflow-030.html
+css/css-ui/text-overflow-change-color.html
+css/css-ui/text-overflow.html
+# --- css-text-decor text-emphasis horizontal marks exact 800x600 PASS-only (+8) ---
+css/css-text-decor/text-emphasis-position-auto-001.html
+css/css-text-decor/text-emphasis-position-auto-002.html
+css/css-text-decor/text-emphasis-position-default-001.html
+css/css-text-decor/text-emphasis-property-001.html
+css/css-text-decor/text-emphasis-punctuation-1.html
+css/css-text-decor/text-emphasis-punctuation-2.html
+css/css-text-decor/text-emphasis-style-001.html
+css/css-text-decor/text-emphasis-style-property-001.html

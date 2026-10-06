@@ -44,6 +44,7 @@ pub mod border;
     dead_code,
     reason = "no caller until the paint walk dispatches ifc roots"
 )]
+mod emphasis;
 mod ifc_text;
 mod standalone_text;
 mod text;

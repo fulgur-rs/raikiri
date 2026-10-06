@@ -842,13 +842,23 @@ fn break_word_breaks_a_long_word() {
 }
 
 #[test]
-fn text_emphasis_paints_nothing_extra() {
+fn text_emphasis_draws_one_mark_over_each_letter() {
     let on = painted_root("width:100px;text-emphasis-style:dot", |doc, root| {
         doc.append_text(root, "abc");
     });
-    assert!(!ink(&on).is_empty());
-    assert_eq!(ink(&on), [(67, 0, 512), (68, 640, 512), (69, 1280, 512)]);
-    assert_eq!(on.commands.len(), 2);
+    // The marks take room over the text, so the baseline moves down from 8px
+    // to 13px; one mark (glyph 221) is drawn above each 10px letter.
+    assert_eq!(
+        ink(&on),
+        [
+            (67, 0, 832),
+            (68, 640, 832),
+            (69, 1280, 832),
+            (221, 160, 256),
+            (221, 800, 256),
+            (221, 1440, 256)
+        ]
+    );
 }
 
 #[test]
@@ -2520,4 +2530,161 @@ fn draw_ifc_lines_selects_only_the_requested_fragmentainer() {
         all.iter().map(|glyph| glyph.1).collect::<Vec<_>>(),
         [100.0, 105.0]
     );
+}
+
+fn draw_root(doc: &Document, cascade: &raikiri_style::CascadeResult, root: usize) -> Scene {
+    let mut scene = Scene::new();
+    draw_ifc_lines(
+        &mut scene,
+        doc,
+        cascade,
+        root,
+        IfcPosition {
+            x: 0.0,
+            y: 0.0,
+            shift_y: 0.0,
+        },
+        &crate::text::DecorationContext::default(),
+        None,
+        &[],
+    );
+    scene
+}
+
+#[test]
+fn emphasis_marks_sit_over_each_cluster_but_not_punctuation() {
+    let (mut doc, cascade, root) = paragraph(
+        "line-height:40px;text-emphasis:dot;text-emphasis-color:rgb(255,0,0)",
+        |doc, root| {
+            doc.append_text(root, "aa,a");
+        },
+    );
+    lay_out(&mut doc, &cascade);
+    let placed = glyphs(&draw_root(&doc, &cascade, root));
+    let red = solid(255, 0, 0);
+    let (marks, text): (Vec<_>, Vec<_>) = placed.iter().partition(|g| g.3 == red);
+    assert_eq!(text.len(), 4, "every character is drawn");
+    // One mark for each letter; the comma takes none.
+    assert_eq!(marks.len(), 3);
+    let baseline = text[0].2;
+    assert!(
+        marks.iter().all(|mark| mark.2 < baseline),
+        "marks go over the text"
+    );
+    // Each mark is centered on its 10px cluster: the three marks keep the
+    // letters' pitch, skipping the comma's.
+    let xs: Vec<f64> = marks.iter().map(|mark| mark.1).collect();
+    assert!((xs[1] - xs[0] - 10.0).abs() < 0.01, "{xs:?}");
+    assert!((xs[2] - xs[1] - 20.0).abs() < 0.01, "{xs:?}");
+}
+
+#[test]
+fn emphasis_marks_follow_the_text_color_by_default_and_can_go_under() {
+    let (mut doc, cascade, root) = paragraph(
+        "line-height:40px;color:rgb(0,0,255);text-emphasis:dot;text-emphasis-position:under right",
+        |doc, root| {
+            doc.append_text(root, "a");
+        },
+    );
+    lay_out(&mut doc, &cascade);
+    let placed = glyphs(&draw_root(&doc, &cascade, root));
+    assert_eq!(placed.len(), 2);
+    let blue = solid(0, 0, 255);
+    assert!(placed.iter().all(|g| g.3 == blue));
+    let (text, mark) = (placed[0].2.min(placed[1].2), placed[0].2.max(placed[1].2));
+    assert!(mark > text, "the mark is below the baseline");
+}
+
+#[test]
+fn ellipsis_is_painted_in_the_root_style() {
+    let css =
+        "width:50px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:rgb(0,0,255)";
+    let (mut doc, cascade, root) = paragraph(css, |doc, root| {
+        let span = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("display:inline;color:rgb(255,0,0)"),
+        );
+        doc.append_text(span, "aaaaaaaaaa");
+    });
+    lay_out(&mut doc, &cascade);
+    let placed = glyphs(&draw_root(&doc, &cascade, root));
+    let blue = solid(0, 0, 255);
+    let ellipsis: Vec<_> = placed.iter().filter(|g| g.3 == blue).collect();
+    let kept = placed.len() - ellipsis.len();
+    assert!(
+        !ellipsis.is_empty(),
+        "the ellipsis is drawn in the root color"
+    );
+    assert!(kept < 10, "content past the ellipsis is dropped");
+    let last_kept = placed
+        .iter()
+        .filter(|g| g.3 != blue)
+        .map(|g| g.1)
+        .fold(f64::NEG_INFINITY, f64::max);
+    assert!(
+        ellipsis.iter().all(|g| g.1 > last_kept),
+        "the ellipsis follows the content"
+    );
+    assert!(
+        ellipsis.iter().all(|g| g.1 < 50.0),
+        "the ellipsis fits the box"
+    );
+
+    // A hidden root hides its ellipsis while visible content stays.
+    let (mut doc, cascade, root) = paragraph(&format!("{css};visibility:hidden"), |doc, root| {
+        let span = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("display:inline;visibility:visible;color:rgb(255,0,0)"),
+        );
+        doc.append_text(span, "aaaaaaaaaa");
+    });
+    lay_out(&mut doc, &cascade);
+    let placed = glyphs(&draw_root(&doc, &cascade, root));
+    assert!(!placed.is_empty());
+    assert!(placed.iter().all(|g| g.3 != blue));
+}
+
+#[test]
+fn atomic_inlines_past_the_ellipsis_are_not_painted() {
+    use kurbo::Shape;
+    let blue_boxes = |text_after: &str| {
+        let text_after = text_after.to_owned();
+        let (mut doc, cascade, _) = paragraph(
+            "width:50px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis",
+            |doc, root| {
+                doc.append_text(root, &text_after);
+                doc.append_element(
+                    Some(root),
+                    "span",
+                    Style::default(),
+                    Some(
+                        "display:inline-block;width:10px;height:10px;background-color:rgb(0,0,255)",
+                    ),
+                );
+                doc.append_text(root, "bb");
+            },
+        );
+        lay_out(&mut doc, &cascade);
+        let mut scene = Scene::new();
+        crate::paint_single_page(&mut scene, &doc, &cascade, PageBox::A4).expect("paint");
+        scene
+            .commands
+            .iter()
+            .filter(|command| match command {
+                RenderCommand::Fill(fill) => {
+                    fill.brush == solid(0, 0, 255) && fill.shape.bounding_box().width() <= 10.0
+                }
+                _ => false,
+            })
+            .count()
+    };
+    // The box fits before the ellipsis when the text before it is short.
+    assert_eq!(blue_boxes("a"), 1);
+    // The box would end past the ellipsis, inside the 50px box: it is
+    // dropped with the text after it instead of showing under the ellipsis.
+    assert_eq!(blue_boxes("aaaa"), 0);
 }

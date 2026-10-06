@@ -42,6 +42,9 @@ pub(crate) struct IfcRoot {
     /// across columns. `y` is the block offset the range's first line is
     /// drawn at.
     pub(crate) multicol_fragments: Option<Vec<crate::node::MulticolTextFragment>>,
+    /// The lines end in an ellipsis where they overflow the root
+    /// (`text-overflow: ellipsis`).
+    pub(crate) ellipsis: bool,
 }
 
 /// Lines broken for one content-box width.
@@ -126,6 +129,7 @@ impl IfcRoot {
             cleared_breaks: projected.cleared_breaks,
             fixed: projected.fixed,
             multicol_fragments: None,
+            ellipsis: projected.ellipsis,
         }
     }
 
@@ -143,6 +147,7 @@ impl IfcRoot {
             cleared_breaks: self.cleared_breaks.clone(),
             fixed: self.fixed,
             multicol_fragments: None,
+            ellipsis: self.ellipsis,
         }
     }
 }

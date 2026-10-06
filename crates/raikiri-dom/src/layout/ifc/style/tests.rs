@@ -719,3 +719,94 @@ fn values_shodo_does_not_name_map_to_their_equivalents() {
     assert_eq!(options.text_align_last, TextAlignLast::Auto);
     assert_eq!(options.text_justify, TextJustify::InterCharacter);
 }
+
+#[test]
+fn text_emphasis_maps_shapes_fill_and_position() {
+    use shodo::style::{TextEmphasisPosition as P, TextEmphasisShape as S};
+    let emphasis = |css: &str| root_style(css).expect("map").text_emphasis;
+    assert_eq!(emphasis(""), None);
+    assert_eq!(emphasis("text-emphasis-style:none"), None);
+    let dot = emphasis("text-emphasis-style:dot").expect("dot");
+    assert_eq!(
+        (dot.shape, dot.filled, dot.position),
+        (S::Dot, true, P::OverRight)
+    );
+    let open = emphasis("text-emphasis-style:open triangle;text-emphasis-position:under left")
+        .expect("triangle");
+    assert_eq!(
+        (open.shape, open.filled, open.position),
+        (S::Triangle, false, P::UnderLeft)
+    );
+    for (css, shape) in [
+        ("circle", S::Circle),
+        ("double-circle", S::DoubleCircle),
+        ("sesame", S::Sesame),
+    ] {
+        let mapped = emphasis(&format!("text-emphasis-style:{css}")).expect("shape");
+        assert_eq!(mapped.shape, shape);
+    }
+    let over_left =
+        emphasis("text-emphasis-style:dot;text-emphasis-position:over left").expect("over left");
+    assert_eq!(over_left.position, P::OverLeft);
+    let under =
+        emphasis("text-emphasis-style:dot;text-emphasis-position:under right").expect("under");
+    assert_eq!(under.position, P::UnderRight);
+    // A fill alone is a circle in horizontal and a sesame in vertical text.
+    let open_default = emphasis("text-emphasis-style:open").expect("open");
+    assert_eq!(
+        (open_default.shape, open_default.filled),
+        (S::Circle, false)
+    );
+    let vertical =
+        emphasis("text-emphasis-style:filled;writing-mode:vertical-rl").expect("vertical");
+    assert_eq!(vertical.shape, S::Sesame);
+    // A string mark is its first character.
+    let string = emphasis("text-emphasis-style:'xy'").expect("string");
+    assert_eq!((string.shape, string.filled), (S::Custom('x'), true));
+    // `auto` stays `over right` without a content language.
+    let auto = emphasis("text-emphasis-style:dot;text-emphasis-position:auto").expect("auto");
+    assert_eq!(auto.position, P::OverRight);
+}
+
+#[test]
+fn auto_emphasis_position_is_under_for_horizontal_chinese_only() {
+    use shodo::style::TextEmphasisPosition as P;
+    let resolve = |css: &str, lang: Option<&str>| {
+        let fixture = block_fixture(css, |doc, root| {
+            doc.append_text(root, "x");
+        });
+        let cv = &fixture.cascade.computed[fixture.root];
+        let mut style = inline_style(cv, fixture.root, &fonts()).expect("map");
+        style.lang = lang.map(str::to_owned);
+        resolve_auto_emphasis_position(cv, &mut style);
+        style.text_emphasis.map(|emphasis| emphasis.position)
+    };
+    let auto = "text-emphasis-style:dot;text-emphasis-position:auto";
+    assert_eq!(resolve(auto, Some("zh")), Some(P::UnderRight));
+    assert_eq!(resolve(auto, Some("zh-hant")), Some(P::UnderRight));
+    assert_eq!(resolve(auto, Some("ja")), Some(P::OverRight));
+    assert_eq!(resolve(auto, Some("zhx")), Some(P::OverRight));
+    assert_eq!(resolve(auto, None), Some(P::OverRight));
+    let vertical = format!("{auto};writing-mode:vertical-rl");
+    assert_eq!(resolve(&vertical, Some("zh")), Some(P::OverRight));
+    // An explicit position is kept.
+    let explicit = "text-emphasis-style:dot;text-emphasis-position:over right";
+    assert_eq!(resolve(explicit, Some("zh")), Some(P::OverRight));
+    // No marks, nothing to resolve.
+    assert_eq!(resolve("text-emphasis-position:auto", Some("zh")), None);
+}
+
+#[test]
+fn ellipsis_needs_a_non_visible_inline_overflow() {
+    let ends = |css: &str| {
+        let fixture = block_fixture(css, |doc, root| {
+            doc.append_text(root, "x");
+        });
+        ends_in_ellipsis(&fixture.cascade.computed[fixture.root])
+    };
+    assert!(ends("text-overflow:ellipsis;overflow:hidden"));
+    assert!(ends("text-overflow:ellipsis;overflow-x:clip"));
+    assert!(!ends("text-overflow:ellipsis"));
+    assert!(!ends("text-overflow:clip;overflow:hidden"));
+    assert!(!ends("overflow:hidden"));
+}

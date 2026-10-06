@@ -63,6 +63,9 @@ bitflags::bitflags! {
         /// Descendant of an [`IS_IFC_ROOT`](Self::IS_IFC_ROOT) node, laid out
         /// as part of that root's paragraph.
         const IN_IFC_SUBTREE = 1 << 6;
+        /// Atomic inline removed from its line by a `text-overflow`
+        /// ellipsis: it keeps its box but is not painted.
+        const HIDDEN_BY_TEXT_OVERFLOW = 1 << 7;
     }
 }
 
@@ -967,6 +970,14 @@ impl Node {
     #[inline]
     pub fn is_display_none(&self) -> bool {
         self.style.display == taffy::Display::None
+    }
+
+    /// Return whether a `text-overflow` ellipsis removed this atomic inline
+    /// from its line (CSS Overflow 3 §5.1). Paint skips its subtree, as for
+    /// [`Self::is_display_none`].
+    #[inline]
+    pub fn is_hidden_by_text_overflow(&self) -> bool {
+        self.flags.contains(NodeFlags::HIDDEN_BY_TEXT_OVERFLOW)
     }
 
     /// Return whether this Node belongs to the flat tree.

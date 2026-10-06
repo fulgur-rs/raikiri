@@ -1232,6 +1232,17 @@ pub(super) fn parse_table_layout(input: &mut Parser<'_, '_>) -> Option<TableLayo
     TableLayoutValue::from_css_ident(input.expect_ident().ok()?)
 }
 
+/// Parses `text-overflow: <ident>` (CSS Overflow 3 §5.1
+/// <https://www.w3.org/TR/css-overflow-3/#text-overflow>); see the
+/// [`TextOverflowValue`] docs.
+///
+/// Value grammar: `clip | ellipsis`. The caller's `expect_exhausted`
+/// (`rule.rs::DeclParser`) drops a second value, such as
+/// `text-overflow: clip ellipsis`.
+pub(super) fn parse_text_overflow(input: &mut Parser<'_, '_>) -> Option<TextOverflowValue> {
+    TextOverflowValue::from_css_ident(input.expect_ident().ok()?)
+}
+
 /// Parses `border-collapse: <ident>` (CSS Tables 3 §6
 /// <https://www.w3.org/TR/css-tables-3/#border-collapse-property>); see the
 /// [`BorderCollapseValue`] docs.

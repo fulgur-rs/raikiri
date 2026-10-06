@@ -82,6 +82,10 @@ pub enum RunSource {
     Text(NodeId),
     /// The generated content of a pseudo-element, by its originating element.
     Generated(NodeId, GeneratedKind),
+    /// The `text-overflow` ellipsis of a block container, by that container
+    /// (CSS Overflow 3 §5.1). Its text is `…`, or periods when the font has
+    /// no ellipsis character.
+    Ellipsis(NodeId),
 }
 
 /// The pseudo-element generated text comes from.
@@ -294,6 +298,23 @@ fn run_source(document: &Document, owner: usize) -> Option<RunSource> {
         .then(|| RunSource::Text(NodeId::new(owner as u64)))
 }
 
+/// The text of an ellipsis run of `glyphs` glyphs, with each glyph's range.
+/// The run holds no text of the line: it is one `…` glyph, or one period per
+/// glyph when the font has no ellipsis character (`periods`, or a run of
+/// more than one glyph).
+fn ellipsis_text(glyphs: usize, periods: bool) -> (&'static str, Vec<Range<usize>>) {
+    if glyphs == 1 && !periods {
+        // The ellipsis character is three bytes long.
+        return ("\u{2026}", std::iter::once(0..3).collect());
+    }
+    let count = glyphs.clamp(1, 3);
+    let ranges = (0..glyphs).map(|index| {
+        let index = index.min(count - 1);
+        index..index + 1
+    });
+    (&"..."[..count], ranges.collect())
+}
+
 /// Byte ranges of `run_text` (the run's slice, starting at `run_start` in the
 /// line's text) for glyphs with the given cluster starts, in logical order.
 /// A cluster ends where the next cluster of the run starts.
@@ -323,16 +344,35 @@ fn glyph_run<'a>(
     (x, y): (f32, f32),
 ) -> Option<PositionedGlyphRun<'a>> {
     let run = &positioned.run;
-    let source = run_source(document, positioned.owner)?;
+    let ellipsis = run.is_ellipsis();
+    let source = if ellipsis {
+        RunSource::Ellipsis(NodeId::new(positioned.owner as u64))
+    } else {
+        run_source(document, positioned.owner)?
+    };
     let color = computed_for_id(cascade, positioned.owner)?.color;
     let font = run.font_data()?;
     let index = font.index;
     let (bytes, blob) = font.data.into_raw_parts();
     let text_range = run.text_range();
-    let text = line.line.text().get(text_range.clone()).unwrap_or_default();
     let shaped: Vec<shodo::Glyph> = run.glyphs().collect();
-    let clusters: Vec<u32> = shaped.iter().map(|glyph| glyph.cluster).collect();
-    let ranges = glyph_text_ranges(&clusters, text_range.start, text_range.end);
+    let (text, ranges) = if ellipsis {
+        // The periods of a fallback ellipsis are split into one run per font.
+        let runs = line
+            .line
+            .fragments()
+            .filter(|fragment| {
+                matches!(fragment, shodo::Fragment::GlyphRun(other) if other.is_ellipsis())
+            })
+            .count();
+        ellipsis_text(shaped.len(), runs > 1)
+    } else {
+        let clusters: Vec<u32> = shaped.iter().map(|glyph| glyph.cluster).collect();
+        (
+            line.line.text().get(text_range.clone()).unwrap_or_default(),
+            glyph_text_ranges(&clusters, text_range.start, text_range.end),
+        )
+    };
     let (dx, dy) = (x + positioned.offset.0, y + positioned.offset.1);
     let mut placed: Vec<(f32, f32, &shodo::Glyph, Range<usize>)> = positioned
         .glyphs

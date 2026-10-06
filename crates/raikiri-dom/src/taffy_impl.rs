@@ -1051,10 +1051,14 @@ fn measure_ifc_root(
         CollapsibleMarginSet::ZERO
     };
     if measure.run_mode == RunMode::PerformLayout
-        && let Some(root) = tree.nodes[idx].ifc.as_mut()
+        && let Some(mut root) = tree.nodes[idx].ifc.take()
     {
+        with_state(tree, |state| {
+            flow::apply_text_overflow(&root, &mut lines, &mut state.layout_cx, geometry.width);
+        });
         root.lines = Some(lines);
         root.multicol_fragments = fragments.map(|(fragments, _)| fragments);
+        tree.nodes[idx].ifc = Some(root);
     }
     (size, baseline, escaping_margin)
 }

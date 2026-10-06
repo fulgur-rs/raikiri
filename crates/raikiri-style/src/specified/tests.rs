@@ -507,6 +507,7 @@ fn parent_fixture() -> ComputedValues {
         filter: Arc::new(vec![FilterFunction::Blur(Length::Px(3.0))]),
         // CSS Tables 3 §4: table-layout is non-inherited; set a value other than the initial `auto`.
         table_layout: TableLayoutValue::Fixed,
+        text_overflow: crate::property::TextOverflowValue::Ellipsis,
         // CSS Tables 3 §6: border-collapse is inherited; set a value other than the initial `separate`.
         border_collapse: BorderCollapseValue::Collapse,
         // CSS Tables 3 §6.1: border-spacing is inherited; set values other than the initial `0px`
