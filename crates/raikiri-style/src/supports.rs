@@ -9,7 +9,10 @@ use crate::consumer::ConsumerPropertyRegistration;
 use crate::grammar::{PResult, first_of, keyword, parens, zero_or_more};
 use crate::property::parse_value;
 use crate::rule::parse_registered_consumer_value;
-use crate::ruletree::{NamespacedSelectorParser, SupportsContext, is_supported_selector_list};
+use crate::ruletree::{
+    NamespacedSelectorParser, SupportsContext, is_supported_selector_list,
+    parse_custom_highlight_prelude,
+};
 
 type SupportsCondition = Condition<bool>;
 
@@ -18,54 +21,24 @@ const MAX_SUPPORTS_NESTING_DEPTH: usize = 128;
 
 /// Evaluate a complete feature query; invalid syntax never matches.
 pub(crate) fn supports_condition(source: &str, namespaces: &SupportsContext<'_>) -> bool {
-    namespaces.invalid_prefix.set(false);
     let mut input = ParserInput::new(source);
     let mut parser = Parser::new(&mut input);
     let start = parser.state();
-    if validate_component_values(&mut parser, 0, namespaces, false).is_err() {
+    if validate_component_values(&mut parser, 0).is_err() {
         return false;
     }
     parser.reset(&start);
     parser
         .parse_entirely(|input| parse_supports_condition(input, namespaces))
-        .is_ok_and(|condition| {
-            !namespaces.invalid_prefix.get() && condition.eval(&|value| Some(*value)) == Some(true)
-        })
+        .is_ok_and(|condition| condition.eval(&|value| Some(*value)) == Some(true))
 }
 
 /// Reject tokenizer errors before forgiving parsers can consume them.
-/// Selector features also check every qualified name before selector parsing
-/// can stop at earlier unsupported syntax.
-fn validate_component_values<'i>(
-    input: &mut Parser<'i, '_>,
-    depth: usize,
-    namespaces: &SupportsContext<'_>,
-    in_selector: bool,
-) -> PResult<'i, ()> {
+fn validate_component_values<'i>(input: &mut Parser<'i, '_>, depth: usize) -> PResult<'i, ()> {
     while !input.is_exhausted() {
         let token = input.next()?.clone();
         if token.is_parse_error() {
             return Err(input.new_custom_error(()));
-        }
-        if in_selector && let Token::Ident(prefix) = &token {
-            let start = input.state();
-            let qualified = input
-                .try_parse(|input| -> PResult<'i, ()> {
-                    input.expect_delim('|')?;
-                    match input.next()? {
-                        Token::Ident(_) | Token::Delim('*') => Ok(()),
-                        _ => Err(input.new_custom_error(())),
-                    }
-                })
-                .is_ok();
-            input.reset(&start);
-            if qualified
-                && !namespaces
-                    .get()
-                    .contains_key(&crate::Atom::from(prefix.as_ref()))
-            {
-                return Err(input.new_custom_error(()));
-            }
         }
 
         if matches!(
@@ -78,9 +51,7 @@ fn validate_component_values<'i>(
             if depth >= MAX_SUPPORTS_NESTING_DEPTH {
                 return Err(input.new_custom_error(()));
             }
-            input.parse_nested_block(|input| {
-                validate_component_values(input, depth + 1, namespaces, in_selector)
-            })?;
+            input.parse_nested_block(|input| validate_component_values(input, depth + 1))?;
         }
     }
     Ok(())
@@ -197,12 +168,9 @@ fn parse_supports_selector<'i>(
 ) -> PResult<'i, bool> {
     input.expect_function_matching("selector")?;
     input.parse_nested_block(|input| {
-        let start = input.state();
-        if validate_component_values(input, 0, namespaces, true).is_err() {
-            namespaces.invalid_prefix.set(true);
-            return Err(input.new_custom_error(()));
+        if input.try_parse(parse_custom_highlight_prelude).is_ok() {
+            return Ok(true);
         }
-        input.reset(&start);
         let selectors = SelectorList::parse(
             &NamespacedSelectorParser {
                 namespaces: namespaces.get(),

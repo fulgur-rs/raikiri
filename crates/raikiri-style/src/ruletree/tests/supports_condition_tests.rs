@@ -248,14 +248,19 @@ fn selector_conditions_use_declared_stylesheet_namespaces() {
 }
 
 #[test]
-fn undefined_namespaces_invalidate_negated_and_forgiving_selector_conditions() {
-    for condition in ["not selector(svg|a)", "not selector(:is(.a, svg|a))"] {
+fn undefined_namespace_features_participate_in_boolean_conditions() {
+    for condition in [
+        "not selector(svg|a)",
+        "not selector(:is(.a, svg|a))",
+        "selector(svg|a) or (color: red)",
+        "selector(:is(.a, svg|a)) or (color: red)",
+    ] {
         let mut tree = RuleTree::empty();
         tree.add_stylesheet(
             &format!("@supports {condition} {{ p {{ color: red }} }}"),
             Origin::Author,
         );
-        assert!(tree.style_rules().is_empty(), "{condition}");
+        assert_eq!(tree.style_rules().len(), 1, "{condition}");
     }
 }
 
@@ -319,12 +324,12 @@ fn namespace_declarations_accept_strings_and_reject_misplacement() {
 }
 
 #[test]
-fn unsupported_selectors_cannot_hide_undefined_namespace_prefixes() {
+fn unsupported_selectors_remain_false_with_undefined_namespace_prefixes() {
     for condition in [
         "not selector(:unknown svg|a)",
         "not selector(:is(.a, :unknown svg|a))",
     ] {
-        assert!(!supports_condition(condition), "{condition}");
+        assert!(supports_condition(condition), "{condition}");
     }
 }
 
@@ -418,4 +423,61 @@ fn consumer_supports_context_is_isolated_and_survives_nested_queries() {
         Origin::Author,
     );
     assert_eq!(tree.style_rules().len(), 2);
+}
+
+#[test]
+fn namespace_records_preserve_quoted_uris_and_raw_preludes() {
+    for prelude in [
+        r#" svg /*comment*/ "urn:a b" /*tail*/ "#,
+        r#" svg "urn:a\"b" "#,
+        r#" "urn:default)" "#,
+        r#" svg url("urn:a b") "#,
+    ] {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(&format!("@namespace{prelude};"), Origin::Author);
+        let record = &tree.opaque_at_rules()[0];
+        assert_eq!(record.prelude, prelude);
+        let serialized = record.to_css();
+        assert_eq!(serialized, format!("@namespace{prelude};"));
+        let mut round_trip = RuleTree::empty();
+        round_trip.add_stylesheet(&serialized, Origin::Author);
+        assert_eq!(round_trip.opaque_at_rules()[0].prelude, prelude);
+    }
+}
+
+#[test]
+fn custom_highlight_features_use_the_supported_selector_prelude() {
+    for selector in [
+        "::highlight(foo)",
+        "::highlight(--marked)",
+        "::highlight(\\66 oo)",
+    ] {
+        let mut ordinary = RuleTree::empty();
+        ordinary.add_stylesheet(
+            &format!("{selector} {{ background-color: red }}"),
+            Origin::Author,
+        );
+        assert_eq!(ordinary.custom_highlight_styles().len(), 1);
+        assert!(supports_condition(&format!("selector({selector})")));
+        assert!(!supports_condition(&format!("not selector({selector})")));
+        let mut conditional = RuleTree::empty();
+        conditional.add_stylesheet(
+            &format!("@supports selector({selector}) {{ p {{ color: red }} }}"),
+            Origin::Author,
+        );
+        assert_eq!(conditional.style_rules().len(), 1);
+    }
+    for selector in [
+        "::highlight()",
+        "::highlight(\"foo\")",
+        "::highlight(foo bar)",
+        "p::highlight(foo)",
+        "::highlight(foo), p",
+        "::highlight(foo):hover",
+    ] {
+        assert!(
+            !supports_condition(&format!("selector({selector})")),
+            "{selector}"
+        );
+    }
 }

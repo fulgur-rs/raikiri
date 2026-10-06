@@ -10,7 +10,7 @@
 
 use cssparser::{Parser, ParserInput, SourceLocation, StyleSheetParser, Token};
 use selectors::parser::{ParseRelative, Parser as SelectorParser, Selector, SelectorList};
-use std::cell::{Cell, OnceCell};
+use std::cell::OnceCell;
 use std::collections::HashMap;
 
 use crate::consumer::ConsumerPropertyRegistration;
@@ -2267,7 +2267,6 @@ pub(crate) struct SupportsContext<'s> {
     source: &'s str,
     pub(crate) consumer_properties: &'s [ConsumerPropertyRegistration],
     namespaces: OnceCell<NamespaceMap>,
-    pub(crate) invalid_prefix: Cell<bool>,
 }
 
 impl<'s> SupportsContext<'s> {
@@ -2279,7 +2278,6 @@ impl<'s> SupportsContext<'s> {
             source,
             consumer_properties,
             namespaces: OnceCell::new(),
-            invalid_prefix: Cell::new(false),
         }
     }
 
@@ -2486,11 +2484,11 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
             return parse_page_prelude(input).map(ParsedAtRulePrelude::Page);
         }
         if name.eq_ignore_ascii_case("namespace") {
+            let start = input.position();
             let (prefix, uri) = parse_namespace_prelude(input)?;
-            let prelude = match &prefix {
-                Some(prefix) => format!(" {} url({})", prefix.0.as_str(), uri.0.as_str()),
-                None => format!(" url({})", uri.0.as_str()),
-            };
+            input.expect_exhausted()?;
+            consume_raw_component_values(input, self.source)?;
+            let prelude = input.slice(start..input.position()).to_owned();
             return Ok(ParsedAtRulePrelude::Namespace {
                 prefix,
                 uri,
@@ -2686,7 +2684,8 @@ impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for StyleRuleParser<'s, 'b> 
     }
 }
 
-fn parse_custom_highlight_prelude<'i, 't>(
+/// Parse the standalone custom-highlight selector supported by style rules.
+pub(crate) fn parse_custom_highlight_prelude<'i, 't>(
     input: &mut Parser<'i, 't>,
 ) -> Result<String, cssparser::ParseError<'i, ()>> {
     input.expect_colon()?;
