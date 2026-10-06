@@ -786,7 +786,9 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS Text full-width preserved spaces Ahem exact slice (+1).
     // + CSS Text Unicode full-width mapping exact slice (+1).
     // + CSS Text hanging-punctuation last in RTL exact slice (+1).
-    assert_eq!(set.baseline.entries.len(), 1361);
+    // + CSS Overflow / UI text-overflow clip|ellipsis exact slice (+27).
+    // + CSS Text Decoration horizontal text-emphasis exact slice (+8).
+    assert_eq!(set.baseline.entries.len(), 1396);
     assert!(set.quarantine.is_empty());
     assert!(set.deprecated.is_empty());
 }
