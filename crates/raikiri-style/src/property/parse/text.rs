@@ -1502,9 +1502,37 @@ pub(super) fn parse_text_align(input: &mut Parser<'_, '_>) -> Option<TextAlign> 
     TextAlign::from_css_ident(input.expect_ident().ok()?)
 }
 
-/// Parses the implemented `hanging-punctuation` subset from CSS Text 3 §8.2.1.
+/// Parses the unordered, non-repeating keyword set from CSS Text 3 §8.2.1.
 pub(super) fn parse_hanging_punctuation(input: &mut Parser<'_, '_>) -> Option<HangingPunctuation> {
-    HangingPunctuation::from_css_ident(input.expect_ident().ok()?)
+    let (mut first, mut last, mut end) = (false, false, None);
+    // Leave the optional !important suffix and non-ident garbage to the
+    // declaration parser, which enforces exhaustive consumption.
+    while let Ok(ident) = input.try_parse(|input| input.expect_ident().cloned()) {
+        cssparser::match_ignore_ascii_case! { &ident,
+            "none" if !first && !last && end.is_none() => {
+                return Some(HangingPunctuation::None);
+            },
+            "first" if !first => first = true,
+            "last" if !last => last = true,
+            "force-end" if end.is_none() => end = Some(true),
+            "allow-end" if end.is_none() => end = Some(false),
+            _ => return None,
+        }
+    }
+    Some(match (first, last, end) {
+        (true, false, None) => HangingPunctuation::First,
+        (false, true, None) => HangingPunctuation::Last,
+        (false, false, Some(true)) => HangingPunctuation::ForceEnd,
+        (false, false, Some(false)) => HangingPunctuation::AllowEnd,
+        (true, true, None) => HangingPunctuation::FirstLast,
+        (true, false, Some(true)) => HangingPunctuation::FirstForceEnd,
+        (true, false, Some(false)) => HangingPunctuation::FirstAllowEnd,
+        (false, true, Some(true)) => HangingPunctuation::ForceEndLast,
+        (false, true, Some(false)) => HangingPunctuation::AllowEndLast,
+        (true, true, Some(true)) => HangingPunctuation::FirstForceEndLast,
+        (true, true, Some(false)) => HangingPunctuation::FirstAllowEndLast,
+        (false, false, None) => return None,
+    })
 }
 
 /// Parses `direction: <ident>`

@@ -355,9 +355,8 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // The spec defines a shorthand (text-align-all + text-align-last), but
         // we store one field (case (b) unsupported; see the `TextAlign` doc comment).
         "text-align" => parse_text_align(input).map(PropertyValue::TextAlign),
-        // CSS Text 3 §8.2.1. This milestone accepts the inherited `none | first`
-        // subset; unsupported valid grammar arms are dropped until their line
-        // layout behavior is implemented.
+        // CSS Text 3 §8.2.1: retain the complete inherited, unordered keyword set.
+        // The computed value serializes in first, end-mode, last order.
         "hanging-punctuation" => {
             parse_hanging_punctuation(input).map(PropertyValue::HangingPunctuation)
         }

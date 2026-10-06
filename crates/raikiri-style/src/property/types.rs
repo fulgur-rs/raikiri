@@ -3704,31 +3704,100 @@ css_keywords!(BoxSizing {
     BorderBox => "border-box",
 });
 
-/// `hanging-punctuation` property value.
+/// The inherited `hanging-punctuation` keyword set (CSS Text 3 §8.2.1).
 ///
-/// CSS Text 3 §8.2.1
+/// Grammar: `none | [ first || [ force-end | allow-end ] || last ]`.
+/// Each variant represents a valid set; the two end modes cannot coexist.
+/// CSS serialization uses the canonical first/end/last order.
 /// <https://drafts.csswg.org/css-text-3/#hanging-punctuation-property>.
-/// The full grammar also has `last`, `force-end`, and `allow-end`; this
-/// milestone carries only the inherited `none | first` subset needed by the
-/// leading U+3000 WPT slice. Unsupported valid keywords are dropped until a
-/// matching line-layout implementation lands.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HangingPunctuation {
     /// No punctuation hangs. This is the initial value.
     None,
-    /// A leading opening mark, quote, or U+3000 IDEOGRAPHIC SPACE hangs on
-    /// the first formatted line.
+    /// Hang an opening mark, quote, or U+3000 IDEOGRAPHIC SPACE on the
+    /// first formatted line.
     First,
-    /// A trailing closing mark or quote hangs on the last formatted line.
+    /// Hang a closing mark or quote on the last formatted line.
     Last,
+    /// Always hang a qualifying stop or comma at the line end.
+    ForceEnd,
+    /// Hang a qualifying stop or comma only when needed to fit the line.
+    AllowEnd,
+    /// `first last`.
+    FirstLast,
+    /// `first force-end`.
+    FirstForceEnd,
+    /// `first allow-end`.
+    FirstAllowEnd,
+    /// `force-end last`.
+    ForceEndLast,
+    /// `allow-end last`.
+    AllowEndLast,
+    /// `first force-end last`.
+    FirstForceEndLast,
+    /// `first allow-end last`.
+    FirstAllowEndLast,
 }
 
-css_keywords!(HangingPunctuation {
+css_keywords!(@serialize HangingPunctuation {
     None => "none",
     First => "first",
     Last => "last",
+    ForceEnd => "force-end",
+    AllowEnd => "allow-end",
+    FirstLast => "first last",
+    FirstForceEnd => "first force-end",
+    FirstAllowEnd => "first allow-end",
+    ForceEndLast => "force-end last",
+    AllowEndLast => "allow-end last",
+    FirstForceEndLast => "first force-end last",
+    FirstAllowEndLast => "first allow-end last",
 });
+
+impl HangingPunctuation {
+    /// Whether the first-line opening-punctuation rule is selected.
+    pub const fn first(self) -> bool {
+        matches!(
+            self,
+            Self::First
+                | Self::FirstLast
+                | Self::FirstForceEnd
+                | Self::FirstAllowEnd
+                | Self::FirstForceEndLast
+                | Self::FirstAllowEndLast
+        )
+    }
+
+    /// Whether the last-line closing-punctuation rule is selected.
+    pub const fn last(self) -> bool {
+        matches!(
+            self,
+            Self::Last
+                | Self::FirstLast
+                | Self::ForceEndLast
+                | Self::AllowEndLast
+                | Self::FirstForceEndLast
+                | Self::FirstAllowEndLast
+        )
+    }
+
+    /// Whether stops and commas must hang at the line end.
+    pub const fn force_end(self) -> bool {
+        matches!(
+            self,
+            Self::ForceEnd | Self::FirstForceEnd | Self::ForceEndLast | Self::FirstForceEndLast
+        )
+    }
+
+    /// Whether stops and commas may hang to fit the line.
+    pub const fn allow_end(self) -> bool {
+        matches!(
+            self,
+            Self::AllowEnd | Self::FirstAllowEnd | Self::AllowEndLast | Self::FirstAllowEndLast
+        )
+    }
+}
 
 /// The value of the `text-align` property.
 ///
@@ -8430,9 +8499,8 @@ pub enum PropertyValue {
     /// implementation stores it in a single field (**part (b) unsupported**;
     /// splitting into longhands is deferred to a later task). See [`TextAlign`] docs.
     TextAlign(TextAlign),
-    /// `hanging-punctuation: none | first` — inherited, initial `none`.
-    /// The line-layout consumer currently implements only a leading U+3000
-    /// hang for `first`; other valid grammar arms remain outside this slice.
+    /// The inherited `hanging-punctuation` keyword set, initially `none`.
+    /// First/last and the mutually exclusive end mode are retained for layout.
     HangingPunctuation(HangingPunctuation),
     /// `text-indent` — the full grammar is
     /// `<length-percentage> && hanging? && each-line?`; this variant covers

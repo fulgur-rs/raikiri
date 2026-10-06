@@ -663,6 +663,74 @@ fn every_inline_style_carries_its_own_hanging_punctuation() {
 }
 
 #[test]
+fn hanging_punctuation_full_grammar_maps_all_root_and_inline_flags() {
+    for (css, (first, last, force_end, allow_end)) in [
+        ("none", (false, false, false, false)),
+        ("first", (true, false, false, false)),
+        ("last", (false, true, false, false)),
+        ("force-end", (false, false, true, false)),
+        ("allow-end", (false, false, false, true)),
+        ("first last", (true, true, false, false)),
+        ("first force-end", (true, false, true, false)),
+        ("first allow-end", (true, false, false, true)),
+        ("force-end last", (false, true, true, false)),
+        ("allow-end last", (false, true, false, true)),
+        ("first force-end last", (true, true, true, false)),
+        ("first allow-end last", (true, true, false, true)),
+    ] {
+        let expected = s::HangingPunctuation {
+            first,
+            last,
+            force_end,
+            allow_end,
+        };
+        let fixture = block_fixture(&format!("hanging-punctuation:{css}"), |doc, root| {
+            doc.append_text(root, "x");
+        });
+        let computed = &fixture.cascade.computed[fixture.root];
+        let options = line_options(computed, fixture.root, &fonts())
+            .expect("root options")
+            .0;
+        let inline = inline_style(computed, fixture.root, &fonts()).expect("inline style");
+        assert_eq!(options.hanging_punctuation, expected, "root {css}");
+        assert_eq!(inline.hanging_punctuation, Some(expected), "inline {css}");
+    }
+}
+
+#[test]
+fn hanging_punctuation_combinations_inherit_and_inline_none_clears_root_flags() {
+    let fixture = block_fixture("hanging-punctuation:first force-end last", |doc, root| {
+        for css in [
+            "display:inline",
+            "display:inline;hanging-punctuation:none",
+            "display:inline;hanging-punctuation:first allow-end",
+        ] {
+            let child = span(doc, root, css);
+            doc.append_text(child, "x");
+        }
+    });
+    let children = &fixture.doc.nodes[fixture.root].children;
+    for (&node, expected) in children.iter().zip([
+        s::HangingPunctuation {
+            first: true,
+            last: true,
+            force_end: true,
+            allow_end: false,
+        },
+        s::HangingPunctuation::default(),
+        s::HangingPunctuation {
+            first: true,
+            last: false,
+            force_end: false,
+            allow_end: true,
+        },
+    ]) {
+        let mapped = inline_style(&fixture.cascade.computed[node], node, &fonts()).expect("map");
+        assert_eq!(mapped.hanging_punctuation, Some(expected));
+    }
+}
+
+#[test]
 fn no_hanging_punctuation_leaves_the_flags_clear() {
     let fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "x");

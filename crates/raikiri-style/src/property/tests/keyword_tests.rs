@@ -46,7 +46,6 @@ fn keyword_tables_round_trip_through_their_parsers() {
         FontVariantLigatures,
         FontVariantPosition,
         GeometryBox,
-        HangingPunctuation,
         HorizontalSide,
         Hyphens,
         Isolation,
@@ -88,6 +87,14 @@ fn keyword_tables_round_trip_through_their_parsers() {
 
 #[test]
 fn multi_token_keyword_tables_round_trip_through_the_property_parser() {
+    for &value in HangingPunctuation::ALL {
+        assert_eq!(
+            parse_entire(value.as_css_str(), "hanging-punctuation"),
+            Some(PropertyValue::HangingPunctuation(value)),
+            "{}",
+            value.as_css_str()
+        );
+    }
     for &value in TextTransform::ALL {
         assert_eq!(
             parse_entire(value.as_css_str(), "text-transform"),

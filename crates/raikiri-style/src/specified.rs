@@ -203,8 +203,8 @@ pub struct SpecifiedValues {
     /// `match-parent` is **not resolved here**. See "`text_align: match-parent`
     /// differs from D5" in the docs for [`Self`].
     pub text_align: TextAlign,
-    /// [`ComputedValues::hanging_punctuation`] staging. Inherited keyword;
-    /// the line-layout consumer applies the implemented `first` subset.
+    /// [`ComputedValues::hanging_punctuation`] staging. The inherited keyword
+    /// set is preserved for the line-layout consumer.
     pub hanging_punctuation: HangingPunctuation,
     /// Staging value for
     /// [`ComputedValues::text_autospace`](crate::computed::ComputedValues::text_autospace);

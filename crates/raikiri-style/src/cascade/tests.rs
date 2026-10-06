@@ -570,3 +570,74 @@ fn replace_page_swaps_the_page_context_and_starts_a_new_generation() {
     result.replace_page(first_page);
     assert_ne!(result.generation(), replaced);
 }
+
+#[test]
+fn hanging_punctuation_combinations_survive_cascade_inheritance_and_overrides() {
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "div", Some("hanging-punctuation:last force-end first"));
+    let inherited = doc.push_element(parent, "span", None);
+    let explicit = doc.push_element(parent, "span", Some("hanging-punctuation:inherit"));
+    let cleared = doc.push_element(parent, "span", Some("hanging-punctuation:none"));
+    let child = doc.push_element(cleared, "span", None);
+    let changed = doc.push_element(
+        parent,
+        "span",
+        Some("--hang:last allow-end;hanging-punctuation:var(--hang)"),
+    );
+    let invalid = doc.push_element(
+        parent,
+        "span",
+        Some("hanging-punctuation:first;hanging-punctuation:force-end allow-end"),
+    );
+    let result = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+    for (node, expected) in [
+        (parent, "first force-end last"),
+        (inherited, "first force-end last"),
+        (explicit, "first force-end last"),
+        (cleared, "none"),
+        (child, "none"),
+        (changed, "allow-end last"),
+        (invalid, "first"),
+    ] {
+        assert_eq!(
+            result.computed[node].hanging_punctuation.as_css_str(),
+            expected
+        );
+    }
+}
+
+#[test]
+fn hanging_punctuation_important_wins_cascade_and_is_inherited() {
+    for css in [
+        "none",
+        "first",
+        "last",
+        "force-end",
+        "allow-end",
+        "first last",
+        "first force-end",
+        "first allow-end",
+        "force-end last",
+        "allow-end last",
+        "first force-end last",
+        "first allow-end last",
+    ] {
+        let mut doc = TestDoc::new();
+        let sheet = doc.push_element(0, "style", None);
+        doc.push_text(
+            sheet,
+            &format!("div {{ hanging-punctuation:{css} !important }}"),
+        );
+        let parent = doc.push_element(0, "div", Some("hanging-punctuation:first last"));
+        let inherited = doc.push_element(parent, "span", None);
+        let explicit = doc.push_element(parent, "span", Some("hanging-punctuation:inherit"));
+        let result = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+        for node in [parent, inherited, explicit] {
+            assert_eq!(
+                result.computed[node].hanging_punctuation.as_css_str(),
+                css,
+                "{css}, node {node}"
+            );
+        }
+    }
+}

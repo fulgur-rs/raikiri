@@ -1763,3 +1763,22 @@ fn only_white_space_that_white_space_keeps_makes_a_root() {
         assert_eq!(is_root(&fixture, fixture.root), root, "{css} {text:?}");
     }
 }
+
+#[test]
+fn hanging_punctuation_end_modes_and_combinations_keep_the_actual_ifc_path() {
+    for css in [
+        "force-end",
+        "allow-end",
+        "first last",
+        "first force-end last",
+        "first allow-end last",
+    ] {
+        let mut fixture = block_fixture(&format!("hanging-punctuation:{css}"), |doc, root| {
+            let child = span(doc, root, "display:inline");
+            doc.append_text(child, "aa,");
+        });
+        enable(&mut fixture);
+        assign(&mut fixture);
+        assert!(is_root(&fixture, fixture.root), "{css}");
+    }
+}
