@@ -1,7 +1,7 @@
 //! Single-page layout driver — publicly provides `layout_single_page`.
 //!
 //! Pipeline: uses the cascade (raikiri-style) output, Document arena, and PageBox
-//! to drive taffy compute_root_layout. Paragraphs are laid out by the shodo
+//! to drive taffy with `<body>` as the root. Paragraphs are laid out by the shodo
 //! inline engine, which taffy measures as leaves; without fonts set on the
 //! Document, the installed system fonts are used.
 //!
@@ -16,11 +16,11 @@ use crate::document::Document;
 use crate::fragment::{FragmentationContext, MulticolStyle};
 use crate::node::{MulticolTextFragment, NodeData, NodeFlags};
 use raikiri_style::property::{
-    AlignSelfValue, BackgroundImage, BoxSizing as StyleBoxSizing, BreakBetween,
-    CalcLengthPercentage, ClearValue, ColumnCountValue, ColumnFillValue, ContentAlignmentValue,
-    Direction, DisplayValue, FlexDirectionValue, FlexWrapValue, FloatValue, GridAutoFlowValue,
-    GridLineValue, GridRepeatCount, GridTemplateAreasValue, Length, LengthOrAuto, OverflowValue,
-    PositionValue, PropertyKey, PropertyValue, RubyPosition, SelfAlignmentValue, WritingMode,
+    AlignSelfValue, BoxSizing as StyleBoxSizing, BreakBetween, CalcLengthPercentage, ClearValue,
+    ColumnCountValue, ColumnFillValue, ContentAlignmentValue, Direction, DisplayValue,
+    FlexDirectionValue, FlexWrapValue, FloatValue, GridAutoFlowValue, GridLineValue,
+    GridRepeatCount, GridTemplateAreasValue, Length, LengthOrAuto, OverflowValue, PositionValue,
+    PropertyKey, PropertyValue, RubyPosition, SelfAlignmentValue, WritingMode,
 };
 use raikiri_style::{
     CascadeResult, ChLengthProvenance, ComputedColumnWidth, ComputedFlexBasis,
@@ -41,8 +41,7 @@ use taffy::{
     MaxTrackSizingFunction, MinTrackSizingFunction, NodeId as TaffyNodeId,
     Overflow as TaffyOverflow, Point, Position as TaffyPosition, Rect,
     RepetitionCount as TaffyRepetitionCount, RequestedAxis, RunMode, Size, SizingMode,
-    TrackSizingFunction, compute_block_layout, compute_root_layout,
-    style_helpers as taffy_style_helpers,
+    TrackSizingFunction, compute_block_layout, style_helpers as taffy_style_helpers,
 };
 
 pub(crate) mod table;
@@ -54,6 +53,7 @@ fn style_dimension_length(value: Dimension) -> Option<f32> {
         .filter(|value| value.is_finite())
 }
 
+mod body_block_margins;
 mod bridge;
 mod depth;
 pub(crate) mod ifc;
@@ -64,6 +64,7 @@ pub(crate) mod sanitize;
 #[cfg(test)]
 pub(crate) mod test_support;
 
+use body_block_margins::*;
 use multicol::*;
 pub(crate) use page::used_style_length_percentage;
 use page::*;

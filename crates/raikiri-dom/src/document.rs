@@ -306,6 +306,9 @@ pub struct Document {
     /// Used left and right margins of `<body>` that the most recent layout
     /// carried as inline padding of the synthetic body root.
     pub(crate) body_inline_margins: (f32, f32),
+    /// Used block-start margin of `<body>` that the most recent layout placed
+    /// inside the synthetic body root.
+    pub(crate) body_block_start_margin: f32,
     /// Dirty flag for the IS_IN_DOCUMENT bit. Any tree mutation primitive
     /// (append_* / attach_child / insert_child_before / detach_from_parent /
     /// reparent_children / retain_children) sets it. Observation APIs
@@ -479,6 +482,7 @@ impl Document {
             ifc: None,
             layout_cascade_generation: None,
             body_inline_margins: (0.0, 0.0),
+            body_block_start_margin: 0.0,
             // Node::new_document() sets IS_IN_DOCUMENT=true on the initial root,
             // consistent with an attached root. There are no templates or
             // detached nodes yet, so the flag is not dirty.
@@ -815,6 +819,23 @@ impl Document {
     #[doc(hidden)]
     pub fn body_inline_margins(&self) -> (f32, f32) {
         self.body_inline_margins
+    }
+
+    /// Used block-start margin of `<body>`, in CSS pixels, as of the most
+    /// recent layout.
+    ///
+    /// This is the body's top margin collapsed with the top margins of its
+    /// first in-flow children when they adjoin (CSS 2.1 §8.3.1), or the
+    /// body's own margin when they do not. Layout lays `<body>` out as the
+    /// root box at the top of the page content box and moves the body's
+    /// content down by this value, so laid-out coordinates already include
+    /// it. A consumer that needs the body's own border box insets the top of
+    /// the root box by it. It can be negative, and is 0 before the first
+    /// layout. The `<html>` margin is not included: margins of the root
+    /// element's box do not collapse, and the body root does not carry them.
+    #[doc(hidden)]
+    pub fn body_block_start_margin(&self) -> f32 {
+        self.body_block_start_margin
     }
 
     /// Fragments emitted by the most recent layout pass.

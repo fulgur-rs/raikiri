@@ -114,7 +114,9 @@ fn realign_grid_abspos_static_positions(document: &mut Document, cascade: &Casca
 /// - Bridge computed values to taffy::Style with `apply_computed_to_style`
 ///   and assign the paragraphs of the inline engine
 /// - Set body.style.size to the page content box with `apply_page_content_box_to_body`
-/// - Run taffy with `compute_root_layout` and store results in Node.unrounded_layout
+/// - Run taffy with the body as the root (`compute_body_root_layout`), store
+///   results in Node.unrounded_layout and move the body's content below its
+///   used block-start margin
 ///
 /// # Errors
 /// - `LayoutError::Internal` — no `<body>` element found (fragment parses
@@ -200,32 +202,35 @@ pub fn layout_single_page(
     // cov:ignore: exercised by the ignored foundation WPT run; default coverage skips ignored reftests.
     prepare_multicol_layout(document, cascade, body_insets.content_width(content_width));
 
-    // The minimal UA sheet contributes the usual 8px body margin.  The body
-    // is also used as the synthetic page root, so feeding that UA margin into
-    // taffy would apply it twice to ordinary element children.  Keep the
-    // computed value for the page cursor and remove only the exact UA-origin
-    // vertical sides from the synthetic root style.  The origin
-    // metadata is needed because an authored `margin: 8px` is otherwise
-    // indistinguishable from the UA rule after value computation.  The
-    // horizontal margins, UA or authored, become inline padding of the root
-    // after Step 4 (`move_body_inline_margins_into_padding`).
+    // The body is the taffy root, which ignores its margins. Its block-start
+    // margin is resolved here and placed after layout (or carried as top
+    // padding, see below), where it can collapse with its first child's;
+    // the bottom margin has no effect on a root sized to the page content
+    // box. The horizontal margins, UA or authored, become inline padding of
+    // the root after Step 4 (`move_body_inline_margins_into_padding`).
+    let body_margin_top = body_margin_top(document, cascade, body_id, content_width);
     {
-        let used = cascade.computed[body_id].margin;
         let style_margin = &mut document.nodes[body_id].style.margin;
-        let non_ua = cascade.non_ua_margin_sides.get(body_id);
-        let is_ua_default = |value: ComputedLengthPercentageOrAuto| matches!(value, ComputedLengthPercentageOrAuto::Px(px) if (px - 8.0).abs() <= 0.001);
-        if is_ua_default(used.top) && !non_ua.is_some_and(|sides| sides.top) {
-            style_margin.top = LengthPercentageAuto::length(0.0);
-        }
-        if is_ua_default(used.bottom) && !non_ua.is_some_and(|sides| sides.bottom) {
-            style_margin.bottom = LengthPercentageAuto::length(0.0);
-        }
+        style_margin.top = LengthPercentageAuto::length(0.0);
+        style_margin.bottom = LengthPercentageAuto::length(0.0);
     }
+    propagate_body_overflow_to_viewport(document, cascade, body_id);
+    let body_top_may_collapse = body_top_margin_may_collapse(document, cascade, body_id);
 
     // Step 4: force body.style.size to the page content box, not the full paper size.
     // Page margins are painted/represented outside this taffy root.
     apply_page_content_box_to_body(document, body_id, page_box, margins, insets);
     move_body_inline_margins_into_padding(document, body_id, body_insets, content_width);
+    // A body whose content is one inline-engine paragraph has line boxes that
+    // keep its top margin from collapsing; carry it as top padding so the
+    // lines and the boxes among them start below it.
+    let body_is_paragraph = document.nodes[body_id].is_ifc_root();
+    let body_top_padding = BodyTopPadding::capture(document, body_id, content_width);
+    let mut body_padded_top = if body_is_paragraph {
+        body_top_padding.apply(document, body_id, body_margin_top)
+    } else {
+        0.0
+    };
     // CSS 2.1 §10.3.7 absolute width:auto shrink-to-fit needs no pre-pass:
     // taffy already shrink-wraps direct-body and nested absolute boxes alike.
     // See the §10.3.7 note on the layout helpers for the removed fill override.
@@ -235,14 +240,47 @@ pub fn layout_single_page(
         state.page_width = Some(content_width);
     }
     // Step 5: taffy compute
-    compute_root_layout(
+    let available_space = taffy::Size {
+        width: AvailableSpace::Definite(content_width),
+        height: AvailableSpace::Definite(content_height),
+    };
+    let escaped_top_margin = compute_body_root_layout(
         document,
         TaffyNodeId::from(body_id),
-        taffy::Size {
-            width: AvailableSpace::Definite(content_width),
-            height: AvailableSpace::Definite(content_height),
-        },
+        available_space,
+        body_top_may_collapse,
     );
+    // A block box that starts the body's paragraph was placed by its own
+    // top margins inside the paragraph; those collapse with the body's. Lay
+    // the body out again with only the part of the collapsed margin that
+    // they leave over as top padding. Only the body's own box changes, so
+    // the boxes inside keep their cached layouts.
+    let mut paragraph_collapsed_top = None;
+    if body_is_paragraph && let Some(leading) = body_paragraph_leading_margin(document, body_id) {
+        let collapsed = leading.collapse_with_margin(body_margin_top).resolve();
+        let padding = collapsed - leading.resolve();
+        if (padding.max(0.0) - body_padded_top).abs() > 1e-4 {
+            body_padded_top = body_top_padding.apply(document, body_id, padding);
+            document.nodes[body_id].cache.clear();
+            compute_body_root_layout(document, TaffyNodeId::from(body_id), available_space, false);
+        }
+        // A negative remainder is clamped, as padding cannot be negative.
+        paragraph_collapsed_top = Some(body_padded_top + leading.resolve());
+    }
+    // CSS 2.1 §8.3.1: the body's top margin and the top margins that escaped
+    // its first in-flow children collapse into one, the largest positive
+    // margin plus the most negative one. When nothing escaped (top padding
+    // or border, a new formatting context, no in-flow child) this is the
+    // body's own margin. Move the content below it.
+    document.body_block_start_margin = if body_is_paragraph {
+        paragraph_collapsed_top.unwrap_or(body_padded_top)
+    } else {
+        let collapsed = escaped_top_margin
+            .collapse_with_margin(body_margin_top)
+            .resolve();
+        shift_body_content(document, body_id, collapsed);
+        collapsed
+    };
     if let Some(message) = document.table_layout_error.take() {
         // A rejected pass must not cache its temporary zero-sized fallback.
         document.layout_dirty = true;
@@ -1604,10 +1642,12 @@ pub fn layout_pages_with_page_geometry_and_control(
     })?;
     let margins = page_margins(cascade, page_box);
     let insets = page_content_insets(cascade, page_box);
-    // The current single-page bridge collapses the root box to zero size, so
-    // html/body block-start margins are not represented in descendant
-    // coordinates. Carry both margins into the initial fragmentainer cursor
-    // instead of treating the first text run as page-zero content.
+    // The body root sits at the top of the page content box, so the html
+    // element's block-start margin is not represented in descendant
+    // coordinates; carry it into the initial fragmentainer cursor. Margins of
+    // the root element's box do not collapse (CSS 2.1 §8.3.1), so it simply
+    // adds to the body's used block-start margin, which layout already
+    // placed inside the body root.
     let html_margin_top = document.nodes[document.root]
         .children
         .iter()
@@ -1627,44 +1667,7 @@ pub fn layout_pages_with_page_geometry_and_control(
             .map(|value| value.max(0.0))
         })
         .unwrap_or(0.0);
-    let body_has_element_child = document.nodes[body_id]
-        .children
-        .iter()
-        .any(|&child_id| document.nodes[child_id].kind() == NodeKind::Element);
-    let body_has_canvas_background = {
-        let body = &cascade.computed[body_id];
-        body.background_color.a != 0 || !matches!(body.background_image, BackgroundImage::None)
-    };
-    let body_has_direct_text = document.nodes[body_id].children.iter().any(|&child_id| {
-        document.nodes[child_id].kind() == NodeKind::Text
-            && document.nodes[child_id].unrounded_layout.size.height > 0.0
-    });
-    let body_top_is_non_ua = cascade
-        .non_ua_margin_sides
-        .get(body_id)
-        .is_some_and(|sides| sides.top);
-    let body_margin_top = if body_top_is_non_ua
-        || (body_has_direct_text && !body_has_element_child && body_has_canvas_background)
-    {
-        let used = if body_top_is_non_ua {
-            used_style_length_percentage_auto(
-                document.nodes[body_id].style.margin.top,
-                margins.content_width(page_box),
-            )
-        } else {
-            None
-        };
-        used.or_else(|| {
-            used_computed_length_percentage_or_auto(
-                cascade.computed[body_id].margin.top,
-                margins.content_width(page_box),
-            )
-        })
-        .map(|value| value.max(0.0))
-        .unwrap_or(0.0)
-    } else {
-        0.0
-    };
+    let body_margin_top = document.body_block_start_margin;
     let root_margin_top = html_margin_top + body_margin_top;
     // Keep the scheduled inline size identical to the first layout pass;
     // page border/padding are applied as a paint offset, not as a narrower
@@ -1691,12 +1694,14 @@ pub fn layout_pages_with_page_geometry_and_control(
     // A root margin that reaches into a later fragmentainer consumes whole
     // leading pages.  Do not leave the first content run stranded halfway
     // down the first nonblank page.
+    // The body's part of that margin is already in the layout coordinates,
+    // so only the rest is added to the content.
     let root_flow_offset = if root_margin_top >= fixed_page_step {
         let page_index = page_index_for_y(root_margin_top);
         control.check_discovery_page_index(page_index)?;
-        page_origin(page_index)
+        page_origin(page_index) - body_margin_top
     } else {
-        root_margin_top
+        html_margin_top
     };
 
     // Pagination adjusts selected boxes after taffy has produced one normal

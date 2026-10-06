@@ -27,8 +27,9 @@ use super::*;
 /// The insets resolve against the page content width `content_width`, the
 /// width of the body's containing block (CSS 2.1 §8.3); an `auto` margin is
 /// 0, as for any block whose width is `auto` (§10.3.3). Negative margins are
-/// clamped to 0 because padding cannot be negative. The vertical margins stay
-/// as they are: the page flow handles them, including margin collapsing.
+/// clamped to 0 because padding cannot be negative. The block-start margin,
+/// which can collapse with the first child's, is placed separately (see
+/// [`super::body_block_margins`]).
 ///
 /// The body's own box spans the full page content width, so its border and
 /// background are not inset by the margins.

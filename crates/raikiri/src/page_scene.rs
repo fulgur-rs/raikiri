@@ -53,8 +53,7 @@ use crate::raster_budget::RasterBufferBudget;
 use anyrender::render_to_buffer;
 use anyrender_vello_cpu::VelloCpuImageRenderer;
 use raikiri_dom::{CounterSnapshotBudget, Document};
-use raikiri_style::property::{DisplayValue, FloatValue, PositionValue};
-use raikiri_style::resolve::{ComputedLengthPercentage, ComputedLengthPercentageOrAuto};
+use raikiri_style::resolve::ComputedLengthPercentageOrAuto;
 use raikiri_style::{CascadeResult, PageMarginBoxCascadeResult};
 use raikiri_traits::{NodeId, NodeKind, PageBox, RenderError};
 use std::collections::{BTreeMap, HashMap};
@@ -161,9 +160,10 @@ pub struct Fragment {
 /// - [`root_id`](PageScene::root_id) / [`body_id`](PageScene::body_id): NodeIds
 ///   of the `<html>` / `<body>` nodes; entry points for consumers looking up
 ///   root-level styling (background / opacity)
-/// - [`body_offset_pt`](PageScene::body_offset_pt): page-absolute offset after
-///   html → body margin collapse (following `body_offset_pt` semantics in
-///   Fulgur drawables.rs:430-438). Consumers add this to the body-content-area-
+/// - [`body_offset_pt`](PageScene::body_offset_pt): page-absolute offset of
+///   the body root, through the page margins and insets and the `<html>`
+///   margins (following `body_offset_pt` semantics in Fulgur
+///   drawables.rs:430-438). Consumers add this to the body-content-area-
 ///   relative per-fragment (x, y) in [`fragments`](PageScene::fragments) to get
 ///   page-absolute coordinates
 /// - [`margin_boxes`](PageScene::margin_boxes): matching `@page` margin-box
@@ -183,9 +183,10 @@ pub struct PageScene {
     pub root_id: Option<NodeId>,
     /// `<body>` NodeId, or `None` if the document has no body.
     pub body_id: Option<NodeId>,
-    /// Page-absolute offset (Pt, Pt) accounting for html → body margin collapse.
-    /// Add it to body-content-area-relative fragment coordinates to obtain
-    /// page-absolute coordinates.
+    /// Page-absolute offset (Pt, Pt) of the body root: the page margins and
+    /// insets plus the `<html>` margins, which do not collapse with the
+    /// body's. Add it to body-content-area-relative fragment coordinates to
+    /// obtain page-absolute coordinates.
     pub body_offset_pt: (Pt, Pt),
     /// Cascaded margin-box declaration bags for this page, in source order.
     ///
@@ -339,186 +340,34 @@ fn used_margin_px(value: ComputedLengthPercentageOrAuto, basis: f32) -> f32 {
     if resolved.is_finite() { resolved } else { 0.0 }
 }
 
-/// Resolve computed padding to used px against the same width basis.
-fn used_padding_px(value: ComputedLengthPercentage, basis: f32) -> f32 {
-    let resolved = match value {
-        ComputedLengthPercentage::Px(px) => px,
-        ComputedLengthPercentage::Percent(percent) => basis * percent / 100.0,
-    };
-    if resolved.is_finite() { resolved } else { 0.0 }
-}
-
-/// Collapse adjoining vertical margins per CSS 2.1 section 8.3.1.
+/// Extra page-absolute offset contributed by the `<html>` margins.
 ///
-/// Positive margins combine to their maximum, negative margins to their
-/// minimum (most negative), and mixed signs combine as the largest positive
-/// plus the most negative. Including zero covers the all-positive and
-/// all-negative cases without extra branches.
-fn collapse_margins(values: &[f32]) -> f32 {
-    let mut max_pos = 0.0_f32;
-    let mut min_neg = 0.0_f32;
-    for &value in values {
-        if !value.is_finite() {
-            continue;
-        }
-        if value >= 0.0 {
-            max_pos = max_pos.max(value);
-        } else {
-            min_neg = min_neg.min(value);
-        }
-    }
-    max_pos + min_neg
-}
-
-/// Whether the element has a top border or padding barrier.
-///
-/// A nonzero top border or padding breaks parent-first-child margin
-/// collapsing (CSS 2.1 section 8.3.1). Border uses the absolutized computed
-/// width; padding resolves percentages against the containing-block width.
-fn has_top_barrier(cascade: &CascadeResult, node_idx: usize, content_width: f32) -> bool {
-    let Some(computed) = cascade.computed.get(node_idx) else {
-        return false;
-    };
-    let border = computed.border.top.width().px();
-    if border.is_finite() && border > 0.001 {
-        return true;
-    }
-    let padding = used_padding_px(computed.padding.top, content_width);
-    padding > 0.001
-}
-
-/// Top margin of the first in-flow body child that adjoins the body top.
-///
-/// Returns `None` when no in-flow child adjoins (empty body, only
-/// out-of-flow or `display: none` children, a leading non-whitespace text run,
-/// a leading float, or a body with non-visible vertical overflow). In those
-/// cases the body top does not collapse with a child margin and the caller
-/// falls back to the `<html>`/`<body>` collapsed value alone.
-///
-/// Only the first level is considered. A deeper first-child chain (body with
-/// no barrier whose first child also has no barrier and its own first child)
-/// collapses all three per CSS 2.1 section 8.3.1, but that chain is a
-/// follow-up; this helper stops after one level.
-fn first_in_flow_top_margin(
-    dom: &Document,
-    cascade: &CascadeResult,
-    body_idx: usize,
-    content_width: f32,
-) -> Option<f32> {
-    use raikiri_style::property::OverflowValue;
-
-    if let Some(computed) = cascade.computed.get(body_idx)
-        && !matches!(
-            computed.overflow.y,
-            OverflowValue::Visible | OverflowValue::Clip
-        )
-    {
-        return None;
-    }
-    let body = dom.get_node(body_idx)?;
-    for &child_idx in &body.children {
-        let Some(child) = dom.get_node(child_idx) else {
-            continue; // cov:ignore: body children indices are always valid in a well-formed Document
-        };
-        if !child.is_in_document()
-            || child.is_non_rendered_html_element()
-            || child.is_display_none()
-        {
-            continue;
-        }
-        match child.kind() {
-            NodeKind::Text => {
-                let text = child.text_content().unwrap_or_default();
-                if text.trim().is_empty() {
-                    continue;
-                }
-                return None;
-            }
-            NodeKind::Element => {
-                let Some(computed) = cascade.computed.get(child_idx) else {
-                    continue;
-                };
-                if computed.display == DisplayValue::None {
-                    continue;
-                }
-                if matches!(
-                    computed.position,
-                    PositionValue::Absolute | PositionValue::Fixed
-                ) {
-                    continue;
-                }
-                if !matches!(computed.float, FloatValue::None) {
-                    return None;
-                }
-                return Some(used_margin_px(computed.margin.top, content_width));
-            }
-            _ => continue, // cov:ignore: body children via parsing are only Text or Element
-        }
-    }
-    None
-}
-
-/// Extra page-absolute offset contributed by `<html>`/`<body>` margins.
-///
-/// Horizontally margins never collapse. Layout already places the body's
-/// content inside the body's own left margin (the synthetic body root carries
-/// its horizontal margins as inline padding), so the x extra is the `<html>`
-/// left margin alone.
-/// Vertically adjoining margins collapse (see [`collapse_margins`]), so the y
-/// extra is the collapsed `<html>`/`<body>`/first-child value minus the first
-/// child's own margin, which keeps the first child's page-absolute position
-/// at the collapsed value while leaving its body-relative fragment untouched.
-/// When the body has a top barrier or no adjoining first child, the y extra
-/// is just the collapsed `<html>`/`<body>` value.
+/// Layout places the body's content inside the body's own margins: the
+/// synthetic body root carries the horizontal ones as inline padding and the
+/// block-start one, collapsed with its first in-flow children's when they
+/// adjoin, above the content. Margins of the root element's box do not
+/// collapse (CSS 2.1 section 8.3.1), so the `<html>` margins are added on
+/// both axes as they are.
 ///
 /// `content_width` is the page content width used as the percent basis.
-/// An `<html>` top barrier (border/padding) disables `<html>`/`<body>`
-/// collapsing; that rare case falls back to the plain sum and is documented
-/// as an approximation.
-fn body_margin_offsets(
-    dom: &Document,
+fn html_margin_offsets(
     cascade: &CascadeResult,
-    body_idx: Option<usize>,
     html_idx: Option<usize>,
     content_width: f32,
 ) -> (Pt, Pt) {
-    let Some(body_idx) = body_idx else {
-        return (0.0, 0.0);
-    };
     let basis = if content_width.is_finite() && content_width > 0.0 {
         content_width
     } else {
         0.0
     };
-    let body_top = cascade
-        .computed
-        .get(body_idx)
-        .map_or(0.0, |computed| used_margin_px(computed.margin.top, basis));
-    let (html_left, html_top, html_has_barrier) = html_idx.map_or((0.0, 0.0, false), |idx| {
-        let left = cascade
-            .computed
-            .get(idx)
-            .map_or(0.0, |computed| used_margin_px(computed.margin.left, basis));
-        let top = cascade
-            .computed
-            .get(idx)
-            .map_or(0.0, |computed| used_margin_px(computed.margin.top, basis));
-        let barrier = has_top_barrier(cascade, idx, basis);
-        (left, top, barrier)
-    });
-    let left_extra = html_left;
-    if html_has_barrier {
-        return (left_extra, html_top + body_top);
-    }
-    let html_body = collapse_margins(&[html_top, body_top]);
-    if has_top_barrier(cascade, body_idx, basis) {
-        return (left_extra, html_body);
-    }
-    let Some(first_top) = first_in_flow_top_margin(dom, cascade, body_idx, basis) else {
-        return (left_extra, html_body);
-    };
-    let collapsed = collapse_margins(&[html_top, body_top, first_top]);
-    (left_extra, collapsed - first_top)
+    html_idx
+        .and_then(|idx| cascade.computed.get(idx))
+        .map_or((0.0, 0.0), |computed| {
+            (
+                used_margin_px(computed.margin.left, basis),
+                used_margin_px(computed.margin.top, basis),
+            )
+        })
 }
 
 /// Extract metadata, fragments, and drawables from a post-layout Document
@@ -542,25 +391,21 @@ fn body_margin_offsets(
 /// # Fragment coordinate semantics
 ///
 /// [`Fragment`] uses Pt relative to the body content area. The synthetic
-/// body root spans the page content width at `(0, 0)` and carries the body's
-/// horizontal margins as inline padding, so descendants already sit inside
-/// the body's left margin; the body's own fragment is that root box inset
-/// horizontally by the body's left and right margins, its border box.
+/// body root spans the page content width at `(0, 0)`, carries the body's
+/// horizontal margins as inline padding and has its content moved below the
+/// body's used block-start margin, so descendants already sit inside the
+/// body's margins; the body's own fragment is that root box inset by the
+/// body's left, right and block-start margins, its border box.
 /// Descendants use body-relative coordinates accumulated as
 /// `parent_abs + node.unrounded_layout.location`, in the same DFS stack order
 /// as `raikiri_paint::walk::paint_document`.
 ///
 /// `body_offset_pt` is the body root's position relative to the page-absolute
 /// origin, including `@page` margins, `@page` border/padding insets, and the
-/// `<html>`/`<body>` element margins outside the body root: horizontally the
-/// `<html>` left margin (margins never collapse, CSS 2.1 section 8.3.1).
-/// Vertically
-/// adjoining margins collapse to the largest positive plus the most negative
-/// (CSS 2.1 section 8.3.1), so the y offset is the collapsed value minus the
-/// first in-flow child's own top margin (single level only; deeper chains,
-/// `<html>` border/padding, and non-visible `overflow` are follow-ups).
-/// Consumers add this offset to body-content-area-relative fragment
-/// coordinates to obtain page-absolute coordinates.
+/// `<html>` left and top margins, which do not collapse with the body's
+/// (CSS 2.1 section 8.3.1). Consumers add this offset to
+/// body-content-area-relative fragment coordinates to obtain page-absolute
+/// coordinates.
 ///
 /// Build the first page of a document using the compatibility single-page
 /// coordinates.
@@ -617,10 +462,11 @@ pub fn build_page_scene_for_page_named(
     let body_id = body_arena_idx.map(|idx| NodeId::new(idx as u64));
     let content_width = margins.content_width(page_box).max(0.0);
     let (body_left_extra, body_top_extra) =
-        body_margin_offsets(dom, cascade, body_arena_idx, html_arena_idx, content_width);
+        html_margin_offsets(cascade, html_arena_idx, content_width);
     // The body's border box is the synthetic root, which spans the page
-    // content width, inset by the margins layout moved into its padding.
+    // content box, inset by the margins layout placed inside it.
     let body_inline_margins = dom.body_inline_margins();
+    let body_block_start_margin = dom.body_block_start_margin();
 
     let mut node_ids: Vec<NodeId> = Vec::new();
     let mut fragments: BTreeMap<NodeId, Vec<Fragment>> = BTreeMap::new();
@@ -708,9 +554,9 @@ pub fn build_page_scene_for_page_named(
                     let (left, right) = body_inline_margins;
                     vec![(
                         abs_x + left,
-                        abs_y,
+                        abs_y + body_block_start_margin,
                         (layout.size.width - left - right).max(0.0),
-                        layout.size.height,
+                        (layout.size.height - body_block_start_margin).max(0.0),
                     )]
                 } else if pieces.is_empty() {
                     vec![(abs_x, abs_y, layout.size.width, layout.size.height)]

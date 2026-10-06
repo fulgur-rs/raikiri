@@ -232,6 +232,7 @@ pub(crate) fn place_lines(
         lines: std::sync::Arc::new(lines),
         beside_floats: false,
         escaping_margin: taffy::CollapsibleMarginSet::ZERO,
+        leading_block_margin: None,
         block_line_starts: Vec::new(),
         shifts: Vec::new(),
         fragment_box_placements: Vec::new(),

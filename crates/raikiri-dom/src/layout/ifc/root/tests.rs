@@ -11,6 +11,7 @@ fn debug_reports_fragment_box_placement_count() {
         height: 0.0,
         beside_floats: false,
         escaping_margin: taffy::CollapsibleMarginSet::ZERO,
+        leading_block_margin: None,
         block_line_starts: Vec::new(),
         shifts: Vec::new(),
         fragment_box_placements: vec![IfcBoxFragment {

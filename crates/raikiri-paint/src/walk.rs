@@ -3391,6 +3391,14 @@ pub(crate) fn paint_document_impl(
         let right_padding =
             (body.unrounded_layout.padding.right - document.body_inline_margins().1).max(0.0);
         if right_padding > 0.0 {
+            // Layout moves the content of a body that is not one paragraph
+            // below the body's block-start margin without changing its
+            // padding; a paragraph body carries that margin in its padding.
+            let content_shift = if body.is_ifc_root() {
+                0.0
+            } else {
+                document.body_block_start_margin()
+            };
             let content_end = body
                 .children
                 .iter()
@@ -3419,7 +3427,7 @@ pub(crate) fn paint_document_impl(
                     None,
                     &Rect::new(
                         (page_offset_x + body.unrounded_layout.padding.left) as f64,
-                        (page_offset_y + body.unrounded_layout.padding.top) as f64,
+                        (page_offset_y + body.unrounded_layout.padding.top + content_shift) as f64,
                         (page_offset_x + content_end + right_padding) as f64,
                         (page_offset_y + content_bottom + body.unrounded_layout.padding.bottom)
                             as f64,

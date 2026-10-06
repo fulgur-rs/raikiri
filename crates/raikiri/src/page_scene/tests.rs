@@ -53,20 +53,21 @@ fn build_page_scene_populates_metadata_from_hello_world() {
             "fragments must have at least one entry for each id in node_ids ({id:?})",
         );
     }
-    // No @page margin, but the UA sheet keeps `body { margin: 8px }`.
-    // The hello-world `<p>` has its top margin zeroed by the quirks-mode
-    // collapsing quirk (HTML LS section 15.3.9), so the vertical collapse is
-    // max(0, 8, 0) = 8. Horizontally layout already places the body's
-    // content inside its 8px left margin, so only `<html>`'s margin (0) is
-    // left for the offset.
-    assert_eq!(scene.body_offset_pt, (0.0, 8.0));
-    // The body's own fragment is its border box, inset by its margins.
+    // No @page margin, and layout already places the body's content inside
+    // the UA `body { margin: 8px }`, so only `<html>`'s margin (0) is left
+    // for the offset.
+    assert_eq!(scene.body_offset_pt, (0.0, 0.0));
+    // The body's own fragment is its border box, inset by its margins. The
+    // hello-world `<p>` has its top margin zeroed by the quirks-mode
+    // collapsing quirk (HTML LS section 15.3.9), so the body's top margin
+    // collapses to max(8, 0) = 8.
     let body = scene
         .body_id
         .and_then(|id| scene.fragments.get(&id))
         .and_then(|fragments| fragments.first())
         .expect("body fragment");
     assert_eq!((body.x, body.width), (8.0, PageBox::A4.width - 16.0));
+    assert_eq!(body.y, 8.0);
     // Page metadata reflects A4
     assert_eq!(
         scene.page_metadata.size,
@@ -171,6 +172,7 @@ fn build_page_scene_populates_block_and_paragraph_entries_from_hello_world() {
 /// from the initial containing block. Vertically the same pair collapses to
 /// max(8, 10) = 10. A plain block with no margin sits at 8 on both axes,
 /// which is the `data-offset-x=8` shape that WPT check-layout fixtures pin.
+/// Layout carries all of it, so the body offset stays zero.
 #[test]
 fn body_margin_horizontal_sum_and_vertical_collapse() {
     for (html, expected_offset, expected_frag, expected_abs) in [
@@ -182,8 +184,8 @@ fn body_margin_horizontal_sum_and_vertical_collapse() {
         ),
         (
             "<div id=b style='width:10px; height:10px'></div>",
-            (0.0, 8.0),
-            (8.0, 0.0),
+            (0.0, 0.0),
+            (8.0, 8.0),
             (8.0, 8.0),
         ),
     ] {
@@ -225,8 +227,7 @@ fn body_margin_horizontal_sum_and_vertical_collapse() {
 /// A lone `margin: 5px` block collapses with the UA body margin.
 ///
 /// Horizontally the result is the sum 8 + 5 = 13. Vertically the adjoining
-/// margins collapse to max(8, 5) = 8, so the page-absolute top is 8 even
-/// though the body-relative fragment keeps its own 5px margin.
+/// margins collapse to max(8, 5) = 8, which layout already applies.
 #[test]
 fn body_margin_lone_5px_collapses_to_8px() {
     let opts = ParseOptions {
@@ -240,7 +241,7 @@ fn body_margin_lone_5px_collapses_to_8px() {
     let mut dom = uncascaded.dom;
     raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
     let scene = build_page_scene(&dom, &cascade, PageBox::A4);
-    assert_eq!(scene.body_offset_pt, (0.0, 3.0));
+    assert_eq!(scene.body_offset_pt, (0.0, 0.0));
     let idx = (0..dom.node_count())
         .find(|&i| dom.element_attribute(i, "id") == Some("a"))
         .expect("probe resolves");
@@ -249,7 +250,7 @@ fn body_margin_lone_5px_collapses_to_8px() {
         .get(&NodeId::new(idx as u64))
         .and_then(|v| v.first())
         .expect("probe has a fragment");
-    assert_eq!((frag.x, frag.y), (13.0, 5.0));
+    assert_eq!((frag.x, frag.y), (13.0, 8.0));
     assert_eq!(
         (
             frag.x + scene.body_offset_pt.0,
@@ -303,15 +304,14 @@ fn rasterize_rejects_oversized_direct_page_box() {
     ));
 }
 
-/// Direct unit coverage for the body-margin helpers.
+/// Direct unit coverage for the margin helpers.
 ///
-/// These pin the used-value resolution and collapsing arithmetic that the
-/// integration tests above exercise only through the UA 8px path, so that
-/// patch coverage sees every new non-test line at least once.
+/// These pin the used-value resolution that the integration tests above
+/// exercise only through UA margins.
 #[test]
-fn body_margin_helpers_cover_used_value_branches() {
+fn margin_helpers_cover_used_value_branches() {
     use raikiri_style::property::CalcLengthPercentage;
-    use raikiri_style::resolve::{ComputedLengthPercentage, ComputedLengthPercentageOrAuto};
+    use raikiri_style::resolve::ComputedLengthPercentageOrAuto;
 
     assert_eq!(
         super::used_margin_px(ComputedLengthPercentageOrAuto::Px(8.0), 800.0),
@@ -339,71 +339,61 @@ fn body_margin_helpers_cover_used_value_branches() {
         super::used_margin_px(ComputedLengthPercentageOrAuto::Px(f32::NAN), 800.0),
         0.0
     );
-    assert_eq!(
-        super::used_padding_px(ComputedLengthPercentage::Px(3.0), 800.0),
-        3.0
-    );
-    assert_eq!(
-        super::used_padding_px(ComputedLengthPercentage::Percent(10.0), 800.0),
-        80.0
-    );
-    assert_eq!(super::collapse_margins(&[8.0, 10.0]), 10.0);
-    assert_eq!(super::collapse_margins(&[8.0, -5.0]), 3.0);
-    assert_eq!(super::collapse_margins(&[-2.0, -5.0]), -5.0);
-    assert_eq!(super::collapse_margins(&[f32::NAN, 8.0]), 8.0);
 }
 
-/// Barriers and empty-body fallbacks for the vertical offset.
-///
-/// A body border breaks parent-first collapsing, an invalid index falls back
-/// to no barrier, and a missing body yields a zero offset.
+/// The `<html>` margins add to the page offset as they are: margins of the
+/// root element's box do not collapse with the body's (CSS 2.1 section
+/// 8.3.1), and a missing `<html>` or an unusable percent basis falls back.
 #[test]
-fn body_margin_helpers_cover_barrier_and_empty_fallbacks() {
+fn html_margins_add_to_the_body_offset() {
     let opts = ParseOptions {
         extra_stylesheets: &[],
         network: None,
         base_url: None,
     };
-    let uncascaded = parse(
-        &b"<style>body{border:1px solid}</style><div id=b></div>"[..],
-        &opts,
-    )
-    .expect("parse Ok");
+    let html = "<!DOCTYPE html><style>html{margin:10px 0 0 4%}</style>\
+        <div id=a style='margin-top:30px; height:10px'></div>";
+    let uncascaded = parse(html.as_bytes(), &opts).expect("parse Ok");
     let cascade = build_cascaded(&uncascaded);
     let mut dom = uncascaded.dom;
     raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
-    let body_idx = (0..dom.node_count())
-        .find(|&i| dom.get_node(i).and_then(|n| n.tag_name()) == Some("body"))
-        .expect("body resolves");
-    assert!(super::has_top_barrier(&cascade, body_idx, 800.0));
-    assert!(!super::has_top_barrier(&cascade, usize::MAX, 800.0));
+    let scene = build_page_scene(&dom, &cascade, PageBox::A4);
+    assert_eq!(scene.body_offset_pt, (PageBox::A4.width * 0.04, 10.0));
+    let idx = (0..dom.node_count())
+        .find(|&i| dom.element_attribute(i, "id") == Some("a"))
+        .expect("probe resolves");
+    let frag = scene
+        .fragments
+        .get(&NodeId::new(idx as u64))
+        .and_then(|v| v.first())
+        .expect("probe has a fragment");
+    // The body's 8px top margin collapses with the div's 30px one.
+    assert_eq!(frag.y + scene.body_offset_pt.1, 40.0);
+    let html_idx =
+        (0..dom.node_count()).find(|&i| dom.get_node(i).and_then(|n| n.tag_name()) == Some("html"));
     assert_eq!(
-        super::body_margin_offsets(&dom, &cascade, None, None, 800.0),
+        super::html_margin_offsets(&cascade, None, 800.0),
         (0.0, 0.0)
     );
     assert_eq!(
-        super::body_margin_offsets(&dom, &cascade, Some(body_idx), None, 0.0).1,
-        super::collapse_margins(&[super::used_margin_px(
-            cascade.computed[body_idx].margin.top,
-            0.0
-        )])
+        super::html_margin_offsets(&cascade, html_idx, f32::NAN),
+        (0.0, 10.0)
     );
 }
 
-/// First-child blockers disable vertical collapsing.
-///
-/// Non-visible overflow, `display: none`, absolute positioning, floats, and a
-/// leading text run all prevent the body top from collapsing with a child
-/// margin, so the offset falls back to the `<html>`/`<body>` collapsed value.
+/// The body offset stays finite whatever keeps the body's top margin from
+/// collapsing with its first child's.
 #[test]
-fn body_margin_helpers_cover_first_child_blockers() {
+fn body_offset_is_finite_when_margins_do_not_collapse() {
     for html in [
         "<style>body{overflow:hidden}</style><div id=b style='margin-top:10px'></div>",
+        "<style>body{border:1px solid}</style><div id=b></div>",
         "<div id=b style='display:none'></div><div id=c></div>",
         "<div id=b style='position:absolute; margin-top:10px'></div>",
         "<div id=b style='float:left; margin-top:10px'></div>",
         "hello<div id=b style='margin-top:10px'></div>",
         "<!-- lead --><div id=b style='margin-top:10px'></div>",
+        "<style>html{border:2px solid} body{margin-top:8px}</style><div id=b></div>",
     ] {
         let opts = ParseOptions {
             extra_stylesheets: &[],
@@ -424,70 +414,6 @@ fn body_margin_helpers_cover_first_child_blockers() {
             "top finite for {html:?}"
         );
     }
-    let opts = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
-    let uncascaded = parse(&b"<div></div>"[..], &opts).expect("parse Ok");
-    let cascade = build_cascaded(&uncascaded);
-    let dom = uncascaded.dom;
-    assert!(super::first_in_flow_top_margin(&dom, &cascade, usize::MAX, 800.0).is_none());
-}
-
-/// Defensive computed-missing and display-mismatch fallbacks.
-///
-/// A truncated cascade (fewer computed entries than DOM nodes) skips the
-/// child, and a computed `display: none` that disagrees with the bridged
-/// style also skips it. Both are caller-responsibility violations that the
-/// scene treats as no adjoining margin.
-#[test]
-fn body_margin_helpers_cover_computed_fallbacks() {
-    let opts = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
-    let uncascaded =
-        parse(&b"<div id=b style='margin-top:10px'></div>"[..], &opts).expect("parse Ok");
-    let mut cascade = build_cascaded(&uncascaded);
-    let mut dom = uncascaded.dom;
-    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
-    let body_idx = (0..dom.node_count())
-        .find(|&i| dom.get_node(i).and_then(|n| n.tag_name()) == Some("body"))
-        .expect("body resolves");
-    let empty_uncascaded = parse(&b""[..], &opts).expect("parse Ok");
-    let empty_cascade = build_cascaded(&empty_uncascaded);
-    assert!(super::first_in_flow_top_margin(&dom, &empty_cascade, body_idx, 800.0).is_none());
-    let child_idx = (0..dom.node_count())
-        .find(|&i| dom.element_attribute(i, "id") == Some("b"))
-        .expect("probe resolves");
-    cascade.computed[child_idx].display = raikiri_style::property::DisplayValue::None;
-    assert!(super::first_in_flow_top_margin(&dom, &cascade, body_idx, 800.0).is_none());
-}
-
-/// `<html>` barriers fall back to the plain sum.
-///
-/// An `<html>` top border disables `<html>`/`<body>` collapsing per CSS 2.1
-/// section 8.3.1; the scene keeps the simple sum as an approximation.
-#[test]
-fn body_margin_helpers_cover_html_barrier_fallback() {
-    let opts = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
-    let uncascaded = parse(
-        &b"<style>html{border:2px solid} body{margin-top:8px}</style><div id=b></div>"[..],
-        &opts,
-    )
-    .expect("parse Ok");
-    let cascade = build_cascaded(&uncascaded);
-    let mut dom = uncascaded.dom;
-    raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
-    let scene = build_page_scene(&dom, &cascade, PageBox::A4);
-    assert!(scene.body_offset_pt.0.is_finite());
-    assert!(scene.body_offset_pt.1.is_finite());
 }
 
 const FONT_DIR: &str = concat!(
