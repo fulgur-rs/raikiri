@@ -417,7 +417,8 @@ pub(crate) fn project_ifc_text_builder(
     // reading `unicode-bidi`.
     let (options, indent) = style::line_options(cv, text, fonts)?;
     let root_style = styled(doc, cascade, cv, text, fonts)?;
-    let paragraph_style = style::paragraph_style(cv, text, root_style)?;
+    let mut paragraph_style = style::paragraph_style(cv, text, root_style)?;
+    paragraph_style.line_height_quirk = line_height_quirk(doc);
     let writing_mode = paragraph_style.writing_mode;
     let mut builder = ParagraphBuilder::new(&paragraph_style, limits);
     let cleared_breaks = Vec::new();

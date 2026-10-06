@@ -372,7 +372,7 @@ fn quirks_mode_mixed_lines_keep_wrapped_images_in_their_direct_positions() {
 }
 
 #[test]
-fn quirks_mode_uses_paragraph_text_across_lines() {
+fn quirks_mode_a_forced_break_keeps_its_line_strut() {
     use raikiri_traits::QuirksMode;
     let empty = image_line_geometry(QuirksMode::Quirks, None, "baseline", false);
     let mixed = image_line_geometry(QuirksMode::Quirks, None, "baseline", true);
