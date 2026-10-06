@@ -84,9 +84,32 @@ fn nested_media_conditions_are_conjoined_and_unknown_wrappers_do_not_leak() {
     let (_, element, screen_result) = context_cascade_doc(css, MediaContext::screen());
     assert_ne!(screen_result.computed[element].color, RED);
 
-    let css = "@supports (display: block) { @media print { p { color: red } } }";
+    let css = "@future feature { @media print { p { color: red } } }";
     let (_, element, result) = context_cascade_doc(css, MediaContext::print());
     assert_ne!(result.computed[element].color, RED);
+}
+
+#[test]
+fn conditional_groups_reach_cascade_only_when_all_conditions_match() {
+    for css in [
+        "p {color:blue} @supports (display:block) {@media print {p {color:red}}}",
+        "p {color:blue} @media print {@supports (color:red) {p {color:red}}}",
+        "p {color:blue} @supports (color:red) {@supports (display:block) {\
+         @media print {p {color:red}}}}",
+    ] {
+        let (_, element, result) = context_cascade_doc(css, MediaContext::print());
+        assert_eq!(result.computed[element].color, RED, "{css}");
+        let (_, element, result) = context_cascade_doc(css, MediaContext::screen());
+        assert_eq!(result.computed[element].color, BLUE, "{css}");
+    }
+    for css in [
+        "p {color:blue} @media print {@supports (display:invalid) {p {color:red}}}",
+        "p {color:blue} @supports (color:red) {@supports (display:invalid) {\
+         @media print {p {color:red}}}}",
+    ] {
+        let (_, element, result) = context_cascade_doc(css, MediaContext::print());
+        assert_eq!(result.computed[element].color, BLUE, "{css}");
+    }
 }
 
 #[test]

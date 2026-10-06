@@ -1,10 +1,9 @@
 //! Unified rule tree: an index shared by the cascade and future GCPM resolution.
 //! Populates style_rules. Also stores @page at-rules in
 //! [`RuleTree::page_rules`] instead of silently skipping them (cascade support is not implemented).
-//! The generic at-rule parse view stores rules without dedicated semantics
-//! (@supports / @import, etc.) as raw data in [`RuleTree::opaque_at_rules`].
-//! It also retains `@media` in this raw view while expanding qualified rules
-//! for supported media types into a dedicated cascade view. `@counter-style`,
+//! The generic at-rule parse view retains raw rules in [`RuleTree::opaque_at_rules`].
+//! Supported `@supports` and `@media` blocks also provide executable descendants;
+//! media-qualified rules use a dedicated cascade view. `@counter-style`,
 //! which also has a dedicated view, is recorded here for raw/source-order inspection;
 //! `@page` remains in the existing page view.
 
@@ -26,21 +25,10 @@ use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNode
 use crate::supports::supports_condition;
 use crate::{Atom, PseudoClass, PseudoElem, RaikiriSelectorImpl, RaikiriSelectorParser};
 
-/// Flatten the subset of cascade layers that the rule parser can evaluate.
+/// Expose supported blocks to the standalone descriptor collectors.
 ///
-/// The generic rule parser stores unsupported at-rules as opaque records, which
-/// would otherwise hide `@page` and ordinary style rules nested in `@layer`.
-/// Flattening here keeps the existing parser and rule-tree representation while
-/// ordering normal layers from lower to higher precedence.  Unlayered rules are
-/// appended last, as required by the normal cascade.  This is intentionally a
-/// small source-level pass; nested blocks, strings, and comments are skipped
-/// while locating only top-level layer blocks.
-/// Remove supported `@supports` blocks before the generic stylesheet parser.
-///
-/// The rule tree intentionally retains unknown at-rules as opaque records, but a
-/// supported condition must expose its qualified rules to the normal cascade.
-/// This small source pass handles declaration conditions and `not`/`and`/`or`
-/// combinations while preserving unsupported blocks verbatim for inspection.
+/// Executable style and page rules are parsed directly by the group-rule parser.
+/// The font and counter collectors still require their rules at the top level.
 fn expand_supports(source: &str, consumer_properties: &[ConsumerPropertyRegistration]) -> String {
     let namespaces = SupportsContext::new(source, consumer_properties);
     expand_supports_with_context(source, &namespaces)
@@ -146,7 +134,7 @@ fn expand_css_nesting_at_depth(
                 };
                 let prelude = &source[cursor..index];
                 let body = &source[index + 1..close];
-                if prelude.trim_start().starts_with('@') {
+                if prelude_is_at_rule(prelude) {
                     budget.append(&mut output, prelude)?;
                     budget.append(&mut output, "{")?;
                     let expanded = expand_css_nesting_at_depth(body, budget, depth + 1)?;
@@ -163,6 +151,12 @@ fn expand_css_nesting_at_depth(
     }
     budget.append(&mut output, &source[cursor..])?;
     Ok(output)
+}
+
+fn prelude_is_at_rule(source: &str) -> bool {
+    let mut input = ParserInput::new(source);
+    let mut parser = Parser::new(&mut input);
+    matches!(parser.next(), Ok(Token::AtKeyword(_)))
 }
 
 /// Return the next top-level declaration terminator or block opener.
@@ -1215,8 +1209,9 @@ impl RuleTree {
     ///   silent-drop behavior.
     /// - Syntactically valid at-rules other than `@page` are retained in
     ///   [`RuleTree::opaque_at_rules`]. Declarations in unsupported at-rules
-    ///   are not applied by the cascade. Supported `@media` descendants are
-    ///   additionally parsed into the cascade's media-qualified view.
+    ///   are not applied by the cascade. Supported `@supports` descendants
+    ///   populate the executable views at their source position, and `@media`
+    ///   descendants carry the intersected conditions of their containing groups.
     /// - For every `@counter-style` at-rule, regardless of `origin`,
     ///   [`crate::counter_style::parse_counter_style_rules`] independently parses
     ///   the same `source` a second time, then passes each resulting rule and
@@ -1271,12 +1266,17 @@ impl RuleTree {
         origin: Origin,
         condition: Option<&MediaCondition>,
     ) {
-        let Ok(source) = expand_css_nesting(&expand_supports(source, &self.consumer_properties))
-        else {
+        let Ok(source) = expand_css_nesting(source) else {
             return;
         };
+        let consumer_properties = self.consumer_properties.clone();
+        let supports_context = SupportsContext::new(&source, &consumer_properties);
         for (layer_order, chunk) in expand_cascade_layers(&source) {
-            self.add_stylesheet_chunk(&chunk, origin, layer_order, condition);
+            self.add_stylesheet_chunk(&chunk, origin, layer_order, condition, &supports_context);
+        }
+        let registration_source = expand_supports(&source, &self.consumer_properties);
+        for (_, chunk) in expand_cascade_layers(&registration_source) {
+            self.add_descriptor_registrations(&chunk, origin, condition);
         }
     }
 
@@ -1286,6 +1286,7 @@ impl RuleTree {
         origin: Origin,
         layer_order: u32,
         condition: Option<&MediaCondition>,
+        supports_context: &SupportsContext<'_>,
     ) {
         let mut input = ParserInput::new(source);
         let mut parser = Parser::new(&mut input);
@@ -1295,6 +1296,7 @@ impl RuleTree {
             opaque_body_budget: &mut self.opaque_body_budget,
             namespaces: &mut namespaces,
             consumer_properties: &self.consumer_properties,
+            supports_context,
         };
         let mut style_order = self.next_style_order;
         let mut page_order = self.page_rules.len() as u32;
@@ -1384,24 +1386,20 @@ impl RuleTree {
                     page_order = page_order.wrapping_add(1);
                     rule_order = rule_order.wrapping_add(1);
                 }
-                ParsedRule::Media(record, local_condition, items) => {
-                    if let Some(local_condition) = local_condition {
-                        let media_condition = match condition {
-                            Some(sheet_condition) => sheet_condition.intersect(&local_condition),
-                            None => local_condition,
-                        };
-                        if !media_condition.is_empty() {
-                            let mut sink = MediaSink {
-                                style_rules: &mut self.media_rules,
-                                style_order: &mut style_order,
-                                page_rules: &mut self.page_rules,
-                                page_order: &mut page_order,
-                                layer_order,
-                                origin,
-                            };
-                            add_media_items(items, &media_condition, &mut sink);
-                        }
-                    }
+                ParsedRule::Group(record, local_condition, items) => {
+                    let mut sink = GroupSink {
+                        style_rules: &mut self.style_rules,
+                        media_rules: &mut self.media_rules,
+                        custom_highlight_styles: &mut self.custom_highlight_styles,
+                        rules: &mut self.rules,
+                        style_order: &mut style_order,
+                        rule_order: &mut rule_order,
+                        page_rules: &mut self.page_rules,
+                        page_order: &mut page_order,
+                        layer_order,
+                        origin,
+                    };
+                    add_group(local_condition, items, condition, false, &mut sink);
                     push_at_rule(
                         &mut self.opaque_at_rules,
                         &mut self.rules,
@@ -1421,6 +1419,15 @@ impl RuleTree {
                 }
             }
         }
+        self.next_style_order = style_order;
+    }
+
+    fn add_descriptor_registrations(
+        &mut self,
+        source: &str,
+        origin: Origin,
+        condition: Option<&MediaCondition>,
+    ) {
         for rule in parse_counter_style_rules(source) {
             if condition.is_none() {
                 self.counter_styles.insert_with_origin(rule.clone(), origin);
@@ -1435,7 +1442,6 @@ impl RuleTree {
             self.font_face_log
                 .push(Registration::new(rule, origin, condition));
         }
-        self.next_style_order = style_order;
     }
 }
 
@@ -2031,63 +2037,90 @@ fn push_at_rule(
     *rule_order = rule_order.wrapping_add(1);
 }
 
-/// Executable content of an `@media` block.
-///
-/// Parsed straight from the block with the error recovery of top-level rules,
-/// so an invalid declaration or rule inside the block drops only itself.
-enum MediaItem {
-    Style(StyleRule),
-    Page(PageSelector, PageBlockBody),
-    /// A nested `@media`; `None` when its query list does not parse.
-    Media(Option<MediaCondition>, Vec<MediaItem>),
+/// Conditions attached to an executable rule group.
+enum GroupCondition {
+    Media(Option<MediaCondition>),
+    Supports(bool),
 }
 
-enum MediaItemPrelude {
-    Media(Option<MediaCondition>),
+/// Executable group content, parsed with top-level rule error recovery.
+enum GroupItem {
+    Style(StyleRule),
+    CustomHighlight {
+        name: String,
+        color: Option<CssColor>,
+    },
+    Page(PageSelector, PageBlockBody),
+    Group(GroupCondition, Vec<GroupItem>),
+}
+
+enum GroupItemPrelude {
+    Group(GroupCondition),
     Page(PageSelector),
 }
 
-/// Rule-list parser for the executable content of an `@media` block. Style
-/// rules, nested `@media`, and `@page` execute; other at-rules are skipped,
-/// since an unknown wrapper may have a completely different grammar.
-struct MediaRuleParser<'s, 'b> {
-    depth: usize,
-    source: &'s str,
-    consumer_properties: &'b [ConsumerPropertyRegistration],
+/// Parse the conditional preludes shared by top-level and nested groups.
+fn parse_group_prelude<'i>(
+    name: &str,
+    input: &mut Parser<'i, '_>,
+    source: &str,
+    context: &SupportsContext<'_>,
+) -> Result<Option<(String, GroupCondition)>, cssparser::ParseError<'i, ()>> {
+    if !name.eq_ignore_ascii_case("media") && !name.eq_ignore_ascii_case("supports") {
+        return Ok(None);
+    }
+    let prelude = consume_raw_component_values(input, source)?;
+    let condition = if name.eq_ignore_ascii_case("media") {
+        GroupCondition::Media(parse_media_prelude(&prelude))
+    } else {
+        GroupCondition::Supports(supports_condition(&prelude, context))
+    };
+    Ok(Some((prelude, condition)))
 }
 
-fn parse_media_items(
+/// Parse only recognized rule grammars; unknown wrappers never execute.
+struct GroupRuleParser<'s, 'b> {
+    depth: usize,
+    source: &'s str,
+    namespaces: &'b NamespaceMap,
+    supports_context: &'b SupportsContext<'b>,
+}
+
+fn parse_group_items(
     input: &mut Parser<'_, '_>,
     source: &str,
     depth: usize,
-    consumer_properties: &[ConsumerPropertyRegistration],
-) -> Vec<MediaItem> {
-    let mut rule_parser = MediaRuleParser {
+    namespaces: &NamespaceMap,
+    supports_context: &SupportsContext<'_>,
+) -> Vec<GroupItem> {
+    let mut rule_parser = GroupRuleParser {
         depth,
         source,
-        consumer_properties,
+        namespaces,
+        supports_context,
     };
     StyleSheetParser::new(input, &mut rule_parser)
         .flatten()
         .collect()
 }
 
-impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for MediaRuleParser<'s, 'b> {
-    type Prelude = MediaItemPrelude;
-    type AtRule = MediaItem;
+impl<'i> cssparser::AtRuleParser<'i> for GroupRuleParser<'_, '_> {
+    type Prelude = GroupItemPrelude;
+    type AtRule = GroupItem;
     type Error = ();
 
     fn parse_prelude<'t>(
         &mut self,
         name: cssparser::CowRcStr<'i>,
         input: &mut Parser<'i, 't>,
-    ) -> Result<Self::Prelude, cssparser::ParseError<'i, Self::Error>> {
-        if name.eq_ignore_ascii_case("media") {
-            let prelude = consume_raw_component_values(input, self.source)?;
-            return Ok(MediaItemPrelude::Media(parse_media_prelude(&prelude)));
+    ) -> Result<Self::Prelude, cssparser::ParseError<'i, ()>> {
+        if let Some((_, condition)) =
+            parse_group_prelude(&name, input, self.source, self.supports_context)?
+        {
+            return Ok(GroupItemPrelude::Group(condition));
         }
         if name.eq_ignore_ascii_case("page") {
-            return parse_page_prelude(input).map(MediaItemPrelude::Page);
+            return parse_page_prelude(input).map(GroupItemPrelude::Page);
         }
         Err(input.new_custom_error(()))
     }
@@ -2097,18 +2130,24 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for MediaRuleParser<'s, 'b> {
         prelude: Self::Prelude,
         _start: &cssparser::ParserState,
         input: &mut Parser<'i, 't>,
-    ) -> Result<Self::AtRule, cssparser::ParseError<'i, Self::Error>> {
+    ) -> Result<Self::AtRule, cssparser::ParseError<'i, ()>> {
         let item = match prelude {
-            MediaItemPrelude::Media(condition) => {
+            GroupItemPrelude::Group(condition) => {
                 let items = if self.depth < MAX_OPAQUE_RULE_NESTING_DEPTH {
-                    parse_media_items(input, self.source, self.depth + 1, self.consumer_properties)
+                    parse_group_items(
+                        input,
+                        self.source,
+                        self.depth + 1,
+                        self.namespaces,
+                        self.supports_context,
+                    )
                 } else {
                     Vec::new()
                 };
-                MediaItem::Media(condition, items)
+                GroupItem::Group(condition, items)
             }
-            MediaItemPrelude::Page(selector) => {
-                MediaItem::Page(selector, parse_page_declaration_block(input))
+            GroupItemPrelude::Page(selector) => {
+                GroupItem::Page(selector, parse_page_declaration_block(input))
             }
         };
         if !nested_block_has_closing_brace(self.source, input) {
@@ -2118,74 +2157,148 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for MediaRuleParser<'s, 'b> {
     }
 }
 
-impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for MediaRuleParser<'s, 'b> {
-    type Prelude = SelectorList<RaikiriSelectorImpl>;
-    type QualifiedRule = MediaItem;
+fn parse_qualified_prelude<'i>(
+    input: &mut Parser<'i, '_>,
+    namespaces: &NamespaceMap,
+) -> Result<QualifiedPrelude, cssparser::ParseError<'i, ()>> {
+    if let Ok(name) = input.try_parse(parse_custom_highlight_prelude) {
+        return Ok(QualifiedPrelude::CustomHighlight(name));
+    }
+    SelectorList::parse(
+        &NamespacedSelectorParser { namespaces },
+        input,
+        ParseRelative::No,
+    )
+    .map(QualifiedPrelude::Style)
+    .map_err(|_| input.new_custom_error(()))
+}
+
+fn custom_highlight_color(declarations: &[Declaration]) -> Option<CssColor> {
+    declarations
+        .iter()
+        .rev()
+        .find_map(|declaration| match declaration.value() {
+            PropertyValue::BackgroundColor(color) => Some(*color),
+            _ => None,
+        })
+}
+
+impl<'i> cssparser::QualifiedRuleParser<'i> for GroupRuleParser<'_, '_> {
+    type Prelude = QualifiedPrelude;
+    type QualifiedRule = GroupItem;
     type Error = ();
 
     fn parse_prelude<'t>(
         &mut self,
         input: &mut Parser<'i, 't>,
-    ) -> Result<Self::Prelude, cssparser::ParseError<'i, Self::Error>> {
-        SelectorList::parse(&RaikiriSelectorParser, input, ParseRelative::No)
-            .map_err(|_| input.new_custom_error(()))
+    ) -> Result<Self::Prelude, cssparser::ParseError<'i, ()>> {
+        parse_qualified_prelude(input, self.namespaces)
     }
 
     fn parse_block<'t>(
         &mut self,
-        selectors: Self::Prelude,
+        prelude: Self::Prelude,
         _start: &cssparser::ParserState,
         input: &mut Parser<'i, 't>,
-    ) -> Result<Self::QualifiedRule, cssparser::ParseError<'i, Self::Error>> {
-        let declarations =
-            parse_declaration_block_with_consumer_properties(input, self.consumer_properties);
+    ) -> Result<Self::QualifiedRule, cssparser::ParseError<'i, ()>> {
+        let declarations = parse_declaration_block_with_consumer_properties(
+            input,
+            self.supports_context.consumer_properties,
+        );
         if !nested_block_has_closing_brace(self.source, input) {
             return Err(input.new_custom_error(()));
         }
-        Ok(MediaItem::Style(StyleRule {
-            selectors,
-            declarations,
-            source_order: 0,
-            origin: Origin::Author,
-        }))
+        match prelude {
+            QualifiedPrelude::Style(selectors) => Ok(GroupItem::Style(StyleRule {
+                selectors,
+                declarations,
+                source_order: 0,
+                origin: Origin::Author,
+            })),
+            QualifiedPrelude::CustomHighlight(name) => Ok(GroupItem::CustomHighlight {
+                name,
+                color: custom_highlight_color(&declarations),
+            }),
+        }
     }
 }
 
-/// Output views and counters that `@media` content is added to.
-struct MediaSink<'a> {
-    style_rules: &'a mut Vec<MediaRule>,
+/// Output views and shared ordering counters for executable group content.
+struct GroupSink<'a> {
+    style_rules: &'a mut Vec<StyleRule>,
+    media_rules: &'a mut Vec<MediaRule>,
+    custom_highlight_styles: &'a mut HashMap<String, CssColor>,
+    rules: &'a mut Vec<CssRule>,
     style_order: &'a mut u32,
+    rule_order: &'a mut u32,
     page_rules: &'a mut Vec<PageRule>,
     page_order: &'a mut u32,
     layer_order: u32,
     origin: Origin,
 }
 
-/// Add the content of one `@media` block guarded by `condition`, in source
-/// order. Nested blocks intersect their condition with it.
-fn add_media_items(items: Vec<MediaItem>, condition: &MediaCondition, sink: &mut MediaSink<'_>) {
+fn add_group(
+    local: GroupCondition,
+    items: Vec<GroupItem>,
+    condition: Option<&MediaCondition>,
+    in_media: bool,
+    sink: &mut GroupSink<'_>,
+) {
+    match local {
+        GroupCondition::Supports(true) => add_group_items(items, condition, in_media, sink),
+        GroupCondition::Supports(false) | GroupCondition::Media(None) => {}
+        GroupCondition::Media(Some(local)) => {
+            let combined = match condition {
+                Some(parent) => parent.intersect(&local),
+                None => local,
+            };
+            if !combined.is_empty() {
+                add_group_items(items, Some(&combined), true, sink);
+            }
+        }
+    }
+}
+
+/// Register descendants only where every containing condition matches.
+fn add_group_items(
+    items: Vec<GroupItem>,
+    condition: Option<&MediaCondition>,
+    in_media: bool,
+    sink: &mut GroupSink<'_>,
+) {
     for item in items {
         match item {
-            MediaItem::Style(mut rule) => {
+            GroupItem::Style(mut rule) => {
                 if !is_supported_selector_list(&rule.selectors) {
                     continue;
                 }
                 rule.source_order = *sink.style_order;
                 rule.origin = sink.origin;
                 *sink.style_order = sink.style_order.wrapping_add(1);
-                sink.style_rules.push(MediaRule {
-                    rule,
-                    condition: condition.clone(),
-                });
-            }
-            MediaItem::Media(Some(local), items) => {
-                let nested = condition.intersect(&local);
-                if !nested.is_empty() {
-                    add_media_items(items, &nested, sink);
+                if let Some(condition) = condition {
+                    sink.media_rules.push(MediaRule {
+                        rule,
+                        condition: condition.clone(),
+                    });
+                } else {
+                    let index = sink.style_rules.len();
+                    sink.style_rules.push(rule);
+                    sink.rules.push(CssRule {
+                        source_order: *sink.rule_order,
+                        origin: sink.origin,
+                        kind: CssRuleKind::Style { index },
+                    });
+                    *sink.rule_order = sink.rule_order.wrapping_add(1);
                 }
             }
-            MediaItem::Media(None, _) => {}
-            MediaItem::Page(selector, body) => {
+            GroupItem::CustomHighlight { name, color } => {
+                // The highlight map has no media-qualified view yet.
+                if !in_media && let Some(color) = color {
+                    sink.custom_highlight_styles.insert(name, color);
+                }
+            }
+            GroupItem::Group(local, items) => add_group(local, items, condition, in_media, sink),
+            GroupItem::Page(selector, body) => {
                 let PageBlockBody {
                     declarations,
                     size_declarations,
@@ -2193,6 +2306,7 @@ fn add_media_items(items: Vec<MediaItem>, condition: &MediaCondition, sink: &mut
                     bleed_declarations,
                     margin_box_rules,
                 } = body;
+                let index = sink.page_rules.len();
                 sink.page_rules.push(PageRule {
                     selector,
                     declarations,
@@ -2203,9 +2317,17 @@ fn add_media_items(items: Vec<MediaItem>, condition: &MediaCondition, sink: &mut
                     source_order: *sink.page_order,
                     layer_order: sink.layer_order,
                     origin: sink.origin,
-                    media_condition: Some(condition.clone()),
+                    media_condition: condition.cloned(),
                 });
                 *sink.page_order = sink.page_order.wrapping_add(1);
+                if !in_media {
+                    sink.rules.push(CssRule {
+                        source_order: *sink.rule_order,
+                        origin: sink.origin,
+                        kind: CssRuleKind::Page { index },
+                    });
+                    *sink.rule_order = sink.rule_order.wrapping_add(1);
+                }
             }
         }
     }
@@ -2227,11 +2349,11 @@ enum ParsedAtRulePrelude {
         name: String,
         prelude: String,
     },
-    /// `@media`, with its query list parsed once (`None` when it is invalid).
-    Media {
+    /// A conditional group, with its prelude evaluated or parsed once.
+    Group {
         name: String,
         prelude: String,
-        condition: Option<MediaCondition>,
+        condition: GroupCondition,
     },
 }
 
@@ -2248,9 +2370,8 @@ enum ParsedRule {
     },
     Page(PageSelector, PageBlockBody),
     OpaqueAtRule(AtRuleRecord),
-    /// `@media`: its inspection record, its query list, and its executable
-    /// content.
-    Media(AtRuleRecord, Option<MediaCondition>, Vec<MediaItem>),
+    /// A conditional group: its inspection record, condition, and executable content.
+    Group(AtRuleRecord, GroupCondition, Vec<GroupItem>),
 }
 
 enum QualifiedPrelude {
@@ -2468,6 +2589,7 @@ struct StyleRuleParser<'s, 'b> {
     opaque_body_budget: &'b mut usize,
     namespaces: &'b mut NamespaceMap,
     consumer_properties: &'b [ConsumerPropertyRegistration],
+    supports_context: &'b SupportsContext<'b>,
 }
 
 impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
@@ -2500,10 +2622,10 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
         // end of the current rule list. Consume component values rather than
         // rejecting the at-rule, retaining comments and whitespace from the
         // original source through `slice`.
-        if name.eq_ignore_ascii_case("media") {
-            let prelude = consume_raw_component_values(input, self.source)?;
-            let condition = parse_media_prelude(&prelude);
-            return Ok(ParsedAtRulePrelude::Media {
+        if let Some((prelude, condition)) =
+            parse_group_prelude(&name, input, self.source, self.supports_context)?
+        {
+            return Ok(ParsedAtRulePrelude::Group {
                 name: name.to_string(),
                 prelude,
                 condition,
@@ -2539,7 +2661,7 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
                 }))
             }
             ParsedAtRulePrelude::Opaque { name, prelude }
-            | ParsedAtRulePrelude::Media { name, prelude, .. } => {
+            | ParsedAtRulePrelude::Group { name, prelude, .. } => {
                 Ok(ParsedRule::OpaqueAtRule(AtRuleRecord {
                     name,
                     prelude,
@@ -2586,7 +2708,7 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
                     origin: Origin::Author,
                 }))
             }
-            ParsedAtRulePrelude::Media {
+            ParsedAtRulePrelude::Group {
                 name,
                 prelude,
                 condition,
@@ -2598,7 +2720,13 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
                 // error token, because its executable rules no longer depend
                 // on that view.
                 let start = input.position();
-                let items = parse_media_items(input, self.source, 0, self.consumer_properties);
+                let items = parse_group_items(
+                    input,
+                    self.source,
+                    0,
+                    self.namespaces,
+                    self.supports_context,
+                );
                 let body = input.slice_from(start).to_owned();
                 if !nested_block_has_closing_brace(self.source, input) {
                     return Err(input.new_custom_error(()));
@@ -2612,7 +2740,7 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
                     source_order: 0,
                     origin: Origin::Author,
                 };
-                Ok(ParsedRule::Media(record, condition, items))
+                Ok(ParsedRule::Group(record, condition, items))
             }
             ParsedAtRulePrelude::Opaque { name, prelude } => {
                 let body = consume_raw_component_values(input, self.source)?;
@@ -2642,18 +2770,7 @@ impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for StyleRuleParser<'s, 'b> 
         &mut self,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::Prelude, cssparser::ParseError<'i, Self::Error>> {
-        if let Ok(name) = input.try_parse(parse_custom_highlight_prelude) {
-            return Ok(QualifiedPrelude::CustomHighlight(name));
-        }
-        SelectorList::parse(
-            &NamespacedSelectorParser {
-                namespaces: self.namespaces,
-            },
-            input,
-            ParseRelative::No,
-        )
-        .map(QualifiedPrelude::Style)
-        .map_err(|_| input.new_custom_error(()))
+        parse_qualified_prelude(input, self.namespaces)
     }
 
     fn parse_block<'t>(
@@ -2670,14 +2787,7 @@ impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for StyleRuleParser<'s, 'b> 
         match prelude {
             QualifiedPrelude::Style(selectors) => Ok(ParsedRule::Style(selectors, declarations)),
             QualifiedPrelude::CustomHighlight(name) => {
-                let color =
-                    declarations
-                        .iter()
-                        .rev()
-                        .find_map(|declaration| match declaration.value() {
-                            PropertyValue::BackgroundColor(color) => Some(*color),
-                            _ => None,
-                        });
+                let color = custom_highlight_color(&declarations);
                 Ok(ParsedRule::CustomHighlight { name, color })
             }
         }
