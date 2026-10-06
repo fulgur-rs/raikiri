@@ -104,6 +104,7 @@ pub(crate) fn layout_with_boxes_in(
             height: 0.0,
             beside_floats: false,
             escaping_margin: CollapsibleMarginSet::ZERO,
+            leading_block_margin: None,
             block_line_starts: Vec::new(),
             shifts: Vec::new(),
             fragment_box_placements: Vec::new(), // cov:ignore: empty IFC fallback has no runtime placement to measure.
@@ -154,6 +155,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
             height: 0.0,
             beside_floats: false,
             escaping_margin: CollapsibleMarginSet::ZERO,
+            leading_block_margin: None,
             block_line_starts: Vec::new(),
             shifts: Vec::new(),
             fragment_box_placements: Vec::new(),
@@ -312,6 +314,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         height: max_height,
         beside_floats,
         escaping_margin,
+        leading_block_margin: None,
         block_line_starts,
         shifts,
         fragment_box_placements,
@@ -498,6 +501,9 @@ fn run_boxes_segment(
     // full before a line (margins never collapse with a line box; CSS 2.1
     // 8.3.1).
     let mut pending = CollapsibleMarginSet::ZERO;
+    // The collapsed top margins of a block child that starts the paragraph,
+    // with no line, float or other margin above it.
+    let mut leading_block_margin = None;
     let mut block_line_starts = Vec::new();
     let mut fragment_box_placements = Vec::new();
     let mut continuation = None;
@@ -742,9 +748,17 @@ fn run_boxes_segment(
                         },
                     ));
                 }
+                let starts_paragraph = lines.is_empty()
+                    && block_line_starts.is_empty()
+                    && y == 0.0
+                    && pending == CollapsibleMarginSet::ZERO
+                    && ceiling == f32::NEG_INFINITY;
                 block_line_starts.push((node.0 as usize, lines.len()));
                 let block =
                     layout_block_child(tree, ctx, node.0 as usize, y, pending, geometry, perform);
+                if starts_paragraph {
+                    leading_block_margin = block.top_margin;
+                }
                 block_floats_bottom = block_floats_bottom.max(block.top + block.floats_bottom);
                 (y, pending) = (block.next_y, block.pending);
                 token = token_after;
@@ -817,6 +831,7 @@ fn run_boxes_segment(
             lines: std::sync::Arc::new(lines),
             beside_floats: beside,
             escaping_margin,
+            leading_block_margin,
             block_line_starts,
             shifts: Vec::new(),
             fragment_box_placements,
@@ -1087,6 +1102,11 @@ struct BlockChild {
     /// Bottom of the floats placed inside the block, from its top;
     /// `NEG_INFINITY` when it has none.
     floats_bottom: f32,
+    /// The block's top margin collapsed with the margins that leave it
+    /// through its first child, which placed its box: `top` is `y` plus
+    /// these collapsed with `pending`. `None` when something else placed it
+    /// (clearance, floats beside it) or it is collapsed through.
+    top_margin: Option<CollapsibleMarginSet>,
 }
 
 /// Lay a block child out below the offset `y`, as wide as the content box
@@ -1211,6 +1231,7 @@ fn layout_block_child(
         next_y: after.0,
         pending: after.1,
         floats_bottom: floats_bottom + (guess - top),
+        top_margin: (!has_clearance && !output.margins_can_collapse_through).then_some(top_set),
     }
 }
 
@@ -1313,6 +1334,7 @@ fn layout_vertical_block_child(
         next_y: block_start + output.size.width,
         pending: CollapsibleMarginSet::from_margin(block_end_margin),
         floats_bottom: f32::NEG_INFINITY,
+        top_margin: None,
     }
 }
 
@@ -1448,6 +1470,10 @@ fn layout_formatting_context_child(
         pending: CollapsibleMarginSet::from_margin(margin.bottom),
         // The box contains its own floats.
         floats_bottom: f32::NEG_INFINITY,
+        // A box that establishes a formatting context keeps its children's
+        // margins, but its own still collapses with the ones above it.
+        top_margin: (!beside_floats && clear == taffy::Clear::None)
+            .then(|| CollapsibleMarginSet::from_margin(margin.top)),
     }
 }
 

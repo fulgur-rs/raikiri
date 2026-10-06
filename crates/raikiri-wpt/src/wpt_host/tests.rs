@@ -275,10 +275,9 @@ fn box_geometry_returns_none_for_an_element_with_no_box() {
 ///   is the body and the result is relative to the initial containing block.
 ///   CSS 2.1 with the UA stylesheet's `body { margin: 8px }` gives 10 at the
 ///   top through margin collapsing (max(8, 10) per section 8.3.1) and
-///   8 + 10 = 18 at the left (horizontal margins never collapse). The page
-///   scene carries the body margin in `body_offset_pt`, so a lone
-///   `margin: 5px` block sits at 8 (max(8, 5)) vertically and 13 (8 + 5)
-///   horizontally.
+///   8 + 10 = 18 at the left (horizontal margins never collapse). Layout
+///   places the body's content inside its margins, so a lone `margin: 5px`
+///   block sits at 8 (max(8, 5)) vertically and 13 (8 + 5) horizontally.
 /// - `i` (100 x 200) fits horizontally inside `o`'s 110px padding box, so
 ///   `scrollWidth` is the padding box width. Vertically, `i`'s border box
 ///   ends 5 + 7 + 200 = 212 below `o`'s top padding edge, and scrollable

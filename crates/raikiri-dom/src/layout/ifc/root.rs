@@ -59,6 +59,10 @@ pub(crate) struct IfcLines {
     /// Bottom margins of a last block child that collapse through the root's
     /// bottom edge with the root's own (CSS 2.1 8.3.1); not in `height`.
     pub(crate) escaping_margin: taffy::CollapsibleMarginSet,
+    /// Collapsed top margins of a block child that starts the paragraph, with
+    /// no line, float or other block above it; they placed its box inside
+    /// the root (CSS 2.1 8.3.1). `None` when the paragraph starts otherwise.
+    pub(crate) leading_block_margin: Option<taffy::CollapsibleMarginSet>,
     /// Each block child of the root with the index of the first line after
     /// it.
     pub(crate) block_line_starts: Vec<(usize, usize)>,
