@@ -470,3 +470,47 @@ fn escaped_group_names_use_css_identifier_parsing() {
     );
     assert_eq!(tree.media_rules.len(), 1);
 }
+
+#[test]
+fn layer_first_mentions_do_not_move_when_a_later_statement_names_them() {
+    for source in [
+        "@layer a {la {color:red}} @layer b,a; @layer b {lb {color:blue}}",
+        "@supports (color:red) {@layer a {la {color:red}}} @layer b,a; @layer b {lb {color:blue}}",
+    ] {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(source, Origin::Author);
+        assert_eq!(
+            tree.style_rules()
+                .iter()
+                .map(selector_text)
+                .collect::<Vec<_>>(),
+            ["la", "lb"],
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn stylesheet_media_does_not_register_highlights_in_the_unconditional_map() {
+    for source in [
+        "::highlight(open) {background-color:red}",
+        "@supports (color:red) {::highlight(open) {background-color:red}}",
+        "@supports (color:red) {@supports selector(::highlight(open)) {::highlight(open) {background-color:red}}}",
+    ] {
+        for media in [None, Some("print"), Some("screen"), Some("all")] {
+            let mut tree = RuleTree::empty();
+            tree.add_stylesheet_with_media(source, Origin::Author, media);
+            assert_eq!(
+                tree.custom_highlight_styles().contains_key("open"),
+                media.is_none(),
+                "{source}, {media:?}"
+            );
+        }
+    }
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "@media all {@supports (color:red) {::highlight(open) {background-color:red}}}",
+        Origin::Author,
+    );
+    assert!(tree.custom_highlight_styles().is_empty());
+}

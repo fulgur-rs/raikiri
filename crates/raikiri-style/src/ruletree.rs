@@ -741,7 +741,13 @@ fn expand_cascade_layers(
 
     layers.sort_by_key(|layer| layer.position);
     let mut order = Vec::new();
-    for layer in layers.iter().filter(|layer| layer.body.is_none()) {
+    for layer in &layers {
+        if layer.body.is_some() {
+            if !order.contains(&layer.name) {
+                order.push(layer.name.clone());
+            }
+            continue;
+        }
         for name in layer
             .name
             .split(',')
@@ -751,11 +757,6 @@ fn expand_cascade_layers(
             if !order.iter().any(|existing| existing == name) {
                 order.push(name.to_owned());
             }
-        }
-    }
-    for layer in layers.iter().filter(|layer| layer.body.is_some()) {
-        if !order.contains(&layer.name) {
-            order.push(layer.name.clone());
         }
     }
     let mut chunks = Vec::with_capacity(order.len() + 1);
@@ -1492,7 +1493,9 @@ impl RuleTree {
                     rule_order = rule_order.wrapping_add(1);
                 }
                 ParsedRule::CustomHighlight { name, color } => {
-                    if let Some(color) = color {
+                    if condition.is_none()
+                        && let Some(color) = color
+                    {
                         self.custom_highlight_styles.insert(name, color);
                     }
                 }
@@ -2432,7 +2435,9 @@ fn add_group_items(
             }
             GroupItem::CustomHighlight { name, color } => {
                 // The highlight map has no media-qualified view yet.
-                if !in_media && let Some(color) = color {
+                if condition.is_none()
+                    && let Some(color) = color
+                {
                     sink.custom_highlight_styles.insert(name, color);
                 }
             }
