@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use crate::consumer::ConsumerPropertyRegistration;
 use crate::counter_style::{CounterStyleRegistry, parse_counter_style_rules};
 use crate::font_face::{FontFaceRegistry, parse_font_face_rules};
-use crate::media::{MediaCondition, MediaRule, parse_media_condition};
+use crate::media::{MediaCondition, MediaRule, parse_media_prelude};
 use crate::page::{
     PageBlockBody, PageRule, PageSelector, parse_page_declaration_block, parse_page_prelude,
 };
@@ -1923,7 +1923,7 @@ fn parse_media_style_rule(
 #[allow(clippy::too_many_arguments)]
 fn collect_media_style_rules(
     record: &AtRuleRecord,
-    parent_condition: Option<MediaCondition>,
+    parent_condition: Option<&MediaCondition>,
     out: &mut Vec<MediaRule>,
     style_order: &mut u32,
     page_out: &mut Vec<PageRule>,
@@ -1931,11 +1931,13 @@ fn collect_media_style_rules(
     layer_order: u32,
     consumer_properties: &[ConsumerPropertyRegistration],
 ) {
-    let Some(local_condition) = parse_media_condition(&record.prelude) else {
+    let Some(local_condition) = parse_media_prelude(&record.prelude) else {
         return;
     };
-    let condition =
-        parent_condition.map_or(local_condition, |parent| parent.intersect(local_condition));
+    let condition = match parent_condition {
+        Some(parent) => parent.intersect(&local_condition),
+        None => local_condition,
+    };
     if condition.is_empty() {
         return;
     }
@@ -1948,12 +1950,15 @@ fn collect_media_style_rules(
                 };
                 rule.source_order = *style_order;
                 *style_order = style_order.wrapping_add(1);
-                out.push(MediaRule { rule, condition });
+                out.push(MediaRule {
+                    rule,
+                    condition: condition.clone(),
+                });
             }
             RuleNode::AtRule(nested) if nested.name.eq_ignore_ascii_case("media") => {
                 collect_media_style_rules(
                     nested,
-                    Some(condition),
+                    Some(&condition),
                     out,
                     style_order,
                     page_out,
@@ -1964,7 +1969,7 @@ fn collect_media_style_rules(
             }
             RuleNode::AtRule(nested) if nested.name.eq_ignore_ascii_case("page") => {
                 let Some(page_rule) =
-                    parse_media_page_rule(nested, condition, *page_order, layer_order)
+                    parse_media_page_rule(nested, condition.clone(), *page_order, layer_order)
                 else {
                     continue;
                 };

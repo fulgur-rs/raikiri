@@ -10,8 +10,8 @@
 //!
 //! GCPM static support, @supports, class/id/attribute selectors, basic
 //! combinator matching, and L4 `:not()` / `:is()` / `:where()` / `:has()` are
-//! implemented. `@media` evaluates `all` / `print` / `screen` conditions
-//! through `MediaContext`.
+//! implemented. `@media` evaluates media types and `width` / `height`
+//! conditions through `MediaContext`.
 //!
 //! `precomputed-hash` is encapsulated as a direct dep of this crate only. It
 //! is intentionally NOT promoted to `[workspace.dependencies]` — see the
