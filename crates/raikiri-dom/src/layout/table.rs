@@ -136,6 +136,40 @@ fn is_vertical_writing_mode(mode: WritingMode) -> bool {
     )
 }
 
+fn caption_minimum_width(doc: &mut Document, table: usize) -> f32 {
+    let Some(caption) = doc.nodes[table]
+        .children
+        .iter()
+        .copied()
+        .find(|&id| doc.nodes[id].display == DisplayValue::TableCaption)
+    else {
+        return 0.0;
+    };
+    let output = doc.compute_child_layout(
+        NodeId::from(caption),
+        LayoutInput {
+            run_mode: RunMode::ComputeSize,
+            sizing_mode: SizingMode::InherentSize,
+            axis: taffy::tree::RequestedAxis::Horizontal,
+            known_dimensions: Size::NONE,
+            parent_size: Size::NONE,
+            available_space: Size {
+                width: AvailableSpace::MinContent,
+                height: AvailableSpace::MaxContent,
+            },
+            known_dimensions_are_definite: Size {
+                width: false,
+                height: false,
+            },
+            vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
+        },
+    );
+    let margins = doc.nodes[caption].style.margin;
+    output.size.width
+        + super::used_style_length_percentage_auto(margins.left, 0.0).unwrap_or(0.0)
+        + super::used_style_length_percentage_auto(margins.right, 0.0).unwrap_or(0.0)
+}
+
 fn layout_table_caption(
     doc: &mut Document,
     table_idx: usize,
@@ -149,7 +183,8 @@ fn layout_table_caption(
         .find(|&child| doc.nodes[child].display == DisplayValue::TableCaption)?;
     let style = doc.nodes[caption_id].style.clone();
     // Let block layout apply authored sizes in their box-sizing domain.
-    let known_width = if style.size.width.is_auto() {
+    let vertical = is_vertical_writing_mode(table_writing_mode(doc, table_idx));
+    let known_width = if !vertical && style.size.width.is_auto() {
         let left = super::used_style_length_percentage_auto(style.margin.left, parent_width)
             .unwrap_or(0.0);
         let right = super::used_style_length_percentage_auto(style.margin.right, parent_width)
@@ -158,7 +193,18 @@ fn layout_table_caption(
     } else {
         None
     };
-    let known_height = None;
+    let known_height = if vertical && style.size.height.is_auto() {
+        parent_height.map(|height| {
+            let top = super::used_style_length_percentage_auto(style.margin.top, parent_width)
+                .unwrap_or(0.0);
+            let bottom =
+                super::used_style_length_percentage_auto(style.margin.bottom, parent_width)
+                    .unwrap_or(0.0);
+            (height - top - bottom).max(0.0)
+        })
+    } else {
+        None
+    };
     let output = doc.compute_child_layout(
         NodeId::from(caption_id),
         LayoutInput {
@@ -230,32 +276,56 @@ fn position_table_caption(
     grid_size: Size<f32>,
     caption_size: Option<Size<f32>>,
     run_mode: RunMode,
-) -> (Size<f32>, f32) {
+) -> (Size<f32>, Point<f32>) {
     let caption_id = doc.nodes[table_idx]
         .children
         .iter()
         .copied()
         .find(|&child| doc.nodes[child].display == DisplayValue::TableCaption);
-    let caption_height = caption_size.map_or(0.0, |size| size.height);
-    let caption_above =
+    let caption_size = caption_size.unwrap_or(Size::ZERO);
+    let mode = table_writing_mode(doc, table_idx);
+    let vertical = is_vertical_writing_mode(mode);
+    let before =
         caption_id.is_some_and(|id| doc.nodes[id].caption_side != CaptionSideValue::Bottom);
-    let above_height = if caption_above { caption_height } else { 0.0 };
-    if let Some(id) = caption_id {
-        let mut caption_layout = doc.nodes[id].unrounded_layout;
-        caption_layout.location.y += if caption_above { 0.0 } else { grid_size.height };
-        doc.nodes[id].unrounded_layout =
-            super::sanitize_taffy_layout(&caption_layout, &mut doc.layout_warnings);
-    }
-    if run_mode == RunMode::PerformLayout && caption_size.is_some() {
-        let grid_layout = TaffyLayout {
-            location: Point {
-                x: 0.0,
-                y: above_height,
+    let right_to_left = matches!(mode, WritingMode::VerticalRl | WritingMode::SidewaysRl);
+    let grid_origin = if vertical {
+        Point {
+            x: if before != right_to_left {
+                caption_size.width
+            } else {
+                0.0
             },
-            size: grid_size,
-            ..TaffyLayout::with_order(0)
-        };
-        let grid_layout = super::sanitize_taffy_layout(&grid_layout, &mut doc.layout_warnings);
+            y: 0.0,
+        }
+    } else {
+        Point {
+            x: 0.0,
+            y: if before { caption_size.height } else { 0.0 },
+        }
+    };
+    if let Some(id) = caption_id {
+        let mut layout = doc.nodes[id].unrounded_layout;
+        if vertical {
+            layout.location.x += if before == right_to_left {
+                grid_size.width
+            } else {
+                0.0
+            };
+        } else {
+            layout.location.y += if before { 0.0 } else { grid_size.height };
+        }
+        doc.nodes[id].unrounded_layout =
+            super::sanitize_taffy_layout(&layout, &mut doc.layout_warnings);
+    }
+    if run_mode == RunMode::PerformLayout && caption_id.is_some() {
+        let grid_layout = super::sanitize_taffy_layout(
+            &TaffyLayout {
+                location: grid_origin,
+                size: grid_size,
+                ..TaffyLayout::with_order(0)
+            },
+            &mut doc.layout_warnings,
+        );
         doc.nodes[table_idx].table_grid_box = Some(raikiri_traits::PaintRect::new(
             grid_layout.location.x,
             grid_layout.location.y,
@@ -264,11 +334,18 @@ fn position_table_caption(
         ));
     }
     (
-        Size {
-            width: grid_size.width,
-            height: grid_size.height + caption_height,
+        if vertical {
+            Size {
+                width: grid_size.width + caption_size.width,
+                height: grid_size.height.max(caption_size.height),
+            }
+        } else {
+            Size {
+                width: grid_size.width,
+                height: grid_size.height + caption_size.height,
+            }
         },
-        above_height,
+        grid_origin,
     )
 }
 
@@ -322,6 +399,13 @@ fn compute_table_layout_checked(
         resolve_collapsed_table_edges(doc, &grid, table_idx);
     }
     let vertical_writing = is_vertical_writing_mode(table_writing_mode(doc, table_idx));
+    // CAPMIN constrains the grid before columns are assigned; widening only
+    // the wrapper would leave its background and containing block too narrow.
+    let caption_minimum = if vertical_writing {
+        0.0
+    } else {
+        caption_minimum_width(doc, table_idx)
+    };
 
     // Container metrics, split so collapse can substitute collapsed outer
     // borders for the table's own border widths (CSS 2.1 §17.6.2 — the table
@@ -401,19 +485,6 @@ fn compute_table_layout_checked(
                 }
             })
         };
-        let caption_size = layout_table_caption(
-            doc,
-            table_idx,
-            if specified_w.is_some() || effective_known.width.is_some() {
-                width
-            } else {
-                inputs.parent_size.width.unwrap_or(width).max(width)
-            },
-            inputs.parent_size.height,
-        );
-        if let Some(size) = caption_size {
-            width = width.max(size.width + padding_border_size.width);
-        }
         let specified_h = resolve_dimension(
             doc.nodes[table_idx].style.size.height,
             inputs.parent_size.height,
@@ -424,6 +495,23 @@ fn compute_table_layout_checked(
                 .unwrap_or(0.0)
                 .max(padding_border_size.height)
         });
+        let caption_size = layout_table_caption(
+            doc,
+            table_idx,
+            if specified_w.is_some() || effective_known.width.is_some() {
+                width
+            } else {
+                inputs.parent_size.width.unwrap_or(width).max(width)
+            },
+            if vertical_writing {
+                Some(height)
+            } else {
+                inputs.parent_size.height
+            },
+        );
+        if !vertical_writing && let Some(size) = caption_size {
+            width = width.max(size.width + padding_border_size.width);
+        }
         let (wrapper_size, _) = position_table_caption(
             doc,
             table_idx,
@@ -478,7 +566,9 @@ fn compute_table_layout_checked(
     let inputs_for_columns = LayoutInput {
         known_dimensions: Size {
             width: match specified_width {
-                Some(_) => effective_known.width,
+                Some(_) => effective_known
+                    .width
+                    .map(|width| width.max(caption_minimum)),
                 None => None,
             },
             height: effective_known.height,
@@ -491,7 +581,8 @@ fn compute_table_layout_checked(
         // Crucially the container width is NOT a substitute basis: a
         // fixed+auto table shrink-wraps like an auto table (WPT
         // table_grid_size_col_colspan), it does not fill its container.
-        let avail = specified_width.map(|w| f32_max_compat(w - distrib_insets.width, 0.0));
+        let avail = specified_width
+            .map(|w| f32_max_compat(w.max(caption_minimum) - distrib_insets.width, 0.0));
         match avail {
             Some(avail) => {
                 for cell in &mut grid.cells {
@@ -580,6 +671,10 @@ fn compute_table_layout_checked(
         let target = f32_max_compat(mn - distrib_insets.width, 0.0);
         distribute_extra_width(&mut column_widths, target);
     }
+    distribute_extra_width(
+        &mut column_widths,
+        (caption_minimum - distrib_insets.width).max(0.0),
+    );
 
     // Row heights
     let mut row_heights = resolve_row_heights(doc, &mut grid, &column_widths, border_spacing)?;
@@ -699,17 +794,25 @@ fn compute_table_layout_checked(
         },
     };
 
-    let caption_size =
-        layout_table_caption(doc, table_idx, final_size.width, inputs.parent_size.height);
-    let (wrapper_size, above_height) =
+    let caption_size = layout_table_caption(
+        doc,
+        table_idx,
+        final_size.width,
+        if vertical_writing {
+            Some(final_size.height)
+        } else {
+            inputs.parent_size.height
+        },
+    );
+    let (wrapper_size, grid_origin) =
         position_table_caption(doc, table_idx, final_size, caption_size, inputs.run_mode);
     if inputs.run_mode == RunMode::ComputeSize {
         return Ok(LayoutOutput::from_outer_size(wrapper_size));
     }
 
     // Position cells: origin includes padding + collapsed outer border.
-    let x_origin = pad.left + collapsed.outer_left + border_spacing.0;
-    let y_origin = pad.top + collapsed.outer_top + border_spacing.1 + above_height;
+    let x_origin = pad.left + collapsed.outer_left + border_spacing.0 + grid_origin.x;
+    let y_origin = pad.top + collapsed.outer_top + border_spacing.1 + grid_origin.y;
     // A separated gap is a negative overlap between adjoining tracks.
     let col_steps = if collapse {
         collapsed.col_overlaps.clone()
@@ -728,9 +831,9 @@ fn compute_table_layout_checked(
         &mut grid,
         &column_widths,
         &row_heights,
-        &col_origins,
-        &row_origins,
+        (&col_origins, &row_origins),
         border_spacing,
+        vertical_writing,
     )?; // cov:ignore: failure is defensive; resolve_row_heights already validated these ranges and track_origins supplies every column origin.
     let first_row_baseline = grid
         .cells
@@ -755,7 +858,6 @@ fn compute_table_layout_checked(
         reposition_cells_for_vertical_writing(
             doc,
             &mut grid,
-            &column_widths,
             &row_heights,
             (final_size.width - padding_border_size.width - border_spacing.0 * 2.0).max(0.0),
             Point {
@@ -763,6 +865,7 @@ fn compute_table_layout_checked(
                 y: y_origin,
             },
             border_spacing.1,
+            table_writing_mode(doc, table_idx),
         );
     }
     Ok(LayoutOutput::from_outer_size(wrapper_size))
@@ -1531,6 +1634,22 @@ fn first_cell_baseline(doc: &Document, root: usize, content_top: f32) -> Option<
     if let Some(lines) = node.ifc.as_ref().and_then(|ifc| ifc.lines.as_ref())
         && let Some(baseline) = super::ifc::flow::first_baseline(lines)
     {
+        // A block before line zero can supply the first qualifying line or
+        // table row. Later blocks must not displace the root's first line.
+        for &(child, line) in &lines.block_line_starts {
+            if line != 0 {
+                continue;
+            }
+            let child_node = &doc.nodes[child];
+            let top =
+                child_node.unrounded_layout.padding.top + child_node.unrounded_layout.border.top;
+            let first = child_node
+                .table_first_baseline
+                .or_else(|| first_cell_baseline(doc, child, top));
+            if let Some(first) = first {
+                return Some(child_node.unrounded_layout.location.y + first);
+            }
+        }
         return Some(content_top + baseline);
     }
     let mut stack = Vec::new();
@@ -1726,10 +1845,11 @@ fn place_cells(
     grid: &mut TableGrid,
     column_widths: &[f32],
     row_heights: &[f32],
-    col_x: &[f32],
-    row_y: &[f32],
+    origins: (&[f32], &[f32]),
     spacing: (f32, f32),
+    vertical_writing: bool,
 ) -> Result<(), raikiri_traits::LayoutError> {
+    let (col_x, row_y) = origins;
     let mut row_baselines = vec![0.0f32; row_heights.len()];
     for cell in &grid.cells {
         if cell_baseline_aligned(doc.nodes[cell.node_id].table_vertical_align) {
@@ -1788,12 +1908,17 @@ fn place_cells(
                     .resolve_or_zero(Some(cell_width), crate::taffy_impl::resolve_calc),
             )
         };
-        let extra = (cell_height - cell.natural_height).max(0.0);
+        let extra = if vertical_writing {
+            0.0
+        } else {
+            (cell_height - cell.natural_height).max(0.0)
+        };
         let shift = match doc.nodes[cell.node_id].table_vertical_align {
             VerticalAlign::Top => 0.0,
             VerticalAlign::Middle => extra / 2.0,
             VerticalAlign::Bottom => extra,
-            _ => (row_baselines[cell.row as usize] - cell.baseline).max(0.0),
+            _ if !vertical_writing => (row_baselines[cell.row as usize] - cell.baseline).max(0.0),
+            _ => 0.0,
         };
         padding.top += shift;
         padding.bottom += (extra - shift).max(0.0);
@@ -1833,17 +1958,16 @@ fn place_cells(
 }
 
 /// Re-map the already measured table grid from horizontal physical axes to
-/// vertical writing-mode axes. The normal placement pass remains authoritative
-/// for child sizing; this pass changes only the cell track positions and the
-/// vertical span used by the table grid.
+/// vertical writing-mode axes. This pass re-lays out cell contents at their
+/// final physical dimensions and aligns them on the table's block axis.
 fn reposition_cells_for_vertical_writing(
     doc: &mut Document,
     grid: &mut TableGrid,
-    column_widths: &[f32],
     row_heights: &[f32],
     cell_width: f32,
     origin: Point<f32>,
     spacing: f32,
+    writing_mode: WritingMode,
 ) {
     let vertical_track = row_heights.iter().sum::<f32>();
     if !vertical_track.is_finite() || vertical_track <= 0.0 {
@@ -1853,16 +1977,105 @@ fn reposition_cells_for_vertical_writing(
         let col_start = cell.col_start as usize;
         let col_end = col_start
             .saturating_add(cell.col_span as usize)
-            .min(column_widths.len());
+            .min(usize::from(grid.n_cols));
         let col_span = col_end.saturating_sub(col_start).max(1);
         let y = origin.y + (vertical_track + spacing) * col_start as f32;
         let height = vertical_track * col_span as f32 + spacing * (col_span - 1) as f32;
+        // Re-layout at the final physical dimensions before distributing
+        // block-axis free space; the earlier horizontal measurement cannot
+        // determine vertical content's occupied block extent.
+        doc.compute_child_layout(
+            NodeId::from(cell.node_id),
+            LayoutInput {
+                run_mode: RunMode::PerformLayout,
+                sizing_mode: SizingMode::InherentSize,
+                axis: taffy::tree::RequestedAxis::Both,
+                known_dimensions: Size {
+                    width: Some(cell_width),
+                    height: Some(height),
+                },
+                parent_size: Size {
+                    width: Some(cell_width),
+                    height: Some(height),
+                },
+                available_space: Size {
+                    width: AvailableSpace::Definite(cell_width),
+                    height: AvailableSpace::Definite(height),
+                },
+                known_dimensions_are_definite: Size {
+                    width: true,
+                    height: true,
+                },
+                vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
+            },
+        );
+        let node = &doc.nodes[cell.node_id];
+        let mut padding = node
+            .style
+            .padding
+            .resolve_or_zero(Some(cell_width), crate::taffy_impl::resolve_calc);
+        let border = node
+            .style
+            .border
+            .resolve_or_zero(Some(cell_width), crate::taffy_impl::resolve_calc);
+        let lines = node.ifc.as_ref().and_then(|ifc| ifc.lines.as_ref());
+        let has_lines = lines.is_some_and(|lines| !lines.lines.is_empty());
+        let natural = if has_lines {
+            lines.map_or(0.0, |lines| lines.height)
+                + padding.left
+                + padding.right
+                + border.left
+                + border.right
+        } else {
+            node.children
+                .iter()
+                .filter(|&&child| doc.nodes[child].style.position != taffy::Position::Absolute)
+                .map(|&child| {
+                    let child = &doc.nodes[child].unrounded_layout;
+                    child.location.x + child.size.width + child.margin.right
+                })
+                .fold(padding.left + border.left, f32::max)
+                + padding.right
+                + border.right
+        };
+        let extra = (cell_width - natural).max(0.0);
+        let shift = match node.table_vertical_align {
+            VerticalAlign::Middle => extra / 2.0,
+            VerticalAlign::Bottom => extra,
+            _ => 0.0,
+        };
+        let rtl = matches!(
+            writing_mode,
+            WritingMode::VerticalRl | WritingMode::SidewaysRl
+        );
+        let child_shift = if rtl {
+            if has_lines { -shift } else { extra - shift }
+        } else {
+            shift
+        };
+        if rtl {
+            padding.right += shift;
+            padding.left += extra - shift;
+        } else {
+            padding.left += shift;
+            padding.right += extra - shift;
+        }
+        for child in doc.nodes[cell.node_id].children.clone() {
+            if doc.nodes[child].style.position != taffy::Position::Absolute {
+                let mut layout = doc.nodes[child].unrounded_layout;
+                layout.location.x += child_shift;
+                doc.nodes[child].unrounded_layout =
+                    super::sanitize_taffy_layout(&layout, &mut doc.layout_warnings);
+            }
+        }
         let Some(layout) = cell.resolved.as_mut() else {
             continue; // cov:ignore: defensive unresolved-cell fallback.
         };
         layout.location = Point { x: origin.x, y };
         layout.size.width = cell_width;
         layout.size.height = height;
+        layout.padding = padding;
+        layout.border = border;
         let sanitized = super::sanitize_taffy_layout(layout, &mut doc.layout_warnings);
         doc.nodes[cell.node_id].unrounded_layout = sanitized;
     }
@@ -2009,10 +2222,44 @@ fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32) -> Vec<f32> {
         remaining = (remaining - width).max(0.0);
         count -= 1;
     }
+    let reclaimable: Vec<_> = (0..n).map(|c| automatic.contains(&c)).collect();
     let mut widths: Vec<_> = fixed
         .into_iter()
         .map(|width| width.unwrap_or(0.0))
         .collect();
+    // First-row spans are disjoint. Reserve each other span's minimum
+    // proportionally in its auto columns before any span draws from them.
+    for cell in &grid.cells {
+        if cell.row != 0 || cell.col_span <= 1 {
+            continue;
+        }
+        let start = usize::from(cell.col_start);
+        let end = (start + usize::from(cell.col_span)).min(n);
+        if start >= end {
+            continue; // cov:ignore: defensive range guard; native grid construction validates nonzero spans within its column count.
+        }
+        let minimum = resolve_dimension(cell.specified_min_width, Some(avail)).unwrap_or(0.0);
+        let fixed_sum: f32 = (start..end)
+            .filter(|&c| !reclaimable[c])
+            .map(|c| widths[c])
+            .sum();
+        let floor_sum: f32 = (start..end)
+            .filter(|&c| reclaimable[c])
+            .map(|c| floors[c])
+            .sum();
+        let spare: f32 = (start..end)
+            .filter(|&c| reclaimable[c])
+            .map(|c| (widths[c] - floors[c]).max(0.0))
+            .sum();
+        let reserve = (minimum - fixed_sum - floor_sum).max(0.0).min(spare);
+        if spare > 0.0 {
+            for c in start..end {
+                if reclaimable[c] {
+                    floors[c] += reserve * (widths[c] - floors[c]).max(0.0) / spare;
+                }
+            }
+        }
+    }
     for cell in &grid.cells {
         if cell.row != 0 || cell.col_span <= 1 {
             continue;
@@ -2025,9 +2272,23 @@ fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32) -> Vec<f32> {
         let minimum = resolve_dimension(cell.specified_min_width, Some(avail)).unwrap_or(0.0);
         let current: f32 = widths[start..end].iter().sum();
         if minimum > current {
-            let extra = (minimum - current) / (end - start) as f32;
-            for width in &mut widths[start..end] {
-                *width += extra;
+            let deficit = minimum - current;
+            let donor_space: f32 = (0..n)
+                .filter(|&c| (c < start || c >= end) && reclaimable[c])
+                .map(|c| (widths[c] - floors[c]).max(0.0))
+                .sum();
+            let reclaimed = deficit.min(donor_space);
+            if donor_space > 0.0 {
+                for c in 0..n {
+                    if (c < start || c >= end) && reclaimable[c] {
+                        widths[c] -= reclaimed * (widths[c] - floors[c]).max(0.0) / donor_space;
+                    }
+                }
+            }
+            for c in start..end {
+                widths[c] += deficit / (end - start) as f32;
+                // Subsequent spans must not undo this satisfied minimum.
+                floors[c] = floors[c].max(widths[c]);
             }
         }
     }

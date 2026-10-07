@@ -167,9 +167,9 @@ fn invalid_cell_column_ranges_are_rejected_before_both_slice_sinks() {
                 &mut grid,
                 &[1.0, 1.0],
                 &[1.0],
-                &[0.0, 1.0, 2.0],
-                &[0.0, 1.0],
-                (0.0, 0.0)
+                (&[0.0, 1.0, 2.0], &[0.0, 1.0]),
+                (0.0, 0.0),
+                false
             )
             .is_err()
         );
@@ -3308,4 +3308,44 @@ fn separate_border_spacing_grows_a_table_shorter_than_its_rows() {
     let cell = doc.nodes[td].unrounded_layout;
     assert_eq!((cell.location.y, cell.size.height), (2.0, 10.0));
     assert_eq!(doc.nodes[table].unrounded_layout.size.height, 14.0);
+}
+
+#[test]
+fn fixed_colspan_minimum_reclaims_only_unconstrained_column_space() {
+    for (minimum, last_floor, last_width, expected) in [
+        (80.0, 0.0, Dimension::auto(), [40.0, 40.0, 10.0]),
+        (100.0, 0.0, Dimension::auto(), [50.0, 50.0, 0.0]),
+        (80.0, 15.0, Dimension::auto(), [40.0, 40.0, 15.0]),
+        (80.0, 0.0, Dimension::length(40.0), [40.0, 40.0, 40.0]),
+    ] {
+        let mut span = fixed_cell(0, 0, 2, Dimension::auto());
+        span.specified_min_width = Dimension::length(minimum);
+        let mut last = fixed_cell(0, 2, 1, last_width);
+        last.specified_min_width = Dimension::length(last_floor);
+        let grid = super::TableGrid {
+            n_cols: 3,
+            rows: vec![],
+            cells: vec![span, last],
+            col_widths: vec![],
+        };
+        assert_eq!(super::resolve_fixed_column_widths(&grid, 90.0), expected);
+    }
+}
+
+#[test]
+fn fixed_span_redistribution_preserves_another_spans_minimum() {
+    let mut first = fixed_cell(0, 0, 2, Dimension::auto());
+    first.specified_min_width = Dimension::length(30.0);
+    let mut second = fixed_cell(0, 2, 2, Dimension::auto());
+    second.specified_min_width = Dimension::length(80.0);
+    let grid = super::TableGrid {
+        n_cols: 4,
+        rows: vec![],
+        cells: vec![first, second],
+        col_widths: vec![],
+    };
+    assert_eq!(
+        super::resolve_fixed_column_widths(&grid, 100.0),
+        [15.0, 15.0, 40.0, 40.0]
+    );
 }

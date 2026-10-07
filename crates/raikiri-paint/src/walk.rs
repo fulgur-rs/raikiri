@@ -4069,6 +4069,10 @@ pub(crate) fn paint_document_impl(
                     // margin on every page after the first; the canvas pass has
                     // already filled the content rectangle at page-local coords.
                     let grid = node.table_grid_box();
+                    let own_paint_x = paint_x + grid.map_or(0.0, |rect| rect.x);
+                    let own_paint_width = grid.map_or(layout.size.width, |rect| rect.width);
+                    let own_background_width =
+                        grid.map_or(paint_background_width, |rect| rect.width);
                     let own_paint_y = paint_y + grid.map_or(0.0, |rect| rect.y);
                     let own_paint_height = grid.map_or(paint_height, |rect| rect.height);
                     let own_background_height =
@@ -4094,9 +4098,9 @@ pub(crate) fn paint_document_impl(
                         }
                         paint_element_box_shadows(
                             scene,
-                            layout.size.width,
+                            own_paint_width,
                             own_paint_height,
-                            paint_x,
+                            own_paint_x,
                             own_paint_y,
                             &paint_border_radius,
                             &cv.box_shadow,
@@ -4104,9 +4108,9 @@ pub(crate) fn paint_document_impl(
                         );
                         paint_element_background(
                             scene,
-                            paint_background_width,
+                            own_background_width,
                             own_background_height,
-                            paint_x,
+                            own_paint_x,
                             own_paint_y,
                             cv.background_color,
                             &cv.background_image,
@@ -4155,9 +4159,9 @@ pub(crate) fn paint_document_impl(
                     if !border_covered_by_background && paints_as_absolute_continuation {
                         paint_element_border_with_top(
                             scene,
-                            layout.size.width,
+                            own_paint_width,
                             own_paint_height, // cov:ignore: absolute continuation fragments are exercised by the ignored fragmentation WPT reftests.
-                            paint_x,
+                            own_paint_x,
                             own_paint_y, // cov:ignore: absolute continuation fragments are exercised by the ignored fragmentation WPT reftests.
                             painted_border, // cov:ignore: absolute continuation fragments are exercised by the ignored fragmentation WPT reftests.
                             cv.color,
@@ -4166,9 +4170,9 @@ pub(crate) fn paint_document_impl(
                     } else if !border_covered_by_background {
                         paint_element_border_rounded(
                             scene,
-                            layout.size.width,
+                            own_paint_width,
                             own_paint_height,
-                            paint_x,
+                            own_paint_x,
                             own_paint_y,
                             painted_border,
                             cv.color,
@@ -4179,9 +4183,9 @@ pub(crate) fn paint_document_impl(
                     // outside the border edge (CSS Basic UI §4).
                     paint_element_outline(
                         scene,
-                        layout.size.width,
+                        own_paint_width,
                         own_paint_height,
-                        paint_x,
+                        own_paint_x,
                         own_paint_y,
                         &cv.outline,
                         cv.outline_offset,
