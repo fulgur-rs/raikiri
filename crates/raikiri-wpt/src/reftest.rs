@@ -1395,7 +1395,9 @@ fn authored_page_viewport(input: &str, fallback_width: f32, fallback_height: f32
 /// resolves the viewport units here while preserving other CSS tokens.  This
 /// is also useful for reference documents that express one printed page as
 /// `height: 100vh`.
-fn expand_viewport_units(input: &str, width: f32, height: f32) -> String {
+/// Shared with the screen adapter to resolve fetched stylesheet text before
+/// its first media-query parse.
+pub(crate) fn expand_viewport_units(input: &str, width: f32, height: f32) -> String {
     expand_viewport_units_with_media_basis(input, width, height, width, height)
 }
 

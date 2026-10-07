@@ -179,3 +179,36 @@ fn media_queries_use_the_requested_screen_viewport() {
     assert_eq!(&image.rgba[..4], &[0, 128, 0, 255]);
     assert_eq!(server.finish(), ["/index.html"]);
 }
+
+#[test]
+fn media_viewport_units_use_requested_screen_size_in_inline_and_external_css() {
+    let server = TestServer::start(HashMap::from([
+        ("/inline.html", ("text/html", b"<style>html,body{margin:0}div{width:8px;height:8px;background:red}@media screen and (width:100vw) and (height:100vh){div{background:green}}</style><div></div>".to_vec())),
+        ("/external.html", ("text/html", b"<link rel=stylesheet href=sheet.css><div></div>".to_vec())),
+        ("/sheet.css", ("text/css", b"html,body{margin:0}div{width:8px;height:8px;background:red}@media screen and (width:100vw) and (height:100vh){div{background:green}}".to_vec())),
+        ("/attribute.html", ("text/html", b"<style>html,body{margin:0}div{width:8px;height:8px;background:red}</style><style media='screen and (width:100vw) and (height:100vh)'>div{background:green}</style><div></div>".to_vec())),
+        ("/import.html", ("text/html", b"<style>@import url(imported.css) screen and (width:100vw) and (height:100vh);</style><div></div>".to_vec())),
+        ("/imported.css", ("text/css", b"html,body{margin:0}div{width:8px;height:8px;background:green}".to_vec())),
+    ]));
+    for page in [
+        "inline.html",
+        "external.html",
+        "attribute.html",
+        "import.html",
+    ] {
+        let image =
+            render_screen_url(&SystemHttpProvider::new(), server.url(page), 32, 24).unwrap();
+        assert_eq!(&image.rgba[..4], &[0, 128, 0, 255], "{page}");
+    }
+    assert_eq!(
+        server.finish(),
+        [
+            "/inline.html",
+            "/external.html",
+            "/sheet.css",
+            "/attribute.html",
+            "/import.html",
+            "/imported.css"
+        ]
+    );
+}
