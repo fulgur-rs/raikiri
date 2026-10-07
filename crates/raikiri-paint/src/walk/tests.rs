@@ -4681,3 +4681,133 @@ fn margin_box_layer_precedence_reaches_the_paint_consumer() {
 }
 
 mod css_wide_margin_tests;
+
+#[test]
+fn large_inset_corner_background_is_cropped_not_rescaled() {
+    for radius in ["100px 0 0 0", "100px 0 0 0 / 80px 0 0 0"] {
+        let scene = transform_markup_scene(&format!(
+            "<body style='margin:0'><div style='position:absolute;left:0;top:0;box-sizing:border-box;width:100px;height:100px;padding:20px;background:red;background-clip:content-box;border-radius:{radius}'></div></body>"
+        ));
+        let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+            |out| out.append_scene(scene, Affine::IDENTITY),
+            100,
+            100,
+        );
+        let offset = (21 * 100 + 85) * 4;
+        assert_eq!(
+            &rgba[offset..offset + 4],
+            &[255, 255, 255, 255],
+            "{radius}: outside content edge"
+        );
+        let inside = (70 * 100 + 70) * 4;
+        assert_eq!(
+            &rgba[inside..inside + 4],
+            &[255, 0, 0, 255],
+            "{radius}: missing inside curve"
+        );
+        if radius == "100px 0 0 0" {
+            let outside_curve = (30 * 100 + 50) * 4;
+            assert_eq!(
+                &rgba[outside_curve..outside_curve + 4],
+                &[255, 255, 255, 255],
+                "curve was rescaled instead of cropped"
+            );
+        }
+    }
+}
+
+#[test]
+fn large_inset_corner_border_has_no_hole_outside_padding_edge() {
+    let scene = transform_markup_scene(
+        "<body style='margin:0'><div style='position:absolute;left:0;top:0;box-sizing:border-box;width:100px;height:100px;border:20px solid red;border-radius:100px 0 0 0'></div></body>",
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        100,
+        100,
+    );
+    let border = (21 * 100 + 85) * 4;
+    assert_eq!(&rgba[border..border + 4], &[255, 0, 0, 255]);
+    let padding = (70 * 100 + 70) * 4;
+    assert_eq!(&rgba[padding..padding + 4], &[255, 255, 255, 255]);
+}
+
+#[test]
+fn one_visible_overflow_axis_keeps_corner_content() {
+    for axes in [
+        "overflow-x:clip;overflow-y:visible",
+        "overflow-x:visible;overflow-y:clip",
+    ] {
+        let scene = transform_markup_scene(&format!(
+            "<body style='margin:0'><div style='position:absolute;left:0;top:0;width:100px;height:50px;{axes};border-radius:30px / 15px'><div style='width:100px;height:50px;background:green'></div></div></body>"
+        ));
+        let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+            |out| out.append_scene(scene, Affine::IDENTITY),
+            100,
+            50,
+        );
+        let corner = (2 * 100 + 8) * 4;
+        assert_eq!(&rgba[corner..corner + 4], &[0, 128, 0, 255], "{axes}");
+    }
+}
+
+#[test]
+fn cropped_corner_paths_stay_inside_each_inner_edge() {
+    use kurbo::Shape;
+    for corner in 0..4 {
+        let mut horizontal = [ComputedLengthPercentage::Px(0.0); 4];
+        let mut vertical = horizontal;
+        horizontal[corner] = ComputedLengthPercentage::Px(100.0);
+        vertical[corner] = ComputedLengthPercentage::Px(80.0);
+        let radius = ComputedBorderRadius::elliptical(horizontal, vertical);
+        let path = rounded_background_path(
+            20.0,
+            20.0,
+            80.0,
+            80.0,
+            &radius,
+            (20.0, 20.0, 20.0, 20.0),
+            (100.0, 100.0),
+        )
+        .unwrap();
+        let bounds = path.bounding_box();
+        assert!(
+            bounds.x0 >= 20.0 - 1e-8
+                && bounds.y0 >= 20.0 - 1e-8
+                && bounds.x1 <= 80.0 + 1e-8
+                && bounds.y1 <= 80.0 + 1e-8,
+            "corner {corner}: {bounds:?}"
+        );
+        assert_ne!(path.winding(Point::new(50.0, 50.0)), 0);
+    }
+    let radius = ComputedBorderRadius::elliptical(
+        [
+            ComputedLengthPercentage::Px(100.0),
+            ComputedLengthPercentage::Px(0.0),
+            ComputedLengthPercentage::Px(0.0),
+            ComputedLengthPercentage::Px(0.0),
+        ],
+        [
+            ComputedLengthPercentage::Px(100.0),
+            ComputedLengthPercentage::Px(0.0),
+            ComputedLengthPercentage::Px(0.0),
+            ComputedLengthPercentage::Px(0.0),
+        ],
+    );
+    let empty = rounded_background_path(
+        60.0,
+        60.0,
+        70.0,
+        70.0,
+        &radius,
+        (60.0, 60.0, 30.0, 30.0),
+        (100.0, 100.0),
+    )
+    .unwrap();
+    assert!(empty.elements().is_empty());
+    assert!(
+        rounded_rect_path(0.0, 0.0, 0.0, 10.0, [[5.0, 5.0]; 4])
+            .elements()
+            .is_empty()
+    );
+}

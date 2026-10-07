@@ -4399,20 +4399,26 @@ pub(crate) fn paint_document_impl(
                             clip_bottom as f64
                         },
                     );
-                    let rounded = rounded_background_path(
-                        clip.x0,
-                        clip.y0,
-                        clip.x1,
-                        clip.y1,
-                        &cv.border_radius,
-                        (
-                            layout.border.left as f64,
-                            layout.border.top as f64,
-                            layout.border.right as f64,
-                            layout.border.bottom as f64,
-                        ),
-                        (layout.size.width as f64, paint_height as f64),
-                    );
+                    let rounded = if !matches!(cv.overflow.x, OverflowValue::Visible)
+                        && !matches!(cv.overflow.y, OverflowValue::Visible)
+                    {
+                        rounded_background_path(
+                            clip.x0,
+                            clip.y0,
+                            clip.x1,
+                            clip.y1,
+                            &cv.border_radius,
+                            (
+                                layout.border.left as f64,
+                                layout.border.top as f64,
+                                layout.border.right as f64,
+                                layout.border.bottom as f64,
+                            ),
+                            (layout.size.width as f64, paint_height as f64),
+                        )
+                    } else {
+                        None
+                    };
                     if let Some(rounded) = rounded {
                         scene.push_clip_layer(Affine::IDENTITY, &rounded);
                     } else {
@@ -6131,39 +6137,81 @@ fn inset_border_radii(radii: [[f64; 2]; 4], inset: (f64, f64, f64, f64)) -> [[f6
     })
 }
 
-fn append_border_arc(path: &mut BezPath, center: Point, start_angle: f64, radii: [f64; 2]) {
-    if radii[0] == 0.0 || radii[1] == 0.0 {
-        return;
-    }
-    let corner = Arc {
-        center,
-        radii: Vec2::new(radii[0], radii[1]),
-        start_angle,
-        sweep_angle: FRAC_PI_2,
-        x_rotation: 0.0,
-    };
-    for element in corner.append_iter(0.1) {
-        path.push(element);
-    }
-}
-
-/// A CSS rounded rectangle from already normalized used corner pairs.
+/// A CSS rounded rectangle with used corner pairs.
+///
+/// Insets can make a curve reach past the opposite edge. Crop its quarter
+/// ellipse at that edge, preserving its center and radii (CSS Backgrounds 3
+/// section 4.2), rather than rescaling the curve to the smaller rectangle.
 fn rounded_rect_path(x0: f64, y0: f64, x1: f64, y1: f64, radii: [[f64; 2]; 4]) -> BezPath {
-    let [tl, tr, br, bl] = radii;
     let mut path = BezPath::new();
-    path.move_to(Point::new(x0, y0 + tl[1]));
-    append_border_arc(&mut path, Point::new(x0 + tl[0], y0 + tl[1]), PI, tl);
-    path.line_to(Point::new(x1 - tr[0], y0));
-    append_border_arc(
-        &mut path,
+    if x1 <= x0 || y1 <= y0 {
+        return path;
+    }
+    let [tl, tr, br, bl] = radii;
+    let centers = [
+        Point::new(x0 + tl[0], y0 + tl[1]),
         Point::new(x1 - tr[0], y0 + tr[1]),
-        3.0 * FRAC_PI_2,
-        tr,
-    );
-    path.line_to(Point::new(x1, y1 - br[1]));
-    append_border_arc(&mut path, Point::new(x1 - br[0], y1 - br[1]), 0.0, br);
-    path.line_to(Point::new(x0 + bl[0], y1));
-    append_border_arc(&mut path, Point::new(x0 + bl[0], y1 - bl[1]), FRAC_PI_2, bl);
+        Point::new(x1 - br[0], y1 - br[1]),
+        Point::new(x0 + bl[0], y1 - bl[1]),
+    ];
+    let square = [
+        Point::new(x0, y0),
+        Point::new(x1, y0),
+        Point::new(x1, y1),
+        Point::new(x0, y1),
+    ];
+    let angles = [PI, 3.0 * FRAC_PI_2, 0.0, FRAC_PI_2];
+    for (index, ([rx, ry], center)) in radii.into_iter().zip(centers).enumerate() {
+        let (point, arc) = if rx == 0.0 || ry == 0.0 {
+            (square[index], None)
+        } else {
+            let (lower, upper) = match index {
+                0 => ((center.y - y1) / ry, (center.x - x1) / rx),
+                1 => ((x0 - center.x) / rx, (center.y - y1) / ry),
+                2 => ((y0 - center.y) / ry, (x0 - center.x) / rx),
+                _ => ((center.x - x1) / rx, (y0 - center.y) / ry),
+            };
+            let start = lower.clamp(0.0, 1.0).asin();
+            let end = upper.clamp(0.0, 1.0).acos();
+            if start >= end {
+                // The whole rectangle lies outside this corner's ellipse.
+                return BezPath::new();
+            }
+            let point = if start == 0.0 {
+                match index {
+                    0 => Point::new(x0, center.y),
+                    1 => Point::new(center.x, y0),
+                    2 => Point::new(x1, center.y),
+                    _ => Point::new(center.x, y1),
+                }
+            } else {
+                match index {
+                    0 => Point::new(center.x - rx * start.cos(), y1),
+                    1 => Point::new(x0, center.y - ry * start.cos()),
+                    2 => Point::new(center.x + rx * start.cos(), y0),
+                    _ => Point::new(x1, center.y + ry * start.cos()),
+                }
+            };
+            let arc = Arc {
+                center,
+                radii: Vec2::new(rx, ry),
+                start_angle: angles[index] + start,
+                sweep_angle: end - start,
+                x_rotation: 0.0,
+            };
+            (point, Some(arc))
+        };
+        if index == 0 {
+            path.move_to(point);
+        } else {
+            path.line_to(point);
+        }
+        if let Some(arc) = arc {
+            for element in arc.append_iter(0.1) {
+                path.push(element);
+            }
+        }
+    }
     path.close_path();
     path
 }
