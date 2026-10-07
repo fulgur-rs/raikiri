@@ -63,7 +63,7 @@ pub(crate) fn generates_own_box(doc: &Document, cascade: &CascadeResult, idx: us
 }
 
 /// Whether `idx` is the body layout starts at.
-fn is_layout_root(doc: &Document, idx: usize) -> bool {
+pub(crate) fn is_layout_root(doc: &Document, idx: usize) -> bool {
     doc.nodes[idx].tag_name() == Some("body") && crate::layout::find_body(doc) == Some(idx)
 }
 

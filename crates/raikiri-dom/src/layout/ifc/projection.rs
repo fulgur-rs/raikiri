@@ -127,8 +127,9 @@ pub(crate) fn language_of(doc: &Document, node: usize) -> Option<String> {
 /// The style a `<br>` gives its line strut in quirks mode: the style of the
 /// box it sits in, with the `<br>`'s own `line-height` (resolved, like
 /// `normal` or a number, against that box's font) and baseline alignment.
-/// The box is the nearest ancestor that generates one (`display: contents`
-/// generates none); its `vertical-align` places that box, not the break.
+/// The box is the nearest ancestor that generates one: `display: contents`
+/// generates none, except on the body layout starts at. Its
+/// `vertical-align` places that box, not the break.
 /// `None` outside quirks mode, where the break takes the enclosing box's
 /// strut unchanged.
 fn break_strut_style(
@@ -143,10 +144,11 @@ fn break_strut_style(
     }
     let owner = std::iter::successors(doc.parent_of(br), |&id| doc.parent_of(id))
         .find(|&id| {
-            cascade
-                .computed
-                .get(id)
-                .is_some_and(|cv| cv.display != DisplayValue::Contents)
+            super::assign::is_layout_root(doc, id)
+                || cascade
+                    .computed
+                    .get(id)
+                    .is_some_and(|cv| cv.display != DisplayValue::Contents)
         })
         .unwrap_or(br);
     let owner_cv = cascade
