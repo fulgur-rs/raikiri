@@ -71,7 +71,7 @@ fn existing_layers_inside_supports_keep_styles_pages_and_precedence() {
     assert_eq!(tree.page_rules.len(), 1);
     assert_eq!(
         tree.layer_order(&MediaContext::default())
-            .rank(tree.page_rules[0].layer),
+            .rank(tree.page_rules[0].layer, tree.page_rules[0].origin),
         0
     );
     assert_eq!(
@@ -167,8 +167,8 @@ fn supported_layer_statements_order_later_blocks_only_when_true() {
             selectors
         );
         let order = tree.layer_order(&MediaContext::default());
-        let a = order.rank(tree.style_rules()[0].layer);
-        let b = order.rank(tree.style_rules()[1].layer);
+        let a = order.rank(tree.style_rules()[0].layer, tree.style_rules()[0].origin);
+        let b = order.rank(tree.style_rules()[1].layer, tree.style_rules()[1].origin);
         assert_eq!(a > b, condition == "(color:red)");
     }
 }

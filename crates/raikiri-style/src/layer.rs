@@ -155,7 +155,7 @@ impl LayerTable {
     }
 
     /// `None` excludes conditional declarations for compatibility registry views.
-    pub(crate) fn order(&self, context: Option<&MediaContext>) -> LayerOrder {
+    pub(crate) fn order(&self, context: Option<&MediaContext>) -> LayerOrder<'_> {
         let mut seen = vec![false; self.nodes.len()];
         let mut children = vec![Vec::new(); self.nodes.len()];
         let mut roots: [Vec<LayerId>; 5] = std::array::from_fn(|_| Vec::new());
@@ -193,24 +193,31 @@ impl LayerTable {
         LayerOrder {
             owner: self.owner,
             ranks,
+            nodes: &self.nodes,
         }
     }
 }
 
-pub(crate) struct LayerOrder {
+pub(crate) struct LayerOrder<'a> {
     owner: u64,
     ranks: Vec<u32>,
+    nodes: &'a [LayerNode],
 }
-impl LayerOrder {
-    pub(crate) fn rank(&self, layer: Option<LayerId>) -> u32 {
+impl LayerOrder<'_> {
+    pub(crate) fn rank(&self, layer: Option<LayerId>, origin: Origin) -> u32 {
         layer
-            .filter(|id| id.owner == self.owner)
+            .filter(|id| {
+                id.owner == self.owner
+                    && self.nodes.get(id.index).is_some_and(|node| {
+                        node.origin == crate::cascade::cascade_rank(origin, false) as usize
+                    })
+            })
             .and_then(|id| self.ranks.get(id.index))
             .copied()
             .unwrap_or(u32::MAX)
     }
-    pub(crate) fn priority(&self, layer: Option<LayerId>, important: bool) -> u32 {
-        let normal = self.rank(layer);
+    pub(crate) fn priority(&self, layer: Option<LayerId>, origin: Origin, important: bool) -> u32 {
+        let normal = self.rank(layer, origin);
         if important { u32::MAX - normal } else { normal }
     }
 }

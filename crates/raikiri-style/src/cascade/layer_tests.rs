@@ -786,3 +786,73 @@ fn invalid_layer_name_tokens_are_rejected_and_all_marker_serializes() {
         Some("revert-layer")
     );
 }
+
+#[test]
+fn border_rollback_continues_through_deferred_fallback_markers() {
+    for final_rule in [
+        "border-top-width:revert-layer",
+        "--y:revert-layer;border-top-width:var(--y)",
+    ] {
+        let tree = author_tree(&[&format!(
+            "@layer a,b,c; @layer a{{p{{border-top:7px solid red}}}} @layer b{{p{{--x:revert-layer;border-top-width:var(--x)}}}} @layer c{{p{{{final_rule}}}}}"
+        )]);
+        let (id, result) = result(&tree, &MediaContext::print(), None);
+        assert_eq!(result.computed[id].border.top.width().px(), 7.0);
+    }
+    let mut tree = author_tree(&[
+        "@layer a,b; @layer a{p{--x:revert;border-top-width:var(--x)}} @layer b{p{border-top-width:revert-layer}} p{border-top-style:solid}",
+    ]);
+    tree.add_stylesheet("p{border-top:7px solid red}", Origin::User);
+    let (id, result) = result(&tree, &MediaContext::print(), None);
+    assert_eq!(result.computed[id].border.top.width().px(), 7.0);
+}
+
+#[test]
+fn static_highlight_all_rollback_restores_previous_layer() {
+    for css in [
+        "@layer a{::highlight(mark){background-color:blue}} @layer b{::highlight(mark){background-color:red;all:revert-layer}}",
+        "@layer a{::highlight(mark){background-color:blue}} @layer b{::highlight(mark){background-color:red} ::highlight(mark){all:revert-layer}}",
+        "@layer a,b,c; @layer a{::highlight(mark){background-color:blue}} @layer b{::highlight(mark){background-color:red!important;all:revert-layer!important}} @layer c{::highlight(mark){background-color:red!important}}",
+    ] {
+        let tree = author_tree(&[css]);
+        assert_eq!(tree.custom_highlight_styles().get("mark"), Some(&BLUE));
+    }
+    let tree = author_tree(&["::highlight(mark){background-color:red;all:revert-layer}"]);
+    assert!(!tree.custom_highlight_styles().contains_key("mark"));
+}
+
+#[test]
+fn public_origin_changes_do_not_reuse_another_origins_layer_rank() {
+    let mut tree =
+        author_tree(&["@layer x{p{color:red} @page{color:red;size:A4;@top-left{color:red}}}"]);
+    tree.add_stylesheet(
+        "@layer a,b; @layer b{p{color:blue} @page{color:blue;size:letter;@top-left{color:blue}}}",
+        Origin::User,
+    );
+    let expected_size = tree.page_rules[0].size_declarations[0].value();
+    tree.page_rules[0].origin = Origin::User;
+    tree.style_rules[0].origin = Origin::User;
+    assert_eq!(color(&tree, &MediaContext::print()), RED);
+    assert_eq!(page_color(&tree, &MediaContext::print()), RED);
+    let page = cascade_page_with_media_context(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::LegacyInitialValues,
+        &MediaContext::print(),
+    );
+    assert_eq!(page.size(), Some(expected_size));
+    let margin = crate::page::PageMarginBoxCascadeResult::cascade_matching(
+        page.margin_boxes(),
+        crate::page::PageMarginBoxSlot::TopLeft,
+    )
+    .unwrap();
+    assert_eq!(
+        margin
+            .declarations
+            .iter()
+            .find(|d| d.value().key() == PropertyKey::Color)
+            .unwrap()
+            .value(),
+        &PropertyValue::Color(RED)
+    );
+}

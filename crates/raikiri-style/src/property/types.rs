@@ -8194,7 +8194,7 @@ pub enum FilterFunction {
 /// implemented in this crate, except for the border longhands and the `border` /
 /// `border-right` shorthands, which accept all five keywords through
 /// [`CssWideKeyword`] (see that type's docs for resolution). The `all` shorthand
-/// additionally accepts literal `revert-layer` through [`PropertyValue::AllRevertLayer];
+/// additionally accepts literal `revert-layer` through [`PropertyValue::AllRevertLayer`];
 /// its other CSS-wide values and `var()` form are not supported.
 ///
 /// Unlike unsupported units, this missing support has no single code arm: each

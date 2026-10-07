@@ -747,7 +747,7 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                                 rule.source_order,
                                 LayerPosition {
                                     attached: false,
-                                    rank: layers.rank(rule.layer),
+                                    rank: layers.rank(rule.layer, rule.origin),
                                 },
                             );
                         }
@@ -801,7 +801,7 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                                 rule.source_order,
                                 LayerPosition {
                                     attached: false,
-                                    rank: layers.rank(rule.layer),
+                                    rank: layers.rank(rule.layer, rule.origin),
                                 },
                             );
                         }

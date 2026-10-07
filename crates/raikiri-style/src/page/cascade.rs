@@ -678,8 +678,8 @@ pub enum PageInheritance<'a> {
 /// let result = cascade_page(&tree, &query, PageInheritance::LegacyInitialValues);
 /// // result.declarations() contains one entry: PropertyKey::Color -> red
 /// ```
-fn page_layer_rank(rule: &PageRule, important: bool, layers: &crate::layer::LayerOrder) -> u32 {
-    layers.priority(rule.layer, important)
+fn page_layer_rank(rule: &PageRule, important: bool, layers: &crate::layer::LayerOrder<'_>) -> u32 {
+    layers.priority(rule.layer, rule.origin, important)
 }
 
 /// Page and margin boxes are laid out in horizontal-tb, so their logical
@@ -824,7 +824,7 @@ pub fn cascade_page_with_media_context(
                     source_order: rule.source_order,
                     origin: rule.origin,
                     specificity: (spec.f, spec.g, spec.h),
-                    layer_order: layers.rank(rule.layer),
+                    layer_order: layers.rank(rule.layer, rule.origin),
                 });
             }
             for decl in &rule.declarations {

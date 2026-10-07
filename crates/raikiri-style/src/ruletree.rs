@@ -694,7 +694,7 @@ pub struct RuleTree {
     pub(crate) style_rules: Vec<StyleRule>,
     /// Winning unconditional custom-highlight background colors.
     custom_highlight_styles: HashMap<String, CssColor>,
-    highlight_log: Vec<Registration<(String, CssColor, bool)>>,
+    highlight_log: Vec<Registration<(String, HighlightColor, bool)>>,
     /// `@page` at-rules. `source_order` starts at zero independently of `style_rules`.
     /// [`crate::page::cascade_page`] applies the cascade; per-page `PageBox`
     /// derivation and margin-box slot layout are not implemented.
@@ -746,7 +746,7 @@ pub struct RuleTree {
 }
 
 impl RuleTree {
-    pub(crate) fn layer_order(&self, context: &MediaContext) -> LayerOrder {
+    pub(crate) fn layer_order(&self, context: &MediaContext) -> LayerOrder<'_> {
         self.layers.order(Some(context))
     }
 
@@ -1021,24 +1021,49 @@ impl RuleTree {
         let supports_context = SupportsContext::new(&source, &consumer_properties);
         self.add_parsed_stylesheet(&source, origin, condition, &supports_context);
         let order = self.layers.order(None);
-        let mut highlights: HashMap<String, ((u8, u32, usize), CssColor)> = HashMap::new();
+        let mut highlights: HashMap<&str, Vec<_>> = HashMap::new();
         for (index, registration) in self.highlight_log.iter().enumerate() {
-            let (name, color, important) = &registration.rule;
-            let key = (
-                crate::cascade::cascade_rank(registration.origin, *important),
-                order.priority(registration.layer, *important),
-                index,
-            );
-            if highlights
-                .get(name)
-                .is_none_or(|(existing, _)| key >= *existing)
-            {
-                highlights.insert(name.clone(), (key, *color));
-            }
+            highlights
+                .entry(&registration.rule.0)
+                .or_default()
+                .push((index, registration));
         }
         self.custom_highlight_styles = highlights
             .into_iter()
-            .map(|(name, (_, color))| (name, color))
+            .filter_map(|(name, registrations)| {
+                let winner = crate::cascade::rollback::select_layered_winner(
+                    &registrations,
+                    |_, (index, registration)| {
+                        let (_, color, important) = &registration.rule;
+                        let layer = crate::layer::LayerPosition {
+                            attached: false,
+                            rank: order.rank(registration.layer, registration.origin),
+                        };
+                        Some((
+                            (
+                                crate::cascade::cascade_rank(registration.origin, *important),
+                                layer.priority(*important),
+                                *index,
+                            ),
+                            registration.origin,
+                            layer,
+                            *important,
+                            match color {
+                                HighlightColor::Paint(_) => {
+                                    crate::cascade::rollback::Rollback::None
+                                }
+                                HighlightColor::RevertLayer => {
+                                    crate::cascade::rollback::Rollback::Layer
+                                }
+                            },
+                        ))
+                    },
+                )?;
+                match registrations[winner].1.rule.1 {
+                    HighlightColor::Paint(color) => Some((name.to_owned(), color)),
+                    HighlightColor::RevertLayer => None,
+                }
+            })
             .collect();
         if !self.layers.is_empty() {
             self.font_faces = replay_layered(
@@ -1357,7 +1382,7 @@ fn replay<R: Clone, Registry: Clone>(
 fn replay_layered<R: Clone, Registry>(
     log: &[Registration<R>],
     context: Option<&MediaContext>,
-    order: &LayerOrder,
+    order: &LayerOrder<'_>,
     new: fn() -> Registry,
     insert: fn(&mut Registry, R, Origin),
 ) -> Registry {
@@ -1369,7 +1394,7 @@ fn replay_layered<R: Clone, Registry>(
             (Some(_), None) => false,
         })
         .collect();
-    active.sort_by_key(|registration| order.rank(registration.layer));
+    active.sort_by_key(|registration| order.rank(registration.layer, registration.origin));
     let mut registry = new();
     for registration in active {
         insert(
@@ -1933,7 +1958,7 @@ enum GroupItem {
     Style(StyleRule),
     CustomHighlight {
         name: String,
-        color: Option<(CssColor, bool)>,
+        color: Option<(HighlightColor, bool)>,
     },
     Page(PageSelector, PageBlockBody),
     Group(GroupCondition, Vec<GroupItem>),
@@ -2138,12 +2163,23 @@ fn parse_qualified_prelude<'i>(
     .map_err(|_| input.new_custom_error(()))
 }
 
-fn custom_highlight_color(declarations: &[Declaration]) -> Option<(CssColor, bool)> {
+#[derive(Clone, Copy)]
+enum HighlightColor {
+    Paint(CssColor),
+    RevertLayer,
+}
+
+fn custom_highlight_color(declarations: &[Declaration]) -> Option<(HighlightColor, bool)> {
     declarations
         .iter()
         .enumerate()
         .filter_map(|(index, declaration)| match declaration.value() {
-            PropertyValue::BackgroundColor(color) => Some((declaration.important, index, *color)),
+            PropertyValue::BackgroundColor(color) => {
+                Some((declaration.important, index, HighlightColor::Paint(*color)))
+            }
+            PropertyValue::AllRevertLayer => {
+                Some((declaration.important, index, HighlightColor::RevertLayer))
+            }
             _ => None,
         })
         .max_by_key(|(important, index, _)| (*important, *index))
@@ -2195,7 +2231,7 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for GroupRuleParser<'_, '_> {
 struct GroupSink<'a, 'r> {
     style_rules: &'a mut Vec<StyleRule>,
     media_rules: &'a mut Vec<MediaRule>,
-    highlight_log: &'a mut Vec<Registration<(String, CssColor, bool)>>,
+    highlight_log: &'a mut Vec<Registration<(String, HighlightColor, bool)>>,
     rules: &'a mut Vec<CssRule>,
     style_order: &'a mut u32,
     rule_order: &'a mut u32,
@@ -2373,7 +2409,7 @@ enum ParsedRule {
     Style(SelectorList<RaikiriSelectorImpl>, Vec<Declaration>),
     CustomHighlight {
         name: String,
-        color: Option<(CssColor, bool)>,
+        color: Option<(HighlightColor, bool)>,
     },
     Page(PageSelector, PageBlockBody),
     OpaqueAtRule(AtRuleRecord),

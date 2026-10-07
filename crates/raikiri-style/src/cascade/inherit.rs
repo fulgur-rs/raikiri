@@ -543,6 +543,7 @@ fn find_border_rollback(
     key: crate::property::PropertyKey,
     winner_index: usize,
     keyword: CssWideKeyword,
+    custom_properties: &CustomPropertyEnvironment,
 ) -> Option<PropertyValue> {
     let index = super::rollback::select_layered_winner(
         candidates,
@@ -567,6 +568,13 @@ fn find_border_rollback(
                     } else {
                         super::rollback::Rollback::Layer
                     }
+                } else if let PropertyValue::Deferred(deferred) = value {
+                    resolve_deferred_value(deferred, custom_properties)
+                        .as_ref()
+                        .map_or(
+                            super::rollback::Rollback::None,
+                            super::rollback::rollback_kind,
+                        )
                 } else {
                     super::rollback::rollback_kind(value)
                 },
@@ -664,7 +672,8 @@ fn resolve_border_css_wide(
         CssWideKeyword::Inherit => Some(pick_field(parent_border())),
         CssWideKeyword::Initial | CssWideKeyword::Unset => Some(pick_field(initial_border())),
         CssWideKeyword::Revert | CssWideKeyword::RevertLayer => {
-            let rollback = find_border_rollback(candidates, key, winner.idx, keyword)?;
+            let rollback =
+                find_border_rollback(candidates, key, winner.idx, keyword, custom_properties)?;
             // Resolve one level: Deferred needs custom-property substitution;
             // a surviving Inherit/Initial/Unset marker resolves without further rollback.
             match rollback {
