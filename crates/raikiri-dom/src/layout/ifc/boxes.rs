@@ -1062,6 +1062,9 @@ pub(crate) fn measure_atomics(
     geometry: FlowGeometry,
 ) -> AtomicMeasure {
     let mut sizes = AtomicSizes::new();
+    if let Some((id, size)) = root.marker_atomic {
+        sizes.insert(id, size);
+    }
     let mut outputs = Vec::new();
     for b in root.boxes.iter().filter(|b| b.kind == IfcBoxKind::Atomic) {
         let node = b.node;
@@ -1941,6 +1944,19 @@ pub(crate) fn intrinsics_of_boxes(tree: &mut Document, idx: usize, basis: f32) -
         engine: AtomicIntrinsics::new(),
         blocks: (0.0, 0.0),
     };
+    if let Some((id, size)) = tree.nodes[idx]
+        .ifc
+        .as_ref()
+        .and_then(|root| root.marker_atomic)
+    {
+        intrinsics.engine.insert_atomic(
+            id,
+            AtomicIntrinsic {
+                min_content: size.inline_size,
+                max_content: size.inline_size,
+            },
+        );
+    }
     for b in boxes {
         match b.kind {
             IfcBoxKind::Float => {

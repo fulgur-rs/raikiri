@@ -7,7 +7,7 @@ use taffy::Style;
 #[test]
 fn generated_ids_round_trip_and_stay_above_document_ids() {
     for element in [0, 1, 42, usize::MAX >> 3] {
-        for pseudo in [PseudoElem::Before, PseudoElem::After] {
+        for pseudo in [PseudoElem::Before, PseudoElem::After, PseudoElem::Marker] {
             let id = generated_node_id(element, pseudo);
             assert!(id > usize::MAX >> 3, "{element} {pseudo:?}");
             assert_eq!(generated_origin(id), Some((element, pseudo)));

@@ -1652,6 +1652,16 @@ css/css-text-decor/text-emphasis-punctuation-2.html
 css/css-text-decor/text-emphasis-style-001.html
 css/css-text-decor/text-emphasis-style-property-001.html
 
+# --- css-lists list-style shorthand and inside marker text (exact, 800x600, bundled fonts) ---
+css/css-lists/content-property/marker-text-matches-decimal-leading-zero.html
+css/css-lists/content-property/marker-text-matches-decimal.html
+css/css-lists/content-property/marker-text-matches-lower-latin.html
+css/css-lists/content-property/marker-text-matches-lower-roman.html
+css/css-lists/content-property/marker-text-matches-upper-latin.html
+css/css-lists/content-property/marker-text-matches-upper-roman.html
+css/css-lists/list-style-type-string-001a.html
+css/css-lists/list-style-type-string-001b.html
+
 # --- Media queries: 800x600, bundled WPT fonts, WPT 97ea26e2 (0vv.95) ---
 css/mediaqueries/aspect-ratio-002.html
 css/mediaqueries/device-aspect-ratio-004.html
@@ -1723,3 +1733,5 @@ css/CSS2/tables/table-vertical-align-baseline-004.xht
 css/CSS2/tables/table-vertical-align-baseline-005.xht
 css/CSS2/tables/table-vertical-align-baseline-006.xht
 css/CSS2/tables/table-vertical-align-baseline-007.xht
+# CSS Overflow inherited Ahem max-width:4ch (exact 800x600, bundled WPT fonts).
+css/css-overflow/text-overflow-ellipsis-002.html

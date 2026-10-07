@@ -350,6 +350,35 @@ fn run_pair_with_images_and_variant_reports_html_read_errors() {
 }
 
 #[test]
+fn inside_marker_image_survives_geometry_reparse() {
+    let temp = tempfile::tempdir().unwrap();
+    let image_path = temp.path().join("marker.png");
+    let file = std::fs::File::create(image_path).unwrap();
+    let mut encoder = png::Encoder::new(file, 8, 8);
+    encoder.set_color(png::ColorType::Rgba);
+    let mut writer = encoder.write_header().unwrap();
+    writer
+        .write_image_data(&[255, 0, 0, 255].repeat(8 * 8))
+        .unwrap();
+    writer.finish().unwrap();
+    let html = r#"<style>
+      @page :first {size:100px 100px;margin:0}
+      @page {size:120px 120px;margin:0}
+      body {margin:0}
+    </style><li style="list-style:inside url(marker.png);height:20px">body</li><div style="height:180px"></div>"#;
+    let rendered =
+        render_raikiri_pages_inner(html, 120, 120, Some(temp.path()), Some(temp.path())).unwrap();
+    assert!(rendered.pages.len() >= 2);
+    assert_eq!(rendered.pages[0].width, 100);
+    assert!(
+        rendered.pages[0]
+            .rgba
+            .chunks_exact(4)
+            .any(|pixel| pixel == [255, 0, 0, 255])
+    );
+}
+
+#[test]
 fn image_resolution_reparses_geometry_varying_pages() {
     let temp = tempfile::tempdir().unwrap();
     let support = temp.path().join("support");

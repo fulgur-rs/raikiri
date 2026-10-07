@@ -80,6 +80,9 @@ pub fn render_screen_url(
     page_box.height = size.height() as f32;
     let image_resolver = ImageResolver::new(provider.clone());
     prepare_cascade_images(&mut cascade, &base_url, &image_resolver);
+    uncascaded
+        .dom
+        .prepare_list_marker_images(&cascade, &image_resolver, Some(&base_url));
     raikiri_dom::layout_single_page_with_resolver_and_base_url(
         &mut uncascaded.dom,
         &cascade,
