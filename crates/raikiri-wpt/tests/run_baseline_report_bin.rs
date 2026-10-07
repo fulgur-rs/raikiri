@@ -42,10 +42,13 @@ fn report_records_execution_errors_and_strict_mode_controls_exit_status() {
         ordinary.get_output()
     );
 
+    std::fs::remove_file(&report).unwrap();
     let strict = Command::cargo_bin("run-baseline-report")
         .unwrap()
         .current_dir(directory.path())
         .args([
+            "--wpt-fonts",
+            "--strict",
             "--wpt-root",
             wpt_root.to_str().unwrap(),
             "--baseline",
@@ -54,10 +57,10 @@ fn report_records_execution_errors_and_strict_mode_controls_exit_status() {
             report.to_str().unwrap(),
             "--limit",
             "1",
-            "--strict",
         ])
         .assert()
         .failure();
+    assert_eq!(std::fs::read_to_string(&report).unwrap(), report_text);
     assert!(
         String::from_utf8_lossy(&strict.get_output().stderr).contains("strict report found"),
         "strict failure reason not reported: {:?}",

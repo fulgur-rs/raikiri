@@ -378,6 +378,57 @@ fn report_args_enable_strict_mode_without_changing_the_default() {
 }
 
 #[test]
+fn boolean_report_flags_preserve_value_flags_in_any_order() {
+    let values = strings(&[
+        "--wpt-root",
+        "fixtures",
+        "--baseline",
+        "pass.txt",
+        "--output",
+        "rows.tsv",
+        "--only",
+        "a.html",
+        "--only",
+        "b.html",
+        "--jobs",
+        "3",
+        "--limit",
+        "7",
+    ]);
+    for position in (0..=values.len()).step_by(2) {
+        for flags in [["--strict", "--wpt-fonts"], ["--wpt-fonts", "--strict"]] {
+            let mut args = values.clone();
+            args.splice(position..position, strings(&flags));
+            let options = parse_report_args(&args).expect("parse mixed report flags");
+            assert!(options.strict);
+            assert_eq!(options.wpt_root, PathBuf::from("fixtures"));
+            assert_eq!(options.baseline, PathBuf::from("pass.txt"));
+            assert_eq!(options.output, Some(PathBuf::from("rows.tsv")));
+            assert_eq!(options.only, ["a.html", "b.html"]);
+            assert_eq!(options.jobs, 3);
+            assert_eq!(options.limit, Some(7));
+        }
+    }
+}
+
+#[test]
+fn strict_does_not_hide_a_missing_flag_value() {
+    for flag in [
+        "--wpt-root",
+        "--baseline",
+        "--output",
+        "--only",
+        "--jobs",
+        "--limit",
+    ] {
+        assert_eq!(
+            parse_report_args(&strings(&["--strict", flag])).unwrap_err(),
+            format!("{flag} requires a value")
+        );
+    }
+}
+
+#[test]
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
 fn a_known_passing_reftest_reports_pass() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
