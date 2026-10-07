@@ -226,6 +226,7 @@ pub(crate) fn draw_resolved_decoration_phase(
             f64::from(line.y),
             f64::from(line.thickness),
             f64::from(line.pattern_origin_x),
+            f64::from(line.pattern_end_x),
         );
     }
 }
@@ -250,7 +251,7 @@ fn paint_decoration_style(
     center: f64,
     thickness: f64,
 ) {
-    paint_decoration_pattern(scene, style, color, x0, x1, center, thickness, x0);
+    paint_decoration_pattern(scene, style, color, x0, x1, center, thickness, x0, x1);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -263,8 +264,11 @@ fn paint_decoration_pattern(
     center: f64,
     thickness: f64,
     pattern_origin: f64,
+    pattern_end: f64,
 ) {
-    if !pattern_origin.is_finite()
+    if !pattern_end.is_finite()
+        || pattern_end <= pattern_origin
+        || !pattern_origin.is_finite()
         || !x0.is_finite()
         || !x1.is_finite()
         || !center.is_finite()
@@ -288,12 +292,11 @@ fn paint_decoration_pattern(
         }
         TextDecorationStyle::Dotted => {
             let radius = (thickness / 2.0).max(0.5);
-            let span = x1 - x0;
+            let span = pattern_end - pattern_origin;
             let natural_step = (radius * 4.0).max(2.0);
             // A hostile but finite letter-spacing/advance must not turn into
             // an unbounded number of scene commands.
-            let step =
-                natural_step.max((x1 - pattern_origin).max(span) / MAX_DECORATION_SEGMENTS as f64);
+            let step = natural_step.max(span / MAX_DECORATION_SEGMENTS as f64);
             let first_center = pattern_origin + radius;
             let index = ((x0 - radius - first_center) / step).ceil();
             let mut x = first_center + index * step;
@@ -302,7 +305,7 @@ fn paint_decoration_pattern(
                 &Rect::new(x0, center - radius, x1, center + radius),
             );
             let mut segments = 0;
-            while x < x1 && segments < MAX_DECORATION_SEGMENTS {
+            while x - radius < x1 && segments < MAX_DECORATION_SEGMENTS {
                 scene.fill(
                     Fill::NonZero,
                     Affine::IDENTITY,
@@ -316,7 +319,7 @@ fn paint_decoration_pattern(
             scene.pop_layer();
         }
         TextDecorationStyle::Dashed => {
-            let (dash, gap) = dashed_lengths((x1 - pattern_origin).max(x1 - x0), thickness);
+            let (dash, gap) = dashed_lengths(pattern_end - pattern_origin, thickness);
             let mut path = BezPath::new();
             path.move_to((x0, center));
             path.line_to((x1, center));
@@ -326,7 +329,7 @@ fn paint_decoration_pattern(
             scene.stroke(&stroke, Affine::IDENTITY, color, None, &path);
         }
         TextDecorationStyle::Wavy => {
-            let span = (x1 - pattern_origin).max(x1 - x0);
+            let span = pattern_end - pattern_origin;
             let wavelength = (thickness * 4.0).max(4.0);
             let amplitude = (thickness * 1.5).max(0.75);
             // Limit path complexity while retaining more detail for normal

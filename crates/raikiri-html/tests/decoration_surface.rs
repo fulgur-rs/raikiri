@@ -261,3 +261,37 @@ fn fallback_font_runs_retain_the_origin_metrics_and_pattern() {
         close(line.pattern_origin_x, 0.0);
     }
 }
+
+#[test]
+fn insets_apply_to_the_unsplit_line_before_run_slicing() {
+    for (insets, endpoints) in [("4px", (4.0, 116.0)), ("-4px -6px", (-4.0, 126.0))] {
+        let doc = document(
+            "<p>ab<span style='color:blue'>cd</span>ef</p>",
+            &format!("p {{text-decoration:underline red;text-decoration-inset:{insets}}}"),
+        );
+        let runs = doc.page(0).unwrap().text_runs();
+        assert_eq!(runs.len(), 3);
+        let lines: Vec<_> = runs.iter().map(|r| &r.decorations[0]).collect();
+        close(lines[0].x_start, endpoints.0);
+        close(lines[0].x_end, 40.0);
+        close(lines[1].x_start, 40.0);
+        close(lines[1].x_end, 80.0);
+        close(lines[2].x_start, 80.0);
+        close(lines[2].x_end, endpoints.1);
+    }
+}
+
+#[test]
+fn pattern_extent_is_shared_before_run_slicing() {
+    let doc = document(
+        "<p>ab<span style='color:blue'>cd</span>ef</p>",
+        "p {text-decoration:underline wavy;text-decoration-inset:4px}",
+    );
+    let runs = doc.page(0).unwrap().text_runs();
+    assert_eq!(runs.len(), 3);
+    for run in runs {
+        let line = &run.decorations[0];
+        close(line.pattern_origin_x, 4.0);
+        close(line.pattern_end_x, 116.0);
+    }
+}

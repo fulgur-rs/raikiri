@@ -33,6 +33,7 @@ fn dashed_segment_keeps_the_unsplit_pattern_phase() {
             line_top: 0.0,
             baseline: Some(0.0),
             pattern_origin_x: Some(0.0),
+            pattern_end_x: None,
         },
         DecorationPhase::BeforeGlyphs,
     );
@@ -91,6 +92,7 @@ fn decorations_are_unchanged_by_the_geometry_field() {
         let mut scene = anyrender::recording::Scene::new();
         let geometry = DecorationGeometry {
             pattern_origin_x: None,
+            pattern_end_x: None,
             x0: 0.0,
             x1: 10.0,
             abs_y,
@@ -432,4 +434,65 @@ fn synthetic_embolden_uses_zero_without_synthesis() {
 fn synthetic_embolden_scales_and_caps_stroke_offset() {
     assert_eq!(synthetic_embolden(true, 10.0), Vec2::new(0.15125, 0.121));
     assert_eq!(synthetic_embolden(true, 100.0), Vec2::new(0.3, 0.3));
+}
+
+#[test]
+fn dotted_segment_includes_dot_center_just_after_the_endpoint() {
+    use kurbo::Shape;
+    let mut scene = Scene::new();
+    paint_decoration_style(
+        &mut scene,
+        TextDecorationStyle::Dotted,
+        peniko::Color::BLACK,
+        0.0,
+        26.0,
+        0.0,
+        6.0,
+    );
+    assert!(
+        scene.commands.iter().any(|command| {
+            let RenderCommand::Fill(fill) = command else {
+                return false;
+            };
+            let bounds = fill.shape.bounding_box();
+            ((bounds.x0 + bounds.x1) * 0.5 - 27.0).abs() < 0.001
+        }),
+        "the dot centered at27 overlaps the segment24..26"
+    );
+}
+
+#[test]
+fn dashed_segments_share_the_full_line_complexity_budget() {
+    let mut cv = ComputedValues::initial();
+    cv.text_decoration_line = TextDecorationLine::UNDERLINE;
+    cv.text_decoration_style = TextDecorationStyle::Dashed;
+    let context = decorations_for_element(
+        &DecorationContext::default(),
+        raikiri_traits::NodeId::new(1),
+        &cv,
+        0.0,
+    );
+    let mut patterns = Vec::new();
+    for (x0, x1) in [(0.0, 1000.0), (1000.0, 1_000_000.0)] {
+        let mut scene = Scene::new();
+        draw_decoration_phase(
+            &mut scene,
+            &context.specs(),
+            DecorationGeometry {
+                x0,
+                x1,
+                abs_y: 0.0,
+                line_top: 0.0,
+                baseline: Some(0.0),
+                pattern_origin_x: Some(0.0),
+                pattern_end_x: Some(1_000_000.0),
+            },
+            DecorationPhase::BeforeGlyphs,
+        );
+        let RenderCommand::Stroke(stroke) = &scene.commands[0] else {
+            panic!("expected stroke")
+        };
+        patterns.push(stroke.style.dash_pattern.clone());
+    }
+    assert_eq!(patterns[0], patterns[1]);
 }

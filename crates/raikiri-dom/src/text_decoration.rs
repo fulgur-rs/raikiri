@@ -34,7 +34,8 @@ pub enum DecorationKind {
 ///
 /// An ancestor's decoration retains its color, thickness and baseline at
 /// the originating element. Segments of the same line share a pattern origin
-/// so font and color run boundaries do not restart the pattern.
+/// and end, so font and color run boundaries cannot restart the pattern or
+/// change a period chosen to bound drawing complexity.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub struct DecorationLine {
@@ -50,6 +51,8 @@ pub struct DecorationLine {
     pub x_end: f32,
     /// Left endpoint of the unsplit line, for pattern phase.
     pub pattern_origin_x: f32,
+    /// Right endpoint of the unsplit line, for a shared pattern complexity budget.
+    pub pattern_end_x: f32,
     /// Vertical center in page coordinates, positive downwards.
     pub y: f32,
     /// Used line thickness.
@@ -265,6 +268,8 @@ fn has_paintable_line(line: TextDecorationLine) -> bool {
 pub struct DecorationGeometry {
     /// Pattern origin before this segment is split.
     pub pattern_origin_x: Option<f64>,
+    /// Pattern end before this segment is split.
+    pub pattern_end_x: Option<f64>,
     pub x0: f64,
     pub x1: f64,
     pub abs_y: f64,
@@ -371,12 +376,16 @@ pub fn resolve_decoration_lines(
                     x_start: x_start as f32,
                     x_end: x_end as f32,
                     pattern_origin_x: geometry.pattern_origin_x.unwrap_or(x_start) as f32,
+                    pattern_end_x: geometry.pattern_end_x.unwrap_or(x_end) as f32,
                     y: y as f32,
                     thickness: thickness as f32,
                     origin: decoration.origin,
                 };
                 if line.x_start.is_finite()
                     && line.x_end.is_finite()
+                    && line.pattern_origin_x.is_finite()
+                    && line.pattern_end_x.is_finite()
+                    && line.pattern_end_x > line.pattern_origin_x
                     && line.y.is_finite()
                     && line.thickness.is_finite()
                     && line.x_end > line.x_start
@@ -516,34 +525,101 @@ pub fn positioned_line_decorations(
     let baseline = f64::from(origin.1)
         + f64::from(line.line.block_offset())
         + f64::from(line.line.baseline(BaselineKind::Alphabetic));
-    let mut result: Vec<Vec<DecorationLine>> = line
+    let contexts: Vec<_> = line
+        .runs
+        .iter()
+        .map(|run| context_for_text(document, cascade, root, run.owner, base, &shifts))
+        .collect();
+    let geometries: Vec<_> = line
         .runs
         .iter()
         .zip(bounds)
-        .map(|(run, (x0, x1))| {
-            let context = context_for_text(document, cascade, root, run.owner, base, &shifts);
-            resolve_decoration_lines(
-                &context.specs(),
-                DecorationGeometry {
-                    x0: x0 + f64::from(run.offset.0),
-                    x1: x1 + f64::from(run.offset.0),
-                    abs_y: baseline,
-                    line_top: 0.0,
-                    baseline: Some(baseline + f64::from(run.offset.1)),
-                    pattern_origin_x: None,
-                },
-            )
+        .map(|(run, (x0, x1))| DecorationGeometry {
+            x0: x0 + f64::from(run.offset.0),
+            x1: x1 + f64::from(run.offset.0),
+            abs_y: baseline,
+            line_top: 0.0,
+            baseline: Some(baseline + f64::from(run.offset.1)),
+            pattern_origin_x: None,
+            pattern_end_x: None,
         })
         .collect();
-    let mut patterns: HashMap<NodeId, f32> = HashMap::new();
+    // Insets belong to the decorating line, before font/color run slicing.
+    let mut extents: HashMap<NodeId, (f64, f64)> = HashMap::new();
+    for (context, geometry) in contexts.iter().zip(&geometries) {
+        if !geometry.x0.is_finite() || !geometry.x1.is_finite() || geometry.x1 <= geometry.x0 {
+            continue;
+        }
+        for spec in context.iter() {
+            extents
+                .entry(spec.origin)
+                .and_modify(|range| {
+                    range.0 = range.0.min(geometry.x0);
+                    range.1 = range.1.max(geometry.x1);
+                })
+                .or_insert((geometry.x0, geometry.x1));
+        }
+    }
+    let mut result: Vec<Vec<DecorationLine>> = contexts
+        .iter()
+        .zip(geometries)
+        .map(|(context, geometry)| {
+            let mut lines = Vec::new();
+            for spec in context.iter() {
+                let Some(&(left, right)) = extents.get(&spec.origin) else {
+                    continue;
+                };
+                let Some((spans, count)) = decoration_spans(left, right, spec) else {
+                    continue;
+                };
+                let without_insets = DecorationSpec {
+                    inset_start: 0.0,
+                    inset_end: 0.0,
+                    ..*spec
+                };
+                for &(start, end) in spans.iter().take(count) {
+                    let x0 = if geometry.x0 == left {
+                        start
+                    } else {
+                        geometry.x0.max(start)
+                    };
+                    let x1 = if geometry.x1 == right {
+                        end
+                    } else {
+                        geometry.x1.min(end)
+                    };
+                    lines.extend(resolve_decoration_lines(
+                        &[&without_insets],
+                        DecorationGeometry {
+                            x0,
+                            x1,
+                            pattern_origin_x: Some(start),
+                            ..geometry
+                        },
+                    ));
+                }
+            }
+            lines.sort_by_key(|line| match line.kind {
+                DecorationKind::Underline => 0,
+                DecorationKind::Overline => 1,
+                DecorationKind::LineThrough => 2,
+            });
+            lines
+        })
+        .collect();
+    let mut patterns: HashMap<NodeId, (f32, f32)> = HashMap::new();
     for segment in result.iter().flatten() {
         patterns
             .entry(segment.origin)
-            .and_modify(|x| *x = x.min(segment.x_start))
-            .or_insert(segment.x_start);
+            .and_modify(|range| {
+                range.0 = range.0.min(segment.x_start);
+                range.1 = range.1.max(segment.x_end);
+            })
+            .or_insert((segment.x_start, segment.x_end));
     }
     for segment in result.iter_mut().flatten() {
-        segment.pattern_origin_x = patterns[&segment.origin];
+        segment.pattern_origin_x = patterns[&segment.origin].0;
+        segment.pattern_end_x = patterns[&segment.origin].1;
     }
     result
 }
