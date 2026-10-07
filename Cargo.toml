@@ -59,7 +59,7 @@ taffy = { version = "0.14", default-features = false, features = [
 
 # ── Text (shodo) ───────────────────────────────────────────────────────
 # Exact pin: the 0.0.x line may change its public API in any release.
-shodo  = { version = "=0.0.20", default-features = false, features = ["system-fonts"] }
+shodo  = { version = "=0.0.21", default-features = false, features = ["system-fonts"] }
 skrifa = "0.44"
 
 # ── Rendering (anyrender + peniko + kurbo) ─────────────────────────────
