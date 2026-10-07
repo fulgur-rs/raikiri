@@ -3085,3 +3085,72 @@ fn separate_border_spacing_counts_spanned_gaps_toward_a_rowspan_height() {
     let t = doc.nodes[table].unrounded_layout.size;
     assert_eq!((t.width, t.height), (35.0, 50.0));
 }
+
+#[test]
+fn separate_border_spacing_widens_a_table_narrower_than_its_columns() {
+    // CSS 2.1 §17.5.2: the table is at least its columns plus the spacing,
+    // so the cell keeps its gap on both sides instead of overflowing.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let table = doc.append_element(
+        Some(body),
+        "table",
+        Style::default(),
+        Some("display: table; border-spacing: 2px; width: 10px"),
+    );
+    let tr = doc.append_element(
+        Some(table),
+        "tr",
+        Style::default(),
+        Some("display: table-row"),
+    );
+    let td = sized_cell(&mut doc, tr, 10.0, 10.0);
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).unwrap();
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
+
+    let cell = doc.nodes[td].unrounded_layout;
+    assert_eq!((cell.location.x, cell.size.width), (2.0, 10.0));
+    assert_eq!(doc.nodes[table].unrounded_layout.size.width, 14.0);
+}
+
+#[test]
+fn separate_border_spacing_gaps_the_stacked_tracks_of_a_vertical_table() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let table = doc.append_element(
+        Some(body),
+        "table",
+        Style::default(),
+        Some("display: table; writing-mode: vertical-lr; border-spacing: 3px 5px"),
+    );
+    let tr = doc.append_element(
+        Some(table),
+        "tr",
+        Style::default(),
+        Some("display: table-row"),
+    );
+    let first = sized_cell(&mut doc, tr, 50.0, 100.0);
+    let second = sized_cell(&mut doc, tr, 50.0, 100.0);
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).unwrap();
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
+
+    let first = doc.nodes[first].unrounded_layout;
+    let second = doc.nodes[second].unrounded_layout;
+    let table = doc.nodes[table].unrounded_layout.size;
+    assert_eq!((first.location.x, first.location.y), (3.0, 5.0));
+    assert_eq!(
+        (second.location.x, second.location.y),
+        (3.0, 5.0 + first.size.height + 5.0)
+    );
+    assert_eq!(
+        table.height,
+        5.0 + first.size.height + 5.0 + second.size.height + 5.0
+    );
+    assert_eq!(table.width, 3.0 + first.size.width + 3.0);
+}

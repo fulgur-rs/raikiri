@@ -530,15 +530,27 @@ fn compute_table_layout_checked(
             None => None,
         }
     };
-    let vertical_content_height = row_heights.iter().sum::<f32>() * grid.n_cols as f32;
+    // Vertical tables stack each column's inline track along the physical
+    // height, so the physical spacing applies across that stack: the
+    // vertical gap between and around the stacked tracks, the horizontal gap
+    // on both sides of the single physical column.
+    let vertical_content_height = row_heights.iter().sum::<f32>() * grid.n_cols as f32
+        + border_spacing.1 * (grid.n_cols as f32 + 1.0);
+    let vertical_content_width =
+        column_widths.iter().sum::<f32>() - overlap_w + border_spacing.0 * 2.0;
+    // CSS 2.1 §17.5.2: the used table width is at least the columns plus
+    // the spacing and borders, even when the specified width is smaller.
+    let min_table_width = content_width + padding_border_size.width;
     let final_size = Size {
         width: if vertical_writing {
             effective_known
                 .width
-                .unwrap_or(content_width + padding_border_size.width)
+                .unwrap_or(vertical_content_width + padding_border_size.width)
         } else {
             table_width_basis
-                .map(|w| clamp_min_max(w, min_w_outer, max_w_outer))
+                .map(|w| {
+                    clamp_min_max(f32_max_compat(w, min_table_width), min_w_outer, max_w_outer)
+                })
                 .unwrap_or_else(|| {
                     clamp_min_max(
                         content_width + padding_border_size.width,
@@ -608,9 +620,12 @@ fn compute_table_layout_checked(
             &mut grid,
             &column_widths,
             &row_heights,
-            (final_size.width - padding_border_size.width).max(0.0),
-            x_origin,
-            y_origin,
+            (final_size.width - padding_border_size.width - border_spacing.0 * 2.0).max(0.0),
+            Point {
+                x: x_origin,
+                y: y_origin,
+            },
+            border_spacing.1,
         );
     }
     // The caption box gets the table's width and the table's top edge. It
@@ -1567,8 +1582,8 @@ fn reposition_cells_for_vertical_writing(
     column_widths: &[f32],
     row_heights: &[f32],
     cell_width: f32,
-    x_origin: f32,
-    y_origin: f32,
+    origin: Point<f32>,
+    spacing: f32,
 ) {
     let vertical_track = row_heights.iter().sum::<f32>();
     if !vertical_track.is_finite() || vertical_track <= 0.0 {
@@ -1580,12 +1595,12 @@ fn reposition_cells_for_vertical_writing(
             .saturating_add(cell.col_span as usize)
             .min(column_widths.len());
         let col_span = col_end.saturating_sub(col_start).max(1);
-        let y = y_origin + vertical_track * col_start as f32;
-        let height = vertical_track * col_span as f32;
+        let y = origin.y + (vertical_track + spacing) * col_start as f32;
+        let height = vertical_track * col_span as f32 + spacing * (col_span - 1) as f32;
         let Some(layout) = cell.resolved.as_mut() else {
             continue; // cov:ignore: defensive unresolved-cell fallback.
         };
-        layout.location = Point { x: x_origin, y };
+        layout.location = Point { x: origin.x, y };
         layout.size.width = cell_width;
         layout.size.height = height;
         let sanitized = super::sanitize_taffy_layout(layout, &mut doc.layout_warnings);
