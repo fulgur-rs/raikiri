@@ -434,6 +434,11 @@ fn context_for_text(
     base: &DecorationContext,
     shifts: &HashMap<usize, f32>,
 ) -> DecorationContext {
+    // Anonymous flex/grid text roots already carry their complete ancestor
+    // context. Starting at their parent would fold those ancestors twice.
+    if root_id == text_node {
+        return base.clone();
+    }
     let mut chain = Vec::new();
     // The text of a pseudo-element is owned by the pseudo-element's own box,
     // which is decorated like an inline element child of its element.

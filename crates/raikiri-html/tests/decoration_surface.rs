@@ -116,6 +116,26 @@ fn ancestor_decoration_keeps_origin_metrics_and_color() {
 }
 
 #[test]
+fn direct_flex_and_grid_text_has_one_ancestor_decoration() {
+    for display in ["flex", "grid"] {
+        let doc = document(
+            "<p id='origin'>ab</p>",
+            &format!("p {{display:{display};text-decoration:underline rgba(255,0,0,0.5)}}"),
+        );
+        let page = doc.page(0).unwrap();
+        let runs = page.text_runs();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].text, "ab");
+        assert_eq!(runs[0].decorations.len(), 1, "{display}");
+        assert_eq!(
+            page.dom().attr(runs[0].decorations[0].origin, "id"),
+            Some("origin")
+        );
+        assert_eq!(runs[0].decorations[0].color.a, 128);
+    }
+}
+
+#[test]
 fn atomic_and_out_of_flow_boxes_stop_propagation() {
     for css in ["display:inline-block", "float:left", "position:absolute"] {
         let doc = document(
@@ -178,6 +198,20 @@ fn underline_offset_and_inset_are_used_values() {
     close(line.x_start, 2.0);
     close(line.x_end, 77.0);
     close(line.y - runs[0].origin.1, 7.0);
+}
+
+#[test]
+fn automatic_insets_keep_the_full_decorated_text_extent() {
+    let doc = document(
+        "<p>ab</p>",
+        "p {text-decoration:underline;text-decoration-inset:auto}",
+    );
+    let page = doc.page(0).unwrap();
+    let runs = page.text_runs();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].decorations.len(), 1);
+    close(runs[0].decorations[0].x_start, 0.0);
+    close(runs[0].decorations[0].x_end, 40.0);
 }
 
 #[test]
