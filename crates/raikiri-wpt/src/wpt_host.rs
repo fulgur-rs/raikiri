@@ -261,8 +261,12 @@ impl DocumentHost for WptDocumentHost {
         self.flushes.set(self.flushes.get() + 1);
         self.resync_stylesheets();
         self.setup.uncascaded.dom.mark_in_document_flags();
-        let cascade = raikiri::build_cascaded_with_media_context_for_page(
+        let resolved = crate::reftest::resolved_live_viewport_document(
             &self.setup.uncascaded,
+            &self.setup.media_context,
+        );
+        let cascade = raikiri::build_cascaded_with_media_context_for_page(
+            &resolved,
             &self.setup.media_context,
             &self.setup.page_query,
         );

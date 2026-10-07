@@ -231,3 +231,39 @@ fn media_viewport_units_use_requested_screen_size_in_inline_and_external_css() {
         ]
     );
 }
+
+#[test]
+fn viewport_review_logical_units_follow_root_axes_and_initial_media_axes() {
+    for mode in [
+        "horizontal-tb",
+        "vertical-rl",
+        "vertical-lr",
+        "sideways-rl",
+        "sideways-lr",
+    ] {
+        for prefix in ["", "s", "l", "d"] {
+            let (inline, block) = if mode == "horizontal-tb" {
+                ("vi", "vb")
+            } else {
+                ("vb", "vi")
+            };
+            let html = format!(
+                "<style>@media screen and (width:100{prefix}vi) and (height:100{prefix}vb){{html{{writing-mode:{mode}}}html,body{{margin:0}}.box{{width:100{prefix}{inline};height:100{prefix}{block};background:green}}}}</style><div class=box></div>"
+            );
+            let server = TestServer::start(HashMap::from([(
+                "/index.html",
+                ("text/html", html.into_bytes()),
+            )]));
+            let image =
+                render_screen_url(&SystemHttpProvider::new(), server.url("index.html"), 32, 24)
+                    .unwrap();
+            server.finish();
+            let offset = (23 * 32 + 31) * 4;
+            assert_eq!(
+                &image.rgba[offset..offset + 4],
+                &[0, 128, 0, 255],
+                "{mode}/{prefix}"
+            );
+        }
+    }
+}

@@ -13,7 +13,12 @@ fn css_viewport_units_preserve_identifiers_strings_urls_and_non_dimensions() {
 #[test]
 fn decoded_inline_units_preserve_html_ids_text_and_css_strings() {
     let mut document = raikiri::parse(br#"<div id="100vw" style="width:100vw;content:'style=&quot;100vw&quot;';height:100vh">100vw</div>"#.as_slice(), &raikiri::ParseOptions {extra_stylesheets:&[], network:None, base_url:None}).unwrap();
-    expand_document_viewport_units(&mut document, 32.0, 24.0, 32.0, 24.0);
+    expand_document_viewport_units(
+        &mut document,
+        32.0,
+        24.0,
+        &raikiri::MediaContext::with_viewport(raikiri::MediaType::Screen, 32, 24),
+    );
     let node = (0..document.dom.node_count())
         .find(|node| document.dom.element_attribute(*node, "id") == Some("100vw"))
         .unwrap();
@@ -74,7 +79,7 @@ fn animation_viewport_units_are_resolved_after_geometry_reparse() {
 #[test]
 fn expand_viewport_units_preserves_utf8_text() {
     let input = "<body>\u{3000}↓</body><style>.box { width: 10vw }</style>";
-    let expanded = expand_viewport_units(input, 800.0, 600.0);
+    let expanded = expand_css_viewport_units_with_media_basis(input, 800.0, 600.0, 800.0, 600.0);
     assert_eq!(
         expanded,
         "<body>\u{3000}↓</body><style>.box { width: 80.000000px }</style>"
@@ -461,6 +466,28 @@ fn authored_page_viewport_prefers_the_first_named_page() {
     let (width, height) = authored_page_viewport(html, 800.0, 600.0);
     assert!((width - 200.0).abs() < 0.01);
     assert!((height - 200.0).abs() < 0.01);
+}
+
+#[test]
+fn print_named_page_with_viewport_size_retains_nominal_declaration_basis() {
+    let html = "<style>@page smaller{size:50vw 50vh;margin:0}html,body{margin:0}.box{page:smaller;width:50vw;height:50vh;background:green}</style><div class=box></div>";
+    let images = render_raikiri_pages(html, 800, 600).unwrap();
+    assert_eq!(images.pages.len(), 1);
+    let image = &images.pages[0];
+    assert_eq!((image.width, image.height), (240, 144));
+    let offset = (100 * 240 + 200) * 4;
+    assert_eq!(&image.rgba[offset..offset + 4], &[0, 128, 0, 255]);
+}
+
+#[test]
+fn superseded_page_viewport_size_does_not_select_nominal_basis() {
+    let html = "<style>@page{size:50vw 50vh;margin:0}@page{size:200px 100px;margin:0}html,body{margin:0}.box{width:100vw;height:100vh;background:green}</style><div class=box></div>";
+    let images = render_raikiri_pages(html, 800, 600).unwrap();
+    assert_eq!(images.pages.len(), 1);
+    let image = &images.pages[0];
+    assert_eq!((image.width, image.height), (200, 100));
+    let offset = (99 * 200 + 199) * 4;
+    assert_eq!(&image.rgba[offset..offset + 4], &[0, 128, 0, 255]);
 }
 
 #[test]
@@ -1781,7 +1808,7 @@ fn print_media_viewport_units_ignore_authored_page_size_and_margins() {
 #[test]
 fn viewport_expansion_separates_media_preludes_from_declarations() {
     let source = r#"@MeDiA/**/print and (max-width:100vw) and (max-height:100vh){.box{width:100vw;height:100vh;content:"@media (width:100vw)"}}@import "child.css" print and (width:100vmin);@media-example{width:100vmax}/* @media (width:100vw) */"#;
-    let result = expand_viewport_units_with_media_basis(source, 200.0, 100.0, 800.0, 600.0);
+    let result = expand_css_viewport_units_with_media_basis(source, 200.0, 100.0, 800.0, 600.0);
     assert_eq!(
         result,
         r#"@MeDiA/**/print and (max-width:800.000000px) and (max-height:600.000000px){.box{width:200.000000px;height:100.000000px;content:"@media (width:100vw)"}}@import "child.css" print and (width:600.000000px);@media-example{width:200.000000px}/* @media (width:100vw) */"#
@@ -1791,7 +1818,7 @@ fn viewport_expansion_separates_media_preludes_from_declarations() {
 #[test]
 fn viewport_expansion_tokenizes_escaped_media_and_import_keywords() {
     let source = r#"@\6d edia (width:100vw){a{width:100vw}}@\69 mport "child.css" (height:100vh);"#;
-    let result = expand_viewport_units_with_media_basis(source, 200.0, 100.0, 800.0, 600.0);
+    let result = expand_css_viewport_units_with_media_basis(source, 200.0, 100.0, 800.0, 600.0);
     assert_eq!(
         result,
         r#"@\6d edia (width:800.000000px){a{width:200.000000px}}@\69 mport "child.css" (height:600.000000px);"#
@@ -1819,7 +1846,7 @@ fn viewport_expansion_keeps_media_mode_inside_url_and_nested_blocks() {
         ),
     ] {
         assert_eq!(
-            expand_viewport_units_with_media_basis(source, 200.0, 100.0, 800.0, 600.0),
+            expand_css_viewport_units_with_media_basis(source, 200.0, 100.0, 800.0, 600.0),
             expected
         );
     }
@@ -1848,9 +1875,29 @@ fn viewport_expansion_preserves_escaped_prelude_delimiters() {
             "@media (unknown: {escaped}) {{}} .box {{ width:200.000000px; height:100.000000px }}"
         );
         assert_eq!(
-            expand_viewport_units_with_media_basis(&source, 200.0, 100.0, 800.0, 600.0),
+            expand_css_viewport_units_with_media_basis(&source, 200.0, 100.0, 800.0, 600.0),
             expected,
             "{escaped}"
+        );
+    }
+}
+
+#[test]
+fn viewport_expansion_preserves_string_and_invalid_escape_boundaries() {
+    for source in [
+        ".box{content:'日本\\界';width:100vw}",
+        ".box{content:'unfinished\\",
+        ".box{width:100vw}\\",
+        "@media [unknown:100vw]{.box{width:100vw}}",
+    ] {
+        let expected = if source.contains("@media") {
+            "@media [unknown:800.000000px]{.box{width:200.000000px}}".to_string()
+        } else {
+            source.replace("100vw", "200.000000px")
+        };
+        assert_eq!(
+            expand_css_viewport_units_with_media_basis(source, 200.0, 100.0, 800.0, 600.0),
+            expected
         );
     }
 }
@@ -1885,4 +1932,20 @@ fn print_probe_preserves_dom_associated_stylesheet_origins() {
             expected
         );
     }
+}
+
+#[test]
+fn viewport_review_rtl_probe_uses_left_page_basis() {
+    let html = "<style>html{direction:rtl}html,body{margin:0}@page:left{size:200px 100px;margin:0}@page:right{size:300px 150px;margin:0}.box{width:100vw;height:100vh;background:green}</style><div class=box></div>";
+    let document = render_raikiri_pages(html, 800, 600).unwrap();
+    assert_eq!(document.pages.len(), 1);
+    assert_eq!(
+        (document.pages[0].width, document.pages[0].height),
+        (200, 100)
+    );
+    let offset = (99 * 200 + 199) * 4;
+    assert_eq!(
+        &document.pages[0].rgba[offset..offset + 4],
+        &[0, 128, 0, 255]
+    );
 }

@@ -312,8 +312,16 @@ selects the declaration basis after fetching stylesheets, so inactive stylesheet
 and import media conditions do not contribute page dimensions. Inline style and
 animation declarations use the same basis through reparsing. Only CSS dimension
 tokens are expanded; identifiers, strings, URLs, and HTML text remain intact.
+The first print page uses the root direction to select its left or right page
+rules. Live documents resolve fetched and dynamically replaced CSS again on
+each style flush. Physical viewport units and their small, large, and dynamic
+variants share the fixed requested viewport; logical `vi` and `vb` families
+follow the root writing mode in declarations and the initial horizontal writing
+mode in media queries.
 See [Media Queries 4 §4](https://www.w3.org/TR/mediaqueries-4/#width)
-and [CSS Paged Media 3 §7.1](https://www.w3.org/TR/css-page-3/#page-size).
+and [CSS Paged Media 3 §7.1](https://www.w3.org/TR/css-page-3/#page-size),
+with logical axes defined by
+[CSS Values 4 §6.1.2.2](https://www.w3.org/TR/css-values-4/#viewport-relative-lengths).
 
 The standalone style API defaults to a nominal 480 × 288 print page box;
 consumers with another paper size set `LayoutConfig::media_context` explicitly

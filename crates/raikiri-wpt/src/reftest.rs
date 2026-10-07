@@ -1401,6 +1401,60 @@ fn authored_page_viewport_for_name(
     )
 }
 
+/// Build an initial-axis probe in cascade order with fixed media dimensions.
+fn viewport_rule_tree(
+    document: &raikiri_html::UncascadedDocument,
+    width: f32,
+    height: f32,
+    context: &raikiri_style::MediaContext,
+) -> raikiri_style::RuleTree {
+    let mut tree = raikiri_style::RuleTree::empty();
+    // DOM-associated sheets contain the UA defaults. Author style elements
+    // enter only through collected sources below, with their media guards.
+    for (source, kind) in document.dom.stylesheets() {
+        let origin = match kind {
+            raikiri_traits::StylesheetKind::UserAgent => raikiri_style::Origin::UserAgent,
+            raikiri_traits::StylesheetKind::User => raikiri_style::Origin::User,
+            raikiri_traits::StylesheetKind::Author => raikiri_style::Origin::Author,
+            _ => unreachable!("unexpected stylesheet kind"), // cov:ignore: non-exhaustive foreign enum has no other current variants.
+        };
+        tree.add_stylesheet(source, origin);
+    }
+    for sheet in &document.stylesheet_sources {
+        for part in &sheet.parts {
+            let source = expand_css_viewport_units_with_media_basis(
+                &part.source,
+                width,
+                height,
+                context.viewport_width() as f32,
+                context.viewport_height() as f32,
+            );
+            let media: Vec<_> = part
+                .media
+                .iter()
+                .map(String::as_str)
+                .chain(sheet.media.as_deref())
+                .map(|media| {
+                    expand_css_viewport_units_with_media_basis(
+                        media,
+                        context.viewport_width() as f32,
+                        context.viewport_height() as f32,
+                        context.viewport_width() as f32,
+                        context.viewport_height() as f32,
+                    )
+                })
+                .collect();
+            let guards: Vec<_> = media.iter().map(String::as_str).collect();
+            tree.add_stylesheet_with_media_conditions(
+                &source,
+                raikiri_style::Origin::Author,
+                &guards,
+            );
+        }
+    }
+    tree
+}
+
 /// Select the declaration basis from collected inline, linked and imported CSS
 /// in the same order used by the rule tree. Keep the existing authored-page
 /// hint policy, including the nominal basis of page-context viewport units.
@@ -1435,47 +1489,16 @@ fn authored_document_page_viewport(
         width as u32,
         height as u32,
     );
-    let mut tree = raikiri_style::RuleTree::empty();
-    // DOM-associated sheets contain the UA defaults. Author style elements
-    // enter only through collected sources below, with their media guards.
-    for (source, kind) in document.dom.stylesheets() {
-        let origin = match kind {
-            raikiri_traits::StylesheetKind::UserAgent => raikiri_style::Origin::UserAgent,
-            raikiri_traits::StylesheetKind::User => raikiri_style::Origin::User,
-            raikiri_traits::StylesheetKind::Author => raikiri_style::Origin::Author,
-            _ => unreachable!("unexpected stylesheet kind"),
-        };
-        tree.add_stylesheet(source, origin);
-    }
-    for sheet in &document.stylesheet_sources {
-        for part in &sheet.parts {
-            let source = expand_css_viewport_units_with_media_basis(
-                &part.source,
-                480.0,
-                288.0,
-                width,
-                height,
-            );
-            let media: Vec<_> = part
-                .media
-                .iter()
-                .map(String::as_str)
-                .chain(sheet.media.as_deref())
-                .map(|media| {
-                    expand_css_viewport_units_with_media_basis(media, width, height, width, height)
-                })
-                .collect();
-            let guards: Vec<_> = media.iter().map(String::as_str).collect();
-            tree.add_stylesheet_with_media_conditions(
-                &source,
-                raikiri_style::Origin::Author,
-                &guards,
-            );
-        }
-    }
+    let tree = viewport_rule_tree(document, 480.0, 288.0, &context);
+    let elements = raikiri_style::cascade_with_media_context(&document.dom, &tree, &context)
+        .expect("page-basis element cascade");
     let mut query = raikiri_style::PageContextQuery::default();
     query.is_first = true;
-    query.is_right = true;
+    query.is_left = matches!(
+        elements.root_element_computed().direction,
+        raikiri_style::property::Direction::Rtl
+    );
+    query.is_right = !query.is_left;
     query.page_name = name.map(Into::into);
     let page = raikiri_style::cascade_page_with_media_context(
         &tree,
@@ -1525,90 +1548,6 @@ fn authored_document_page_viewport(
     )
 }
 
-/// Expand viewport-relative lengths before the style cascade.
-///
-/// The style layer stores only resolved absolute lengths and intentionally has
-/// no viewport object.  The WPT adapter does have the test setup viewport, so it
-/// resolves the viewport units here while preserving other CSS tokens.  This
-/// is also useful for reference documents that express one printed page as
-/// `height: 100vh`.
-fn expand_viewport_units(input: &str, width: f32, height: f32) -> String {
-    expand_viewport_units_with_media_basis(input, width, height, width, height)
-}
-
-/// Keep media-query operands relative to the output environment while resolving
-/// declaration lengths against the authored print page area.
-fn expand_viewport_units_with_media_basis(
-    input: &str,
-    width: f32,
-    height: f32,
-    media_width: f32,
-    media_height: f32,
-) -> String {
-    // Resolve units in inline `style` attributes as well as stylesheet text.
-    // The normal scanner intentionally skips quoted strings, but an HTML
-    // attribute quote is not a CSS string; reference pages commonly put
-    // `height:100vh` on an inline grid container.
-    let mut source = input.to_string();
-    let lower = input.to_ascii_lowercase();
-    let mut cursor = 0usize;
-    let mut copied_until = 0usize;
-    let mut attributes = String::with_capacity(input.len());
-    while let Some(relative) = lower[cursor..].find("style") {
-        let start = cursor + relative;
-        let preceded_by_ident = start > 0
-            && (lower.as_bytes()[start - 1].is_ascii_alphanumeric()
-                || lower.as_bytes()[start - 1] == b'-'
-                || lower.as_bytes()[start - 1] == b'_');
-        if preceded_by_ident {
-            cursor = start + 5;
-            continue;
-        }
-        let mut after = start + 5;
-        while after < input.len() && input.as_bytes()[after].is_ascii_whitespace() {
-            after += 1;
-        }
-        if after >= input.len() || input.as_bytes()[after] != b'=' {
-            cursor = start + 5;
-            continue;
-        }
-        after += 1;
-        while after < input.len() && input.as_bytes()[after].is_ascii_whitespace() {
-            after += 1;
-        }
-        let Some(&delimiter) = input.as_bytes().get(after) else {
-            break;
-        };
-        if delimiter != b'"' && delimiter != b'\'' {
-            cursor = after;
-            continue;
-        }
-        let value_start = after + 1;
-        let mut value_end = value_start;
-        while value_end < input.len() && input.as_bytes()[value_end] != delimiter {
-            value_end += 1;
-        }
-        if value_end >= input.len() {
-            break;
-        }
-        attributes.push_str(&input[copied_until..value_start]);
-        attributes.push_str(&expand_css_viewport_units_with_media_basis(
-            &input[value_start..value_end],
-            width,
-            height,
-            media_width,
-            media_height,
-        ));
-        copied_until = value_end;
-        cursor = value_end + 1;
-    }
-    if copied_until != 0 {
-        attributes.push_str(&input[copied_until..]);
-        source = attributes;
-    }
-    expand_css_viewport_units_with_media_basis(&source, width, height, media_width, media_height)
-}
-
 /// Expand CSS dimensions without interpreting quoted strings as HTML attributes.
 fn expand_css_viewport_units_with_media_basis(
     input: &str,
@@ -1617,12 +1556,25 @@ fn expand_css_viewport_units_with_media_basis(
     media_width: f32,
     media_height: f32,
 ) -> String {
-    fn unit_value(unit: &str, width: f32, height: f32) -> Option<f32> {
+    expand_css_viewport_units_with_axes(input, width, height, media_width, media_height, false)
+}
+
+fn expand_css_viewport_units_with_axes(
+    input: &str,
+    width: f32,
+    height: f32,
+    media_width: f32,
+    media_height: f32,
+    vertical: bool,
+) -> String {
+    fn unit_value(unit: &str, width: f32, height: f32, vertical: bool) -> Option<f32> {
         let value = match unit {
             "vw" | "svw" | "lvw" | "dvw" => width / 100.0,
             "vh" | "svh" | "lvh" | "dvh" => height / 100.0,
             "vmin" | "svmin" | "lvmin" | "dvmin" => width.min(height) / 100.0,
             "vmax" | "svmax" | "lvmax" | "dvmax" => width.max(height) / 100.0,
+            "vi" | "svi" | "lvi" | "dvi" => (if vertical { height } else { width }) / 100.0,
+            "vb" | "svb" | "lvb" | "dvb" => (if vertical { width } else { height }) / 100.0,
             _ => return None,
         };
         Some(value)
@@ -1753,8 +1705,12 @@ fn expand_css_viewport_units_with_media_basis(
                 } else {
                     (width, height)
                 };
-                if let Some(scale) = unit_value(&unit.to_ascii_lowercase(), unit_width, unit_height)
-                    && (value * scale).is_finite()
+                if let Some(scale) = unit_value(
+                    &unit.to_ascii_lowercase(),
+                    unit_width,
+                    unit_height,
+                    vertical && !media_prelude,
+                ) && (value * scale).is_finite()
                 {
                     result.push_str(&format!("{:.6}px", value * scale));
                 } else {
@@ -1766,46 +1722,9 @@ fn expand_css_viewport_units_with_media_basis(
             _ => {}
         }
 
-        // An escaped code point belongs to its CSS token, even when its
-        // spelling contains a delimiter, quote, or at-sign. Preserve the full
-        // escape, including hexadecimal digits and their optional whitespace.
-        if bytes[i] == b'\\' {
-            let start = i;
-            i += 1;
-            if i < bytes.len() && bytes[i].is_ascii_hexdigit() {
-                let hex_start = i;
-                while i < bytes.len() && i - hex_start < 6 && bytes[i].is_ascii_hexdigit() {
-                    i += 1;
-                }
-                if i < bytes.len() && matches!(bytes[i], b' ' | b'\t' | b'\n' | b'\r' | 0x0c) {
-                    let carriage_return = bytes[i] == b'\r';
-                    i += 1;
-                    if carriage_return && i < bytes.len() && bytes[i] == b'\n' {
-                        i += 1;
-                    }
-                }
-            } else if i < bytes.len() {
-                i += input[i..]
-                    .chars()
-                    .next()
-                    .expect("byte index remains on a UTF-8 boundary")
-                    .len_utf8();
-            }
-            result.push_str(&input[start..i]);
-            continue;
-        }
-
         // Strings and comments have already been copied above, so only actual
         // media/import preludes select the output basis for their dimensions.
-        if bytes[i] == b'@' {
-            let mut prelude_input = cssparser::ParserInput::new(&input[i..]);
-            let mut parser = cssparser::Parser::new(&mut prelude_input);
-            if matches!(parser.next(), Ok(cssparser::Token::AtKeyword(name))
-                if name.eq_ignore_ascii_case("media") || name.eq_ignore_ascii_case("import"))
-            {
-                media_prelude = true;
-            }
-        } else if media_prelude {
+        if media_prelude {
             match bytes[i] {
                 b'(' => media_blocks.push(b')'),
                 b'[' => media_blocks.push(b']'),
@@ -1816,19 +1735,6 @@ fn expand_css_viewport_units_with_media_basis(
                 b'{' | b';' if media_blocks.is_empty() => media_prelude = false,
                 _ => {}
             }
-        }
-
-        // This scanner works in byte indices so it can preserve CSS slices.
-        // Copy non-ASCII characters as complete UTF-8 scalars instead of
-        // turning each byte into mojibake while looking for viewport units.
-        if !bytes[i].is_ascii() {
-            let character = input[i..]
-                .chars()
-                .next()
-                .expect("byte index remains on a UTF-8 boundary");
-            result.push(character);
-            i += character.len_utf8();
-            continue;
         }
 
         result.push(bytes[i] as char);
@@ -1844,9 +1750,20 @@ pub(crate) fn expand_document_viewport_units(
     document: &mut raikiri_html::UncascadedDocument,
     width: f32,
     height: f32,
-    media_width: f32,
-    media_height: f32,
+    context: &raikiri::MediaContext,
 ) {
+    let media_width = context.viewport_width() as f32;
+    let media_height = context.viewport_height() as f32;
+    let tree = viewport_rule_tree(document, width, height, context);
+    let root = raikiri_style::cascade_with_media_context(&document.dom, &tree, context)
+        .expect("viewport-axis element cascade");
+    let vertical = matches!(
+        root.root_element_computed().cssom_writing_mode,
+        raikiri_style::property::WritingMode::VerticalRl
+            | raikiri_style::property::WritingMode::VerticalLr
+            | raikiri_style::property::WritingMode::SidewaysRl
+            | raikiri_style::property::WritingMode::SidewaysLr
+    );
     for sheet in &mut document.stylesheet_sources {
         if let Some(media) = &mut sheet.media {
             *media = expand_css_viewport_units_with_media_basis(
@@ -1858,12 +1775,13 @@ pub(crate) fn expand_document_viewport_units(
             );
         }
         for part in &mut sheet.parts {
-            part.source = expand_css_viewport_units_with_media_basis(
+            part.source = expand_css_viewport_units_with_axes(
                 &part.source,
                 width,
                 height,
                 media_width,
                 media_height,
+                vertical,
             );
             for media in &mut part.media {
                 *media = expand_css_viewport_units_with_media_basis(
@@ -1879,12 +1797,13 @@ pub(crate) fn expand_document_viewport_units(
     let inline: Vec<_> = (0..document.dom.node_count())
         .filter_map(|node| {
             let style = document.dom.element_attribute(node, "style")?;
-            let expanded = expand_css_viewport_units_with_media_basis(
+            let expanded = expand_css_viewport_units_with_axes(
                 style,
                 width,
                 height,
                 media_width,
                 media_height,
+                vertical,
             );
             (expanded != style).then_some((node, expanded))
         })
@@ -1899,15 +1818,17 @@ pub(crate) fn expand_document_viewport_units(
             let reference = raikiri_style::StyleDom::node(
                 &document.dom,
                 raikiri_style::StyleNodeId::new(node as u64),
-            )?;
+            )
+            .expect("node_count bounds the valid document arena");
             let element = raikiri_style::StyleNode::as_element(&reference)?;
             let style = raikiri_style::StyleElement::animation_style_source(&element)?;
-            let expanded = expand_css_viewport_units_with_media_basis(
+            let expanded = expand_css_viewport_units_with_axes(
                 style,
                 width,
                 height,
                 media_width,
                 media_height,
+                vertical,
             );
             (expanded != style).then_some((node, expanded))
         })
@@ -2080,6 +2001,27 @@ pub(crate) struct LiveWptSetup {
     pub page_box: raikiri::PageBox,
 }
 
+pub(crate) fn resolved_live_viewport_document(
+    document: &raikiri_html::UncascadedDocument,
+    context: &raikiri::MediaContext,
+) -> raikiri_html::UncascadedDocument {
+    let mut resolved = raikiri_html::UncascadedDocument {
+        dom: document.dom.clone(),
+        stylesheet_sources: document.stylesheet_sources.clone(),
+        user_stylesheet_sources: document.user_stylesheet_sources.clone(),
+        user_stylesheet_insertion_index: document.user_stylesheet_insertion_index,
+        warnings: Vec::new(),
+        quirks_mode: document.quirks_mode,
+    };
+    expand_document_viewport_units(
+        &mut resolved,
+        context.viewport_width() as f32,
+        context.viewport_height() as f32,
+        context,
+    );
+    resolved
+}
+
 /// Parse and configure one WPT document for a live JavaScript DOM backend.
 pub(crate) fn prepare_wpt_live_document(
     html: &str,
@@ -2105,7 +2047,6 @@ pub(crate) fn prepare_wpt_live_document(
     };
 
     let html = absolutize_wpt_resource_urls(html, page_base.as_deref(), wpt_root.as_deref());
-    let html = expand_viewport_units(&html, width as f32, height as f32);
     let image_resolver = wpt_root
         .as_ref()
         .map(|_| raikiri_net::ImageResolver::new(raikiri_net::FileNetworkProvider));
@@ -2121,7 +2062,8 @@ pub(crate) fn prepare_wpt_live_document(
     // Keep the print renderer's page-margin and authored-@page setup isolated
     // from this live JavaScript path.
     let media_context = MediaContext::with_viewport(raikiri::MediaType::Screen, width, height);
-    let font_face_tree = raikiri::build_rule_tree(&uncascaded);
+    let resolved = resolved_live_viewport_document(&uncascaded, &media_context);
+    let font_face_tree = raikiri::build_rule_tree(&resolved);
     let font_loader = WptFontLoader::discover(page_base.as_deref())
         .or_else(|| WptFontLoader::discover(wpt_root.as_deref()));
     let (fonts, _) = wpt_document_fonts(
@@ -2276,7 +2218,8 @@ pub(crate) fn update_live_wpt_stylesheet_sources(
         return;
     }
     setup.uncascaded.stylesheet_sources = remaining;
-    setup.font_face_tree = raikiri::build_rule_tree(&setup.uncascaded);
+    let resolved = resolved_live_viewport_document(&setup.uncascaded, &setup.media_context);
+    setup.font_face_tree = raikiri::build_rule_tree(&resolved);
     let font_loader = WptFontLoader::discover(setup.page_resource_base.as_deref())
         .or_else(|| WptFontLoader::discover(Some(wpt_root)));
     // The installed fonts stand in when the WPT fonts are missing, so this
@@ -2297,8 +2240,8 @@ pub(crate) fn parse_wpt_inner_html_fragment(
     markup: &str,
     context_tag: &str,
     context_namespace: &str,
-    width: u32,
-    height: u32,
+    _width: u32,
+    _height: u32,
     document_base_url: Option<&raikiri::Url>,
     page_base: Option<&Path>,
     wpt_root: &Path,
@@ -2314,7 +2257,6 @@ pub(crate) fn parse_wpt_inner_html_fragment(
         base_url: document_base_url.cloned(),
     };
     let markup = absolutize_wpt_resource_urls(markup, page_base.as_deref(), wpt_root.as_deref());
-    let markup = expand_viewport_units(&markup, width as f32, height as f32);
     raikiri_html::parse_fragment(
         markup.as_bytes(),
         &opts,
@@ -2517,8 +2459,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
         &mut uncascaded,
         viewport_width,
         viewport_height,
-        width as f32,
-        height as f32,
+        &media_context,
     );
     if let Some(base_url) = base_url {
         crate::http_resources::absolutize_img_sources(&mut uncascaded.dom, base_url);
@@ -2701,13 +2642,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
         if let Some(base_url) = base_url {
             crate::http_resources::absolutize_img_sources(&mut fresh.dom, base_url);
         }
-        expand_document_viewport_units(
-            &mut fresh,
-            viewport_width,
-            viewport_height,
-            width as f32,
-            height as f32,
-        );
+        expand_document_viewport_units(&mut fresh, viewport_width, viewport_height, &media_context);
         use_fonts(&mut fresh.dom);
         // The reparsed document is a different arena, so it gets its own
         // rule tree and full cascade.

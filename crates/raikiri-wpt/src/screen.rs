@@ -54,18 +54,12 @@ pub fn render_screen_url(
     // Expand the already decoded and imported stylesheet sources before the
     // first rule-tree parse. This covers inline and external CSS without
     // rewriting document bytes or changing their encoding and resource URLs.
-    expand_document_viewport_units(
-        &mut uncascaded,
-        width as f32,
-        height as f32,
-        width as f32,
-        height as f32,
-    );
+    let media_context = MediaContext::with_viewport(raikiri::MediaType::Screen, width, height);
+    expand_document_viewport_units(&mut uncascaded, width as f32, height as f32, &media_context);
     let base_url = effective_document_base_url(&uncascaded, Some(&fallback_base_url))
         .unwrap_or(fallback_base_url);
     absolutize_img_sources(&mut uncascaded.dom, &base_url);
 
-    let media_context = MediaContext::with_viewport(raikiri::MediaType::Screen, width, height);
     let page_query = PageContextQuery::default();
     let font_face_tree = raikiri::build_rule_tree(&uncascaded);
     let (fonts, bundled_only) = wpt_document_fonts(
