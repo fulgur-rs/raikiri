@@ -266,6 +266,8 @@ pub struct RuleTree {
     pub(crate) rules: Vec<CssRule>,
     /// Remaining budget for overlapping bodies retained by nested opaque rules.
     opaque_body_budget: usize,
+    /// Remaining cumulative bytes for contextual selector reparsing.
+    selector_revalidation_budget: usize,
     /// Consumer-owned CSS property registrations used while parsing declarations.
     /// Empty in the compatibility/default path.
     consumer_properties: Vec<ConsumerPropertyRegistration>,
@@ -449,6 +451,7 @@ impl RuleTree {
             next_style_order: 0,
             rules: Vec::new(),
             opaque_body_budget: MAX_CUMULATIVE_NESTED_OPAQUE_BODY_BYTES,
+            selector_revalidation_budget: nesting::MAX_SELECTOR_REVALIDATION_BYTES,
             consumer_properties: Vec::new(),
         }
     }
@@ -505,7 +508,10 @@ impl RuleTree {
     /// selector lists are limited to 32,768 weighted components, counting repeated
     /// parent references. Token nesting is limited to 32 levels before recursive
     /// nested-selector parsing or contextual revalidation. Contextual revalidation
-    /// also limits serialized selector output to 64 MiB before appending bytes.
+    /// also limits cumulative serialized selector bytes to 64 MiB for this tree,
+    /// shared across rules and stylesheet additions, before appending bytes.
+    /// Only rules requiring contextual revalidation spend this budget.
+    /// Failed attempts also spend the bytes already serialized.
     ///
     /// An over-limit nested rule is skipped with its descendants; valid ancestor
     /// declarations and sibling rules remain. Opaque inspection uses independent
@@ -625,6 +631,7 @@ impl RuleTree {
         let mut rule_parser = StyleRuleParser {
             source,
             opaque_body_budget: &mut self.opaque_body_budget,
+            selector_revalidation_budget: &mut self.selector_revalidation_budget,
             namespaces: &mut namespaces,
             supports_context,
         };
@@ -1536,6 +1543,7 @@ struct GroupRuleParser<'s, 'b> {
     source: &'s str,
     namespaces: &'b NamespaceMap,
     supports_context: &'b SupportsContext<'b>,
+    selector_revalidation_budget: &'b mut usize,
 }
 
 fn parse_group_items(
@@ -1544,12 +1552,14 @@ fn parse_group_items(
     depth: usize,
     namespaces: &NamespaceMap,
     supports_context: &SupportsContext<'_>,
+    selector_revalidation_budget: &mut usize,
 ) -> Vec<GroupItem> {
     let mut rule_parser = GroupRuleParser {
         depth,
         source,
         namespaces,
         supports_context,
+        selector_revalidation_budget,
     };
     StyleSheetParser::new(input, &mut rule_parser)
         .flatten()
@@ -1614,6 +1624,7 @@ impl<'i> cssparser::AtRuleParser<'i> for GroupRuleParser<'_, '_> {
                         self.depth + 1,
                         self.namespaces,
                         self.supports_context,
+                        self.selector_revalidation_budget,
                     )
                 } else {
                     Vec::new()
@@ -1628,6 +1639,7 @@ impl<'i> cssparser::AtRuleParser<'i> for GroupRuleParser<'_, '_> {
                         self.depth + 1,
                         self.namespaces,
                         self.supports_context,
+                        self.selector_revalidation_budget,
                     )
                 } else {
                     Vec::new()
@@ -1711,6 +1723,7 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for GroupRuleParser<'_, '_> {
                 self.depth + 1,
                 self.namespaces,
                 self.supports_context,
+                self.selector_revalidation_budget,
             )),
             QualifiedPrelude::CustomHighlight(name) => GroupItem::Sequence(parse_highlight_body(
                 input,
@@ -1719,6 +1732,7 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for GroupRuleParser<'_, '_> {
                 self.depth + 1,
                 self.namespaces,
                 self.supports_context,
+                self.selector_revalidation_budget,
             )),
         };
         if !nested_block_has_closing_brace(self.source, input) {
@@ -2154,6 +2168,7 @@ struct StyleRuleParser<'s, 'b> {
     opaque_body_budget: &'b mut usize,
     namespaces: &'b mut NamespaceMap,
     supports_context: &'b SupportsContext<'b>,
+    selector_revalidation_budget: &'b mut usize,
 }
 
 impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
@@ -2303,6 +2318,7 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
                     0,
                     self.namespaces,
                     self.supports_context,
+                    self.selector_revalidation_budget,
                 );
                 let body = input.slice_from(start).to_owned();
                 if !nested_block_has_closing_brace(self.source, input) {
@@ -2367,6 +2383,7 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
                     0,
                     self.namespaces,
                     self.supports_context,
+                    self.selector_revalidation_budget,
                 );
                 let body = input.slice_from(start).to_owned();
                 if !nested_block_has_closing_brace(self.source, input) {
@@ -2455,6 +2472,7 @@ impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for StyleRuleParser<'s, 'b> 
                 0,
                 self.namespaces,
                 self.supports_context,
+                self.selector_revalidation_budget,
             )),
             QualifiedPrelude::CustomHighlight(name) => ParsedRule::Style(parse_highlight_body(
                 input,
@@ -2463,6 +2481,7 @@ impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for StyleRuleParser<'s, 'b> 
                 0,
                 self.namespaces,
                 self.supports_context,
+                self.selector_revalidation_budget,
             )),
         };
         if !nested_block_has_closing_brace(self.source, input) {

@@ -2,6 +2,49 @@ use super::*;
 use cssparser::ToCss;
 
 #[test]
+fn retained_contextual_repairs_share_a_budget_across_rules_and_stylesheets() {
+    let large = "a".repeat(32 * 1024);
+    let child = format!(
+        "{}:has(> :is(&,.leaf)){{color:blue}}",
+        ":is(&,.outer)".repeat(512)
+    );
+    let parent = |children: usize| {
+        format!(
+            ".outer[data-big=\"{large}\"]:has(.leaf){{color:red;{}}}",
+            child.repeat(children)
+        )
+    };
+    for separate_sheets in [false, true] {
+        let mut tree = RuleTree::empty();
+        let grouped = format!(
+            "@supports (display:block){{@layer nested{{{}}}}}",
+            parent(3)
+        );
+        if separate_sheets {
+            tree.add_stylesheet(&parent(2), Origin::Author);
+            tree.add_stylesheet(&grouped, Origin::User);
+        } else {
+            tree.add_stylesheet(&format!("{}{grouped}", parent(2)), Origin::Author);
+        }
+        tree.add_stylesheet(".sibling{color:green}", Origin::Author);
+        let repaired: Vec<_> = tree
+            .style_rules()
+            .iter()
+            .filter(|rule| {
+                rule.declarations()
+                    .iter()
+                    .any(|d| matches!(d.value(), PropertyValue::Color(CssColor { b: 255, .. })))
+            })
+            .collect();
+        // Parent references outside :has() retain the large attribute after
+        // contextual pruning, so each accepted repair holds over 16 MiB.
+        assert!(repaired[0].selectors.to_css_string().len() > 16 * 1024 * 1024);
+        assert_eq!(repaired.len(), 3);
+        assert_eq!(tree.style_rules().len(), 6);
+    }
+}
+
+#[test]
 fn native_nesting_preserves_origin_namespace_and_order() {
     let mut tree = RuleTree::empty();
     tree.add_stylesheet("@namespace svg 'urn:svg'; svg|svg { color:red; @media print { > svg|rect {color:blue} color:green; } color:blue; }", Origin::User);

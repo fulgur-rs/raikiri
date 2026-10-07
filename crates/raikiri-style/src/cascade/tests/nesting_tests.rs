@@ -589,6 +589,31 @@ fn contextual_parent_serialization_budget_preserves_other_rules() {
 }
 
 #[test]
+fn failed_contextual_repairs_spend_the_budget_but_keep_ordinary_nesting() {
+    let mut doc = TestDoc::new();
+    let ancestor = doc.push_element_with_attrs(0, "section", None, &[("class", "ancestor")]);
+    let large = "a".repeat(32 * 1024);
+    let outer = doc.push_element_with_attrs(
+        ancestor,
+        "div",
+        None,
+        &[("class", "outer"), ("data-big", &large)],
+    );
+    let leaf = doc.push_element_with_attrs(outer, "p", None, &[("class", "leaf")]);
+    let sibling = doc.push_element_with_attrs(0, "div", None, &[("class", "sibling")]);
+    let oversized = format!(".ancestor:has(>{})", ":is(&,.outer)".repeat(2050));
+    let small = format!(".ancestor:has(>{})", ":is(&,.outer)".repeat(4));
+    let source = format!(
+        ".ancestor,.leaf{{color:red}}.outer[data-big=\"{large}\"]:has(.leaf){{color:blue;{oversized}{{color:blue}}{small}{{color:blue}}.leaf{{color:blue}}}}.sibling{{color:blue}}"
+    );
+    let values = cascade(&doc, &nesting_tree(&source)).unwrap();
+    assert_eq!(values.computed[ancestor].color, RED);
+    assert_eq!(values.computed[outer].color, BLUE);
+    assert_eq!(values.computed[leaf].color, BLUE);
+    assert_eq!(values.computed[sibling].color, BLUE);
+}
+
+#[test]
 fn supports_nesting_selector_guards_working_nested_rules() {
     let (doc, parent, _, _) = nesting_doc();
     for query in [

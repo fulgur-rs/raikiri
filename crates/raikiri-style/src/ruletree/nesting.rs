@@ -14,6 +14,7 @@ pub(super) fn parse_style_body(
     depth: usize,
     namespaces: &NamespaceMap,
     supports_context: &SupportsContext<'_>,
+    selector_revalidation_budget: &mut usize,
 ) -> Vec<GroupItem> {
     parse_body(
         input,
@@ -22,6 +23,7 @@ pub(super) fn parse_style_body(
         depth,
         namespaces,
         supports_context,
+        selector_revalidation_budget,
     )
 }
 
@@ -32,6 +34,7 @@ pub(super) fn parse_highlight_body(
     depth: usize,
     namespaces: &NamespaceMap,
     supports_context: &SupportsContext<'_>,
+    selector_revalidation_budget: &mut usize,
 ) -> Vec<GroupItem> {
     parse_body(
         input,
@@ -40,6 +43,7 @@ pub(super) fn parse_highlight_body(
         depth,
         namespaces,
         supports_context,
+        selector_revalidation_budget,
     )
 }
 
@@ -56,6 +60,7 @@ fn parse_body(
     depth: usize,
     namespaces: &NamespaceMap,
     supports_context: &SupportsContext<'_>,
+    selector_revalidation_budget: &mut usize,
 ) -> Vec<GroupItem> {
     if depth > MAX_OPAQUE_RULE_NESTING_DEPTH {
         return Vec::new();
@@ -66,6 +71,7 @@ fn parse_body(
         depth,
         namespaces,
         supports_context,
+        selector_revalidation_budget,
         nesting_parent: None,
         parent_cost: None,
     };
@@ -117,6 +123,7 @@ struct StyleBodyParser<'a> {
     depth: usize,
     namespaces: &'a NamespaceMap,
     supports_context: &'a SupportsContext<'a>,
+    selector_revalidation_budget: &'a mut usize,
     nesting_parent: Option<SelectorList<RaikiriSelectorImpl>>,
     parent_cost: Option<usize>,
 }
@@ -186,6 +193,7 @@ impl<'i> cssparser::AtRuleParser<'i> for StyleBodyParser<'_> {
             self.depth + 1,
             self.namespaces,
             self.supports_context,
+            self.selector_revalidation_budget,
         );
         if !nested_block_has_closing_brace(self.source, input) {
             return Err(input.new_custom_error(()));
@@ -252,18 +260,20 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleBodyParser<'_> {
             // Reparse only this bounded selector list through the public parser,
             // which drops contextually invalid forgiving branches and recomputes
             // specificity. Ordinary nesting keeps its shared selector graph.
-            let source = selector_css_for_revalidation(&selectors)
-                .map_err(|_| input.new_custom_error(()))?;
+            let source =
+                selector_css_for_revalidation(&selectors, self.selector_revalidation_budget)
+                    .map_err(|_| input.new_custom_error(()))?;
             let mut source_input = ParserInput::new(&source);
             let mut parser = Parser::new(&mut source_input);
             check_selector_token_depth(&mut parser, 0).map_err(|_| input.new_custom_error(()))?;
             let mut source_input = ParserInput::new(&source);
-            return SelectorList::parse(
+            let reparsed = SelectorList::parse(
                 &NamespacedSelectorParser::new(self.namespaces),
                 &mut Parser::new(&mut source_input),
                 ParseRelative::No,
             )
-            .map_err(|_| input.new_custom_error(()));
+            .map_err(|_| input.new_custom_error(()))?;
+            return Ok(reparsed);
         }
         Ok(selectors)
     }
@@ -281,6 +291,7 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleBodyParser<'_> {
             self.depth + 1,
             self.namespaces,
             self.supports_context,
+            self.selector_revalidation_budget,
         );
         if !nested_block_has_closing_brace(self.source, input) {
             return Err(input.new_custom_error(()));
@@ -299,32 +310,33 @@ impl<'i> RuleBodyItemParser<'i, BodyItem, ()> for StyleBodyParser<'_> {
 }
 
 // Rare contextual reparsing must not expand compact parent references into an
-// unbounded string. This per-selector-list ceiling does not limit a stylesheet.
-const MAX_SELECTOR_REVALIDATION_BYTES: usize = 64 * 1024 * 1024;
+// unbounded string. The tree shares this budget across rules and stylesheets.
+pub(super) const MAX_SELECTOR_REVALIDATION_BYTES: usize = 64 * 1024 * 1024;
 
 fn selector_css_for_revalidation(
     selectors: &SelectorList<RaikiriSelectorImpl>,
+    remaining: &mut usize,
 ) -> Result<String, std::fmt::Error> {
     let mut output = SelectorOutput {
         text: String::new(),
-        remaining: MAX_SELECTOR_REVALIDATION_BYTES,
+        remaining,
     };
     selectors.to_css(&mut output)?;
     Ok(output.text)
 }
 
-struct SelectorOutput {
+struct SelectorOutput<'a> {
     text: String,
-    remaining: usize,
+    remaining: &'a mut usize,
 }
 
-impl std::fmt::Write for SelectorOutput {
+impl std::fmt::Write for SelectorOutput<'_> {
     fn write_str(&mut self, text: &str) -> std::fmt::Result {
         let Some(remaining) = self.remaining.checked_sub(text.len()) else {
             return Err(std::fmt::Error);
         };
         self.text.push_str(text);
-        self.remaining = remaining;
+        *self.remaining = remaining;
         Ok(())
     }
 }
