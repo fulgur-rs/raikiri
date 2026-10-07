@@ -315,3 +315,35 @@ fn error_tokens_anywhere_invalidate_the_list() {
         assert!(condition.matches(&MediaContext::print()), "{source:?}");
     }
 }
+
+#[test]
+fn paper_dimension_provenance_uses_feature_tokens() {
+    for (source, dependent) in [
+        ("print", false),
+        ("print, (orientation: landscape)", true),
+        ("print, (min-device-aspect-ratio: 1/2)", true),
+        ("print, (200px < width <= 300px)", true),
+        ("print, (calc(100px) < width)", true),
+        ("print, (100% < width)", true),
+        ("print, (1/2 < aspect-ratio)", true),
+        ("print, (unknown-feature < width)", false),
+        ("print, (\"width\")", false),
+        ("print, ((hover:width) or (width:261px))", true),
+        (r"print, (\77 idth: 200px)", true),
+        ("print, (hover: width)", false),
+        ("print, (unknown-feature: (width:200px))", false),
+        ("print, (unknown-feature: 0 < width)", false),
+        ("print, (unknown-feature: 'width')", false),
+        ("print, (unknown-feature: calc(width))", false),
+        ("print, unknown(width)", false),
+        ("print /* (width: 200px) */", false),
+        ("print, only (width:200px)", false),
+        ("print, print and (width:200px) unexpected", false),
+    ] {
+        assert_eq!(
+            parse_media_prelude(source).unwrap().depends_on_paper_size(),
+            dependent,
+            "{source}"
+        );
+    }
+}

@@ -1286,6 +1286,125 @@ fn mirror_default_page_margin(test_html: &str, reference_html: &str) -> String {
     format!("<style>@page {{ margin: 48px; }}</style>{reference_html}")
 }
 
+// Resolve page descriptors once using the existing nominal page-unit basis.
+// Ordinary declarations are expanded separately against the selected page area.
+fn resolve_page_size_viewport_units(input: &str) -> String {
+    use cssparser::{AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser};
+
+    struct SizeValues<'a>(&'a mut Vec<std::ops::Range<usize>>);
+    impl<'i> DeclarationParser<'i> for SizeValues<'_> {
+        type Declaration = ();
+        type Error = ();
+        fn parse_value<'t>(
+            &mut self,
+            name: cssparser::CowRcStr<'i>,
+            input: &mut cssparser::Parser<'i, 't>,
+            _: &cssparser::ParserState,
+        ) -> Result<(), cssparser::ParseError<'i, ()>> {
+            let start = input.position().byte_index();
+            input.expect_no_error_token()?;
+            if name.eq_ignore_ascii_case("size") {
+                self.0.push(start..input.position().byte_index());
+            }
+            Ok(())
+        }
+    }
+    impl<'i> AtRuleParser<'i> for SizeValues<'_> {
+        type Prelude = ();
+        type AtRule = ();
+        type Error = ();
+    }
+    impl<'i> QualifiedRuleParser<'i> for SizeValues<'_> {
+        type Prelude = ();
+        type QualifiedRule = ();
+        type Error = ();
+    }
+    impl<'i> RuleBodyItemParser<'i, (), ()> for SizeValues<'_> {
+        fn parse_declarations(&self) -> bool {
+            true
+        }
+        fn parse_qualified(&self) -> bool {
+            false
+        }
+    }
+
+    fn collect<'i>(
+        input: &mut cssparser::Parser<'i, '_>,
+        ranges: &mut Vec<std::ops::Range<usize>>,
+        depth: usize,
+    ) -> Result<(), cssparser::ParseError<'i, ()>> {
+        let mut page = None;
+        let mut group = None;
+        while let Ok(token) = input.next().cloned() {
+            match token {
+                cssparser::Token::AtKeyword(name) => {
+                    page = name.eq_ignore_ascii_case("page").then(|| input.position());
+                    group = Some(
+                        ["media", "supports", "layer"]
+                            .iter()
+                            .any(|known| name.eq_ignore_ascii_case(known)),
+                    );
+                }
+                cssparser::Token::Semicolon => {
+                    page = None;
+                    group = None;
+                }
+                cssparser::Token::CurlyBracketBlock => {
+                    if let Some(start) = page {
+                        let mut tree = raikiri_style::RuleTree::empty();
+                        tree.add_stylesheet(
+                            &format!("@page{}}}", input.slice_from(start)),
+                            raikiri_style::Origin::Author,
+                        );
+                        if !tree.page_rules.is_empty() {
+                            input.parse_nested_block(|input| {
+                                let mut sizes = SizeValues(ranges);
+                                for _ in cssparser::RuleBodyParser::new(input, &mut sizes) {}
+                                Ok(())
+                            })?;
+                        }
+                    } else if group != Some(false) && depth < 128 {
+                        // Bound the observational walk; unknown wrappers and
+                        // deeper groups remain untouched.
+                        input.parse_nested_block(|input| collect(input, ranges, depth + 1))?;
+                    }
+                    page = None;
+                    group = None;
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    let mut ranges = Vec::new();
+    let mut source = cssparser::ParserInput::new(input);
+    let _ = collect(&mut cssparser::Parser::new(&mut source), &mut ranges, 0);
+    let mut result = String::with_capacity(input.len());
+    let mut copied = 0;
+    for range in ranges {
+        result.push_str(&input[copied..range.start]);
+        result.push_str(&expand_css_viewport_units_with_media_basis(
+            &input[range.clone()],
+            480.0,
+            288.0,
+            480.0,
+            288.0,
+        ));
+        copied = range.end;
+    }
+    result.push_str(&input[copied..]);
+    result
+}
+
+fn resolve_document_page_size_viewport_units(document: &mut raikiri::UncascadedDocument) {
+    for sheet in &mut document.stylesheet_sources {
+        for part in &mut sheet.parts {
+            part.source = resolve_page_size_viewport_units(&part.source);
+        }
+    }
+}
+
 fn authored_page_viewport(input: &str, fallback_width: f32, fallback_height: f32) -> (f32, f32) {
     authored_page_viewport_for_name(
         input,
@@ -2455,6 +2574,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
     }
     let (viewport_width, viewport_height) =
         authored_document_page_viewport(&uncascaded, &html, width as f32, height as f32);
+    resolve_document_page_size_viewport_units(&mut uncascaded);
     expand_document_viewport_units(
         &mut uncascaded,
         viewport_width,
@@ -2642,6 +2762,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
         if let Some(base_url) = base_url {
             crate::http_resources::absolutize_img_sources(&mut fresh.dom, base_url);
         }
+        resolve_document_page_size_viewport_units(&mut fresh);
         expand_document_viewport_units(&mut fresh, viewport_width, viewport_height, &media_context);
         use_fonts(&mut fresh.dom);
         // The reparsed document is a different arena, so it gets its own

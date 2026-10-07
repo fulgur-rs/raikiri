@@ -246,6 +246,7 @@ impl MediaQuery {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct MediaCondition {
     lists: Arc<[Vec<MediaQuery>]>,
+    paper_dependent: bool,
 }
 
 /// A parsed qualified rule that is guarded by a media condition.
@@ -258,6 +259,12 @@ pub(crate) struct MediaRule {
 }
 
 impl MediaCondition {
+    /// Whether a containing query qualifies declarations by paper dimensions.
+    /// CSS Paged Media 3 §7.1 excludes only `size` under these conditions.
+    pub(crate) fn depends_on_paper_size(&self) -> bool {
+        self.paper_dependent
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.lists.iter().any(Vec::is_empty)
     }
@@ -276,6 +283,7 @@ impl MediaCondition {
                 .chain(other.lists.iter())
                 .cloned()
                 .collect(),
+            paper_dependent: self.paper_dependent || other.paper_dependent,
         }
     }
 }
@@ -287,10 +295,96 @@ impl MediaCondition {
 pub(crate) fn parse_media_prelude(source: &str) -> Option<MediaCondition> {
     let mut input = ParserInput::new(source);
     let mut parser = Parser::new(&mut input);
-    let list = parse_media_query_list(&mut parser).ok()?;
+    let (list, paper_dependent) = parse_media_query_list(&mut parser).ok()?;
     (!list.is_empty()).then(|| MediaCondition {
         lists: Arc::from([list]),
+        paper_dependent,
     })
+}
+
+/// Retain paper-feature provenance before unsupported queries are discarded.
+/// A media list can still match through `print` while an orientation query is
+/// unknown; that does not remove its qualification of a page `size` descriptor.
+fn prelude_depends_on_paper_size(source: &str) -> bool {
+    fn paper_feature(name: &str) -> bool {
+        match_ignore_ascii_case! { name,
+            "width" | "min-width" | "max-width" |
+            "height" | "min-height" | "max-height" |
+            "device-width" | "min-device-width" | "max-device-width" |
+            "device-height" | "min-device-height" | "max-device-height" |
+            "aspect-ratio" | "min-aspect-ratio" | "max-aspect-ratio" |
+            "device-aspect-ratio" | "min-device-aspect-ratio" | "max-device-aspect-ratio" |
+            "orientation" => true,
+            _ => false,
+        }
+    }
+
+    fn comparison(token: &Token<'_>) -> bool {
+        matches!(token, Token::Delim('<' | '>' | '='))
+    }
+
+    fn scan<'i>(input: &mut Parser<'i, '_>, in_parens: bool) -> PResult<'i, bool> {
+        fn finish<'i>(input: &mut Parser<'i, '_>, dependent: bool) -> PResult<'i, bool> {
+            input.expect_no_error_token()?;
+            Ok(dependent)
+        }
+
+        let mut previous_comparison = false;
+        let mut first = true;
+        let mut value_first = false;
+        let mut dependent = false;
+        while let Ok(token) = input.next().cloned() {
+            if in_parens && first {
+                match &token {
+                    Token::Ident(name) => {
+                        // Plain/boolean/name-first features occupy this whole
+                        // block. Their values are opaque, including nested
+                        // blocks that resemble another feature or a range.
+                        let feature = input
+                            .try_parse(|input| {
+                                if input.is_exhausted() {
+                                    return Ok(());
+                                }
+                                let location = input.current_source_location();
+                                match input.next() {
+                                    Ok(Token::Colon) => Ok(()),
+                                    Ok(token) if comparison(token) => Ok(()),
+                                    _ => Err(location.new_custom_error::<(), ()>(())),
+                                }
+                            })
+                            .is_ok();
+                        if feature {
+                            return finish(input, paper_feature(name));
+                        }
+                        if !name.eq_ignore_ascii_case("not") {
+                            return finish(input, false);
+                        }
+                    }
+                    Token::Number { .. }
+                    | Token::Dimension { .. }
+                    | Token::Percentage { .. }
+                    | Token::Function(_) => value_first = true,
+                    Token::ParenthesisBlock => {}
+                    _ => return finish(input, false),
+                }
+            }
+            match &token {
+                Token::ParenthesisBlock if !value_first => {
+                    dependent |= input.parse_nested_block(|nested| scan(nested, true))?;
+                }
+                Token::Ident(name) if value_first && previous_comparison => {
+                    return finish(input, paper_feature(name));
+                }
+                _ => {}
+            }
+            previous_comparison = comparison(&token);
+            first = false;
+        }
+        Ok(dependent)
+    }
+
+    let mut input = ParserInput::new(source);
+    scan(&mut Parser::new(&mut input), false).unwrap_or(false)
 }
 
 // ---------------------------------------------------------------------------
@@ -306,24 +400,31 @@ pub(crate) fn parse_media_prelude(source: &str) -> Option<MediaCondition> {
 /// A malformed `<media-query>` becomes `not all` (MQ4 §3.2) and is dropped
 /// together with queries that can never match. An empty entry or a tokenizer
 /// error token invalidates the whole list instead.
-fn parse_media_query_list<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, Vec<MediaQuery>> {
+fn parse_media_query_list<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, (Vec<MediaQuery>, bool)> {
     let queries = input.parse_comma_separated(|input| {
         if input.is_exhausted() {
             return Err(input.new_custom_error(()));
         }
+        let start = input.position();
         let query = optional(input, parse_media_query);
+        // Invalid arms become `not all` and cannot qualify declarations.
+        // Valid unsupported paper features still retain their provenance.
+        let paper_dependent =
+            query.is_some() && prelude_depends_on_paper_size(input.slice_from(start));
         // Whatever the query did not consume, including all of it when it
         // failed, is skipped here; an error token anywhere invalidates the
         // list. A parsed query can only have consumed error tokens inside
         // `<general-enclosed>`, which rejects them as well.
         input.expect_no_error_token()?;
-        Ok(query)
+        Ok((query, paper_dependent))
     })?;
-    Ok(queries
+    let paper_dependent = queries.iter().any(|(_, dependent)| *dependent);
+    let list = queries
         .into_iter()
-        .flatten()
+        .filter_map(|(query, _)| query)
         .filter(MediaQuery::can_match)
-        .collect())
+        .collect();
+    Ok((list, paper_dependent))
 }
 
 /// `<media-query> = <media-condition>
