@@ -76,6 +76,14 @@ if ! bash "$SCRIPT_DIR/test-safe-merge.sh"; then
 fi
 echo
 
+# Script regressions apply even when no compiled source inputs changed.
+echo "-- Python script tests --"
+if ! python3 -m unittest discover -s "$SCRIPT_DIR/lib" -p 'test_*.py'; then
+  echo "FAIL: Python script tests failed"
+  FAIL=1
+fi
+echo
+
 # ── source-change applicability test (mechanical) ───────────────────────────
 # Skip the main validation run only when the name-only diff has no paths that
 # indicate Rust or other compiled source inputs. Renames are expanded by

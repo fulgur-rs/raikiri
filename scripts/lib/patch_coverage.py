@@ -113,10 +113,11 @@ this workspace's `cargo-llvm-cov 0.8.7` output rather than assumed:
     even though their tests ran. Also classified **unreported**; see
     `is_structurally_unreported()`.
 
-Uncovered added lines that git's moved-block detection reports as moved
-from elsewhere in the same diff (e.g. splitting one file into modules) are
-reported as **moved** and not counted as a failure: the move does not change
-whether they are covered, so the gap predates the diff. See
+Git's moved-block colors are only candidates for a move exemption. A
+candidate must belong to a complete unchanged function deleted elsewhere
+in this diff, with the same enclosing context (plain module boundaries
+may change during file extraction). Matching expressions or partial
+function bodies cannot establish preserved execution context. See
 `collect_moved_added_lines()`.
 """
 
@@ -693,12 +694,13 @@ def parse_moved_added_lines(colored_diff: str) -> dict[str, set[int]]:
 
 
 def collect_moved_added_lines(repo_root: str, base: str, head: str) -> dict[str, set[int]]:
-    """Added lines between `base` and `head` that git's own moved-block
-    detection (`--color-moved=blocks`, indentation changes allowed) reports
-    as moved from elsewhere in the same diff, across files.
+    """Find Git move candidates backed by a complete unchanged function.
 
-    A moved line carries the coverage it had before the move, so it is not
-    new code this diff has to cover; see `main()` for how it is reported.
+    Git can color a single long expression as moved even when its role
+    changed from a pattern to a branch result. Require a deleted function
+    with identical tokens and enclosing context before exempting a line.
+    This retains function/file extraction, including indentation changes,
+    while leaving edited functions and copied code subject to coverage.
     """
     config = ["-c", "color.diff.new=green"]
     for slot in (
@@ -729,7 +731,147 @@ def collect_moved_added_lines(repo_root: str, base: str, head: str) -> dict[str,
         text=True,
         check=True,
     )
-    return parse_moved_added_lines(proc.stdout)
+    candidates = parse_moved_added_lines(proc.stdout)
+    deleted = parse_added_lines(subprocess.run(
+        ["git", "-C", repo_root, "diff", "--no-renames", "-U0", head, base,
+         "--", "*.rs"], capture_output=True, text=True, check=True,
+    ).stdout)
+    old_functions = set()
+    for path, lines in deleted.items():
+        source = git_show(repo_root, base, path)
+        if source is not None:
+            deleted_lines = set(lines)
+            for key, token_lines, substantive_lines in unchanged_function_units(source):
+                # Git may align a closing brace with an unrelated block.
+                # Only punctuation-only lines may remain outside deletions.
+                if substantive_lines <= deleted_lines:
+                    old_functions.add(key)
+    result = {}
+    for path, lines in candidates.items():
+        source = git_show(repo_root, head, path)
+        if source is None:
+            continue
+        eligible = set()
+        for key, token_lines, _ in unchanged_function_units(source):
+            if key in old_functions:
+                eligible.update(token_lines & lines)
+        if eligible:
+            result[path] = eligible
+    return result
+
+
+def rust_move_tokens(source: str) -> list[tuple[str, int]] | None:
+    """Tokenize enough Rust syntax to compare complete functions safely.
+
+    Keep literal contents, omit whitespace/comments, and retain line
+    numbers. Unterminated literals/comments fail closed. This is not a
+    Rust parser: unsupported item shapes simply receive no exemption.
+    """
+    tokens = []
+    raw_start = re.compile(r'(?:br|cr|r)(#*)"')
+    word_or_operator = re.compile(
+        r"\w+|<<=|>>=|\.\.=|\.\.\.|::|->|=>|&&|\|\||==|!=|<=|>=|"
+        r"\+=|-=|\*=|/=|%=|\^=|&=|\|=|<<|>>|\.\."
+    )
+    i = 0
+    line = 1
+    while i < len(source):
+        start = i
+        if source[i].isspace():
+            line += source[i] == "\n"
+            i += 1
+            continue
+        if source.startswith("//", i):
+            end = source.find("\n", i)
+            i = len(source) if end < 0 else end
+            continue
+        if source.startswith("/*", i):
+            depth = 1
+            i += 2
+            while i < len(source) and depth:
+                if source.startswith("/*", i):
+                    depth += 1
+                    i += 2
+                elif source.startswith("*/", i):
+                    depth -= 1
+                    i += 2
+                else:
+                    i += 1
+            if depth:
+                return None
+            line += source[start:i].count("\n")
+            continue
+        raw = raw_start.match(source, i)
+        if raw:
+            terminator = '"' + raw.group(1)
+            end = source.find(terminator, raw.end())
+            if end < 0:
+                return None
+            i = end + len(terminator)
+        elif source[i] == '"':
+            i += 1
+            while i < len(source) and source[i] != '"':
+                i += 2 if source[i] == "\\" else 1
+            if i >= len(source):
+                return None
+            i += 1
+        elif source[i] == "'" and (end := _char_literal_end(source, i)) is not None:
+            i = end + 1
+        else:
+            word = word_or_operator.match(source, i)
+            i = word.end() if word else i + 1
+        tokens.append((source[start:i], line))
+        line += source[start:i].count("\n")
+    return tokens
+
+
+def unchanged_function_units(source: str) -> list[tuple[tuple, set[int], set[int]]]:
+    """Return complete functions keyed by tokens and enclosing headers.
+
+    Preserve attributes and impl/trait/control-flow context. Plain inline
+    modules are allowed to become separate files; attributed modules keep
+    their context because e.g. changing cfg can change whether code runs.
+    Nested delimiters and literals cannot end a function prematurely.
+    """
+    tokens = rust_move_tokens(source)
+    if tokens is None:
+        return []
+    units = []
+    # Each frame stores its opener, statement boundary, header and start.
+    frames = [["", 0, (), 0]]
+    for index, (token, _) in enumerate(tokens):
+        if token in ("{", "(", "["):
+            start = frames[-1][1]
+            header = tuple(value for value, _ in tokens[start:index])
+            frames.append([token, index + 1, header, start])
+        elif token in ("}", ")", "]"):
+            if len(frames) == 1 or frames[-1][0] != {"}": "{", ")": "(", "]": "["}[token]:
+                return []
+            opener, _, header, start = frames.pop()
+            if opener == "{":
+                # A definition has `fn name`, unlike a function pointer type.
+                is_function = any(
+                    value == "fn" and re.fullmatch(r"\w+", following)
+                    for value, following in zip(header, header[1:])
+                )
+                if is_function and all(frame[0] == "{" for frame in frames[1:]):
+                    context = tuple(
+                        frame[2] for frame in frames[1:]
+                        if not re.fullmatch(r"(?:pub(?:\([^)]*\))?)?mod\w+",
+                                            "".join(frame[2]))
+                    )
+                    body = tokens[start:index + 1]
+                    key = (context, tuple(value for value, _ in body))
+                    token_lines = {line for value, number in body
+                                   for line in range(number, number + value.count("\n") + 1)}
+                    substantive = {line for value, number in body
+                                   if value not in ("{", "}", "(", ")", "[", "]", ";", ",")
+                                   for line in range(number, number + value.count("\n") + 1)}
+                    units.append((key, token_lines, substantive))
+                frames[-1][1] = index + 1
+        elif token == ";":
+            frames[-1][1] = index + 1
+    return units if len(frames) == 1 else []
 
 
 def parse_lcov(lcov_text: str, repo_root: str) -> dict[str, dict[int, int]]:
@@ -868,8 +1010,8 @@ def main() -> int:
     print()
 
     if total_moved:
-        print("Moved uncovered lines per file — git reports these lines as moved")
-        print("from elsewhere in this diff, so their coverage gap predates it; not")
+        print("Moved uncovered lines per file — complete unchanged functions")
+        print("deleted elsewhere in this diff support these move exemptions; not")
         print("counted toward PASS/FAIL:")
         for r in results:
             if r.moved:

@@ -46,6 +46,9 @@ import os
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
+
+import patch_coverage
 
 from patch_coverage import (
     MOVED_SGR,
@@ -333,6 +336,168 @@ class CollectMovedAddedLinesGitTests(unittest.TestCase):
             self._git(repo, "commit", "-qm", "move")
             moved = collect_moved_added_lines(repo, base, "HEAD")
         self.assertEqual(moved.get("b.rs"), set(range(2, 2 + len(block))))
+
+    def _classify(self, before: str, after: str, missed: str,
+                  reported: bool = True, destination: str = "lib.rs",
+                  copy: bool = False) -> tuple[int, str]:
+        with tempfile.TemporaryDirectory() as repo:
+            self._git(repo, "init", "-q")
+            path = os.path.join(repo, "lib.rs")
+            with open(path, "w") as f:
+                f.write(before)
+            self._git(repo, "add", ".")
+            self._git(repo, "commit", "-qm", "base")
+            base = self._git(repo, "rev-parse", "HEAD")
+            if destination != "lib.rs":
+                if not copy:
+                    os.unlink(path)
+                path = os.path.join(repo, destination)
+            with open(path, "w") as f:
+                f.write(after)
+            self._git(repo, "add", ".")
+            self._git(repo, "commit", "-qm", "change")
+            missed_line = after.splitlines().index(missed) + 1
+            lcov = os.path.join(repo, "coverage.info")
+            with open(lcov, "w") as f:
+                if reported:
+                    f.write(f"SF:{path}\nDA:{missed_line},0\nend_of_record\n")
+            output = io.StringIO()
+            # Cargo target discovery is unrelated to this Git/LCOV regression.
+            with mock.patch.object(patch_coverage, "load_cargo_metadata", return_value=_metadata()), \
+                 mock.patch("sys.argv", ["patch_coverage.py", "--repo-root", repo,
+                                        "--base", base, "--lcov", lcov]), \
+                 contextlib.redirect_stdout(output):
+                status = patch_coverage.main()
+            return status, output.getvalue()
+
+    def test_match_pattern_reused_as_fallback_expression_is_uncovered(self) -> None:
+        before = """fn resolve(value: Option<PropertyValue>) -> Option<PropertyValue> {
+    match value {
+        Some(PropertyValue::Deferred(marker))
+            if marker.value.trim().eq_ignore_ascii_case("inherit") => None,
+        value => value,
+    }
+}
+"""
+        after = """fn resolve(value: Option<PropertyValue>) -> Option<PropertyValue> {
+    match value {
+        Some(PropertyValue::Deferred(marker)) => {
+            if marker.css_wide_keyword().is_some() {
+                None
+            } else {
+                Some(PropertyValue::Deferred(marker))
+            }
+        }
+        value => value,
+    }
+}
+"""
+        for reported in (True, False):
+            with self.subTest(reported=reported):
+                status, output = self._classify(
+                    before, after, "                Some(PropertyValue::Deferred(marker))", reported
+                )
+                self.assertEqual(status, 1, output)
+                self.assertIn("  lib.rs:7", output)
+
+    def test_unchanged_statement_under_changed_condition_is_uncovered(self) -> None:
+        before = """fn resolve(enabled: bool) {
+    if enabled {
+        record_uncovered_resolution_result();
+    }
+}
+"""
+        after = before.replace("if enabled", "if !enabled")
+        # Relocation makes Git see the unchanged body as added/deleted.
+        after = "fn new_function() {}\n" + after.replace("    ", "        ")
+        status, output = self._classify(
+            before, after, "                record_uncovered_resolution_result();"
+        )
+        self.assertEqual(status, 1, output)
+
+    def test_unchanged_function_with_indentation_change_remains_exempt(self) -> None:
+        before = """fn resolve() {
+    record_uncovered_resolution_result();
+}
+fn keep() {}
+"""
+        after = """fn keep() {}
+mod extracted {
+    fn resolve() {
+        record_uncovered_resolution_result();
+    }
+}
+"""
+        status, output = self._classify(
+            before, after, "        record_uncovered_resolution_result();"
+        )
+        self.assertEqual(status, 0, output)
+        self.assertIn("informational): 1", output)
+
+    def test_complete_function_move_without_lcov_record_remains_exempt(self) -> None:
+        source = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        status, output = self._classify(
+            source, source, "    record_uncovered_resolution_result();",
+            reported=False, destination="moved.rs"
+        )
+        self.assertEqual(status, 0, output)
+        self.assertIn("total uncovered added lines (FAIL if > 0): 0", output)
+
+    def test_copied_function_is_not_a_move_exemption(self) -> None:
+        source = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        status, output = self._classify(
+            source, source, "    record_uncovered_resolution_result();",
+            destination="copied.rs", copy=True
+        )
+        self.assertEqual(status, 1, output)
+
+    def test_changed_attributes_and_impl_context_are_not_exempt(self) -> None:
+        body = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        cases = (
+            ('#[cfg(feature = "old")]\n' + body, '#[cfg(feature = "new")]\n' + body),
+            ('#[cfg(feature = "old")]\nmod gated {\n' + body + "}\n",
+             '#[cfg(feature = "new")]\nmod gated {\n' + body + "}\n"),
+            ("impl Old {\n" + body + "}\n", "impl New {\n" + body + "}\n"),
+        )
+        for before, after in cases:
+            with self.subTest(before=before):
+                status, output = self._classify(
+                    before, after, "    record_uncovered_resolution_result();",
+                    destination="moved.rs"
+                )
+                self.assertEqual(status, 1, output)
+
+    def test_literals_comments_and_lifetimes_do_not_break_valid_move(self) -> None:
+        source = '''fn resolve<'a>(value: &'a str) {
+    /* outer { /* nested } */ } */
+    let brace = '}';
+    let text = r##"fn fake() { "quoted" }
+    /* not a comment */"##;
+    let continued = "one \\
+        } two";
+    record_uncovered_resolution_result();
+}
+'''
+        status, output = self._classify(
+            source, source, "    record_uncovered_resolution_result();",
+            destination="moved.rs"
+        )
+        self.assertEqual(status, 0, output)
+
+    def test_changed_literal_or_operator_does_not_exempt_relocated_function(self) -> None:
+        source = '''fn resolve(a: bool, b: bool) {
+    let text = r#"old { }"#;
+    let both = a && b;
+    record_uncovered_resolution_result();
+}
+'''
+        for after in (source.replace("old", "new"), source.replace("&&", "& &")):
+            with self.subTest(after=after):
+                status, output = self._classify(
+                    source, after, "    record_uncovered_resolution_result();",
+                    destination="moved.rs"
+                )
+                self.assertEqual(status, 1, output)
 
 
 class ClassifyNoLcovRecordLinesTests(unittest.TestCase):
