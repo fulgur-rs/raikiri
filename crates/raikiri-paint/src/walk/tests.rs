@@ -1457,6 +1457,14 @@ fn manually_placed_roots_floats_and_multicol_children_keep_relative_offsets() {
             "<body style='margin:0'><div style='width:200px;column-count:2;column-gap:0'><div style='display:grid;position:relative;top:12px;width:20px;height:20px;background:green'></div></div>",
             Point::new(0.0, 12.0),
         ),
+        (
+            "<body style='margin:0'><div style='column-count:2;width:200px;height:60px'><div style='min-block-size:40px;break-inside:avoid;position:relative;left:10px;top:12px;width:20px;background:green'></div></div>",
+            Point::new(10.0, 12.0),
+        ),
+        (
+            "<body style='margin:0'><div style='column-count:2;width:200px;height:60px'><div style='min-block-size:40px;break-inside:avoid'></div><div style='position:relative;left:10px;top:12px;width:20px;height:10px;background:green'></div></div>",
+            Point::new(10.0, 92.0),
+        ),
     ] {
         let scene = transform_markup_scene(markup);
         let fill = scene

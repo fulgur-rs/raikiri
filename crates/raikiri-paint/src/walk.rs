@@ -3739,6 +3739,10 @@ pub(crate) fn paint_document_impl(
                             | DisplayValue::InlineTable
                     ) {
                     position_offset_px(cv)
+                } else if node.needs_relative_block_paint_offset() {
+                    // The foundational column post-pass replaces only Y;
+                    // the existing X location already includes its inset.
+                    (0.0, position_offset_px(cv).1)
                 } else {
                     (0.0, 0.0)
                 };
