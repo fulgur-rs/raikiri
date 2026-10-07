@@ -716,8 +716,8 @@ fn find_first_element_by_tag(dom: &Document, tag: &str) -> Option<usize> {
 ///
 /// `rgba` must have exactly `width * height * 4` bytes. The
 /// `anyrender_vello_cpu` output is premultiplied RGBA8, while PNG stores
-/// straight alpha, so the buffer is demultiplied in place with
-/// `tiny_skia::Pixmap::take_demultiplied` (the same rounding
+/// straight alpha, so the buffer is demultiplied in place by
+/// [`demultiply_rgba8_in_place`] (the same rounding
 /// `tiny_skia::Pixmap::encode_png` uses, so decoded pixels are unchanged).
 /// Taking ownership of `rgba` avoids the two whole-page copies the
 /// `Pixmap::encode_png` route makes.
@@ -729,7 +729,7 @@ fn find_first_element_by_tag(dom: &Document, tag: &str) -> Option<usize> {
 ///
 /// # Panics
 /// - `rgba.len() != width * height * 4`
-/// - `width == 0 || height == 0` (invalid `tiny_skia::IntSize`)
+/// - `width == 0 || height == 0`
 /// - PNG serialization fails (not expected for a well-formed buffer;
 ///   treated as an invariant violation).
 fn encode_png(rgba: Vec<u8>, width: u32, height: u32) -> Vec<u8> {
@@ -740,11 +740,12 @@ fn encode_png(rgba: Vec<u8>, width: u32, height: u32) -> Vec<u8> {
         "encode_png: expected {expected} bytes for {width}x{height}, got {}",
         rgba.len(),
     );
-    let size =
-        tiny_skia::IntSize::from_wh(width, height).expect("encode_png: width/height must be > 0");
-    let demultiplied = tiny_skia::Pixmap::from_vec(rgba, size)
-        .expect("encode_png: Pixmap::from_vec rejected pre-validated buffer (tiny-skia invariant violation)")
-        .take_demultiplied();
+    assert!(
+        width > 0 && height > 0,
+        "encode_png: width/height must be > 0"
+    );
+    let mut demultiplied = rgba;
+    demultiply_rgba8_in_place(&mut demultiplied);
 
     let mut out = Vec::new();
     let mut encoder = png::Encoder::new(&mut out, width, height);
@@ -761,6 +762,28 @@ fn encode_png(rgba: Vec<u8>, width: u32, height: u32) -> Vec<u8> {
         .finish()
         .expect("encode_png: finishing the PNG stream should not fail");
     out
+}
+
+/// Convert premultiplied RGBA8 pixels to straight alpha in place.
+///
+/// Bit-for-bit the per-pixel formula of `tiny_skia::Pixmap::take_demultiplied`
+/// (`PremultipliedColorU8::demultiply`): opaque pixels are unchanged and every
+/// other channel is `(c / (a / 255) + 0.5) as u8` in `f64`. A fully
+/// transparent pixel has zero channels, whose `0 / 0` quotient saturates back
+/// to zero. A tight loop over the byte slice avoids the per-pixel call and
+/// copy overhead of the `Pixmap` route, and a rendered page is mostly opaque,
+/// so most pixels take the early `continue`.
+fn demultiply_rgba8_in_place(rgba: &mut [u8]) {
+    for pixel in rgba.chunks_exact_mut(4) {
+        let alpha = pixel[3];
+        if alpha == u8::MAX {
+            continue;
+        }
+        let a = f64::from(alpha) / 255.0;
+        for channel in &mut pixel[..3] {
+            *channel = (f64::from(*channel) / a + 0.5) as u8;
+        }
+    }
 }
 
 #[cfg(test)]

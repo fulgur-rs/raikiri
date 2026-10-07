@@ -756,6 +756,33 @@ fn encode_png_rejects_mismatched_buffer_length() {
     super::encode_png(vec![0u8; 3], 1, 1);
 }
 
+/// `demultiply_rgba8_in_place` matches `tiny_skia::Pixmap::take_demultiplied`
+/// for every valid premultiplied channel/alpha pair, so the PNG bytes do not
+/// change with the conversion routine.
+#[test]
+fn demultiply_matches_tiny_skia_for_every_premultiplied_pair() {
+    let mut rgba = Vec::new();
+    for alpha in 0..=255u8 {
+        for channel in 0..=alpha {
+            rgba.extend_from_slice(&[channel, channel / 2, alpha - channel, alpha]);
+        }
+    }
+    let pixels = u32::try_from(rgba.len() / 4).expect("pixel count fits u32");
+    let size = tiny_skia::IntSize::from_wh(pixels, 1).expect("non-empty row");
+    let expected = tiny_skia::Pixmap::from_vec(rgba.clone(), size)
+        .expect("buffer matches the size")
+        .take_demultiplied();
+    super::demultiply_rgba8_in_place(&mut rgba);
+    assert_eq!(rgba, expected);
+}
+
+/// `encode_png` rejects an empty canvas.
+#[test]
+#[should_panic(expected = "encode_png: width/height must be > 0")]
+fn encode_png_rejects_an_empty_canvas() {
+    super::encode_png(Vec::new(), 0, 1);
+}
+
 #[test]
 fn page_scene_places_an_atomic_inside_a_span_once() {
     // The inline-block is laid out relative to the paragraph's root; the
