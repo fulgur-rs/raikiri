@@ -791,7 +791,8 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS UI text-overflow into padding exact slice (+1).
     // + CSS Lists shorthand and inside marker text exact slice (+8).
     // + CSS2 relative block positioning exact slice (+14).
-    assert_eq!(set.baseline.entries.len(), 1419);
+    // + CSS Inline image-loaded vertical-align length exact slice (+1).
+    assert_eq!(set.baseline.entries.len(), 1420);
     for id in [
         "css/css-lists/list-style-type-string-001a.html",
         "css/css-lists/list-style-type-string-001b.html",
@@ -804,6 +805,11 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     ] {
         assert!(set.baseline.entries.contains(id));
     }
+    assert!(
+        set.baseline
+            .entries
+            .contains("css/CSS2/linebox/vertical-align-007.xht")
+    );
     assert!(
         set.baseline
             .entries
