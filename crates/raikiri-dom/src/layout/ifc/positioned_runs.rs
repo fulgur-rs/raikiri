@@ -30,6 +30,10 @@ pub struct PositionedRun<'a> {
     /// The node the run is painted for: a text node, the id of a generated
     /// text, or an element that supplied text of its own.
     pub owner: usize,
+    /// The box supplying paint, distinct from the caller's text source.
+    pub style_owner: usize,
+    /// Resolved paint including typographic pseudo inheritance.
+    pub style: &'a raikiri_style::ComputedValues,
     /// Glyph positions in the run's glyph order, never empty.
     pub glyphs: Vec<LineGlyph>,
     /// The sum of the relative offsets of the run's inline ancestors, which
@@ -185,8 +189,25 @@ impl<'a> PositionedLines<'a> {
             };
             // Text inherits `visibility` from its element; hidden and
             // collapsed text is laid out but not painted (CSS 2.1 §11.2).
-            let visible = computed_for_id(self.cascade, owner)
-                .is_some_and(|style| style.visibility == Visibility::Visible);
+            let letter = self
+                .document
+                .get_node(self.root_id)
+                .and_then(|node| node.ifc.as_ref())
+                .and_then(|ifc| {
+                    run.source().and_then(|source| {
+                        ifc.letter_styles
+                            .iter()
+                            .rev()
+                            .find(|style| style.owns(source))
+                    })
+                });
+            let Some(style) = letter
+                .map(|letter| &letter.computed)
+                .or_else(|| computed_for_id(self.cascade, owner))
+            else {
+                continue;
+            };
+            let visible = style.visibility == Visibility::Visible;
             if !visible || run.font_data().is_none() {
                 continue;
             }
@@ -203,9 +224,16 @@ impl<'a> PositionedLines<'a> {
             if !glyphs.is_empty() {
                 runs.push(PositionedRun {
                     run,
-                    owner,
+                    owner: letter.map_or(owner, |letter| letter.source_owner),
+                    style_owner: letter.map_or(owner, |letter| letter.box_id),
+                    style,
                     glyphs,
-                    offset: cumulative_offset(self.document, self.root_id, self.offsets, owner),
+                    offset: cumulative_offset(
+                        self.document,
+                        self.root_id,
+                        self.offsets,
+                        letter.map_or(owner, |letter| letter.source_owner),
+                    ),
                 });
             }
         }

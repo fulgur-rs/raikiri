@@ -340,7 +340,6 @@ css/css-backgrounds/css3-background-clip-content-box.html
 css/css-backgrounds/css3-background-clip-padding-box.html
 css/css-backgrounds/css3-background-clip.html
 css/css-backgrounds/fieldset-inset-shadow.html
-css/css-backgrounds/first-letter-space-not-selected.html
 css/css-backgrounds/inline-background-rtl-001.html
 css/css-backgrounds/subpixel-repeat-no-repeat-mix.html
 css/css-backgrounds/table-cell-background-local.html
@@ -1450,7 +1449,9 @@ css/css-transforms/transform-origin-003.html
 css/css-transforms/transform-origin-004.html
 css/css-transforms/transform-origin-005.html
 css/css-pseudo/active-selection-056.html
-css/css-pseudo/first-letter-003.html
+css/css-pseudo/first-letter-004.html
+css/css-pseudo/first-letter-005.html
+css/css-pseudo/first-letter-with-before-after.html
 css/selectors/case-insensitive-parent.html
 css/selectors/child-indexed-no-parent.html
 css/selectors/dir-selector-ltr-001.html

@@ -810,3 +810,75 @@ fn an_inline_table_is_an_atomic_and_table_internal_boxes_are_blocks() {
         assert_eq!(projected.boxes.first().map(|b| b.kind), kind, "{css}");
     }
 }
+
+#[test]
+fn generated_first_letter_retains_the_originating_elements_language() {
+    let fixture = crate::layout::ifc::test_support::sheet_fixture(
+        "div::before {content:'ix'} div::first-letter {text-transform:uppercase}",
+        "",
+        |doc, root| {
+            doc.set_element_attribute(root, "lang", "tr").unwrap();
+        },
+    );
+    let projected = project(&fixture).unwrap();
+    assert_eq!(projected.paragraph.text(), "İx");
+}
+
+#[test]
+fn first_letter_adjacent_source_scan_enforces_text_and_item_limits() {
+    for (text_limit, item_limit, kind) in [
+        (Some(3), None, shodo::limits::LimitKind::TextBytes),
+        (None, Some(1), shodo::limits::LimitKind::Items),
+    ] {
+        let fixture = crate::layout::ifc::test_support::sheet_fixture(
+            "div::first-letter{font-size:20px}",
+            "",
+            |doc, root| {
+                doc.append_text(root, "\"");
+                doc.append_comment(Some(root), "gap");
+                doc.append_text(root, " ");
+                doc.append_text(root, "XY");
+            },
+        );
+        let limits = Limits {
+            max_text_bytes: text_limit,
+            max_items: item_limit,
+            ..Limits::default()
+        };
+        let error = match project_ifc_builder(
+            &fixture.doc,
+            &fixture.cascade,
+            fixture.root,
+            &ahem_fonts(),
+            &limits,
+        ) {
+            Err(error) => error,
+            Ok(_) => panic!("source scan must enforce its budget"),
+        };
+        assert!(matches!(error,IfcError::Limit(limit) if limit.kind==kind));
+    }
+}
+
+#[test]
+fn floated_first_letter_requires_a_drop_cap_box_instead_of_an_inline_approximation() {
+    for side in ["left", "right", "inline-start", "inline-end"] {
+        let fixture = crate::layout::ifc::test_support::sheet_fixture(
+            &format!("div::first-letter{{font-size:40px;float:{side}}}"),
+            "font:10px/10px Ahem;white-space:pre",
+            |doc, root| {
+                doc.append_text(root, "XX\nXX\nXX");
+            },
+        );
+        let error = match project(&fixture) {
+            Err(error) => error,
+            Ok(_) => panic!("a floated letter must not be drawn as an ordinary inline"),
+        };
+        assert!(matches!(
+            error,
+            IfcError::Unsupported {
+                reason: "floating ::first-letter requires drop-cap box layout",
+                ..
+            }
+        ));
+    }
+}

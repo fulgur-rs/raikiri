@@ -2780,10 +2780,21 @@ fn is_supported_selector_with_relative_anchor(
                         is_supported_selector_with_relative_anchor(selector, false, false, false)
                     })
             }
-            Component::NonTSPseudoClass(PseudoClass::Lang(_) | PseudoClass::Dir(_)) => true,
+            Component::NonTSPseudoClass(
+                PseudoClass::Lang(_)
+                | PseudoClass::Dir(_)
+                | PseudoClass::Link
+                | PseudoClass::AnyLink,
+            ) => true,
             Component::Combinator(Combinator::PseudoElement) => allow_nth,
             Component::PseudoElement(
-                PseudoElem::Before | PseudoElem::After | PseudoElem::Marker | PseudoElem::FirstLine,
+                PseudoElem::Before
+                | PseudoElem::After
+                | PseudoElem::Marker
+                | PseudoElem::FirstLine
+                | PseudoElem::FirstLetter
+                | PseudoElem::Backdrop
+                | PseudoElem::FileSelectorButton,
             ) => allow_nth,
             Component::RelativeSelectorAnchor => allow_relative_anchor,
             Component::Invalid(_) => allow_invalid,

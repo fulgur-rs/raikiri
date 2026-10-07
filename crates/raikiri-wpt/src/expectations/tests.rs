@@ -791,7 +791,25 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS UI text-overflow into padding exact slice (+1).
     // + CSS2 relative block positioning exact slice (+14).
     // + CSS Inline image-loaded vertical-align length exact slice (+1).
-    assert_eq!(set.baseline.entries.len(), 1412);
+    // + Genuine non-floating first-letter pairs (+3), remove two vacuous pins (-2).
+    assert_eq!(set.baseline.entries.len(), 1413);
+    for id in [
+        "css/css-pseudo/first-letter-004.html",
+        "css/css-pseudo/first-letter-005.html",
+        "css/css-pseudo/first-letter-with-before-after.html",
+    ] {
+        assert!(set.baseline.entries.contains(id));
+    }
+    assert!(
+        !set.baseline
+            .entries
+            .contains("css/css-pseudo/first-letter-003.html")
+    );
+    assert!(
+        !set.baseline
+            .entries
+            .contains("css/css-backgrounds/first-letter-space-not-selected.html")
+    );
     assert!(
         set.baseline
             .entries

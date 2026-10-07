@@ -485,6 +485,7 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
                 None => false,
             },
             Component::NonTSPseudoClass(pseudo) => match pseudo {
+                crate::PseudoClass::Link | crate::PseudoClass::AnyLink => elem.is_link(),
                 // Both resolve an inherited property of the element, memoized
                 // per element for the lifetime of `ctx.caches`.
                 crate::PseudoClass::Lang(ranges) => lang_pseudo_matches(
@@ -1188,6 +1189,14 @@ pub(crate) fn selector_matches_pseudo_element<D: StyleDom, E: StyleElement>(
 ) -> Option<PseudoElem> {
     let ctx = MatchContext { scope: None, ..ctx };
     let pseudo = *selector.pseudo_element()?;
+    // These valid names preserve their selector-list siblings, but this
+    // renderer has no top-layer or native file-button boxes to match.
+    if matches!(
+        pseudo,
+        PseudoElem::Backdrop | PseudoElem::FileSelectorButton
+    ) {
+        return None;
+    }
     let mut iter = selector.iter();
     // Skip past the (sole) pseudo-element compound — same idiom the
     // `selectors` crate's own `Selector::parts()` uses to skip a leading

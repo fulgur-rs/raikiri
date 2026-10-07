@@ -95,8 +95,7 @@ fn baseline_shifts(document: &Document, line: &shodo::Line) -> HashMap<usize, f3
 /// One glyph run ready to draw, with its decoration context.
 struct RunDraw<'a> {
     run: shodo::GlyphRunView<'a>,
-    /// The text node the run belongs to.
-    owner: usize,
+    style: &'a raikiri_style::ComputedValues,
     color: peniko::Color,
     glyphs: Vec<AnyrenderGlyph>,
     /// Horizontal extent of the run in page coordinates.
@@ -163,10 +162,17 @@ pub(crate) fn draw_ifc_lines(
         // (CSS 2.1 Appendix E: an inline box's background and borders, then
         // its text).
         for piece in &pieces_by_line[line_index] {
-            let Some(cv) = computed_for_id(cascade, piece.node) else {
+            let root_node = document.get_node(root_id);
+            let Some(cv) = root_node
+                .and_then(|root| root.ifc_typographic_style(piece.node))
+                .or_else(|| computed_for_id(cascade, piece.node))
+            else {
                 continue;
             };
-            let (dx, dy) = cumulative_offset(document, root_id, offsets, piece.node);
+            let source = root_node
+                .and_then(|root| root.ifc_typographic_source(piece.node))
+                .unwrap_or(piece.node);
+            let (dx, dy) = cumulative_offset(document, root_id, offsets, source);
             // The pieces already carry the line's pagination shift, which
             // `position` holds too.
             let line_shift = shifts.get(line_index).copied().unwrap_or(0.0);
@@ -201,9 +207,8 @@ pub(crate) fn draw_ifc_lines(
         for positioned_run in positioned_line.runs {
             let run = positioned_run.run;
             let owner = positioned_run.owner;
-            let Some(cv) = computed_for_id(cascade, owner) else {
-                continue; // cov:ignore: the enumerator keeps only runs with computed values.
-            };
+            let cv = positioned_run.style;
+            let style_owner = positioned_run.style_owner;
             let glyphs: Vec<AnyrenderGlyph> = positioned_run
                 .glyphs
                 .iter()
@@ -223,14 +228,43 @@ pub(crate) fn draw_ifc_lines(
             }
             let offset = positioned_run.offset;
             let decorations = contexts
-                .entry(owner)
+                .entry(style_owner)
                 .or_insert_with(|| {
-                    context_for_text(document, cascade, root_id, owner, base_decorations, &shifts)
+                    let context = context_for_text(
+                        document,
+                        cascade,
+                        root_id,
+                        owner,
+                        base_decorations,
+                        &shifts,
+                    );
+                    if style_owner == owner {
+                        return context;
+                    }
+                    let Some(root) = document.get_node(root_id) else {
+                        return context;
+                    };
+                    let mut chain = Vec::new();
+                    let mut current = Some(style_owner);
+                    while let Some(id) = current {
+                        chain.push(id);
+                        current = root.ifc_typographic_parent(id);
+                    }
+                    chain.iter().rev().fold(context, |context, &id| {
+                        let Some(style) = root.ifc_typographic_style(id) else {
+                            return context;
+                        };
+                        decorations_for_element(
+                            &context,
+                            style,
+                            shifts.get(&id).copied().unwrap_or(0.0),
+                        )
+                    })
                 })
                 .clone();
             runs.push(RunDraw {
                 run,
-                owner,
+                style: cv,
                 color: css_color_to_peniko(cv.color),
                 glyphs,
                 x0: f64::from(position.x) + first_x,
@@ -259,9 +293,7 @@ pub(crate) fn draw_ifc_lines(
             let Some(font) = draw.run.font_data() else {
                 continue;
             };
-            let Some(owner_style) = computed_for_id(cascade, draw.owner) else {
-                continue;
-            };
+            let owner_style = draw.style;
             let font_size = draw.run.font_size();
             // shodo's normalized coordinates are `F2Dot14` newtypes; the scene
             // takes the raw `i16` bits.

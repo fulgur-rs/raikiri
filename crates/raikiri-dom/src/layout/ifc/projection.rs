@@ -11,6 +11,7 @@
 
 use super::boxes::{IfcBox, IfcBoxKind};
 use super::error::IfcError;
+use super::first_letter::{FirstLetter, LetterStyle};
 use super::style;
 use crate::Document;
 use crate::generated_content::{generated_node_id, generated_text, is_in_flow_generated_text};
@@ -63,6 +64,7 @@ pub(crate) struct ProjectedIfc {
     pub(crate) fixed: bool,
     /// The root's lines end in an ellipsis where they overflow it.
     pub(crate) ellipsis: bool,
+    pub(crate) letter_styles: Vec<LetterStyle>,
 }
 
 /// Whether `node` or one of its ancestors has an authored vertical writing
@@ -93,7 +95,7 @@ fn under_vertical_writing(doc: &Document, cascade: &CascadeResult, node: usize) 
 
 /// The text style of `node` with its document context: its `lang`, and no
 /// autospacing under a vertical writing mode.
-fn styled(
+pub(super) fn styled(
     doc: &Document,
     cascade: &CascadeResult,
     cv: &ComputedValues,
@@ -218,6 +220,7 @@ fn push_generated(
     pseudo: PseudoElem,
     fonts: &FontCollection,
     counters: &GeneratedCounters,
+    first_letter: &mut FirstLetter,
 ) -> Result<(), IfcError> {
     if !is_in_flow_generated_text(cascade, element, pseudo) {
         return Ok(());
@@ -250,7 +253,15 @@ fn push_generated(
     if !inline_level && pseudo == PseudoElem::After {
         builder.push_forced_break(id);
     }
-    builder.push_text(TextSource::Generated { node: id }, &text);
+    first_letter.push(
+        builder,
+        doc,
+        cascade,
+        TextSource::Generated { node: id },
+        cv,
+        &text,
+        fonts,
+    )?;
     if !inline_level && pseudo == PseudoElem::Before {
         builder.push_forced_break(id);
     }
@@ -367,6 +378,7 @@ pub(crate) struct ProjectedBuilder {
     pub(crate) fixed: bool,
     /// The root's lines end in an ellipsis where they overflow it.
     pub(crate) ellipsis: bool,
+    pub(crate) letter_styles: Vec<LetterStyle>,
 }
 
 impl ProjectedBuilder {
@@ -391,6 +403,7 @@ impl ProjectedBuilder {
             cleared_breaks: self.cleared_breaks,
             fixed: self.fixed,
             ellipsis: self.ellipsis,
+            letter_styles: self.letter_styles,
         })
     }
 }
@@ -487,6 +500,7 @@ pub(crate) fn project_ifc_text_builder(
         fixed: false,
         // An anonymous flex or grid item has no overflow of its own.
         ellipsis: false,
+        letter_styles: Vec::new(),
     })
 }
 
@@ -557,6 +571,7 @@ pub(crate) fn project_ifc_builder_with(
     let mut boxes = Vec::new();
     let mut offsets = Vec::new();
     let mut cleared_breaks = Vec::new();
+    let mut first_letter = FirstLetter::new(doc, cascade, root, limits);
     push_generated(
         &mut builder,
         doc,
@@ -565,6 +580,7 @@ pub(crate) fn project_ifc_builder_with(
         PseudoElem::Before,
         fonts,
         counters,
+        &mut first_letter,
     )?;
 
     let mut stack: Vec<Step> = root_node
@@ -588,6 +604,7 @@ pub(crate) fn project_ifc_builder_with(
                     PseudoElem::After,
                     fonts,
                     counters,
+                    &mut first_letter,
                 )?;
                 continue;
             }
@@ -600,13 +617,18 @@ pub(crate) fn project_ifc_builder_with(
         match node.kind() {
             NodeKind::Text => {
                 let text = node.text_content().ok_or(IfcError::InvalidNode(id))?;
-                builder.push_text(
+                first_letter.push(
+                    &mut builder,
+                    doc,
+                    cascade,
                     TextSource::Dom {
                         node: NodeId(id as u64),
                         offset: 0,
                     },
+                    &cascade.computed[doc.parent_of(id).unwrap_or(id)],
                     text,
-                );
+                    fonts,
+                )?;
             }
             NodeKind::Comment | NodeKind::ProcessingInstruction => {}
             NodeKind::Element => {
@@ -637,6 +659,7 @@ pub(crate) fn project_ifc_builder_with(
                         PseudoElem::Before,
                         fonts,
                         counters,
+                        &mut first_letter,
                     )?;
                     stack.push(Step::After(id));
                     stack.extend(node.children.iter().rev().map(|&child| Step::Enter(child)));
@@ -668,6 +691,7 @@ pub(crate) fn project_ifc_builder_with(
                     continue;
                 }
                 if box_kind(cascade, doc, id) == Some(IfcBoxKind::Atomic) {
+                    first_letter.stop();
                     let atomic_style = styled(doc, cascade, cv, id, fonts)?;
                     // shodo sizes an atomic from `AtomicSize` alone, margins
                     // included; the edges are not read for atomics.
@@ -685,6 +709,7 @@ pub(crate) fn project_ifc_builder_with(
                 // it (CSS 2.1 9.2.1.1): the lines before and after it are the
                 // element's, the block sits between them.
                 if box_kind(cascade, doc, id) == Some(IfcBoxKind::Block) {
+                    first_letter.stop();
                     builder.push_block_in_inline(NodeId(id as u64));
                     boxes.push(IfcBox {
                         node: id,
@@ -713,6 +738,7 @@ pub(crate) fn project_ifc_builder_with(
                     cleared_breaks.push((id, clear));
                 }
                 if tag == "br" {
+                    first_letter.stop();
                     // The break is not wrapped in an inline box of its own: in
                     // quirks mode a box would credit its strut to every line it
                     // ends, while a `<br>` adds its strut only to a line
@@ -738,6 +764,7 @@ pub(crate) fn project_ifc_builder_with(
                         PseudoElem::Before,
                         fonts,
                         counters,
+                        &mut first_letter,
                     )?;
                     if tag == "wbr" {
                         builder.push_text(
@@ -771,6 +798,7 @@ pub(crate) fn project_ifc_builder_with(
         PseudoElem::After,
         fonts,
         counters,
+        &mut first_letter,
     )?;
     Ok(ProjectedBuilder {
         builder,
@@ -783,6 +811,7 @@ pub(crate) fn project_ifc_builder_with(
         cleared_breaks,
         fixed: root_cv.position == PositionValue::Fixed,
         ellipsis: style::ends_in_ellipsis(root_cv),
+        letter_styles: first_letter.styles,
     })
 }
 

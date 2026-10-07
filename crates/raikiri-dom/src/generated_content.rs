@@ -22,7 +22,14 @@ const GENERATED_ID_BIT: usize = 1 << (usize::BITS - 2);
 
 /// The node id the inline engine gives the `pseudo` of `element`.
 pub fn generated_node_id(element: usize, pseudo: PseudoElem) -> usize {
-    GENERATED_ID_BIT | (element << 1) | usize::from(pseudo == PseudoElem::After)
+    GENERATED_ID_BIT
+        | (element << 1)
+        | match pseudo {
+            PseudoElem::After => 1,
+            PseudoElem::Marker => 1 << (usize::BITS - 1),
+            PseudoElem::FirstLetter => (1 << (usize::BITS - 1)) | 1,
+            _ => 0,
+        }
 }
 
 /// The element and pseudo-element an id of [`generated_node_id`] stands for;
@@ -31,8 +38,15 @@ pub fn generated_origin(id: usize) -> Option<(usize, PseudoElem)> {
     if id & GENERATED_ID_BIT == 0 {
         return None;
     }
-    let raw = id & !GENERATED_ID_BIT;
-    let pseudo = if raw & 1 == 1 {
+    let kind_bit = 1 << (usize::BITS - 1);
+    let raw = id & !(GENERATED_ID_BIT | kind_bit);
+    let pseudo = if id & kind_bit != 0 {
+        if raw & 1 == 1 {
+            PseudoElem::FirstLetter
+        } else {
+            PseudoElem::Marker
+        }
+    } else if raw & 1 == 1 {
         PseudoElem::After
     } else {
         PseudoElem::Before

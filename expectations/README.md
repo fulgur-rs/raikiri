@@ -91,3 +91,18 @@ Use `known-issues.txt` when the test should not run because it is outside the
 product scope. Use `quarantine.txt` only for intermittent behavior. Neither
 file is a substitute for tracking a deterministic failure that should keep
 running.
+
+## First-letter evidence
+
+The non-floating first-letter pins cover punctuation with combining characters,
+symbols, and generated text. Bundled-Ahem native tests also compare every pixel
+with independent fixed rectangles and verify the original DOM byte offsets.
+The old `first-letter-003.html` pin was fully occluded: its PASS did not prove
+that the floated pseudo-element was drawn. Floating drop-cap layout is tracked
+by `raikiri-spike-0vv.124` and currently returns an explicit unsupported error.
+
+The pinned `first-letter-space-not-selected.html` reference removes styling
+that current Chromium applies to the letters after Unicode spaces. Both
+Chromium 152 and Raikiri mismatch that unmodified reference. The dated exact
+expected failure in `raikiri-spike-0vv.125` keeps this result visible while
+avoiding a vacuous PASS from dropping the entire first-letter rule.

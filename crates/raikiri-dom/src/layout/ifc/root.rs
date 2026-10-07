@@ -45,6 +45,7 @@ pub(crate) struct IfcRoot {
     /// The lines end in an ellipsis where they overflow the root
     /// (`text-overflow: ellipsis`).
     pub(crate) ellipsis: bool,
+    pub(crate) letter_styles: Vec<super::first_letter::LetterStyle>,
 }
 
 /// Lines broken for one content-box width.
@@ -130,6 +131,7 @@ impl IfcRoot {
             fixed: projected.fixed,
             multicol_fragments: None,
             ellipsis: projected.ellipsis,
+            letter_styles: projected.letter_styles,
         }
     }
 
@@ -148,6 +150,7 @@ impl IfcRoot {
             fixed: self.fixed,
             multicol_fragments: None,
             ellipsis: self.ellipsis,
+            letter_styles: self.letter_styles.clone(),
         }
     }
 }

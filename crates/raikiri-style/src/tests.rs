@@ -1,6 +1,25 @@
 use super::*;
 
 #[test]
+fn common_report_pseudo_selectors_parse_without_forgiving_invalid_lists() {
+    for source in [
+        "a:link",
+        "area:any-link",
+        "::backdrop",
+        "input::file-selector-button",
+        "*, ::after, ::before, ::backdrop, ::file-selector-button",
+    ] {
+        let list = parse_selector_list(source).expect("valid selector");
+        let mut serialized = String::new();
+        list.to_css(&mut serialized).unwrap();
+        assert_eq!(serialized, source);
+    }
+    for source in ["p, ::unknown-pseudo", "p, :unknown-state", "p, input["] {
+        assert!(parse_selector_list(source).is_err());
+    }
+}
+
+#[test]
 fn atom_precomputed_hash_is_deterministic() {
     let a1 = Atom::from("btn");
     let a2 = Atom::from("btn");

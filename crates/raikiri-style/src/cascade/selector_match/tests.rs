@@ -9,6 +9,76 @@ use crate::test_dom::TestDoc;
 mod namespace_tests;
 
 #[test]
+fn preflight_keeps_universal_and_generated_members_without_inventing_native_boxes() {
+    let mut doc = TestDoc::new();
+    let style = doc.push_element(0, "style", None);
+    doc.push_text(
+        style,
+        "*, ::after, ::before, ::backdrop, ::file-selector-button { color:red }",
+    );
+    let item = doc.push_element(0, "input", None);
+    let result = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    let id = StyleNodeId::new(item as u64);
+    assert_eq!(result.computed[item].color, RED);
+    assert_eq!(result.pseudo[&(id, crate::PseudoElem::Before)].color, RED);
+    assert_eq!(result.pseudo[&(id, crate::PseudoElem::After)].color, RED);
+    assert_eq!(
+        result.pseudo.keys().filter(|(node, _)| *node == id).count(),
+        2
+    );
+
+    let invalid = cascade_doc("p, ::unknown-pseudo { color:red }", "p", None);
+    assert_ne!(invalid.color, RED);
+}
+
+#[test]
+fn hyperlink_states_share_namespace_aware_cascade_and_query_matching() {
+    for (tag, namespace, href, expected) in [
+        ("a", None, Some("/target"), true),
+        ("area", None, Some("#target"), true),
+        (
+            "A",
+            Some("http://www.w3.org/1999/xhtml"),
+            Some("/target"),
+            true,
+        ),
+        ("a", None, None, false),
+        ("div", None, Some("/target"), false),
+        ("link", None, Some("/target"), false),
+        ("a", Some("urn:custom"), Some("/target"), false),
+        ("a", Some(""), Some("/target"), false),
+    ] {
+        for selector in [":link", ":any-link"] {
+            let mut doc = TestDoc::new();
+            let style = doc.push_element(0, "style", None);
+            doc.push_text(style, &format!("{selector} {{ color:red }}"));
+            let item = doc.push_element(0, tag, None);
+            if let Some(namespace) = namespace {
+                doc.set_namespace(item, namespace);
+            }
+            if let Some(href) = href {
+                doc.set_attr(item, "href", href);
+            }
+            let result = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+            assert_eq!(
+                result.computed[item].color == RED,
+                expected,
+                "{tag} {namespace:?}"
+            );
+            assert_eq!(
+                crate::SelectorQuery::parse(selector).unwrap().matches(
+                    &doc,
+                    StyleNodeId::new(item as u64),
+                    &[]
+                ),
+                expected,
+                "{tag} {namespace:?}",
+            );
+        }
+    }
+}
+
+#[test]
 fn type_selector_applies_color() {
     let cv = cascade_doc("p { color: red }", "p", None);
     assert_eq!(cv.color, RED);

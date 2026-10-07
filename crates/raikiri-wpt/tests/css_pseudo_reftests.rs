@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use raikiri_wpt::reftest::{ReftestConfig, discover_pairs_for_file_with_wpt_root, run_pair};
 use raikiri_wpt::runner::{TestOutcome, Tolerance};
 
-/// The supported first-letter and active-selection cases match exactly.
+/// Real non-floating first-letter pairs and the active-selection compatibility guard.
 #[test]
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
 fn pseudo_pairs_are_pixel_exact_at_800x600() {
@@ -16,7 +16,12 @@ fn pseudo_pairs_are_pixel_exact_at_800x600() {
     config.height = 600;
     config.tolerance = Tolerance::EXACT;
 
-    for name in ["active-selection-056.html", "first-letter-003.html"] {
+    for name in [
+        "active-selection-056.html",
+        "first-letter-004.html",
+        "first-letter-005.html",
+        "first-letter-with-before-after.html",
+    ] {
         let test = dir.join(name);
         let pairs = discover_pairs_for_file_with_wpt_root(&test, Some(&root))
             .unwrap_or_else(|error| panic!("discover {}: {error}", test.display()));
@@ -31,4 +36,23 @@ fn pseudo_pairs_are_pixel_exact_at_800x600() {
             result.mismatched_pixels
         );
     }
+}
+
+#[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
+fn floating_first_letter_is_explicitly_unsupported_until_drop_cap_layout_lands() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
+    let test = root.join("css/css-pseudo/first-letter-003.html");
+    let pairs = discover_pairs_for_file_with_wpt_root(&test, Some(&root)).unwrap();
+    assert_eq!(pairs.len(), 1);
+    let error = match run_pair(&pairs[0], ReftestConfig::default()) {
+        Err(error) => error,
+        Ok(_) => panic!("a floated first-letter requires real drop-cap layout"),
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("floating ::first-letter requires drop-cap box layout"),
+        "{error}"
+    );
 }

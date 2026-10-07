@@ -729,6 +729,36 @@ impl Node {
             .map(|lines| lines.lines.as_slice())
     }
 
+    /// Retained late-resolved style of a typographic pseudo inline box.
+    pub fn ifc_typographic_style(&self, box_id: usize) -> Option<&raikiri_style::ComputedValues> {
+        self.ifc
+            .as_ref()?
+            .letter_styles
+            .iter()
+            .find(|style| style.box_id == box_id)
+            .map(|style| &style.computed)
+    }
+
+    /// Source owner whose inline ancestors move a typographic pseudo box.
+    pub fn ifc_typographic_source(&self, box_id: usize) -> Option<usize> {
+        self.ifc
+            .as_ref()?
+            .letter_styles
+            .iter()
+            .find(|style| style.box_id == box_id)
+            .map(|style| style.source_owner)
+    }
+
+    /// Enclosing typographic pseudo box, when ancestor block letters nest.
+    pub fn ifc_typographic_parent(&self, box_id: usize) -> Option<usize> {
+        self.ifc
+            .as_ref()?
+            .letter_styles
+            .iter()
+            .find(|style| style.box_id == box_id)
+            .and_then(|style| style.parent_box)
+    }
+
     /// Pieces of the inline elements of an ifc root on its lines, in the
     /// root's content box; `None` for a node without lines.
     #[doc(hidden)]
