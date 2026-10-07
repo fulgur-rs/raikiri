@@ -1,9 +1,85 @@
 use super::*;
 
 #[test]
+fn css_viewport_units_preserve_identifiers_strings_urls_and_non_dimensions() {
+    let source = r#".foo100vw,#100vw,.日本100vw,.\31 00vw{--size100vw:100vw;--\31 00vw:1e2vw;width:var(--size100vw);content:"style='100vw'";background:url(a100vw.png);--a:1vw2;--b:1vw_foo;height:100v\68}"#;
+    let expected = r#".foo100vw,#100vw,.日本100vw,.\31 00vw{--size100vw:32.000000px;--\31 00vw:32.000000px;width:var(--size100vw);content:"style='100vw'";background:url(a100vw.png);--a:1vw2;--b:1vw_foo;height:24.000000px}"#;
+    assert_eq!(
+        expand_css_viewport_units_with_media_basis(source, 32.0, 24.0, 32.0, 24.0),
+        expected
+    );
+}
+
+#[test]
+fn decoded_inline_units_preserve_html_ids_text_and_css_strings() {
+    let mut document = raikiri::parse(br#"<div id="100vw" style="width:100vw;content:'style=&quot;100vw&quot;';height:100vh">100vw</div>"#.as_slice(), &raikiri::ParseOptions {extra_stylesheets:&[], network:None, base_url:None}).unwrap();
+    expand_document_viewport_units(
+        &mut document,
+        32.0,
+        24.0,
+        &raikiri::MediaContext::with_viewport(raikiri::MediaType::Screen, 32, 24),
+    );
+    let node = (0..document.dom.node_count())
+        .find(|node| document.dom.element_attribute(*node, "id") == Some("100vw"))
+        .unwrap();
+    assert_eq!(
+        document.dom.element_attribute(node, "style"),
+        Some("width:32.000000px;content:'style=\"100vw\"';height:24.000000px")
+    );
+    let child = document.dom.get_node(node).unwrap().children[0];
+    assert_eq!(
+        document.dom.get_node(child).unwrap().text_content(),
+        Some("100vw")
+    );
+}
+
+#[test]
+fn animation_viewport_units_are_resolved_after_geometry_reparse() {
+    let rules = "@page{size:300px 300px;margin:0}@page:first{size:300px 200px}html,body{margin:0}";
+    let source = format!(
+        "<html><head><style>{rules}</style></head><body><div style='height:1px;background:green'></div></body></html>"
+    );
+    let expected = format!(
+        "<html><head><style>{rules}</style></head><body><div style='height:400px;background:green'></div></body></html>"
+    );
+    let styles = [AnimationStyleSidecar {
+        node_path: vec![0, 1, 0],
+        declarations: "height:200vh".into(),
+    }];
+    let engine = InlineEngineChoice {
+        require_inline_fonts: false,
+    };
+    let actual = render_raikiri_pages_inner_with_canvases(
+        &source,
+        800,
+        600,
+        None,
+        None,
+        engine,
+        Some(&styles),
+        None,
+        None,
+    )
+    .unwrap();
+    let expected = render_raikiri_pages_inner_with_canvases(
+        &expected, 800, 600, None, None, engine, None, None, None,
+    )
+    .unwrap();
+    assert!(expected.pages.len() >= 2);
+    assert_eq!(actual.pages.len(), expected.pages.len());
+    for (actual, expected) in actual.pages.iter().zip(&expected.pages) {
+        assert_eq!(
+            (actual.width, actual.height),
+            (expected.width, expected.height)
+        );
+        assert_eq!(actual.rgba, expected.rgba);
+    }
+}
+
+#[test]
 fn expand_viewport_units_preserves_utf8_text() {
     let input = "<body>\u{3000}↓</body><style>.box { width: 10vw }</style>";
-    let expanded = expand_viewport_units(input, 800.0, 600.0);
+    let expanded = expand_css_viewport_units_with_media_basis(input, 800.0, 600.0, 800.0, 600.0);
     assert_eq!(
         expanded,
         "<body>\u{3000}↓</body><style>.box { width: 80.000000px }</style>"
@@ -390,6 +466,28 @@ fn authored_page_viewport_prefers_the_first_named_page() {
     let (width, height) = authored_page_viewport(html, 800.0, 600.0);
     assert!((width - 200.0).abs() < 0.01);
     assert!((height - 200.0).abs() < 0.01);
+}
+
+#[test]
+fn print_named_page_with_viewport_size_retains_nominal_declaration_basis() {
+    let html = "<style>@page smaller{size:50vw 50vh;margin:0}html,body{margin:0}.box{page:smaller;width:50vw;height:50vh;background:green}</style><div class=box></div>";
+    let images = render_raikiri_pages(html, 800, 600).unwrap();
+    assert_eq!(images.pages.len(), 1);
+    let image = &images.pages[0];
+    assert_eq!((image.width, image.height), (240, 144));
+    let offset = (100 * 240 + 200) * 4;
+    assert_eq!(&image.rgba[offset..offset + 4], &[0, 128, 0, 255]);
+}
+
+#[test]
+fn superseded_page_viewport_size_does_not_select_nominal_basis() {
+    let html = "<style>@page{size:50vw 50vh;margin:0}@page{size:200px 100px;margin:0}html,body{margin:0}.box{width:100vw;height:100vh;background:green}</style><div class=box></div>";
+    let images = render_raikiri_pages(html, 800, 600).unwrap();
+    assert_eq!(images.pages.len(), 1);
+    let image = &images.pages[0];
+    assert_eq!((image.width, image.height), (200, 100));
+    let offset = (99 * 200 + 199) * 4;
+    assert_eq!(&image.rgba[offset..offset + 4], &[0, 128, 0, 255]);
 }
 
 #[test]
@@ -1683,4 +1781,171 @@ fn legacy_page_width_and_height_size_the_page_area_inside_the_margins() {
     let page = page_context("@page { size: 500px 700px; width: 300px }");
     let page_box = page_box_from_cascade(&page, page_box_of(1.0, 1.0));
     assert_eq!((page_box.width, page_box.height), (500.0, 700.0));
+}
+
+#[test]
+fn live_document_media_context_uses_requested_viewport() {
+    let root = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/wpt"));
+    let setup = prepare_wpt_live_document("<div></div>", 320, 240, root, root).unwrap();
+    assert_eq!(setup.media_context.viewport_width(), 320);
+    assert_eq!(setup.media_context.viewport_height(), 240);
+}
+
+#[test]
+fn print_media_dimensions_use_the_output_page_box_before_margins() {
+    let image = render_raikiri("<style>@page{margin:10px}html,body{margin:0;background:red}@media print and (width:320px) and (height:240px){html,body{background:green}}</style><div></div>", 320, 240).unwrap();
+    let offset = (120 * 320 + 160) * 4;
+    assert_eq!(&image.rgba[offset..offset + 4], &[0, 128, 0, 255]);
+}
+
+#[test]
+fn print_media_viewport_units_ignore_authored_page_size_and_margins() {
+    let image = render_raikiri("<style>@page{size:200px 100px;margin:10px}html,body{margin:0;background:red}@media print and (max-width:100vw) and (max-height:100vh){html,body{background:green}}</style><div></div>", 800, 600).unwrap();
+    let offset = (50 * image.width as usize + 50) * 4;
+    assert_eq!(&image.rgba[offset..offset + 4], &[0, 128, 0, 255]);
+}
+
+#[test]
+fn viewport_expansion_separates_media_preludes_from_declarations() {
+    let source = r#"@MeDiA/**/print and (max-width:100vw) and (max-height:100vh){.box{width:100vw;height:100vh;content:"@media (width:100vw)"}}@import "child.css" print and (width:100vmin);@media-example{width:100vmax}/* @media (width:100vw) */"#;
+    let result = expand_css_viewport_units_with_media_basis(source, 200.0, 100.0, 800.0, 600.0);
+    assert_eq!(
+        result,
+        r#"@MeDiA/**/print and (max-width:800.000000px) and (max-height:600.000000px){.box{width:200.000000px;height:100.000000px;content:"@media (width:100vw)"}}@import "child.css" print and (width:600.000000px);@media-example{width:200.000000px}/* @media (width:100vw) */"#
+    );
+}
+
+#[test]
+fn viewport_expansion_tokenizes_escaped_media_and_import_keywords() {
+    let source = r#"@\6d edia (width:100vw){a{width:100vw}}@\69 mport "child.css" (height:100vh);"#;
+    let result = expand_css_viewport_units_with_media_basis(source, 200.0, 100.0, 800.0, 600.0);
+    assert_eq!(
+        result,
+        r#"@\6d edia (width:800.000000px){a{width:200.000000px}}@\69 mport "child.css" (height:600.000000px);"#
+    );
+}
+
+#[test]
+fn viewport_expansion_keeps_media_mode_inside_url_and_nested_blocks() {
+    for (source, expected) in [
+        (
+            r#"@import url(child;a.css) print and (max-width:100vw);"#,
+            r#"@import url(child;a.css) print and (max-width:800.000000px);"#,
+        ),
+        (
+            r#"@import url(child100vw\);a.css) print and (max-width:100vw);"#,
+            r#"@import url(child100vw\);a.css) print and (max-width:800.000000px);"#,
+        ),
+        (
+            r#"@import url("child;100vw.css") print and (max-height:100vh);"#,
+            r#"@import url("child;100vw.css") print and (max-height:600.000000px);"#,
+        ),
+        (
+            r#"@media (future({value:100vw})) or (max-width:100vw){a{width:100vw}}"#,
+            r#"@media (future({value:800.000000px})) or (max-width:800.000000px){a{width:200.000000px}}"#,
+        ),
+    ] {
+        assert_eq!(
+            expand_css_viewport_units_with_media_basis(source, 200.0, 100.0, 800.0, 600.0),
+            expected
+        );
+    }
+}
+
+#[test]
+fn viewport_expansion_preserves_escaped_prelude_delimiters() {
+    for escaped in [
+        r"\{",
+        r"\}",
+        r"\(",
+        r"\)",
+        r"\[",
+        r"\]",
+        r"\;",
+        r#"\""#,
+        r"\'",
+        r"\7b ",
+        r"\00007b ",
+        "\\7b\r\n",
+        "\\界",
+    ] {
+        let source =
+            format!("@media (unknown: {escaped}) {{}} .box {{ width:100vw; height:100vh }}");
+        let expected = format!(
+            "@media (unknown: {escaped}) {{}} .box {{ width:200.000000px; height:100.000000px }}"
+        );
+        assert_eq!(
+            expand_css_viewport_units_with_media_basis(&source, 200.0, 100.0, 800.0, 600.0),
+            expected,
+            "{escaped}"
+        );
+    }
+}
+
+#[test]
+fn viewport_expansion_preserves_string_and_invalid_escape_boundaries() {
+    for source in [
+        ".box{content:'日本\\界';width:100vw}",
+        ".box{content:'unfinished\\",
+        ".box{width:100vw}\\",
+        "@media [unknown:100vw]{.box{width:100vw}}",
+    ] {
+        let expected = if source.contains("@media") {
+            "@media [unknown:800.000000px]{.box{width:200.000000px}}".to_string()
+        } else {
+            source.replace("100vw", "200.000000px")
+        };
+        assert_eq!(
+            expand_css_viewport_units_with_media_basis(source, 200.0, 100.0, 800.0, 600.0),
+            expected
+        );
+    }
+}
+
+#[test]
+fn print_probe_preserves_nominal_basis_for_unqualified_page_units() {
+    let html = "<style>@page{size:50vw 50vh;margin:0}html,body{margin:0}.box{width:50vw;height:50vh;background:green}</style><div class=box></div>";
+    let image = render_raikiri(html, 800, 600).unwrap();
+    assert_eq!((image.width, image.height), (240, 144));
+    let offset = (100 * 240 + 200) * 4;
+    assert_eq!(&image.rgba[offset..offset + 4], &[0, 128, 0, 255]);
+}
+
+#[test]
+fn print_probe_preserves_dom_associated_stylesheet_origins() {
+    for (kind, expected) in [
+        (raikiri_traits::StylesheetKind::UserAgent, (300.0, 200.0)),
+        (raikiri_traits::StylesheetKind::User, (300.0, 200.0)),
+        (raikiri_traits::StylesheetKind::Author, (200.0, 100.0)),
+    ] {
+        let html = "<style>@page{size:200px 100px!important;margin:0}</style>";
+        let opts = raikiri::ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        };
+        let mut doc = raikiri_html::parse(html.as_bytes(), &opts).unwrap();
+        doc.dom
+            .add_stylesheet("@page{size:300px 200px!important;margin:0}", kind);
+        assert_eq!(
+            authored_document_page_viewport(&doc, html, 800.0, 600.0),
+            expected
+        );
+    }
+}
+
+#[test]
+fn viewport_review_rtl_probe_uses_left_page_basis() {
+    let html = "<style>html{direction:rtl}html,body{margin:0}@page:left{size:200px 100px;margin:0}@page:right{size:300px 150px;margin:0}.box{width:100vw;height:100vh;background:green}</style><div class=box></div>";
+    let document = render_raikiri_pages(html, 800, 600).unwrap();
+    assert_eq!(document.pages.len(), 1);
+    assert_eq!(
+        (document.pages[0].width, document.pages[0].height),
+        (200, 100)
+    );
+    let offset = (99 * 200 + 199) * 4;
+    assert_eq!(
+        &document.pages[0].rgba[offset..offset + 4],
+        &[0, 128, 0, 255]
+    );
 }

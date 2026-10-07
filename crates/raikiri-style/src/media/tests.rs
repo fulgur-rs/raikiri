@@ -67,10 +67,10 @@ fn context_constructors_and_default() {
 }
 
 #[test]
-fn default_print_viewport_matches_wpt_page_area() {
+fn default_print_dimensions_match_wpt_page_box() {
     let context = MediaContext::print();
-    assert_eq!(context.viewport_width(), 384);
-    assert_eq!(context.viewport_height(), 192);
+    assert_eq!(context.viewport_width(), 480);
+    assert_eq!(context.viewport_height(), 288);
 }
 
 #[test]

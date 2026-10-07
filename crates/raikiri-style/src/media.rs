@@ -25,6 +25,19 @@ pub enum MediaType {
 /// The initial context is [`MediaContext::print`], matching the renderer's
 /// paged-output default. Callers rendering a screen context should pass
 /// [`MediaContext::screen`] to [`crate::cascade_with_media_context`].
+///
+/// Width and height describe the externally selected viewport for screen media
+/// and the page box, including margins, for print media (Media Queries 4 §4.1–4.2).
+/// The environment stays fixed while evaluating a document: authored `@page`
+/// sizes, margins, and named-page geometry do not change these dimensions.
+/// CSS Paged Media 3 §7.1 defines the media-query basis as the paper selected
+/// without authored `@page` rules.
+///
+/// The default print environment is a nominal 5in × 3in page box (480 × 288 CSS
+/// pixels). Consumers selecting another paper size should supply its dimensions
+/// with [`MediaContext::with_viewport`]; layout page defaults are independent.
+/// See <https://www.w3.org/TR/mediaqueries-4/#width> and
+/// <https://www.w3.org/TR/css-page-3/#page-size>.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MediaContext {
@@ -37,9 +50,9 @@ impl MediaContext {
     /// Create a context for the given media type with its default viewport.
     pub const fn new(media_type: MediaType) -> Self {
         let (viewport_width, viewport_height) = match media_type {
-            // WPT's print-media tests use a nominal 5in × 3in sheet with
-            // 0.5in margins, leaving a 4in × 2in page area.
-            MediaType::Print => (384, 192),
+            // WPT's nominal print sheet is 5in × 3in. Media queries include
+            // page margins rather than using the smaller page area.
+            MediaType::Print => (480, 288),
             MediaType::Screen => (800, 600),
         };
         Self {
@@ -49,7 +62,10 @@ impl MediaContext {
         }
     }
 
-    /// Create a context with an explicit viewport in CSS pixels.
+    /// Create a context with explicit output dimensions in CSS pixels.
+    ///
+    /// For print media, pass the externally selected page-box size before
+    /// subtracting margins. For screen media, pass the viewport size.
     pub const fn with_viewport(media_type: MediaType, width: u32, height: u32) -> Self {
         Self {
             media_type,
@@ -73,12 +89,12 @@ impl MediaContext {
         self.media_type
     }
 
-    /// Return the viewport width in CSS pixels.
+    /// Return the viewport or print page-box width in CSS pixels.
     pub const fn viewport_width(self) -> u32 {
         self.viewport_width
     }
 
-    /// Return the viewport height in CSS pixels.
+    /// Return the viewport or print page-box height in CSS pixels.
     pub const fn viewport_height(self) -> u32 {
         self.viewport_height
     }
