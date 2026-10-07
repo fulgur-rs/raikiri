@@ -1753,3 +1753,33 @@ fn viewport_expansion_keeps_media_mode_inside_url_and_nested_blocks() {
         );
     }
 }
+
+#[test]
+fn viewport_expansion_preserves_escaped_prelude_delimiters() {
+    for escaped in [
+        r"\{",
+        r"\}",
+        r"\(",
+        r"\)",
+        r"\[",
+        r"\]",
+        r"\;",
+        r#"\""#,
+        r"\'",
+        r"\7b ",
+        r"\00007b ",
+        "\\7b\r\n",
+        "\\界",
+    ] {
+        let source =
+            format!("@media (unknown: {escaped}) {{}} .box {{ width:100vw; height:100vh }}");
+        let expected = format!(
+            "@media (unknown: {escaped}) {{}} .box {{ width:200.000000px; height:100.000000px }}"
+        );
+        assert_eq!(
+            expand_viewport_units_with_media_basis(&source, 200.0, 100.0, 800.0, 600.0),
+            expected,
+            "{escaped}"
+        );
+    }
+}

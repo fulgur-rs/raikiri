@@ -1562,6 +1562,35 @@ fn expand_viewport_units_with_media_basis(
             }
         }
 
+        // An escaped code point belongs to its CSS token, even when its
+        // spelling contains a delimiter, quote, or at-sign. Preserve the full
+        // escape, including hexadecimal digits and their optional whitespace.
+        if bytes[i] == b'\\' {
+            let start = i;
+            i += 1;
+            if i < bytes.len() && bytes[i].is_ascii_hexdigit() {
+                let hex_start = i;
+                while i < bytes.len() && i - hex_start < 6 && bytes[i].is_ascii_hexdigit() {
+                    i += 1;
+                }
+                if i < bytes.len() && matches!(bytes[i], b' ' | b'\t' | b'\n' | b'\r' | 0x0c) {
+                    let carriage_return = bytes[i] == b'\r';
+                    i += 1;
+                    if carriage_return && i < bytes.len() && bytes[i] == b'\n' {
+                        i += 1;
+                    }
+                }
+            } else if i < bytes.len() {
+                i += input[i..]
+                    .chars()
+                    .next()
+                    .expect("byte index remains on a UTF-8 boundary")
+                    .len_utf8();
+            }
+            result.push_str(&input[start..i]);
+            continue;
+        }
+
         // Strings and comments have already been copied above, so only actual
         // media/import preludes select the output basis for their dimensions.
         if bytes[i] == b'@' {
