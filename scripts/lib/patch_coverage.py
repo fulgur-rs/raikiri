@@ -740,9 +740,9 @@ def collect_moved_added_lines(repo_root: str, base: str, head: str,
     if not candidates:
         return {}
     manifests = subprocess.run(
-        ["git", "-C", repo_root, "diff", "--name-only", "--no-renames", base, head,
+        ["git", "-C", repo_root, "diff", "--name-only", "-z", "--no-renames", base, head,
          "--", "*Cargo.toml"], capture_output=True, text=True, check=True,
-    ).stdout.splitlines()
+    ).stdout.split("\0")
     # Compiler extensions can interpret even formatting as input. Git
     # detects changed bytes without text-mode newline normalization or
     # requiring a version-specific TOML parser.
