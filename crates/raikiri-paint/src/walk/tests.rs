@@ -1376,6 +1376,112 @@ fn transform_markup_scene(markup: &str) -> Scene {
 }
 
 #[test]
+fn relative_block_offsets_are_applied_once_to_boxes_and_descendants() {
+    for display in [
+        "block",
+        "flex",
+        "grid",
+        "inline-block",
+        "inline-flex",
+        "inline-grid",
+    ] {
+        for (insets, x, y) in [
+            ("left:-10px;top:-10px", 15.0, 25.0),
+            ("left:10px;top:12px", 35.0, 47.0),
+            ("right:10px;bottom:10px", 15.0, 25.0),
+        ] {
+            let scene = transform_markup_scene(&format!(
+                "<body style='margin:0'><div style='position:absolute;left:10px;top:20px;width:100px;height:80px;padding:10px;border:5px solid red'><div style='display:{display};position:relative;{insets};width:20px;height:20px;background:green'><div style='width:10px;height:10px;background:blue'></div></div></div>",
+            ));
+            let fills: Vec<_> = scene
+                .commands
+                .iter()
+                .filter_map(|command| match command {
+                    RenderCommand::Fill(fill) => Some(fill),
+                    _ => None,
+                })
+                .collect();
+            let green = fills[fills.len() - 2];
+            let blue = fills[fills.len() - 1];
+            for (fill, size) in [(green, 20.0), (blue, 10.0)] {
+                let rect = kurbo::Shape::bounding_box(&fill.shape);
+                assert_eq!(fill.transform * rect.origin(), Point::new(x, y), "{insets}");
+                assert_eq!(
+                    fill.transform * Point::new(rect.x1, rect.y1),
+                    Point::new(x + size, y + size),
+                    "{insets}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_manually_placed_table_caption_retains_its_relative_offset() {
+    let scene = transform_markup_scene(
+        "<body style='margin:0'><table style='width:100px'><caption style='width:100px;height:50px;margin-left:200px;position:relative;left:-200px;background:green'></caption><tr><td></td></tr></table>",
+    );
+    let fill = scene
+        .commands
+        .iter()
+        .rev()
+        .find_map(|command| match command {
+            RenderCommand::Fill(fill) => Some(fill),
+            _ => None,
+        })
+        .expect("caption background");
+    let rect = kurbo::Shape::bounding_box(&fill.shape);
+    assert_eq!((fill.transform * rect.origin()).x, 0.0);
+}
+
+#[test]
+fn manually_placed_roots_floats_and_multicol_children_keep_relative_offsets() {
+    for (markup, expected) in [
+        (
+            "<body style='margin:0;position:relative;left:10px;top:12px'><div style='width:20px;height:20px;background:green'></div>",
+            Point::new(10.0, 12.0),
+        ),
+        (
+            "<body style='margin:0'><div style='width:100px;height:80px'><div style='float:left;position:relative;left:10px;top:12px;width:20px;height:20px;background:green'></div></div>",
+            Point::new(10.0, 12.0),
+        ),
+        (
+            "<body style='margin:0'><div style='display:flex;width:100px;height:80px'><div style='float:left;position:relative;left:10px;top:12px;width:20px;height:20px;background:green'></div></div>",
+            Point::new(10.0, 12.0),
+        ),
+        (
+            "<body style='margin:0'><div style='display:grid;width:100px;height:80px'><div style='float:left;position:relative;left:10px;top:12px;width:20px;height:20px;background:green'></div></div>",
+            Point::new(10.0, 12.0),
+        ),
+        (
+            "<body style='margin:0'><div style='width:200px;column-count:2;column-gap:0'><div style='display:grid;position:relative;top:12px;width:20px;height:20px;background:green'></div></div>",
+            Point::new(0.0, 12.0),
+        ),
+        (
+            "<body style='margin:0'><div style='column-count:2;width:200px;height:60px'><div style='min-block-size:40px;break-inside:avoid;position:relative;left:10px;top:12px;width:20px;background:green'></div></div>",
+            Point::new(10.0, 12.0),
+        ),
+        (
+            "<body style='margin:0'><div style='column-count:2;width:200px;height:60px'><div style='min-block-size:40px;break-inside:avoid'></div><div style='position:relative;left:10px;top:12px;width:20px;height:10px;background:green'></div></div>",
+            Point::new(10.0, 92.0),
+        ),
+    ] {
+        let scene = transform_markup_scene(markup);
+        let fill = scene
+            .commands
+            .iter()
+            .rev()
+            .find_map(|command| match command {
+                RenderCommand::Fill(fill) => Some(fill),
+                _ => None,
+            })
+            .expect("child background");
+        let rect = kurbo::Shape::bounding_box(&fill.shape);
+        assert_eq!(fill.transform * rect.origin(), expected, "{markup}");
+    }
+}
+
+#[test]
 fn transformed_opacity_group_keeps_its_clip_in_page_coordinates() {
     let scene = transform_markup_scene(
         "<body style='margin:0'><div style='position:absolute;left:900px;top:0;width:100px;height:100px;background:green;opacity:.5;transform:matrix(1,0,0,1,-900,0)'></div>",
@@ -3107,6 +3213,55 @@ fn background_space_tiny_tiles_fall_back_to_single_without_allocating() {
         &space,
     );
     assert_eq!(background_fill_count(&scene), 1);
+}
+
+#[test]
+fn overflow_clips_to_padding_edges_inside_the_border() {
+    for overflow in ["hidden", "clip", "scroll", "auto"] {
+        let scene = transform_markup_scene(&format!(
+            "<body style='margin:0'><div style='position:absolute;left:10px;top:20px;width:100px;height:50px;padding:10px;border:5px solid red;overflow:{overflow}'><div style='width:10px;height:10px;background:green'></div></div>",
+        ));
+        let clips: Vec<_> = scene
+            .commands
+            .iter()
+            .filter_map(|command| match command {
+                RenderCommand::PushClipLayer(clip) => Some(kurbo::Shape::bounding_box(&clip.clip)),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            clips.contains(&Rect::new(15.0, 25.0, 135.0, 95.0)),
+            "{overflow}: {clips:?}"
+        );
+    }
+}
+
+#[test]
+fn overflow_hidden_preserves_descendant_ink_in_padding() {
+    let scene = transform_markup_scene(
+        "<body style='margin:0'><div style='position:absolute;left:10px;top:20px;width:100px;height:50px;padding:10px;border:5px solid red;overflow:hidden'><div style='margin-left:-10px;margin-top:-10px;width:120px;height:70px;background:green'></div></div>",
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        160,
+        120,
+    );
+    for (x, y) in [(16, 26), (134, 26), (16, 94), (134, 94)] {
+        let offset = (y * 160 + x) * 4;
+        assert_eq!(
+            &rgba[offset..offset + 4],
+            &[0, 128, 0, 255],
+            "padding at ({x}, {y})"
+        );
+    }
+    for (x, y) in [(12, 26), (137, 26), (16, 22), (16, 97)] {
+        let offset = (y * 160 + x) * 4;
+        assert_eq!(
+            &rgba[offset..offset + 4],
+            &[255, 0, 0, 255],
+            "border at ({x}, {y})"
+        );
+    }
 }
 
 #[test]

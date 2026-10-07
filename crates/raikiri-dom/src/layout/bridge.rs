@@ -210,6 +210,7 @@ pub(crate) fn apply_computed_to_style(
         }
         doc.nodes[idx].has_logical_min_block_size = cv.min_block_size.is_some()
             && matches!(cv.break_inside, raikiri_style::property::BreakInside::Avoid);
+        doc.nodes[idx].needs_relative_block_paint_offset = false;
         let is_multicol_container = doc.nodes[idx].multicol.is_some();
         let style = &mut doc.nodes[idx].style;
         bridge_direction(style, cv);

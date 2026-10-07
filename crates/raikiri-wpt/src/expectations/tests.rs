@@ -788,7 +788,29 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS Text hanging-punctuation last in RTL exact slice (+1).
     // + CSS Overflow / UI text-overflow clip|ellipsis exact slice (+27).
     // + CSS Text Decoration horizontal text-emphasis exact slice (+8).
-    assert_eq!(set.baseline.entries.len(), 1396);
+    // + CSS UI text-overflow into padding exact slice (+1).
+    // + CSS2 relative block positioning exact slice (+14).
+    // + CSS Inline image-loaded vertical-align length exact slice (+1).
+    assert_eq!(set.baseline.entries.len(), 1412);
+    assert!(
+        set.baseline
+            .entries
+            .contains("css/CSS2/linebox/vertical-align-007.xht")
+    );
+    assert!(
+        set.baseline
+            .entries
+            .contains("css/css-ui/text-overflow-ellipsis-indent-001.html")
+    );
+    for id in [
+        "css/CSS2/positioning/position-relative-004.xht",
+        "css/CSS2/positioning/position-relative-038.xht",
+    ] {
+        assert!(
+            set.baseline.entries.contains(id),
+            "missing relative positioning pin: {id}"
+        );
+    }
     assert!(set.quarantine.is_empty());
     assert!(set.deprecated.is_empty());
 }

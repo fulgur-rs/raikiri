@@ -21,10 +21,11 @@ use raikiri_dom::{CounterSnapshot, Document, FragmentRect, StandaloneAlign};
 use raikiri_style::property::{
     AnglePercentage, BackgroundImage, BackgroundRepeatKeyword, Border, BorderColor, BorderStyle,
     ColumnCountValue, ConicGradient, ContentComponent, CounterStyle, CssColor, CssPosition,
-    CssPositionOffset, DisplayValue, Gradient, GradientStopColor, HueInterpolationMethod, Length,
-    LengthOrAuto, ListStyleType, MixColorSpace, ObjectFit, OutlineColor, OutlineStyle,
-    OverflowValue, PositionValue, PropertyKey, PropertyValue, QuoteKeyword, Sides, TextAlign,
-    TextShadowColor, VerticalAlign, Visibility, VisualBox, WritingMode,
+    CssPositionOffset, DisplayValue, FloatValue, Gradient, GradientStopColor,
+    HueInterpolationMethod, Length, LengthOrAuto, ListStyleType, MixColorSpace, ObjectFit,
+    OutlineColor, OutlineStyle, OverflowValue, PositionValue, PropertyKey, PropertyValue,
+    QuoteKeyword, Sides, TextAlign, TextShadowColor, VerticalAlign, Visibility, VisualBox,
+    WritingMode,
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedBorderRadius, ComputedCssPosition,
@@ -3707,20 +3708,48 @@ pub(crate) fn paint_document_impl(
                     vertical_align_shift_px(cv.vertical_align, cv.display, parent_font_size)
                 };
                 let child_shift_y = shift_y + own_shift;
-                // Taffy applies `inset` to inline-level boxes' layout locations,
-                // while the table-caption path still needs the paint-side
-                // relative offset. Avoid shifting inline descendants twice.
-                let (pos_dx, pos_dy) = if matches!(
-                    cv.display,
-                    DisplayValue::Inline
-                        | DisplayValue::InlineBlock
-                        | DisplayValue::InlineFlex
-                        | DisplayValue::InlineGrid
-                        | DisplayValue::InlineTable
-                ) {
-                    (0.0, 0.0)
-                } else {
+                // Taffy and the IFC block/atomic placement paths already apply
+                // relative insets. Keep the legacy paint offset for the body
+                // root, floats, explicit multicol fragments and manually
+                // placed table parts. Those paths still use paint-side insets.
+                let is_float = matches!(cv.float, FloatValue::Left | FloatValue::Right)
+                    && document.layout_parent_of(node_id).is_none_or(|parent| {
+                        !matches!(
+                            cascade.computed[parent].display,
+                            DisplayValue::Flex
+                                | DisplayValue::InlineFlex
+                                | DisplayValue::Grid
+                                | DisplayValue::InlineGrid
+                        )
+                    });
+                let needs_paint_inset = node_id == body_id
+                    || is_float
+                    || is_fragment_visit
+                    || matches!(
+                        cv.display,
+                        DisplayValue::TableCaption
+                            | DisplayValue::TableCell
+                            | DisplayValue::TableRow
+                            | DisplayValue::TableRowGroup
+                            | DisplayValue::TableHeaderGroup
+                            | DisplayValue::TableFooterGroup
+                    );
+                let (pos_dx, pos_dy) = if needs_paint_inset
+                    && !matches!(
+                        cv.display,
+                        DisplayValue::Inline
+                            | DisplayValue::InlineBlock
+                            | DisplayValue::InlineFlex
+                            | DisplayValue::InlineGrid
+                            | DisplayValue::InlineTable
+                    ) {
                     position_offset_px(cv)
+                } else if node.needs_relative_block_paint_offset() {
+                    // The foundational column post-pass replaces only Y;
+                    // the existing X location already includes its inset.
+                    (0.0, position_offset_px(cv).1)
+                } else {
+                    (0.0, 0.0)
                 };
                 // spec: https://www.w3.org/TR/css-transforms-1/#terminology
                 // Non-replaced inline and table-column boxes are not transformable.
@@ -4359,11 +4388,11 @@ pub(crate) fn paint_document_impl(
                 // explicit stack frame.
                 let clips_overflow = raikiri_dom::paint_rules::clips_overflow(cv);
                 if clips_overflow {
-                    let clip_right = paint_x + layout.size.width - layout.padding.right;
-                    let clip_bottom = paint_y + paint_height - layout.padding.bottom;
+                    let clip_right = paint_x + layout.size.width - layout.border.right;
+                    let clip_bottom = paint_y + paint_height - layout.border.bottom;
                     let clip = Rect::new(
-                        (paint_x + layout.padding.left).floor() as f64,
-                        (paint_y + layout.padding.top).floor() as f64,
+                        (paint_x + layout.border.left).floor() as f64,
+                        (paint_y + layout.border.top).floor() as f64,
                         if matches!(cv.overflow.x, OverflowValue::Clip) {
                             clip_right.floor() as f64
                         } else {
@@ -4547,8 +4576,8 @@ pub(crate) fn paint_document_impl(
                 };
 
                 // Reverse push makes the lowest stack level paint first.
-                // Inline relative insets are already present in `layout.location`;
-                // other supported relative boxes retain the paint-side offset.
+                // Relative insets are already present in `layout.location`
+                // except for the manual placement paths identified above.
                 let child_parent_x = abs_x + pos_dx + fixed_dx;
                 let child_parent_y = abs_y + pos_dy + fixed_dy;
                 // A paragraph inside a fixed box, or a fixed box that is a

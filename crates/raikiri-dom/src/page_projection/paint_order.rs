@@ -335,11 +335,11 @@ fn overflow_clip(
 ) -> PaintClip {
     let rect = fragment.paint_rect();
     let top = rect.y - item.rect.y + item.box_y;
-    let padding = node.unrounded_layout.padding;
-    let right = rect.x + rect.width - padding.right;
-    let bottom = top + item.box_height - padding.bottom;
-    let x0 = (rect.x + padding.left).floor();
-    let y0 = (top + padding.top).floor();
+    let border = node.unrounded_layout.border;
+    let right = rect.x + rect.width - border.right;
+    let bottom = top + item.box_height - border.bottom;
+    let x0 = (rect.x + border.left).floor();
+    let y0 = (top + border.top).floor();
     let x1 = if matches!(cv.overflow.x, OverflowValue::Clip) {
         right.floor()
     } else {

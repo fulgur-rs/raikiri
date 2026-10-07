@@ -354,6 +354,37 @@ fn compute_multicol_layout_spaces_break_avoid_min_height_children_across_a_defin
 }
 
 #[test]
+fn manual_column_block_position_provenance_resets_on_relayout() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;column-count:2;width:200px;height:60px"),
+    );
+    let child = doc.append_element(
+        Some(container),
+        "div",
+        Style::default(),
+        Some("display:block;min-block-size:40px;break-inside:avoid;position:relative;top:12px"),
+    );
+    let rules = build_rule_tree(&doc);
+    let mut cascade = cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("column layout");
+    assert!(doc.nodes[child].needs_relative_block_paint_offset());
+
+    cascade.computed[container].column_count = ColumnCountValue::Auto;
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("ordinary block layout");
+    assert!(!doc.nodes[child].needs_relative_block_paint_offset());
+    assert_eq!(doc.nodes[child].unrounded_layout.location.y, 12.0);
+}
+
+#[test]
 fn balanced_auto_multicol_updates_its_container_fragment_height() {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;

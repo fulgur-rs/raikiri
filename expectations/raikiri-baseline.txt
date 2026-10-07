@@ -494,6 +494,8 @@ css/css-page/margin-boxes/background-001-print.html
 css/css-display/display-flow-root-002.html
 # --- css-inline minimal line-box foundation (exact static reftest, 800x600) ---
 css/CSS2/linebox/vertical-align-top-bottom-padding.html
+# --- css-inline image-loaded vertical-align length (exact, 800x600, shodo 0.0.23) ---
+css/CSS2/linebox/vertical-align-007.xht
 # --- css-inline collapsed whitespace between inline boxes (exact, 800x600) ---
 css/CSS2/linebox/inline-formatting-context-001.xht
 # --- css-inline block-in-inline margin collapse (exact static reftest, 800x600) ---
@@ -1638,6 +1640,7 @@ css/css-ui/text-overflow-028.html
 css/css-ui/text-overflow-029.html
 css/css-ui/text-overflow-030.html
 css/css-ui/text-overflow-change-color.html
+css/css-ui/text-overflow-ellipsis-indent-001.html
 css/css-ui/text-overflow.html
 # --- css-text-decor text-emphasis horizontal marks exact 800x600 PASS-only (+8) ---
 css/css-text-decor/text-emphasis-position-auto-001.html
@@ -1648,3 +1651,19 @@ css/css-text-decor/text-emphasis-punctuation-1.html
 css/css-text-decor/text-emphasis-punctuation-2.html
 css/css-text-decor/text-emphasis-style-001.html
 css/css-text-decor/text-emphasis-style-property-001.html
+
+# --- CSS2 relative block positioning exact 800x600 PASS-only (+14) ---
+css/CSS2/positioning/position-relative-004.xht
+css/CSS2/positioning/position-relative-005.xht
+css/CSS2/positioning/position-relative-006.xht
+css/CSS2/positioning/position-relative-007.xht
+css/CSS2/positioning/position-relative-009.xht
+css/CSS2/positioning/position-relative-010.xht
+css/CSS2/positioning/position-relative-013.xht
+css/CSS2/positioning/position-relative-014.xht
+css/CSS2/positioning/position-relative-015.xht
+css/CSS2/positioning/position-relative-016.xht
+css/CSS2/positioning/position-relative-018.xht
+css/CSS2/positioning/position-relative-019.xht
+css/CSS2/positioning/position-relative-037.xht
+css/CSS2/positioning/position-relative-038.xht
