@@ -313,7 +313,7 @@ fn descriptor_groups_respect_depth_and_unclosed_container_limits() {
 }
 
 #[test]
-fn descriptor_registration_keeps_layer_chunk_precedence_and_media() {
+fn descriptor_registration_keeps_global_layer_precedence_and_media() {
     let mut tree = RuleTree::empty();
     tree.add_stylesheet(
         &format!(
@@ -331,6 +331,6 @@ fn descriptor_registration_keeps_layer_chunk_precedence_and_media() {
         ),
         Origin::Author,
     );
-    assert_registration(&tree, &MediaContext::print(), "demo", Some("printed"));
+    assert_registration(&tree, &MediaContext::print(), "demo", Some("outside"));
     assert_registration(&tree, &MediaContext::screen(), "demo", Some("outside"));
 }

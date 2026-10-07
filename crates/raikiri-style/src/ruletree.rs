@@ -17,6 +17,7 @@ use crate::counter_style::{
     CounterStyleRegistry, CounterStyleRule, parse_counter_style_rule, parse_counter_style_rule_name,
 };
 use crate::font_face::{FontFaceRegistry, FontFaceRule, parse_font_face_rule};
+use crate::layer::{LayerId, LayerName, LayerOrder, LayerTable, parse_layer_names};
 use crate::media::{MediaCondition, MediaContext, MediaRule, parse_media_prelude};
 use crate::page::{
     PageBlockBody, PageRule, PageSelector, parse_page_declaration_block, parse_page_prelude,
@@ -461,324 +462,6 @@ fn step_in_css_string(bytes: &[u8], index: usize, delimiter: u8) -> (usize, bool
     }
 }
 
-struct LayerSource {
-    position: usize,
-    name: String,
-    body: Option<String>,
-}
-
-/// Find layers exposed by supported conditions without flattening their styles.
-struct SupportedLayerParser<'s, 'b> {
-    source: &'s str,
-    context: &'b SupportsContext<'b>,
-    inside_supports: bool,
-    depth: usize,
-}
-
-enum SupportedLayerPrelude {
-    Supports(bool),
-    Layer(String),
-}
-
-impl<'i> cssparser::AtRuleParser<'i> for SupportedLayerParser<'_, '_> {
-    type Prelude = SupportedLayerPrelude;
-    type AtRule = Vec<LayerSource>;
-    type Error = ();
-
-    fn parse_prelude<'t>(
-        &mut self,
-        name: cssparser::CowRcStr<'i>,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self::Prelude, cssparser::ParseError<'i, ()>> {
-        if name.eq_ignore_ascii_case("supports") {
-            let prelude = consume_raw_component_values(input, self.source)?;
-            return Ok(SupportedLayerPrelude::Supports(supports_condition(
-                &prelude,
-                self.context,
-            )));
-        }
-        if self.inside_supports && name.eq_ignore_ascii_case("layer") {
-            return consume_raw_component_values(input, self.source)
-                .map(|name| SupportedLayerPrelude::Layer(name.trim().to_owned()));
-        }
-        Err(input.new_custom_error(()))
-    }
-
-    fn rule_without_block(
-        &mut self,
-        prelude: Self::Prelude,
-        start: &cssparser::ParserState,
-    ) -> Result<Self::AtRule, ()> {
-        match prelude {
-            SupportedLayerPrelude::Layer(name) => Ok(vec![LayerSource {
-                position: start.position().byte_index(),
-                name,
-                body: None,
-            }]),
-            SupportedLayerPrelude::Supports(_) => Err(()),
-        }
-    }
-
-    fn parse_block<'t>(
-        &mut self,
-        prelude: Self::Prelude,
-        start: &cssparser::ParserState,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self::AtRule, cssparser::ParseError<'i, ()>> {
-        let layers = match prelude {
-            SupportedLayerPrelude::Supports(true) if self.depth < MAX_OPAQUE_RULE_NESTING_DEPTH => {
-                let mut parser = SupportedLayerParser {
-                    source: self.source,
-                    context: self.context,
-                    inside_supports: true,
-                    depth: self.depth + usize::from(self.inside_supports),
-                };
-                StyleSheetParser::new(input, &mut parser)
-                    .flatten()
-                    .flatten()
-                    .collect()
-            }
-            SupportedLayerPrelude::Layer(name) if !name.is_empty() => {
-                let body_start = input.position();
-                // Skip tokens without validating declarations; the executable
-                // parser must recover from invalid declarations in this body.
-                while input.next_including_whitespace_and_comments().is_ok() {}
-                vec![LayerSource {
-                    position: start.position().byte_index(),
-                    name,
-                    body: Some(input.slice_from(body_start).to_owned()),
-                }]
-            }
-            _ => {
-                while input.next().is_ok() {}
-                Vec::new()
-            }
-        };
-        if !nested_block_has_closing_brace(self.source, input) {
-            return Err(input.new_custom_error(()));
-        }
-        Ok(layers)
-    }
-}
-
-impl<'i> cssparser::QualifiedRuleParser<'i> for SupportedLayerParser<'_, '_> {
-    type Prelude = ();
-    type QualifiedRule = Vec<LayerSource>;
-    type Error = ();
-}
-
-fn expand_cascade_layers(
-    source: &str,
-    supports_context: &SupportsContext<'_>,
-) -> Vec<(u32, String)> {
-    let mut cursor = 0;
-    let mut plain_start = 0;
-    let mut unlayered = String::with_capacity(source.len());
-    let mut layers = Vec::new();
-    let mut found_layer = false;
-    let mut nested_layers = false;
-
-    while let Some(start) = find_top_level_layer(source, cursor, &mut nested_layers) {
-        unlayered.push_str(&source[plain_start..start]);
-        let prelude_start = start + "@layer".len();
-        let Some((delimiter, delimiter_index)) = find_layer_delimiter(source, prelude_start) else {
-            unlayered.push_str(&source[start..]);
-            break;
-        };
-        let prelude = source[prelude_start..delimiter_index].trim();
-        match delimiter {
-            b';' => {
-                layers.push(LayerSource {
-                    position: start,
-                    name: prelude.to_owned(),
-                    body: None,
-                });
-                cursor = delimiter_index + 1;
-                plain_start = cursor;
-                found_layer = true;
-            }
-            b'{' => {
-                let Some(close) = matching_brace(source, delimiter_index) else {
-                    unlayered.push_str(&source[start..]);
-                    break;
-                };
-                if !prelude.is_empty() {
-                    layers.push(LayerSource {
-                        position: start,
-                        name: prelude.to_owned(),
-                        body: Some(source[delimiter_index + 1..close].to_owned()),
-                    });
-                    found_layer = true;
-                    cursor = close + 1;
-                    plain_start = cursor;
-                } else {
-                    unlayered.push_str(&source[start..=close]);
-                    cursor = close + 1;
-                    plain_start = cursor;
-                }
-            }
-            _ => {
-                unlayered.push_str(&source[start..]);
-                break;
-            }
-        }
-    }
-
-    if nested_layers {
-        let mut input = ParserInput::new(source);
-        let mut input = Parser::new(&mut input);
-        let mut parser = SupportedLayerParser {
-            source,
-            context: supports_context,
-            inside_supports: false,
-            depth: 0,
-        };
-        layers.extend(
-            StyleSheetParser::new(&mut input, &mut parser)
-                .flatten()
-                .flatten(),
-        );
-    }
-    if !found_layer && layers.is_empty() {
-        return vec![(u32::MAX, source.to_owned())];
-    }
-    unlayered.push_str(&source[plain_start..]);
-
-    layers.sort_by_key(|layer| layer.position);
-    let mut order = Vec::new();
-    for layer in &layers {
-        if layer.body.is_some() {
-            if !order.contains(&layer.name) {
-                order.push(layer.name.clone());
-            }
-            continue;
-        }
-        for name in layer
-            .name
-            .split(',')
-            .map(str::trim)
-            .filter(|name| !name.is_empty())
-        {
-            if !order.iter().any(|existing| existing == name) {
-                order.push(name.to_owned());
-            }
-        }
-    }
-    let mut chunks = Vec::with_capacity(order.len() + 1);
-    for (layer_order, name) in order.into_iter().enumerate() {
-        let mut body = String::new();
-        for layer in &layers {
-            if layer.name == name
-                && let Some(block_body) = &layer.body
-            {
-                body.push_str(block_body);
-                body.push('\n');
-            }
-        }
-        chunks.push((layer_order as u32, body));
-    }
-    chunks.push((u32::MAX, unlayered));
-    chunks
-}
-
-fn find_top_level_layer(source: &str, from: usize, nested_layers: &mut bool) -> Option<usize> {
-    let bytes = source.as_bytes();
-    let mut index = from;
-    let mut depth = 0_u32;
-    let mut quote = None;
-    let mut comment = false;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if comment {
-            if byte == b'*' && bytes.get(index + 1) == Some(&b'/') {
-                comment = false;
-                index += 2;
-            } else {
-                index += 1;
-            }
-            continue;
-        }
-        if let Some(delimiter) = quote {
-            let (next, ended) = step_in_css_string(bytes, index, delimiter);
-            index = next;
-            if ended {
-                quote = None;
-            }
-            continue;
-        }
-        if byte == b'/' && bytes.get(index + 1) == Some(&b'*') {
-            comment = true;
-            index += 2;
-            continue;
-        }
-        if byte == b'\'' || byte == b'"' {
-            quote = Some(byte);
-            index += 1;
-            continue;
-        }
-        match byte {
-            b'{' => depth = depth.saturating_add(1),
-            b'}' => depth = depth.saturating_sub(1),
-            b'@' if bytes
-                .get(index..index + "@layer".len())
-                .is_some_and(|candidate| candidate.eq_ignore_ascii_case(b"@layer"))
-                && source
-                    .as_bytes()
-                    .get(index + "@layer".len())
-                    .is_none_or(|next| !next.is_ascii_alphanumeric() && *next != b'-') =>
-            {
-                if depth == 0 {
-                    return Some(index);
-                }
-                *nested_layers = true;
-                index += 1;
-            }
-            _ => {}
-        }
-        index += 1;
-    }
-    None
-}
-
-fn find_layer_delimiter(source: &str, from: usize) -> Option<(u8, usize)> {
-    let bytes = source.as_bytes();
-    let mut index = from;
-    let mut quote = None;
-    let mut comment = false;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if comment {
-            if byte == b'*' && bytes.get(index + 1) == Some(&b'/') {
-                comment = false;
-                index += 2;
-            } else {
-                index += 1;
-            }
-            continue;
-        }
-        if let Some(delimiter) = quote {
-            let (next, ended) = step_in_css_string(bytes, index, delimiter);
-            index = next;
-            if ended {
-                quote = None;
-            }
-            continue;
-        }
-        if byte == b'/' && bytes.get(index + 1) == Some(&b'*') {
-            comment = true;
-            index += 2;
-            continue;
-        }
-        if byte == b'\'' || byte == b'"' {
-            quote = Some(byte);
-        } else if byte == b'{' || byte == b';' {
-            return Some((byte, index));
-        }
-        index += 1;
-    }
-    None
-}
-
 fn matching_brace(source: &str, open: usize) -> Option<usize> {
     let bytes = source.as_bytes();
     let mut index = open + 1;
@@ -1009,8 +692,9 @@ impl AtRuleRecord {
 pub struct RuleTree {
     /// Qualified style rules (`selectors { declarations }`), kept in source order.
     pub(crate) style_rules: Vec<StyleRule>,
-    /// Named custom-highlight background colors, in stylesheet source order.
+    /// Winning unconditional custom-highlight background colors.
     custom_highlight_styles: HashMap<String, CssColor>,
+    highlight_log: Vec<Registration<(String, HighlightColor, bool)>>,
     /// `@page` at-rules. `source_order` starts at zero independently of `style_rules`.
     /// [`crate::page::cascade_page`] applies the cascade; per-page `PageBox`
     /// derivation and margin-box slot layout are not implemented.
@@ -1027,7 +711,7 @@ pub struct RuleTree {
     /// Stylesheet and conditional group parsing passes each valid
     /// [`crate::font_face::FontFaceRule`] with its origin to
     /// [`FontFaceRegistry::insert_with_origin`]. The registry resolves same-name
-    /// precedence by origin, then source order, using
+    /// precedence by origin, then layer and source order, using
     /// [`crate::cascade::cascade_rank`].
     /// Only rules without a media condition populate this view. Use
     /// [`RuleTree::font_faces_for`] to include matching conditional rules.
@@ -1037,6 +721,7 @@ pub struct RuleTree {
     /// registries can be rebuilt for one media context.
     counter_style_log: Vec<Registration<CounterStyleRule>>,
     font_face_log: Vec<Registration<FontFaceRule>>,
+    layers: LayerTable,
     /// Generic records for at-rules that do not use the `@page` compatibility
     /// view.
     ///
@@ -1061,6 +746,10 @@ pub struct RuleTree {
 }
 
 impl RuleTree {
+    pub(crate) fn layer_order(&self, context: &MediaContext) -> LayerOrder<'_> {
+        self.layers.order(Some(context))
+    }
+
     /// Read-only accessor for qualified style rules (in source order).
     ///
     /// For **qualified style rules**, [`RuleTree::add_stylesheet`] is now the only
@@ -1151,6 +840,15 @@ impl RuleTree {
     /// stylesheets added through [`RuleTree::add_stylesheet_with_media`] and
     /// rules nested in `@media` whose combined query lists match `context`.
     pub fn font_faces_for(&self, context: &MediaContext) -> FontFaceRegistry {
+        if !self.layers.is_empty() {
+            return replay_layered(
+                &self.font_face_log,
+                Some(context),
+                &self.layers.order(Some(context)),
+                FontFaceRegistry::new,
+                FontFaceRegistry::insert_with_origin,
+            );
+        }
         replay(
             &self.font_face_log,
             &self.font_faces,
@@ -1163,6 +861,15 @@ impl RuleTree {
     /// The `@counter-style` registry for one media context; see
     /// [`RuleTree::font_faces_for`].
     pub fn counter_styles_for(&self, context: &MediaContext) -> CounterStyleRegistry {
+        if !self.layers.is_empty() {
+            return replay_layered(
+                &self.counter_style_log,
+                Some(context),
+                &self.layers.order(Some(context)),
+                CounterStyleRegistry::new,
+                CounterStyleRegistry::insert_with_origin,
+            );
+        }
         replay(
             &self.counter_style_log,
             &self.counter_styles,
@@ -1204,11 +911,13 @@ impl RuleTree {
         Self {
             style_rules: Vec::new(),
             custom_highlight_styles: HashMap::new(),
+            highlight_log: Vec::new(),
             page_rules: Vec::new(),
             counter_styles: CounterStyleRegistry::new(),
             font_faces: FontFaceRegistry::new(),
             counter_style_log: Vec::new(),
             font_face_log: Vec::new(),
+            layers: LayerTable::default(),
             opaque_at_rules: Vec::new(),
             media_rules: Vec::new(),
             next_style_order: 0,
@@ -1310,16 +1019,73 @@ impl RuleTree {
         };
         let consumer_properties = self.consumer_properties.clone();
         let supports_context = SupportsContext::new(&source, &consumer_properties);
-        for (layer_order, chunk) in expand_cascade_layers(&source, &supports_context) {
-            self.add_stylesheet_chunk(&chunk, origin, layer_order, condition, &supports_context);
+        self.add_parsed_stylesheet(&source, origin, condition, &supports_context);
+        let order = self.layers.order(None);
+        let mut highlights: HashMap<&str, Vec<_>> = HashMap::new();
+        for (index, registration) in self.highlight_log.iter().enumerate() {
+            highlights
+                .entry(&registration.rule.0)
+                .or_default()
+                .push((index, registration));
+        }
+        self.custom_highlight_styles = highlights
+            .into_iter()
+            .filter_map(|(name, registrations)| {
+                let winner = crate::cascade::rollback::select_layered_winner(
+                    &registrations,
+                    |_, (index, registration)| {
+                        let (_, color, important) = &registration.rule;
+                        let layer = crate::layer::LayerPosition {
+                            attached: false,
+                            rank: order.rank(registration.layer, registration.origin),
+                        };
+                        Some((
+                            (
+                                crate::cascade::cascade_rank(registration.origin, *important),
+                                layer.priority(*important),
+                                *index,
+                            ),
+                            registration.origin,
+                            layer,
+                            *important,
+                            if color.0.is_some() {
+                                crate::cascade::rollback::Rollback::None
+                            } else {
+                                crate::cascade::rollback::Rollback::Layer
+                            },
+                        ))
+                    },
+                )?;
+                registrations[winner]
+                    .1
+                    .rule
+                    .1
+                    .0
+                    .map(|color| (name.to_owned(), color))
+            })
+            .collect();
+        if !self.layers.is_empty() {
+            self.font_faces = replay_layered(
+                &self.font_face_log,
+                None,
+                &order,
+                FontFaceRegistry::new,
+                FontFaceRegistry::insert_with_origin,
+            );
+            self.counter_styles = replay_layered(
+                &self.counter_style_log,
+                None,
+                &order,
+                CounterStyleRegistry::new,
+                CounterStyleRegistry::insert_with_origin,
+            );
         }
     }
 
-    fn add_stylesheet_chunk(
+    fn add_parsed_stylesheet(
         &mut self,
         source: &str,
         origin: Origin,
-        layer_order: u32,
         condition: Option<&MediaCondition>,
         supports_context: &SupportsContext<'_>,
     ) {
@@ -1375,6 +1141,7 @@ impl RuleTree {
                         declarations,
                         source_order: style_order,
                         origin,
+                        layer: None,
                     };
                     style_order = style_order.wrapping_add(1);
                     if let Some(condition) = condition {
@@ -1395,9 +1162,14 @@ impl RuleTree {
                 }
                 ParsedRule::CustomHighlight { name, color } => {
                     if condition.is_none()
-                        && let Some(color) = color
+                        && let Some((color, important)) = color
                     {
-                        self.custom_highlight_styles.insert(name, color);
+                        self.highlight_log.push(Registration::new(
+                            (name, color, important),
+                            origin,
+                            None,
+                            None,
+                        ));
                     }
                 }
                 ParsedRule::Page(selector, body) => {
@@ -1417,7 +1189,7 @@ impl RuleTree {
                         bleed_declarations,
                         margin_box_rules,
                         source_order: page_order,
-                        layer_order,
+                        layer: None,
                         origin,
                         media_condition: condition.cloned(),
                     });
@@ -1433,17 +1205,30 @@ impl RuleTree {
                     let mut sink = GroupSink {
                         style_rules: &mut self.style_rules,
                         media_rules: &mut self.media_rules,
-                        custom_highlight_styles: &mut self.custom_highlight_styles,
+                        highlight_log: &mut self.highlight_log,
                         rules: &mut self.rules,
                         style_order: &mut style_order,
                         rule_order: &mut rule_order,
                         page_rules: &mut self.page_rules,
                         page_order: &mut page_order,
-                        layer_order,
+                        layer: None,
+                        layers: &mut self.layers,
                         origin,
                         registrations: &mut registrations,
                     };
                     add_group(local_condition, items, condition, false, &mut sink);
+                    push_at_rule(
+                        &mut self.opaque_at_rules,
+                        &mut self.rules,
+                        record,
+                        origin,
+                        &mut rule_order,
+                    );
+                }
+                ParsedRule::LayerStatement(record, names) => {
+                    for name in names {
+                        self.layers.declare(None, Some(&name), origin, condition);
+                    }
                     push_at_rule(
                         &mut self.opaque_at_rules,
                         &mut self.rules,
@@ -1463,7 +1248,7 @@ impl RuleTree {
                 }
                 ParsedRule::Descriptor { record, rule } => {
                     if let Some(rule) = rule {
-                        registrations.register(*rule, origin, condition);
+                        registrations.register(*rule, origin, condition, None);
                     }
                     if let Some(record) = record {
                         push_at_rule(
@@ -1494,12 +1279,14 @@ impl DescriptorSink<'_> {
         rule: DescriptorRule,
         origin: Origin,
         condition: Option<&MediaCondition>,
+        layer: Option<LayerId>,
     ) {
         match rule {
             DescriptorRule::FontFace(rule) => register_rule(
                 rule,
                 origin,
                 condition,
+                layer,
                 self.font_faces,
                 self.font_face_log,
                 FontFaceRegistry::insert_with_origin,
@@ -1508,6 +1295,7 @@ impl DescriptorSink<'_> {
                 rule,
                 origin,
                 condition,
+                layer,
                 self.counter_styles,
                 self.counter_style_log,
                 CounterStyleRegistry::insert_with_origin,
@@ -1520,6 +1308,7 @@ fn register_rule<R: Clone, Registry>(
     rule: R,
     origin: Origin,
     condition: Option<&MediaCondition>,
+    layer: Option<LayerId>,
     registry: &mut Registry,
     log: &mut Vec<Registration<R>>,
     insert: fn(&mut Registry, R, Origin),
@@ -1527,7 +1316,7 @@ fn register_rule<R: Clone, Registry>(
     if condition.is_none() {
         insert(registry, rule.clone(), origin);
     }
-    log.push(Registration::new(rule, origin, condition));
+    log.push(Registration::new(rule, origin, condition, layer));
 }
 
 /// One registry insertion, kept so a registry can be rebuilt for a media
@@ -1536,14 +1325,21 @@ struct Registration<R> {
     rule: R,
     origin: Origin,
     condition: Option<MediaCondition>,
+    layer: Option<LayerId>,
 }
 
 impl<R> Registration<R> {
-    fn new(rule: R, origin: Origin, condition: Option<&MediaCondition>) -> Self {
+    fn new(
+        rule: R,
+        origin: Origin,
+        condition: Option<&MediaCondition>,
+        layer: Option<LayerId>,
+    ) -> Self {
         Self {
             rule,
             origin,
             condition: condition.cloned(),
+            layer,
         }
     }
 }
@@ -1578,6 +1374,33 @@ fn replay<R: Clone, Registry: Clone>(
                 registration.origin,
             );
         }
+    }
+    registry
+}
+
+fn replay_layered<R: Clone, Registry>(
+    log: &[Registration<R>],
+    context: Option<&MediaContext>,
+    order: &LayerOrder<'_>,
+    new: fn() -> Registry,
+    insert: fn(&mut Registry, R, Origin),
+) -> Registry {
+    let mut active: Vec<_> = log
+        .iter()
+        .filter(|registration| match (&registration.condition, context) {
+            (None, _) => true,
+            (Some(condition), Some(context)) => condition.matches(context),
+            (Some(_), None) => false,
+        })
+        .collect();
+    active.sort_by_key(|registration| order.rank(registration.layer, registration.origin));
+    let mut registry = new();
+    for registration in active {
+        insert(
+            &mut registry,
+            registration.rule.clone(),
+            registration.origin,
+        );
     }
     registry
 }
@@ -2126,6 +1949,7 @@ fn push_at_rule(
 enum GroupCondition {
     Media(Option<MediaCondition>),
     Supports(bool),
+    Layer(Vec<LayerName>),
 }
 
 /// Executable group content, parsed with top-level rule error recovery.
@@ -2133,17 +1957,19 @@ enum GroupItem {
     Style(StyleRule),
     CustomHighlight {
         name: String,
-        color: Option<CssColor>,
+        color: Option<(HighlightColor, bool)>,
     },
     Page(PageSelector, PageBlockBody),
     Group(GroupCondition, Vec<GroupItem>),
     Descriptor(Box<DescriptorRule>),
+    LayerStatement(Vec<LayerName>),
 }
 
 enum GroupItemPrelude {
     Group(GroupCondition),
     Page(PageSelector),
     Descriptor(DescriptorPrelude),
+    Layer(Vec<LayerName>),
 }
 
 enum DescriptorPrelude {
@@ -2243,6 +2069,9 @@ impl<'i> cssparser::AtRuleParser<'i> for GroupRuleParser<'_, '_> {
         {
             return Ok(GroupItemPrelude::Group(condition));
         }
+        if name.eq_ignore_ascii_case("layer") {
+            return parse_layer_names(input).map(GroupItemPrelude::Layer);
+        }
         if name.eq_ignore_ascii_case("page") {
             return parse_page_prelude(input).map(GroupItemPrelude::Page);
         }
@@ -2252,6 +2081,19 @@ impl<'i> cssparser::AtRuleParser<'i> for GroupRuleParser<'_, '_> {
         Err(input.new_custom_error(()))
     }
 
+    fn rule_without_block(
+        &mut self,
+        prelude: Self::Prelude,
+        _start: &cssparser::ParserState,
+    ) -> Result<Self::AtRule, ()> {
+        match prelude {
+            GroupItemPrelude::Layer(names) if !names.is_empty() => {
+                Ok(GroupItem::LayerStatement(names))
+            }
+            _ => Err(()),
+        }
+    }
+
     fn parse_block<'t>(
         &mut self,
         prelude: Self::Prelude,
@@ -2259,6 +2101,23 @@ impl<'i> cssparser::AtRuleParser<'i> for GroupRuleParser<'_, '_> {
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::AtRule, cssparser::ParseError<'i, ()>> {
         let item = match prelude {
+            GroupItemPrelude::Layer(names) => {
+                if names.len() > 1 {
+                    return Err(input.new_custom_error(()));
+                }
+                let items = if self.depth < MAX_OPAQUE_RULE_NESTING_DEPTH {
+                    parse_group_items(
+                        input,
+                        self.source,
+                        self.depth + 1,
+                        self.namespaces,
+                        self.supports_context,
+                    )
+                } else {
+                    Vec::new()
+                };
+                GroupItem::Group(GroupCondition::Layer(names), items)
+            }
             GroupItemPrelude::Group(condition) => {
                 let items = if self.depth < MAX_OPAQUE_RULE_NESTING_DEPTH {
                     parse_group_items(
@@ -2303,14 +2162,25 @@ fn parse_qualified_prelude<'i>(
     .map_err(|_| input.new_custom_error(()))
 }
 
-fn custom_highlight_color(declarations: &[Declaration]) -> Option<CssColor> {
+/// A missing paint requests layer rollback.
+#[derive(Clone, Copy)]
+struct HighlightColor(Option<CssColor>);
+
+fn custom_highlight_color(declarations: &[Declaration]) -> Option<(HighlightColor, bool)> {
     declarations
         .iter()
-        .rev()
-        .find_map(|declaration| match declaration.value() {
-            PropertyValue::BackgroundColor(color) => Some(*color),
+        .enumerate()
+        .filter_map(|(index, declaration)| match declaration.value() {
+            PropertyValue::BackgroundColor(color) => {
+                Some((declaration.important, index, HighlightColor(Some(*color))))
+            }
+            PropertyValue::AllRevertLayer => {
+                Some((declaration.important, index, HighlightColor(None)))
+            }
             _ => None,
         })
+        .max_by_key(|(important, index, _)| (*important, *index))
+        .map(|(important, _, color)| (color, important))
 }
 
 impl<'i> cssparser::QualifiedRuleParser<'i> for GroupRuleParser<'_, '_> {
@@ -2344,6 +2214,7 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for GroupRuleParser<'_, '_> {
                 declarations,
                 source_order: 0,
                 origin: Origin::Author,
+                layer: None,
             })),
             QualifiedPrelude::CustomHighlight(name) => Ok(GroupItem::CustomHighlight {
                 name,
@@ -2357,13 +2228,14 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for GroupRuleParser<'_, '_> {
 struct GroupSink<'a, 'r> {
     style_rules: &'a mut Vec<StyleRule>,
     media_rules: &'a mut Vec<MediaRule>,
-    custom_highlight_styles: &'a mut HashMap<String, CssColor>,
+    highlight_log: &'a mut Vec<Registration<(String, HighlightColor, bool)>>,
     rules: &'a mut Vec<CssRule>,
     style_order: &'a mut u32,
     rule_order: &'a mut u32,
     page_rules: &'a mut Vec<PageRule>,
     page_order: &'a mut u32,
-    layer_order: u32,
+    layer: Option<LayerId>,
+    layers: &'a mut LayerTable,
     origin: Origin,
     registrations: &'a mut DescriptorSink<'r>,
 }
@@ -2376,6 +2248,15 @@ fn add_group(
     sink: &mut GroupSink<'_, '_>,
 ) {
     match local {
+        GroupCondition::Layer(names) => {
+            let parent = sink.layer;
+            sink.layer = Some(
+                sink.layers
+                    .declare(parent, names.first(), sink.origin, condition),
+            );
+            add_group_items(items, condition, in_media, sink);
+            sink.layer = parent;
+        }
         GroupCondition::Supports(true) => add_group_items(items, condition, in_media, sink),
         GroupCondition::Supports(false) | GroupCondition::Media(None) => {}
         GroupCondition::Media(Some(local)) => {
@@ -2405,6 +2286,7 @@ fn add_group_items(
                 }
                 rule.source_order = *sink.style_order;
                 rule.origin = sink.origin;
+                rule.layer = sink.layer;
                 *sink.style_order = sink.style_order.wrapping_add(1);
                 if let Some(condition) = condition {
                     sink.media_rules.push(MediaRule {
@@ -2425,14 +2307,26 @@ fn add_group_items(
             GroupItem::CustomHighlight { name, color } => {
                 // The highlight map has no media-qualified view yet.
                 if condition.is_none()
-                    && let Some(color) = color
+                    && let Some((color, important)) = color
                 {
-                    sink.custom_highlight_styles.insert(name, color);
+                    sink.highlight_log.push(Registration::new(
+                        (name, color, important),
+                        sink.origin,
+                        None,
+                        sink.layer,
+                    ));
                 }
             }
             GroupItem::Group(local, items) => add_group(local, items, condition, in_media, sink),
             GroupItem::Descriptor(rule) => {
-                sink.registrations.register(*rule, sink.origin, condition)
+                sink.registrations
+                    .register(*rule, sink.origin, condition, sink.layer)
+            }
+            GroupItem::LayerStatement(names) => {
+                for name in names {
+                    sink.layers
+                        .declare(sink.layer, Some(&name), sink.origin, condition);
+                }
             }
             GroupItem::Page(selector, body) => {
                 let PageBlockBody {
@@ -2451,7 +2345,7 @@ fn add_group_items(
                     bleed_declarations,
                     margin_box_rules,
                     source_order: *sink.page_order,
-                    layer_order: sink.layer_order,
+                    layer: sink.layer,
                     origin: sink.origin,
                     media_condition: condition.cloned(),
                 });
@@ -2476,6 +2370,11 @@ fn add_group_items(
 /// component-value prelude so a later semantic pass can reinterpret it.
 enum ParsedAtRulePrelude {
     Page(PageSelector),
+    Layer {
+        name: String,
+        prelude: String,
+        names: Vec<LayerName>,
+    },
     Namespace {
         prefix: Option<Atom>,
         uri: Atom,
@@ -2507,10 +2406,11 @@ enum ParsedRule {
     Style(SelectorList<RaikiriSelectorImpl>, Vec<Declaration>),
     CustomHighlight {
         name: String,
-        color: Option<CssColor>,
+        color: Option<(HighlightColor, bool)>,
     },
     Page(PageSelector, PageBlockBody),
     OpaqueAtRule(AtRuleRecord),
+    LayerStatement(AtRuleRecord, Vec<LayerName>),
     /// A conditional group: its inspection record, condition, and executable content.
     Group(AtRuleRecord, GroupCondition, Vec<GroupItem>),
     Descriptor {
@@ -2750,6 +2650,17 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
         if name.eq_ignore_ascii_case("page") {
             return parse_page_prelude(input).map(ParsedAtRulePrelude::Page);
         }
+        if name.eq_ignore_ascii_case("layer") {
+            let start = input.position();
+            if let Ok(names) = input.try_parse(parse_layer_names) {
+                consume_raw_component_values(input, self.source)?;
+                return Ok(ParsedAtRulePrelude::Layer {
+                    name: name.to_string(),
+                    prelude: input.slice_from(start).to_owned(),
+                    names,
+                });
+            }
+        }
         if name.eq_ignore_ascii_case("namespace") {
             let start = input.position();
             let (prefix, uri) = parse_namespace_prelude(input)?;
@@ -2800,6 +2711,26 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
     ) -> Result<Self::AtRule, ()> {
         match prelude {
             ParsedAtRulePrelude::Page(_) => Err(()),
+            ParsedAtRulePrelude::Layer {
+                name,
+                prelude,
+                names,
+            } => {
+                if names.is_empty() {
+                    return Err(());
+                }
+                Ok(ParsedRule::LayerStatement(
+                    AtRuleRecord {
+                        name,
+                        prelude,
+                        body: AtRuleBody::Statement,
+                        children: Vec::new(),
+                        source_order: 0,
+                        origin: Origin::Author,
+                    },
+                    names,
+                ))
+            }
             ParsedAtRulePrelude::Namespace {
                 prefix,
                 uri,
@@ -2838,6 +2769,40 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::AtRule, cssparser::ParseError<'i, Self::Error>> {
         match prelude {
+            ParsedAtRulePrelude::Layer {
+                name,
+                prelude,
+                names,
+            } => {
+                if names.len() > 1 {
+                    return Err(input.new_custom_error(()));
+                }
+                let start = input.position();
+                let items = parse_group_items(
+                    input,
+                    self.source,
+                    0,
+                    self.namespaces,
+                    self.supports_context,
+                );
+                let body = input.slice_from(start).to_owned();
+                if !nested_block_has_closing_brace(self.source, input) {
+                    return Err(input.new_custom_error(()));
+                }
+                let children = parse_nested_rule_nodes(&body, self.opaque_body_budget);
+                Ok(ParsedRule::Group(
+                    AtRuleRecord {
+                        name,
+                        prelude,
+                        body: AtRuleBody::Block(body),
+                        children,
+                        source_order: 0,
+                        origin: Origin::Author,
+                    },
+                    GroupCondition::Layer(names),
+                    items,
+                ))
+            }
             ParsedAtRulePrelude::Page(selector) => {
                 // `@page` body = declaration list + `size` / `marks` / `bleed`
                 // descriptors + nested margin-box at-rules — parsed by a

@@ -104,6 +104,120 @@ pub struct PageMarginBoxCascadeResult {
     pub origin: Origin,
     /// Enclosing page-selector specificity `(f, g, h)`.
     pub specificity: (u32, u32, u32),
+    /// Normal layer rank evaluated for the enclosing page media context.
+    layer_order: u32,
+}
+
+impl PageMarginBoxCascadeResult {
+    /// Cascade matching rules for one margin-box slot, preserving declaration
+    /// importance, origin, layer, page-selector specificity and source order.
+    /// Returns `None` when no rule targets the slot.
+    pub fn cascade_matching(rules: &[Self], slot: PageMarginBoxSlot) -> Option<Self> {
+        let mut merged = rules.iter().rev().find(|rule| rule.slot == slot)?.clone();
+        let candidates: Vec<_> = rules
+            .iter()
+            .enumerate()
+            .filter(|(_, rule)| rule.slot == slot)
+            .flat_map(|(rule_index, rule)| {
+                rule.declarations
+                    .iter()
+                    .enumerate()
+                    .map(move |(decl_index, decl)| (rule_index, decl_index, rule, decl))
+            })
+            .collect();
+        let mut winners = HashMap::new();
+        let mut has_rollback = false;
+        for (index, &(rule_index, decl_index, rule, decl)) in candidates.iter().enumerate() {
+            if matches!(decl.value, PropertyValue::AllRevertLayer) {
+                has_rollback = true;
+                continue;
+            }
+            let name = match &decl.value {
+                PropertyValue::CustomProperty(custom) => {
+                    has_rollback |= crate::cascade::custom_property_rollback(&custom.value)
+                        != crate::cascade::rollback::Rollback::None;
+                    Some(custom.name.clone())
+                }
+                _ => None,
+            };
+            let layer = crate::layer::LayerPosition {
+                attached: false,
+                rank: rule.layer_order,
+            };
+            let priority = (
+                cascade_rank(rule.origin, decl.important),
+                layer.priority(decl.important),
+                rule.specificity,
+                rule.source_order,
+                rule_index,
+                decl_index,
+            );
+            let entry = winners
+                .entry((decl.value.key(), name))
+                .or_insert((priority, index));
+            if priority >= entry.0 {
+                *entry = (priority, index);
+            }
+        }
+        if has_rollback {
+            winners.retain(|(key, name), winner| {
+                if matches!(key, PropertyKey::Direction | PropertyKey::UnicodeBidi) {
+                    return true;
+                }
+                let selected = crate::cascade::rollback::select_layered_winner(
+                    &candidates,
+                    |_, &(rule_index, decl_index, rule, decl)| {
+                        let same_property = decl.value.key() == *key
+                            && match (&decl.value, name) {
+                                (PropertyValue::CustomProperty(custom), Some(name)) => {
+                                    custom.name == *name
+                                }
+                                _ => true,
+                            };
+                        let reset_all = *key != PropertyKey::Custom
+                            && matches!(decl.value, PropertyValue::AllRevertLayer);
+                        if !same_property && !reset_all {
+                            return None;
+                        }
+                        let layer = crate::layer::LayerPosition {
+                            attached: false,
+                            rank: rule.layer_order,
+                        };
+                        Some((
+                            (
+                                cascade_rank(rule.origin, decl.important),
+                                layer.priority(decl.important),
+                                rule.specificity,
+                                rule.source_order,
+                                rule_index,
+                                decl_index,
+                            ),
+                            rule.origin,
+                            layer,
+                            decl.important,
+                            crate::cascade::rollback::rollback_kind(&decl.value),
+                        ))
+                    },
+                );
+                if let Some(index) = selected {
+                    winner.1 = index;
+                    true
+                } else {
+                    false
+                }
+            });
+        }
+        let mut winners: Vec<_> = winners
+            .into_values()
+            .map(|(_, index)| candidates[index])
+            .collect();
+        winners.sort_unstable_by_key(|(rule_index, decl_index, _, _)| (*rule_index, *decl_index));
+        merged.declarations = winners
+            .into_iter()
+            .map(|(_, _, _, decl)| decl.clone())
+            .collect();
+        Some(merged)
+    }
 }
 
 /// Winning values from an `@page` cascade pass.
@@ -572,12 +686,8 @@ pub enum PageInheritance<'a> {
 /// let result = cascade_page(&tree, &query, PageInheritance::LegacyInitialValues);
 /// // result.declarations() contains one entry: PropertyKey::Color -> red
 /// ```
-fn page_layer_rank(rule: &PageRule, important: bool) -> u32 {
-    if important {
-        u32::MAX.saturating_sub(rule.layer_order)
-    } else {
-        rule.layer_order
-    }
+fn page_layer_rank(rule: &PageRule, important: bool, layers: &crate::layer::LayerOrder<'_>) -> u32 {
+    layers.priority(rule.layer, rule.origin, important)
 }
 
 /// Page and margin boxes are laid out in horizontal-tb, so their logical
@@ -624,6 +734,7 @@ pub fn cascade_page_with_media_context(
     inheritance: PageInheritance<'_>,
     media_context: &MediaContext,
 ) -> PageCascadeResult {
+    let layers = rule_tree.layer_order(media_context);
     // Candidate: (value, important, origin, specificity, source_order).
     // Shape mirrors `cascade::CascadedDecl` per the sibling convention, with
     // `PageSpecificity` in place of `selectors`-crate `Specificity`.
@@ -662,7 +773,7 @@ pub fn cascade_page_with_media_context(
             for (index, decl) in rule.size_declarations.iter().enumerate() {
                 let candidate = (
                     cascade_rank(rule.origin, decl.important),
-                    page_layer_rank(rule, decl.important),
+                    page_layer_rank(rule, decl.important, &layers),
                     spec,
                     rule.source_order,
                     index as u32,
@@ -678,7 +789,7 @@ pub fn cascade_page_with_media_context(
             for (index, decl) in rule.marks_declarations.iter().enumerate() {
                 let candidate = (
                     cascade_rank(rule.origin, decl.important),
-                    page_layer_rank(rule, decl.important),
+                    page_layer_rank(rule, decl.important, &layers),
                     spec,
                     rule.source_order,
                     index as u32,
@@ -694,7 +805,7 @@ pub fn cascade_page_with_media_context(
             for (index, decl) in rule.bleed_declarations.iter().enumerate() {
                 let candidate = (
                     cascade_rank(rule.origin, decl.important),
-                    page_layer_rank(rule, decl.important),
+                    page_layer_rank(rule, decl.important, &layers),
                     spec,
                     rule.source_order,
                     index as u32,
@@ -721,6 +832,7 @@ pub fn cascade_page_with_media_context(
                     source_order: rule.source_order,
                     origin: rule.origin,
                     specificity: (spec.f, spec.g, spec.h),
+                    layer_order: layers.rank(rule.layer, rule.origin),
                 });
             }
             for decl in &rule.declarations {
@@ -729,7 +841,7 @@ pub fn cascade_page_with_media_context(
                         custom.clone(),
                         decl.important,
                         rule.origin,
-                        page_layer_rank(rule, decl.important),
+                        page_layer_rank(rule, decl.important, &layers),
                         spec,
                         rule.source_order,
                     ));
@@ -746,7 +858,7 @@ pub fn cascade_page_with_media_context(
                         horizontal_preferred_size(d.value),
                         d.important,
                         rule.origin,
-                        page_layer_rank(rule, d.important),
+                        page_layer_rank(rule, d.important, &layers),
                         spec,
                         rule.source_order,
                     ));
@@ -760,28 +872,63 @@ pub fn cascade_page_with_media_context(
     // `PropertyKey::Custom` sentinel only for the specified-layer shape).
     let mut custom_best: HashMap<SmolStr, (u8, u32, PageSpecificity, u32, CustomProperty)> =
         HashMap::new();
-    for (value, important, origin, layer, spec, order) in custom_candidates {
+    for (value, important, origin, layer, spec, order) in &custom_candidates {
         let name = value.name.clone();
-        let rank = cascade_rank(origin, important);
+        let rank = cascade_rank(*origin, *important);
         let replace = custom_best.get(&name).is_none_or(|existing| {
-            (rank, layer, spec, order) >= (existing.0, existing.1, existing.2, existing.3)
+            (rank, *layer, *spec, *order) >= (existing.0, existing.1, existing.2, existing.3)
         });
         if replace {
-            custom_best.insert(name, (rank, layer, spec, order, value));
+            custom_best.insert(name, (rank, *layer, *spec, *order, value.clone()));
         }
     }
-    let custom_local: HashMap<SmolStr, SmolStr> = custom_best
-        .into_iter()
-        .map(|(name, (_, _, _, _, value))| (name, value.value))
-        .collect();
+    let custom_local = if custom_best.values().any(|(_, _, _, _, value)| {
+        crate::cascade::custom_property_rollback(&value.value)
+            != crate::cascade::rollback::Rollback::None
+    }) {
+        crate::cascade::select_custom_rollback_values(custom_candidates.iter().enumerate().map(
+            |(index, (value, important, origin, priority, spec, order))| {
+                (
+                    value,
+                    (
+                        cascade_rank(*origin, *important),
+                        *priority,
+                        *spec,
+                        *order,
+                        index,
+                    ),
+                    *origin,
+                    crate::layer::LayerPosition {
+                        attached: false,
+                        rank: if *important {
+                            u32::MAX - *priority
+                        } else {
+                            *priority
+                        },
+                    },
+                    *important,
+                )
+            },
+        ))
+    } else {
+        custom_best
+            .into_iter()
+            .map(|(name, (_, _, _, _, value))| (name, value.value))
+            .collect()
+    };
 
     // Winner selection — sibling arm to `cascade::pick_winners`.
     let mut best: HashMap<PropertyKey, (u8, u32, PageSpecificity, u32, PropertyValue)> =
         HashMap::new();
-    for (value, important, origin, layer, spec, order) in candidates {
-        let rank = cascade_rank(origin, important);
+    let mut has_rollback = false;
+    for (value, important, origin, layer, spec, order) in &candidates {
+        if matches!(value, PropertyValue::AllRevertLayer) {
+            has_rollback = true;
+            continue;
+        }
+        let rank = cascade_rank(*origin, *important);
         let key = value.key();
-        let candidate = (rank, layer, spec, order, value);
+        let candidate = (rank, *layer, *spec, *order, value.clone());
         match best.get(&key) {
             Some(existing) => {
                 if page_beats(&candidate, existing) {
@@ -792,6 +939,56 @@ pub fn cascade_page_with_media_context(
                 best.insert(key, candidate);
             }
         }
+    }
+
+    if has_rollback {
+        best.retain(|key, winner| {
+            if matches!(key, PropertyKey::Direction | PropertyKey::UnicodeBidi) {
+                return true;
+            }
+            let selected = crate::cascade::rollback::select_layered_winner(
+                &candidates,
+                |idx, (value, important, origin, priority, spec, order)| {
+                    if value.key() != *key && !matches!(value, PropertyValue::AllRevertLayer) {
+                        return None;
+                    }
+                    let layer = crate::layer::LayerPosition {
+                        attached: false,
+                        rank: if *important {
+                            u32::MAX - *priority
+                        } else {
+                            *priority
+                        },
+                    };
+                    Some((
+                        (
+                            cascade_rank(*origin, *important),
+                            *priority,
+                            *spec,
+                            *order,
+                            idx,
+                        ),
+                        *origin,
+                        layer,
+                        *important,
+                        crate::cascade::rollback::rollback_kind(value),
+                    ))
+                },
+            );
+            if let Some(index) = selected {
+                let (value, important, origin, layer, spec, order) = &candidates[index];
+                *winner = (
+                    cascade_rank(*origin, *important),
+                    *layer,
+                    *spec,
+                    *order,
+                    value.clone(),
+                );
+                true
+            } else {
+                false
+            }
+        });
     }
 
     // Step 3 (phase 2): resolve winners against the page context's inheritance

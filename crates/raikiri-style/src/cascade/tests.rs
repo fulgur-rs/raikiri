@@ -1,3 +1,5 @@
+mod layer_tests;
+
 use super::*;
 use crate::cascade::test_support::*;
 use crate::ruletree::{Origin, build_rule_tree};

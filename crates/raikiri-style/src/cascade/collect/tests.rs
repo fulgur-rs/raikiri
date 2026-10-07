@@ -579,6 +579,7 @@ fn pseudo_element_selector_specificity_participates_in_cascade_ranking() {
 fn pick_winners_panics_on_non_empty_scratch_buffer() {
     let mut winners: Vec<Option<RankedDecl>> = vec![Some(RankedDecl {
         rank: 0,
+        layer_priority: (false, u32::MAX),
         specificity: 0,
         source_order: 0,
         idx: 0,

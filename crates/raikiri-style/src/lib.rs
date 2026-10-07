@@ -51,6 +51,8 @@ pub use property::{
     VisualBox, WordSpaceTransform, WordSpacingValue,
 };
 
+mod layer;
+
 pub mod rule;
 pub use rule::{Declaration, StyleRule};
 

@@ -264,6 +264,10 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
 
     // Dispatch property names using ASCII-lowercase comparisons.
     match normalized_name.as_str() {
+        "all" => {
+            input.expect_ident_matching("revert-layer").ok()?;
+            Some(PropertyValue::AllRevertLayer)
+        }
         "color" => parse_color(input).map(PropertyValue::Color),
         // CSS Backgrounds 3 §2.2 <https://www.w3.org/TR/css-backgrounds-3/#background-color>
         // "Base Color: the background-color property". Its value grammar is

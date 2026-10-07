@@ -124,6 +124,8 @@ pub struct StyleRule {
     pub source_order: u32,
     /// The cascade origin to which this rule belongs.
     pub origin: crate::ruletree::Origin,
+    /// Stable layer identity; its precedence depends on the media context.
+    pub(crate) layer: Option<crate::layer::LayerId>,
 }
 
 impl StyleRule {
@@ -255,7 +257,8 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         // No longhand variant exists for expansion: push one declaration unchanged.
         // Do not collapse this into `_` (see "Why there is no wildcard arm (contract)" above).
         // Adding a variant here asserts that it has no expansion target.
-        PropertyValue::Grid(_)
+        PropertyValue::AllRevertLayer
+        | PropertyValue::Grid(_)
         | PropertyValue::GridArea(_)
         | PropertyValue::Color(_)
         | PropertyValue::BackgroundColor(_)

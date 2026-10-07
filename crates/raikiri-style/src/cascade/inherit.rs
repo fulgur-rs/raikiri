@@ -537,126 +537,69 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
 // The winner application already groups several optional cascade side channels;
 // the inherited computed values add one more required input for `inherit`
 // resolution without changing that staging boundary.
-/// Find the origin-rollback winner for `revert` / `revert-layer` on one border longhand.
-///
-/// CSS Cascading 4 §7.3.4 "The revert keyword" rolls back to the previous origin:
-/// an Author `revert` uses the best User (or UA if no User) winner for the same
-/// [`PropertyKey`], ignoring all Author declarations for that property. CSS Cascading 5
-/// §6.5 carves out presentational hints for `revert` only ("it is considered part of
-/// the author origin", not for `revert-layer`): an Author `revert` therefore also
-/// ignores [`Origin::AuthorPresentationalHint`] candidates. This crate stores no style
-/// layers for element rules, so `revert-layer` falls back to the same origin rollback
-/// (see [`CssWideKeyword`]).
-///
-/// `winner_rank` / `winner_origin` come from the `revert` declaration that won
-/// [`pick_winners`]. Among `candidates` with the same `key`, consider only those with
-/// strictly lower [`cascade_rank`] (any lower origin tier, or the same origin tier at
-/// lower importance when `!important` is involved) and, for `revert` from Author,
-/// exclude both Author and presentational-hint origins per the carve-out above.
-/// Pick the best among the survivors with the same ordering [`pick_winners`] uses
-/// (rank, specificity, source order). Candidates that are themselves `revert` /
-/// `revert-layer` markers are skipped to avoid recursion; when no survivor exists,
-/// the caller falls back to the initial value (see [`INITIAL_BORDER`]).
-///
-/// Returns the rollback [`PropertyValue`] still in specified form (possibly
-/// [`PropertyValue::Deferred`], which the caller resolves). Returns `None` when no
-/// lower-origin winner exists.
+/// Find a border longhand's surviving value after origin or layer rollback.
 fn find_border_rollback(
     candidates: &[CascadedDecl],
     key: crate::property::PropertyKey,
-    winner_rank: u8,
-    winner_origin: Origin,
+    winner_index: usize,
     keyword: CssWideKeyword,
+    custom_properties: &CustomPropertyEnvironment,
 ) -> Option<PropertyValue> {
-    use crate::cascade::collect::RankedDecl;
-    let is_revert = matches!(keyword, CssWideKeyword::Revert);
-    let mut best: Option<(RankedDecl, PropertyValue)> = None;
-    for (idx, (value, important, origin, spec, order)) in candidates.iter().enumerate() {
-        if value.key() != key {
-            continue;
-        }
-        // Skip other revert markers to avoid recursion.
-        if matches!(
-            value,
-            PropertyValue::BorderTopWidthCssWide(
-                CssWideKeyword::Revert | CssWideKeyword::RevertLayer
-            ) | PropertyValue::BorderRightWidthCssWide(
-                CssWideKeyword::Revert | CssWideKeyword::RevertLayer
-            ) | PropertyValue::BorderBottomWidthCssWide(
-                CssWideKeyword::Revert | CssWideKeyword::RevertLayer
-            ) | PropertyValue::BorderLeftWidthCssWide(
-                CssWideKeyword::Revert | CssWideKeyword::RevertLayer
-            ) | PropertyValue::BorderTopStyleCssWide(
-                CssWideKeyword::Revert | CssWideKeyword::RevertLayer
-            ) | PropertyValue::BorderRightStyleCssWide(
-                CssWideKeyword::Revert | CssWideKeyword::RevertLayer
-            ) | PropertyValue::BorderBottomStyleCssWide(
-                CssWideKeyword::Revert | CssWideKeyword::RevertLayer
-            ) | PropertyValue::BorderLeftStyleCssWide(
-                CssWideKeyword::Revert | CssWideKeyword::RevertLayer
-            ) | PropertyValue::BorderTopColorCssWide(
-                CssWideKeyword::Revert | CssWideKeyword::RevertLayer
-            ) | PropertyValue::BorderRightColorCssWide(
-                CssWideKeyword::Revert | CssWideKeyword::RevertLayer
-            ) | PropertyValue::BorderBottomColorCssWide(
-                CssWideKeyword::Revert | CssWideKeyword::RevertLayer
-            ) | PropertyValue::BorderLeftColorCssWide(
-                CssWideKeyword::Revert | CssWideKeyword::RevertLayer
-            )
-        ) {
-            continue;
-        }
-        let rank = cascade_rank(*origin, *important);
-        if rank >= winner_rank {
-            continue;
-        }
-        // `revert` carve-out: Author rollback also ignores presentational hints.
-        if is_revert
-            && matches!(
-                winner_origin,
-                Origin::Author | Origin::AuthorPresentationalHint
-            )
-            && matches!(origin, Origin::Author | Origin::AuthorPresentationalHint)
-        {
-            continue;
-        }
-        let candidate = RankedDecl {
-            rank,
-            specificity: *spec,
-            source_order: *order,
-            idx,
-        };
-        let better = match &best {
-            None => true,
-            Some((existing, _)) => {
-                use crate::cascade::collect::beats as beats_fn;
-                beats_fn(candidate, *existing)
+    let index = super::rollback::select_layered_winner(
+        candidates,
+        |idx, (value, important, origin, spec, order, layer)| {
+            if value.key() != key && !matches!(value, PropertyValue::AllRevertLayer) {
+                return None;
             }
-        };
-        if better {
-            best = Some((candidate, value.clone()));
-        }
-    }
-    best.map(|(_, v)| v)
+            Some((
+                (
+                    cascade_rank(*origin, *important),
+                    layer.priority(*important),
+                    *spec,
+                    *order,
+                    idx,
+                ),
+                *origin,
+                *layer,
+                *important,
+                if idx == winner_index {
+                    if keyword == CssWideKeyword::Revert {
+                        super::rollback::Rollback::Origin
+                    } else {
+                        super::rollback::Rollback::Layer
+                    }
+                } else if let PropertyValue::Deferred(deferred) = value {
+                    resolve_deferred_value(deferred, custom_properties)
+                        .as_ref()
+                        .map_or(
+                            super::rollback::Rollback::None,
+                            super::rollback::rollback_kind,
+                        )
+                } else {
+                    super::rollback::rollback_kind(value)
+                },
+            ))
+        },
+    )?;
+    Some(candidates[index].0.clone())
 }
 
 /// Resolve one border longhand CSS-wide marker to its concrete specified value.
 ///
 /// `inherited` supplies the parent computed border for `Inherit`. `INITIAL_BORDER`
 /// supplies `Initial` and, because all `border-*` are non-inherited, `Unset`.
-/// `Revert` / `RevertLayer` use [`find_border_rollback`]; when no lower-origin winner
+/// `Revert` / `RevertLayer` use [`find_border_rollback`]; when no surviving winner
 /// exists they fall back to [`INITIAL_BORDER`]. A rollback winner that is
 /// [`PropertyValue::Deferred`] is resolved through `custom_properties`; a rollback
 /// winner that is itself a CSS-wide marker (only `Inherit` / `Initial` / `Unset`
-/// can survive [`find_border_rollback`]'s revert skip) is resolved recursively one
+/// can survive [`find_border_rollback`]'s rollback filters) is resolved recursively one
 /// level without further rollback.
 fn resolve_border_css_wide(
     keyword: CssWideKeyword,
     key: crate::property::PropertyKey,
     inherited: &ComputedValues,
     candidates: &[CascadedDecl],
-    winner_rank: u8,
-    winner_origin: Origin,
+    winner: RankedDecl,
     custom_properties: &CustomPropertyEnvironment,
 ) -> Option<PropertyValue> {
     let parent_side = |side: &crate::resolve::ComputedBorder| -> Border {
@@ -730,7 +673,7 @@ fn resolve_border_css_wide(
         CssWideKeyword::Initial | CssWideKeyword::Unset => Some(pick_field(initial_border())),
         CssWideKeyword::Revert | CssWideKeyword::RevertLayer => {
             let rollback =
-                find_border_rollback(candidates, key, winner_rank, winner_origin, keyword)?;
+                find_border_rollback(candidates, key, winner.idx, keyword, custom_properties)?;
             // Resolve one level: Deferred needs custom-property substitution;
             // a surviving Inherit/Initial/Unset marker resolves without further rollback.
             match rollback {
@@ -828,8 +771,6 @@ pub(crate) fn apply_winners(
                     _ => {}
                 }
             }
-            let winner_rank = winner.rank;
-            let winner_origin = candidates[winner.idx].2;
             let winner_key = value.key();
             let value = match value {
                 PropertyValue::BorderRadiusInherit => Some(PropertyValue::BorderRadius(
@@ -883,8 +824,7 @@ pub(crate) fn apply_winners(
                             winner_key,
                             inherited,
                             candidates,
-                            winner_rank,
-                            winner_origin,
+                            winner,
                             custom_properties,
                         ),
                         Some(PropertyValue::TextDecorationThicknessInherit) => {
@@ -911,8 +851,7 @@ pub(crate) fn apply_winners(
                     winner_key,
                     inherited,
                     candidates,
-                    winner_rank,
-                    winner_origin,
+                    winner,
                     custom_properties,
                 ),
                 _ => Some(value.clone()),
@@ -921,6 +860,7 @@ pub(crate) fn apply_winners(
             // time: it still decides which of a physical and a logical size wins.
             let rank = Some((
                 winner.rank,
+                winner.layer_priority,
                 winner.specificity,
                 winner.source_order,
                 winner.idx,
@@ -965,7 +905,19 @@ pub(crate) fn apply_winners(
 /// rule (and of one inline style) share a source order, so the candidate
 /// position is what orders them.
 fn declared_later(a: RankedDecl, b: RankedDecl) -> bool {
-    (a.rank, a.specificity, a.source_order, a.idx) > (b.rank, b.specificity, b.source_order, b.idx)
+    (
+        a.rank,
+        a.layer_priority,
+        a.specificity,
+        a.source_order,
+        a.idx,
+    ) > (
+        b.rank,
+        b.layer_priority,
+        b.specificity,
+        b.source_order,
+        b.idx,
+    )
 }
 
 /// The cascade winners of the legacy `white-space` shorthand and of the
@@ -2016,6 +1968,7 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::BorderSpacing(_)
         | PropertyValue::CaptionSide(_)
         | PropertyValue::EmptyCells(_)
+        | PropertyValue::AllRevertLayer
         | PropertyValue::CustomProperty(_)
         | PropertyValue::Deferred(_)
         | PropertyValue::Grid(_)
@@ -2469,7 +2422,9 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             target.column_width = value.width;
         }
         // Resolved before ordinary winners reach this function.
-        PropertyValue::CustomProperty(_) | PropertyValue::Deferred(_) => {}
+        PropertyValue::AllRevertLayer
+        | PropertyValue::CustomProperty(_)
+        | PropertyValue::Deferred(_) => {}
     }
 }
 

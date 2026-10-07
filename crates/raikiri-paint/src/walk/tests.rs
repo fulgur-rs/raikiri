@@ -4371,3 +4371,48 @@ fn generated_flow_height_caches_zero_for_an_unknown_node_id() {
     );
     assert_eq!(cache.get(&usize::MAX), Some(&0.0));
 }
+
+#[test]
+fn margin_box_layer_precedence_reaches_the_paint_consumer() {
+    for (sheets, expected) in [
+        (
+            [
+                "@layer a,b; @layer b{@page{@top-left{color:blue}}}",
+                "@layer a{@page{@top-left{color:red}}}",
+            ],
+            raikiri_style::CssColor {
+                r: 0,
+                g: 0,
+                b: 255,
+                a: 255,
+            },
+        ),
+        (
+            [
+                "@layer a,b; @layer a{@page{@top-left{color:red!important}}}",
+                "@layer b{@page{@top-left{color:blue!important}}} @page{@top-left{color:green!important}}",
+            ],
+            raikiri_style::CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
+        ),
+    ] {
+        let mut tree = raikiri_style::RuleTree::empty();
+        for sheet in sheets {
+            tree.add_stylesheet(sheet, raikiri_style::Origin::Author);
+        }
+        let page = raikiri_style::cascade_page(
+            &tree,
+            &raikiri_style::PageContextQuery::default(),
+            raikiri_style::PageInheritance::LegacyInitialValues,
+        );
+        let rule = margin_box_rule(page.margin_boxes(), PageMarginBoxSlot::TopLeft).unwrap();
+        assert_eq!(
+            margin_box_property(&rule, PropertyKey::Color),
+            Some(&PropertyValue::Color(expected))
+        );
+    }
+}

@@ -380,6 +380,7 @@ fn cascade_from_candidates<D: StyleDom>(
 }
 
 mod collect;
+pub(crate) mod rollback;
 pub(crate) use collect::*;
 mod directionality;
 pub(crate) mod lang;

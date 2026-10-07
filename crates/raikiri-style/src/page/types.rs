@@ -660,9 +660,8 @@ pub struct PageRule {
     /// 0-indexed source order among `@page` rules across all
     /// `RuleTree::add_stylesheet` calls.
     pub source_order: u32,
-    /// Normal cascade-layer order. Larger values have higher precedence;
-    /// `u32::MAX` represents unlayered rules.
-    pub layer_order: u32,
+    /// Stable layer identity, resolved by the owning rule tree for each media context.
+    pub(crate) layer: Option<crate::layer::LayerId>,
     /// Cascade origin this rule was parsed under. See [`Origin`] for the
     /// current 4-variant set (`UserAgent` / `User` / `AuthorPresentationalHint`
     /// / `Author`) — `@page` rules are only ever
