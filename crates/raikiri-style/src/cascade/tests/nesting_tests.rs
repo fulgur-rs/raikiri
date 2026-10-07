@@ -643,14 +643,22 @@ fn repeated_parent_has_references_keep_their_valid_matches() {
 }
 
 #[test]
-fn has_context_repair_preserves_explicit_any_namespace_parent() {
+fn has_context_repair_preserves_namespace_constraints() {
     let mut doc = TestDoc::new();
     let outer = doc.push_element_with_namespace(0, "div", "urn:foreign", &[("class", "outer")]);
     doc.push_element_with_namespace(outer, "div", "urn:foreign", &[("class", "outer")]);
-    let tree = nesting_tree(
-        "@namespace 'urn:default'; *|*.outer{color:red} *|*.outer,#absent:has(.leaf){&:has(>&){color:blue}}",
-    );
-    assert_eq!(cascade(&doc, &tree).unwrap().computed[outer].color, BLUE);
+    // The default namespace constrains bare `&` compounds, including inside
+    // `:has()`. An explicit any-namespace universal overrides that constraint.
+    for (selector, expected) in [("&:has(>&)", RED), ("*|*&:has(>*|*&)", BLUE)] {
+        let tree = nesting_tree(&format!(
+            "@namespace 'urn:default'; *|*.outer{{color:red}} \
+             *|*.outer,#absent:has(.leaf){{{selector}{{color:blue}}}}",
+        ));
+        assert_eq!(
+            cascade(&doc, &tree).unwrap().computed[outer].color,
+            expected
+        );
+    }
 }
 
 #[test]

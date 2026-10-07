@@ -1,6 +1,59 @@
 use super::*;
 
 #[test]
+fn namespace_selectors_match_real_html_svg_and_mathml_elements() {
+    for (css, expected) in [
+        (
+            "@namespace svg 'http://www.w3.org/2000/svg'; svg|rect {display:block}",
+            [false, true, false],
+        ),
+        (
+            "@namespace 'http://www.w3.org/2000/svg'; rect {display:block}",
+            [false, true, false],
+        ),
+        (
+            "@namespace html 'http://www.w3.org/1999/xhtml'; html|rect {display:block}",
+            [true, false, false],
+        ),
+        ("|rect {display:block}", [false; 3]),
+        ("*|rect {display:block}", [true; 3]),
+    ] {
+        let html = format!(
+            "<style>{css}</style><rect id=html></rect><svg><rect id=svg></rect></svg><math><rect id=math></rect></math>"
+        );
+        let doc = crate::parse(
+            html.as_bytes(),
+            &crate::ParseOptions {
+                extra_stylesheets: &[],
+                network: None,
+                base_url: None,
+            },
+        )
+        .unwrap();
+        let result = build_cascaded(&doc);
+        for (name, matches) in ["html", "svg", "math"].into_iter().zip(expected) {
+            let index = (0..doc.dom.node_count())
+                .find(|&index| {
+                    doc.dom
+                        .get_node(index)
+                        .and_then(|node| node.attribute("id"))
+                        == Some(name)
+                })
+                .unwrap();
+            assert_eq!(
+                result.computed[index].display,
+                if matches {
+                    raikiri_style::DisplayValue::Block
+                } else {
+                    raikiri_style::DisplayValue::Inline
+                },
+                "{name} element, stylesheet {css}"
+            );
+        }
+    }
+}
+
+#[test]
 fn stylesheet_kind_to_origin_matches_spec() {
     assert_eq!(
         stylesheet_kind_to_origin(StylesheetKind::UserAgent),

@@ -251,6 +251,7 @@ pub trait StyleElement {
 
     /// Namespace URI (`Some("http://www.w3.org/2000/svg")` for SVG etc).
     /// HTML default namespace returns `None` (optimized path).
+    /// Elements without a namespace return `Some("")`.
     fn namespace_uri(&self) -> Option<&str> {
         None
     }
