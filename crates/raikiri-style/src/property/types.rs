@@ -10792,7 +10792,9 @@ pub(crate) fn color_math_dimension_type(unit: &str) -> ColorMathType {
         "px" | "em"
             | "rem"
             | "ex"
+            | "rex"
             | "ch"
+            | "rch"
             | "cm"
             | "mm"
             | "q"
@@ -10826,7 +10828,9 @@ pub(crate) fn color_math_dimension_type(unit: &str) -> ColorMathType {
             | "lh"
             | "rlh"
             | "cap"
+            | "rcap"
             | "ic"
+            | "ric"
             | "cqw"
             | "cqh"
             | "cqi"
@@ -11129,6 +11133,20 @@ pub(crate) fn color_value_with_math_is_valid(value: &str) -> bool {
             parse_color(input).ok_or_else(|| input.new_custom_error::<(), ()>(()))
         })
         .is_ok()
+}
+
+/// Validate a math value's length type for media-feature grammar. This helper
+/// exposes the existing type checker to the media parser without substituting
+/// a property parser's deferred dummy for the expression's actual type.
+pub(crate) fn length_math_value_is_valid(source: &str) -> bool {
+    if crate::cascade::find_function_tokens(source, &[]).is_none() {
+        return false;
+    }
+    let mut parser_input = ParserInput::new(source);
+    let mut parser = Parser::new(&mut parser_input);
+    parser
+        .parse_entirely(|input| color_math_expression_type(input, false))
+        .is_ok_and(|kind| kind == ColorMathType::Length)
 }
 
 pub(crate) fn math_function_syntax_is_valid(input: &str) -> bool {

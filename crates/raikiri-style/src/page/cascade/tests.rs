@@ -58,6 +58,24 @@ use crate::ruletree::build_rule_tree;
 use crate::test_dom::TestDoc;
 use std::sync::Arc;
 
+#[test]
+fn invalid_or_never_matching_paper_query_arms_keep_page_size() {
+    for prelude in ["print, (width:red)", "print, projection and (width:1px)"] {
+        let result = page(
+            &format!("@media {prelude}{{@page{{size:300px 200px;margin:10px}}}}"),
+            &ComputedValues::initial(),
+        );
+        assert_eq!(
+            result.size(),
+            Some(PageSize::Lengths {
+                width: Length::Px(300.0),
+                height: Length::Px(200.0)
+            }),
+            "{prelude}"
+        );
+    }
+}
+
 const RED: CssColor = CssColor {
     r: 255,
     g: 0,
