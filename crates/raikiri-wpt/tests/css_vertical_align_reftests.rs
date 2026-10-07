@@ -51,7 +51,8 @@ fn vertical_align_length_96px_wpt_pair_matches_at_800x600() {
     let mut config = ReftestConfig::default();
     config.width = 800;
     config.height = 600;
-    config.tolerance = ReftestTolerance::TIER2;
+    config.tolerance = ReftestTolerance::EXACT;
+    config.require_inline_fonts = true;
     let result =
         run_pair_with_images(&pairs[0], config).expect("run vertical-align length WPT pair");
     assert!(
@@ -60,11 +61,8 @@ fn vertical_align_length_96px_wpt_pair_matches_at_800x600() {
         result.outcome,
         result.mismatched_pixels
     );
-    // This WPT scales a 15×15 PNG to 20×20 at a fractional origin. Its four
-    // edge rows differ from hinted Ahem glyphs; cap that known fringe at 80.
-    assert!(
-        result.mismatched_pixels <= 80,
-        "image/Ahem edge-AA fringe exceeded 80 pixels: {}",
-        result.mismatched_pixels
+    assert_eq!(
+        result.mismatched_pixels, 0,
+        "image-loaded vertical-align length pair must be pixel exact"
     );
 }
