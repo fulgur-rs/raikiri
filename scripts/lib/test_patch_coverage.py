@@ -619,6 +619,8 @@ mod second {
             ("old.rs", "entry.rs", {"entry.rs": '#[cfg(feature="old")] mod old;\n'}),
             ("old.rs", "lib.rs",
              {"lib.rs": '#[cfg_attr(all(), path="old.rs")] #[cfg(feature="old")] mod gated;\n'}),
+            ("old.rs", "lib.rs",
+             {"lib.rs": '#[cfg_attr(all(), path="old.rs")] #[path="fallback.rs"] #[cfg(feature="old")] mod gated;\n'}),
         )
         for origin, root, auxiliary in cases:
             with self.subTest(origin=origin, root=root):
@@ -664,6 +666,12 @@ mod second {
             auxiliary_after={"Cargo.toml": manifest.replace('noop="0.1"', 'noop="0.2"'),
                              "lib.rs": "mod moved;\n"}
         )
+        self.assertEqual(status, 0, output)
+
+    def test_function_reorder_with_shared_statement_remains_exempt(self) -> None:
+        moved = "fn moved_uncovered_resolution_result() {\n    record_uncovered_resolution_result();\n}\n"
+        kept = moved.replace("moved_uncovered", "kept_uncovered")
+        status, output = self._classify(moved + kept, kept + moved, moved.splitlines()[0])
         self.assertEqual(status, 0, output)
 
 

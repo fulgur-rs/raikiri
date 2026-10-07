@@ -761,10 +761,9 @@ def collect_moved_added_lines(repo_root: str, base: str, head: str,
             # layout change. Treat these functions as coverage-gated.
             return {}
     added = parse_added_lines(ANSI_RE.sub("", proc.stdout))
-    deleted = parse_added_lines(subprocess.run(
-        ["git", "-C", repo_root, "diff", "--no-renames", "-U0", head, base,
-         "--", "*.rs"], capture_output=True, text=True, check=True,
-    ).stdout)
+    # Reversing the diff can align different shared lines. Parse deletions
+    # from the very same forward diff that supplied the move candidates.
+    deleted = parse_deleted_lines(ANSI_RE.sub("", proc.stdout))
     old_functions = Counter()
     source_cache = {}
     root_paths = set()
@@ -782,9 +781,10 @@ def collect_moved_added_lines(repo_root: str, base: str, head: str,
             deleted_lines = set(lines)
             inherited = inherited_module_attributes(repo_root, base, path, source_cache[base], root_paths)
             for key, token_lines, substantive_lines in rust_source_units(source)[0]:
-                # Git may align a closing brace with an unrelated block.
-                # Only punctuation-only lines may remain outside deletions.
-                if substantive_lines <= deleted_lines:
+                # Git can align shared statements as context while moving
+                # the surrounding function. Count an affected occurrence;
+                # its complete tokens must still match on the new side.
+                if substantive_lines & deleted_lines:
                     context, attrs, body = key
                     effective_attrs = tuple(value for group in inherited for value in group) + attrs
                     old_functions[(context, effective_attrs, body)] += 1
@@ -811,6 +811,28 @@ def collect_moved_added_lines(repo_root: str, base: str, head: str,
             eligible = token_lines & candidates.get(path, set())
             if eligible:
                 result.setdefault(path, set()).update(eligible)
+    return result
+
+
+def parse_deleted_lines(diff: str) -> dict[str, set[int]]:
+    """Read old-side line numbers from a forward zero-context diff."""
+    result = {}
+    path = None
+    next_line = None
+    for line in diff.splitlines():
+        if line.startswith("--- "):
+            path = line[4:]
+            path = None if path == "/dev/null" else path.removeprefix("a/")
+            next_line = None
+        elif line.startswith("@@"):
+            match = re.match(r"^@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@", line)
+            next_line = int(match.group(1)) if match and path is not None else None
+        elif next_line is not None and path is not None:
+            if line.startswith("-"):
+                result.setdefault(path, set()).add(next_line)
+                next_line += 1
+            elif line.startswith(" "):
+                next_line += 1
     return result
 
 
@@ -1010,7 +1032,7 @@ def inherited_module_attributes(repo_root: str, ref: str, path: str,
                          if attrs[i:i + 4] == ("#", "[", "path", "=")]
             if "path" in attrs:
                 try:
-                    if not overrides:
+                    if not overrides or attrs.count("path") != len(overrides):
                         raise ValueError("conditional path override")
                     override = json.loads(overrides[0])
                     if chain or len(overrides) != 1 or not isinstance(override, str):
