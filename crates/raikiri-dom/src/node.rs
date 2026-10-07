@@ -371,6 +371,8 @@ pub struct Node {
     /// to Taffy's physical min-size fields, while fragmentation needs the
     /// provenance to avoid changing physical `min-height` behavior.
     pub(crate) has_logical_min_block_size: bool,
+    /// Whether manual multicol placement replaced the relative block position.
+    pub(crate) needs_relative_block_paint_offset: bool,
     /// Computed CSS `order`; consumed only when this node is a flex/grid item.
     pub(crate) order: i32,
     /// Optional order-modified child view for the last style bridge. This is
@@ -470,6 +472,7 @@ impl Node {
             multicol: None,
             authored_writing_mode: None,
             has_logical_min_block_size: false,
+            needs_relative_block_paint_offset: false,
             order: 0,
             order_modified_children: Box::new([]),
             grid_item_row_starts: Box::new([]),
@@ -508,6 +511,7 @@ impl Node {
             multicol: None,
             authored_writing_mode: None,
             has_logical_min_block_size: false,
+            needs_relative_block_paint_offset: false,
             order: 0,
             order_modified_children: Box::new([]),
             grid_item_row_starts: Box::new([]),
@@ -550,6 +554,7 @@ impl Node {
             multicol: None,
             authored_writing_mode: None,
             has_logical_min_block_size: false,
+            needs_relative_block_paint_offset: false,
             order: 0,
             order_modified_children: Box::new([]),
             grid_item_row_starts: Box::new([]),
@@ -587,6 +592,7 @@ impl Node {
             multicol: None,
             authored_writing_mode: None,
             has_logical_min_block_size: false,
+            needs_relative_block_paint_offset: false,
             order: 0,
             order_modified_children: Box::new([]),
             grid_item_row_starts: Box::new([]),
@@ -621,6 +627,7 @@ impl Node {
             multicol: None,
             authored_writing_mode: None,
             has_logical_min_block_size: false,
+            needs_relative_block_paint_offset: false,
             order: 0,
             order_modified_children: Box::new([]),
             grid_item_row_starts: Box::new([]),
@@ -657,6 +664,7 @@ impl Node {
             multicol: None,
             authored_writing_mode: None,
             has_logical_min_block_size: false,
+            needs_relative_block_paint_offset: false,
             order: 0,
             order_modified_children: Box::new([]),
             grid_item_row_starts: Box::new([]),
@@ -826,6 +834,12 @@ impl Node {
             .as_ref()
             .map(|root| root.boxes.iter().map(|b| b.node).collect())
             .unwrap_or_default()
+    }
+
+    /// Whether manual column placement needs the relative block inset at paint time.
+    #[doc(hidden)]
+    pub fn needs_relative_block_paint_offset(&self) -> bool {
+        self.needs_relative_block_paint_offset
     }
 
     /// Children in this node's layout and paint order.

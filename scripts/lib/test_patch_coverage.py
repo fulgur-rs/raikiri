@@ -42,10 +42,15 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
+from unittest import mock
+
+import patch_coverage
 
 from patch_coverage import (
     MOVED_SGR,
@@ -333,6 +338,1115 @@ class CollectMovedAddedLinesGitTests(unittest.TestCase):
             self._git(repo, "commit", "-qm", "move")
             moved = collect_moved_added_lines(repo, base, "HEAD")
         self.assertEqual(moved.get("b.rs"), set(range(2, 2 + len(block))))
+
+    def _classify(self, before: str, after: str, missed: str,
+                  reported: bool = True, destination: str = "lib.rs",
+                  copy: bool = False, origin: str = "lib.rs",
+                  auxiliary_before: dict[str, str] | None = None,
+                  auxiliary_after: dict[str, str] | None = None,
+                  target_root: str = "lib.rs", extra_targets: tuple = (),
+                  covered_auxiliary: bool = False, extra_packages: tuple = (),
+                  dependencies: tuple = ()) -> tuple[int, str]:
+        with tempfile.TemporaryDirectory() as repo:
+            # Ordinary file moves preserve the public module/target. Use
+            # a stable crate root and relocate its `component` module.
+            if (origin == "lib.rs" and destination != origin and target_root == "lib.rs"
+                    and not any(name.endswith(".rs") for name in
+                                (* (auxiliary_before or {}), * (auxiliary_after or {})))):
+                target_root = "fixture.rs"
+                auxiliary_before = {**(auxiliary_before or {}), target_root:
+                                    f"#[path={json.dumps(origin)}]\nmod component;\n"}
+                auxiliary_after = {**(auxiliary_after or {}), target_root:
+                                   f"#[path={json.dumps(destination)}]\nmod component;\n"}
+            self._git(repo, "init", "-q")
+            def write_auxiliary(files: dict[str, str] | None) -> None:
+                for name, content in (files or {}).items():
+                    auxiliary = os.path.join(repo, name)
+                    os.makedirs(os.path.dirname(auxiliary), exist_ok=True)
+                    with open(auxiliary, "w") as f:
+                        f.write(content)
+
+            path = os.path.join(repo, origin)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.write(before)
+            write_auxiliary(auxiliary_before)
+            self._git(repo, "add", ".")
+            self._git(repo, "commit", "-qm", "base")
+            base = self._git(repo, "rev-parse", "HEAD")
+            if destination != origin:
+                if not copy:
+                    os.unlink(path)
+                path = os.path.join(repo, destination)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.write(after)
+            write_auxiliary(auxiliary_after)
+            self._git(repo, "add", ".")
+            self._git(repo, "commit", "-qm", "change")
+            missed_line = after.splitlines().index(missed) + 1
+            lcov = os.path.join(repo, "coverage.info")
+            with open(lcov, "w") as f:
+                if reported:
+                    f.write(f"SF:{path}\nDA:{missed_line},0\nend_of_record\n")
+                if covered_auxiliary:
+                    for name, content in (auxiliary_after or {}).items():
+                        if name.endswith(".rs"):
+                            f.write(f"SF:{os.path.join(repo, name)}\n")
+                            for line in range(1, len(content.splitlines()) + 1):
+                                f.write(f"DA:{line},1\n")
+                            f.write("end_of_record\n")
+            output = io.StringIO()
+            # Supply Cargo targets; Git parsing and LCOV classification stay real.
+            targets = [_target(["lib"], os.path.join(repo, target_root))]
+            targets.extend(_target([kind], os.path.join(repo, name)) for kind, name in extra_targets)
+            for target in targets:
+                target["name"] = os.path.basename(target["src_path"]).removesuffix(".rs")
+            metadata = {"packages": [{"name": "fixture", "manifest_path": os.path.join(repo, "Cargo.toml"),
+                                      "targets": targets, "dependencies": list(dependencies)}]}
+            for manifest, root, kind in extra_packages:
+                target = _target([kind], os.path.join(repo, root))
+                target["name"] = os.path.dirname(manifest)
+                metadata["packages"].append({"name": target["name"], "manifest_path": os.path.join(repo, manifest),
+                                             "targets": [target]})
+            with mock.patch.object(patch_coverage, "load_cargo_metadata", return_value=metadata), \
+                 mock.patch("sys.argv", ["patch_coverage.py", "--repo-root", repo,
+                                        "--base", base, "--lcov", lcov]), \
+                 contextlib.redirect_stdout(output):
+                status = patch_coverage.main()
+            return status, output.getvalue()
+
+    def test_match_pattern_reused_as_fallback_expression_is_uncovered(self) -> None:
+        before = """fn resolve(value: Option<PropertyValue>) -> Option<PropertyValue> {
+    match value {
+        Some(PropertyValue::Deferred(marker))
+            if marker.value.trim().eq_ignore_ascii_case("inherit") => None,
+        value => value,
+    }
+}
+"""
+        after = """fn resolve(value: Option<PropertyValue>) -> Option<PropertyValue> {
+    match value {
+        Some(PropertyValue::Deferred(marker)) => {
+            if marker.css_wide_keyword().is_some() {
+                None
+            } else {
+                Some(PropertyValue::Deferred(marker))
+            }
+        }
+        value => value,
+    }
+}
+"""
+        for reported in (True, False):
+            with self.subTest(reported=reported):
+                status, output = self._classify(
+                    before, after, "                Some(PropertyValue::Deferred(marker))", reported
+                )
+                self.assertEqual(status, 1, output)
+                self.assertIn("  lib.rs:7", output)
+
+    def test_unchanged_statement_under_changed_condition_is_uncovered(self) -> None:
+        before = """fn resolve(enabled: bool) {
+    if enabled {
+        record_uncovered_resolution_result();
+    }
+}
+"""
+        after = before.replace("if enabled", "if !enabled")
+        # Relocation makes Git see the unchanged body as added/deleted.
+        after = "fn new_function() {}\n" + after.replace("    ", "        ")
+        status, output = self._classify(
+            before, after, "                record_uncovered_resolution_result();"
+        )
+        self.assertEqual(status, 1, output)
+
+    def test_unchanged_function_with_indentation_change_remains_exempt(self) -> None:
+        before = """mod extracted {
+fn resolve() {
+    record_uncovered_resolution_result();
+}
+}
+fn keep() {}
+"""
+        after = """fn keep() {}
+mod extracted {
+    fn resolve() {
+        record_uncovered_resolution_result();
+    }
+}
+"""
+        status, output = self._classify(
+            before, after, "        record_uncovered_resolution_result();"
+        )
+        self.assertEqual(status, 0, output)
+        self.assertIn("informational): 1", output)
+
+    def test_complete_function_move_without_lcov_record_remains_exempt(self) -> None:
+        source = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        status, output = self._classify(
+            source, source, "    record_uncovered_resolution_result();",
+            reported=False, destination="moved.rs"
+        )
+        self.assertEqual(status, 0, output)
+        self.assertIn("total uncovered added lines (FAIL if > 0): 0", output)
+
+    def test_copied_function_is_not_a_move_exemption(self) -> None:
+        source = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        status, output = self._classify(
+            source, source, "    record_uncovered_resolution_result();",
+            destination="copied.rs", copy=True
+        )
+        self.assertEqual(status, 1, output)
+
+    def test_changed_attributes_and_impl_context_are_not_exempt(self) -> None:
+        body = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        cases = (
+            ('#[cfg(feature = "old")]\n' + body, '#[cfg(feature = "new")]\n' + body),
+            ('#[cfg(feature = "old")]\nmod gated {\n' + body + "}\n",
+             '#[cfg(feature = "new")]\nmod gated {\n' + body + "}\n"),
+            ("impl Old {\n" + body + "}\n", "impl New {\n" + body + "}\n"),
+        )
+        for before, after in cases:
+            with self.subTest(before=before):
+                status, output = self._classify(
+                    before, after, "    record_uncovered_resolution_result();",
+                    destination="moved.rs"
+                )
+                self.assertEqual(status, 1, output)
+
+    def test_literals_comments_and_lifetimes_do_not_break_valid_move(self) -> None:
+        source = '''fn resolve<'a>(value: &'a str) {
+    /* outer { /* nested } */ } */
+    let brace = '}';
+    let text = r##"fn fake() { "quoted" }
+    /* not a comment */"##;
+    let continued = "one \\
+        } two";
+    record_uncovered_resolution_result();
+}
+'''
+        status, output = self._classify(
+            source, source, "    record_uncovered_resolution_result();",
+            destination="moved.rs"
+        )
+        self.assertEqual(status, 0, output)
+
+    def test_changed_literal_or_operator_does_not_exempt_relocated_function(self) -> None:
+        source = '''fn resolve(a: bool, b: bool) {
+    let text = r#"old { }"#;
+    let both = a && b;
+    record_uncovered_resolution_result();
+}
+'''
+        for after in (source.replace("old", "new"), source.replace("&&", "& &")):
+            with self.subTest(after=after):
+                status, output = self._classify(
+                    source, after, "    record_uncovered_resolution_result();",
+                    destination="moved.rs"
+                )
+                self.assertEqual(status, 1, output)
+
+    def test_inner_attributes_apply_to_every_function_in_the_scope(self) -> None:
+        body = "fn keep() {}\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        for wrapper in ("{}", "mod gated {{\n{}\n}}\n"):
+            before = wrapper.format('#![cfg(feature = "old")]\n' + body)
+            after = wrapper.format('#![cfg(feature = "new")]\n' + body)
+            with self.subTest(wrapper=wrapper):
+                status, output = self._classify(
+                    before, after, "    record_uncovered_resolution_result();",
+                    destination="moved.rs"
+                )
+                self.assertEqual(status, 1, output)
+
+    def test_one_deleted_function_cannot_exempt_two_destinations(self) -> None:
+        before = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        after = """mod first {
+    fn resolve() {
+        record_uncovered_resolution_result();
+    }
+}
+mod second {
+        fn resolve() {
+            record_uncovered_resolution_result();
+        }
+}
+"""
+        status, output = self._classify(
+            before, after, "        record_uncovered_resolution_result();",
+            destination="moved.rs"
+        )
+        self.assertEqual(status, 1, output)
+
+    def test_multiple_identical_functions_can_move_without_becoming_copies(self) -> None:
+        source = """#![allow(dead_code)]
+mod first {
+    fn resolve() {
+        record_uncovered_resolution_result();
+    }
+}
+mod second {
+    fn resolve() {
+        record_uncovered_resolution_result();
+    }
+}
+"""
+        status, output = self._classify(
+            source, source, "        record_uncovered_resolution_result();",
+            destination="moved.rs"
+        )
+        self.assertEqual(status, 0, output)
+
+    def test_const_generic_braces_do_not_hide_a_changed_body(self) -> None:
+        before = """fn resolve_uncovered_resolution_result() -> GenericArray<{ 3 }> {
+    old_uncovered_resolution_result()
+}
+"""
+        after = before.replace("old_uncovered", "new_uncovered")
+        status, output = self._classify(
+            before, after, after.splitlines()[0], destination="moved.rs"
+        )
+        self.assertEqual(status, 1, output)
+
+    def test_complete_const_generic_function_move_remains_exempt(self) -> None:
+        source = """fn resolve_uncovered_resolution_result() -> GenericArray<{ 3 }> {
+    old_uncovered_resolution_result()
+}
+"""
+        status, output = self._classify(
+            source, source, "    old_uncovered_resolution_result()", destination="moved.rs"
+        )
+        self.assertEqual(status, 0, output)
+
+    def test_external_module_attributes_follow_the_function(self) -> None:
+        source = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        for parent in ('#[cfg(feature = "old")]\nmod old;\n',
+                       '#![cfg(feature = "old")]\nmod old;\n'):
+            with self.subTest(parent=parent):
+                status, output = self._classify(
+                    source, source, "    record_uncovered_resolution_result();",
+                    origin="old.rs", destination="new.rs",
+                    auxiliary_before={"lib.rs": parent},
+                    auxiliary_after={"lib.rs": "mod new;\n"}
+                )
+                self.assertEqual(status, 1, output)
+
+    def test_external_module_move_preserving_attributes_remains_exempt(self) -> None:
+        source = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        status, output = self._classify(
+            source, source, "    record_uncovered_resolution_result();",
+            origin="old.rs", destination="new.rs",
+            auxiliary_before={"lib.rs": '#[cfg(feature = "gate")]\n#[path="old.rs"]\nmod component;\n'},
+            auxiliary_after={"lib.rs": '#[cfg(feature = "gate")]\n#[path="new.rs"]\nmod component;\n'}
+        )
+        self.assertEqual(status, 0, output)
+
+    def test_nested_and_custom_path_module_attributes_are_not_lost(self) -> None:
+        source = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        cases = (
+            ("gated/old.rs", "lib.rs", {"lib.rs": '#[cfg(feature="old")] mod gated;\n',
+                                        "gated/mod.rs": "mod old;\n"}),
+            ("gated/old.rs", "lib.rs", {"lib.rs": '#[cfg(feature="old")] mod gated { mod old; }\n'}),
+            ("shared/old.rs", "src/lib.rs",
+             {"src/lib.rs": '#[path="../shared/old.rs"] #[cfg(feature="old")] mod old;\n'}),
+            ("old.rs", "entry.rs", {"entry.rs": '#[cfg(feature="old")] mod old;\n'}),
+            ("old.rs", "lib.rs",
+             {"lib.rs": '#[cfg_attr(all(), path="old.rs")] #[cfg(feature="old")] mod gated;\n'}),
+            ("old.rs", "lib.rs",
+             {"lib.rs": '#[cfg_attr(all(), path="old.rs")] #[path="fallback.rs"] #[cfg(feature="old")] mod gated;\n'}),
+        )
+        for origin, root, auxiliary in cases:
+            with self.subTest(origin=origin, root=root):
+                status, output = self._classify(
+                    source, source, "    record_uncovered_resolution_result();",
+                    origin=origin, destination="new.rs", target_root=root,
+                    auxiliary_before=auxiliary, auxiliary_after={root: "mod new;\n"}
+                )
+                self.assertEqual(status, 1, output)
+
+    def test_parent_scope_attributes_can_follow_function_extraction(self) -> None:
+        body = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        for before, parent in (
+            ("#![allow(dead_code)]\nmod moved {\n" + body + "}\n", "#![allow(dead_code)]\nmod moved;\n"),
+            ('#![allow(dead_code)]\n#[cfg(feature="gate")] mod moved {\n' + body + "}\n",
+             '#![allow(dead_code)]\n#[cfg(feature="gate")]\nmod moved;\n'),
+            ('#[cfg(feature="gate")] mod moved {\n' + body + "}\n",
+             '#[cfg(feature="gate")]\nmod moved;\n'),
+        ):
+            with self.subTest(parent=parent):
+                status, output = self._classify(
+                    before, body, "    record_uncovered_resolution_result();",
+                    destination="moved.rs", auxiliary_after={"lib.rs": parent}
+                )
+                self.assertEqual(status, 0, output)
+
+    def test_changed_cargo_target_root_does_not_exempt_moved_function(self) -> None:
+        body = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        status, output = self._classify(
+            body, body, "    record_uncovered_resolution_result();",
+            origin="old.rs", destination="new.rs", target_root="new_entry.rs",
+            auxiliary_before={"Cargo.toml": '[package]\nname="fixture"\nversion="0.1.0"\n[lib]\npath="old_entry.rs"\n',
+                              "old_entry.rs": '#[cfg(feature="old")] mod old;\n'},
+            auxiliary_after={"Cargo.toml": '[package]\nname="fixture"\nversion="0.1.0"\n[lib]\npath="new_entry.rs"\n',
+                             "new_entry.rs": "mod new;\n"}
+        )
+        self.assertEqual(status, 1, output)
+
+    def test_dependency_edit_leaves_old_compilation_context_unproven(self) -> None:
+        body = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        manifest = '[package]\nname="fixture"\nversion="0.1.0"\n[dependencies]\nnoop="0.1"\n'
+        status, output = self._classify(
+            body, body, "    record_uncovered_resolution_result();",
+            destination="moved.rs", auxiliary_before={"Cargo.toml": manifest},
+            auxiliary_after={"Cargo.toml": manifest.replace('noop="0.1"', 'noop="0.2"')}
+        )
+        self.assertEqual(status, 1, output)
+
+    def test_function_reorder_with_shared_statement_remains_exempt(self) -> None:
+        moved = "fn moved_uncovered_resolution_result() {\n    record_uncovered_resolution_result();\n}\n"
+        kept = moved.replace("moved_uncovered", "kept_uncovered")
+        status, output = self._classify(moved + kept, kept + moved, moved.splitlines()[0])
+        self.assertEqual(status, 0, output)
+
+    def test_cross_target_function_move_is_not_exempt(self) -> None:
+        body = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        for kind, folder in (("test", "tests"), ("example", "examples"), ("bench", "benches")):
+            origin = folder + "/helper.rs"
+            with self.subTest(kind=kind):
+                status, output = self._classify(
+                    body, body, "    record_uncovered_resolution_result();",
+                    origin=origin, destination="src/lib.rs", target_root="src/lib.rs",
+                    extra_targets=((kind, origin),)
+                )
+                self.assertEqual(status, 1, output)
+
+    def test_moving_to_another_logical_module_is_not_exempt(self) -> None:
+        before = """mod old {
+const VALUE: u8 = 1;
+fn resolve() {
+    record_uncovered_resolution_result(VALUE);
+}
+}
+"""
+        after = before.replace("mod old", "mod new").replace("= 1", "= 2").replace("    record", "        record")
+        status, output = self._classify(before, after, "        record_uncovered_resolution_result(VALUE);")
+        self.assertEqual(status, 1, output)
+
+    def test_binding_context_is_preserved_during_inline_module_extraction(self) -> None:
+        before = """mod resolver {
+use old::VALUE;
+fn resolve() {
+    record_uncovered_resolution_result(VALUE);
+}
+}
+"""
+        body = "use old::VALUE;\nfn resolve() {\n    record_uncovered_resolution_result(VALUE);\n}\n"
+        for binding in ("old", "new"):
+            with self.subTest(binding=binding):
+                status, output = self._classify(
+                    before, body.replace("old", binding), "    record_uncovered_resolution_result(VALUE);",
+                    destination="resolver.rs", auxiliary_after={"lib.rs": "mod resolver;\n"}
+                )
+                self.assertEqual(status, 0 if binding == "old" else 1, output)
+
+    def test_nested_lib_filename_does_not_make_a_cargo_root(self) -> None:
+        body = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        status, output = self._classify(
+            body, body, "    record_uncovered_resolution_result();",
+            origin="outer/lib/child.rs", destination="new.rs",
+            auxiliary_before={"lib.rs": "mod outer;\n", "outer/mod.rs": "mod lib;\n",
+                              "outer/lib.rs": '#[cfg(feature="old")]\nmod child;\n'},
+            auxiliary_after={"lib.rs": "mod new;\n"}
+        )
+        self.assertEqual(status, 1, output)
+
+    def test_cargo_feature_activation_change_does_not_exempt_function(self) -> None:
+        body = '#[cfg(feature="gate")]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n'
+        manifest = '[package]\nname="fixture"\nversion="0.1.0"\n[features]\ngate=[]\ndefault=[]\n'
+        status, output = self._classify(
+            body + "fn keep() {}\n", "fn keep() {}\n" + body.replace("    record", "        record"),
+            "        record_uncovered_resolution_result();",
+            auxiliary_before={"Cargo.toml": manifest},
+            auxiliary_after={"Cargo.toml": manifest.replace("default=[]", 'default=["gate"]')}
+        )
+        self.assertEqual(status, 1, output)
+
+    def test_constants_aliases_and_macros_keep_their_binding_during_extraction(self) -> None:
+        cases = (
+            ("const VALUE: u8 = 1;", "const VALUE: u8 = 2;", "VALUE"),
+            ("type Value = OldValue;", "type Value = NewValue;", "Value::default()"),
+            ("macro_rules! value { () => { 1 } }", "macro_rules! value { () => { 2 } }", "value!()"),
+            ("use old::*;", "use new::*;", "VALUE"),
+        )
+        for original, changed, expression in cases:
+            body = f"fn resolve() {{\n    record_uncovered_resolution_result({expression});\n}}\n"
+            for binding in (original, changed):
+                with self.subTest(original=original, binding=binding):
+                    status, output = self._classify(
+                        "mod resolver {\n" + original + "\n" + body + "}\n",
+                        binding + "\n" + body, body.splitlines()[1],
+                        destination="resolver.rs", auxiliary_after={"lib.rs": "mod resolver;\n"}
+                    )
+                    self.assertEqual(status, 0 if binding == original else 1, output)
+
+    def test_macro_shadowing_order_changes_are_not_move_exemptions(self) -> None:
+        definition = "macro_rules! value { () => { 1 } }\n"
+        shadow = definition.replace("1", "2")
+        body = "fn resolve() {\n    record_uncovered_resolution_result(value!());\n}\n"
+        status, output = self._classify(
+            definition + shadow + body, shadow + definition + body,
+            body.splitlines()[1], destination="moved.rs"
+        )
+        self.assertEqual(status, 1, output)
+
+    def test_unrelated_sibling_edit_preserves_the_public_function_path(self) -> None:
+        before = """mod unrelated { const OTHER: u8 = 1; }
+mod resolver {
+const VALUE: u8 = 7;
+fn resolve() {
+    record_uncovered_resolution_result(VALUE);
+}
+}
+pub fn call() { crate::resolver::resolve(); }
+"""
+        body = "const VALUE: u8 = 7;\nfn resolve() {\n    record_uncovered_resolution_result(VALUE);\n}\n"
+        for value in ("7", "8"):
+            with self.subTest(value=value):
+                status, output = self._classify(
+                    before, body.replace("= 7", "= " + value), body.splitlines()[2],
+                    destination="resolver.rs", auxiliary_after={"lib.rs":
+                        "mod unrelated { const OTHER: u8 = 2; }\nmod resolver;\n"
+                        "pub fn call() { crate::resolver::resolve(); }\n"}, covered_auxiliary=True
+                )
+                self.assertEqual(status, 0 if value == "7" else 1, output)
+
+    def test_referenced_module_attributes_are_part_of_the_binding_context(self) -> None:
+        body = "fn resolve() {\n    record_uncovered_resolution_result(crate::shared::VALUE);\n}\n"
+        shared = "pub const VALUE: u8 = 7;\n"
+        declaration = '#[cfg(feature="old")]\nmod shared;\n'
+        for feature in ("old", "new"):
+            with self.subTest(feature=feature):
+                status, output = self._classify(
+                    declaration + "mod resolver {\n" + body + "}\n", body, body.splitlines()[1],
+                    destination="resolver.rs", auxiliary_before={"shared.rs": shared},
+                    auxiliary_after={"lib.rs": declaration.replace('"old"', f'"{feature}"') + "mod resolver;\n",
+                                     "shared.rs": shared}, covered_auxiliary=True
+                )
+                self.assertEqual(status, 0 if feature == "old" else 1, output)
+
+    def test_nested_lib_child_can_move_preserving_module_identity(self) -> None:
+        body = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        graph = {"lib.rs": "mod outer;\n", "outer/mod.rs": "mod lib;\n",
+                 "outer/lib.rs": '#[cfg(feature="gate")]\nmod child;\n'}
+        status, output = self._classify(
+            body, body, body.splitlines()[1], origin="outer/lib/child.rs",
+            destination="outer/lib/child/mod.rs", auxiliary_before=graph, auxiliary_after=graph
+        )
+        self.assertEqual(status, 0, output)
+
+    def test_nested_function_scope_bindings_cannot_receive_move_exemptions(self) -> None:
+        for declaration, expression in (("const VALUE: u8 = 1;", "VALUE"),
+                                        ("macro_rules! value { () => { 1 } }", "value!()")):
+            source = f"""fn outer() {{
+    {declaration}
+    fn resolve() {{
+        record_uncovered_resolution_result({expression});
+    }}
+    resolve();
+}}
+"""
+            for after in (source, source.replace("1", "2")):
+                with self.subTest(declaration=declaration, unchanged=after == source):
+                    status, output = self._classify(
+                        source, after, source.splitlines()[3], destination="moved.rs"
+                    )
+                    self.assertEqual(status, 0 if after == source else 1, output)
+
+    def test_complete_impl_method_move_preserves_its_context(self) -> None:
+        source = """impl Resolver {
+    fn resolve() {
+        record_uncovered_resolution_result();
+    }
+}
+"""
+        status, output = self._classify(
+            source, source, source.splitlines()[2], destination="moved.rs"
+        )
+        self.assertEqual(status, 0, output)
+
+    def test_compilation_manifest_changes_do_not_exempt_relocated_functions(self) -> None:
+        body = "fn resolve() {\n    record_uncovered_resolution_result([1, 2].into_iter());\n}\n"
+        manifest = '[package]\nname="fixture"\nversion="0.1.0"\nedition="2018"\n'
+        cases = ((manifest, manifest.replace('"2018"', '"2021"')),
+                 (manifest + '[dependencies]\nother={version="0.1",features=[]}\n',
+                  manifest + '[dependencies]\nother={version="0.1",features=["gate"]}\n'),
+                 (manifest + '[workspace.dependencies]\nother={version="0.1",default-features=false}\n',
+                  manifest + '[workspace.dependencies]\nother={version="0.1",default-features=true}\n'))
+        for before, after in cases:
+            with self.subTest(after=after):
+                status, output = self._classify(
+                    body, body, body.splitlines()[1], destination="moved.rs",
+                    auxiliary_before={"Cargo.toml": before}, auxiliary_after={"Cargo.toml": after}
+                )
+                self.assertEqual(status, 1, output)
+
+    def test_trait_import_changes_affect_implicit_method_resolution(self) -> None:
+        body = "fn resolve(value: Value) {\n    record_uncovered_resolution_result(value.resolve());\n}\n"
+        for alias in ("", " as _"):
+            for imported in ("old", "new"):
+                with self.subTest(alias=alias, imported=imported):
+                    status, output = self._classify(
+                        "mod resolver {\nuse old::Resolve" + alias + ";\n" + body + "}\n",
+                        "use " + imported + "::Resolve" + alias + ";\n" + body, body.splitlines()[1],
+                        destination="resolver.rs", auxiliary_after={"lib.rs": "mod resolver;\n"}
+                    )
+                    self.assertEqual(status, 0 if imported == "old" else 1, output)
+
+    def test_include_inputs_cannot_silently_change_move_context(self) -> None:
+        body = 'include!("bindings.rs");\nfn resolve() {\n    record_uncovered_resolution_result(VALUE);\n}\n'
+        status, output = self._classify(
+            body + "fn keep() {}\n", "fn keep() {}\n" + body.replace("    record", "        record"),
+            "        record_uncovered_resolution_result(VALUE);",
+            auxiliary_before={"bindings.rs": "const VALUE: u8 = 1;\n"},
+            auxiliary_after={"bindings.rs": "const VALUE: u8 = 2;\n"}, covered_auxiliary=True
+        )
+        self.assertEqual(status, 1, output)
+
+    def test_unrelated_include_does_not_disable_valid_module_extraction(self) -> None:
+        body = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        status, output = self._classify(
+            "mod unrelated;\nmod resolver {\n" + body + "}\n", body, body.splitlines()[1],
+            destination="resolver.rs", auxiliary_before={"unrelated.rs": 'include!("bindings.rs");\n'},
+            auxiliary_after={"lib.rs": "mod unrelated;\nmod resolver;\n",
+                             "unrelated.rs": 'include!("bindings.rs");\n'}
+        )
+        self.assertEqual(status, 0, output)
+
+
+    def test_include_macro_indirection_inputs_are_not_move_exemptions(self) -> None:
+        for expansion in ('use std::include as inject;\ninject!("bindings.rs");\n',
+                          'macro_rules! inject { ($m:ident) => { $m!("bindings.rs"); } }\ninject!(include);\n'):
+            body = expansion + 'fn resolve() {\n    record_uncovered_resolution_result(VALUE);\n}\n'
+            with self.subTest(expansion=expansion):
+                status, output = self._classify(
+                    body + "fn keep() {}\n", "fn keep() {}\n" + body.replace("    record", "        record"),
+                    "        record_uncovered_resolution_result(VALUE);",
+                    auxiliary_before={"bindings.rs": "const VALUE: u8 = 1;\n"},
+                    auxiliary_after={"bindings.rs": "const VALUE: u8 = 2;\n"}, covered_auxiliary=True
+                )
+                self.assertEqual(status, 1, output)
+
+    def test_build_script_metadata_is_not_a_dependency_version_edit(self) -> None:
+        manifest = '[package]\nname="fixture"\nversion="0.1.0"\nbuild="build.rs"\n[package.metadata.dependencies]\ngate="off"\n'
+        build = 'fn main() { let text = std::fs::read_to_string("Cargo.toml").unwrap(); if text.contains("gate=\\\"on\\\"") { println!("cargo:rustc-cfg=custom_gate"); } }\n'
+        body = '#[cfg(custom_gate)]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n'
+        status, output = self._classify(
+            body + "fn keep() {}\n", "fn keep() {}\n" + body.replace("    record", "        record"),
+            "        record_uncovered_resolution_result();",
+            auxiliary_before={"Cargo.toml": manifest, "build.rs": build},
+            auxiliary_after={"Cargo.toml": manifest.replace('"off"', '"on"'), "build.rs": build},
+            extra_targets=(("custom-build", "build.rs"),), covered_auxiliary=True
+        )
+        self.assertEqual(status, 1, output)
+
+    def test_helper_include_inputs_follow_references_without_rejecting_unrelated_moves(self) -> None:
+        included = 'fn input() -> &\'static str { include_str!("value.txt") }\n'
+        wrapper = "fn wrapper() -> &'static str { input() }\n"
+        for called in ("input", "wrapper", "unrelated"):
+            body = f"use crate::{{{called}}};\nfn resolve() {{\n    record_uncovered_resolution_result({called}());\n}}\n"
+            helper = included + wrapper + "fn unrelated() -> &'static str { \"stable\" }\n"
+            with self.subTest(called=called):
+                status, output = self._classify(
+                    helper + "mod resolver {\n" + body + "}\n", body, body.splitlines()[2],
+                    destination="resolver.rs", auxiliary_before={"value.txt": "old"},
+                    auxiliary_after={"lib.rs": helper + "mod resolver;\n", "value.txt": "new"},
+                    covered_auxiliary=True
+                )
+                self.assertEqual(status, 0 if called == "unrelated" else 1, output)
+
+    def test_macro_use_module_bindings_follow_extraction(self) -> None:
+        body = "fn resolve() {\n    record_uncovered_resolution_result(value!());\n}\n"
+        helper = "macro_rules! value { () => { 1 } }\n"
+        for value in ("1", "2"):
+            with self.subTest(value=value):
+                status, output = self._classify(
+                    "#[macro_use] mod helpers;\nmod resolver {\n" + body + "}\n", body, body.splitlines()[1],
+                    destination="resolver.rs", auxiliary_before={"helpers.rs": helper},
+                    auxiliary_after={"lib.rs": "#[macro_use] mod helpers;\nmod resolver;\n",
+                                     "helpers.rs": helper.replace("1", value)}, covered_auxiliary=True
+                )
+                self.assertEqual(status, 0 if value == "1" else 1, output)
+
+    def test_macro_use_shadowing_order_survives_module_extraction(self) -> None:
+        body = "fn resolve() {\n    record_uncovered_resolution_result(value!());\n}\n"
+        first = "#[macro_use] mod old;\n"
+        second = "#[macro_use] mod new;\n"
+        helpers = {"old.rs": "macro_rules! value { () => { 1 } }\n",
+                   "new.rs": "macro_rules! value { () => { 2 } }\n"}
+        for imports in (first + second, second + first):
+            with self.subTest(unchanged=imports == first + second):
+                status, output = self._classify(
+                    first + second + "mod resolver {\n" + body + "}\n", body, body.splitlines()[1],
+                    destination="resolver.rs", auxiliary_before=helpers,
+                    auxiliary_after={**helpers, "lib.rs": imports + "mod resolver;\n"},
+                    covered_auxiliary=True
+                )
+                self.assertEqual(status, 0 if imports == first + second else 1, output)
+
+    def test_literal_suffix_is_part_of_the_macro_token(self) -> None:
+        for literal in ('"x"', "'x'", 'b"x"', "b'x'", 'r#"x"#', 'br#"x"#', 'c"x"', 'cr#"x"#'):
+            original = literal + "suffix"
+            source = "macro_rules! choose { ($value:tt) => { 1 }; ($($value:tt)+) => { 2 }; }\n"
+            source += f"fn resolve() {{\n    let value = choose!({original});\n    record_uncovered_resolution_result(value);\n}}\n"
+            for after in (source, source.replace(original, literal + " suffix")):
+                with self.subTest(literal=literal, unchanged=after == source):
+                    status, output = self._classify(source, after, source.splitlines()[3], destination="moved.rs")
+                    self.assertEqual(status, 0 if after == source else 1, output)
+
+    def test_doc_comments_are_macro_attribute_tokens(self) -> None:
+        for comment in ("/// old", "/** old */", "//! old", "/*! old */"):
+            source = 'macro_rules! choose { (#[doc=$text:literal]) => { $text }; (#![doc=$text:literal]) => { $text }; }\n'
+            source += "fn resolve() {\n    let value = choose!(\n" + comment + "\n);\n    record_uncovered_resolution_result(value);\n}\n"
+            for after in (source, source.replace("old", "new")):
+                with self.subTest(comment=comment, unchanged=after == source):
+                    status, output = self._classify(source, after, source.splitlines()[5], destination="moved.rs")
+                    self.assertEqual(status, 0 if after == source else 1, output)
+
+    def test_build_script_include_inputs_make_compilation_context_unknown(self) -> None:
+        manifest = '[package]\nname="fixture"\nversion="0.1.0"\nbuild="build.rs"\n'
+        build = 'fn main() { if include_str!("gate.txt").trim()=="on" { println!("cargo:rustc-cfg=gate"); } }\n'
+        body = "#[cfg(gate)]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        status, output = self._classify(
+            body + "fn keep() {}\n", "fn keep() {}\n" + body.replace("    record", "        record"),
+            "        record_uncovered_resolution_result();",
+            auxiliary_before={"Cargo.toml": manifest, "build.rs": build, "gate.txt": "off"},
+            auxiliary_after={"Cargo.toml": manifest, "build.rs": build, "gate.txt": "on"},
+            extra_targets=(("custom-build", "build.rs"),), covered_auxiliary=True
+        )
+        self.assertEqual(status, 1, output)
+
+    def test_raw_include_identifier_does_not_hide_file_inputs(self) -> None:
+        body = 'fn resolve() {\n    record_uncovered_resolution_result(r#include_str!("value.txt"));\n}\n'
+        status, output = self._classify(
+            body, body, body.splitlines()[1], destination="moved.rs",
+            auxiliary_before={"value.txt": "old"}, auxiliary_after={"value.txt": "new"}
+        )
+        self.assertEqual(status, 1, output)
+
+    def test_dependency_resolution_changes_invalidate_moves(self) -> None:
+        body = "#[inline]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        manifest = '[package]\nname="fixture"\nversion="0.1.0"\n[dependencies]\nattribute_macro="0.1"\n'
+        for name, before, after in (("Cargo.toml", manifest, manifest.replace('"0.1"', '"0.2"')),
+                                    ("Cargo.lock", 'version=3\n[[package]]\nname="attribute_macro"\nversion="0.1.0"\n',
+                                     'version=3\n[[package]]\nname="attribute_macro"\nversion="0.2.0"\n')):
+            with self.subTest(name=name):
+                status, output = self._classify(
+                    body, body, body.splitlines()[2], destination="moved.rs",
+                    auxiliary_before={name: before}, auxiliary_after={name: after}
+                )
+                self.assertEqual(status, 1, output)
+
+    def test_build_script_runtime_file_inputs_are_not_assumed_unchanged(self) -> None:
+        manifest = '[package]\nname="fixture"\nversion="0.1.0"\nbuild="build.rs"\n'
+        build = 'fn main() { if std::fs::read_to_string("gate.txt").unwrap().trim()=="on" { println!("cargo:rustc-cfg=gate"); } }\n'
+        body = "#[cfg(gate)]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        for name in ("gate.txt", "input.rs"):
+            with self.subTest(name=name):
+                status, output = self._classify(
+                    body + "fn keep() {}\n", "fn keep() {}\n" + body.replace("    record", "        record"),
+                    "        record_uncovered_resolution_result();",
+                    auxiliary_before={"Cargo.toml": manifest, "build.rs": build.replace("gate.txt", name), name: "off"},
+                    auxiliary_after={"Cargo.toml": manifest, "build.rs": build.replace("gate.txt", name), name: "on"},
+                    extra_targets=(("custom-build", "build.rs"),), covered_auxiliary=True
+                )
+                self.assertEqual(status, 1, output)
+
+    def test_referenced_helper_implementation_changes_invalidate_moves(self) -> None:
+        helper = "fn helper() -> bool { true }\n"
+        unrelated = "fn unrelated() -> bool { true }\n"
+        body = "use crate::helper;\nfn resolve() {\n    if helper() {\n        record_uncovered_resolution_result();\n    }\n}\n"
+        for changed in ("helper", "unrelated"):
+            with self.subTest(changed=changed):
+                after_helpers = (helper.replace("true", "false") if changed == "helper" else helper)
+                after_helpers += unrelated.replace("true", "false") if changed == "unrelated" else unrelated
+                status, output = self._classify(
+                    helper + unrelated + "mod resolver {\n" + body + "}\n", body, body.splitlines()[3],
+                    destination="resolver.rs", auxiliary_after={"lib.rs": after_helpers + "mod resolver;\n"},
+                    covered_auxiliary=True
+                )
+                self.assertEqual(status, 1 if changed == "helper" else 0, output)
+
+    def test_build_script_can_read_a_modeled_rust_source(self) -> None:
+        manifest = '[package]\nname="fixture"\nversion="0.1.0"\nbuild="build.rs"\n'
+        build = 'fn main() { if std::fs::read_to_string("lib.rs").unwrap().starts_with("fn keep") { println!("cargo:rustc-cfg=gate"); } }\n'
+        body = "#[cfg(gate)]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        status, output = self._classify(
+            body + "fn keep() {}\n", "fn keep() {}\n" + body.replace("    record", "        record"),
+            "        record_uncovered_resolution_result();",
+            auxiliary_before={"Cargo.toml": manifest, "build.rs": build},
+            auxiliary_after={"Cargo.toml": manifest, "build.rs": build},
+            extra_targets=(("custom-build", "build.rs"),), covered_auxiliary=True
+        )
+        self.assertEqual(status, 1, output)
+
+    def test_macro_export_definitions_affect_sibling_callers(self) -> None:
+        helper = "#[macro_export]\nmacro_rules! exported { () => { 1 } }\n"
+        body = "fn resolve() {\n    record_uncovered_resolution_result(exported!());\n}\n"
+        for value in ("1", "2"):
+            with self.subTest(value=value):
+                status, output = self._classify(
+                    "mod helpers;\nmod resolver {\n" + body + "}\n", body, body.splitlines()[1],
+                    destination="resolver.rs", auxiliary_before={"helpers.rs": helper},
+                    auxiliary_after={"lib.rs": "mod helpers;\nmod resolver;\n",
+                                     "helpers.rs": helper.replace("1", value)}, covered_auxiliary=True
+                )
+                self.assertEqual(status, 0 if value == "1" else 1, output)
+
+    def test_sibling_trait_implementations_participate_in_move_context(self) -> None:
+        declarations = 'struct Item;\ntrait Measure { fn measure(self) -> u8; }\n'
+        body = 'fn resolve() {\n    record_uncovered_resolution_result(crate::Item.measure());\n}\n'
+        original = 'impl crate::Measure for crate::Item { fn measure(self) -> u8 { 1 } }\n'
+        for changed in (False, True):
+            with self.subTest(changed=changed):
+                status, output = self._classify(
+                    declarations + 'mod implementations;\nmod resolver {\n' + body + '}\n',
+                    body, body.splitlines()[1], destination='resolver.rs',
+                    auxiliary_before={'implementations.rs': original},
+                    auxiliary_after={'lib.rs': declarations + 'mod implementations;\nmod resolver;\n',
+                                     'implementations.rs': original.replace('{ 1 }', '{ 2 }') if changed else original},
+                    covered_auxiliary=True
+                )
+                self.assertEqual(status, 1 if changed else 0, output)
+
+    def test_unrelated_trait_impl_in_same_sibling_scope_does_not_disable_move(self) -> None:
+        declarations = ('struct Item;\ntrait Measure { fn measure(self) -> u8; }\n'
+                        'struct Other;\ntrait Unrelated { fn unrelated(self) -> u8; }\n')
+        body = 'fn resolve() {\n    record_uncovered_resolution_result(crate::Item.measure());\n}\n'
+        original = ('impl crate::Measure for crate::Item { fn measure(self) -> u8 { 1 } }\n'
+                    'impl crate::Unrelated for crate::Other { fn unrelated(self) -> u8 { 1 } }\n')
+        status, output = self._classify(
+            declarations + 'mod implementations;\nmod resolver {\n' + body + '}\n',
+            body, body.splitlines()[1], destination='resolver.rs',
+            auxiliary_before={'implementations.rs': original},
+            auxiliary_after={'lib.rs': declarations + 'mod implementations;\nmod resolver;\n',
+                             'implementations.rs': original.replace('fn unrelated(self) -> u8 { 1 }',
+                                                                       'fn unrelated(self) -> u8 { 2 }')},
+            covered_auxiliary=True
+        )
+        self.assertEqual(status, 0, output)
+
+    def test_function_name_matching_unrelated_trait_method_does_not_disable_move(self) -> None:
+        declarations = 'struct Other;\ntrait Unrelated { fn resolve(self) -> u8; }\n'
+        body = 'fn resolve() {\n    record_uncovered_resolution_result();\n}\n'
+        original = 'impl crate::Unrelated for crate::Other { fn resolve(self) -> u8 { 1 } }\n'
+        status, output = self._classify(
+            declarations + 'mod implementations;\nmod resolver {\n' + body + '}\n',
+            body, body.splitlines()[1], destination='resolver.rs',
+            auxiliary_before={'implementations.rs': original},
+            auxiliary_after={'lib.rs': declarations + 'mod implementations;\nmod resolver;\n',
+                             'implementations.rs': original.replace('{ 1 }', '{ 2 }')}, covered_auxiliary=True
+        )
+        self.assertEqual(status, 0, output)
+
+    def test_sibling_impl_dependencies_follow_lexical_parent_scopes(self) -> None:
+        declarations = 'struct Item;\ntrait Measure { fn measure(self) -> u8; }\n'
+        body = 'fn resolve() {\n    record_uncovered_resolution_result(crate::Item.measure());\n}\n'
+        implementation = 'mod nested { impl crate::Measure for crate::Item { fn measure(self) -> u8 { super::VALUE } } }\n'
+        for value in ("1", "2"):
+            with self.subTest(value=value):
+                status, output = self._classify(
+                    declarations + 'mod implementations;\nmod resolver {\n' + body + '}\n',
+                    body, body.splitlines()[1], destination='resolver.rs',
+                    auxiliary_before={'implementations.rs': 'const VALUE:u8=1;\n' + implementation},
+                    auxiliary_after={'lib.rs': declarations + 'mod implementations;\nmod resolver;\n',
+                                     'implementations.rs': 'const VALUE:u8=' + value + ';\n' + implementation},
+                    covered_auxiliary=True
+                )
+                self.assertEqual(status, 0 if value == "1" else 1, output)
+
+    def test_sibling_impl_macro_visibility_order_participates_in_move_context(self) -> None:
+        declarations = 'struct Item;\ntrait Measure { fn measure(self) -> u8; }\n'
+        body = 'fn resolve() {\n    record_uncovered_resolution_result(crate::Item.measure());\n}\n'
+        first = 'macro_rules! value { () => { 1 } }\n'
+        second = 'macro_rules! value { () => { 2 } }\n'
+        implementation = 'impl crate::Measure for crate::Item { fn measure(self) -> u8 { value!() } }\n'
+        for macros in (first + second, second + first):
+            with self.subTest(unchanged=macros == first + second):
+                status, output = self._classify(
+                    declarations + 'mod implementations;\nmod resolver {\n' + body + '}\n',
+                    body, body.splitlines()[1], destination='resolver.rs',
+                    auxiliary_before={'implementations.rs': first + second + implementation},
+                    auxiliary_after={'lib.rs': declarations + 'mod implementations;\nmod resolver;\n',
+                                     'implementations.rs': macros + implementation}, covered_auxiliary=True
+                )
+                self.assertEqual(status, 0 if macros == first + second else 1, output)
+
+    def test_sibling_impl_macro_visibility_depends_on_definition_position(self) -> None:
+        declarations = 'struct Item;\ntrait Measure { fn measure(self) -> u8; }\n'
+        body = 'fn resolve() {\n    record_uncovered_resolution_result(crate::Item.measure());\n}\n'
+        first = 'macro_rules! value { () => { 1 } }\n'
+        second = 'macro_rules! value { () => { 2 } }\n'
+        implementation = 'impl crate::Measure for crate::Item { fn measure(self) -> u8 { value!() } }\n'
+        for changed in (False, True):
+            with self.subTest(changed=changed):
+                status, output = self._classify(
+                    declarations + 'mod implementations;\nmod resolver {\n' + body + '}\n',
+                    body, body.splitlines()[1], destination='resolver.rs',
+                    auxiliary_before={'implementations.rs': first + implementation + second},
+                    auxiliary_after={'lib.rs': declarations + 'mod implementations;\nmod resolver;\n',
+                                     'implementations.rs': first + second + implementation if changed else first + implementation + second},
+                    covered_auxiliary=True
+                )
+                self.assertEqual(status, 1 if changed else 0, output)
+
+    def test_sibling_impl_inherited_macro_visibility_depends_on_module_position(self) -> None:
+        declarations = 'struct Item;\ntrait Measure { fn measure(self) -> u8; }\n'
+        body = 'fn resolve() {\n    record_uncovered_resolution_result(crate::Item.measure());\n}\n'
+        first = 'macro_rules! value { () => { 1 } }\n'
+        second = 'macro_rules! value { () => { 2 } }\n'
+        implementation = 'impl crate::Measure for crate::Item { fn measure(self) -> u8 { value!() } }\n'
+        status, output = self._classify(
+            declarations + first + 'mod implementations;\n' + second + 'mod resolver {\n' + body + '}\n',
+            body, body.splitlines()[1], destination='resolver.rs',
+            auxiliary_before={'implementations.rs': implementation},
+            auxiliary_after={'lib.rs': declarations + first + second + 'mod implementations;\nmod resolver;\n',
+                             'implementations.rs': implementation}, covered_auxiliary=True
+        )
+        self.assertEqual(status, 1, output)
+
+    def test_referenced_helper_macro_visibility_depends_on_definition_position(self) -> None:
+        body = 'fn resolve() {\n    record_uncovered_resolution_result(crate::helper::read_value());\n}\n'
+        first = 'macro_rules! value { () => { 1 } }\n'
+        second = 'macro_rules! value { () => { 2 } }\n'
+        helper = 'fn read_value() -> u8 { value!() }\n'
+        status, output = self._classify(
+            'mod helper;\nmod resolver {\n' + body + '}\n', body, body.splitlines()[1],
+            destination='resolver.rs', auxiliary_before={'helper.rs': first + helper + second},
+            auxiliary_after={'lib.rs': 'mod helper;\nmod resolver;\n',
+                             'helper.rs': first + second + helper}, covered_auxiliary=True
+        )
+        self.assertEqual(status, 1, output)
+
+    def test_modeled_build_dependency_source_changes_compilation_context(self) -> None:
+        manifest = '[package]\nname="fixture"\nversion="0.1.0"\nbuild="build.rs"\n[lib]\npath="lib.rs"\n[workspace]\nmembers=["cfgsupport"]\n[build-dependencies]\ncfgsupport={path="cfgsupport"}\n'
+        support_manifest = '[package]\nname="cfgsupport"\nversion="0.1.0"\n[lib]\npath="lib.rs"\n'
+        build = 'fn main() { if cfgsupport::enabled() { println!("cargo:rustc-cfg=gate"); } }\n'
+        helper = "pub fn enabled() -> bool { false }\n"
+        body = "#[cfg(gate)]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        for changed in (False, True):
+            with self.subTest(changed=changed):
+                files = {"Cargo.toml": manifest, "cfgsupport/Cargo.toml": support_manifest,
+                         "build.rs": build, "cfgsupport/lib.rs": helper}
+                status, output = self._classify(
+                    body + "fn keep() {}\n", "fn keep() {}\n" + body.replace("    record", "        record"),
+                    "        record_uncovered_resolution_result();", auxiliary_before=files,
+                    auxiliary_after={**files, "cfgsupport/lib.rs": helper.replace("false", "true") if changed else helper},
+                    extra_targets=(("custom-build", "build.rs"),), covered_auxiliary=True,
+                    extra_packages=(("cfgsupport/Cargo.toml", "cfgsupport/lib.rs", "lib"),)
+                )
+                self.assertEqual(status, 1 if changed else 0, output)
+
+    def test_location_macro_inputs_do_not_receive_move_exemptions(self) -> None:
+        for expansion in ("file!()", "line!()", "column!()", "r#file!()"):
+            body = "fn resolve() {\n    record_uncovered_resolution_result(" + expansion + ");\n}\n"
+            with self.subTest(expansion=expansion):
+                status, output = self._classify(body, body, body.splitlines()[1], destination="moved.rs")
+                self.assertEqual(status, 1, output)
+
+    def test_location_macro_indirection_does_not_hide_span_inputs(self) -> None:
+        for helper in ('use std::file as location;\n',
+                       'macro_rules! location { () => { file!() }; }\n'):
+            body = helper + "fn resolve() {\n    record_uncovered_resolution_result(location!());\n}\n"
+            with self.subTest(helper=helper):
+                status, output = self._classify(body, body, body.splitlines()[2], destination="moved.rs")
+                self.assertEqual(status, 1, output)
+
+    def test_location_named_values_do_not_disable_plain_function_moves(self) -> None:
+        body = "fn resolve(file: u8, line: u8, column: u8) {\n    record_uncovered_resolution_result(file, line, column);\n}\n"
+        status, output = self._classify(body, body, body.splitlines()[1], destination="moved.rs")
+        self.assertEqual(status, 0, output)
+
+    def test_opaque_macro_inputs_do_not_receive_move_exemptions(self) -> None:
+        for expansion in ('sqlx::query_file!("query.sql")', 'query_file!("query.sql")',
+                          'r#query_file!("query.sql")'):
+            body = "fn resolve() {\n    record_uncovered_resolution_result(" + expansion + ");\n}\n"
+            with self.subTest(expansion=expansion):
+                status, output = self._classify(
+                    "mod resolver {\n" + body + "}\n", body, body.splitlines()[1],
+                    destination="resolver.rs", auxiliary_before={"query.sql": "SELECT 1"},
+                    auxiliary_after={"lib.rs": "mod resolver;\n", "query.sql": "SELECT 2"}
+                )
+                self.assertEqual(status, 1, output)
+
+    def test_referenced_opaque_macro_wrappers_invalidate_moves(self) -> None:
+        helpers = ('fn query() -> u8 { external::tracked!() }\n',
+                   'macro_rules! query { () => { external::tracked!() }; }\n')
+        for helper in helpers:
+            expression = "query!()" if "macro_rules" in helper else "query()"
+            body = "fn resolve() {\n    record_uncovered_resolution_result(" + expression + ");\n}\n"
+            with self.subTest(helper=helper):
+                status, output = self._classify(
+                    helper + "mod resolver {\n" + body + "}\n", body, body.splitlines()[1],
+                    destination="resolver.rs", auxiliary_before={"query.sql": "SELECT 1"},
+                    auxiliary_after={"lib.rs": helper + "mod resolver;\n", "query.sql": "SELECT 2"},
+                    covered_auxiliary=True
+                )
+                self.assertEqual(status, 1, output)
+
+    def test_opaque_attribute_inputs_do_not_receive_move_exemptions(self) -> None:
+        body = "#[external::tracked]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        status, output = self._classify(
+            body, body, body.splitlines()[2], destination="moved.rs",
+            auxiliary_before={"query.sql": "SELECT 1"}, auxiliary_after={"query.sql": "SELECT 2"}
+        )
+        self.assertEqual(status, 1, output)
+
+    def test_standard_macro_moves_and_unrelated_opaque_helpers_remain_exempt(self) -> None:
+        body = 'fn resolve() {\n    record_uncovered_resolution_result(std::vec![1, 2]);\n}\n'
+        helper = 'fn query() -> u8 { external::tracked!() }\n'
+        status, output = self._classify(
+            helper + "mod resolver {\n" + body + "}\n", body, body.splitlines()[1],
+            destination="resolver.rs", auxiliary_before={"query.sql": "SELECT 1"},
+            auxiliary_after={"lib.rs": helper + "mod resolver;\n", "query.sql": "SELECT 2"},
+            covered_auxiliary=True
+        )
+        self.assertEqual(status, 0, output)
+        self.assertIn("informational): 1", output)
+
+    def test_standard_macro_namespace_aliases_cannot_hide_opaque_inputs(self) -> None:
+        for root in ("std", "core", "alloc"):
+            for imported in (f"use fixture_macro as {root};\n", f"use fixture_macro as r#{root};\n",
+                             f"use fixture_macro::{{self as {root}}};\n", "use fixture_macro::*;\n",
+                             f"extern crate fixture_macro as {root};\n"):
+                body = f"fn resolve() {{\n    record_uncovered_resolution_result({root}::vec!());\n}}\n"
+                with self.subTest(imported=imported):
+                    status, output = self._classify(
+                        imported + "mod resolver {\n" + body + "}\n", body, body.splitlines()[1],
+                        destination="resolver.rs", auxiliary_before={"query.sql": "SELECT 1"},
+                        auxiliary_after={"lib.rs": imported + "mod resolver;\n", "query.sql": "SELECT 2"}
+                    )
+                    self.assertEqual(status, 1, output)
+
+    def test_standard_macro_namespace_modules_cannot_hide_opaque_inputs(self) -> None:
+        helper = 'mod std { pub use external::vec; }\n'
+        body = 'fn resolve() {\n    record_uncovered_resolution_result(std::vec!());\n}\n'
+        status, output = self._classify(
+            helper + "mod resolver {\n" + body + "}\n", body, body.splitlines()[1],
+            destination="resolver.rs", auxiliary_before={"query.sql": "SELECT 1"},
+            auxiliary_after={"lib.rs": helper + "mod resolver;\n", "query.sql": "SELECT 2"}
+        )
+        self.assertEqual(status, 1, output)
+
+    def test_standard_macro_namespace_with_unrelated_standard_import_remains_exempt(self) -> None:
+        body = 'use std::fmt;\nfn resolve() {\n    record_uncovered_resolution_result(std::vec![1, 2]);\n}\n'
+        status, output = self._classify(body, body, body.splitlines()[2], destination="moved.rs")
+        self.assertEqual(status, 0, output)
+
+    def test_external_macro_use_cannot_shadow_standard_prelude_macros(self) -> None:
+        helper = '#[macro_use]\nextern crate fixture_macro;\n'
+        body = 'fn resolve() {\n    record_uncovered_resolution_result(vec!());\n}\n'
+        status, output = self._classify(
+            helper + "mod resolver {\n" + body + "}\n", body, body.splitlines()[1],
+            destination="resolver.rs", auxiliary_before={"query.sql": "SELECT 1"},
+            auxiliary_after={"lib.rs": helper + "mod resolver;\n", "query.sql": "SELECT 2"}
+        )
+        self.assertEqual(status, 1, output)
+
+    def test_test_removal_does_not_make_unchanged_production_moves_new_code(self) -> None:
+        body = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        test = "#[cfg(test)]\nmod tests { #[test] fn exercise() { super::resolver::resolve(); } }\n"
+        for extracted in (False, True):
+            with self.subTest(extracted=extracted):
+                status, output = self._classify(
+                    "mod resolver {\n" + body + "}\n" + test,
+                    body if extracted else "mod resolver {\n" + body + "}\n", body.splitlines()[1],
+                    destination="resolver.rs" if extracted else "lib.rs",
+                    auxiliary_after={"lib.rs": "mod resolver;\n"} if extracted else None
+                )
+                self.assertEqual(status, 0, output)
+                self.assertIn("total uncovered added lines (FAIL if > 0): 0", output)
+
+    def test_cli_can_start_without_tomllib(self) -> None:
+        script = os.path.join(os.path.dirname(__file__), "patch_coverage.py")
+        command = "import runpy,sys; sys.modules['tomllib']=None; sys.argv=[sys.argv[1],'--help']; runpy.run_path(sys.argv[0],run_name='__main__')"
+        proc = subprocess.run([sys.executable, "-c", command, script], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("--lcov", proc.stdout)
+
+    def test_manifest_line_endings_are_compilation_inputs(self) -> None:
+        body = "#[inline]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        manifest = '[package]\r\nname="fixture"\r\nversion="0.1.0"\r\n'
+        for after in (manifest, manifest.replace("\r\n", "\n")):
+            with self.subTest(unchanged=after == manifest):
+                status, output = self._classify(
+                    body, body, body.splitlines()[2], destination="moved.rs",
+                    auxiliary_before={"Cargo.toml": manifest}, auxiliary_after={"Cargo.toml": after}
+                )
+                self.assertEqual(status, 0 if after == manifest else 1, output)
+
+    def test_quoted_manifest_paths_do_not_hide_compilation_changes(self) -> None:
+        body = "#[inline]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        manifest = '[package]\nname="attribute_macro"\nversion="0.1.0"\n'
+        for folder in ("日本語", "split\nname", 'with"quote'):
+            with self.subTest(folder=folder):
+                path = folder + "/Cargo.toml"
+                status, output = self._classify(
+                    body, body, body.splitlines()[2], destination="moved.rs",
+                    auxiliary_before={path: manifest}, auxiliary_after={path: manifest.replace("0.1.0", "0.2.0")}
+                )
+                self.assertEqual(status, 1, output)
+
+    def test_standard_macro_namespace_dependency_renames_cannot_hide_opaque_inputs(self) -> None:
+        for root in ("std", "core", "alloc"):
+            body = f"fn resolve() {{\n    record_uncovered_resolution_result({root}::vec!());\n}}\n"
+            with self.subTest(root=root):
+                status, output = self._classify(
+                    "mod resolver {\n" + body + "}\n", body, body.splitlines()[1],
+                    destination="resolver.rs", auxiliary_before={"query.sql": "SELECT 1"},
+                    auxiliary_after={"lib.rs": "mod resolver;\n", "query.sql": "SELECT 2"},
+                    dependencies=({"name": "fixture_macro", "rename": root},)
+                )
+                self.assertEqual(status, 1, output)
+
+    def test_compiler_configuration_changes_do_not_exempt_functions(self) -> None:
+        body = "#[cfg(gate)]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        for name, before, after in (
+            (".cargo/config.toml", '[build]\nrustflags=["--check-cfg=cfg(gate)"]\n',
+             '[build]\nrustflags=["--check-cfg=cfg(gate)","--cfg=gate"]\n'),
+            (".cargo/config", '[build]\nrustflags=[]\n', '[build]\nrustflags=["--cfg=gate"]\n'),
+            ("rust-toolchain.toml", '[toolchain]\nchannel="1.90"\n', '[toolchain]\nchannel="1.91"\n'),
+        ):
+            with self.subTest(name=name):
+                status, output = self._classify(
+                    body + "fn keep() {}\n", "fn keep() {}\n" + body.replace("    record", "        record"),
+                    "        record_uncovered_resolution_result();",
+                    auxiliary_before={name: before}, auxiliary_after={name: after}
+                )
+                self.assertEqual(status, 1, output)
+
+    def test_literal_and_raw_identifier_tokens_are_not_whitespace_equivalent(self) -> None:
+        for original, changed in (('b"x"', 'b "x"'), ("b'x'", "b 'x'"),
+                                  ('c"x"', 'c "x"'), ("1.0", "1 . 0"), ("r#value", "r # value")):
+            source = "macro_rules! choose { ($value:tt) => { 1 }; ($($value:tt)+) => { 2 }; }\n"
+            source += f"fn resolve() {{\n    let value = choose!({original});\n    record_uncovered_resolution_result(value);\n}}\n"
+            for after in (source, source.replace(original, changed)):
+                with self.subTest(original=original, unchanged=after == source):
+                    status, output = self._classify(
+                        source, after, source.splitlines()[3], destination="moved.rs"
+                    )
+                    self.assertEqual(status, 0 if after == source else 1, output)
+
+    def test_build_script_source_change_invalidates_old_compilation_context(self) -> None:
+        manifest = '[package]\nname="fixture"\nversion="0.1.0"\nbuild="build.rs"\n'
+        body = "#[cfg(gate)]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        status, output = self._classify(
+            body + "fn keep() {}\n", "fn keep() {}\n" + body.replace("    record", "        record"),
+            "        record_uncovered_resolution_result();",
+            auxiliary_before={"Cargo.toml": manifest, "build.rs": "fn main() {}\n"},
+            auxiliary_after={"Cargo.toml": manifest, "build.rs": 'fn main() { println!("cargo:rustc-cfg=gate"); }\n'},
+            extra_targets=(("custom-build", "build.rs"),), covered_auxiliary=True
+        )
+        self.assertEqual(status, 1, output)
 
 
 class ClassifyNoLcovRecordLinesTests(unittest.TestCase):
