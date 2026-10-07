@@ -3110,6 +3110,55 @@ fn background_space_tiny_tiles_fall_back_to_single_without_allocating() {
 }
 
 #[test]
+fn overflow_clips_to_padding_edges_inside_the_border() {
+    for overflow in ["hidden", "clip", "scroll", "auto"] {
+        let scene = transform_markup_scene(&format!(
+            "<body style='margin:0'><div style='position:absolute;left:10px;top:20px;width:100px;height:50px;padding:10px;border:5px solid red;overflow:{overflow}'><div style='width:10px;height:10px;background:green'></div></div>",
+        ));
+        let clips: Vec<_> = scene
+            .commands
+            .iter()
+            .filter_map(|command| match command {
+                RenderCommand::PushClipLayer(clip) => Some(kurbo::Shape::bounding_box(&clip.clip)),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            clips.contains(&Rect::new(15.0, 25.0, 135.0, 95.0)),
+            "{overflow}: {clips:?}"
+        );
+    }
+}
+
+#[test]
+fn overflow_hidden_preserves_descendant_ink_in_padding() {
+    let scene = transform_markup_scene(
+        "<body style='margin:0'><div style='position:absolute;left:10px;top:20px;width:100px;height:50px;padding:10px;border:5px solid red;overflow:hidden'><div style='margin-left:-10px;margin-top:-10px;width:120px;height:70px;background:green'></div></div>",
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        160,
+        120,
+    );
+    for (x, y) in [(16, 26), (134, 26), (16, 94), (134, 94)] {
+        let offset = (y * 160 + x) * 4;
+        assert_eq!(
+            &rgba[offset..offset + 4],
+            &[0, 128, 0, 255],
+            "padding at ({x}, {y})"
+        );
+    }
+    for (x, y) in [(12, 26), (137, 26), (16, 22), (16, 97)] {
+        let offset = (y * 160 + x) * 4;
+        assert_eq!(
+            &rgba[offset..offset + 4],
+            &[255, 0, 0, 255],
+            "border at ({x}, {y})"
+        );
+    }
+}
+
+#[test]
 fn overflow_hidden_clip_min_edges_floor_outward() {
     // A fractional padding-box origin must not antialias-cut pixel-snapped
     // descendant backgrounds. Min edges floor outward to integer pixels while

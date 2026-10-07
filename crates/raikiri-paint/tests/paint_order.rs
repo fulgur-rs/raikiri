@@ -580,6 +580,19 @@ fn assert_rects_match(walker: &[[f64; 4]], api: &[[f64; 4]], context: &str) {
 
 /// The walker's overflow clip rectangles and the public list's, in order.
 #[test]
+fn overflow_clip_keeps_padding_and_excludes_border_in_both_paths() {
+    let result = lay_out(
+        "<div style='position:absolute;left:10px;top:20px;width:100px;height:50px;padding:10px;border:5px solid red;overflow:hidden'><div style='width:10px;height:10px;background:green'></div></div>",
+        "@page { margin: 0 } body { margin: 0 }",
+    );
+    let page = result.pages().next().expect("a page");
+    let (walker, api) = clip_rects(&page);
+    let expected = [[15.0, 25.0, 135.0, 95.0]];
+    assert_eq!(walker, expected);
+    assert_eq!(api, expected);
+}
+
+#[test]
 fn overflow_clip_rectangles_match() {
     let result = lay_out(NESTED_CLIPS, "");
     assert_eq!(result.page_count(), 1);

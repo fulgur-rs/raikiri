@@ -1638,6 +1638,7 @@ css/css-ui/text-overflow-028.html
 css/css-ui/text-overflow-029.html
 css/css-ui/text-overflow-030.html
 css/css-ui/text-overflow-change-color.html
+css/css-ui/text-overflow-ellipsis-indent-001.html
 css/css-ui/text-overflow.html
 # --- css-text-decor text-emphasis horizontal marks exact 800x600 PASS-only (+8) ---
 css/css-text-decor/text-emphasis-position-auto-001.html
