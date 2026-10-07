@@ -8,6 +8,9 @@ use std::time::{Duration, Instant};
 
 use raikiri::Url;
 
+#[cfg(test)]
+mod tests;
+
 pub(crate) struct TestResponse {
     status: &'static str,
     content_type: &'static str,
@@ -116,6 +119,10 @@ fn serve_one(
         .expect("set request timeout");
     let mut request = [0_u8; 4096];
     let length = stream.read(&mut request).expect("read request");
+    // Closing an unused connection is not an HTTP request.
+    if length == 0 {
+        return;
+    }
     let request = String::from_utf8_lossy(&request[..length]);
     let path = request
         .lines()

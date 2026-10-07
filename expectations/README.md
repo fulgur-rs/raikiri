@@ -13,6 +13,32 @@ These files describe how Raikiri evaluates the pinned Web Platform Tests
 | `tracked-wpt.txt` | Informational test tracking categories. |
 | `meta-assert-baseline.txt` | Separate reviewed results for tests without a reftest. |
 
+## Interpreting baseline PASS
+
+The pass baseline records reproducible output equality or parsing assertions,
+not a count of supported features. Invalid-value parsing tests can pass because
+an unsupported property is rejected; they do not prove valid-value parsing,
+cascade, layout, or painting. Keep these negative guards without claiming
+feature coverage.
+
+The following visual guards also remain in the baseline without a feature
+coverage claim (remeasured at pinned WPT `97ea26e2`, EXACT 800x600, bundled
+fonts; `raikiri-spike-0vv.99` records the measurements):
+
+| Test suffix | Why PASS does not establish the named feature |
+| --- | --- |
+| `css-pseudo/active-selection-056.html` | The selected content has no visible ink. |
+| `css-backgrounds/border-radius-shorthand-002.html` | Both sides ignore elliptical radii. |
+| `css-backgrounds/fieldset-inset-shadow.html` | Both sides omit inset shadows. |
+| `css-backgrounds/box-shadow-body.html` | Removing test-side shadows still produces PASS. |
+| `css-backgrounds/box-shadow-overlapping-002.html` | Removing test-side shadows still produces PASS. |
+| `css-backgrounds/box-shadow-overlapping-004.html` | Removing test-side shadows still produces PASS. |
+
+In contrast, removing test-side shadows from `box-shadow-005.html` and
+`box-shadow-overlapping-003.html` produces 2780 and 60000 mismatched pixels,
+respectively. Those two pairs provide positive evidence for their outer shadow
+cases; they do not establish complete box-shadow conformance.
+
 ## Expected failures
 
 `expected-failures.txt` uses one exact test id per row:

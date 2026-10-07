@@ -5,7 +5,8 @@ use std::path::PathBuf;
 use raikiri_wpt::reftest::{ReftestConfig, discover_pairs_for_file_with_wpt_root, run_pair};
 use raikiri_wpt::runner::{TestOutcome, Tolerance};
 
-/// Real non-floating first-letter pairs and the active-selection compatibility guard.
+/// Real non-floating first-letter pairs and an active-selection compatibility guard.
+/// The selection pair has no visible ink and does not prove selection painting.
 #[test]
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
 fn pseudo_pairs_are_pixel_exact_at_800x600() {
