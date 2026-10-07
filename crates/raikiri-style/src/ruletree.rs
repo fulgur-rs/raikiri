@@ -1048,21 +1048,20 @@ impl RuleTree {
                             registration.origin,
                             layer,
                             *important,
-                            match color {
-                                HighlightColor::Paint(_) => {
-                                    crate::cascade::rollback::Rollback::None
-                                }
-                                HighlightColor::RevertLayer => {
-                                    crate::cascade::rollback::Rollback::Layer
-                                }
+                            if color.0.is_some() {
+                                crate::cascade::rollback::Rollback::None
+                            } else {
+                                crate::cascade::rollback::Rollback::Layer
                             },
                         ))
                     },
                 )?;
-                match registrations[winner].1.rule.1 {
-                    HighlightColor::Paint(color) => Some((name.to_owned(), color)),
-                    HighlightColor::RevertLayer => None,
-                }
+                registrations[winner]
+                    .1
+                    .rule
+                    .1
+                    .0
+                    .map(|color| (name.to_owned(), color))
             })
             .collect();
         if !self.layers.is_empty() {
@@ -2163,11 +2162,9 @@ fn parse_qualified_prelude<'i>(
     .map_err(|_| input.new_custom_error(()))
 }
 
+/// A missing paint requests layer rollback.
 #[derive(Clone, Copy)]
-enum HighlightColor {
-    Paint(CssColor),
-    RevertLayer,
-}
+struct HighlightColor(Option<CssColor>);
 
 fn custom_highlight_color(declarations: &[Declaration]) -> Option<(HighlightColor, bool)> {
     declarations
@@ -2175,10 +2172,10 @@ fn custom_highlight_color(declarations: &[Declaration]) -> Option<(HighlightColo
         .enumerate()
         .filter_map(|(index, declaration)| match declaration.value() {
             PropertyValue::BackgroundColor(color) => {
-                Some((declaration.important, index, HighlightColor::Paint(*color)))
+                Some((declaration.important, index, HighlightColor(Some(*color))))
             }
             PropertyValue::AllRevertLayer => {
-                Some((declaration.important, index, HighlightColor::RevertLayer))
+                Some((declaration.important, index, HighlightColor(None)))
             }
             _ => None,
         })
