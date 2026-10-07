@@ -41,6 +41,8 @@ const XHTML_NAMESPACE_URI: &str = "http://www.w3.org/1999/xhtml";
 // A WPT pair can hold one sidecar beside the other document and its paint blob.
 // Capping each side at 32 MiB keeps these three canvas buffers at 96 MiB total.
 const MAX_DOCUMENT_CANVAS_BITMAP_BYTES: usize = 32 * 1024 * 1024;
+// Bound all size variants retained beyond the source cache's current raster.
+const MAX_DOCUMENT_LIST_MARKER_IMAGE_BYTES: u64 = 128 * 1024 * 1024;
 
 fn is_xml_name_start(ch: char) -> bool {
     matches!(
@@ -2595,13 +2597,32 @@ mod tests;
 impl Document {
     /// Prepare inside image markers before layout from already resolved pixels.
     /// A failed image keeps the text fallback; explicit `::marker` content wins.
+    /// Retained pixel allocations share a 128 MiB document budget.
     pub fn prepare_list_marker_images(
         &mut self,
         cascade: &raikiri_style::CascadeResult,
         source: &dyn raikiri_traits::ImagePixelSource,
         base_url: Option<&url::Url>,
     ) {
+        self.prepare_list_marker_images_with_budget(
+            cascade,
+            source,
+            base_url,
+            MAX_DOCUMENT_LIST_MARKER_IMAGE_BYTES,
+        );
+    }
+
+    fn prepare_list_marker_images_with_budget(
+        &mut self,
+        cascade: &raikiri_style::CascadeResult,
+        source: &dyn raikiri_traits::ImagePixelSource,
+        base_url: Option<&url::Url>,
+        mut remaining: u64,
+    ) {
         self.list_marker_images.clear();
+        let mut variants =
+            HashMap::<(url::Url, u32, u32), Arc<raikiri_traits::DecodedImage>>::new();
+        let mut allocations = std::collections::HashSet::new();
         for (element, cv) in cascade.computed.iter().enumerate() {
             if !crate::generated_content::inside_marker_in_flow(cascade, element)
                 || cascade
@@ -2636,18 +2657,36 @@ impl Document {
                 .font_size
                 .0;
             let size = marker_image_size(intrinsic, em);
-            if let Some(image) = source.get_decoded_at_size(&url, size, None)
-                && image.width > 0
-                && image.height > 0
-            {
-                self.list_marker_images.insert(
-                    element,
-                    ListMarkerImage {
-                        pixels: image,
-                        size,
-                    },
-                );
-            }
+            let key = (url.clone(), size.width.to_bits(), size.height.to_bits());
+            let image = if let Some(image) = variants.get(&key) {
+                Arc::clone(image)
+            } else {
+                let Some(image) = source.get_decoded_at_size(&url, size, Some(remaining)) else {
+                    continue;
+                };
+                if image.width == 0 || image.height == 0 {
+                    continue;
+                }
+                let allocation = Arc::as_ptr(&image);
+                if !allocations.contains(&allocation) {
+                    // Sources may ignore the requested limit or reserve extra capacity.
+                    let bytes = image.rgba.capacity() as u64;
+                    if bytes > remaining {
+                        continue;
+                    }
+                    remaining -= bytes;
+                    allocations.insert(allocation);
+                }
+                variants.insert(key, Arc::clone(&image));
+                image
+            };
+            self.list_marker_images.insert(
+                element,
+                ListMarkerImage {
+                    pixels: image,
+                    size,
+                },
+            );
         }
         self.layout_dirty = true;
     }
