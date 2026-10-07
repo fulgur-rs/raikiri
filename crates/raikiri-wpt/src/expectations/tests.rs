@@ -792,7 +792,8 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS Lists shorthand and inside marker text exact slice (+8).
     // + CSS2 relative block positioning exact slice (+14).
     // + CSS Inline image-loaded vertical-align length exact slice (+1).
-    assert_eq!(set.baseline.entries.len(), 1420);
+    // + Remeasured exact regression pins (+8) and unsupported pins removed (-7).
+    assert_eq!(set.baseline.entries.len(), 1421);
     for id in [
         "css/css-lists/list-style-type-string-001a.html",
         "css/css-lists/list-style-type-string-001b.html",
