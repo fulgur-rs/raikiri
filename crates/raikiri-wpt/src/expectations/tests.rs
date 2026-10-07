@@ -789,11 +789,12 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS Overflow / UI text-overflow clip|ellipsis exact slice (+27).
     // + CSS Text Decoration horizontal text-emphasis exact slice (+8).
     // + CSS UI text-overflow into padding exact slice (+1).
+    // + CSS mediaqueries upstream exact pixel references (+22).
     // + CSS Lists shorthand and inside marker text exact slice (+8).
     // + CSS2 relative block positioning exact slice (+14).
     // + CSS Inline image-loaded vertical-align length exact slice (+1).
     // + Remeasured exact regression pins (+8) and unsupported pins removed (-7).
-    assert_eq!(set.baseline.entries.len(), 1421);
+    assert_eq!(set.baseline.entries.len(), 1443);
     for id in [
         "css/css-lists/list-style-type-string-001a.html",
         "css/css-lists/list-style-type-string-001b.html",
@@ -817,13 +818,13 @@ fn load_from_workspace_root_reads_the_header_only_files() {
             .contains("css/css-ui/text-overflow-ellipsis-indent-001.html")
     );
     for id in [
+        "css/mediaqueries/mq-range-001.html",
+        "css/mediaqueries/mq-invalid-media-type-layer-001.html",
+        "css/mediaqueries/relative-units-001.html",
         "css/CSS2/positioning/position-relative-004.xht",
         "css/CSS2/positioning/position-relative-038.xht",
     ] {
-        assert!(
-            set.baseline.entries.contains(id),
-            "missing relative positioning pin: {id}"
-        );
+        assert!(set.baseline.entries.contains(id), "missing WPT pin: {id}");
     }
     assert!(set.quarantine.is_empty());
     assert!(set.deprecated.is_empty());

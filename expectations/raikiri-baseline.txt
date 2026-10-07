@@ -1662,6 +1662,29 @@ css/css-lists/content-property/marker-text-matches-upper-roman.html
 css/css-lists/list-style-type-string-001a.html
 css/css-lists/list-style-type-string-001b.html
 
+# --- Media queries: 800x600, bundled WPT fonts, WPT 97ea26e2 (0vv.95) ---
+css/mediaqueries/aspect-ratio-002.html
+css/mediaqueries/device-aspect-ratio-004.html
+css/mediaqueries/device-aspect-ratio-006.html
+css/mediaqueries/mq-calc-006.html
+css/mediaqueries/mq-calc-sign-function-006.html
+css/mediaqueries/mq-deprecated-001.html
+css/mediaqueries/mq-gamut-003.html
+css/mediaqueries/mq-gamut-005.html
+css/mediaqueries/mq-invalid-media-type-001.html
+css/mediaqueries/mq-invalid-media-type-002.html
+css/mediaqueries/mq-invalid-media-type-003.html
+css/mediaqueries/mq-invalid-media-type-004.html
+css/mediaqueries/mq-invalid-media-type-layer-001.html
+css/mediaqueries/mq-range-001.html
+css/mediaqueries/prefers-color-scheme-svg-image-normal-with-meta-dark.html
+css/mediaqueries/prefers-color-scheme-svg-image-normal-with-meta-light.html
+css/mediaqueries/prefers-color-scheme-svg-image-normal.html
+css/mediaqueries/prefers-color-scheme-svg-image.html
+css/mediaqueries/relative-units-001.html
+css/mediaqueries/relative-units-002.html
+css/mediaqueries/relative-units-003.html
+css/mediaqueries/relative-units-004.html
 # --- CSS2 relative block positioning exact 800x600 PASS-only (+14) ---
 css/CSS2/positioning/position-relative-004.xht
 css/CSS2/positioning/position-relative-005.xht

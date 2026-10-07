@@ -662,19 +662,13 @@ pub(crate) fn run_pipeline(
         effective_base_url.as_ref(),
         Arc::clone(&warnings),
     );
-    let runtime = RenderExecutionResources {
-        font_faces: &doc.font_faces,
-        font_face_loader: &font_loader,
-        effective_base_url: effective_base_url.as_ref(),
-        warnings: Arc::clone(&warnings),
-    };
     let noop_resolver = NoopReplacedResolver;
     let inner_resolver = resources.resolver().unwrap_or(&noop_resolver);
     let resolver = FallbackRecordingResolver {
         inner: inner_resolver,
         policy: resources.policy(),
         image_pixel_source: resources.raw_image_pixel_source(),
-        warnings,
+        warnings: Arc::clone(&warnings),
         seen: Mutex::new(HashSet::new()),
     };
     let signal = config.signal.clone();
@@ -699,6 +693,18 @@ pub(crate) fn run_pipeline(
     // Every cascade of this run reads the same parsed document, stylesheets,
     // consumer registrations, and media context, so the rule tree is built once.
     let tree = build_rule_tree_with_consumer_properties(&doc.uncascaded, consumer_properties);
+
+    // The parse-time font registry is cached for the default environment.
+    // Other layout environments must select faces using their own dimensions,
+    // just like the element and page cascades below.
+    let layout_font_faces =
+        (*media_context != MediaContext::default()).then(|| tree.font_faces_for(media_context));
+    let runtime = RenderExecutionResources {
+        font_faces: layout_font_faces.as_ref().unwrap_or(&doc.font_faces),
+        font_face_loader: &font_loader,
+        effective_base_url: effective_base_url.as_ref(),
+        warnings: Arc::clone(&warnings),
+    };
 
     // Resolve the first page context before layout so `:first` and the first
     // resolved `@page size` participate in the initial fragmentainer.
