@@ -531,3 +531,39 @@ fn a_line_break_is_placed_on_the_line_it_ends() {
     assert_eq!(second_layout.size.height, heights[1]);
     assert_eq!(second_layout.size.width, 0.0);
 }
+
+#[test]
+fn quirks_mode_a_line_break_takes_its_strut_font_from_a_contents_body() {
+    use raikiri_traits::QuirksMode;
+    use taffy::Style;
+    let mut doc = Document::new();
+    doc.set_quirks_mode(QuirksMode::Quirks);
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        Style::default(),
+        Some("display:block;font-size:10px;line-height:10px"),
+    );
+    // The body layout starts at generates a box even with `display:
+    // contents`, so the break's `line-height: 2` is resolved against the
+    // body's 20px font, not the html element's 10px one.
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:contents;margin:0;font-size:20px;line-height:20px"),
+    );
+    doc.append_element(Some(body), "br", Style::default(), Some("line-height:2"));
+    doc.append_text(body, "z");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cascade, raikiri_traits::PageBox::A4).expect("layout");
+    let heights: Vec<f32> = doc.nodes[body]
+        .ifc_lines()
+        .expect("body lines")
+        .iter()
+        .map(shodo::Line::block_size)
+        .collect();
+    assert_eq!(heights, [40.0, 20.0]);
+}
