@@ -172,14 +172,33 @@ fn parse_supports_selector<'i>(
             return Ok(true);
         }
         let selectors = SelectorList::parse(
-            &NamespacedSelectorParser::new(namespaces.get()),
+            &NamespacedSelectorParser::for_nesting(namespaces.get()),
             input,
             ParseRelative::No,
         )
         .map_err(|_| input.new_custom_error(()))?;
-        Ok(selectors.slice().len() == 1
-            && is_supported_selector_list(&selectors)
-            && !selectors.slice().iter().any(has_invalid_selector_component))
+        if selectors.slice().len() != 1
+            || selectors.slice().iter().any(has_invalid_selector_component)
+        {
+            return Ok(false);
+        }
+        if selectors.slice().iter().any(Selector::has_parent_selector) {
+            // Feature detection checks whether a nesting selector can be used,
+            // independently of an actual parent or the ordinary root grammar.
+            // A universal representative lets the existing support gate inspect
+            // every other component after public parent replacement.
+            let mut universal_input = cssparser::ParserInput::new("*");
+            let universal = SelectorList::parse(
+                &NamespacedSelectorParser::new(namespaces.get()),
+                &mut Parser::new(&mut universal_input),
+                ParseRelative::No,
+            )
+            .map_err(|_| input.new_custom_error(()))?;
+            return Ok(is_supported_selector_list(
+                &selectors.replace_parent_selector(&universal),
+            ));
+        }
+        Ok(is_supported_selector_list(&selectors))
     })
 }
 

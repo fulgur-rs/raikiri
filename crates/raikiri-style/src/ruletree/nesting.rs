@@ -35,7 +35,7 @@ pub(super) fn parse_highlight_body(
 ) -> Vec<GroupItem> {
     parse_body(
         input,
-        BodyParent::Highlight(name),
+        BodyParent::Highlight(name.into()),
         source,
         depth,
         namespaces,
@@ -46,7 +46,7 @@ pub(super) fn parse_highlight_body(
 #[derive(Clone)]
 enum BodyParent {
     Style(SelectorList<RaikiriSelectorImpl>),
-    Highlight(String),
+    Highlight(Arc<str>),
 }
 
 fn parse_body(
@@ -252,7 +252,8 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleBodyParser<'_> {
             // Reparse only this bounded selector list through the public parser,
             // which drops contextually invalid forgiving branches and recomputes
             // specificity. Ordinary nesting keeps its shared selector graph.
-            let source = selectors.to_css_string();
+            let source = selector_css_for_revalidation(&selectors)
+                .map_err(|_| input.new_custom_error(()))?;
             let mut source_input = ParserInput::new(&source);
             let mut parser = Parser::new(&mut source_input);
             check_selector_token_depth(&mut parser, 0).map_err(|_| input.new_custom_error(()))?;
@@ -294,6 +295,37 @@ impl<'i> RuleBodyItemParser<'i, BodyItem, ()> for StyleBodyParser<'_> {
     }
     fn parse_declarations(&self) -> bool {
         true
+    }
+}
+
+// Rare contextual reparsing must not expand compact parent references into an
+// unbounded string. This per-selector-list ceiling does not limit a stylesheet.
+const MAX_SELECTOR_REVALIDATION_BYTES: usize = 64 * 1024 * 1024;
+
+fn selector_css_for_revalidation(
+    selectors: &SelectorList<RaikiriSelectorImpl>,
+) -> Result<String, std::fmt::Error> {
+    let mut output = SelectorOutput {
+        text: String::new(),
+        remaining: MAX_SELECTOR_REVALIDATION_BYTES,
+    };
+    selectors.to_css(&mut output)?;
+    Ok(output.text)
+}
+
+struct SelectorOutput {
+    text: String,
+    remaining: usize,
+}
+
+impl std::fmt::Write for SelectorOutput {
+    fn write_str(&mut self, text: &str) -> std::fmt::Result {
+        let Some(remaining) = self.remaining.checked_sub(text.len()) else {
+            return Err(std::fmt::Error);
+        };
+        self.text.push_str(text);
+        self.remaining = remaining;
+        Ok(())
     }
 }
 

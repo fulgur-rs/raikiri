@@ -11,6 +11,7 @@ use cssparser::{Parser, ParserInput, SourceLocation, StyleSheetParser, Token};
 use selectors::parser::{ParseRelative, Parser as SelectorParser, Selector, SelectorList};
 use std::cell::OnceCell;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::consumer::ConsumerPropertyRegistration;
 use crate::counter_style::{
@@ -219,7 +220,7 @@ pub struct RuleTree {
     pub(crate) style_rules: Vec<StyleRule>,
     /// Winning unconditional custom-highlight background colors.
     custom_highlight_styles: HashMap<String, CssColor>,
-    highlight_log: Vec<Registration<(String, HighlightColor, bool)>>,
+    highlight_log: Vec<Registration<(Arc<str>, HighlightColor, bool)>>,
     /// `@page` at-rules. `source_order` starts at zero independently of `style_rules`.
     /// [`crate::page::cascade_page`] applies the cascade; per-page `PageBox`
     /// derivation and margin-box slot layout are not implemented.
@@ -503,7 +504,8 @@ impl RuleTree {
     /// group bodies share a cumulative nesting limit of 128 levels. Nested
     /// selector lists are limited to 32,768 weighted components, counting repeated
     /// parent references. Token nesting is limited to 32 levels before recursive
-    /// nested-selector parsing or contextual revalidation.
+    /// nested-selector parsing or contextual revalidation. Contextual revalidation
+    /// also limits serialized selector output to 64 MiB before appending bytes.
     ///
     /// An over-limit nested rule is skipped with its descendants; valid ancestor
     /// declarations and sibling rules remain. Opaque inspection uses independent
@@ -1456,7 +1458,7 @@ enum GroupItem {
     Style(StyleRule),
     Sequence(Vec<GroupItem>),
     CustomHighlight {
-        name: String,
+        name: Arc<str>,
         color: Option<(HighlightColor, bool)>,
     },
     Page(PageSelector, PageBlockBody),
@@ -1730,7 +1732,7 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for GroupRuleParser<'_, '_> {
 struct GroupSink<'a, 'r> {
     style_rules: &'a mut Vec<StyleRule>,
     media_rules: &'a mut Vec<MediaRule>,
-    highlight_log: &'a mut Vec<Registration<(String, HighlightColor, bool)>>,
+    highlight_log: &'a mut Vec<Registration<(Arc<str>, HighlightColor, bool)>>,
     rules: &'a mut Vec<CssRule>,
     style_order: &'a mut u32,
     rule_order: &'a mut u32,
@@ -2085,7 +2087,7 @@ impl<'a> NamespacedSelectorParser<'a> {
         }
     }
 
-    fn for_nesting(namespaces: &'a NamespaceMap) -> Self {
+    pub(crate) fn for_nesting(namespaces: &'a NamespaceMap) -> Self {
         Self {
             namespaces,
             nesting: true,

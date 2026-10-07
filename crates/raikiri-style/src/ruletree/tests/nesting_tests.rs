@@ -184,3 +184,30 @@ fn highlight_nested_groups_preserve_layer_priority_and_static_media_policy() {
         assert_eq!(tree.custom_highlight_styles().get("note"), Some(&blue));
     }
 }
+
+#[test]
+fn nested_highlight_registrations_share_large_names() {
+    let name = "h".repeat(16 * 1024);
+    let source = format!(
+        "::highlight({name}){{background-color:red;{}background-color:blue}}",
+        "@supports (display:block){background-color:red}".repeat(96)
+    );
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(&source, Origin::Author);
+    assert_eq!(tree.highlight_log.len(), 98);
+    let first = tree.highlight_log[0].rule.0.as_ptr();
+    assert!(
+        tree.highlight_log
+            .iter()
+            .all(|entry| entry.rule.0.as_ptr() == first)
+    );
+    assert_eq!(
+        tree.custom_highlight_styles().get(&name),
+        Some(&CssColor {
+            r: 0,
+            g: 0,
+            b: 255,
+            a: 255
+        })
+    );
+}

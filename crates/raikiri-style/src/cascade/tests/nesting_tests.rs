@@ -562,3 +562,70 @@ fn has_context_repair_preserves_explicit_any_namespace_parent() {
     );
     assert_eq!(cascade(&doc, &tree).unwrap().computed[outer].color, BLUE);
 }
+
+#[test]
+fn contextual_parent_serialization_budget_preserves_other_rules() {
+    let mut doc = TestDoc::new();
+    let ancestor = doc.push_element_with_attrs(0, "section", None, &[("class", "ancestor")]);
+    let large = "a".repeat(32 * 1024);
+    let outer = doc.push_element_with_attrs(
+        ancestor,
+        "div",
+        None,
+        &[("class", "outer"), ("data-big", &large)],
+    );
+    doc.push_element_with_attrs(outer, "p", None, &[("class", "leaf")]);
+    let sibling = doc.push_element_with_attrs(0, "div", None, &[("class", "sibling")]);
+    for (count, expected) in [(4, BLUE), (2050, RED)] {
+        let selector = format!(".ancestor:has(>{})", ":is(&,.outer)".repeat(count));
+        let source = format!(
+            ".ancestor{{color:red}}.outer[data-big=\"{large}\"]:has(.leaf){{color:blue;{selector}{{color:blue}}}}.sibling{{color:blue}}"
+        );
+        let values = cascade(&doc, &nesting_tree(&source)).unwrap();
+        assert_eq!(values.computed[ancestor].color, expected);
+        assert_eq!(values.computed[outer].color, BLUE);
+        assert_eq!(values.computed[sibling].color, BLUE);
+    }
+}
+
+#[test]
+fn supports_nesting_selector_guards_working_nested_rules() {
+    let (doc, parent, _, _) = nesting_doc();
+    for query in [
+        "selector(&)",
+        "selector(:is(&,.outer))",
+        "selector(:has(>&))",
+        "selector(&:nth-child(1))",
+    ] {
+        let source = format!(".outer{{color:red;@supports {query}{{&{{color:blue}}}}}}");
+        assert_eq!(
+            cascade(&doc, &nesting_tree(&source)).unwrap().computed[parent].color,
+            BLUE,
+            "{query}"
+        );
+    }
+    for query in [
+        "selector(:is(&,:unknown))",
+        "selector(&,.outer)",
+        "selector(>&)",
+        "selector(& || .outer)",
+    ] {
+        let source = format!(".outer{{color:red;@supports {query}{{&{{color:blue}}}}}}");
+        assert_eq!(
+            cascade(&doc, &nesting_tree(&source)).unwrap().computed[parent].color,
+            RED,
+            "{query}"
+        );
+    }
+    let (doc, _, leaf, _) = nesting_doc();
+    let tree = nesting_tree("@supports selector(&){.leaf{color:red;&{color:inherit}}}");
+    assert_eq!(
+        cascade(&doc, &tree).unwrap().computed[leaf].color,
+        CssColor {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 255
+        }
+    );
+}
