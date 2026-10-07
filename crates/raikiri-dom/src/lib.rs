@@ -61,6 +61,9 @@ pub mod fonts;
 pub mod layout;
 #[doc(hidden)]
 pub mod paint_rules;
+#[doc(hidden)]
+pub mod text_decoration;
+pub use text_decoration::{DecorationKind, DecorationLine, DecorationStyle};
 pub mod taffy_impl;
 
 pub use document::{Document, DomMutationError};
@@ -98,9 +101,10 @@ pub use layout::{StandaloneAlign, StandaloneStyle, StandaloneText};
 pub use node::{CanvasBitmap, CanvasBitmapError, ElementData, Node, NodeData, NodeFlags, TextData};
 pub use page_projection::fragment::{Fragment, FragmentKind, RepeatKind};
 pub use page_projection::paint_order::{ClipKind, PaintEvent};
+// cov:ignore: public type re-exports have no executable mapping; API integration tests verify them.
 pub use page_projection::text_runs::{
     FontBlob, FontId, FontRef, FontVariation, GeneratedKind, Glyph, PositionedGlyphRun, RunSource,
-    Synthesis, Tag,
+    Synthesis, Tag, TextLineId,
 };
 pub use raikiri_traits::{NodeKind, QuirksMode};
 // cov:ignore: public re-exports have no executable coverage mapping.
