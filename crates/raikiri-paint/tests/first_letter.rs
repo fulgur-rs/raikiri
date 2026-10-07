@@ -417,8 +417,8 @@ fn only_the_first_in_flow_block_supplies_an_ancestors_letter() {
             Some("display:block;font:10px/40px Ahem"),
         );
         let target = doc.append_text(first, "XX");
-        let previous = if prefix.starts_with("text:") {
-            doc.append_text(body, &prefix[5..])
+        let previous = if let Some(text) = prefix.strip_prefix("text:") {
+            doc.append_text(body, text)
         } else if prefix == "comment" {
             doc.append_comment(Some(body), "ignored")
         } else {
