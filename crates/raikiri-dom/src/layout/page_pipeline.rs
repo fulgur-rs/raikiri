@@ -2348,7 +2348,6 @@ pub fn layout_pages_with_page_geometry_and_control(
         selected_page_name(cascade, body_id).or_else(|| first_page_name(document, cascade));
     let mut page_names = vec![current_page_name.clone()];
     let mut outer_page_name = current_page_name.clone();
-    let mut flex_page_names = HashMap::<usize, Option<String>>::new();
 
     let mut trailing_flex_child_by_parent = HashMap::<usize, Option<usize>>::new();
     // Paragraphs laid out by the inline engine that already had a candidate
@@ -2377,9 +2376,13 @@ pub fn layout_pages_with_page_geometry_and_control(
             (false, current_page_name.clone())
         } else {
             match candidate.named_flex_context {
-                Some(context) if candidate.is_named || candidate.is_text => {
-                    let previous = flex_page_names.insert(context, candidate.page_name.clone());
-                    (previous.is_some(), previous.flatten())
+                Some(_) if candidate.is_named || candidate.is_text => {
+                    // Nested column flows share the physical page opened by
+                    // their preceding sibling, including an inner flow's end.
+                    (
+                        saw_child && current_page_name.is_some(),
+                        current_page_name.clone(),
+                    )
                 }
                 Some(_) => (false, candidate.page_name.clone()),
                 None => {

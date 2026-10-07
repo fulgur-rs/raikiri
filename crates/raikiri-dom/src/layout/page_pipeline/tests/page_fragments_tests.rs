@@ -1918,3 +1918,80 @@ fn trailing_positioned_text_preserves_the_column_items_named_page() {
         );
     }
 }
+
+#[test]
+fn returning_from_a_nested_column_flex_keeps_its_last_named_page() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;font:10px/10px Ahem"),
+    );
+    let outer = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:flex;flex-direction:column"),
+    );
+    let item = doc.append_element(Some(outer), "div", Style::default(), Some("display:block"));
+    let first = doc.append_element(
+        Some(item),
+        "div",
+        Style::default(),
+        Some("display:block;page:a"),
+    );
+    let a = doc.append_text(first, "A");
+    let inner = doc.append_element(
+        Some(item),
+        "div",
+        Style::default(),
+        Some("display:flex;flex-direction:column"),
+    );
+    let inner_item =
+        doc.append_element(Some(inner), "div", Style::default(), Some("display:block"));
+    let mut texts = vec![a];
+    for name in ["b", "c"] {
+        let block = doc.append_element(
+            Some(inner_item),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;page:{name}")),
+        );
+        texts.push(doc.append_text(block, "X"));
+    }
+    let after = doc.append_element(
+        Some(item),
+        "div",
+        Style::default(),
+        Some("display:block;page:c"),
+    );
+    texts.push(doc.append_text(after, "D"));
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 50.0;
+    let slices = layout_pages(with_ahem(&mut doc), &computed, page).unwrap();
+    let fragments = page_fragments_from_slices(&doc, &computed, page, &slices);
+    let pages = texts
+        .into_iter()
+        .map(|id| {
+            fragments
+                .iter()
+                .flat_map(|p| &p.items)
+                .find(|item| item.node_id == NodeId::new(id as u64))
+                .unwrap()
+                .page_index
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(pages, [0, 1, 2, 2]);
+    assert_eq!(
+        slices
+            .iter()
+            .map(|page| page.page_name.as_deref())
+            .collect::<Vec<_>>(),
+        [Some("a"), Some("b"), Some("c")]
+    );
+}
