@@ -482,6 +482,96 @@ fn has_parent_nth_context_is_invalid() {
 }
 
 #[test]
+fn nth_parent_keeps_independent_forgiving_filter_branches() {
+    let (doc, _, leaf, other) = nesting_doc();
+    for filter in [":is(&,.leaf)", ":where(&,.leaf)"] {
+        let tree = nesting_tree(&format!(
+            ".leaf{{color:red}}.outer:first-child{{.leaf:nth-child(1 of {filter}){{color:blue}}}}"
+        ));
+        let values = cascade(&doc, &tree).unwrap();
+        assert_eq!(values.computed[leaf].color, BLUE, "{filter}");
+        assert_eq!(values.computed[other].color, BLUE, "{filter}");
+    }
+}
+
+#[test]
+fn nth_parent_dropped_branches_do_not_contribute_specificity() {
+    let (doc, _, leaf, _) = nesting_doc();
+    let tree = nesting_tree(
+        "#absent:first-child,.outer:first-child{.leaf:nth-child(1 of :is(&,.leaf)){color:blue}}\
+         .leaf.leaf.leaf:nth-child(1){color:red}",
+    );
+    assert_eq!(cascade(&doc, &tree).unwrap().computed[leaf].color, RED);
+}
+
+#[test]
+fn nth_parent_context_repair_preserves_each_indexed_pseudo_kind() {
+    let (doc, _, leaf, _) = nesting_doc();
+    for parent in [
+        ".outer:first-child",
+        ".outer:last-child",
+        ".outer:only-child",
+        ".outer:first-of-type",
+        ".outer:last-of-type",
+        ".outer:only-of-type",
+        ".outer:nth-child(1)",
+        ".outer:nth-last-child(1)",
+        ".outer:nth-of-type(1)",
+        ".outer:nth-last-of-type(1)",
+        ".outer:nth-child(1 of .outer)",
+    ] {
+        for nth in ["nth-child", "nth-last-child"] {
+            let tree = nesting_tree(&format!(
+                ".leaf{{color:red}}{parent}{{.leaf:{nth}(1 of :is(&,.leaf)){{color:blue}}}}"
+            ));
+            assert_eq!(
+                cascade(&doc, &tree).unwrap().computed[leaf].color,
+                BLUE,
+                "{parent} / {nth}"
+            );
+        }
+    }
+}
+
+#[test]
+fn nth_parent_non_forgiving_filters_recover_to_following_rules() {
+    let (doc, parent, leaf, other) = nesting_doc();
+    for filter in ["&,.leaf", ":not(&),.leaf"] {
+        let tree = nesting_tree(&format!(
+            ".leaf{{color:red}}.outer:first-child{{color:red;\
+             .leaf:nth-child(1 of {filter}){{color:blue}}\
+             >.leaf{{color:green}}color:blue;}}.outer + .leaf{{color:blue}}"
+        ));
+        let values = cascade(&doc, &tree).unwrap();
+        assert_eq!(values.computed[parent].color, BLUE);
+        assert_eq!(
+            values.computed[leaf].color,
+            CssColor {
+                r: 0,
+                g: 128,
+                b: 0,
+                a: 255
+            }
+        );
+        assert_eq!(values.computed[other].color, BLUE);
+    }
+}
+
+#[test]
+fn nth_parent_repair_keeps_valid_parent_list_branches() {
+    let (doc, _, leaf, _) = nesting_doc();
+    let tree = nesting_tree(
+        "#absent:first-child,.leaf{.leaf:nth-child(1 of &){color:blue}}\
+         .leaf.leaf:nth-child(1){color:red}",
+    );
+    assert_eq!(cascade(&doc, &tree).unwrap().computed[leaf].color, RED);
+    let tree = nesting_tree(
+        ".leaf{color:red}#absent:first-child,.leaf{.leaf:nth-child(1 of &){color:blue}}",
+    );
+    assert_eq!(cascade(&doc, &tree).unwrap().computed[leaf].color, BLUE);
+}
+
+#[test]
 fn explicit_is_context_controls() {
     let mut doc = TestDoc::new();
     let ancestor = doc.push_element_with_attrs(0, "section", None, &[("class", "ancestor")]);
@@ -653,4 +743,34 @@ fn supports_nesting_selector_guards_working_nested_rules() {
             a: 255
         }
     );
+}
+
+#[test]
+fn child_authored_recursive_nth_keeps_only_supported_forgiving_branches() {
+    let (doc, _, leaf, _) = nesting_doc();
+    for filter in [
+        ":is(#absent:first-child,.leaf)",
+        ":where(#absent:first-child,.leaf)",
+    ] {
+        let source =
+            format!(".leaf{{color:red}}.outer{{.leaf:nth-child(1 of {filter}){{color:blue}}}}");
+        assert_eq!(
+            cascade(&doc, &nesting_tree(&source)).unwrap().computed[leaf].color,
+            BLUE
+        );
+        let source = format!("{source}.leaf.leaf.leaf.leaf:nth-child(1){{color:red}}");
+        assert_eq!(
+            cascade(&doc, &nesting_tree(&source)).unwrap().computed[leaf].color,
+            RED
+        );
+    }
+    for filter in [
+        "#absent:first-child,.leaf",
+        ":not(#absent:first-child),.leaf",
+    ] {
+        let tree = nesting_tree(&format!(
+            ".leaf{{color:red}}.outer{{.leaf:nth-child(1 of {filter}){{color:blue}}}}"
+        ));
+        assert_eq!(cascade(&doc, &tree).unwrap().computed[leaf].color, RED);
+    }
 }

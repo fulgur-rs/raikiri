@@ -137,6 +137,7 @@ pub use raikiri_traits::{
 
 // ── raikiri-html: parse pipeline entry ─────────────────────────────────
 pub use raikiri_html::{MINIMAL_UA_CSS, ParseOptions, UncascadedDocument, parse};
+pub use raikiri_html::{StylesheetPart, StylesheetSource};
 
 // ── raikiri-dom: Document (the type of raikiri-html::UncascadedDocument.dom) ──
 // Consumers need this to name `&raikiri::Document` explicitly.

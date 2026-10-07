@@ -50,7 +50,7 @@ pub use resources::{
     ResourceLimits, parse_html_with_resources,
 };
 pub use sink::RaikiriTreeSink;
-pub use types::{ParseOptions, UncascadedDocument};
+pub use types::{ParseOptions, StylesheetPart, StylesheetSource, UncascadedDocument};
 pub use ua::MINIMAL_UA_CSS;
 
 // Types that appear in the signatures above, re-exported so a consumer that

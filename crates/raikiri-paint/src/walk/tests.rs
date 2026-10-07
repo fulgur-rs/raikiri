@@ -4409,10 +4409,12 @@ fn margin_box_layer_precedence_reaches_the_paint_consumer() {
             &raikiri_style::PageContextQuery::default(),
             raikiri_style::PageInheritance::LegacyInitialValues,
         );
-        let rule = margin_box_rule(page.margin_boxes(), PageMarginBoxSlot::TopLeft).unwrap();
+        let rule = margin_box_rule(&page, PageMarginBoxSlot::TopLeft).unwrap();
         assert_eq!(
             margin_box_property(&rule, PropertyKey::Color),
             Some(&PropertyValue::Color(expected))
         );
     }
 }
+
+mod css_wide_margin_tests;

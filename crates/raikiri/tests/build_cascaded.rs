@@ -545,7 +545,14 @@ fn link_rel_stylesheet_fetched_css_reaches_computed_style_through_real_cascade()
     // Also inspect raikiri-html's stylesheet_sources contract to verify
     // that fetched CSS arrives as an Author stylesheet.
     assert_eq!(
-        doc.stylesheet_sources,
+        doc.stylesheet_sources
+            .iter()
+            .map(|sheet| sheet
+                .parts
+                .iter()
+                .map(|part| part.source.as_str())
+                .collect::<String>())
+            .collect::<Vec<_>>(),
         vec![String::from("div { display: none }")],
         "fetched external stylesheet CSS text must land in stylesheet_sources"
     );
@@ -1042,7 +1049,10 @@ fn style_media_attribute_guards_the_stylesheet() {
         </body></html>"#;
     let doc = parse_html(html);
     assert_eq!(
-        doc.stylesheet_media,
+        doc.stylesheet_sources
+            .iter()
+            .map(|sheet| sheet.media.clone())
+            .collect::<Vec<_>>(),
         [
             Some("screen".to_owned()),
             Some(String::new()),

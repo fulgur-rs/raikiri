@@ -537,8 +537,8 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
 // The winner application already groups several optional cascade side channels;
 // the inherited computed values add one more required input for `inherit`
 // resolution without changing that staging boundary.
-/// Find a border longhand's surviving value after origin or layer rollback.
-fn find_border_rollback(
+/// Find a longhand's surviving value after origin or layer rollback.
+fn find_rollback(
     candidates: &[CascadedDecl],
     key: crate::property::PropertyKey,
     winner_index: usize,
@@ -588,11 +588,11 @@ fn find_border_rollback(
 ///
 /// `inherited` supplies the parent computed border for `Inherit`. `INITIAL_BORDER`
 /// supplies `Initial` and, because all `border-*` are non-inherited, `Unset`.
-/// `Revert` / `RevertLayer` use [`find_border_rollback`]; when no surviving winner
+/// `Revert` / `RevertLayer` use [`find_rollback`]; when no surviving winner
 /// exists they fall back to [`INITIAL_BORDER`]. A rollback winner that is
 /// [`PropertyValue::Deferred`] is resolved through `custom_properties`; a rollback
 /// winner that is itself a CSS-wide marker (only `Inherit` / `Initial` / `Unset`
-/// can survive [`find_border_rollback`]'s rollback filters) is resolved recursively one
+/// can survive [`find_rollback`]'s rollback filters) is resolved recursively one
 /// level without further rollback.
 fn resolve_border_css_wide(
     keyword: CssWideKeyword,
@@ -672,8 +672,7 @@ fn resolve_border_css_wide(
         CssWideKeyword::Inherit => Some(pick_field(parent_border())),
         CssWideKeyword::Initial | CssWideKeyword::Unset => Some(pick_field(initial_border())),
         CssWideKeyword::Revert | CssWideKeyword::RevertLayer => {
-            let rollback =
-                find_border_rollback(candidates, key, winner.idx, keyword, custom_properties)?;
+            let rollback = find_rollback(candidates, key, winner.idx, keyword, custom_properties)?;
             // Resolve one level: Deferred needs custom-property substitution;
             // a surviving Inherit/Initial/Unset marker resolves without further rollback.
             match rollback {
@@ -722,7 +721,7 @@ fn resolve_border_css_wide(
                     CssWideKeyword::Initial | CssWideKeyword::Unset => {
                         Some(pick_field(initial_border()))
                     }
-                    // Unreachable via find_border_rollback's skip, defensive fallback.
+                    // Unreachable via find_rollback's skip, defensive fallback.
                     CssWideKeyword::Revert | CssWideKeyword::RevertLayer => {
                         Some(pick_field(initial_border()))
                     }
@@ -784,22 +783,38 @@ pub(crate) fn apply_winners(
                 PropertyValue::Deferred(deferred) => {
                     let resolved = resolve_deferred_value(deferred, custom_properties);
                     let resolved = match resolved {
-                        Some(PropertyValue::Deferred(marker))
-                            if marker.value.trim().eq_ignore_ascii_case("inherit") =>
-                        {
-                            match marker.key {
-                                crate::property::PropertyKey::Color => {
-                                    Some(PropertyValue::Color(inherited.color))
+                        Some(PropertyValue::Deferred(marker)) => {
+                            if let Some(keyword) = marker.css_wide_keyword() {
+                                if matches!(
+                                    keyword,
+                                    CssWideKeyword::Revert | CssWideKeyword::RevertLayer
+                                ) {
+                                    match find_rollback(
+                                        candidates,
+                                        winner_key,
+                                        winner.idx,
+                                        keyword,
+                                        custom_properties,
+                                    ) {
+                                        Some(PropertyValue::Deferred(fallback)) => {
+                                            resolve_deferred_value(&fallback, custom_properties)
+                                                .map(|value| {
+                                                    resolve_defaulting_value(value, inherited)
+                                                })
+                                        }
+                                        Some(value) => {
+                                            Some(resolve_defaulting_value(value, inherited))
+                                        }
+                                        None => None,
+                                    }
+                                } else {
+                                    Some(resolve_defaulting_value(
+                                        PropertyValue::Deferred(marker),
+                                        inherited,
+                                    ))
                                 }
-                                crate::property::PropertyKey::BackgroundColor => {
-                                    Some(PropertyValue::BackgroundColor(inherited.background_color))
-                                }
-                                crate::property::PropertyKey::FontSize => {
-                                    Some(PropertyValue::FontSize(Length::Px(inherited.font_size.0)))
-                                }
-                                // cov:ignore: inherit markers are emitted only
-                                // for the three keys handled above by parse_property_value.
-                                _ => None,
+                            } else {
+                                Some(PropertyValue::Deferred(marker))
                             }
                         }
                         value => value,
@@ -1393,12 +1408,60 @@ fn inherited_margin_length(value: ComputedLengthPercentageOrAuto) -> LengthOrAut
     }
 }
 
+/// Resolve defaulting markers shared by the element and page inheritance paths.
+fn resolve_defaulting_value(value: PropertyValue, inherited: &ComputedValues) -> PropertyValue {
+    resolve_css_wide_color_font(
+        value,
+        inherited.color,
+        inherited.background_color,
+        inherited.font_size,
+    )
+}
+
+/// Share color/background/font defaulting with the page-margin cascade.
+pub(crate) fn resolve_css_wide_color_font(
+    value: PropertyValue,
+    inherited_color: crate::property::CssColor,
+    inherited_background: crate::property::CssColor,
+    inherited_font_size: ComputedLength,
+) -> PropertyValue {
+    let PropertyValue::Deferred(marker) = &value else {
+        return value;
+    };
+    let Some(keyword) = marker.css_wide_keyword() else {
+        return value;
+    };
+    let inherit = keyword == CssWideKeyword::Inherit
+        || (keyword != CssWideKeyword::Initial
+            && marker.key != crate::property::PropertyKey::BackgroundColor);
+    if marker.key == crate::property::PropertyKey::Color {
+        PropertyValue::Color(if inherit {
+            inherited_color
+        } else {
+            crate::property::CssColor::BLACK
+        })
+    } else if marker.key == crate::property::PropertyKey::BackgroundColor {
+        PropertyValue::BackgroundColor(if inherit {
+            inherited_background
+        } else {
+            crate::property::CssColor::TRANSPARENT
+        })
+    } else {
+        // css_wide_keyword only accepts these three keys, so the remaining key is FontSize.
+        PropertyValue::FontSize(Length::Px(if inherit {
+            inherited_font_size.0
+        } else {
+            crate::computed::INITIAL_FONT_SIZE_PX
+        }))
+    }
+}
+
 pub(crate) fn resolve_against_inherited(
     value: PropertyValue,
     inherited: &ComputedValues,
     ctx: &ResolveContext,
 ) -> ResolvedAgainstInherited {
-    ResolvedAgainstInherited(match value {
+    ResolvedAgainstInherited(match resolve_defaulting_value(value, inherited) {
         PropertyValue::BorderRadiusInherit => {
             PropertyValue::BorderRadius(inherited_border_radius_value(inherited))
         },

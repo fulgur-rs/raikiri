@@ -5,14 +5,14 @@ use smol_str::SmolStr;
 
 use crate::Atom;
 use crate::cascade::{
-    ResolvedAgainstInherited, cascade_rank, resolve_against_inherited,
+    ResolvedAgainstInherited, cascade_rank, resolve_against_inherited, resolve_css_wide_color_font,
     resolve_custom_property_environment, resolve_deferred_value,
 };
 use crate::computed::{ComputedValues, CustomPropertyEnvironment, empty_custom_properties};
 use crate::media::MediaContext;
 use crate::property::{
-    BackgroundImage, BorderStyle, CustomProperty, Length, OutlineStyle, OverflowValue, OverflowXY,
-    PropertyKey, PropertyValue, Sides,
+    BackgroundImage, BorderStyle, CssColor, CustomProperty, Length, OutlineStyle, OverflowValue,
+    OverflowXY, PropertyKey, PropertyValue, Sides,
 };
 use crate::resolve::{
     ComputedLength, ResolveContext, resolve_length, resolve_line_height, used_line_height_length,
@@ -85,6 +85,25 @@ pub struct PageContextQuery {
     pub is_blank: bool,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct MarginBoxInheritance {
+    color: CssColor,
+    background_color: CssColor,
+    font_size: ComputedLength,
+    custom_properties: Arc<CustomPropertyEnvironment>,
+}
+
+impl Default for MarginBoxInheritance {
+    fn default() -> Self {
+        Self {
+            color: CssColor::BLACK,
+            background_color: CssColor::TRANSPARENT,
+            font_size: ComputedLength(crate::computed::INITIAL_FONT_SIZE_PX),
+            custom_properties: empty_custom_properties(),
+        }
+    }
+}
+
 /// Cascaded declarations belonging to one page-margin box slot.
 ///
 /// The declaration list is kept in source order. The page-context cascade and
@@ -111,8 +130,18 @@ pub struct PageMarginBoxCascadeResult {
 impl PageMarginBoxCascadeResult {
     /// Cascade matching rules for one margin-box slot, preserving declaration
     /// importance, origin, layer, page-selector specificity and source order.
+    /// Uses initial inheritance values for supported defaulting longhands.
+    /// Use [`PageCascadeResult::cascade_margin_box`] to inherit from an actual page.
     /// Returns `None` when no rule targets the slot.
     pub fn cascade_matching(rules: &[Self], slot: PageMarginBoxSlot) -> Option<Self> {
+        Self::cascade_with_inheritance(rules, slot, &MarginBoxInheritance::default())
+    }
+
+    fn cascade_with_inheritance(
+        rules: &[Self],
+        slot: PageMarginBoxSlot,
+        inherited: &MarginBoxInheritance,
+    ) -> Option<Self> {
         let mut merged = rules.iter().rev().find(|rule| rule.slot == slot)?.clone();
         let candidates: Vec<_> = rules
             .iter()
@@ -125,6 +154,52 @@ impl PageMarginBoxCascadeResult {
                     .map(move |(decl_index, decl)| (rule_index, decl_index, rule, decl))
             })
             .collect();
+        let local_custom =
+            crate::cascade::select_custom_rollback_values(candidates.iter().filter_map(
+                |&(rule_index, decl_index, rule, decl)| {
+                    let PropertyValue::CustomProperty(custom) = &decl.value else {
+                        return None;
+                    };
+                    let layer = crate::layer::LayerPosition {
+                        attached: false,
+                        rank: rule.layer_order,
+                    };
+                    Some((
+                        custom,
+                        (
+                            cascade_rank(rule.origin, decl.important),
+                            layer.priority(decl.important),
+                            rule.specificity,
+                            rule.source_order,
+                            rule_index,
+                            decl_index,
+                        ),
+                        rule.origin,
+                        layer,
+                        decl.important,
+                    ))
+                },
+            ));
+        let custom_properties =
+            resolve_custom_property_environment(&inherited.custom_properties, &local_custom);
+        let resolved_value = |value: &PropertyValue| {
+            if let PropertyValue::Deferred(deferred) = value
+                && matches!(
+                    deferred.key,
+                    PropertyKey::Color | PropertyKey::BackgroundColor | PropertyKey::FontSize
+                )
+            {
+                resolve_deferred_value(deferred, custom_properties.as_ref())
+            } else {
+                Some(value.clone())
+            }
+        };
+        let rollback = |value: &PropertyValue| {
+            resolved_value(value).as_ref().map_or(
+                crate::cascade::rollback::Rollback::None,
+                crate::cascade::rollback::rollback_kind,
+            )
+        };
         let mut winners = HashMap::new();
         let mut has_rollback = false;
         for (index, &(rule_index, decl_index, rule, decl)) in candidates.iter().enumerate() {
@@ -132,6 +207,8 @@ impl PageMarginBoxCascadeResult {
                 has_rollback = true;
                 continue;
             }
+            has_rollback |= matches!(&decl.value, PropertyValue::Deferred(_))
+                && rollback(&decl.value) != crate::cascade::rollback::Rollback::None;
             let name = match &decl.value {
                 PropertyValue::CustomProperty(custom) => {
                     has_rollback |= crate::cascade::custom_property_rollback(&custom.value)
@@ -195,7 +272,7 @@ impl PageMarginBoxCascadeResult {
                             rule.origin,
                             layer,
                             decl.important,
-                            crate::cascade::rollback::rollback_kind(&decl.value),
+                            rollback(&decl.value),
                         ))
                     },
                 );
@@ -214,7 +291,18 @@ impl PageMarginBoxCascadeResult {
         winners.sort_unstable_by_key(|(rule_index, decl_index, _, _)| (*rule_index, *decl_index));
         merged.declarations = winners
             .into_iter()
-            .map(|(_, _, _, decl)| decl.clone())
+            .filter_map(|(_, _, _, decl)| {
+                let value = resolved_value(&decl.value)?;
+                Some(Declaration {
+                    value: resolve_css_wide_color_font(
+                        value,
+                        inherited.color,
+                        inherited.background_color,
+                        inherited.font_size,
+                    ),
+                    important: decl.important,
+                })
+            })
             .collect();
         Some(merged)
     }
@@ -261,6 +349,7 @@ pub struct PageCascadeResult {
     bleed: Option<PageBleed>,
     /// Matching margin-box at-rules in source order.
     margin_boxes: Vec<PageMarginBoxCascadeResult>,
+    margin_box_inheritance: MarginBoxInheritance,
 }
 
 impl PageCascadeResult {
@@ -544,7 +633,23 @@ impl PageCascadeResult {
         self.bleed
     }
 
-    /// Matching margin-box declarations, in source order.
+    /// Cascade a margin-box slot against this page's computed inheritance values.
+    ///
+    /// Color, background-color and font-size defaulting and variable substitution
+    /// are resolved before returning declarations to the layout/paint consumer.
+    pub fn cascade_margin_box(
+        &self,
+        slot: PageMarginBoxSlot,
+    ) -> Option<PageMarginBoxCascadeResult> {
+        PageMarginBoxCascadeResult::cascade_with_inheritance(
+            &self.margin_boxes,
+            slot,
+            &self.margin_box_inheritance,
+        )
+    }
+
+    /// Matching parsed margin-box declarations, in source order.
+    /// Use [`Self::cascade_margin_box`] to resolve a slot for layout or painting.
     pub fn margin_boxes(&self) -> &[PageMarginBoxCascadeResult] {
         &self.margin_boxes
     }
@@ -917,15 +1022,53 @@ pub fn cascade_page_with_media_context(
             .collect()
     };
 
+    // Resolve custom properties and defaulting against the page context's inheritance
+    // parent. `PageInheritance::LegacyInitialValues` falls back to the initial
+    // values, which the L3 legacy exception in CSS Paged Media 3 §6 "Page
+    // Properties" permits explicitly (see `PageInheritance`'s doc). Shared
+    // static: the fallback is immutable and `initial()` costs a heap allocation,
+    // which the `LegacyInitialValues` path would otherwise take on every call
+    // (following the `empty_counter_entries` precedent in `property.rs`).
+    static INITIAL_PAGE_PARENT: LazyLock<ComputedValues> = LazyLock::new(ComputedValues::initial);
+    let empty_custom_property_environment = empty_custom_properties();
+    let (inherited, inherited_custom_properties): (
+        &ComputedValues,
+        &Arc<CustomPropertyEnvironment>,
+    ) = match inheritance {
+        PageInheritance::FromRoot(root) => (root, &root.custom_properties),
+        PageInheritance::LegacyInitialValues => {
+            (&INITIAL_PAGE_PARENT, &empty_custom_property_environment)
+        }
+    };
+    let custom_properties =
+        resolve_custom_property_environment(inherited_custom_properties, &custom_local);
+    // Defaulting after substitution participates in rollback before selecting
+    // ordinary winners. Invalid computed values still win their own slot.
+    let candidate_rollback = |value: &PropertyValue| {
+        if let PropertyValue::Deferred(deferred) = value {
+            resolve_deferred_value(deferred, custom_properties.as_ref())
+                .as_ref()
+                .map_or(
+                    crate::cascade::rollback::Rollback::None,
+                    crate::cascade::rollback::rollback_kind,
+                )
+        } else {
+            crate::cascade::rollback::rollback_kind(value)
+        }
+    };
+
     // Winner selection — sibling arm to `cascade::pick_winners`.
     let mut best: HashMap<PropertyKey, (u8, u32, PageSpecificity, u32, PropertyValue)> =
         HashMap::new();
     let mut has_rollback = false;
+    let mut has_property_rollback = false;
     for (value, important, origin, layer, spec, order) in &candidates {
         if matches!(value, PropertyValue::AllRevertLayer) {
             has_rollback = true;
             continue;
         }
+        has_property_rollback |= matches!(value, PropertyValue::Deferred(_))
+            && candidate_rollback(value) != crate::cascade::rollback::Rollback::None;
         let rank = cascade_rank(*origin, *important);
         let key = value.key();
         let candidate = (rank, *layer, *spec, *order, value.clone());
@@ -941,8 +1084,11 @@ pub fn cascade_page_with_media_context(
         }
     }
 
-    if has_rollback {
+    if has_rollback || has_property_rollback {
         best.retain(|key, winner| {
+            if !has_rollback && !matches!(&winner.4, PropertyValue::Deferred(_)) {
+                return true;
+            }
             if matches!(key, PropertyKey::Direction | PropertyKey::UnicodeBidi) {
                 return true;
             }
@@ -971,7 +1117,7 @@ pub fn cascade_page_with_media_context(
                         *origin,
                         layer,
                         *important,
-                        crate::cascade::rollback::rollback_kind(value),
+                        candidate_rollback(value),
                     ))
                 },
             );
@@ -991,26 +1137,6 @@ pub fn cascade_page_with_media_context(
         });
     }
 
-    // Step 3 (phase 2): resolve winners against the page context's inheritance
-    // parent. `PageInheritance::LegacyInitialValues` falls back to the initial
-    // values, which the L3 legacy exception in CSS Paged Media 3 §6 "Page
-    // Properties" permits explicitly (see `PageInheritance`'s doc). Shared
-    // static: the fallback is immutable and `initial()` costs a heap allocation,
-    // which the `LegacyInitialValues` path would otherwise take on every call
-    // (following the `empty_counter_entries` precedent in `property.rs`).
-    static INITIAL_PAGE_PARENT: LazyLock<ComputedValues> = LazyLock::new(ComputedValues::initial);
-    let empty_custom_property_environment = empty_custom_properties();
-    let (inherited, inherited_custom_properties): (
-        &ComputedValues,
-        &Arc<CustomPropertyEnvironment>,
-    ) = match inheritance {
-        PageInheritance::FromRoot(root) => (root, &root.custom_properties),
-        PageInheritance::LegacyInitialValues => {
-            (&INITIAL_PAGE_PARENT, &empty_custom_property_environment)
-        }
-    };
-    let custom_properties =
-        resolve_custom_property_environment(inherited_custom_properties, &custom_local);
     // `ctx` carries `inherited`'s used line-height as `root_line_height` —
     // needed by *both* step 3 below (`resolve_against_inherited`'s
     // `FontSize` arm, for `font-size: 1lh`/`1rlh`'s self-reference basis) and
@@ -1069,6 +1195,24 @@ pub fn cascade_page_with_media_context(
     // `font_size` above: `1lh` in `padding`/`margin`/`border-*-width` needs
     // the page context's *own* resolved line-height, not the root's.
     let own_line_height = page_context_line_height_basis(&resolved, inherited, font_size, &ctx);
+    let margin_box_inheritance = MarginBoxInheritance {
+        color: match resolved
+            .get(&PropertyKey::Color)
+            .map(ResolvedAgainstInherited::as_property_value)
+        {
+            Some(PropertyValue::Color(color)) => *color,
+            _ => inherited.color,
+        },
+        background_color: match resolved
+            .get(&PropertyKey::BackgroundColor)
+            .map(ResolvedAgainstInherited::as_property_value)
+        {
+            Some(PropertyValue::BackgroundColor(color)) => *color,
+            _ => CssColor::TRANSPARENT,
+        },
+        font_size,
+        custom_properties,
+    };
     PageCascadeResult {
         declarations: resolved
             .into_iter()
@@ -1093,6 +1237,7 @@ pub fn cascade_page_with_media_context(
         bleed: bleed_best
             .map(|candidate| absolutize_page_bleed(candidate.5, font_size, own_line_height, &ctx)),
         margin_boxes,
+        margin_box_inheritance,
     }
 }
 

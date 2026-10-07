@@ -8627,7 +8627,7 @@ fn border_var_with_css_wide_resolves() {
 
 #[test]
 fn border_revert_for_style_and_color_rolls_back() {
-    // Cover `find_border_rollback` for style/color keys (width already covered):
+    // Cover `find_rollback` for style/color keys (width already covered):
     // User declares style/color; Author reverts; rollback finds User values.
     let mut doc = TestDoc::new();
     let div = doc.push_element(0, "div", None);
@@ -8659,7 +8659,7 @@ fn border_revert_for_style_and_color_rolls_back() {
 
 #[test]
 fn border_revert_ignores_same_origin_author_and_picks_best_user() {
-    // Cover `find_border_rollback`'s `rank >= winner_rank` skip (same-origin Author
+    // Cover `find_rollback`'s `rank >= winner_rank` skip (same-origin Author
     // non-revert) and `better` comparison among multiple lower-origin winners:
     // Author has `5px` then `revert` (revert wins, then ignores Author 5px);
     // User has `7px` (earlier) and `8px` (later, wins among Users).

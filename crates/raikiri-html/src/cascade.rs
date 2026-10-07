@@ -33,8 +33,8 @@ use crate::UncascadedDocument;
 ///
 /// # DOM `<style>` (Author) vs `extra_stylesheets` (User)
 ///
-/// `Document.stylesheets()` (UA plus `extra_stylesheets`, inserted during parsing)
-/// enters the RuleTree first. Next, `stylesheet_sources` (inline styles in the
+/// `Document.stylesheets()` and `user_stylesheet_sources` enter the RuleTree
+/// first. Next, `stylesheet_sources` (inline styles in the
 /// head/body and fetched head links) enters as Author. Previously,
 /// `extra_stylesheets` was also tagged `Author`, so conflicts with DOM `<style>`
 /// were resolved by source-order tie-breaking within one origin
@@ -149,18 +149,41 @@ pub fn build_rule_tree_with_consumer_properties(
 
     // Map every stylesheet associated with the Document to an Origin by kind.
     // Call order (insertion order) determines cascade source_order.
-    for (source, kind) in doc.dom.stylesheets() {
+    let mut dom_stylesheets = doc.dom.stylesheets();
+    for (source, kind) in dom_stylesheets
+        .by_ref()
+        .take(doc.user_stylesheet_insertion_index)
+    {
         let origin = stylesheet_kind_to_origin(kind);
         tree.add_stylesheet(source, origin);
     }
 
-    // Add the head/body inline styles and fetched head links collected through
-    // raikiri-html's template-inert filter during parsing as Author stylesheets.
-    for (index, source) in doc.stylesheet_sources.iter().enumerate() {
-        tree.add_stylesheet_with_media(source, Origin::Author, doc.stylesheet_media_at(index));
+    for sheet in &doc.user_stylesheet_sources {
+        add_sheet(&mut tree, sheet, Origin::User);
+    }
+    for (source, kind) in dom_stylesheets {
+        let origin = stylesheet_kind_to_origin(kind);
+        tree.add_stylesheet(source, origin);
+    }
+
+    // Add inline styles and fetched links in their original document order.
+    for sheet in &doc.stylesheet_sources {
+        add_sheet(&mut tree, sheet, Origin::Author);
     }
 
     tree
+}
+
+fn add_sheet(tree: &mut RuleTree, sheet: &crate::StylesheetSource, origin: Origin) {
+    for part in &sheet.parts {
+        let media: Vec<&str> = part
+            .media
+            .iter()
+            .map(String::as_str)
+            .chain(sheet.media.as_deref())
+            .collect();
+        tree.add_stylesheet_with_media_conditions(&part.source, origin, &media);
+    }
 }
 
 /// Translate DOM-level [`StylesheetKind`] (raikiri-traits) into cascade-level
@@ -193,22 +216,4 @@ fn stylesheet_kind_to_origin(kind: StylesheetKind) -> Origin {
 /// uses Document `<style>` sources as Author, without counting UA CSS from
 /// Document.stylesheets a second time.
 #[cfg(test)]
-mod smoke_tests {
-    use super::*;
-
-    #[test]
-    fn stylesheet_kind_to_origin_matches_spec() {
-        assert_eq!(
-            stylesheet_kind_to_origin(StylesheetKind::UserAgent),
-            Origin::UserAgent,
-        );
-        assert_eq!(
-            stylesheet_kind_to_origin(StylesheetKind::User),
-            Origin::User,
-        );
-        assert_eq!(
-            stylesheet_kind_to_origin(StylesheetKind::Author),
-            Origin::Author,
-        );
-    }
-}
+mod tests;

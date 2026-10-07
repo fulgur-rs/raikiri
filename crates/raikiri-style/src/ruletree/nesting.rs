@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::rule::{expand_shorthand_into, parse_declaration_value};
+use crate::selector_depth::check_selector_token_depth;
 use cssparser::{DeclarationParser, RuleBodyItemParser, RuleBodyParser, ToCss};
 
 /// Preserve each declaration run's selectors and position among child rules.
@@ -251,12 +252,10 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleBodyParser<'_> {
             return Err(input.new_custom_error(()));
         }
         let selectors = selectors.replace_parent_selector(nesting_parent);
-        if selectors
-            .slice()
-            .iter()
-            .any(|selector| selector_has_nested_has(selector, false, &mut HashMap::new()))
-        {
-            // Replacement does not revalidate the parent's new :has() context.
+        if selectors.slice().iter().any(|selector| {
+            selector_needs_revalidation(selector, false, false, &mut HashMap::new())
+        }) {
+            // Replacement does not revalidate the parent's new :has()/nth context.
             // Reparse only this bounded selector list through the public parser,
             // which drops contextually invalid forgiving branches and recomputes
             // specificity. Ordinary nesting keeps its shared selector graph.
@@ -266,6 +265,8 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleBodyParser<'_> {
             let mut source_input = ParserInput::new(&source);
             let mut parser = Parser::new(&mut source_input);
             check_selector_token_depth(&mut parser, 0).map_err(|_| input.new_custom_error(()))?;
+            let source = reject_recursive_nth(&source, self.selector_revalidation_budget)
+                .map_err(|_| input.new_custom_error(()))?;
             let mut source_input = ParserInput::new(&source);
             let reparsed = SelectorList::parse(
                 &NamespacedSelectorParser::new(self.namespaces),
@@ -341,14 +342,15 @@ impl std::fmt::Write for SelectorOutput<'_> {
     }
 }
 
-// A parent can introduce a :has() that was not present when its child was parsed.
-fn selector_has_nested_has(
+// A parent can introduce contextual components absent when its child was parsed.
+fn selector_needs_revalidation(
     selector: &Selector<RaikiriSelectorImpl>,
     inside_has: bool,
-    memo: &mut HashMap<(selectors::parser::SelectorKey, bool), bool>,
+    inside_nth: bool,
+    memo: &mut HashMap<(selectors::parser::SelectorKey, bool, bool), bool>,
 ) -> bool {
     use selectors::parser::{Component, SelectorKey};
-    let key = (SelectorKey::new(selector), inside_has);
+    let key = (SelectorKey::new(selector), inside_has, inside_nth);
     if let Some(&nested) = memo.get(&key) {
         return nested;
     }
@@ -357,47 +359,116 @@ fn selector_has_nested_has(
         .any(|component| match component {
             Component::Has(list) => {
                 inside_has
-                    || list
-                        .iter()
-                        .any(|child| selector_has_nested_has(&child.selector, true, memo))
+                    || list.iter().any(|child| {
+                        selector_needs_revalidation(&child.selector, true, inside_nth, memo)
+                    })
             }
             Component::Is(list) | Component::Where(list) | Component::Negation(list) => list
                 .slice()
                 .iter()
-                .any(|child| selector_has_nested_has(child, inside_has, memo)),
-            Component::NthOf(data) => data
-                .selectors()
-                .iter()
-                .any(|child| selector_has_nested_has(child, inside_has, memo)),
+                .any(|child| selector_needs_revalidation(child, inside_has, inside_nth, memo)),
+            Component::Nth(_) => inside_nth,
+            Component::NthOf(data) => {
+                inside_nth
+                    || data
+                        .selectors()
+                        .iter()
+                        .any(|child| selector_needs_revalidation(child, inside_has, true, memo))
+            }
             _ => false,
         });
     memo.insert(key, nested);
     nested
 }
 
-// Check token depth before invoking the recursive public selector parser.
-// The rule-body depth limit cannot bound selector functions in one prelude.
-const MAX_SELECTOR_TOKEN_DEPTH: usize = 32;
-
-fn check_selector_token_depth<'i>(
-    input: &mut Parser<'i, '_>,
-    depth: usize,
-) -> Result<(), cssparser::ParseError<'i, ()>> {
-    while let Ok(token) = input.next_including_whitespace_and_comments().cloned() {
-        if matches!(
-            token,
-            Token::Function(_)
-                | Token::ParenthesisBlock
-                | Token::SquareBracketBlock
-                | Token::CurlyBracketBlock
-        ) {
-            if depth >= MAX_SELECTOR_TOKEN_DEPTH {
-                return Err(input.new_custom_error(()));
+// Recursive nth is valid grammar but intentionally unsupported by the matcher.
+// Make only those pseudo-classes unknown to the public parser, so its forgiving
+// lists discard their branches and its non-forgiving lists still reject them.
+fn reject_recursive_nth<'a>(
+    source: &'a str,
+    remaining: &mut usize,
+) -> Result<std::borrow::Cow<'a, str>, ()> {
+    fn replacements(
+        input: &mut Parser<'_, '_>,
+        mut inside_nth: bool,
+        nth_arguments: bool,
+        edits: &mut Vec<std::ops::Range<usize>>,
+    ) -> Result<(), ()> {
+        let mut after_colon = false;
+        loop {
+            let start = input.position().byte_index();
+            let Ok(token) = input.next_including_whitespace_and_comments().cloned() else {
+                break;
+            };
+            match token {
+                Token::Function(name) => {
+                    let indexed = after_colon
+                        && matches!(
+                            name.as_ref(),
+                            "nth-child" | "nth-last-child" | "nth-of-type" | "nth-last-of-type"
+                        );
+                    if indexed && inside_nth {
+                        input
+                            .parse_nested_block(|nested| {
+                                while nested.next_including_whitespace_and_comments().is_ok() {}
+                                Ok::<_, cssparser::ParseError<'_, ()>>(())
+                            })
+                            .map_err(|_| ())?;
+                        edits.push(start..input.position().byte_index());
+                    } else {
+                        input
+                            .parse_nested_block(|nested| {
+                                replacements(nested, inside_nth, indexed, edits)
+                                    .map_err(|()| nested.new_custom_error::<(), ()>(()))
+                            })
+                            .map_err(|_| ())?;
+                    }
+                    after_colon = false;
+                }
+                Token::Ident(name) => {
+                    if nth_arguments && name == "of" {
+                        inside_nth = true;
+                    }
+                    if inside_nth
+                        && after_colon
+                        && matches!(
+                            name.as_ref(),
+                            "first-child"
+                                | "last-child"
+                                | "only-child"
+                                | "first-of-type"
+                                | "last-of-type"
+                                | "only-of-type"
+                        )
+                    {
+                        edits.push(start..input.position().byte_index());
+                    }
+                    after_colon = false;
+                }
+                Token::Colon => after_colon = true,
+                _ => after_colon = false,
             }
-            input.parse_nested_block(|nested| check_selector_token_depth(nested, depth + 1))?;
         }
+        Ok(())
     }
-    Ok(())
+    let mut input = ParserInput::new(source);
+    let mut edits = Vec::new();
+    replacements(&mut Parser::new(&mut input), false, false, &mut edits)?;
+    if edits.is_empty() {
+        return Ok(std::borrow::Cow::Borrowed(source));
+    }
+    let mut output = SelectorOutput {
+        text: String::new(),
+        remaining,
+    };
+    let mut start = 0;
+    for edit in edits {
+        std::fmt::Write::write_str(&mut output, &source[start..edit.start]).map_err(|_| ())?;
+        std::fmt::Write::write_str(&mut output, "raikiri-unsupported-nth").map_err(|_| ())?;
+        start = edit.end;
+    }
+    std::fmt::Write::write_str(&mut output, &source[start..]).map_err(|_| ())?;
+    Ok(std::borrow::Cow::Owned(output.text))
 }
 
 // Compact parent references avoid string products, but repeated references

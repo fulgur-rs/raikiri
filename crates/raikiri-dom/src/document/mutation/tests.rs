@@ -267,7 +267,7 @@ fn replace_child_adjusts_reference_when_node_is_childs_next_sibling() {
     d.pre_insert(body, child, None).unwrap();
     d.pre_insert(body, node, None).unwrap();
     d.pre_insert(body, z, None).unwrap();
-    // body's children are now [a, child, node, z]; node is child's
+    // body's children are now `a, child, node, z`; node is child's
     // immediate next sibling, so replacing child with node must resolve the
     // reinsertion point against node's OWN next sibling (z), not the
     // about-to-move `node` reference itself.

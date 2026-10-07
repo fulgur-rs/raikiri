@@ -42,3 +42,5 @@ mod serialize_tests;
 mod text_indent_calc_tests;
 mod text_tests;
 mod visual_tests;
+
+mod css_wide_tests;

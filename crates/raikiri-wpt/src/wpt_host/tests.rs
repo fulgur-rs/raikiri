@@ -689,6 +689,24 @@ fn inner_html_style_expands_leading_import() {
     );
 }
 
+#[test]
+fn inner_html_media_import_preserves_namespace_supports() {
+    let (dir, mut rt) = runtime("<div id=t></div>");
+    std::fs::write(dir.path().join("imported.css"),
+        "@namespace svg 'http://www.w3.org/2000/svg'; @supports selector(svg|rect) {#t {height:37px}}").unwrap();
+    rt.evaluate(r#"document.head.innerHTML = '<style media="screen">@import "imported.css" screen;</style>';"#).unwrap();
+    assert_eq!(
+        num(&mut rt, "document.getElementById('t').offsetHeight"),
+        37.0
+    );
+    rt.evaluate("document.head.querySelector('style').setAttribute('media', 'print');")
+        .unwrap();
+    assert_eq!(
+        num(&mut rt, "document.getElementById('t').offsetHeight"),
+        0.0
+    );
+}
+
 /// An SVG-namespace `<style>` connected by script reaches the cascade like the
 /// fragment parser's `stylesheet_sources` projection, which keeps SVG styles.
 #[test]

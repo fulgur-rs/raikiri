@@ -26,7 +26,7 @@ fn unicode_root_and_live_sources_are_preserved_without_fetches() {
     );
     assert_eq!(
         expand_live_stylesheet_imports(vec![source.to_owned()], Some(&base), Some(&provider)),
-        vec![source]
+        vec![StylesheetSource::new(source.to_owned(), None)]
     );
     assert!(provider.requests.lock().unwrap().is_empty());
     assert!(warnings.is_empty());
@@ -240,7 +240,7 @@ fn malformed_import_and_unterminated_prefix_are_not_rewritten() {
 }
 
 #[test]
-fn expansion_inlines_at_import_position_and_wraps_media() {
+fn expansion_preserves_import_position_and_media_conditions() {
     let provider = MapProvider::new(&[
         ("https://example.test/a.css", "a { color: red }"),
         ("https://example.test/b.css", "b { color: blue }"),
@@ -256,7 +256,7 @@ fn expansion_inlines_at_import_position_and_wraps_media() {
     );
     assert_eq!(
         expanded,
-        "a { color: red } @media screen{b { color: blue }} c { color: green }"
+        "a { color: red } b { color: blue } c { color: green }"
     );
     assert_eq!(
         *provider.requests.lock().unwrap(),
@@ -625,4 +625,433 @@ fn depth_limit_leaves_the_next_import_untouched() {
         provider.requests.lock().unwrap().len(),
         MAX_IMPORT_DEPTH as usize
     );
+}
+
+#[test]
+fn media_import_preserves_child_namespace_for_supports() {
+    let provider = MapProvider::new(&[(
+        "https://example.test/child.css",
+        "@namespace svg 'http://www.w3.org/2000/svg'; @supports selector(svg|rect) {p {display:none}}",
+    )]);
+    let document = imported_document(
+        &provider,
+        "<style>@import 'child.css' print;</style><p>x</p>",
+        &[],
+    );
+    let tree = crate::build_rule_tree(&document);
+    assert_eq!(
+        element_display(&document, &tree, &raikiri_style::MediaContext::print(), "p"),
+        raikiri_style::DisplayValue::None
+    );
+    assert_eq!(
+        element_display(
+            &document,
+            &tree,
+            &raikiri_style::MediaContext::screen(),
+            "p"
+        ),
+        raikiri_style::DisplayValue::Block
+    );
+}
+
+fn imported_document(
+    provider: &MapProvider,
+    html: &str,
+    extra: &[&str],
+) -> crate::UncascadedDocument {
+    crate::parse(
+        html.as_bytes(),
+        &crate::ParseOptions {
+            extra_stylesheets: extra,
+            network: Some(provider),
+            base_url: Some(Url::parse("https://example.test/root.html").unwrap()),
+        },
+    )
+    .unwrap()
+}
+
+fn element_display(
+    document: &crate::UncascadedDocument,
+    tree: &raikiri_style::RuleTree,
+    context: &raikiri_style::MediaContext,
+    tag: &str,
+) -> raikiri_style::DisplayValue {
+    let index = (0..document.dom.node_count())
+        .find(|&index| {
+            document
+                .dom
+                .get_node(index)
+                .and_then(|node| node.tag_name())
+                == Some(tag)
+        })
+        .unwrap();
+    raikiri_style::cascade_with_media_context(&document.dom, tree, context)
+        .unwrap()
+        .computed[index]
+        .display
+}
+
+#[test]
+fn nested_import_media_lists_keep_conjunctions_and_descriptor_collections() {
+    let provider = MapProvider::new(&[
+        (
+            "https://example.test/child.css",
+            "@import 'grand.css' (min-width:500px), screen;",
+        ),
+        (
+            "https://example.test/grand.css",
+            "@font-face {font-family:Imported;src:url(font.woff)} \
+         @counter-style imported {system:cyclic;symbols:'*'} \
+         @page {margin:1in} @layer imported {@supports (display:block) {p {display:none}}}",
+        ),
+    ]);
+    let document = imported_document(
+        &provider,
+        "<style media='(max-width:800px)'>@import 'child.css' print, (min-width:900px);</style><p>x</p>",
+        &[],
+    );
+    let tree = crate::build_rule_tree(&document);
+    use raikiri_style::{DisplayValue, MediaContext, MediaType};
+    for (kind, width, active) in [
+        (MediaType::Print, 600, true),
+        (MediaType::Print, 400, false),
+        (MediaType::Print, 850, false),
+        (MediaType::Screen, 600, false),
+        (MediaType::Screen, 1000, false),
+    ] {
+        let context = MediaContext::with_viewport(kind, width, 1000);
+        assert_eq!(
+            tree.font_faces_for(&context).get("Imported").is_some(),
+            active
+        );
+        assert_eq!(
+            tree.counter_styles_for(&context).get("imported").is_some(),
+            active
+        );
+        assert_eq!(
+            element_display(&document, &tree, &context, "p"),
+            if active {
+                DisplayValue::None
+            } else {
+                DisplayValue::Block
+            }
+        );
+        let page = raikiri_style::cascade_page_with_media_context(
+            &tree,
+            &raikiri_style::PageContextQuery::default(),
+            raikiri_style::PageInheritance::LegacyInitialValues,
+            &context,
+        );
+        assert_eq!(
+            page.declarations()
+                .contains_key(&raikiri_style::PropertyKey::MarginTop),
+            active
+        );
+    }
+    assert_eq!(tree.page_rules.len(), 1);
+}
+
+#[test]
+fn false_import_media_does_not_change_layer_order() {
+    let provider = MapProvider::new(&[("https://example.test/child.css", "@layer b,a;")]);
+    let document = imported_document(
+        &provider,
+        "<style>@import 'child.css' screen; @layer a,b; @layer a {p {display:none}} @layer b {p {display:inline}}</style><p>x</p>",
+        &[],
+    );
+    let tree = crate::build_rule_tree(&document);
+    assert_eq!(
+        element_display(&document, &tree, &raikiri_style::MediaContext::print(), "p"),
+        raikiri_style::DisplayValue::Inline
+    );
+    assert_eq!(
+        element_display(
+            &document,
+            &tree,
+            &raikiri_style::MediaContext::screen(),
+            "p"
+        ),
+        raikiri_style::DisplayValue::None
+    );
+}
+
+#[test]
+fn malformed_and_impossible_import_conditions_drop_all_rule_kinds() {
+    let provider = MapProvider::new(&[(
+        "https://example.test/child.css",
+        "@font-face {font-family:Hidden;src:url(font.woff)} @counter-style hidden {system:cyclic;symbols:'*'} \
+         @page {margin:1in} @layer b,a; @supports (display:block) {p {display:none}}",
+    )]);
+    for media in ["not all", "print,", "(hover:hover)"] {
+        let document = imported_document(
+            &provider,
+            &format!(
+                "<style>@import 'child.css' {media}; @layer a,b; @layer a {{p {{display:none}}}} @layer b {{p {{display:inline}}}}</style><p>x</p>"
+            ),
+            &[],
+        );
+        let tree = crate::build_rule_tree(&document);
+        assert!(tree.page_rules.is_empty());
+        for context in [
+            raikiri_style::MediaContext::print(),
+            raikiri_style::MediaContext::screen(),
+        ] {
+            assert!(tree.font_faces_for(&context).get("Hidden").is_none());
+            assert!(tree.counter_styles_for(&context).get("hidden").is_none());
+            assert_eq!(
+                element_display(&document, &tree, &context, "p"),
+                raikiri_style::DisplayValue::Inline
+            );
+        }
+    }
+}
+
+#[test]
+fn imports_preserve_root_order_and_user_origin_with_empty_element_media() {
+    let provider = MapProvider::new(&[("https://example.test/child.css", "p {display:none}")]);
+    let document = imported_document(
+        &provider,
+        "<style media='  '>@import 'child.css' print; p {display:inline}</style><p>x</p>",
+        &["@import 'child.css' print;"],
+    );
+    let tree = crate::build_rule_tree(&document);
+    for context in [
+        raikiri_style::MediaContext::print(),
+        raikiri_style::MediaContext::screen(),
+    ] {
+        assert_eq!(
+            element_display(&document, &tree, &context, "p"),
+            raikiri_style::DisplayValue::Inline
+        );
+    }
+}
+
+#[test]
+fn imported_namespaces_do_not_leak_between_child_and_parent_sheets() {
+    let provider = MapProvider::new(&[(
+        "https://example.test/child.css",
+        "@namespace x 'urn:child'; @supports selector(x|p) {p {display:none}}",
+    )]);
+    let document = imported_document(
+        &provider,
+        "<style>@import 'child.css'; @supports selector(x|p) {p {display:inline}}</style><p>x</p>",
+        &[],
+    );
+    let tree = crate::build_rule_tree(&document);
+    assert_eq!(
+        element_display(&document, &tree, &raikiri_style::MediaContext::print(), "p"),
+        raikiri_style::DisplayValue::None
+    );
+}
+
+#[test]
+fn live_import_expansion_preserves_sheet_namespace_and_media() {
+    let provider = MapProvider::new(&[(
+        "https://example.test/child.css",
+        "@namespace h 'http://www.w3.org/1999/xhtml'; @supports selector(h|p) {p {display:none}}",
+    )]);
+    let mut document = imported_document(&provider, "<p>x</p>", &[]);
+    document.stylesheet_sources = expand_live_stylesheet_imports(
+        vec!["@import 'child.css' print;".to_owned()],
+        Some(&Url::parse("https://example.test/root.html").unwrap()),
+        Some(&provider),
+    );
+    let tree = crate::build_rule_tree(&document);
+    assert_eq!(
+        element_display(&document, &tree, &raikiri_style::MediaContext::print(), "p"),
+        raikiri_style::DisplayValue::None
+    );
+    assert_eq!(
+        element_display(
+            &document,
+            &tree,
+            &raikiri_style::MediaContext::screen(),
+            "p"
+        ),
+        raikiri_style::DisplayValue::Block
+    );
+}
+
+#[test]
+fn imported_user_important_declarations_outrank_author_important_declarations() {
+    let provider = MapProvider::new(&[(
+        "https://example.test/child.css",
+        "p {display:none!important}",
+    )]);
+    let document = imported_document(
+        &provider,
+        "<style>p {display:inline!important}</style><p>x</p>",
+        &["@import 'child.css' print;"],
+    );
+    let tree = crate::build_rule_tree(&document);
+    assert_eq!(
+        element_display(&document, &tree, &raikiri_style::MediaContext::print(), "p"),
+        raikiri_style::DisplayValue::None
+    );
+    assert_eq!(
+        element_display(
+            &document,
+            &tree,
+            &raikiri_style::MediaContext::screen(),
+            "p"
+        ),
+        raikiri_style::DisplayValue::Inline
+    );
+}
+
+#[test]
+fn import_media_bytes_count_toward_the_expansion_budget() {
+    let provider = MapProvider::new(&[("https://example.test/child.css", "p{display:none}")]);
+    let base = Url::parse("https://example.test/root.css").unwrap();
+    let mut warnings = Vec::new();
+    let mut budget = ImportBudget {
+        expansion_bytes: MAX_IMPORT_EXPANSION_BYTES - "p{display:none}".len(),
+        ..ImportBudget::default()
+    };
+    let source = "@import 'child.css' print;";
+    let parts = expand_stylesheet_imports_with_budget(
+        source,
+        Some(&base),
+        None,
+        Some(&provider),
+        &mut warnings,
+        &mut budget,
+    );
+    assert_eq!(
+        parts,
+        vec![StylesheetPart {
+            source: source.to_owned(),
+            media: Vec::new()
+        }]
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn parent_import_media_budget_prevents_allocation_amplification() {
+    const CHILD_MARKER: &str = "RAIKIRI_IMPORT_MEDIA_MEMORY_CHILD";
+    if std::env::var_os(CHILD_MARKER).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "import::tests::parent_import_media_budget_prevents_allocation_amplification",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(CHILD_MARKER, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "isolated memory regression failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+
+    fn peak_resident_bytes() -> usize {
+        std::fs::read_to_string("/proc/self/status")
+            .unwrap()
+            .lines()
+            .find_map(|line| line.strip_prefix("VmHWM:"))
+            .unwrap()
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .parse::<usize>()
+            .unwrap()
+            * 1024
+    }
+
+    // Interstitial whitespace creates separate source-ordered parts. The
+    // input stays small while repeated parent media would exceed 16 MiB.
+    let child = "@import 'grand.css'; ".repeat(255);
+    let provider = MapProvider::new(&[
+        ("https://example.test/child.css", &child),
+        ("https://example.test/grand.css", "p{display:none}"),
+    ]);
+    let source = format!("@import 'child.css' print /*{}*/;", "x".repeat(64 * 1024));
+    let base = Url::parse("https://example.test/root.css").unwrap();
+    let mut warnings = Vec::new();
+    let mut budget = ImportBudget::default();
+    let before = peak_resident_bytes();
+    let parts = expand_stylesheet_imports_with_budget(
+        &source,
+        Some(&base),
+        None,
+        Some(&provider),
+        &mut warnings,
+        &mut budget,
+    );
+    let growth = peak_resident_bytes().saturating_sub(before);
+    println!("rejected import peak resident memory growth: {growth} bytes");
+    assert_eq!(
+        parts,
+        vec![StylesheetPart {
+            source,
+            media: Vec::new()
+        }]
+    );
+    assert!(
+        growth <= 16 * 1024 * 1024,
+        "rejected import grew peak resident memory by {growth} bytes"
+    );
+}
+
+#[test]
+fn credential_bearing_root_stylesheet_does_not_resolve_even_safe_child_urls() {
+    let provider = MapProvider::new(&[("https://example.test/child.css", "p {display:none}")]);
+    let base = Url::parse("https://example.test/root.css").unwrap();
+    let root = Url::parse("https://user:secret@example.test/root.css").unwrap();
+    let source = "@import 'child.css'; p {display:inline}";
+    let mut warnings = Vec::new();
+    let mut budget = ImportBudget::default();
+    let parts = expand_stylesheet_imports_with_budget(
+        source,
+        Some(&base),
+        Some(&root),
+        Some(&provider),
+        &mut warnings,
+        &mut budget,
+    );
+    assert_eq!(parts.len(), 1);
+    assert_eq!(parts[0].source, source);
+    assert!(provider.requests.lock().unwrap().is_empty());
+    assert!(warnings.is_empty());
+}
+
+#[test]
+fn live_sheets_without_a_provider_keep_unresolved_imports_and_cascade_in_order() {
+    let mut document = crate::parse(
+        &b"<p>x</p>"[..],
+        &crate::ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        },
+    )
+    .unwrap();
+    let first = "@import 'missing.css' print; p {display:none}";
+    let second = "p {display:inline}";
+    document.stylesheet_sources =
+        expand_live_stylesheet_imports(vec![first.to_owned(), second.to_owned()], None, None);
+    assert_eq!(document.stylesheet_sources.len(), 2);
+    assert_eq!(document.stylesheet_sources[0].parts[0].source, first);
+    assert_eq!(document.stylesheet_sources[1].parts[0].source, second);
+    let tree = crate::build_rule_tree(&document);
+    assert!(
+        tree.opaque_at_rules()
+            .iter()
+            .any(|rule| rule.name == "import")
+    );
+    for context in [
+        raikiri_style::MediaContext::print(),
+        raikiri_style::MediaContext::screen(),
+    ] {
+        assert_eq!(
+            element_display(&document, &tree, &context, "p"),
+            raikiri_style::DisplayValue::Inline
+        );
+    }
 }

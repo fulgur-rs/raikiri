@@ -537,13 +537,34 @@ impl RuleTree {
     /// [`RuleTree::font_faces_for`] and [`RuleTree::counter_styles_for`] to
     /// read the registries for one media context.
     pub fn add_stylesheet_with_media(&mut self, source: &str, origin: Origin, media: Option<&str>) {
-        let condition = match media.map(str::trim) {
-            None | Some("") => None,
-            Some(media) => match parse_media_prelude(media) {
-                Some(condition) => Some(condition),
-                None => return,
-            },
-        };
+        self.add_stylesheet_with_media_conditions(source, origin, media.as_slice());
+    }
+
+    /// Add a stylesheet guarded by the conjunction of independent media lists.
+    ///
+    /// Each nonempty list must match; commas within one list remain alternatives.
+    /// This preserves nested import conditions without changing sheet-level
+    /// constructs such as `@namespace` into group rules. Empty lists mean `all`.
+    pub fn add_stylesheet_with_media_conditions(
+        &mut self,
+        source: &str,
+        origin: Origin,
+        media: &[&str],
+    ) {
+        let mut condition: Option<MediaCondition> = None;
+        for list in media
+            .iter()
+            .map(|list| list.trim())
+            .filter(|list| !list.is_empty())
+        {
+            let Some(next) = parse_media_prelude(list) else {
+                return;
+            };
+            condition = Some(match condition {
+                Some(previous) => previous.intersect(&next),
+                None => next,
+            });
+        }
         self.add_conditional_stylesheet(source, origin, condition.as_ref());
     }
 
@@ -1664,6 +1685,9 @@ fn parse_qualified_prelude<'i>(
     input: &mut Parser<'i, '_>,
     namespaces: &NamespaceMap,
 ) -> Result<QualifiedPrelude, cssparser::ParseError<'i, ()>> {
+    let start = input.state();
+    crate::selector_depth::check_selector_token_depth(input, 0)?;
+    input.reset(&start);
     if let Ok(name) = input.try_parse(parse_custom_highlight_prelude) {
         return Ok(QualifiedPrelude::CustomHighlight(name));
     }
@@ -2054,6 +2078,9 @@ fn parse_stylesheet_namespaces(source: &str) -> NamespaceMap {
             &mut self,
             input: &mut Parser<'i, 't>,
         ) -> Result<(), cssparser::ParseError<'i, ()>> {
+            let start = input.state();
+            crate::selector_depth::check_selector_token_depth(input, 0)?;
+            input.reset(&start);
             if input.try_parse(parse_custom_highlight_prelude).is_ok() {
                 return Ok(());
             }

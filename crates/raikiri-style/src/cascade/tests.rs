@@ -675,3 +675,5 @@ fn hanging_punctuation_important_wins_cascade_and_is_inherited() {
         }
     }
 }
+
+mod css_wide_tests;
