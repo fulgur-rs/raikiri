@@ -1017,9 +1017,7 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
                 PropertyValue::TextShadow(Arc::new(v))
             }
         }),
-        // CSS Backgrounds and Borders 3 §5: this task supports the four
-        // circular `<length>` radii only; percentages and slash-separated
-        // elliptical radii remain a follow-up.
+        // CSS Backgrounds and Borders 3 §4.1: independent axes per corner.
         "border-radius" => {
             if input
                 .try_parse(|i| i.expect_ident_matching("inherit"))
@@ -1031,16 +1029,16 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
             }
         }
         "border-top-left-radius" => {
-            parse_non_negative_length_percentage(input).map(PropertyValue::BorderRadiusTopLeft)
+            parse_border_radius_corner(input).map(PropertyValue::BorderRadiusTopLeft)
         }
         "border-top-right-radius" => {
-            parse_non_negative_length_percentage(input).map(PropertyValue::BorderRadiusTopRight)
+            parse_border_radius_corner(input).map(PropertyValue::BorderRadiusTopRight)
         }
         "border-bottom-right-radius" => {
-            parse_non_negative_length_percentage(input).map(PropertyValue::BorderRadiusBottomRight)
+            parse_border_radius_corner(input).map(PropertyValue::BorderRadiusBottomRight)
         }
         "border-bottom-left-radius" => {
-            parse_non_negative_length_percentage(input).map(PropertyValue::BorderRadiusBottomLeft)
+            parse_border_radius_corner(input).map(PropertyValue::BorderRadiusBottomLeft)
         }
         // CSS Backgrounds and Borders 3 §6.1: multiple comma-separated
         // shadows are stored as an Arc list. `inset` is intentionally outside

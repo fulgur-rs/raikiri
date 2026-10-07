@@ -2670,37 +2670,37 @@ fn border_radius_expands_one_to_four_lengths_in_clockwise_order() {
     assert_eq!(
         parse("1px", "border-radius"),
         Some(PropertyValue::BorderRadius(BorderRadius {
-            top_left: Length::Px(1.0),
-            top_right: Length::Px(1.0),
-            bottom_right: Length::Px(1.0),
-            bottom_left: Length::Px(1.0),
+            top_left: Length::Px(1.0).into(),
+            top_right: Length::Px(1.0).into(),
+            bottom_right: Length::Px(1.0).into(),
+            bottom_left: Length::Px(1.0).into(),
         }))
     );
     assert_eq!(
         parse("1px 2em", "border-radius"),
         Some(PropertyValue::BorderRadius(BorderRadius {
-            top_left: Length::Px(1.0),
-            top_right: Length::Em(2.0),
-            bottom_right: Length::Px(1.0),
-            bottom_left: Length::Em(2.0),
+            top_left: Length::Px(1.0).into(),
+            top_right: Length::Em(2.0).into(),
+            bottom_right: Length::Px(1.0).into(),
+            bottom_left: Length::Em(2.0).into(),
         }))
     );
     assert_eq!(
         parse("1px 2px 3px", "border-radius"),
         Some(PropertyValue::BorderRadius(BorderRadius {
-            top_left: Length::Px(1.0),
-            top_right: Length::Px(2.0),
-            bottom_right: Length::Px(3.0),
-            bottom_left: Length::Px(2.0),
+            top_left: Length::Px(1.0).into(),
+            top_right: Length::Px(2.0).into(),
+            bottom_right: Length::Px(3.0).into(),
+            bottom_left: Length::Px(2.0).into(),
         }))
     );
     assert_eq!(
         parse("1px 2px 3px 4px", "border-radius"),
         Some(PropertyValue::BorderRadius(BorderRadius {
-            top_left: Length::Px(1.0),
-            top_right: Length::Px(2.0),
-            bottom_right: Length::Px(3.0),
-            bottom_left: Length::Px(4.0),
+            top_left: Length::Px(1.0).into(),
+            top_right: Length::Px(2.0).into(),
+            bottom_right: Length::Px(3.0).into(),
+            bottom_left: Length::Px(4.0).into(),
         }))
     );
 }
@@ -2710,21 +2710,107 @@ fn border_radius_accepts_percentages_and_rejects_negative_lengths() {
     assert_eq!(
         parse_entire("50% 25%", "border-radius"),
         Some(PropertyValue::BorderRadius(BorderRadius {
-            top_left: Length::Percent(50.0),
-            top_right: Length::Percent(25.0),
-            bottom_right: Length::Percent(50.0),
-            bottom_left: Length::Percent(25.0),
+            top_left: Length::Percent(50.0).into(),
+            top_right: Length::Percent(25.0).into(),
+            bottom_right: Length::Percent(50.0).into(),
+            bottom_left: Length::Percent(25.0).into(),
         }))
     );
     assert_eq!(
         parse_entire("25%", "border-top-left-radius"),
-        Some(PropertyValue::BorderRadiusTopLeft(Length::Percent(25.0)))
+        Some(PropertyValue::BorderRadiusTopLeft(
+            Length::Percent(25.0).into()
+        ))
     );
     assert_eq!(
         parse_entire("inherit", "border-radius"),
         Some(PropertyValue::BorderRadiusInherit)
     );
     assert_eq!(parse_entire("1px -2px", "border-radius"), None);
+}
+
+#[test]
+fn border_radius_accepts_independent_horizontal_and_vertical_axes() {
+    for (css, expected) in [
+        ("30px / 15px", [[30.0, 15.0]; 4]),
+        (
+            "1px 2px 3px / 4px 5px",
+            [[1.0, 4.0], [2.0, 5.0], [3.0, 4.0], [2.0, 5.0]],
+        ),
+        (
+            "1px 2px / 3px 4px 5px 6px",
+            [[1.0, 3.0], [2.0, 4.0], [1.0, 5.0], [2.0, 6.0]],
+        ),
+    ] {
+        let Some(PropertyValue::BorderRadius(radius)) = parse_entire(css, "border-radius") else {
+            panic!("{css}")
+        };
+        for (corner, [x, y]) in [
+            radius.top_left,
+            radius.top_right,
+            radius.bottom_right,
+            radius.bottom_left,
+        ]
+        .into_iter()
+        .zip(expected)
+        {
+            assert_eq!(corner.horizontal, Length::Px(x));
+            assert_eq!(corner.vertical, Length::Px(y));
+        }
+    }
+    let corner = CornerRadius::new(Length::Percent(50.0), Length::Percent(25.0));
+    assert_eq!(
+        parse_entire("50% / 25%", "border-radius"),
+        Some(PropertyValue::BorderRadius(BorderRadius {
+            top_left: corner,
+            top_right: corner,
+            bottom_right: corner,
+            bottom_left: corner,
+        }))
+    );
+    for (property, expected) in [
+        (
+            "border-top-left-radius",
+            PropertyValue::BorderRadiusTopLeft(corner),
+        ),
+        (
+            "border-top-right-radius",
+            PropertyValue::BorderRadiusTopRight(corner),
+        ),
+        (
+            "border-bottom-right-radius",
+            PropertyValue::BorderRadiusBottomRight(corner),
+        ),
+        (
+            "border-bottom-left-radius",
+            PropertyValue::BorderRadiusBottomLeft(corner),
+        ),
+    ] {
+        assert_eq!(parse_entire("50% 25%", property), Some(expected));
+        let value = parse_entire("30px 15px", property).unwrap();
+        assert_eq!(
+            super::super::serialize_value(&value),
+            Some("30px 15px".to_owned())
+        );
+        let value = parse_entire("30px", property).unwrap();
+        assert_eq!(
+            super::super::serialize_value(&value),
+            Some("30px".to_owned())
+        );
+        assert!(parse_entire("30px -15px", property).is_none());
+        assert!(parse_entire("30px 15px 10px", property).is_none());
+    }
+    for css in [
+        "30px /",
+        "/ 15px",
+        "30px / -15px",
+        "-30px / 15px",
+        "1px 2px 3px 4px 5px / 6px",
+        "1px / 2px 3px 4px 5px 6px",
+        "1px / 2px / 3px",
+    ] {
+        assert!(parse_entire(css, "border-radius").is_none(), "{css}");
+    }
 }
 
 #[test]

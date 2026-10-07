@@ -6,8 +6,8 @@
 /// generically rather than through a per-name dispatch arm).
 ///
 /// This is a superset of [`super::property_key_for_name`]'s domain: a few
-/// shorthands (`border-radius` and its four physical longhands, `grid`,
-/// `grid-area`, and the `grid-gap`/`grid-column-gap`/`grid-row-gap` legacy
+/// shorthands (`grid`, `grid-area`, and the
+/// `grid-gap`/`grid-column-gap`/`grid-row-gap` legacy
 /// aliases) fully expand into other properties during declaration parsing
 /// and so need no `PropertyKey` of their own, but they are still names
 /// `parse_value` dispatches on and therefore belong here.

@@ -2976,10 +2976,10 @@ fn cascade_page_computes_border_radius_box_shadow_and_outline() {
     assert_eq!(
         result.declarations().get(&PropertyKey::BorderRadius),
         Some(&PropertyValue::BorderRadius(BorderRadius {
-            top_left: Length::Percent(10.0),
-            top_right: Length::Px(40.0),
-            bottom_right: Length::Px(60.0),
-            bottom_left: Length::Px(80.0),
+            top_left: Length::Percent(10.0).into(),
+            top_right: Length::Px(40.0).into(),
+            bottom_right: Length::Px(60.0).into(),
+            bottom_left: Length::Px(80.0).into(),
         }))
     );
     assert_eq!(
@@ -3015,6 +3015,28 @@ fn cascade_page_computes_border_radius_box_shadow_and_outline() {
         result.declarations().get(&PropertyKey::OutlineColor),
         Some(&PropertyValue::OutlineColor(OutlineColor::Resolved(RED)))
     );
+}
+
+#[test]
+fn cascade_page_preserves_both_elliptical_axes_and_percentage_longhands() {
+    let result = page(
+        "@page {border-radius:2em / 25%;border-top-left-radius:50% 1em}",
+        &root_with_font_size(20.0),
+    );
+    let Some(PropertyValue::BorderRadius(radius)) =
+        result.declarations().get(&PropertyKey::BorderRadius)
+    else {
+        panic!("missing radius")
+    };
+    assert_eq!(radius.top_left.horizontal, Length::Px(40.0));
+    assert_eq!(radius.top_left.vertical, Length::Percent(25.0));
+    let Some(PropertyValue::BorderRadiusTopLeft(corner)) =
+        result.declarations().get(&PropertyKey::BorderRadiusTopLeft)
+    else {
+        panic!("missing corner")
+    };
+    assert_eq!(corner.horizontal, Length::Percent(50.0));
+    assert_eq!(corner.vertical, Length::Px(20.0));
 }
 
 /// CSS Basic User Interface Module Level 3 §4: page-context outline
@@ -3577,15 +3599,15 @@ property_key_samples! {
     // supported static-side properties; percentage radii remain symbolic
     // through this page conversion.
     BorderRadius => PropertyValue::BorderRadius(BorderRadius {
-        top_left: Length::Em(0.5),
-        top_right: Length::Rem(0.25),
-        bottom_right: Length::Pt(6.0),
-        bottom_left: Length::Px(1.0),
+        top_left: Length::Em(0.5).into(),
+        top_right: Length::Rem(0.25).into(),
+        bottom_right: Length::Pt(6.0).into(),
+        bottom_left: Length::Px(1.0).into(),
     }),
-    BorderRadiusTopLeft => PropertyValue::BorderRadiusTopLeft(Length::Em(0.5)),
-    BorderRadiusTopRight => PropertyValue::BorderRadiusTopRight(Length::Rem(0.25)),
-    BorderRadiusBottomRight => PropertyValue::BorderRadiusBottomRight(Length::Pt(6.0)),
-    BorderRadiusBottomLeft => PropertyValue::BorderRadiusBottomLeft(Length::Px(1.0)),
+    BorderRadiusTopLeft => PropertyValue::BorderRadiusTopLeft(Length::Em(0.5).into()),
+    BorderRadiusTopRight => PropertyValue::BorderRadiusTopRight(Length::Rem(0.25).into()),
+    BorderRadiusBottomRight => PropertyValue::BorderRadiusBottomRight(Length::Pt(6.0).into()),
+    BorderRadiusBottomLeft => PropertyValue::BorderRadiusBottomLeft(Length::Px(1.0).into()),
     BoxShadow => PropertyValue::BoxShadow(Arc::new(vec![BoxShadowItem {
         offset_x: Length::Em(0.5),
         offset_y: Length::Rem(0.25),
@@ -4936,11 +4958,11 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                 radius.bottom_left,
             ]
             .into_iter()
-            .find_map(length),
+            .find_map(|corner| length(corner.horizontal).or_else(|| length(corner.vertical))),
             PropertyValue::BorderRadiusTopLeft(radius)
             | PropertyValue::BorderRadiusTopRight(radius)
             | PropertyValue::BorderRadiusBottomRight(radius)
-            | PropertyValue::BorderRadiusBottomLeft(radius) => length(*radius),
+            | PropertyValue::BorderRadiusBottomLeft(radius) => length(radius.horizontal).or_else(|| length(radius.vertical)),
             // `box-shadow` stores four length components per item. Colors do
             // not participate in the layer check.
             PropertyValue::BoxShadow(shadows) => shadows.iter().find_map(|s| {
