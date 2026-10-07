@@ -12,8 +12,40 @@ use raikiri_style::property::{
 };
 
 #[test]
+fn dashed_segment_keeps_the_unsplit_pattern_phase() {
+    let mut cv = ComputedValues::initial();
+    cv.text_decoration_line = TextDecorationLine::UNDERLINE;
+    cv.text_decoration_style = TextDecorationStyle::Dashed;
+    let context = decorations_for_element(
+        &DecorationContext::default(),
+        raikiri_traits::NodeId::new(1),
+        &cv,
+        0.0,
+    );
+    let mut scene = Scene::new();
+    draw_decoration_phase(
+        &mut scene,
+        &context.specs(),
+        DecorationGeometry {
+            x0: 12.0,
+            x1: 20.0,
+            abs_y: 0.0,
+            line_top: 0.0,
+            baseline: Some(0.0),
+            pattern_origin_x: Some(0.0),
+        },
+        DecorationPhase::BeforeGlyphs,
+    );
+    let RenderCommand::Stroke(stroke) = &scene.commands[0] else {
+        panic!("expected dashed stroke")
+    };
+    assert_eq!(stroke.style.dash_offset, 2.0);
+}
+
+#[test]
 fn decoration_span_applies_logical_insets_from_origin_direction() {
     let mut spec = DecorationSpec {
+        origin: raikiri_traits::NodeId::new(0),
         line: TextDecorationLine::UNDERLINE,
         style: TextDecorationStyle::Solid,
         color: CssColor::BLACK,
@@ -40,6 +72,7 @@ fn decorations_are_unchanged_by_the_geometry_field() {
     // added to it, so the line's baseline without the shift draws the
     // same line.
     let spec = DecorationSpec {
+        origin: raikiri_traits::NodeId::new(0),
         line: TextDecorationLine::UNDERLINE,
         style: TextDecorationStyle::Solid,
         color: CssColor::BLACK,
@@ -57,6 +90,7 @@ fn decorations_are_unchanged_by_the_geometry_field() {
     let draw = |baseline: Option<f64>| {
         let mut scene = anyrender::recording::Scene::new();
         let geometry = DecorationGeometry {
+            pattern_origin_x: None,
             x0: 0.0,
             x1: 10.0,
             abs_y,
@@ -88,6 +122,7 @@ fn decorations_are_unchanged_by_the_geometry_field() {
 #[test]
 fn decoration_span_rejects_empty_or_nonfinite_ranges() {
     let spec = DecorationSpec {
+        origin: raikiri_traits::NodeId::new(0),
         line: TextDecorationLine::UNDERLINE,
         style: TextDecorationStyle::Solid,
         color: CssColor::BLACK,
@@ -109,6 +144,7 @@ fn decoration_span_rejects_empty_or_nonfinite_ranges() {
 #[test]
 fn decoration_spans_preserve_asymmetric_mixed_sign_endpoint_overlap() {
     let spec = DecorationSpec {
+        origin: raikiri_traits::NodeId::new(0),
         line: TextDecorationLine::UNDERLINE,
         style: TextDecorationStyle::Solid,
         color: CssColor::BLACK,
@@ -130,6 +166,7 @@ fn decoration_spans_preserve_asymmetric_mixed_sign_endpoint_overlap() {
 #[test]
 fn decoration_spans_collapse_equal_endpoint_translation() {
     let spec = DecorationSpec {
+        origin: raikiri_traits::NodeId::new(0),
         line: TextDecorationLine::UNDERLINE,
         style: TextDecorationStyle::Solid,
         color: CssColor::BLACK,
@@ -163,7 +200,12 @@ fn generated_text_measurements_handle_empty_and_nonfinite_inputs() {
 fn ancestor_context() -> DecorationContext {
     let mut cv = ComputedValues::initial();
     cv.text_decoration_line = TextDecorationLine::UNDERLINE;
-    decorations_for_element(&DecorationContext::default(), &cv, 0.0)
+    decorations_for_element(
+        &DecorationContext::default(),
+        raikiri_traits::NodeId::new(0),
+        &cv,
+        0.0,
+    )
 }
 
 #[test]
@@ -199,12 +241,18 @@ fn dashed_decoration_scales_period_for_huge_spans() {
 fn display_contents_does_not_originate_or_block_decoration() {
     let mut ancestor = ComputedValues::initial();
     ancestor.text_decoration_line = TextDecorationLine::UNDERLINE;
-    let context = decorations_for_element(&DecorationContext::default(), &ancestor, 0.0);
+    let context = decorations_for_element(
+        &DecorationContext::default(),
+        raikiri_traits::NodeId::new(0),
+        &ancestor,
+        0.0,
+    );
 
     let mut contents = ComputedValues::initial();
     contents.display = DisplayValue::Contents;
     contents.text_decoration_line = TextDecorationLine::OVERLINE;
-    let propagated = decorations_for_element(&context, &contents, 0.0);
+    let propagated =
+        decorations_for_element(&context, raikiri_traits::NodeId::new(0), &contents, 0.0);
     let specs: Vec<_> = propagated.iter().collect();
     assert_eq!(specs.len(), 1);
     assert_eq!(specs[0].line, TextDecorationLine::UNDERLINE);
@@ -214,7 +262,12 @@ fn display_contents_does_not_originate_or_block_decoration() {
 fn decoration_retains_origin_vertical_align_shift() {
     let mut cv = ComputedValues::initial();
     cv.text_decoration_line = TextDecorationLine::UNDERLINE;
-    let decorations = decorations_for_element(&DecorationContext::default(), &cv, 7.5);
+    let decorations = decorations_for_element(
+        &DecorationContext::default(),
+        raikiri_traits::NodeId::new(0),
+        &cv,
+        7.5,
+    );
     assert_eq!(
         decorations
             .iter()
@@ -230,7 +283,12 @@ fn decoration_metrics_are_taken_from_the_originating_element() {
     let mut cv = ComputedValues::initial();
     cv.font_size = raikiri_style::resolve::ComputedLength(32.0);
     cv.text_decoration_line = TextDecorationLine::UNDERLINE;
-    let decorations = decorations_for_element(&DecorationContext::default(), &cv, 0.0);
+    let decorations = decorations_for_element(
+        &DecorationContext::default(),
+        raikiri_traits::NodeId::new(0),
+        &cv,
+        0.0,
+    );
     let decoration = decorations.iter().next().expect("origin decoration");
     assert_eq!(decoration.origin_thickness, 2.0);
     assert_eq!(decoration.origin_ascent, 25.6);
@@ -243,7 +301,12 @@ fn underline_offset_percentage_resolves_against_decorating_font_size() {
     cv.font_size = raikiri_style::resolve::ComputedLength(40.0);
     cv.text_decoration_line = TextDecorationLine::UNDERLINE;
     cv.text_underline_offset = raikiri_style::ComputedTextUnderlineOffset::Percent(50.0);
-    let decorations = decorations_for_element(&DecorationContext::default(), &cv, 0.0);
+    let decorations = decorations_for_element(
+        &DecorationContext::default(),
+        raikiri_traits::NodeId::new(0),
+        &cv,
+        0.0,
+    );
     let decoration = decorations.iter().next().expect("origin decoration");
     assert_eq!(decoration.underline_offset, 20.0);
 }
@@ -259,7 +322,12 @@ fn underline_offset_calc_resolves_percentage_against_decorating_font_size() {
             px: 8.0,
         },
     );
-    let decorations = decorations_for_element(&DecorationContext::default(), &cv, 0.0);
+    let decorations = decorations_for_element(
+        &DecorationContext::default(),
+        raikiri_traits::NodeId::new(0),
+        &cv,
+        0.0,
+    );
     let decoration = decorations.iter().next().expect("origin decoration");
     assert_eq!(decoration.underline_offset, 28.0);
 }
@@ -319,7 +387,7 @@ fn ancestor_decoration_stops_at_out_of_flow_float_and_atomic_boundaries() {
         // cov:ignore: the assertion message is evaluated only when this
         // boundary regression assertion fails.
         assert!(
-            decorations_for_element(&ancestor, &cv, 0.0)
+            decorations_for_element(&ancestor, raikiri_traits::NodeId::new(0), &cv, 0.0)
                 .iter()
                 .next()
                 .is_none(),
@@ -330,7 +398,7 @@ fn ancestor_decoration_stops_at_out_of_flow_float_and_atomic_boundaries() {
     let mut in_flow = ComputedValues::initial();
     in_flow.display = DisplayValue::Block;
     assert_eq!(
-        decorations_for_element(&ancestor, &in_flow, 0.0)
+        decorations_for_element(&ancestor, raikiri_traits::NodeId::new(0), &in_flow, 0.0)
             .iter()
             .count(),
         1
@@ -339,7 +407,12 @@ fn ancestor_decoration_stops_at_out_of_flow_float_and_atomic_boundaries() {
     let mut boundary_origin = ComputedValues::initial();
     boundary_origin.display = DisplayValue::InlineBlock;
     boundary_origin.text_decoration_line = TextDecorationLine::OVERLINE;
-    let boundary_decorations = decorations_for_element(&ancestor, &boundary_origin, 0.0);
+    let boundary_decorations = decorations_for_element(
+        &ancestor,
+        raikiri_traits::NodeId::new(0),
+        &boundary_origin,
+        0.0,
+    );
     assert_eq!(boundary_decorations.iter().count(), 1);
     assert_eq!(
         boundary_decorations

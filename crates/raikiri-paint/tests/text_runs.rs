@@ -819,3 +819,64 @@ fn ellipsis_runs_match_paint_and_name_their_block() {
         .expect("the kept text");
     assert!(text.origin.0 < ellipsis.origin.0);
 }
+
+#[test]
+fn decoration_api_matches_the_builtin_painter_on_each_page() {
+    use kurbo::Shape;
+    let layout = lay_out(
+        "<p>a<span style='font-size:6px;vertical-align:super'>b</span>c</p><p style='break-before:page'>de</p>",
+        "p {text-decoration:underline overline line-through red;text-underline-offset:2px}",
+    );
+    assert_eq!(layout.page_count(), 2);
+    for page in layout.pages() {
+        let expected: Vec<_> = page
+            .text_runs()
+            .into_iter()
+            .flat_map(|r| r.decorations)
+            .collect();
+        assert!(!expected.is_empty());
+        let (document, cascade, page_box, origin) = page.paint_inputs();
+        let mut scene = Scene::new();
+        paint_single_page_with_origin_and_page(
+            &mut scene,
+            document,
+            cascade,
+            page_box,
+            origin,
+            page.index(),
+            layout.page_count(),
+            page.index() % 2 == 1,
+            &mut CounterSnapshotBudget::default(),
+        )
+        .unwrap();
+        let mut rectangles: Vec<_> = scene
+            .commands
+            .iter()
+            .filter_map(|command| {
+                let RenderCommand::Fill(fill) = command else {
+                    return None;
+                };
+                (fill.brush == anyrender::Paint::Solid(peniko::Color::from_rgba8(255, 0, 0, 255)))
+                    .then(|| {
+                        fill.transform
+                            .transform_rect_bbox(fill.shape.bounding_box())
+                    })
+            })
+            .collect();
+        for line in expected {
+            let center = f64::from(line.y);
+            let matching = rectangles.iter().position(|rect| {
+                (rect.x0 - f64::from(line.x_start)).abs() < TOLERANCE
+                    && (rect.x1 - f64::from(line.x_end)).abs() < TOLERANCE
+                    && ((rect.y0 + rect.y1) * 0.5 - center).abs() < TOLERANCE
+                    && (rect.height() - f64::from(line.thickness)).abs() < TOLERANCE
+            });
+            assert!(
+                matching.is_some(),
+                "page {}: missing {line:?}; painted {rectangles:?}",
+                page.index()
+            );
+            rectangles.swap_remove(matching.unwrap());
+        }
+    }
+}

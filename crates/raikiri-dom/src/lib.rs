@@ -61,6 +61,9 @@ pub mod fonts;
 pub mod layout;
 #[doc(hidden)]
 pub mod paint_rules;
+#[doc(hidden)]
+pub mod text_decoration;
+pub use text_decoration::{DecorationKind, DecorationLine, DecorationStyle};
 pub mod taffy_impl;
 
 pub use document::{Document, DomMutationError};
