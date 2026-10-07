@@ -115,9 +115,10 @@ this workspace's `cargo-llvm-cov 0.8.7` output rather than assumed:
 
 Git's moved-block colors are only candidates for a move exemption. A
 candidate must belong to a complete unchanged function deleted elsewhere
-in this diff, with the same enclosing context (plain module boundaries
-may change during file extraction). Matching expressions or partial
-function bodies cannot establish preserved execution context. See
+in this diff, with the same Cargo target, logical module, attributes, and
+name bindings. Inline modules may become files while preserving this
+execution context. Matching expressions or partial function bodies cannot
+establish preserved execution context. See
 `collect_moved_added_lines()`.
 """
 
@@ -755,6 +756,7 @@ def collect_moved_added_lines(repo_root: str, base: str, head: str,
                       ("autolib", "autobins", "autotests", "autoexamples", "autobenches")),
                 tuple(data.get("workspace", {}).get(key) for key in
                       ("members", "exclude", "default-members")),
+                data.get("features"),
             ))
         if layouts[0] != layouts[1]:
             # HEAD metadata cannot establish BASE roots after a target
@@ -765,44 +767,29 @@ def collect_moved_added_lines(repo_root: str, base: str, head: str,
     # from the very same forward diff that supplied the move candidates.
     deleted = parse_deleted_lines(ANSI_RE.sub("", proc.stdout))
     old_functions = Counter()
-    source_cache = {}
-    root_paths = set()
-    for package in (metadata or {}).get("packages", []):
-        for target in package.get("targets", []):
-            try:
-                root_paths.add(PurePosixPath(target["src_path"]).relative_to(Path(repo_root).resolve()))
-            except ValueError:
-                continue
-    for ref in (base, head):
-        source_cache[ref] = {}
+    snapshots = {ref: rust_module_snapshot(repo_root, ref, metadata) for ref in (base, head)}
     for path, lines in deleted.items():
-        source = git_show(repo_root, base, path)
-        if source is not None:
-            deleted_lines = set(lines)
-            inherited = inherited_module_attributes(repo_root, base, path, source_cache[base], root_paths)
-            for key, token_lines, substantive_lines in rust_source_units(source)[0]:
-                # Git can align shared statements as context while moving
-                # the surrounding function. Count an affected occurrence;
-                # its complete tokens must still match on the new side.
-                if substantive_lines & deleted_lines:
-                    context, attrs, body = key
-                    effective_attrs = tuple(value for group in inherited for value in group) + attrs
-                    old_functions[(context, effective_attrs, body)] += 1
+        snapshot = snapshots[base]
+        for unit in (snapshot["sources"].get(path) or ([], [], {}))[0]:
+            _, _, substantive_lines, _ = unit
+            # Git can align shared statements as context while moving
+            # the surrounding function. Count an affected occurrence;
+            # its complete tokens must still match on the new side.
+            if substantive_lines & set(lines):
+                semantic_key = function_move_key(snapshot, path, unit)
+                if semantic_key is not None:
+                    old_functions[semantic_key] += 1
     new_functions = []
     new_counts = Counter()
     for path, lines in added.items():
-        source = git_show(repo_root, head, path)
-        if source is None:
-            continue
-        added_lines = set(lines)
-        inherited = inherited_module_attributes(repo_root, head, path, source_cache[head], root_paths)
-        for key, token_lines, substantive_lines in rust_source_units(source)[0]:
-            if substantive_lines & added_lines:
-                context, attrs, body = key
-                effective_attrs = tuple(value for group in inherited for value in group) + attrs
-                key = (context, effective_attrs, body)
-                new_functions.append((path, key, token_lines))
-                new_counts[key] += 1
+        snapshot = snapshots[head]
+        for unit in (snapshot["sources"].get(path) or ([], [], {}))[0]:
+            _, token_lines, substantive_lines, _ = unit
+            if substantive_lines & set(lines):
+                key = function_move_key(snapshot, path, unit)
+                if key is not None:
+                    new_functions.append((path, key, token_lines))
+                    new_counts[key] += 1
     result = {}
     for path, key, token_lines in new_functions:
         # If destinations outnumber deleted sources, the move/copy mapping
@@ -915,7 +902,23 @@ def attribute_prefix(header: tuple[str, ...]) -> tuple[str, ...]:
     return header[:end]
 
 
-def rust_source_units(source: str) -> tuple[list, list]:
+def module_chain(frames: list) -> tuple[str, ...]:
+    return tuple(frame[2][-1] for frame in frames[1:]
+                 if len(frame[2]) >= 2 and frame[2][-2] == "mod")
+
+
+def is_module_scope(frames: list) -> bool:
+    return all(frame[0] == "{" and len(frame[2]) >= 2 and frame[2][-2] == "mod"
+               for frame in frames[1:])
+
+
+def enclosing_attributes(frames: list) -> tuple:
+    return tuple(value for frame in frames for value in
+                 ((attribute_prefix(frame[2]) if len(frame[2]) >= 2 and frame[2][-2] == "mod" else ())
+                  + tuple(value for attr in frame[4] for value in attr)))
+
+
+def rust_source_units(source: str) -> tuple[list, list, dict]:
     """Return complete functions and external module attribute contexts.
 
     Preserve attributes and impl/trait/control-flow context. Plain inline
@@ -925,9 +928,10 @@ def rust_source_units(source: str) -> tuple[list, list]:
     """
     tokens = rust_move_tokens(source)
     if tokens is None:
-        return [], []
+        return [], [], {}
     units = []
     modules = []
+    bindings = {}
     # Frames store opener, boundary, header, start, inner attrs, signature flag.
     frames = [["", 0, (), 0, [], False]]
     for index, (token, _) in enumerate(tokens):
@@ -949,8 +953,8 @@ def rust_source_units(source: str) -> tuple[list, list]:
             frames.append([token, index + 1, header, start, [], signature])
         elif token in ("}", ")", "]"):
             if len(frames) == 1 or frames[-1][0] != {"}": "{", ")": "(", "]": "["}[token]:
-                return [], []
-            opener, _, header, start, _, signature = frames.pop()
+                return [], [], {}
+            opener, _, header, start, inner_attrs, signature = frames.pop()
             if opener == "[" and header == ("#", "!"):
                 # Inner attributes describe the entire parent scope,
                 # not just whichever item happens to appear first.
@@ -964,89 +968,227 @@ def rust_source_units(source: str) -> tuple[list, list]:
                 )
                 if is_function and all(frame[0] == "{" for frame in frames[1:]):
                     context = []
-                    effective_attrs = []
                     for frame in frames:
                         is_module = len(frame[2]) >= 2 and frame[2][-2] == "mod"
-                        if is_module:
-                            effective_attrs.extend(attribute_prefix(frame[2]))
-                        elif frame[0]:
+                        if not is_module and frame[0]:
                             context.append(frame[2])
-                        effective_attrs.extend(value for attr in frame[4] for value in attr)
                     body = tokens[start:index + 1]
-                    key = (tuple(context), tuple(effective_attrs), tuple(value for value, _ in body))
+                    visible_macros = tuple((module_chain(frames)[:n], binding) for n in range(len(module_chain(frames)) + 1)
+                                           for binding in bindings.get(module_chain(frames)[:n], [])
+                                           if "macro_rules" in binding or "macro" in binding)
+                    key = (tuple(context), enclosing_attributes(frames), tuple(value for value, _ in body), visible_macros)
                     token_lines = {line for value, number in body
                                    for line in range(number, number + value.count("\n") + 1)}
                     substantive = {line for value, number in body
                                    if value not in ("{", "}", "(", ")", "[", "]", ";", ",")
                                    for line in range(number, number + value.count("\n") + 1)}
-                    units.append((key, token_lines, substantive))
+                    units.append((key, token_lines, substantive, module_chain(frames)))
+                if is_module_scope(frames) and len(header) >= 2 and header[-2] == "mod":
+                    scope_attrs = enclosing_attributes(frames)
+                    scope_attrs += attribute_prefix(header) + tuple(value for attr in inner_attrs for value in attr)
+                    bindings.setdefault(module_chain(frames) + (header[-1],), []).append(("@scope",) + scope_attrs)
+                if is_module_scope(frames) and not (len(header) >= 2 and header[-2] == "mod"):
+                    # Function signatures bind names; their bodies are
+                    # checked separately by patch coverage. Other items
+                    # (constants, aliases, macros, impls) retain values.
+                    binding = header if is_function else tuple(value for value, _ in tokens[start:index + 1])
+                    bindings.setdefault(module_chain(frames), []).append(binding)
                 frames[-1][1] = index + 1
         elif token == ";":
             header = tuple(value for value, _ in tokens[frames[-1][1]:index])
-            if len(header) >= 2 and header[-2] == "mod" and re.fullmatch(r"\w+", header[-1]):
+            is_module = len(header) >= 2 and header[-2] == "mod" and re.fullmatch(r"\w+", header[-1])
+            if is_module and is_module_scope(frames):
                 chain = tuple(frame[2][-1] for frame in frames[1:]
                               if len(frame[2]) >= 2 and frame[2][-2] == "mod")
-                attributes = tuple(value for frame in frames
-                                   for value in attribute_prefix(frame[2]))
-                attributes += tuple(value for frame in frames
-                                    for attr in frame[4] for value in attr)
+                attributes = enclosing_attributes(frames)
                 attributes += attribute_prefix(header)
-                modules.append((chain, header[-1], attributes))
+                visible_macros = tuple((chain[:n], binding) for n in range(len(chain) + 1)
+                                       for binding in bindings.get(chain[:n], [])
+                                       if "macro_rules" in binding or "macro" in binding)
+                modules.append((chain, header[-1], attributes, visible_macros))
+            elif header and is_module_scope(frames):
+                bindings.setdefault(module_chain(frames), []).append(header)
             frames[-1][1] = index + 1
-    return (units, modules) if len(frames) == 1 else ([], [])
+    if len(frames) != 1:
+        return [], [], {}
+    bindings.setdefault((), []).append(("@scope",) + tuple(value for attr in frames[0][4] for value in attr))
+    return units, modules, bindings
 
 
-def inherited_module_attributes(repo_root: str, ref: str, path: str,
-                                cache: dict, root_paths: set[PurePosixPath]) -> tuple:
-    """Keep attributes on ancestor file-module declarations during a move.
+def module_locator(attrs: tuple) -> tuple[tuple, str | None] | None:
+    """Separate a direct file locator from execution attributes.
 
-    Resolve Cargo target roots and conventional module files, including
-    inline module directories. Simple path overrides are resolved; an
-    ambiguous override disables moves to other paths in that repository.
+    Conditional/ambiguous locators cannot establish a module graph, so
+    their target receives no exemptions. Paths never identify a module.
     """
-    target = PurePosixPath(path)
-    if "module parents" not in cache:
-        proc = subprocess.run(
-            ["git", "-C", repo_root, "grep", "-l", "-w", "mod", ref, "--", "*.rs"],
-            capture_output=True, text=True,
-        )
-        if proc.returncode not in (0, 1):
-            proc.check_returncode()
-        cache["module parents"] = {PurePosixPath(line[len(ref) + 1:])
-                                   for line in proc.stdout.splitlines()}
-    contexts = []
-    for parent in sorted(cache["module parents"] - {target}):
-        name = str(parent)
-        if name not in cache:
-            source = git_show(repo_root, ref, name)
-            cache[name] = rust_source_units(source)[1] if source is not None else []
-        root = (parent.parent if parent in root_paths or parent.name in ("lib.rs", "main.rs", "mod.rs")
-                else parent.with_suffix(""))
-        for chain, module, attrs in cache[name]:
-            if not attrs:
+    retained = []
+    override = None
+    index = 0
+    while index < len(attrs):
+        start = index
+        index += 1
+        while index < len(attrs) and attrs[index] != "[":
+            index += 1
+        depth = 1
+        index += 1
+        while index < len(attrs) and depth:
+            depth += (attrs[index] == "[") - (attrs[index] == "]")
+            index += 1
+        chunk = attrs[start:index]
+        if "path" in chunk:
+            if (override is not None or len(chunk) != 6
+                    or chunk[:4] != ("#", "[", "path", "=") or chunk[-1] != "]"):
+                return None
+            try:
+                override = json.loads(chunk[4])
+            except ValueError:
+                return None
+            if not isinstance(override, str):
+                return None
+        else:
+            retained.extend(chunk)
+    return tuple(retained), override
+
+
+def rust_module_snapshot(repo_root: str, ref: str, metadata: dict | None) -> dict:
+    """Resolve source files to Cargo targets and logical module paths.
+
+    Only actual Cargo entry files (and mod.rs) use their parent as the
+    conventional child directory. Multiple target/module contexts are
+    retained together; an unresolved layout fails closed for its target.
+    """
+    snapshot = {"sources": {}, "contexts": {}, "bindings": {}, "unsafe": set()}
+    def read(path):
+        if path not in snapshot["sources"]:
+            source = git_show(repo_root, ref, path)
+            snapshot["sources"][path] = rust_source_units(source) if source is not None else None
+        return snapshot["sources"][path]
+
+    if metadata is None:
+        # The standalone helper can compare Git fixtures without Cargo.
+        # Production callers always supply metadata and use the graph.
+        names = subprocess.run(["git", "-C", repo_root, "ls-tree", "-r", "--name-only", ref],
+                               capture_output=True, text=True, check=True).stdout.splitlines()
+        for path in names:
+            if path.endswith(".rs"):
+                read(path)
+                snapshot["contexts"][path] = {((), (), (), ())}
+                for chain, values in snapshot["sources"][path][2].items():
+                    snapshot["bindings"][((), chain)] = values
+        return snapshot
+
+    for package in metadata.get("packages", []):
+        try:
+            manifest = str(Path(package["manifest_path"]).relative_to(Path(repo_root).resolve()))
+        except (KeyError, ValueError):
+            continue
+        for target in package.get("targets", []):
+            try:
+                root = str(Path(target["src_path"]).relative_to(Path(repo_root).resolve()))
+            except (KeyError, ValueError):
                 continue
-            module_root = root.joinpath(*chain, module)
-            matches = (target == module_root.with_suffix(".rs")
-                       or module_root in target.parents)
-            overrides = [attrs[i + 4] for i in range(len(attrs) - 4)
-                         if attrs[i:i + 4] == ("#", "[", "path", "=")]
-            if "path" in attrs:
-                try:
-                    if not overrides or attrs.count("path") != len(overrides):
-                        raise ValueError("conditional path override")
-                    override = json.loads(overrides[0])
-                    if chain or len(overrides) != 1 or not isinstance(override, str):
-                        raise ValueError("ambiguous path override")
-                    override_path = PurePosixPath(posixpath.normpath(str(parent.parent / override)))
-                    override_root = (override_path.parent if override_path.name == "mod.rs"
-                                     else override_path.with_suffix(""))
-                    matches = target == override_path or override_root in target.parents
-                except (ValueError, TypeError):
-                    contexts.append(("unresolved path", path, attrs))
+            identity = (manifest, tuple(target.get("kind", [])), target.get("name", ""))
+            pending = [(root, (), (), (), ())]
+            visited = set()
+            while pending:
+                path, prefix, inherited_attrs, inherited_macros, ancestors = pending.pop()
+                context = (identity, prefix, inherited_attrs, inherited_macros)
+                if (path, context) in visited:
                     continue
-            if matches:
-                contexts.append(attrs)
-    return tuple(contexts)
+                visited.add((path, context))
+                if path in ancestors:
+                    snapshot["unsafe"].add(identity)
+                    continue
+                info = read(path)
+                if info is None:
+                    continue
+                snapshot["contexts"].setdefault(path, set()).add(context)
+                for chain, values in info[2].items():
+                    snapshot["bindings"].setdefault((identity, prefix + chain), []).extend(
+                        ("@scope",) + inherited_attrs + value[1:] if value[:1] == ("@scope",) else value
+                        for value in values)
+                parent = PurePosixPath(path)
+                directory = parent.parent if path == root or parent.name == "mod.rs" else parent.with_suffix("")
+                for chain, name, attrs, macros in info[1]:
+                    locator = module_locator(attrs)
+                    if locator is None:
+                        snapshot["unsafe"].add(identity)
+                        continue
+                    effective_attrs, override = locator
+                    if override is not None:
+                        if chain:
+                            # Inline path overrides have additional Rust
+                            # directory rules; do not guess those rules.
+                            snapshot["unsafe"].add(identity)
+                            continue
+                        choices = [posixpath.normpath(str(parent.parent / override))]
+                    else:
+                        child = directory.joinpath(*chain, name)
+                        choices = [str(child.with_suffix(".rs")), str(child / "mod.rs")]
+                    children = [child for child in choices if read(child) is not None]
+                    if len(children) > 1:
+                        snapshot["unsafe"].add(identity)
+                    elif children:
+                        prefix_macros = tuple((prefix + scope, binding) for scope, binding in macros)
+                        pending.append((children[0], prefix + chain + (name,),
+                                        inherited_attrs + effective_attrs,
+                                        inherited_macros + prefix_macros, ancestors + (path,)))
+    return snapshot
+
+
+def binding_names(tokens: tuple) -> set[str] | None:
+    """Identify names introduced by common module-level declarations."""
+    kinds = {"fn", "const", "static", "type", "struct", "enum", "trait", "macro_rules", "macro"}
+    for index, token in enumerate(tokens):
+        if token == "use":
+            if "*" in tokens[index + 1:]:
+                return None
+            return {value for value in tokens[index + 1:] if re.fullmatch(r"\w+", value)}
+        if token in kinds:
+            return {value for value in tokens[index + 1:] if re.fullmatch(r"\w+", value)}
+        if token == "impl":
+            return None
+    # Unknown expansions can introduce any referenced name.
+    return None
+
+
+def function_move_key(snapshot: dict, path: str, unit: tuple) -> tuple | None:
+    """Compare execution context, including bindings used by a function.
+
+    Follow references through constants, imports, signatures and aliases.
+    Qualified module references also include the corresponding scopes.
+    Declaration order is irrelevant except for textual macro visibility.
+    """
+    (runtime, attrs, body, local_macros), _, _, local_chain = unit
+    contexts = snapshot["contexts"].get(path)
+    if not contexts:
+        return None
+    keys = []
+    for identity, prefix, inherited_attrs, inherited_macros in contexts:
+        if identity in snapshot["unsafe"]:
+            return None
+        logical = prefix + local_chain
+        references = {token for token in body if re.fullmatch(r"\w+", token)}
+        macro_prefix = inherited_macros + tuple((prefix + scope, binding) for scope, binding in local_macros)
+        relevant = set()
+        changed = True
+        while changed:
+            previous = len(references)
+            for (target, scope), bindings in snapshot["bindings"].items():
+                if target != identity:
+                    continue
+                if not (logical[:len(scope)] == scope or any(name in references for name in scope)):
+                    continue
+                for binding in bindings:
+                    names = binding_names(binding)
+                    if names is None or references & names:
+                        relevant.add((scope, binding))
+                        references.update(token for token in binding if re.fullmatch(r"\w+", token))
+            changed = len(references) != previous
+        macros = tuple((scope, binding) for scope, binding in macro_prefix
+                       if binding_names(binding) is None or references & binding_names(binding))
+        keys.append((identity, logical, inherited_attrs + attrs, tuple(sorted(relevant)), macros))
+    return tuple(sorted(keys)), runtime, body
 
 
 def parse_lcov(lcov_text: str, repo_root: str) -> dict[str, dict[int, int]]:

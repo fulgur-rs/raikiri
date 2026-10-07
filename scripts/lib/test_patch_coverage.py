@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import os
 import subprocess
 import tempfile
@@ -342,8 +343,19 @@ class CollectMovedAddedLinesGitTests(unittest.TestCase):
                   copy: bool = False, origin: str = "lib.rs",
                   auxiliary_before: dict[str, str] | None = None,
                   auxiliary_after: dict[str, str] | None = None,
-                  target_root: str = "lib.rs") -> tuple[int, str]:
+                  target_root: str = "lib.rs", extra_targets: tuple = (),
+                  covered_auxiliary: bool = False) -> tuple[int, str]:
         with tempfile.TemporaryDirectory() as repo:
+            # Ordinary file moves preserve the public module/target. Use
+            # a stable crate root and relocate its `component` module.
+            if (origin == "lib.rs" and destination != origin and target_root == "lib.rs"
+                    and not any(name.endswith(".rs") for name in
+                                (* (auxiliary_before or {}), * (auxiliary_after or {})))):
+                target_root = "fixture.rs"
+                auxiliary_before = {**(auxiliary_before or {}), target_root:
+                                    f"#[path={json.dumps(origin)}]\nmod component;\n"}
+                auxiliary_after = {**(auxiliary_after or {}), target_root:
+                                   f"#[path={json.dumps(destination)}]\nmod component;\n"}
             self._git(repo, "init", "-q")
             def write_auxiliary(files: dict[str, str] | None) -> None:
                 for name, content in (files or {}).items():
@@ -375,9 +387,21 @@ class CollectMovedAddedLinesGitTests(unittest.TestCase):
             with open(lcov, "w") as f:
                 if reported:
                     f.write(f"SF:{path}\nDA:{missed_line},0\nend_of_record\n")
+                if covered_auxiliary:
+                    for name, content in (auxiliary_after or {}).items():
+                        if name.endswith(".rs"):
+                            f.write(f"SF:{os.path.join(repo, name)}\n")
+                            for line in range(1, len(content.splitlines()) + 1):
+                                f.write(f"DA:{line},1\n")
+                            f.write("end_of_record\n")
             output = io.StringIO()
-            # Cargo target discovery is unrelated to this Git/LCOV regression.
-            metadata = _metadata(_target(["lib"], os.path.join(repo, target_root)))
+            # Supply Cargo targets; Git parsing and LCOV classification stay real.
+            targets = [_target(["lib"], os.path.join(repo, target_root))]
+            targets.extend(_target([kind], os.path.join(repo, name)) for kind, name in extra_targets)
+            for target in targets:
+                target["name"] = os.path.basename(target["src_path"]).removesuffix(".rs")
+            metadata = {"packages": [{"name": "fixture", "manifest_path": os.path.join(repo, "Cargo.toml"),
+                                      "targets": targets}]}
             with mock.patch.object(patch_coverage, "load_cargo_metadata", return_value=metadata), \
                  mock.patch("sys.argv", ["patch_coverage.py", "--repo-root", repo,
                                         "--base", base, "--lcov", lcov]), \
@@ -431,8 +455,10 @@ class CollectMovedAddedLinesGitTests(unittest.TestCase):
         self.assertEqual(status, 1, output)
 
     def test_unchanged_function_with_indentation_change_remains_exempt(self) -> None:
-        before = """fn resolve() {
+        before = """mod extracted {
+fn resolve() {
     record_uncovered_resolution_result();
+}
 }
 fn keep() {}
 """
@@ -603,8 +629,8 @@ mod second {
         status, output = self._classify(
             source, source, "    record_uncovered_resolution_result();",
             origin="old.rs", destination="new.rs",
-            auxiliary_before={"lib.rs": '#[cfg(feature = "gate")]\nmod old;\n'},
-            auxiliary_after={"lib.rs": '#[cfg(feature = "gate")]\nmod new;\n'}
+            auxiliary_before={"lib.rs": '#[cfg(feature = "gate")]\n#[path="old.rs"]\nmod component;\n'},
+            auxiliary_after={"lib.rs": '#[cfg(feature = "gate")]\n#[path="new.rs"]\nmod component;\n'}
         )
         self.assertEqual(status, 0, output)
 
@@ -634,8 +660,10 @@ mod second {
     def test_parent_scope_attributes_can_follow_function_extraction(self) -> None:
         body = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
         for before, parent in (
-            ("#![allow(dead_code)]\n" + body, "#![allow(dead_code)]\nmod moved;\n"),
-            ('#[cfg(feature="gate")] mod old {\n' + body + "}\n",
+            ("#![allow(dead_code)]\nmod moved {\n" + body + "}\n", "#![allow(dead_code)]\nmod moved;\n"),
+            ('#![allow(dead_code)]\n#[cfg(feature="gate")] mod moved {\n' + body + "}\n",
+             '#![allow(dead_code)]\n#[cfg(feature="gate")]\nmod moved;\n'),
+            ('#[cfg(feature="gate")] mod moved {\n' + body + "}\n",
              '#[cfg(feature="gate")]\nmod moved;\n'),
         ):
             with self.subTest(parent=parent):
@@ -663,8 +691,7 @@ mod second {
         status, output = self._classify(
             body, body, "    record_uncovered_resolution_result();",
             destination="moved.rs", auxiliary_before={"Cargo.toml": manifest},
-            auxiliary_after={"Cargo.toml": manifest.replace('noop="0.1"', 'noop="0.2"'),
-                             "lib.rs": "mod moved;\n"}
+            auxiliary_after={"Cargo.toml": manifest.replace('noop="0.1"', 'noop="0.2"')}
         )
         self.assertEqual(status, 0, output)
 
@@ -672,6 +699,142 @@ mod second {
         moved = "fn moved_uncovered_resolution_result() {\n    record_uncovered_resolution_result();\n}\n"
         kept = moved.replace("moved_uncovered", "kept_uncovered")
         status, output = self._classify(moved + kept, kept + moved, moved.splitlines()[0])
+        self.assertEqual(status, 0, output)
+
+    def test_cross_target_function_move_is_not_exempt(self) -> None:
+        body = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        for kind, folder in (("test", "tests"), ("example", "examples"), ("bench", "benches")):
+            origin = folder + "/helper.rs"
+            with self.subTest(kind=kind):
+                status, output = self._classify(
+                    body, body, "    record_uncovered_resolution_result();",
+                    origin=origin, destination="src/lib.rs", target_root="src/lib.rs",
+                    extra_targets=((kind, origin),)
+                )
+                self.assertEqual(status, 1, output)
+
+    def test_moving_to_another_logical_module_is_not_exempt(self) -> None:
+        before = """mod old {
+const VALUE: u8 = 1;
+fn resolve() {
+    record_uncovered_resolution_result(VALUE);
+}
+}
+"""
+        after = before.replace("mod old", "mod new").replace("= 1", "= 2").replace("    record", "        record")
+        status, output = self._classify(before, after, "        record_uncovered_resolution_result(VALUE);")
+        self.assertEqual(status, 1, output)
+
+    def test_binding_context_is_preserved_during_inline_module_extraction(self) -> None:
+        before = """mod resolver {
+use old::VALUE;
+fn resolve() {
+    record_uncovered_resolution_result(VALUE);
+}
+}
+"""
+        body = "use old::VALUE;\nfn resolve() {\n    record_uncovered_resolution_result(VALUE);\n}\n"
+        for binding in ("old", "new"):
+            with self.subTest(binding=binding):
+                status, output = self._classify(
+                    before, body.replace("old", binding), "    record_uncovered_resolution_result(VALUE);",
+                    destination="resolver.rs", auxiliary_after={"lib.rs": "mod resolver;\n"}
+                )
+                self.assertEqual(status, 0 if binding == "old" else 1, output)
+
+    def test_nested_lib_filename_does_not_make_a_cargo_root(self) -> None:
+        body = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        status, output = self._classify(
+            body, body, "    record_uncovered_resolution_result();",
+            origin="outer/lib/child.rs", destination="new.rs",
+            auxiliary_before={"lib.rs": "mod outer;\n", "outer/mod.rs": "mod lib;\n",
+                              "outer/lib.rs": '#[cfg(feature="old")]\nmod child;\n'},
+            auxiliary_after={"lib.rs": "mod new;\n"}
+        )
+        self.assertEqual(status, 1, output)
+
+    def test_cargo_feature_activation_change_does_not_exempt_function(self) -> None:
+        body = '#[cfg(feature="gate")]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n'
+        manifest = '[package]\nname="fixture"\nversion="0.1.0"\n[features]\ngate=[]\ndefault=[]\n'
+        status, output = self._classify(
+            body + "fn keep() {}\n", "fn keep() {}\n" + body.replace("    record", "        record"),
+            "        record_uncovered_resolution_result();",
+            auxiliary_before={"Cargo.toml": manifest},
+            auxiliary_after={"Cargo.toml": manifest.replace("default=[]", 'default=["gate"]')}
+        )
+        self.assertEqual(status, 1, output)
+
+    def test_constants_aliases_and_macros_keep_their_binding_during_extraction(self) -> None:
+        cases = (
+            ("const VALUE: u8 = 1;", "const VALUE: u8 = 2;", "VALUE"),
+            ("type Value = OldValue;", "type Value = NewValue;", "Value::default()"),
+            ("macro_rules! value { () => { 1 } }", "macro_rules! value { () => { 2 } }", "value!()"),
+            ("use old::*;", "use new::*;", "VALUE"),
+        )
+        for original, changed, expression in cases:
+            body = f"fn resolve() {{\n    record_uncovered_resolution_result({expression});\n}}\n"
+            for binding in (original, changed):
+                with self.subTest(original=original, binding=binding):
+                    status, output = self._classify(
+                        "mod resolver {\n" + original + "\n" + body + "}\n",
+                        binding + "\n" + body, body.splitlines()[1],
+                        destination="resolver.rs", auxiliary_after={"lib.rs": "mod resolver;\n"}
+                    )
+                    self.assertEqual(status, 0 if binding == original else 1, output)
+
+    def test_macro_shadowing_order_changes_are_not_move_exemptions(self) -> None:
+        definition = "macro_rules! value { () => { 1 } }\n"
+        shadow = definition.replace("1", "2")
+        body = "fn resolve() {\n    record_uncovered_resolution_result(value!());\n}\n"
+        status, output = self._classify(
+            definition + shadow + body, shadow + definition + body,
+            body.splitlines()[1], destination="moved.rs"
+        )
+        self.assertEqual(status, 1, output)
+
+    def test_unrelated_sibling_edit_preserves_the_public_function_path(self) -> None:
+        before = """mod unrelated { const OTHER: u8 = 1; }
+mod resolver {
+const VALUE: u8 = 7;
+fn resolve() {
+    record_uncovered_resolution_result(VALUE);
+}
+}
+pub fn call() { crate::resolver::resolve(); }
+"""
+        body = "const VALUE: u8 = 7;\nfn resolve() {\n    record_uncovered_resolution_result(VALUE);\n}\n"
+        for value in ("7", "8"):
+            with self.subTest(value=value):
+                status, output = self._classify(
+                    before, body.replace("= 7", "= " + value), body.splitlines()[2],
+                    destination="resolver.rs", auxiliary_after={"lib.rs":
+                        "mod unrelated { const OTHER: u8 = 2; }\nmod resolver;\n"
+                        "pub fn call() { crate::resolver::resolve(); }\n"}, covered_auxiliary=True
+                )
+                self.assertEqual(status, 0 if value == "7" else 1, output)
+
+    def test_referenced_module_attributes_are_part_of_the_binding_context(self) -> None:
+        body = "fn resolve() {\n    record_uncovered_resolution_result(crate::shared::VALUE);\n}\n"
+        shared = "pub const VALUE: u8 = 7;\n"
+        declaration = '#[cfg(feature="old")]\nmod shared;\n'
+        for feature in ("old", "new"):
+            with self.subTest(feature=feature):
+                status, output = self._classify(
+                    declaration + "mod resolver {\n" + body + "}\n", body, body.splitlines()[1],
+                    destination="resolver.rs", auxiliary_before={"shared.rs": shared},
+                    auxiliary_after={"lib.rs": declaration.replace('"old"', f'"{feature}"') + "mod resolver;\n",
+                                     "shared.rs": shared}, covered_auxiliary=True
+                )
+                self.assertEqual(status, 0 if feature == "old" else 1, output)
+
+    def test_nested_lib_child_can_move_preserving_module_identity(self) -> None:
+        body = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        graph = {"lib.rs": "mod outer;\n", "outer/mod.rs": "mod lib;\n",
+                 "outer/lib.rs": '#[cfg(feature="gate")]\nmod child;\n'}
+        status, output = self._classify(
+            body, body, body.splitlines()[1], origin="outer/lib/child.rs",
+            destination="outer/lib/child/mod.rs", auxiliary_before=graph, auxiliary_after=graph
+        )
         self.assertEqual(status, 0, output)
 
 
