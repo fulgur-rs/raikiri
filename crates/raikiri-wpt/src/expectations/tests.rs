@@ -792,7 +792,8 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS mediaqueries upstream exact pixel references (+22).
     // + CSS2 relative block positioning exact slice (+14).
     // + CSS Inline image-loaded vertical-align length exact slice (+1).
-    assert_eq!(set.baseline.entries.len(), 1434);
+    // + Remeasured baseline pins (+8 PASS, -7 inaccurate pins).
+    assert_eq!(set.baseline.entries.len(), 1435);
     assert!(
         set.baseline
             .entries
