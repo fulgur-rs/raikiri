@@ -1250,12 +1250,9 @@ def binding_names(tokens: tuple) -> set[str] | None:
             if name is None:
                 return None
             names = {name}
-            # Trait methods can be called without naming the trait. The
-            # other declarations bind their name, not every identifier
-            # mentioned by their field types or implementation bodies.
-            if token == "trait":
-                names.update(name for value, following in zip(tokens[index:], tokens[index + 1:])
-                             if value == "fn" and (name := rust_identifier(following)) is not None)
+            # Declarations bind their name, not every identifier mentioned
+            # by field types or bodies. Trait methods are matched against
+            # method references separately by the context closure.
             return names
         if token == "impl":
             return None
@@ -1306,7 +1303,23 @@ def is_textual_macro(tokens: tuple) -> bool:
             or any(rust_identifier(token) in ("macro_rules", "macro") for token in tokens))
 
 
-def impl_dependency_names(tokens: tuple) -> set[str] | None:
+def method_references(tokens: tuple) -> set[str]:
+    return {name for previous, token in zip(tokens, tokens[1:])
+            if previous in (".", "::") and (name := rust_identifier(token)) is not None}
+
+
+def trait_method_names(tokens: tuple) -> set[str] | None:
+    kinds = {"fn", "const", "static", "type", "struct", "enum", "union", "trait", "macro_rules", "macro", "impl", "use"}
+    for index, token in enumerate(tokens):
+        if token in kinds:
+            if token != "trait":
+                return None
+            return {name for value, following in zip(tokens[index:], tokens[index + 1:])
+                    if value == "fn" and (name := rust_identifier(following)) is not None}
+    return None
+
+
+def impl_dependency_names(tokens: tuple) -> tuple[set[str], set[str]] | None:
     """Identify impl candidates independently of their module location.
 
     Receiver inference is unavailable here. Match header types/traits or
@@ -1334,9 +1347,9 @@ def impl_dependency_names(tokens: tuple) -> set[str] | None:
                 "dyn", "fn", "pub", "crate", "super", "self", "in", "extern", "async", "move"}
     names = {name for token in tokens[start + 1:end]
              if (name := rust_identifier(token)) is not None and name not in keywords}
-    names.update(name for token, following in zip(tokens[end:], tokens[end + 1:])
-                 if token == "fn" and (name := rust_identifier(following)) is not None)
-    return names
+    methods = {name for token, following in zip(tokens[end:], tokens[end + 1:])
+               if token == "fn" and (name := rust_identifier(following)) is not None}
+    return names, methods
 
 
 def has_opaque_expansion(tokens: tuple, local_names: set[str], shadowed_roots: set[str]) -> bool:
@@ -1420,6 +1433,8 @@ def function_move_key(snapshot: dict, path: str, unit: tuple) -> tuple | None:
         logical = prefix + local_chain
         references = {name for token in body + tuple(token for header in runtime for token in header)
                       if (name := rust_identifier(token)) is not None}
+        methods = method_references(body)
+        dependency_scopes = {logical}
         macro_prefix = inherited_macros + tuple((prefix + scope, binding) for scope, binding in local_macros)
         impl_names = {(scope, binding): names for (target, scope), bindings in snapshot["bindings"].items()
                       if target == identity for binding in bindings
@@ -1430,16 +1445,18 @@ def function_move_key(snapshot: dict, path: str, unit: tuple) -> tuple | None:
         relevant = set()
         changed = True
         while changed:
-            previous = len(references)
+            previous = len(references), len(methods), len(dependency_scopes)
             for (target, scope), bindings in snapshot["bindings"].items():
                 if target != identity:
                     continue
                 lexical_scope = logical[:len(scope)] == scope or any(name in references for name in scope)
-                impl_scope = any(names & references for names in impl_by_scope.get(scope, ()))
-                if not (lexical_scope or impl_scope):
+                dependency_scope = any(dependency[:len(scope)] == scope for dependency in dependency_scopes)
+                impl_scope = any(types & references or calls & methods for types, calls in impl_by_scope.get(scope, ()))
+                if not (lexical_scope or dependency_scope or impl_scope):
                     continue
                 for binding in bindings:
-                    if not lexical_scope and (names := impl_names.get((scope, binding))) is not None and not names & references:
+                    if (not lexical_scope and (candidates := impl_names.get((scope, binding))) is not None
+                            and not (candidates[0] & references or candidates[1] & methods)):
                         continue
                     bodies = snapshot["function_bodies"].get((identity, scope, binding), [])
                     if bodies:
@@ -1451,18 +1468,22 @@ def function_move_key(snapshot: dict, path: str, unit: tuple) -> tuple | None:
                                  if token == "fn" and (name := rust_identifier(following)) is not None}
                     else:
                         names = binding_names(binding)
-                    if names is None or references & names:
+                    trait_methods = trait_method_names(binding)
+                    if names is None or references & names or (trait_methods is not None and trait_methods & methods):
                         # Expansion inputs can change bindings or values
                         # outside this graph. Fail closed only for functions
                         # whose scope/references reach those inputs.
                         if "@macro_use_unknown" in binding or has_file_include(binding) or any(has_file_include(value) for value in bodies):
                             return None
                         relevant.add((scope, binding))
+                        dependency_scopes.add(scope)
                         references.update(name for token in binding if (name := rust_identifier(token)) is not None)
+                        methods.update(method_references(binding))
                         for value in bodies:
                             relevant.add((scope, ("@function_body",) + value))
                             references.update(name for token in value if (name := rust_identifier(token)) is not None)
-            changed = len(references) != previous
+                            methods.update(method_references(value))
+            changed = (len(references), len(methods), len(dependency_scopes)) != previous
         macros = []
         for scope, binding in macro_prefix:
             if binding[:1] == ("@macro_use",):

@@ -1135,6 +1135,35 @@ pub fn call() { crate::resolver::resolve(); }
         )
         self.assertEqual(status, 0, output)
 
+    def test_function_name_matching_unrelated_trait_method_does_not_disable_move(self) -> None:
+        declarations = 'struct Other;\ntrait Unrelated { fn resolve(self) -> u8; }\n'
+        body = 'fn resolve() {\n    record_uncovered_resolution_result();\n}\n'
+        original = 'impl crate::Unrelated for crate::Other { fn resolve(self) -> u8 { 1 } }\n'
+        status, output = self._classify(
+            declarations + 'mod implementations;\nmod resolver {\n' + body + '}\n',
+            body, body.splitlines()[1], destination='resolver.rs',
+            auxiliary_before={'implementations.rs': original},
+            auxiliary_after={'lib.rs': declarations + 'mod implementations;\nmod resolver;\n',
+                             'implementations.rs': original.replace('{ 1 }', '{ 2 }')}, covered_auxiliary=True
+        )
+        self.assertEqual(status, 0, output)
+
+    def test_sibling_impl_dependencies_follow_lexical_parent_scopes(self) -> None:
+        declarations = 'struct Item;\ntrait Measure { fn measure(self) -> u8; }\n'
+        body = 'fn resolve() {\n    record_uncovered_resolution_result(crate::Item.measure());\n}\n'
+        implementation = 'mod nested { impl crate::Measure for crate::Item { fn measure(self) -> u8 { super::VALUE } } }\n'
+        for value in ("1", "2"):
+            with self.subTest(value=value):
+                status, output = self._classify(
+                    declarations + 'mod implementations;\nmod resolver {\n' + body + '}\n',
+                    body, body.splitlines()[1], destination='resolver.rs',
+                    auxiliary_before={'implementations.rs': 'const VALUE:u8=1;\n' + implementation},
+                    auxiliary_after={'lib.rs': declarations + 'mod implementations;\nmod resolver;\n',
+                                     'implementations.rs': 'const VALUE:u8=' + value + ';\n' + implementation},
+                    covered_auxiliary=True
+                )
+                self.assertEqual(status, 0 if value == "1" else 1, output)
+
     def test_sibling_impl_macro_visibility_order_participates_in_move_context(self) -> None:
         declarations = 'struct Item;\ntrait Measure { fn measure(self) -> u8; }\n'
         body = 'fn resolve() {\n    record_uncovered_resolution_result(crate::Item.measure());\n}\n'
