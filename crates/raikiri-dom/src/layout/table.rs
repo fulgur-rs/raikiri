@@ -568,8 +568,10 @@ fn compute_table_layout_checked(
                     // Taffy reports authored definite table heights in the
                     // outer box-sizing domain. Auto tables retain the legacy
                     // known-height normalization used by fragmentation.
+                    // CSS 2.2 §17.5.3: a specified height is a minimum; the
+                    // table still holds its rows and the spacing.
                     let outer_height = if specified_height.is_some() {
-                        h
+                        f32_max_compat(h, content_height + padding_border_size.height)
                     } else {
                         (h - padding_border_size.height).max(0.0) // cov:ignore: exercised by ignored exact table-fragmentation WPT.
                     };
