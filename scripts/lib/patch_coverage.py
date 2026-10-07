@@ -743,16 +743,11 @@ def collect_moved_added_lines(repo_root: str, base: str, head: str,
         ["git", "-C", repo_root, "diff", "--name-only", "--no-renames", base, head,
          "--", "*Cargo.toml"], capture_output=True, text=True, check=True,
     ).stdout.splitlines()
-    for manifest in manifests:
-        if PurePosixPath(manifest).name != "Cargo.toml":
-            continue
-        # Build scripts may interpret even formatting as input. Require
-        # identical manifest bytes without a version-specific TOML parser.
-        layouts = [git_show(repo_root, ref, manifest) for ref in (base, head)]
-        if layouts[0] != layouts[1]:
-            # The old build context cannot be inferred after an edition,
-            # target, feature, or other compilation setting changes.
-            return {}
+    # Compiler extensions can interpret even formatting as input. Git
+    # detects changed bytes without text-mode newline normalization or
+    # requiring a version-specific TOML parser.
+    if any(PurePosixPath(manifest).name == "Cargo.toml" for manifest in manifests):
+        return {}
     config_paths = subprocess.run(
         ["git", "-C", repo_root, "diff", "--name-only", base, head, "--", ".cargo/config", ".cargo/config.toml",
          "*/.cargo/config", "*/.cargo/config.toml", "rust-toolchain", "rust-toolchain.toml", "*Cargo.lock"],

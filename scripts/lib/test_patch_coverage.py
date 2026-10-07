@@ -1147,6 +1147,17 @@ pub fn call() { crate::resolver::resolve(); }
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("--lcov", proc.stdout)
 
+    def test_manifest_line_endings_are_compilation_inputs(self) -> None:
+        body = "#[attribute_macro::gate]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        manifest = '[package]\r\nname="fixture"\r\nversion="0.1.0"\r\n'
+        for after in (manifest, manifest.replace("\r\n", "\n")):
+            with self.subTest(unchanged=after == manifest):
+                status, output = self._classify(
+                    body, body, body.splitlines()[2], destination="moved.rs",
+                    auxiliary_before={"Cargo.toml": manifest}, auxiliary_after={"Cargo.toml": after}
+                )
+                self.assertEqual(status, 0 if after == manifest else 1, output)
+
     def test_compiler_configuration_changes_do_not_exempt_functions(self) -> None:
         body = "#[cfg(gate)]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n"
         for name, before, after in (
