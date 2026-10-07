@@ -21,6 +21,7 @@ use super::rule_index::{AncestorFilter, RuleIndex};
 use super::selector_match::{
     MatchCaches, MatchContext, match_complex_selector_list, selector_matches_pseudo_element,
 };
+use super::table_hints::push_table_attribute_hints;
 
 /// A 32-bit specificity from selectors, totally ordered as `u32`.
 pub(crate) type Specificity = u32;
@@ -661,6 +662,7 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                 // `img_width_attribute_overridable_by_author_stylesheet_regardless_of_specificity`
                 // continues to check the outcome this comment claims.
                 push_img_dimension_hints(&elem, &mut out.decls);
+                push_table_attribute_hints(&elem, &mut out.decls);
                 const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
                 let is_svg_root = elem.tag_name() == "svg"
                     && elem.namespace_uri() == Some(SVG_NAMESPACE)

@@ -3897,6 +3897,61 @@ fn img_defaults_to_inline_block_via_ua_css() {
 }
 
 #[test]
+fn table_ua_rule_sets_a_2px_border_spacing() {
+    // HTML LS §15.3.8: `table { border-spacing: 2px }`. The CSS initial
+    // value is 0, so the spacing comes only from the UA rule.
+    use raikiri_style::Origin;
+    use raikiri_style::resolve::ComputedLength;
+
+    let spacing = |html: &str, tag: &str| {
+        let uncascaded = parse(html.as_bytes(), &empty_options()).expect("parse ok");
+        let mut tree = raikiri_style::build_rule_tree(&uncascaded.dom);
+        tree.add_stylesheet(MINIMAL_UA_CSS, Origin::UserAgent);
+        let cascade = raikiri_style::cascade(&uncascaded.dom, &tree).expect("cascade ok");
+        let id = find_first_by_tag(&uncascaded.dom, tag)
+            .unwrap_or_else(|| panic!("<{tag}> should exist"))
+            .0 as usize;
+        let bs = &cascade.computed[id].border_spacing;
+        (bs.horizontal, bs.vertical)
+    };
+    let table =
+        "<!doctype html><html><body><table><tr><td>a</td></tr></table><div>b</div></body></html>";
+    assert_eq!(
+        spacing(table, "table"),
+        (ComputedLength(2.0), ComputedLength(2.0))
+    );
+    // Elements outside a table keep the initial 0.
+    assert_eq!(
+        spacing(table, "div"),
+        (ComputedLength(0.0), ComputedLength(0.0))
+    );
+    // `border-collapse` is inherited; the UA rule restates `separate` so a
+    // table nested in a collapsing table keeps its own spacing.
+    let nested = "<!doctype html><html><body><table style=\"border-collapse: collapse\"><tr><td>\
+        <table id=inner><tr><td>a</td></tr></table></td></tr></table></body></html>";
+    let uncascaded = parse(nested.as_bytes(), &empty_options()).expect("parse ok");
+    let mut tree = raikiri_style::build_rule_tree(&uncascaded.dom);
+    tree.add_stylesheet(MINIMAL_UA_CSS, Origin::UserAgent);
+    let cascade = raikiri_style::cascade(&uncascaded.dom, &tree).expect("cascade ok");
+    let inner = (0..cascade.computed.len())
+        .find(|&id| {
+            find_first_by_tag(&uncascaded.dom, "table").map(|n| n.0 as usize) != Some(id)
+                && cascade.computed[id].display == raikiri_style::property::DisplayValue::Table
+        })
+        .expect("inner table");
+    assert_eq!(
+        cascade.computed[inner].border_collapse,
+        raikiri_style::property::BorderCollapseValue::Separate
+    );
+    // Author style wins over the UA rule.
+    let author = "<!doctype html><html><body><table style=\"border-spacing: 0 4px\"><tr><td>a</td></tr></table></body></html>";
+    assert_eq!(
+        spacing(author, "table"),
+        (ComputedLength(0.0), ComputedLength(4.0))
+    );
+}
+
+#[test]
 fn heading_ua_rules_set_weight_size_and_block_margins_per_level() {
     // HTML LS §15.3.6 sections-and-headings, through real parse+cascade:
     // every heading is bold; level n gets its own font size and block

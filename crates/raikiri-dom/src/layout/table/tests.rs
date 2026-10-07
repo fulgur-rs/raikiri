@@ -124,7 +124,7 @@ fn invalid_cell_column_ranges_are_rejected_before_both_slice_sinks() {
             cells: vec![fixed_cell(0, start, span, Dimension::auto())],
             col_widths: vec![],
         };
-        assert!(super::resolve_row_heights(&mut doc, &grid, &[1.0, 1.0]).is_err());
+        assert!(super::resolve_row_heights(&mut doc, &grid, &[1.0, 1.0], (0.0, 0.0)).is_err());
         assert!(
             super::place_cells(
                 &mut doc,
@@ -132,7 +132,8 @@ fn invalid_cell_column_ranges_are_rejected_before_both_slice_sinks() {
                 &[1.0, 1.0],
                 &[1.0],
                 &[0.0, 1.0, 2.0],
-                &[0.0, 1.0]
+                &[0.0, 1.0],
+                (0.0, 0.0)
             )
             .is_err()
         );
@@ -2371,6 +2372,7 @@ fn resolve_column_widths_colspan_one_percent_cell_sets_column_percentage() {
             width: 0.0,
             height: 0.0,
         },
+        0.0,
     );
     assert!(
         (widths[0] - 80.0).abs() < 0.5,
@@ -2424,6 +2426,7 @@ fn resolve_column_widths_colspan_excess_distributes_min_and_max_across_targets()
             width: 0.0,
             height: 0.0,
         },
+        0.0,
     );
 
     assert!((widths[0] - 150.0).abs() < 1.0, "widths: {widths:?}");
@@ -2488,6 +2491,7 @@ fn resolve_column_widths_definite_avail_nonfit_keeps_colspan_minimum() {
             width: 0.0,
             height: 0.0,
         },
+        0.0,
     );
 
     assert!((widths[0] - 50.0).abs() < 1.0, "widths: {widths:?}");
@@ -2533,6 +2537,7 @@ fn resolve_column_widths_col_percent_ignored_for_unoccupied_column() {
             width: 0.0,
             height: 0.0,
         },
+        0.0,
     );
 
     // If the 25% were (incorrectly) applied despite no cell occupying
@@ -2578,6 +2583,7 @@ fn resolve_column_widths_col_length_floors_even_unoccupied_column() {
             width: 0.0,
             height: 0.0,
         },
+        0.0,
     );
 
     assert!(widths[0] > widths[1], "widths: {widths:?}");
@@ -2622,6 +2628,7 @@ fn resolve_column_widths_col_min_over_max_resolves_to_min() {
             width: 0.0,
             height: 0.0,
         },
+        0.0,
     );
 
     assert_eq!(widths, [80.0, 0.0]);
@@ -2662,6 +2669,7 @@ fn resolve_column_widths_col_width_clamped_by_max_width() {
             width: 0.0,
             height: 0.0,
         },
+        0.0,
     );
 
     assert_eq!(widths, [60.0, 0.0]);
@@ -2753,8 +2761,9 @@ fn compute_table_layout_max_width_never_shrinks_below_intrinsic_content() {
 
 #[test]
 fn compute_table_layout_single_column_separate_border_spacing_adds_both_gaps() {
-    // A single-column separate-border table needs the *two* outer
-    // spacing gaps folded into its one track's used width.
+    // CSS 2.2 §17.6.1: the spacing separates the outer cell from the
+    // table edge on both sides, so a single-column table is the cell plus
+    // two gaps wide, with the cell inset by one gap.
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
     let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
@@ -2788,11 +2797,12 @@ fn compute_table_layout_single_column_separate_border_spacing_adds_both_gaps() {
     crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
 
     let td_layout = doc.nodes[td].unrounded_layout;
-    assert!(
-        (td_layout.size.width - 60.0).abs() < 2.0,
-        "single track should include both 10px spacing gaps (40 + 2*10 = 60), got {}",
-        td_layout.size.width
-    );
+    assert_eq!(td_layout.size.width, 40.0);
+    assert_eq!(td_layout.location.x, 10.0);
+    assert_eq!(td_layout.location.y, 10.0);
+    let table_layout = doc.nodes[table].unrounded_layout;
+    assert_eq!(table_layout.size.width, 60.0);
+    assert_eq!(table_layout.size.height, 30.0);
 }
 
 // -----------------------------------------------------------------
@@ -2967,4 +2977,210 @@ fn auto_width_shrink_wraps_to_content_baseline() {
         "auto+auto table should shrink-wrap to 50px content, got {}",
         table_layout.size.width
     );
+}
+
+/// Appends a `display: table-cell` with one block child of the given size.
+fn sized_cell(doc: &mut Document, row: usize, width: f32, height: f32) -> usize {
+    let td = doc.append_element(
+        Some(row),
+        "td",
+        Style::default(),
+        Some("display: table-cell"),
+    );
+    doc.append_element(
+        Some(td),
+        "div",
+        Style::default(),
+        Some(format!("width: {width}px; height: {height}px").as_str()),
+    );
+    td
+}
+
+#[test]
+fn separate_border_spacing_gaps_columns_rows_and_spanned_cells() {
+    // CSS 2.2 §17.6.1: n tracks take n + 1 gaps, and a spanning cell
+    // covers the gaps between the tracks it spans.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let table = doc.append_element(
+        Some(body),
+        "table",
+        Style::default(),
+        Some("display: table; border-spacing: 5px"),
+    );
+    let row = |doc: &mut Document| {
+        doc.append_element(
+            Some(table),
+            "tr",
+            Style::default(),
+            Some("display: table-row"),
+        )
+    };
+    let tr1 = row(&mut doc);
+    let wide = sized_cell(&mut doc, tr1, 10.0, 10.0);
+    doc.set_element_attributes(wide, vec![("colspan".into(), "2".into())]);
+    let tr2 = row(&mut doc);
+    let a = sized_cell(&mut doc, tr2, 20.0, 10.0);
+    let b = sized_cell(&mut doc, tr2, 30.0, 10.0);
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).unwrap();
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
+
+    let at = |id: usize| {
+        let l = doc.nodes[id].unrounded_layout;
+        (l.location.x, l.location.y, l.size.width, l.size.height)
+    };
+    assert_eq!(at(wide), (5.0, 5.0, 55.0, 10.0));
+    assert_eq!(at(a), (5.0, 20.0, 20.0, 10.0));
+    assert_eq!(at(b), (30.0, 20.0, 30.0, 10.0));
+    let t = doc.nodes[table].unrounded_layout.size;
+    assert_eq!((t.width, t.height), (65.0, 35.0));
+}
+
+#[test]
+fn separate_border_spacing_counts_spanned_gaps_toward_a_rowspan_height() {
+    // A 40px cell spanning two rows already gets the 5px gap between
+    // them, so the two rows only need to share the remaining 35px.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let table = doc.append_element(
+        Some(body),
+        "table",
+        Style::default(),
+        Some("display: table; border-spacing: 5px"),
+    );
+    let row = |doc: &mut Document| {
+        doc.append_element(
+            Some(table),
+            "tr",
+            Style::default(),
+            Some("display: table-row"),
+        )
+    };
+    // The spanning cell is the last column, so the second row's cell
+    // takes the first column without depending on slot reservation.
+    let tr1 = row(&mut doc);
+    let top = sized_cell(&mut doc, tr1, 10.0, 10.0);
+    let tall = sized_cell(&mut doc, tr1, 10.0, 40.0);
+    doc.set_element_attributes(tall, vec![("rowspan".into(), "2".into())]);
+    let tr2 = row(&mut doc);
+    let bottom = sized_cell(&mut doc, tr2, 10.0, 10.0);
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).unwrap();
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
+
+    let at = |id: usize| {
+        let l = doc.nodes[id].unrounded_layout;
+        (l.location.x, l.location.y, l.size.width, l.size.height)
+    };
+    let (top, tall, bottom) = (at(top), at(tall), at(bottom));
+    assert_eq!((top.0, top.1), (5.0, 5.0));
+    assert_eq!((tall.0, tall.1, tall.3), (20.0, 5.0, 40.0));
+    assert_eq!((bottom.0, bottom.1), (5.0, top.1 + top.3 + 5.0));
+    assert_eq!(top.3 + 5.0 + bottom.3, 40.0);
+    let t = doc.nodes[table].unrounded_layout.size;
+    assert_eq!((t.width, t.height), (35.0, 50.0));
+}
+
+#[test]
+fn separate_border_spacing_widens_a_table_narrower_than_its_columns() {
+    // CSS 2.1 §17.5.2: the table is at least its columns plus the spacing,
+    // so the cell keeps its gap on both sides instead of overflowing.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let table = doc.append_element(
+        Some(body),
+        "table",
+        Style::default(),
+        Some("display: table; border-spacing: 2px; width: 10px"),
+    );
+    let tr = doc.append_element(
+        Some(table),
+        "tr",
+        Style::default(),
+        Some("display: table-row"),
+    );
+    let td = sized_cell(&mut doc, tr, 10.0, 10.0);
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).unwrap();
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
+
+    let cell = doc.nodes[td].unrounded_layout;
+    assert_eq!((cell.location.x, cell.size.width), (2.0, 10.0));
+    assert_eq!(doc.nodes[table].unrounded_layout.size.width, 14.0);
+}
+
+#[test]
+fn separate_border_spacing_gaps_the_stacked_tracks_of_a_vertical_table() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let table = doc.append_element(
+        Some(body),
+        "table",
+        Style::default(),
+        Some("display: table; writing-mode: vertical-lr; border-spacing: 3px 5px"),
+    );
+    let tr = doc.append_element(
+        Some(table),
+        "tr",
+        Style::default(),
+        Some("display: table-row"),
+    );
+    let first = sized_cell(&mut doc, tr, 50.0, 100.0);
+    let second = sized_cell(&mut doc, tr, 50.0, 100.0);
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).unwrap();
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
+
+    let first = doc.nodes[first].unrounded_layout;
+    let second = doc.nodes[second].unrounded_layout;
+    let table = doc.nodes[table].unrounded_layout.size;
+    assert_eq!((first.location.x, first.location.y), (3.0, 5.0));
+    assert_eq!(
+        (second.location.x, second.location.y),
+        (3.0, 5.0 + first.size.height + 5.0)
+    );
+    assert_eq!(
+        table.height,
+        5.0 + first.size.height + 5.0 + second.size.height + 5.0
+    );
+    assert_eq!(table.width, 3.0 + first.size.width + 3.0);
+}
+
+#[test]
+fn separate_border_spacing_grows_a_table_shorter_than_its_rows() {
+    // CSS 2.2 §17.5.3: a specified table height is a minimum, so the rows
+    // and their gaps still fit.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let table = doc.append_element(
+        Some(body),
+        "table",
+        Style::default(),
+        Some("display: table; border-spacing: 2px; height: 10px"),
+    );
+    let tr = doc.append_element(
+        Some(table),
+        "tr",
+        Style::default(),
+        Some("display: table-row"),
+    );
+    let td = sized_cell(&mut doc, tr, 10.0, 10.0);
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).unwrap();
+    crate::layout::layout_single_page(&mut doc, &cr, PageBox::A4).unwrap();
+
+    let cell = doc.nodes[td].unrounded_layout;
+    assert_eq!((cell.location.y, cell.size.height), (2.0, 10.0));
+    assert_eq!(doc.nodes[table].unrounded_layout.size.height, 14.0);
 }

@@ -432,3 +432,26 @@ fn layout_page_origin_is_applied_once_to_fragments_and_links() {
     assert_eq!(links[0].target, "/go");
     assert_eq!(links[0].quads, &[text]);
 }
+
+// HTML LS §15.3.8 gives tables a 2px border-spacing, which separates
+// adjoining cells and also the outer cells from the table's edge
+// (CSS 2.2 §17.6.1).
+#[test]
+fn table_cells_are_separated_by_the_ua_border_spacing() {
+    let cell_x = |css: &str| {
+        let result = laid_out(&format!(
+            "<style>@page{{size:200px 100px;margin:0}} body{{margin:0}} \
+             td{{padding:0;width:10px;height:10px}} {css}</style>\
+             <table><tr><td>a</td><td>b</td></tr></table>"
+        ));
+        let page = result.page(0).unwrap();
+        let cells: Vec<_> = page
+            .fragments()
+            .filter(|f| page.dom().local_name(f.node()) == Some("td"))
+            .map(|f| (f.rect().x, f.rect().y))
+            .collect();
+        cells
+    };
+    assert_eq!(cell_x(""), [(2.0, 2.0), (14.0, 2.0)]);
+    assert_eq!(cell_x("table{border-spacing:0}"), [(0.0, 0.0), (10.0, 0.0)]);
+}

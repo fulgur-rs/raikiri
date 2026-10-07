@@ -452,7 +452,7 @@ img {
   display: inline-block;
 }
 
-/* HTML Living Standard "Rendering" §tables (15.3.9) + CSS 2.1 §17.2 / Appendix D
+/* HTML Living Standard "Rendering" §tables (15.3.8) + CSS 2.1 §17.2 / Appendix D
  * — table model display types. Each HTML table-related element maps to its
  * corresponding internal display value (CSS Display 3 §2 `<display-internal>`).
  * Cleanroom UA rules derived from spec vocabulary, not copied from any engine's
@@ -468,13 +468,9 @@ img {
  * for it, but the keyword is now accepted so author `display: inline-table`
  * parses.
  *
- * Layout-time table formatting (row/column/cell track sizing, border-collapse,
- * anonymous table object generation per CSS 2.1 §17.2.1) is not yet implemented
- * in raikiri-dom — `bridge_display` maps these display values to `Display::Block`
- * with a TODO until a dedicated table layout is wired. These UA rules still
- * land so cascade/computed/selector matching for `display: table*` is
- * observable (and WPT table display tests can assert the computed value)
- * even while layout remains block-approximation. */
+ * raikiri-dom lays these display types out with its table formatting
+ * (`layout/table.rs`), which reads the separated-borders `border-spacing`
+ * set below. */
 table { display: table; }
 caption { display: table-caption; }
 col { display: table-column; }
@@ -484,6 +480,22 @@ thead { display: table-header-group; }
 tfoot { display: table-footer-group; }
 tr { display: table-row; }
 td, th { display: table-cell; }
+/* HTML LS §15.3.8 gives tables a 2px separated-borders spacing:
+ *
+ *   table {
+ *     box-sizing: border-box;
+ *     border-spacing: 2px;
+ *     border-collapse: separate;
+ *     text-indent: initial;
+ *   }
+ *
+ * The CSS initial value of `border-spacing` is 0 (CSS 2.2 §17.6.1), so
+ * without this rule tables lay out with no gap between adjoining cells or
+ * between the outer cells and the table border. `border-collapse` is
+ * inherited, so `separate` is restated here: a table nested in a collapsing
+ * table would otherwise inherit `collapse` and lose the spacing. The block's
+ * `box-sizing` and `text-indent` are not taken here. */
+table { border-spacing: 2px; border-collapse: separate; }
 /* HTML UA behavior: the internal center value centers a header only when
  * its inherited table alignment is the initial `start` value; otherwise it
  * follows the inherited alignment. */

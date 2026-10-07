@@ -391,6 +391,7 @@ pub(crate) use directionality::*;
 pub use query::{SelectorMatcher, SelectorQuery};
 mod custom_property;
 mod html_quirks;
+mod table_hints;
 pub(crate) use custom_property::*;
 mod first_line;
 pub use first_line::{FirstLineCascade, FirstLineStyles, cascade_with_first_line};
