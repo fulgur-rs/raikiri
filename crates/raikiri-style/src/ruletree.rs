@@ -499,9 +499,15 @@ impl RuleTree {
     ///   same-name collision from other origins appears in `counter_styles`, whereas
     ///   the former Author-only gate used to drop it unconditionally.
     ///
-    /// CSS nesting preprocessing is bounded by cumulative work bytes, generated
-    /// items, and recursion depth. A stylesheet that exceeds a preprocessing
-    /// limit is discarded before any of its rules are added to this tree.
+    /// CSS nesting is parsed directly from the stylesheet. Style and supported
+    /// group bodies share a cumulative nesting limit of 128 levels. Nested
+    /// selector lists are limited to 32,768 weighted components, counting repeated
+    /// parent references. Token nesting is limited to 32 levels before recursive
+    /// nested-selector parsing or contextual revalidation.
+    ///
+    /// An over-limit nested rule is skipped with its descendants; valid ancestor
+    /// declarations and sibling rules remain. Opaque inspection uses independent
+    /// body-byte and nesting budgets.
     ///
     pub fn add_stylesheet(&mut self, source: &str, origin: Origin) {
         self.add_conditional_stylesheet(source, origin, None);
