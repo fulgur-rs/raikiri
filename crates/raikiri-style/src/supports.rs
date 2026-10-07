@@ -172,9 +172,7 @@ fn parse_supports_selector<'i>(
             return Ok(true);
         }
         let selectors = SelectorList::parse(
-            &NamespacedSelectorParser {
-                namespaces: namespaces.get(),
-            },
+            &NamespacedSelectorParser::new(namespaces.get()),
             input,
             ParseRelative::No,
         )

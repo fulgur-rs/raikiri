@@ -1,4 +1,5 @@
 use super::*;
+use crate::rule::parse_declaration_block_with_consumer_properties;
 
 fn supports_condition(source: &str) -> bool {
     crate::supports::supports_condition(source, &SupportsContext::new("", &[]))

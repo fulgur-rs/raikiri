@@ -23,489 +23,14 @@ use crate::page::{
     PageBlockBody, PageRule, PageSelector, parse_page_declaration_block, parse_page_prelude,
 };
 use crate::property::{CssColor, PropertyValue};
-use crate::rule::{Declaration, StyleRule, parse_declaration_block_with_consumer_properties};
+use crate::rule::{Declaration, StyleRule};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
 use crate::supports::supports_condition;
 use crate::{Atom, PseudoClass, PseudoElem, RaikiriSelectorImpl, RaikiriSelectorParser};
 
-/// Expand qualified CSS nesting into the flat selector rules understood by the
-/// rule tree. The parser intentionally keeps this pass source-based: it handles
-/// nested qualified rules, preserves at-rules, and leaves declaration values,
-/// strings, comments, and function arguments opaque to the brace scanner.
-fn expand_css_nesting(source: &str) -> Result<String, ()> {
-    expand_css_nesting_at_depth(source, &mut NestingBudget::new(), 0)
-}
+mod nesting;
 
-// One stylesheet shares these limits across siblings, wrappers, and every
-// recursive expansion. Charge scans and copies before allocating their output.
-const MAX_NESTING_WORK_BYTES: usize = 64 * 1024 * 1024;
-const MAX_NESTING_ITEMS: usize = 4096;
-const MAX_NESTING_DEPTH: usize = 512;
-
-struct NestingBudget {
-    bytes: usize,
-    items: usize,
-}
-
-impl NestingBudget {
-    fn new() -> Self {
-        Self {
-            bytes: MAX_NESTING_WORK_BYTES,
-            items: MAX_NESTING_ITEMS,
-        }
-    }
-
-    fn consume_bytes(&mut self, bytes: usize) -> Result<(), ()> {
-        self.bytes = self.bytes.checked_sub(bytes).ok_or(())?;
-        Ok(())
-    }
-
-    fn consume_items(&mut self, items: usize) -> Result<(), ()> {
-        self.items = self.items.checked_sub(items).ok_or(())?;
-        Ok(())
-    }
-
-    fn append(&mut self, output: &mut String, value: &str) -> Result<(), ()> {
-        self.consume_bytes(value.len())?;
-        output.push_str(value);
-        Ok(())
-    }
-}
-
-fn expand_css_nesting_at_depth(
-    source: &str,
-    budget: &mut NestingBudget,
-    depth: usize,
-) -> Result<String, ()> {
-    if depth > MAX_NESTING_DEPTH {
-        return Err(());
-    }
-    budget.consume_bytes(source.len())?;
-    let mut output = String::new();
-    let mut cursor = 0;
-    while let Some((kind, index)) = next_css_top_level_construct(source, cursor) {
-        match kind {
-            b';' => {
-                budget.append(&mut output, &source[cursor..=index])?;
-                cursor = index + 1;
-            }
-            b'{' => {
-                let Some(close) = matching_brace(source, index) else {
-                    budget.append(&mut output, &source[cursor..])?;
-                    return Ok(output);
-                };
-                let prelude = &source[cursor..index];
-                let body = &source[index + 1..close];
-                if prelude_is_at_rule(prelude) {
-                    budget.append(&mut output, prelude)?;
-                    budget.append(&mut output, "{")?;
-                    let expanded = expand_css_nesting_at_depth(body, budget, depth + 1)?;
-                    budget.append(&mut output, &expanded)?;
-                    budget.append(&mut output, "}")?;
-                } else {
-                    let expanded = flatten_css_style_rule(prelude, body, budget, depth)?;
-                    budget.append(&mut output, &expanded)?;
-                }
-                cursor = close + 1;
-            }
-            _ => unreachable!("next_css_top_level_construct only returns ; or {{"), // cov:ignore: helper returns only semicolon or block-opener tags.
-        }
-    }
-    budget.append(&mut output, &source[cursor..])?;
-    Ok(output)
-}
-
-fn prelude_is_at_rule(source: &str) -> bool {
-    let mut input = ParserInput::new(source);
-    let mut parser = Parser::new(&mut input);
-    matches!(parser.next(), Ok(Token::AtKeyword(_)))
-}
-
-/// Return the next top-level declaration terminator or block opener.
-fn next_css_top_level_construct(source: &str, from: usize) -> Option<(u8, usize)> {
-    let bytes = source.as_bytes();
-    let mut index = from;
-    let mut paren_depth = 0_u32;
-    let mut bracket_depth = 0_u32;
-    let mut quote = None;
-    let mut comment = false;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if comment {
-            if byte == b'*' && bytes.get(index + 1) == Some(&b'/') {
-                comment = false;
-                index += 2;
-            } else {
-                index += 1;
-            }
-            continue;
-        }
-        if let Some(delimiter) = quote {
-            let (next, ended) = step_in_css_string(bytes, index, delimiter);
-            index = next;
-            if ended {
-                quote = None;
-            }
-            continue;
-        }
-        if byte == b'/' && bytes.get(index + 1) == Some(&b'*') {
-            comment = true;
-            index += 2;
-            continue;
-        }
-        if byte == b'\'' || byte == b'"' {
-            quote = Some(byte);
-            index += 1;
-            continue;
-        }
-        match byte {
-            b'(' => paren_depth = paren_depth.saturating_add(1),
-            b')' => paren_depth = paren_depth.saturating_sub(1),
-            b'[' => bracket_depth = bracket_depth.saturating_add(1),
-            b']' => bracket_depth = bracket_depth.saturating_sub(1),
-            b';' | b'{' if paren_depth == 0 && bracket_depth == 0 => {
-                return Some((byte, index));
-            }
-            _ => {}
-        }
-        index += 1;
-    }
-    None
-}
-
-fn flatten_css_style_rule(
-    prelude: &str,
-    body: &str,
-    budget: &mut NestingBudget,
-    depth: usize,
-) -> Result<String, ()> {
-    if depth > MAX_NESTING_DEPTH {
-        return Err(());
-    }
-    budget.consume_bytes(body.len())?;
-    let unchanged = |budget: &mut NestingBudget| {
-        let mut unchanged = String::new();
-        budget.append(&mut unchanged, prelude)?;
-        budget.append(&mut unchanged, "{")?;
-        budget.append(&mut unchanged, body)?;
-        budget.append(&mut unchanged, "}")?;
-        Ok(unchanged)
-    };
-    let Some(segments) = split_css_nested_body(body, budget)? else {
-        return unchanged(budget);
-    };
-    let selector = prelude.trim();
-    // cov:ignore: callers only pass qualified-rule preludes; at-rules are routed elsewhere.
-    if selector.is_empty() || selector.starts_with('@') {
-        return unchanged(budget); // cov:ignore: see above.
-    }
-
-    let leading_len = prelude.len() - prelude.trim_start().len();
-    let mut output = String::new();
-    budget.append(&mut output, &prelude[..leading_len])?;
-    for segment in segments {
-        match segment {
-            // Declarations keep their source position relative to nested
-            // rules: CSS Nesting wraps declarations that follow a nested rule
-            // in a nested declarations rule matching the parent's elements
-            // with the parent's specificity, i.e. a repeat of the parent rule.
-            NestedSegment::Declarations(declarations) => {
-                if declarations.trim().is_empty() {
-                    continue;
-                }
-                budget.append(&mut output, selector)?;
-                budget.append(&mut output, "{")?;
-                budget.append(&mut output, &declarations)?;
-                budget.append(&mut output, "}\n")?;
-            }
-            NestedSegment::Rule(nested_selector, nested_body) => {
-                let combined = combine_nested_selectors(selector, &nested_selector, budget)?;
-                let expanded = flatten_css_style_rule(&combined, &nested_body, budget, depth + 1)?;
-                budget.append(&mut output, &expanded)?;
-                budget.append(&mut output, "\n")?;
-            }
-        }
-    }
-    Ok(output)
-}
-
-/// A rule body split in source order.
-enum NestedSegment {
-    /// A run of declarations between nested rules.
-    Declarations(String),
-    /// A nested qualified rule: its selector and its body.
-    Rule(String, String),
-}
-
-/// Split a rule body into declaration runs and nested qualified-rule blocks,
-/// in source order. Returns `None` when the body has no nested rules or
-/// contains a nested construct outside this pass's qualified-rule subset.
-fn split_css_nested_body(
-    body: &str,
-    budget: &mut NestingBudget,
-) -> Result<Option<Vec<NestedSegment>>, ()> {
-    let mut segments = Vec::new();
-    let mut has_nested_rule = false;
-    let mut segment_start = 0;
-    let mut cursor = 0;
-    while let Some((kind, index)) = next_css_top_level_construct(body, cursor) {
-        match kind {
-            b';' => cursor = index + 1,
-            b'{' => {
-                let Some(close) = matching_brace(body, index) else {
-                    return Ok(None);
-                };
-                let nested_selector = body[cursor..index].trim();
-                // cov:ignore: at-rules and empty nested preludes remain opaque to this qualified-rule pass.
-                if nested_selector.is_empty() || nested_selector.starts_with('@') {
-                    return Ok(None);
-                }
-                budget.consume_items(2)?;
-                segments.push(NestedSegment::Declarations(
-                    body[segment_start..cursor].to_owned(),
-                ));
-                segments.push(NestedSegment::Rule(
-                    nested_selector.to_owned(),
-                    body[index + 1..close].to_owned(),
-                ));
-                has_nested_rule = true;
-                cursor = close + 1;
-                segment_start = cursor;
-            }
-            _ => unreachable!("next_css_top_level_construct only returns ; or {{"), // cov:ignore: helper returns only semicolon or block-opener tags.
-        }
-    }
-    if !has_nested_rule {
-        return Ok(None);
-    }
-    budget.consume_items(1)?;
-    segments.push(NestedSegment::Declarations(
-        body[segment_start..].to_owned(),
-    ));
-    Ok(Some(segments))
-}
-
-/// Resolve a nested selector list against its parent selector list.
-///
-/// CSS Nesting gives `&` the meaning of `:is(<parent list>)`, which the
-/// selector matcher does not support. Each `&` is therefore expanded
-/// independently over the parent list, so `.a, .b { & + & {} }` covers all
-/// four pairings. Matching is equivalent; specificity differs from `:is()`
-/// only when the parent list mixes selectors of different specificity. A
-/// nested selector without `&` is relative to the parent as a descendant.
-fn combine_nested_selectors(
-    parent: &str,
-    nested: &str,
-    budget: &mut NestingBudget,
-) -> Result<String, ()> {
-    let parents = split_top_level_selector_list(parent, budget)?;
-    let mut combined = Vec::new();
-    for nested in split_top_level_selector_list(nested, budget)? {
-        let pieces = split_on_nesting_selector(&nested, budget)?;
-        if pieces.len() == 1 {
-            budget.consume_items(parents.len())?;
-            for parent in &parents {
-                budget.consume_bytes(
-                    parent
-                        .len()
-                        .checked_add(nested.len())
-                        .and_then(|len| len.checked_add(1))
-                        .ok_or(())?,
-                )?;
-                combined.push(format!("{parent} {nested}"));
-            }
-            continue;
-        }
-        budget.consume_items(1)?;
-        budget.consume_bytes(pieces[0].len())?;
-        let mut expansions = vec![pieces[0].to_owned()];
-        for piece in &pieces[1..] {
-            let count = expansions.len().checked_mul(parents.len()).ok_or(())?;
-            budget.consume_items(count)?;
-            let mut next = Vec::new();
-            for prefix in &expansions {
-                for parent in &parents {
-                    let length = prefix
-                        .len()
-                        .checked_add(parent.len())
-                        .and_then(|len| len.checked_add(piece.len()))
-                        .ok_or(())?;
-                    budget.consume_bytes(length)?;
-                    next.push(format!("{prefix}{parent}{piece}"));
-                }
-            }
-            expansions = next;
-        }
-        combined.extend(expansions);
-    }
-    let separators = combined.len().saturating_sub(1).checked_mul(2).ok_or(())?;
-    let length = combined
-        .iter()
-        .try_fold(separators, |len, value| len.checked_add(value.len()))
-        .ok_or(())?;
-    budget.consume_bytes(length)?;
-    Ok(combined.join(", "))
-}
-
-/// Split `selector` around each nesting selector `&`, skipping `&` inside
-/// quoted strings and escaped `\&`.
-fn split_on_nesting_selector<'a>(
-    selector: &'a str,
-    budget: &mut NestingBudget,
-) -> Result<Vec<&'a str>, ()> {
-    budget.consume_bytes(selector.len())?;
-    let bytes = selector.as_bytes();
-    let mut pieces = Vec::new();
-    let mut start = 0;
-    let mut index = 0;
-    let mut quote = None;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if let Some(delimiter) = quote {
-            let (next, ended) = step_in_css_string(bytes, index, delimiter);
-            index = next;
-            if ended {
-                quote = None;
-            }
-            continue;
-        }
-        match byte {
-            b'\\' => {
-                index = index.saturating_add(2);
-                continue;
-            }
-            b'\'' | b'"' => quote = Some(byte),
-            b'&' => {
-                budget.consume_items(1)?;
-                pieces.push(&selector[start..index]);
-                start = index + 1;
-            }
-            _ => {}
-        }
-        index += 1;
-    }
-    budget.consume_items(1)?;
-    pieces.push(&selector[start.min(selector.len())..]);
-    Ok(pieces)
-}
-
-fn split_top_level_selector_list(
-    value: &str,
-    budget: &mut NestingBudget,
-) -> Result<Vec<String>, ()> {
-    budget.consume_bytes(value.len())?;
-    let mut result = Vec::new();
-    let mut start = 0;
-    let mut index = 0;
-    let mut paren_depth = 0_u32;
-    let mut bracket_depth = 0_u32;
-    let bytes = value.as_bytes();
-    let mut quote = None;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if let Some(delimiter) = quote {
-            let (next, ended) = step_in_css_string(bytes, index, delimiter);
-            index = next;
-            if ended {
-                quote = None;
-            }
-            continue;
-        }
-        if byte == b'\'' || byte == b'"' {
-            quote = Some(byte);
-        } else {
-            match byte {
-                b'(' => paren_depth = paren_depth.saturating_add(1),
-                b')' => paren_depth = paren_depth.saturating_sub(1),
-                b'[' => bracket_depth = bracket_depth.saturating_add(1),
-                b']' => bracket_depth = bracket_depth.saturating_sub(1),
-                b',' if paren_depth == 0 && bracket_depth == 0 => {
-                    let item = value[start..index].trim();
-                    if !item.is_empty() {
-                        budget.consume_items(1)?;
-                        budget.consume_bytes(item.len())?;
-                        result.push(item.to_owned());
-                    }
-                    start = index + 1;
-                }
-                _ => {}
-            }
-        }
-        index += 1;
-    }
-    let item = value[start..].trim();
-    if !item.is_empty() {
-        budget.consume_items(1)?;
-        budget.consume_bytes(item.len())?;
-        result.push(item.to_owned());
-    }
-    Ok(result)
-}
-
-/// Advance one byte, or one escape, inside a CSS string opened by
-/// `delimiter`, and report whether the string ended.
-///
-/// CSS Syntax 3 §4.3.5 (consume a string token): a backslash escapes the
-/// next code point, including a newline (`\r\n` counts as one), and the
-/// string ends at the matching delimiter or at an unescaped newline, which
-/// makes it a bad-string token. The text passes below must end strings
-/// where the tokenizer does, or an unterminated string hides the rest of the
-/// stylesheet from them.
-fn step_in_css_string(bytes: &[u8], index: usize, delimiter: u8) -> (usize, bool) {
-    match bytes[index] {
-        b'\\' => {
-            let crlf = bytes.get(index + 1) == Some(&b'\r') && bytes.get(index + 2) == Some(&b'\n');
-            (index.saturating_add(if crlf { 3 } else { 2 }), false)
-        }
-        b'\n' | b'\r' | b'\x0C' => (index + 1, true),
-        byte => (index + 1, byte == delimiter),
-    }
-}
-
-fn matching_brace(source: &str, open: usize) -> Option<usize> {
-    let bytes = source.as_bytes();
-    let mut index = open + 1;
-    let mut depth = 1_u32;
-    let mut quote = None;
-    let mut comment = false;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if comment {
-            if byte == b'*' && bytes.get(index + 1) == Some(&b'/') {
-                comment = false;
-                index += 2;
-            } else {
-                index += 1;
-            }
-            continue;
-        }
-        if let Some(delimiter) = quote {
-            let (next, ended) = step_in_css_string(bytes, index, delimiter);
-            index = next;
-            if ended {
-                quote = None;
-            }
-            continue;
-        }
-        if byte == b'/' && bytes.get(index + 1) == Some(&b'*') {
-            comment = true;
-            index += 2;
-            continue;
-        }
-        if byte == b'\'' || byte == b'"' {
-            quote = Some(byte);
-        } else if byte == b'{' {
-            depth = depth.saturating_add(1);
-        } else if byte == b'}' {
-            depth = depth.saturating_sub(1);
-            if depth == 0 {
-                return Some(index);
-            }
-        }
-        index += 1;
-    }
-    None
-}
+use nesting::{parse_highlight_body, parse_style_body};
 
 /// Cascade origin (CSS Cascading L4 §6.2).
 ///
@@ -1014,12 +539,9 @@ impl RuleTree {
         origin: Origin,
         condition: Option<&MediaCondition>,
     ) {
-        let Ok(source) = expand_css_nesting(source) else {
-            return;
-        };
         let consumer_properties = self.consumer_properties.clone();
-        let supports_context = SupportsContext::new(&source, &consumer_properties);
-        self.add_parsed_stylesheet(&source, origin, condition, &supports_context);
+        let supports_context = SupportsContext::new(source, &consumer_properties);
+        self.add_parsed_stylesheet(source, origin, condition, &supports_context);
         let order = self.layers.order(None);
         let mut highlights: HashMap<&str, Vec<_>> = HashMap::new();
         for (index, registration) in self.highlight_log.iter().enumerate() {
@@ -1096,7 +618,6 @@ impl RuleTree {
             source,
             opaque_body_budget: &mut self.opaque_body_budget,
             namespaces: &mut namespaces,
-            consumer_properties: &self.consumer_properties,
             supports_context,
         };
         let mut style_order = self.next_style_order;
@@ -1127,50 +648,22 @@ impl RuleTree {
         }
         for rule in StyleSheetParser::new(&mut parser, &mut rule_parser).flatten() {
             match rule {
-                ParsedRule::Style(selectors, declarations) => {
-                    // Skip selectors containing unsupported components (pseudo-classes, etc.;
-                    // see the `is_supported_selector_list` docs).
-                    // Descendant/child and next-sibling/general-sibling combinators
-                    // are accepted (see `is_supported_selector_list` for details).
-                    // as specified in those docs.
-                    if !is_supported_selector_list(&selectors) {
-                        continue;
-                    }
-                    let rule = StyleRule {
-                        selectors,
-                        declarations,
-                        source_order: style_order,
-                        origin,
+                ParsedRule::Style(items) => {
+                    let mut sink = GroupSink {
+                        style_rules: &mut self.style_rules,
+                        media_rules: &mut self.media_rules,
+                        highlight_log: &mut self.highlight_log,
+                        rules: &mut self.rules,
+                        style_order: &mut style_order,
+                        rule_order: &mut rule_order,
+                        page_rules: &mut self.page_rules,
+                        page_order: &mut page_order,
                         layer: None,
-                    };
-                    style_order = style_order.wrapping_add(1);
-                    if let Some(condition) = condition {
-                        self.media_rules.push(MediaRule {
-                            rule,
-                            condition: condition.clone(),
-                        });
-                        continue;
-                    }
-                    let index = self.style_rules.len();
-                    self.style_rules.push(rule);
-                    self.rules.push(CssRule {
-                        source_order: rule_order,
+                        layers: &mut self.layers,
                         origin,
-                        kind: CssRuleKind::Style { index },
-                    });
-                    rule_order = rule_order.wrapping_add(1);
-                }
-                ParsedRule::CustomHighlight { name, color } => {
-                    if condition.is_none()
-                        && let Some((color, important)) = color
-                    {
-                        self.highlight_log.push(Registration::new(
-                            (name, color, important),
-                            origin,
-                            None,
-                            None,
-                        ));
-                    }
+                        registrations: &mut registrations,
+                    };
+                    add_group_items(items, condition, false, &mut sink);
                 }
                 ParsedRule::Page(selector, body) => {
                     let PageBlockBody {
@@ -1955,6 +1448,7 @@ enum GroupCondition {
 /// Executable group content, parsed with top-level rule error recovery.
 enum GroupItem {
     Style(StyleRule),
+    Sequence(Vec<GroupItem>),
     CustomHighlight {
         name: String,
         color: Option<(HighlightColor, bool)>,
@@ -2154,7 +1648,7 @@ fn parse_qualified_prelude<'i>(
         return Ok(QualifiedPrelude::CustomHighlight(name));
     }
     SelectorList::parse(
-        &NamespacedSelectorParser { namespaces },
+        &NamespacedSelectorParser::new(namespaces),
         input,
         ParseRelative::No,
     )
@@ -2201,26 +1695,28 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for GroupRuleParser<'_, '_> {
         _start: &cssparser::ParserState,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::QualifiedRule, cssparser::ParseError<'i, ()>> {
-        let declarations = parse_declaration_block_with_consumer_properties(
-            input,
-            self.supports_context.consumer_properties,
-        );
+        let item = match prelude {
+            QualifiedPrelude::Style(selectors) => GroupItem::Sequence(parse_style_body(
+                input,
+                selectors,
+                self.source,
+                self.depth + 1,
+                self.namespaces,
+                self.supports_context,
+            )),
+            QualifiedPrelude::CustomHighlight(name) => GroupItem::Sequence(parse_highlight_body(
+                input,
+                name,
+                self.source,
+                self.depth + 1,
+                self.namespaces,
+                self.supports_context,
+            )),
+        };
         if !nested_block_has_closing_brace(self.source, input) {
             return Err(input.new_custom_error(()));
         }
-        match prelude {
-            QualifiedPrelude::Style(selectors) => Ok(GroupItem::Style(StyleRule {
-                selectors,
-                declarations,
-                source_order: 0,
-                origin: Origin::Author,
-                layer: None,
-            })),
-            QualifiedPrelude::CustomHighlight(name) => Ok(GroupItem::CustomHighlight {
-                name,
-                color: custom_highlight_color(&declarations),
-            }),
-        }
+        Ok(item)
     }
 }
 
@@ -2280,6 +1776,7 @@ fn add_group_items(
 ) {
     for item in items {
         match item {
+            GroupItem::Sequence(items) => add_group_items(items, condition, in_media, sink),
             GroupItem::Style(mut rule) => {
                 if !is_supported_selector_list(&rule.selectors) {
                     continue;
@@ -2403,11 +1900,7 @@ enum ParsedAtRulePrelude {
 /// to be the same type, so both feed into this enum
 /// (due to the `Item = R` constraint on `StyleSheetParser::next`).
 enum ParsedRule {
-    Style(SelectorList<RaikiriSelectorImpl>, Vec<Declaration>),
-    CustomHighlight {
-        name: String,
-        color: Option<(HighlightColor, bool)>,
-    },
+    Style(Vec<GroupItem>),
     Page(PageSelector, PageBlockBody),
     OpaqueAtRule(AtRuleRecord),
     LayerStatement(AtRuleRecord, Vec<LayerName>),
@@ -2543,9 +2036,7 @@ fn parse_stylesheet_namespaces(source: &str) -> NamespaceMap {
                 return Ok(());
             }
             SelectorList::parse(
-                &NamespacedSelectorParser {
-                    namespaces: &self.namespaces,
-                },
+                &NamespacedSelectorParser::new(&self.namespaces),
                 input,
                 ParseRelative::No,
             )
@@ -2576,12 +2067,33 @@ fn parse_stylesheet_namespaces(source: &str) -> NamespaceMap {
 }
 
 pub(crate) struct NamespacedSelectorParser<'a> {
-    pub(crate) namespaces: &'a NamespaceMap,
+    namespaces: &'a NamespaceMap,
+    nesting: bool,
+}
+
+impl<'a> NamespacedSelectorParser<'a> {
+    pub(crate) fn new(namespaces: &'a NamespaceMap) -> Self {
+        Self {
+            namespaces,
+            nesting: false,
+        }
+    }
+
+    fn for_nesting(namespaces: &'a NamespaceMap) -> Self {
+        Self {
+            namespaces,
+            nesting: true,
+        }
+    }
 }
 
 impl<'i, 'a> SelectorParser<'i> for NamespacedSelectorParser<'a> {
     type Impl = RaikiriSelectorImpl;
     type Error = selectors::parser::SelectorParseErrorKind<'i>;
+
+    fn parse_parent_selector(&self) -> bool {
+        self.nesting
+    }
 
     fn parse_nth_child_of(&self) -> bool {
         true
@@ -2633,7 +2145,6 @@ struct StyleRuleParser<'s, 'b> {
     source: &'s str,
     opaque_body_budget: &'b mut usize,
     namespaces: &'b mut NamespaceMap,
-    consumer_properties: &'b [ConsumerPropertyRegistration],
     supports_context: &'b SupportsContext<'b>,
 }
 
@@ -2928,18 +2439,28 @@ impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for StyleRuleParser<'s, 'b> 
         _start: &cssparser::ParserState,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::QualifiedRule, cssparser::ParseError<'i, Self::Error>> {
-        let declarations =
-            parse_declaration_block_with_consumer_properties(input, self.consumer_properties);
+        let rule = match prelude {
+            QualifiedPrelude::Style(selectors) => ParsedRule::Style(parse_style_body(
+                input,
+                selectors,
+                self.source,
+                0,
+                self.namespaces,
+                self.supports_context,
+            )),
+            QualifiedPrelude::CustomHighlight(name) => ParsedRule::Style(parse_highlight_body(
+                input,
+                name,
+                self.source,
+                0,
+                self.namespaces,
+                self.supports_context,
+            )),
+        };
         if !nested_block_has_closing_brace(self.source, input) {
             return Err(input.new_custom_error(()));
         }
-        match prelude {
-            QualifiedPrelude::Style(selectors) => Ok(ParsedRule::Style(selectors, declarations)),
-            QualifiedPrelude::CustomHighlight(name) => {
-                let color = custom_highlight_color(&declarations);
-                Ok(ParsedRule::CustomHighlight { name, color })
-            }
-        }
+        Ok(rule)
     }
 }
 
