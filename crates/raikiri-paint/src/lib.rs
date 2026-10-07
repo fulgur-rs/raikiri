@@ -3,7 +3,8 @@
 //! This crate follows the refutation in docs/feasibility-report.md §3.4:
 //! it consumes `impl anyrender::PaintScene` directly, without a bridge trait.
 //! It currently handles one A4 page, text glyphs, CSS Text Decoration Level 3
-//! (line/style/color), and minimal element background and border painting.
+//! (line/style/color), text shadows, horizontal emphasis, outer box shadows,
+//! and element background and border painting.
 //!
 //! ## Contract
 //!
@@ -60,10 +61,10 @@ mod walk;
 ///
 /// # Non-goals (current scope)
 /// - Multi-page pagination
-/// - Advanced element `box-shadow` painting (inset shadows and non-zero blur,
-///   spread, or radius interactions remain deferred follow-up work)
+/// - Inset `box-shadow` painting and exact per-corner shadow radius geometry
+///   (outer shadows already emit blur and spread through the scene backend)
 /// - CSS Text Decoration Level 4 features (skip-ink / skip-spaces, thickness,
-///   emphasis, text-shadow, and vertical writing)
+///   and vertical emphasis)
 /// - Scrollbar painting for `overflow: scroll` / `auto` — descendants are
 ///   clipped, but scrollbar geometry and painting remain out of scope.
 /// - z-index / stacking context
