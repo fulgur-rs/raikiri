@@ -418,3 +418,147 @@ fn accumulated_selector_graph_depth_preserves_declarations() {
         }));
     }
 }
+
+#[test]
+fn has_parent_negation_is_contextually_invalid() {
+    let mut doc = TestDoc::new();
+    let ancestor = doc.push_element_with_attrs(0, "section", None, &[("class", "ancestor")]);
+    let outer = doc.push_element_with_attrs(ancestor, "div", None, &[("class", "outer")]);
+    doc.push_element_with_attrs(outer, "p", None, &[("class", "leaf")]);
+    let tree =
+        nesting_tree(".ancestor{color:red}.outer:not(:has(.leaf)){.ancestor:has(> &){color:blue}}");
+    let values = cascade(&doc, &tree).unwrap();
+    assert_eq!(values.computed[ancestor].color, RED);
+}
+
+#[test]
+fn has_parent_invalid_branch_has_no_specificity() {
+    let mut doc = TestDoc::new();
+    let ancestor = doc.push_element_with_attrs(0, "section", None, &[("class", "ancestor")]);
+    let outer = doc.push_element_with_attrs(ancestor, "div", None, &[("class", "outer")]);
+    doc.push_element_with_attrs(outer, "p", None, &[("class", "leaf")]);
+    let tree = nesting_tree(
+        ".outer,#absent:has(.leaf){.ancestor:has(> &){color:blue}}.ancestor:has(>.outer){color:red}",
+    );
+    assert_eq!(cascade(&doc, &tree).unwrap().computed[ancestor].color, RED);
+}
+
+#[test]
+fn highlight_parent_keeps_valid_forgiving_branch() {
+    let (doc, parent, _, _) = nesting_doc();
+    let tree = nesting_tree(".outer{color:red}::highlight(note){:is(&,.outer){color:blue}}");
+    assert_eq!(cascade(&doc, &tree).unwrap().computed[parent].color, BLUE);
+}
+
+#[test]
+fn has_parent_keeps_valid_branches_and_outer_has() {
+    let mut doc = TestDoc::new();
+    let ancestor = doc.push_element_with_attrs(0, "section", None, &[("class", "ancestor")]);
+    let outer = doc.push_element_with_attrs(ancestor, "div", None, &[("class", "outer")]);
+    doc.push_element_with_attrs(outer, "p", None, &[("class", "leaf")]);
+    for source in [
+        ".ancestor{color:red}.outer:not(:has(.leaf)),.outer{.ancestor:has(> &){color:blue}}",
+        ".ancestor{color:red}.outer:is(:not(:has(.leaf)),.outer){.ancestor:has(> &){color:blue}}",
+    ] {
+        assert_eq!(
+            cascade(&doc, &nesting_tree(source)).unwrap().computed[ancestor].color,
+            BLUE
+        );
+    }
+    let tree = nesting_tree(".outer{color:red}.outer:has(.leaf){&{color:blue}}");
+    assert_eq!(cascade(&doc, &tree).unwrap().computed[outer].color, BLUE);
+}
+
+#[test]
+fn has_parent_nth_context_is_invalid() {
+    let mut doc = TestDoc::new();
+    let ancestor = doc.push_element_with_attrs(0, "section", None, &[("class", "ancestor")]);
+    let outer = doc.push_element_with_attrs(ancestor, "div", None, &[("class", "outer")]);
+    doc.push_element_with_attrs(outer, "p", None, &[("class", "leaf")]);
+    let tree = nesting_tree(
+        ".ancestor{color:red}.outer:nth-child(1 of :has(.leaf)){.ancestor:has(> &){color:blue}}",
+    );
+    assert_eq!(cascade(&doc, &tree).unwrap().computed[ancestor].color, RED);
+}
+
+#[test]
+fn explicit_is_context_controls() {
+    let mut doc = TestDoc::new();
+    let ancestor = doc.push_element_with_attrs(0, "section", None, &[("class", "ancestor")]);
+    let outer = doc.push_element_with_attrs(ancestor, "div", None, &[("class", "outer")]);
+    doc.push_element_with_attrs(outer, "p", None, &[("class", "leaf")]);
+    for source in [
+        ".ancestor{color:red}.ancestor:has(>:is(.outer:not(:has(.leaf)))){color:blue}",
+        ".ancestor:has(>:is(.outer,#absent:has(.leaf))){color:blue}.ancestor:has(>.outer){color:red}",
+        ".ancestor{color:red}.ancestor:has(>:is(.outer:nth-child(1 of :has(.leaf)))){color:blue}",
+    ] {
+        assert_eq!(
+            cascade(&doc, &nesting_tree(source)).unwrap().computed[ancestor].color,
+            RED
+        );
+    }
+}
+
+#[test]
+fn has_parent_context_preserves_references_outside_the_has() {
+    let mut doc = TestDoc::new();
+    let root = doc.push_element_with_attrs(0, "div", None, &[("class", "outer")]);
+    let ancestor = doc.push_element_with_attrs(root, "section", None, &[("class", "ancestor")]);
+    let outer = doc.push_element_with_attrs(ancestor, "div", None, &[("class", "outer")]);
+    doc.push_element_with_attrs(outer, "p", None, &[("class", "leaf")]);
+    let tree = nesting_tree(
+        ".outer,#absent:has(.leaf){& .ancestor:has(> &){color:blue}}.outer .ancestor:has(>.outer){color:red}",
+    );
+    assert_eq!(cascade(&doc, &tree).unwrap().computed[ancestor].color, BLUE);
+}
+
+#[test]
+fn deep_contextual_has_recovery_keeps_sibling_declarations() {
+    let mut doc = TestDoc::new();
+    let ancestor = doc.push_element_with_attrs(0, "section", None, &[("class", "ancestor")]);
+    let outer = doc.push_element_with_attrs(ancestor, "div", None, &[("class", "outer")]);
+    doc.push_element_with_attrs(outer, "p", None, &[("class", "leaf")]);
+    for depth in [25, 29] {
+        let parent = format!(
+            "{}.outer:not(:has(.leaf)){}",
+            ":is(".repeat(depth),
+            ")".repeat(depth)
+        );
+        let tree = nesting_tree(&format!(
+            ".ancestor{{color:red}}{parent}{{.ancestor:has(>&){{color:blue}}}}.outer{{color:blue}}"
+        ));
+        let values = cascade(&doc, &tree).unwrap();
+        assert_eq!(values.computed[ancestor].color, RED);
+        assert_eq!(values.computed[outer].color, BLUE);
+    }
+}
+
+#[test]
+fn where_parent_keeps_valid_branches_inside_has() {
+    let mut doc = TestDoc::new();
+    let ancestor = doc.push_element_with_attrs(0, "section", None, &[("class", "ancestor")]);
+    let outer = doc.push_element_with_attrs(ancestor, "div", None, &[("class", "outer")]);
+    doc.push_element_with_attrs(outer, "p", None, &[("class", "leaf")]);
+    let tree = nesting_tree(
+        ".ancestor{color:red}:where(.outer:not(:has(.leaf)),.outer){.ancestor:has(>&){color:blue}}",
+    );
+    assert_eq!(cascade(&doc, &tree).unwrap().computed[ancestor].color, BLUE);
+}
+
+#[test]
+fn repeated_parent_has_references_keep_their_valid_matches() {
+    let (doc, parent, _, _) = nesting_doc();
+    let tree = nesting_tree(".outer{color:red}.outer:has(.leaf){&&{color:blue}}");
+    assert_eq!(cascade(&doc, &tree).unwrap().computed[parent].color, BLUE);
+}
+
+#[test]
+fn has_context_repair_preserves_explicit_any_namespace_parent() {
+    let mut doc = TestDoc::new();
+    let outer = doc.push_element_with_namespace(0, "div", "urn:foreign", &[("class", "outer")]);
+    doc.push_element_with_namespace(outer, "div", "urn:foreign", &[("class", "outer")]);
+    let tree = nesting_tree(
+        "@namespace 'urn:default'; *|*.outer{color:red} *|*.outer,#absent:has(.leaf){&:has(>&){color:blue}}",
+    );
+    assert_eq!(cascade(&doc, &tree).unwrap().computed[outer].color, BLUE);
+}

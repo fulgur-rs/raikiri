@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::rule::{expand_shorthand_into, parse_declaration_value};
-use cssparser::{DeclarationParser, RuleBodyItemParser, RuleBodyParser};
+use cssparser::{DeclarationParser, RuleBodyItemParser, RuleBodyParser, ToCss};
 
 /// Preserve each declaration run's selectors and position among child rules.
 /// Direct declarations keep the parent's pseudo-elements and per-branch
@@ -203,10 +203,6 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleBodyParser<'_> {
         &mut self,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::Prelude, cssparser::ParseError<'i, ()>> {
-        let BodyParent::Style(parent_selectors) = self.parent else {
-            // Parent selectors cannot represent the custom highlight pseudo-element.
-            return Err(input.new_custom_error(()));
-        };
         let start = input.state();
         check_selector_token_depth(input, 0)?;
         input.reset(&start);
@@ -219,6 +215,11 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleBodyParser<'_> {
         // Pseudo-element branches are invalid in the implicit :is() parent:
         // they contribute neither matches nor specificity to a child selector.
         let nesting_parent = self.nesting_parent.get_or_insert_with(|| {
+            let BodyParent::Style(parent_selectors) = self.parent else {
+                // An unrepresentable highlight parent cannot match, but independent
+                // branches of a forgiving child selector remain valid.
+                return SelectorList::from_iter(std::iter::empty());
+            };
             if parent_selectors
                 .slice()
                 .iter()
@@ -241,7 +242,29 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleBodyParser<'_> {
         if selector_list_cost(&selectors, Some(parent_cost)).is_none() {
             return Err(input.new_custom_error(()));
         }
-        Ok(selectors.replace_parent_selector(nesting_parent))
+        let selectors = selectors.replace_parent_selector(nesting_parent);
+        if selectors
+            .slice()
+            .iter()
+            .any(|selector| selector_has_nested_has(selector, false, &mut HashMap::new()))
+        {
+            // Replacement does not revalidate the parent's new :has() context.
+            // Reparse only this bounded selector list through the public parser,
+            // which drops contextually invalid forgiving branches and recomputes
+            // specificity. Ordinary nesting keeps its shared selector graph.
+            let source = selectors.to_css_string();
+            let mut source_input = ParserInput::new(&source);
+            let mut parser = Parser::new(&mut source_input);
+            check_selector_token_depth(&mut parser, 0).map_err(|_| input.new_custom_error(()))?;
+            let mut source_input = ParserInput::new(&source);
+            return SelectorList::parse(
+                &NamespacedSelectorParser::new(self.namespaces),
+                &mut Parser::new(&mut source_input),
+                ParseRelative::No,
+            )
+            .map_err(|_| input.new_custom_error(()));
+        }
+        Ok(selectors)
     }
 
     fn parse_block<'t>(
@@ -272,6 +295,40 @@ impl<'i> RuleBodyItemParser<'i, BodyItem, ()> for StyleBodyParser<'_> {
     fn parse_declarations(&self) -> bool {
         true
     }
+}
+
+// A parent can introduce a :has() that was not present when its child was parsed.
+fn selector_has_nested_has(
+    selector: &Selector<RaikiriSelectorImpl>,
+    inside_has: bool,
+    memo: &mut HashMap<(selectors::parser::SelectorKey, bool), bool>,
+) -> bool {
+    use selectors::parser::{Component, SelectorKey};
+    let key = (SelectorKey::new(selector), inside_has);
+    if let Some(&nested) = memo.get(&key) {
+        return nested;
+    }
+    let nested = selector
+        .iter_raw_match_order()
+        .any(|component| match component {
+            Component::Has(list) => {
+                inside_has
+                    || list
+                        .iter()
+                        .any(|child| selector_has_nested_has(&child.selector, true, memo))
+            }
+            Component::Is(list) | Component::Where(list) | Component::Negation(list) => list
+                .slice()
+                .iter()
+                .any(|child| selector_has_nested_has(child, inside_has, memo)),
+            Component::NthOf(data) => data
+                .selectors()
+                .iter()
+                .any(|child| selector_has_nested_has(child, inside_has, memo)),
+            _ => false,
+        });
+    memo.insert(key, nested);
+    nested
 }
 
 // Check token depth before invoking the recursive public selector parser.
