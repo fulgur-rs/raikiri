@@ -1,6 +1,16 @@
 use super::*;
 
 #[test]
+fn dimensional_exponents_reject_overflow_without_wrapping() {
+    let maximum = NumericType([i32::MAX, 0, 0, 0, 0, 0, 0]);
+    let minimum = NumericType([i32::MIN, 0, 0, 0, 0, 0, 0]);
+    let length = NumericType::dimension(0);
+    assert_eq!(maximum.product(length, '*'), None);
+    assert_eq!(minimum.product(length, '/'), None);
+    assert_eq!(maximum.product(maximum, '/'), Some(NumericType::NUMBER));
+}
+
+#[test]
 fn valid_functions_keep_their_numeric_types() {
     for value in [
         "clamp(1px, 2em, 3px)",
