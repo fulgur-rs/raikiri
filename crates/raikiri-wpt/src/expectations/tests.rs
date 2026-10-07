@@ -795,7 +795,7 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS Inline image-loaded vertical-align length exact slice (+1).
     // + Genuine non-floating first-letter pairs (+3), remove two vacuous pins (-2).
     // + Remeasured baseline pins (+8 PASS, -7 inaccurate pins).
-    assert_eq!(set.baseline.entries.len(), 1444);
+    assert_eq!(set.baseline.entries.len(), 1445);
     for id in [
         "css/css-pseudo/first-letter-004.html",
         "css/css-pseudo/first-letter-005.html",
@@ -812,6 +812,11 @@ fn load_from_workspace_root_reads_the_header_only_files() {
         !set.baseline
             .entries
             .contains("css/css-backgrounds/first-letter-space-not-selected.html")
+    );
+    assert!(
+        set.baseline
+            .entries
+            .contains("css/css-overflow/text-overflow-ellipsis-002.html")
     );
     for id in [
         "css/css-lists/list-style-type-string-001a.html",
