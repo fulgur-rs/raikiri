@@ -375,3 +375,6 @@ fn selector_cost(
     memo.insert(key, cost);
     Some(cost)
 }
+
+#[cfg(test)]
+mod tests;
