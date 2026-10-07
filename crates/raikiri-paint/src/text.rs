@@ -343,7 +343,7 @@ fn paint_decoration_pattern(
             while x < x1 && segments <= MAX_DECORATION_SEGMENTS {
                 let end = x + half_wave;
                 if end <= x {
-                    break;
+                    break; // cov:ignore: valid segments lie within the shared extent; the bounded f64 step exceeds roundoff.
                 }
                 let sign = if index.rem_euclid(2.0) < 1.0 {
                     -1.0

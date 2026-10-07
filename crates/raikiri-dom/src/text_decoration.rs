@@ -623,3 +623,6 @@ pub fn positioned_line_decorations(
     }
     result
 }
+
+#[cfg(test)]
+mod tests;

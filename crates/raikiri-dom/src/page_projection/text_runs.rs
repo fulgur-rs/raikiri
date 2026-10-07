@@ -484,7 +484,7 @@ fn root_runs<'a>(
                     run.decorations = lines;
                 }
                 out.push(run);
-            }
+            } // cov:ignore: current positioned body runs have a source, style, font and nonempty glyphs; future element-owned runs may be omitted.
         }
     }
     Some(())

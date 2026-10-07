@@ -295,3 +295,58 @@ fn pattern_extent_is_shared_before_run_slicing() {
         close(line.pattern_end_x, 116.0);
     }
 }
+
+#[test]
+fn collapsed_insets_leave_glyphs_without_decoration_segments() {
+    let doc = document(
+        "<p>ab</p>",
+        "p {text-decoration:underline;text-decoration-inset:50px}",
+    );
+    let runs = doc.page(0).unwrap().text_runs();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].text, "ab");
+    assert!(runs[0].decorations.is_empty());
+}
+
+#[test]
+fn zero_width_formatting_text_does_not_decorate_neighboring_glyphs() {
+    for text in ["\u{200b}", "\u{200c}", "\u{200d}"] {
+        let doc = document(
+            &format!("<p><span style='text-decoration:underline'>{text}</span>ab</p>"),
+            "",
+        );
+        let runs = doc.page(0).unwrap().text_runs();
+        assert!(runs.iter().any(|run| run.text.contains("ab")));
+        assert!(runs.iter().all(|run| run.decorations.is_empty()));
+    }
+}
+
+#[test]
+fn word_break_placeholders_do_not_open_decoration_gaps() {
+    for body in ["<p>ab<wbr>cd</p>", "<p><wbr>abcd</p>"] {
+        let doc = document(body, "p {text-decoration:underline}");
+        let runs = doc.page(0).unwrap().text_runs();
+        assert_eq!(
+            runs.iter()
+                .map(|run| run.text)
+                .collect::<String>()
+                .replace('\u{200b}', ""),
+            "abcd"
+        );
+        close(runs.iter().map(|run| run.advance).sum(), 80.0);
+        for line in runs.iter().flat_map(|run| &run.decorations) {
+            close(line.pattern_origin_x, 0.0);
+            close(line.pattern_end_x, 80.0);
+        }
+    }
+}
+
+#[test]
+fn zero_size_text_does_not_emit_collapsed_decoration_spans() {
+    let doc = document("<p>ab</p>", "p {font-size:0;text-decoration:underline}");
+    let runs = doc.page(0).unwrap().text_runs();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].text, "ab");
+    close(runs[0].advance, 0.0);
+    assert!(runs[0].decorations.is_empty());
+}

@@ -33,6 +33,7 @@ pub use cascade::{
     build_rule_tree_with_consumer_properties,
 };
 pub use document::HtmlDocument;
+// cov:ignore: these type/function re-exports have no executable code; API integration tests and rustdoc verify them.
 pub use document_layout::{
     Anchor, AnchorIndex, ClipKind, DecorationKind, DecorationLine, DecorationStyle, DocumentLayout,
     DomView, FontBlob, FontId, FontRef, FontVariation, Fragment, FragmentKind, GeneratedKind,
