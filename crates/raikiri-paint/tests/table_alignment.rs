@@ -1844,3 +1844,48 @@ fn horizontal_cells_in_a_vertical_table_keep_their_own_block_axis_alignment() {
         }
     }
 }
+
+#[test]
+fn a_leading_empty_block_keeps_the_following_text_as_the_cell_baseline() {
+    let (mut doc, body) = document();
+    let table = element(&mut doc, body, "display:table;border-spacing:0;width:30px");
+    let row = element(&mut doc, table, "display:table-row");
+    let first = element(
+        &mut doc,
+        row,
+        "display:table-cell;width:10px;vertical-align:baseline;color:green",
+    );
+    element(&mut doc, first, "display:block;height:10px");
+    doc.append_text(first, "X");
+    let second = element(
+        &mut doc,
+        row,
+        "display:table-cell;width:20px;vertical-align:baseline;color:blue;font-size:20px;line-height:20px",
+    );
+    doc.append_text(second, "X");
+    let computed = layout(&mut doc);
+    let actual = scene(&doc, &computed);
+    let baselines: Vec<_> = actual
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::GlyphRun(run) => {
+                Some(run.transform.as_coeffs()[5] + f64::from(run.glyphs[0].y))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(baselines, [18.0, 18.0]);
+    let (mut reference, body) = document();
+    for (left, top, size, color) in [(0, 10, 10, "green"), (10, 2, 20, "blue")] {
+        element(
+            &mut reference,
+            body,
+            &format!(
+                "position:absolute;left:{left}px;top:{top}px;width:{size}px;height:{size}px;background:{color}"
+            ),
+        );
+    }
+    let expected = layout(&mut reference);
+    assert_exact_pixels(raster(actual), raster(scene(&reference, &expected)));
+}

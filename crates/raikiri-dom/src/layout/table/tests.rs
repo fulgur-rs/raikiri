@@ -3349,3 +3349,25 @@ fn fixed_span_redistribution_preserves_another_spans_minimum() {
         [15.0, 15.0, 40.0, 40.0]
     );
 }
+
+#[test]
+fn a_satisfied_span_minimum_keeps_all_authored_column_widths() {
+    let mut span = fixed_cell(0, 0, 2, Dimension::auto());
+    span.specified_min_width = Dimension::length(80.0);
+    let grid = super::TableGrid {
+        n_cols: 3,
+        rows: vec![],
+        cells: vec![span, fixed_cell(0, 2, 1, Dimension::auto())],
+        col_widths: [40.0, 40.0, 10.0]
+            .map(|width| super::ColSizing {
+                width: Dimension::length(width),
+                min_width: Dimension::auto(),
+                max_width: Dimension::auto(),
+            })
+            .to_vec(),
+    };
+    assert_eq!(
+        super::resolve_fixed_column_widths(&grid, 90.0),
+        [40.0, 40.0, 10.0]
+    );
+}
