@@ -942,6 +942,21 @@ pub fn call() { crate::resolver::resolve(); }
         )
         self.assertEqual(status, 1, output)
 
+    def test_helper_include_inputs_follow_references_without_rejecting_unrelated_moves(self) -> None:
+        included = 'fn input() -> &\'static str { include_str!("value.txt") }\n'
+        wrapper = "fn wrapper() -> &'static str { input() }\n"
+        for called in ("input", "wrapper", "unrelated"):
+            body = f"use crate::{{{called}}};\nfn resolve() {{\n    record_uncovered_resolution_result({called}());\n}}\n"
+            helper = included + wrapper + "fn unrelated() -> &'static str { \"stable\" }\n"
+            with self.subTest(called=called):
+                status, output = self._classify(
+                    helper + "mod resolver {\n" + body + "}\n", body, body.splitlines()[2],
+                    destination="resolver.rs", auxiliary_before={"value.txt": "old"},
+                    auxiliary_after={"lib.rs": helper + "mod resolver;\n", "value.txt": "new"},
+                    covered_auxiliary=True
+                )
+                self.assertEqual(status, 0 if called == "unrelated" else 1, output)
+
 
 class ClassifyNoLcovRecordLinesTests(unittest.TestCase):
     """Regression tests for the whole-file-zero-SF-record false positive: a

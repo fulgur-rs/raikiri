@@ -1003,7 +1003,7 @@ def rust_source_units(source: str) -> tuple[list, list, dict]:
                     visible_macros = tuple((module_chain(frames)[:n], binding) for n in range(len(module_chain(frames)) + 1)
                                            for binding in bindings.get(module_chain(frames)[:n], [])
                                            if "macro_rules" in binding or "macro" in binding)
-                    key = (tuple(context), enclosing_attributes(frames), tuple(value for value, _ in body), visible_macros)
+                    key = (tuple(context), enclosing_attributes(frames), tuple(value for value, _ in body), visible_macros, header)
                     token_lines = {line for value, number in body
                                    for line in range(number, number + value.count("\n") + 1)}
                     substantive = {line for value, number in body
@@ -1084,7 +1084,7 @@ def rust_module_snapshot(repo_root: str, ref: str, metadata: dict | None) -> dic
     conventional child directory. Multiple target/module contexts are
     retained together; an unresolved layout fails closed for its target.
     """
-    snapshot = {"sources": {}, "contexts": {}, "bindings": {}, "unsafe": set()}
+    snapshot = {"sources": {}, "contexts": {}, "bindings": {}, "function_bodies": {}, "unsafe": set()}
     def read(path):
         if path not in snapshot["sources"]:
             source = git_show(repo_root, ref, path)
@@ -1130,6 +1130,9 @@ def rust_module_snapshot(repo_root: str, ref: str, metadata: dict | None) -> dic
                 if info is None:
                     continue
                 snapshot["contexts"].setdefault(path, set()).add(context)
+                for unit in info[0]:
+                    key = (identity, prefix + unit[3], unit[0][4])
+                    snapshot["function_bodies"].setdefault(key, []).append(unit[0][2])
                 for chain, values in info[2].items():
                     snapshot["bindings"].setdefault((identity, prefix + chain), []).extend(
                         ("@scope",) + inherited_attrs + value[1:] if value[:1] == ("@scope",) else value
@@ -1194,7 +1197,7 @@ def function_move_key(snapshot: dict, path: str, unit: tuple) -> tuple | None:
     Qualified module references also include the corresponding scopes.
     Declaration order is irrelevant except for textual macro visibility.
     """
-    (runtime, attrs, body, local_macros), _, _, local_chain = unit
+    (runtime, attrs, body, local_macros, _), _, _, local_chain = unit
     if has_file_include(body):
         return None
     contexts = snapshot["contexts"].get(path)
@@ -1217,15 +1220,26 @@ def function_move_key(snapshot: dict, path: str, unit: tuple) -> tuple | None:
                 if not (logical[:len(scope)] == scope or any(name in references for name in scope)):
                     continue
                 for binding in bindings:
-                    names = binding_names(binding)
+                    bodies = snapshot["function_bodies"].get((identity, scope, binding), [])
+                    if bodies:
+                        # A function binds its name, not every type named
+                        # in its signature. Follow body references for
+                        # known input taint without comparing whole bodies.
+                        header = binding[len(attribute_prefix(binding)):]
+                        names = {following for token, following in zip(header, header[1:])
+                                 if token == "fn" and re.fullmatch(r"\w+", following)}
+                    else:
+                        names = binding_names(binding)
                     if names is None or references & names:
                         # Expansion inputs can change bindings or values
                         # outside this graph. Fail closed only for functions
                         # whose scope/references reach those inputs.
-                        if has_file_include(binding):
+                        if has_file_include(binding) or any(has_file_include(value) for value in bodies):
                             return None
                         relevant.add((scope, binding))
                         references.update(token for token in binding if re.fullmatch(r"\w+", token))
+                        for value in bodies:
+                            references.update(token for token in value if re.fullmatch(r"\w+", token))
             changed = len(references) != previous
         macros = tuple((scope, binding) for scope, binding in macro_prefix
                        if binding_names(binding) is None or references & binding_names(binding))
