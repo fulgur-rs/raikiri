@@ -207,6 +207,9 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleBodyParser<'_> {
             // Parent selectors cannot represent the custom highlight pseudo-element.
             return Err(input.new_custom_error(()));
         };
+        let start = input.state();
+        check_selector_token_depth(input, 0)?;
+        input.reset(&start);
         let selectors = SelectorList::parse(
             &NamespacedSelectorParser::for_nesting(self.namespaces),
             input,
@@ -269,6 +272,31 @@ impl<'i> RuleBodyItemParser<'i, BodyItem, ()> for StyleBodyParser<'_> {
     fn parse_declarations(&self) -> bool {
         true
     }
+}
+
+// Check token depth before invoking the recursive public selector parser.
+// The rule-body depth limit cannot bound selector functions in one prelude.
+const MAX_SELECTOR_TOKEN_DEPTH: usize = 32;
+
+fn check_selector_token_depth<'i>(
+    input: &mut Parser<'i, '_>,
+    depth: usize,
+) -> Result<(), cssparser::ParseError<'i, ()>> {
+    while let Ok(token) = input.next_including_whitespace_and_comments().cloned() {
+        if matches!(
+            token,
+            Token::Function(_)
+                | Token::ParenthesisBlock
+                | Token::SquareBracketBlock
+                | Token::CurlyBracketBlock
+        ) {
+            if depth >= MAX_SELECTOR_TOKEN_DEPTH {
+                return Err(input.new_custom_error(()));
+            }
+            input.parse_nested_block(|nested| check_selector_token_depth(nested, depth + 1))?;
+        }
+    }
+    Ok(())
 }
 
 // Compact parent references avoid string products, but repeated references

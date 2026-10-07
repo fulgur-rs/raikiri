@@ -1,4 +1,5 @@
 use super::*;
+use crate::PropertyValue;
 
 #[test]
 fn is_parent_lists_match_through_the_cascade() {
@@ -327,4 +328,93 @@ fn all_pseudo_parent_branches_match_nothing_but_keep_other_forgiving_branches() 
     )
     .unwrap();
     assert_eq!(values.computed[parent].color, BLUE);
+}
+
+#[test]
+fn nested_layer_statements_establish_order_and_recover_invalid_forms() {
+    let (doc, parent, _, _) = nesting_doc();
+    let tree = nesting_tree(".outer{@layer b,a;@layer a{color:red}@layer b{color:blue}}");
+    assert_eq!(cascade(&doc, &tree).unwrap().computed[parent].color, RED);
+    let tree = nesting_tree(
+        ".outer{color:blue;@layer;@media print;@supports (display:block);@layer a,b{color:red}}",
+    );
+    assert_eq!(cascade(&doc, &tree).unwrap().computed[parent].color, BLUE);
+}
+
+#[test]
+fn broad_nested_selector_lists_preserve_ancestor_and_sibling_declarations() {
+    let (doc, parent, _, other) = nesting_doc();
+    let source = format!(
+        ".outer{{color:blue;{}{{color:red}}}}.leaf{{color:red}}",
+        vec!["&"; 12000].join(",")
+    );
+    let values = cascade(&doc, &nesting_tree(&source)).unwrap();
+    assert_eq!(values.computed[parent].color, BLUE);
+    assert_eq!(values.computed[other].color, RED);
+}
+
+#[test]
+fn deep_nested_selector_functions_preserve_ancestor_declarations() {
+    let (doc, parent, _, _) = nesting_doc();
+    for function in ["", ":has("] {
+        let selector = format!(
+            "{}{}&{}{}",
+            function,
+            ":is(".repeat(132),
+            ")".repeat(132),
+            if function.is_empty() { "" } else { ")" }
+        );
+        let source = format!(".outer{{color:blue;{selector}{{color:red}}}}");
+        let tree = nesting_tree(&source);
+        assert_eq!(cascade(&doc, &tree).unwrap().computed[parent].color, BLUE);
+        assert!(tree.style_rules().iter().all(|r| {
+            r.declarations()
+                .iter()
+                .all(|d| !matches!(d.value(),PropertyValue::Color(c) if *c==RED))
+        }));
+    }
+}
+
+#[test]
+fn implicit_descendant_nesting_matches_only_children_of_the_parent() {
+    let (doc, _, child, other) = nesting_doc();
+    let tree = nesting_tree(".leaf{color:red}.outer{.leaf,.other-leaf{color:blue}}");
+    let values = cascade(&doc, &tree).unwrap();
+    assert_eq!(values.computed[child].color, BLUE);
+    assert_eq!(values.computed[other].color, RED);
+}
+
+#[test]
+fn bounded_nested_selector_functions_still_match() {
+    let (doc, parent, _, _) = nesting_doc();
+    let selector = format!("{}&{}", ":is(".repeat(32), ")".repeat(32));
+    let tree = nesting_tree(&format!(".outer{{color:red;{selector}{{color:blue}}}}"));
+    assert_eq!(cascade(&doc, &tree).unwrap().computed[parent].color, BLUE);
+}
+
+#[test]
+fn accumulated_selector_graph_depth_preserves_declarations() {
+    let (doc, parent, _, _) = nesting_doc();
+    for function in ["", ":has("] {
+        let wrappers = if function.is_empty() { 32 } else { 31 };
+        let selector = format!(
+            "{}{}&{}{}",
+            function,
+            ":is(".repeat(wrappers),
+            ")".repeat(wrappers),
+            if function.is_empty() { "" } else { ")" }
+        );
+        let source = format!(
+            ".outer{{color:blue;{}{selector}{{ &{{color:red}} }}{}}}",
+            "&{".repeat(110),
+            "}".repeat(110)
+        );
+        let tree = nesting_tree(&source);
+        assert_eq!(cascade(&doc, &tree).unwrap().computed[parent].color, BLUE);
+        assert!(tree.style_rules().iter().all(|r| {
+            r.declarations()
+                .iter()
+                .all(|d| !matches!(d.value(),PropertyValue::Color(c) if *c==RED))
+        }));
+    }
 }
