@@ -794,7 +794,13 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS2 relative block positioning exact slice (+14).
     // + CSS Inline image-loaded vertical-align length exact slice (+1).
     // + Remeasured exact regression pins (+8) and unsupported pins removed (-7).
-    assert_eq!(set.baseline.entries.len(), 1443);
+    // + CSS Overflow inherited Ahem font-metric max-width:4ch exact slice (+1).
+    assert_eq!(set.baseline.entries.len(), 1444);
+    assert!(
+        set.baseline
+            .entries
+            .contains("css/css-overflow/text-overflow-ellipsis-002.html")
+    );
     for id in [
         "css/css-lists/list-style-type-string-001a.html",
         "css/css-lists/list-style-type-string-001b.html",
