@@ -1673,3 +1673,18 @@ css/mediaqueries/relative-units-001.html
 css/mediaqueries/relative-units-002.html
 css/mediaqueries/relative-units-003.html
 css/mediaqueries/relative-units-004.html
+# --- CSS2 relative block positioning exact 800x600 PASS-only (+14) ---
+css/CSS2/positioning/position-relative-004.xht
+css/CSS2/positioning/position-relative-005.xht
+css/CSS2/positioning/position-relative-006.xht
+css/CSS2/positioning/position-relative-007.xht
+css/CSS2/positioning/position-relative-009.xht
+css/CSS2/positioning/position-relative-010.xht
+css/CSS2/positioning/position-relative-013.xht
+css/CSS2/positioning/position-relative-014.xht
+css/CSS2/positioning/position-relative-015.xht
+css/CSS2/positioning/position-relative-016.xht
+css/CSS2/positioning/position-relative-018.xht
+css/CSS2/positioning/position-relative-019.xht
+css/CSS2/positioning/position-relative-037.xht
+css/CSS2/positioning/position-relative-038.xht

@@ -109,6 +109,7 @@ pub(crate) fn compute_multicol_layout(
             let step = child_height + 2.0 * (parent_height - child_height).abs();
             for (order, child) in children.into_iter().enumerate() {
                 tree.nodes[child].unrounded_layout.location.y = order as f32 * step;
+                tree.nodes[child].needs_relative_block_paint_offset = true;
             }
         }
     }

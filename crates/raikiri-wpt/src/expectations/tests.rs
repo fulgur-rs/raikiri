@@ -790,7 +790,8 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS Text Decoration horizontal text-emphasis exact slice (+8).
     // + CSS UI text-overflow into padding exact slice (+1).
     // + CSS mediaqueries upstream exact pixel references (+22).
-    assert_eq!(set.baseline.entries.len(), 1419);
+    // + CSS2 relative block positioning exact slice (+14).
+    assert_eq!(set.baseline.entries.len(), 1433);
     assert!(
         set.baseline
             .entries
@@ -800,8 +801,10 @@ fn load_from_workspace_root_reads_the_header_only_files() {
         "css/mediaqueries/mq-range-001.html",
         "css/mediaqueries/mq-invalid-media-type-layer-001.html",
         "css/mediaqueries/relative-units-001.html",
+        "css/CSS2/positioning/position-relative-004.xht",
+        "css/CSS2/positioning/position-relative-038.xht",
     ] {
-        assert!(set.baseline.entries.contains(id));
+        assert!(set.baseline.entries.contains(id), "missing WPT pin: {id}");
     }
     assert!(set.quarantine.is_empty());
     assert!(set.deprecated.is_empty());
