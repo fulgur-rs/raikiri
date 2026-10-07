@@ -267,3 +267,16 @@ fn viewport_review_logical_units_follow_root_axes_and_initial_media_axes() {
         }
     }
 }
+
+#[test]
+fn screen_render_prepares_inside_marker_pixels_before_layout() {
+    let server = TestServer::start(HashMap::from([
+        ("/index.html", ("text/html", br#"<!doctype html><style>body{margin:0}li{list-style:inside url(red.png)}</style><li>body</li>"#.to_vec())),
+        ("/red.png", ("image/png", red_png())),
+    ]));
+    let image =
+        render_screen_url(&SystemHttpProvider::new(), server.url("index.html"), 64, 32).unwrap();
+    let requests = server.finish();
+    assert!(requests.iter().any(|path| path == "/red.png"));
+    assert!(contains_red_pixel(&image));
+}

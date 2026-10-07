@@ -209,6 +209,11 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         })
     };
     match d.value {
+        PropertyValue::ListStyle(ref value) => {
+            push_longhand(PropertyValue::ListStyleType(value.kind.clone()));
+            push_longhand(PropertyValue::ListStylePosition(value.position));
+            push_longhand(PropertyValue::ListStyleImage(value.image.clone()));
+        }
         PropertyValue::Margin(sides) => expand_margin(sides, push_longhand),
         PropertyValue::MarginInherit => expand_margin_inherit(push_longhand),
         PropertyValue::Padding(sides) => expand_padding(sides, push_longhand),
@@ -609,6 +614,11 @@ fn expand_deferred(
             PropertyKey::BorderRightColor,
             PropertyKey::BorderBottomColor,
             PropertyKey::BorderLeftColor,
+        ],
+        PropertyKey::ListStyle => &[
+            PropertyKey::ListStyleType,
+            PropertyKey::ListStylePosition,
+            PropertyKey::ListStyleImage,
         ],
         PropertyKey::Overflow => &[PropertyKey::OverflowX, PropertyKey::OverflowY],
         PropertyKey::TextDecoration => &[

@@ -121,14 +121,14 @@ pub fn html_to_png_with_render_fonts<R: std::io::Read>(
 }
 
 /// Like [`html_to_png`], but fetches, decodes, lays out, and paints `<img>`
-/// through `resolver` and `pixel_source`.
+/// and inside `list-style-image` markers through `resolver` and `pixel_source`.
 ///
 /// They often refer to the same value (`raikiri_net::ImageResolver` implements
 /// both traits), but this function also accepts separate types.
 ///
 /// # Errors
 /// In addition to errors from [`html_to_png`], returns `RenderError::Resolver`
-/// if `resolver` fails for any `<img>`, and `RenderError::LimitExceeded` when
+/// if `resolver` fails for any image, and `RenderError::LimitExceeded` when
 /// the raster exceeds its edge or byte budget. The `ReplacedResolver` contract treats
 /// `Err` as terminal: rendering stops at the first error rather than silently
 /// replacing the image with 0×0. Consumers who want a placeholder should
@@ -150,6 +150,35 @@ where
     };
     let (mut uncascaded, cascade) = parse_html(input, &opts)?.into_parts();
     let page_box = PageBox::from_page_size(cascade.page.size());
+    let base_url = raikiri_html::effective_document_base_url(&uncascaded, None);
+    for (element, computed) in cascade.computed.iter().enumerate() {
+        if !raikiri_dom::generated_content::inside_marker_in_flow(&cascade, element)
+            || cascade
+                .pseudo
+                .get(&(
+                    raikiri_style::StyleNodeId::new(element as u64),
+                    raikiri_style::PseudoElem::Marker,
+                ))
+                .is_some_and(|marker| !marker.content.is_empty())
+        {
+            continue;
+        }
+        let raikiri_style::property::BackgroundImage::Url(raw) = &computed.list_style_image else {
+            continue;
+        };
+        let Some(url) = url::Url::parse(raw)
+            .ok()
+            .or_else(|| base_url.as_ref().and_then(|base| base.join(raw).ok()))
+        else {
+            continue;
+        };
+        resolver
+            .resolve(raikiri_traits::ResolverRequest::new(&url))
+            .map_err(RenderError::Resolver)?;
+    }
+    uncascaded
+        .dom
+        .prepare_list_marker_images(&cascade, pixel_source, base_url.as_ref());
     raikiri_dom::layout_single_page_with_resolver(
         &mut uncascaded.dom,
         &cascade,
