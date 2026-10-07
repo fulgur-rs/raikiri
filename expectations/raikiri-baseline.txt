@@ -1713,3 +1713,6 @@ css/css-color/parsing/color-valid.html
 # Negative-only rejection guards; these do not establish valid grid support.
 css/css-grid/parsing/grid-shorthand-invalid.html
 css/css-grid/parsing/grid-template-shorthand-invalid.html
+
+# CSS Overflow inherited Ahem max-width:4ch (exact 800x600, bundled WPT fonts).
+css/css-overflow/text-overflow-ellipsis-002.html
