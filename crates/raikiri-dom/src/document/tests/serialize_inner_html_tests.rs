@@ -2,6 +2,91 @@ use super::*;
 use taffy::Style;
 
 #[test]
+fn serialize_raw_text_tags_in_both_html_namespace_representations() {
+    for tag in [
+        "SCRIPT",
+        "STYLE",
+        "XMP",
+        "IFRAME",
+        "NOEMBED",
+        "NOFRAMES",
+        "PLAINTEXT",
+        "NOSCRIPT",
+    ] {
+        for namespace in [None, Some(XHTML_NAMESPACE_URI.into())] {
+            let mut doc = Document::new();
+            let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+            let element = doc.append_element(Some(host), tag, Style::default(), None::<&str>);
+            doc.set_element_namespace(element, namespace);
+            doc.append_text(element, "a < b & c");
+            assert_eq!(doc.serialize_inner_html(element).unwrap(), "a < b & c");
+            assert_eq!(
+                doc.serialize_inner_html(host).unwrap(),
+                format!("<{tag}>a < b & c</{tag}>")
+            );
+        }
+    }
+}
+
+#[test]
+fn serialize_html_void_tags_omits_children_and_end_tags() {
+    let mut doc = Document::new();
+    let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let mut expected = String::new();
+    for tag in [
+        "AREA", "BASE", "BR", "COL", "EMBED", "HR", "IMG", "INPUT", "LINK", "META", "PARAM",
+        "SOURCE", "TRACK", "WBR",
+    ] {
+        let element = doc.append_element(Some(host), tag, Style::default(), None::<&str>);
+        doc.append_text(element, "ignored");
+        expected.push_str(&format!("<{tag}>"));
+    }
+    assert_eq!(doc.serialize_inner_html(host).unwrap(), expected);
+}
+
+#[test]
+fn serialize_mixed_case_raw_text_void_and_foreign_elements() {
+    let mut doc = Document::new();
+    let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let script = doc.append_element(Some(host), "ScRiPt", Style::default(), None::<&str>);
+    doc.append_text(script, "a < b & c");
+    let br = doc.append_element(Some(host), "BR", Style::default(), None::<&str>);
+    doc.append_text(br, "ignored");
+    let foreign = doc.append_element(Some(host), "ScRiPt", Style::default(), None::<&str>);
+    doc.set_element_namespace(foreign, Some("http://www.w3.org/2000/svg".into()));
+    doc.append_text(foreign, "a < b & c");
+    let foreign_br = doc.append_element(Some(host), "BR", Style::default(), None::<&str>);
+    doc.set_element_namespace(foreign_br, Some("http://www.w3.org/2000/svg".into()));
+    doc.append_text(foreign_br, "kept");
+    assert_eq!(
+        doc.serialize_inner_html(host).unwrap(),
+        "<ScRiPt>a < b & c</ScRiPt><BR><ScRiPt>a &lt; b &amp; c</ScRiPt><BR>kept</BR>"
+    );
+}
+
+#[test]
+fn serialize_nested_templates_preserves_long_end_tags_and_sibling_order() {
+    let mut doc = Document::new();
+    let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let long_tag = "a-custom-element-with-a-tag-longer-than-inline-storage";
+    let outer = doc.append_element(Some(host), long_tag, Style::default(), None::<&str>);
+    doc.append_text(outer, "first");
+    let template = doc.append_element(Some(outer), "template", Style::default(), None::<&str>);
+    let contents = doc.allocate_template_fragment_root(template);
+    let nested = doc.append_element(Some(contents), "template", Style::default(), None::<&str>);
+    let nested_contents = doc.allocate_template_fragment_root(nested);
+    doc.append_text(nested_contents, "inner");
+    doc.append_text(contents, "last");
+    doc.append_text(host, "sibling");
+    assert_eq!(
+        doc.serialize_inner_html(host).unwrap(),
+        format!(
+            "<{long_tag}>first<template><template>inner</template>last</template></{long_tag}>sibling"
+        )
+    );
+}
+
+#[test]
 fn serialize_inner_html_uses_live_attributes_escapes_content_and_omits_void_end_tags() {
     let mut doc = Document::new();
     let host = doc.append_element(Some(0), "div", Style::default(), None::<&str>);

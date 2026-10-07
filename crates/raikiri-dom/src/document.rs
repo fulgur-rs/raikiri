@@ -256,17 +256,18 @@ fn sanitize_external_style(mut style: Style) -> Style {
 
 fn is_html_raw_text_element(namespace: Option<&str>, tag_name: &str) -> bool {
     namespace.is_none_or(|namespace| namespace == XHTML_NAMESPACE_URI)
-        && matches!(
-            tag_name.to_ascii_lowercase().as_str(),
-            "script"
-                | "style"
-                | "xmp"
-                | "iframe"
-                | "noembed"
-                | "noframes"
-                | "plaintext"
-                | "noscript"
-        )
+        && [
+            "script",
+            "style",
+            "xmp",
+            "iframe",
+            "noembed",
+            "noframes",
+            "plaintext",
+            "noscript",
+        ]
+        .iter()
+        .any(|tag| tag_name.eq_ignore_ascii_case(tag))
 }
 
 // Cloning invalidates this cache because cloned Vec capacities can change.
@@ -1404,9 +1405,9 @@ impl Document {
             }
         }
 
-        enum Task {
+        enum Task<'a> {
             Node(usize, bool),
-            EndTag(SmolStr),
+            EndTag(&'a str),
         }
 
         let parent_node = self
@@ -1432,12 +1433,12 @@ impl Document {
                         "template contents index {fragment_id} is not a fragment"
                     ));
                 }
-                fragment.children.clone()
+                &fragment.children
             } else {
-                parent_node.children.clone()
+                &parent_node.children
             }
         } else {
-            parent_node.children.clone()
+            &parent_node.children
         };
         let parent_raw_text = match &parent_node.data {
             NodeData::Element(element) => {
@@ -1447,16 +1448,16 @@ impl Document {
         };
         let mut output = String::new();
         let mut pending: Vec<Task> = initial_children
-            .into_iter()
+            .iter()
             .rev()
-            .map(|child| Task::Node(child, parent_raw_text))
+            .map(|&child| Task::Node(child, parent_raw_text))
             .collect();
 
         while let Some(task) = pending.pop() {
             match task {
                 Task::EndTag(tag) => {
                     output.push_str("</");
-                    output.push_str(tag.as_str());
+                    output.push_str(tag);
                     output.push('>');
                 }
                 Task::Node(id, raw_text_parent) => {
@@ -1491,23 +1492,12 @@ impl Document {
                             output.push('>');
 
                             let is_html_void = element.namespace.is_none()
-                                && matches!(
-                                    tag.to_ascii_lowercase().as_str(),
-                                    "area"
-                                        | "base"
-                                        | "br"
-                                        | "col"
-                                        | "embed"
-                                        | "hr"
-                                        | "img"
-                                        | "input"
-                                        | "link"
-                                        | "meta"
-                                        | "param"
-                                        | "source"
-                                        | "track"
-                                        | "wbr"
-                                );
+                                && [
+                                    "area", "base", "br", "col", "embed", "hr", "img", "input",
+                                    "link", "meta", "param", "source", "track", "wbr",
+                                ]
+                                .iter()
+                                .any(|void_tag| tag.eq_ignore_ascii_case(void_tag));
                             if is_html_void {
                                 continue;
                             }
@@ -1523,20 +1513,20 @@ impl Document {
                                         "template contents index {fragment_id} is not a fragment"
                                     ));
                                 }
-                                fragment.children.clone()
+                                &fragment.children
                             } else {
-                                node.children.clone()
+                                &node.children
                             };
-                            pending.push(Task::EndTag(element.tag_name.clone()));
+                            pending.push(Task::EndTag(tag));
                             let raw_text = is_html_raw_text_element(
                                 element.namespace.as_deref(),
                                 element.tag_name.as_str(),
                             );
                             pending.extend(
                                 children
-                                    .into_iter()
+                                    .iter()
                                     .rev()
-                                    .map(|child| Task::Node(child, raw_text)),
+                                    .map(|&child| Task::Node(child, raw_text)),
                             );
                         }
                         NodeData::Text(text) => {
@@ -1865,16 +1855,15 @@ impl Document {
         let NodeData::Element(element) = &node.data else {
             return None;
         };
-        let local = if element
+        if element
             .namespace
             .as_deref()
             .is_none_or(|namespace| namespace == XHTML_NAMESPACE_URI)
+            && name.bytes().any(|byte| byte.is_ascii_uppercase())
         {
-            name.to_ascii_lowercase()
-        } else {
-            name.to_owned()
-        };
-        node.attribute(&local)
+            return node.attribute(&name.to_ascii_lowercase());
+        }
+        node.attribute(name)
     }
 
     /// Read a namespace-qualified attribute by namespace URI and local name.

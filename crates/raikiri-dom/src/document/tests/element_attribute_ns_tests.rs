@@ -4,6 +4,34 @@ use taffy::Style;
 const XLINK_NS: &str = "http://www.w3.org/1999/xlink";
 const SVG_NS: &str = "http://www.w3.org/2000/svg";
 
+#[test]
+fn null_namespace_lookup_folds_only_ascii_on_html_elements() {
+    let mut doc = Document::new();
+    for namespace in [None, Some(XHTML_NAMESPACE_URI.into()), Some(SVG_NS.into())] {
+        let id = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+        doc.set_element_namespace(id, namespace.clone());
+        doc.set_element_attribute(id, "data-Ä", "unicode").unwrap();
+        doc.set_element_attribute(id, "data-key", "ascii").unwrap();
+        assert_eq!(doc.element_attribute(id, "data-key"), Some("ascii"));
+        assert_eq!(doc.element_attribute(id, "data-Ä"), Some("unicode"));
+        assert_eq!(doc.element_attribute(id, "data-ä"), None);
+        let html = namespace
+            .as_deref()
+            .is_none_or(|ns| ns == XHTML_NAMESPACE_URI);
+        assert_eq!(
+            doc.element_attribute(id, "DATA-KEY"),
+            html.then_some("ascii")
+        );
+        assert_eq!(
+            doc.element_attribute(id, "DATA-Ä"),
+            html.then_some("unicode")
+        );
+        assert_eq!(doc.element_attribute(id, "absent"), None);
+    }
+    assert_eq!(doc.element_attribute(usize::MAX, "data-key"), None);
+    assert_eq!(doc.element_attribute(doc.root_index(), "data-key"), None);
+}
+
 fn svg_use_element(doc: &mut Document) -> usize {
     let id = doc.append_element(Some(0), "use", Style::default(), None::<&str>);
     doc.set_element_namespace_info(id, Some(SVG_NS.into()), None);

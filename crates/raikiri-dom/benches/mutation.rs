@@ -128,9 +128,65 @@ fn bench_text_append(c: &mut Criterion) {
 }
 
 // cov:ignore: bench harness — bench target never built under `cargo test` / `cargo llvm-cov --workspace`
+fn bench_dom_reads(c: &mut Criterion) {
+    let mut group = c.benchmark_group("dom_reads");
+    let (mut doc, parent) = append_target();
+    let html = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
+    doc.set_element_attribute(html, "data-key", "value")
+        .unwrap();
+    let svg = doc.append_element(Some(parent), "svg", Style::default(), None::<&str>);
+    doc.set_element_namespace(svg, Some("http://www.w3.org/2000/svg".into()));
+    doc.set_element_attribute(svg, "viewBox", "0 0 10 10")
+        .unwrap();
+    for (name, id, attribute, expected) in [
+        ("html_lowercase_attribute", html, "data-key", "value"),
+        ("html_uppercase_attribute", html, "DATA-KEY", "value"),
+        ("foreign_attribute", svg, "viewBox", "0 0 10 10"),
+    ] {
+        assert_eq!(doc.element_attribute(id, attribute), Some(expected));
+        group.bench_function(name, |b| {
+            b.iter(|| {
+                doc.element_attribute(std::hint::black_box(id), std::hint::black_box(attribute))
+            });
+        });
+    }
+    for (name, deep) in [
+        ("serialize_wide_2000", false),
+        ("serialize_deep_2000", true),
+    ] {
+        let (mut doc, root) = append_target();
+        let mut parent = root;
+        let mut expected = String::new();
+        for _ in 0..2000 {
+            let child = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
+            doc.append_text(child, "hello");
+            expected.push_str("<div>hello");
+            if deep {
+                parent = child;
+            } else {
+                expected.push_str("</div>");
+            }
+        }
+        if deep {
+            expected.push_str(&"</div>".repeat(2000));
+        }
+        assert_eq!(doc.serialize_inner_html(root).unwrap(), expected);
+        group.throughput(Throughput::Elements(2000));
+        group.bench_function(name, |b| {
+            b.iter(|| {
+                doc.serialize_inner_html(std::hint::black_box(root))
+                    .unwrap()
+            });
+        });
+    }
+    group.finish();
+}
+
+// cov:ignore: bench harness — bench target never built under `cargo test` / `cargo llvm-cov --workspace`
 fn main() {
     let mut criterion = Criterion::default().configure_from_args();
     bench_replace_children(&mut criterion);
     bench_text_append(&mut criterion);
+    bench_dom_reads(&mut criterion);
     criterion.final_summary();
 }
