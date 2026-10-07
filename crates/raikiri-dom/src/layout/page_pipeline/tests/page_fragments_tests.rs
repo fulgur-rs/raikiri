@@ -2046,3 +2046,165 @@ fn a_seen_anonymous_column_page_remains_distinct_from_a_named_page() {
         [Some("a"), None, Some("b")]
     );
 }
+
+#[test]
+fn a_non_text_column_item_uses_the_anonymous_page_before_a_named_descendant() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;font:10px/10px Ahem"),
+    );
+    let flex = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:flex;flex-direction:column"),
+    );
+    let first = doc.append_element(
+        Some(flex),
+        "div",
+        Style::default(),
+        Some("display:block;height:10px;background:red"),
+    );
+    let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
+    let named = doc.append_element(
+        Some(item),
+        "div",
+        Style::default(),
+        Some("display:block;page:a"),
+    );
+    let text = doc.append_text(named, "X");
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 50.0;
+    let slices = layout_pages(with_ahem(&mut doc), &computed, page).unwrap();
+    let fragments = page_fragments_from_slices(&doc, &computed, page, &slices);
+    assert_eq!(
+        slices
+            .iter()
+            .map(|p| p.page_name.as_deref())
+            .collect::<Vec<_>>(),
+        [None, Some("a")]
+    );
+    assert_eq!(
+        [first, text].map(|id| fragments
+            .iter()
+            .flat_map(|p| &p.items)
+            .find(|item| item.node_id == NodeId::new(id as u64))
+            .unwrap()
+            .page_index),
+        [0, 1]
+    );
+}
+
+#[test]
+fn contents_wrapping_a_flex_item_preserves_its_page_name_suppression() {
+    let run = |contents: bool| {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            Some("display:block;font:10px/10px Ahem"),
+        );
+        let before = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        let a = doc.append_text(before, "A");
+        let flex = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flex;flex-direction:column"),
+        );
+        let parent = if contents {
+            doc.append_element(
+                Some(flex),
+                "div",
+                Style::default(),
+                Some("display:contents"),
+            )
+        } else {
+            flex
+        };
+        let item = doc.append_element(
+            Some(parent),
+            "div",
+            Style::default(),
+            Some("display:block;page:a"),
+        );
+        let b = doc.append_text(item, "B");
+        let after = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        let c = doc.append_text(after, "C");
+        doc.mark_in_document_flags();
+        let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 50.0;
+        let slices = layout_pages(with_ahem(&mut doc), &computed, page).unwrap();
+        let fragments = page_fragments_from_slices(&doc, &computed, page, &slices);
+        (
+            slices
+                .iter()
+                .map(|p| p.page_name.clone())
+                .collect::<Vec<_>>(),
+            [a, b, c].map(|id| {
+                fragments
+                    .iter()
+                    .flat_map(|p| &p.items)
+                    .find(|item| item.node_id == NodeId::new(id as u64))
+                    .map(|item| (item.page_index, item.rect.y))
+                    .unwrap()
+            }),
+        )
+    };
+    assert_eq!(run(true), run(false));
+}
+
+#[test]
+fn row_flex_keeps_the_existing_deferred_nested_named_boundary() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;font:10px/10px Ahem"),
+    );
+    let flex = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:flex;flex-direction:row"),
+    );
+    let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
+    let named = doc.append_element(
+        Some(item),
+        "div",
+        Style::default(),
+        Some("display:block;page:a"),
+    );
+    let a = doc.append_text(named, "A");
+    let after = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+    let b = doc.append_text(after, "B");
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 50.0;
+    let slices = layout_pages(with_ahem(&mut doc), &computed, page).unwrap();
+    let fragments = page_fragments_from_slices(&doc, &computed, page, &slices);
+    assert_eq!(
+        [a, b].map(|id| fragments
+            .iter()
+            .flat_map(|p| &p.items)
+            .find(|item| item.node_id == NodeId::new(id as u64))
+            .unwrap()
+            .page_index),
+        [1, 2]
+    );
+}
