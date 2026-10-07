@@ -1189,14 +1189,18 @@ def rust_module_snapshot(repo_root: str, ref: str, metadata: dict | None) -> dic
                                         inherited_macros + prefix_macros, ancestors + (path,)))
     if snapshot["build_inputs"]:
         # Build scripts can read tracked data through arbitrary helpers.
-        # Inputs outside the modeled Rust graph must remain byte-identical.
+        # Their dependencies are executable compiler inputs too. Retain
+        # other packages' sources as well as data outside the Rust graph.
+        build_manifests = {identity[0] for identity, _ in snapshot["build_inputs"]}
         entries = subprocess.run(
             ["git", "-C", repo_root, "ls-tree", "-r", "-z", "--format=%(objectname)\t%(path)", ref],
             capture_output=True, text=True, check=True,
         ).stdout.split("\0")
         snapshot["build_data"] = {path: oid for entry in entries if entry
                                   for oid, path in [entry.split("\t", 1)]
-                                  if snapshot["sources"].get(path) is None}
+                                  if (snapshot["sources"].get(path) is None
+                                      or any(identity[0] != manifest for identity, *_ in snapshot["contexts"].get(path, ())
+                                             for manifest in build_manifests))}
     # Exported macros bind at the crate root even when their definitions
     # live in sibling modules. Keep defining scope and cfg attributes.
     for (identity, scope), values in list(snapshot["bindings"].items()):

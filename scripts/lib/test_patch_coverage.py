@@ -344,7 +344,7 @@ class CollectMovedAddedLinesGitTests(unittest.TestCase):
                   auxiliary_before: dict[str, str] | None = None,
                   auxiliary_after: dict[str, str] | None = None,
                   target_root: str = "lib.rs", extra_targets: tuple = (),
-                  covered_auxiliary: bool = False) -> tuple[int, str]:
+                  covered_auxiliary: bool = False, extra_packages: tuple = ()) -> tuple[int, str]:
         with tempfile.TemporaryDirectory() as repo:
             # Ordinary file moves preserve the public module/target. Use
             # a stable crate root and relocate its `component` module.
@@ -402,6 +402,11 @@ class CollectMovedAddedLinesGitTests(unittest.TestCase):
                 target["name"] = os.path.basename(target["src_path"]).removesuffix(".rs")
             metadata = {"packages": [{"name": "fixture", "manifest_path": os.path.join(repo, "Cargo.toml"),
                                       "targets": targets}]}
+            for manifest, root, kind in extra_packages:
+                target = _target([kind], os.path.join(repo, root))
+                target["name"] = os.path.dirname(manifest)
+                metadata["packages"].append({"name": target["name"], "manifest_path": os.path.join(repo, manifest),
+                                             "targets": [target]})
             with mock.patch.object(patch_coverage, "load_cargo_metadata", return_value=metadata), \
                  mock.patch("sys.argv", ["patch_coverage.py", "--repo-root", repo,
                                         "--base", base, "--lcov", lcov]), \
@@ -1094,6 +1099,25 @@ pub fn call() { crate::resolver::resolve(); }
                                      "helpers.rs": helper.replace("1", value)}, covered_auxiliary=True
                 )
                 self.assertEqual(status, 0 if value == "1" else 1, output)
+
+    def test_modeled_build_dependency_source_changes_compilation_context(self) -> None:
+        manifest = '[package]\nname="fixture"\nversion="0.1.0"\nbuild="build.rs"\n[lib]\npath="lib.rs"\n[workspace]\nmembers=["cfgsupport"]\n[build-dependencies]\ncfgsupport={path="cfgsupport"}\n'
+        support_manifest = '[package]\nname="cfgsupport"\nversion="0.1.0"\n[lib]\npath="lib.rs"\n'
+        build = 'fn main() { if cfgsupport::enabled() { println!("cargo:rustc-cfg=gate"); } }\n'
+        helper = "pub fn enabled() -> bool { false }\n"
+        body = "#[cfg(gate)]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        for changed in (False, True):
+            with self.subTest(changed=changed):
+                files = {"Cargo.toml": manifest, "cfgsupport/Cargo.toml": support_manifest,
+                         "build.rs": build, "cfgsupport/lib.rs": helper}
+                status, output = self._classify(
+                    body + "fn keep() {}\n", "fn keep() {}\n" + body.replace("    record", "        record"),
+                    "        record_uncovered_resolution_result();", auxiliary_before=files,
+                    auxiliary_after={**files, "cfgsupport/lib.rs": helper.replace("false", "true") if changed else helper},
+                    extra_targets=(("custom-build", "build.rs"),), covered_auxiliary=True,
+                    extra_packages=(("cfgsupport/Cargo.toml", "cfgsupport/lib.rs", "lib"),)
+                )
+                self.assertEqual(status, 1 if changed else 0, output)
 
     def test_compiler_configuration_changes_do_not_exempt_functions(self) -> None:
         body = "#[cfg(gate)]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n"
