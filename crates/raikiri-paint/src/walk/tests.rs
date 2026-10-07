@@ -4754,31 +4754,33 @@ fn one_visible_overflow_axis_keeps_corner_content() {
 #[test]
 fn cropped_corner_paths_stay_inside_each_inner_edge() {
     use kurbo::Shape;
-    for corner in 0..4 {
-        let mut horizontal = [ComputedLengthPercentage::Px(0.0); 4];
-        let mut vertical = horizontal;
-        horizontal[corner] = ComputedLengthPercentage::Px(100.0);
-        vertical[corner] = ComputedLengthPercentage::Px(80.0);
-        let radius = ComputedBorderRadius::elliptical(horizontal, vertical);
-        let path = rounded_background_path(
-            20.0,
-            20.0,
-            80.0,
-            80.0,
-            &radius,
-            (20.0, 20.0, 20.0, 20.0),
-            (100.0, 100.0),
-        )
-        .unwrap();
-        let bounds = path.bounding_box();
-        assert!(
-            bounds.x0 >= 20.0 - 1e-8
-                && bounds.y0 >= 20.0 - 1e-8
-                && bounds.x1 <= 80.0 + 1e-8
-                && bounds.y1 <= 80.0 + 1e-8,
-            "corner {corner}: {bounds:?}"
-        );
-        assert_ne!(path.winding(Point::new(50.0, 50.0)), 0);
+    for vertical_radius in [80.0, 100.0] {
+        for corner in 0..4 {
+            let mut horizontal = [ComputedLengthPercentage::Px(0.0); 4];
+            let mut vertical = horizontal;
+            horizontal[corner] = ComputedLengthPercentage::Px(100.0);
+            vertical[corner] = ComputedLengthPercentage::Px(vertical_radius);
+            let radius = ComputedBorderRadius::elliptical(horizontal, vertical);
+            let path = rounded_background_path(
+                20.0,
+                20.0,
+                80.0,
+                80.0,
+                &radius,
+                (20.0, 20.0, 20.0, 20.0),
+                (100.0, 100.0),
+            )
+            .unwrap();
+            let bounds = path.bounding_box();
+            assert!(
+                bounds.x0 >= 20.0 - 1e-8
+                    && bounds.y0 >= 20.0 - 1e-8
+                    && bounds.x1 <= 80.0 + 1e-8
+                    && bounds.y1 <= 80.0 + 1e-8,
+                "corner {corner}: {bounds:?}"
+            );
+            assert_ne!(path.winding(Point::new(50.0, 50.0)), 0);
+        }
     }
     let radius = ComputedBorderRadius::elliptical(
         [
