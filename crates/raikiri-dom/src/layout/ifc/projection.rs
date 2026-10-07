@@ -126,8 +126,11 @@ pub(crate) fn language_of(doc: &Document, node: usize) -> Option<String> {
 
 /// The style a `<br>` gives its line strut in quirks mode: the style of the
 /// box it sits in, with the `<br>`'s own `line-height` (resolved, like
-/// `normal` or a number, against that box's font). `None` outside quirks
-/// mode, where the break takes the enclosing box's strut unchanged.
+/// `normal` or a number, against that box's font) and baseline alignment.
+/// The box is the nearest ancestor that generates one (`display: contents`
+/// generates none); its `vertical-align` places that box, not the break.
+/// `None` outside quirks mode, where the break takes the enclosing box's
+/// strut unchanged.
 fn break_strut_style(
     doc: &Document,
     cascade: &CascadeResult,
@@ -138,14 +141,21 @@ fn break_strut_style(
     if !line_height_quirk(doc) {
         return Ok(None);
     }
-    let Some(parent) = doc.parent_of(br) else {
-        return Ok(None); // cov:ignore: a projected <br> always has a parent.
-    };
-    let Some(parent_cv) = cascade.computed.get(parent) else {
-        return Ok(None); // cov:ignore: every in-document node has computed values.
-    };
-    let mut style = styled(doc, cascade, parent_cv, parent, fonts)?;
+    let owner = std::iter::successors(doc.parent_of(br), |&id| doc.parent_of(id))
+        .find(|&id| {
+            cascade
+                .computed
+                .get(id)
+                .is_some_and(|cv| cv.display != DisplayValue::Contents)
+        })
+        .unwrap_or(br);
+    let owner_cv = cascade
+        .computed
+        .get(owner)
+        .ok_or(IfcError::InvalidNode(owner))?;
+    let mut style = styled(doc, cascade, owner_cv, owner, fonts)?;
     style.line_height = br_style.line_height;
+    style.vertical_align = shodo::style::VerticalAlign::default();
     Ok(Some(style))
 }
 
