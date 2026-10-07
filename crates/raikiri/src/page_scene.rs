@@ -225,7 +225,8 @@ impl PageScene {
     ///    `RasterBufferBudget` (the same limit used by html_to_png).
     /// 2. Build `PaintScene` with `anyrender::render_to_buffer::<VelloCpuImageRenderer, _>`.
     /// 3. Call `raikiri_paint::paint_single_page(scene, dom, cascade, page_box)` verbatim.
-    /// 4. Serialize RGBA8 to PNG with `encode_png` (`tiny_skia::Pixmap::encode_png`).
+    /// 4. Serialize RGBA8 to PNG with `encode_png` (demultiply via `tiny_skia`,
+    ///    then `png::Encoder` with `png::Compression::Fast`).
     ///
     /// # Errors
     /// Returns `RenderError::Configuration` for non-finite or non-positive
@@ -235,7 +236,7 @@ impl PageScene {
     /// # Panics
     /// - The `anyrender_vello_cpu` output buffer length differs from
     ///   `width * height * 4` (invariant violation).
-    /// - `tiny_skia::Pixmap::encode_png` fails (not expected for a well-formed pixmap).
+    /// - PNG serialization fails (not expected for a well-formed buffer).
     /// - (Debug builds only) `cascade` and `dom` did not come from the same
     ///   `cascade()` call (`cascade.computed.len() != dom.node_count()`). This
     ///   violates the caller-responsibility contract in the `raikiri_paint`
@@ -278,7 +279,7 @@ impl PageScene {
         );
         paint_result?;
 
-        Ok(encode_png(&rgba, size.width(), size.height()))
+        Ok(encode_png(rgba, size.width(), size.height()))
     }
 
     /// Like [`Self::rasterize`], but retrieves decoded `<img>` pixels from
@@ -319,7 +320,7 @@ impl PageScene {
         );
         paint_result?;
 
-        Ok(encode_png(&rgba, size.width(), size.height()))
+        Ok(encode_png(rgba, size.width(), size.height()))
     }
 }
 
@@ -711,18 +712,27 @@ fn find_first_element_by_tag(dom: &Document, tag: &str) -> Option<usize> {
     None // cov:ignore: parse always synthesizes <html>/<body>; lookup fails only for hand-built Documents that cannot supply the CascadeResult this API requires
 }
 
-/// Serialize a premultiplied RGBA8 buffer to PNG bytes (via `tiny_skia::Pixmap`).
+/// Serialize a premultiplied RGBA8 buffer to PNG bytes.
 ///
-/// `rgba` must have exactly `width * height * 4` bytes. Both the
-/// `anyrender_vello_cpu` output and `tiny_skia` use premultiplied RGBA8,
-/// so wrap the buffer and serialize it.
+/// `rgba` must have exactly `width * height * 4` bytes. The
+/// `anyrender_vello_cpu` output is premultiplied RGBA8, while PNG stores
+/// straight alpha, so the buffer is demultiplied in place with
+/// `tiny_skia::Pixmap::take_demultiplied` (the same rounding
+/// `tiny_skia::Pixmap::encode_png` uses, so decoded pixels are unchanged).
+/// Taking ownership of `rgba` avoids the two whole-page copies the
+/// `Pixmap::encode_png` route makes.
+///
+/// The encoder uses `png::Compression::Fast` (the `fdeflate` path) instead of
+/// the default `Balanced` zlib level. For a full A4 page this is several
+/// times faster to encode, at the cost of a larger file. The output is still
+/// deterministic for a given buffer.
 ///
 /// # Panics
 /// - `rgba.len() != width * height * 4`
 /// - `width == 0 || height == 0` (invalid `tiny_skia::IntSize`)
-/// - PNG serialization fails (not expected for a well-formed pixmap;
+/// - PNG serialization fails (not expected for a well-formed buffer;
 ///   treated as an invariant violation).
-fn encode_png(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
+fn encode_png(rgba: Vec<u8>, width: u32, height: u32) -> Vec<u8> {
     let expected = (width as usize) * (height as usize) * 4;
     assert_eq!(
         rgba.len(),
@@ -732,11 +742,25 @@ fn encode_png(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
     );
     let size =
         tiny_skia::IntSize::from_wh(width, height).expect("encode_png: width/height must be > 0");
-    let pixmap = tiny_skia::Pixmap::from_vec(rgba.to_vec(), size)
-        .expect("encode_png: Pixmap::from_vec rejected pre-validated buffer (tiny-skia invariant violation)");
-    pixmap
-        .encode_png()
-        .expect("encode_png: tiny_skia::Pixmap::encode_png should not fail for a valid pixmap")
+    let demultiplied = tiny_skia::Pixmap::from_vec(rgba, size)
+        .expect("encode_png: Pixmap::from_vec rejected pre-validated buffer (tiny-skia invariant violation)")
+        .take_demultiplied();
+
+    let mut out = Vec::new();
+    let mut encoder = png::Encoder::new(&mut out, width, height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder.set_compression(png::Compression::Fast);
+    let mut writer = encoder
+        .write_header()
+        .expect("encode_png: writing the PNG header to a Vec should not fail");
+    writer
+        .write_image_data(&demultiplied)
+        .expect("encode_png: writing PNG image data to a Vec should not fail");
+    writer
+        .finish()
+        .expect("encode_png: finishing the PNG stream should not fail");
+    out
 }
 
 #[cfg(test)]

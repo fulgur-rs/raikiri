@@ -447,15 +447,19 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
                 )
             };
 
-        // Resize out to id+1 before writing by index. Pre-allocation in
-        // `cascade()` normally makes out.len() == node_count(), so this resize
-        // is a no-op. Keep it as a safety net if a Dom implementation
-        // underreports node_count().
+        // `out` may be shorter than node_count(): `cascade()` only reserves
+        // capacity, so a slot is created the first time the walk reaches it.
+        // Ids usually arrive in increasing order, which makes this a plain
+        // push; any gap left by an unvisited id is filled with initial().
         let idx = id.0 as usize;
-        if out.len() <= idx {
-            out.resize(idx + 1, ComputedValues::initial());
+        if out.len() < idx {
+            out.resize(idx, ComputedValues::initial());
         }
-        out[idx] = computed;
+        if out.len() == idx {
+            out.push(computed);
+        } else {
+            out[idx] = computed;
+        }
         if non_ua_margin_sides.len() <= idx {
             non_ua_margin_sides.resize(idx + 1, Sides::all(false));
         }

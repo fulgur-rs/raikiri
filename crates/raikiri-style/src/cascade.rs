@@ -330,15 +330,20 @@ fn cascade_from_candidates<D: StyleDom>(
 
     // Phase 2: inheritance walk.
     //
-    // Preallocate computed to Dom::node_count(). resolve_inheritance's DFS
-    // visits only nodes reachable from the root, so detached / unreachable
-    // nodes (foster-parenting transients, orphans after stripping, etc.) do
-    // not get entries from the walk. But the contract
+    // resolve_inheritance's DFS visits only nodes reachable from the root, so
+    // detached / unreachable nodes (foster-parenting transients, orphans after
+    // stripping, etc.) do not get entries from the walk. But the contract
     // `computed.len() == document.node_count()` covers the entire arena:
     // raikiri-dom's layout and raikiri-paint's walker index `computed[idx]`
-    // directly by node_id. Fill with initial() in advance, then overwrite visited slots
-    // during DFS.
-    let mut computed: Vec<ComputedValues> = vec![ComputedValues::initial(); dom.node_count()];
+    // directly by node_id.
+    //
+    // Reserve capacity only, rather than filling every slot with initial() up
+    // front: `ComputedValues` is large and cloning it is not cheap, and the
+    // walk overwrites almost every slot. The walk appends in place when node
+    // ids arrive in document order (the common case for a parsed tree) and
+    // fills any skipped slot with initial(); the trailing resize below covers
+    // unvisited nodes past the last visited id.
+    let mut computed: Vec<ComputedValues> = Vec::with_capacity(dom.node_count());
     let mut non_ua_margin_sides = vec![Sides::all(false); dom.node_count()];
     let mut authored_writing_modes = vec![None; dom.node_count()];
     let mut page_values = vec![crate::property::PageValue::Auto; dom.node_count()];
@@ -354,6 +359,9 @@ fn cascade_from_candidates<D: StyleDom>(
         &mut page_values,
         &mut pseudo,
     );
+    if computed.len() < dom.node_count() {
+        computed.resize(dom.node_count(), ComputedValues::initial());
+    }
 
     let root_element_index = page_inheritance_root_index(dom, computed.len());
     let page = cascade_page_with_media_context(
