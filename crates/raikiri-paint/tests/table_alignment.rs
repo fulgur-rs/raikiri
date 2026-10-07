@@ -1800,3 +1800,47 @@ fn fixed_colspan_minimum_reuses_the_auto_column_without_widening_the_table() {
         raster(scene(&reference, &expected)),
     );
 }
+
+#[test]
+fn horizontal_cells_in_a_vertical_table_keep_their_own_block_axis_alignment() {
+    for mode in ["vertical-lr", "vertical-rl"] {
+        for (align, top) in [("top", 0), ("middle", 10), ("bottom", 20)] {
+            let (mut doc, body) = document();
+            let table = element(
+                &mut doc,
+                body,
+                &format!(
+                    "display:table;writing-mode:{mode};width:40px;height:30px;border-spacing:0"
+                ),
+            );
+            let row = element(&mut doc, table, "display:table-row");
+            let cell = element(
+                &mut doc,
+                row,
+                &format!(
+                    "display:table-cell;writing-mode:horizontal-tb;width:40px;height:30px;background:blue;color:green;vertical-align:{align}"
+                ),
+            );
+            doc.append_text(cell, "XX");
+            let computed = layout(&mut doc);
+            let (mut reference, body) = document();
+            element(
+                &mut reference,
+                body,
+                "position:absolute;left:0;top:0;width:40px;height:30px;background:blue",
+            );
+            element(
+                &mut reference,
+                body,
+                &format!(
+                    "position:absolute;left:0;top:{top}px;width:20px;height:10px;background:green"
+                ),
+            );
+            let expected = layout(&mut reference);
+            assert_exact_pixels(
+                raster(scene(&doc, &computed)),
+                raster(scene(&reference, &expected)),
+            );
+        }
+    }
+}

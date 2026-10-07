@@ -1908,7 +1908,9 @@ fn place_cells(
                     .resolve_or_zero(Some(cell_width), crate::taffy_impl::resolve_calc),
             )
         };
-        let extra = if vertical_writing {
+        let vertical_cell =
+            vertical_writing && is_vertical_writing_mode(table_writing_mode(doc, cell.node_id));
+        let extra = if vertical_cell {
             0.0
         } else {
             (cell_height - cell.natural_height).max(0.0)
@@ -1917,7 +1919,7 @@ fn place_cells(
             VerticalAlign::Top => 0.0,
             VerticalAlign::Middle => extra / 2.0,
             VerticalAlign::Bottom => extra,
-            _ if !vertical_writing => (row_baselines[cell.row as usize] - cell.baseline).max(0.0),
+            _ if !vertical_cell => (row_baselines[cell.row as usize] - cell.baseline).max(0.0),
             _ => 0.0,
         };
         padding.top += shift;
@@ -1958,8 +1960,9 @@ fn place_cells(
 }
 
 /// Re-map the already measured table grid from horizontal physical axes to
-/// vertical writing-mode axes. This pass re-lays out cell contents at their
-/// final physical dimensions and aligns them on the table's block axis.
+/// vertical writing-mode axes. Vertical cells are re-laid out at their final
+/// physical dimensions and aligned on their block axis. Orthogonal horizontal
+/// cells retain the normal pass's content layout.
 fn reposition_cells_for_vertical_writing(
     doc: &mut Document,
     grid: &mut TableGrid,
@@ -1981,6 +1984,19 @@ fn reposition_cells_for_vertical_writing(
         let col_span = col_end.saturating_sub(col_start).max(1);
         let y = origin.y + (vertical_track + spacing) * col_start as f32;
         let height = vertical_track * col_span as f32 + spacing * (col_span - 1) as f32;
+        let Some(layout) = cell.resolved.as_mut() else {
+            continue; // cov:ignore: defensive unresolved-cell fallback.
+        };
+        layout.location = Point { x: origin.x, y };
+        layout.size.width = cell_width;
+        layout.size.height = height;
+        if !is_vertical_writing_mode(table_writing_mode(doc, cell.node_id)) {
+            // A horizontal cell in a vertical table still aligns content on
+            // its own block axis. Preserve the normal pass's vertical shift.
+            doc.nodes[cell.node_id].unrounded_layout =
+                super::sanitize_taffy_layout(layout, &mut doc.layout_warnings);
+            continue;
+        }
         // Re-layout at the final physical dimensions before distributing
         // block-axis free space; the earlier horizontal measurement cannot
         // determine vertical content's occupied block extent.
@@ -2068,12 +2084,6 @@ fn reposition_cells_for_vertical_writing(
                     super::sanitize_taffy_layout(&layout, &mut doc.layout_warnings);
             }
         }
-        let Some(layout) = cell.resolved.as_mut() else {
-            continue; // cov:ignore: defensive unresolved-cell fallback.
-        };
-        layout.location = Point { x: origin.x, y };
-        layout.size.width = cell_width;
-        layout.size.height = height;
         layout.padding = padding;
         layout.border = border;
         let sanitized = super::sanitize_taffy_layout(layout, &mut doc.layout_warnings);
