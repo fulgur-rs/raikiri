@@ -6151,11 +6151,28 @@ fn inset_border_radii(radii: [[f64; 2]; 4], inset: (f64, f64, f64, f64)) -> [[f6
 /// Insets can make a curve reach past the opposite edge. Crop its quarter
 /// ellipse at that edge, preserving its center and radii (CSS Backgrounds 3
 /// section 4.2), rather than rescaling the curve to the smaller rectangle.
+/// When cropped diagonal curves cross, use their common convex outline.
+/// Ordinary and single-corner paths retain their cubic arcs.
 fn rounded_rect_path(x0: f64, y0: f64, x1: f64, y1: f64, radii: [[f64; 2]; 4]) -> BezPath {
     let mut path = BezPath::new();
     if x1 <= x0 || y1 <= y0 {
         return path;
     }
+    let (width, height) = (x1 - x0, y1 - y0);
+    let cropped = radii.iter().any(|r| r[0] > width || r[1] > height);
+    let diagonal_overlap = [(0, 2), (1, 3)].into_iter().any(|(a, b)| {
+        radii[a].iter().chain(&radii[b]).all(|r| *r > 0.0)
+            && radii[a][0] + radii[b][0] > width
+            && radii[a][1] + radii[b][1] > height
+    });
+    let mut common = (cropped && diagonal_overlap).then(|| {
+        vec![
+            Point::new(x0, y0),
+            Point::new(x1, y0),
+            Point::new(x1, y1),
+            Point::new(x0, y1),
+        ]
+    });
     let [tl, tr, br, bl] = radii;
     let centers = [
         Point::new(x0 + tl[0], y0 + tl[1]),
@@ -6210,19 +6227,97 @@ fn rounded_rect_path(x0: f64, y0: f64, x1: f64, y1: f64, radii: [[f64; 2]; 4]) -
             };
             (point, Some(arc))
         };
-        if index == 0 {
-            path.move_to(point);
-        } else {
-            path.line_to(point);
+        if let (Some(polygon), Some(arc)) = (common.as_mut(), arc) {
+            // One tangent cubic per cropped quarter arc keeps subdivision
+            // bounded independently of the coordinate magnitudes.
+            let alpha = (4.0 / 3.0) * (arc.sweep_angle / 4.0).tan();
+            let (sin0, cos0) = arc.start_angle.sin_cos();
+            let (sin1, cos1) = (arc.start_angle + arc.sweep_angle).sin_cos();
+            let to = arc.center + Vec2::new(arc.radii.x * cos1, arc.radii.y * sin1);
+            let a = point + Vec2::new(-arc.radii.x * sin0, arc.radii.y * cos0) * alpha;
+            let b = to - Vec2::new(-arc.radii.x * sin1, arc.radii.y * cos1) * alpha;
+            let mut points = vec![point];
+            flatten_corner_curve([point, a, b, to], 0, &mut points);
+            for edge in points.windows(2) {
+                *polygon = clip_corner_polygon(std::mem::take(polygon), edge[0], edge[1]);
+                if polygon.len() < 3 {
+                    return BezPath::new();
+                }
+            }
         }
-        if let Some(arc) = arc {
-            for element in arc.append_iter(0.1) {
-                path.push(element);
+        if common.is_none() {
+            if index == 0 {
+                path.move_to(point);
+            } else {
+                path.line_to(point);
+            }
+            if let Some(arc) = arc {
+                for element in arc.append_iter(0.1) {
+                    path.push(element);
+                }
             }
         }
     }
+    if let Some(polygon) = common {
+        let mut outline = BezPath::new();
+        outline.move_to(polygon[0]);
+        for point in &polygon[1..] {
+            outline.line_to(*point);
+        }
+        outline.close_path();
+        return outline;
+    }
     path.close_path();
     path
+}
+
+/// Flatten a convex corner cubic to a 0.05px control-hull target, bounded
+/// to 1024 chords per cubic for extreme coordinates.
+fn flatten_corner_curve(curve: [Point; 4], depth: u8, points: &mut Vec<Point>) {
+    let [from, a, b, to] = curve;
+    let delta = to - from;
+    let length = delta.hypot();
+    let distance = |point: Point| {
+        let offset = point - from;
+        if length == 0.0 {
+            offset.hypot()
+        } else {
+            delta.cross(offset).abs() / length
+        }
+    };
+    if depth == 10 || distance(a).max(distance(b)) <= 0.05 {
+        points.push(to);
+        return;
+    }
+    let ab = from.lerp(a, 0.5);
+    let bc = a.lerp(b, 0.5);
+    let cd = b.lerp(to, 0.5);
+    let abc = ab.lerp(bc, 0.5);
+    let bcd = bc.lerp(cd, 0.5);
+    let center = abc.lerp(bcd, 0.5);
+    flatten_corner_curve([from, ab, abc, center], depth + 1, points);
+    flatten_corner_curve([center, bcd, cd, to], depth + 1, points);
+}
+
+/// Clip a nonempty convex polygon to the clockwise edge's interior side.
+fn clip_corner_polygon(polygon: Vec<Point>, a: Point, b: Point) -> Vec<Point> {
+    let distance = |point: Point| (b - a).cross(point - a);
+    let mut out = Vec::with_capacity(polygon.len() + 1);
+    let mut previous = polygon[polygon.len() - 1];
+    let mut previous_distance = distance(previous);
+    for current in polygon {
+        let current_distance = distance(current);
+        if (previous_distance >= 0.0) != (current_distance >= 0.0) {
+            let t = previous_distance / (previous_distance - current_distance);
+            out.push(previous.lerp(current, t));
+        }
+        if current_distance >= 0.0 {
+            out.push(current);
+        }
+        previous = current;
+        previous_distance = current_distance;
+    }
+    out
 }
 
 pub(crate) fn paintable_border_radius(

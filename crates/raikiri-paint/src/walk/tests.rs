@@ -4813,3 +4813,128 @@ fn cropped_corner_paths_stay_inside_each_inner_edge() {
             .is_empty()
     );
 }
+
+#[test]
+fn crossing_inner_corner_paths_keep_only_the_common_region() {
+    use kurbo::Shape;
+    for (pair, outside) in [
+        ([0, 2], Point::new(78.0, 21.0)),
+        ([1, 3], Point::new(21.0, 21.0)),
+    ] {
+        let mut values = [ComputedLengthPercentage::Px(0.0); 4];
+        for corner in pair {
+            values[corner] = ComputedLengthPercentage::Px(100.0);
+        }
+        let radius = ComputedBorderRadius::elliptical(values, values);
+        let path = rounded_background_path(
+            20.0,
+            20.0,
+            80.0,
+            80.0,
+            &radius,
+            (20.0, 20.0, 20.0, 20.0),
+            (100.0, 100.0),
+        )
+        .unwrap();
+        assert_eq!(path.winding(outside), 0);
+        assert_ne!(path.winding(Point::new(50.0, 50.0)), 0);
+        let empty = rounded_background_path(
+            40.0,
+            40.0,
+            60.0,
+            60.0,
+            &radius,
+            (40.0, 40.0, 40.0, 40.0),
+            (100.0, 100.0),
+        )
+        .unwrap();
+        assert!(empty.elements().is_empty());
+    }
+}
+
+const CROSSING_RADII: [&str; 2] = [
+    "border-top-left-radius:100px;border-bottom-right-radius:100px",
+    "border-top-right-radius:100px;border-bottom-left-radius:100px",
+];
+
+fn crossing_corner_pixels(style: &str, content: &str) -> Vec<u8> {
+    let scene = transform_markup_scene(&format!(
+        "<body style='margin:0'><div style='position:absolute;left:0;top:0;box-sizing:border-box;width:100px;height:100px;{style}'>{content}</div></body>"
+    ));
+    anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        100,
+        100,
+    )
+}
+
+#[test]
+fn crossing_inner_corner_backgrounds_do_not_paint_reversed_islands() {
+    for (radii, outside) in CROSSING_RADII.into_iter().zip([(78, 21), (21, 21)]) {
+        let partial = crossing_corner_pixels(
+            &format!(
+                "{radii};border:20px solid transparent;background:red;background-clip:padding-box"
+            ),
+            "",
+        );
+        let offset = (outside.1 * 100 + outside.0) * 4;
+        assert_eq!(&partial[offset..offset + 4], &[255, 255, 255, 255]);
+        let center = (50 * 100 + 50) * 4;
+        assert_eq!(&partial[center..center + 4], &[255, 0, 0, 255]);
+        let empty = crossing_corner_pixels(
+            &format!(
+                "{radii};border:40px solid transparent;background:red;background-clip:padding-box"
+            ),
+            "",
+        );
+        assert_eq!(&empty[center..center + 4], &[255, 255, 255, 255]);
+    }
+}
+
+#[test]
+fn crossing_inner_corner_empty_ring_retains_the_outer_border() {
+    for radii in CROSSING_RADII {
+        let rgba = crossing_corner_pixels(
+            &format!("{radii};border:40px solid red;background:blue;background-clip:padding-box"),
+            "",
+        );
+        let center = (50 * 100 + 50) * 4;
+        assert_eq!(&rgba[center..center + 4], &[255, 0, 0, 255]);
+    }
+}
+
+#[test]
+fn crossing_inner_corner_empty_overflow_clip_hides_descendants() {
+    for radii in CROSSING_RADII {
+        let rgba = crossing_corner_pixels(
+            &format!("{radii};border:40px solid transparent;overflow:hidden"),
+            "<div style='width:100px;height:100px;background:red'></div>",
+        );
+        let center = (50 * 100 + 50) * 4;
+        assert_eq!(&rgba[center..center + 4], &[255, 255, 255, 255]);
+    }
+}
+
+#[test]
+fn corner_curve_flattening_preserves_endpoints_with_bounded_finite_output() {
+    let collapsed = Point::new(10.0, 20.0);
+    let mut points = vec![collapsed];
+    flatten_corner_curve([collapsed; 4], 0, &mut points);
+    assert!(points.iter().all(|point| *point == collapsed));
+    let extent = 1e18;
+    let curve = [
+        Point::new(0.0, extent),
+        Point::new(0.0, extent * 0.447_715_2),
+        Point::new(extent * 0.447_715_2, 0.0),
+        Point::new(extent, 0.0),
+    ];
+    let mut points = vec![curve[0]];
+    flatten_corner_curve(curve, 0, &mut points);
+    assert!(points.len() <= 1025);
+    assert_eq!(points.first(), Some(&curve[0]));
+    assert_eq!(points.last(), Some(&curve[3]));
+    assert!(points.iter().all(|point| point.x.is_finite()
+        && point.y.is_finite()
+        && (0.0..=extent).contains(&point.x)
+        && (0.0..=extent).contains(&point.y)));
+}
