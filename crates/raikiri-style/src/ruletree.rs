@@ -2079,7 +2079,13 @@ fn parse_stylesheet_namespaces(source: &str) -> NamespaceMap {
             input: &mut Parser<'i, 't>,
         ) -> Result<(), cssparser::ParseError<'i, ()>> {
             let start = input.state();
-            crate::selector_depth::check_selector_token_depth(input, 0)?;
+            if crate::selector_depth::check_selector_token_depth(input, 0).is_err() {
+                // A depth-limited qualified rule still ends the namespace header.
+                // Consume its prelude without entering the recursive selector parser.
+                input.reset(&start);
+                while input.next().is_ok() {}
+                return Ok(());
+            }
             input.reset(&start);
             if input.try_parse(parse_custom_highlight_prelude).is_ok() {
                 return Ok(());

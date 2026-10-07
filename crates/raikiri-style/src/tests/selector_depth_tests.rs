@@ -120,3 +120,31 @@ fn quoted_selector_attribute_delimiters_do_not_consume_depth_budget() {
         &SupportsContext::new("", &[])
     ));
 }
+
+#[test]
+fn depth_limited_rules_preserve_the_namespace_header_barrier() {
+    for depth in [32, 33, 4000] {
+        let deep = nested_selector(depth);
+        let source = format!(
+            "@namespace early 'urn:early'; {deep} {{color:red}} @namespace late 'urn:late'; \
+             @supports selector(late|div) {{p {{color:red}}}} \
+             @supports selector(early|div) {{p {{color:blue}}}}"
+        );
+        let context = SupportsContext::new(&source, &[]);
+        assert!(crate::supports::supports_condition(
+            "selector(early|div)",
+            &context
+        ));
+        assert!(
+            !crate::supports::supports_condition("selector(late|div)", &context),
+            "namespace following a depth-{depth} qualified rule must be ignored"
+        );
+        let mut tree = crate::RuleTree::empty();
+        tree.add_stylesheet(&source, crate::Origin::Author);
+        assert_eq!(tree.style_rules().len(), if depth == 32 { 2 } else { 1 });
+        assert_eq!(
+            tree.style_rules().last().unwrap().selectors.to_css_string(),
+            "p"
+        );
+    }
+}
