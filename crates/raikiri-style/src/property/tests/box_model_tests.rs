@@ -2668,6 +2668,15 @@ fn height_key_maps_to_height_property_key() {
 #[test]
 fn border_radius_expands_one_to_four_lengths_in_clockwise_order() {
     assert_eq!(
+        parse_entire("1px 2px 3px 4px", "border-radius"),
+        Some(PropertyValue::BorderRadius(BorderRadius::corners(
+            Length::Px(1.0),
+            Length::Px(2.0),
+            Length::Px(3.0),
+            Length::Px(4.0)
+        )))
+    );
+    assert_eq!(
         parse("1px", "border-radius"),
         Some(PropertyValue::BorderRadius(BorderRadius {
             top_left: Length::Px(1.0).into(),

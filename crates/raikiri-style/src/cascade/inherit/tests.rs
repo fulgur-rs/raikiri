@@ -3892,6 +3892,21 @@ fn elliptical_radius_custom_property_fallback_can_select_inherited_axes() {
 }
 
 #[test]
+fn independent_elliptical_corner_longhands_are_cascaded_without_a_shorthand() {
+    let cv = cascade_doc(
+        "",
+        "p",
+        Some(
+            "border-top-left-radius:1px 2px;border-top-right-radius:3px 4px;border-bottom-right-radius:5px 6px;border-bottom-left-radius:7px 8px",
+        ),
+    );
+    assert_eq!(
+        cv.border_radius.used(100.0, 100.0),
+        [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0], [7.0, 8.0]]
+    );
+}
+
+#[test]
 fn box_shadow_zero_mantissa_huge_exponent_offset_resolves_through_real_cascade() {
     // Same recovery as
     // `text_shadow_zero_mantissa_huge_exponent_offset_resolves_through_real_cascade`

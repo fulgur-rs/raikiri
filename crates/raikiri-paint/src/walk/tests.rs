@@ -778,31 +778,97 @@ fn paint_list_marker_emits_text_and_honors_display_none() {
 
 #[test]
 fn border_radius_normalization_scales_adjacent_edges() {
-    let normalized =
-        normalize_border_radii(100.0, 100.0, RoundedRectRadii::new(80.0, 80.0, 80.0, 80.0));
-    assert_eq!(normalized.top_left, 50.0);
-    assert_eq!(normalized.top_right, 50.0);
-    assert_eq!(normalized.bottom_right, 50.0);
-    assert_eq!(normalized.bottom_left, 50.0);
     assert_eq!(
-        used_border_radius(ComputedLengthPercentage::Percent(25.0), 200.0),
-        50.0
+        used_border_radii(
+            &ComputedBorderRadius::all(ComputedLength(80.0)),
+            100.0,
+            100.0
+        ),
+        [[50.0, 50.0]; 4]
     );
 }
 
 #[test]
-fn border_radius_paint_keeps_lengths_but_defers_percentages() {
-    let radius = ComputedBorderRadius::corners(
-        ComputedLengthPercentage::Px(12.0),
-        ComputedLengthPercentage::Percent(25.0),
-        ComputedLengthPercentage::Px(4.0),
-        ComputedLengthPercentage::Percent(50.0),
+fn elliptical_background_paths_keep_both_axes_and_independent_insets() {
+    let radius = ComputedBorderRadius::elliptical(
+        [ComputedLengthPercentage::Px(30.0); 4],
+        [ComputedLengthPercentage::Px(15.0); 4],
     );
-    let used = paintable_border_radius(&radius, true);
-    assert_eq!(used.top_left, ComputedLengthPercentage::Px(12.0));
-    assert_eq!(used.top_right, ComputedLengthPercentage::Px(0.0));
-    assert_eq!(used.bottom_right, ComputedLengthPercentage::Px(4.0));
-    assert_eq!(used.bottom_left, ComputedLengthPercentage::Px(0.0));
+    let path = rounded_background_path(
+        0.0,
+        0.0,
+        100.0,
+        50.0,
+        &radius,
+        (0.0, 0.0, 0.0, 0.0),
+        (100.0, 50.0),
+    )
+    .unwrap();
+    assert_eq!(
+        path.elements()[0],
+        kurbo::PathEl::MoveTo(Point::new(0.0, 15.0))
+    );
+    let inset = rounded_background_path(
+        4.0,
+        2.0,
+        94.0,
+        47.0,
+        &radius,
+        (4.0, 2.0, 6.0, 3.0),
+        (100.0, 50.0),
+    )
+    .unwrap();
+    assert_eq!(
+        inset.elements()[0],
+        kurbo::PathEl::MoveTo(Point::new(4.0, 15.0))
+    );
+    assert_eq!(
+        kurbo::Shape::bounding_box(&inset),
+        Rect::new(4.0, 2.0, 94.0, 47.0)
+    );
+}
+
+#[test]
+fn elliptical_background_raster_distinguishes_the_vertical_axis() {
+    let radius = ComputedBorderRadius::elliptical(
+        [ComputedLengthPercentage::Px(30.0); 4],
+        [ComputedLengthPercentage::Px(15.0); 4],
+    );
+    let mut scene = Scene::new();
+    fill_rounded_background(
+        &mut scene,
+        Color::from_rgba8(255, 0, 0, 255),
+        0.0,
+        0.0,
+        100.0,
+        50.0,
+        &radius,
+        (0.0, 0.0, 0.0, 0.0),
+        (100.0, 50.0),
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        100,
+        50,
+    );
+    assert_eq!(
+        &rgba[(8 * 100 + 8) * 4..(8 * 100 + 8) * 4 + 4],
+        &[255, 0, 0, 255]
+    );
+    assert_eq!(rgba[(2 * 100 + 8) * 4 + 3], 0);
+}
+
+#[test]
+fn border_radius_paint_keeps_both_axes_and_percentages() {
+    let radius = ComputedBorderRadius::elliptical(
+        [ComputedLengthPercentage::Px(12.0); 4],
+        [ComputedLengthPercentage::Percent(25.0); 4],
+    );
+    assert_eq!(paintable_border_radius(&radius, true), radius);
+    assert_eq!(
+        paintable_border_radius(&radius, false).used(100.0, 50.0),
+        [[0.0, 0.0]; 4]
+    );
 }
 
 #[test]
@@ -2259,7 +2325,7 @@ fn background_rounded_corners_clip_url_images() {
             50.0,
             &ComputedBorderRadius::all(ComputedLength(0.0)),
             (0.0, 0.0, 0.0, 0.0),
-            100.0,
+            (100.0, 50.0),
         )
         .is_none()
     );
@@ -2271,7 +2337,7 @@ fn background_rounded_corners_clip_url_images() {
         50.0,
         &ComputedBorderRadius::all(ComputedLength(12.0)),
         (0.0, 0.0, 0.0, 0.0),
-        100.0,
+        (100.0, 50.0),
     )
     .expect("nonzero radius must produce a rounded clip");
     let bounds = kurbo::Shape::bounding_box(&rounded);
@@ -2571,7 +2637,7 @@ fn background_rounded_clip_pixel_corners() {
         painting.y1,
         &ComputedBorderRadius::all(ComputedLength(8.0)),
         (0.0, 0.0, 0.0, 0.0),
-        20.0,
+        (20.0, 20.0),
     )
     .expect("rounded clip must exist");
     let mut scene = Scene::new();
@@ -3261,6 +3327,48 @@ fn overflow_hidden_preserves_descendant_ink_in_padding() {
             &[255, 0, 0, 255],
             "border at ({x}, {y})"
         );
+    }
+}
+
+#[test]
+fn elliptical_overflow_clips_descendants_without_an_own_background() {
+    for (radius, inside) in [("30px / 15px", (8, 8)), ("50% / 25%", (25, 8))] {
+        let scene = transform_markup_scene(&format!(
+            "<body style='margin:0'><div style='position:absolute;left:0;top:0;width:100px;height:50px;overflow:hidden;border-radius:{radius}'><div style='width:100px;height:50px;background:green'></div></div></body>"
+        ));
+        let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+            |out| out.append_scene(scene, Affine::IDENTITY),
+            100,
+            50,
+        );
+        let outside = (2 * 100 + 8) * 4;
+        assert_eq!(
+            &rgba[outside..outside + 4],
+            &[255, 255, 255, 255],
+            "{radius}"
+        );
+        let offset = (inside.1 * 100 + inside.0) * 4;
+        assert_eq!(&rgba[offset..offset + 4], &[0, 128, 0, 255], "{radius}");
+    }
+}
+
+#[test]
+fn elliptical_border_ring_has_independent_outer_and_inner_axes() {
+    let scene = transform_markup_scene(
+        "<body style='margin:0'><div style='position:absolute;left:0;top:0;box-sizing:border-box;width:100px;height:50px;border:4px solid red;border-radius:30px / 15px'></div></body>",
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        100,
+        50,
+    );
+    assert_eq!(
+        &rgba[(4 * 100 + 15) * 4..(4 * 100 + 15) * 4 + 4],
+        &[255, 0, 0, 255]
+    );
+    for (x, y) in [(8, 2), (30, 15)] {
+        let offset = (y * 100 + x) * 4;
+        assert_eq!(&rgba[offset..offset + 4], &[255, 255, 255, 255]);
     }
 }
 
@@ -4001,7 +4109,7 @@ fn conic_paint_covers_empty_square_and_rounded_boxes() {
         painting,
         &square_radius,
         (0.0, 0.0, 0.0, 0.0),
-        200.0,
+        (200.0, 200.0),
         current,
     );
     assert!(!scene.commands.is_empty());
@@ -4013,7 +4121,7 @@ fn conic_paint_covers_empty_square_and_rounded_boxes() {
         painting,
         &square_radius,
         (0.0, 0.0, 0.0, 0.0),
-        200.0,
+        (200.0, 200.0),
         current,
     );
     assert_eq!(scene.commands.len(), before);
@@ -4024,7 +4132,7 @@ fn conic_paint_covers_empty_square_and_rounded_boxes() {
         painting,
         &round_radius,
         (0.0, 0.0, 0.0, 0.0),
-        200.0,
+        (200.0, 200.0),
         current,
     );
     assert!(scene.commands.len() > before);
