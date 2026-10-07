@@ -305,9 +305,14 @@ against the requested viewport. Print rendering evaluates them against the
 requested fallback page box, including margins, before authored `@page` sizes.
 The context is fixed for the document's element, page, and font-face cascades.
 Changing authored page size, margins, or named pages does not change the
-media-query environment. The print adapter resolves viewport units in inline
-`@media` / `@import` query operands against that fixed page box; declaration
-lengths retain their authored page-area basis. See [Media Queries 4 §4](https://www.w3.org/TR/mediaqueries-4/#width)
+media-query environment. The print adapter resolves viewport units in collected
+inline and external `@media` / `@import` query operands against that fixed page
+box; declaration lengths retain their authored page-area basis. The page cascade
+selects the declaration basis after fetching stylesheets, so inactive stylesheet
+and import media conditions do not contribute page dimensions. Inline style and
+animation declarations use the same basis through reparsing. Only CSS dimension
+tokens are expanded; identifiers, strings, URLs, and HTML text remain intact.
+See [Media Queries 4 §4](https://www.w3.org/TR/mediaqueries-4/#width)
 and [CSS Paged Media 3 §7.1](https://www.w3.org/TR/css-page-3/#page-size).
 
 The standalone style API defaults to a nominal 480 × 288 print page box;
