@@ -499,6 +499,56 @@ mod extracted {
                 )
                 self.assertEqual(status, 1, output)
 
+    def test_inner_attributes_apply_to_every_function_in_the_scope(self) -> None:
+        body = "fn keep() {}\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        for wrapper in ("{}", "mod gated {{\n{}\n}}\n"):
+            before = wrapper.format('#![cfg(feature = "old")]\n' + body)
+            after = wrapper.format('#![cfg(feature = "new")]\n' + body)
+            with self.subTest(wrapper=wrapper):
+                status, output = self._classify(
+                    before, after, "    record_uncovered_resolution_result();",
+                    destination="moved.rs"
+                )
+                self.assertEqual(status, 1, output)
+
+    def test_one_deleted_function_cannot_exempt_two_destinations(self) -> None:
+        before = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        after = """mod first {
+    fn resolve() {
+        record_uncovered_resolution_result();
+    }
+}
+mod second {
+        fn resolve() {
+            record_uncovered_resolution_result();
+        }
+}
+"""
+        status, output = self._classify(
+            before, after, "        record_uncovered_resolution_result();",
+            destination="moved.rs"
+        )
+        self.assertEqual(status, 1, output)
+
+    def test_multiple_identical_functions_can_move_without_becoming_copies(self) -> None:
+        source = """#![allow(dead_code)]
+mod first {
+    fn resolve() {
+        record_uncovered_resolution_result();
+    }
+}
+mod second {
+    fn resolve() {
+        record_uncovered_resolution_result();
+    }
+}
+"""
+        status, output = self._classify(
+            source, source, "        record_uncovered_resolution_result();",
+            destination="moved.rs"
+        )
+        self.assertEqual(status, 0, output)
+
 
 class ClassifyNoLcovRecordLinesTests(unittest.TestCase):
     """Regression tests for the whole-file-zero-SF-record false positive: a

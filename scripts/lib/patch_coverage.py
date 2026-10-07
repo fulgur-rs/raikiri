@@ -128,6 +128,7 @@ import json
 import re
 import subprocess
 import sys
+from collections import Counter
 from dataclasses import dataclass, field
 
 COMMENT_LINE_RE = re.compile(r"^\s*//")
@@ -732,11 +733,14 @@ def collect_moved_added_lines(repo_root: str, base: str, head: str) -> dict[str,
         check=True,
     )
     candidates = parse_moved_added_lines(proc.stdout)
+    if not candidates:
+        return {}
+    added = parse_added_lines(ANSI_RE.sub("", proc.stdout))
     deleted = parse_added_lines(subprocess.run(
         ["git", "-C", repo_root, "diff", "--no-renames", "-U0", head, base,
          "--", "*.rs"], capture_output=True, text=True, check=True,
     ).stdout)
-    old_functions = set()
+    old_functions = Counter()
     for path, lines in deleted.items():
         source = git_show(repo_root, base, path)
         if source is not None:
@@ -745,18 +749,26 @@ def collect_moved_added_lines(repo_root: str, base: str, head: str) -> dict[str,
                 # Git may align a closing brace with an unrelated block.
                 # Only punctuation-only lines may remain outside deletions.
                 if substantive_lines <= deleted_lines:
-                    old_functions.add(key)
-    result = {}
-    for path, lines in candidates.items():
+                    old_functions[key] += 1
+    new_functions = []
+    new_counts = Counter()
+    for path, lines in added.items():
         source = git_show(repo_root, head, path)
         if source is None:
             continue
-        eligible = set()
-        for key, token_lines, _ in unchanged_function_units(source):
-            if key in old_functions:
-                eligible.update(token_lines & lines)
-        if eligible:
-            result[path] = eligible
+        added_lines = set(lines)
+        for key, token_lines, substantive_lines in unchanged_function_units(source):
+            if substantive_lines & added_lines:
+                new_functions.append((path, key, token_lines))
+                new_counts[key] += 1
+    result = {}
+    for path, key, token_lines in new_functions:
+        # If destinations outnumber deleted sources, the move/copy mapping
+        # is ambiguous. Exempt none rather than reuse one deleted function.
+        if new_counts[key] <= old_functions[key]:
+            eligible = token_lines & candidates.get(path, set())
+            if eligible:
+                result.setdefault(path, set()).update(eligible)
     return result
 
 
@@ -837,17 +849,22 @@ def unchanged_function_units(source: str) -> list[tuple[tuple, set[int], set[int
     if tokens is None:
         return []
     units = []
-    # Each frame stores its opener, statement boundary, header and start.
-    frames = [["", 0, (), 0]]
+    # Each frame stores its opener, boundary, header, start and inner attrs.
+    frames = [["", 0, (), 0, []]]
     for index, (token, _) in enumerate(tokens):
         if token in ("{", "(", "["):
             start = frames[-1][1]
             header = tuple(value for value, _ in tokens[start:index])
-            frames.append([token, index + 1, header, start])
+            frames.append([token, index + 1, header, start, []])
         elif token in ("}", ")", "]"):
             if len(frames) == 1 or frames[-1][0] != {"}": "{", ")": "(", "]": "["}[token]:
                 return []
-            opener, _, header, start = frames.pop()
+            opener, _, header, start, _ = frames.pop()
+            if opener == "[" and header == ("#", "!"):
+                # Inner attributes describe the entire parent scope,
+                # not just whichever item happens to appear first.
+                frames[-1][4].append(tuple(value for value, _ in tokens[start:index + 1]))
+                frames[-1][1] = index + 1
             if opener == "{":
                 # A definition has `fn name`, unlike a function pointer type.
                 is_function = any(
@@ -860,8 +877,9 @@ def unchanged_function_units(source: str) -> list[tuple[tuple, set[int], set[int
                         if not re.fullmatch(r"(?:pub(?:\([^)]*\))?)?mod\w+",
                                             "".join(frame[2]))
                     )
+                    inner_attrs = tuple(attr for frame in frames for attr in frame[4])
                     body = tokens[start:index + 1]
-                    key = (context, tuple(value for value, _ in body))
+                    key = (context, inner_attrs, tuple(value for value, _ in body))
                     token_lines = {line for value, number in body
                                    for line in range(number, number + value.count("\n") + 1)}
                     substantive = {line for value, number in body
