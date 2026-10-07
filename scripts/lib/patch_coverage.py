@@ -750,17 +750,10 @@ def collect_moved_added_lines(repo_root: str, base: str, head: str,
         layouts = []
         for ref in (base, head):
             data = tomllib.loads(git_show(repo_root, ref, manifest) or "")
-            layouts.append((
-                tuple(data.get(kind) for kind in ("lib", "bin", "test", "example", "bench")),
-                tuple(data.get("package", {}).get(key) for key in
-                      ("autolib", "autobins", "autotests", "autoexamples", "autobenches")),
-                tuple(data.get("workspace", {}).get(key) for key in
-                      ("members", "exclude", "default-members")),
-                data.get("features"),
-            ))
+            layouts.append(cargo_compilation_layout(data))
         if layouts[0] != layouts[1]:
-            # HEAD metadata cannot establish BASE roots after a target
-            # layout change. Treat these functions as coverage-gated.
+            # The old build context cannot be inferred after an edition,
+            # target, feature, or other compilation setting changes.
             return {}
     added = parse_added_lines(ANSI_RE.sub("", proc.stdout))
     # Reversing the diff can align different shared lines. Parse deletions
@@ -798,6 +791,28 @@ def collect_moved_added_lines(repo_root: str, base: str, head: str,
             eligible = token_lines & candidates.get(path, set())
             if eligible:
                 result.setdefault(path, set()).update(eligible)
+    return result
+
+
+def cargo_compilation_layout(value):
+    """Keep manifest state, ignoring only dependency version edits.
+
+    Features, edition, resolver, workspace inheritance and unknown fields
+    remain significant. A dependency's source/rename/optional/default-
+    feature settings cannot be normalized away with its version string.
+    """
+    if isinstance(value, list):
+        return [cargo_compilation_layout(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    result = {}
+    for key, item in value.items():
+        if key in ("dependencies", "dev-dependencies", "build-dependencies") and isinstance(item, dict):
+            result[key] = {name: ({} if isinstance(spec, str) else
+                                {field: setting for field, setting in spec.items() if field != "version"})
+                           for name, spec in item.items()}
+        else:
+            result[key] = cargo_compilation_layout(item)
     return result
 
 
@@ -1150,15 +1165,20 @@ def binding_names(tokens: tuple) -> set[str] | None:
     kinds = {"fn", "const", "static", "type", "struct", "enum", "trait", "macro_rules", "macro"}
     for index, token in enumerate(tokens):
         if token == "use":
-            if "*" in tokens[index + 1:]:
-                return None
-            return {value for value in tokens[index + 1:] if re.fullmatch(r"\w+", value)}
+            # Trait imports affect method lookup without the trait name
+            # appearing in the body, including imports aliased as `_`.
+            return None
         if token in kinds:
             return {value for value in tokens[index + 1:] if re.fullmatch(r"\w+", value)}
         if token == "impl":
             return None
     # Unknown expansions can introduce any referenced name.
     return None
+
+
+def has_file_include(tokens: tuple) -> bool:
+    return any(token in ("include", "include_str", "include_bytes") and following == "!"
+               for token, following in zip(tokens, tokens[1:]))
 
 
 def function_move_key(snapshot: dict, path: str, unit: tuple) -> tuple | None:
@@ -1169,6 +1189,8 @@ def function_move_key(snapshot: dict, path: str, unit: tuple) -> tuple | None:
     Declaration order is irrelevant except for textual macro visibility.
     """
     (runtime, attrs, body, local_macros), _, _, local_chain = unit
+    if has_file_include(body):
+        return None
     contexts = snapshot["contexts"].get(path)
     if not contexts:
         return None
@@ -1191,6 +1213,11 @@ def function_move_key(snapshot: dict, path: str, unit: tuple) -> tuple | None:
                 for binding in bindings:
                     names = binding_names(binding)
                     if names is None or references & names:
+                        # Expansion inputs can change bindings or values
+                        # outside this graph. Fail closed only for functions
+                        # whose scope/references reach those inputs.
+                        if has_file_include(binding):
+                            return None
                         relevant.add((scope, binding))
                         references.update(token for token in binding if re.fullmatch(r"\w+", token))
             changed = len(references) != previous

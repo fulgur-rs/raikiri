@@ -867,6 +867,54 @@ pub fn call() { crate::resolver::resolve(); }
         )
         self.assertEqual(status, 0, output)
 
+    def test_compilation_manifest_changes_do_not_exempt_relocated_functions(self) -> None:
+        body = "fn resolve() {\n    record_uncovered_resolution_result([1, 2].into_iter());\n}\n"
+        manifest = '[package]\nname="fixture"\nversion="0.1.0"\nedition="2018"\n'
+        cases = ((manifest, manifest.replace('"2018"', '"2021"')),
+                 (manifest + '[dependencies]\nother={version="0.1",features=[]}\n',
+                  manifest + '[dependencies]\nother={version="0.1",features=["gate"]}\n'),
+                 (manifest + '[workspace.dependencies]\nother={version="0.1",default-features=false}\n',
+                  manifest + '[workspace.dependencies]\nother={version="0.1",default-features=true}\n'))
+        for before, after in cases:
+            with self.subTest(after=after):
+                status, output = self._classify(
+                    body, body, body.splitlines()[1], destination="moved.rs",
+                    auxiliary_before={"Cargo.toml": before}, auxiliary_after={"Cargo.toml": after}
+                )
+                self.assertEqual(status, 1, output)
+
+    def test_trait_import_changes_affect_implicit_method_resolution(self) -> None:
+        body = "fn resolve(value: Value) {\n    record_uncovered_resolution_result(value.resolve());\n}\n"
+        for alias in ("", " as _"):
+            for imported in ("old", "new"):
+                with self.subTest(alias=alias, imported=imported):
+                    status, output = self._classify(
+                        "mod resolver {\nuse old::Resolve" + alias + ";\n" + body + "}\n",
+                        "use " + imported + "::Resolve" + alias + ";\n" + body, body.splitlines()[1],
+                        destination="resolver.rs", auxiliary_after={"lib.rs": "mod resolver;\n"}
+                    )
+                    self.assertEqual(status, 0 if imported == "old" else 1, output)
+
+    def test_include_inputs_cannot_silently_change_move_context(self) -> None:
+        body = 'include!("bindings.rs");\nfn resolve() {\n    record_uncovered_resolution_result(VALUE);\n}\n'
+        status, output = self._classify(
+            body + "fn keep() {}\n", "fn keep() {}\n" + body.replace("    record", "        record"),
+            "        record_uncovered_resolution_result(VALUE);",
+            auxiliary_before={"bindings.rs": "const VALUE: u8 = 1;\n"},
+            auxiliary_after={"bindings.rs": "const VALUE: u8 = 2;\n"}, covered_auxiliary=True
+        )
+        self.assertEqual(status, 1, output)
+
+    def test_unrelated_include_does_not_disable_valid_module_extraction(self) -> None:
+        body = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        status, output = self._classify(
+            "mod unrelated;\nmod resolver {\n" + body + "}\n", body, body.splitlines()[1],
+            destination="resolver.rs", auxiliary_before={"unrelated.rs": 'include!("bindings.rs");\n'},
+            auxiliary_after={"lib.rs": "mod unrelated;\nmod resolver;\n",
+                             "unrelated.rs": 'include!("bindings.rs");\n'}
+        )
+        self.assertEqual(status, 0, output)
+
 
 class ClassifyNoLcovRecordLinesTests(unittest.TestCase):
     """Regression tests for the whole-file-zero-SF-record false positive: a
