@@ -970,6 +970,62 @@ pub fn call() { crate::resolver::resolve(); }
                 )
                 self.assertEqual(status, 0 if value == "1" else 1, output)
 
+    def test_macro_use_shadowing_order_survives_module_extraction(self) -> None:
+        body = "fn resolve() {\n    record_uncovered_resolution_result(value!());\n}\n"
+        first = "#[macro_use] mod old;\n"
+        second = "#[macro_use] mod new;\n"
+        helpers = {"old.rs": "macro_rules! value { () => { 1 } }\n",
+                   "new.rs": "macro_rules! value { () => { 2 } }\n"}
+        for imports in (first + second, second + first):
+            with self.subTest(unchanged=imports == first + second):
+                status, output = self._classify(
+                    first + second + "mod resolver {\n" + body + "}\n", body, body.splitlines()[1],
+                    destination="resolver.rs", auxiliary_before=helpers,
+                    auxiliary_after={**helpers, "lib.rs": imports + "mod resolver;\n"},
+                    covered_auxiliary=True
+                )
+                self.assertEqual(status, 0 if imports == first + second else 1, output)
+
+    def test_literal_suffix_is_part_of_the_macro_token(self) -> None:
+        for literal in ('"x"', "'x'", 'b"x"', "b'x'", 'r#"x"#', 'br#"x"#', 'c"x"', 'cr#"x"#'):
+            original = literal + "suffix"
+            source = "macro_rules! choose { ($value:tt) => { 1 }; ($($value:tt)+) => { 2 }; }\n"
+            source += f"fn resolve() {{\n    let value = choose!({original});\n    record_uncovered_resolution_result(value);\n}}\n"
+            for after in (source, source.replace(original, literal + " suffix")):
+                with self.subTest(literal=literal, unchanged=after == source):
+                    status, output = self._classify(source, after, source.splitlines()[3], destination="moved.rs")
+                    self.assertEqual(status, 0 if after == source else 1, output)
+
+    def test_doc_comments_are_macro_attribute_tokens(self) -> None:
+        for comment in ("/// old", "/** old */", "//! old", "/*! old */"):
+            source = 'macro_rules! choose { (#[doc=$text:literal]) => { $text }; (#![doc=$text:literal]) => { $text }; }\n'
+            source += "fn resolve() {\n    let value = choose!(\n" + comment + "\n);\n    record_uncovered_resolution_result(value);\n}\n"
+            for after in (source, source.replace("old", "new")):
+                with self.subTest(comment=comment, unchanged=after == source):
+                    status, output = self._classify(source, after, source.splitlines()[5], destination="moved.rs")
+                    self.assertEqual(status, 0 if after == source else 1, output)
+
+    def test_build_script_include_inputs_make_compilation_context_unknown(self) -> None:
+        manifest = '[package]\nname="fixture"\nversion="0.1.0"\nbuild="build.rs"\n'
+        build = 'fn main() { if include_str!("gate.txt").trim()=="on" { println!("cargo:rustc-cfg=gate"); } }\n'
+        body = "#[cfg(gate)]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        status, output = self._classify(
+            body + "fn keep() {}\n", "fn keep() {}\n" + body.replace("    record", "        record"),
+            "        record_uncovered_resolution_result();",
+            auxiliary_before={"Cargo.toml": manifest, "build.rs": build, "gate.txt": "off"},
+            auxiliary_after={"Cargo.toml": manifest, "build.rs": build, "gate.txt": "on"},
+            extra_targets=(("custom-build", "build.rs"),), covered_auxiliary=True
+        )
+        self.assertEqual(status, 1, output)
+
+    def test_raw_include_identifier_does_not_hide_file_inputs(self) -> None:
+        body = 'fn resolve() {\n    record_uncovered_resolution_result(r#include_str!("value.txt"));\n}\n'
+        status, output = self._classify(
+            body, body, body.splitlines()[1], destination="moved.rs",
+            auxiliary_before={"value.txt": "old"}, auxiliary_after={"value.txt": "new"}
+        )
+        self.assertEqual(status, 1, output)
+
     def test_compiler_configuration_changes_do_not_exempt_functions(self) -> None:
         body = "#[cfg(gate)]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n"
         for name, before, after in (

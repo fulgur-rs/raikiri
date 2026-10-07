@@ -769,7 +769,8 @@ def collect_moved_added_lines(repo_root: str, base: str, head: str,
     old_functions = Counter()
     snapshots = {ref: rust_module_snapshot(repo_root, ref, metadata) for ref in (base, head)}
     if (snapshots[base]["build_inputs"] != snapshots[head]["build_inputs"]
-            or any(value is None for snapshot in snapshots.values() for value in snapshot["build_inputs"].values())):
+            or any(value is None or has_file_include(value)
+                   for snapshot in snapshots.values() for value in snapshot["build_inputs"].values())):
         return {}
     for path, lines in deleted.items():
         snapshot = snapshots[base]
@@ -858,8 +859,8 @@ def rust_identifier(token: str) -> str | None:
 def rust_move_tokens(source: str) -> list[tuple[str, int]] | None:
     """Tokenize enough Rust syntax to compare complete functions safely.
 
-    Keep literal contents, omit whitespace/comments, and retain line
-    numbers. Unterminated literals/comments fail closed. This is not a
+    Keep literal contents, suffixes and doc attributes. Omit whitespace
+    and plain comments; retain line numbers. Unterminated literals/comments fail closed. This is not a
     Rust parser: unsupported item shapes simply receive no exemption.
     """
     tokens = []
@@ -869,6 +870,7 @@ def rust_move_tokens(source: str) -> list[tuple[str, int]] | None:
         r"\+=|-=|\*=|/=|%=|\^=|&=|\|=|<<|>>|\.\."
     )
     raw_identifier = re.compile(r"r#[^\W\d]\w*")
+    literal_suffix = re.compile(r"[^\W\d]\w*")
     number = re.compile(r"[0-9][0-9_]*(?:\.(?:[0-9][0-9_]*|(?!(?:[.\w]))))?(?:[eE][+-]?[0-9][0-9_]*)?\w*")
     i = 0
     line = 1
@@ -881,6 +883,9 @@ def rust_move_tokens(source: str) -> list[tuple[str, int]] | None:
         if source.startswith("//", i):
             end = source.find("\n", i)
             i = len(source) if end < 0 else end
+            if source.startswith("//!", start) or (source.startswith("///", start) and not source.startswith("////", start)):
+                prefix = ("#", "!") if source.startswith("//!", start) else ("#",)
+                tokens.extend((value, line) for value in prefix + ("[", "doc", "=", json.dumps(source[start:i]), "]"))
             continue
         if source.startswith("/*", i):
             depth = 1
@@ -896,16 +901,23 @@ def rust_move_tokens(source: str) -> list[tuple[str, int]] | None:
                     i += 1
             if depth:
                 return None
+            if source.startswith("/*!", start) or (source.startswith("/**", start)
+                                                    and not source.startswith(("/***", "/**/"), start)):
+                prefix = ("#", "!") if source.startswith("/*!", start) else ("#",)
+                tokens.extend((value, line) for value in prefix + ("[", "doc", "=", json.dumps(source[start:i]), "]"))
             line += source[start:i].count("\n")
             continue
+        literal = False
         raw = raw_start.match(source, i)
         if raw:
+            literal = True
             terminator = '"' + raw.group(1)
             end = source.find(terminator, raw.end())
             if end < 0:
                 return None
             i = end + len(terminator)
         elif source[i] == '"' or source[i:i + 2] in ('b"', 'c"'):
+            literal = True
             i += 1 if source[i] == '"' else 2
             while i < len(source) and source[i] != '"':
                 i += 2 if source[i] == "\\" else 1
@@ -913,6 +925,7 @@ def rust_move_tokens(source: str) -> list[tuple[str, int]] | None:
                 return None
             i += 1
         elif source.startswith("b'", i):
+            literal = True
             end = _char_literal_end(source, i + 1)
             if end is None:
                 return None
@@ -922,10 +935,13 @@ def rust_move_tokens(source: str) -> list[tuple[str, int]] | None:
         elif source[i].isdigit() and (numeric := number.match(source, i)) is not None:
             i = numeric.end()
         elif source[i] == "'" and (end := _char_literal_end(source, i)) is not None:
+            literal = True
             i = end + 1
         else:
             word = word_or_operator.match(source, i)
             i = word.end() if word else i + 1
+        if literal and (suffix := literal_suffix.match(source, i)) is not None:
+            i = suffix.end()
         tokens.append((source[start:i], line))
         line += source[start:i].count("\n")
     return tokens
@@ -1027,7 +1043,7 @@ def rust_source_units(source: str) -> tuple[list, list, dict]:
                     body = tokens[start:index + 1]
                     visible_macros = tuple((module_chain(frames)[:n], binding) for n in range(len(module_chain(frames)) + 1)
                                            for binding in bindings.get(module_chain(frames)[:n], [])
-                                           if "macro_rules" in binding or "macro" in binding)
+                                           if is_textual_macro(binding))
                     key = (tuple(context), enclosing_attributes(frames), tuple(value for value, _ in body), visible_macros, header)
                     token_lines = {line for value, number in body
                                    for line in range(number, number + value.count("\n") + 1)}
@@ -1039,7 +1055,7 @@ def rust_source_units(source: str) -> tuple[list, list, dict]:
                     scope_attrs = enclosing_attributes(frames)
                     scope_attrs += attribute_prefix(header) + tuple(value for attr in inner_attrs for value in attr)
                     bindings.setdefault(module_chain(frames) + (rust_identifier(header[-1]),), []).append(("@scope",) + scope_attrs)
-                    if "macro_use" in attribute_prefix(header):
+                    if any(rust_identifier(token) == "macro_use" for token in attribute_prefix(header)):
                         bindings.setdefault(module_chain(frames), []).append(("@macro_use", rust_identifier(header[-1])) + attribute_prefix(header))
                 if is_module_scope(frames) and not (len(header) >= 2 and header[-2] == "mod"):
                     # Function signatures bind names; their bodies are
@@ -1057,9 +1073,9 @@ def rust_source_units(source: str) -> tuple[list, list, dict]:
                 attributes += attribute_prefix(header)
                 visible_macros = tuple((chain[:n], binding) for n in range(len(chain) + 1)
                                        for binding in bindings.get(chain[:n], [])
-                                       if "macro_rules" in binding or "macro" in binding)
+                                       if is_textual_macro(binding))
                 modules.append((chain, rust_identifier(header[-1]), attributes, visible_macros))
-                if "macro_use" in attribute_prefix(header):
+                if any(rust_identifier(token) == "macro_use" for token in attribute_prefix(header)):
                     bindings.setdefault(chain, []).append(("@macro_use", rust_identifier(header[-1])) + attribute_prefix(header))
             elif header and is_module_scope(frames):
                 bindings.setdefault(module_chain(frames), []).append(header)
@@ -1112,7 +1128,8 @@ def rust_module_snapshot(repo_root: str, ref: str, metadata: dict | None) -> dic
     conventional child directory. Multiple target/module contexts are
     retained together; an unresolved layout fails closed for its target.
     """
-    snapshot = {"sources": {}, "contexts": {}, "bindings": {}, "function_bodies": {}, "build_inputs": {}, "unsafe": set()}
+    snapshot = {"sources": {}, "contexts": {}, "bindings": {}, "function_bodies": {},
+                "macro_imports": {}, "build_inputs": {}, "unsafe": set()}
     def read(path):
         if path not in snapshot["sources"]:
             source = git_show(repo_root, ref, path)
@@ -1200,14 +1217,15 @@ def rust_module_snapshot(repo_root: str, ref: str, metadata: dict | None) -> dic
         resolved = []
         for binding in values:
             if binding[:1] == ("@macro_use",):
+                raw_binding = binding
                 child = snapshot["bindings"].get((identity, scope + (binding[1],)))
                 locator = module_locator(binding[2:])
                 if child is None or locator is None:
                     binding = ("@macro_use_unknown",)
                 else:
-                    macros = [value for value in child if "macro_rules" in value or "macro" in value
-                              or value[:1] in (("@macro_use",), ("@macro_use_unknown",))]
+                    macros = [value for value in child if is_textual_macro(value)]
                     binding = ("@macro_use", binding[1]) + locator[0] + tuple(token for value in macros for token in ("@definition",) + value)
+                snapshot["macro_imports"][(identity, scope, raw_binding)] = binding
             resolved.append(binding)
         snapshot["bindings"][(identity, scope)] = resolved
     return snapshot
@@ -1236,7 +1254,12 @@ def has_file_include(tokens: tuple) -> bool:
     # A built-in may be aliased, re-exported or passed to another macro.
     # Unknown expansion cannot establish unchanged file inputs. Literal
     # text remains quoted tokens and does not match these identifiers.
-    return bool(includes.intersection(tokens))
+    return any(rust_identifier(token) in includes for token in tokens)
+
+
+def is_textual_macro(tokens: tuple) -> bool:
+    return (tokens[:1] in (("@macro_use",), ("@macro_use_unknown",))
+            or any(rust_identifier(token) in ("macro_rules", "macro") for token in tokens))
 
 
 def function_move_key(snapshot: dict, path: str, unit: tuple) -> tuple | None:
@@ -1290,8 +1313,15 @@ def function_move_key(snapshot: dict, path: str, unit: tuple) -> tuple | None:
                         for value in bodies:
                             references.update(name for token in value if (name := rust_identifier(token)) is not None)
             changed = len(references) != previous
-        macros = tuple((scope, binding) for scope, binding in macro_prefix
-                       if binding_names(binding) is None or references & binding_names(binding))
+        macros = []
+        for scope, binding in macro_prefix:
+            if binding[:1] == ("@macro_use",):
+                binding = snapshot["macro_imports"].get((identity, scope, binding))
+                if binding is None or "@macro_use_unknown" in binding:
+                    return None
+            if binding_names(binding) is None or references & binding_names(binding):
+                macros.append((scope, binding))
+        macros = tuple(macros)
         keys.append((identity, logical, inherited_attrs + attrs, tuple(sorted(relevant)), macros))
     return tuple(sorted(keys)), runtime, body
 
