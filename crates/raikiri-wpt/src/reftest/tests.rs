@@ -1985,7 +1985,7 @@ fn ignored_page_size_does_not_change_declaration_viewport_basis() {
         ),
         (
             "@media print { @page { size:auto; margin:0 } }",
-            (800.0, 600.0),
+            (793.7008, 1122.5197),
         ),
         (
             "@layer base { @media print and (min-width:1px) { @page { size:300px 200px; margin:0 } } }",
@@ -2084,29 +2084,51 @@ fn ignored_page_size_does_not_rescale_later_viewport_size() {
 }
 
 #[test]
-fn page_size_unit_expansion_preserves_other_css_tokens() {
+fn page_context_unit_expansion_preserves_other_css_tokens() {
     let source = r#"/* @page{size:50vw} */ @MEDIA print and (width:100vw){@\70 age{SIZE:50vw 50vh!important; width:100vw; content:'size:50vw'; @top-left{size:50vw}}}.box{size:50vw;width:100vw}"#;
-    let expected = r#"/* @page{size:50vw} */ @MEDIA print and (width:100vw){@\70 age{SIZE:240.000015px 144.000000px!important; width:100vw; content:'size:50vw'; @top-left{size:50vw}}}.box{size:50vw;width:100vw}"#;
-    assert_eq!(resolve_page_size_viewport_units(source), expected);
+    let expected = r#"/* @page{size:50vw} */ @MEDIA print and (width:100vw){@\70 age{SIZE:240.000015px 144.000000px!important; width:480.000031px; content:'size:50vw'; @top-left{size:240.000015px}}}.box{size:50vw;width:100vw}"#;
+    assert_eq!(resolve_page_context_viewport_units(source), expected);
     let deep = format!(
         "{}@page{{size:50vw}}{}",
         "@layer base{".repeat(129),
         "}".repeat(129)
     );
-    assert_eq!(resolve_page_size_viewport_units(&deep), deep);
-    for invalid in ["@unknown{@page{size:50vw}}", "@page :unknown {size:50vw}"] {
-        assert_eq!(resolve_page_size_viewport_units(invalid), invalid);
+    assert_eq!(resolve_page_context_viewport_units(&deep), deep);
+    for invalid in [
+        "@unknown{@page{size:50vw}}",
+        "@page :unknown {size:50vw}",
+        ".box{--tokens:{@page{size:50vw}}}",
+        ".box{@page{size:50vw}}",
+    ] {
+        assert_eq!(resolve_page_context_viewport_units(invalid), invalid);
     }
 }
 
 #[test]
 fn ignored_size_preserves_requested_width_page_and_element_declarations() {
-    for (body, expected) in [("<div style='width:1px;height:1px'></div>", [0, 128, 0, 255]), ("<div class=box></div>", [0, 0, 255, 255])] {
-        let html = format!("<style>@media print and (width:800px){{@page{{size:300px 200px;margin:0;background:green}}html,body{{margin:0}}.box{{width:100vw;height:100vh;background:blue}}}}</style>{body}");
+    for (body, expected) in [
+        ("<div style='width:1px;height:1px'></div>", [0, 128, 0, 255]),
+        ("<div class=box></div>", [0, 0, 255, 255]),
+    ] {
+        let html = format!(
+            "<style>@media print and (width:800px){{@page{{size:300px 200px;margin:0;background:green}}html,body{{margin:0}}.box{{width:100vw;height:100vh;background:blue}}}}</style>{body}"
+        );
         let image = render_raikiri(&html, 800, 600).unwrap();
         assert_eq!((image.width, image.height), (800, 600));
         assert_eq!(&image.rgba[..4], &expected);
         let offset = (500 * 800 + 700) * 4;
         assert_eq!(&image.rgba[offset..offset + 4], &expected);
     }
+}
+
+#[test]
+fn ignored_page_size_keeps_viewport_margin_basis_consistent() {
+    let html = "<style>@media print and (width:800px){@page{size:300px 200px;margin:10vw;background:red}}html,body{margin:0}.box{width:100vw;height:100vh;background:green}</style><div class=box></div>";
+    let reference = "<style>@page{margin:48px;background:red}html,body{margin:0}.box{width:704px;height:504px;background:green}</style><div class=box></div>";
+    let actual = render_raikiri(html, 800, 600).unwrap();
+    let expected = render_raikiri(reference, 800, 600).unwrap();
+    assert_eq!((actual.width, actual.height), (800, 600));
+    let offset = (50 * 800 + 50) * 4;
+    assert_eq!(&actual.rgba[offset..offset + 4], &[0, 128, 0, 255]);
+    assert_eq!(actual.rgba, expected.rgba);
 }

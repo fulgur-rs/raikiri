@@ -1286,48 +1286,9 @@ fn mirror_default_page_margin(test_html: &str, reference_html: &str) -> String {
     format!("<style>@page {{ margin: 48px; }}</style>{reference_html}")
 }
 
-// Resolve page descriptors once using the existing nominal page-unit basis.
+// Resolve page-context units once using the same nominal basis as the probe.
 // Ordinary declarations are expanded separately against the selected page area.
-fn resolve_page_size_viewport_units(input: &str) -> String {
-    use cssparser::{AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser};
-
-    struct SizeValues<'a>(&'a mut Vec<std::ops::Range<usize>>);
-    impl<'i> DeclarationParser<'i> for SizeValues<'_> {
-        type Declaration = ();
-        type Error = ();
-        fn parse_value<'t>(
-            &mut self,
-            name: cssparser::CowRcStr<'i>,
-            input: &mut cssparser::Parser<'i, 't>,
-            _: &cssparser::ParserState,
-        ) -> Result<(), cssparser::ParseError<'i, ()>> {
-            let start = input.position().byte_index();
-            input.expect_no_error_token()?;
-            if name.eq_ignore_ascii_case("size") {
-                self.0.push(start..input.position().byte_index());
-            }
-            Ok(())
-        }
-    }
-    impl<'i> AtRuleParser<'i> for SizeValues<'_> {
-        type Prelude = ();
-        type AtRule = ();
-        type Error = ();
-    }
-    impl<'i> QualifiedRuleParser<'i> for SizeValues<'_> {
-        type Prelude = ();
-        type QualifiedRule = ();
-        type Error = ();
-    }
-    impl<'i> RuleBodyItemParser<'i, (), ()> for SizeValues<'_> {
-        fn parse_declarations(&self) -> bool {
-            true
-        }
-        fn parse_qualified(&self) -> bool {
-            false
-        }
-    }
-
+fn resolve_page_context_viewport_units(input: &str) -> String {
     fn collect<'i>(
         input: &mut cssparser::Parser<'i, '_>,
         ranges: &mut Vec<std::ops::Range<usize>>,
@@ -1358,12 +1319,13 @@ fn resolve_page_size_viewport_units(input: &str) -> String {
                         );
                         if !tree.page_rules.is_empty() {
                             input.parse_nested_block(|input| {
-                                let mut sizes = SizeValues(ranges);
-                                for _ in cssparser::RuleBodyParser::new(input, &mut sizes) {}
+                                let start = input.position().byte_index();
+                                input.expect_no_error_token()?;
+                                ranges.push(start..input.position().byte_index());
                                 Ok(())
                             })?;
                         }
-                    } else if group != Some(false) && depth < 128 {
+                    } else if group == Some(true) && depth < 128 {
                         // Bound the observational walk; unknown wrappers and
                         // deeper groups remain untouched.
                         input.parse_nested_block(|input| collect(input, ranges, depth + 1))?;
@@ -1397,10 +1359,10 @@ fn resolve_page_size_viewport_units(input: &str) -> String {
     result
 }
 
-fn resolve_document_page_size_viewport_units(document: &mut raikiri::UncascadedDocument) {
+fn resolve_document_page_context_viewport_units(document: &mut raikiri::UncascadedDocument) {
     for sheet in &mut document.stylesheet_sources {
         for part in &mut sheet.parts {
-            part.source = resolve_page_size_viewport_units(&part.source);
+            part.source = resolve_page_context_viewport_units(&part.source);
         }
     }
 }
@@ -2574,7 +2536,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
     }
     let (viewport_width, viewport_height) =
         authored_document_page_viewport(&uncascaded, &html, width as f32, height as f32);
-    resolve_document_page_size_viewport_units(&mut uncascaded);
+    resolve_document_page_context_viewport_units(&mut uncascaded);
     expand_document_viewport_units(
         &mut uncascaded,
         viewport_width,
@@ -2762,7 +2724,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
         if let Some(base_url) = base_url {
             crate::http_resources::absolutize_img_sources(&mut fresh.dom, base_url);
         }
-        resolve_document_page_size_viewport_units(&mut fresh);
+        resolve_document_page_context_viewport_units(&mut fresh);
         expand_document_viewport_units(&mut fresh, viewport_width, viewport_height, &media_context);
         use_fonts(&mut fresh.dom);
         // The reparsed document is a different arena, so it gets its own
