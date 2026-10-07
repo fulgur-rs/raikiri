@@ -1688,3 +1688,233 @@ fn an_inline_element_after_a_block_moved_to_the_next_page_follows_its_line() {
     });
     assert_eq!(fragments, [(1, 0.0, 10.0)]);
 }
+
+#[test]
+fn nested_column_flex_page_names_break_inside_the_item() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;font-family:Ahem;font-size:10px;line-height:10px"),
+    );
+    let block = |doc: &mut Document, parent, css: &str| {
+        doc.append_element(Some(parent), "div", Style::default(), Some(css))
+    };
+    let before = block(&mut doc, body, "display:block");
+    let a = doc.append_text(before, "a");
+    let flex = block(&mut doc, body, "display:flex;flex-direction:column");
+    let item = block(&mut doc, flex, "display:block");
+    let wrapper = block(&mut doc, item, "display:block");
+    let first = block(&mut doc, wrapper, "display:block;page:a");
+    let b = doc.append_text(first, "b");
+    let second = block(&mut doc, wrapper, "display:block;page:b");
+    let c = doc.append_text(second, "c");
+    let after = block(&mut doc, body, "display:block");
+    let d = doc.append_text(after, "d");
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 50.0;
+    let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
+    let fragments = page_fragments_from_slices(&doc, &cascade, page, &slices);
+    let positions = [a, b, c, d].map(|id| {
+        fragments
+            .iter()
+            .flat_map(|p| &p.items)
+            .find(|item| item.node_id == NodeId::new(id as u64))
+            .map(|item| (item.page_index, item.rect.y))
+            .expect("fragment")
+    });
+    assert_eq!(
+        slices
+            .iter()
+            .map(|page| page.page_name.as_deref())
+            .collect::<Vec<_>>(),
+        [Some("a"), Some("b")]
+    );
+    // The column item fragments between b and c, with no outer edge breaks.
+    assert_eq!(
+        (slices.len(), positions),
+        (2, [(0, 0.0), (0, 10.0), (1, 0.0), (1, 10.0)])
+    );
+}
+
+#[test]
+fn nested_column_flex_named_boundary_matches_an_explicit_break_with_body_margin() {
+    let run = |named: bool| {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            Some("display:block;margin:8px;font:10px/10px Ahem"),
+        );
+        let block = |doc: &mut Document, parent, css: &str| {
+            doc.append_element(Some(parent), "div", Style::default(), Some(css))
+        };
+        let before = block(&mut doc, body, "display:block");
+        let a = doc.append_text(before, "a");
+        let flex = block(&mut doc, body, "display:flex;flex-direction:column");
+        let item = block(&mut doc, flex, "display:block");
+        let wrapper = if named {
+            block(&mut doc, item, "display:block")
+        } else {
+            item
+        };
+        let first = block(
+            &mut doc,
+            wrapper,
+            if named {
+                "display:block;page:a"
+            } else {
+                "display:block;break-after:page"
+            },
+        );
+        let b = doc.append_text(first, "b");
+        let second = block(
+            &mut doc,
+            wrapper,
+            if named {
+                "display:block;page:b"
+            } else {
+                "display:block"
+            },
+        );
+        let c = doc.append_text(second, "c");
+        let after = block(&mut doc, body, "display:block");
+        let d = doc.append_text(after, "d");
+        doc.mark_in_document_flags();
+        let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 50.0;
+        let slices = layout_pages(with_ahem(&mut doc), &computed, page).unwrap();
+        let fragments = page_fragments_from_slices(&doc, &computed, page, &slices);
+        (
+            slices.len(),
+            [a, b, c, d].map(|id| {
+                fragments
+                    .iter()
+                    .flat_map(|p| &p.items)
+                    .find(|item| item.node_id == NodeId::new(id as u64))
+                    .map(|item| (item.page_index, item.rect.x, item.rect.y))
+                    .unwrap()
+            }),
+        )
+    };
+    assert_eq!(run(true), run(false));
+}
+
+#[test]
+fn non_flow_text_does_not_reset_a_column_items_named_page() {
+    for non_flow in [
+        "float:right;width:1px;height:1px",
+        "position:absolute;left:80px;top:0",
+        "position:fixed;left:80px;top:0",
+    ] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            Some("display:block;font:10px/10px Ahem"),
+        );
+        let block = |doc: &mut Document, parent, css: &str| {
+            doc.append_element(Some(parent), "div", Style::default(), Some(css))
+        };
+        let before = block(&mut doc, body, "display:block");
+        let a = doc.append_text(before, "a");
+        let flex = block(&mut doc, body, "display:flex;flex-direction:column");
+        let item = block(&mut doc, flex, "display:block");
+        let wrapper = block(&mut doc, item, "display:block");
+        let first = block(&mut doc, wrapper, "display:block;page:a");
+        let b = doc.append_text(first, "b");
+        let second = block(&mut doc, wrapper, "display:block;page:b");
+        let c = doc.append_text(second, "c");
+        let ignored = block(
+            &mut doc,
+            wrapper,
+            &format!("display:block;page:ignored;{non_flow}"),
+        );
+        doc.append_text(ignored, "X");
+        let third = block(&mut doc, wrapper, "display:block;page:b");
+        let d = doc.append_text(third, "d");
+        let after = block(&mut doc, body, "display:block");
+        let e = doc.append_text(after, "e");
+        doc.mark_in_document_flags();
+        let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 50.0;
+        let slices = layout_pages(with_ahem(&mut doc), &computed, page).unwrap();
+        let fragments = page_fragments_from_slices(&doc, &computed, page, &slices);
+        let pages = [a, b, c, d, e].map(|id| {
+            fragments
+                .iter()
+                .flat_map(|p| &p.items)
+                .find(|item| item.node_id == NodeId::new(id as u64))
+                .map(|item| item.page_index)
+                .unwrap()
+        });
+        assert_eq!((slices.len(), pages), (2, [0, 0, 1, 1, 1]), "{non_flow}");
+    }
+}
+
+#[test]
+fn trailing_positioned_text_preserves_the_column_items_named_page() {
+    for position in ["absolute", "fixed"] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            Some("display:block;font:10px/10px Ahem"),
+        );
+        let flex = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flex;flex-direction:column"),
+        );
+        let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
+        for name in ["a", "b"] {
+            let block = doc.append_element(
+                Some(item),
+                "div",
+                Style::default(),
+                Some(&format!("display:block;page:{name}")),
+            );
+            doc.append_text(block, "X");
+        }
+        let positioned = doc.append_element(
+            Some(item),
+            "div",
+            Style::default(),
+            Some(&format!(
+                "display:block;position:{position};left:80px;top:0;page:ignored"
+            )),
+        );
+        doc.append_text(positioned, "X");
+        doc.mark_in_document_flags();
+        let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 50.0;
+        let slices = layout_pages(with_ahem(&mut doc), &computed, page).unwrap();
+        assert_eq!(
+            slices
+                .iter()
+                .map(|page| page.page_name.as_deref())
+                .collect::<Vec<_>>(),
+            [Some("a"), Some("b")],
+            "{position}"
+        );
+    }
+}
