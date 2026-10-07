@@ -7,6 +7,42 @@ use raikiri_traits::PageBox;
 use taffy::style::{Dimension, LengthPercentage, LengthPercentageAuto};
 use taffy::{AvailableSpace, LayoutInput, Rect, Size, Style};
 
+#[test]
+fn spanning_only_cell_floors_the_first_row_at_its_natural_baseline() {
+    let mut doc = Document::new();
+    crate::layout::test_support::with_ahem(&mut doc);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let table = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:table;width:40px;border-spacing:0"),
+    );
+    let row = doc.append_element(
+        Some(table),
+        "div",
+        Style::default(),
+        Some("display:table-row"),
+    );
+    let cell = doc.append_element(Some(row), "div", Style::default(), Some("display:table-cell;width:40px;vertical-align:baseline;font-family:Ahem;font-size:40px;line-height:40px"));
+    doc.set_element_attributes(cell, vec![("rowspan".into(), "2".into())]);
+    doc.append_text(cell, "X");
+    doc.append_element(
+        Some(table),
+        "div",
+        Style::default(),
+        Some("display:table-row"),
+    );
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
+    let mut grid = super::build_table_grid(&doc, table).unwrap();
+    let heights = super::resolve_row_heights(&mut doc, &mut grid, &[40.0], (0.0, 0.0)).unwrap();
+    assert_eq!(grid.cells[0].baseline, 32.0);
+    assert_eq!(heights, [36.0, 4.0]);
+}
+
 fn oversized_columns_document(explicit_row: bool, columns: bool) -> Document {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
@@ -124,7 +160,7 @@ fn invalid_cell_column_ranges_are_rejected_before_both_slice_sinks() {
             cells: vec![fixed_cell(0, start, span, Dimension::auto())],
             col_widths: vec![],
         };
-        assert!(super::resolve_row_heights(&mut doc, &grid, &[1.0, 1.0], (0.0, 0.0)).is_err());
+        assert!(super::resolve_row_heights(&mut doc, &mut grid, &[1.0, 1.0], (0.0, 0.0)).is_err());
         assert!(
             super::place_cells(
                 &mut doc,
@@ -1761,7 +1797,10 @@ fn fixed_cell(row: u16, col_start: u16, col_span: u16, width: Dimension) -> supe
         col_span,
         row_span: 1,
         specified_width: width,
+        specified_min_width: Dimension::auto(),
         resolved: None,
+        natural_height: 0.0,
+        baseline: 0.0,
     }
 }
 
@@ -1778,6 +1817,25 @@ fn resolve_fixed_column_widths_first_row_length_fixes_column_remainder_splits() 
     };
     let widths = super::resolve_fixed_column_widths(&grid, 400.0);
     assert_eq!(widths, [100.0, 300.0]);
+}
+
+#[test]
+fn fixed_auto_columns_keep_free_space_while_respecting_first_row_floors() {
+    for (minimum, expected) in [
+        (10.0, [25.0, 25.0]),
+        (40.0, [40.0, 10.0]),
+        (60.0, [60.0, 0.0]),
+    ] {
+        let mut first = fixed_cell(0, 0, 1, Dimension::auto());
+        first.specified_min_width = Dimension::length(minimum);
+        let grid = super::TableGrid {
+            n_cols: 2,
+            rows: vec![],
+            cells: vec![first, fixed_cell(0, 1, 1, Dimension::auto())],
+            col_widths: vec![],
+        };
+        assert_eq!(super::resolve_fixed_column_widths(&grid, 50.0), expected);
+    }
 }
 
 #[test]
@@ -2208,7 +2266,10 @@ fn make_cell(
         col_span,
         row_span,
         specified_width: width,
+        specified_min_width: Dimension::auto(),
         resolved: None,
+        natural_height: 0.0,
+        baseline: 0.0,
     }
 }
 
@@ -3068,6 +3129,16 @@ fn separate_border_spacing_counts_spanned_gaps_toward_a_rowspan_height() {
     doc.set_element_attributes(tall, vec![("rowspan".into(), "2".into())]);
     let tr2 = row(&mut doc);
     let bottom = sized_cell(&mut doc, tr2, 10.0, 10.0);
+    // Keep this spacing contract independent of empty-cell baseline alignment.
+    for (cell, height) in [(top, 10), (tall, 40), (bottom, 10)] {
+        doc.set_element_inline_style(
+            cell,
+            Some(
+                format!("display:table-cell;width:10px;height:{height}px;vertical-align:top")
+                    .into(),
+            ),
+        );
+    }
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).unwrap();

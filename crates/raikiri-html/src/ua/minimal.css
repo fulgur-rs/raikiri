@@ -480,6 +480,8 @@ thead { display: table-header-group; }
 tfoot { display: table-footer-group; }
 tr { display: table-row; }
 td, th { display: table-cell; }
+thead, tbody, tfoot, table > tr { vertical-align: middle; }
+tr, td, th { vertical-align: inherit; }
 /* HTML LS §15.3.8 gives tables a 2px separated-borders spacing:
  *
  *   table {

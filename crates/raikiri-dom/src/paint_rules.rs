@@ -3,9 +3,10 @@
 
 use crate::Document;
 use raikiri_style::property::{
-    DisplayValue, FloatValue, OverflowValue, PositionValue, Visibility, ZIndexValue,
+    BorderCollapseValue, ContentComponent, DisplayValue, EmptyCellsValue, FloatValue,
+    OverflowValue, PositionValue, Visibility, WhiteSpaceCollapse, ZIndexValue,
 };
-use raikiri_style::{CascadeResult, ComputedValues};
+use raikiri_style::{CascadeResult, ComputedValues, PseudoElem, StyleNodeId};
 use raikiri_traits::NodeKind;
 
 /// Whether `node_id` is painted on the page whose name is `active_page_name`.
@@ -182,6 +183,88 @@ pub fn find_paint_root(doc: &Document) -> Option<usize> {
         }
     }
     None
+}
+
+/// Whether separate-border `empty-cells: hide` suppresses this cell's box ink.
+/// Out-of-flow content does not make a cell nonempty; floated and in-flow
+/// elements do, even when their own box has no content (CSS 2.2 section 17.6.1.1).
+pub fn hides_empty_table_cell(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    let cv = &cascade.computed[node_id];
+    if cv.display != DisplayValue::TableCell
+        || cv.empty_cells != EmptyCellsValue::Hide
+        || cv.border_collapse != BorderCollapseValue::Separate
+    {
+        return false;
+    }
+    if cv.visibility == Visibility::Hidden {
+        return true;
+    }
+    let has_generated_box = |id| {
+        [PseudoElem::Before, PseudoElem::After]
+            .iter()
+            .any(|pseudo| {
+                cascade
+                    .pseudo
+                    .get(&(StyleNodeId::new(id as u64), *pseudo))
+                    .is_some_and(|cv| {
+                        cv.display != DisplayValue::None
+                            && !matches!(
+                                cv.position,
+                                PositionValue::Absolute | PositionValue::Fixed
+                            )
+                            && !cv.content.is_empty()
+                            && !cv
+                                .content
+                                .iter()
+                                .any(|component| matches!(component, ContentComponent::None))
+                    })
+            })
+    };
+    // Generated boxes count as in-flow or floating content, including a
+    // generated empty inline box, just like an authored empty inline element.
+    if has_generated_box(node_id) {
+        return false;
+    }
+    let mut stack = document.nodes[node_id].children.clone();
+    while let Some(id) = stack.pop() {
+        let node = &document.nodes[id];
+        let cv = &cascade.computed[id];
+        if !node.is_in_document()
+            || node.is_non_rendered_html_element()
+            || cv.display == DisplayValue::None
+            || matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
+        {
+            continue;
+        }
+        match node.kind() {
+            NodeKind::Text => {
+                let text = node.text_content().unwrap_or("");
+                if text.chars().any(|c| {
+                    !matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{c}')
+                        || match cv.effective_white_space_collapse {
+                            WhiteSpaceCollapse::Collapse | WhiteSpaceCollapse::Discard => false,
+                            WhiteSpaceCollapse::PreserveBreaks => matches!(c, '\n' | '\r'),
+                            _ => true,
+                        }
+                }) {
+                    return false;
+                }
+            }
+            NodeKind::Element if cv.display == DisplayValue::Contents => {
+                if has_generated_box(id) {
+                    return false;
+                }
+                stack.extend(&node.children)
+            }
+            NodeKind::Element => return false,
+            _ => {}
+        }
+    }
+    true
 }
 
 #[cfg(test)]

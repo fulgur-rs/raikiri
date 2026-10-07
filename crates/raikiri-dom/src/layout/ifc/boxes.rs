@@ -623,6 +623,15 @@ fn run_boxes_segment(
                     continue;
                 }
                 let height = line.block_size();
+                if line.is_empty()
+                    && height == 0.0
+                    && line.break_reason() != shodo::BreakReason::Forced
+                {
+                    // Empty inline closures around a block do not separate
+                    // its adjoining margins or add a line box (CSS 2.2 9.4.2).
+                    token = line.break_token();
+                    continue;
+                }
                 // The line may span more of an outer float than the height it
                 // was assumed to have; lay it out again if the space for its
                 // real height differs.

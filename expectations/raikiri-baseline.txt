@@ -1680,3 +1680,23 @@ css/css-color/parsing/color-valid.html
 # Negative-only rejection guards; these do not establish valid grid support.
 css/css-grid/parsing/grid-shorthand-invalid.html
 css/css-grid/parsing/grid-template-shorthand-invalid.html
+
+# --- CSS2 table baseline, bottom captions and empty cells exact 800x600 PASS-only (+18) ---
+css/CSS2/tables/caption-side-applies-to-006.xht
+css/CSS2/tables/caption-side-applies-to-007.xht
+css/CSS2/tables/caption-side-applies-to-008.xht
+css/CSS2/tables/caption-side-applies-to-009.xht
+css/CSS2/tables/caption-side-applies-to-010.xht
+css/CSS2/tables/caption-side-applies-to-011.xht
+css/CSS2/tables/caption-side-applies-to-012.xht
+css/CSS2/tables/caption-side-applies-to-013.xht
+css/CSS2/tables/caption-side-applies-to-014.xht
+css/CSS2/tables/caption-side-applies-to-015.xht
+css/CSS2/tables/empty-cells-applies-to-014.xht
+css/CSS2/tables/table-vertical-align-baseline-001.xht
+css/CSS2/tables/table-vertical-align-baseline-002.xht
+css/CSS2/tables/table-vertical-align-baseline-003.xht
+css/CSS2/tables/table-vertical-align-baseline-004.xht
+css/CSS2/tables/table-vertical-align-baseline-005.xht
+css/CSS2/tables/table-vertical-align-baseline-006.xht
+css/CSS2/tables/table-vertical-align-baseline-007.xht

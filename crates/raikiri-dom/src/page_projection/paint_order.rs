@@ -150,7 +150,9 @@ impl Document {
                         .copied()
                         .filter(|item| item.kind != PageFragmentKind::Text)
                         .collect();
-                    if !paint_rules::is_visibility_hidden_table(cv) {
+                    if !paint_rules::is_visibility_hidden_table(cv)
+                        && !paint_rules::hides_empty_table_cell(self, cascade, node_id)
+                    {
                         let replaced_content =
                             node.is_inline_svg_root() || self.is_canvas_element(node_id);
                         for &item in &own {

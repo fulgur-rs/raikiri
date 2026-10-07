@@ -4057,7 +4057,9 @@ pub(crate) fn paint_document_impl(
                     }
                 }
                 let mut before_advance = 0.0;
-                if paints_on_page {
+                if paints_on_page
+                    && !raikiri_dom::paint_rules::hides_empty_table_cell(document, cascade, node_id)
+                {
                     if let Some(t) = trace.as_deref_mut() {
                         t.push(crate::PaintTraceEvent::Box(node_id));
                     }
@@ -4066,6 +4068,11 @@ pub(crate) fn paint_document_impl(
                     // well would leak that color into the translated top/bottom
                     // margin on every page after the first; the canvas pass has
                     // already filled the content rectangle at page-local coords.
+                    let grid = node.table_grid_box();
+                    let own_paint_y = paint_y + grid.map_or(0.0, |rect| rect.y);
+                    let own_paint_height = grid.map_or(paint_height, |rect| rect.height);
+                    let own_background_height =
+                        grid.map_or(paint_background_height, |rect| rect.height);
                     if node_id != body_id {
                         // The body canvas background was already propagated by
                         // `paint_canvas_background`; do not paint it a second
@@ -4088,9 +4095,9 @@ pub(crate) fn paint_document_impl(
                         paint_element_box_shadows(
                             scene,
                             layout.size.width,
-                            paint_height,
+                            own_paint_height,
                             paint_x,
-                            paint_y,
+                            own_paint_y,
                             &paint_border_radius,
                             &cv.box_shadow,
                             cv.color,
@@ -4098,9 +4105,9 @@ pub(crate) fn paint_document_impl(
                         paint_element_background(
                             scene,
                             paint_background_width,
-                            paint_background_height,
+                            own_background_height,
                             paint_x,
-                            paint_y,
+                            own_paint_y,
                             cv.background_color,
                             &cv.background_image,
                             cv.color,
@@ -4149,9 +4156,9 @@ pub(crate) fn paint_document_impl(
                         paint_element_border_with_top(
                             scene,
                             layout.size.width,
-                            paint_height,
+                            own_paint_height,
                             paint_x,
-                            paint_y,
+                            own_paint_y,
                             painted_border, // cov:ignore: absolute continuation fragments are exercised by the ignored fragmentation WPT reftests.
                             cv.color,
                             false,
@@ -4160,9 +4167,9 @@ pub(crate) fn paint_document_impl(
                         paint_element_border_rounded(
                             scene,
                             layout.size.width,
-                            paint_height,
+                            own_paint_height,
                             paint_x,
-                            paint_y,
+                            own_paint_y,
                             painted_border,
                             cv.color,
                             &paint_border_radius,
@@ -4173,9 +4180,9 @@ pub(crate) fn paint_document_impl(
                     paint_element_outline(
                         scene,
                         layout.size.width,
-                        paint_height,
+                        own_paint_height,
                         paint_x,
-                        paint_y,
+                        own_paint_y,
                         &cv.outline,
                         cv.outline_offset,
                         cv.color,
@@ -4840,6 +4847,9 @@ fn used_padding_for_paint(
     cv: &raikiri_style::ComputedValues,
     layout: &taffy::Layout,
 ) -> taffy::Rect<f32> {
+    if cv.display == DisplayValue::TableCell {
+        return layout.padding;
+    }
     fn computed_padding_px(
         value: raikiri_style::resolve::ComputedLengthPercentage,
         reference: f32,

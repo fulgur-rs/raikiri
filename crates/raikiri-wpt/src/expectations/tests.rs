@@ -791,7 +791,15 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS UI text-overflow into padding exact slice (+1).
     // + CSS2 relative block positioning exact slice (+14).
     // + CSS Inline image-loaded vertical-align length exact slice (+1).
-    assert_eq!(set.baseline.entries.len(), 1413);
+    // + CSS2 table baseline, bottom caption and empty-cell exact slice (+18).
+    assert_eq!(set.baseline.entries.len(), 1431);
+    for id in [
+        "css/CSS2/tables/caption-side-applies-to-006.xht",
+        "css/CSS2/tables/empty-cells-applies-to-014.xht",
+        "css/CSS2/tables/table-vertical-align-baseline-007.xht",
+    ] {
+        assert!(set.baseline.entries.contains(id));
+    }
     assert!(
         set.baseline
             .entries

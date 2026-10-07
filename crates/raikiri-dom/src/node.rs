@@ -11,10 +11,11 @@ use taffy::{Cache, Layout, Style};
 use crate::fragment::MulticolStyle;
 
 use raikiri_style::property::{
-    BorderCollapseValue, BreakBetween, DisplayValue, Sides, TableLayoutValue, WritingMode,
+    BorderCollapseValue, BreakBetween, CaptionSideValue, DisplayValue, Sides, TableLayoutValue,
+    VerticalAlign, WritingMode,
 };
 use raikiri_style::{ComputedBorder, ComputedBorderSpacing};
-use raikiri_traits::{IntrinsicBox, NodeKind};
+use raikiri_traits::{IntrinsicBox, NodeKind, PaintRect};
 
 bitflags::bitflags! {
     /// Per-node boolean attributes. Their **raw bit values exactly match**
@@ -358,6 +359,14 @@ pub struct Node {
     pub(crate) collapsed_border: Option<Sides<ComputedBorder>>,
     /// Computed `border-spacing` used by the separate-border table layout.
     pub(crate) border_spacing: ComputedBorderSpacing,
+    /// Computed alignment used by the native table cell placement pass.
+    pub(crate) table_vertical_align: VerticalAlign,
+    /// Computed caption position consumed by the native table layout.
+    pub(crate) caption_side: CaptionSideValue,
+    /// The table grid's border box within its wrapper, excluding captions.
+    pub(crate) table_grid_box: Option<PaintRect>,
+    /// First-row baseline relative to the table wrapper's border edge.
+    pub(crate) table_first_baseline: Option<f32>,
     /// Computed `break-before` value consumed by column fragmentation.
     pub(crate) break_before: BreakBetween,
     /// Computed `break-after` value consumed by column fragmentation.
@@ -460,6 +469,10 @@ impl Node {
             style: Style::default(),
             display: DisplayValue::Inline,
             table_layout: TableLayoutValue::Auto,
+            table_vertical_align: VerticalAlign::Baseline,
+            caption_side: CaptionSideValue::Top,
+            table_grid_box: None,
+            table_first_baseline: None,
             border_collapse: BorderCollapseValue::Separate,
             computed_border: None,
             collapsed_border: None,
@@ -499,6 +512,10 @@ impl Node {
             style,
             display: DisplayValue::Inline,
             table_layout: TableLayoutValue::Auto,
+            table_vertical_align: VerticalAlign::Baseline,
+            caption_side: CaptionSideValue::Top,
+            table_grid_box: None,
+            table_first_baseline: None,
             border_collapse: BorderCollapseValue::Separate,
             computed_border: None,
             collapsed_border: None,
@@ -542,6 +559,10 @@ impl Node {
             style: Style::default(),
             display: DisplayValue::Inline,
             table_layout: TableLayoutValue::Auto,
+            table_vertical_align: VerticalAlign::Baseline,
+            caption_side: CaptionSideValue::Top,
+            table_grid_box: None,
+            table_first_baseline: None,
             border_collapse: BorderCollapseValue::Separate,
             computed_border: None,
             collapsed_border: None,
@@ -580,6 +601,10 @@ impl Node {
             style: Style::default(),
             display: DisplayValue::Inline,
             table_layout: TableLayoutValue::Auto,
+            table_vertical_align: VerticalAlign::Baseline,
+            caption_side: CaptionSideValue::Top,
+            table_grid_box: None,
+            table_first_baseline: None,
             border_collapse: BorderCollapseValue::Separate,
             computed_border: None,
             collapsed_border: None,
@@ -615,6 +640,10 @@ impl Node {
             style: Style::default(),
             display: DisplayValue::Inline,
             table_layout: TableLayoutValue::Auto,
+            table_vertical_align: VerticalAlign::Baseline,
+            caption_side: CaptionSideValue::Top,
+            table_grid_box: None,
+            table_first_baseline: None,
             border_collapse: BorderCollapseValue::Separate,
             computed_border: None,
             collapsed_border: None,
@@ -652,6 +681,10 @@ impl Node {
             style: Style::default(),
             display: DisplayValue::Inline,
             table_layout: TableLayoutValue::Auto,
+            table_vertical_align: VerticalAlign::Baseline,
+            caption_side: CaptionSideValue::Top,
+            table_grid_box: None,
+            table_first_baseline: None,
             border_collapse: BorderCollapseValue::Separate,
             computed_border: None,
             collapsed_border: None,
@@ -859,6 +892,12 @@ impl Node {
         } else {
             &self.order_modified_children
         }
+    }
+
+    /// The used table grid border box relative to its wrapper origin.
+    /// Captions occupy wrapper space outside this box.
+    pub fn table_grid_box(&self) -> Option<PaintRect> {
+        self.table_grid_box
     }
 
     /// Return tag_name for an Element, or `None` otherwise.

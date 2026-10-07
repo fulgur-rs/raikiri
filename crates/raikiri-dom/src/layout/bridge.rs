@@ -153,6 +153,12 @@ pub(crate) fn apply_computed_to_style(
         // Table engine inputs — no taffy::Style counterpart (taffy 0.12
         // has no table layout), carried Node-side like `display` above.
         doc.nodes[idx].table_layout = cv.table_layout;
+        doc.nodes[idx].table_vertical_align = cv.vertical_align;
+        doc.nodes[idx].caption_side = cv.caption_side;
+        if !matches!(cv.display, DisplayValue::Table | DisplayValue::InlineTable) {
+            doc.nodes[idx].table_grid_box = None;
+            doc.nodes[idx].table_first_baseline = None;
+        }
         doc.nodes[idx].border_collapse = cv.border_collapse;
         doc.nodes[idx].computed_border = Some(cv.border);
         doc.nodes[idx].collapsed_border = None;

@@ -1404,6 +1404,16 @@ fn inherited_margin_length(value: ComputedLengthPercentageOrAuto) -> LengthOrAut
 
 /// Resolve defaulting markers shared by the element and page inheritance paths.
 fn resolve_defaulting_value(value: PropertyValue, inherited: &ComputedValues) -> PropertyValue {
+    if let PropertyValue::Deferred(marker) = &value
+        && marker.key == crate::property::PropertyKey::VerticalAlign
+        && let Some(keyword) = marker.css_wide_keyword()
+    {
+        return PropertyValue::VerticalAlign(if keyword == CssWideKeyword::Inherit {
+            inherited.vertical_align
+        } else {
+            crate::property::VerticalAlign::Baseline
+        });
+    }
     resolve_css_wide_color_font(
         value,
         inherited.color,
@@ -1422,6 +1432,14 @@ pub(crate) fn resolve_css_wide_color_font(
     let PropertyValue::Deferred(marker) = &value else {
         return value;
     };
+    if !matches!(
+        marker.key,
+        crate::property::PropertyKey::Color
+            | crate::property::PropertyKey::BackgroundColor
+            | crate::property::PropertyKey::FontSize
+    ) {
+        return value;
+    }
     let Some(keyword) = marker.css_wide_keyword() else {
         return value;
     };
