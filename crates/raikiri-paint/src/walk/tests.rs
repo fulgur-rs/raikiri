@@ -4023,6 +4023,16 @@ fn inside_ruby_multicol_markers_paint_on_the_legacy_path() {
         );
         assert!(ruby_layout.location.x >= authored_padding + expected_advance);
         assert_eq!(doc.legacy_inside_marker_advance(item), expected_advance);
+        let (marker_cv, marker_text) =
+            marker_render_info_with_snapshots(&doc, &cascade, item, &[]).unwrap();
+        let paint_advance = if image { 8.0 } else { 0.0 }
+            + text::measure_margin_text_advance(
+                &doc,
+                if image { " " } else { &marker_text },
+                marker_cv.font_size.px(),
+                marker_cv.font_family.first().unwrap().as_str(),
+            );
+        assert_eq!(doc.legacy_inside_marker_advance(item), paint_advance);
         raikiri_dom::layout_single_page(&mut doc, &cascade, PageBox::A4).unwrap();
         assert_eq!(
             doc.get_node(item).unwrap().unrounded_layout.padding.left,

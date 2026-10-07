@@ -504,13 +504,25 @@ pub(crate) fn prepare_legacy_inside_markers_before_taffy(
             continue;
         };
         let image_width = doc.list_marker_image_size(idx).map(|size| size.width);
+        // Match the legacy painter's normal face, first family and usable size.
+        let family = cv
+            .font_family
+            .first()
+            .map(|family| family.as_str())
+            .unwrap_or("serif");
+        let font_size = cv.font_size.px();
         let style = crate::StandaloneStyle {
-            families: cv
-                .font_family
-                .iter()
-                .map(|family| family.as_str().to_owned())
+            families: family
+                .split(',')
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(str::to_owned)
                 .collect(),
-            font_size: cv.font_size.px(),
+            font_size: if font_size.is_finite() && font_size > 0.0 {
+                font_size
+            } else {
+                16.0
+            },
             ..crate::StandaloneStyle::default()
         };
         let text = if image_width.is_some() { " " } else { &text };
@@ -522,18 +534,37 @@ pub(crate) fn prepare_legacy_inside_markers_before_taffy(
             continue;
         }
         let padding = doc.nodes[idx].style.padding.left.into_raw();
-        doc.nodes[idx].style.padding.left = if padding.tag() == taffy::CompactLength::PERCENT_TAG {
-            doc.calc_values.push(std::sync::Arc::new(
-                raikiri_style::property::CalcLengthPercentage {
-                    percent: padding.value() * 100.0,
-                    px: advance,
-                },
-            ));
-            let payload = doc
-                .calc_values
-                .last()
-                .expect("padding calc was just pushed");
-            taffy::LengthPercentage::calc((&**payload) as *const _ as *const ())
+        let deferred = if padding.is_calc() {
+            Some(
+                *doc.calc_values
+                    .iter()
+                    .find(|value| {
+                        std::ptr::eq(
+                            std::sync::Arc::as_ptr(value).cast::<()>(),
+                            padding.calc_value(),
+                        )
+                    })
+                    .ok_or_else(|| LayoutError::Internal {
+                        message: "legacy marker padding calc handle is not registered".to_owned(),
+                    })?
+                    .as_ref(),
+            )
+        } else if padding.tag() == taffy::CompactLength::PERCENT_TAG {
+            Some(raikiri_style::property::CalcLengthPercentage {
+                percent: padding.value() * 100.0,
+                px: 0.0,
+            })
+        } else {
+            None
+        };
+        doc.nodes[idx].style.padding.left = if let Some(base) = deferred {
+            let payload = std::sync::Arc::new(raikiri_style::property::CalcLengthPercentage {
+                percent: base.percent,
+                px: base.px + advance,
+            });
+            let pointer = std::sync::Arc::as_ptr(&payload).cast();
+            doc.calc_values.push(payload);
+            taffy::LengthPercentage::calc(pointer)
         } else {
             taffy::LengthPercentage::length(padding.value() + advance)
         };

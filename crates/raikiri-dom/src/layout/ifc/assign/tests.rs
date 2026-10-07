@@ -8,6 +8,129 @@ use shodo::limits::Limits;
 type Build = fn(&mut crate::Document, usize);
 
 #[test]
+fn vertical_block_children_with_inside_counter_text_qualify_the_parent() {
+    let mut child = 0;
+    let mut fixture = crate::layout::ifc::test_support::sheet_fixture(
+        "body {counter-reset:section 7} span::marker {content:counters(section, '.')}",
+        "writing-mode:vertical-rl",
+        |doc, root| {
+            child = doc.append_element(
+                Some(root),
+                "span",
+                taffy::Style::default(),
+                Some("display:list-item;list-style:inside none"),
+            );
+        },
+    );
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assert!(is_root(&fixture, fixture.root));
+    assert!(is_root(&fixture, child));
+    assert_eq!(
+        fixture.doc.nodes[child]
+            .ifc
+            .as_ref()
+            .unwrap()
+            .paragraph
+            .text(),
+        "\u{2066}7\u{2069}"
+    );
+}
+
+fn legacy_marker_fixture() -> Fixture {
+    let mut fixture = block_fixture(
+        "display:list-item;list-style:inside decimal;columns:2;font-family:Ahem,serif;font-style:italic;font-weight:bold",
+        |doc, root| {
+            let ruby = doc.append_element(
+                Some(root),
+                "ruby",
+                taffy::Style::default(),
+                Some("display:inline"),
+            );
+            doc.append_element(
+                Some(ruby),
+                "span",
+                taffy::Style::default(),
+                Some("display:inline-block;width:10px;height:20px"),
+            );
+            doc.append_element(
+                Some(root),
+                "br",
+                taffy::Style::default(),
+                Some("display:inline"),
+            );
+        },
+    );
+    enable(&mut fixture);
+    crate::layout::bridge::apply_computed_to_style(&mut fixture.doc, &fixture.cascade).unwrap();
+    fixture
+}
+
+#[test]
+fn legacy_marker_reservation_preserves_registered_calc_padding() {
+    let mut fixture = legacy_marker_fixture();
+    let value = std::sync::Arc::new(raikiri_style::property::CalcLengthPercentage {
+        percent: 10.0,
+        px: 4.0,
+    });
+    let pointer = std::sync::Arc::as_ptr(&value).cast();
+    fixture.doc.calc_values.push(value);
+    fixture.doc.nodes[fixture.root].style.padding.left = taffy::LengthPercentage::calc(pointer);
+    prepare_legacy_inside_markers_before_taffy(&mut fixture.doc, &fixture.cascade).unwrap();
+    let padding = fixture.doc.nodes[fixture.root]
+        .style
+        .padding
+        .left
+        .into_raw();
+    assert!(padding.is_calc());
+    assert_eq!(fixture.doc.legacy_inside_marker_advance(fixture.root), 30.0);
+    assert_eq!(
+        crate::taffy_impl::resolve_calc(padding.calc_value(), 200.0),
+        54.0
+    );
+    assert_eq!(
+        *fixture.doc.calc_values[0],
+        raikiri_style::property::CalcLengthPercentage {
+            percent: 10.0,
+            px: 4.0
+        }
+    );
+    assert_eq!(
+        *fixture.doc.calc_values[1],
+        raikiri_style::property::CalcLengthPercentage {
+            percent: 10.0,
+            px: 34.0
+        }
+    );
+}
+
+#[test]
+fn legacy_marker_reservation_rejects_unregistered_calc_handles() {
+    let mut fixture = legacy_marker_fixture();
+    let unregistered = std::sync::Arc::new(raikiri_style::property::CalcLengthPercentage {
+        percent: 10.0,
+        px: 4.0,
+    });
+    fixture.doc.nodes[fixture.root].style.padding.left =
+        taffy::LengthPercentage::calc(std::sync::Arc::as_ptr(&unregistered).cast());
+    assert!(matches!(
+        prepare_legacy_inside_markers_before_taffy(&mut fixture.doc, &fixture.cascade),
+        Err(LayoutError::Internal { .. })
+    ));
+}
+
+#[test]
+fn legacy_marker_reservation_uses_the_legacy_painters_usable_font_size() {
+    for size in [0.0, f32::NAN] {
+        let mut fixture = legacy_marker_fixture();
+        fixture.cascade.computed[fixture.root].font_size = raikiri_style::ComputedLength(size);
+        fixture.cascade.computed[fixture.root].font_family = std::sync::Arc::new(Vec::new());
+        prepare_legacy_inside_markers_before_taffy(&mut fixture.doc, &fixture.cascade).unwrap();
+        assert_eq!(fixture.doc.legacy_inside_marker_advance(fixture.root), 48.0);
+    }
+}
+
+#[test]
 fn ancestor_counters_qualify_empty_and_block_only_inside_markers() {
     for block_child in [false, true] {
         let mut fixture = crate::layout::ifc::test_support::sheet_fixture(
