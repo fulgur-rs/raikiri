@@ -1,6 +1,5 @@
-//! CSS rule and declaration structures. Supports qualified rules (StyleRule)
-//! with type/universal selectors only. At-rules (@page / @media, etc.) are
-//! skipped in ruletree.rs.
+//! Style rules and declaration parsing shared by stylesheet and inline styles.
+//! Nested rules and at-rules are handled by the rule-tree parsers.
 
 use cssparser::{
     AtRuleParser, CowRcStr, DeclarationParser, ParseError, Parser, ParserState,
@@ -1215,6 +1214,25 @@ pub(crate) fn parse_registered_consumer_value(
     }))
 }
 
+/// Parse one declaration, including importance and exhaustive consumption.
+pub(crate) fn parse_declaration_value<'i>(
+    name: CowRcStr<'i>,
+    input: &mut Parser<'i, '_>,
+    consumer_properties: &[ConsumerPropertyRegistration],
+) -> Result<Declaration, ParseError<'i, ()>> {
+    let value = parse_registered_consumer_value(name.as_ref(), input, consumer_properties)
+        .or_else(|| parse_value(name.as_ref(), input))
+        .ok_or_else(|| input.new_custom_error(()))?;
+    let important = input.try_parse(cssparser::parse_important).is_ok();
+    // Exhaustive consumption: trailing garbage after the value (and optional
+    // `!important`) must reject the whole declaration rather than silently
+    // accepting a prefix (e.g. `color: red garbage` / `font-size: 16px 20px`).
+    input
+        .expect_exhausted()
+        .map_err(|e: cssparser::BasicParseError<'i>| -> ParseError<'i, ()> { e.into() })?;
+    Ok(Declaration { value, important })
+}
+
 /// Per-declaration parser for cssparser::RuleBodyParser.
 struct DeclParser<'a> {
     consumer_properties: &'a [ConsumerPropertyRegistration],
@@ -1230,17 +1248,7 @@ impl<'i, 'a> DeclarationParser<'i> for DeclParser<'a> {
         input: &mut Parser<'i, 't>,
         _declaration_start: &ParserState,
     ) -> Result<Declaration, ParseError<'i, Self::Error>> {
-        let value = parse_registered_consumer_value(name.as_ref(), input, self.consumer_properties)
-            .or_else(|| parse_value(name.as_ref(), input))
-            .ok_or_else(|| input.new_custom_error(()))?;
-        let important = input.try_parse(cssparser::parse_important).is_ok();
-        // Exhaustive consumption: trailing garbage after the value (and optional
-        // `!important`) must reject the whole declaration rather than silently
-        // accepting a prefix (e.g. `color: red garbage` / `font-size: 16px 20px`).
-        input.expect_exhausted().map_err(
-            |e: cssparser::BasicParseError<'i>| -> ParseError<'i, Self::Error> { e.into() },
-        )?;
-        Ok(Declaration { value, important })
+        parse_declaration_value(name, input, self.consumer_properties)
     }
 }
 
