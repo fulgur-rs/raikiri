@@ -860,20 +860,28 @@ impl<'a> RenderResources<'a> {
     /// Fetch image markers before layout because their dimensions affect lines.
     pub(crate) fn preload_list_marker_images(
         &self,
-        computed: &[ComputedValues],
+        cascade: &raikiri_style::CascadeResult,
         base_url: Option<&Url>,
         warnings: &SharedRenderWarnings,
         seen: &mut std::collections::HashSet<Url>,
         attempts: &mut usize,
         signal: Option<&AbortSignal>,
     ) {
-        let urls: Vec<String> = computed
+        let urls: Vec<String> = cascade
+            .computed
             .iter()
-            .filter(|cv| {
-                cv.display == DisplayValue::ListItem
-                    && cv.list_style_position == raikiri_style::ListStylePosition::Inside
+            .enumerate()
+            .filter(|(element, _)| {
+                raikiri_dom::generated_content::inside_marker_in_flow(cascade, *element)
+                    && cascade
+                        .pseudo
+                        .get(&(
+                            raikiri_style::StyleNodeId::new(*element as u64),
+                            raikiri_style::PseudoElem::Marker,
+                        ))
+                        .is_none_or(|marker| marker.content.is_empty())
             })
-            .filter_map(|cv| match &cv.list_style_image {
+            .filter_map(|(_, cv)| match &cv.list_style_image {
                 BackgroundImage::Url(raw) => Url::parse(raw)
                     .ok()
                     .or_else(|| base_url.and_then(|base| base.join(raw).ok()))

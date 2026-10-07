@@ -735,7 +735,7 @@ pub(crate) fn run_pipeline(
     let mut marker_image_seen = HashSet::new();
     let mut marker_image_attempts = 0;
     resources.preload_list_marker_images(
-        &first_cascade.computed,
+        &first_cascade,
         runtime.effective_base_url,
         &runtime.warnings,
         &mut marker_image_seen,

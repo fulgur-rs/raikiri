@@ -244,6 +244,93 @@ fn inside_marker_fetch_is_independent_of_background_preloading() {
 }
 
 #[test]
+fn suppressed_marker_images_preserve_the_shared_background_request_budget() {
+    let provider = SvgNetworkProvider::default();
+    let resources = RenderResources::new().network_provider(&provider);
+    let mut html = String::from(
+        r#"<!doctype html><style>
+        li { list-style-position:inside }
+        .hidden::marker { display:none }
+        .none::marker { content:none }
+        .text::marker { content:'custom' }
+        .empty::marker { content:'' }
+        div { background-image:url(https://images.test/element.svg) }
+        @page { background-image:url(https://images.test/page.svg) }
+        </style>"#,
+    );
+    let classes = ["hidden", "none", "text", "empty"];
+    for index in 0..MAX_BACKGROUND_IMAGE_ATTEMPTS {
+        html.push_str(&format!(
+            r#"<li class="{}" style="list-style-image:url(https://images.test/suppressed-{index}.svg)"></li>"#,
+            classes[index % classes.len()]
+        ));
+    }
+    html.push_str(
+        r#"<li style="list-style-image:url(https://images.test/marker.svg)"></li><div></div>"#,
+    );
+    let options = ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let uncascaded = crate::parse(html.as_bytes(), &options).unwrap();
+    let cascade = crate::build_cascaded(&uncascaded);
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    let mut seen = Default::default();
+    let mut attempts = 0;
+    resources.preload_list_marker_images(&cascade, None, &warnings, &mut seen, &mut attempts, None);
+    resources.preload_background_images(&cascade, &warnings, &mut seen, &mut attempts, None);
+    assert_eq!(attempts, 3);
+    assert_eq!(
+        *provider.requests.lock().unwrap(),
+        ["marker.svg", "element.svg", "page.svg"].map(|name| (
+            Url::parse(&format!("https://images.test/{name}")).unwrap(),
+            ResourceKind::Image
+        ))
+    );
+    assert!(warnings.lock().unwrap().is_empty());
+}
+
+#[test]
+fn render_preloads_only_effective_marker_images() {
+    let provider = SvgNetworkProvider::default();
+    let resources = RenderResources::new().network_provider(&provider);
+    let html = br#"<!doctype html><style>
+        li { list-style:inside url(https://images.test/unused.svg) }
+        .hidden::marker { display:none }
+        .none::marker { content:none }
+        .text::marker { content:'custom' }
+        .empty::marker { content:'' }
+        .visible { list-style-image:url(https://images.test/marker.svg) }
+        div { background-image:url(https://images.test/element.svg) }
+        @page { background-image:url(https://images.test/page.svg) }
+        </style><li class="hidden"></li><li class="none"></li>
+        <li class="text"></li><li class="empty"></li><li class="visible"></li><div></div>"#;
+    let doc = crate::parse_html_with_resources(html.as_slice(), &resources).unwrap();
+    let crate::render::PipelineRun::Completed(_) = crate::render::run_pipeline(
+        &doc,
+        raikiri_traits::PageDefaults::default(),
+        &raikiri_traits::LayoutConfig::default(),
+        crate::render::PipelineInputs {
+            resources: Some(&resources),
+            consumer_properties: &[],
+            property_observer: None,
+            preload_background_images: true,
+        },
+    )
+    .unwrap() else {
+        panic!("complete pipeline");
+    };
+    assert_eq!(
+        *provider.requests.lock().unwrap(),
+        ["marker.svg", "element.svg", "page.svg"].map(|name| (
+            Url::parse(&format!("https://images.test/{name}")).unwrap(),
+            ResourceKind::Image
+        ))
+    );
+}
+
+#[test]
 fn relative_inside_marker_image_is_fetched_once_before_layout() {
     let provider = SvgNetworkProvider::default();
     let resources = RenderResources::new().network_provider(&provider);
@@ -258,7 +345,7 @@ fn relative_inside_marker_image_is_fetched_once_before_layout() {
     let cascade = crate::build_cascaded(&uncascaded);
     let warnings = Arc::new(Mutex::new(Vec::new()));
     resources.preload_list_marker_images(
-        &cascade.computed,
+        &cascade,
         Some(&base),
         &warnings,
         &mut Default::default(),
@@ -296,7 +383,7 @@ fn viewbox_only_svg_inside_marker_uses_one_em_default_size() {
     let mut uncascaded = crate::parse(&html[..], &options).unwrap();
     let cascade = crate::build_cascaded(&uncascaded);
     resources.preload_list_marker_images(
-        &cascade.computed,
+        &cascade,
         None,
         &Arc::new(Mutex::new(Vec::new())),
         &mut Default::default(),
