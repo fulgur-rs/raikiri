@@ -880,3 +880,19 @@ fn decoration_api_matches_the_builtin_painter_on_each_page() {
         }
     }
 }
+
+#[test]
+fn line_identity_groups_split_runs_but_distinguishes_coincident_lines_and_paragraphs() {
+    let layout = lay_out(
+        "<p>A<span style='color:red'>B</span>CD</p><p>EF</p>",
+        "p {width:20px;margin:0;font:10px/0 Ahem;word-break:break-all}",
+    );
+    let runs = layout.page(0).unwrap().text_runs();
+    let run = |text| runs.iter().find(|run| run.text == text).unwrap();
+    let (a, b, cd, ef) = (run("A"), run("B"), run("CD"), run("EF"));
+    assert_eq!(a.line, b.line);
+    assert_eq!(a.line.root, cd.line.root);
+    assert_eq!(cd.line.index, a.line.index + 1);
+    assert_ne!(a.line.root, ef.line.root);
+    assert_eq!(a.origin.1, cd.origin.1);
+}

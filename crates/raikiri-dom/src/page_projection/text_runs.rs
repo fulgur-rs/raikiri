@@ -15,6 +15,21 @@ use std::fmt;
 use std::ops::Range;
 use std::sync::Arc;
 
+/// Identifies one line of a paragraph, independent of its paint coordinates.
+///
+/// Runs with different colors or fonts on the same line share this identity.
+/// Coincident lines, including lines with zero line height, remain distinct.
+/// The identity is scoped to the laid-out document and remains the same for
+/// a repeated paragraph on different pages.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub struct TextLineId {
+    /// The paragraph's inline formatting context root.
+    pub root: NodeId,
+    /// Zero-based line index in that paragraph, before page slicing.
+    pub index: usize,
+}
+
 /// One run of glyphs in one font and color, positioned on the page.
 ///
 /// Positions are in CSS px with the origin at the top-left of the page box and
@@ -25,6 +40,8 @@ use std::sync::Arc;
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct PositionedGlyphRun<'a> {
+    /// The line containing this run, for painting decorations per line.
+    pub line: TextLineId,
     /// What the text of the run comes from.
     pub source: RunSource,
     /// The font face.
@@ -345,6 +362,7 @@ fn glyph_run<'a>(
     line: &PositionedLine<'a>,
     positioned: &PositionedRun<'a>,
     (x, y): (f32, f32),
+    line_id: TextLineId,
 ) -> Option<PositionedGlyphRun<'a>> {
     let run = &positioned.run;
     let ellipsis = run.is_ellipsis();
@@ -410,6 +428,7 @@ fn glyph_run<'a>(
         .collect();
     let metrics = run.metrics();
     Some(PositionedGlyphRun {
+        line: line_id,
         source,
         font: FontRef {
             id: FontId { blob, index },
@@ -479,7 +498,17 @@ fn root_runs<'a>(
             line_origin,
         );
         for (run, lines) in line.runs.iter().zip(decorations) {
-            if let Some(mut run) = glyph_run(document, cascade, &line, run, line_origin) {
+            if let Some(mut run) = glyph_run(
+                document,
+                cascade,
+                &line,
+                run,
+                line_origin,
+                TextLineId {
+                    root: NodeId::new(root.node as u64),
+                    index: line.index,
+                },
+            ) {
                 if matches!(run.source, RunSource::Text(_)) {
                     run.decorations = lines;
                 }

@@ -38,7 +38,7 @@ pub use document_layout::{
     Anchor, AnchorIndex, ClipKind, DecorationKind, DecorationLine, DecorationStyle, DocumentLayout,
     DomView, FontBlob, FontId, FontRef, FontVariation, Fragment, FragmentKind, GeneratedKind,
     Glyph, LayoutOptions, LayoutStatus, Link, Page, PageGeometry, PageMode, PaintEvent,
-    PositionedGlyphRun, RepeatKind, RunSource, Synthesis, Tag, layout,
+    PositionedGlyphRun, RepeatKind, RunSource, Synthesis, Tag, TextLineId, layout,
 };
 pub use document_parse::{parse_html, parse_html_with_limits};
 pub use font_collection::{
