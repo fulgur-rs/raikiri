@@ -892,3 +892,84 @@ fn inside_marker_preserves_spaces_does_not_wrap_or_inherit_text_transform() {
         assert_eq!(line_texts(&projected, 30.0).first().unwrap(), "  x  y");
     }
 }
+
+#[test]
+fn image_marker_has_intrinsic_extents_and_uses_authored_style_in_vertical_and_rtl_layout() {
+    struct Pixels;
+    impl raikiri_traits::ImagePixelSource for Pixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
+                width: 16,
+                height: 8,
+                rgba: [0, 128, 0, 255].repeat(16 * 8),
+            }))
+        }
+    }
+    for (extra, expected) in [
+        ("direction:rtl", (16.0, 8.0)),
+        ("writing-mode:vertical-rl", (8.0, 16.0)),
+    ] {
+        let mut fixture = crate::layout::ifc::test_support::sheet_fixture(
+            "div::marker {color:red}",
+            &format!(
+                "display:list-item;list-style:inside url(https://images.test/marker.png);{extra}"
+            ),
+            |doc, root| {
+                doc.append_text(root, "a");
+            },
+        );
+        fixture
+            .doc
+            .prepare_list_marker_images(&fixture.cascade, &Pixels, None);
+        let projected = project(&fixture).expect("project marker");
+        let (_, size) = projected.marker_atomic.unwrap();
+        assert_eq!((size.inline_size, size.block_size), expected);
+        fixture.doc.set_font_collection(ahem_fonts());
+        crate::layout::layout_single_page(
+            &mut fixture.doc,
+            &fixture.cascade,
+            crate::layout::test_support::page_box_800x600(),
+        )
+        .unwrap();
+        let inputs =
+            crate::layout::ifc::boxes::intrinsics_of_boxes(&mut fixture.doc, fixture.root, 100.0);
+        let root = fixture.doc.nodes[fixture.root].ifc.as_ref().unwrap();
+        let extents = root.paragraph.intrinsic_sizes(
+            &mut LayoutContext::new(),
+            &root.options,
+            &inputs.engine,
+        );
+        assert!(extents.min_content >= expected.0);
+        assert!(extents.max_content >= expected.0 + 10.0);
+    }
+}
+
+#[test]
+fn unsupported_marker_style_returns_an_explicit_projection_error() {
+    let mut fixture = crate::layout::ifc::test_support::sheet_fixture(
+        "div::marker {font-variation-settings:\"wdth\" 1}",
+        "display:list-item;list-style:inside 'x'",
+        |_, _| {},
+    );
+    let marker = fixture
+        .cascade
+        .pseudo
+        .get_mut(&(
+            raikiri_style::StyleNodeId::new(fixture.root as u64),
+            PseudoElem::Marker,
+        ))
+        .unwrap();
+    let raikiri_style::property::FontVariationSettings::Settings(values) =
+        &mut marker.font_variation_settings
+    else {
+        panic!("parsed axis")
+    };
+    values[0].tag = "bad".into();
+    assert!(matches!(
+        project(&fixture),
+        Err(IfcError::Unsupported { .. })
+    ));
+}

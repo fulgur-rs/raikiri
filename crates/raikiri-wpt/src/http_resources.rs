@@ -87,7 +87,7 @@ pub(crate) fn absolutize_img_sources(document: &mut raikiri_dom::Document, base_
     }
 }
 
-fn prepare_background_image(
+pub(crate) fn prepare_background_image(
     image: &mut BackgroundImage,
     base_url: &Url,
     resolver: &dyn raikiri_traits::ReplacedResolver,

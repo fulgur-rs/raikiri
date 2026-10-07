@@ -869,7 +869,10 @@ impl<'a> RenderResources<'a> {
     ) {
         let urls: Vec<String> = computed
             .iter()
-            .filter(|cv| cv.display == DisplayValue::ListItem)
+            .filter(|cv| {
+                cv.display == DisplayValue::ListItem
+                    && cv.list_style_position == raikiri_style::ListStylePosition::Inside
+            })
             .filter_map(|cv| match &cv.list_style_image {
                 BackgroundImage::Url(raw) => Url::parse(raw)
                     .ok()

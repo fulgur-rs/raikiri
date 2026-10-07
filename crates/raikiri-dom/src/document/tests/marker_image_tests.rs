@@ -120,3 +120,31 @@ fn image_marker_resolves_missing_natural_dimensions_against_one_em() {
         assert_eq!((image.width, image.height), expected);
     }
 }
+
+#[test]
+fn unavailable_marker_images_leave_the_text_fallback_and_clear_cached_pixels() {
+    struct NoPixels;
+    impl ImagePixelSource for NoPixels {
+        fn get_decoded(&self, _: &url::Url) -> Option<Arc<DecodedImage>> {
+            None
+        }
+    }
+    let mut doc = Document::new();
+    for css in [
+        "list-style:inside disc",
+        "list-style:inside url(relative.svg)",
+        "list-style:inside url(https://images.test/missing.svg)",
+    ] {
+        doc.append_element(
+            Some(0),
+            "li",
+            taffy::Style::default(),
+            Some(format!("display:list-item;{css}").as_str()),
+        );
+    }
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    doc.prepare_list_marker_images(&cascade, &NoPixels, None);
+    assert!(doc.list_marker_images.is_empty());
+}

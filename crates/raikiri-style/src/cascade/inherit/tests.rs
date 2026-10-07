@@ -9398,3 +9398,39 @@ fn list_style_shorthand_defaults_css_wide_and_variables_follow_longhand_cascade(
         BackgroundImage::Url("child.png".into())
     );
 }
+
+#[test]
+fn marker_shorthand_direct_application_resets_all_three_inherited_fields() {
+    let mut specified = SpecifiedValues::initial();
+    specified.list_style_type = ListStyleType::Named("square".into());
+    specified.list_style_position = ListStylePosition::Inside;
+    specified.list_style_image = crate::property::BackgroundImage::Url("old.png".into());
+    apply_value(
+        PropertyValue::ListStyle(crate::property::ListStyleShorthand {
+            kind: ListStyleType::Disc,
+            position: ListStylePosition::Outside,
+            image: crate::property::BackgroundImage::None,
+        }),
+        &mut specified,
+    );
+    assert_eq!(specified.list_style_type, ListStyleType::Disc);
+    assert_eq!(specified.list_style_position, ListStylePosition::Outside);
+    assert_eq!(
+        specified.list_style_image,
+        crate::property::BackgroundImage::None
+    );
+    let marker = PropertyValue::Deferred(crate::property::DeferredValue {
+        property: "list-style-type".into(),
+        value: "inherit".into(),
+        key: crate::property::PropertyKey::ListStyleType,
+    });
+    assert_eq!(
+        resolve_css_wide_color_font(
+            marker.clone(),
+            crate::property::CssColor::BLACK,
+            crate::property::CssColor::TRANSPARENT,
+            ComputedLength(20.0)
+        ),
+        marker
+    );
+}

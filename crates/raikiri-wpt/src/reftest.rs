@@ -2130,7 +2130,7 @@ fn render_raikiri_pages_inner_with_canvases(
     )
 }
 
-/// Reuse the HTTP resource preparation for file-backed reftests too.
+/// Prepare inside marker images before file-backed reftest layout.
 struct FileCascadeImagePreparer<'a> {
     resolver: &'a raikiri_net::ImageResolver<raikiri_net::FileNetworkProvider>,
     base_url: &'a raikiri::Url,
@@ -2138,11 +2138,19 @@ struct FileCascadeImagePreparer<'a> {
 
 impl CascadeImagePreparer for FileCascadeImagePreparer<'_> {
     fn prepare_cascade(&self, cascade: &mut raikiri_style::CascadeResult) {
-        crate::http_resources::prepare_cascade_images(cascade, self.base_url, self.resolver);
+        for computed in &mut cascade.computed {
+            if computed.display == raikiri_style::DisplayValue::ListItem
+                && computed.list_style_position == raikiri_style::ListStylePosition::Inside
+            {
+                crate::http_resources::prepare_background_image(
+                    &mut computed.list_style_image,
+                    self.base_url,
+                    self.resolver,
+                );
+            }
+        }
     }
-    fn prepare_page(&self, page: &mut raikiri_style::PageCascadeResult) {
-        crate::http_resources::prepare_page_images(page, self.base_url, self.resolver);
-    }
+    fn prepare_page(&self, _: &mut raikiri_style::PageCascadeResult) {}
 }
 
 pub(crate) fn render_raikiri_pages_with_resources(

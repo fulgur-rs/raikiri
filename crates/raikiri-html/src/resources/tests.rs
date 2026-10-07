@@ -215,7 +215,7 @@ fn relative_inside_marker_image_is_fetched_once_before_layout() {
         network: None,
         base_url: Some(base.clone()),
     };
-    let html = br#"<!doctype html><style>li {list-style:inside url(marker.svg)}</style><li>one</li><li>two</li>"#;
+    let html = br#"<!doctype html><style>li {list-style:inside url(marker.svg)}</style><li>one</li><li>two</li><li style="list-style-image:none">text</li><li style="list-style-position:outside;list-style-image:url(ignored.svg)">outside</li>"#;
     let mut uncascaded = crate::parse(&html[..], &options).expect("HTML parses");
     let cascade = crate::build_cascaded(&uncascaded);
     let warnings = Arc::new(Mutex::new(Vec::new()));

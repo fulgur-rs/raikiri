@@ -57,7 +57,7 @@ fn inside_image_marker_scales_raster_pixels_to_css_dimensions() {
             })
         }
     }
-    let (mut doc, cascade, root) = paragraph(
+    let (mut doc, mut cascade, root) = paragraph(
         "display:list-item;list-style:inside url(https://images.test/marker.png)",
         |doc, root| {
             doc.append_text(root, "a");
@@ -95,6 +95,57 @@ fn inside_image_marker_scales_raster_pixels_to_css_dimensions() {
         kurbo::Shape::bounding_box(&image.shape),
         Rect::new(0.0, 0.0, 32.0, 16.0)
     );
+    let mut hidden = raikiri_style::ComputedValues::inherit_marker_from(&cascade.computed[root]);
+    hidden.visibility = raikiri_style::property::Visibility::Hidden;
+    cascade.pseudo.insert(
+        (
+            raikiri_style::StyleNodeId::new(root as u64),
+            raikiri_style::PseudoElem::Marker,
+        ),
+        hidden,
+    );
+    let mut invisible = Scene::new();
+    draw_ifc_lines(
+        &mut invisible,
+        &doc,
+        &cascade,
+        root,
+        IfcPosition {
+            x: 0.0,
+            y: 0.0,
+            shift_y: 0.0,
+        },
+        &crate::text::DecorationContext::default(),
+        None,
+        &[],
+    );
+    assert!(!invisible.commands.iter().any(|command| matches!(command,RenderCommand::Fill(fill) if matches!(fill.brush,anyrender::Paint::Image(_)))));
+    struct NoPixels;
+    impl raikiri_traits::ImagePixelSource for NoPixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            None
+        }
+    }
+    doc.prepare_list_marker_images(&cascade, &NoPixels, None);
+    let mut missing = Scene::new();
+    draw_ifc_lines(
+        &mut missing,
+        &doc,
+        &cascade,
+        root,
+        IfcPosition {
+            x: 0.0,
+            y: 0.0,
+            shift_y: 0.0,
+        },
+        &crate::text::DecorationContext::default(),
+        None,
+        &[],
+    );
+    assert!(!missing.commands.iter().any(|command| matches!(command,RenderCommand::Fill(fill) if matches!(fill.brush,anyrender::Paint::Image(_)))));
 }
 
 #[test]
