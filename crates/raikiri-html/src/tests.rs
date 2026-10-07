@@ -3925,6 +3925,24 @@ fn table_ua_rule_sets_a_2px_border_spacing() {
         spacing(table, "div"),
         (ComputedLength(0.0), ComputedLength(0.0))
     );
+    // `border-collapse` is inherited; the UA rule restates `separate` so a
+    // table nested in a collapsing table keeps its own spacing.
+    let nested = "<!doctype html><html><body><table style=\"border-collapse: collapse\"><tr><td>\
+        <table id=inner><tr><td>a</td></tr></table></td></tr></table></body></html>";
+    let uncascaded = parse(nested.as_bytes(), &empty_options()).expect("parse ok");
+    let mut tree = raikiri_style::build_rule_tree(&uncascaded.dom);
+    tree.add_stylesheet(MINIMAL_UA_CSS, Origin::UserAgent);
+    let cascade = raikiri_style::cascade(&uncascaded.dom, &tree).expect("cascade ok");
+    let inner = (0..cascade.computed.len())
+        .find(|&id| {
+            find_first_by_tag(&uncascaded.dom, "table").map(|n| n.0 as usize) != Some(id)
+                && cascade.computed[id].display == raikiri_style::property::DisplayValue::Table
+        })
+        .expect("inner table");
+    assert_eq!(
+        cascade.computed[inner].border_collapse,
+        raikiri_style::property::BorderCollapseValue::Separate
+    );
     // Author style wins over the UA rule.
     let author = "<!doctype html><html><body><table style=\"border-spacing: 0 4px\"><tr><td>a</td></tr></table></body></html>";
     assert_eq!(

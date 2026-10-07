@@ -491,10 +491,11 @@ td, th { display: table-cell; }
  *
  * The CSS initial value of `border-spacing` is 0 (CSS 2.2 §17.6.1), so
  * without this rule tables lay out with no gap between adjoining cells or
- * between the outer cells and the table border. Only `border-spacing` is
- * taken from that block here; `border-collapse: separate` is already the
- * initial value. */
-table { border-spacing: 2px; }
+ * between the outer cells and the table border. `border-collapse` is
+ * inherited, so `separate` is restated here: a table nested in a collapsing
+ * table would otherwise inherit `collapse` and lose the spacing. The block's
+ * `box-sizing` and `text-indent` are not taken here. */
+table { border-spacing: 2px; border-collapse: separate; }
 /* HTML UA behavior: the internal center value centers a header only when
  * its inherited table alignment is the initial `start` value; otherwise it
  * follows the inherited alignment. */
