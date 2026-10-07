@@ -13,6 +13,20 @@ fn an_out_of_range_root_has_no_decoration_context() {
 }
 
 #[test]
+fn mixed_inset_copy_overflow_falls_back_to_a_finite_endpoint_span() {
+    let mut values = ComputedValues::initial();
+    values.text_decoration_line.underline = true;
+    let mut spec = element_decoration(NodeId::new(1), &values, 0.0).unwrap();
+    spec.inset_start = 1.0e308;
+    spec.inset_end = -1.0e306;
+    let (spans, count) = decoration_spans(-1.0e308, 1.5e308, &spec).unwrap();
+    assert_eq!(count, 1);
+    assert_eq!(spans[0].0, 0.0);
+    assert!(spans[0].1.is_finite());
+    assert!(spans[0].1 > 1.5e308);
+}
+
+#[test]
 fn an_uncascaded_descendant_keeps_the_existing_decoration_context() {
     let mut document = Document::new();
     let root = document.append_element(
