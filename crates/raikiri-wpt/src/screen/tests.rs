@@ -5,6 +5,25 @@ use std::collections::HashMap;
 use crate::test_http_server::TestServer;
 
 #[test]
+fn viewport_units_keep_class_and_variable_names_and_resolve_inline_styles() {
+    let server = TestServer::start(HashMap::from([
+        ("/names.html", ("text/html", b"<style>html,body{margin:0}.foo100vw{--size100vw:100vw;width:var(--size100vw);height:100vh;background:green}</style><div class=foo100vw></div>".to_vec())),
+        ("/inline.html", ("text/html", b"<style>html,body{margin:0}</style><div style='width:100vw;height:100vh;background:green'></div>".to_vec())),
+    ]));
+    let pixels: Vec<_> = ["names.html", "inline.html"]
+        .into_iter()
+        .map(|page| {
+            let image =
+                render_screen_url(&SystemHttpProvider::new(), server.url(page), 32, 24).unwrap();
+            let offset = (23 * 32 + 31) * 4;
+            image.rgba[offset..offset + 4].to_vec()
+        })
+        .collect();
+    assert_eq!(pixels, [vec![0, 128, 0, 255], vec![0, 128, 0, 255]]);
+    assert_eq!(server.finish(), ["/names.html", "/inline.html"]);
+}
+
+#[test]
 fn rejects_an_oversized_viewport_before_fetching_the_document() {
     let error = match render_screen_url(
         &SystemHttpProvider::new(),

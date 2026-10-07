@@ -1287,8 +1287,21 @@ fn mirror_default_page_margin(test_html: &str, reference_html: &str) -> String {
 }
 
 fn authored_page_viewport(input: &str, fallback_width: f32, fallback_height: f32) -> (f32, f32) {
-    let block = first_authored_page_name(input)
-        .as_deref()
+    authored_page_viewport_for_name(
+        input,
+        first_authored_page_name(input).as_deref(),
+        fallback_width,
+        fallback_height,
+    )
+}
+
+fn authored_page_viewport_for_name(
+    input: &str,
+    page_name: Option<&str>,
+    fallback_width: f32,
+    fallback_height: f32,
+) -> (f32, f32) {
+    let block = page_name
         .and_then(|name| page_block_named(input, name))
         .or_else(|| page_block(input));
     let Some(block) = block else {
@@ -1388,6 +1401,119 @@ fn authored_page_viewport(input: &str, fallback_width: f32, fallback_height: f32
     )
 }
 
+/// Select the declaration basis from collected inline, linked and imported CSS
+/// in the same order used by the rule tree. Keep the existing authored-page
+/// hint policy, including the nominal basis of page-context viewport units.
+fn authored_document_page_viewport(
+    document: &raikiri_html::UncascadedDocument,
+    html: &str,
+    width: f32,
+    height: f32,
+) -> (f32, f32) {
+    let mut projected = String::from("<style>");
+    for sheet in &document.stylesheet_sources {
+        for part in &sheet.parts {
+            let media: Vec<_> = part
+                .media
+                .iter()
+                .map(String::as_str)
+                .chain(sheet.media.as_deref())
+                .collect();
+            for condition in &media {
+                projected.push_str(&format!("@media {condition}{{"));
+            }
+            projected.push_str(&part.source);
+            for _ in media {
+                projected.push('}');
+            }
+        }
+    }
+    projected.push_str("</style>");
+    let name = first_authored_page_name(html).or_else(|| first_authored_page_name(&projected));
+    let context = raikiri_style::MediaContext::with_viewport(
+        raikiri_style::MediaType::Print,
+        width as u32,
+        height as u32,
+    );
+    let mut tree = raikiri_style::build_rule_tree(&document.dom);
+    for sheet in &document.stylesheet_sources {
+        for part in &sheet.parts {
+            let source = expand_css_viewport_units_with_media_basis(
+                &part.source,
+                480.0,
+                288.0,
+                width,
+                height,
+            );
+            let media: Vec<_> = part
+                .media
+                .iter()
+                .map(String::as_str)
+                .chain(sheet.media.as_deref())
+                .map(|media| {
+                    expand_css_viewport_units_with_media_basis(media, width, height, width, height)
+                })
+                .collect();
+            let guards: Vec<_> = media.iter().map(String::as_str).collect();
+            tree.add_stylesheet_with_media_conditions(
+                &source,
+                raikiri_style::Origin::Author,
+                &guards,
+            );
+        }
+    }
+    let mut query = raikiri_style::PageContextQuery::default();
+    query.is_first = true;
+    query.is_right = true;
+    query.page_name = name.map(Into::into);
+    let page = raikiri_style::cascade_page_with_media_context(
+        &tree,
+        &query,
+        raikiri_style::PageInheritance::LegacyInitialValues,
+        &context,
+    );
+    // Preserve the legacy nominal unit basis only when the hinted descriptor
+    // can actually contribute in this environment. An inactive imported page
+    // rule must not change ordinary declaration lengths.
+    let hint = query
+        .page_name
+        .as_ref()
+        .map(|name| name.0.as_str())
+        .and_then(|name| page_block_named(&projected, name))
+        .or_else(|| page_block(&projected));
+    if hint.is_some_and(|block| {
+        let lower = block.to_ascii_lowercase();
+        lower.contains("vw") || lower.contains("vh")
+    }) && page.size().is_some()
+        && let Some(first) = tree.page_rules.first()
+    {
+        let mut isolated = raikiri_style::RuleTree::empty();
+        isolated.page_rules.push(first.clone());
+        let hinted = raikiri_style::cascade_page_with_media_context(
+            &isolated,
+            &query,
+            raikiri_style::PageInheritance::LegacyInitialValues,
+            &context,
+        );
+        if hinted.size() == page.size() {
+            return if let Some(name) = query.page_name.as_ref().map(|name| name.0.as_str()) {
+                authored_page_viewport_for_name(&projected, Some(name), width, height)
+            } else {
+                authored_page_viewport(&projected, width, height)
+            };
+        }
+    }
+    let mut fallback = raikiri_traits::PageBox::new();
+    fallback.width = width;
+    fallback.height = height;
+    let paper = page_box_or_fallback(&page, fallback);
+    let margins = raikiri_dom::page_margins_for_page(&page, paper);
+    (
+        (paper.width - margins.left - margins.right).max(1.0),
+        (paper.height - margins.top - margins.bottom).max(1.0),
+    )
+}
+
 /// Expand viewport-relative lengths before the style cascade.
 ///
 /// The style layer stores only resolved absolute lengths and intentionally has
@@ -1395,9 +1521,7 @@ fn authored_page_viewport(input: &str, fallback_width: f32, fallback_height: f32
 /// resolves the viewport units here while preserving other CSS tokens.  This
 /// is also useful for reference documents that express one printed page as
 /// `height: 100vh`.
-/// Shared with the screen adapter to resolve fetched stylesheet text before
-/// its first media-query parse.
-pub(crate) fn expand_viewport_units(input: &str, width: f32, height: f32) -> String {
+fn expand_viewport_units(input: &str, width: f32, height: f32) -> String {
     expand_viewport_units_with_media_basis(input, width, height, width, height)
 }
 
@@ -1410,17 +1534,6 @@ fn expand_viewport_units_with_media_basis(
     media_width: f32,
     media_height: f32,
 ) -> String {
-    fn unit_value(unit: &str, width: f32, height: f32) -> Option<f32> {
-        let value = match unit {
-            "vw" | "svw" | "lvw" | "dvw" => width / 100.0,
-            "vh" | "svh" | "lvh" | "dvh" => height / 100.0,
-            "vmin" | "svmin" | "lvmin" | "dvmin" => width.min(height) / 100.0,
-            "vmax" | "svmax" | "lvmax" | "dvmax" => width.max(height) / 100.0,
-            _ => return None,
-        };
-        Some(value)
-    }
-
     // Resolve units in inline `style` attributes as well as stylesheet text.
     // The normal scanner intentionally skips quoted strings, but an HTML
     // attribute quote is not a CSS string; reference pages commonly put
@@ -1468,10 +1581,12 @@ fn expand_viewport_units_with_media_basis(
             break;
         }
         attributes.push_str(&input[copied_until..value_start]);
-        attributes.push_str(&expand_viewport_units(
+        attributes.push_str(&expand_css_viewport_units_with_media_basis(
             &input[value_start..value_end],
             width,
             height,
+            media_width,
+            media_height,
         ));
         copied_until = value_end;
         cursor = value_end + 1;
@@ -1480,7 +1595,28 @@ fn expand_viewport_units_with_media_basis(
         attributes.push_str(&input[copied_until..]);
         source = attributes;
     }
-    let input = source.as_str();
+    expand_css_viewport_units_with_media_basis(&source, width, height, media_width, media_height)
+}
+
+/// Expand CSS dimensions without interpreting quoted strings as HTML attributes.
+fn expand_css_viewport_units_with_media_basis(
+    input: &str,
+    width: f32,
+    height: f32,
+    media_width: f32,
+    media_height: f32,
+) -> String {
+    fn unit_value(unit: &str, width: f32, height: f32) -> Option<f32> {
+        let value = match unit {
+            "vw" | "svw" | "lvw" | "dvw" => width / 100.0,
+            "vh" | "svh" | "lvh" | "dvh" => height / 100.0,
+            "vmin" | "svmin" | "lvmin" | "dvmin" => width.min(height) / 100.0,
+            "vmax" | "svmax" | "lvmax" | "dvmax" => width.max(height) / 100.0,
+            _ => return None,
+        };
+        Some(value)
+    }
+
     let bytes = input.as_bytes();
     let mut result = String::with_capacity(input.len());
     let mut i = 0;
@@ -1564,6 +1700,61 @@ fn expand_viewport_units_with_media_basis(
             }
         }
 
+        // Copy complete name tokens before examining individual bytes. Only
+        // a Dimension token is a viewport-relative numeric length; digits in
+        // selectors, custom-property names, hashes and escaped identifiers are
+        // not lengths. The CSS tokenizer also handles exponents and unit escapes.
+        let mut token_input = cssparser::ParserInput::new(&input[i..]);
+        let mut parser = cssparser::Parser::new(&mut token_input);
+        let token = parser.next_including_whitespace_and_comments().cloned();
+        let token_end = i + parser.position().byte_index();
+        match token {
+            Ok(cssparser::Token::AtKeyword(name)) => {
+                if name.eq_ignore_ascii_case("media") || name.eq_ignore_ascii_case("import") {
+                    media_prelude = true;
+                }
+                result.push_str(&input[i..token_end]);
+                i = token_end;
+                continue;
+            }
+            Ok(
+                cssparser::Token::Ident(_)
+                | cssparser::Token::Hash(_)
+                | cssparser::Token::IDHash(_)
+                | cssparser::Token::Number { .. }
+                | cssparser::Token::Percentage { .. },
+            ) => {
+                result.push_str(&input[i..token_end]);
+                i = token_end;
+                continue;
+            }
+            Ok(cssparser::Token::Function(_)) => {
+                if media_prelude {
+                    media_blocks.push(b')');
+                }
+                result.push_str(&input[i..token_end]);
+                i = token_end;
+                continue;
+            }
+            Ok(cssparser::Token::Dimension { value, unit, .. }) => {
+                let (unit_width, unit_height) = if media_prelude {
+                    (media_width, media_height)
+                } else {
+                    (width, height)
+                };
+                if let Some(scale) = unit_value(&unit.to_ascii_lowercase(), unit_width, unit_height)
+                    && (value * scale).is_finite()
+                {
+                    result.push_str(&format!("{:.6}px", value * scale));
+                } else {
+                    result.push_str(&input[i..token_end]);
+                }
+                i = token_end;
+                continue;
+            }
+            _ => {}
+        }
+
         // An escaped code point belongs to its CSS token, even when its
         // spelling contains a delimiter, quote, or at-sign. Preserve the full
         // escape, including hexadecimal digits and their optional whitespace.
@@ -1629,54 +1820,92 @@ fn expand_viewport_units_with_media_basis(
             continue;
         }
 
-        let number_start = i;
-        if bytes[i] == b'+' || bytes[i] == b'-' {
-            if i + 1 >= bytes.len() || !(bytes[i + 1].is_ascii_digit() || bytes[i + 1] == b'.') {
-                result.push(bytes[i] as char);
-                i += 1;
-                continue;
-            }
-            i += 1;
-        }
-        let mut digits = false;
-        while i < bytes.len() && bytes[i].is_ascii_digit() {
-            digits = true;
-            i += 1;
-        }
-        if i < bytes.len() && bytes[i] == b'.' {
-            i += 1;
-            while i < bytes.len() && bytes[i].is_ascii_digit() {
-                digits = true;
-                i += 1;
-            }
-        }
-        if !digits {
-            result.push(bytes[number_start] as char);
-            i = number_start + 1;
-            continue;
-        }
-        let number = &input[number_start..i];
-        let unit_start = i;
-        while i < bytes.len() && bytes[i].is_ascii_alphabetic() {
-            i += 1;
-        }
-        let unit = input[unit_start..i].to_ascii_lowercase();
-        let (unit_width, unit_height) = if media_prelude {
-            (media_width, media_height)
-        } else {
-            (width, height)
-        };
-        let Some(px_per_unit) = unit_value(&unit, unit_width, unit_height) else {
-            result.push_str(&input[number_start..i]);
-            continue;
-        };
-        let Ok(number) = number.parse::<f32>() else {
-            result.push_str(&input[number_start..i]);
-            continue;
-        };
-        result.push_str(&format!("{:.6}px", number * px_per_unit));
+        result.push(bytes[i] as char);
+        i += 1;
     }
     result
+}
+
+/// Resolve decoded CSS from every document stylesheet and inline-style slot.
+/// Screen and print adapters call this before their first rule-tree parse and
+/// after restoring authored animation styles on a freshly parsed document.
+pub(crate) fn expand_document_viewport_units(
+    document: &mut raikiri_html::UncascadedDocument,
+    width: f32,
+    height: f32,
+    media_width: f32,
+    media_height: f32,
+) {
+    for sheet in &mut document.stylesheet_sources {
+        if let Some(media) = &mut sheet.media {
+            *media = expand_css_viewport_units_with_media_basis(
+                media,
+                media_width,
+                media_height,
+                media_width,
+                media_height,
+            );
+        }
+        for part in &mut sheet.parts {
+            part.source = expand_css_viewport_units_with_media_basis(
+                &part.source,
+                width,
+                height,
+                media_width,
+                media_height,
+            );
+            for media in &mut part.media {
+                *media = expand_css_viewport_units_with_media_basis(
+                    media,
+                    media_width,
+                    media_height,
+                    media_width,
+                    media_height,
+                );
+            }
+        }
+    }
+    let inline: Vec<_> = (0..document.dom.node_count())
+        .filter_map(|node| {
+            let style = document.dom.element_attribute(node, "style")?;
+            let expanded = expand_css_viewport_units_with_media_basis(
+                style,
+                width,
+                height,
+                media_width,
+                media_height,
+            );
+            (expanded != style).then_some((node, expanded))
+        })
+        .collect();
+    for (node, style) in inline {
+        document
+            .dom
+            .set_element_inline_style(node, Some(style.into()));
+    }
+    let animations: Vec<_> = (0..document.dom.node_count())
+        .filter_map(|node| {
+            let reference = raikiri_style::StyleDom::node(
+                &document.dom,
+                raikiri_style::StyleNodeId::new(node as u64),
+            )?;
+            let element = raikiri_style::StyleNode::as_element(&reference)?;
+            let style = raikiri_style::StyleElement::animation_style_source(&element)?;
+            let expanded = expand_css_viewport_units_with_media_basis(
+                style,
+                width,
+                height,
+                media_width,
+                media_height,
+            );
+            (expanded != style).then_some((node, expanded))
+        })
+        .collect();
+    for (node, style) in animations {
+        document
+            .dom
+            .set_element_animation_style(node, Some(style.into()));
+    }
 }
 
 fn page_descriptor_length(value: &raikiri_style::property::Length, basis: f32) -> Option<f32> {
@@ -2267,19 +2496,19 @@ pub(crate) fn render_raikiri_pages_with_resources(
     // before resolving viewport units so both the content box and `vh` use the
     // same print viewport as the reference renderer.
     let html = inject_default_page_margin(html);
+    let mut uncascaded = parse(html.as_bytes(), &opts).map_err(|e| format!("parse: {e:?}"))?;
+    if let Some(styles) = animation_styles {
+        restore_animation_styles(&mut uncascaded.dom, styles)?;
+    }
     let (viewport_width, viewport_height) =
-        authored_page_viewport(&html, width as f32, height as f32);
-    let html = expand_viewport_units_with_media_basis(
-        &html,
+        authored_document_page_viewport(&uncascaded, &html, width as f32, height as f32);
+    expand_document_viewport_units(
+        &mut uncascaded,
         viewport_width,
         viewport_height,
         width as f32,
         height as f32,
     );
-    let mut uncascaded = parse(html.as_bytes(), &opts).map_err(|e| format!("parse: {e:?}"))?;
-    if let Some(styles) = animation_styles {
-        restore_animation_styles(&mut uncascaded.dom, styles)?;
-    }
     if let Some(base_url) = base_url {
         crate::http_resources::absolutize_img_sources(&mut uncascaded.dom, base_url);
     }
@@ -2461,6 +2690,13 @@ pub(crate) fn render_raikiri_pages_with_resources(
         if let Some(base_url) = base_url {
             crate::http_resources::absolutize_img_sources(&mut fresh.dom, base_url);
         }
+        expand_document_viewport_units(
+            &mut fresh,
+            viewport_width,
+            viewport_height,
+            width as f32,
+            height as f32,
+        );
         use_fonts(&mut fresh.dom);
         // The reparsed document is a different arena, so it gets its own
         // rule tree and full cascade.

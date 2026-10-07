@@ -1,6 +1,77 @@
 use super::*;
 
 #[test]
+fn css_viewport_units_preserve_identifiers_strings_urls_and_non_dimensions() {
+    let source = r#".foo100vw,#100vw,.日本100vw,.\31 00vw{--size100vw:100vw;--\31 00vw:1e2vw;width:var(--size100vw);content:"style='100vw'";background:url(a100vw.png);--a:1vw2;--b:1vw_foo;height:100v\68}"#;
+    let expected = r#".foo100vw,#100vw,.日本100vw,.\31 00vw{--size100vw:32.000000px;--\31 00vw:32.000000px;width:var(--size100vw);content:"style='100vw'";background:url(a100vw.png);--a:1vw2;--b:1vw_foo;height:24.000000px}"#;
+    assert_eq!(
+        expand_css_viewport_units_with_media_basis(source, 32.0, 24.0, 32.0, 24.0),
+        expected
+    );
+}
+
+#[test]
+fn decoded_inline_units_preserve_html_ids_text_and_css_strings() {
+    let mut document = raikiri::parse(br#"<div id="100vw" style="width:100vw;content:'style=&quot;100vw&quot;';height:100vh">100vw</div>"#.as_slice(), &raikiri::ParseOptions {extra_stylesheets:&[], network:None, base_url:None}).unwrap();
+    expand_document_viewport_units(&mut document, 32.0, 24.0, 32.0, 24.0);
+    let node = (0..document.dom.node_count())
+        .find(|node| document.dom.element_attribute(*node, "id") == Some("100vw"))
+        .unwrap();
+    assert_eq!(
+        document.dom.element_attribute(node, "style"),
+        Some("width:32.000000px;content:'style=\"100vw\"';height:24.000000px")
+    );
+    let child = document.dom.get_node(node).unwrap().children[0];
+    assert_eq!(
+        document.dom.get_node(child).unwrap().text_content(),
+        Some("100vw")
+    );
+}
+
+#[test]
+fn animation_viewport_units_are_resolved_after_geometry_reparse() {
+    let rules = "@page{size:300px 300px;margin:0}@page:first{size:300px 200px}html,body{margin:0}";
+    let source = format!(
+        "<html><head><style>{rules}</style></head><body><div style='height:1px;background:green'></div></body></html>"
+    );
+    let expected = format!(
+        "<html><head><style>{rules}</style></head><body><div style='height:400px;background:green'></div></body></html>"
+    );
+    let styles = [AnimationStyleSidecar {
+        node_path: vec![0, 1, 0],
+        declarations: "height:200vh".into(),
+    }];
+    let engine = InlineEngineChoice {
+        require_inline_fonts: false,
+    };
+    let actual = render_raikiri_pages_inner_with_canvases(
+        &source,
+        800,
+        600,
+        None,
+        None,
+        engine,
+        Some(&styles),
+        None,
+        None,
+    )
+    .unwrap();
+    let expected = render_raikiri_pages_inner_with_canvases(
+        &expected, 800, 600, None, None, engine, None, None, None,
+    )
+    .unwrap();
+    assert!(expected.pages.len() >= 2);
+    assert_eq!(actual.pages.len(), expected.pages.len());
+    for (actual, expected) in actual.pages.iter().zip(&expected.pages) {
+        assert_eq!(
+            (actual.width, actual.height),
+            (expected.width, expected.height)
+        );
+        assert_eq!(actual.rgba, expected.rgba);
+    }
+}
+
+#[test]
 fn expand_viewport_units_preserves_utf8_text() {
     let input = "<body>\u{3000}↓</body><style>.box { width: 10vw }</style>";
     let expanded = expand_viewport_units(input, 800.0, 600.0);

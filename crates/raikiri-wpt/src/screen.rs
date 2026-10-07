@@ -14,7 +14,7 @@ use raikiri_net::{ImageResolver, SystemHttpProvider};
 use crate::http_resources::{
     NetworkFontLoader, StylesheetUrlProvider, absolutize_img_sources, prepare_cascade_images,
 };
-use crate::reftest::{RenderedImage, expand_viewport_units, wpt_document_fonts};
+use crate::reftest::{RenderedImage, expand_document_viewport_units, wpt_document_fonts};
 
 /// Fetches and renders one HTTP document at the requested screen viewport.
 pub fn render_screen_url(
@@ -54,17 +54,13 @@ pub fn render_screen_url(
     // Expand the already decoded and imported stylesheet sources before the
     // first rule-tree parse. This covers inline and external CSS without
     // rewriting document bytes or changing their encoding and resource URLs.
-    for sheet in &mut uncascaded.stylesheet_sources {
-        if let Some(media) = &mut sheet.media {
-            *media = expand_viewport_units(media, width as f32, height as f32);
-        }
-        for part in &mut sheet.parts {
-            part.source = expand_viewport_units(&part.source, width as f32, height as f32);
-            for media in &mut part.media {
-                *media = expand_viewport_units(media, width as f32, height as f32);
-            }
-        }
-    }
+    expand_document_viewport_units(
+        &mut uncascaded,
+        width as f32,
+        height as f32,
+        width as f32,
+        height as f32,
+    );
     let base_url = effective_document_base_url(&uncascaded, Some(&fallback_base_url))
         .unwrap_or(fallback_base_url);
     absolutize_img_sources(&mut uncascaded.dom, &base_url);
