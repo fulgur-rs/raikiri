@@ -353,12 +353,21 @@ fn compute_table_layout_checked(
     // (origins net the overlaps out afterwards), so the avail/target the
     // distributors aim at must add the overlaps back — otherwise a stretched
     // table leaves an `overlap`-wide slack at its end edge. Separate model:
-    // overlaps are zero, so this reduces to `padding_border_size`.
+    // overlaps are zero.
     let overlap_w: f32 = collapsed.col_overlaps.iter().sum();
     let overlap_h: f32 = collapsed.row_overlaps.iter().sum();
+    // Separated borders (CSS 2.2 §17.6.1): `border-spacing` sits between
+    // adjoining cells and between the outer cells and the table's padding
+    // edge, so n tracks take n + 1 gaps. The spacing belongs to the table's
+    // content box, so it is part of the extents the tracks share but not of
+    // `padding_border_size`. Collapse zeroes `border_spacing`.
+    let spacing = Size {
+        width: border_spacing.0 * (grid.n_cols as f32 + 1.0),
+        height: border_spacing.1 * (grid.rows.len() as f32 + 1.0),
+    };
     let distrib_insets = Size {
-        width: padding_border_size.width - overlap_w,
-        height: padding_border_size.height - overlap_h,
+        width: padding_border_size.width - overlap_w + spacing.width,
+        height: padding_border_size.height - overlap_h + spacing.height,
     };
 
     // Specified (non-auto) table width, resolved against the containing
@@ -400,16 +409,23 @@ fn compute_table_layout_checked(
         let avail = specified_width.map(|w| f32_max_compat(w - distrib_insets.width, 0.0));
         match avail {
             Some(avail) => resolve_fixed_column_widths(&grid, avail),
-            None => resolve_column_widths(doc, &grid, inputs_for_columns, distrib_insets),
+            None => resolve_column_widths(
+                doc,
+                &grid,
+                inputs_for_columns,
+                distrib_insets,
+                border_spacing.0,
+            ),
         }
     } else {
-        resolve_column_widths(doc, &grid, inputs_for_columns, distrib_insets)
+        resolve_column_widths(
+            doc,
+            &grid,
+            inputs_for_columns,
+            distrib_insets,
+            border_spacing.0,
+        )
     };
-    // A single separate-border cell needs the two outer spacing gaps in its
-    // used track width. General multi-track distribution remains deferred.
-    if !collapse && grid.n_cols == 1 && border_spacing.0 > 0.0 {
-        column_widths[0] += border_spacing.0 * 2.0;
-    }
 
     // min/max authored values + box-sizing (CSS Sizing 3 §3.3/§4/§5, WPT
     // min-height-table-*, min-max-size-table-content-box). Percentages
@@ -454,7 +470,7 @@ fn compute_table_layout_checked(
     }
 
     // Row heights
-    let mut row_heights = resolve_row_heights(doc, &grid, &column_widths)?;
+    let mut row_heights = resolve_row_heights(doc, &grid, &column_widths, border_spacing)?;
     // An authored definite table height also establishes the containing block
     // for percentage-sized children of a single-row cell. Fragmentation can
     // impose a definite height on a single-row table without doing so; keep
@@ -475,10 +491,10 @@ fn compute_table_layout_checked(
         distribute_extra_height(&mut row_heights, target);
     }
 
-    // Content extents net of collapsed-line overlaps (separate: overlaps are
-    // zero, so this reduces to the plain sum).
-    let content_width: f32 = column_widths.iter().sum::<f32>() - overlap_w;
-    let content_height: f32 = row_heights.iter().sum::<f32>() - overlap_h;
+    // Content extents net of collapsed-line overlaps, plus the separated
+    // spacing (one of the two is always zero).
+    let content_width: f32 = column_widths.iter().sum::<f32>() - overlap_w + spacing.width;
+    let content_height: f32 = row_heights.iter().sum::<f32>() - overlap_h + spacing.height;
     // min grows the box; max NEVER shrinks a table below its intrinsic
     // content size (csswg-drafts#5336 / Mozilla bug 1651530: WPT
     // min-max-size-table-content-box and max-height-table check that
@@ -508,8 +524,6 @@ fn compute_table_layout_checked(
         // the containing block; retaining the probe would leave a narrow strip
         // missing from the table background.
         inputs.parent_size.width.or(effective_known.width)
-    } else if border_spacing.0 > 0.0 || border_spacing.1 > 0.0 {
-        specified_width.or(effective_known.width)
     } else {
         match specified_width {
             Some(_) => effective_known.width,
@@ -517,11 +531,6 @@ fn compute_table_layout_checked(
         }
     };
     let vertical_content_height = row_heights.iter().sum::<f32>() * grid.n_cols as f32;
-    let separate_single_cell_extra_height = if !collapse && grid.n_cols == 1 {
-        border_spacing.1 * 2.0
-    } else {
-        0.0
-    };
     let final_size = Size {
         width: if vertical_writing {
             effective_known
@@ -561,13 +570,6 @@ fn compute_table_layout_checked(
                         max_h_outer,
                     )
                 })
-                + if effective_known.height.is_some() {
-                    // cov:ignore: exercised by ignored exact table-fragmentation WPT.
-
-                    0.0
-                } else {
-                    separate_single_cell_extra_height
-                }
         },
     };
 
@@ -578,8 +580,19 @@ fn compute_table_layout_checked(
     // Position cells: origin includes padding + collapsed outer border.
     let x_origin = pad.left + collapsed.outer_left + border_spacing.0;
     let y_origin = pad.top + collapsed.outer_top + border_spacing.1;
-    let col_origins = track_origins(&column_widths, &collapsed.col_overlaps, x_origin);
-    let row_origins = track_origins(&row_heights, &collapsed.row_overlaps, y_origin);
+    // A separated gap is a negative overlap between adjoining tracks.
+    let col_steps = if collapse {
+        collapsed.col_overlaps.clone()
+    } else {
+        vec![-border_spacing.0; usize::from(grid.n_cols).saturating_sub(1)]
+    };
+    let row_steps = if collapse {
+        collapsed.row_overlaps.clone()
+    } else {
+        vec![-border_spacing.1; grid.rows.len().saturating_sub(1)]
+    };
+    let col_origins = track_origins(&column_widths, &col_steps, x_origin);
+    let row_origins = track_origins(&row_heights, &row_steps, y_origin);
     place_cells(
         doc,
         &mut grid,
@@ -587,6 +600,7 @@ fn compute_table_layout_checked(
         &row_heights,
         &col_origins,
         &row_origins,
+        border_spacing,
     )?; // cov:ignore: failure is defensive; resolve_row_heights already validated these ranges and track_origins supplies every column origin.
     if vertical_writing {
         reposition_cells_for_vertical_writing(
@@ -1021,6 +1035,7 @@ fn resolve_column_widths(
     grid: &TableGrid,
     inputs: LayoutInput,
     padding_border_size: Size<f32>,
+    spacing: f32,
 ) -> Vec<f32> {
     let n = grid.n_cols as usize;
     // (B) Measure each cell
@@ -1082,14 +1097,16 @@ fn resolve_column_widths(
             targets
         };
         let cnt = targets.len() as f32;
-        let cur_min: f32 = col_min_full[s..e].iter().sum();
+        // The spanned columns' separated gaps already give the cell room.
+        let gaps = spacing * (e - s - 1) as f32;
+        let cur_min: f32 = col_min_full[s..e].iter().sum::<f32>() + gaps;
         if cell_min[i] > cur_min {
             let add = (cell_min[i] - cur_min) / cnt;
             for column in &targets {
                 col_min_full[*column] += add;
             }
         }
-        let cur_max: f32 = col_max_full[s..e].iter().sum();
+        let cur_max: f32 = col_max_full[s..e].iter().sum::<f32>() + gaps;
         if cell_max[i] > cur_max {
             let add = (cell_max[i] - cur_max) / cnt;
             for column in &targets {
@@ -1351,6 +1368,7 @@ fn resolve_row_heights(
     doc: &mut Document,
     grid: &TableGrid,
     column_widths: &[f32],
+    spacing: (f32, f32),
 ) -> Result<Vec<f32>, raikiri_traits::LayoutError> {
     let mut row_heights = vec![0.0f32; grid.rows.len()];
     // Authored `height` on rows floors the row (CSS 2.1 §17.5.3; lengths
@@ -1369,7 +1387,7 @@ fn resolve_row_heights(
     }
     for cell in &grid.cells {
         let columns = cell_column_range(cell, column_widths.len())?;
-        let cell_width: f32 = column_widths[columns].iter().sum();
+        let cell_width = spanned_size(&column_widths[columns], spacing.0);
         let output = doc.compute_child_layout(
             NodeId::from(cell.node_id),
             LayoutInput {
@@ -1406,7 +1424,7 @@ fn resolve_row_heights(
             let cnt = (end_row - start) as f32;
             if cnt > 0.0 {
                 // Need to ensure span can accommodate h: if sum current < h, distribute deficit
-                let cur: f32 = row_heights[start..end_row].iter().sum();
+                let cur = spanned_size(&row_heights[start..end_row], spacing.1);
                 if h > cur {
                     let add = (h - cur) / cnt;
                     for slot in row_heights[start..end_row].iter_mut() {
@@ -1424,14 +1442,22 @@ fn resolve_row_heights(
 // Positioning
 // ---------------------------------------------------------------------------
 
+/// The size a cell spanning `tracks` covers in the separated borders
+/// model: the tracks plus the `spacing` gaps between them.
+fn spanned_size(tracks: &[f32], spacing: f32) -> f32 {
+    tracks.iter().sum::<f32>() + spacing * tracks.len().saturating_sub(1) as f32
+}
+
 /// Cumulative track origins from sizes minus collapsed-line overlaps.
 ///
 /// `origins.len() == sizes.len() + 1`, `origins[0] == origin`, and
 /// `origins[i + 1] - origins[i] == sizes[i] - overlaps[i]` where
-/// `overlaps[i]` is the collapsed line between track `i` and `i + 1`
-/// (zero for the separate model). A cell spanning tracks `i..j` therefore
-/// covers `origins[j] - origins[i]` — interior collapsed lines are absorbed
-/// into the spanning cell rather than double-counted.
+/// `overlaps[i]` is the collapsed line between track `i` and `i + 1`.
+/// The separated borders model passes the negated `border-spacing` instead,
+/// so adjoining tracks move apart by the gap. In the collapsing model a
+/// cell spanning tracks `i..j` covers `origins[j] - origins[i]` — interior
+/// collapsed lines are absorbed into the spanning cell rather than
+/// double-counted.
 fn track_origins(sizes: &[f32], overlaps: &[f32], origin: f32) -> Vec<f32> {
     let mut out = vec![0.0f32; sizes.len() + 1];
     out[0] = origin;
@@ -1449,6 +1475,7 @@ fn place_cells(
     row_heights: &[f32],
     col_x: &[f32],
     row_y: &[f32],
+    spacing: (f32, f32),
 ) -> Result<(), raikiri_traits::LayoutError> {
     for (order, cell) in grid.cells.iter_mut().enumerate() {
         let columns = cell_column_range(cell, column_widths.len())?;
@@ -1457,10 +1484,10 @@ fn place_cells(
         let cell_y = row_y[cell.row as usize];
         // Full spanned widths — origins already net out the collapsed
         // overlaps for *positioning*; shrinking the box by the overlap as
-        // well would double-count the absorbed line (separate model:
-        // origins differences equal these sums, so this is a no-op there).
-        let cell_width: f32 = column_widths[columns].iter().sum();
-        let cell_height: f32 = row_heights[cell.row as usize..end_row].iter().sum();
+        // well would double-count the absorbed line. Separated borders add
+        // the spanned gaps instead, matching the origin differences.
+        let cell_width = spanned_size(&column_widths[columns], spacing.0);
+        let cell_height = spanned_size(&row_heights[cell.row as usize..end_row], spacing.1);
         // Final layout for cell contents with definite size
         let output = doc.compute_child_layout(
             NodeId::from(cell.node_id),
