@@ -298,6 +298,8 @@ pub struct Document {
     canvas_bitmap_bytes: CanvasBitmapByteCount,
     /// Decoded inside-marker images retained for both sizing and painting.
     list_marker_images: std::collections::HashMap<usize, ListMarkerImage>,
+    /// Measured marker advances reserved by the current legacy layout pass.
+    pub(crate) legacy_inside_marker_advances: std::collections::HashMap<usize, f32>,
     /// Arena index of the Document root (normally 0, stored explicitly to
     /// accommodate unusual future cases such as detaching the root).
     pub(crate) root: usize,
@@ -487,6 +489,7 @@ impl Document {
             nodes,
             canvas_bitmap_bytes: CanvasBitmapByteCount(Some(0)),
             list_marker_images: Default::default(),
+            legacy_inside_marker_advances: Default::default(),
             root: 0,
             layout_dirty: false,
             ifc: None,
@@ -2654,6 +2657,16 @@ impl Document {
         self.list_marker_images
             .get(&element)
             .map(|marker| marker.pixels.as_ref())
+    }
+
+    /// Inline space reserved before legacy ruby/multicol list-item content.
+    /// The painter subtracts it from the used padding to recover the marker origin.
+    #[doc(hidden)]
+    pub fn legacy_inside_marker_advance(&self, element: usize) -> f32 {
+        self.legacy_inside_marker_advances
+            .get(&element)
+            .copied()
+            .unwrap_or(0.0)
     }
 
     /// CSS dimensions of a prepared marker, independent of raster rounding.

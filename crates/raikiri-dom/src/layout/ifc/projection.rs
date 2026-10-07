@@ -180,7 +180,7 @@ pub(crate) struct GeneratedCounters(
 );
 
 impl GeneratedCounters {
-    fn get(
+    pub(super) fn get(
         &self,
         doc: &Document,
         cascade: &CascadeResult,
@@ -200,21 +200,26 @@ pub(crate) fn has_in_flow_generated_text(
     doc: &Document,
     cascade: &CascadeResult,
     element: usize,
-) -> bool {
-    [PseudoElem::Marker, PseudoElem::Before, PseudoElem::After]
-        .into_iter()
-        .any(|pseudo| {
-            is_in_flow_generated_text(cascade, element, pseudo)
-                && (pseudo != PseudoElem::Marker
-                    || doc.list_marker_image_size(element).is_some()
-                    || crate::generated_content::markers::marker_render_info_with_snapshots(
-                        doc,
-                        cascade,
-                        element,
-                        &[],
-                    )
-                    .is_some_and(|(_, text)| !text.is_empty()))
-        })
+    counters: &GeneratedCounters,
+) -> Result<bool, IfcError> {
+    for pseudo in [PseudoElem::Marker, PseudoElem::Before, PseudoElem::After] {
+        if !is_in_flow_generated_text(cascade, element, pseudo) {
+            continue;
+        }
+        if pseudo != PseudoElem::Marker
+            || doc.list_marker_image_size(element).is_some()
+            || crate::generated_content::markers::marker_render_info_with_snapshots(
+                doc,
+                cascade,
+                element,
+                counters.get(doc, cascade)?,
+            )
+            .is_some_and(|(_, text)| !text.is_empty())
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Push the text of the `pseudo` of `element` into the paragraph, as an

@@ -3968,13 +3968,21 @@ fn inside_ruby_multicol_markers_paint_on_the_legacy_path() {
             })
         }
     }
-    for image in [false, true] {
+    for (image, padding, authored_padding) in [
+        (false, "4px", 4.0),
+        (true, "4px", 4.0),
+        (false, "4ch", 40.0),
+        (true, "4ch", 40.0),
+        (false, "10%", 20.0),
+        (true, "10%", 20.0),
+    ] {
         let style = if image {
-            "display:list-item;list-style:inside url(marker.png);columns:2;height:100px"
+            "display:list-item;list-style:inside url(marker.png);columns:2;height:100px;font-family:Ahem;font-size:10px;padding-left:4px"
         } else {
-            "display:list-item;list-style:inside decimal;columns:2;height:100px"
+            "display:list-item;list-style:inside decimal;columns:2;height:100px;font-family:Ahem;font-size:10px;padding-left:4px"
         };
-        let (mut doc, _, item, _) = list_fixture(style, "display:none", None);
+        let style = format!("{style};padding-left:{padding}");
+        let (mut doc, _, item, _) = list_fixture(&style, "display:none", None);
         let html = doc.append_element(
             Some(doc.root_index()),
             "html",
@@ -3982,7 +3990,13 @@ fn inside_ruby_multicol_markers_paint_on_the_legacy_path() {
             None::<&str>,
         );
         let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-        doc.append_child(body, item).unwrap();
+        let container = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;width:200px"),
+        );
+        doc.append_child(container, item).unwrap();
         let ruby = doc.append_element(Some(item), "ruby", Style::default(), Some("display:inline"));
         doc.append_element(
             Some(ruby),
@@ -4000,6 +4014,20 @@ fn inside_ruby_multicol_markers_paint_on_the_legacy_path() {
         );
         raikiri_dom::layout_single_page(&mut doc, &cascade, PageBox::A4).unwrap();
         assert!(!doc.get_node(item).unwrap().is_ifc_root());
+        let expected_advance = if image { 18.0 } else { 30.0 };
+        let item_layout = doc.get_node(item).unwrap().unrounded_layout;
+        let ruby_layout = doc.get_node(ruby).unwrap().unrounded_layout;
+        assert_eq!(
+            item_layout.padding.left,
+            authored_padding + expected_advance
+        );
+        assert!(ruby_layout.location.x >= authored_padding + expected_advance);
+        assert_eq!(doc.legacy_inside_marker_advance(item), expected_advance);
+        raikiri_dom::layout_single_page(&mut doc, &cascade, PageBox::A4).unwrap();
+        assert_eq!(
+            doc.get_node(item).unwrap().unrounded_layout.padding.left,
+            item_layout.padding.left
+        );
         let mut scene = Scene::new();
         paint_list_marker_with_snapshots(
             &mut scene,
@@ -4010,7 +4038,7 @@ fn inside_ruby_multicol_markers_paint_on_the_legacy_path() {
             3.0,
             100.0,
             100.0,
-            4.0,
+            item_layout.padding.left,
             &[],
             Some(&Pixels),
         );
@@ -4027,10 +4055,32 @@ fn inside_ruby_multicol_markers_paint_on_the_legacy_path() {
                     _ => None,
                 })
                 .unwrap();
-            assert_eq!(fill.transform.as_coeffs(), [0.5, 0.0, 0.0, 0.5, 6.0, 3.0]);
+            assert_eq!(
+                fill.transform.as_coeffs(),
+                [0.5, 0.0, 0.0, 0.5, f64::from(2.0 + authored_padding), 3.0]
+            );
         } else {
-            assert!(!glyph_xs(&scene).is_empty());
+            assert_eq!(
+                glyph_xs(&scene),
+                [
+                    f64::from(2.0 + authored_padding),
+                    f64::from(12.0 + authored_padding),
+                    f64::from(22.0 + authored_padding)
+                ]
+            );
         }
+        let suppressed = if image { "''" } else { "none" };
+        doc.set_element_inline_style(item, Some(format!(
+            "display:list-item;list-style:inside {suppressed};columns:2;height:100px;font-family:Ahem;font-size:10px;padding-left:{padding}"
+        ).into()));
+        let updated = raikiri_style::cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        doc.prepare_list_marker_images(&updated, &Pixels, Some(&base));
+        raikiri_dom::layout_single_page(&mut doc, &updated, PageBox::A4).unwrap();
+        assert_eq!(doc.legacy_inside_marker_advance(item), 0.0);
+        assert_eq!(
+            doc.get_node(item).unwrap().unrounded_layout.padding.left,
+            authored_padding
+        );
     }
 }
 

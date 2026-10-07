@@ -8,12 +8,53 @@ use shodo::limits::Limits;
 type Build = fn(&mut crate::Document, usize);
 
 #[test]
+fn ancestor_counters_qualify_empty_and_block_only_inside_markers() {
+    for block_child in [false, true] {
+        let mut fixture = crate::layout::ifc::test_support::sheet_fixture(
+            "body {counter-reset:section 7} div::marker {content:counters(section, '.')}",
+            "display:list-item;list-style:inside none",
+            |doc, root| {
+                if block_child {
+                    let child = doc.append_element(
+                        Some(root),
+                        "p",
+                        taffy::Style::default(),
+                        Some("display:block"),
+                    );
+                    doc.append_text(child, "body");
+                }
+            },
+        );
+        enable(&mut fixture);
+        assign(&mut fixture);
+        assert!(is_root(&fixture, fixture.root));
+        let paragraph = &fixture.doc.nodes[fixture.root]
+            .ifc
+            .as_ref()
+            .unwrap()
+            .paragraph;
+        assert_eq!(
+            paragraph.text(),
+            if block_child {
+                "\u{2066}7\u{2069}\u{2029}"
+            } else {
+                "\u{2066}7\u{2069}"
+            }
+        );
+    }
+}
+
+#[test]
 fn suppressed_inside_markers_leave_block_children_on_the_block_path() {
     for (sheet, css) in [
         ("", "display:list-item;list-style:inside none"),
         ("", "display:list-item;list-style:inside ''"),
         (
             "div::marker {content:''}",
+            "display:list-item;list-style:inside disc",
+        ),
+        (
+            "div::marker {content:counters(absent, '.')}",
             "display:list-item;list-style:inside disc",
         ),
         (

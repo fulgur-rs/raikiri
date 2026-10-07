@@ -1594,7 +1594,9 @@ fn paint_list_marker_with_snapshots(
             raikiri_style::ListStylePosition::Outside => {
                 paint_x + padding_left - marker_width - 4.0
             }
-            raikiri_style::ListStylePosition::Inside => paint_x + padding_left,
+            raikiri_style::ListStylePosition::Inside => {
+                paint_x + padding_left - document.legacy_inside_marker_advance(node_id)
+            }
             _ => paint_x + padding_left - marker_width - 4.0,
         };
         let image_data = peniko::ImageData {
@@ -1631,14 +1633,16 @@ fn paint_list_marker_with_snapshots(
     if marker_width <= 0.0 {
         return; // cov:ignore: zero-advance glyphs are a defensive font-metric edge
     }
-    // Outside markers keep their gutter. A legacy inside marker starts at
-    // the padding edge when the inline engine did not own its content.
+    // Legacy content reserves the marker advance in its used padding.
+    // Subtract it to place the marker at the authored padding edge.
     const MARKER_GAP: f32 = 4.0;
     let marker_x = match computed.list_style_position {
         raikiri_style::ListStylePosition::Outside => {
             paint_x + padding_left - marker_width - MARKER_GAP
         }
-        raikiri_style::ListStylePosition::Inside => paint_x + padding_left,
+        raikiri_style::ListStylePosition::Inside => {
+            paint_x + padding_left - document.legacy_inside_marker_advance(node_id)
+        }
         // cov:ignore: non-exhaustive enum fallback is not constructible here
         _ => paint_x + padding_left - marker_width - MARKER_GAP,
     };

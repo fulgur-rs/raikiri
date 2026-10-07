@@ -2,6 +2,30 @@ use super::*;
 use crate::layout::ifc::test_support::{Fixture, ahem_fonts, block_fixture, span};
 use shodo::AtomicSizes;
 
+#[test]
+fn marker_eligibility_preserves_counter_snapshot_errors() {
+    let fixture = crate::layout::ifc::test_support::sheet_fixture(
+        "div::marker {content:counters(section, '.')}",
+        "display:list-item;list-style:inside none",
+        |_, _| {},
+    );
+    let counters = GeneratedCounters::default();
+    counters
+        .0
+        .set(Err(CounterSnapshotLimitExceeded {
+            limit: 32,
+            actual: 33,
+        }))
+        .unwrap();
+    assert!(matches!(
+        has_in_flow_generated_text(&fixture.doc, &fixture.cascade, fixture.root, &counters),
+        Err(IfcError::CounterSnapshots(CounterSnapshotLimitExceeded {
+            limit: 32,
+            actual: 33
+        }))
+    ));
+}
+
 fn project(fixture: &Fixture) -> Result<ProjectedIfc, IfcError> {
     let mut cx = LayoutContext::new();
     project_ifc(
