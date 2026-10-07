@@ -23,9 +23,13 @@ bytes          = { workspace = true }
 # Raster pipeline for html_to_png (`render_to_buffer` in anyrender_vello_cpu).
 anyrender           = { workspace = true }
 anyrender_vello_cpu = { workspace = true }
-# Used by encode_png (inlined from raikiri-vrt). reference::decode_png
-# remains in raikiri-vrt, so both crates use tiny-skia.
+# Used by encode_png (inlined from raikiri-vrt) for alpha demultiplication.
+# reference::decode_png remains in raikiri-vrt, so both crates use tiny-skia.
 tiny-skia           = { workspace = true }
+# PNG serialization in encode_png. Called directly (rather than through
+# `tiny_skia::Pixmap::encode_png`) to pick a faster DEFLATE setting and to
+# avoid copying the raster buffer; see `page_scene::encode_png`.
+png                 = { workspace = true }
 
 [dev-dependencies]
 cssparser   = { workspace = true }
@@ -38,8 +42,6 @@ cssparser   = { workspace = true }
 raikiri-vrt = { path = "../raikiri-vrt" }
 # Write PNGs to temporary files in the html_to_png_with_resolver test.
 tempfile    = { workspace = true }
-# Decode the output PNG and verify pixel values in img_element_basic.
-png         = { workspace = true }
 
 [lints]
 workspace = true
