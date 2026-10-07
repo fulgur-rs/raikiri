@@ -1684,3 +1684,72 @@ fn legacy_page_width_and_height_size_the_page_area_inside_the_margins() {
     let page_box = page_box_from_cascade(&page, page_box_of(1.0, 1.0));
     assert_eq!((page_box.width, page_box.height), (500.0, 700.0));
 }
+
+#[test]
+fn live_document_media_context_uses_requested_viewport() {
+    let root = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/wpt"));
+    let setup = prepare_wpt_live_document("<div></div>", 320, 240, root, root).unwrap();
+    assert_eq!(setup.media_context.viewport_width(), 320);
+    assert_eq!(setup.media_context.viewport_height(), 240);
+}
+
+#[test]
+fn print_media_dimensions_use_the_output_page_box_before_margins() {
+    let image = render_raikiri("<style>@page{margin:10px}html,body{margin:0;background:red}@media print and (width:320px) and (height:240px){html,body{background:green}}</style><div></div>", 320, 240).unwrap();
+    let offset = (120 * 320 + 160) * 4;
+    assert_eq!(&image.rgba[offset..offset + 4], &[0, 128, 0, 255]);
+}
+
+#[test]
+fn print_media_viewport_units_ignore_authored_page_size_and_margins() {
+    let image = render_raikiri("<style>@page{size:200px 100px;margin:10px}html,body{margin:0;background:red}@media print and (max-width:100vw) and (max-height:100vh){html,body{background:green}}</style><div></div>", 800, 600).unwrap();
+    let offset = (50 * image.width as usize + 50) * 4;
+    assert_eq!(&image.rgba[offset..offset + 4], &[0, 128, 0, 255]);
+}
+
+#[test]
+fn viewport_expansion_separates_media_preludes_from_declarations() {
+    let source = r#"@MeDiA/**/print and (max-width:100vw) and (max-height:100vh){.box{width:100vw;height:100vh;content:"@media (width:100vw)"}}@import "child.css" print and (width:100vmin);@media-example{width:100vmax}/* @media (width:100vw) */"#;
+    let result = expand_viewport_units_with_media_basis(source, 200.0, 100.0, 800.0, 600.0);
+    assert_eq!(
+        result,
+        r#"@MeDiA/**/print and (max-width:800.000000px) and (max-height:600.000000px){.box{width:200.000000px;height:100.000000px;content:"@media (width:100vw)"}}@import "child.css" print and (width:600.000000px);@media-example{width:200.000000px}/* @media (width:100vw) */"#
+    );
+}
+
+#[test]
+fn viewport_expansion_tokenizes_escaped_media_and_import_keywords() {
+    let source = r#"@\6d edia (width:100vw){a{width:100vw}}@\69 mport "child.css" (height:100vh);"#;
+    let result = expand_viewport_units_with_media_basis(source, 200.0, 100.0, 800.0, 600.0);
+    assert_eq!(
+        result,
+        r#"@\6d edia (width:800.000000px){a{width:200.000000px}}@\69 mport "child.css" (height:600.000000px);"#
+    );
+}
+
+#[test]
+fn viewport_expansion_keeps_media_mode_inside_url_and_nested_blocks() {
+    for (source, expected) in [
+        (
+            r#"@import url(child;a.css) print and (max-width:100vw);"#,
+            r#"@import url(child;a.css) print and (max-width:800.000000px);"#,
+        ),
+        (
+            r#"@import url(child100vw\);a.css) print and (max-width:100vw);"#,
+            r#"@import url(child100vw\);a.css) print and (max-width:800.000000px);"#,
+        ),
+        (
+            r#"@import url("child;100vw.css") print and (max-height:100vh);"#,
+            r#"@import url("child;100vw.css") print and (max-height:600.000000px);"#,
+        ),
+        (
+            r#"@media (future({value:100vw})) or (max-width:100vw){a{width:100vw}}"#,
+            r#"@media (future({value:800.000000px})) or (max-width:800.000000px){a{width:200.000000px}}"#,
+        ),
+    ] {
+        assert_eq!(
+            expand_viewport_units_with_media_basis(source, 200.0, 100.0, 800.0, 600.0),
+            expected
+        );
+    }
+}

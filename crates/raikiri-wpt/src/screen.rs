@@ -55,7 +55,7 @@ pub fn render_screen_url(
         .unwrap_or(fallback_base_url);
     absolutize_img_sources(&mut uncascaded.dom, &base_url);
 
-    let media_context = MediaContext::screen();
+    let media_context = MediaContext::with_viewport(raikiri::MediaType::Screen, width, height);
     let page_query = PageContextQuery::default();
     let font_face_tree = raikiri::build_rule_tree(&uncascaded);
     let (fonts, bundled_only) = wpt_document_fonts(

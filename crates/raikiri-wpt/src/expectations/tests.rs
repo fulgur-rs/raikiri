@@ -789,12 +789,20 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS Overflow / UI text-overflow clip|ellipsis exact slice (+27).
     // + CSS Text Decoration horizontal text-emphasis exact slice (+8).
     // + CSS UI text-overflow into padding exact slice (+1).
-    assert_eq!(set.baseline.entries.len(), 1397);
+    // + CSS mediaqueries upstream exact pixel references (+22).
+    assert_eq!(set.baseline.entries.len(), 1419);
     assert!(
         set.baseline
             .entries
             .contains("css/css-ui/text-overflow-ellipsis-indent-001.html")
     );
+    for id in [
+        "css/mediaqueries/mq-range-001.html",
+        "css/mediaqueries/mq-invalid-media-type-layer-001.html",
+        "css/mediaqueries/relative-units-001.html",
+    ] {
+        assert!(set.baseline.entries.contains(id));
+    }
     assert!(set.quarantine.is_empty());
     assert!(set.deprecated.is_empty());
 }

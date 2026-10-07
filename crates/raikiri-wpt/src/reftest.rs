@@ -1396,6 +1396,18 @@ fn authored_page_viewport(input: &str, fallback_width: f32, fallback_height: f32
 /// is also useful for reference documents that express one printed page as
 /// `height: 100vh`.
 fn expand_viewport_units(input: &str, width: f32, height: f32) -> String {
+    expand_viewport_units_with_media_basis(input, width, height, width, height)
+}
+
+/// Keep media-query operands relative to the output environment while resolving
+/// declaration lengths against the authored print page area.
+fn expand_viewport_units_with_media_basis(
+    input: &str,
+    width: f32,
+    height: f32,
+    media_width: f32,
+    media_height: f32,
+) -> String {
     fn unit_value(unit: &str, width: f32, height: f32) -> Option<f32> {
         let value = match unit {
             "vw" | "svw" | "lvw" | "dvw" => width / 100.0,
@@ -1471,6 +1483,8 @@ fn expand_viewport_units(input: &str, width: f32, height: f32) -> String {
     let mut result = String::with_capacity(input.len());
     let mut i = 0;
     let mut quote = None;
+    let mut media_prelude = false;
+    let mut media_blocks = Vec::new();
     while i < bytes.len() {
         if let Some(delimiter) = quote {
             if bytes[i] == b'\\' {
@@ -1518,6 +1532,59 @@ fn expand_viewport_units(input: &str, width: f32, height: f32) -> String {
             continue;
         }
 
+        // URL contents are opaque CSS tokens: punctuation and viewport-like
+        // text in them must not change prelude state or the resource URL.
+        let token_boundary = i == 0 || {
+            let previous = bytes[i - 1];
+            !previous.is_ascii_alphanumeric()
+                && !matches!(previous, b'_' | b'-' | b'\\')
+                && previous.is_ascii()
+        };
+        if token_boundary && matches!(bytes[i], b'u' | b'U' | b'\\') {
+            let mut url_input = cssparser::ParserInput::new(&input[i..]);
+            let mut parser = cssparser::Parser::new(&mut url_input);
+            let is_url = match parser.next() {
+                Ok(cssparser::Token::UnquotedUrl(_) | cssparser::Token::BadUrl(_)) => true,
+                Ok(cssparser::Token::Function(name)) if name.eq_ignore_ascii_case("url") => {
+                    let _: Result<(), cssparser::ParseError<'_, ()>> =
+                        parser.parse_nested_block(|nested| {
+                            nested.expect_no_error_token().map_err(Into::into)
+                        });
+                    true
+                }
+                _ => false,
+            };
+            if is_url {
+                let end = i + parser.position().byte_index();
+                result.push_str(&input[i..end]);
+                i = end;
+                continue;
+            }
+        }
+
+        // Strings and comments have already been copied above, so only actual
+        // media/import preludes select the output basis for their dimensions.
+        if bytes[i] == b'@' {
+            let mut prelude_input = cssparser::ParserInput::new(&input[i..]);
+            let mut parser = cssparser::Parser::new(&mut prelude_input);
+            if matches!(parser.next(), Ok(cssparser::Token::AtKeyword(name))
+                if name.eq_ignore_ascii_case("media") || name.eq_ignore_ascii_case("import"))
+            {
+                media_prelude = true;
+            }
+        } else if media_prelude {
+            match bytes[i] {
+                b'(' => media_blocks.push(b')'),
+                b'[' => media_blocks.push(b']'),
+                b'{' if !media_blocks.is_empty() => media_blocks.push(b'}'),
+                b')' | b']' | b'}' if media_blocks.last() == Some(&bytes[i]) => {
+                    media_blocks.pop();
+                }
+                b'{' | b';' if media_blocks.is_empty() => media_prelude = false,
+                _ => {}
+            }
+        }
+
         // This scanner works in byte indices so it can preserve CSS slices.
         // Copy non-ASCII characters as complete UTF-8 scalars instead of
         // turning each byte into mojibake while looking for viewport units.
@@ -1563,7 +1630,12 @@ fn expand_viewport_units(input: &str, width: f32, height: f32) -> String {
             i += 1;
         }
         let unit = input[unit_start..i].to_ascii_lowercase();
-        let Some(px_per_unit) = unit_value(&unit, width, height) else {
+        let (unit_width, unit_height) = if media_prelude {
+            (media_width, media_height)
+        } else {
+            (width, height)
+        };
+        let Some(px_per_unit) = unit_value(&unit, unit_width, unit_height) else {
             result.push_str(&input[number_start..i]);
             continue;
         };
@@ -1777,7 +1849,7 @@ pub(crate) fn prepare_wpt_live_document(
     // WPT testharness pages run in a screen viewport, unlike print reftests.
     // Keep the print renderer's page-margin and authored-@page setup isolated
     // from this live JavaScript path.
-    let media_context = MediaContext::screen();
+    let media_context = MediaContext::with_viewport(raikiri::MediaType::Screen, width, height);
     let font_face_tree = raikiri::build_rule_tree(&uncascaded);
     let font_loader = WptFontLoader::discover(page_base.as_deref())
         .or_else(|| WptFontLoader::discover(wpt_root.as_deref()));
@@ -2156,7 +2228,9 @@ pub(crate) fn render_raikiri_pages_with_resources(
         network: resources.network,
         base_url: resources.parse_base_url.cloned(),
     };
-    let media_context = MediaContext::print();
+    // Media queries use the selected output page box before margins and
+    // independently of any authored `@page size`.
+    let media_context = MediaContext::with_viewport(raikiri::MediaType::Print, width, height);
     // WPT's print UA supplies a 0.5in default page margin when an authored
     // `@page` rule omits all page-margin declarations.  Add that UA value
     // before resolving viewport units so both the content box and `vh` use the
@@ -2164,7 +2238,13 @@ pub(crate) fn render_raikiri_pages_with_resources(
     let html = inject_default_page_margin(html);
     let (viewport_width, viewport_height) =
         authored_page_viewport(&html, width as f32, height as f32);
-    let html = expand_viewport_units(&html, viewport_width, viewport_height);
+    let html = expand_viewport_units_with_media_basis(
+        &html,
+        viewport_width,
+        viewport_height,
+        width as f32,
+        height as f32,
+    );
     let mut uncascaded = parse(html.as_bytes(), &opts).map_err(|e| format!("parse: {e:?}"))?;
     if let Some(styles) = animation_styles {
         restore_animation_styles(&mut uncascaded.dom, styles)?;

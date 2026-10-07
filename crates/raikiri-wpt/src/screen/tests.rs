@@ -166,3 +166,16 @@ fn resolves_external_stylesheet_resources_from_the_stylesheet_url() {
     assert!(requests.iter().any(|path| path == "/styles/probe.ttf"));
     assert!(contains_red_pixel(&image));
 }
+
+#[test]
+fn media_queries_use_the_requested_screen_viewport() {
+    let server = TestServer::start(HashMap::from([(
+        "/index.html",
+        ("text/html", b"<style>html,body{margin:0}div{width:8px;height:8px;background:red}@media screen and (width:32px) and (height:24px){div{background:green}}</style><div></div>".to_vec()),
+    )]));
+    let image =
+        render_screen_url(&SystemHttpProvider::new(), server.url("index.html"), 32, 24).unwrap();
+    assert!(!contains_red_pixel(&image));
+    assert_eq!(&image.rgba[..4], &[0, 128, 0, 255]);
+    assert_eq!(server.finish(), ["/index.html"]);
+}

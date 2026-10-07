@@ -1649,3 +1649,27 @@ css/css-text-decor/text-emphasis-punctuation-1.html
 css/css-text-decor/text-emphasis-punctuation-2.html
 css/css-text-decor/text-emphasis-style-001.html
 css/css-text-decor/text-emphasis-style-property-001.html
+
+# --- Media queries: 800x600, bundled WPT fonts, WPT 97ea26e2 (0vv.95) ---
+css/mediaqueries/aspect-ratio-002.html
+css/mediaqueries/device-aspect-ratio-004.html
+css/mediaqueries/device-aspect-ratio-006.html
+css/mediaqueries/mq-calc-006.html
+css/mediaqueries/mq-calc-sign-function-006.html
+css/mediaqueries/mq-deprecated-001.html
+css/mediaqueries/mq-gamut-003.html
+css/mediaqueries/mq-gamut-005.html
+css/mediaqueries/mq-invalid-media-type-001.html
+css/mediaqueries/mq-invalid-media-type-002.html
+css/mediaqueries/mq-invalid-media-type-003.html
+css/mediaqueries/mq-invalid-media-type-004.html
+css/mediaqueries/mq-invalid-media-type-layer-001.html
+css/mediaqueries/mq-range-001.html
+css/mediaqueries/prefers-color-scheme-svg-image-normal-with-meta-dark.html
+css/mediaqueries/prefers-color-scheme-svg-image-normal-with-meta-light.html
+css/mediaqueries/prefers-color-scheme-svg-image-normal.html
+css/mediaqueries/prefers-color-scheme-svg-image.html
+css/mediaqueries/relative-units-001.html
+css/mediaqueries/relative-units-002.html
+css/mediaqueries/relative-units-003.html
+css/mediaqueries/relative-units-004.html
