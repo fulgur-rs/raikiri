@@ -133,7 +133,11 @@ impl PageMarginBoxCascadeResult {
                 continue;
             }
             let name = match &decl.value {
-                PropertyValue::CustomProperty(custom) => Some(custom.name.clone()),
+                PropertyValue::CustomProperty(custom) => {
+                    has_rollback |= crate::cascade::custom_property_rollback(&custom.value)
+                        != crate::cascade::rollback::Rollback::None;
+                    Some(custom.name.clone())
+                }
                 _ => None,
             };
             let layer = crate::layer::LayerPosition {
@@ -156,19 +160,23 @@ impl PageMarginBoxCascadeResult {
             }
         }
         if has_rollback {
-            winners.retain(|(key, _), winner| {
-                if matches!(
-                    key,
-                    PropertyKey::Custom | PropertyKey::Direction | PropertyKey::UnicodeBidi
-                ) {
+            winners.retain(|(key, name), winner| {
+                if matches!(key, PropertyKey::Direction | PropertyKey::UnicodeBidi) {
                     return true;
                 }
                 let selected = crate::cascade::rollback::select_layered_winner(
                     &candidates,
                     |_, &(rule_index, decl_index, rule, decl)| {
-                        if decl.value.key() != *key
-                            && !matches!(decl.value, PropertyValue::AllRevertLayer)
-                        {
+                        let same_property = decl.value.key() == *key
+                            && match (&decl.value, name) {
+                                (PropertyValue::CustomProperty(custom), Some(name)) => {
+                                    custom.name == *name
+                                }
+                                _ => true,
+                            };
+                        let reset_all = *key != PropertyKey::Custom
+                            && matches!(decl.value, PropertyValue::AllRevertLayer);
+                        if !same_property && !reset_all {
                             return None;
                         }
                         let layer = crate::layer::LayerPosition {
@@ -864,20 +872,50 @@ pub fn cascade_page_with_media_context(
     // `PropertyKey::Custom` sentinel only for the specified-layer shape).
     let mut custom_best: HashMap<SmolStr, (u8, u32, PageSpecificity, u32, CustomProperty)> =
         HashMap::new();
-    for (value, important, origin, layer, spec, order) in custom_candidates {
+    for (value, important, origin, layer, spec, order) in &custom_candidates {
         let name = value.name.clone();
-        let rank = cascade_rank(origin, important);
+        let rank = cascade_rank(*origin, *important);
         let replace = custom_best.get(&name).is_none_or(|existing| {
-            (rank, layer, spec, order) >= (existing.0, existing.1, existing.2, existing.3)
+            (rank, *layer, *spec, *order) >= (existing.0, existing.1, existing.2, existing.3)
         });
         if replace {
-            custom_best.insert(name, (rank, layer, spec, order, value));
+            custom_best.insert(name, (rank, *layer, *spec, *order, value.clone()));
         }
     }
-    let custom_local: HashMap<SmolStr, SmolStr> = custom_best
-        .into_iter()
-        .map(|(name, (_, _, _, _, value))| (name, value.value))
-        .collect();
+    let custom_local = if custom_best.values().any(|(_, _, _, _, value)| {
+        crate::cascade::custom_property_rollback(&value.value)
+            != crate::cascade::rollback::Rollback::None
+    }) {
+        crate::cascade::select_custom_rollback_values(custom_candidates.iter().enumerate().map(
+            |(index, (value, important, origin, priority, spec, order))| {
+                (
+                    value,
+                    (
+                        cascade_rank(*origin, *important),
+                        *priority,
+                        *spec,
+                        *order,
+                        index,
+                    ),
+                    *origin,
+                    crate::layer::LayerPosition {
+                        attached: false,
+                        rank: if *important {
+                            u32::MAX - *priority
+                        } else {
+                            *priority
+                        },
+                    },
+                    *important,
+                )
+            },
+        ))
+    } else {
+        custom_best
+            .into_iter()
+            .map(|(name, (_, _, _, _, value))| (name, value.value))
+            .collect()
+    };
 
     // Winner selection — sibling arm to `cascade::pick_winners`.
     let mut best: HashMap<PropertyKey, (u8, u32, PageSpecificity, u32, PropertyValue)> =

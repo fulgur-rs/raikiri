@@ -694,7 +694,7 @@ fn border_and_all_layer_rollback_share_one_exclusion_chain() {
 #[test]
 fn deferred_border_layer_rollback_uses_the_resolved_keyword() {
     let tree = author_tree(&[
-        "@layer a,b; @layer a{p{border-top:7px solid red}} @layer b{p{--rollback:revert-layer;border-top-style:solid;border-top-width:var(--rollback)}}",
+        "@layer a,b; @layer a{p{border-top:7px solid red}} @layer b{p{border-top-style:solid;border-top-width:var(--missing,revert-layer)}}",
     ]);
     let (id, result) = result(&tree, &MediaContext::print(), None);
     assert_eq!(result.computed[id].border.top.width().px(), 7.0);
@@ -791,16 +791,16 @@ fn invalid_layer_name_tokens_are_rejected_and_all_marker_serializes() {
 fn border_rollback_continues_through_deferred_fallback_markers() {
     for final_rule in [
         "border-top-width:revert-layer",
-        "--y:revert-layer;border-top-width:var(--y)",
+        "border-top-width:var(--missing,revert-layer)",
     ] {
         let tree = author_tree(&[&format!(
-            "@layer a,b,c; @layer a{{p{{border-top:7px solid red}}}} @layer b{{p{{--x:revert-layer;border-top-width:var(--x)}}}} @layer c{{p{{{final_rule}}}}}"
+            "@layer a,b,c; @layer a{{p{{border-top:7px solid red}}}} @layer b{{p{{border-top-width:var(--missing,revert-layer)}}}} @layer c{{p{{{final_rule}}}}}"
         )]);
         let (id, result) = result(&tree, &MediaContext::print(), None);
         assert_eq!(result.computed[id].border.top.width().px(), 7.0);
     }
     let mut tree = author_tree(&[
-        "@layer a,b; @layer a{p{--x:revert;border-top-width:var(--x)}} @layer b{p{border-top-width:revert-layer}} p{border-top-style:solid}",
+        "@layer a,b; @layer a{p{border-top-width:var(--missing,revert)}} @layer b{p{border-top-width:revert-layer}} p{border-top-style:solid}",
     ]);
     tree.add_stylesheet("p{border-top:7px solid red}", Origin::User);
     let (id, result) = result(&tree, &MediaContext::print(), None);
@@ -855,4 +855,120 @@ fn public_origin_changes_do_not_reuse_another_origins_layer_rank() {
             .value(),
         &PropertyValue::Color(RED)
     );
+}
+
+#[test]
+fn custom_property_layer_rollback_selects_per_name_before_substitution() {
+    for css in [
+        "@layer base{p{--x:red}} @layer theme{p{--x:revert-layer;color:var(--x)}}",
+        "@layer base,theme,later; @layer base{p{--x:red}} @layer theme{p{--x:revert-layer!important}} @layer later{p{--x:blue!important}} p{color:var(--x)}",
+        "@layer base{p{--x:red}} @layer theme{p{--x:/*before*/ReVeRt-LaYeR/*after*/}} p{color:var(--x)}",
+        r"@layer base{p{--x:red}} @layer theme{p{--x:r\65 vert-layer}} p{color:var(--x)}",
+        "@layer base{p{--x:red}} @layer theme{p{--x:blue;--y:blue}} @layer theme{p{--x:revert-layer}} p{color:var(--x);background-color:var(--y)}",
+    ] {
+        let tree = author_tree(&[css]);
+        assert_eq!(color(&tree, &MediaContext::print()), RED);
+    }
+    let tree = author_tree(&["div{--x:red} p{--x:revert-layer;color:var(--x)}"]);
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "div", None);
+    let child = doc.push_element(parent, "p", None);
+    let values = cascade(&doc, &tree).unwrap();
+    assert_eq!(values.computed[child].color, RED);
+    let tree = author_tree(&["p{--x:revert-layer;color:var(--x,red);--literal:revert-layer blue}"]);
+    assert_eq!(color(&tree, &MediaContext::print()), RED);
+    let (id, values) = result(&tree, &MediaContext::print(), None);
+    assert_eq!(
+        values.computed[id]
+            .custom_properties
+            .get("--literal")
+            .as_deref(),
+        Some("revert-layer blue")
+    );
+}
+
+#[test]
+fn page_and_margin_custom_property_rollback_preserves_other_names() {
+    let tree = author_tree(&[
+        "@layer base{ @page{--x:red;@top-left{--x:red;--y:red}}} @layer theme{@page{--x:revert-layer;--y:blue;@top-left{--x:revert-layer;--y:blue}}} @page{color:var(--x);background-color:var(--y)}",
+    ]);
+    assert_eq!(page_color(&tree, &MediaContext::print()), RED);
+    let page = cascade_page_with_media_context(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::LegacyInitialValues,
+        &MediaContext::print(),
+    );
+    assert_eq!(
+        page.declarations().get(&PropertyKey::BackgroundColor),
+        Some(&PropertyValue::BackgroundColor(BLUE))
+    );
+    let margin = crate::page::PageMarginBoxCascadeResult::cascade_matching(
+        page.margin_boxes(),
+        crate::page::PageMarginBoxSlot::TopLeft,
+    )
+    .unwrap();
+    let values: std::collections::HashMap<_, _> = margin
+        .declarations
+        .iter()
+        .filter_map(|d| match d.value() {
+            PropertyValue::CustomProperty(c) => Some((c.name.as_str(), c.value.as_str())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(values.get("--x"), Some(&"red"));
+    assert_eq!(values.get("--y"), Some(&"blue"));
+}
+
+#[test]
+fn custom_rollback_covers_origins_pseudos_and_empty_page_results() {
+    let mut tree = author_tree(&["@layer a{p{--x:blue}} @layer b{p{--x:revert;color:var(--x)}}"]);
+    tree.add_stylesheet("p{--x:red}", Origin::User);
+    assert_eq!(color(&tree, &MediaContext::print()), RED);
+    let tree = author_tree(&[
+        "@layer a{p::before{--x:red}} @layer b{p::before{--x:revert-layer}} p::before{content:'x';color:var(--x)}",
+    ]);
+    let (id, values) = result(&tree, &MediaContext::print(), None);
+    assert_eq!(
+        values.pseudo[&(StyleNodeId(id as u64), PseudoElem::Before)].color,
+        RED
+    );
+    let tree = author_tree(&["@layer a{p{--x:red!important}}"]);
+    let (id, values) = result(
+        &tree,
+        &MediaContext::print(),
+        Some("--x:revert-layer!important;color:var(--x)"),
+    );
+    assert_eq!(values.computed[id].color, RED);
+    let tree = author_tree(&[
+        "@layer a,b,c; @layer a{@page{--x:red;@top-left{--x:red}}} @layer b{@page{--x:revert-layer!important;@top-left{--x:revert-layer!important}}} @layer c{@page{--x:blue!important;@top-left{--x:blue!important}}} @page{color:var(--x)}",
+    ]);
+    assert_eq!(page_color(&tree, &MediaContext::print()), RED);
+    let page = cascade_page_with_media_context(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::LegacyInitialValues,
+        &MediaContext::print(),
+    );
+    let margin = crate::page::PageMarginBoxCascadeResult::cascade_matching(
+        page.margin_boxes(),
+        crate::page::PageMarginBoxSlot::TopLeft,
+    )
+    .unwrap();
+    assert!(margin.declarations.iter().any(
+        |d| matches!(d.value(),PropertyValue::CustomProperty(c) if c.name=="--x" && c.value=="red")
+    ));
+    let tree = author_tree(&["@page{--x:revert-layer;@top-left{--x:revert-layer}}"]);
+    let page = cascade_page_with_media_context(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::LegacyInitialValues,
+        &MediaContext::print(),
+    );
+    let margin = crate::page::PageMarginBoxCascadeResult::cascade_matching(
+        page.margin_boxes(),
+        crate::page::PageMarginBoxSlot::TopLeft,
+    )
+    .unwrap();
+    assert!(margin.declarations.is_empty());
 }

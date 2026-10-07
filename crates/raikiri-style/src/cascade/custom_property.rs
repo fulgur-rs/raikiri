@@ -1218,6 +1218,61 @@ impl VariableResolutionBudget {
     }
 }
 
+/// Interpret literal rollback keywords before variable substitution.
+pub(crate) fn custom_property_rollback(value: &str) -> super::rollback::Rollback {
+    let mut input = ParserInput::new(value);
+    let mut parser = Parser::new(&mut input);
+    let Ok(ident) = parser.expect_ident_cloned() else {
+        return super::rollback::Rollback::None;
+    };
+    if !parser.is_exhausted() {
+        return super::rollback::Rollback::None;
+    }
+    if ident.eq_ignore_ascii_case("revert-layer") {
+        super::rollback::Rollback::Layer
+    } else if ident.eq_ignore_ascii_case("revert") {
+        super::rollback::Rollback::Origin
+    } else {
+        super::rollback::Rollback::None
+    }
+}
+
+/// Select custom-property rollback winners independently for each name.
+pub(crate) fn select_custom_rollback_values<'a, P: Copy + Ord>(
+    candidates: impl Iterator<
+        Item = (
+            &'a CustomProperty,
+            P,
+            crate::ruletree::Origin,
+            crate::layer::LayerPosition,
+            bool,
+        ),
+    >,
+) -> HashMap<SmolStr, SmolStr> {
+    let mut groups: HashMap<&SmolStr, Vec<_>> = HashMap::new();
+    for candidate in candidates {
+        groups.entry(&candidate.0.name).or_default().push(candidate);
+    }
+    groups
+        .into_iter()
+        .filter_map(|(name, candidates)| {
+            let index = super::rollback::select_layered_winner(
+                &candidates,
+                |_, (value, priority, origin, layer, important)| {
+                    Some((
+                        *priority,
+                        *origin,
+                        *layer,
+                        *important,
+                        custom_property_rollback(&value.value),
+                    ))
+                },
+            )?;
+            Some((name.clone(), candidates[index].0.value.clone()))
+        })
+        .collect()
+}
+
 pub(crate) fn resolve_custom_properties(
     inherited: &Arc<CustomPropertyEnvironment>,
     candidates: &[CustomCascadedDecl],
@@ -1241,10 +1296,33 @@ pub(crate) fn resolve_custom_properties(
         }
     }
 
-    let local: HashMap<SmolStr, SmolStr> = winners
-        .into_iter()
-        .map(|(name, (value, _))| (name, value.value))
-        .collect();
+    let local = if winners
+        .values()
+        .any(|(value, _)| custom_property_rollback(&value.value) != super::rollback::Rollback::None)
+    {
+        select_custom_rollback_values(candidates.iter().enumerate().map(
+            |(index, (value, important, origin, specificity, source_order, layer))| {
+                (
+                    value,
+                    (
+                        cascade_rank(*origin, *important),
+                        layer.priority(*important),
+                        *specificity,
+                        *source_order,
+                        index,
+                    ),
+                    *origin,
+                    *layer,
+                    *important,
+                )
+            },
+        ))
+    } else {
+        winners
+            .into_iter()
+            .map(|(name, (value, _))| (name, value.value))
+            .collect()
+    };
     resolve_custom_property_environment(inherited, &local)
 }
 

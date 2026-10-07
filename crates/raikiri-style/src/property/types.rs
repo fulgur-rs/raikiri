@@ -8195,7 +8195,9 @@ pub enum FilterFunction {
 /// `border-right` shorthands, which accept all five keywords through
 /// [`CssWideKeyword`] (see that type's docs for resolution). The `all` shorthand
 /// additionally accepts literal `revert-layer` through [`PropertyValue::AllRevertLayer`];
-/// its other CSS-wide values and `var()` form are not supported.
+/// its other CSS-wide values and `var()` form are not supported. Custom
+/// properties interpret literal `revert` and `revert-layer` during cascading;
+/// their other CSS-wide defaults are not supported.
 ///
 /// Unlike unsupported units, this missing support has no single code arm: each
 /// `parse_*` function simply does not recognize these idents and rejects them
