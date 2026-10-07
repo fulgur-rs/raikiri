@@ -6,6 +6,8 @@ use crate::property::BorderStyle;
 use crate::ruletree::{Origin, RuleTree, build_rule_tree};
 use crate::test_dom::TestDoc;
 
+mod namespace_tests;
+
 #[test]
 fn type_selector_applies_color() {
     let cv = cascade_doc("p { color: red }", "p", None);

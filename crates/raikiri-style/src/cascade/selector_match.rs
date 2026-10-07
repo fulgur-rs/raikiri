@@ -403,13 +403,14 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
                 // `local.name` is an Atom (`raikiri-style::Atom`); compare it to the tag name.
                 elem.tag_name().eq_ignore_ascii_case(local.name.0.as_str())
             }
-            Component::ExplicitUniversalType
-            | Component::ExplicitAnyNamespace
-            | Component::ExplicitNoNamespace
-            | Component::DefaultNamespace(_) => {
-                // Always match; namespaces are currently treated as always matching.
-                true
+            Component::ExplicitUniversalType | Component::ExplicitAnyNamespace => true,
+            Component::Namespace(_, uri) | Component::DefaultNamespace(uri) => {
+                // The StyleElement contract uses None for the HTML namespace.
+                elem.namespace_uri()
+                    .unwrap_or("http://www.w3.org/1999/xhtml")
+                    == uri.0.as_str()
             }
+            Component::ExplicitNoNamespace => elem.namespace_uri() == Some(""),
             // CSS Selectors L4 id-selectors / class-html (verbatim
             // quoted on the function doc
             // above): ASCII-case-fold only under full quirks mode.
@@ -660,13 +661,10 @@ pub(crate) fn matches_empty<D: StyleDom>(dom: &D, elem_id: StyleNodeId) -> bool 
 /// `of_type == true` (`:nth-of-type`/`:first-of-type`/`:last-of-type`/
 /// `:only-of-type`) additionally restricts to siblings sharing `elem_tag`
 /// — same source, verbatim: "an+b−1 siblings with the same expanded
-/// element name". "Expanded element name" is tag name **and** namespace;
-/// this crate's `compound_matches` already treats namespace matching as
-/// always-true (`Component::DefaultNamespace(_) => true`, "namespaces
-/// currently always match") for the equivalent
-/// selector-vs-element case, so restricting this sibling-vs-sibling
-/// comparison to `tag_name` equality inherits that existing scope
-/// simplification rather than introducing a new one. Plain `==` (not
+/// element name". "Expanded element name" is tag name **and** namespace.
+/// This sibling grouping currently compares local names only; unlike
+/// selector-vs-element namespace matching, namespace-aware typed sibling
+/// counting is not yet implemented. Plain `==` (not
 /// `eq_ignore_ascii_case`, unlike the selector-vs-element `LocalName` arm)
 /// — html5ever already normalises HTML tag names to lowercase before they
 /// ever reach `StyleElement::tag_name`, and "expanded name" comparison for
