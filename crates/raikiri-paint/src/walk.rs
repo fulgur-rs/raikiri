@@ -4354,11 +4354,11 @@ pub(crate) fn paint_document_impl(
                 // explicit stack frame.
                 let clips_overflow = raikiri_dom::paint_rules::clips_overflow(cv);
                 if clips_overflow {
-                    let clip_right = paint_x + layout.size.width - layout.padding.right;
-                    let clip_bottom = paint_y + paint_height - layout.padding.bottom;
+                    let clip_right = paint_x + layout.size.width - layout.border.right;
+                    let clip_bottom = paint_y + paint_height - layout.border.bottom;
                     let clip = Rect::new(
-                        (paint_x + layout.padding.left).floor() as f64,
-                        (paint_y + layout.padding.top).floor() as f64,
+                        (paint_x + layout.border.left).floor() as f64,
+                        (paint_y + layout.border.top).floor() as f64,
                         if matches!(cv.overflow.x, OverflowValue::Clip) {
                             clip_right.floor() as f64
                         } else {
