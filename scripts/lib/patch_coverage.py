@@ -1241,7 +1241,22 @@ def binding_names(tokens: tuple) -> set[str] | None:
             # appearing in the body, including imports aliased as `_`.
             return None
         if token in kinds:
-            return {name for value in tokens[index + 1:] if (name := rust_identifier(value)) is not None}
+            offset = 2 if token == "macro_rules" else 1
+            if token == "const" and tokens[index + 1:index + 2] == ("fn",):
+                continue
+            if token == "static" and tokens[index + 1:index + 2] == ("mut",):
+                offset += 1
+            name = rust_identifier(tokens[index + offset]) if index + offset < len(tokens) else None
+            if name is None:
+                return None
+            names = {name}
+            # Trait methods can be called without naming the trait. The
+            # other declarations bind their name, not every identifier
+            # mentioned by their field types or implementation bodies.
+            if token == "trait":
+                names.update(name for value, following in zip(tokens[index:], tokens[index + 1:])
+                             if value == "fn" and (name := rust_identifier(following)) is not None)
+            return names
         if token == "impl":
             return None
     # Unknown expansions can introduce any referenced name.
@@ -1289,6 +1304,39 @@ def has_runtime_file_input(tokens: tuple) -> bool:
 def is_textual_macro(tokens: tuple) -> bool:
     return (tokens[:1] in (("@macro_use",), ("@macro_use_unknown",))
             or any(rust_identifier(token) in ("macro_rules", "macro") for token in tokens))
+
+
+def impl_dependency_names(tokens: tuple) -> set[str] | None:
+    """Identify impl candidates independently of their module location.
+
+    Receiver inference is unavailable here. Match header types/traits or
+    referenced method names conservatively, retaining the entire selected
+    implementation and its scope dependencies in the context comparison.
+    """
+    if binding_names(tokens) is not None or "impl" not in tokens:
+        return None
+    start = tokens.index("impl")
+    delimiters = []
+    angles = 0
+    end = len(tokens)
+    for index in range(start + 1, len(tokens)):
+        token = tokens[index]
+        if token == "{" and not delimiters and angles == 0:
+            end = index
+            break
+        if token in ("(", "[", "{"):
+            delimiters.append(token)
+        elif token in (")", "]", "}") and delimiters:
+            delimiters.pop()
+        elif not delimiters:
+            angles += {"<": 1, "<<": 2, ">": -1, ">>": -2}.get(token, 0)
+    keywords = {"impl", "for", "where", "unsafe", "default", "const", "mut", "ref", "as",
+                "dyn", "fn", "pub", "crate", "super", "self", "in", "extern", "async", "move"}
+    names = {name for token in tokens[start + 1:end]
+             if (name := rust_identifier(token)) is not None and name not in keywords}
+    names.update(name for token, following in zip(tokens[end:], tokens[end + 1:])
+                 if token == "fn" and (name := rust_identifier(following)) is not None)
+    return names
 
 
 def has_opaque_expansion(tokens: tuple, local_names: set[str], shadowed_roots: set[str]) -> bool:
@@ -1370,8 +1418,15 @@ def function_move_key(snapshot: dict, path: str, unit: tuple) -> tuple | None:
         if identity in snapshot["unsafe"]:
             return None
         logical = prefix + local_chain
-        references = {name for token in body if (name := rust_identifier(token)) is not None}
+        references = {name for token in body + tuple(token for header in runtime for token in header)
+                      if (name := rust_identifier(token)) is not None}
         macro_prefix = inherited_macros + tuple((prefix + scope, binding) for scope, binding in local_macros)
+        impl_names = {(scope, binding): names for (target, scope), bindings in snapshot["bindings"].items()
+                      if target == identity for binding in bindings
+                      if (names := impl_dependency_names(binding)) is not None}
+        impl_by_scope = {}
+        for (scope, _), names in impl_names.items():
+            impl_by_scope.setdefault(scope, []).append(names)
         relevant = set()
         changed = True
         while changed:
@@ -1379,9 +1434,13 @@ def function_move_key(snapshot: dict, path: str, unit: tuple) -> tuple | None:
             for (target, scope), bindings in snapshot["bindings"].items():
                 if target != identity:
                     continue
-                if not (logical[:len(scope)] == scope or any(name in references for name in scope)):
+                lexical_scope = logical[:len(scope)] == scope or any(name in references for name in scope)
+                impl_scope = any(names & references for names in impl_by_scope.get(scope, ()))
+                if not (lexical_scope or impl_scope):
                     continue
                 for binding in bindings:
+                    if not lexical_scope and (names := impl_names.get((scope, binding))) is not None and not names & references:
+                        continue
                     bodies = snapshot["function_bodies"].get((identity, scope, binding), [])
                     if bodies:
                         # A function binds its name, not every type named
@@ -1437,7 +1496,13 @@ def function_move_key(snapshot: dict, path: str, unit: tuple) -> tuple | None:
         }
         if any(has_opaque_expansion(tokens + imports, local_names, shadowed_roots) for tokens in inputs):
             return None
-        keys.append((identity, logical, inherited_attrs + attrs, tuple(sorted(relevant)), macros))
+        # Referenced implementations/helpers can use textual macros in
+        # a sibling scope. Preserve those bindings in declaration order
+        # as well as the caller's own lexical macro prefix.
+        dependency_macros = tuple((scope, tuple(binding for binding in snapshot["bindings"].get((identity, scope), [])
+                                               if is_textual_macro(binding) and (scope, binding) in relevant))
+                                  for scope in sorted({scope for scope, _ in relevant}))
+        keys.append((identity, logical, inherited_attrs + attrs, tuple(sorted(relevant)), macros, dependency_macros))
     return tuple(sorted(keys)), runtime, body
 
 

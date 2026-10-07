@@ -1102,6 +1102,56 @@ pub fn call() { crate::resolver::resolve(); }
                 )
                 self.assertEqual(status, 0 if value == "1" else 1, output)
 
+    def test_sibling_trait_implementations_participate_in_move_context(self) -> None:
+        declarations = 'struct Item;\ntrait Measure { fn measure(self) -> u8; }\n'
+        body = 'fn resolve() {\n    record_uncovered_resolution_result(crate::Item.measure());\n}\n'
+        original = 'impl crate::Measure for crate::Item { fn measure(self) -> u8 { 1 } }\n'
+        for changed in (False, True):
+            with self.subTest(changed=changed):
+                status, output = self._classify(
+                    declarations + 'mod implementations;\nmod resolver {\n' + body + '}\n',
+                    body, body.splitlines()[1], destination='resolver.rs',
+                    auxiliary_before={'implementations.rs': original},
+                    auxiliary_after={'lib.rs': declarations + 'mod implementations;\nmod resolver;\n',
+                                     'implementations.rs': original.replace('{ 1 }', '{ 2 }') if changed else original},
+                    covered_auxiliary=True
+                )
+                self.assertEqual(status, 1 if changed else 0, output)
+
+    def test_unrelated_trait_impl_in_same_sibling_scope_does_not_disable_move(self) -> None:
+        declarations = ('struct Item;\ntrait Measure { fn measure(self) -> u8; }\n'
+                        'struct Other;\ntrait Unrelated { fn unrelated(self) -> u8; }\n')
+        body = 'fn resolve() {\n    record_uncovered_resolution_result(crate::Item.measure());\n}\n'
+        original = ('impl crate::Measure for crate::Item { fn measure(self) -> u8 { 1 } }\n'
+                    'impl crate::Unrelated for crate::Other { fn unrelated(self) -> u8 { 1 } }\n')
+        status, output = self._classify(
+            declarations + 'mod implementations;\nmod resolver {\n' + body + '}\n',
+            body, body.splitlines()[1], destination='resolver.rs',
+            auxiliary_before={'implementations.rs': original},
+            auxiliary_after={'lib.rs': declarations + 'mod implementations;\nmod resolver;\n',
+                             'implementations.rs': original.replace('fn unrelated(self) -> u8 { 1 }',
+                                                                       'fn unrelated(self) -> u8 { 2 }')},
+            covered_auxiliary=True
+        )
+        self.assertEqual(status, 0, output)
+
+    def test_sibling_impl_macro_visibility_order_participates_in_move_context(self) -> None:
+        declarations = 'struct Item;\ntrait Measure { fn measure(self) -> u8; }\n'
+        body = 'fn resolve() {\n    record_uncovered_resolution_result(crate::Item.measure());\n}\n'
+        first = 'macro_rules! value { () => { 1 } }\n'
+        second = 'macro_rules! value { () => { 2 } }\n'
+        implementation = 'impl crate::Measure for crate::Item { fn measure(self) -> u8 { value!() } }\n'
+        for macros in (first + second, second + first):
+            with self.subTest(unchanged=macros == first + second):
+                status, output = self._classify(
+                    declarations + 'mod implementations;\nmod resolver {\n' + body + '}\n',
+                    body, body.splitlines()[1], destination='resolver.rs',
+                    auxiliary_before={'implementations.rs': first + second + implementation},
+                    auxiliary_after={'lib.rs': declarations + 'mod implementations;\nmod resolver;\n',
+                                     'implementations.rs': macros + implementation}, covered_auxiliary=True
+                )
+                self.assertEqual(status, 0 if macros == first + second else 1, output)
+
     def test_modeled_build_dependency_source_changes_compilation_context(self) -> None:
         manifest = '[package]\nname="fixture"\nversion="0.1.0"\nbuild="build.rs"\n[lib]\npath="lib.rs"\n[workspace]\nmembers=["cfgsupport"]\n[build-dependencies]\ncfgsupport={path="cfgsupport"}\n'
         support_manifest = '[package]\nname="cfgsupport"\nversion="0.1.0"\n[lib]\npath="lib.rs"\n'
