@@ -788,7 +788,13 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS Text hanging-punctuation last in RTL exact slice (+1).
     // + CSS Overflow / UI text-overflow clip|ellipsis exact slice (+27).
     // + CSS Text Decoration horizontal text-emphasis exact slice (+8).
-    assert_eq!(set.baseline.entries.len(), 1396);
+    // + CSS UI text-overflow into padding exact slice (+1).
+    assert_eq!(set.baseline.entries.len(), 1397);
+    assert!(
+        set.baseline
+            .entries
+            .contains("css/css-ui/text-overflow-ellipsis-indent-001.html")
+    );
     assert!(set.quarantine.is_empty());
     assert!(set.deprecated.is_empty());
 }
