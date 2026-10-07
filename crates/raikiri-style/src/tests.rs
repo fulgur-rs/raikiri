@@ -379,3 +379,13 @@ fn parse_legacy_single_colon_before_and_after_syntax() {
 }
 
 mod selector_depth_tests;
+
+#[test]
+fn first_letter_legacy_and_modern_selectors_serialize_canonically() {
+    for source in ["div:first-letter", "div::first-letter"] {
+        let selectors = parse_selector_list(source).unwrap();
+        let mut output = String::new();
+        selectors.to_css(&mut output).unwrap();
+        assert_eq!(output, "div::first-letter");
+    }
+}

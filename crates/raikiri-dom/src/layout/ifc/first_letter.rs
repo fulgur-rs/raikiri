@@ -42,6 +42,7 @@ pub(crate) struct FirstLetter {
     line_origin: Option<usize>,
     pending: bool,
     continuation: Option<(usize, Range<usize>)>,
+    open_boxes: usize,
     text_limit: Option<u64>,
     item_limit: Option<u64>,
     checked_through: Option<usize>,
@@ -95,7 +96,7 @@ impl FirstLetter {
                 break;
             }
             let Some(parent) = doc.parent_of(id) else {
-                break;
+                break; // cov:ignore: eligible IFC element roots have a document parent; the document root is not a block-container cascade node.
             };
             if crate::generated_content::is_in_flow_generated_text(
                 cascade,
@@ -105,7 +106,7 @@ impl FirstLetter {
                 break;
             }
             let Some(node) = doc.get_node(parent) else {
-                break;
+                break; // cov:ignore: parent IDs were validated by the document tree and cascade traversal.
             };
             let blocked = node
                 .children
@@ -114,7 +115,7 @@ impl FirstLetter {
                 .any(|&sibling| {
                     let sibling_cv = &cascade.computed[sibling];
                     let Some(node) = doc.get_node(sibling) else {
-                        return false;
+                        return false; // cov:ignore: this document owns and validates the sibling IDs in its child graph.
                     };
                     if sibling_cv.display == DisplayValue::None
                         || sibling_cv.float != FloatValue::None
@@ -153,6 +154,7 @@ impl FirstLetter {
             origins,
             line_origin,
             continuation: None,
+            open_boxes: 0,
             text_limit: limits.max_text_bytes,
             item_limit: limits.max_items,
             checked_through: None,
@@ -188,7 +190,7 @@ impl FirstLetter {
             .skip(1)
         {
             let Some(node) = doc.get_node(sibling) else {
-                break;
+                break; // cov:ignore: source lookahead visits only this document's validated child IDs.
             };
             match node.kind() {
                 NodeKind::Comment | NodeKind::ProcessingInstruction => continue,
@@ -326,6 +328,7 @@ impl FirstLetter {
                 .unwrap_or_else(|| parent.clone());
             let context_node = crate::generated_content::generated_origin(source_owner)
                 .map_or(source_owner, |(element, _)| element);
+            let continuing_box = self.open_boxes > 0;
             let mut box_id = 0;
             for &origin in &self.origins {
                 let Some(cv) =
@@ -343,7 +346,10 @@ impl FirstLetter {
                 box_id = generated_node_id(origin, PseudoElem::FirstLetter);
                 let inline = styled(doc, cascade, &cv, context_node, fonts)?;
                 let edges = style::inline_edges(&cv, context_node, fonts)?;
-                builder.open_inline(NodeId(box_id as u64), &inline, edges);
+                if !continuing_box {
+                    builder.open_inline(NodeId(box_id as u64), &inline, edges);
+                    self.open_boxes += 1;
+                }
                 if let Some(error) = builder.error() {
                     return Err(IfcError::Limit(error));
                 }
@@ -372,8 +378,11 @@ impl FirstLetter {
             // Source offsets refer to the original UTF-8 text, including
             // the unstyled whitespace preceding the typographic unit.
             builder.push_text(first_source, &text[range.clone()]);
-            for _ in &self.origins {
-                builder.close_inline();
+            if self.continuation.is_none() {
+                for _ in 0..self.open_boxes {
+                    builder.close_inline();
+                }
+                self.open_boxes = 0;
             }
             let rest_source = match source {
                 TextSource::Dom { node, .. } => TextSource::Dom {
@@ -398,3 +407,6 @@ impl FirstLetter {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -242,7 +242,7 @@ pub(crate) fn draw_ifc_lines(
                         return context;
                     }
                     let Some(root) = document.get_node(root_id) else {
-                        return context;
+                        return context; // cov:ignore: PositionedLines validated this root before producing any styled run.
                     };
                     let mut chain = Vec::new();
                     let mut current = Some(style_owner);
@@ -252,7 +252,7 @@ pub(crate) fn draw_ifc_lines(
                     }
                     chain.iter().rev().fold(context, |context, &id| {
                         let Some(style) = root.ifc_typographic_style(id) else {
-                            return context;
+                            return context; // cov:ignore: style owner and parent IDs come from this root's retained letter styles.
                         };
                         decorations_for_element(
                             &context,

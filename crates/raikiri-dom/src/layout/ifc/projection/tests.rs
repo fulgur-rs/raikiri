@@ -882,3 +882,42 @@ fn floated_first_letter_requires_a_drop_cap_box_instead_of_an_inline_approximati
         ));
     }
 }
+
+#[test]
+fn an_atomic_or_out_of_flow_letter_does_not_inherit_ancestor_pseudo_boxes() {
+    for css in [
+        "display:inline-block",
+        "display:table-cell",
+        "float:left",
+        "position:absolute",
+        "position:fixed",
+    ] {
+        let fixture = crate::layout::ifc::test_support::sheet_fixture(
+            "body::first-letter{font-size:2em} div::first-letter{font-size:2em}",
+            css,
+            |doc, root| {
+                doc.append_text(root, "XX");
+            },
+        );
+        let projected = project(&fixture).unwrap();
+        assert_eq!(projected.letter_styles.len(), 1, "{css}");
+        assert_eq!(
+            projected.letter_styles[0].computed.font_size.0, 20.0,
+            "{css}"
+        );
+    }
+}
+
+#[test]
+fn an_ancestors_generated_prefix_keeps_a_childs_letter_local() {
+    let fixture = crate::layout::ifc::test_support::sheet_fixture(
+        "body::before{content:'prefix'} body::first-letter{font-size:2em} div::first-letter{font-size:2em}",
+        "",
+        |doc, root| {
+            doc.append_text(root, "XX");
+        },
+    );
+    let projected = project(&fixture).unwrap();
+    assert_eq!(projected.letter_styles.len(), 1);
+    assert_eq!(projected.letter_styles[0].computed.font_size.0, 20.0);
+}

@@ -369,3 +369,102 @@ fn first_line_relative_fonts_and_real_custom_properties_reach_the_letter() {
     );
     assert_eq!(glyph_sizes(&doc, &computed)[0], (20.0, 1));
 }
+
+#[test]
+fn a_comment_split_typographic_unit_has_one_set_of_inline_edges() {
+    use kurbo::Affine;
+    let sheet =
+        "div::first-letter{font-size:20px;color:red;padding:0 1px;border-left:1px solid blue}";
+    let (mut split, _, first) = fixture(sheet, None, "A");
+    let root = split.parent_of(first).unwrap();
+    split.append_comment(
+        Some(root),
+        "source segmentation does not duplicate the pseudo box",
+    );
+    split.append_text(root, "!Y");
+    split.mark_in_document_flags();
+    let computed = cascade(&split, &build_rule_tree(&split)).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 80.0;
+    layout_single_page(&mut split, &computed, page).unwrap();
+    let (joined, joined_computed, _) = fixture(sheet, None, "A!Y");
+    let render = |doc: &Document, computed: &CascadeResult| {
+        let mut scene = Scene::new();
+        raikiri_paint::paint_single_page(&mut scene, doc, computed, page).unwrap();
+        anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+            |out| {
+                use anyrender::PaintScene;
+                out.append_scene(scene, Affine::IDENTITY);
+            },
+            100,
+            80,
+        )
+    };
+    assert_eq!(render(&split, &computed), render(&joined, &joined_computed));
+}
+
+#[test]
+fn only_the_first_in_flow_block_supplies_an_ancestors_letter() {
+    let run = |prefix: &str| {
+        let (mut doc, _, text) = fixture("body::first-letter{font-size:20px}", None, "XX");
+        let root = doc.parent_of(text).unwrap();
+        let body = doc.parent_of(root).unwrap();
+        let first = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;font:10px/40px Ahem"),
+        );
+        let target = doc.append_text(first, "XX");
+        let previous = if prefix.starts_with("text:") {
+            doc.append_text(body, &prefix[5..])
+        } else if prefix == "comment" {
+            doc.append_comment(Some(body), "ignored")
+        } else {
+            doc.append_element(
+                Some(body),
+                if prefix == "nonrendered" {
+                    "meta"
+                } else {
+                    "div"
+                },
+                Style::default(),
+                Some(if prefix == "nonrendered" {
+                    "display:block"
+                } else {
+                    prefix
+                }),
+            )
+        };
+        doc.detach_from_parent(root).unwrap();
+        doc.detach_from_parent(previous).unwrap();
+        doc.insert_child_before(body, first, previous);
+        doc.mark_in_document_flags();
+        let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 80.0;
+        layout_single_page(&mut doc, &computed, page).unwrap();
+        let lines = raikiri_dom::PositionedLines::new(&doc, &computed, first, None).unwrap();
+        lines
+            .lines()
+            .flat_map(|line| line.runs)
+            .filter(|run| run.owner == target)
+            .map(|run| run.run.font_size())
+            .collect::<Vec<_>>()
+    };
+    for prefix in [
+        "display:none",
+        "display:block;float:left",
+        "display:block;position:absolute",
+        "nonrendered",
+        "comment",
+        "text: ",
+    ] {
+        assert_eq!(run(prefix), [20.0, 10.0], "{prefix}");
+    }
+    for prefix in ["display:block", "text:X"] {
+        assert_eq!(run(prefix), [10.0], "{prefix}");
+    }
+}
