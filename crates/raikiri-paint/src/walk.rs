@@ -1551,7 +1551,11 @@ fn paint_list_marker_with_snapshots(
     snapshots: &[CounterSnapshot],
     pixel_source: Option<&dyn ImagePixelSource>,
 ) {
-    if raikiri_dom::generated_content::inside_marker_in_flow(cascade, node_id) {
+    if raikiri_dom::generated_content::inside_marker_in_flow(cascade, node_id)
+        && document
+            .get_node(node_id)
+            .is_some_and(|node| node.is_ifc_root())
+    {
         return;
     }
     let Some((computed, content)) =
@@ -1562,20 +1566,35 @@ fn paint_list_marker_with_snapshots(
     if width <= 0.0 || height <= 0.0 {
         return;
     }
-    if let (BackgroundImage::Url(raw_url), Some(source)) =
+    let explicit_content = cascade
+        .pseudo
+        .get(&(
+            raikiri_style::StyleNodeId::new(node_id as u64),
+            raikiri_style::PseudoElem::Marker,
+        ))
+        .is_some_and(|marker| !marker.content.is_empty());
+    let resolved = if let (BackgroundImage::Url(raw_url), Some(source)) =
         (&computed.list_style_image, pixel_source)
-        && let Ok(url) = url::Url::parse(raw_url)
-        && let Some(decoded) = source.get_decoded(&url)
+    {
+        url::Url::parse(raw_url)
+            .ok()
+            .and_then(|url| source.get_decoded(&url))
+    } else {
+        None
+    };
+    if !explicit_content
+        && let Some(decoded) = document.list_marker_image(node_id).or(resolved.as_deref())
         && decoded.width > 0
         && decoded.height > 0
     {
-        let marker_width = decoded.width as f32;
-        let marker_height = decoded.height as f32;
+        let size = document.list_marker_image_size(node_id);
+        let marker_width = size.map_or(decoded.width as f32, |size| size.width);
+        let marker_height = size.map_or(decoded.height as f32, |size| size.height);
         let marker_x = match computed.list_style_position {
             raikiri_style::ListStylePosition::Outside => {
                 paint_x + padding_left - marker_width - 4.0
             }
-            raikiri_style::ListStylePosition::Inside => paint_x + padding_left - marker_width - 4.0,
+            raikiri_style::ListStylePosition::Inside => paint_x + padding_left,
             _ => paint_x + padding_left - marker_width - 4.0,
         };
         let image_data = peniko::ImageData {
@@ -1588,10 +1607,14 @@ fn paint_list_marker_with_snapshots(
         let brush = peniko::ImageBrush::new(image_data);
         scene.fill(
             peniko::Fill::NonZero,
-            Affine::translate((marker_x as f64, paint_y as f64)),
+            Affine::translate((marker_x as f64, paint_y as f64))
+                * Affine::scale_non_uniform(
+                    f64::from(marker_width) / f64::from(decoded.width),
+                    f64::from(marker_height) / f64::from(decoded.height),
+                ),
             brush.as_ref(),
             None,
-            &Rect::new(0.0, 0.0, marker_width as f64, marker_height as f64),
+            &Rect::new(0.0, 0.0, decoded.width as f64, decoded.height as f64),
         );
         return;
     }
@@ -1608,16 +1631,14 @@ fn paint_list_marker_with_snapshots(
     if marker_width <= 0.0 {
         return; // cov:ignore: zero-advance glyphs are a defensive font-metric edge
     }
-    // Reserve a small, stable separation between an outside marker and the
-    // principal box. Inside markers use the same gutter that the DOM bridge
-    // reserves before Taffy, so their first-line text starts after the glyph.
+    // Outside markers keep their gutter. A legacy inside marker starts at
+    // the padding edge when the inline engine did not own its content.
     const MARKER_GAP: f32 = 4.0;
-    let gutter = (marker_width + MARKER_GAP).max(computed.font_size.px());
     let marker_x = match computed.list_style_position {
         raikiri_style::ListStylePosition::Outside => {
             paint_x + padding_left - marker_width - MARKER_GAP
         }
-        raikiri_style::ListStylePosition::Inside => paint_x + padding_left - gutter,
+        raikiri_style::ListStylePosition::Inside => paint_x + padding_left,
         // cov:ignore: non-exhaustive enum fallback is not constructible here
         _ => paint_x + padding_left - marker_width - MARKER_GAP,
     };

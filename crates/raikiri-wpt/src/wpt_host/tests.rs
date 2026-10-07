@@ -856,3 +856,46 @@ fn reftest_wait_helper_removes_wait_and_reports_no_fetch_error() {
         .as_boolean();
     assert_eq!(waiting, Some(false));
 }
+
+#[test]
+fn live_flush_prepares_marker_images_and_discards_stale_pixels() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = std::fs::File::create(dir.path().join("marker.png")).unwrap();
+    let mut encoder = png::Encoder::new(file, 8, 8);
+    encoder.set_color(png::ColorType::Rgba);
+    let mut writer = encoder.write_header().unwrap();
+    writer
+        .write_image_data(&[255, 0, 0, 255].repeat(64))
+        .unwrap();
+    writer.finish().unwrap();
+    let setup = prepare_wpt_live_document(
+        r#"<style>.authored::marker{content:'custom'}</style>
+        <li id=t style='list-style:inside url(marker.png)'>body</li>
+        <li id=authored class=authored style='list-style:inside url(missing.png)'>body</li>
+        <li id=invalid style="list-style:inside url('http://[')">body</li>"#,
+        100,
+        100,
+        dir.path(),
+        dir.path(),
+    )
+    .unwrap();
+    let mut host = WptDocumentHost::new(setup, dir.path());
+    let item = find_by_id(host.document(), "t");
+    assert!(host.document().list_marker_image(item).is_none());
+    host.flush().unwrap();
+    let image = host.document().list_marker_image(item).unwrap();
+    assert_eq!((image.width, image.height), (8, 8));
+    assert_eq!(image.rgba, [255, 0, 0, 255].repeat(64));
+    for id in ["authored", "invalid"] {
+        assert!(
+            host.document()
+                .list_marker_image(find_by_id(host.document(), id))
+                .is_none()
+        );
+    }
+    host.document_mut()
+        .set_element_attribute(item, "style", "list-style:inside none")
+        .unwrap();
+    host.flush().unwrap();
+    assert!(host.document().list_marker_image(item).is_none());
+}

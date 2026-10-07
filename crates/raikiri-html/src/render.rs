@@ -734,16 +734,14 @@ pub(crate) fn run_pipeline(
     );
     let mut marker_image_seen = HashSet::new();
     let mut marker_image_attempts = 0;
-    if inputs.preload_background_images {
-        resources.preload_list_marker_images(
-            &first_cascade.computed,
-            runtime.effective_base_url,
-            &runtime.warnings,
-            &mut marker_image_seen,
-            &mut marker_image_attempts,
-            signal.as_ref(),
-        );
-    }
+    resources.preload_list_marker_images(
+        &first_cascade.computed,
+        runtime.effective_base_url,
+        &runtime.warnings,
+        &mut marker_image_seen,
+        &mut marker_image_attempts,
+        signal.as_ref(),
+    );
     if let Some(source) = resources.image_pixel_source_ref() {
         dom.prepare_list_marker_images(&first_cascade, source, runtime.effective_base_url);
     }

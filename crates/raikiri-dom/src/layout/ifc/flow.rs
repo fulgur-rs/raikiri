@@ -145,11 +145,15 @@ pub(crate) fn line_space(
 pub(crate) fn break_lines(root: &IfcRoot, cx: &mut LayoutContext, width: f32) -> IfcLines {
     let mut options = root.options;
     options.text_indent.length = resolve_indent(root.indent, width);
+    let mut atomics = AtomicSizes::new();
+    if let Some((id, size)) = root.marker_atomic {
+        atomics.insert(id, size);
+    }
     let mut placed = place_lines(
         &root.paragraph,
         &options,
         cx,
-        &AtomicSizes::EMPTY,
+        &atomics,
         width,
         IfcAxes::new(
             root.writing_mode,

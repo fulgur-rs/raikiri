@@ -170,7 +170,7 @@ fn needs_ifc_layout(
     idx: usize,
     fonts: &shodo::font::FontCollection,
 ) -> bool {
-    if has_in_flow_generated_text(cascade, idx) {
+    if has_in_flow_generated_text(doc, cascade, idx) {
         return true;
     }
     let cv = &cascade.computed[idx];
@@ -195,7 +195,7 @@ fn needs_ifc_layout(
             NodeKind::Element => match box_kind(cascade, doc, id) {
                 Some(IfcBoxKind::Atomic) => return true,
                 Some(IfcBoxKind::Block) if vertical_block_children => {
-                    if has_in_flow_generated_text(cascade, id) {
+                    if has_in_flow_generated_text(doc, cascade, id) {
                         return true;
                     }
                     stack.extend(node.children.iter().copied());
@@ -209,7 +209,7 @@ fn needs_ifc_layout(
                     {
                         continue;
                     }
-                    if has_in_flow_generated_text(cascade, id) {
+                    if has_in_flow_generated_text(doc, cascade, id) {
                         return true;
                     }
                     if cv.display == DisplayValue::Inline {

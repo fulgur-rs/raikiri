@@ -3935,6 +3935,151 @@ fn list_fixture_with_engine() -> (Document, CascadeResult, usize) {
 }
 
 #[test]
+fn inside_marker_legacy_painter_remains_available_without_an_ifc_owner() {
+    let (document, mut cascade, first) = list_fixture_with_engine();
+    cascade.computed[first].list_style_position = raikiri_style::ListStylePosition::Inside;
+    assert!(!document.get_node(first).unwrap().is_ifc_root());
+    let mut scene = Scene::new();
+    paint_list_marker(
+        &mut scene, &document, &cascade, first, 0.0, 0.0, 200.0, 30.0, 0.0,
+    );
+    assert_eq!(glyph_xs(&scene), [0.0, 10.0, 20.0]);
+}
+
+#[test]
+fn inside_ruby_multicol_markers_paint_on_the_legacy_path() {
+    struct Pixels;
+    impl ImagePixelSource for Pixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
+                width: 16,
+                height: 8,
+                rgba: [255, 0, 0, 255].repeat(128),
+            }))
+        }
+        fn intrinsic_size(&self, _: &url::Url) -> Option<raikiri_traits::ImageIntrinsicSize> {
+            Some(raikiri_traits::ImageIntrinsicSize {
+                width: Some(8.0),
+                height: Some(4.0),
+                aspect_ratio: Some(2.0),
+            })
+        }
+    }
+    for image in [false, true] {
+        let style = if image {
+            "display:list-item;list-style:inside url(marker.png);columns:2;height:100px"
+        } else {
+            "display:list-item;list-style:inside decimal;columns:2;height:100px"
+        };
+        let (mut doc, _, item, _) = list_fixture(style, "display:none", None);
+        let html = doc.append_element(
+            Some(doc.root_index()),
+            "html",
+            Style::default(),
+            None::<&str>,
+        );
+        let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+        doc.append_child(body, item).unwrap();
+        let ruby = doc.append_element(Some(item), "ruby", Style::default(), Some("display:inline"));
+        doc.append_element(
+            Some(ruby),
+            "span",
+            Style::default(),
+            Some("display:inline-block;width:10px;height:20px"),
+        );
+        doc.append_element(Some(item), "br", Style::default(), Some("display:inline"));
+        doc.mark_in_document_flags();
+        let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        let base = url::Url::parse("https://images.test/doc").unwrap();
+        doc.prepare_list_marker_images(&cascade, &Pixels, Some(&base));
+        doc.set_font_collection(
+            raikiri_dom::build_wpt_font_collection(std::path::Path::new(FONT_DIR)).unwrap(),
+        );
+        raikiri_dom::layout_single_page(&mut doc, &cascade, PageBox::A4).unwrap();
+        assert!(!doc.get_node(item).unwrap().is_ifc_root());
+        let mut scene = Scene::new();
+        paint_list_marker_with_snapshots(
+            &mut scene,
+            &doc,
+            &cascade,
+            item,
+            2.0,
+            3.0,
+            100.0,
+            100.0,
+            4.0,
+            &[],
+            Some(&Pixels),
+        );
+        if image {
+            let fill = scene
+                .commands
+                .iter()
+                .find_map(|command| match command {
+                    RenderCommand::Fill(fill)
+                        if matches!(fill.brush, anyrender::Paint::Image(_)) =>
+                    {
+                        Some(fill)
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(fill.transform.as_coeffs(), [0.5, 0.0, 0.0, 0.5, 6.0, 3.0]);
+        } else {
+            assert!(!glyph_xs(&scene).is_empty());
+        }
+    }
+}
+
+#[test]
+fn explicit_marker_content_suppresses_legacy_image_paint() {
+    struct Pixels;
+    impl ImagePixelSource for Pixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
+                width: 8,
+                height: 8,
+                rgba: [255, 0, 0, 255].repeat(64),
+            }))
+        }
+    }
+    for content in ["none", "'text'"] {
+        let sheet = format!("li::marker{{content:{content}}}");
+        let (mut doc, cascade, item, _) = list_fixture(
+            "display:list-item;list-style:inside url(https://images.test/marker.png)",
+            "display:none",
+            Some(&sheet),
+        );
+        doc.set_font_collection(
+            raikiri_dom::build_wpt_font_collection(std::path::Path::new(FONT_DIR)).unwrap(),
+        );
+        let mut scene = Scene::new();
+        paint_list_marker_with_snapshots(
+            &mut scene,
+            &doc,
+            &cascade,
+            item,
+            0.0,
+            0.0,
+            100.0,
+            30.0,
+            0.0,
+            &[],
+            Some(&Pixels),
+        );
+        assert!(!scene.commands.iter().any(|command| matches!(command,
+            RenderCommand::Fill(fill) if matches!(fill.brush, anyrender::Paint::Image(_)))));
+        assert_eq!(glyph_xs(&scene).is_empty(), content == "none");
+    }
+}
+
+#[test]
 fn a_list_marker_is_measured_and_drawn_with_the_document_font() {
     // The marker text is "1. " (three glyphs, the last one a space). Its width
     // is 20 (the trailing space is left out of the width), so an outside

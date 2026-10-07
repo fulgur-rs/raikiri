@@ -2398,6 +2398,11 @@ pub(crate) fn render_raikiri_pages_with_resources(
         if let Some(prepare) = prepare_cascade_images {
             prepare.prepare_cascade(&mut fresh_cascade);
         }
+        if let Some(source) = image_pixel_source {
+            fresh
+                .dom
+                .prepare_list_marker_images(&fresh_cascade, source, base_url);
+        }
         let fresh_slices = if let Some(resolver) = image_resolver {
             // The geometry-varying path reparses the source, so the image
             // intrinsic pre-pass must run on the fresh DOM as well.

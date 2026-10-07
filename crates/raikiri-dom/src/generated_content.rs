@@ -79,7 +79,25 @@ pub fn is_in_flow_generated_text(
     pseudo: PseudoElem,
 ) -> bool {
     if pseudo == PseudoElem::Marker {
-        return inside_marker_in_flow(cascade, element);
+        if !inside_marker_in_flow(cascade, element) {
+            return false;
+        }
+        let cv = &cascade.computed[element];
+        if cascade
+            .pseudo
+            .get(&(StyleNodeId::new(element as u64), pseudo))
+            .is_some_and(|marker| !marker.content.is_empty())
+        {
+            return true;
+        }
+        return matches!(
+            cv.list_style_image,
+            raikiri_style::property::BackgroundImage::Url(_)
+        ) || match &cv.list_style_type {
+            raikiri_style::ListStyleType::None => false,
+            raikiri_style::ListStyleType::String(text) => !text.is_empty(),
+            _ => true,
+        };
     }
     let Some(cv) = cascade
         .pseudo
@@ -484,5 +502,15 @@ pub fn inside_marker_in_flow(cascade: &CascadeResult, element: usize) -> bool {
     cascade.computed.get(element).is_some_and(|cv| {
         cv.display == DisplayValue::ListItem
             && cv.list_style_position == raikiri_style::ListStylePosition::Inside
+            && cascade
+                .pseudo
+                .get(&(StyleNodeId::new(element as u64), PseudoElem::Marker))
+                .is_none_or(|marker| {
+                    marker.display != DisplayValue::None
+                        && !marker
+                            .content
+                            .iter()
+                            .any(|part| matches!(part, ContentComponent::None))
+                })
     })
 }

@@ -206,6 +206,44 @@ impl NetworkProvider for SvgNetworkProvider {
 }
 
 #[test]
+fn inside_marker_fetch_is_independent_of_background_preloading() {
+    let provider = SvgNetworkProvider::default();
+    let base = Url::parse("https://images.test/assets/document.html").unwrap();
+    let resources = RenderResources::new()
+        .network_provider(&provider)
+        .base_url(base.clone());
+    let doc = crate::parse_html_with_resources(
+        br#"<!doctype html><li style="list-style:inside url(marker.svg);background-image:url(unwanted.svg)">one</li>"#.as_slice(),
+        &resources,
+    ).unwrap();
+    let crate::render::PipelineRun::Completed(output) = crate::render::run_pipeline(
+        &doc,
+        raikiri_traits::PageDefaults::default(),
+        &raikiri_traits::LayoutConfig::default(),
+        crate::render::PipelineInputs {
+            resources: Some(&resources),
+            consumer_properties: &[],
+            property_observer: None,
+            preload_background_images: false,
+        },
+    )
+    .unwrap() else {
+        panic!("complete pipeline");
+    };
+    assert_eq!(
+        *provider.requests.lock().unwrap(),
+        [(base.join("marker.svg").unwrap(), ResourceKind::Image)]
+    );
+    let item = output
+        .cascade
+        .computed
+        .iter()
+        .position(|cv| cv.display == DisplayValue::ListItem)
+        .unwrap();
+    assert!(output.document.list_marker_image(item).is_some());
+}
+
+#[test]
 fn relative_inside_marker_image_is_fetched_once_before_layout() {
     let provider = SvgNetworkProvider::default();
     let resources = RenderResources::new().network_provider(&provider);

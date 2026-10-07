@@ -195,12 +195,26 @@ impl GeneratedCounters {
     }
 }
 
-/// Whether `element` has a `::before` or `::after` that the paragraph lays
-/// out as text.
-pub(crate) fn has_in_flow_generated_text(cascade: &CascadeResult, element: usize) -> bool {
+/// Whether `element` has generated text or a prepared inside marker image.
+pub(crate) fn has_in_flow_generated_text(
+    doc: &Document,
+    cascade: &CascadeResult,
+    element: usize,
+) -> bool {
     [PseudoElem::Marker, PseudoElem::Before, PseudoElem::After]
         .into_iter()
-        .any(|pseudo| is_in_flow_generated_text(cascade, element, pseudo))
+        .any(|pseudo| {
+            is_in_flow_generated_text(cascade, element, pseudo)
+                && (pseudo != PseudoElem::Marker
+                    || doc.list_marker_image_size(element).is_some()
+                    || crate::generated_content::markers::marker_render_info_with_snapshots(
+                        doc,
+                        cascade,
+                        element,
+                        &[],
+                    )
+                    .is_some_and(|(_, text)| !text.is_empty()))
+        })
 }
 
 /// Push the text of the `pseudo` of `element` into the paragraph, as an

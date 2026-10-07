@@ -894,6 +894,36 @@ fn inside_marker_preserves_spaces_does_not_wrap_or_inherit_text_transform() {
 }
 
 #[test]
+fn suppressed_inside_image_marker_consumes_no_inline_space() {
+    struct Pixels;
+    impl raikiri_traits::ImagePixelSource for Pixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
+                width: 16,
+                height: 8,
+                rgba: [0, 128, 0, 255].repeat(16 * 8),
+            }))
+        }
+    }
+    let mut fixture = crate::layout::ifc::test_support::sheet_fixture(
+        "div::marker {display:none}",
+        "display:list-item;list-style:inside url(https://images.test/marker.png)",
+        |doc, root| {
+            doc.append_text(root, "a");
+        },
+    );
+    fixture
+        .doc
+        .prepare_list_marker_images(&fixture.cascade, &Pixels, None);
+    let projected = project(&fixture).unwrap();
+    assert!(projected.marker_atomic.is_none());
+    assert_eq!(projected.paragraph.text(), "a");
+}
+
+#[test]
 fn image_marker_has_intrinsic_extents_and_uses_authored_style_in_vertical_and_rtl_layout() {
     struct Pixels;
     impl raikiri_traits::ImagePixelSource for Pixels {

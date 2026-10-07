@@ -5,6 +5,19 @@ use std::collections::HashMap;
 use crate::test_http_server::TestServer;
 
 #[test]
+fn screen_render_prepares_inside_marker_pixels_before_layout() {
+    let server = TestServer::start(HashMap::from([
+        ("/index.html", ("text/html", br#"<!doctype html><style>body{margin:0}li{list-style:inside url(red.png)}</style><li>body</li>"#.to_vec())),
+        ("/red.png", ("image/png", red_png())),
+    ]));
+    let image =
+        render_screen_url(&SystemHttpProvider::new(), server.url("index.html"), 64, 32).unwrap();
+    let requests = server.finish();
+    assert!(requests.iter().any(|path| path == "/red.png"));
+    assert!(contains_red_pixel(&image));
+}
+
+#[test]
 fn rejects_an_oversized_viewport_before_fetching_the_document() {
     let error = match render_screen_url(
         &SystemHttpProvider::new(),

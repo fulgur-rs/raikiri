@@ -7,6 +7,44 @@ use shodo::limits::Limits;
 /// A paragraph builder for table-driven cases.
 type Build = fn(&mut crate::Document, usize);
 
+#[test]
+fn suppressed_inside_markers_leave_block_children_on_the_block_path() {
+    for (sheet, css) in [
+        ("", "display:list-item;list-style:inside none"),
+        ("", "display:list-item;list-style:inside ''"),
+        (
+            "div::marker {content:''}",
+            "display:list-item;list-style:inside disc",
+        ),
+        (
+            "div::marker {content:none}",
+            "display:list-item;list-style:inside disc",
+        ),
+        (
+            "div::marker {display:none}",
+            "display:list-item;list-style:inside disc",
+        ),
+        (
+            "",
+            "display:list-item;list-style:inside none url(https://images.test/missing.png)",
+        ),
+    ] {
+        let mut fixture =
+            crate::layout::ifc::test_support::sheet_fixture(sheet, css, |doc, root| {
+                let child = doc.append_element(
+                    Some(root),
+                    "p",
+                    taffy::Style::default(),
+                    Some("display:block;margin-top:20px"),
+                );
+                doc.append_text(child, "body");
+            });
+        enable(&mut fixture);
+        assign(&mut fixture);
+        assert!(!is_root(&fixture, fixture.root), "{sheet} / {css}");
+    }
+}
+
 fn enable(fixture: &mut crate::layout::ifc::test_support::Fixture) {
     fixture
         .doc

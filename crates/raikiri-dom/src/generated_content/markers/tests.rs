@@ -166,6 +166,21 @@ fn list_marker_text_formats_ordinals_and_styles() {
 }
 
 #[test]
+fn running_element_content_is_not_resolved_as_marker_text() {
+    let marker = marker_content_text(
+        &[ContentComponent::Element {
+            name: "header".into(),
+        }],
+        &[] as &[(&str, &str)],
+        false,
+        1,
+        &CounterSnapshot::default(),
+        &CounterStyleRegistry::default(),
+    );
+    assert_eq!(marker, Some(String::new()));
+}
+
+#[test]
 fn custom_counter_styles_reach_default_and_explicit_markers() {
     let (document, cascade, first, second) = list_fixture(
         "display: list-item; list-style-type: thumbs",
