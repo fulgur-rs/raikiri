@@ -699,3 +699,90 @@ fn deferred_border_layer_rollback_uses_the_resolved_keyword() {
     let (id, result) = result(&tree, &MediaContext::print(), None);
     assert_eq!(result.computed[id].border.top.width().px(), 7.0);
 }
+
+#[test]
+fn layers_order_within_ua_hint_and_animation_origins() {
+    for origin in [
+        Origin::UserAgent,
+        Origin::AuthorPresentationalHint,
+        Origin::Animation,
+    ] {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            "@layer a,b; @layer a{#target{color:red}} @layer b{p{color:blue}}",
+            origin,
+        );
+        assert_eq!(color(&tree, &MediaContext::print()), BLUE);
+    }
+}
+
+#[test]
+fn all_layer_rollback_selects_each_border_side_and_can_chain_origin_rollback() {
+    for (origin, width) in [
+        (Origin::Author, 7.0),
+        (Origin::User, 7.0),
+        (Origin::UserAgent, 0.0),
+    ] {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet("p{border:7px solid red}", Origin::UserAgent);
+        tree.add_stylesheet("@layer a,b; @layer a{p{border:revert}} @layer b{p{border:9px solid blue;all:revert-layer!important}}",origin);
+        let (id, result) = result(&tree, &MediaContext::print(), None);
+        let border = &result.computed[id].border;
+        for side in [&border.top, &border.right, &border.bottom, &border.left] {
+            assert_eq!(side.width().px(), width);
+        }
+    }
+    let tree = author_tree(&[
+        "@layer a,b,c; @layer a{p{border:7px solid red}} @layer b{p{border:revert-layer}} @layer c{p{border:9px solid blue;all:revert-layer}}",
+    ]);
+    let (id, result) = result(&tree, &MediaContext::print(), None);
+    let border = &result.computed[id].border;
+    for side in [&border.top, &border.right, &border.bottom, &border.left] {
+        assert_eq!(side.width().px(), 7.0);
+        assert_eq!(side.color, crate::property::BorderColor::Resolved(RED));
+    }
+}
+
+#[test]
+fn page_all_rollback_keeps_each_properties_candidates_separate() {
+    let tree = author_tree(&[
+        "@layer a{@page{color:red;width:17px;@top-left{color:red;width:17px}}} @layer b{@page{color:blue;width:3px;all:revert-layer;@top-left{color:blue;width:3px;all:revert-layer}}}",
+    ]);
+    let page = cascade_page_with_media_context(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::LegacyInitialValues,
+        &MediaContext::print(),
+    );
+    assert_eq!(
+        page.declarations().get(&PropertyKey::Width),
+        Some(&PropertyValue::Width(
+            crate::property::LengthOrAuto::Length(crate::property::Length::Px(17.0))
+        ))
+    );
+    let margin = crate::page::PageMarginBoxCascadeResult::cascade_matching(
+        page.margin_boxes(),
+        crate::page::PageMarginBoxSlot::TopLeft,
+    )
+    .unwrap();
+    assert_eq!(margin.declarations.len(), 2);
+    assert_eq!(
+        margin
+            .declarations
+            .iter()
+            .find(|d| d.value().key() == PropertyKey::Color)
+            .unwrap()
+            .value(),
+        &PropertyValue::Color(RED)
+    );
+}
+
+#[test]
+fn invalid_layer_name_tokens_are_rejected_and_all_marker_serializes() {
+    let tree = author_tree(&["@layer a:b{p{color:blue}} @layer a!{p{color:blue}} p{color:red}"]);
+    assert_eq!(color(&tree, &MediaContext::print()), RED);
+    assert_eq!(
+        crate::property::serialize_value(&PropertyValue::AllRevertLayer).as_deref(),
+        Some("revert-layer")
+    );
+}

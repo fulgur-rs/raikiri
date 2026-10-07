@@ -112,34 +112,41 @@ impl LayerTable {
             Origin::Author => 3,
             Origin::Animation => 4,
         };
-        let mut parent = parent;
-        if let Some(name) = name {
-            for segment in name {
-                let key = (origin, parent, segment.clone());
-                let id = *self.named.entry(key).or_insert_with(|| {
-                    let id = LayerId {
-                        owner: self.owner,
-                        index: self.nodes.len(),
-                    };
-                    self.nodes.push(LayerNode { parent, origin });
-                    id
-                });
-                self.mentions.push(LayerMention {
-                    layer: id,
-                    condition: condition.cloned(),
-                });
-                parent = Some(id);
+        if let Some((first, rest)) = name.and_then(|name| name.split_first()) {
+            let mut layer = self.named_segment(parent, first, origin, condition);
+            for segment in rest {
+                layer = self.named_segment(Some(layer), segment, origin, condition);
             }
-            // Parsed names always contain at least one identifier.
-            if let Some(parent) = parent {
-                return parent;
-            }
+            return layer;
         }
         let id = LayerId {
             owner: self.owner,
             index: self.nodes.len(),
         };
         self.nodes.push(LayerNode { parent, origin });
+        self.mentions.push(LayerMention {
+            layer: id,
+            condition: condition.cloned(),
+        });
+        id
+    }
+
+    fn named_segment(
+        &mut self,
+        parent: Option<LayerId>,
+        segment: &SmolStr,
+        origin: usize,
+        condition: Option<&MediaCondition>,
+    ) -> LayerId {
+        let key = (origin, parent, segment.clone());
+        let id = *self.named.entry(key).or_insert_with(|| {
+            let id = LayerId {
+                owner: self.owner,
+                index: self.nodes.len(),
+            };
+            self.nodes.push(LayerNode { parent, origin });
+            id
+        });
         self.mentions.push(LayerMention {
             layer: id,
             condition: condition.cloned(),
