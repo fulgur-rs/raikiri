@@ -837,6 +837,36 @@ pub fn call() { crate::resolver::resolve(); }
         )
         self.assertEqual(status, 0, output)
 
+    def test_nested_function_scope_bindings_cannot_receive_move_exemptions(self) -> None:
+        for declaration, expression in (("const VALUE: u8 = 1;", "VALUE"),
+                                        ("macro_rules! value { () => { 1 } }", "value!()")):
+            source = f"""fn outer() {{
+    {declaration}
+    fn resolve() {{
+        record_uncovered_resolution_result({expression});
+    }}
+    resolve();
+}}
+"""
+            for after in (source, source.replace("1", "2")):
+                with self.subTest(declaration=declaration, unchanged=after == source):
+                    status, output = self._classify(
+                        source, after, source.splitlines()[3], destination="moved.rs"
+                    )
+                    self.assertEqual(status, 0 if after == source else 1, output)
+
+    def test_complete_impl_method_move_preserves_its_context(self) -> None:
+        source = """impl Resolver {
+    fn resolve() {
+        record_uncovered_resolution_result();
+    }
+}
+"""
+        status, output = self._classify(
+            source, source, source.splitlines()[2], destination="moved.rs"
+        )
+        self.assertEqual(status, 0, output)
+
 
 class ClassifyNoLcovRecordLinesTests(unittest.TestCase):
     """Regression tests for the whole-file-zero-SF-record false positive: a

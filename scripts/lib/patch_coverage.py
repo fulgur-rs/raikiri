@@ -966,7 +966,16 @@ def rust_source_units(source: str) -> tuple[list, list, dict]:
                     value == "fn" and re.fullmatch(r"\w+", following)
                     for value, following in zip(header, header[1:])
                 )
-                if is_function and all(frame[0] == "{" for frame in frames[1:]):
+                supported_scope = all(
+                    frame[0] == "{" and (
+                        (len(frame[2]) >= 2 and frame[2][-2] == "mod")
+                        or ("fn" not in frame[2] and ("impl" in frame[2] or "trait" in frame[2]))
+                    ) for frame in frames[1:]
+                )
+                # Nested functions can resolve local constants/imports/
+                # macros. Those lexical bindings are not module bindings,
+                # so do not infer preserved context for a nested function.
+                if is_function and supported_scope:
                     context = []
                     for frame in frames:
                         is_module = len(frame[2]) >= 2 and frame[2][-2] == "mod"
