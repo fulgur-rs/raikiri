@@ -957,6 +957,59 @@ pub fn call() { crate::resolver::resolve(); }
                 )
                 self.assertEqual(status, 0 if called == "unrelated" else 1, output)
 
+    def test_macro_use_module_bindings_follow_extraction(self) -> None:
+        body = "fn resolve() {\n    record_uncovered_resolution_result(value!());\n}\n"
+        helper = "macro_rules! value { () => { 1 } }\n"
+        for value in ("1", "2"):
+            with self.subTest(value=value):
+                status, output = self._classify(
+                    "#[macro_use] mod helpers;\nmod resolver {\n" + body + "}\n", body, body.splitlines()[1],
+                    destination="resolver.rs", auxiliary_before={"helpers.rs": helper},
+                    auxiliary_after={"lib.rs": "#[macro_use] mod helpers;\nmod resolver;\n",
+                                     "helpers.rs": helper.replace("1", value)}, covered_auxiliary=True
+                )
+                self.assertEqual(status, 0 if value == "1" else 1, output)
+
+    def test_compiler_configuration_changes_do_not_exempt_functions(self) -> None:
+        body = "#[cfg(gate)]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        for name, before, after in (
+            (".cargo/config.toml", '[build]\nrustflags=["--check-cfg=cfg(gate)"]\n',
+             '[build]\nrustflags=["--check-cfg=cfg(gate)","--cfg=gate"]\n'),
+            (".cargo/config", '[build]\nrustflags=[]\n', '[build]\nrustflags=["--cfg=gate"]\n'),
+            ("rust-toolchain.toml", '[toolchain]\nchannel="1.90"\n', '[toolchain]\nchannel="1.91"\n'),
+        ):
+            with self.subTest(name=name):
+                status, output = self._classify(
+                    body + "fn keep() {}\n", "fn keep() {}\n" + body.replace("    record", "        record"),
+                    "        record_uncovered_resolution_result();",
+                    auxiliary_before={name: before}, auxiliary_after={name: after}
+                )
+                self.assertEqual(status, 1, output)
+
+    def test_literal_and_raw_identifier_tokens_are_not_whitespace_equivalent(self) -> None:
+        for original, changed in (('b"x"', 'b "x"'), ("b'x'", "b 'x'"),
+                                  ('c"x"', 'c "x"'), ("1.0", "1 . 0"), ("r#value", "r # value")):
+            source = "macro_rules! choose { ($value:tt) => { 1 }; ($($value:tt)+) => { 2 }; }\n"
+            source += f"fn resolve() {{\n    let value = choose!({original});\n    record_uncovered_resolution_result(value);\n}}\n"
+            for after in (source, source.replace(original, changed)):
+                with self.subTest(original=original, unchanged=after == source):
+                    status, output = self._classify(
+                        source, after, source.splitlines()[3], destination="moved.rs"
+                    )
+                    self.assertEqual(status, 0 if after == source else 1, output)
+
+    def test_build_script_source_change_invalidates_old_compilation_context(self) -> None:
+        manifest = '[package]\nname="fixture"\nversion="0.1.0"\nbuild="build.rs"\n'
+        body = "#[cfg(gate)]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        status, output = self._classify(
+            body + "fn keep() {}\n", "fn keep() {}\n" + body.replace("    record", "        record"),
+            "        record_uncovered_resolution_result();",
+            auxiliary_before={"Cargo.toml": manifest, "build.rs": "fn main() {}\n"},
+            auxiliary_after={"Cargo.toml": manifest, "build.rs": 'fn main() { println!("cargo:rustc-cfg=gate"); }\n'},
+            extra_targets=(("custom-build", "build.rs"),), covered_auxiliary=True
+        )
+        self.assertEqual(status, 1, output)
+
 
 class ClassifyNoLcovRecordLinesTests(unittest.TestCase):
     """Regression tests for the whole-file-zero-SF-record false positive: a

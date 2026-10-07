@@ -755,12 +755,22 @@ def collect_moved_added_lines(repo_root: str, base: str, head: str,
             # The old build context cannot be inferred after an edition,
             # target, feature, or other compilation setting changes.
             return {}
+    config_paths = subprocess.run(
+        ["git", "-C", repo_root, "diff", "--name-only", base, head, "--", ".cargo/config", ".cargo/config.toml",
+         "*/.cargo/config", "*/.cargo/config.toml", "rust-toolchain", "rust-toolchain.toml"],
+        capture_output=True, text=True, check=True,
+    ).stdout.splitlines()
+    if config_paths:
+        return {}
     added = parse_added_lines(ANSI_RE.sub("", proc.stdout))
     # Reversing the diff can align different shared lines. Parse deletions
     # from the very same forward diff that supplied the move candidates.
     deleted = parse_deleted_lines(ANSI_RE.sub("", proc.stdout))
     old_functions = Counter()
     snapshots = {ref: rust_module_snapshot(repo_root, ref, metadata) for ref in (base, head)}
+    if (snapshots[base]["build_inputs"] != snapshots[head]["build_inputs"]
+            or any(value is None for snapshot in snapshots.values() for value in snapshot["build_inputs"].values())):
+        return {}
     for path, lines in deleted.items():
         snapshot = snapshots[base]
         for unit in (snapshot["sources"].get(path) or ([], [], {}))[0]:
@@ -841,6 +851,10 @@ def parse_deleted_lines(diff: str) -> dict[str, set[int]]:
     return result
 
 
+def rust_identifier(token: str) -> str | None:
+    return token.removeprefix("r#") if re.fullmatch(r"(?:r#)?[^\W\d]\w*", token) else None
+
+
 def rust_move_tokens(source: str) -> list[tuple[str, int]] | None:
     """Tokenize enough Rust syntax to compare complete functions safely.
 
@@ -854,6 +868,8 @@ def rust_move_tokens(source: str) -> list[tuple[str, int]] | None:
         r"\w+|<<=|>>=|\.\.=|\.\.\.|::|->|=>|&&|\|\||==|!=|<=|>=|"
         r"\+=|-=|\*=|/=|%=|\^=|&=|\|=|<<|>>|\.\."
     )
+    raw_identifier = re.compile(r"r#[^\W\d]\w*")
+    number = re.compile(r"[0-9][0-9_]*(?:\.(?:[0-9][0-9_]*|(?!(?:[.\w]))))?(?:[eE][+-]?[0-9][0-9_]*)?\w*")
     i = 0
     line = 1
     while i < len(source):
@@ -889,13 +905,22 @@ def rust_move_tokens(source: str) -> list[tuple[str, int]] | None:
             if end < 0:
                 return None
             i = end + len(terminator)
-        elif source[i] == '"':
-            i += 1
+        elif source[i] == '"' or source[i:i + 2] in ('b"', 'c"'):
+            i += 1 if source[i] == '"' else 2
             while i < len(source) and source[i] != '"':
                 i += 2 if source[i] == "\\" else 1
             if i >= len(source):
                 return None
             i += 1
+        elif source.startswith("b'", i):
+            end = _char_literal_end(source, i + 1)
+            if end is None:
+                return None
+            i = end + 1
+        elif (ident := raw_identifier.match(source, i)) is not None:
+            i = ident.end()
+        elif source[i].isdigit() and (numeric := number.match(source, i)) is not None:
+            i = numeric.end()
         elif source[i] == "'" and (end := _char_literal_end(source, i)) is not None:
             i = end + 1
         else:
@@ -921,7 +946,7 @@ def attribute_prefix(header: tuple[str, ...]) -> tuple[str, ...]:
 
 
 def module_chain(frames: list) -> tuple[str, ...]:
-    return tuple(frame[2][-1] for frame in frames[1:]
+    return tuple(rust_identifier(frame[2][-1]) for frame in frames[1:]
                  if len(frame[2]) >= 2 and frame[2][-2] == "mod")
 
 
@@ -981,7 +1006,7 @@ def rust_source_units(source: str) -> tuple[list, list, dict]:
             if opener == "{" and not signature:
                 # A definition has `fn name`, unlike a function pointer type.
                 is_function = any(
-                    value == "fn" and re.fullmatch(r"\w+", following)
+                    value == "fn" and rust_identifier(following)
                     for value, following in zip(header, header[1:])
                 )
                 supported_scope = all(
@@ -1013,7 +1038,9 @@ def rust_source_units(source: str) -> tuple[list, list, dict]:
                 if is_module_scope(frames) and len(header) >= 2 and header[-2] == "mod":
                     scope_attrs = enclosing_attributes(frames)
                     scope_attrs += attribute_prefix(header) + tuple(value for attr in inner_attrs for value in attr)
-                    bindings.setdefault(module_chain(frames) + (header[-1],), []).append(("@scope",) + scope_attrs)
+                    bindings.setdefault(module_chain(frames) + (rust_identifier(header[-1]),), []).append(("@scope",) + scope_attrs)
+                    if "macro_use" in attribute_prefix(header):
+                        bindings.setdefault(module_chain(frames), []).append(("@macro_use", rust_identifier(header[-1])) + attribute_prefix(header))
                 if is_module_scope(frames) and not (len(header) >= 2 and header[-2] == "mod"):
                     # Function signatures bind names; their bodies are
                     # checked separately by patch coverage. Other items
@@ -1023,16 +1050,17 @@ def rust_source_units(source: str) -> tuple[list, list, dict]:
                 frames[-1][1] = index + 1
         elif token == ";":
             header = tuple(value for value, _ in tokens[frames[-1][1]:index])
-            is_module = len(header) >= 2 and header[-2] == "mod" and re.fullmatch(r"\w+", header[-1])
+            is_module = len(header) >= 2 and header[-2] == "mod" and rust_identifier(header[-1])
             if is_module and is_module_scope(frames):
-                chain = tuple(frame[2][-1] for frame in frames[1:]
-                              if len(frame[2]) >= 2 and frame[2][-2] == "mod")
+                chain = module_chain(frames)
                 attributes = enclosing_attributes(frames)
                 attributes += attribute_prefix(header)
                 visible_macros = tuple((chain[:n], binding) for n in range(len(chain) + 1)
                                        for binding in bindings.get(chain[:n], [])
                                        if "macro_rules" in binding or "macro" in binding)
-                modules.append((chain, header[-1], attributes, visible_macros))
+                modules.append((chain, rust_identifier(header[-1]), attributes, visible_macros))
+                if "macro_use" in attribute_prefix(header):
+                    bindings.setdefault(chain, []).append(("@macro_use", rust_identifier(header[-1])) + attribute_prefix(header))
             elif header and is_module_scope(frames):
                 bindings.setdefault(module_chain(frames), []).append(header)
             frames[-1][1] = index + 1
@@ -1084,7 +1112,7 @@ def rust_module_snapshot(repo_root: str, ref: str, metadata: dict | None) -> dic
     conventional child directory. Multiple target/module contexts are
     retained together; an unresolved layout fails closed for its target.
     """
-    snapshot = {"sources": {}, "contexts": {}, "bindings": {}, "function_bodies": {}, "unsafe": set()}
+    snapshot = {"sources": {}, "contexts": {}, "bindings": {}, "function_bodies": {}, "build_inputs": {}, "unsafe": set()}
     def read(path):
         if path not in snapshot["sources"]:
             source = git_show(repo_root, ref, path)
@@ -1129,6 +1157,9 @@ def rust_module_snapshot(repo_root: str, ref: str, metadata: dict | None) -> dic
                 info = read(path)
                 if info is None:
                     continue
+                if "custom-build" in identity[1]:
+                    tokens = rust_move_tokens(git_show(repo_root, ref, path) or "")
+                    snapshot["build_inputs"][(identity, path)] = tuple(value for value, _ in tokens) if tokens is not None else None
                 snapshot["contexts"].setdefault(path, set()).add(context)
                 for unit in info[0]:
                     key = (identity, prefix + unit[3], unit[0][4])
@@ -1163,11 +1194,29 @@ def rust_module_snapshot(repo_root: str, ref: str, metadata: dict | None) -> dic
                         pending.append((children[0], prefix + chain + (name,),
                                         inherited_attrs + effective_attrs,
                                         inherited_macros + prefix_macros, ancestors + (path,)))
+    # Imported legacy macros retain declaration order and definition
+    # contents. Resolve deepest modules first for nested macro_use imports.
+    for (identity, scope), values in sorted(snapshot["bindings"].items(), key=lambda item: len(item[0][1]), reverse=True):
+        resolved = []
+        for binding in values:
+            if binding[:1] == ("@macro_use",):
+                child = snapshot["bindings"].get((identity, scope + (binding[1],)))
+                locator = module_locator(binding[2:])
+                if child is None or locator is None:
+                    binding = ("@macro_use_unknown",)
+                else:
+                    macros = [value for value in child if "macro_rules" in value or "macro" in value
+                              or value[:1] in (("@macro_use",), ("@macro_use_unknown",))]
+                    binding = ("@macro_use", binding[1]) + locator[0] + tuple(token for value in macros for token in ("@definition",) + value)
+            resolved.append(binding)
+        snapshot["bindings"][(identity, scope)] = resolved
     return snapshot
 
 
 def binding_names(tokens: tuple) -> set[str] | None:
     """Identify names introduced by common module-level declarations."""
+    if tokens[:1] in (("@macro_use",), ("@macro_use_unknown",)):
+        return None
     kinds = {"fn", "const", "static", "type", "struct", "enum", "trait", "macro_rules", "macro"}
     for index, token in enumerate(tokens):
         if token == "use":
@@ -1175,7 +1224,7 @@ def binding_names(tokens: tuple) -> set[str] | None:
             # appearing in the body, including imports aliased as `_`.
             return None
         if token in kinds:
-            return {value for value in tokens[index + 1:] if re.fullmatch(r"\w+", value)}
+            return {name for value in tokens[index + 1:] if (name := rust_identifier(value)) is not None}
         if token == "impl":
             return None
     # Unknown expansions can introduce any referenced name.
@@ -1208,7 +1257,7 @@ def function_move_key(snapshot: dict, path: str, unit: tuple) -> tuple | None:
         if identity in snapshot["unsafe"]:
             return None
         logical = prefix + local_chain
-        references = {token for token in body if re.fullmatch(r"\w+", token)}
+        references = {name for token in body if (name := rust_identifier(token)) is not None}
         macro_prefix = inherited_macros + tuple((prefix + scope, binding) for scope, binding in local_macros)
         relevant = set()
         changed = True
@@ -1226,20 +1275,20 @@ def function_move_key(snapshot: dict, path: str, unit: tuple) -> tuple | None:
                         # in its signature. Follow body references for
                         # known input taint without comparing whole bodies.
                         header = binding[len(attribute_prefix(binding)):]
-                        names = {following for token, following in zip(header, header[1:])
-                                 if token == "fn" and re.fullmatch(r"\w+", following)}
+                        names = {name for token, following in zip(header, header[1:])
+                                 if token == "fn" and (name := rust_identifier(following)) is not None}
                     else:
                         names = binding_names(binding)
                     if names is None or references & names:
                         # Expansion inputs can change bindings or values
                         # outside this graph. Fail closed only for functions
                         # whose scope/references reach those inputs.
-                        if has_file_include(binding) or any(has_file_include(value) for value in bodies):
+                        if "@macro_use_unknown" in binding or has_file_include(binding) or any(has_file_include(value) for value in bodies):
                             return None
                         relevant.add((scope, binding))
-                        references.update(token for token in binding if re.fullmatch(r"\w+", token))
+                        references.update(name for token in binding if (name := rust_identifier(token)) is not None)
                         for value in bodies:
-                            references.update(token for token in value if re.fullmatch(r"\w+", token))
+                            references.update(name for token in value if (name := rust_identifier(token)) is not None)
             changed = len(references) != previous
         macros = tuple((scope, binding) for scope, binding in macro_prefix
                        if binding_names(binding) is None or references & binding_names(binding))
