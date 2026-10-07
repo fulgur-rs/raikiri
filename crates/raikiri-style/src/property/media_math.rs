@@ -139,19 +139,22 @@ fn parse_function<'i>(
     depth: usize,
 ) -> MathResult<'i, NumericType> {
     let name = name.to_ascii_lowercase();
-    if name == "round" {
-        let _ = input.try_parse(|input| {
-            let strategy = input.expect_ident()?;
-            if !matches!(
-                strategy.to_ascii_lowercase().as_str(),
-                "nearest" | "up" | "down" | "to-zero"
-            ) {
-                return Err(input.new_custom_error(()));
-            }
-            input.expect_comma()?;
-            Ok::<_, ParseError<'i, ()>>(())
-        });
-    }
+    let line_width_rounding = if name == "round" {
+        input
+            .try_parse(|input| {
+                let strategy = input.expect_ident()?;
+                let line_width = match strategy.to_ascii_lowercase().as_str() {
+                    "line-width" => true,
+                    "nearest" | "up" | "down" | "to-zero" => false,
+                    _ => return Err(input.new_custom_error(())),
+                };
+                input.expect_comma()?;
+                Ok::<_, ParseError<'i, ()>>(line_width)
+            })
+            .unwrap_or(false)
+    } else {
+        false
+    };
     let mut count = 0;
     let arguments = input.parse_comma_separated(|input| {
         // Support more than the required 32 arguments with bounded storage.
@@ -196,7 +199,14 @@ fn parse_function<'i>(
     let kind = match name.as_str() {
         "calc" | "abs" if arity == 1 => first,
         "min" | "max" | "hypot" if consistent => first,
-        "round" if consistent && (arity == 2 || (arity == 1 && first == NumericType::NUMBER)) => {
+        "round"
+            if consistent
+                && if line_width_rounding {
+                    first == NumericType::dimension(0) && (1..=2).contains(&arity)
+                } else {
+                    arity == 2 || (arity == 1 && first == NumericType::NUMBER)
+                } =>
+        {
             first
         }
         "mod" | "rem" if arity == 2 && consistent => first,

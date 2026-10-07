@@ -1,6 +1,43 @@
 use super::*;
 
 #[test]
+fn line_width_rounding_qualifies_only_length_media_values() {
+    use crate::page::{PageContextQuery, PageInheritance, PageSize, cascade_page};
+    use crate::property::Length;
+    use crate::ruletree::{Origin, RuleTree};
+
+    for (value, dependent) in [
+        ("round(line-width,1px)", true),
+        ("round(line-width,1px,2em)", true),
+        ("round(line-width,1)", false),
+        ("round(line-width,1deg)", false),
+        ("round(line-width,1%)", false),
+        ("round(line-width,1px,2px,3px)", false),
+    ] {
+        let prelude = format!("print, (width:{value})");
+        let condition = crate::media::parse_media_prelude(&prelude).unwrap();
+        assert_eq!(condition.depends_on_paper_size(), dependent);
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            &format!("@media {prelude}{{@page{{size:300px 200px}}}}"),
+            Origin::Author,
+        );
+        let result = cascade_page(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::LegacyInitialValues,
+        );
+        assert_eq!(
+            result.size(),
+            (!dependent).then_some(PageSize::Lengths {
+                width: Length::Px(300.0),
+                height: Length::Px(200.0)
+            })
+        );
+    }
+}
+
+#[test]
 fn dimensional_exponents_reject_overflow_without_wrapping() {
     let maximum = NumericType([i32::MAX, 0, 0, 0, 0, 0, 0]);
     let minimum = NumericType([i32::MIN, 0, 0, 0, 0, 0, 0]);
@@ -19,6 +56,12 @@ fn valid_functions_keep_their_numeric_types() {
         "max(1px, 2em)",
         "abs(-1px)",
         "round(nearest, 1px, 2em)",
+        "round(up, 1px, 2em)",
+        "round(down, 1px, 2em)",
+        "round(to-zero, 1px, 2em)",
+        "round(line-width, 1px)",
+        "round(line-width, 1px, 2em)",
+        "RoUnD(LINE-WIDTH, -1px)",
         "mod(1px, 2em)",
         "rem(1px, 2em)",
         "hypot(1px, 2em)",
@@ -79,6 +122,15 @@ fn malformed_functions_and_wrong_types_remain_invalid() {
         "calc(1unknown)",
         "round(1px)",
         "round(sideways, 1px, 2px)",
+        "round(line-width)",
+        "round(line-width, 1px, 2px, 3px)",
+        "round(line-width, 1)",
+        "round(line-width, -1)",
+        "round(line-width, 1, 2)",
+        "round(line-width, 1deg)",
+        "round(line-width, 1deg, 2deg)",
+        "round(line-width, 1%)",
+        "round(line-width, 1%, 2%)",
         "mod(1px)",
         "sign(1px, 2px)",
         "pow(1px, 2)",
