@@ -125,10 +125,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import posixpath
 import re
 import subprocess
 import sys
 from collections import Counter
+from pathlib import Path, PurePosixPath
 from dataclasses import dataclass, field
 
 COMMENT_LINE_RE = re.compile(r"^\s*//")
@@ -694,7 +696,8 @@ def parse_moved_added_lines(colored_diff: str) -> dict[str, set[int]]:
     return result
 
 
-def collect_moved_added_lines(repo_root: str, base: str, head: str) -> dict[str, set[int]]:
+def collect_moved_added_lines(repo_root: str, base: str, head: str,
+                             metadata: dict | None = None) -> dict[str, set[int]]:
     """Find Git move candidates backed by a complete unchanged function.
 
     Git can color a single long expression as moved even when its role
@@ -741,15 +744,26 @@ def collect_moved_added_lines(repo_root: str, base: str, head: str) -> dict[str,
          "--", "*.rs"], capture_output=True, text=True, check=True,
     ).stdout)
     old_functions = Counter()
+    source_cache = {}
+    root_paths = set()
+    for package in (metadata or {}).get("packages", []):
+        for target in package.get("targets", []):
+            try:
+                root_paths.add(PurePosixPath(target["src_path"]).relative_to(Path(repo_root).resolve()))
+            except ValueError:
+                continue
+    for ref in (base, head):
+        source_cache[ref] = {}
     for path, lines in deleted.items():
         source = git_show(repo_root, base, path)
         if source is not None:
             deleted_lines = set(lines)
-            for key, token_lines, substantive_lines in unchanged_function_units(source):
+            inherited = inherited_module_attributes(repo_root, base, path, source_cache[base], root_paths)
+            for key, token_lines, substantive_lines in rust_source_units(source)[0]:
                 # Git may align a closing brace with an unrelated block.
                 # Only punctuation-only lines may remain outside deletions.
                 if substantive_lines <= deleted_lines:
-                    old_functions[key] += 1
+                    old_functions[(inherited, key)] += 1
     new_functions = []
     new_counts = Counter()
     for path, lines in added.items():
@@ -757,8 +771,10 @@ def collect_moved_added_lines(repo_root: str, base: str, head: str) -> dict[str,
         if source is None:
             continue
         added_lines = set(lines)
-        for key, token_lines, substantive_lines in unchanged_function_units(source):
+        inherited = inherited_module_attributes(repo_root, head, path, source_cache[head], root_paths)
+        for key, token_lines, substantive_lines in rust_source_units(source)[0]:
             if substantive_lines & added_lines:
+                key = (inherited, key)
                 new_functions.append((path, key, token_lines))
                 new_counts[key] += 1
     result = {}
@@ -837,8 +853,22 @@ def rust_move_tokens(source: str) -> list[tuple[str, int]] | None:
     return tokens
 
 
-def unchanged_function_units(source: str) -> list[tuple[tuple, set[int], set[int]]]:
-    """Return complete functions keyed by tokens and enclosing headers.
+def attribute_prefix(header: tuple[str, ...]) -> tuple[str, ...]:
+    """Read leading attributes without confusing nested brackets or literals."""
+    end = 0
+    while end + 1 < len(header) and header[end:end + 2] == ("#", "["):
+        depth = 1
+        end += 2
+        while end < len(header) and depth:
+            depth += (header[end] == "[") - (header[end] == "]")
+            end += 1
+        if depth:
+            return ()
+    return header[:end]
+
+
+def rust_source_units(source: str) -> tuple[list, list]:
+    """Return complete functions and external module attribute contexts.
 
     Preserve attributes and impl/trait/control-flow context. Plain inline
     modules are allowed to become separate files; attributed modules keep
@@ -847,25 +877,38 @@ def unchanged_function_units(source: str) -> list[tuple[tuple, set[int], set[int
     """
     tokens = rust_move_tokens(source)
     if tokens is None:
-        return []
+        return [], []
     units = []
-    # Each frame stores its opener, boundary, header, start and inner attrs.
-    frames = [["", 0, (), 0, []]]
+    modules = []
+    # Frames store opener, boundary, header, start, inner attrs, signature flag.
+    frames = [["", 0, (), 0, [], False]]
     for index, (token, _) in enumerate(tokens):
         if token in ("{", "(", "["):
             start = frames[-1][1]
             header = tuple(value for value, _ in tokens[start:index])
-            frames.append([token, index + 1, header, start, []])
+            # A brace in a generic signature is a const expression, not
+            # the function body. Keep the signature boundary across it.
+            depth = 0
+            brace_depth = 0
+            for value in header:
+                if value == "{":
+                    brace_depth += 1
+                elif value == "}":
+                    brace_depth -= 1
+                elif brace_depth == 0:
+                    depth += {"<": 1, "<<": 2, ">": -1, ">>": -2}.get(value, 0)
+            signature = token == "{" and "fn" in header and depth > 0
+            frames.append([token, index + 1, header, start, [], signature])
         elif token in ("}", ")", "]"):
             if len(frames) == 1 or frames[-1][0] != {"}": "{", ")": "(", "]": "["}[token]:
-                return []
-            opener, _, header, start, _ = frames.pop()
+                return [], []
+            opener, _, header, start, _, signature = frames.pop()
             if opener == "[" and header == ("#", "!"):
                 # Inner attributes describe the entire parent scope,
                 # not just whichever item happens to appear first.
                 frames[-1][4].append(tuple(value for value, _ in tokens[start:index + 1]))
                 frames[-1][1] = index + 1
-            if opener == "{":
+            if opener == "{" and not signature:
                 # A definition has `fn name`, unlike a function pointer type.
                 is_function = any(
                     value == "fn" and re.fullmatch(r"\w+", following)
@@ -888,8 +931,69 @@ def unchanged_function_units(source: str) -> list[tuple[tuple, set[int], set[int
                     units.append((key, token_lines, substantive))
                 frames[-1][1] = index + 1
         elif token == ";":
+            header = tuple(value for value, _ in tokens[frames[-1][1]:index])
+            if len(header) >= 2 and header[-2] == "mod" and re.fullmatch(r"\w+", header[-1]):
+                chain = tuple(frame[2][-1] for frame in frames[1:]
+                              if len(frame[2]) >= 2 and frame[2][-2] == "mod")
+                attributes = tuple(value for frame in frames
+                                   for value in attribute_prefix(frame[2]))
+                attributes += tuple(value for frame in frames
+                                    for attr in frame[4] for value in attr)
+                attributes += attribute_prefix(header)
+                modules.append((chain, header[-1], attributes))
             frames[-1][1] = index + 1
-    return units if len(frames) == 1 else []
+    return (units, modules) if len(frames) == 1 else ([], [])
+
+
+def inherited_module_attributes(repo_root: str, ref: str, path: str,
+                                cache: dict, root_paths: set[PurePosixPath]) -> tuple:
+    """Keep attributes on ancestor file-module declarations during a move.
+
+    Resolve Cargo target roots and conventional module files, including
+    inline module directories. Simple path overrides are resolved; an
+    ambiguous override disables moves to other paths in that repository.
+    """
+    target = PurePosixPath(path)
+    if "module parents" not in cache:
+        proc = subprocess.run(
+            ["git", "-C", repo_root, "grep", "-l", "-w", "mod", ref, "--", "*.rs"],
+            capture_output=True, text=True,
+        )
+        if proc.returncode not in (0, 1):
+            proc.check_returncode()
+        cache["module parents"] = {PurePosixPath(line[len(ref) + 1:])
+                                   for line in proc.stdout.splitlines()}
+    contexts = []
+    for parent in sorted(cache["module parents"] - {target}):
+        name = str(parent)
+        if name not in cache:
+            source = git_show(repo_root, ref, name)
+            cache[name] = rust_source_units(source)[1] if source is not None else []
+        root = (parent.parent if parent in root_paths or parent.name in ("lib.rs", "main.rs", "mod.rs")
+                else parent.with_suffix(""))
+        for chain, module, attrs in cache[name]:
+            if not attrs:
+                continue
+            module_root = root.joinpath(*chain, module)
+            matches = (target == module_root.with_suffix(".rs")
+                       or module_root in target.parents)
+            overrides = [attrs[i + 4] for i in range(len(attrs) - 4)
+                         if attrs[i:i + 4] == ("#", "[", "path", "=")]
+            if overrides:
+                try:
+                    override = json.loads(overrides[0])
+                    if chain or len(overrides) != 1 or not isinstance(override, str):
+                        raise ValueError("ambiguous path override")
+                    override_path = PurePosixPath(posixpath.normpath(str(parent.parent / override)))
+                    override_root = (override_path.parent if override_path.name == "mod.rs"
+                                     else override_path.with_suffix(""))
+                    matches = target == override_path or override_root in target.parents
+                except (ValueError, TypeError):
+                    contexts.append(("unresolved path", path, attrs))
+                    continue
+            if matches:
+                contexts.append(attrs)
+    return tuple(contexts)
 
 
 def parse_lcov(lcov_text: str, repo_root: str) -> dict[str, dict[int, int]]:
@@ -956,7 +1060,7 @@ def main() -> int:
         check=True,
     )
     added_by_file = parse_added_lines(diff_proc.stdout)
-    moved_by_file = collect_moved_added_lines(args.repo_root, args.base, args.head)
+    moved_by_file = collect_moved_added_lines(args.repo_root, args.base, args.head, metadata)
 
     with open(args.lcov, encoding="utf-8", errors="replace") as f:
         lcov_by_file = parse_lcov(f.read(), args.repo_root)

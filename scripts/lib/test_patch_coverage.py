@@ -339,21 +339,35 @@ class CollectMovedAddedLinesGitTests(unittest.TestCase):
 
     def _classify(self, before: str, after: str, missed: str,
                   reported: bool = True, destination: str = "lib.rs",
-                  copy: bool = False) -> tuple[int, str]:
+                  copy: bool = False, origin: str = "lib.rs",
+                  auxiliary_before: dict[str, str] | None = None,
+                  auxiliary_after: dict[str, str] | None = None,
+                  target_root: str = "lib.rs") -> tuple[int, str]:
         with tempfile.TemporaryDirectory() as repo:
             self._git(repo, "init", "-q")
-            path = os.path.join(repo, "lib.rs")
+            def write_auxiliary(files: dict[str, str] | None) -> None:
+                for name, content in (files or {}).items():
+                    auxiliary = os.path.join(repo, name)
+                    os.makedirs(os.path.dirname(auxiliary), exist_ok=True)
+                    with open(auxiliary, "w") as f:
+                        f.write(content)
+
+            path = os.path.join(repo, origin)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w") as f:
                 f.write(before)
+            write_auxiliary(auxiliary_before)
             self._git(repo, "add", ".")
             self._git(repo, "commit", "-qm", "base")
             base = self._git(repo, "rev-parse", "HEAD")
-            if destination != "lib.rs":
+            if destination != origin:
                 if not copy:
                     os.unlink(path)
                 path = os.path.join(repo, destination)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w") as f:
                 f.write(after)
+            write_auxiliary(auxiliary_after)
             self._git(repo, "add", ".")
             self._git(repo, "commit", "-qm", "change")
             missed_line = after.splitlines().index(missed) + 1
@@ -363,7 +377,8 @@ class CollectMovedAddedLinesGitTests(unittest.TestCase):
                     f.write(f"SF:{path}\nDA:{missed_line},0\nend_of_record\n")
             output = io.StringIO()
             # Cargo target discovery is unrelated to this Git/LCOV regression.
-            with mock.patch.object(patch_coverage, "load_cargo_metadata", return_value=_metadata()), \
+            metadata = _metadata(_target(["lib"], os.path.join(repo, target_root)))
+            with mock.patch.object(patch_coverage, "load_cargo_metadata", return_value=metadata), \
                  mock.patch("sys.argv", ["patch_coverage.py", "--repo-root", repo,
                                         "--base", base, "--lcov", lcov]), \
                  contextlib.redirect_stdout(output):
@@ -548,6 +563,69 @@ mod second {
             destination="moved.rs"
         )
         self.assertEqual(status, 0, output)
+
+    def test_const_generic_braces_do_not_hide_a_changed_body(self) -> None:
+        before = """fn resolve_uncovered_resolution_result() -> GenericArray<{ 3 }> {
+    old_uncovered_resolution_result()
+}
+"""
+        after = before.replace("old_uncovered", "new_uncovered")
+        status, output = self._classify(
+            before, after, after.splitlines()[0], destination="moved.rs"
+        )
+        self.assertEqual(status, 1, output)
+
+    def test_complete_const_generic_function_move_remains_exempt(self) -> None:
+        source = """fn resolve_uncovered_resolution_result() -> GenericArray<{ 3 }> {
+    old_uncovered_resolution_result()
+}
+"""
+        status, output = self._classify(
+            source, source, "    old_uncovered_resolution_result()", destination="moved.rs"
+        )
+        self.assertEqual(status, 0, output)
+
+    def test_external_module_attributes_follow_the_function(self) -> None:
+        source = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        for parent in ('#[cfg(feature = "old")]\nmod old;\n',
+                       '#![cfg(feature = "old")]\nmod old;\n'):
+            with self.subTest(parent=parent):
+                status, output = self._classify(
+                    source, source, "    record_uncovered_resolution_result();",
+                    origin="old.rs", destination="new.rs",
+                    auxiliary_before={"lib.rs": parent},
+                    auxiliary_after={"lib.rs": "mod new;\n"}
+                )
+                self.assertEqual(status, 1, output)
+
+    def test_external_module_move_preserving_attributes_remains_exempt(self) -> None:
+        source = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        status, output = self._classify(
+            source, source, "    record_uncovered_resolution_result();",
+            origin="old.rs", destination="new.rs",
+            auxiliary_before={"lib.rs": '#[cfg(feature = "gate")]\nmod old;\n'},
+            auxiliary_after={"lib.rs": '#[cfg(feature = "gate")]\nmod new;\n'}
+        )
+        self.assertEqual(status, 0, output)
+
+    def test_nested_and_custom_path_module_attributes_are_not_lost(self) -> None:
+        source = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        cases = (
+            ("gated/old.rs", "lib.rs", {"lib.rs": '#[cfg(feature="old")] mod gated;\n',
+                                        "gated/mod.rs": "mod old;\n"}),
+            ("gated/old.rs", "lib.rs", {"lib.rs": '#[cfg(feature="old")] mod gated { mod old; }\n'}),
+            ("shared/old.rs", "src/lib.rs",
+             {"src/lib.rs": '#[path="../shared/old.rs"] #[cfg(feature="old")] mod old;\n'}),
+            ("old.rs", "entry.rs", {"entry.rs": '#[cfg(feature="old")] mod old;\n'}),
+        )
+        for origin, root, auxiliary in cases:
+            with self.subTest(origin=origin, root=root):
+                status, output = self._classify(
+                    source, source, "    record_uncovered_resolution_result();",
+                    origin=origin, destination="new.rs", target_root=root,
+                    auxiliary_before=auxiliary, auxiliary_after={root: "mod new;\n"}
+                )
+                self.assertEqual(status, 1, output)
 
 
 class ClassifyNoLcovRecordLinesTests(unittest.TestCase):
