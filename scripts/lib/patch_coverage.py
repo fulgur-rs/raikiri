@@ -129,6 +129,7 @@ import posixpath
 import re
 import subprocess
 import sys
+import tomllib
 from collections import Counter
 from pathlib import Path, PurePosixPath
 from dataclasses import dataclass, field
@@ -738,6 +739,27 @@ def collect_moved_added_lines(repo_root: str, base: str, head: str,
     candidates = parse_moved_added_lines(proc.stdout)
     if not candidates:
         return {}
+    manifests = subprocess.run(
+        ["git", "-C", repo_root, "diff", "--name-only", "--no-renames", base, head,
+         "--", "*Cargo.toml"], capture_output=True, text=True, check=True,
+    ).stdout.splitlines()
+    for manifest in manifests:
+        if PurePosixPath(manifest).name != "Cargo.toml":
+            continue
+        layouts = []
+        for ref in (base, head):
+            data = tomllib.loads(git_show(repo_root, ref, manifest) or "")
+            layouts.append((
+                tuple(data.get(kind) for kind in ("lib", "bin", "test", "example", "bench")),
+                tuple(data.get("package", {}).get(key) for key in
+                      ("autolib", "autobins", "autotests", "autoexamples", "autobenches")),
+                tuple(data.get("workspace", {}).get(key) for key in
+                      ("members", "exclude", "default-members")),
+            ))
+        if layouts[0] != layouts[1]:
+            # HEAD metadata cannot establish BASE roots after a target
+            # layout change. Treat these functions as coverage-gated.
+            return {}
     added = parse_added_lines(ANSI_RE.sub("", proc.stdout))
     deleted = parse_added_lines(subprocess.run(
         ["git", "-C", repo_root, "diff", "--no-renames", "-U0", head, base,
@@ -763,7 +785,9 @@ def collect_moved_added_lines(repo_root: str, base: str, head: str,
                 # Git may align a closing brace with an unrelated block.
                 # Only punctuation-only lines may remain outside deletions.
                 if substantive_lines <= deleted_lines:
-                    old_functions[(inherited, key)] += 1
+                    context, attrs, body = key
+                    effective_attrs = tuple(value for group in inherited for value in group) + attrs
+                    old_functions[(context, effective_attrs, body)] += 1
     new_functions = []
     new_counts = Counter()
     for path, lines in added.items():
@@ -774,7 +798,9 @@ def collect_moved_added_lines(repo_root: str, base: str, head: str,
         inherited = inherited_module_attributes(repo_root, head, path, source_cache[head], root_paths)
         for key, token_lines, substantive_lines in rust_source_units(source)[0]:
             if substantive_lines & added_lines:
-                key = (inherited, key)
+                context, attrs, body = key
+                effective_attrs = tuple(value for group in inherited for value in group) + attrs
+                key = (context, effective_attrs, body)
                 new_functions.append((path, key, token_lines))
                 new_counts[key] += 1
     result = {}
@@ -915,14 +941,17 @@ def rust_source_units(source: str) -> tuple[list, list]:
                     for value, following in zip(header, header[1:])
                 )
                 if is_function and all(frame[0] == "{" for frame in frames[1:]):
-                    context = tuple(
-                        frame[2] for frame in frames[1:]
-                        if not re.fullmatch(r"(?:pub(?:\([^)]*\))?)?mod\w+",
-                                            "".join(frame[2]))
-                    )
-                    inner_attrs = tuple(attr for frame in frames for attr in frame[4])
+                    context = []
+                    effective_attrs = []
+                    for frame in frames:
+                        is_module = len(frame[2]) >= 2 and frame[2][-2] == "mod"
+                        if is_module:
+                            effective_attrs.extend(attribute_prefix(frame[2]))
+                        elif frame[0]:
+                            context.append(frame[2])
+                        effective_attrs.extend(value for attr in frame[4] for value in attr)
                     body = tokens[start:index + 1]
-                    key = (context, inner_attrs, tuple(value for value, _ in body))
+                    key = (tuple(context), tuple(effective_attrs), tuple(value for value, _ in body))
                     token_lines = {line for value, number in body
                                    for line in range(number, number + value.count("\n") + 1)}
                     substantive = {line for value, number in body
@@ -979,8 +1008,10 @@ def inherited_module_attributes(repo_root: str, ref: str, path: str,
                        or module_root in target.parents)
             overrides = [attrs[i + 4] for i in range(len(attrs) - 4)
                          if attrs[i:i + 4] == ("#", "[", "path", "=")]
-            if overrides:
+            if "path" in attrs:
                 try:
+                    if not overrides:
+                        raise ValueError("conditional path override")
                     override = json.loads(overrides[0])
                     if chain or len(overrides) != 1 or not isinstance(override, str):
                         raise ValueError("ambiguous path override")

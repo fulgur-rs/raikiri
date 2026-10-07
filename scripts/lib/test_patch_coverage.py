@@ -617,6 +617,8 @@ mod second {
             ("shared/old.rs", "src/lib.rs",
              {"src/lib.rs": '#[path="../shared/old.rs"] #[cfg(feature="old")] mod old;\n'}),
             ("old.rs", "entry.rs", {"entry.rs": '#[cfg(feature="old")] mod old;\n'}),
+            ("old.rs", "lib.rs",
+             {"lib.rs": '#[cfg_attr(all(), path="old.rs")] #[cfg(feature="old")] mod gated;\n'}),
         )
         for origin, root, auxiliary in cases:
             with self.subTest(origin=origin, root=root):
@@ -626,6 +628,43 @@ mod second {
                     auxiliary_before=auxiliary, auxiliary_after={root: "mod new;\n"}
                 )
                 self.assertEqual(status, 1, output)
+
+    def test_parent_scope_attributes_can_follow_function_extraction(self) -> None:
+        body = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        for before, parent in (
+            ("#![allow(dead_code)]\n" + body, "#![allow(dead_code)]\nmod moved;\n"),
+            ('#[cfg(feature="gate")] mod old {\n' + body + "}\n",
+             '#[cfg(feature="gate")]\nmod moved;\n'),
+        ):
+            with self.subTest(parent=parent):
+                status, output = self._classify(
+                    before, body, "    record_uncovered_resolution_result();",
+                    destination="moved.rs", auxiliary_after={"lib.rs": parent}
+                )
+                self.assertEqual(status, 0, output)
+
+    def test_changed_cargo_target_root_does_not_exempt_moved_function(self) -> None:
+        body = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        status, output = self._classify(
+            body, body, "    record_uncovered_resolution_result();",
+            origin="old.rs", destination="new.rs", target_root="new_entry.rs",
+            auxiliary_before={"Cargo.toml": '[package]\nname="fixture"\nversion="0.1.0"\n[lib]\npath="old_entry.rs"\n',
+                              "old_entry.rs": '#[cfg(feature="old")] mod old;\n'},
+            auxiliary_after={"Cargo.toml": '[package]\nname="fixture"\nversion="0.1.0"\n[lib]\npath="new_entry.rs"\n',
+                             "new_entry.rs": "mod new;\n"}
+        )
+        self.assertEqual(status, 1, output)
+
+    def test_dependency_edit_does_not_disable_function_move_exemptions(self) -> None:
+        body = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        manifest = '[package]\nname="fixture"\nversion="0.1.0"\n[dependencies]\nnoop="0.1"\n'
+        status, output = self._classify(
+            body, body, "    record_uncovered_resolution_result();",
+            destination="moved.rs", auxiliary_before={"Cargo.toml": manifest},
+            auxiliary_after={"Cargo.toml": manifest.replace('noop="0.1"', 'noop="0.2"'),
+                             "lib.rs": "mod moved;\n"}
+        )
+        self.assertEqual(status, 0, output)
 
 
 class ClassifyNoLcovRecordLinesTests(unittest.TestCase):
