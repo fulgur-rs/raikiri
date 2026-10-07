@@ -1200,9 +1200,9 @@ impl Default for Border {
 /// - `Initial` takes the property's initial value (see [`crate::specified::INITIAL_BORDER`]).
 /// - `Unset` behaves as `Initial` for these non-inherited properties.
 /// - `Revert` rolls back to the previous origin's winner (see [`crate::cascade::cascade_rank`]).
-/// - `RevertLayer` rolls back to the previous cascade layer; this crate stores no
-///   style layers for element rules, so it falls back to the `Revert` origin rollback.
-///   `@page` rules do carry a layer order and use it (see [`crate::page::cascade_page`]).
+/// - `RevertLayer` removes the current layer. For important declarations, it also
+///   removes the interval between that layer's normal and important levels.
+///   Important element-attached declarations preserve stylesheet important values.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CssWideKeyword {
@@ -8193,7 +8193,9 @@ pub enum FilterFunction {
 /// keyword" <https://www.w3.org/TR/css-cascade-5/#revert-layer>) is not yet
 /// implemented in this crate, except for the border longhands and the `border` /
 /// `border-right` shorthands, which accept all five keywords through
-/// [`CssWideKeyword`] (see that type's docs for resolution).
+/// [`CssWideKeyword`] (see that type's docs for resolution). The `all` shorthand
+/// additionally accepts literal `revert-layer` through [`PropertyValue::AllRevertLayer];
+/// its other CSS-wide values and `var()` form are not supported.
 ///
 /// Unlike unsupported units, this missing support has no single code arm: each
 /// `parse_*` function simply does not recognize these idents and rejects them
@@ -8272,6 +8274,8 @@ pub struct TextIndentValue {
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
 pub enum PropertyValue {
+    /// Roll back all ordinary properties except direction and unicode-bidi by layer.
+    AllRevertLayer,
     /// A `--<ident>` custom property. The value remains token-preserving until
     /// the computed-value stage, where `var()` references are resolved.
     CustomProperty(CustomProperty),
@@ -9917,6 +9921,8 @@ pub enum PropertyValue {
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PropertyKey {
+    /// The all-properties rollback shorthand.
+    All,
     Color,
     BackgroundColor,
     FontFamily,
@@ -10444,6 +10450,7 @@ impl PropertyValue {
     /// cascade, and as the key in the `@page` cascade result map.
     pub fn key(&self) -> PropertyKey {
         match self {
+            PropertyValue::AllRevertLayer => PropertyKey::All,
             PropertyValue::CustomProperty(_) => PropertyKey::Custom,
             PropertyValue::Deferred(value) => value.key,
             PropertyValue::Grid(_) => PropertyKey::Grid,

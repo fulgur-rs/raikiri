@@ -54,6 +54,7 @@ fn serialize_text_decoration_line(value: TextDecorationLine) -> Option<String> {
 /// back to echoing the raw input string when this returns `None`.
 pub fn serialize_value(value: &PropertyValue) -> Option<String> {
     match value {
+        PropertyValue::AllRevertLayer => Some("revert-layer".to_owned()),
         PropertyValue::FontSize(l)
         | PropertyValue::PaddingTop(l)
         | PropertyValue::PaddingRight(l)

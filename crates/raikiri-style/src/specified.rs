@@ -694,9 +694,9 @@ pub struct SpecifiedValues {
 }
 
 /// Cascade sort key of a winning declaration: origin and importance rank,
-/// specificity, source order, then position among the element's candidates
+/// element attachment and layer, specificity, source order, then position among the element's candidates
 /// (CSS Cascading 4 §6.1).
-pub(crate) type CascadePrecedence = (u8, u32, u32, usize);
+pub(crate) type CascadePrecedence = (u8, (bool, u32), u32, u32, usize);
 
 /// [`CascadePrecedence`] of each winning preferred-size declaration; `None`
 /// when no declaration won for that property.

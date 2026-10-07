@@ -380,6 +380,7 @@ fn cascade_from_candidates<D: StyleDom>(
 }
 
 mod collect;
+pub(crate) mod rollback;
 pub(crate) use collect::*;
 mod directionality;
 pub(crate) mod lang;
@@ -401,3 +402,6 @@ mod test_support;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod layer_tests;

@@ -6644,8 +6644,14 @@ fn apply_winners_direct_margin_shorthand_marks_all_sides_non_ua() {
         bottom: LengthOrAuto::Length(Length::Px(3.0)),
         left: LengthOrAuto::Length(Length::Px(4.0)),
     };
-    let candidates: Vec<CascadedDecl> =
-        vec![(PropertyValue::Margin(sides), false, Origin::Author, 0, 0)];
+    let candidates: Vec<CascadedDecl> = vec![(
+        PropertyValue::Margin(sides),
+        false,
+        Origin::Author,
+        0,
+        0,
+        crate::layer::LayerPosition::default(),
+    )];
     let mut winners: Vec<Option<RankedDecl>> = Vec::new();
     let mut specified = SpecifiedValues::initial();
     let inherited = ComputedValues::initial();
@@ -6675,6 +6681,7 @@ fn apply_winners_direct_border_radius_inherit() {
         Origin::Author,
         0,
         0,
+        crate::layer::LayerPosition::default(),
     )];
     let mut winners: Vec<Option<RankedDecl>> = Vec::new();
     let mut specified = SpecifiedValues::initial();
@@ -6711,6 +6718,7 @@ fn apply_winners_direct_page_value() {
         Origin::Author,
         0,
         0,
+        crate::layer::LayerPosition::default(),
     )];
     let mut winners: Vec<Option<RankedDecl>> = Vec::new();
     let mut specified = SpecifiedValues::initial();

@@ -2488,21 +2488,7 @@ fn margin_box_rule(
     rules: &[PageMarginBoxCascadeResult],
     slot: PageMarginBoxSlot,
 ) -> Option<PageMarginBoxCascadeResult> {
-    // Matching nested rules arrive in source order.  Cascade declarations per
-    // property instead of selecting one whole nested rule: a later selector
-    // may override only `counter-reset` while inheriting the earlier rule's
-    // `content` (the common `@page :right` pattern).
-    let matching: Vec<&PageMarginBoxCascadeResult> =
-        rules.iter().filter(|rule| rule.slot == slot).collect();
-    let last = matching.last()?;
-    let mut merged = (*last).clone();
-    merged.declarations.clear();
-    for rule in matching {
-        merged
-            .declarations
-            .extend(rule.declarations.iter().cloned());
-    }
-    Some(merged)
+    PageMarginBoxCascadeResult::cascade_matching(rules, slot)
 }
 
 fn margin_box_border_width(spec: &MarginBoxPaintSpec) -> f32 {

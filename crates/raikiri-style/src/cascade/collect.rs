@@ -1,3 +1,4 @@
+use crate::layer::LayerPosition;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -91,15 +92,22 @@ pub(crate) const CASCADED_PSEUDO_ELEMENTS: [PseudoElem; 4] = [
     PseudoElem::FirstLine,
 ];
 
-/// One candidate declaration: `(value, important, origin, specificity, source_order)`.
+/// One candidate declaration: `(value, important, origin, specificity, source_order, layer)`.
 /// `collect_cascaded` populates it; `pick_winners` ranks and selects winners.
 /// Alias the tuple (including `Origin`) to avoid clippy::type_complexity.
-pub(crate) type CascadedDecl = (PropertyValue, bool, Origin, Specificity, u32);
+pub(crate) type CascadedDecl = (PropertyValue, bool, Origin, Specificity, u32, LayerPosition);
 
 /// A custom-property candidate. Unlike ordinary declarations, custom
 /// properties are keyed by their case-sensitive name rather than by a fixed
 /// `PropertyKey` slot.
-pub(crate) type CustomCascadedDecl = (CustomProperty, bool, Origin, Specificity, u32);
+pub(crate) type CustomCascadedDecl = (
+    CustomProperty,
+    bool,
+    Origin,
+    Specificity,
+    u32,
+    LayerPosition,
+);
 
 /// Output of [`collect_cascaded`]: all nodes' candidates in one flat `Vec`,
 /// indexed by per-node [`Range`] values.
@@ -308,19 +316,19 @@ fn for_each_declaration(
 /// [`collect_cascaded`]'s pseudo-element section) without duplicating this
 /// match.
 fn push_cascaded_decl(
-    decls: &mut Vec<CascadedDecl>,
-    custom_decls: &mut Vec<CustomCascadedDecl>,
+    (decls, custom_decls): (&mut Vec<CascadedDecl>, &mut Vec<CustomCascadedDecl>),
     value: PropertyValue,
     important: bool,
     origin: Origin,
     specificity: Specificity,
     source_order: u32,
+    layer: LayerPosition,
 ) {
     match value {
         PropertyValue::CustomProperty(custom) => {
-            custom_decls.push((custom, important, origin, specificity, source_order))
+            custom_decls.push((custom, important, origin, specificity, source_order, layer))
         }
-        value => decls.push((value, important, origin, specificity, source_order)),
+        value => decls.push((value, important, origin, specificity, source_order, layer)),
     }
 }
 
@@ -335,7 +343,7 @@ fn push_cascaded_decl(
 ///
 /// The sibling [`CascadedDecl`] remains a tuple alias because it is always
 /// destructured into named bindings, never accessed positionally. This type
-/// uses named fields because [`beats`] compares three fields **in order**:
+/// uses named fields because [`beats`] compares precedence fields **in order**:
 /// [`specificity`](Self::specificity) and [`source_order`](Self::source_order)
 /// are both `u32`; swapping tuple positions `.1` and `.2` would compile and
 /// silently change cascade winners.
@@ -343,6 +351,8 @@ fn push_cascaded_decl(
 pub(crate) struct RankedDecl {
     /// Origin plus `!important` precedence from [`cascade_rank`].
     pub(crate) rank: u8,
+    /// Element-attached declarations first, then the importance-adjusted layer rank.
+    pub(crate) layer_priority: (bool, u32),
     /// Selector specificity (inline style uses [`INLINE_SPECIFICITY`]).
     pub(crate) specificity: Specificity,
     /// Source order in the stylesheet (inline style uses [`INLINE_SOURCE_ORDER`]).
@@ -476,10 +486,8 @@ pub(crate) struct RankedDecl {
 /// even before a producer existed.
 ///
 /// The `revert` keyword carve-out (the fourth quote: "it is considered part
-/// of the author origin"; not `revert-layer`) does not yet affect this crate:
-/// neither CSS-wide keyword is implemented (see the "CSS-wide keyword
-/// (canonical)" section of [`crate::property`]). Implementation will need
-/// a special case for this carve-out.
+/// of the author origin"; not `revert-layer`) is applied when border longhands
+/// roll back their winners in [`super::inherit`].
 ///
 /// The `@page` cascade shares this origin ordering, so expose this function
 /// as `pub(crate)` for reuse by [`crate::page::cascade_page`].
@@ -544,6 +552,7 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
 ) {
     // Document-wide constant — read once rather than
     // per (node, rule) pair inside the loop below.
+    let layers = rule_tree.layer_order(media_context);
     let quirks_mode = dom.quirks_mode();
     // Sibling positions, languages and directionality are pure functions of
     // the DOM, which stays immutably borrowed for this whole walk, so one
@@ -682,13 +691,13 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                             && parser.expect_exhausted().is_ok()
                         {
                             push_cascaded_decl(
-                                &mut out.decls,
-                                &mut out.custom_decls,
+                                (&mut out.decls, &mut out.custom_decls),
                                 value,
                                 false,
                                 Origin::AuthorPresentationalHint,
                                 PRESENTATIONAL_HINT_SPECIFICITY,
                                 PRESENTATIONAL_HINT_SOURCE_ORDER,
+                                LayerPosition::default(),
                             );
                         }
                     }
@@ -730,13 +739,16 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                         // see the `crate::rule::expand_shorthand_into` docs.
                         for d in &indexed.declarations {
                             push_cascaded_decl(
-                                &mut out.decls,
-                                &mut out.custom_decls,
+                                (&mut out.decls, &mut out.custom_decls),
                                 d.value.clone(),
                                 d.important,
                                 rule.origin,
                                 spec,
                                 rule.source_order,
+                                LayerPosition {
+                                    attached: false,
+                                    rank: layers.rank(rule.layer),
+                                },
                             );
                         }
                     }
@@ -781,13 +793,16 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                         };
                         for d in &indexed.declarations {
                             push_cascaded_decl(
-                                buf,
-                                custom_buf,
+                                (buf, custom_buf),
                                 d.value.clone(),
                                 d.important,
                                 rule.origin,
                                 spec,
                                 rule.source_order,
+                                LayerPosition {
+                                    attached: false,
+                                    rank: layers.rank(rule.layer),
+                                },
                             );
                         }
                     }
@@ -798,13 +813,16 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                         block_cache.declarations(source, rule_tree),
                         |value, important| {
                             push_cascaded_decl(
-                                &mut out.decls,
-                                &mut out.custom_decls,
+                                (&mut out.decls, &mut out.custom_decls),
                                 value,
                                 important,
                                 Origin::Author,
                                 INLINE_SPECIFICITY,
                                 INLINE_SOURCE_ORDER,
+                                LayerPosition {
+                                    attached: true,
+                                    ..LayerPosition::default()
+                                },
                             );
                         },
                     );
@@ -814,13 +832,13 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                         block_cache.declarations(source, rule_tree),
                         |value, _| {
                             push_cascaded_decl(
-                                &mut out.decls,
-                                &mut out.custom_decls,
+                                (&mut out.decls, &mut out.custom_decls),
                                 value,
                                 false,
                                 Origin::Animation,
                                 INLINE_SPECIFICITY,
                                 INLINE_SOURCE_ORDER,
+                                LayerPosition::default(),
                             );
                         },
                     );
@@ -946,7 +964,12 @@ pub(crate) fn pick_winners(candidates: &[CascadedDecl], winners: &mut Vec<Option
          前 node の winner slot が生き残っている (drain の unwind 等)"
     );
 
-    for (idx, (value, important, origin, spec, order)) in candidates.iter().enumerate() {
+    let mut has_rollback = false;
+    for (idx, (value, important, origin, spec, order, layer)) in candidates.iter().enumerate() {
+        if matches!(value, PropertyValue::AllRevertLayer) {
+            has_rollback = true;
+            continue;
+        }
         // Use the fieldless enum discriminant directly as the slot index.
         // `resize` handles new variants; no fixed upper bound is needed.
         let slot = value.key() as usize;
@@ -955,6 +978,7 @@ pub(crate) fn pick_winners(candidates: &[CascadedDecl], winners: &mut Vec<Option
         }
         let candidate = RankedDecl {
             rank: cascade_rank(*origin, *important),
+            layer_priority: layer.priority(*important),
             specificity: *spec,
             source_order: *order,
             idx,
@@ -963,13 +987,60 @@ pub(crate) fn pick_winners(candidates: &[CascadedDecl], winners: &mut Vec<Option
             winners[slot] = Some(candidate);
         }
     }
+    if has_rollback {
+        for winner in winners.iter_mut() {
+            let Some(existing) = *winner else {
+                continue;
+            };
+            let key = candidates[existing.idx].0.key();
+            if matches!(
+                key,
+                crate::property::PropertyKey::Direction | crate::property::PropertyKey::UnicodeBidi
+            ) {
+                continue;
+            }
+            let selected = super::rollback::select_layered_winner(
+                candidates,
+                |idx, (value, important, origin, spec, order, layer)| {
+                    let rollback = matches!(value, PropertyValue::AllRevertLayer);
+                    if value.key() != key && !rollback {
+                        return None;
+                    }
+                    Some((
+                        (
+                            cascade_rank(*origin, *important),
+                            layer.priority(*important),
+                            *spec,
+                            *order,
+                            idx,
+                        ),
+                        *origin,
+                        *layer,
+                        *important,
+                        super::rollback::rollback_kind(value),
+                    ))
+                },
+            );
+            *winner = selected.map(|idx| {
+                let (_, important, origin, spec, order, layer) = &candidates[idx];
+                RankedDecl {
+                    rank: cascade_rank(*origin, *important),
+                    layer_priority: layer.priority(*important),
+                    specificity: *spec,
+                    source_order: *order,
+                    idx,
+                }
+            });
+        }
+    }
 }
 
 pub(crate) fn beats(candidate: RankedDecl, existing: RankedDecl) -> bool {
-    // Tuple compare: (rank, specificity, source_order)
+    // Compare origin/importance, element attachment and layer, specificity, then source order.
     // - Higher rank wins (see `cascade_rank` for exact ordering and values:
     //   originally UA/Author, now UA/User/AuthorPresentationalHint/Author).
-    // - At equal rank, higher specificity wins.
+    // - At equal rank, element-attached declarations and stronger layers win.
+    // - At equal origin and layer priority, higher specificity wins.
     // - At equal rank and specificity, later source_order wins.
     // Deliberately use `>=` so a later duplicate in the same rule wins,
     // per CSS Cascading L4 §6.1 "Order of Appearance"
@@ -982,9 +1053,15 @@ pub(crate) fn beats(candidate: RankedDecl, existing: RankedDecl) -> bool {
     // obscure the explicit tie-break rule: later wins at equal rank/spec/order.
     (
         candidate.rank,
+        candidate.layer_priority,
         candidate.specificity,
         candidate.source_order,
-    ) >= (existing.rank, existing.specificity, existing.source_order)
+    ) >= (
+        existing.rank,
+        existing.layer_priority,
+        existing.specificity,
+        existing.source_order,
+    )
 }
 
 #[cfg(test)]

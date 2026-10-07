@@ -69,16 +69,20 @@ fn existing_layers_inside_supports_keep_styles_pages_and_precedence() {
     );
     assert_eq!(tree.style_rules().len(), 3);
     assert_eq!(tree.page_rules.len(), 1);
-    assert_eq!(tree.page_rules[0].layer_order, 0);
+    assert_eq!(
+        tree.layer_order(&MediaContext::default())
+            .rank(tree.page_rules[0].layer),
+        0
+    );
     assert_eq!(
         tree.style_rules()
             .iter()
             .map(selector_text)
             .collect::<Vec<_>>(),
-        ["p", "p", "div"]
+        ["p", "div", "p"]
     );
     assert!(matches!(
-        tree.style_rules()[0].declarations[0].value(),
+        tree.style_rules()[2].declarations[0].value(),
         PropertyValue::Color(CssColor {
             r: 255,
             g: 0,
@@ -94,22 +98,22 @@ fn supported_layers_keep_existing_name_order_and_wrapper_isolation() {
         (
             "@supports (color:red) {u {color:blue} @layer a {la {color:red}}} \
              @layer b {lb {color:green}}",
-            vec!["la", "lb", "u"],
+            vec!["u", "la", "lb"],
         ),
         (
             "@layer b {lb {color:green}} \
              @supports (color:red) {u {color:blue} @layer a {la {color:red}}}",
-            vec!["lb", "la", "u"],
+            vec!["lb", "u", "la"],
         ),
         (
             "@layer b,a; @supports (color:red) {u {color:blue} @layer a {la {color:red}}} \
              @layer b {lb {color:green}}",
-            vec!["lb", "la", "u"],
+            vec!["u", "la", "lb"],
         ),
         (
             "@layer a {la {color:red}} \
              @supports (color:red) {u {color:blue} @layer a {lb {color:green}}}",
-            vec!["la", "lb", "u"],
+            vec!["la", "u", "lb"],
         ),
         (
             "@supports (display:invalid) {u {color:blue} @layer a {hidden {color:red}}} \
@@ -133,14 +137,18 @@ fn supported_layers_keep_existing_name_order_and_wrapper_isolation() {
             selectors,
             "{source}"
         );
-        assert!(tree.media_rules.is_empty(), "{source}");
+        assert_eq!(
+            tree.media_rules.len(),
+            usize::from(source.contains("@media print")),
+            "{source}"
+        );
     }
 }
 
 #[test]
 fn supported_layer_statements_order_later_blocks_only_when_true() {
     for (condition, selectors) in [
-        ("(color:red)", ["lb", "la"]),
+        ("(color:red)", ["la", "lb"]),
         ("(display:invalid)", ["la", "lb"]),
     ] {
         let mut tree = RuleTree::empty();
@@ -158,6 +166,10 @@ fn supported_layer_statements_order_later_blocks_only_when_true() {
                 .collect::<Vec<_>>(),
             selectors
         );
+        let order = tree.layer_order(&MediaContext::default());
+        let a = order.rank(tree.style_rules()[0].layer);
+        let b = order.rank(tree.style_rules()[1].layer);
+        assert_eq!(a > b, condition == "(color:red)");
     }
 }
 
@@ -174,7 +186,7 @@ fn supported_layer_extraction_keeps_declaration_recovery_and_depth_limits() {
             .iter()
             .map(selector_text)
             .collect::<Vec<_>>(),
-        ["p", "div", "u"]
+        ["u", "p", "div"]
     );
     assert!(
         tree.style_rules()

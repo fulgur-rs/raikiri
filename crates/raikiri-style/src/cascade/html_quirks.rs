@@ -46,6 +46,7 @@ pub(crate) fn push_img_dimension_hints(elem: &impl StyleElement, decls: &mut Vec
             Origin::AuthorPresentationalHint,
             PRESENTATIONAL_HINT_SPECIFICITY,
             PRESENTATIONAL_HINT_SOURCE_ORDER,
+            crate::layer::LayerPosition::default(),
         ));
     }
     if let Some(height) = elem.attr("height").and_then(parse_html_dimension_value) {
@@ -55,6 +56,7 @@ pub(crate) fn push_img_dimension_hints(elem: &impl StyleElement, decls: &mut Vec
             Origin::AuthorPresentationalHint,
             PRESENTATIONAL_HINT_SPECIFICITY,
             PRESENTATIONAL_HINT_SOURCE_ORDER,
+            crate::layer::LayerPosition::default(),
         ));
     }
 }
@@ -359,6 +361,7 @@ pub(crate) fn push_margin_collapsing_quirk_declarations<D: StyleDom>(
             Origin::UserAgent,
             MARGIN_COLLAPSING_QUIRK_SPECIFICITY,
             MARGIN_COLLAPSING_QUIRK_SOURCE_ORDER,
+            crate::layer::LayerPosition::default(),
         ));
     }
     if zero_end {
@@ -368,6 +371,7 @@ pub(crate) fn push_margin_collapsing_quirk_declarations<D: StyleDom>(
             Origin::UserAgent,
             MARGIN_COLLAPSING_QUIRK_SPECIFICITY,
             MARGIN_COLLAPSING_QUIRK_SOURCE_ORDER,
+            crate::layer::LayerPosition::default(),
         ));
     }
 }

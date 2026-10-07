@@ -3088,7 +3088,7 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
 /// determines the classification.
 // Includes page-only inherit markers, which are resolved before this
 // phase and therefore remain unchanged here.
-const PHASE_3_PASS_THROUGH_VARIANTS: usize = 165;
+const PHASE_3_PASS_THROUGH_VARIANTS: usize = 166;
 /// Number of corpus variants transformed by page-context resolution.
 /// This is derived from the corpus size and the pass-through count.
 fn phase_3_transformed_variants() -> usize {
@@ -3103,8 +3103,9 @@ const KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE: usize = 4;
 
 fn raw_corpus_residue_variants() -> usize {
     // The five raw page-only inherit markers add specified-layer residue
-    // just like the existing three phase-2-only samples.
-    phase_3_transformed_variants() + 8 - KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE
+    // just like the existing three phase-2-only samples. The all-properties
+    // rollback marker adds one control value consumed during winner selection.
+    phase_3_transformed_variants() + 9 - KEYWORD_TRANSFORMED_WITHOUT_RAW_RESIDUE
 }
 
 /// Generate `sample_for` and `ALL_PROPERTY_KEYS` from **one token list**.
@@ -3142,7 +3143,7 @@ macro_rules! property_key_samples {
     }
 
 property_key_samples! {
-    Color => PropertyValue::Color(RED),
+    All => PropertyValue::AllRevertLayer,    Color => PropertyValue::Color(RED),
     BackgroundColor => PropertyValue::BackgroundColor(BLUE),
     FontFamily => PropertyValue::FontFamily(Arc::new(vec![crate::property::FontFamilyName::generic("serif")])),
     FontSize => PropertyValue::FontSize(Length::Em(2.0)),
@@ -3960,12 +3961,13 @@ fn page_corpus() -> Vec<PropertyValue> {
 macro_rules! property_value_variant_registry {
         ($($variant:ident),+ $(,)?) => {
             const PROPERTY_VALUE_VARIANT_COUNT: usize = [$(stringify!($variant)),+,
-                "CounterResetInherit", "MarginTopInherit", "MarginRightInherit",
+                "AllRevertLayer", "CounterResetInherit", "MarginTopInherit", "MarginRightInherit",
                 "MarginBottomInherit", "MarginLeftInherit", "MarginInherit",
                 "BorderRadiusInherit", "TextDecorationThicknessInherit", "GridArea", "Grid", "TransformOrigin"].len();
 
             fn property_value_variant_name(value: &PropertyValue) -> &'static str {
                 match value {
+                    PropertyValue::AllRevertLayer => "AllRevertLayer",
                     PropertyValue::CounterResetInherit => "CounterResetInherit",
                     PropertyValue::MarginTopInherit => "MarginTopInherit",
                     PropertyValue::MarginRightInherit => "MarginRightInherit",
@@ -4504,6 +4506,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
     }
 
     match value {
+            PropertyValue::AllRevertLayer => Some("all layer rollback"),
             PropertyValue::FontWeight(fw) => font_weight(*fw),
             PropertyValue::TextAlign(ta) => text_align(*ta),
             PropertyValue::HangingPunctuation(_) => None,
@@ -5646,6 +5649,9 @@ fn page_declarations_carry_no_specified_layer_residue() {
 
     let residues: Vec<(PropertyKey, &'static str)> = page_corpus()
         .into_iter()
+        // The all-properties marker is consumed by layer winner selection;
+        // it has no isolated value to resolve without the candidate list.
+        .filter(|v| !matches!(v, PropertyValue::AllRevertLayer))
         .map(|v| resolve_against_inherited(v, &root, &ctx))
         .map(|v| {
             absolutize_in_page_context(
