@@ -750,14 +750,14 @@ def collect_moved_added_lines(repo_root: str, base: str, head: str,
         layouts = []
         for ref in (base, head):
             data = tomllib.loads(git_show(repo_root, ref, manifest) or "")
-            layouts.append(cargo_compilation_layout(data))
+            layouts.append(data)
         if layouts[0] != layouts[1]:
             # The old build context cannot be inferred after an edition,
             # target, feature, or other compilation setting changes.
             return {}
     config_paths = subprocess.run(
         ["git", "-C", repo_root, "diff", "--name-only", base, head, "--", ".cargo/config", ".cargo/config.toml",
-         "*/.cargo/config", "*/.cargo/config.toml", "rust-toolchain", "rust-toolchain.toml"],
+         "*/.cargo/config", "*/.cargo/config.toml", "rust-toolchain", "rust-toolchain.toml", "*Cargo.lock"],
         capture_output=True, text=True, check=True,
     ).stdout.splitlines()
     if config_paths:
@@ -769,7 +769,8 @@ def collect_moved_added_lines(repo_root: str, base: str, head: str,
     old_functions = Counter()
     snapshots = {ref: rust_module_snapshot(repo_root, ref, metadata) for ref in (base, head)}
     if (snapshots[base]["build_inputs"] != snapshots[head]["build_inputs"]
-            or any(value is None or has_file_include(value)
+            or snapshots[base]["build_data"] != snapshots[head]["build_data"]
+            or any(value is None or has_file_include(value) or has_runtime_file_input(value)
                    for snapshot in snapshots.values() for value in snapshot["build_inputs"].values())):
         return {}
     for path, lines in deleted.items():
@@ -802,31 +803,6 @@ def collect_moved_added_lines(repo_root: str, base: str, head: str,
             eligible = token_lines & candidates.get(path, set())
             if eligible:
                 result.setdefault(path, set()).update(eligible)
-    return result
-
-
-def cargo_compilation_layout(value, path: tuple = ()):
-    """Keep manifest state, ignoring only dependency version edits.
-
-    Features, edition, resolver, workspace inheritance and unknown fields
-    remain significant. A dependency's source/rename/optional/default-
-    feature settings cannot be normalized away with its version string.
-    """
-    if isinstance(value, list):
-        return [cargo_compilation_layout(item, path) for item in value]
-    if not isinstance(value, dict):
-        return value
-    result = {}
-    for key, item in value.items():
-        dependency_table = (path == () or (path == ("workspace",) and key == "dependencies")
-                            or (len(path) == 2 and path[0] == "target"))
-        if dependency_table and key in ("dependencies", "dev-dependencies", "build-dependencies") and isinstance(item, dict):
-            result[key] = {name: ({} if isinstance(spec, str) else
-                                {field: setting for field, setting in spec.items() if field != "version"}
-                                if isinstance(spec, dict) else spec)
-                           for name, spec in item.items()}
-        else:
-            result[key] = cargo_compilation_layout(item, path + (key,))
     return result
 
 
@@ -1129,7 +1105,7 @@ def rust_module_snapshot(repo_root: str, ref: str, metadata: dict | None) -> dic
     retained together; an unresolved layout fails closed for its target.
     """
     snapshot = {"sources": {}, "contexts": {}, "bindings": {}, "function_bodies": {},
-                "macro_imports": {}, "build_inputs": {}, "unsafe": set()}
+                "macro_imports": {}, "build_inputs": {}, "build_data": {}, "unsafe": set()}
     def read(path):
         if path not in snapshot["sources"]:
             source = git_show(repo_root, ref, path)
@@ -1211,6 +1187,25 @@ def rust_module_snapshot(repo_root: str, ref: str, metadata: dict | None) -> dic
                         pending.append((children[0], prefix + chain + (name,),
                                         inherited_attrs + effective_attrs,
                                         inherited_macros + prefix_macros, ancestors + (path,)))
+    if snapshot["build_inputs"]:
+        # Build scripts can read tracked data through arbitrary helpers.
+        # Inputs outside the modeled Rust graph must remain byte-identical.
+        entries = subprocess.run(
+            ["git", "-C", repo_root, "ls-tree", "-r", "-z", "--format=%(objectname)\t%(path)", ref],
+            capture_output=True, text=True, check=True,
+        ).stdout.split("\0")
+        snapshot["build_data"] = {path: oid for entry in entries if entry
+                                  for oid, path in [entry.split("\t", 1)]
+                                  if snapshot["sources"].get(path) is None}
+    # Exported macros bind at the crate root even when their definitions
+    # live in sibling modules. Keep defining scope and cfg attributes.
+    for (identity, scope), values in list(snapshot["bindings"].items()):
+        if not scope:
+            continue
+        attrs = tuple(token for value in values if value[:1] == ("@scope",) for token in value[1:])
+        for binding in values:
+            if any(rust_identifier(token) == "macro_export" for token in attribute_prefix(binding)):
+                snapshot["bindings"].setdefault((identity, ()), []).append(("@exported_macro",) + scope + attrs + binding)
     # Imported legacy macros retain declaration order and definition
     # contents. Resolve deepest modules first for nested macro_use imports.
     for (identity, scope), values in sorted(snapshot["bindings"].items(), key=lambda item: len(item[0][1]), reverse=True):
@@ -1257,6 +1252,18 @@ def has_file_include(tokens: tuple) -> bool:
     return any(rust_identifier(token) in includes for token in tokens)
 
 
+def has_runtime_file_input(tokens: tuple) -> bool:
+    """Reject build-script file reads whose paths cannot be established.
+
+    A script may read modeled Rust sources as data. Their relocation also
+    changes input bytes, so comparing only the remaining files is unsafe.
+    Include aliases and common handle/reader APIs conservatively.
+    """
+    names = {"fs", "File", "OpenOptions", "BufReader", "BufRead", "Read", "read",
+             "read_to_string", "read_to_end", "read_exact", "read_dir", "metadata"}
+    return any(rust_identifier(token) in names for token in tokens)
+
+
 def is_textual_macro(tokens: tuple) -> bool:
     return (tokens[:1] in (("@macro_use",), ("@macro_use_unknown",))
             or any(rust_identifier(token) in ("macro_rules", "macro") for token in tokens))
@@ -1295,8 +1302,8 @@ def function_move_key(snapshot: dict, path: str, unit: tuple) -> tuple | None:
                     bodies = snapshot["function_bodies"].get((identity, scope, binding), [])
                     if bodies:
                         # A function binds its name, not every type named
-                        # in its signature. Follow body references for
-                        # known input taint without comparing whole bodies.
+                        # in its signature. Retain referenced bodies and
+                        # follow their references through helper calls.
                         header = binding[len(attribute_prefix(binding)):]
                         names = {name for token, following in zip(header, header[1:])
                                  if token == "fn" and (name := rust_identifier(following)) is not None}
@@ -1311,6 +1318,7 @@ def function_move_key(snapshot: dict, path: str, unit: tuple) -> tuple | None:
                         relevant.add((scope, binding))
                         references.update(name for token in binding if (name := rust_identifier(token)) is not None)
                         for value in bodies:
+                            relevant.add((scope, ("@function_body",) + value))
                             references.update(name for token in value if (name := rust_identifier(token)) is not None)
             changed = len(references) != previous
         macros = []

@@ -685,7 +685,7 @@ mod second {
         )
         self.assertEqual(status, 1, output)
 
-    def test_dependency_edit_does_not_disable_function_move_exemptions(self) -> None:
+    def test_dependency_edit_leaves_old_compilation_context_unproven(self) -> None:
         body = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
         manifest = '[package]\nname="fixture"\nversion="0.1.0"\n[dependencies]\nnoop="0.1"\n'
         status, output = self._classify(
@@ -693,7 +693,7 @@ mod second {
             destination="moved.rs", auxiliary_before={"Cargo.toml": manifest},
             auxiliary_after={"Cargo.toml": manifest.replace('noop="0.1"', 'noop="0.2"')}
         )
-        self.assertEqual(status, 0, output)
+        self.assertEqual(status, 1, output)
 
     def test_function_reorder_with_shared_statement_remains_exempt(self) -> None:
         moved = "fn moved_uncovered_resolution_result() {\n    record_uncovered_resolution_result();\n}\n"
@@ -1025,6 +1025,75 @@ pub fn call() { crate::resolver::resolve(); }
             auxiliary_before={"value.txt": "old"}, auxiliary_after={"value.txt": "new"}
         )
         self.assertEqual(status, 1, output)
+
+    def test_dependency_resolution_changes_invalidate_moves(self) -> None:
+        body = "#[attribute_macro::gate]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        manifest = '[package]\nname="fixture"\nversion="0.1.0"\n[dependencies]\nattribute_macro="0.1"\n'
+        for name, before, after in (("Cargo.toml", manifest, manifest.replace('"0.1"', '"0.2"')),
+                                    ("Cargo.lock", 'version=3\n[[package]]\nname="attribute_macro"\nversion="0.1.0"\n',
+                                     'version=3\n[[package]]\nname="attribute_macro"\nversion="0.2.0"\n')):
+            with self.subTest(name=name):
+                status, output = self._classify(
+                    body, body, body.splitlines()[2], destination="moved.rs",
+                    auxiliary_before={name: before}, auxiliary_after={name: after}
+                )
+                self.assertEqual(status, 1, output)
+
+    def test_build_script_runtime_file_inputs_are_not_assumed_unchanged(self) -> None:
+        manifest = '[package]\nname="fixture"\nversion="0.1.0"\nbuild="build.rs"\n'
+        build = 'fn main() { if std::fs::read_to_string("gate.txt").unwrap().trim()=="on" { println!("cargo:rustc-cfg=gate"); } }\n'
+        body = "#[cfg(gate)]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        for name in ("gate.txt", "input.rs"):
+            with self.subTest(name=name):
+                status, output = self._classify(
+                    body + "fn keep() {}\n", "fn keep() {}\n" + body.replace("    record", "        record"),
+                    "        record_uncovered_resolution_result();",
+                    auxiliary_before={"Cargo.toml": manifest, "build.rs": build.replace("gate.txt", name), name: "off"},
+                    auxiliary_after={"Cargo.toml": manifest, "build.rs": build.replace("gate.txt", name), name: "on"},
+                    extra_targets=(("custom-build", "build.rs"),), covered_auxiliary=True
+                )
+                self.assertEqual(status, 1, output)
+
+    def test_referenced_helper_implementation_changes_invalidate_moves(self) -> None:
+        helper = "fn helper() -> bool { true }\n"
+        unrelated = "fn unrelated() -> bool { true }\n"
+        body = "use crate::helper;\nfn resolve() {\n    if helper() {\n        record_uncovered_resolution_result();\n    }\n}\n"
+        for changed in ("helper", "unrelated"):
+            with self.subTest(changed=changed):
+                after_helpers = (helper.replace("true", "false") if changed == "helper" else helper)
+                after_helpers += unrelated.replace("true", "false") if changed == "unrelated" else unrelated
+                status, output = self._classify(
+                    helper + unrelated + "mod resolver {\n" + body + "}\n", body, body.splitlines()[3],
+                    destination="resolver.rs", auxiliary_after={"lib.rs": after_helpers + "mod resolver;\n"},
+                    covered_auxiliary=True
+                )
+                self.assertEqual(status, 1 if changed == "helper" else 0, output)
+
+    def test_build_script_can_read_a_modeled_rust_source(self) -> None:
+        manifest = '[package]\nname="fixture"\nversion="0.1.0"\nbuild="build.rs"\n'
+        build = 'fn main() { if std::fs::read_to_string("lib.rs").unwrap().starts_with("fn keep") { println!("cargo:rustc-cfg=gate"); } }\n'
+        body = "#[cfg(gate)]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        status, output = self._classify(
+            body + "fn keep() {}\n", "fn keep() {}\n" + body.replace("    record", "        record"),
+            "        record_uncovered_resolution_result();",
+            auxiliary_before={"Cargo.toml": manifest, "build.rs": build},
+            auxiliary_after={"Cargo.toml": manifest, "build.rs": build},
+            extra_targets=(("custom-build", "build.rs"),), covered_auxiliary=True
+        )
+        self.assertEqual(status, 1, output)
+
+    def test_macro_export_definitions_affect_sibling_callers(self) -> None:
+        helper = "#[macro_export]\nmacro_rules! exported { () => { 1 } }\n"
+        body = "fn resolve() {\n    record_uncovered_resolution_result(exported!());\n}\n"
+        for value in ("1", "2"):
+            with self.subTest(value=value):
+                status, output = self._classify(
+                    "mod helpers;\nmod resolver {\n" + body + "}\n", body, body.splitlines()[1],
+                    destination="resolver.rs", auxiliary_before={"helpers.rs": helper},
+                    auxiliary_after={"lib.rs": "mod helpers;\nmod resolver;\n",
+                                     "helpers.rs": helper.replace("1", value)}, covered_auxiliary=True
+                )
+                self.assertEqual(status, 0 if value == "1" else 1, output)
 
     def test_compiler_configuration_changes_do_not_exempt_functions(self) -> None:
         body = "#[cfg(gate)]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n"
