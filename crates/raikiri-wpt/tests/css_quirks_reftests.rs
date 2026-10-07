@@ -81,3 +81,23 @@ fn line_height_quirk_br_own_style_pair() {
     );
     assert_eq!(result.mismatched_pixels, 0);
 }
+
+#[test]
+fn standards_mode_br_own_style_pair() {
+    let test =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("testdata/standards-br-own-style.html");
+    let pairs = discover_pairs_for_file(&test).expect("discover local reftest");
+    assert_eq!(pairs.len(), 1);
+    let mut config = ReftestConfig::default();
+    config.width = 800;
+    config.height = 600;
+    config.tolerance = Tolerance::EXACT;
+    let result = run_pair(&pairs[0], config).expect("run local reftest");
+    assert!(
+        matches!(result.outcome, TestOutcome::Pass),
+        "{:?} ({} mismatched pixels)",
+        result.outcome,
+        result.mismatched_pixels
+    );
+    assert_eq!(result.mismatched_pixels, 0);
+}

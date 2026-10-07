@@ -124,6 +124,31 @@ pub(crate) fn language_of(doc: &Document, node: usize) -> Option<String> {
     None
 }
 
+/// The style a `<br>` gives its line strut in quirks mode: the style of the
+/// box it sits in, with the `<br>`'s own `line-height` (resolved, like
+/// `normal` or a number, against that box's font). `None` outside quirks
+/// mode, where the break takes the enclosing box's strut unchanged.
+fn break_strut_style(
+    doc: &Document,
+    cascade: &CascadeResult,
+    br: usize,
+    br_style: &shodo::style::InlineStyle,
+    fonts: &FontCollection,
+) -> Result<Option<shodo::style::InlineStyle>, IfcError> {
+    if !line_height_quirk(doc) {
+        return Ok(None);
+    }
+    let Some(parent) = doc.parent_of(br) else {
+        return Ok(None); // cov:ignore: a projected <br> always has a parent.
+    };
+    let Some(parent_cv) = cascade.computed.get(parent) else {
+        return Ok(None); // cov:ignore: every in-document node has computed values.
+    };
+    let mut style = styled(doc, cascade, parent_cv, parent, fonts)?;
+    style.line_height = br_style.line_height;
+    Ok(Some(style))
+}
+
 /// Whether the line height calculation quirk applies to the document: it is
 /// in quirks or limited-quirks mode (Quirks Mode Standard, 3.3).
 fn line_height_quirk(doc: &Document) -> bool {
@@ -676,12 +701,21 @@ pub(crate) fn project_ifc_builder_with(
                     cleared_breaks.push((id, clear));
                 }
                 if tag == "br" {
-                    // The break carries the `<br>`'s own style instead of an
-                    // inline box of its own: in quirks mode a box would credit
-                    // its strut to every line it ends, while a `<br>` adds its
-                    // strut only to a line holding nothing else (Quirks Mode
-                    // Standard 3.3).
-                    builder.push_forced_break_with_style(NodeId(id as u64), &inline_style);
+                    // The break is not wrapped in an inline box of its own: in
+                    // quirks mode a box would credit its strut to every line it
+                    // ends, while a `<br>` adds its strut only to a line
+                    // holding nothing else (Quirks Mode Standard 3.3). That
+                    // strut is the enclosing box's with the `<br>`'s own
+                    // line-height, as in Chromium; outside quirks mode the
+                    // `<br>`'s own style takes no part in the line.
+                    match break_strut_style(doc, cascade, id, &inline_style, fonts)? {
+                        Some(style) => {
+                            builder.push_forced_break_with_style(NodeId(id as u64), &style);
+                        }
+                        None => {
+                            builder.push_forced_break(NodeId(id as u64));
+                        }
+                    }
                 } else {
                     builder.open_inline(NodeId(id as u64), &inline_style, edges);
                     push_generated(
