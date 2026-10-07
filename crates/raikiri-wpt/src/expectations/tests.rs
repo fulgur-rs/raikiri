@@ -791,7 +791,7 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS UI text-overflow into padding exact slice (+1).
     // + CSS2 relative block positioning exact slice (+14).
     // + CSS Inline image-loaded vertical-align length exact slice (+1).
-    assert_eq!(set.baseline.entries.len(), 1412);
+    assert_eq!(set.baseline.entries.len(), 1413);
     assert!(
         set.baseline
             .entries

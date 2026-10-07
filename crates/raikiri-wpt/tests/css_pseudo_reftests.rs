@@ -5,7 +5,8 @@ use std::path::PathBuf;
 use raikiri_wpt::reftest::{ReftestConfig, discover_pairs_for_file_with_wpt_root, run_pair};
 use raikiri_wpt::runner::{TestOutcome, Tolerance};
 
-/// The supported first-letter and active-selection cases match exactly.
+/// These output regression guards match exactly. First-letter ink is occluded
+/// and the selection has no visible ink, so neither pair proves feature support.
 #[test]
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
 fn pseudo_pairs_are_pixel_exact_at_800x600() {
