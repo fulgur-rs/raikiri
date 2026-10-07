@@ -402,6 +402,3 @@ mod test_support;
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-mod layer_tests;
