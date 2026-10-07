@@ -753,7 +753,7 @@ fn build_page_scene_for_page_named_attaches_name_and_landscape() {
 #[test]
 #[should_panic(expected = "encode_png: expected")]
 fn encode_png_rejects_mismatched_buffer_length() {
-    super::encode_png(&[0u8; 3], 1, 1);
+    super::encode_png(vec![0u8; 3], 1, 1);
 }
 
 #[test]
