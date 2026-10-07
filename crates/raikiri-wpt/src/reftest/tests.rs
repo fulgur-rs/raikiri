@@ -2130,6 +2130,7 @@ fn page_context_unit_expansion_preserves_other_css_tokens() {
         "@page :unknown {size:50vw}",
         ".box{--tokens:{@page{size:50vw}}}",
         ".box{@page{size:50vw}}",
+        "@layer base;.box{--tokens:{@page{size:50vw}}}",
     ] {
         assert_eq!(resolve_page_context_viewport_units(invalid), invalid);
     }

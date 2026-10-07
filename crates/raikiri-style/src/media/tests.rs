@@ -329,6 +329,7 @@ fn paper_dimension_provenance_uses_feature_tokens() {
         ("print, (unknown-feature < width)", false),
         ("print, (\"width\")", false),
         ("print, ((hover:width) or (width:261px))", true),
+        ("print, (not (width:200px))", true),
         (r"print, (\77 idth: 200px)", true),
         ("print, (hover: width)", false),
         ("print, (unknown-feature: (width:200px))", false),

@@ -348,7 +348,7 @@ the condition matches. This qualification includes inherited stylesheet and
 import media conditions; a media list keeps the union of paper dependencies
 from its valid arms even when another arm matches independently. Invalid arms
 do not contribute dependencies. Ignored sizes do not set the declaration
-viewport basis. Page-context viewport units, including size and margin-box declarations, are
-resolved once against the existing nominal 480 × 288 page-unit basis used by
+viewport basis. Page-context viewport units, including size and margin-box
+declarations, are resolved once against the existing nominal 480 × 288 basis used by
 the page probe, before ordinary declaration units expand. This adapter policy
 does not claim complete support for every paged-media viewport-unit behavior.
