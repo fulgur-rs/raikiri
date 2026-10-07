@@ -42,6 +42,7 @@ fn list_style_shorthand_inside_string_marker_is_pixel_exact() {
 }
 
 #[test]
+#[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
 fn inside_image_marker_matches_inline_image_and_wraps_subsequent_lines() {
     use raikiri_wpt::reftest::run_pair_with_images;
     let dir = tempfile::tempdir().expect("fixture directory");
