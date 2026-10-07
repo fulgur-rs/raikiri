@@ -549,26 +549,50 @@ fn parse_paper_feature_name<'i>(
 
 // Capture one feature value, including a ratio's second component. Reparse
 // its complete source only after the name has supplied the required type.
-fn paper_value_source<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, &'i str> {
-    fn component<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, ()> {
-        match input.next()? {
-            Token::Number { .. }
-            | Token::Dimension { .. }
-            | Token::Percentage { .. }
-            | Token::Ident(_) => Ok(()),
-            Token::Function(_) => {
-                input.parse_nested_block(|input| Ok(input.expect_no_error_token()?))
-            }
-            _ => Err(input.new_custom_error(())),
-        }
-    }
+fn paper_component_source<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, &'i str> {
     let start = input.position();
-    component(input)?;
+    match input.next()? {
+        Token::Number { .. }
+        | Token::Dimension { .. }
+        | Token::Percentage { .. }
+        | Token::Ident(_) => {}
+        Token::Function(_) => {
+            input.parse_nested_block(|input| Ok(input.expect_no_error_token()?))?
+        }
+        _ => return Err(input.new_custom_error(())),
+    }
+    Ok(input.slice_from(start))
+}
+
+fn paper_value_source<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, &'i str> {
+    let start = input.position();
+    paper_component_source(input)?;
     let _ = input.try_parse(|input| {
         input.expect_delim('/')?;
-        component(input)
+        paper_component_source(input)
     });
     Ok(input.slice_from(start))
+}
+
+fn parse_ratio_number<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, ()> {
+    if let Ok(number) = input.try_parse(|input| input.expect_number()) {
+        return if number >= 0.0 {
+            Ok(())
+        } else {
+            Err(input.new_custom_error(()))
+        };
+    }
+    let state = input.state();
+    input.expect_function()?;
+    input.reset(&state);
+    let source = paper_component_source(input)?;
+    if !crate::property::contains_function_in_source(source, "var")
+        && crate::property::math_value_has_type(source, crate::property::ColorMathType::Number)
+    {
+        Ok(())
+    } else {
+        Err(input.new_custom_error(()))
+    }
 }
 
 fn valid_paper_value(source: &str, kind: PaperFeatureKind) -> bool {
@@ -588,18 +612,12 @@ fn valid_paper_value(source: &str, kind: PaperFeatureKind) -> bool {
             .is_ok(),
         PaperFeatureKind::Ratio => input
             .parse_entirely(|input| {
-                let numerator = input.expect_number()?;
-                let denominator = if input.is_exhausted() {
-                    1.0
-                } else {
+                parse_ratio_number(input)?;
+                if !input.is_exhausted() {
                     input.expect_delim('/')?;
-                    input.expect_number()?
-                };
-                if numerator >= 0.0 && denominator >= 0.0 {
-                    Ok::<_, cssparser::ParseError<'_, ()>>(())
-                } else {
-                    Err(input.new_custom_error(()))
+                    parse_ratio_number(input)?;
                 }
+                Ok(())
             })
             .is_ok(),
         PaperFeatureKind::Length => {
@@ -633,7 +651,10 @@ fn valid_paper_value(source: &str, kind: PaperFeatureKind) -> bool {
                 return true;
             }
             !crate::property::contains_function_in_source(source, "var")
-                && crate::property::length_math_value_is_valid(source)
+                && crate::property::math_value_has_type(
+                    source,
+                    crate::property::ColorMathType::Length,
+                )
         }
     }
 }
