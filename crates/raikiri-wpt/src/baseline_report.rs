@@ -645,7 +645,7 @@ pub fn parse_report_args(args: &[String]) -> Result<ReportOptions, String> {
             "--output" => options.output = Some(PathBuf::from(flag_value(args, index, flag)?)),
             // Text is always laid out with the WPT fonts; the flag names that
             // default.
-            "--wpt-fonts" => index -= 1,
+            "--wpt-fonts" => continue,
             "--only" => options.only.push(flag_value(args, index, flag)?.to_owned()),
             "--jobs" => {
                 let jobs: usize = flag_value(args, index, flag)?
@@ -663,7 +663,10 @@ pub fn parse_report_args(args: &[String]) -> Result<ReportOptions, String> {
                         .map_err(|_| "--limit expects a number".to_owned())?,
                 );
             }
-            "--strict" => options.strict = true,
+            "--strict" => {
+                options.strict = true;
+                continue;
+            }
             other => return Err(format!("unrecognized argument: {other}")),
         }
         index += 1;
