@@ -783,40 +783,30 @@ pub(crate) fn apply_winners(
                 PropertyValue::Deferred(deferred) => {
                     let resolved = resolve_deferred_value(deferred, custom_properties);
                     let resolved = match resolved {
-                        Some(PropertyValue::Deferred(marker)) => {
-                            if let Some(keyword) = marker.css_wide_keyword() {
-                                if matches!(
+                        Some(PropertyValue::Deferred(marker)) => match marker.css_wide_keyword() {
+                            Some(
+                                keyword @ (CssWideKeyword::Revert | CssWideKeyword::RevertLayer),
+                            ) => {
+                                match find_rollback(
+                                    candidates,
+                                    winner_key,
+                                    winner.idx,
                                     keyword,
-                                    CssWideKeyword::Revert | CssWideKeyword::RevertLayer
+                                    custom_properties,
                                 ) {
-                                    match find_rollback(
-                                        candidates,
-                                        winner_key,
-                                        winner.idx,
-                                        keyword,
-                                        custom_properties,
-                                    ) {
-                                        Some(PropertyValue::Deferred(fallback)) => {
-                                            resolve_deferred_value(&fallback, custom_properties)
-                                                .map(|value| {
-                                                    resolve_defaulting_value(value, inherited)
-                                                })
-                                        }
-                                        Some(value) => {
-                                            Some(resolve_defaulting_value(value, inherited))
-                                        }
-                                        None => None,
+                                    Some(PropertyValue::Deferred(fallback)) => {
+                                        resolve_deferred_value(&fallback, custom_properties)
+                                            .map(|value| resolve_defaulting_value(value, inherited))
                                     }
-                                } else {
-                                    Some(resolve_defaulting_value(
-                                        PropertyValue::Deferred(marker),
-                                        inherited,
-                                    ))
+                                    Some(value) => Some(resolve_defaulting_value(value, inherited)),
+                                    None => None,
                                 }
-                            } else {
-                                Some(PropertyValue::Deferred(marker))
                             }
-                        }
+                            _ => Some(resolve_defaulting_value(
+                                PropertyValue::Deferred(marker),
+                                inherited,
+                            )),
+                        },
                         value => value,
                     };
                     match resolved {
