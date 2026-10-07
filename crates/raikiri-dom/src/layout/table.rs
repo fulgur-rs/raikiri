@@ -2210,7 +2210,8 @@ fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32) -> Vec<f32> {
     }
     let fixed_sum: f32 = fixed.iter().flatten().sum();
     let mut remaining = (avail - fixed_sum).max(0.0);
-    let mut automatic: Vec<_> = (0..n).filter(|&c| fixed[c].is_none()).collect();
+    let reclaimable: Vec<_> = fixed.iter().map(Option::is_none).collect();
+    let mut automatic: Vec<_> = (0..n).filter(|&c| reclaimable[c]).collect();
     // A minimum does not make an auto column fixed. Allocate the largest
     // floors first, then divide the remaining space among the other columns.
     automatic.sort_by(|&a, &b| floors[b].total_cmp(&floors[a]));
@@ -2222,7 +2223,6 @@ fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32) -> Vec<f32> {
         remaining = (remaining - width).max(0.0);
         count -= 1;
     }
-    let reclaimable: Vec<_> = (0..n).map(|c| automatic.contains(&c)).collect();
     let mut widths: Vec<_> = fixed
         .into_iter()
         .map(|width| width.unwrap_or(0.0))
