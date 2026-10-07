@@ -549,6 +549,10 @@ fn empty_cell_classification_preserves_in_flow_content_and_absolute_descendants(
         (6, false),
         (7, true),
         (8, false),
+        (9, true),
+        (10, false),
+        (11, true),
+        (12, false),
     ] {
         let (mut doc, body) = document();
         let table = element(
@@ -592,6 +596,30 @@ fn empty_cell_classification_preserves_in_flow_content_and_absolute_descendants(
             8 => {
                 let wrapper = element(&mut doc, cell, "display:contents");
                 doc.append_text(wrapper, "X");
+            }
+            9 => {
+                doc.set_element_inline_style(
+                    cell,
+                    Some("display:table-cell;empty-cells:hide;visibility:hidden".into()),
+                );
+                doc.append_text(cell, "X");
+            }
+            10 | 11 => {
+                doc.set_element_inline_style(
+                    cell,
+                    Some("display:table-cell;empty-cells:hide;white-space:pre-line".into()),
+                );
+                doc.append_text(cell, if contents == 10 { "\n" } else { " " });
+            }
+            12 => {
+                let sheet = doc.append_element(Some(body), "style", Style::default(), None::<&str>);
+                doc.append_text(sheet, "span::before{content:'X'}");
+                doc.append_element(
+                    Some(cell),
+                    "span",
+                    Style::default(),
+                    Some("display:contents"),
+                );
             }
             _ => {}
         }
@@ -783,19 +811,23 @@ fn baseline_rowspan_aligns_its_first_row_without_shifting_the_second_row_ink() {
 
 #[test]
 fn empty_cell_height_includes_its_content_box_border_and_padding() {
-    let (mut doc, body) = document();
-    let table = element(&mut doc, body, "display:table;border-spacing:0;width:122px");
-    let row = element(&mut doc, table, "display:table-row");
-    let cell = element(
-        &mut doc,
-        row,
-        "display:table-cell;width:120px;height:37.4px;border:1px solid blue;padding:0",
-    );
-    layout(&mut doc);
-    assert_eq!(
-        doc.get_node(cell).unwrap().unrounded_layout.size.height,
-        39.4
-    );
+    for (sizing, height) in [("content-box", 39.4), ("border-box", 37.4)] {
+        let (mut doc, body) = document();
+        let table = element(&mut doc, body, "display:table;border-spacing:0;width:122px");
+        let row = element(&mut doc, table, "display:table-row");
+        let cell = element(
+            &mut doc,
+            row,
+            &format!(
+                "display:table-cell;width:120px;height:37.4px;border:1px solid blue;padding:0;box-sizing:{sizing}"
+            ),
+        );
+        layout(&mut doc);
+        assert_eq!(
+            doc.get_node(cell).unwrap().unrounded_layout.size.height,
+            height
+        );
+    }
 }
 
 #[test]
@@ -1103,6 +1135,22 @@ fn generated_box_empty_cell_classification_respects_box_generation_and_flow() {
             "{declarations}"
         );
     }
+}
+
+#[test]
+fn comments_and_processing_instructions_leave_a_cell_empty_after_membership_refresh() {
+    let (mut doc, body) = document();
+    let table = element(&mut doc, body, "display:table;width:20px;border-spacing:0");
+    let row = element(&mut doc, table, "display:table-row");
+    let cell = element(&mut doc, row, "display:table-cell;empty-cells:hide");
+    let comment = doc.append_comment(Some(cell), "gap");
+    let pi = doc.append_processing_instruction(Some(cell), "example", "gap");
+    let computed = layout(&mut doc);
+    assert!(!doc.get_node(comment).unwrap().is_in_document());
+    assert!(!doc.get_node(pi).unwrap().is_in_document());
+    assert!(raikiri_dom::paint_rules::hides_empty_table_cell(
+        &doc, &computed, cell
+    ));
 }
 
 #[test]

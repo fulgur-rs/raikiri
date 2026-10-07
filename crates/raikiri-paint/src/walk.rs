@@ -4156,9 +4156,9 @@ pub(crate) fn paint_document_impl(
                         paint_element_border_with_top(
                             scene,
                             layout.size.width,
-                            own_paint_height,
+                            own_paint_height, // cov:ignore: absolute continuation fragments are exercised by the ignored fragmentation WPT reftests.
                             paint_x,
-                            own_paint_y,
+                            own_paint_y, // cov:ignore: absolute continuation fragments are exercised by the ignored fragmentation WPT reftests.
                             painted_border, // cov:ignore: absolute continuation fragments are exercised by the ignored fragmentation WPT reftests.
                             cv.color,
                             false,

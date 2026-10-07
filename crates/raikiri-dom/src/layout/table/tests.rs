@@ -1839,6 +1839,60 @@ fn fixed_auto_columns_keep_free_space_while_respecting_first_row_floors() {
 }
 
 #[test]
+fn fixed_first_row_colspan_minimum_grows_its_columns() {
+    let mut span = fixed_cell(0, 0, 2, Dimension::auto());
+    span.specified_min_width = Dimension::length(60.0);
+    let grid = super::TableGrid {
+        n_cols: 2,
+        rows: vec![],
+        cells: vec![span],
+        col_widths: vec![],
+    };
+    assert_eq!(
+        super::resolve_fixed_column_widths(&grid, 40.0),
+        [30.0, 30.0]
+    );
+}
+
+#[test]
+fn first_cell_baseline_descends_through_multiple_block_containers() {
+    let mut doc = Document::new();
+    crate::layout::test_support::with_ahem(&mut doc);
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let table = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:table;width:20px;border-spacing:0"),
+    );
+    let row = doc.append_element(
+        Some(table),
+        "div",
+        Style::default(),
+        Some("display:table-row"),
+    );
+    let cell = doc.append_element(Some(row), "div", Style::default(), Some("display:table-cell;vertical-align:top;font-family:Ahem;font-size:10px;line-height:10px"));
+    let outer = doc.append_element(
+        Some(cell),
+        "div",
+        Style::default(),
+        Some("display:block;margin-top:3px;padding-top:2px"),
+    );
+    let inner = doc.append_element(
+        Some(outer),
+        "div",
+        Style::default(),
+        Some("display:block;margin-top:5px;padding-top:4px"),
+    );
+    doc.append_text(inner, "X");
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
+    assert_eq!(super::first_cell_baseline(&doc, cell, 0.0), Some(22.0));
+}
+
+#[test]
 fn resolve_fixed_column_widths_first_row_percent_resolves_against_avail() {
     let grid = super::TableGrid {
         n_cols: 2,

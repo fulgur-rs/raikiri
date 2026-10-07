@@ -2020,7 +2020,7 @@ fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32) -> Vec<f32> {
         let start = usize::from(cell.col_start);
         let end = (start + usize::from(cell.col_span)).min(n);
         if start >= end {
-            continue;
+            continue; // cov:ignore: defensive range guard; native grid construction validates nonzero spans within its column count.
         }
         let minimum = resolve_dimension(cell.specified_min_width, Some(avail)).unwrap_or(0.0);
         let current: f32 = widths[start..end].iter().sum();

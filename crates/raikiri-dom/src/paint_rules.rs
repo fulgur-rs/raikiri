@@ -261,7 +261,7 @@ pub fn hides_empty_table_cell(
                 stack.extend(&node.children)
             }
             NodeKind::Element => return false,
-            _ => {}
+            _ => {} // cov:ignore: Comment/PI membership is cleared by mark_in_document_flags; document/fragment roots cannot occur in a valid cell subtree.
         }
     }
     true
