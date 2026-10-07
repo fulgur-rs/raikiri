@@ -331,6 +331,29 @@ fn pattern_extent_is_shared_before_run_slicing() {
 }
 
 #[test]
+fn mixed_inset_copies_keep_independent_shared_pattern_extents() {
+    for style in ["solid", "double", "dotted", "dashed", "wavy"] {
+        for body in [
+            "<p>abcdef</p>",
+            "<p>ab<span style='color:blue'>cd</span>ef</p>",
+        ] {
+            let doc = document(
+                body,
+                &format!("p {{text-decoration:underline {style};text-decoration-inset:4px -6px}}"),
+            );
+            let runs = doc.page(0).unwrap().text_runs();
+            for run in runs {
+                assert_eq!(run.decorations.len(), 2);
+                close(run.decorations[0].pattern_origin_x, 4.0);
+                close(run.decorations[0].pattern_end_x, 124.0);
+                close(run.decorations[1].pattern_origin_x, 6.0);
+                close(run.decorations[1].pattern_end_x, 126.0);
+            }
+        }
+    }
+}
+
+#[test]
 fn collapsed_insets_leave_glyphs_without_decoration_segments() {
     let doc = document(
         "<p>ab</p>",

@@ -325,7 +325,6 @@ pub fn decoration_spans(
             && second.1.is_finite()
             && first.1 > first.0
             && second.1 > second.0
-        // cov:ignore: asymmetric endpoint overlap is covered by the ignored exact WPT reftest.
         {
             return Some(([first, second], 2));
         }
@@ -565,7 +564,7 @@ pub fn positioned_line_decorations(
                 .or_insert((geometry.x0, geometry.x1));
         }
     }
-    let mut result: Vec<Vec<DecorationLine>> = contexts
+    contexts
         .iter()
         .zip(geometries)
         .map(|(context, geometry)| {
@@ -599,6 +598,7 @@ pub fn positioned_line_decorations(
                             x0,
                             x1,
                             pattern_origin_x: Some(start),
+                            pattern_end_x: Some(end),
                             ..geometry
                         },
                     ));
@@ -611,22 +611,7 @@ pub fn positioned_line_decorations(
             });
             lines
         })
-        .collect();
-    let mut patterns: HashMap<NodeId, (f32, f32)> = HashMap::new();
-    for segment in result.iter().flatten() {
-        patterns
-            .entry(segment.origin)
-            .and_modify(|range| {
-                range.0 = range.0.min(segment.x_start);
-                range.1 = range.1.max(segment.x_end);
-            })
-            .or_insert((segment.x_start, segment.x_end));
-    }
-    for segment in result.iter_mut().flatten() {
-        segment.pattern_origin_x = patterns[&segment.origin].0;
-        segment.pattern_end_x = patterns[&segment.origin].1;
-    }
-    result
+        .collect()
 }
 
 #[cfg(test)]
