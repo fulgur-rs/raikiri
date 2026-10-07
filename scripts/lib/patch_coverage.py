@@ -706,6 +706,8 @@ def collect_moved_added_lines(repo_root: str, base: str, head: str,
     with identical tokens and enclosing context before exempting a line.
     This retains function/file extraction, including indentation changes,
     while leaving edited functions and copied code subject to coverage.
+    Opaque compiler extensions cannot prove unchanged expansion inputs,
+    so their callers remain subject to coverage even with identical tokens.
     """
     config = ["-c", "color.diff.new=green"]
     for slot in (
@@ -1284,6 +1286,55 @@ def is_textual_macro(tokens: tuple) -> bool:
             or any(rust_identifier(token) in ("macro_rules", "macro") for token in tokens))
 
 
+def has_opaque_expansion(tokens: tuple, local_names: set[str]) -> bool:
+    """Unknown compiler extensions may read files without a build script.
+
+    Their source tokens do not establish unchanged expansion inputs. Keep
+    modeled declarative macros and standard macros eligible, but require
+    coverage for functions reaching opaque invocations or attributes.
+    """
+    standard = {"assert", "assert_eq", "assert_ne", "cfg", "concat", "concat_idents",
+                "debug_assert", "debug_assert_eq", "debug_assert_ne", "eprint", "eprintln",
+                "format", "format_args", "matches", "module_path", "panic", "print", "println",
+                "stringify", "todo", "unimplemented", "unreachable", "vec", "write", "writeln"}
+    attributes = {"allow", "warn", "deny", "forbid", "expect", "cfg", "doc", "inline",
+                  "cold", "must_use", "deprecated", "repr", "path", "macro_use", "macro_export",
+                  "test", "ignore", "should_panic", "no_mangle", "export_name", "link_name",
+                  "link", "link_section", "non_exhaustive", "no_std", "no_main", "crate_type",
+                  "crate_name", "recursion_limit", "type_length_limit", "feature"}
+    for index, token in enumerate(tokens):
+        if token == "#":
+            start = index + (2 if tokens[index + 1:index + 2] == ("!",) else 1)
+            if tokens[start:start + 1] == ("[",):
+                name = rust_identifier(tokens[start + 1]) if start + 1 < len(tokens) else None
+                if name not in attributes or tokens[start + 2:start + 3] == ("::",):
+                    return True
+        name = rust_identifier(token)
+        if name is None or tokens[index + 1:index + 2] != ("!",) or tokens[index + 2:index + 3] not in (("(",), ("[",), ("{",)):
+            continue
+        # Keywords before unary negation are not macro paths.
+        if name in {"return", "if", "while", "match", "else", "break", "yield", "in"}:
+            continue
+        qualified = index > 0 and tokens[index - 1] == "::"
+        if not qualified and name in local_names:
+            continue
+        if name in standard:
+            if qualified:
+                if index >= 2 and rust_identifier(tokens[index - 2]) in {"std", "core", "alloc"} and (index < 3 or tokens[index - 3] != "::"):
+                    continue
+            else:
+                # An explicit or glob import can shadow a prelude macro.
+                imports = []
+                for start, value in enumerate(tokens):
+                    if value == "use":
+                        end = next((n for n in range(start, len(tokens)) if tokens[n] == ";"), len(tokens))
+                        imports.append(tokens[start:end])
+                if not any("*" in value or name in value for value in imports):
+                    continue
+        return True
+    return False
+
+
 def function_move_key(snapshot: dict, path: str, unit: tuple) -> tuple | None:
     """Compare execution context, including bindings used by a function.
 
@@ -1345,6 +1396,21 @@ def function_move_key(snapshot: dict, path: str, unit: tuple) -> tuple | None:
             if binding_names(binding) is None or references & binding_names(binding):
                 macros.append((scope, binding))
         macros = tuple(macros)
+        inputs = [body, inherited_attrs + attrs, *(binding for _, binding in relevant),
+                  *(binding for _, binding in macros)]
+        local_names = set()
+        for tokens in inputs:
+            for index, token in enumerate(tokens):
+                offset = 2 if rust_identifier(token) == "macro_rules" else 1 if token == "macro" else 0
+                if offset and index + offset < len(tokens):
+                    name = rust_identifier(tokens[index + offset])
+                    if name is not None:
+                        local_names.add(name)
+        # Include imports when checking unqualified standard macros: a
+        # dependency can export a macro with the same prelude name.
+        imports = tuple(token for _, binding in relevant if "use" in binding for token in binding)
+        if any(has_opaque_expansion(tokens + imports, local_names) for tokens in inputs):
+            return None
         keys.append((identity, logical, inherited_attrs + attrs, tuple(sorted(relevant)), macros))
     return tuple(sorted(keys)), runtime, body
 

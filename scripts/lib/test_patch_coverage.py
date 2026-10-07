@@ -1033,7 +1033,7 @@ pub fn call() { crate::resolver::resolve(); }
         self.assertEqual(status, 1, output)
 
     def test_dependency_resolution_changes_invalidate_moves(self) -> None:
-        body = "#[attribute_macro::gate]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        body = "#[inline]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n"
         manifest = '[package]\nname="fixture"\nversion="0.1.0"\n[dependencies]\nattribute_macro="0.1"\n'
         for name, before, after in (("Cargo.toml", manifest, manifest.replace('"0.1"', '"0.2"')),
                                     ("Cargo.lock", 'version=3\n[[package]]\nname="attribute_macro"\nversion="0.1.0"\n',
@@ -1140,6 +1140,67 @@ pub fn call() { crate::resolver::resolve(); }
         status, output = self._classify(body, body, body.splitlines()[1], destination="moved.rs")
         self.assertEqual(status, 0, output)
 
+    def test_opaque_macro_inputs_do_not_receive_move_exemptions(self) -> None:
+        for expansion in ('sqlx::query_file!("query.sql")', 'query_file!("query.sql")',
+                          'r#query_file!("query.sql")'):
+            body = "fn resolve() {\n    record_uncovered_resolution_result(" + expansion + ");\n}\n"
+            with self.subTest(expansion=expansion):
+                status, output = self._classify(
+                    "mod resolver {\n" + body + "}\n", body, body.splitlines()[1],
+                    destination="resolver.rs", auxiliary_before={"query.sql": "SELECT 1"},
+                    auxiliary_after={"lib.rs": "mod resolver;\n", "query.sql": "SELECT 2"}
+                )
+                self.assertEqual(status, 1, output)
+
+    def test_referenced_opaque_macro_wrappers_invalidate_moves(self) -> None:
+        helpers = ('fn query() -> u8 { external::tracked!() }\n',
+                   'macro_rules! query { () => { external::tracked!() }; }\n')
+        for helper in helpers:
+            expression = "query!()" if "macro_rules" in helper else "query()"
+            body = "fn resolve() {\n    record_uncovered_resolution_result(" + expression + ");\n}\n"
+            with self.subTest(helper=helper):
+                status, output = self._classify(
+                    helper + "mod resolver {\n" + body + "}\n", body, body.splitlines()[1],
+                    destination="resolver.rs", auxiliary_before={"query.sql": "SELECT 1"},
+                    auxiliary_after={"lib.rs": helper + "mod resolver;\n", "query.sql": "SELECT 2"},
+                    covered_auxiliary=True
+                )
+                self.assertEqual(status, 1, output)
+
+    def test_opaque_attribute_inputs_do_not_receive_move_exemptions(self) -> None:
+        body = "#[external::tracked]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        status, output = self._classify(
+            body, body, body.splitlines()[2], destination="moved.rs",
+            auxiliary_before={"query.sql": "SELECT 1"}, auxiliary_after={"query.sql": "SELECT 2"}
+        )
+        self.assertEqual(status, 1, output)
+
+    def test_standard_macro_moves_and_unrelated_opaque_helpers_remain_exempt(self) -> None:
+        body = 'fn resolve() {\n    record_uncovered_resolution_result(std::vec![1, 2]);\n}\n'
+        helper = 'fn query() -> u8 { external::tracked!() }\n'
+        status, output = self._classify(
+            helper + "mod resolver {\n" + body + "}\n", body, body.splitlines()[1],
+            destination="resolver.rs", auxiliary_before={"query.sql": "SELECT 1"},
+            auxiliary_after={"lib.rs": helper + "mod resolver;\n", "query.sql": "SELECT 2"},
+            covered_auxiliary=True
+        )
+        self.assertEqual(status, 0, output)
+        self.assertIn("informational): 1", output)
+
+    def test_test_removal_does_not_make_unchanged_production_moves_new_code(self) -> None:
+        body = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        test = "#[cfg(test)]\nmod tests { #[test] fn exercise() { super::resolver::resolve(); } }\n"
+        for extracted in (False, True):
+            with self.subTest(extracted=extracted):
+                status, output = self._classify(
+                    "mod resolver {\n" + body + "}\n" + test,
+                    body if extracted else "mod resolver {\n" + body + "}\n", body.splitlines()[1],
+                    destination="resolver.rs" if extracted else "lib.rs",
+                    auxiliary_after={"lib.rs": "mod resolver;\n"} if extracted else None
+                )
+                self.assertEqual(status, 0, output)
+                self.assertIn("total uncovered added lines (FAIL if > 0): 0", output)
+
     def test_cli_can_start_without_tomllib(self) -> None:
         script = os.path.join(os.path.dirname(__file__), "patch_coverage.py")
         command = "import runpy,sys; sys.modules['tomllib']=None; sys.argv=[sys.argv[1],'--help']; runpy.run_path(sys.argv[0],run_name='__main__')"
@@ -1148,7 +1209,7 @@ pub fn call() { crate::resolver::resolve(); }
         self.assertIn("--lcov", proc.stdout)
 
     def test_manifest_line_endings_are_compilation_inputs(self) -> None:
-        body = "#[attribute_macro::gate]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        body = "#[inline]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n"
         manifest = '[package]\r\nname="fixture"\r\nversion="0.1.0"\r\n'
         for after in (manifest, manifest.replace("\r\n", "\n")):
             with self.subTest(unchanged=after == manifest):
@@ -1159,7 +1220,7 @@ pub fn call() { crate::resolver::resolve(); }
                 self.assertEqual(status, 0 if after == manifest else 1, output)
 
     def test_quoted_manifest_paths_do_not_hide_compilation_changes(self) -> None:
-        body = "#[attribute_macro::gate]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n"
+        body = "#[inline]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n"
         manifest = '[package]\nname="attribute_macro"\nversion="0.1.0"\n'
         for folder in ("日本語", "split\nname", 'with"quote'):
             with self.subTest(folder=folder):
