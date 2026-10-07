@@ -1181,6 +1181,52 @@ pub fn call() { crate::resolver::resolve(); }
                 )
                 self.assertEqual(status, 0 if macros == first + second else 1, output)
 
+    def test_sibling_impl_macro_visibility_depends_on_definition_position(self) -> None:
+        declarations = 'struct Item;\ntrait Measure { fn measure(self) -> u8; }\n'
+        body = 'fn resolve() {\n    record_uncovered_resolution_result(crate::Item.measure());\n}\n'
+        first = 'macro_rules! value { () => { 1 } }\n'
+        second = 'macro_rules! value { () => { 2 } }\n'
+        implementation = 'impl crate::Measure for crate::Item { fn measure(self) -> u8 { value!() } }\n'
+        for changed in (False, True):
+            with self.subTest(changed=changed):
+                status, output = self._classify(
+                    declarations + 'mod implementations;\nmod resolver {\n' + body + '}\n',
+                    body, body.splitlines()[1], destination='resolver.rs',
+                    auxiliary_before={'implementations.rs': first + implementation + second},
+                    auxiliary_after={'lib.rs': declarations + 'mod implementations;\nmod resolver;\n',
+                                     'implementations.rs': first + second + implementation if changed else first + implementation + second},
+                    covered_auxiliary=True
+                )
+                self.assertEqual(status, 1 if changed else 0, output)
+
+    def test_sibling_impl_inherited_macro_visibility_depends_on_module_position(self) -> None:
+        declarations = 'struct Item;\ntrait Measure { fn measure(self) -> u8; }\n'
+        body = 'fn resolve() {\n    record_uncovered_resolution_result(crate::Item.measure());\n}\n'
+        first = 'macro_rules! value { () => { 1 } }\n'
+        second = 'macro_rules! value { () => { 2 } }\n'
+        implementation = 'impl crate::Measure for crate::Item { fn measure(self) -> u8 { value!() } }\n'
+        status, output = self._classify(
+            declarations + first + 'mod implementations;\n' + second + 'mod resolver {\n' + body + '}\n',
+            body, body.splitlines()[1], destination='resolver.rs',
+            auxiliary_before={'implementations.rs': implementation},
+            auxiliary_after={'lib.rs': declarations + first + second + 'mod implementations;\nmod resolver;\n',
+                             'implementations.rs': implementation}, covered_auxiliary=True
+        )
+        self.assertEqual(status, 1, output)
+
+    def test_referenced_helper_macro_visibility_depends_on_definition_position(self) -> None:
+        body = 'fn resolve() {\n    record_uncovered_resolution_result(crate::helper::read_value());\n}\n'
+        first = 'macro_rules! value { () => { 1 } }\n'
+        second = 'macro_rules! value { () => { 2 } }\n'
+        helper = 'fn read_value() -> u8 { value!() }\n'
+        status, output = self._classify(
+            'mod helper;\nmod resolver {\n' + body + '}\n', body, body.splitlines()[1],
+            destination='resolver.rs', auxiliary_before={'helper.rs': first + helper + second},
+            auxiliary_after={'lib.rs': 'mod helper;\nmod resolver;\n',
+                             'helper.rs': first + second + helper}, covered_auxiliary=True
+        )
+        self.assertEqual(status, 1, output)
+
     def test_modeled_build_dependency_source_changes_compilation_context(self) -> None:
         manifest = '[package]\nname="fixture"\nversion="0.1.0"\nbuild="build.rs"\n[lib]\npath="lib.rs"\n[workspace]\nmembers=["cfgsupport"]\n[build-dependencies]\ncfgsupport={path="cfgsupport"}\n'
         support_manifest = '[package]\nname="cfgsupport"\nversion="0.1.0"\n[lib]\npath="lib.rs"\n'

@@ -948,7 +948,7 @@ def enclosing_attributes(frames: list) -> tuple:
                   + tuple(value for attr in frame[4] for value in attr)))
 
 
-def rust_source_units(source: str) -> tuple[list, list, dict]:
+def rust_source_units(source: str) -> tuple[list, list, dict, dict]:
     """Return complete functions and external module attribute contexts.
 
     Preserve attributes and impl/trait/control-flow context. Plain inline
@@ -958,10 +958,16 @@ def rust_source_units(source: str) -> tuple[list, list, dict]:
     """
     tokens = rust_move_tokens(source)
     if tokens is None:
-        return [], [], {}
+        return [], [], {}, {}
     units = []
     modules = []
     bindings = {}
+    binding_macros = {}
+    def add_binding(chain, binding):
+        visible = tuple((chain[:n], value) for n in range(len(chain) + 1)
+                        for value in bindings.get(chain[:n], []) if is_textual_macro(value))
+        binding_macros.setdefault((chain, binding), []).append(visible)
+        bindings.setdefault(chain, []).append(binding)
     # Frames store opener, boundary, header, start, inner attrs, signature flag.
     frames = [["", 0, (), 0, [], False]]
     for index, (token, _) in enumerate(tokens):
@@ -983,7 +989,7 @@ def rust_source_units(source: str) -> tuple[list, list, dict]:
             frames.append([token, index + 1, header, start, [], signature])
         elif token in ("}", ")", "]"):
             if len(frames) == 1 or frames[-1][0] != {"}": "{", ")": "(", "]": "["}[token]:
-                return [], [], {}
+                return [], [], {}, {}
             opener, _, header, start, inner_attrs, signature = frames.pop()
             if opener == "[" and header == ("#", "!"):
                 # Inner attributes describe the entire parent scope,
@@ -1033,7 +1039,7 @@ def rust_source_units(source: str) -> tuple[list, list, dict]:
                     # checked separately by patch coverage. Other items
                     # (constants, aliases, macros, impls) retain values.
                     binding = header if is_function else tuple(value for value, _ in tokens[start:index + 1])
-                    bindings.setdefault(module_chain(frames), []).append(binding)
+                    add_binding(module_chain(frames), binding)
                 frames[-1][1] = index + 1
         elif token == ";":
             header = tuple(value for value, _ in tokens[frames[-1][1]:index])
@@ -1049,12 +1055,12 @@ def rust_source_units(source: str) -> tuple[list, list, dict]:
                 if any(rust_identifier(token) == "macro_use" for token in attribute_prefix(header)):
                     bindings.setdefault(chain, []).append(("@macro_use", rust_identifier(header[-1])) + attribute_prefix(header))
             elif header and is_module_scope(frames):
-                bindings.setdefault(module_chain(frames), []).append(header)
+                add_binding(module_chain(frames), header)
             frames[-1][1] = index + 1
     if len(frames) != 1:
-        return [], [], {}
+        return [], [], {}, {}
     bindings.setdefault((), []).append(("@scope",) + tuple(value for attr in frames[0][4] for value in attr))
-    return units, modules, bindings
+    return units, modules, bindings, binding_macros
 
 
 def module_locator(attrs: tuple) -> tuple[tuple, str | None] | None:
@@ -1101,7 +1107,7 @@ def rust_module_snapshot(repo_root: str, ref: str, metadata: dict | None) -> dic
     """
     snapshot = {"sources": {}, "contexts": {}, "bindings": {}, "function_bodies": {},
                 "macro_imports": {}, "build_inputs": {}, "build_data": {}, "unsafe": set(),
-                "shadowed_macro_roots": {}}
+                "shadowed_macro_roots": {}, "binding_macros": {}}
     def read(path):
         if path not in snapshot["sources"]:
             source = git_show(repo_root, ref, path)
@@ -1119,6 +1125,8 @@ def rust_module_snapshot(repo_root: str, ref: str, metadata: dict | None) -> dic
                 snapshot["contexts"][path] = {((), (), (), ())}
                 for chain, values in snapshot["sources"][path][2].items():
                     snapshot["bindings"][((), chain)] = values
+                for (chain, binding), contexts in snapshot["sources"][path][3].items():
+                    snapshot["binding_macros"].setdefault(((), chain, binding), []).extend(contexts)
         return snapshot
 
     for package in metadata.get("packages", []):
@@ -1161,6 +1169,10 @@ def rust_module_snapshot(repo_root: str, ref: str, metadata: dict | None) -> dic
                     snapshot["bindings"].setdefault((identity, prefix + chain), []).extend(
                         ("@scope",) + inherited_attrs + value[1:] if value[:1] == ("@scope",) else value
                         for value in values)
+                for (chain, binding), contexts in info[3].items():
+                    snapshot["binding_macros"].setdefault((identity, prefix + chain, binding), []).extend(
+                        inherited_macros + tuple((prefix + scope, value) for scope, value in macros)
+                        for macros in contexts)
                 parent = PurePosixPath(path)
                 directory = parent.parent if path == root or parent.name == "mod.rs" else parent.with_suffix("")
                 for chain, name, attrs, macros in info[1]:
@@ -1517,12 +1529,23 @@ def function_move_key(snapshot: dict, path: str, unit: tuple) -> tuple | None:
         }
         if any(has_opaque_expansion(tokens + imports, local_names, shadowed_roots) for tokens in inputs):
             return None
-        # Referenced implementations/helpers can use textual macros in
-        # a sibling scope. Preserve those bindings in declaration order
-        # as well as the caller's own lexical macro prefix.
-        dependency_macros = tuple((scope, tuple(binding for binding in snapshot["bindings"].get((identity, scope), [])
-                                               if is_textual_macro(binding) and (scope, binding) in relevant))
-                                  for scope in sorted({scope for scope, _ in relevant}))
+        # Referenced implementations/helpers use the macro prefix visible
+        # at their declaration, including inherited module visibility.
+        # Ordering macros alone loses their position relative to the item.
+        dependency_macros = []
+        for scope, binding in sorted(relevant):
+            for visible in snapshot["binding_macros"].get((identity, scope, binding), []):
+                context = []
+                for macro_scope, value in visible:
+                    if value[:1] == ("@macro_use",):
+                        value = snapshot["macro_imports"].get((identity, macro_scope, value))
+                        if value is None or "@macro_use_unknown" in value:
+                            return None
+                    names = binding_names(value)
+                    if names is None or names & references:
+                        context.append((macro_scope, value))
+                dependency_macros.append((scope, binding, tuple(context)))
+        dependency_macros = tuple(sorted(dependency_macros))
         keys.append((identity, logical, inherited_attrs + attrs, tuple(sorted(relevant)), macros, dependency_macros))
     return tuple(sorted(keys)), runtime, body
 
