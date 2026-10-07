@@ -483,6 +483,64 @@ fn absolute_continuation() {
     assert_multi_page(&result);
 }
 
+#[test]
+fn relative_box_paints_at_its_public_fragment_coordinates() {
+    for (insets, reference_insets, x, y) in [
+        ("left:-10px;top:-10px", "left:0;top:0", 15.0, 25.0),
+        ("left:10px;top:12px", "left:20px;top:22px", 35.0, 47.0),
+        ("right:10px;bottom:10px", "left:0;top:0", 15.0, 25.0),
+    ] {
+        let body = "<div class='parent'><div id='child'>X<div class='nested'></div></div></div>";
+        let css = "@page { margin:0 } body { margin:0 } .parent { position:absolute;left:10px;top:20px;width:100px;height:80px;padding:10px;border:5px solid red } #child { width:20px;height:20px;background:green;border:2px solid black } .nested { width:10px;height:10px;background:blue }";
+        let result = lay_out(
+            body,
+            &format!("{css} #child {{ position:relative;{insets} }}"),
+        );
+        let child = by_id(&result, "child");
+        let page = result.pages().next().expect("a page");
+        let rect = page
+            .fragments()
+            .find(|fragment| {
+                fragment.kind() == FragmentKind::Box && node_index(fragment.node()) == child
+            })
+            .expect("child fragment")
+            .paint_rect();
+        assert_eq!(
+            (rect.x, rect.y, rect.width, rect.height),
+            (x, y, 24.0, 24.0)
+        );
+
+        let pixels = |page: Page<'_>| {
+            let (document, cascade, page_box, origin) = page.paint_inputs();
+            let mut budget = CounterSnapshotBudget::default();
+            anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+                |scene| {
+                    raikiri_paint::paint_single_page_with_origin(
+                        scene,
+                        document,
+                        cascade,
+                        page_box,
+                        origin,
+                        &mut budget,
+                    )
+                    .expect("paint");
+                },
+                300,
+                200,
+            )
+        };
+        let reference = lay_out(
+            body,
+            &format!("{css} #child {{ position:absolute;{reference_insets} }}"),
+        );
+        assert_eq!(
+            pixels(page),
+            pixels(reference.pages().next().expect("reference page")),
+            "background, border, text and descendants for {insets}"
+        );
+    }
+}
+
 /// An overflow box that starts on the first page and ends there while its
 /// content runs on: on the later pages the box has no fragment, and the
 /// walker's clip for it lies wholly above the page, so nothing inside it is

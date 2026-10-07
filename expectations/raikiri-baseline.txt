@@ -1649,3 +1649,19 @@ css/css-text-decor/text-emphasis-punctuation-1.html
 css/css-text-decor/text-emphasis-punctuation-2.html
 css/css-text-decor/text-emphasis-style-001.html
 css/css-text-decor/text-emphasis-style-property-001.html
+
+# --- CSS2 relative block positioning exact 800x600 PASS-only (+14) ---
+css/CSS2/positioning/position-relative-004.xht
+css/CSS2/positioning/position-relative-005.xht
+css/CSS2/positioning/position-relative-006.xht
+css/CSS2/positioning/position-relative-007.xht
+css/CSS2/positioning/position-relative-009.xht
+css/CSS2/positioning/position-relative-010.xht
+css/CSS2/positioning/position-relative-013.xht
+css/CSS2/positioning/position-relative-014.xht
+css/CSS2/positioning/position-relative-015.xht
+css/CSS2/positioning/position-relative-016.xht
+css/CSS2/positioning/position-relative-018.xht
+css/CSS2/positioning/position-relative-019.xht
+css/CSS2/positioning/position-relative-037.xht
+css/CSS2/positioning/position-relative-038.xht

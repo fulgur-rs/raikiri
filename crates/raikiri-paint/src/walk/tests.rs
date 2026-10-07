@@ -1376,6 +1376,112 @@ fn transform_markup_scene(markup: &str) -> Scene {
 }
 
 #[test]
+fn relative_block_offsets_are_applied_once_to_boxes_and_descendants() {
+    for display in [
+        "block",
+        "flex",
+        "grid",
+        "inline-block",
+        "inline-flex",
+        "inline-grid",
+    ] {
+        for (insets, x, y) in [
+            ("left:-10px;top:-10px", 15.0, 25.0),
+            ("left:10px;top:12px", 35.0, 47.0),
+            ("right:10px;bottom:10px", 15.0, 25.0),
+        ] {
+            let scene = transform_markup_scene(&format!(
+                "<body style='margin:0'><div style='position:absolute;left:10px;top:20px;width:100px;height:80px;padding:10px;border:5px solid red'><div style='display:{display};position:relative;{insets};width:20px;height:20px;background:green'><div style='width:10px;height:10px;background:blue'></div></div></div>",
+            ));
+            let fills: Vec<_> = scene
+                .commands
+                .iter()
+                .filter_map(|command| match command {
+                    RenderCommand::Fill(fill) => Some(fill),
+                    _ => None,
+                })
+                .collect();
+            let green = fills[fills.len() - 2];
+            let blue = fills[fills.len() - 1];
+            for (fill, size) in [(green, 20.0), (blue, 10.0)] {
+                let rect = kurbo::Shape::bounding_box(&fill.shape);
+                assert_eq!(fill.transform * rect.origin(), Point::new(x, y), "{insets}");
+                assert_eq!(
+                    fill.transform * Point::new(rect.x1, rect.y1),
+                    Point::new(x + size, y + size),
+                    "{insets}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_manually_placed_table_caption_retains_its_relative_offset() {
+    let scene = transform_markup_scene(
+        "<body style='margin:0'><table style='width:100px'><caption style='width:100px;height:50px;margin-left:200px;position:relative;left:-200px;background:green'></caption><tr><td></td></tr></table>",
+    );
+    let fill = scene
+        .commands
+        .iter()
+        .rev()
+        .find_map(|command| match command {
+            RenderCommand::Fill(fill) => Some(fill),
+            _ => None,
+        })
+        .expect("caption background");
+    let rect = kurbo::Shape::bounding_box(&fill.shape);
+    assert_eq!((fill.transform * rect.origin()).x, 0.0);
+}
+
+#[test]
+fn manually_placed_roots_floats_and_multicol_children_keep_relative_offsets() {
+    for (markup, expected) in [
+        (
+            "<body style='margin:0;position:relative;left:10px;top:12px'><div style='width:20px;height:20px;background:green'></div>",
+            Point::new(10.0, 12.0),
+        ),
+        (
+            "<body style='margin:0'><div style='width:100px;height:80px'><div style='float:left;position:relative;left:10px;top:12px;width:20px;height:20px;background:green'></div></div>",
+            Point::new(10.0, 12.0),
+        ),
+        (
+            "<body style='margin:0'><div style='display:flex;width:100px;height:80px'><div style='float:left;position:relative;left:10px;top:12px;width:20px;height:20px;background:green'></div></div>",
+            Point::new(10.0, 12.0),
+        ),
+        (
+            "<body style='margin:0'><div style='display:grid;width:100px;height:80px'><div style='float:left;position:relative;left:10px;top:12px;width:20px;height:20px;background:green'></div></div>",
+            Point::new(10.0, 12.0),
+        ),
+        (
+            "<body style='margin:0'><div style='width:200px;column-count:2;column-gap:0'><div style='display:grid;position:relative;top:12px;width:20px;height:20px;background:green'></div></div>",
+            Point::new(0.0, 12.0),
+        ),
+        (
+            "<body style='margin:0'><div style='column-count:2;width:200px;height:60px'><div style='min-block-size:40px;break-inside:avoid;position:relative;left:10px;top:12px;width:20px;background:green'></div></div>",
+            Point::new(10.0, 12.0),
+        ),
+        (
+            "<body style='margin:0'><div style='column-count:2;width:200px;height:60px'><div style='min-block-size:40px;break-inside:avoid'></div><div style='position:relative;left:10px;top:12px;width:20px;height:10px;background:green'></div></div>",
+            Point::new(10.0, 92.0),
+        ),
+    ] {
+        let scene = transform_markup_scene(markup);
+        let fill = scene
+            .commands
+            .iter()
+            .rev()
+            .find_map(|command| match command {
+                RenderCommand::Fill(fill) => Some(fill),
+                _ => None,
+            })
+            .expect("child background");
+        let rect = kurbo::Shape::bounding_box(&fill.shape);
+        assert_eq!(fill.transform * rect.origin(), expected, "{markup}");
+    }
+}
+
+#[test]
 fn transformed_opacity_group_keeps_its_clip_in_page_coordinates() {
     let scene = transform_markup_scene(
         "<body style='margin:0'><div style='position:absolute;left:900px;top:0;width:100px;height:100px;background:green;opacity:.5;transform:matrix(1,0,0,1,-900,0)'></div>",
