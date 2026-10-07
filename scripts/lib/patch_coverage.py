@@ -1307,6 +1307,9 @@ def has_opaque_expansion(tokens: tuple, local_names: set[str], shadowed_roots: s
                   "test", "ignore", "should_panic", "no_mangle", "export_name", "link_name",
                   "link", "link_section", "non_exhaustive", "no_std", "no_main", "crate_type",
                   "crate_name", "recursion_limit", "type_length_limit", "feature"}
+    if (any(rust_identifier(token) == "macro_use" for token in attribute_prefix(tokens))
+            and any(pair == ("extern", "crate") for pair in zip(tokens, tokens[1:]))):
+        return True
     imports = []
     for start, value in enumerate(tokens):
         if value == "use":
@@ -1333,7 +1336,7 @@ def has_opaque_expansion(tokens: tuple, local_names: set[str], shadowed_roots: s
         if name in {"return", "if", "while", "match", "else", "break", "yield", "in"}:
             continue
         qualified = index > 0 and tokens[index - 1] == "::"
-        if not qualified and name in local_names:
+        if not qualified and name in local_names and not any("*" in value or name in value for value in imports):
             continue
         if name in standard:
             if qualified:

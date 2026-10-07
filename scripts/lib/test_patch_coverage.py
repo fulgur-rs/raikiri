@@ -1217,6 +1217,16 @@ pub fn call() { crate::resolver::resolve(); }
         status, output = self._classify(body, body, body.splitlines()[2], destination="moved.rs")
         self.assertEqual(status, 0, output)
 
+    def test_external_macro_use_cannot_shadow_standard_prelude_macros(self) -> None:
+        helper = '#[macro_use]\nextern crate fixture_macro;\n'
+        body = 'fn resolve() {\n    record_uncovered_resolution_result(vec!());\n}\n'
+        status, output = self._classify(
+            helper + "mod resolver {\n" + body + "}\n", body, body.splitlines()[1],
+            destination="resolver.rs", auxiliary_before={"query.sql": "SELECT 1"},
+            auxiliary_after={"lib.rs": helper + "mod resolver;\n", "query.sql": "SELECT 2"}
+        )
+        self.assertEqual(status, 1, output)
+
     def test_test_removal_does_not_make_unchanged_production_moves_new_code(self) -> None:
         body = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
         test = "#[cfg(test)]\nmod tests { #[test] fn exercise() { super::resolver::resolve(); } }\n"
