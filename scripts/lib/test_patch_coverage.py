@@ -345,7 +345,8 @@ class CollectMovedAddedLinesGitTests(unittest.TestCase):
                   auxiliary_before: dict[str, str] | None = None,
                   auxiliary_after: dict[str, str] | None = None,
                   target_root: str = "lib.rs", extra_targets: tuple = (),
-                  covered_auxiliary: bool = False, extra_packages: tuple = ()) -> tuple[int, str]:
+                  covered_auxiliary: bool = False, extra_packages: tuple = (),
+                  dependencies: tuple = ()) -> tuple[int, str]:
         with tempfile.TemporaryDirectory() as repo:
             # Ordinary file moves preserve the public module/target. Use
             # a stable crate root and relocate its `component` module.
@@ -402,7 +403,7 @@ class CollectMovedAddedLinesGitTests(unittest.TestCase):
             for target in targets:
                 target["name"] = os.path.basename(target["src_path"]).removesuffix(".rs")
             metadata = {"packages": [{"name": "fixture", "manifest_path": os.path.join(repo, "Cargo.toml"),
-                                      "targets": targets}]}
+                                      "targets": targets, "dependencies": list(dependencies)}]}
             for manifest, root, kind in extra_packages:
                 target = _target([kind], os.path.join(repo, root))
                 target["name"] = os.path.dirname(manifest)
@@ -1187,6 +1188,35 @@ pub fn call() { crate::resolver::resolve(); }
         self.assertEqual(status, 0, output)
         self.assertIn("informational): 1", output)
 
+    def test_standard_macro_namespace_aliases_cannot_hide_opaque_inputs(self) -> None:
+        for root in ("std", "core", "alloc"):
+            for imported in (f"use fixture_macro as {root};\n", f"use fixture_macro as r#{root};\n",
+                             f"use fixture_macro::{{self as {root}}};\n", "use fixture_macro::*;\n",
+                             f"extern crate fixture_macro as {root};\n"):
+                body = f"fn resolve() {{\n    record_uncovered_resolution_result({root}::vec!());\n}}\n"
+                with self.subTest(imported=imported):
+                    status, output = self._classify(
+                        imported + "mod resolver {\n" + body + "}\n", body, body.splitlines()[1],
+                        destination="resolver.rs", auxiliary_before={"query.sql": "SELECT 1"},
+                        auxiliary_after={"lib.rs": imported + "mod resolver;\n", "query.sql": "SELECT 2"}
+                    )
+                    self.assertEqual(status, 1, output)
+
+    def test_standard_macro_namespace_modules_cannot_hide_opaque_inputs(self) -> None:
+        helper = 'mod std { pub use external::vec; }\n'
+        body = 'fn resolve() {\n    record_uncovered_resolution_result(std::vec!());\n}\n'
+        status, output = self._classify(
+            helper + "mod resolver {\n" + body + "}\n", body, body.splitlines()[1],
+            destination="resolver.rs", auxiliary_before={"query.sql": "SELECT 1"},
+            auxiliary_after={"lib.rs": helper + "mod resolver;\n", "query.sql": "SELECT 2"}
+        )
+        self.assertEqual(status, 1, output)
+
+    def test_standard_macro_namespace_with_unrelated_standard_import_remains_exempt(self) -> None:
+        body = 'use std::fmt;\nfn resolve() {\n    record_uncovered_resolution_result(std::vec![1, 2]);\n}\n'
+        status, output = self._classify(body, body, body.splitlines()[2], destination="moved.rs")
+        self.assertEqual(status, 0, output)
+
     def test_test_removal_does_not_make_unchanged_production_moves_new_code(self) -> None:
         body = "fn resolve() {\n    record_uncovered_resolution_result();\n}\n"
         test = "#[cfg(test)]\nmod tests { #[test] fn exercise() { super::resolver::resolve(); } }\n"
@@ -1228,6 +1258,18 @@ pub fn call() { crate::resolver::resolve(); }
                 status, output = self._classify(
                     body, body, body.splitlines()[2], destination="moved.rs",
                     auxiliary_before={path: manifest}, auxiliary_after={path: manifest.replace("0.1.0", "0.2.0")}
+                )
+                self.assertEqual(status, 1, output)
+
+    def test_standard_macro_namespace_dependency_renames_cannot_hide_opaque_inputs(self) -> None:
+        for root in ("std", "core", "alloc"):
+            body = f"fn resolve() {{\n    record_uncovered_resolution_result({root}::vec!());\n}}\n"
+            with self.subTest(root=root):
+                status, output = self._classify(
+                    "mod resolver {\n" + body + "}\n", body, body.splitlines()[1],
+                    destination="resolver.rs", auxiliary_before={"query.sql": "SELECT 1"},
+                    auxiliary_after={"lib.rs": "mod resolver;\n", "query.sql": "SELECT 2"},
+                    dependencies=({"name": "fixture_macro", "rename": root},)
                 )
                 self.assertEqual(status, 1, output)
 

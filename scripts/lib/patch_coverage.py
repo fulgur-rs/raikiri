@@ -1100,7 +1100,8 @@ def rust_module_snapshot(repo_root: str, ref: str, metadata: dict | None) -> dic
     retained together; an unresolved layout fails closed for its target.
     """
     snapshot = {"sources": {}, "contexts": {}, "bindings": {}, "function_bodies": {},
-                "macro_imports": {}, "build_inputs": {}, "build_data": {}, "unsafe": set()}
+                "macro_imports": {}, "build_inputs": {}, "build_data": {}, "unsafe": set(),
+                "shadowed_macro_roots": {}}
     def read(path):
         if path not in snapshot["sources"]:
             source = git_show(repo_root, ref, path)
@@ -1131,6 +1132,10 @@ def rust_module_snapshot(repo_root: str, ref: str, metadata: dict | None) -> dic
             except (KeyError, ValueError):
                 continue
             identity = (manifest, tuple(target.get("kind", [])), target.get("name", ""))
+            snapshot["shadowed_macro_roots"][identity] = {
+                dependency.get("rename") or dependency.get("name", "")
+                for dependency in package.get("dependencies", [])
+            } & {"std", "core", "alloc"}
             pending = [(root, (), (), (), ())]
             visited = set()
             while pending:
@@ -1286,7 +1291,7 @@ def is_textual_macro(tokens: tuple) -> bool:
             or any(rust_identifier(token) in ("macro_rules", "macro") for token in tokens))
 
 
-def has_opaque_expansion(tokens: tuple, local_names: set[str]) -> bool:
+def has_opaque_expansion(tokens: tuple, local_names: set[str], shadowed_roots: set[str]) -> bool:
     """Unknown compiler extensions may read files without a build script.
 
     Their source tokens do not establish unchanged expansion inputs. Keep
@@ -1302,6 +1307,18 @@ def has_opaque_expansion(tokens: tuple, local_names: set[str]) -> bool:
                   "test", "ignore", "should_panic", "no_mangle", "export_name", "link_name",
                   "link", "link_section", "non_exhaustive", "no_std", "no_main", "crate_type",
                   "crate_name", "recursion_limit", "type_length_limit", "feature"}
+    imports = []
+    for start, value in enumerate(tokens):
+        if value == "use":
+            end = next((n for n in range(start, len(tokens)) if tokens[n] == ";"), len(tokens))
+            imported = tuple(rust_identifier(token) or token for token in tokens[start + 1:end])
+            imports.append(imported[1:] if imported[:1] == ("::",) else imported)
+    shadowed_roots = shadowed_roots | {
+        root for root in ("std", "core", "alloc")
+        if any("*" in value or root in value[1:] for value in imports)
+        or any(token in {"mod", "struct", "enum", "type", "trait", "as"}
+               and rust_identifier(following) == root for token, following in zip(tokens, tokens[1:]))
+    }
     for index, token in enumerate(tokens):
         if token == "#":
             start = index + (2 if tokens[index + 1:index + 2] == ("!",) else 1)
@@ -1320,15 +1337,12 @@ def has_opaque_expansion(tokens: tuple, local_names: set[str]) -> bool:
             continue
         if name in standard:
             if qualified:
-                if index >= 2 and rust_identifier(tokens[index - 2]) in {"std", "core", "alloc"} and (index < 3 or tokens[index - 3] != "::"):
+                root = rust_identifier(tokens[index - 2]) if index >= 2 else None
+                if (root in {"std", "core", "alloc"} and root not in shadowed_roots
+                        and (index < 3 or tokens[index - 3] != "::" or index == 3)):
                     continue
             else:
                 # An explicit or glob import can shadow a prelude macro.
-                imports = []
-                for start, value in enumerate(tokens):
-                    if value == "use":
-                        end = next((n for n in range(start, len(tokens)) if tokens[n] == ";"), len(tokens))
-                        imports.append(tokens[start:end])
                 if not any("*" in value or name in value for value in imports):
                     continue
         return True
@@ -1401,7 +1415,8 @@ def function_move_key(snapshot: dict, path: str, unit: tuple) -> tuple | None:
         local_names = set()
         for tokens in inputs:
             for index, token in enumerate(tokens):
-                offset = 2 if rust_identifier(token) == "macro_rules" else 1 if token == "macro" else 0
+                offset = (2 if rust_identifier(token) == "macro_rules" and tokens[index + 1:index + 2] == ("!",)
+                          else 1 if token == "macro" else 0)
                 if offset and index + offset < len(tokens):
                     name = rust_identifier(tokens[index + offset])
                     if name is not None:
@@ -1409,7 +1424,15 @@ def function_move_key(snapshot: dict, path: str, unit: tuple) -> tuple | None:
         # Include imports when checking unqualified standard macros: a
         # dependency can export a macro with the same prelude name.
         imports = tuple(token for _, binding in relevant if "use" in binding for token in binding)
-        if any(has_opaque_expansion(tokens + imports, local_names) for tokens in inputs):
+        shadowed_roots = snapshot["shadowed_macro_roots"].get(identity, set()) | {
+            name for (target, scope) in snapshot["bindings"] if target == identity
+            for name in scope if name in {"std", "core", "alloc"}
+        } | {
+            name for tokens in inputs for token, following in zip(tokens, tokens[1:])
+            if token in {"mod", "struct", "enum", "type", "trait", "as"}
+            and (name := rust_identifier(following)) in {"std", "core", "alloc"}
+        }
+        if any(has_opaque_expansion(tokens + imports, local_names, shadowed_roots) for tokens in inputs):
             return None
         keys.append((identity, logical, inherited_attrs + attrs, tuple(sorted(relevant)), macros))
     return tuple(sorted(keys)), runtime, body
