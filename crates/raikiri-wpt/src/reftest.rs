@@ -1435,7 +1435,18 @@ fn authored_document_page_viewport(
         width as u32,
         height as u32,
     );
-    let mut tree = raikiri_style::build_rule_tree(&document.dom);
+    let mut tree = raikiri_style::RuleTree::empty();
+    // DOM-associated sheets contain the UA defaults. Author style elements
+    // enter only through collected sources below, with their media guards.
+    for (source, kind) in document.dom.stylesheets() {
+        let origin = match kind {
+            raikiri_traits::StylesheetKind::UserAgent => raikiri_style::Origin::UserAgent,
+            raikiri_traits::StylesheetKind::User => raikiri_style::Origin::User,
+            raikiri_traits::StylesheetKind::Author => raikiri_style::Origin::Author,
+            _ => unreachable!("unexpected stylesheet kind"),
+        };
+        tree.add_stylesheet(source, origin);
+    }
     for sheet in &document.stylesheet_sources {
         for part in &sheet.parts {
             let source = expand_css_viewport_units_with_media_basis(

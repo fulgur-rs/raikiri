@@ -535,3 +535,25 @@ fn paints_margin_box_background_with_origin_and_clip() {
     assert!(requests.iter().any(|path| path == "/pages/red.png"));
     assert!(contains_red_pixel(&document.pages[0]));
 }
+
+#[test]
+fn print_probe_preserves_inactive_html_style_media() {
+    let server = TestServer::start(HashMap::from([
+        ("/index.html", TestResponse::ok("text/html", b"<style media=screen>@page{size:200px 100px;margin:0}</style><link rel=stylesheet href=sheet.css><div class=box></div>".to_vec())),
+        ("/sheet.css", TestResponse::ok("text/css", b"@page{margin:0}html,body{margin:0}.box{width:100vw;height:100vh;background:green}".to_vec())),
+    ]));
+    let document = render_print_url(
+        &SystemHttpProvider::new(),
+        server.url("index.html"),
+        800,
+        600,
+    )
+    .unwrap();
+    let requests = server.finish();
+    assert!(requests.iter().any(|path| path == "/sheet.css"));
+    assert_eq!(document.pages.len(), 1);
+    let image = &document.pages[0];
+    assert_eq!((image.width, image.height), (800, 600));
+    let offset = (599 * 800 + 799) * 4;
+    assert_eq!(&image.rgba[offset..offset + 4], &[0, 128, 0, 255]);
+}

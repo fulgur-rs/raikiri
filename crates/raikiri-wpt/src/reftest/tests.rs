@@ -1854,3 +1854,35 @@ fn viewport_expansion_preserves_escaped_prelude_delimiters() {
         );
     }
 }
+
+#[test]
+fn print_probe_preserves_nominal_basis_for_unqualified_page_units() {
+    let html = "<style>@page{size:50vw 50vh;margin:0}html,body{margin:0}.box{width:50vw;height:50vh;background:green}</style><div class=box></div>";
+    let image = render_raikiri(html, 800, 600).unwrap();
+    assert_eq!((image.width, image.height), (240, 144));
+    let offset = (100 * 240 + 200) * 4;
+    assert_eq!(&image.rgba[offset..offset + 4], &[0, 128, 0, 255]);
+}
+
+#[test]
+fn print_probe_preserves_dom_associated_stylesheet_origins() {
+    for (kind, expected) in [
+        (raikiri_traits::StylesheetKind::UserAgent, (300.0, 200.0)),
+        (raikiri_traits::StylesheetKind::User, (300.0, 200.0)),
+        (raikiri_traits::StylesheetKind::Author, (200.0, 100.0)),
+    ] {
+        let html = "<style>@page{size:200px 100px!important;margin:0}</style>";
+        let opts = raikiri::ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        };
+        let mut doc = raikiri_html::parse(html.as_bytes(), &opts).unwrap();
+        doc.dom
+            .add_stylesheet("@page{size:300px 200px!important;margin:0}", kind);
+        assert_eq!(
+            authored_document_page_viewport(&doc, html, 800.0, 600.0),
+            expected
+        );
+    }
+}
