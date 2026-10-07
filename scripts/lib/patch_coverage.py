@@ -130,7 +130,6 @@ import posixpath
 import re
 import subprocess
 import sys
-import tomllib
 from collections import Counter
 from pathlib import Path, PurePosixPath
 from dataclasses import dataclass, field
@@ -747,10 +746,9 @@ def collect_moved_added_lines(repo_root: str, base: str, head: str,
     for manifest in manifests:
         if PurePosixPath(manifest).name != "Cargo.toml":
             continue
-        layouts = []
-        for ref in (base, head):
-            data = tomllib.loads(git_show(repo_root, ref, manifest) or "")
-            layouts.append(data)
+        # Build scripts may interpret even formatting as input. Require
+        # identical manifest bytes without a version-specific TOML parser.
+        layouts = [git_show(repo_root, ref, manifest) for ref in (base, head)]
         if layouts[0] != layouts[1]:
             # The old build context cannot be inferred after an edition,
             # target, feature, or other compilation setting changes.
@@ -1251,9 +1249,27 @@ def binding_names(tokens: tuple) -> set[str] | None:
 def has_file_include(tokens: tuple) -> bool:
     includes = {"include", "include_str", "include_bytes"}
     # A built-in may be aliased, re-exported or passed to another macro.
-    # Unknown expansion cannot establish unchanged file inputs. Literal
+    # Unknown expansion cannot establish unchanged file/span inputs. Literal
     # text remains quoted tokens and does not match these identifiers.
-    return any(rust_identifier(token) in includes for token in tokens)
+    if any(rust_identifier(token) in includes for token in tokens):
+        return True
+    # Location built-ins can be imported or passed to another macro.
+    # Ordinary values named file/line/column remain valid move candidates.
+    delimiters = []
+    in_import = False
+    for index, token in enumerate(tokens):
+        if token == "use":
+            in_import = True
+        elif token == ";":
+            in_import = False
+        if rust_identifier(token) in ("file", "line", "column"):
+            if in_import or any(delimiters) or tokens[index + 1:index + 2] == ("!",):
+                return True
+        if token in ("(", "[", "{"):
+            delimiters.append(any(delimiters) or (index > 0 and tokens[index - 1] == "!"))
+        elif token in (")", "]", "}") and delimiters:
+            delimiters.pop()
+    return False
 
 
 def has_runtime_file_input(tokens: tuple) -> bool:

@@ -45,6 +45,7 @@ import io
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -1118,6 +1119,33 @@ pub fn call() { crate::resolver::resolve(); }
                     extra_packages=(("cfgsupport/Cargo.toml", "cfgsupport/lib.rs", "lib"),)
                 )
                 self.assertEqual(status, 1 if changed else 0, output)
+
+    def test_location_macro_inputs_do_not_receive_move_exemptions(self) -> None:
+        for expansion in ("file!()", "line!()", "column!()", "r#file!()"):
+            body = "fn resolve() {\n    record_uncovered_resolution_result(" + expansion + ");\n}\n"
+            with self.subTest(expansion=expansion):
+                status, output = self._classify(body, body, body.splitlines()[1], destination="moved.rs")
+                self.assertEqual(status, 1, output)
+
+    def test_location_macro_indirection_does_not_hide_span_inputs(self) -> None:
+        for helper in ('use std::file as location;\n',
+                       'macro_rules! location { () => { file!() }; }\n'):
+            body = helper + "fn resolve() {\n    record_uncovered_resolution_result(location!());\n}\n"
+            with self.subTest(helper=helper):
+                status, output = self._classify(body, body, body.splitlines()[2], destination="moved.rs")
+                self.assertEqual(status, 1, output)
+
+    def test_location_named_values_do_not_disable_plain_function_moves(self) -> None:
+        body = "fn resolve(file: u8, line: u8, column: u8) {\n    record_uncovered_resolution_result(file, line, column);\n}\n"
+        status, output = self._classify(body, body, body.splitlines()[1], destination="moved.rs")
+        self.assertEqual(status, 0, output)
+
+    def test_cli_can_start_without_tomllib(self) -> None:
+        script = os.path.join(os.path.dirname(__file__), "patch_coverage.py")
+        command = "import runpy,sys; sys.modules['tomllib']=None; sys.argv=[sys.argv[1],'--help']; runpy.run_path(sys.argv[0],run_name='__main__')"
+        proc = subprocess.run([sys.executable, "-c", command, script], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("--lcov", proc.stdout)
 
     def test_compiler_configuration_changes_do_not_exempt_functions(self) -> None:
         body = "#[cfg(gate)]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n"
