@@ -794,7 +794,7 @@ def collect_moved_added_lines(repo_root: str, base: str, head: str,
     return result
 
 
-def cargo_compilation_layout(value):
+def cargo_compilation_layout(value, path: tuple = ()):
     """Keep manifest state, ignoring only dependency version edits.
 
     Features, edition, resolver, workspace inheritance and unknown fields
@@ -802,17 +802,20 @@ def cargo_compilation_layout(value):
     feature settings cannot be normalized away with its version string.
     """
     if isinstance(value, list):
-        return [cargo_compilation_layout(item) for item in value]
+        return [cargo_compilation_layout(item, path) for item in value]
     if not isinstance(value, dict):
         return value
     result = {}
     for key, item in value.items():
-        if key in ("dependencies", "dev-dependencies", "build-dependencies") and isinstance(item, dict):
+        dependency_table = (path == () or (path == ("workspace",) and key == "dependencies")
+                            or (len(path) == 2 and path[0] == "target"))
+        if dependency_table and key in ("dependencies", "dev-dependencies", "build-dependencies") and isinstance(item, dict):
             result[key] = {name: ({} if isinstance(spec, str) else
-                                {field: setting for field, setting in spec.items() if field != "version"})
+                                {field: setting for field, setting in spec.items() if field != "version"}
+                                if isinstance(spec, dict) else spec)
                            for name, spec in item.items()}
         else:
-            result[key] = cargo_compilation_layout(item)
+            result[key] = cargo_compilation_layout(item, path + (key,))
     return result
 
 
@@ -1177,8 +1180,11 @@ def binding_names(tokens: tuple) -> set[str] | None:
 
 
 def has_file_include(tokens: tuple) -> bool:
-    return any(token in ("include", "include_str", "include_bytes") and following == "!"
-               for token, following in zip(tokens, tokens[1:]))
+    includes = {"include", "include_str", "include_bytes"}
+    # A built-in may be aliased, re-exported or passed to another macro.
+    # Unknown expansion cannot establish unchanged file inputs. Literal
+    # text remains quoted tokens and does not match these identifiers.
+    return bool(includes.intersection(tokens))
 
 
 def function_move_key(snapshot: dict, path: str, unit: tuple) -> tuple | None:

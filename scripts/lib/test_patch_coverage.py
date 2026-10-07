@@ -916,6 +916,33 @@ pub fn call() { crate::resolver::resolve(); }
         self.assertEqual(status, 0, output)
 
 
+    def test_include_macro_indirection_inputs_are_not_move_exemptions(self) -> None:
+        for expansion in ('use std::include as inject;\ninject!("bindings.rs");\n',
+                          'macro_rules! inject { ($m:ident) => { $m!("bindings.rs"); } }\ninject!(include);\n'):
+            body = expansion + 'fn resolve() {\n    record_uncovered_resolution_result(VALUE);\n}\n'
+            with self.subTest(expansion=expansion):
+                status, output = self._classify(
+                    body + "fn keep() {}\n", "fn keep() {}\n" + body.replace("    record", "        record"),
+                    "        record_uncovered_resolution_result(VALUE);",
+                    auxiliary_before={"bindings.rs": "const VALUE: u8 = 1;\n"},
+                    auxiliary_after={"bindings.rs": "const VALUE: u8 = 2;\n"}, covered_auxiliary=True
+                )
+                self.assertEqual(status, 1, output)
+
+    def test_build_script_metadata_is_not_a_dependency_version_edit(self) -> None:
+        manifest = '[package]\nname="fixture"\nversion="0.1.0"\nbuild="build.rs"\n[package.metadata.dependencies]\ngate="off"\n'
+        build = 'fn main() { let text = std::fs::read_to_string("Cargo.toml").unwrap(); if text.contains("gate=\\\"on\\\"") { println!("cargo:rustc-cfg=custom_gate"); } }\n'
+        body = '#[cfg(custom_gate)]\nfn resolve() {\n    record_uncovered_resolution_result();\n}\n'
+        status, output = self._classify(
+            body + "fn keep() {}\n", "fn keep() {}\n" + body.replace("    record", "        record"),
+            "        record_uncovered_resolution_result();",
+            auxiliary_before={"Cargo.toml": manifest, "build.rs": build},
+            auxiliary_after={"Cargo.toml": manifest.replace('"off"', '"on"'), "build.rs": build},
+            extra_targets=(("custom-build", "build.rs"),), covered_auxiliary=True
+        )
+        self.assertEqual(status, 1, output)
+
+
 class ClassifyNoLcovRecordLinesTests(unittest.TestCase):
     """Regression tests for the whole-file-zero-SF-record false positive: a
     "pure declaration" file (only `use` statements, struct/enum
