@@ -189,6 +189,7 @@ pub fn layout_single_page(
     // Step 2b: resolve `ch` lengths of box properties with the inline
     // engine's fonts before taffy sizes the boxes.
     prepare_ch_box_values_before_taffy(document, cascade);
+    crate::layout::ifc::assign::prepare_legacy_inside_markers_before_taffy(document, cascade)?;
     // Step 3: <body> lookup
     let body_id = find_body(document).ok_or_else(|| LayoutError::Internal {
         message: "no <body> element found (fragment parse not supported yet)".to_string(),

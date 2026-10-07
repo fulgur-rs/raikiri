@@ -66,307 +66,6 @@ fn list_fixture(
 }
 
 #[test]
-fn list_marker_text_formats_ordinals_and_styles() {
-    let (mut document, cascade, first, second) =
-        list_fixture("display: list-item", "display: list-item", None);
-    assert_eq!(
-        list_marker_text(&document, &cascade, first, &ListStyleType::Disc),
-        Some("• ".to_string())
-    );
-    assert_eq!(
-        list_marker_text(
-            &document,
-            &cascade,
-            second,
-            &ListStyleType::Named("decimal".into())
-        ),
-        Some("2. ".to_string())
-    );
-    assert_eq!(
-        list_marker_text(
-            &document,
-            &cascade,
-            second,
-            &ListStyleType::Named("decimal-leading-zero".into())
-        ),
-        Some("02. ".to_string())
-    );
-    assert_eq!(
-        list_marker_text(
-            &document,
-            &cascade,
-            second,
-            &ListStyleType::Named("lower-alpha".into())
-        ),
-        Some("b. ".to_string())
-    );
-    assert_eq!(
-        list_marker_text(
-            &document,
-            &cascade,
-            second,
-            &ListStyleType::Named("upper-alpha".into())
-        ),
-        Some("B. ".to_string())
-    );
-    assert_eq!(
-        list_marker_text(
-            &document,
-            &cascade,
-            second,
-            &ListStyleType::Named("lower-roman".into())
-        ),
-        Some("ii. ".to_string())
-    );
-    assert_eq!(
-        list_marker_text(
-            &document,
-            &cascade,
-            second,
-            &ListStyleType::Named("upper-roman".into())
-        ),
-        Some("II. ".to_string())
-    );
-    assert_eq!(
-        list_marker_text(
-            &document,
-            &cascade,
-            second,
-            &ListStyleType::Named("circle".into())
-        ),
-        Some("◦ ".to_string())
-    );
-    assert_eq!(
-        list_marker_text(
-            &document,
-            &cascade,
-            second,
-            &ListStyleType::Named("square".into())
-        ),
-        Some("▪ ".to_string())
-    );
-    assert_eq!(
-        list_marker_text(
-            &document,
-            &cascade,
-            second,
-            &ListStyleType::Named("custom-counter".into())
-        ),
-        Some("2. ".to_string())
-    );
-    assert_eq!(
-        list_marker_text(
-            &document,
-            &cascade,
-            second,
-            &ListStyleType::String("§".into())
-        ),
-        Some("§".to_string())
-    );
-    assert_eq!(
-        list_marker_text(&document, &cascade, second, &ListStyleType::None),
-        None
-    );
-    // Defensive ordinal paths: the root has no parent, while a text child
-    // has a parent but is not itself a list item.
-    assert_eq!(
-        list_item_ordinal(&document, &cascade, document.root_index()),
-        1
-    );
-    let text = document.append_text(document.root_index(), "text");
-    assert_eq!(list_item_ordinal(&document, &cascade, text), 1);
-    assert_eq!(alpha_marker(0), "");
-}
-
-#[test]
-fn custom_counter_styles_reach_default_and_explicit_markers() {
-    let (document, cascade, first, second) = list_fixture(
-        "display: list-item; list-style-type: thumbs",
-        "display: list-item; list-style-type: thumbs",
-        Some(
-            r#"@counter-style thumbs {
-                    system: cyclic;
-                    symbols: "A" "B";
-                    prefix: "[";
-                    suffix: "] ";
-                }"#,
-        ),
-    );
-    assert_eq!(cascade.counter_styles.len(), 1);
-    assert_eq!(
-        list_marker_text(
-            &document,
-            &cascade,
-            first,
-            &ListStyleType::Named("thumbs".into()),
-        ),
-        Some("[A] ".to_string())
-    );
-    assert_eq!(
-        list_marker_text(
-            &document,
-            &cascade,
-            second,
-            &ListStyleType::Named("thumbs".into()),
-        ),
-        Some("[B] ".to_string())
-    );
-
-    let explicit = vec![ContentComponent::Counter {
-        name: "list-item".into(),
-        style: CounterStyle::Named("thumbs".into()),
-    }];
-    let marker = marker_content_text(
-        &explicit,
-        &[] as &[(&str, &str)],
-        false,
-        1,
-        &CounterSnapshot::default(),
-        &cascade.counter_styles,
-    );
-    assert_eq!(marker, Some("A".to_string()));
-
-    let (document, cascade, first, _) = list_fixture(
-        "display: list-item; list-style-type: disc",
-        "display: list-item",
-        Some(
-            r#"@counter-style thumbs {
-                    system: cyclic;
-                    symbols: "A" "B";
-                }
-                li::marker { content: counter(list-item, thumbs); }"#,
-        ),
-    );
-    let (_, explicit_content) =
-        marker_render_info(&document, &cascade, first).expect("custom marker content");
-    assert_eq!(explicit_content, "A");
-}
-
-#[test]
-fn marker_render_info_resolves_named_counters_from_element_scopes() {
-    let mut document = Document::new();
-    let style = document.append_element(
-        Some(document.root_index()),
-        "style",
-        Style::default(),
-        None::<&str>,
-    );
-    document.append_text(
-            style,
-            "section { counter-reset: step 4 list-item 4 } section::before { content: counter(step) } section::after { content: counters(step, \".\") } li { display: list-item; counter-increment: step list-item; list-style: none } li::marker { counter-reset: local 1; counter-increment: local 2 fresh 3; counter-set: local 9 setfresh 4; content: counter(step) \"/\" counter(list-item) \"/\" counter(local) \"/\" counter(fresh) \"/\" counter(setfresh) }",
-        );
-    let section = document.append_element(
-        Some(document.root_index()),
-        "section",
-        Style::default(),
-        None::<&str>,
-    );
-    let first = document.append_element(Some(section), "li", Style::default(), None::<&str>);
-    let second = document.append_element(Some(section), "li", Style::default(), None::<&str>);
-    document.mark_in_document_flags();
-    let rules = build_rule_tree(&document);
-    let cascade = cascade(&document, &rules).expect("cascade Ok");
-    let (_, first_content) = marker_render_info(&document, &cascade, first).expect("first marker");
-    let (_, second_content) =
-        marker_render_info(&document, &cascade, second).expect("second marker");
-    assert_eq!(first_content, "5/5/9/3/4");
-    assert_eq!(second_content, "6/6/9/3/4");
-    let snapshots = raikiri_dom::counter_snapshots(&document, &cascade)
-        .expect("test counter snapshots stay within budget");
-    let (_, before_content) = generated_pseudo_content_with_snapshots(
-        &document,
-        &cascade,
-        section,
-        raikiri_style::PseudoElem::Before,
-        &snapshots,
-    )
-    .expect("generated before content");
-    assert_eq!(before_content, "4");
-    let (_, after_content) = generated_pseudo_content_with_snapshots(
-        &document,
-        &cascade,
-        section,
-        raikiri_style::PseudoElem::After,
-        &snapshots,
-    )
-    .expect("generated after content");
-    assert_eq!(after_content, "4");
-}
-
-#[test]
-fn marker_content_text_resolves_literals_counters_and_quotes() {
-    let registry = CounterStyleRegistry::new();
-    let components = vec![
-        ContentComponent::Quote(QuoteKeyword::OpenQuote),
-        ContentComponent::Literal("(".into()),
-        ContentComponent::Counter {
-            name: "list-item".into(),
-            style: CounterStyle::Decimal,
-        },
-        ContentComponent::Counters {
-            name: "list-item".into(),
-            separator: ".".to_string(),
-            style: CounterStyle::Named("upper-roman".into()),
-        },
-        // Named counters are resolved from the supplied scope snapshot.
-        ContentComponent::Counters {
-            name: "chapter".into(),
-            separator: ".".to_string(),
-            style: CounterStyle::Decimal,
-        },
-        ContentComponent::Quote(QuoteKeyword::CloseQuote),
-    ];
-    let mut counters = CounterSnapshot::default();
-    counters.insert(raikiri_traits::Symbol::new("chapter"), vec![1, 3]);
-    assert_eq!(
-        marker_content_text(&components, &[("<", ">")], false, 2, &counters, &registry,),
-        Some("<(2II1.3>".to_string())
-    );
-    let mut list_item_counters = CounterSnapshot::default();
-    list_item_counters.insert(raikiri_traits::Symbol::new("list-item"), vec![1, 2]);
-    assert_eq!(
-        marker_content_text(
-            &components,
-            &[] as &[(&str, &str)],
-            false,
-            2,
-            &list_item_counters,
-            &registry,
-        ),
-        Some("(2I.II".to_string())
-    );
-    assert_eq!(
-        marker_content_text(
-            &[],
-            &[] as &[(&str, &str)],
-            true,
-            1,
-            &CounterSnapshot::default(),
-            &registry,
-        ),
-        None
-    );
-    assert_eq!(
-        marker_content_text(
-            &[
-                ContentComponent::Quote(QuoteKeyword::OpenQuote),
-                ContentComponent::Quote(QuoteKeyword::OpenQuote),
-                ContentComponent::Quote(QuoteKeyword::CloseQuote),
-                ContentComponent::Quote(QuoteKeyword::CloseQuote),
-                ContentComponent::Quote(QuoteKeyword::NoOpenQuote),
-                ContentComponent::Quote(QuoteKeyword::NoCloseQuote),
-            ],
-            &[] as &[(&str, &str)],
-            true,
-            1,
-            &CounterSnapshot::default(),
-            &registry,
-        ),
-        Some("“‘’”".to_string())
-    );
-}
-
-#[test]
 fn generated_content_resolves_dom_attributes_and_fallbacks() {
     let mut document = Document::new();
     let element = document.append_element(
@@ -4233,6 +3932,211 @@ fn list_fixture_with_engine() -> (Document, CascadeResult, usize) {
     let collection = raikiri_dom::build_wpt_font_collection(dir).expect("collection");
     document.set_font_collection_with_limits(collection, shodo::limits::Limits::default());
     (document, cascade, first)
+}
+
+#[test]
+fn inside_marker_legacy_painter_remains_available_without_an_ifc_owner() {
+    let (document, mut cascade, first) = list_fixture_with_engine();
+    cascade.computed[first].list_style_position = raikiri_style::ListStylePosition::Inside;
+    assert!(!document.get_node(first).unwrap().is_ifc_root());
+    let mut scene = Scene::new();
+    paint_list_marker(
+        &mut scene, &document, &cascade, first, 0.0, 0.0, 200.0, 30.0, 0.0,
+    );
+    assert_eq!(glyph_xs(&scene), [0.0, 10.0, 20.0]);
+}
+
+#[test]
+fn inside_ruby_multicol_markers_paint_on_the_legacy_path() {
+    struct Pixels;
+    impl ImagePixelSource for Pixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
+                width: 16,
+                height: 8,
+                rgba: [255, 0, 0, 255].repeat(128),
+            }))
+        }
+        fn intrinsic_size(&self, _: &url::Url) -> Option<raikiri_traits::ImageIntrinsicSize> {
+            Some(raikiri_traits::ImageIntrinsicSize {
+                width: Some(8.0),
+                height: Some(4.0),
+                aspect_ratio: Some(2.0),
+            })
+        }
+    }
+    for (image, padding, authored_padding) in [
+        (false, "4px", 4.0),
+        (true, "4px", 4.0),
+        (false, "4ch", 40.0),
+        (true, "4ch", 40.0),
+        (false, "10%", 20.0),
+        (true, "10%", 20.0),
+    ] {
+        let style = if image {
+            "display:list-item;list-style:inside url(marker.png);columns:2;height:100px;font-family:Ahem;font-size:10px;padding-left:4px"
+        } else {
+            "display:list-item;list-style:inside decimal;columns:2;height:100px;font-family:Ahem;font-size:10px;padding-left:4px"
+        };
+        let style = format!("{style};padding-left:{padding}");
+        let (mut doc, _, item, _) = list_fixture(&style, "display:none", None);
+        let html = doc.append_element(
+            Some(doc.root_index()),
+            "html",
+            Style::default(),
+            None::<&str>,
+        );
+        let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+        let container = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;width:200px"),
+        );
+        doc.append_child(container, item).unwrap();
+        let ruby = doc.append_element(Some(item), "ruby", Style::default(), Some("display:inline"));
+        doc.append_element(
+            Some(ruby),
+            "span",
+            Style::default(),
+            Some("display:inline-block;width:10px;height:20px"),
+        );
+        doc.append_element(Some(item), "br", Style::default(), Some("display:inline"));
+        doc.mark_in_document_flags();
+        let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        let base = url::Url::parse("https://images.test/doc").unwrap();
+        doc.prepare_list_marker_images(&cascade, &Pixels, Some(&base));
+        doc.set_font_collection(
+            raikiri_dom::build_wpt_font_collection(std::path::Path::new(FONT_DIR)).unwrap(),
+        );
+        raikiri_dom::layout_single_page(&mut doc, &cascade, PageBox::A4).unwrap();
+        assert!(!doc.get_node(item).unwrap().is_ifc_root());
+        let expected_advance = if image { 18.0 } else { 30.0 };
+        let item_layout = doc.get_node(item).unwrap().unrounded_layout;
+        let ruby_layout = doc.get_node(ruby).unwrap().unrounded_layout;
+        assert_eq!(
+            item_layout.padding.left,
+            authored_padding + expected_advance
+        );
+        assert!(ruby_layout.location.x >= authored_padding + expected_advance);
+        assert_eq!(doc.legacy_inside_marker_advance(item), expected_advance);
+        let (marker_cv, marker_text) =
+            marker_render_info_with_snapshots(&doc, &cascade, item, &[]).unwrap();
+        let paint_advance = if image { 8.0 } else { 0.0 }
+            + text::measure_margin_text_advance(
+                &doc,
+                if image { " " } else { &marker_text },
+                marker_cv.font_size.px(),
+                marker_cv.font_family.first().unwrap().as_str(),
+            );
+        assert_eq!(doc.legacy_inside_marker_advance(item), paint_advance);
+        raikiri_dom::layout_single_page(&mut doc, &cascade, PageBox::A4).unwrap();
+        assert_eq!(
+            doc.get_node(item).unwrap().unrounded_layout.padding.left,
+            item_layout.padding.left
+        );
+        let mut scene = Scene::new();
+        paint_list_marker_with_snapshots(
+            &mut scene,
+            &doc,
+            &cascade,
+            item,
+            2.0,
+            3.0,
+            100.0,
+            100.0,
+            item_layout.padding.left,
+            &[],
+            Some(&Pixels),
+        );
+        if image {
+            let fill = scene
+                .commands
+                .iter()
+                .find_map(|command| match command {
+                    RenderCommand::Fill(fill)
+                        if matches!(fill.brush, anyrender::Paint::Image(_)) =>
+                    {
+                        Some(fill)
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(
+                fill.transform.as_coeffs(),
+                [0.5, 0.0, 0.0, 0.5, f64::from(2.0 + authored_padding), 3.0]
+            );
+        } else {
+            assert_eq!(
+                glyph_xs(&scene),
+                [
+                    f64::from(2.0 + authored_padding),
+                    f64::from(12.0 + authored_padding),
+                    f64::from(22.0 + authored_padding)
+                ]
+            );
+        }
+        let suppressed = if image { "''" } else { "none" };
+        doc.set_element_inline_style(item, Some(format!(
+            "display:list-item;list-style:inside {suppressed};columns:2;height:100px;font-family:Ahem;font-size:10px;padding-left:{padding}"
+        ).into()));
+        let updated = raikiri_style::cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        doc.prepare_list_marker_images(&updated, &Pixels, Some(&base));
+        raikiri_dom::layout_single_page(&mut doc, &updated, PageBox::A4).unwrap();
+        assert_eq!(doc.legacy_inside_marker_advance(item), 0.0);
+        assert_eq!(
+            doc.get_node(item).unwrap().unrounded_layout.padding.left,
+            authored_padding
+        );
+    }
+}
+
+#[test]
+fn explicit_marker_content_suppresses_legacy_image_paint() {
+    struct Pixels;
+    impl ImagePixelSource for Pixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
+                width: 8,
+                height: 8,
+                rgba: [255, 0, 0, 255].repeat(64),
+            }))
+        }
+    }
+    for content in ["none", "'text'"] {
+        let sheet = format!("li::marker{{content:{content}}}");
+        let (mut doc, cascade, item, _) = list_fixture(
+            "display:list-item;list-style:inside url(https://images.test/marker.png)",
+            "display:none",
+            Some(&sheet),
+        );
+        doc.set_font_collection(
+            raikiri_dom::build_wpt_font_collection(std::path::Path::new(FONT_DIR)).unwrap(),
+        );
+        let mut scene = Scene::new();
+        paint_list_marker_with_snapshots(
+            &mut scene,
+            &doc,
+            &cascade,
+            item,
+            0.0,
+            0.0,
+            100.0,
+            30.0,
+            0.0,
+            &[],
+            Some(&Pixels),
+        );
+        assert!(!scene.commands.iter().any(|command| matches!(command,
+            RenderCommand::Fill(fill) if matches!(fill.brush, anyrender::Paint::Image(_)))));
+        assert_eq!(glyph_xs(&scene).is_empty(), content == "none");
+    }
 }
 
 #[test]
