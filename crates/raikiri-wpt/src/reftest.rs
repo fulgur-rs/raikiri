@@ -1320,7 +1320,9 @@ fn resolve_page_context_viewport_units(input: &str) -> String {
                         if !tree.page_rules.is_empty() {
                             input.parse_nested_block(|input| {
                                 let start = input.position().byte_index();
-                                input.expect_no_error_token()?;
+                                // Invalid declarations do not invalidate the
+                                // other descriptors accepted by the page parser.
+                                while input.next_including_whitespace_and_comments().is_ok() {}
                                 ranges.push(start..input.position().byte_index());
                                 Ok(())
                             })?;
@@ -1664,43 +1666,18 @@ fn expand_css_viewport_units_with_axes(
     let bytes = input.as_bytes();
     let mut result = String::with_capacity(input.len());
     let mut i = 0;
-    let mut quote = None;
     let mut media_prelude = false;
     let mut media_blocks = Vec::new();
     while i < bytes.len() {
-        if let Some(delimiter) = quote {
-            if bytes[i] == b'\\' {
-                result.push('\\');
-                i += 1;
-                if i < bytes.len() {
-                    let escaped = input[i..]
-                        .chars()
-                        .next()
-                        .expect("byte index remains on a UTF-8 boundary");
-                    result.push(escaped);
-                    i += escaped.len_utf8();
-                }
-            } else if bytes[i] == delimiter {
-                result.push(bytes[i] as char);
-                i += 1;
-                quote = None;
-            } else if bytes[i].is_ascii() {
-                result.push(bytes[i] as char);
-                i += 1;
-            } else {
-                let character = input[i..]
-                    .chars()
-                    .next()
-                    .expect("byte index remains on a UTF-8 boundary");
-                result.push(character);
-                i += character.len_utf8();
-            }
-            continue;
-        }
         if bytes[i] == b'"' || bytes[i] == b'\'' {
-            quote = Some(bytes[i]);
-            result.push(bytes[i] as char);
-            i += 1;
+            // Token boundaries preserve string bytes and recover after a bad
+            // string ending at a newline, as the declaration parser does.
+            let mut string_input = cssparser::ParserInput::new(&input[i..]);
+            let mut parser = cssparser::Parser::new(&mut string_input);
+            let _ = parser.next().expect("opening quote begins a string token");
+            let end = i + parser.position().byte_index();
+            result.push_str(&input[i..end]);
+            i = end;
             continue;
         }
         if bytes[i] == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
