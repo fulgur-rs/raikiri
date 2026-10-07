@@ -57,3 +57,22 @@ fn ellipsis_text_is_one_ellipsis_or_one_period_per_glyph() {
         ("...", vec![0..1, 1..2, 2..3, 2..3])
     );
 }
+
+#[test]
+fn a_typographic_box_is_not_reported_as_generated_before_text() {
+    let mut document = Document::new();
+    let owner = document.append_element(Some(0), "div", taffy::Style::default(), None::<&str>);
+    let letter = crate::generated_content::generated_node_id(owner, PseudoElem::FirstLetter);
+    assert_eq!(run_source(&document, letter), None);
+    for (pseudo, kind) in [
+        (PseudoElem::Before, GeneratedKind::Before),
+        (PseudoElem::After, GeneratedKind::After),
+        (PseudoElem::Marker, GeneratedKind::Marker),
+    ] {
+        let id = crate::generated_content::generated_node_id(owner, pseudo);
+        assert_eq!(
+            run_source(&document, id),
+            Some(RunSource::Generated(NodeId::new(owner as u64), kind))
+        );
+    }
+}

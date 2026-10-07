@@ -20,6 +20,54 @@ const AHEM: &[u8] = include_bytes!(concat!(
     "/../raikiri-dom/tests/data/text-autospace/Ahem.ttf"
 ));
 
+#[test]
+fn inside_marker_before_body_and_after_keep_distinct_sources() {
+    let html = br#"<!doctype html><style>
+      @page { size: 300px 200px; margin: 0 }
+      body { margin: 0; font: 10px/10px Ahem }
+      li { list-style: "M " inside }
+      li::before { content: "B " }
+      li::after { content: " A" }
+    </style><li id="item">body</li>"#;
+    let fonts = FontCollectionBuilder::new()
+        .font_bytes("Ahem", AHEM.to_vec())
+        .build()
+        .expect("fonts");
+    let resources = RenderResources::new().fonts(fonts);
+    let doc = parse_html_with_resources(&html[..], &resources).expect("parse");
+    let LayoutStatus::Completed(result) = layout(
+        &doc,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        LayoutOptions::new().resources(&resources),
+    )
+    .expect("layout") else {
+        panic!("expected a complete layout");
+    };
+    let page = result.pages().next().expect("one page");
+    let runs = page.text_runs();
+    let marker = runs.iter().find(|run| run.text == "M").expect("marker");
+    let RunSource::Generated(element, GeneratedKind::Marker) = marker.source else {
+        panic!("expected a ::marker run, got {:?}", marker.source);
+    };
+    assert_eq!(page.dom().attr(element, "id"), Some("item"));
+    let before = runs.iter().find(|run| run.text == "B ").expect("before");
+    assert_eq!(
+        before.source,
+        RunSource::Generated(element, GeneratedKind::Before)
+    );
+    let after = runs.iter().find(|run| run.text == " A").expect("after");
+    assert_eq!(
+        after.source,
+        RunSource::Generated(element, GeneratedKind::After)
+    );
+    let body = runs.iter().find(|run| run.text == "body").expect("body");
+    let RunSource::Text(text_node) = body.source else {
+        panic!("expected the body text node");
+    };
+    assert_eq!(page.dom().text(text_node), Some("body"));
+}
+
 /// What a painter keeps of one glyph: its id, position and source text.
 fn place(run: &PositionedGlyphRun<'_>) -> Vec<(u32, (f32, f32), String)> {
     let mut pen = run.origin.0;
@@ -130,4 +178,91 @@ fn painter_reads_text_runs_through_raikiri_html_only() {
         .filter(|warning| matches!(warning.kind, WarningKind::TextRunsOmitted))
         .count();
     assert_eq!(omitted, 1, "the vertical paragraph is reported as omitted");
+}
+
+#[test]
+fn first_letter_runs_keep_original_sources_and_resolved_paint() {
+    for generated in [false, true] {
+        let before = if generated {
+            "li::before {content:'XY';color:blue}"
+        } else {
+            ""
+        };
+        let html = format!(
+            r#"<!doctype html><style>
+          @page {{size:300px 200px;margin:0}}
+          body {{margin:0;font:10px/30px Ahem;color:black}}
+          li {{list-style:"M " inside}}
+          li::first-letter {{font-size:20px;color:red}}
+          {before}
+        </style><li id="item">AB</li>"#
+        );
+        let fonts = FontCollectionBuilder::new()
+            .font_bytes("Ahem", AHEM.to_vec())
+            .build()
+            .unwrap();
+        let resources = RenderResources::new().fonts(fonts);
+        let doc = parse_html_with_resources(html.as_bytes(), &resources).unwrap();
+        let LayoutStatus::Completed(result) = layout(
+            &doc,
+            PageDefaults::default(),
+            LayoutConfig::default(),
+            LayoutOptions::new().resources(&resources),
+        )
+        .unwrap() else {
+            panic!("expected complete layout")
+        };
+        let page = result.pages().next().unwrap();
+        let runs = page.text_runs();
+        let marker = runs.iter().find(|run| run.text == "M").unwrap();
+        assert_eq!(marker.font_size, 10.0);
+        let RunSource::Generated(item, GeneratedKind::Marker) = marker.source else {
+            panic!("marker source")
+        };
+        assert_eq!(page.dom().attr(item, "id"), Some("item"));
+        let letter = runs.iter().find(|run| run.font_size == 20.0).unwrap();
+        assert_eq!(letter.text, if generated { "X" } else { "A" });
+        assert_eq!(
+            letter.color,
+            CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255
+            }
+        );
+        if generated {
+            assert_eq!(
+                letter.source,
+                RunSource::Generated(item, GeneratedKind::Before)
+            );
+            let rest = runs.iter().find(|run| run.text == "Y").unwrap();
+            assert_eq!(rest.source, letter.source);
+            assert_eq!(
+                rest.color,
+                CssColor {
+                    r: 0,
+                    g: 0,
+                    b: 255,
+                    a: 255
+                }
+            );
+        } else {
+            let RunSource::Text(text) = letter.source else {
+                panic!("original DOM text source")
+            };
+            assert_eq!(page.dom().text(text), Some("AB"));
+            let rest = runs.iter().find(|run| run.text == "B").unwrap();
+            assert_eq!(rest.source, letter.source);
+            assert_eq!(
+                rest.color,
+                CssColor {
+                    r: 0,
+                    g: 0,
+                    b: 0,
+                    a: 255
+                }
+            );
+        }
+    }
 }

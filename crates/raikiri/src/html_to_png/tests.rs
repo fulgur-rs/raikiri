@@ -63,10 +63,68 @@ fn html_to_png_rejects_page_that_exceeds_raster_byte_budget() {
     );
 }
 
-/// Exercise `<img>` intrinsic-size resolution, layout, pixel decoding,
-/// and painting end to end through `html_to_png_with_resolver`.
-/// The `assert_ne!` below proves the resolver/pixel source actually
-/// paints pixels, not merely that the call succeeds.
+#[test]
+fn resolver_backed_png_render_prepares_inside_marker_images() {
+    use raikiri_traits::{
+        DecodedImage, ImagePixelSource, IntrinsicBox, ReplacedResolver, ResolveDisposition,
+        ResolvedIntrinsic, ResolverError, ResolverRequest,
+    };
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    struct Marker(AtomicBool);
+    impl ReplacedResolver for Marker {
+        fn resolve(
+            &self,
+            request: ResolverRequest<'_>,
+        ) -> Result<ResolvedIntrinsic, ResolverError> {
+            assert_eq!(request.url().as_str(), "https://images.test/marker.png");
+            self.0.store(true, Ordering::SeqCst);
+            Ok(ResolvedIntrinsic {
+                intrinsic: IntrinsicBox::new(8.0, 8.0),
+                disposition: ResolveDisposition::Ok,
+            })
+        }
+    }
+    impl ImagePixelSource for Marker {
+        fn get_decoded(&self, _: &url::Url) -> Option<Arc<DecodedImage>> {
+            self.0.load(Ordering::SeqCst).then(|| {
+                Arc::new(DecodedImage {
+                    width: 8,
+                    height: 8,
+                    rgba: [255, 0, 0, 255].repeat(8 * 8),
+                })
+            })
+        }
+    }
+    let marker = Marker(AtomicBool::new(false));
+    let html = br#"<style>body{margin:0}li{list-style:inside url(https://images.test/marker.png)}</style><li>body</li>"#;
+    let rendered = html_to_png_with_resolver(html.as_slice(), &marker, &marker).unwrap();
+    assert!(marker.0.load(Ordering::SeqCst));
+    assert_ne!(rendered, html_to_png(html.as_slice()).unwrap());
+    for (html, expected) in [
+        (
+            "<base href='https://images.test/'><li style='list-style:inside url(marker.png)'>body</li>",
+            true,
+        ),
+        (
+            "<li style='list-style:inside url(marker.png)'>body</li>",
+            false,
+        ),
+        ("<li style='list-style:inside decimal'>body</li>", false),
+        (
+            "<style>li::marker{content:'custom'}</style><li style='list-style:inside url(https://images.test/marker.png)'>body</li>",
+            false,
+        ),
+    ] {
+        let marker = Marker(AtomicBool::new(false));
+        html_to_png_with_resolver(html.as_bytes(), &marker, &marker).unwrap();
+        assert_eq!(marker.0.load(Ordering::SeqCst), expected);
+    }
+}
+
+/// Exercise intrinsic sizing, decoding and painting through the resolver API.
 #[test]
 fn html_to_png_with_resolver_paints_an_img_element() {
     use raikiri_net::{FileNetworkProvider, ImageResolver};
@@ -136,14 +194,18 @@ fn html_to_png_with_resolver_propagates_a_terminal_resolver_error() {
 
     // The `src` must parse as an absolute URL — a relative one is skipped
     // before `resolve()` is ever called, which would make this vacuous.
-    let html = br#"<html><body><img src="file:///nonexistent-fixture.png"></body></html>"#;
     let resolver = AlwaysErrResolver;
-    let err = html_to_png_with_resolver(&html[..], &resolver, &resolver)
-        .expect_err("a resolver Err must fail the render");
-    assert!(
-        matches!(err, RenderError::Resolver(ResolverError::Decode(_))),
-        "expected RenderError::Resolver(Decode(_)), got {err:?}"
-    );
+    for html in [
+        r#"<html><body><img src="file:///nonexistent-fixture.png"></body></html>"#,
+        r#"<li style="list-style:inside url(file:///nonexistent-fixture.png)">body</li>"#,
+    ] {
+        let err = html_to_png_with_resolver(html.as_bytes(), &resolver, &resolver)
+            .expect_err("a resolver Err must fail the render");
+        assert!(matches!(
+            err,
+            RenderError::Resolver(ResolverError::Decode(_))
+        ));
+    }
 }
 
 #[test]

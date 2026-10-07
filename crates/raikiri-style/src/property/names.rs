@@ -139,6 +139,7 @@ pub fn supported_property_names() -> &'static [&'static str] {
         "letter-spacing",
         "line-break",
         "line-height",
+        "list-style",
         "list-style-image",
         "list-style-position",
         "list-style-type",

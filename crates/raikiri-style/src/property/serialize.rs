@@ -463,6 +463,7 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::Display(..)
         | PropertyValue::ListStyleType(..)
         | PropertyValue::ListStylePosition(..)
+        | PropertyValue::ListStyle(..)
         | PropertyValue::ListStyleImage(..)
         | PropertyValue::CounterReset(..)
         | PropertyValue::CounterResetInherit

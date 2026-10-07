@@ -226,20 +226,6 @@ pub(crate) fn apply_computed_to_style(
         bridge_float(style, cv);
         bridge_margin(style, cv, &mut doc.layout_warnings);
         bridge_padding(style, cv, &mut doc.layout_warnings);
-        if cv.display == DisplayValue::ListItem
-            && matches!(
-                cv.list_style_position,
-                raikiri_style::ListStylePosition::Inside
-            )
-            && style.padding.left.into_raw().value() == 0.0
-        {
-            // The current Taffy bridge has no marker child. Reserve a
-            // conservative first-line gutter for the inside marker so its
-            // post-layout paint does not overlap ordinary text. Explicit or
-            // percentage padding remains untouched; a later inline-formatting
-            // pass will replace this estimate with measured marker width.
-            style.padding.left = LengthPercentage::length(cv.font_size.px().max(16.0) * 1.5);
-        }
         bridge_min_max_size(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
         bridge_border(style, cv, &mut doc.layout_warnings);
         bridge_box_sizing(style, cv);

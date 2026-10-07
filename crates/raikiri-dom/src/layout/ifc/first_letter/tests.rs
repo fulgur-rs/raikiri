@@ -258,3 +258,146 @@ fn empty_text_before_a_comment_split_grapheme_keeps_original_sources() {
         })
         && run.font_size() == 10.0));
 }
+
+#[test]
+fn preserved_whitespace_before_an_inner_block_stops_ancestor_letter_selection() {
+    for (extra, expected_size) in [("", 20.0), ("white-space:pre", 10.0)] {
+        let fixture = sheet_fixture("div::first-letter{font-size:20px}", extra, |doc, root| {
+            doc.append_text(root, " ");
+            let block = doc.append_element(
+                Some(root),
+                "p",
+                taffy::Style::default(),
+                Some("display:block"),
+            );
+            doc.append_text(block, "A");
+        });
+        let block = fixture.doc.get_node(fixture.root).unwrap().children[1];
+        let text = fixture.doc.get_node(block).unwrap().children[0];
+        let fonts = ahem_fonts();
+        let limits = Limits::default();
+        let mut builder = paragraph_builder(&fixture, &fonts, &limits);
+        let mut letter = FirstLetter::new(&fixture.doc, &fixture.cascade, block, &limits);
+        letter
+            .push(
+                &mut builder,
+                &fixture.doc,
+                &fixture.cascade,
+                TextSource::Dom {
+                    node: NodeId(text as u64),
+                    offset: 0,
+                },
+                &fixture.cascade.computed[block],
+                "A",
+                &fonts,
+            )
+            .unwrap();
+        assert_eq!(letter.styles.len(), usize::from(extra.is_empty()));
+        let mut cx = LayoutContext::new();
+        let paragraph = builder.build(&mut cx, &fonts).unwrap();
+        let (options, _) =
+            style::line_options(&fixture.cascade.computed[block], block, &fonts).unwrap();
+        let lines = paragraph.break_all(&mut cx, &options, 100.0, &AtomicSizes::EMPTY);
+        let run = lines.iter().flat_map(glyph_runs).next().unwrap();
+        assert_eq!(run.font_size(), expected_size);
+        assert_eq!(
+            run.source(),
+            Some(TextSource::Dom {
+                node: NodeId(text as u64),
+                offset: 0,
+            })
+        );
+    }
+}
+
+#[test]
+fn whitespace_only_prefix_keeps_normal_source_until_the_adjacent_letter() {
+    let fixture = sheet_fixture(
+        "div::first-letter{font-size:20px}",
+        "white-space:pre",
+        |doc, root| {
+            doc.append_text(root, " ");
+            doc.append_comment(Some(root), "whitespace and letter keep their own sources");
+            doc.append_text(root, "AB");
+        },
+    );
+    let children = &fixture.doc.get_node(fixture.root).unwrap().children;
+    let prefix = children[0];
+    let letters = children[2];
+    let fonts = ahem_fonts();
+    let limits = Limits::default();
+    let mut builder = paragraph_builder(&fixture, &fonts, &limits);
+    let mut letter = FirstLetter::new(&fixture.doc, &fixture.cascade, fixture.root, &limits);
+    let cv = &fixture.cascade.computed[fixture.root];
+    letter
+        .push(
+            &mut builder,
+            &fixture.doc,
+            &fixture.cascade,
+            TextSource::Dom {
+                node: NodeId(prefix as u64),
+                offset: 0,
+            },
+            cv,
+            " ",
+            &fonts,
+        )
+        .unwrap();
+    assert!(letter.styles.is_empty());
+    letter
+        .push(
+            &mut builder,
+            &fixture.doc,
+            &fixture.cascade,
+            TextSource::Dom {
+                node: NodeId(letters as u64),
+                offset: 0,
+            },
+            cv,
+            "AB",
+            &fonts,
+        )
+        .unwrap();
+    assert_eq!(letter.styles.len(), 1);
+    assert_eq!(letter.styles[0].source_owner, letters);
+    assert_eq!(letter.styles[0].source_range, Some(0..1));
+    let mut cx = LayoutContext::new();
+    let paragraph = builder.build(&mut cx, &fonts).unwrap();
+    assert_eq!(paragraph.text(), " AB");
+    let (options, _) = style::line_options(cv, fixture.root, &fonts).unwrap();
+    let lines = paragraph.break_all(&mut cx, &options, 100.0, &AtomicSizes::EMPTY);
+    for (node, offset, size) in [(prefix, 0, 10.0), (letters, 0, 20.0), (letters, 1, 10.0)] {
+        assert!(lines.iter().flat_map(glyph_runs).any(|run| run.source()
+            == Some(TextSource::Dom {
+                node: NodeId(node as u64),
+                offset,
+            })
+            && run.font_size() == size));
+    }
+}
+
+#[test]
+fn generated_before_propagates_the_floating_letter_error_through_projection() {
+    let fixture = sheet_fixture(
+        "div::before{content:'A'} div::first-letter{float:left;font-size:40px}",
+        "",
+        |doc, root| {
+            doc.append_text(root, "B");
+        },
+    );
+    let result = super::super::projection::project_ifc(
+        &fixture.doc,
+        &fixture.cascade,
+        fixture.root,
+        &mut LayoutContext::new(),
+        &ahem_fonts(),
+        &Limits::default(),
+    );
+    assert!(matches!(
+        result,
+        Err(IfcError::Unsupported {
+            node,
+            reason: "floating ::first-letter requires drop-cap box layout",
+        }) if node == fixture.root
+    ));
+}

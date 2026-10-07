@@ -2,7 +2,7 @@
 //! draws text itself.
 
 use super::records::{PageFragment, ProjectedTextRoot};
-use crate::generated_content::{computed_for_id, generated_origin};
+use crate::generated_content::generated_origin;
 use crate::layout::{PositionedLine, PositionedLines, PositionedRun, line_center_on_page};
 use crate::{Document, relative_offset};
 use raikiri_style::property::{CssColor, DisplayValue, PositionValue};
@@ -96,6 +96,8 @@ pub enum GeneratedKind {
     Before,
     /// `::after`.
     After,
+    /// `::marker`.
+    Marker,
 }
 
 /// A font face and its data.
@@ -290,7 +292,13 @@ fn run_source(document: &Document, owner: usize) -> Option<RunSource> {
     if let Some((element, pseudo)) = generated_origin(owner) {
         let kind = match pseudo {
             PseudoElem::After => GeneratedKind::After,
-            _ => GeneratedKind::Before,
+            PseudoElem::Marker => GeneratedKind::Marker,
+            PseudoElem::Before | PseudoElem::FirstLine => GeneratedKind::Before,
+            // Retained typographic boxes are projected with their original
+            // text owner; unsupported box pseudos never supply text sources.
+            PseudoElem::FirstLetter | PseudoElem::Backdrop | PseudoElem::FileSelectorButton => {
+                return None;
+            }
         };
         return Some(RunSource::Generated(NodeId::new(element as u64), kind));
     }
@@ -338,7 +346,6 @@ fn glyph_text_ranges(clusters: &[u32], run_start: usize, run_end: usize) -> Vec<
 /// page at `(x, y)`.
 fn glyph_run<'a>(
     document: &Document,
-    cascade: &CascadeResult,
     line: &PositionedLine<'a>,
     positioned: &PositionedRun<'a>,
     (x, y): (f32, f32),
@@ -350,7 +357,7 @@ fn glyph_run<'a>(
     } else {
         run_source(document, positioned.owner)?
     };
-    let color = computed_for_id(cascade, positioned.owner)?.color;
+    let color = positioned.style.color;
     let font = run.font_data()?;
     let index = font.index;
     let (bytes, blob) = font.data.into_raw_parts();
@@ -468,7 +475,7 @@ fn root_runs<'a>(
         out.extend(
             line.runs
                 .iter()
-                .filter_map(|run| glyph_run(document, cascade, &line, run, line_origin)),
+                .filter_map(|run| glyph_run(document, &line, run, line_origin)),
         );
     }
     Some(())

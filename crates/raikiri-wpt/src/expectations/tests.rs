@@ -790,11 +790,12 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS Text Decoration horizontal text-emphasis exact slice (+8).
     // + CSS UI text-overflow into padding exact slice (+1).
     // + CSS mediaqueries upstream exact pixel references (+22).
+    // + CSS Lists shorthand and inside marker text exact slice (+8).
     // + CSS2 relative block positioning exact slice (+14).
     // + CSS Inline image-loaded vertical-align length exact slice (+1).
     // + Genuine non-floating first-letter pairs (+3), remove two vacuous pins (-2).
     // + Remeasured baseline pins (+8 PASS, -7 inaccurate pins).
-    assert_eq!(set.baseline.entries.len(), 1436);
+    assert_eq!(set.baseline.entries.len(), 1444);
     for id in [
         "css/css-pseudo/first-letter-004.html",
         "css/css-pseudo/first-letter-005.html",
@@ -812,6 +813,18 @@ fn load_from_workspace_root_reads_the_header_only_files() {
             .entries
             .contains("css/css-backgrounds/first-letter-space-not-selected.html")
     );
+    for id in [
+        "css/css-lists/list-style-type-string-001a.html",
+        "css/css-lists/list-style-type-string-001b.html",
+        "css/css-lists/content-property/marker-text-matches-decimal.html",
+        "css/css-lists/content-property/marker-text-matches-decimal-leading-zero.html",
+        "css/css-lists/content-property/marker-text-matches-lower-latin.html",
+        "css/css-lists/content-property/marker-text-matches-upper-latin.html",
+        "css/css-lists/content-property/marker-text-matches-lower-roman.html",
+        "css/css-lists/content-property/marker-text-matches-upper-roman.html",
+    ] {
+        assert!(set.baseline.entries.contains(id));
+    }
     assert!(
         set.baseline
             .entries

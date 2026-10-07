@@ -158,10 +158,56 @@ pub(crate) fn draw_ifc_lines(
             f64::from(position.x),
             f64::from(position.y + position.shift_y),
         ));
+        for fragment in line.fragments() {
+            let Fragment::Atomic(atomic) = fragment else {
+                continue;
+            };
+            let Some((element, raikiri_style::PseudoElem::Marker)) =
+                generated_origin(atomic.node.0 as usize)
+            else {
+                continue;
+            };
+            let Some(image) = document.list_marker_image(element) else {
+                continue;
+            };
+            if computed_for_id(cascade, atomic.node.0 as usize)
+                .is_some_and(|cv| cv.visibility != raikiri_style::property::Visibility::Visible)
+            {
+                continue;
+            }
+            let mut logical = atomic.border_rect;
+            logical.block_start += line.block_offset();
+            let rect = positioned_line.converter.rect(logical);
+            let brush = peniko::ImageBrush::new(peniko::ImageData {
+                data: peniko::Blob::from(image.rgba.clone()),
+                format: peniko::ImageFormat::Rgba8,
+                alpha_type: peniko::ImageAlphaType::Alpha,
+                width: image.width,
+                height: image.height,
+            });
+            scene.fill(
+                Fill::NonZero,
+                Affine::translate((
+                    f64::from(position.x + rect.x),
+                    f64::from(position.y + position.shift_y + rect.y),
+                )) * Affine::scale_non_uniform(
+                    f64::from(rect.width) / f64::from(image.width),
+                    f64::from(rect.height) / f64::from(image.height),
+                ),
+                brush.as_ref(),
+                None,
+                &Rect::new(0.0, 0.0, f64::from(image.width), f64::from(image.height)),
+            );
+        }
         // The boxes of the inline elements on this line go below its text
         // (CSS 2.1 Appendix E: an inline box's background and borders, then
         // its text).
         for piece in &pieces_by_line[line_index] {
+            if generated_origin(piece.node)
+                .is_some_and(|(_, pseudo)| pseudo == raikiri_style::PseudoElem::Marker)
+            {
+                continue;
+            }
             let root_node = document.get_node(root_id);
             let Some(cv) = root_node
                 .and_then(|root| root.ifc_typographic_style(piece.node))

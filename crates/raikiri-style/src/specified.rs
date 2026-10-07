@@ -709,6 +709,21 @@ pub(crate) struct PreferredSizePrecedence {
 }
 
 impl SpecifiedValues {
+    /// Inherit marker text with the UA defaults required by CSS Lists 3 §3.1.1.
+    pub(crate) fn inherit_marker_from(parent: &ComputedValues) -> Self {
+        let mut marker = Self::inherit_from(parent);
+        marker.unicode_bidi = crate::property::UnicodeBidi::Isolate;
+        marker.font_variant_numeric = FontVariantNumeric::initial();
+        marker.font_variant_numeric.tabular_nums = true;
+        marker.white_space = WhiteSpace::Pre;
+        marker.white_space_collapse = WhiteSpaceCollapse::Preserve;
+        marker.text_wrap = TextWrapMode::Nowrap;
+        marker.effective_white_space_collapse = WhiteSpaceCollapse::Preserve;
+        marker.effective_text_wrap_mode = TextWrapMode::Nowrap;
+        marker.text_transform = TextTransform::None;
+        marker
+    }
+
     /// Staging values with the CSS-specified initial value for every property.
     ///
     /// The field-by-field comments of [`ComputedValues::initial`] and field

@@ -179,7 +179,7 @@ impl FirstLetter {
         };
         let id = node.0 as usize;
         let Some(parent) = doc.parent_of(id).and_then(|parent| doc.get_node(parent)) else {
-            return Ok(None);
+            return Ok(None); // cov:ignore: projected text sources retain a parent in the validated document graph.
         };
         let mut pieces = Vec::new();
         let mut length = text.len() as u64;
@@ -263,7 +263,7 @@ impl FirstLetter {
             if dom_parent == Some(owner) {
                 Some(range)
             } else {
-                None
+                None // cov:ignore: adjacent-range continuation contains same-parent text only; entering another box calls stop.
             }
         } else if self.pending && !text.is_empty() {
             let range = shodo::first_letter_range(text, preserve_breaks);
@@ -334,7 +334,7 @@ impl FirstLetter {
                 let Some(cv) =
                     cascade.resolve_first_letter_style(StyleNodeId::new(origin as u64), &resolved)
                 else {
-                    continue;
+                    continue; // cov:ignore: origins are retained only for first-letter styles present in this immutable cascade.
                 };
                 if cv.float != FloatValue::None {
                     return Err(IfcError::Unsupported {
