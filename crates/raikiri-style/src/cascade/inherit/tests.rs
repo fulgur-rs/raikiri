@@ -9343,3 +9343,58 @@ fn children_of_shared_siblings_share_with_their_cousins() {
     // children, and the text inside those share: 4 * 3.
     assert_eq!(shared, 12);
 }
+
+#[test]
+fn list_style_shorthand_defaults_css_wide_and_variables_follow_longhand_cascade() {
+    use crate::property::BackgroundImage;
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "ol", Some("list-style: square inside url(parent.png)"));
+    let inherited = doc.push_element(parent, "li", Some("list-style: inherit"));
+    let initial = doc.push_element(parent, "li", Some("list-style: initial"));
+    let unset = doc.push_element(parent, "li", Some("list-style: unset"));
+    let reset = doc.push_element(parent, "li", Some("list-style: inside"));
+    let variable = doc.push_element(parent, "li", Some("--marker: decimal inside url(child.png);list-style: var(--marker);list-style-type: none"));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade");
+    for child in [inherited, unset] {
+        assert_eq!(
+            result.computed[child].list_style_type,
+            ListStyleType::Named("square".into())
+        );
+        assert_eq!(
+            result.computed[child].list_style_position,
+            ListStylePosition::Inside
+        );
+        assert_eq!(
+            result.computed[child].list_style_image,
+            BackgroundImage::Url("parent.png".into())
+        );
+    }
+    for child in [initial, reset] {
+        assert_eq!(result.computed[child].list_style_type, ListStyleType::Disc);
+        assert_eq!(
+            result.computed[child].list_style_image,
+            BackgroundImage::None
+        );
+    }
+    assert_eq!(
+        result.computed[initial].list_style_position,
+        ListStylePosition::Outside
+    );
+    assert_eq!(
+        result.computed[reset].list_style_position,
+        ListStylePosition::Inside
+    );
+    assert_eq!(
+        result.computed[variable].list_style_type,
+        ListStyleType::None
+    );
+    assert_eq!(
+        result.computed[variable].list_style_position,
+        ListStylePosition::Inside
+    );
+    assert_eq!(
+        result.computed[variable].list_style_image,
+        BackgroundImage::Url("child.png".into())
+    );
+}

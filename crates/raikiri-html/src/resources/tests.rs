@@ -206,6 +206,88 @@ impl NetworkProvider for SvgNetworkProvider {
 }
 
 #[test]
+fn relative_inside_marker_image_is_fetched_once_before_layout() {
+    let provider = SvgNetworkProvider::default();
+    let resources = RenderResources::new().network_provider(&provider);
+    let base = Url::parse("https://images.test/assets/document.html").unwrap();
+    let options = crate::types::ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: Some(base.clone()),
+    };
+    let html = br#"<!doctype html><style>li {list-style:inside url(marker.svg)}</style><li>one</li><li>two</li>"#;
+    let mut uncascaded = crate::parse(&html[..], &options).expect("HTML parses");
+    let cascade = crate::build_cascaded(&uncascaded);
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    resources.preload_list_marker_images(
+        &cascade.computed,
+        Some(&base),
+        &warnings,
+        &mut Default::default(),
+        &mut 0,
+        None,
+    );
+    uncascaded
+        .dom
+        .prepare_list_marker_images(&cascade, &resources, Some(&base));
+    assert_eq!(
+        *provider.requests.lock().unwrap(),
+        [(base.join("marker.svg").unwrap(), ResourceKind::Image)]
+    );
+    let item = cascade
+        .computed
+        .iter()
+        .position(|cv| cv.display == DisplayValue::ListItem)
+        .unwrap();
+    let image = uncascaded
+        .dom
+        .list_marker_image(item)
+        .expect("prepared image");
+    assert_eq!((image.width, image.height), (2, 1));
+}
+
+#[test]
+fn viewbox_only_svg_inside_marker_uses_one_em_default_size() {
+    let resources = RenderResources::new();
+    let options = crate::types::ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let html = br#"<!doctype html><li style="font-size:16px;list-style:inside url('data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 10 10%22%3E%3Crect width=%2210%22 height=%2210%22 fill=%22green%22/%3E%3C/svg%3E')">one</li>"#;
+    let mut uncascaded = crate::parse(&html[..], &options).unwrap();
+    let cascade = crate::build_cascaded(&uncascaded);
+    resources.preload_list_marker_images(
+        &cascade.computed,
+        None,
+        &Arc::new(Mutex::new(Vec::new())),
+        &mut Default::default(),
+        &mut 0,
+        None,
+    );
+    uncascaded
+        .dom
+        .prepare_list_marker_images(&cascade, &resources, None);
+    let item = cascade
+        .computed
+        .iter()
+        .position(|cv| cv.display == DisplayValue::ListItem)
+        .unwrap();
+    let image = uncascaded
+        .dom
+        .list_marker_image(item)
+        .expect("rasterized SVG marker");
+    assert_eq!((image.width, image.height), (16, 16));
+    assert_eq!(
+        uncascaded.dom.list_marker_image_size(item),
+        Some(ImageRasterSize {
+            width: 16.0,
+            height: 16.0
+        })
+    );
+}
+
+#[test]
 fn preloads_an_absolute_svg_background_once_and_rasterizes_on_demand() {
     let provider = SvgNetworkProvider::default();
     let resources = RenderResources::new().network_provider(&provider);

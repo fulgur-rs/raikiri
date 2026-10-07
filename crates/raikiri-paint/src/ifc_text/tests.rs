@@ -36,6 +36,68 @@ fn lay_out(doc: &mut Document, cascade: &raikiri_style::CascadeResult) {
 }
 
 #[test]
+fn inside_image_marker_scales_raster_pixels_to_css_dimensions() {
+    struct MarkerPixels;
+    impl raikiri_traits::ImagePixelSource for MarkerPixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
+                width: 32,
+                height: 16,
+                rgba: [255, 0, 0, 255].repeat(32 * 16),
+            }))
+        }
+        fn intrinsic_size(&self, _: &url::Url) -> Option<raikiri_traits::ImageIntrinsicSize> {
+            Some(raikiri_traits::ImageIntrinsicSize {
+                width: Some(16.0),
+                height: Some(8.0),
+                aspect_ratio: Some(2.0),
+            })
+        }
+    }
+    let (mut doc, cascade, root) = paragraph(
+        "display:list-item;list-style:inside url(https://images.test/marker.png)",
+        |doc, root| {
+            doc.append_text(root, "a");
+        },
+    );
+    doc.prepare_list_marker_images(&cascade, &MarkerPixels, None);
+    lay_out(&mut doc, &cascade);
+    let mut scene = Scene::new();
+    draw_ifc_lines(
+        &mut scene,
+        &doc,
+        &cascade,
+        root,
+        IfcPosition {
+            x: 0.0,
+            y: 0.0,
+            shift_y: 0.0,
+        },
+        &crate::text::DecorationContext::default(),
+        None,
+        &[],
+    );
+    let image = scene
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            RenderCommand::Fill(fill) if matches!(fill.brush, anyrender::Paint::Image(_)) => {
+                Some(fill)
+            }
+            _ => None,
+        })
+        .expect("image marker fill");
+    assert_eq!(&image.transform.as_coeffs()[..4], &[0.5, 0.0, 0.0, 0.5]);
+    assert_eq!(
+        kurbo::Shape::bounding_box(&image.shape),
+        Rect::new(0.0, 0.0, 32.0, 16.0)
+    );
+}
+
+#[test]
 fn many_inline_pieces_on_separate_lines_paint_within_three_seconds() {
     use std::time::{Duration, Instant};
 

@@ -2188,6 +2188,18 @@ impl ComputedValues {
         child.quotes_auto = parent.quotes_auto;
         child
     }
+
+    /// Inherit marker text styles, including the CSS Lists 3 §3.1.1 UA defaults.
+    /// The cascade applies author declarations after these defaults.
+    pub fn inherit_marker_from(parent: &Self) -> Self {
+        let mut marker = crate::specified::SpecifiedValues::inherit_marker_from(parent).finalize(
+            parent,
+            &crate::resolve::ResolveContext::new(parent.font_size),
+        );
+        marker.custom_properties = parent.custom_properties.clone();
+        marker.quotes_auto = parent.quotes_auto;
+        marker
+    }
 }
 
 mod cssom;

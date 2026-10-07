@@ -1483,3 +1483,46 @@ pub(super) fn parse_legacy_page_break_inside(input: &mut Parser<'_, '_>) -> Opti
         _ => None,
     }
 }
+
+/// Parse the unordered shorthand, resolving `none` after explicit components.
+pub(super) fn parse_list_style(input: &mut Parser<'_, '_>) -> Option<ListStyleShorthand> {
+    let mut kind = None;
+    let mut position = None;
+    let mut image = None;
+    let mut none_count = 0;
+    let mut any = false;
+    while !input.is_exhausted() {
+        let start = input.state();
+        if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+            none_count += 1;
+        } else if let Ok(value) = input.try_parse(|i| parse_list_style_position(i).ok_or(())) {
+            if position.replace(value).is_some() {
+                return None;
+            }
+        } else if let Ok(value) = input.try_parse(|i| parse_list_style_image(i).ok_or(())) {
+            if image.replace(value).is_some() {
+                return None;
+            }
+        } else if let Ok(value) = input.try_parse(|i| parse_list_style_type(i).ok_or(())) {
+            if kind.replace(value).is_some() {
+                return None;
+            }
+        } else {
+            input.reset(&start);
+            break;
+        }
+        any = true;
+    }
+    if !any || none_count > usize::from(kind.is_none()) + usize::from(image.is_none()) {
+        return None;
+    }
+    if none_count > 0 {
+        kind.get_or_insert(ListStyleType::None);
+        image.get_or_insert(BackgroundImage::None);
+    }
+    Some(ListStyleShorthand {
+        kind: kind.unwrap_or_default(),
+        position: position.unwrap_or_default(),
+        image: image.unwrap_or(BackgroundImage::None),
+    })
+}

@@ -3088,7 +3088,7 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
 /// determines the classification.
 // Includes page-only inherit markers, which are resolved before this
 // phase and therefore remain unchanged here.
-const PHASE_3_PASS_THROUGH_VARIANTS: usize = 166;
+const PHASE_3_PASS_THROUGH_VARIANTS: usize = 167;
 /// Number of corpus variants transformed by page-context resolution.
 /// This is derived from the corpus size and the pass-through count.
 fn phase_3_transformed_variants() -> usize {
@@ -3774,6 +3774,7 @@ property_key_samples! {
     ListStyleType => PropertyValue::ListStyleType(ListStyleType::Named("decimal".into())),
     ListStylePosition => PropertyValue::ListStylePosition(ListStylePosition::Inside),
     ListStyleImage => PropertyValue::ListStyleImage(BackgroundImage::Url("marker.png".into())),
+    ListStyle => PropertyValue::ListStyle(crate::property::ListStyleShorthand { kind: ListStyleType::Disc, position: ListStylePosition::Inside, image: BackgroundImage::None }),
     ColumnCount => PropertyValue::ColumnCount(ColumnCountValue::Count(3)),
     ColumnFill => PropertyValue::ColumnFill(ColumnFillValue::BalanceAll),
     ColumnWidth => PropertyValue::ColumnWidth(ColumnWidthValue::Length(Length::Em(2.0))),
@@ -4002,6 +4003,7 @@ property_value_variant_registry! {
     ListStyleType,
     ListStylePosition,
     ListStyleImage,
+    ListStyle,
     CounterReset,
     CounterIncrement,
     CounterSet,
@@ -4683,6 +4685,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | PropertyValue::FontFamily(_)
             | PropertyValue::Display(_)
             | PropertyValue::ListStyleType(_)
+        | PropertyValue::ListStyle(_)
         | PropertyValue::ListStyleImage(_)
             | PropertyValue::ListStylePosition(_)
             | PropertyValue::CounterReset(_)

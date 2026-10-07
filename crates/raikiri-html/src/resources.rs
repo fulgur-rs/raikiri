@@ -857,6 +857,36 @@ impl<'a> RenderResources<'a> {
         self.preload_background_urls(raw_urls, warnings, seen, attempts, signal);
     }
 
+    /// Fetch image markers before layout because their dimensions affect lines.
+    pub(crate) fn preload_list_marker_images(
+        &self,
+        computed: &[ComputedValues],
+        base_url: Option<&Url>,
+        warnings: &SharedRenderWarnings,
+        seen: &mut std::collections::HashSet<Url>,
+        attempts: &mut usize,
+        signal: Option<&AbortSignal>,
+    ) {
+        let urls: Vec<String> = computed
+            .iter()
+            .filter(|cv| cv.display == DisplayValue::ListItem)
+            .filter_map(|cv| match &cv.list_style_image {
+                BackgroundImage::Url(raw) => Url::parse(raw)
+                    .ok()
+                    .or_else(|| base_url.and_then(|base| base.join(raw).ok()))
+                    .map(|url| url.to_string()),
+                _ => None,
+            })
+            .collect();
+        self.preload_background_urls(
+            urls.iter().map(String::as_str),
+            warnings,
+            seen,
+            attempts,
+            signal,
+        );
+    }
+
     /// Preload the page-context and page-margin-box background images of one
     /// page.
     pub(crate) fn preload_page_context_background_images(

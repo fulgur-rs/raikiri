@@ -280,6 +280,12 @@ impl Clone for CanvasBitmapByteCount {
     }
 }
 
+#[derive(Debug, Clone)]
+struct ListMarkerImage {
+    pixels: std::sync::Arc<raikiri_traits::DecodedImage>,
+    size: raikiri_traits::ImageRasterSize,
+}
+
 /// DOM Document (root plus a Vec-backed node arena).
 ///
 /// `nodes` is flat storage keyed by arena indices. Index 0 is the virtual
@@ -290,6 +296,8 @@ pub struct Document {
     pub(crate) page_projection: crate::page_projection::PageProjection,
     pub(crate) nodes: Vec<Node>,
     canvas_bitmap_bytes: CanvasBitmapByteCount,
+    /// Decoded inside-marker images retained for both sizing and painting.
+    list_marker_images: std::collections::HashMap<usize, ListMarkerImage>,
     /// Arena index of the Document root (normally 0, stored explicitly to
     /// accommodate unusual future cases such as detaching the root).
     pub(crate) root: usize,
@@ -478,6 +486,7 @@ impl Document {
             page_projection: crate::page_projection::PageProjection::default(),
             nodes,
             canvas_bitmap_bytes: CanvasBitmapByteCount(Some(0)),
+            list_marker_images: Default::default(),
             root: 0,
             layout_dirty: false,
             ifc: None,
@@ -2579,3 +2588,104 @@ impl Default for Document {
 
 #[cfg(test)]
 mod tests;
+
+impl Document {
+    /// Prepare inside image markers before layout from already resolved pixels.
+    /// A failed image keeps the text fallback; explicit `::marker` content wins.
+    pub fn prepare_list_marker_images(
+        &mut self,
+        cascade: &raikiri_style::CascadeResult,
+        source: &dyn raikiri_traits::ImagePixelSource,
+        base_url: Option<&url::Url>,
+    ) {
+        self.list_marker_images.clear();
+        for (element, cv) in cascade.computed.iter().enumerate() {
+            if !crate::generated_content::inside_marker_in_flow(cascade, element)
+                || cascade
+                    .pseudo
+                    .get(&(
+                        raikiri_style::StyleNodeId::new(element as u64),
+                        raikiri_style::PseudoElem::Marker,
+                    ))
+                    .is_some_and(|marker| !marker.content.is_empty())
+            {
+                continue;
+            }
+            let raikiri_style::property::BackgroundImage::Url(raw) = &cv.list_style_image else {
+                continue;
+            };
+            let Some(url) = url::Url::parse(raw)
+                .ok()
+                .or_else(|| base_url.and_then(|base| base.join(raw).ok()))
+            else {
+                continue;
+            };
+            let Some(intrinsic) = source.intrinsic_size(&url) else {
+                continue;
+            };
+            let em = cascade
+                .pseudo
+                .get(&(
+                    raikiri_style::StyleNodeId::new(element as u64),
+                    raikiri_style::PseudoElem::Marker,
+                ))
+                .unwrap_or(cv)
+                .font_size
+                .0;
+            let size = marker_image_size(intrinsic, em);
+            if let Some(image) = source.get_decoded_at_size(&url, size, None)
+                && image.width > 0
+                && image.height > 0
+            {
+                self.list_marker_images.insert(
+                    element,
+                    ListMarkerImage {
+                        pixels: image,
+                        size,
+                    },
+                );
+            }
+        }
+        self.layout_dirty = true;
+    }
+
+    /// Pixels of an inside marker prepared by [`Self::prepare_list_marker_images`].
+    pub fn list_marker_image(&self, element: usize) -> Option<&raikiri_traits::DecodedImage> {
+        self.list_marker_images
+            .get(&element)
+            .map(|marker| marker.pixels.as_ref())
+    }
+
+    /// CSS dimensions of a prepared marker, independent of raster rounding.
+    pub fn list_marker_image_size(
+        &self,
+        element: usize,
+    ) -> Option<raikiri_traits::ImageRasterSize> {
+        self.list_marker_images
+            .get(&element)
+            .map(|marker| marker.size)
+    }
+}
+
+fn marker_image_size(
+    intrinsic: raikiri_traits::ImageIntrinsicSize,
+    em: f32,
+) -> raikiri_traits::ImageRasterSize {
+    let valid = |value: f32| value.is_finite() && value > 0.0;
+    let width = intrinsic.width.filter(|value| valid(*value));
+    let height = intrinsic.height.filter(|value| valid(*value));
+    let ratio = intrinsic.aspect_ratio.filter(|value| valid(*value));
+    let (width, height) = match (width, height, ratio) {
+        (Some(width), Some(height), _) => (width, height),
+        (Some(width), None, Some(ratio)) => (width, width / ratio),
+        (None, Some(height), Some(ratio)) => (height * ratio, height),
+        (None, None, Some(ratio)) => {
+            let width = em.min(em * ratio);
+            (width, width / ratio)
+        }
+        (Some(width), None, None) => (width, em),
+        (None, Some(height), None) => (em, height),
+        (None, None, None) => (em, em),
+    };
+    raikiri_traits::ImageRasterSize { width, height }
+}

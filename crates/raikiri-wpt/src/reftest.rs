@@ -2096,6 +2096,10 @@ fn render_raikiri_pages_inner_with_canvases(
     if let Some(resolver) = image_resolver.as_ref() {
         prime_image_resolver(resolver, &html);
     }
+    let image_preparer = image_resolver
+        .as_ref()
+        .zip(stylesheet_base.as_ref())
+        .map(|(resolver, base_url)| FileCascadeImagePreparer { resolver, base_url });
     render_raikiri_pages_with_resources(
         &html,
         width,
@@ -2115,13 +2119,30 @@ fn render_raikiri_pages_inner_with_canvases(
             font_loader: font_loader
                 .as_ref()
                 .map(|loader| loader as &dyn raikiri_dom::FontFaceLoader),
-            prepare_cascade_images: None,
+            prepare_cascade_images: image_preparer
+                .as_ref()
+                .map(|preparer| preparer as &dyn CascadeImagePreparer),
             require_inline_fonts: engine.require_inline_fonts,
             canvas_bitmaps,
             animation_styles,
             custom_highlight_ranges,
         },
     )
+}
+
+/// Reuse the HTTP resource preparation for file-backed reftests too.
+struct FileCascadeImagePreparer<'a> {
+    resolver: &'a raikiri_net::ImageResolver<raikiri_net::FileNetworkProvider>,
+    base_url: &'a raikiri::Url,
+}
+
+impl CascadeImagePreparer for FileCascadeImagePreparer<'_> {
+    fn prepare_cascade(&self, cascade: &mut raikiri_style::CascadeResult) {
+        crate::http_resources::prepare_cascade_images(cascade, self.base_url, self.resolver);
+    }
+    fn prepare_page(&self, page: &mut raikiri_style::PageCascadeResult) {
+        crate::http_resources::prepare_page_images(page, self.base_url, self.resolver);
+    }
 }
 
 pub(crate) fn render_raikiri_pages_with_resources(
@@ -2201,6 +2222,11 @@ pub(crate) fn render_raikiri_pages_with_resources(
         build_cascaded_with_media_context_for_page(&uncascaded, &media_context, &first_query);
     if let Some(prepare) = prepare_cascade_images {
         prepare.prepare_cascade(&mut default_cascade);
+    }
+    if let Some(source) = image_pixel_source {
+        uncascaded
+            .dom
+            .prepare_list_marker_images(&default_cascade, source, base_url);
     }
     // Only the page context of a cascade result depends on the page query, so
     // later queries on this document rerun just the `@page` cascade.  The

@@ -24,6 +24,7 @@ fn line_texts(projected: &ProjectedIfc, width: f32) -> Vec<String> {
         .map(|line| {
             line.text()[line.text_range()]
                 .replace('\u{FFFC}', "")
+                .replace(['\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}'], "")
                 .trim_end()
                 .to_owned()
         })
@@ -808,5 +809,86 @@ fn an_inline_table_is_an_atomic_and_table_internal_boxes_are_blocks() {
         });
         let projected = project(&fixture).expect(css);
         assert_eq!(projected.boxes.first().map(|b| b.kind), kind, "{css}");
+    }
+}
+
+#[test]
+fn inside_marker_is_first_inline_content_and_only_indents_the_first_line() {
+    let fixture = block_fixture(
+        "display:list-item;list-style-position:inside;list-style-type:'X '",
+        |doc, root| {
+            doc.append_text(root, "aaaa bbbb");
+        },
+    );
+    let projected = project(&fixture).expect("project");
+    assert_eq!(projected.paragraph.text(), "\u{2066}X \u{2069}aaaa bbbb");
+    assert_eq!(line_texts(&projected, 70.0), ["X aaaa", "bbbb"]);
+    assert_eq!(
+        fixture.doc.nodes[fixture.root]
+            .style
+            .padding
+            .left
+            .into_raw()
+            .value(),
+        0.0
+    );
+}
+
+#[test]
+fn inside_marker_precedes_before_and_increases_empty_item_height() {
+    let mut fixture = block_fixture(
+        "display:list-item;list-style-position:inside;list-style-type:'X'",
+        |doc, root| {
+            doc.append_text(root, "b");
+        },
+    );
+    let head = fixture
+        .doc
+        .append_element(Some(0), "style", taffy::Style::default(), None::<&str>);
+    fixture.doc.append_text(
+        head,
+        r#"div::before { content: "a" } div::marker { color:red;font-size:20px }"#,
+    );
+    fixture.doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&fixture.doc);
+    fixture.cascade = raikiri_style::cascade(&fixture.doc, &rules).expect("cascade");
+    let projected = project(&fixture).expect("project");
+    assert_eq!(projected.paragraph.text(), "\u{2066}X\u{2069}ab");
+    let empty = block_fixture(
+        "display:list-item;list-style-position:inside;list-style-type:'X'",
+        |_, _| {},
+    );
+    let projected_empty = project(&empty).expect("project");
+    assert_eq!(line_texts(&projected_empty, 100.0), ["X"]);
+    let lines = projected_empty.paragraph.break_all(
+        &mut LayoutContext::new(),
+        &projected_empty.options,
+        100.0,
+        &AtomicSizes::EMPTY,
+    );
+    assert_eq!(lines.len(), 1);
+    assert!(lines[0].block_size() >= 10.0);
+}
+
+#[test]
+fn inside_marker_preserves_spaces_does_not_wrap_or_inherit_text_transform() {
+    for author_marker in ["", "div::marker {color:red}"] {
+        let mut fixture = block_fixture(
+            "display:list-item;list-style:inside '  x  y  ';text-transform:uppercase",
+            |doc, root| {
+                doc.append_text(root, "ab");
+            },
+        );
+        let sheet =
+            fixture
+                .doc
+                .append_element(Some(0), "style", taffy::Style::default(), None::<&str>);
+        fixture.doc.append_text(sheet, author_marker);
+        fixture.doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&fixture.doc);
+        fixture.cascade = raikiri_style::cascade(&fixture.doc, &rules).expect("cascade");
+        let projected = project(&fixture).expect("project");
+        assert_eq!(projected.paragraph.text(), "\u{2066}  x  y  \u{2069}AB");
+        assert_eq!(line_texts(&projected, 30.0).first().unwrap(), "  x  y");
     }
 }
