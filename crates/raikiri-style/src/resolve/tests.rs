@@ -1771,3 +1771,14 @@ fn text_decoration_thickness_preserves_keywords_and_resolves_lengths() {
         ComputedTextDecorationThickness::Length(ComputedLength(10.0))
     );
 }
+
+#[test]
+fn circular_corner_constructor_preserves_each_value_until_axis_resolution() {
+    use ComputedLengthPercentage::{Percent, Px};
+    let [tl, tr, br, bl] = std::hint::black_box([Percent(25.0), Px(10.0), Percent(40.0), Px(0.0)]);
+    let radius = ComputedBorderRadius::corners(tl, tr, br, bl);
+    assert_eq!(
+        radius.used(200.0, 100.0),
+        [[50.0, 25.0], [10.0, 10.0], [80.0, 40.0], [0.0, 0.0]]
+    );
+}
