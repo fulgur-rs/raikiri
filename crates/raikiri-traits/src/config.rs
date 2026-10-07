@@ -303,8 +303,11 @@ pub struct LayoutConfig {
     pub limits: RenderLimits,
     /// An optional registry hint for target resolution.
     pub initial_registry: Option<TargetRegistry>,
-    /// Media type and viewport used to evaluate layout-time media queries.
-    /// Defaults to print media.
+    /// Media type and output dimensions used to evaluate layout-time media queries.
+    /// Defaults to the nominal print page box in [`raikiri_style::MediaContext::print`].
+    /// Supply the selected paper size with [`raikiri_style::MediaContext::with_viewport`]
+    /// when it differs; page defaults, authored sizes, and margins do not change
+    /// this environment. Element styles, page styles, and font faces share it.
     pub media_context: raikiri_style::MediaContext,
     /// Optional cooperative cancellation signal checked before layout and
     /// during page production.
