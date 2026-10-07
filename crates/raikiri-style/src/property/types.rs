@@ -6753,7 +6753,13 @@ impl DeferredValue {
     pub(crate) fn css_wide_keyword(&self) -> Option<CssWideKeyword> {
         if !matches!(
             self.key,
-            PropertyKey::Color | PropertyKey::BackgroundColor | PropertyKey::FontSize
+            PropertyKey::Color
+                | PropertyKey::BackgroundColor
+                | PropertyKey::FontSize
+                | PropertyKey::BorderRadiusTopLeft
+                | PropertyKey::BorderRadiusTopRight
+                | PropertyKey::BorderRadiusBottomRight
+                | PropertyKey::BorderRadiusBottomLeft
         ) {
             return None;
         }

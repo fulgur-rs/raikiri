@@ -1486,6 +1486,30 @@ fn inherited_margin_length(value: ComputedLengthPercentageOrAuto) -> LengthOrAut
 
 /// Resolve defaulting markers shared by the element and page inheritance paths.
 fn resolve_defaulting_value(value: PropertyValue, inherited: &ComputedValues) -> PropertyValue {
+    if let PropertyValue::Deferred(marker) = &value
+        && let Some(keyword) = marker.css_wide_keyword()
+    {
+        let radius = if keyword == CssWideKeyword::Inherit {
+            inherited_border_radius_value(inherited)
+        } else {
+            BorderRadius::elliptical([Length::Px(0.0); 4], [Length::Px(0.0); 4])
+        };
+        match marker.key {
+            crate::property::PropertyKey::BorderRadiusTopLeft => {
+                return PropertyValue::BorderRadiusTopLeft(radius.top_left);
+            }
+            crate::property::PropertyKey::BorderRadiusTopRight => {
+                return PropertyValue::BorderRadiusTopRight(radius.top_right);
+            }
+            crate::property::PropertyKey::BorderRadiusBottomRight => {
+                return PropertyValue::BorderRadiusBottomRight(radius.bottom_right);
+            }
+            crate::property::PropertyKey::BorderRadiusBottomLeft => {
+                return PropertyValue::BorderRadiusBottomLeft(radius.bottom_left);
+            }
+            _ => {}
+        }
+    }
     resolve_css_wide_color_font(
         value,
         inherited.color,
@@ -1522,13 +1546,14 @@ pub(crate) fn resolve_css_wide_color_font(
         } else {
             crate::property::CssColor::TRANSPARENT
         })
-    } else {
-        // css_wide_keyword only accepts these three keys, so the remaining key is FontSize.
+    } else if marker.key == crate::property::PropertyKey::FontSize {
         PropertyValue::FontSize(Length::Px(if inherit {
             inherited_font_size.0
         } else {
             crate::computed::INITIAL_FONT_SIZE_PX
         }))
+    } else {
+        value
     }
 }
 

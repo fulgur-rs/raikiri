@@ -3028,8 +3028,8 @@ fn cascade_page_preserves_both_elliptical_axes_and_percentage_longhands() {
     else {
         panic!("missing radius")
     };
-    assert_eq!(radius.top_left.horizontal, Length::Px(40.0));
-    assert_eq!(radius.top_left.vertical, Length::Percent(25.0));
+    assert_eq!(radius.top_left.horizontal, Length::Percent(50.0));
+    assert_eq!(radius.top_left.vertical, Length::Px(20.0));
     let Some(PropertyValue::BorderRadiusTopLeft(corner)) =
         result.declarations().get(&PropertyKey::BorderRadiusTopLeft)
     else {
@@ -6581,5 +6581,114 @@ fn cascade_page_min_content_width_is_kept() {
     assert_eq!(
         result.declarations().get(&PropertyKey::Width),
         Some(&PropertyValue::Width(LengthOrAuto::MinContent)),
+    );
+}
+
+#[test]
+fn page_elliptical_radius_settles_shorthand_and_longhand_precedence() {
+    for (declarations, expected) in [
+        (
+            "border-radius:30px / 15px;border-top-left-radius:5px 10px",
+            [5.0, 10.0],
+        ),
+        (
+            "border-top-left-radius:5px 10px;border-radius:30px / 15px",
+            [30.0, 15.0],
+        ),
+        (
+            "border-top-left-radius:5px 10px!important;border-radius:30px / 15px",
+            [5.0, 10.0],
+        ),
+        (
+            "border-radius:30px / 15px!important;border-top-left-radius:5px 10px",
+            [30.0, 15.0],
+        ),
+        (
+            "--r:30px / 15px;border-radius:var(--r);border-top-left-radius:5px 10px",
+            [5.0, 10.0],
+        ),
+        (
+            "border-radius:30px / 15px;border-top-left-radius:var(--missing)",
+            [0.0, 0.0],
+        ),
+        (
+            "border-top-left-radius:5px 10px;border-radius:var(--missing)",
+            [0.0, 0.0],
+        ),
+    ] {
+        let result = page(
+            &format!("@page {{{declarations}}}"),
+            &root_with_font_size(20.0),
+        );
+        let Some(PropertyValue::BorderRadius(radius)) =
+            result.declarations().get(&PropertyKey::BorderRadius)
+        else {
+            panic!("missing effective radius")
+        };
+        assert_eq!(
+            radius.top_left,
+            crate::property::CornerRadius::new(Length::Px(expected[0]), Length::Px(expected[1])),
+            "{declarations}"
+        );
+        if let Some(PropertyValue::BorderRadiusTopLeft(corner)) =
+            result.declarations().get(&PropertyKey::BorderRadiusTopLeft)
+        {
+            assert_eq!(
+                *corner, radius.top_left,
+                "longhand map agrees with effective shorthand"
+            );
+        }
+    }
+}
+
+#[test]
+fn page_elliptical_radius_longhands_work_independently_on_all_corners() {
+    let result = page(
+        "@page {border-top-left-radius:1em 2%;border-top-right-radius:3% 4em;border-bottom-right-radius:5em 6%;border-bottom-left-radius:7% 8em}",
+        &root_with_font_size(20.0),
+    );
+    let Some(PropertyValue::BorderRadius(radius)) =
+        result.declarations().get(&PropertyKey::BorderRadius)
+    else {
+        panic!("effective radius")
+    };
+    let corners = [
+        radius.top_left,
+        radius.top_right,
+        radius.bottom_right,
+        radius.bottom_left,
+    ];
+    let expected = [
+        (Length::Px(20.0), Length::Percent(2.0)),
+        (Length::Percent(3.0), Length::Px(80.0)),
+        (Length::Px(100.0), Length::Percent(6.0)),
+        (Length::Percent(7.0), Length::Px(160.0)),
+    ];
+    for (corner, (horizontal, vertical)) in corners.into_iter().zip(expected) {
+        assert_eq!(
+            corner,
+            crate::property::CornerRadius::new(horizontal, vertical)
+        );
+    }
+}
+
+#[test]
+fn page_elliptical_radius_rollback_restores_cross_property_precedence() {
+    let result = page(
+        "@layer base {@page {border-radius:30px / 15px;border-top-left-radius:5px 10px}} @layer override {@page {border-top-left-radius:var(--missing,revert-layer)}}",
+        &root_with_font_size(20.0),
+    );
+    let Some(PropertyValue::BorderRadius(radius)) =
+        result.declarations().get(&PropertyKey::BorderRadius)
+    else {
+        panic!("effective radius")
+    };
+    assert_eq!(
+        radius.top_left,
+        crate::property::CornerRadius::new(Length::Px(5.0), Length::Px(10.0))
+    );
+    assert_eq!(
+        radius.top_right,
+        crate::property::CornerRadius::new(Length::Px(30.0), Length::Px(15.0))
     );
 }

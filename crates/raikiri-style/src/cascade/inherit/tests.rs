@@ -9463,3 +9463,65 @@ fn children_of_shared_siblings_share_with_their_cousins() {
     // children, and the text inside those share: 4 * 3.
     assert_eq!(shared, 12);
 }
+
+#[test]
+fn elliptical_radius_longhand_defaulting_includes_variable_fallbacks() {
+    let names = [
+        "border-top-left-radius",
+        "border-top-right-radius",
+        "border-bottom-right-radius",
+        "border-bottom-left-radius",
+    ];
+    for (index, name) in names.iter().enumerate() {
+        for value in [
+            "var(--missing, inherit)",
+            "inherit",
+            "initial",
+            "var(--missing, initial)",
+            "unset",
+            "var(--missing, unset)",
+        ] {
+            let (_, child) = cascade_parent_child(
+                "p",
+                Some("font-size:20px;border-radius:2em / 25%"),
+                "span",
+                Some(&format!("font-size:10px;border-radius:10px;{name}:{value}")),
+            );
+            let expected = if value.contains("inherit") {
+                [40.0, 25.0]
+            } else {
+                [0.0, 0.0]
+            };
+            let mut corners = [[10.0, 10.0]; 4];
+            corners[index] = expected;
+            assert_eq!(
+                child.border_radius.used(200.0, 100.0),
+                corners,
+                "{name}:{value}"
+            );
+        }
+    }
+    let cv = cascade_doc(
+        "@layer base {p {border-top-left-radius:20px 30px}} @layer override {p {border-top-left-radius:var(--missing,revert-layer)}}",
+        "p",
+        None,
+    );
+    assert_eq!(cv.border_radius.used(200.0, 100.0)[0], [20.0, 30.0]);
+}
+
+#[test]
+fn color_font_defaulting_leaves_corner_radius_markers_for_the_radius_resolver() {
+    let mut input = cssparser::ParserInput::new("inherit");
+    let mut parser = cssparser::Parser::new(&mut input);
+    let value = crate::property::parse_value("border-top-left-radius", &mut parser)
+        .expect("corner defaulting marker");
+    assert_eq!(
+        resolve_css_wide_color_font(
+            value.clone(),
+            CssColor::BLACK,
+            CssColor::TRANSPARENT,
+            ComputedLength(20.0)
+        ),
+        value
+    );
+}
