@@ -2485,10 +2485,10 @@ fn paint_margin_box(
 }
 
 fn margin_box_rule(
-    rules: &[PageMarginBoxCascadeResult],
+    page: &raikiri_style::PageCascadeResult,
     slot: PageMarginBoxSlot,
 ) -> Option<PageMarginBoxCascadeResult> {
-    PageMarginBoxCascadeResult::cascade_matching(rules, slot)
+    page.cascade_margin_box(slot)
 }
 
 fn margin_box_border_width(spec: &MarginBoxPaintSpec) -> f32 {
@@ -2979,7 +2979,7 @@ pub(crate) fn paint_page_margin_boxes(
         PageMarginBoxSlot::LeftMiddle,
         PageMarginBoxSlot::LeftTop,
     ] {
-        let Some(rule) = margin_box_rule(cascade.page.margin_boxes(), slot) else {
+        let Some(rule) = margin_box_rule(&cascade.page, slot) else {
             continue;
         };
         // Percentages on an edge dimension use the available strip axis,

@@ -19,7 +19,7 @@ use crate::import::{
     sanitize_policy_violation,
 };
 use crate::sink::RaikiriTreeSink;
-use crate::types::{ParseOptions, UncascadedDocument};
+use crate::types::{ParseOptions, StylesheetSource, UncascadedDocument};
 
 /// Parse HTML and return an [`UncascadedDocument`] containing the pre-cascade
 /// DOM, extracted inline `<style>` elements, and parse warnings.
@@ -51,9 +51,9 @@ pub fn parse<R: Read>(
 /// `type Output = UncascadedDocument` and propagate the inner sink's
 /// `finish(self)` result.
 ///
-/// After parsing, inject the default UA CSS and `options.extra_stylesheets`
-/// into the Document with [`raikiri_dom::Document::add_stylesheet`]
-/// (UserAgent and User kinds, respectively). Leading `@import` rules in extra
+/// After parsing, inject the default UA CSS into the Document with
+/// [`raikiri_dom::Document::add_stylesheet`] and retain consumer extra sheets
+/// with User origin. Leading `@import` rules in extra
 /// and inline stylesheets expand in source order when `options.network` is set.
 /// Then fetch external stylesheets in `<head>` via `options.network` and
 /// `options.base_url`, merging successful responses into
@@ -146,6 +146,8 @@ fn finish_document(
         StylesheetKind::UserAgent,
     );
 
+    doc.user_stylesheet_insertion_index = doc.dom.stylesheets().count();
+
     // The HTML document base URL also resolves relative `@import` rules in
     // inline and extra stylesheets. External stylesheets instead use their
     // fetched `FetchedResource::final_url` as the base.
@@ -155,11 +157,8 @@ fn finish_document(
     // the fetch and expansion caps.
     let mut import_budget = ImportBudget::default();
 
-    // Add consumer-provided extra_stylesheets with User origin
-    // (the path that consumes ParseOptions::extra_stylesheets).
-    // These were moved from StylesheetKind::Author to StylesheetKind::User
-    // so they are not confused with real author-origin stylesheets
-    // (such as `<link rel=stylesheet>`) arriving through other paths.
+    // Keep consumer sheets separate from author styles and retain import
+    // conditions without flattening them through the DOM string API.
     for extra in options.extra_stylesheets {
         let expanded = expand_stylesheet_imports_with_budget(
             extra,
@@ -169,8 +168,10 @@ fn finish_document(
             &mut doc.warnings,
             &mut import_budget,
         );
-        doc.dom
-            .add_stylesheet(Cow::Owned(expanded), StylesheetKind::User);
+        doc.user_stylesheet_sources.push(StylesheetSource {
+            parts: expanded,
+            media: None,
+        });
     }
 
     // Find `<link rel="stylesheet" href="...">` elements, fetch via
@@ -184,8 +185,8 @@ fn finish_document(
 /// Process stylesheet-bearing `<head>` elements in document order, adding
 /// successfully fetched external CSS to `doc.stylesheet_sources` as Author.
 /// Inline `<style>` elements and `<link>` elements in the head retain head order;
-/// inline `<style>` elements outside the head follow. The raikiri umbrella
-/// crate's `build_cascaded` consumes the entire Vec as Author, without API changes.
+/// inline `<style>` elements outside the head follow. The cascade consumes
+/// the resolved parts as Author sheets with their media conditions.
 ///
 /// `sink::collect_head_stylesheet_sources` detects hrefs using only the
 /// `Document` after `finish()`, with no side effects. Actual fetching happens
@@ -195,12 +196,11 @@ fn finish_document(
 ///
 /// # Known scope limits
 ///
-/// - `Document::stylesheets()` (UA CSS / extra stylesheets) is a separate
-///   bucket, so these cascade before head stylesheets. Imports in extra
-///   stylesheets expand before this post-processing pass.
+/// - DOM-associated sheets and consumer extra sheets cascade before head
+///   stylesheets. Imports in extra sheets expand before this pass.
 /// - **`disabled` / `crossorigin` / `integrity`**:
 ///   See the `sink::collect_external_stylesheet_hrefs` documentation. The
-///   `media` attribute is recorded in `doc.stylesheet_media` and evaluated by
+///   `media` attribute is recorded in each stylesheet and evaluated by
 ///   the cascade.
 /// - **`<base>` search scope and href handling**:
 ///   See the `sink::find_document_base_href` documentation. Document-level
@@ -228,43 +228,35 @@ fn fetch_external_stylesheets(
     // Rebuild it in the order of the original head elements so a fetched link
     // does not silently move after every inline style.
     let head_sources = crate::sink::collect_head_stylesheet_sources(&doc.dom);
-    let inline_media = std::mem::take(&mut doc.stylesheet_media);
-    let mut inline_sources = std::mem::take(&mut doc.stylesheet_sources)
-        .into_iter()
-        .enumerate()
-        .map(|(index, css)| (css, inline_media.get(index).cloned().flatten()));
+    let mut inline_sources = std::mem::take(&mut doc.stylesheet_sources).into_iter();
     if head_sources.is_empty() {
         // Preserve the generic `parse_with_sink` contract for a consumer sink
         // that supplies stylesheet_sources without a normal HTML `<head>`.
-        (doc.stylesheet_sources, doc.stylesheet_media) = inline_sources
-            .map(|(css, media)| {
-                let css = expand_stylesheet_imports_with_budget(
-                    &css,
+        doc.stylesheet_sources = inline_sources
+            .map(|sheet| {
+                expand_inline_sheet(
+                    sheet,
                     effective_base.as_ref(),
-                    None,
-                    Some(network),
+                    network,
                     &mut doc.warnings,
                     import_budget,
-                );
-                (css, media)
+                )
             })
-            .unzip();
+            .collect();
         return;
     }
     let mut ordered_sources = Vec::new();
     for source in head_sources {
         match source {
             crate::sink::HeadStylesheetSource::Inline { .. } => {
-                if let Some((css, media)) = inline_sources.next() {
-                    let expanded = expand_stylesheet_imports_with_budget(
-                        &css,
+                if let Some(sheet) = inline_sources.next() {
+                    ordered_sources.push(expand_inline_sheet(
+                        sheet,
                         effective_base.as_ref(),
-                        None,
-                        Some(network),
+                        network,
                         &mut doc.warnings,
                         import_budget,
-                    );
-                    ordered_sources.push((expanded, media));
+                    ));
                 }
             }
             crate::sink::HeadStylesheetSource::External { node_id, href } => {
@@ -299,7 +291,10 @@ fn fetch_external_stylesheets(
                                 import_budget,
                             );
                             let media = crate::sink::stylesheet_media_attribute(&doc.dom, node_id);
-                            ordered_sources.push((expanded, media));
+                            ordered_sources.push(StylesheetSource {
+                                parts: expanded,
+                                media,
+                            });
                         }
                     }
                     Err(NetworkError::PolicyViolation(violation)) => {
@@ -348,18 +343,47 @@ fn fetch_external_stylesheets(
     }
     // Defensive: preserve any inline projection that did not have a matching
     // collector entry if the sink projection changes in the future.
-    ordered_sources.extend(inline_sources.map(|(css, media)| {
-        let css = expand_stylesheet_imports_with_budget(
-            &css,
+    ordered_sources.extend(inline_sources.map(|sheet| {
+        expand_inline_sheet(
+            sheet,
             effective_base.as_ref(),
-            None,
-            Some(network),
+            network,
             &mut doc.warnings,
             import_budget,
-        );
-        (css, media)
+        )
     }));
-    (doc.stylesheet_sources, doc.stylesheet_media) = ordered_sources.into_iter().unzip();
+    doc.stylesheet_sources = ordered_sources;
+}
+
+fn expand_inline_sheet(
+    sheet: StylesheetSource,
+    base_url: Option<&Url>,
+    network: &dyn raikiri_traits::NetworkProvider,
+    warnings: &mut Vec<RenderWarning>,
+    budget: &mut ImportBudget,
+) -> StylesheetSource {
+    let parts = sheet
+        .parts
+        .into_iter()
+        .flat_map(|part| {
+            let mut expanded = expand_stylesheet_imports_with_budget(
+                &part.source,
+                base_url,
+                None,
+                Some(network),
+                warnings,
+                budget,
+            );
+            for child in &mut expanded {
+                child.media.extend(part.media.iter().cloned());
+            }
+            expanded
+        })
+        .collect();
+    StylesheetSource {
+        parts,
+        media: sheet.media,
+    }
 }
 
 /// Resolve the document's effective base URL for stylesheet, font, and replaced-resource fetches.
@@ -389,48 +413,4 @@ fn resolve_url(href: &str, base: Option<&Url>) -> Option<Url> {
 }
 
 #[cfg(test)]
-mod fragment_root_tests {
-    use super::*;
-
-    #[test]
-    fn fragment_root_with_zero_or_multiple_children_is_not_flattened() {
-        let mut empty = raikiri_dom::Document::new();
-        flatten_fragment_root(&mut empty);
-        assert!(
-            empty
-                .get_node(empty.root_index())
-                .unwrap()
-                .children
-                .is_empty()
-        );
-
-        let mut multiple = raikiri_dom::Document::new();
-        let root = multiple.root_index();
-        let first = multiple.append_element(Some(root), "div", Default::default(), None::<&str>);
-        let second = multiple.append_element(Some(root), "span", Default::default(), None::<&str>);
-        flatten_fragment_root(&mut multiple);
-        assert_eq!(
-            multiple.get_node(root).unwrap().children,
-            vec![first, second]
-        );
-    }
-
-    #[test]
-    fn fragment_root_with_non_html_or_foreign_html_child_is_not_flattened() {
-        let mut non_html = raikiri_dom::Document::new();
-        let root = non_html.root_index();
-        let div = non_html.append_element(Some(root), "div", Default::default(), None::<&str>);
-        flatten_fragment_root(&mut non_html);
-        assert_eq!(non_html.get_node(root).unwrap().children, vec![div]);
-
-        let mut foreign_html = raikiri_dom::Document::new();
-        let root = foreign_html.root_index();
-        let html =
-            foreign_html.append_element(Some(root), "html", Default::default(), None::<&str>);
-        foreign_html.set_element_namespace(html, Some("urn:foreign".into()));
-        let child = foreign_html.append_element(Some(html), "g", Default::default(), None::<&str>);
-        flatten_fragment_root(&mut foreign_html);
-        assert_eq!(foreign_html.get_node(root).unwrap().children, vec![html]);
-        assert_eq!(foreign_html.get_node(html).unwrap().children, vec![child]);
-    }
-}
+mod tests;

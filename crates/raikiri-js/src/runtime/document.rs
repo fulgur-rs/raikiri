@@ -20,7 +20,7 @@ const XMLNS_NAMESPACE: &str = "http://www.w3.org/2000/xmlns/";
 
 // The XML `Name` production. `createElementNS`'s "validate and extract"
 // needs to validate a namespace prefix and a local name independently of
-// each other (see [`validate_and_extract`]), which `raikiri_dom`'s
+// each other (see `validate_and_extract`), which `raikiri_dom`'s
 // equivalent check cannot do: it is private, and it always validates and
 // allocates an element in the same call (`create_detached_element`), with
 // no way to just check a candidate string's characters. So the same

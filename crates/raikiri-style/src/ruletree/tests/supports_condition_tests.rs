@@ -482,3 +482,29 @@ fn custom_highlight_features_use_the_supported_selector_prelude() {
         );
     }
 }
+
+#[test]
+fn css_wide_keywords_are_supported_for_color_background_and_font_size() {
+    for name in ["color", "background-color", "font-size"] {
+        for value in [
+            "inherit",
+            "initial",
+            "unset",
+            "revert",
+            "revert-layer",
+            "InItIaL",
+            r"\69 nitial",
+            "/*a*/unset/*b*/",
+        ] {
+            assert!(
+                supports_condition(&format!("({name}: {value})")),
+                "{name}: {value}"
+            );
+            assert!(supports_condition(&format!("({name}: {value} !important)")));
+        }
+        for value in ["initial extra", "unset 1px", "revert-layer, initial"] {
+            assert!(!supports_condition(&format!("({name}: {value})")));
+        }
+    }
+    assert!(!supports_condition("(not-a-property: initial)"));
+}

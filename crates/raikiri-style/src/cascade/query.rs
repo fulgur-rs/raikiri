@@ -20,6 +20,7 @@ impl SelectorQuery {
     ///
     /// Returns an error for an empty or syntactically invalid list, which DOM
     /// callers report as a `SyntaxError` `DOMException`.
+    /// Token blocks are limited to 32 nested levels before recursive parsing.
     /// Also rejects syntactically valid nth selectors nested inside an
     /// `:nth-child(An+B of S)` or `:nth-last-child(An+B of S)` filter.
     /// This intentional bounded-support restriction prevents recursively

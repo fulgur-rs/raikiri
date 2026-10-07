@@ -9,6 +9,19 @@ fn empty_options<'a>() -> ParseOptions<'a> {
     }
 }
 
+fn stylesheet_texts(doc: &UncascadedDocument) -> Vec<String> {
+    doc.stylesheet_sources
+        .iter()
+        .map(|sheet| {
+            sheet
+                .parts
+                .iter()
+                .map(|part| part.source.as_str())
+                .collect()
+        })
+        .collect()
+}
+
 fn find_first_by_tag<'a>(
     doc: &'a raikiri_dom::Document,
     target: &str,
@@ -68,7 +81,7 @@ fn parse_extracts_style_element_content() {
     let opts = empty_options();
     let uncascaded = parse(&html[..], &opts).expect("parse ok");
     assert_eq!(
-        uncascaded.stylesheet_sources,
+        stylesheet_texts(&uncascaded),
         vec![String::from("p{color:red}")]
     );
 }
@@ -216,7 +229,11 @@ mod external_link_stylesheet_fetch_tests {
         let uncascaded = parse(&html[..], &opts).expect("parse ok");
         assert_eq!(uncascaded.stylesheet_sources.len(), 3);
         assert_eq!(
-            uncascaded.stylesheet_media,
+            uncascaded
+                .stylesheet_sources
+                .iter()
+                .map(|sheet| sheet.media.clone())
+                .collect::<Vec<_>>(),
             [
                 Some("print".to_owned()),
                 None,
@@ -266,9 +283,14 @@ mod external_link_stylesheet_fetch_tests {
         let uncascaded = parse(&html[..], &opts).expect("parse ok");
 
         assert_eq!(uncascaded.stylesheet_sources.len(), 2);
-        assert!(uncascaded.stylesheet_sources[0].contains(".inline { color: red }"));
-        assert!(uncascaded.stylesheet_sources[1].contains(".nested { color: blue }"));
-        assert!(uncascaded.stylesheet_sources[1].contains("@media screen"));
+        assert!(stylesheet_texts(&uncascaded)[0].contains(".inline { color: red }"));
+        assert!(stylesheet_texts(&uncascaded)[1].contains(".nested { color: blue }"));
+        assert!(
+            uncascaded.stylesheet_sources[1]
+                .parts
+                .iter()
+                .any(|part| part.media.iter().any(|media| media == "screen"))
+        );
         assert_eq!(
             *provider.requests.lock().unwrap(),
             vec![
@@ -346,8 +368,8 @@ mod external_link_stylesheet_fetch_tests {
                 </head><body>x</body></html>"#;
         let uncascaded = parse(&html[..], &opts).expect("parse ok");
 
-        assert!(uncascaded.stylesheet_sources[0].contains(".nested { color: blue }"));
-        assert!(uncascaded.stylesheet_sources[1].contains(".inline { color: red }"));
+        assert!(stylesheet_texts(&uncascaded)[0].contains(".nested { color: blue }"));
+        assert!(stylesheet_texts(&uncascaded)[1].contains(".inline { color: red }"));
         assert_eq!(
             *provider.requests.lock().unwrap(),
             vec![
@@ -378,7 +400,7 @@ mod external_link_stylesheet_fetch_tests {
         let html = br#"<html><head><link rel="stylesheet" href="https://example.test/a.css"></head><body>x</body></html>"#;
         let uncascaded = parse(&html[..], &opts).expect("parse ok");
         assert_eq!(
-            uncascaded.stylesheet_sources,
+            stylesheet_texts(&uncascaded),
             vec![String::from("/* https://example.test/a.css */")]
         );
     }
@@ -409,7 +431,7 @@ mod external_link_stylesheet_fetch_tests {
         // cov:ignore: assert_eq! message args only evaluate when the
         // condition is false; this assertion passes in every run.
         assert_eq!(
-            uncascaded.stylesheet_sources,
+            stylesheet_texts(&uncascaded),
             vec![String::from("/* https://example.test/a.css */")],
             "the comment must not prevent the <link> after it from being fetched"
         );
@@ -428,7 +450,7 @@ mod external_link_stylesheet_fetch_tests {
             br#"<html><head><link rel="stylesheet" href="style.css"></head><body>x</body></html>"#;
         let uncascaded = parse(&html[..], &opts).expect("parse ok");
         assert_eq!(
-            uncascaded.stylesheet_sources,
+            stylesheet_texts(&uncascaded),
             vec![String::from("/* https://example.test/dir/style.css */")]
         );
     }
@@ -453,7 +475,7 @@ mod external_link_stylesheet_fetch_tests {
                            </head><body>x</body></html>"#;
         let uncascaded = parse(&html[..], &opts).expect("parse ok");
         assert_eq!(
-            uncascaded.stylesheet_sources,
+            stylesheet_texts(&uncascaded),
             vec![String::from("/* https://cdn.example/a.css */")],
             "<link href> must resolve against the <base> override, not options.base_url"
         );
@@ -479,7 +501,7 @@ mod external_link_stylesheet_fetch_tests {
                            </head><body>x</body></html>"#;
         let uncascaded = parse(&html[..], &opts).expect("parse ok");
         assert_eq!(
-            uncascaded.stylesheet_sources,
+            stylesheet_texts(&uncascaded),
             vec![String::from("/* https://page.example/assets/a.css */")]
         );
     }
@@ -499,7 +521,7 @@ mod external_link_stylesheet_fetch_tests {
                            </head><body>x</body></html>"#;
         let uncascaded = parse(&html[..], &opts).expect("parse ok");
         assert_eq!(
-            uncascaded.stylesheet_sources,
+            stylesheet_texts(&uncascaded),
             vec![String::from("/* https://first.example/a.css */")],
             "the first <base> in document order wins, later ones are ignored"
         );
@@ -534,7 +556,7 @@ mod external_link_stylesheet_fetch_tests {
                            </head><body>x</body></html>"#;
         let uncascaded = parse(&html[..], &opts).expect("parse ok");
         assert_eq!(
-            uncascaded.stylesheet_sources,
+            stylesheet_texts(&uncascaded),
             vec![String::from("/* https://cdn.example/a.css */")]
         );
     }
@@ -557,7 +579,7 @@ mod external_link_stylesheet_fetch_tests {
                            </head><body>x</body></html>"#;
         let uncascaded = parse(&html[..], &opts).expect("parse ok");
         assert_eq!(
-            uncascaded.stylesheet_sources,
+            stylesheet_texts(&uncascaded),
             vec![String::from("/* https://cdn.example/a.css */")]
         );
     }
@@ -577,7 +599,7 @@ mod external_link_stylesheet_fetch_tests {
                            </head><body>x</body></html>"#;
         let uncascaded = parse(&html[..], &opts).expect("parse ok");
         assert_eq!(
-            uncascaded.stylesheet_sources,
+            stylesheet_texts(&uncascaded),
             vec![String::from("/* https://page.example/dir/a.css */")],
             "an empty <base href> must not shadow a real base further down; \
                  options.base_url is used as if there were no <base> at all"
@@ -599,7 +621,7 @@ mod external_link_stylesheet_fetch_tests {
                            </head><body>x</body></html>"#;
         let uncascaded = parse(&html[..], &opts).expect("parse ok");
         assert_eq!(
-            uncascaded.stylesheet_sources,
+            stylesheet_texts(&uncascaded),
             vec![String::from("/* https://page.example/dir/a.css */")]
         );
     }
@@ -625,7 +647,7 @@ mod external_link_stylesheet_fetch_tests {
                            </head><body>x</body></html>"#;
         let uncascaded = parse(&html[..], &opts).expect("parse ok");
         assert_eq!(
-            uncascaded.stylesheet_sources,
+            stylesheet_texts(&uncascaded),
             vec![String::from("/* https://page.example/dir/a.css */")]
         );
     }
@@ -649,7 +671,7 @@ mod external_link_stylesheet_fetch_tests {
                            </head><body>x</body></html>"#;
         let uncascaded = parse(&html[..], &opts).expect("parse ok");
         assert_eq!(
-            uncascaded.stylesheet_sources,
+            stylesheet_texts(&uncascaded),
             vec![String::from("/* https://page.example/a.css */")],
             "a <base> inert inside <template> must not override options.base_url"
         );
@@ -688,7 +710,7 @@ mod external_link_stylesheet_fetch_tests {
                            </head><body>x</body></html>"#;
         let uncascaded = parse(&html[..], &opts).expect("parse ok");
         assert_eq!(
-            uncascaded.stylesheet_sources,
+            stylesheet_texts(&uncascaded),
             vec![
                 String::from("/* https://example.test/a.css */"),
                 String::from("/* https://example.test/b.css */"),
@@ -714,7 +736,7 @@ mod external_link_stylesheet_fetch_tests {
         // cov:ignore: assert_eq! message args only evaluate when the
         // condition is false; this assertion passes in every run.
         assert_eq!(
-            uncascaded.stylesheet_sources,
+            stylesheet_texts(&uncascaded),
             vec![
                 String::from("/* https://example.test/a.css */"),
                 String::from("p{color:red}"),
@@ -745,7 +767,7 @@ mod external_link_stylesheet_fetch_tests {
                            </body></html>"#;
         let uncascaded = parse(&html[..], &opts).expect("parse ok");
         assert_eq!(
-            uncascaded.stylesheet_sources,
+            stylesheet_texts(&uncascaded),
             vec![
                 String::from("p{color:red}"),
                 String::from("/* https://example.test/head.css */"),
@@ -871,7 +893,7 @@ mod external_link_stylesheet_fetch_tests {
         let html = br#"<html><head><link rel="stylesheet" href="  https://example.test/a.css  "></head><body>x</body></html>"#;
         let uncascaded = parse(&html[..], &opts).expect("parse ok");
         assert_eq!(
-            uncascaded.stylesheet_sources,
+            stylesheet_texts(&uncascaded),
             vec![String::from("/* https://example.test/a.css */")]
         );
     }
@@ -1024,8 +1046,8 @@ mod external_link_stylesheet_fetch_tests {
             </style></head><body>x</body></html>"#;
         let uncascaded = parse(&html[..], &opts).expect("parse ok");
         assert_eq!(uncascaded.stylesheet_sources.len(), 1);
-        assert!(uncascaded.stylesheet_sources[0].contains(r#"@import "missing.css";"#));
-        assert!(uncascaded.stylesheet_sources[0].contains("p { color: blue }"));
+        assert!(stylesheet_texts(&uncascaded)[0].contains(r#"@import "missing.css";"#));
+        assert!(stylesheet_texts(&uncascaded)[0].contains("p { color: blue }"));
         assert!(
             uncascaded
                 .warnings
@@ -1721,7 +1743,7 @@ fn parse_extracts_multiple_style_blocks_in_document_order() {
     let opts = empty_options();
     let uncascaded = parse(&html[..], &opts).expect("parse ok");
     assert_eq!(
-        uncascaded.stylesheet_sources,
+        stylesheet_texts(&uncascaded),
         vec![
             String::from("p{color:red}"),
             String::from("p{color:blue}"),
@@ -1744,7 +1766,7 @@ fn parse_skips_style_inside_template_element() {
     let uncascaded = parse(&html[..], &opts).expect("parse ok");
     // Only the top-level <style> should appear.
     assert_eq!(
-        uncascaded.stylesheet_sources,
+        stylesheet_texts(&uncascaded),
         vec![String::from("p{color:blue}")]
     );
 }
@@ -3225,7 +3247,7 @@ fn parse_extracts_body_style_after_head_style() {
     let opts = empty_options();
     let uncascaded = parse(&html[..], &opts).expect("parse ok");
     assert_eq!(
-        uncascaded.stylesheet_sources,
+        stylesheet_texts(&uncascaded),
         vec![String::from("p{color:red}"), String::from("p{color:blue}")]
     );
 }
@@ -3236,7 +3258,7 @@ fn parse_extracts_body_style_without_explicit_head() {
     let opts = empty_options();
     let uncascaded = parse(&html[..], &opts).expect("parse ok");
     assert_eq!(
-        uncascaded.stylesheet_sources,
+        stylesheet_texts(&uncascaded),
         vec![String::from("p{color:green}")]
     );
 }
@@ -3247,7 +3269,7 @@ fn parse_skips_body_style_inside_template_element() {
     let opts = empty_options();
     let uncascaded = parse(&html[..], &opts).expect("parse ok");
     assert_eq!(
-        uncascaded.stylesheet_sources,
+        stylesheet_texts(&uncascaded),
         vec![String::from("p{color:blue}")]
     );
 }
@@ -3258,7 +3280,7 @@ fn parse_includes_svg_and_html_styles_in_host_stylesheet_sources() {
     let opts = empty_options();
     let uncascaded = parse(&html[..], &opts).expect("parse ok");
     assert_eq!(
-        uncascaded.stylesheet_sources,
+        stylesheet_texts(&uncascaded),
         vec![
             String::from("circle{fill:red}"),
             String::from("p{color:green}"),
@@ -3836,7 +3858,7 @@ fn parse_injects_default_ua_stylesheet_into_document() {
 }
 
 #[test]
-fn parse_injects_extra_stylesheets_as_user() {
+fn parse_retains_extra_stylesheets_as_user() {
     use raikiri_traits::StylesheetKind;
 
     let html = b"<html><body></body></html>";
@@ -3852,10 +3874,9 @@ fn parse_injects_extra_stylesheets_as_user() {
     // extra_stylesheets are tagged StylesheetKind::User. Previously they
     // were mixed into Author; the separate variant prevents that regression.
     let user_entries: Vec<&str> = doc
-        .dom
-        .stylesheets()
-        .filter(|(_, k)| *k == StylesheetKind::User)
-        .map(|(s, _)| s)
+        .user_stylesheet_sources
+        .iter()
+        .flat_map(|sheet| sheet.parts.iter().map(|part| part.source.as_str()))
         .collect();
     assert_eq!(user_entries.len(), 2);
     assert_eq!(user_entries[0], extra_a);

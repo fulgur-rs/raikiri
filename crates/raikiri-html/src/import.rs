@@ -3,7 +3,7 @@
 //! The style crate deliberately has no network dependency.  Imports are therefore
 //! expanded in the HTML parse layer, where the existing [`NetworkProvider`] and
 //! document base URL are already available.  A successfully fetched import is
-//! replaced with its CSS at the import position; failed, unresolvable, cyclic,
+//! represented by separate stylesheet parts at the import position; failed, unresolvable, cyclic,
 //! or depth-limited imports are copied unchanged so the style parser can retain
 //! them as opaque at-rules.
 
@@ -12,6 +12,8 @@ use raikiri_traits::{
     ResourceKind, ViolationType, WarningKind,
 };
 use url::Url;
+
+use crate::{StylesheetPart, StylesheetSource};
 
 /// Conservative fallback bound used when the provider does not expose a policy
 /// object to this layer. Sandboxed providers still receive
@@ -97,6 +99,9 @@ pub(crate) fn expand_stylesheet_imports(
         warnings,
         &mut budget,
     )
+    .into_iter()
+    .map(|part| part.source)
+    .collect()
 }
 
 /// Expand imports while consuming the caller's document-wide budget.
@@ -107,16 +112,16 @@ pub(crate) fn expand_stylesheet_imports_with_budget(
     network: Option<&dyn NetworkProvider>,
     warnings: &mut Vec<RenderWarning>,
     budget: &mut ImportBudget,
-) -> String {
+) -> Vec<StylesheetPart> {
     let Some(network) = network else {
-        return source.to_owned();
+        return unexpanded_parts(source);
     };
 
     let normalized_base = normalize_base_url(base_url);
     let normalized_root = normalize_base_url(root_url);
     let max_depth = network.max_import_depth().unwrap_or(MAX_IMPORT_DEPTH);
     if root_url.is_some() && normalized_root.is_none() {
-        return source.to_owned();
+        return unexpanded_parts(source);
     }
     let mut expander = ImportExpander {
         network,
@@ -138,55 +143,79 @@ pub(crate) fn expand_stylesheet_imports_with_budget(
 ///
 /// Shares one document-wide budget across `sources`, like the document parse
 /// does. Fetch diagnostics are discarded: the fragment path also drops them
-/// with the fragment's own warnings, keeping only the expanded text.
+/// with the fragment's own warnings, keeping the resolved parts.
 pub fn expand_live_stylesheet_imports(
     sources: Vec<String>,
     base_url: Option<&Url>,
     network: Option<&dyn NetworkProvider>,
-) -> Vec<String> {
+) -> Vec<StylesheetSource> {
     let Some(network) = network else {
-        return sources;
+        return sources
+            .into_iter()
+            .map(|source| StylesheetSource::new(source, None))
+            .collect();
     };
     let mut warnings = Vec::new();
     let mut budget = ImportBudget::default();
     sources
         .iter()
-        .map(|source| {
-            expand_stylesheet_imports_with_budget(
+        .map(|source| StylesheetSource {
+            parts: expand_stylesheet_imports_with_budget(
                 source,
                 base_url,
                 None,
                 Some(network),
                 &mut warnings,
                 &mut budget,
-            )
+            ),
+            media: None,
         })
         .collect()
 }
 
+fn unexpanded_parts(source: &str) -> Vec<StylesheetPart> {
+    vec![StylesheetPart {
+        source: source.to_owned(),
+        media: Vec::new(),
+    }]
+}
+
 impl ImportExpander<'_> {
-    fn expand(&mut self, source: &str, base_url: Option<&Url>, depth: u32) -> String {
+    fn expand(&mut self, source: &str, base_url: Option<&Url>, depth: u32) -> Vec<StylesheetPart> {
         if depth >= self.max_depth {
-            return source.to_owned();
+            return unexpanded_parts(source);
         }
 
         let imports = scan_leading_imports(source);
         if imports.is_empty() {
-            return source.to_owned();
+            return unexpanded_parts(source);
         }
 
-        let mut expanded = String::with_capacity(source.len());
+        let mut expanded = Vec::new();
+        let mut pending = String::new();
         let mut cursor = 0;
         for import in imports {
-            expanded.push_str(&source[cursor..import.start]);
-
-            let replacement = self
-                .resolve_import(&import, base_url, depth)
-                .unwrap_or_else(|| source[import.start..import.end].to_owned());
-            expanded.push_str(&replacement);
+            pending.push_str(&source[cursor..import.start]);
+            if let Some(mut child) = self.resolve_import(&import, base_url, depth) {
+                if !pending.is_empty() {
+                    expanded.push(StylesheetPart {
+                        source: std::mem::take(&mut pending),
+                        media: Vec::new(),
+                    });
+                }
+                expanded.append(&mut child);
+            } else {
+                pending.push_str(&source[import.start..import.end]);
+            }
             cursor = import.end;
         }
-        expanded.push_str(&source[cursor..]);
+        pending.push_str(&source[cursor..]);
+        if !pending.is_empty() {
+            expanded.push(StylesheetPart {
+                source: pending,
+                media: Vec::new(),
+            });
+        }
         expanded
     }
 
@@ -243,7 +272,7 @@ impl ImportExpander<'_> {
         import: &ImportStatement,
         base_url: Option<&Url>,
         depth: u32,
-    ) -> Option<String> {
+    ) -> Option<Vec<StylesheetPart>> {
         if import.url.len() > MAX_IMPORT_URL_LENGTH {
             return None;
         }
@@ -352,26 +381,31 @@ impl ImportExpander<'_> {
             let _ = self.chain.pop();
         }
 
-        if child.is_empty() {
-            return Some(String::new());
-        }
-        let replacement = if let Some(media) = &import.media {
-            let mut wrapped = String::with_capacity(child.len() + media.len() + 12);
-            wrapped.push_str("@media ");
-            wrapped.push_str(media);
-            wrapped.push('{');
-            wrapped.push_str(&child);
-            wrapped.push('}');
-            wrapped
-        } else {
-            child
+        let replacement_bytes = child.iter().try_fold(0usize, |total, part| {
+            let total = total.checked_add(part.source.len())?;
+            part.media
+                .iter()
+                .try_fold(total, |total, media| total.checked_add(media.len()))
+        })?;
+        let parent_media_bytes = match &import.media {
+            Some(media) => media.len().checked_mul(child.len())?,
+            None => 0,
         };
-        let total = self.budget.expansion_bytes.checked_add(replacement.len())?;
+        let replacement_bytes = replacement_bytes.checked_add(parent_media_bytes)?;
+        let total = self.budget.expansion_bytes.checked_add(replacement_bytes)?;
         if total > MAX_IMPORT_EXPANSION_BYTES {
             return None;
         }
+
+        // Check the full cost before copying the parent condition into parts.
+        let mut child = child;
+        if let Some(media) = &import.media {
+            for part in &mut child {
+                part.media.push(media.clone());
+            }
+        }
         self.budget.expansion_bytes = total;
-        Some(replacement)
+        Some(child)
     }
 }
 
@@ -939,7 +973,7 @@ fn starts_unsupported_import_clause(source: &str) -> bool {
         return true;
     };
     let Some((after_name, name)) = parse_identifier(source, cursor) else {
-        return true;
+        return false;
     };
     if name.eq_ignore_ascii_case("layer") {
         return true;

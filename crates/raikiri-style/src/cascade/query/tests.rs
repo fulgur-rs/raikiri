@@ -154,7 +154,7 @@ fn scope_pseudo_class_combines_with_a_combinator() {
 fn scope_pseudo_class_falls_back_to_root_semantics_with_no_bound_scope() {
     let (dom, div, p) = doc();
     let query = SelectorQuery::parse(":scope").unwrap();
-    // [`SelectorQuery::matches`] never binds a scope element -- `:scope`
+    // `SelectorQuery::matches` never binds a scope element -- `:scope`
     // then behaves exactly like `:root` (matches only the document element).
     assert!(query.matches(&dom, div, &[]));
     assert!(!query.matches(&dom, p, &[div]));

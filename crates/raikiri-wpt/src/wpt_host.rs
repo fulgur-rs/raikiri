@@ -81,9 +81,7 @@ pub(crate) struct WptDocumentHost {
     page_scene: Option<raikiri::PageScene>,
     computed_styles: Option<Vec<raikiri_style::ComputedValues>>,
     /// `<style>` sources connected at the last flush, in tree order.
-    style_sources: Vec<String>,
-    /// The `media` attribute of each entry of `style_sources`.
-    style_media: Vec<Option<String>>,
+    style_sources: Vec<raikiri_html::StylesheetSource>,
     /// Descendant content extents per arena index, rebuilt on every `flush`.
     /// Each entry is the union of descendant border-box right/bottom edges,
     /// or negative infinity when no descendant has a fragment. The scroll
@@ -102,27 +100,36 @@ pub(crate) struct WptDocumentHost {
 /// and checkout network; without this an `innerHTML`-inserted `@import`
 /// would stay opaque.
 fn expand_live_style_sources(
-    raw: Vec<String>,
+    raw: Vec<(String, Option<String>)>,
     base_url: Option<&raikiri::Url>,
     wpt_root: &Path,
-) -> Vec<String> {
+) -> Vec<raikiri_html::StylesheetSource> {
     if std::fs::canonicalize(wpt_root).is_err() {
-        return raw;
+        return raw
+            .into_iter()
+            .map(|(source, media)| raikiri_html::StylesheetSource::new(source, media))
+            .collect();
     }
     let network = raikiri_net::FileNetworkProvider;
+    let (sources, media): (Vec<_>, Vec<_>) = raw.into_iter().unzip();
     raikiri_html::expand_live_stylesheet_imports(
-        raw,
+        sources,
         base_url,
         Some(&network as &dyn raikiri_traits::NetworkProvider),
     )
+    .into_iter()
+    .zip(media)
+    .map(|(mut sheet, media)| {
+        sheet.media = media;
+        sheet
+    })
+    .collect()
 }
 
 impl WptDocumentHost {
     pub(crate) fn new(setup: LiveWptSetup, wpt_root: &Path) -> Self {
         let root = setup.uncascaded.dom.root_index();
-        let (raw, style_media) = live_wpt_stylesheets_in_subtree(&setup.uncascaded.dom, root)
-            .into_iter()
-            .unzip();
+        let raw = live_wpt_stylesheets_in_subtree(&setup.uncascaded.dom, root);
         let style_sources =
             expand_live_style_sources(raw, setup.document_base_url.as_ref(), wpt_root);
         Self {
@@ -133,7 +140,6 @@ impl WptDocumentHost {
             page_scene: None,
             computed_styles: None,
             style_sources,
-            style_media,
             scroll_content_extents: Vec::new(),
             #[cfg(test)]
             flushes: Default::default(),
@@ -215,20 +221,15 @@ impl WptDocumentHost {
     /// sheets follow in tree order.
     fn resync_stylesheets(&mut self) {
         let root = self.setup.uncascaded.dom.root_index();
-        let (raw, media): (Vec<_>, Vec<_>) =
-            live_wpt_stylesheets_in_subtree(&self.setup.uncascaded.dom, root)
-                .into_iter()
-                .unzip();
+        let raw = live_wpt_stylesheets_in_subtree(&self.setup.uncascaded.dom, root);
         let current =
             expand_live_style_sources(raw, self.setup.document_base_url.as_ref(), &self.wpt_root);
-        if current != self.style_sources || media != self.style_media {
+        if current != self.style_sources {
             let previous = std::mem::replace(&mut self.style_sources, current.clone());
-            self.style_media = media.clone();
             update_live_wpt_stylesheet_sources(
                 &mut self.setup,
                 &previous,
                 &current,
-                &media,
                 &self.wpt_root,
             );
         }

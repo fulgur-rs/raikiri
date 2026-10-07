@@ -140,12 +140,15 @@ impl TreeSink for RaikiriTreeSink {
         // is_in_document() gate.
         document.mark_in_document_flags();
 
-        let (stylesheet_sources, stylesheet_media) =
-            extract_inline_stylesheets(&document).into_iter().unzip();
+        let stylesheet_sources = extract_inline_stylesheets(&document)
+            .into_iter()
+            .map(|(source, media)| crate::StylesheetSource::new(source, media))
+            .collect();
         UncascadedDocument {
             dom: document,
             stylesheet_sources,
-            stylesheet_media,
+            user_stylesheet_sources: Vec::new(),
+            user_stylesheet_insertion_index: 0,
             warnings,
             quirks_mode,
         }
@@ -416,7 +419,7 @@ impl TreeSink for RaikiriTreeSink {
 
 /// A stylesheet-bearing element in `<head>`, retained in tree order so the
 /// parse layer can interleave inline and fetched external sheets without
-/// changing the public `stylesheet_sources: Vec<String>` projection.
+/// changing stylesheet collection order.
 ///
 /// `<template>` subtrees are inert and skipped. An explicit stack avoids call
 /// stack growth for attacker-controlled deep documents.
@@ -914,201 +917,4 @@ fn convert_quirks(mode: QuirksMode) -> raikiri_traits::QuirksMode {
 }
 
 #[cfg(test)]
-mod stylesheet_link_tests {
-    use super::is_stylesheet_link;
-
-    #[test]
-    fn no_rel_attribute_is_not_a_stylesheet_link() {
-        assert!(!is_stylesheet_link(None, None, None));
-    }
-
-    #[test]
-    fn rel_without_stylesheet_token_is_not_a_stylesheet_link() {
-        assert!(!is_stylesheet_link(Some("icon"), None, None));
-    }
-
-    #[test]
-    fn rel_stylesheet_token_is_case_insensitive() {
-        assert!(is_stylesheet_link(Some("StyleSheet"), None, None));
-        assert!(is_stylesheet_link(Some("STYLESHEET"), None, None));
-    }
-
-    #[test]
-    fn rel_stylesheet_among_multiple_space_separated_tokens_matches() {
-        assert!(is_stylesheet_link(Some("alternate stylesheet"), None, None));
-        assert!(is_stylesheet_link(Some("stylesheet next"), None, None));
-    }
-
-    #[test]
-    fn absent_type_attribute_is_treated_as_stylesheet() {
-        assert!(is_stylesheet_link(Some("stylesheet"), None, None));
-    }
-
-    #[test]
-    fn empty_type_attribute_is_treated_as_stylesheet_same_as_absent() {
-        // `type=""` is "type unspecified", not "type is the empty MIME
-        // essence" — it must gate identically to a wholly absent `type`
-        // attribute (both `Some("")` and `None` reach this predicate now
-        // that `Element::attr` distinguishes "present with empty value"
-        // from "absent"; see the doc comment above `is_stylesheet_link`).
-        assert!(is_stylesheet_link(Some("stylesheet"), Some(""), None));
-    }
-
-    #[test]
-    fn type_text_css_case_insensitive_is_treated_as_stylesheet() {
-        assert!(is_stylesheet_link(
-            Some("stylesheet"),
-            Some("text/css"),
-            None
-        ));
-        assert!(is_stylesheet_link(
-            Some("stylesheet"),
-            Some("Text/CSS"),
-            None
-        ));
-    }
-
-    #[test]
-    fn non_css_type_attribute_is_not_treated_as_stylesheet() {
-        assert!(!is_stylesheet_link(
-            Some("stylesheet"),
-            Some("application/rss+xml"),
-            None
-        ));
-    }
-
-    #[test]
-    fn type_with_charset_mime_parameter_is_still_treated_as_stylesheet() {
-        // browsers ignore MIME parameters (charset, etc.) when gating on the
-        // `type` attribute's essence — only `text/css` (before any `;`)
-        // matters.
-        assert!(is_stylesheet_link(
-            Some("stylesheet"),
-            Some("text/css; charset=utf-8"),
-            None
-        ));
-        assert!(is_stylesheet_link(
-            Some("stylesheet"),
-            Some("TEXT/CSS;charset=UTF-8"),
-            None
-        ));
-    }
-
-    #[test]
-    fn non_css_essence_with_mime_parameter_is_not_treated_as_stylesheet() {
-        assert!(!is_stylesheet_link(
-            Some("stylesheet"),
-            Some("application/rss+xml; charset=utf-8"),
-            None
-        ));
-    }
-
-    #[test]
-    fn untitled_alternate_stylesheet_is_treated_as_stylesheet() {
-        // CSSOM "add a CSS style sheet" step 5: an empty title unsets the
-        // disabled flag unconditionally, regardless of the alternate flag.
-        assert!(is_stylesheet_link(Some("alternate stylesheet"), None, None));
-    }
-
-    #[test]
-    fn empty_string_title_on_alternate_stylesheet_is_treated_as_stylesheet() {
-        // Same as the `None` case above, but exercises `Some("")` directly
-        // rather than relying on the call site's `Element::attr` contract
-        // (which normalizes an empty attribute value to `None` before this
-        // function ever sees it) to collapse the two.
-        assert!(is_stylesheet_link(
-            Some("alternate stylesheet"),
-            None,
-            Some("")
-        ));
-    }
-
-    #[test]
-    fn titled_alternate_stylesheet_is_excluded() {
-        // CSSOM "add a CSS style sheet" step 4-6: a titled alternate
-        // stylesheet only has its disabled flag unset if it matches the
-        // page's preferred/selected stylesheet set. This crate tracks
-        // neither, so it can never legitimately be "selected" — excluded
-        // unconditionally rather than applied as if always preferred.
-        assert!(!is_stylesheet_link(
-            Some("alternate stylesheet"),
-            None,
-            Some("High Contrast")
-        ));
-    }
-
-    #[test]
-    fn titled_alternate_stylesheet_is_excluded_regardless_of_type_match() {
-        assert!(!is_stylesheet_link(
-            Some("stylesheet alternate"),
-            Some("text/css"),
-            Some("High Contrast")
-        ));
-    }
-
-    #[test]
-    fn titled_non_alternate_stylesheet_link_still_applies() {
-        // No `alternate` token in `rel` — a titled *non-alternate* link is
-        // the preferred stylesheet (its title becomes the page's preferred
-        // stylesheet set name, per CSSOM "add a CSS style sheet" step 4),
-        // so it's unaffected by the alternate-only exclusion.
-        assert!(is_stylesheet_link(
-            Some("stylesheet"),
-            None,
-            Some("Default")
-        ));
-    }
-}
-
-#[cfg(test)]
-mod collect_external_stylesheet_hrefs_tests {
-    use super::collect_external_stylesheet_hrefs;
-    use raikiri_dom::Document;
-
-    #[test]
-    fn document_without_a_head_element_yields_no_hrefs() {
-        // find_head_element's None branch: a Document that never got a
-        // <head> attached at all (html5ever's tree construction always
-        // synthesizes one, so this only happens for a hand-built Document
-        // like this one — exercised directly since collect_external_stylesheet_hrefs
-        // is pub(crate) and doesn't need the full parse pipeline).
-        let doc = Document::new();
-        assert!(collect_external_stylesheet_hrefs(&doc).is_empty());
-    }
-}
-
-#[cfg(test)]
-mod find_document_base_href_tests {
-    use super::find_document_base_href;
-    use raikiri_dom::Document;
-
-    #[test]
-    fn document_without_a_head_element_yields_no_base_href() {
-        // Mirrors collect_external_stylesheet_hrefs_tests's identical case:
-        // find_head_element's None branch, only reachable via a hand-built
-        // Document (html5ever's tree construction always synthesizes a
-        // <head>). Full document-order / trim / empty-href / <template>
-        // behavior is exercised at the `parse()` level in lib.rs, where a
-        // mock `NetworkProvider` can observe which URL was actually
-        // resolved and requested.
-        let doc = Document::new();
-        assert!(find_document_base_href(&doc).is_none());
-    }
-}
-
-#[cfg(test)]
-mod inline_stylesheet_text_tests {
-    use super::strip_xhtml_cdata_wrapper;
-
-    #[test]
-    fn strips_xhtml_cdata_wrapper_but_keeps_plain_css() {
-        assert_eq!(
-            strip_xhtml_cdata_wrapper("\n<![CDATA[\nbody { color: red }\n]]>\n"),
-            "\nbody { color: red }\n"
-        );
-        assert_eq!(
-            strip_xhtml_cdata_wrapper("body { color: red }"),
-            "body { color: red }"
-        );
-    }
-}
+mod tests;

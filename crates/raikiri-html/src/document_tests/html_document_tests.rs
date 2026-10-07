@@ -37,7 +37,7 @@ fn html_document_accessors_expose_underlying_types() {
     // The accessor has the same identity as the inner field (no separate heap allocation).
     let dom_ref: &raikiri_dom::Document = doc.dom();
     let cascade_ref: &CascadeResult = doc.cascade();
-    let sources_ref: &[String] = doc.stylesheet_sources();
+    let sources_ref: &[crate::StylesheetSource] = doc.stylesheet_sources();
 
     assert!(
         std::ptr::eq(dom_ref, &doc.uncascaded.dom),

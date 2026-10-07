@@ -17,6 +17,10 @@ pub(crate) enum Rollback {
 pub(crate) fn rollback_kind(value: &PropertyValue) -> Rollback {
     let keyword = match value {
         PropertyValue::AllRevertLayer => return Rollback::Layer,
+        PropertyValue::Deferred(marker) => match marker.css_wide_keyword() {
+            Some(keyword) => keyword,
+            None => return Rollback::None,
+        },
         PropertyValue::CustomProperty(custom) => {
             return super::custom_property::custom_property_rollback(&custom.value);
         }

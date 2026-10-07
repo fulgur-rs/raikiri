@@ -1911,28 +1911,16 @@ pub(crate) fn live_wpt_stylesheets_in_subtree(
 
 pub(crate) fn update_live_wpt_stylesheet_sources(
     setup: &mut LiveWptSetup,
-    previous_sources: &[String],
-    current_sources: &[String],
-    current_media: &[Option<String>],
+    previous_sources: &[raikiri_html::StylesheetSource],
+    current_sources: &[raikiri_html::StylesheetSource],
     wpt_root: &Path,
 ) {
     // Preserve parser-loaded `<link>` sheets: they are the author entries that
     // did not come from connected `<style>` elements. Removing the previous
     // inline sheets in multiset order leaves them in their original order.
-    // Each remaining sheet keeps its `media` attribute, so the two parallel
-    // vectors stay aligned.
-    let mut remaining: Vec<(String, Option<String>)> = setup
-        .uncascaded
-        .stylesheet_sources
-        .iter()
-        .enumerate()
-        .map(|(index, source)| {
-            let media = setup.uncascaded.stylesheet_media_at(index);
-            (source.clone(), media.map(ToOwned::to_owned))
-        })
-        .collect();
+    let mut remaining = setup.uncascaded.stylesheet_sources.clone();
     for previous in previous_sources {
-        if let Some(index) = remaining.iter().position(|(source, _)| source == previous) {
+        if let Some(index) = remaining.iter().position(|source| source == previous) {
             remaining.remove(index);
         }
     }
@@ -1940,20 +1928,11 @@ pub(crate) fn update_live_wpt_stylesheet_sources(
     // at the end, so a script-connected `<style>` preceding an existing sheet
     // never matched document order. Rebuilding from the current tree order
     // fixes that; link sheets stay untouched at the front.
-    remaining.extend(
-        current_sources
-            .iter()
-            .enumerate()
-            .map(|(index, source)| (source.clone(), current_media.get(index).cloned().flatten())),
-    );
-    let (stylesheet_sources, stylesheet_media): (Vec<_>, Vec<_>) = remaining.into_iter().unzip();
-    if setup.uncascaded.stylesheet_sources == stylesheet_sources
-        && setup.uncascaded.stylesheet_media == stylesheet_media
-    {
+    remaining.extend_from_slice(current_sources);
+    if setup.uncascaded.stylesheet_sources == remaining {
         return;
     }
-    setup.uncascaded.stylesheet_sources = stylesheet_sources;
-    setup.uncascaded.stylesheet_media = stylesheet_media;
+    setup.uncascaded.stylesheet_sources = remaining;
     setup.font_face_tree = raikiri::build_rule_tree(&setup.uncascaded);
     let font_loader = WptFontLoader::discover(setup.page_resource_base.as_deref())
         .or_else(|| WptFontLoader::discover(Some(wpt_root)));

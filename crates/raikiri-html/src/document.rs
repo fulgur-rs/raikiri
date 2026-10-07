@@ -35,7 +35,7 @@ impl HtmlDocument {
     /// a list of fetched head stylesheet sources
     /// (matching [`UncascadedDocument::stylesheet_sources`]).
     /// Includes HTML/XHTML and SVG `<style>`, but excludes MathML elements with that name.
-    pub fn stylesheet_sources(&self) -> &[String] {
+    pub fn stylesheet_sources(&self) -> &[crate::StylesheetSource] {
         &self.uncascaded.stylesheet_sources
     }
 

@@ -6748,6 +6748,19 @@ pub struct DeferredValue {
     pub(crate) key: PropertyKey,
 }
 
+impl DeferredValue {
+    /// Return a canonical defaulting marker for the supported deferred longhands.
+    pub(crate) fn css_wide_keyword(&self) -> Option<CssWideKeyword> {
+        if !matches!(
+            self.key,
+            PropertyKey::Color | PropertyKey::BackgroundColor | PropertyKey::FontSize
+        ) {
+            return None;
+        }
+        CssWideKeyword::from_css_ident(self.value.as_ref())
+    }
+}
+
 /// A four-corner `<length>` value for `border-radius`.
 ///
 /// This is the shorthand from CSS Backgrounds and Borders Level 3 §5
@@ -8191,7 +8204,8 @@ pub enum FilterFunction {
 /// <https://www.w3.org/TR/css-cascade-4/#defaulting-keywords>; `revert-layer`
 /// — CSS Cascade 5 §7.3.5 "Rolling Back Cascade Layers: the revert-layer
 /// keyword" <https://www.w3.org/TR/css-cascade-5/#revert-layer>) is not yet
-/// implemented in this crate, except for the border longhands and the `border` /
+/// implemented in this crate, except for `color`, `background-color`, `font-size`,
+/// the border longhands and the `border` /
 /// `border-right` shorthands, which accept all five keywords through
 /// [`CssWideKeyword`] (see that type's docs for resolution). The `all` shorthand
 /// additionally accepts literal `revert-layer` through [`PropertyValue::AllRevertLayer`];

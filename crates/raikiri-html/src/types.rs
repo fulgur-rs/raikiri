@@ -29,13 +29,12 @@ pub struct UncascadedDocument {
     /// first; inline styles outside the head follow in document order.
     /// The raikiri umbrella crate cascades them as Author-origin stylesheets via
     /// `build_cascaded`.
-    pub stylesheet_sources: Vec<String>,
-    /// The `media` attribute of the element that produced each entry of
-    /// `stylesheet_sources`: entry `i` applies to `stylesheet_sources[i]`.
-    /// `None`, or a missing entry, means the element had no `media`
-    /// attribute, so the stylesheet applies to all media. Read entries with
-    /// [`UncascadedDocument::stylesheet_media_at`].
-    pub stylesheet_media: Vec<Option<String>>,
+    pub stylesheet_sources: Vec<StylesheetSource>,
+    /// Consumer-supplied sheets, cascaded with User origin before author sheets.
+    pub user_stylesheet_sources: Vec<StylesheetSource>,
+    /// Number of DOM-associated sheets preceding the parsed consumer sheets.
+    /// Later calls to [`Document::add_stylesheet`] follow these consumer sheets.
+    pub user_stylesheet_insertion_index: usize,
     /// Nonfatal html5ever parse errors, retained as warnings.
     /// The higher-level orchestrator (the raikiri umbrella crate) merges them into
     /// `RenderSummary.warnings` through `Document`.
@@ -46,17 +45,45 @@ pub struct UncascadedDocument {
     pub quirks_mode: raikiri_traits::QuirksMode,
 }
 
-impl UncascadedDocument {
-    /// The `media` attribute recorded for `stylesheet_sources[index]`, if any.
-    pub fn stylesheet_media_at(&self, index: usize) -> Option<&str> {
-        self.stylesheet_media.get(index).and_then(Option::as_deref)
+/// One stylesheet root with imports resolved into source-ordered parts.
+///
+/// A part remains a top-level stylesheet, so its namespace declarations and
+/// descriptor rules retain their original scope. The element media attribute
+/// applies to every part, in conjunction with the part's import conditions.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StylesheetSource {
+    /// Parts in the order they enter the cascade.
+    pub parts: Vec<StylesheetPart>,
+    /// The media query list from the owning style or link element.
+    pub media: Option<String>,
+}
+
+impl StylesheetSource {
+    /// Create a stylesheet before import resolution.
+    pub fn new(source: String, media: Option<String>) -> Self {
+        Self {
+            parts: vec![StylesheetPart {
+                source,
+                media: Vec::new(),
+            }],
+            media,
+        }
     }
+}
+
+/// Top-level CSS text guarded by the media lists of its importing ancestors.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StylesheetPart {
+    /// CSS text parsed in its own stylesheet namespace scope.
+    pub source: String,
+    /// Media query lists combined with logical AND, preserving each list's OR.
+    pub media: Vec<String>,
 }
 
 /// Options passed to the parse phase.
 ///
-/// `parse_with_sink` consumes `extra_stylesheets` via `Document::add_stylesheet`
-/// with `StylesheetKind::User`. It resolves leading `@import` rules in inline,
+/// `parse_with_sink` consumes `extra_stylesheets` with User origin. It resolves
+/// leading `@import` rules in inline,
 /// extra, and external stylesheets when `network` is available. It also uses
 /// `network` and `base_url` to fetch `<head>` links with `rel="stylesheet"` and
 /// resolve relative URLs in stylesheet `@import` rules
