@@ -587,7 +587,7 @@ fn parse_ratio_number<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, ()> {
     input.reset(&state);
     let source = paper_component_source(input)?;
     if !crate::property::contains_function_in_source(source, "var")
-        && crate::property::math_value_has_type(source, crate::property::ColorMathType::Number)
+        && crate::property::math_value_has_type(source, crate::property::MediaNumericType::Number)
     {
         Ok(())
     } else {
@@ -650,10 +650,11 @@ fn valid_paper_value(source: &str, kind: PaperFeatureKind) -> bool {
             {
                 return true;
             }
-            !crate::property::contains_function_in_source(source, "var")
+            input.expect_function().is_ok()
+                && !crate::property::contains_function_in_source(source, "var")
                 && crate::property::math_value_has_type(
                     source,
-                    crate::property::ColorMathType::Length,
+                    crate::property::MediaNumericType::Length,
                 )
         }
     }

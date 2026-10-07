@@ -11135,20 +11135,6 @@ pub(crate) fn color_value_with_math_is_valid(value: &str) -> bool {
         .is_ok()
 }
 
-/// Validate a math value's numeric type for media-feature grammar. This helper
-/// exposes the existing type checker to the media parser without substituting
-/// a property parser's deferred dummy for the expression's actual type.
-pub(crate) fn math_value_has_type(source: &str, expected: ColorMathType) -> bool {
-    if crate::cascade::find_function_tokens(source, &[]).is_none() {
-        return false;
-    }
-    let mut parser_input = ParserInput::new(source);
-    let mut parser = Parser::new(&mut parser_input);
-    parser
-        .parse_entirely(|input| color_math_expression_type(input, false))
-        .is_ok_and(|kind| kind == expected)
-}
-
 pub(crate) fn math_function_syntax_is_valid(input: &str) -> bool {
     let mut parser_input = ParserInput::new(input);
     let mut parser = Parser::new(&mut parser_input);

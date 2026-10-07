@@ -60,7 +60,13 @@ use std::sync::Arc;
 
 #[test]
 fn invalid_or_never_matching_paper_query_arms_keep_page_size() {
-    for prelude in ["print, (width:red)", "print, projection and (width:1px)"] {
+    for prelude in [
+        "print, (width:red)",
+        "print, (width:clamp(1px))",
+        "print, (width:1px/2)",
+        "print, (device-width:1px/2)",
+        "print, projection and (width:1px)",
+    ] {
         let result = page(
             &format!("@media {prelude}{{@page{{size:300px 200px;margin:10px}}}}"),
             &ComputedValues::initial(),
