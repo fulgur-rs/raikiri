@@ -88,6 +88,154 @@ const RED: CssColor = CssColor {
     b: 0,
     a: 255,
 };
+
+#[test]
+fn page_context_currentcolor_uses_page_color() {
+    let mut root = ComputedValues::initial();
+    root.color = BLUE;
+    let result = page(
+        "@page { color: color-mix(in srgb, currentcolor, red); background-color: currentcolor }",
+        &root,
+    );
+    let purple = CssColor {
+        r: 128,
+        g: 0,
+        b: 128,
+        a: 255,
+    };
+    assert_eq!(
+        result.declarations.get(&PropertyKey::Color),
+        Some(&PropertyValue::Color(purple))
+    );
+    assert_eq!(
+        result.declarations.get(&PropertyKey::BackgroundColor),
+        Some(&PropertyValue::BackgroundColor(purple))
+    );
+}
+
+#[test]
+fn margin_context_currentcolor_resolves_after_its_own_color() {
+    for (declarations, expected) in [
+        ("background-color:currentcolor;color:blue", BLUE),
+        ("color:blue;background-color:currentcolor", BLUE),
+        (
+            "background-color:currentcolor;color:color-mix(in srgb,currentcolor,blue)",
+            CssColor {
+                r: 128,
+                g: 0,
+                b: 128,
+                a: 255,
+            },
+        ),
+    ] {
+        let result = page(
+            &format!("@page{{color:red;@top-center{{content:'X';{declarations}}}}}"),
+            &ComputedValues::initial(),
+        );
+        let margin = result
+            .cascade_margin_box(PageMarginBoxSlot::TopCenter)
+            .unwrap();
+        assert!(
+            margin
+                .declarations
+                .iter()
+                .any(|declaration| declaration.value == PropertyValue::Color(expected))
+        );
+        assert!(
+            margin
+                .declarations
+                .iter()
+                .any(|declaration| declaration.value == PropertyValue::BackgroundColor(expected))
+        );
+    }
+    let result = page(
+        "@page{@top-center{content:'X';background-color:currentcolor}}",
+        &ComputedValues::initial(),
+    );
+    let margin = result
+        .cascade_margin_box(PageMarginBoxSlot::TopCenter)
+        .unwrap();
+    assert!(margin.declarations.iter().any(|declaration| declaration.value == PropertyValue::BackgroundColor(CssColor::BLACK)));
+}
+
+#[test]
+fn margin_background_inherits_the_page_color_expression() {
+    for (page_background, expected) in [
+        ("currentcolor", BLUE),
+        (
+            "color-mix(in srgb,currentcolor,white)",
+            CssColor {
+                r: 128,
+                g: 128,
+                b: 255,
+                a: 255,
+            },
+        ),
+    ] {
+        let result = page(
+            &format!(
+                "@page{{color:red;background:{page_background};@top-center{{content:'X';color:blue;background-color:inherit}}}}"
+            ),
+            &ComputedValues::initial(),
+        );
+        let margin = result
+            .cascade_margin_box(PageMarginBoxSlot::TopCenter)
+            .unwrap();
+        assert!(
+            margin
+                .declarations
+                .iter()
+                .any(|declaration| declaration.value == PropertyValue::BackgroundColor(expected)),
+            "{page_background}: {:?}, page source: {:?}",
+            margin.declarations,
+            result.margin_box_inheritance.background_color_expression
+        );
+    }
+}
+
+#[test]
+fn root_page_and_margin_keep_inherited_background_color_symbolic() {
+    let mut root = ComputedValues::initial();
+    root.color = RED;
+    root.background_color = RED;
+    root.background_color_expression = Some("currentcolor".into());
+    let result = page(
+        "@page{color:blue;background-color:inherit;@top-center{content:'X';color:green;background-color:inherit}}",
+        &root,
+    );
+    assert_eq!(
+        result.declarations.get(&PropertyKey::BackgroundColor),
+        Some(&PropertyValue::BackgroundColor(BLUE))
+    );
+    let margin = result
+        .cascade_margin_box(PageMarginBoxSlot::TopCenter)
+        .unwrap();
+    assert!(
+        margin
+            .declarations
+            .iter()
+            .any(|declaration| declaration.value == PropertyValue::BackgroundColor(GREEN))
+    );
+    for defaulting in ["initial", "unset"] {
+        let result = page(
+            &format!(
+                "@page{{color:blue;background-color:inherit;@top-center{{content:'X';color:green;background-color:{defaulting}}}}}"
+            ),
+            &root,
+        );
+        let margin = result
+            .cascade_margin_box(PageMarginBoxSlot::TopCenter)
+            .unwrap();
+        assert!(
+            margin
+                .declarations
+                .iter()
+                .any(|declaration| declaration.value
+                    == PropertyValue::BackgroundColor(CssColor::TRANSPARENT))
+        );
+    }
+}
+
 const BLUE: CssColor = CssColor {
     r: 0,
     g: 0,
@@ -2239,6 +2387,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
     // field-swap-detecting shape as the `border` case above), leaving
     // the other 6 fields untouched via the struct-update `..shorthand`.
     let shorthand = BackgroundShorthand {
+        color_expression: None,
         color: CssColor::TRANSPARENT,
         image: BackgroundImage::None,
         repeat: BackgroundRepeat {
@@ -3111,8 +3260,9 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
 /// conversion. The exhaustive match in `absolutize_in_page_context`
 /// determines the classification.
 // Includes page-only inherit markers, which are resolved before this
-// phase and therefore remain unchanged here.
-const PHASE_3_PASS_THROUGH_VARIANTS: usize = 167;
+// phase and therefore remain unchanged here. ContextualColor is also a
+// computed expression; it requires no page-context length conversion.
+const PHASE_3_PASS_THROUGH_VARIANTS: usize = 168;
 /// Number of corpus variants transformed by page-context resolution.
 /// This is derived from the corpus size and the pass-through count.
 fn phase_3_transformed_variants() -> usize {
@@ -3678,6 +3828,7 @@ property_key_samples! {
     // catch a field-swap regression in the shorthand's own fall-through
     // arms.
     Background => PropertyValue::Background(BackgroundShorthand {
+        color_expression: None,
         color: GREEN,
         image: BackgroundImage::Url("tile.png".to_string()),
         repeat: BackgroundRepeat {
@@ -3911,6 +4062,10 @@ fn key_sharing_extras() -> Vec<PropertyValue> {
         PropertyValue::BorderRightColorCssWide(CssWideKeyword::Inherit),
         PropertyValue::BorderBottomColorCssWide(CssWideKeyword::Inherit),
         PropertyValue::BorderLeftColorCssWide(CssWideKeyword::Inherit),
+        PropertyValue::ContextualColor(crate::property::ContextualColor {
+            source: "currentcolor".into(),
+            key: PropertyKey::BackgroundColor,
+        }),
         PropertyValue::Deferred(DeferredValue {
             property: "width".into(),
             value: "calc(1px + 1px)".into(),
@@ -4016,6 +4171,7 @@ macro_rules! property_value_variant_registry {
 property_value_variant_registry! {
     CustomProperty,
     Deferred,
+    ContextualColor,
     Color,
     BackgroundColor,
     FontFamily,
@@ -4932,6 +5088,8 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             // representations, not page-context computed length payloads.
             | PropertyValue::CustomProperty(_)
             | PropertyValue::Deferred(_) => None,
+            // CSS Color 5 retains expressions containing currentcolor as computed values.
+            PropertyValue::ContextualColor(_) => None,
             // `text-shadow` — each item's 3 lengths (`offset-x`/`offset-y`/
             // `blur-radius`) can carry specified-layer residue (same `length`
             // check `Padding`/`Margin` use above); `<color>` carries no
@@ -5346,6 +5504,7 @@ fn background_size_cover_and_contain_are_not_specified_layer_residue() {
 fn background_shorthand_size_cover_and_contain_are_not_specified_layer_residue() {
     fn shorthand_with_size(size: BackgroundSize) -> BackgroundShorthand {
         BackgroundShorthand {
+            color_expression: None,
             color: RED,
             image: BackgroundImage::None,
             repeat: BackgroundRepeat {
