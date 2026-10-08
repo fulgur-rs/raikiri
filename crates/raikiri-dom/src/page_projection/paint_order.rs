@@ -111,6 +111,9 @@ impl Document {
                 lines.entry(run.line.root).or_default().push(run.line);
             }
         }
+        for paragraph in lines.values_mut() {
+            paragraph.sort_unstable_by_key(|line| line.index);
+        }
         self.page_paint_order_impl(cascade, page_index, Some(&lines))
     }
 
