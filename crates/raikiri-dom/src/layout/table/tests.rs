@@ -122,6 +122,48 @@ fn a_rowspan_that_fills_the_column_limit_rejects_a_cell_beyond_it() {
 }
 
 #[test]
+fn paged_projection_does_not_change_the_next_single_page_cell_coordinates() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let table = doc.append_element(
+        Some(body),
+        "table",
+        Style::default(),
+        Some("display:table;border-spacing:0"),
+    );
+    let mut cells = Vec::new();
+    let mut rows = Vec::new();
+    for _ in 0..2 {
+        let row = doc.append_element(
+            Some(table),
+            "tr",
+            Style::default(),
+            Some("display:table-row"),
+        );
+        rows.push(row);
+        cells.push(doc.append_element(
+            Some(row),
+            "td",
+            Style::default(),
+            Some("display:table-cell;width:10px;height:10px"),
+        ));
+    }
+    doc.mark_in_document_flags();
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+
+    for _ in 0..2 {
+        crate::layout::layout_single_page(&mut doc, &cascade, PageBox::A4).unwrap();
+        assert_eq!(doc.nodes[rows[1]].unrounded_layout.location.y, 0.0);
+        assert_eq!(doc.nodes[cells[1]].unrounded_layout.location.y, 10.0);
+
+        crate::layout::layout_pages(&mut doc, &cascade, PageBox::A4).unwrap();
+        assert_eq!(doc.nodes[rows[1]].unrounded_layout.location.y, 10.0);
+        assert_eq!(doc.nodes[cells[1]].unrounded_layout.location.y, 0.0);
+    }
+}
+
+#[test]
 fn native_callback_keeps_proper_cell_geometry_without_prepared_objects() {
     for prepared in [false, true] {
         let mut doc = Document::new();
