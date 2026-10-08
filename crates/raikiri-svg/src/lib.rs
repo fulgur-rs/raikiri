@@ -242,8 +242,14 @@ impl SvgDocument {
     /// External resource references, CSS imports and XML stylesheet processing
     /// instructions are rejected before source is exported. SVG navigation
     /// links and same-document fragment references remain available.
-    /// CSS at-rules are retained without interpretation; the vector consumer
-    /// determines which of them it supports.
+    /// Style rules with selectors in the subset this crate matches are frozen
+    /// to the elements they match in the original source and emitted with
+    /// equal specificity in their original cascade order. CSS at-rules, and
+    /// style rules with any other selector, are retained without
+    /// interpretation after the frozen rules, in source order; retained style
+    /// rules are wrapped in `@media all`. Retained CSS therefore does not keep
+    /// its original order or specificity relative to frozen rules. The vector
+    /// consumer determines which retained CSS it supports.
     pub fn styled_source(
         &self,
         viewport: SvgViewport,
@@ -2940,7 +2946,9 @@ fn freeze_svg_stylesheet_selectors(
             stylesheet.parse_more(text);
         }
     }
-    if stylesheet.rules.is_empty() {
+    // Style text without matched rules is still rewritten so retained style
+    // rules are wrapped before later rewrites split their selector lists.
+    if stylesheet.rules.is_empty() && stylesheet_ranges.is_empty() {
         return Ok(source.to_owned());
     }
 
@@ -3025,7 +3033,7 @@ fn freeze_svg_stylesheet_selectors(
 
     let mut stylesheet_inserted = false;
     for (node, range) in stylesheet_ranges {
-        let retained = retain_svg_at_rules(node.text().unwrap_or_default(), budget)?;
+        let retained = retain_unfrozen_svg_css(node.text().unwrap_or_default(), budget)?;
         let replacement = if !stylesheet_inserted {
             stylesheet_inserted = true;
             budget.bytes(retained.len())?;
@@ -3061,9 +3069,12 @@ fn freeze_svg_stylesheet_selectors(
     apply_selector_edits(source, edits, budget)
 }
 
-// SimpleCSS ignores at-rules. Keep their source for other vector consumers
-// while freezing only the qualified rules that SimpleCSS actually matched.
-fn retain_svg_at_rules(
+// SimpleCSS ignores at-rules and style rules with a selector-list entry it
+// cannot parse. Keep their source for other vector consumers while freezing
+// only the qualified rules that SimpleCSS actually matched. Retained style
+// rules are wrapped in `@media all`, which SimpleCSS and the later stylesheet
+// rewrites skip, so their selectors never match the rewritten source there.
+fn retain_unfrozen_svg_css(
     source: &str,
     budget: &mut SelectorFreezeBudget,
 ) -> Result<String, SvgError> {
@@ -3076,29 +3087,91 @@ fn retain_svg_at_rules(
             break;
         };
         SelectorFreezeBudget::consume(&mut budget.checks, 1)?;
-        if !matches!(token, cssparser::Token::AtKeyword(_)) {
+        if matches!(
+            token,
+            cssparser::Token::WhiteSpace(_)
+                | cssparser::Token::Comment(_)
+                | cssparser::Token::CDO
+                | cssparser::Token::CDC
+        ) {
             continue;
         }
-        loop {
+        if matches!(token, cssparser::Token::AtKeyword(_)) {
+            loop {
+                SelectorFreezeBudget::consume(&mut budget.checks, 1)?;
+                match parser.next_including_whitespace_and_comments() {
+                    Ok(cssparser::Token::Semicolon) | Err(_) => break,
+                    Ok(cssparser::Token::CurlyBracketBlock) => {
+                        skip_css_block(&mut parser);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            let raw = parser.slice_from(start);
+            budget.bytes(raw.len().saturating_add(1))?;
+            retained.push_str(raw);
+            retained.push('\n');
+            continue;
+        }
+
+        // A block parses differently inside `@media`: `}` closes it and `;`
+        // separates rules. Rules whose prelude is empty or contains either
+        // token at top level are invalid everywhere and are not retained.
+        let mut wrappable = !matches!(
+            token,
+            cssparser::Token::CurlyBracketBlock
+                | cssparser::Token::CloseCurlyBracket
+                | cssparser::Token::Semicolon
+        );
+        let mut prelude_end = matches!(token, cssparser::Token::CurlyBracketBlock).then_some(start);
+        while prelude_end.is_none() {
+            let position = parser.position();
             SelectorFreezeBudget::consume(&mut budget.checks, 1)?;
             match parser.next_including_whitespace_and_comments() {
-                Ok(cssparser::Token::Semicolon) | Err(_) => break,
-                Ok(cssparser::Token::CurlyBracketBlock) => {
-                    let _ = parser.parse_nested_block(|body| {
-                        while body.next().is_ok() {}
-                        Ok::<(), cssparser::ParseError<'_, ()>>(())
-                    });
-                    break;
+                Ok(cssparser::Token::CurlyBracketBlock) => prelude_end = Some(position),
+                Ok(cssparser::Token::CloseCurlyBracket | cssparser::Token::Semicolon) => {
+                    wrappable = false;
                 }
-                _ => {}
+                Ok(_) => {}
+                Err(_) => break,
             }
         }
+        let Some(prelude_end) = prelude_end else {
+            break;
+        };
+        skip_css_block(&mut parser);
+        if !wrappable {
+            continue;
+        }
+        let prelude = parser.slice(start..prelude_end);
+        let selector_count = prelude
+            .bytes()
+            .filter(|byte| *byte == b',')
+            .count()
+            .saturating_add(1);
+        budget.bytes(selector_count.saturating_mul(2 * std::mem::size_of::<&str>()))?;
+        SelectorFreezeBudget::consume(&mut budget.checks, selector_count)?;
+        if split_css_selector_list(prelude)
+            .into_iter()
+            .all(|selector| simplecss::Selector::parse(selector).is_some())
+        {
+            continue;
+        }
         let raw = parser.slice_from(start);
-        budget.bytes(raw.len().saturating_add(1))?;
+        budget.bytes(raw.len().saturating_add(16))?;
+        retained.push_str("@media all { ");
         retained.push_str(raw);
-        retained.push('\n');
+        retained.push_str(" }\n");
     }
     Ok(retained)
+}
+
+fn skip_css_block(parser: &mut cssparser::Parser<'_, '_>) {
+    let _ = parser.parse_nested_block(|body| {
+        while body.next().is_ok() {}
+        Ok::<(), cssparser::ParseError<'_, ()>>(())
+    });
 }
 
 fn apply_selector_edits(

@@ -2026,17 +2026,145 @@ fn at_rule_retention_charges_the_shared_rewrite_budget() {
     let mut budget = SelectorFreezeBudget::new();
     budget.bytes = 1;
     assert!(matches!(
-        super::retain_svg_at_rules("@media all { rect { fill:red } }", &mut budget),
+        super::retain_unfrozen_svg_css("@media all { rect { fill:red } }", &mut budget),
         Err(SvgError::InvalidDocument(_))
     ));
     let mut budget = SelectorFreezeBudget::new();
     for checks in [0, 1] {
         budget.checks = checks;
         assert!(matches!(
-            super::retain_svg_at_rules("@custom;", &mut budget),
+            super::retain_unfrozen_svg_css("@custom;", &mut budget),
             Err(SvgError::InvalidDocument(_))
         ));
     }
+}
+
+#[test]
+fn source_export_without_frozen_rules_keeps_unmatched_selectors_inert() {
+    let source = format!(
+        "<svg xmlns='{SVG_NAMESPACE}' width='10' height='10'><style>rect:is(.hot), rect {{ color:red }}</style><rect class='hot' width='10' height='10' fill='currentColor'/></svg>"
+    );
+    let exported = SvgDocument::parse(source.as_bytes())
+        .unwrap()
+        .styled_source_with_root_color(
+            SvgViewport {
+                width: 10.0,
+                height: 10.0,
+            },
+            SvgRootStyle::default(),
+            [0, 0, 0, 255],
+        )
+        .unwrap();
+    assert!(
+        exported.contains("@media all { rect:is(.hot), rect { color:red } }"),
+        "{exported}"
+    );
+    let image = SvgDocument::parse(exported.as_bytes())
+        .unwrap()
+        .rasterize(
+            SvgViewport {
+                width: 10.0,
+                height: 10.0,
+            },
+            SvgRootStyle::default(),
+            None,
+        )
+        .unwrap();
+    assert_eq!(&image.rgba[..4], &[0, 0, 0, 255]);
+}
+
+#[test]
+fn style_rule_retention_charges_the_shared_rewrite_budget() {
+    let rule = "a:is(.b), c { fill:red }";
+    let mut unlimited = SelectorFreezeBudget::new();
+    assert_eq!(
+        super::retain_unfrozen_svg_css(rule, &mut unlimited).unwrap(),
+        format!("@media all {{ {rule} }}\n")
+    );
+    let initial = SelectorFreezeBudget::new();
+    for checks in 0..initial.checks - unlimited.checks {
+        let mut budget = SelectorFreezeBudget::new();
+        budget.checks = checks;
+        assert!(matches!(
+            super::retain_unfrozen_svg_css(rule, &mut budget),
+            Err(SvgError::InvalidDocument(_))
+        ));
+    }
+    let used_bytes = initial.bytes - unlimited.bytes;
+    for bytes in [0, used_bytes - 1] {
+        let mut budget = SelectorFreezeBudget::new();
+        budget.bytes = bytes;
+        assert!(matches!(
+            super::retain_unfrozen_svg_css(rule, &mut budget),
+            Err(SvgError::InvalidDocument(_))
+        ));
+    }
+}
+
+#[test]
+fn style_rule_retention_skips_rules_that_cannot_be_wrapped() {
+    let mut budget = SelectorFreezeBudget::new();
+    for stylesheet in [
+        "{ fill:red }",
+        "} a:is(.b) { fill:red }",
+        "a:is(.b) } c { fill:red }",
+        "; a:is(.b) { fill:red }",
+        "a:is(.b); c { fill:red }",
+        "a:is(.b)",
+        "<!-- a, c { fill:red } -->",
+    ] {
+        assert_eq!(
+            super::retain_unfrozen_svg_css(stylesheet, &mut budget).unwrap(),
+            "",
+            "{stylesheet}"
+        );
+    }
+}
+
+#[test]
+fn source_export_retains_style_rules_with_unmatched_selectors() {
+    let stylesheet = "rect { opacity:.5 } rect:is(.hot) { fill:red } rect:is(.hot), rect { color:red } } rect:is(.hot) { fill:blue }";
+    let source = format!(
+        "<svg xmlns='{SVG_NAMESPACE}' width='10' height='10'><style>{stylesheet}</style><rect class='hot' width='10' height='10' fill='currentColor'/></svg>"
+    );
+    let exported = SvgDocument::parse(source.as_bytes())
+        .unwrap()
+        .styled_source_with_root_color(
+            SvgViewport {
+                width: 10.0,
+                height: 10.0,
+            },
+            SvgRootStyle::default(),
+            [0, 0, 0, 255],
+        )
+        .unwrap();
+    let xml = roxmltree::Document::parse(&exported).unwrap();
+    let style = xml
+        .descendants()
+        .find(|node| node.has_tag_name("style"))
+        .and_then(|node| node.text())
+        .unwrap();
+    assert!(
+        style.contains("@media all { rect:is(.hot) { fill:red } }\n@media all { rect:is(.hot), rect { color:red } }"),
+        "{style}"
+    );
+    assert!(!style.contains("rect { opacity:.5 }"), "{style}");
+    assert!(!style.contains("fill:blue"), "{style}");
+    // Retained rules stay invisible to the rasterizer, including the rule
+    // whose selector list contains a supported entry.
+    let image = SvgDocument::parse(exported.as_bytes())
+        .unwrap()
+        .rasterize(
+            SvgViewport {
+                width: 10.0,
+                height: 10.0,
+            },
+            SvgRootStyle::default(),
+            None,
+        )
+        .unwrap();
+    assert_eq!(&image.rgba[..3], &[0, 0, 0]);
+    assert!((100..150).contains(&image.rgba[3]));
 }
 
 fn source_with_descendant_styles(
