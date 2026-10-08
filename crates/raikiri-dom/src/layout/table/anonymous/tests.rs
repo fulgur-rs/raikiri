@@ -33,7 +33,7 @@ fn deep_contents_wrappers_keep_source_order_on_a_small_stack() {
     crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
     let actual = std::thread::Builder::new()
         .stack_size(128 * 1024)
-        .spawn(move || children(&doc, &computed, owner))
+        .spawn(move || children(&doc, &computed, owner, &mut TableObjects::default()))
         .unwrap()
         .join()
         .unwrap();
@@ -170,7 +170,7 @@ fn deep_generated_contents_stream_is_bounded_and_keeps_real_children() {
     std::thread::Builder::new()
         .stack_size(128 * 1024)
         .spawn(move || {
-            let actual = children(&doc, &computed, owner);
+            let actual = children(&doc, &computed, owner, &mut TableObjects::default());
             let expected: Vec<_> = wrappers
                 .iter()
                 .copied()
@@ -411,4 +411,70 @@ fn prototypes_exclude_real_canvas_payloads_and_rebuild_with_source_changes() {
         assert_eq!(doc.nodes[block].parent, Some(table));
         assert_eq!(doc.nodes[row].parent, Some(table));
     }
+}
+
+#[test]
+fn deep_overlay_contents_metadata_is_linear_and_keeps_source_children() {
+    let mut doc = Document::new();
+    let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+    doc.append_text(
+        sheet,
+        "span::before{content:'X';position:absolute}span::after{content:'Y';float:left}",
+    );
+    let table = doc.append_element(Some(0), "div", Style::default(), Some("display:table"));
+    let owner = doc.append_element(
+        Some(table),
+        "div",
+        Style::default(),
+        Some("display:table-row"),
+    );
+    let mut parent = owner;
+    let mut wrappers = Vec::new();
+    for _ in 0..2048 {
+        parent = doc.append_element(
+            Some(parent),
+            "span",
+            Style::default(),
+            Some("display:contents"),
+        );
+        wrappers.push(parent);
+    }
+    let text = doc.append_text(parent, "A");
+    let sources: Vec<_> = doc.nodes.iter().map(|node| node.children.clone()).collect();
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
+    std::thread::Builder::new()
+        .stack_size(128 * 1024)
+        .spawn(move || {
+            prepare(&mut doc, &computed).unwrap();
+            assert_eq!(doc.anonymous_table_cells(owner).count(), 1);
+            assert_eq!(
+                doc.table_objects.cells[0].content,
+                vec![Content::Node(text)]
+            );
+            assert_eq!(
+                doc.table_objects.overlay_contents_by_owner[&owner],
+                wrappers
+            );
+            assert_eq!(
+                doc.table_objects.overlay_contents_owner.len(),
+                wrappers.len()
+            );
+            let sequence = doc.anonymous_table_paint_sequence(owner).unwrap();
+            assert_eq!(sequence.len(), wrappers.len() + 1);
+            assert_eq!(sequence[0], text);
+            assert_eq!(&sequence[1..], wrappers);
+            assert!(sequence.len() <= doc.node_count() * 2);
+            assert_eq!(
+                doc.nodes
+                    .iter()
+                    .map(|node| node.children.clone())
+                    .collect::<Vec<_>>(),
+                sources
+            );
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }

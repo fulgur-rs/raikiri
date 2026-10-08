@@ -1261,18 +1261,17 @@ fn generated_pseudo_content_with_snapshots<'a>(
 }
 
 /// Whether the inline engine laid the `pseudo` of `node_id` out as text of
-/// the paragraph `node_id` roots: it is drawn from the lines, not as an
-/// overlay, and the root's layout already holds its height.
+/// its paragraph or a containing anonymous cell. Such content is drawn from
+/// the lines, and must not also paint as a standalone overlay.
 fn laid_out_in_lines(
     document: &Document,
     cascade: &CascadeResult,
     node_id: usize,
     pseudo: raikiri_style::PseudoElem,
 ) -> bool {
-    document
-        .get_node(node_id)
-        .is_some_and(|node| node.is_ifc_root())
-        && raikiri_dom::generated_content::is_in_flow_generated_text(cascade, node_id, pseudo)
+    document.get_node(node_id).is_some_and(|node| {
+        node.is_ifc_root() || document.anonymous_table_contents_paint_only(node_id)
+    }) && raikiri_dom::generated_content::is_in_flow_generated_text(cascade, node_id, pseudo)
 }
 
 fn generated_pseudo_text_advance(
@@ -4363,7 +4362,9 @@ pub(crate) fn paint_document_impl(
                 // This is intentionally local to the current parent; full
                 // nested stacking-context isolation remains outside this
                 // minimal painter.
-                let mut children = if node.is_inline_svg_root() {
+                let mut children = if node.is_inline_svg_root()
+                    || document.anonymous_table_contents_paint_only(node_id)
+                {
                     Vec::new()
                 } else if node.is_ifc_root() {
                     // The paragraph's own text and inline elements are drawn

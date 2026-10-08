@@ -2157,3 +2157,145 @@ fn review_contents_generated_cells_survive_cancelled_pagination() {
         raster(scene(&reference, &expected)),
     );
 }
+
+#[test]
+fn contents_out_of_flow_pseudos_survive_anonymous_cell_traversal() {
+    for pseudo in ["before", "after"] {
+        for placement in [
+            "position:absolute",
+            "position:fixed",
+            "float:left",
+            "float:right",
+        ] {
+            for (owner_kind, has_text) in ["table", "group", "row"]
+                .into_iter()
+                .flat_map(|kind| [false, true].map(move |has_text| (kind, has_text)))
+            {
+                let (mut doc, body) = document();
+                let sheet =
+                    doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+                doc.append_text(
+                    sheet,
+                    format!("span::{pseudo}{{content:'X';color:red;{placement}}}"),
+                );
+                let table = element(&mut doc, body, "display:table;border-spacing:0");
+                let owner = match owner_kind {
+                    "row" => element(&mut doc, table, "display:table-row"),
+                    "group" => element(&mut doc, table, "display:table-row-group"),
+                    _ => table,
+                };
+                let span = doc.append_element(
+                    Some(owner),
+                    "span",
+                    Style::default(),
+                    Some("display:contents;color:transparent"),
+                );
+                if has_text {
+                    doc.append_text(span, "A");
+                }
+                let computed = layout(&mut doc);
+                assert_eq!(
+                    doc.anonymous_table_cells(owner).count(),
+                    usize::from(has_text)
+                );
+                assert_eq!(doc.anonymous_table_contents_paint_only(span), has_text);
+                let (mut reference, body) = document();
+                element(
+                    &mut reference,
+                    body,
+                    "position:absolute;left:0;top:0;width:10px;height:10px;background:red",
+                );
+                let expected = layout(&mut reference);
+                assert_exact_pixels(
+                    raster(scene(&doc, &computed)),
+                    raster(scene(&reference, &expected)),
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn contents_overlay_keeps_projected_pseudos_and_real_cells_single() {
+    for proper_cell in [false, true] {
+        let (mut doc, body) = document();
+        let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+        doc.append_text(sheet, if proper_cell {
+            "span::before{content:'X';color:red;position:absolute}"
+        } else {
+            "span::before{content:'X';color:red;position:absolute}span::after{content:'Y';color:rgba(0,0,255,.5)}"
+        });
+        let table = element(&mut doc, body, "display:table;border-spacing:0");
+        let row = element(&mut doc, table, "display:table-row");
+        let span = doc.append_element(
+            Some(row),
+            "span",
+            Style::default(),
+            Some("display:contents;color:transparent"),
+        );
+        let nested = element(&mut doc, span, "display:contents");
+        doc.append_text(nested, "A");
+        let cell = proper_cell.then(|| element(&mut doc, nested, "display:table-cell;width:10px;height:10px;vertical-align:top;background:rgba(0,0,255,.5)"));
+        let computed = layout(&mut doc);
+        assert!(doc.anonymous_table_contents_paint_only(span));
+        let (mut reference, body) = document();
+        let red = element(
+            &mut reference,
+            body,
+            "position:absolute;left:0;top:0;width:10px;height:10px;background:red",
+        );
+        element(
+            &mut reference,
+            body,
+            "position:absolute;left:10px;top:0;width:10px;height:10px;background:rgba(0,0,255,.5)",
+        );
+        let expected = layout(&mut reference);
+        assert_exact_pixels(
+            raster(scene(&doc, &computed)),
+            raster(scene(&reference, &expected)),
+        );
+        if let Some(cell) = cell {
+            let mut budget = raikiri_dom::CounterSnapshotBudget::default();
+            let trace =
+                raikiri_paint::trace_paint_order(&doc, &computed, page(), 0.0, None, &mut budget)
+                    .unwrap();
+            assert_eq!(trace.iter().filter(|event| matches!(event, raikiri_paint::PaintTraceEvent::Box(id) if *id == cell)).count(), 1);
+            let slices = raikiri_dom::layout_pages(&mut doc, &computed, page()).unwrap();
+            doc.project_pages(&computed, page(), &slices, &[]);
+            let runs = doc.page_text_runs(&computed, 0);
+            let events = doc.page_paint_order_for_text_runs(&computed, 0, &runs);
+            assert_eq!(events.iter().filter(|event| matches!(event, raikiri_dom::PaintEvent::Box(fragment) if fragment.node().0 as usize == cell)).count(), 1);
+        }
+        let again = layout(&mut doc);
+        assert_exact_pixels(
+            raster(scene(&doc, &again)),
+            raster(scene(&reference, &expected)),
+        );
+        doc.set_element_inline_style(sheet, Some("display:none".into()));
+        doc.set_element_inline_style(span, Some("display:contents;color:transparent".into()));
+        // A later cascade with no overlay rebuilds the ordinary token stream.
+        doc.set_element_text_content(
+            sheet,
+            if proper_cell {
+                "span::before{content:none}"
+            } else {
+                "span::before{content:none}span::after{content:'Y';color:rgba(0,0,255,.5)}"
+            },
+        )
+        .unwrap();
+        let changed = layout(&mut doc);
+        assert!(!doc.anonymous_table_contents_paint_only(span));
+        reference.set_element_inline_style(
+            red,
+            Some(
+                "position:absolute;left:0;top:0;width:10px;height:10px;background:transparent"
+                    .into(),
+            ),
+        );
+        let expected = layout(&mut reference);
+        assert_exact_pixels(
+            raster(scene(&doc, &changed)),
+            raster(scene(&reference, &expected)),
+        );
+    }
+}

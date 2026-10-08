@@ -246,7 +246,9 @@ impl Document {
                     if node.is_ifc_root() {
                         push_paragraph(self, &items, node_id, lines, &mut events);
                     }
-                    let mut children = if node.is_inline_svg_root() {
+                    let mut children = if node.is_inline_svg_root()
+                        || self.anonymous_table_contents_paint_only(node_id)
+                    {
                         Vec::new()
                     } else if node.is_ifc_root() {
                         // The paragraph's own text and inline elements were

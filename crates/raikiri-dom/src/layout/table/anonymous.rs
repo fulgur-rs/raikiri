@@ -43,6 +43,8 @@ pub(crate) struct TableObjects {
     cells_by_owner: HashMap<usize, Vec<usize>>,
     cell_by_content: HashMap<Content, usize>,
     content_by_owner: HashMap<usize, Vec<Content>>,
+    overlay_contents_by_owner: HashMap<usize, Vec<usize>>,
+    overlay_contents_owner: HashMap<usize, usize>,
     prototypes_by_owner: HashMap<usize, Node>,
     pub(crate) rows: HashMap<usize, Vec<Row>>,
     pub(crate) paragraph_owner: Vec<Option<usize>>,
@@ -61,7 +63,12 @@ fn whitespace(doc: &Document, content: Content) -> bool {
         })
 }
 
-fn children(doc: &Document, cascade: &CascadeResult, owner: usize) -> Vec<Content> {
+fn children(
+    doc: &Document,
+    cascade: &CascadeResult,
+    owner: usize,
+    objects: &mut TableObjects,
+) -> Vec<Content> {
     let mut out = Vec::new();
     let mut pending: Vec<_> = doc.nodes[owner]
         .children
@@ -83,6 +90,29 @@ fn children(doc: &Document, cascade: &CascadeResult, owner: usize) -> Vec<Conten
             continue;
         }
         if node.display == DisplayValue::Contents {
+            let has_overlay = [PseudoElem::Before, PseudoElem::After]
+                .into_iter()
+                .any(|pseudo| {
+                    cascade
+                        .pseudo
+                        .get(&(raikiri_style::StyleNodeId::new(id as u64), pseudo))
+                        .is_some_and(|cv| {
+                            cv.display != DisplayValue::None
+                                && !cv.content.is_empty()
+                                && !cv.content.iter().any(|part| {
+                                    matches!(part, raikiri_style::property::ContentComponent::None)
+                                })
+                        })
+                        && !crate::generated_content::is_in_flow_generated_text(cascade, id, pseudo)
+                });
+            if has_overlay {
+                objects
+                    .overlay_contents_by_owner
+                    .entry(owner)
+                    .or_default()
+                    .push(id);
+                objects.overlay_contents_owner.insert(id, owner);
+            }
             if crate::generated_content::is_in_flow_generated_text(cascade, id, PseudoElem::After) {
                 pending.push(Content::After(id));
             }
@@ -247,7 +277,7 @@ fn rows(
     reorder: bool,
     row_count: &mut usize,
 ) -> Result<Vec<Row>, LayoutError> {
-    let mut ids = children(doc, cascade, owner);
+    let mut ids = children(doc, cascade, owner, objects);
     objects.content_by_owner.insert(owner, ids.clone());
     if reorder {
         let first_head = ids.iter().copied().find(|&id| {
@@ -290,12 +320,13 @@ fn rows(
         match doc.nodes[id].display {
             DisplayValue::TableRow => {
                 flush(&mut pending, &mut out, objects, row_count)?;
+                let content = children(doc, cascade, id, objects);
                 out.push(row(
                     doc,
                     cascade,
                     objects,
                     id,
-                    &children(doc, cascade, id),
+                    &content,
                     Some(id),
                     row_count,
                 )?);
@@ -387,7 +418,7 @@ impl Document {
             })
     }
 
-    /// Source boxes painted beside anonymous paragraphs, in source child order.
+    /// Source boxes beside anonymous paragraphs, followed by pseudo overlays.
     #[doc(hidden)]
     pub fn anonymous_table_paint_children(&self, owner: usize) -> Option<Vec<usize>> {
         self.anonymous_table_paint_sequence(owner).map(|items| {
@@ -398,7 +429,7 @@ impl Document {
         })
     }
 
-    /// Paragraph keys and source boxes in reconstructed anonymous-cell order.
+    /// Reconstructed paragraph and source-box order, followed by pseudo overlays.
     #[doc(hidden)]
     pub fn anonymous_table_paint_sequence(&self, owner: usize) -> Option<Vec<usize>> {
         self.table_objects.cells_by_owner.get(&owner)?;
@@ -420,7 +451,25 @@ impl Document {
                 out.push(content.node());
             }
         }
+        // Flattened descendants already occur in the normal paint sequence.
+        // Retain only the wrappers' overlay paint, outside cell shaping.
+        out.extend(
+            self.table_objects
+                .overlay_contents_by_owner
+                .get(&owner)
+                .into_iter()
+                .flatten(),
+        );
         Some(out)
+    }
+
+    /// Whether flattened contents are visited only for their pseudo overlays.
+    #[doc(hidden)]
+    pub fn anonymous_table_contents_paint_only(&self, id: usize) -> bool {
+        self.table_objects
+            .overlay_contents_owner
+            .get(&id)
+            .is_some_and(|owner| self.table_objects.cells_by_owner.contains_key(owner))
     }
 
     /// Cell areas of a source row or group, relative to its used box.
