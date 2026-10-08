@@ -61,6 +61,19 @@ pub fn named_page_matches(
 
 /// Whether the element clips its descendants to its padding box.
 pub fn clips_overflow(cv: &ComputedValues) -> bool {
+    // Internal table tracks are not block, flex, or grid containers, so
+    // overflow does not turn their materialized boxes into clipping boxes.
+    if matches!(
+        cv.display,
+        DisplayValue::TableRow
+            | DisplayValue::TableRowGroup
+            | DisplayValue::TableHeaderGroup
+            | DisplayValue::TableFooterGroup
+            | DisplayValue::TableColumn
+            | DisplayValue::TableColumnGroup
+    ) {
+        return false;
+    }
     !matches!(cv.overflow.x, OverflowValue::Visible)
         || !matches!(cv.overflow.y, OverflowValue::Visible)
 }
@@ -224,7 +237,11 @@ pub fn sort_paint_children(
     // their order were zero, while in-flow (including relative) items use the
     // computed `order` value. Stacking buckets stay primary.
     children.sort_by_key(|&child| {
-        let computed = &cascade.computed[child];
+        // Anonymous paragraph keys are outside the source DOM arena. Their
+        // non-inherited position, float and order use initial values.
+        let Some(computed) = cascade.computed.get(child) else {
+            return ((1, 0), 0, 0);
+        };
         let stack =
             if order_sensitive_container && matches!(computed.position, PositionValue::Static) {
                 // A flex/grid item can use integer z-index even when static.
@@ -333,6 +350,35 @@ pub fn hides_empty_table_cell(
     if cv.visibility == Visibility::Hidden {
         return true;
     }
+    lacks_visible_table_cell_content(
+        document,
+        cascade,
+        Some(node_id),
+        &document.nodes[node_id].children,
+    )
+}
+
+/// Classify a layout-only cell using its inherited values and its own content
+/// group. Pseudo-elements on the source row belong to that row, not this box.
+pub(crate) fn hides_anonymous_table_cell(
+    document: &Document,
+    cascade: &CascadeResult,
+    owner: usize,
+    children: &[usize],
+) -> bool {
+    let cv = &cascade.computed[owner];
+    cv.empty_cells == EmptyCellsValue::Hide
+        && cv.border_collapse == BorderCollapseValue::Separate
+        && (cv.visibility == Visibility::Hidden
+            || lacks_visible_table_cell_content(document, cascade, None, children))
+}
+
+fn lacks_visible_table_cell_content(
+    document: &Document,
+    cascade: &CascadeResult,
+    generated_owner: Option<usize>,
+    children: &[usize],
+) -> bool {
     let has_generated_box = |id| {
         [PseudoElem::Before, PseudoElem::After]
             .iter()
@@ -357,10 +403,10 @@ pub fn hides_empty_table_cell(
     };
     // Generated boxes count as in-flow or floating content, including a
     // generated empty inline box, just like an authored empty inline element.
-    if has_generated_box(node_id) {
+    if generated_owner.is_some_and(has_generated_box) {
         return false;
     }
-    let mut stack = document.nodes[node_id].children.clone();
+    let mut stack = children.to_vec();
     while let Some(id) = stack.pop() {
         let node = &document.nodes[id];
         let cv = &cascade.computed[id];

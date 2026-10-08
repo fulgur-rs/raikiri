@@ -6,6 +6,44 @@ use crate::ruletree::build_rule_tree;
 use crate::test_dom::TestDoc;
 
 #[test]
+fn col_width_attribute_maps_html_dimensions_below_author_css() {
+    use crate::resolve::ComputedLengthPercentageOrAuto as Width;
+    for (attribute, authored, expected) in [
+        ("40", None, Width::Px(40.0)),
+        ("50%", None, Width::Percent(50.0)),
+        (" 10.5px", None, Width::Px(10.5)),
+        ("0", None, Width::Px(0.0)),
+        ("-1", None, Width::Auto),
+        ("", None, Width::Auto),
+        ("40", Some("width:12px"), Width::Px(12.0)),
+        ("40", Some("width:auto"), Width::Auto),
+    ] {
+        let mut doc = TestDoc::new();
+        let column = doc.push_element_with_attrs(0, "col", authored, &[("width", attribute)]);
+        let result = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        assert_eq!(
+            result.computed[column].width, expected,
+            "{attribute:?} / {authored:?}"
+        );
+    }
+}
+
+#[test]
+fn col_width_hint_is_scoped_to_html_columns() {
+    let mut doc = TestDoc::new();
+    let foreign =
+        doc.push_element_with_namespace(0, "col", "http://www.w3.org/2000/svg", &[("width", "40")]);
+    let div = doc.push_element_with_attrs(0, "div", None, &[("width", "40")]);
+    let result = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    for node in [foreign, div] {
+        assert_eq!(
+            result.computed[node].width,
+            crate::resolve::ComputedLengthPercentageOrAuto::Auto
+        );
+    }
+}
+
+#[test]
 fn parse_non_negative_integer_follows_the_html_integer_rules() {
     assert_eq!(parse_non_negative_integer("0"), Some(0));
     assert_eq!(parse_non_negative_integer("  12px"), Some(12));

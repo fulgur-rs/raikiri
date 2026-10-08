@@ -1261,18 +1261,17 @@ fn generated_pseudo_content_with_snapshots<'a>(
 }
 
 /// Whether the inline engine laid the `pseudo` of `node_id` out as text of
-/// the paragraph `node_id` roots: it is drawn from the lines, not as an
-/// overlay, and the root's layout already holds its height.
+/// its paragraph or a containing anonymous cell. Such content is drawn from
+/// the lines, and must not also paint as a standalone overlay.
 fn laid_out_in_lines(
     document: &Document,
     cascade: &CascadeResult,
     node_id: usize,
     pseudo: raikiri_style::PseudoElem,
 ) -> bool {
-    document
-        .get_node(node_id)
-        .is_some_and(|node| node.is_ifc_root())
-        && raikiri_dom::generated_content::is_in_flow_generated_text(cascade, node_id, pseudo)
+    document.get_node(node_id).is_some_and(|node| {
+        node.is_ifc_root() || document.anonymous_table_pseudo_is_projected(node_id, pseudo)
+    }) && raikiri_dom::generated_content::is_in_flow_generated_text(cascade, node_id, pseudo)
 }
 
 fn generated_pseudo_text_advance(
@@ -3067,7 +3066,7 @@ pub(crate) fn paint_document_impl(
             .or_default()
             .push(fragment_id);
     }
-    enum PaintFrame {
+    enum PaintFrame<'a> {
         Visit {
             node_id: usize,
             parent_abs_x: f32,
@@ -3086,6 +3085,18 @@ pub(crate) fn paint_document_impl(
             is_fragment_visit: bool,
             inside_fixed: bool,
             inside_fixed_containing_block: bool,
+            decorations: text::DecorationContext,
+        },
+        AnonymousParagraph {
+            key: usize,
+            cell: &'a raikiri_dom::Node,
+            x: f32,
+            y: f32,
+            shift_y: f32,
+            transform_x: f32,
+            transform_y: f32,
+            fragmentainer: Option<usize>,
+            inside_fixed: bool,
             decorations: text::DecorationContext,
         },
         RestoreTransform(Affine),
@@ -3287,6 +3298,98 @@ pub(crate) fn paint_document_impl(
             inside_fixed_containing_block,
             decorations,
         ) = match frame {
+            PaintFrame::AnonymousParagraph {
+                key,
+                cell,
+                x,
+                y,
+                shift_y,
+                transform_x,
+                transform_y,
+                fragmentainer,
+                inside_fixed,
+                decorations,
+            } => {
+                let layout = cell.unrounded_layout;
+                let probe = cell
+                    .ifc_lines()
+                    .and_then(|lines| {
+                        lines
+                            .iter()
+                            .flat_map(|line| line.fragments())
+                            .find_map(|fragment| {
+                                let shodo::Fragment::GlyphRun(run) = fragment else {
+                                    return None;
+                                };
+                                let owner = run.node()?.0 as usize;
+                                document
+                                    .get_node(owner)
+                                    .filter(|node| node.kind() == NodeKind::Text)
+                                    .map(|_| owner)
+                            })
+                    })
+                    .unwrap_or(document.ifc_source_owner(key));
+                if !named_page_matches(probe)
+                    || (!box_intersects_page(
+                        y,
+                        ifc_paint_extent(cell, &layout),
+                        page_top,
+                        page_bottom,
+                    ) && !inside_fixed)
+                {
+                    continue;
+                }
+                let clip = text_page_clip(inside_fixed);
+                if let Some(clip) = &clip {
+                    scene.scene.push_clip_layer(Affine::IDENTITY, clip);
+                }
+                let owner = document.ifc_source_owner(key);
+                if cascade.computed[owner].visibility != Visibility::Hidden
+                    && let Some(border) = cell.collapsed_border()
+                {
+                    paint_element_border(
+                        scene,
+                        layout.size.width,
+                        layout.size.height,
+                        x + page_offset_x + transform_x,
+                        y + page_offset_y + transform_y,
+                        border,
+                        cascade.computed[owner].color,
+                    );
+                }
+                if let Some(events) = trace.as_deref_mut()
+                    && raikiri_dom::PositionedLines::new(document, cascade, key, fragmentainer)
+                        .is_some_and(|lines| lines.lines().any(|line| !line.runs.is_empty()))
+                {
+                    events.push(crate::PaintTraceEvent::Text(document.ifc_source_owner(key)));
+                }
+                let paint_transform = scene.transform;
+                crate::ifc_text::draw_ifc_lines_with_resources(
+                    scene,
+                    document,
+                    cascade,
+                    key,
+                    crate::ifc_text::IfcPosition {
+                        x: x + page_offset_x
+                            + transform_x
+                            + layout.border.left
+                            + layout.padding.left,
+                        y: y + page_offset_y + transform_y + layout.border.top + layout.padding.top,
+                        shift_y,
+                    },
+                    &decorations,
+                    fragmentainer,
+                    custom_highlights,
+                    pixel_source,
+                    warnings,
+                    page_box,
+                    paint_transform,
+                );
+                if clip.is_some() {
+                    scene.pop_layer();
+                }
+                continue;
+            }
             PaintFrame::RestoreTransform(transform) => {
                 scene.transform = transform;
                 continue;
@@ -3884,6 +3987,26 @@ pub(crate) fn paint_document_impl(
                             &cv.box_shadow,
                             cv.color,
                         );
+                        let table_part_clip =
+                            document.anonymous_table_part_background_cells(node_id);
+                        if let Some(cells) = table_part_clip {
+                            let mut path = BezPath::new();
+                            for cell in cells {
+                                let x = f64::from(cell.x);
+                                let y = f64::from(cell.y);
+                                let right = x + f64::from(cell.width);
+                                let bottom = y + f64::from(cell.height);
+                                path.move_to((x, y));
+                                path.line_to((right, y));
+                                path.line_to((right, bottom));
+                                path.line_to((x, bottom));
+                                path.close_path();
+                            }
+                            scene.scene.push_clip_layer(
+                                Affine::translate((f64::from(own_paint_x), f64::from(own_paint_y))),
+                                &path,
+                            );
+                        }
                         paint_element_background(
                             scene,
                             own_background_width,
@@ -3904,6 +4027,9 @@ pub(crate) fn paint_document_impl(
                             pixel_source,
                             warnings,
                         );
+                        if table_part_clip.is_some() {
+                            scene.pop_layer();
+                        }
                         if clip_background.is_some() {
                             scene.pop_layer();
                         }
@@ -4274,13 +4400,17 @@ pub(crate) fn paint_document_impl(
                 // This is intentionally local to the current parent; full
                 // nested stacking-context isolation remains outside this
                 // minimal painter.
-                let mut children = if node.is_inline_svg_root() {
+                let mut children = if node.is_inline_svg_root()
+                    || document.anonymous_table_contents_paint_only(node_id)
+                {
                     Vec::new()
                 } else if node.is_ifc_root() {
                     // The paragraph's own text and inline elements are drawn
                     // from the lines; only the boxes laid out beside them are
                     // visited like ordinary children.
                     node.ifc_boxes()
+                } else if let Some(children) = document.anonymous_table_paint_sequence(node_id) {
+                    children
                 } else {
                     node.children.clone()
                 };
@@ -4497,6 +4627,24 @@ pub(crate) fn paint_document_impl(
                     _ => None,
                 };
                 for child in children.into_iter().rev() {
+                    if let Some(cell) = document
+                        .ifc_layout_node(child)
+                        .filter(|_| document.get_node(child).is_none())
+                    {
+                        stack.push(PaintFrame::AnonymousParagraph {
+                            key: child,
+                            cell,
+                            x: child_parent_x + cell.unrounded_layout.location.x,
+                            y: child_parent_y + cell.unrounded_layout.location.y,
+                            shift_y: child_shift_y,
+                            transform_x: child_transform_x,
+                            transform_y: child_transform_y,
+                            fragmentainer,
+                            inside_fixed: ifc_inside_fixed,
+                            decorations: child_decorations.clone(),
+                        });
+                        continue;
+                    }
                     let child_fragment_clip_height = match own_multicol_clip_height {
                         Some(clip_height)
                             if document.get_node(child).is_some_and(|child_node| {

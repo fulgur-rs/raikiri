@@ -5,7 +5,7 @@ use super::records::{PageFragmentItem, PageFragmentKind};
 use crate::{Document, Fragment, OverflowClip, PositionedGlyphRun, TextLineId, paint_rules};
 use raikiri_style::CascadeResult;
 use raikiri_style::property::ColumnCountValue;
-use raikiri_traits::{NodeId, NodeKind, PaintClip};
+use raikiri_traits::{NodeId, NodeKind, PaintClip, PaintRect};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// What a clip in [`PaintEvent::PushClip`] comes from.
@@ -18,6 +18,9 @@ pub enum ClipKind {
     Overflow,
     /// A column of a multi-column container.
     Fragmentainer,
+    /// One cell area of a source table row or group. The clip encloses only
+    /// the box event, preserving separated-border gaps for the table below.
+    TableCell,
 }
 
 /// One step of painting a page's body content, in paint order.
@@ -56,6 +59,7 @@ const COLUMNS_WITHOUT_CLIPS: &str = "columns are listed without column clips";
 
 enum Frame {
     Visit(usize),
+    Paragraph(usize),
     PopClip,
     PopOpacity,
 }
@@ -157,6 +161,10 @@ impl Document {
         let mut stack = vec![Frame::Visit(root)];
         while let Some(frame) = stack.pop() {
             let node_id = match frame {
+                Frame::Paragraph(key) => {
+                    push_paragraph(self, &items, key, lines, &mut events);
+                    continue;
+                }
                 Frame::PopClip => {
                     events.push(PaintEvent::PopClip);
                     continue;
@@ -200,7 +208,26 @@ impl Document {
                             node.is_inline_svg_root() || self.is_canvas_element(node_id);
                         for &item in &own {
                             let fragment = items.fragment(item);
-                            events.push(PaintEvent::Box(fragment));
+                            if let Some(cells) = self.anonymous_table_part_background_cells(node_id)
+                            {
+                                let rect = fragment.paint_rect();
+                                let top = rect.y - item.rect.y + item.box_y;
+                                for cell in cells {
+                                    events.push(PaintEvent::PushClip(
+                                        PaintClip::new(PaintRect::new(
+                                            rect.x + cell.x,
+                                            top + cell.y,
+                                            cell.width,
+                                            cell.height,
+                                        )),
+                                        ClipKind::TableCell,
+                                    ));
+                                    events.push(PaintEvent::Box(fragment));
+                                    events.push(PaintEvent::PopClip);
+                                }
+                            } else {
+                                events.push(PaintEvent::Box(fragment));
+                            }
                             if item.kind == PageFragmentKind::Replaced || replaced_content {
                                 events.push(PaintEvent::Replaced(fragment));
                             }
@@ -222,18 +249,28 @@ impl Document {
                     if node.is_ifc_root() {
                         push_paragraph(self, &items, node_id, lines, &mut events);
                     }
-                    let mut children = if node.is_inline_svg_root() {
+                    let mut children = if node.is_inline_svg_root()
+                        || self.anonymous_table_contents_paint_only(node_id)
+                    {
                         Vec::new()
                     } else if node.is_ifc_root() {
                         // The paragraph's own text and inline elements were
                         // listed above; only the boxes laid out beside its
                         // lines are visited like ordinary children.
                         node.ifc_boxes()
+                    } else if let Some(children) = self.anonymous_table_paint_sequence(node_id) {
+                        children
                     } else {
                         node.children.clone()
                     };
                     paint_rules::sort_paint_children(&mut children, cv.display, cascade);
-                    stack.extend(children.into_iter().rev().map(Frame::Visit));
+                    stack.extend(children.into_iter().rev().map(|key| {
+                        if self.get_node(key).is_none() && self.ifc_layout_node(key).is_some() {
+                            Frame::Paragraph(key)
+                        } else {
+                            Frame::Visit(key)
+                        }
+                    }));
                 }
                 // A text node laid out as an anonymous flex or grid item is a
                 // paragraph of its own. Any other text node outside a
@@ -313,7 +350,7 @@ fn push_paragraph<'a>(
     lines: Option<&HashMap<NodeId, Vec<TextLineId>>>,
     events: &mut Vec<PaintEvent<'a>>,
 ) {
-    let Some(root_node) = document.get_node(root) else {
+    let Some(root_node) = document.ifc_layout_node(root) else {
         return; // cov:ignore: paragraph roots come from the arena
     };
     let push_kind = |events: &mut Vec<PaintEvent<'a>>, node_id: usize, kind| {

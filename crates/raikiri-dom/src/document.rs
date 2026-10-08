@@ -295,6 +295,7 @@ struct ListMarkerImage {
 /// element at index 1 or later, as a child of root index 0.
 #[derive(Debug, Clone)]
 pub struct Document {
+    pub(crate) table_objects: crate::layout::table::anonymous::TableObjects,
     pub(crate) page_projection: crate::page_projection::PageProjection,
     pub(crate) nodes: Vec<Node>,
     canvas_bitmap_bytes: CanvasBitmapByteCount,
@@ -487,6 +488,7 @@ impl Document {
         let mut nodes = Vec::with_capacity(16);
         nodes.push(Node::new_document());
         Self {
+            table_objects: crate::layout::table::anonymous::TableObjects::default(),
             page_projection: crate::page_projection::PageProjection::default(),
             nodes,
             canvas_bitmap_bytes: CanvasBitmapByteCount(Some(0)),

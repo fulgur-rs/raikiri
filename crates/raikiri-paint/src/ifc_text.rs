@@ -78,7 +78,7 @@ pub(crate) fn draw_ifc_lines_with_resources(
     let size = positioned.size;
     let vertical = writing_mode != WritingMode::HorizontalTb;
     let pieces = document
-        .get_node(root_id)
+        .ifc_layout_node(root_id)
         .and_then(|node| node.ifc_inline_boxes())
         .unwrap_or_default();
     let mut pieces_by_line = vec![Vec::new(); positioned.all_lines().len()];
@@ -104,7 +104,7 @@ pub(crate) fn draw_ifc_lines_with_resources(
             f64::from(position.y + position.shift_y),
         ));
         let root_node = document
-            .get_node(root_id)
+            .ifc_layout_node(root_id)
             .expect("positioned lines require an existing IFC root");
         let mut paint = typographic::TypographicPaint::new(root_node, &pieces_by_line[line_index]);
         let background_slices = typographic::background_slices(&pieces_by_line[line_index]);

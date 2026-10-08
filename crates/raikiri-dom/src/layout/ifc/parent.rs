@@ -33,6 +33,15 @@ impl Document {
     /// paragraph.
     #[doc(hidden)]
     pub fn ifc_root_of(&self, node: usize) -> Option<usize> {
+        if let Some(key) = self
+            .table_objects
+            .paragraph_owner
+            .get(node)
+            .copied()
+            .flatten()
+        {
+            return Some(key);
+        }
         let mut current = self.parent_of(node);
         while let Some(id) = current {
             if self.nodes[id].flags.contains(NodeFlags::IS_IFC_ROOT) {

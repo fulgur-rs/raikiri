@@ -95,7 +95,7 @@ impl<'a> PositionedLines<'a> {
         root_id: usize,
         fragmentainer: Option<usize>,
     ) -> Option<Self> {
-        let root_node = document.get_node(root_id)?;
+        let root_node = document.ifc_layout_node(root_id)?;
         let lines = root_node.ifc_lines()?;
         let writing_mode = root_node
             .ifc_writing_mode()

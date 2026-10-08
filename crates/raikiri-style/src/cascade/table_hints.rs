@@ -1,4 +1,4 @@
-//! HTML presentational hints of the `table` element's legacy attributes.
+//! HTML presentational hints of legacy table and column attributes.
 //!
 //! HTML Living Standard §15.3.8 "Tables"
 //! (<https://html.spec.whatwg.org/multipage/rendering.html#tables-2>) maps
@@ -13,12 +13,14 @@
 //! - `table[rules=none i], table[rules=groups i], table[rules=rows i],
 //!   table[rules=cols i], table[rules=all i] { border-style: hidden;
 //!   border-collapse: collapse; }`
+//! - The `col` element's `width` attribute maps to the width dimension property,
+//!   using the same HTML dimension-value algorithm as image attributes.
 //!
 //! The UA stylesheet gives every table `border-spacing: 2px`, so honoring
 //! `cellspacing="0"` is what lets legacy markup remove that gap.
 
 use crate::property::{
-    BorderCollapseValue, BorderSpacingValue, BorderStyle, Length, PropertyValue,
+    BorderCollapseValue, BorderSpacingValue, BorderStyle, Length, LengthOrAuto, PropertyValue,
 };
 use crate::ruletree::Origin;
 use crate::style_dom::StyleElement;
@@ -27,12 +29,11 @@ use super::collect::{
     CascadedDecl, PRESENTATIONAL_HINT_SOURCE_ORDER, PRESENTATIONAL_HINT_SPECIFICITY,
 };
 
-/// Pushes the presentational hints of an HTML `table` element's
-/// `cellspacing` and `rules` attributes.
+/// Pushes an HTML table's `cellspacing`/`rules` hints and a column's width hint.
 pub(crate) fn push_table_attribute_hints(elem: &impl StyleElement, decls: &mut Vec<CascadedDecl>) {
     // The mapping belongs to the HTML namespace; `namespace_uri()` is `None`
     // for it.
-    if !elem.tag_name().eq_ignore_ascii_case("table") || elem.namespace_uri().is_some() {
+    if elem.namespace_uri().is_some() {
         return;
     }
     let mut push = |value: PropertyValue| {
@@ -45,6 +46,18 @@ pub(crate) fn push_table_attribute_hints(elem: &impl StyleElement, decls: &mut V
             crate::layer::LayerPosition::default(),
         ));
     };
+    if elem.tag_name().eq_ignore_ascii_case("col") {
+        if let Some(width) = elem
+            .attr("width")
+            .and_then(super::html_quirks::parse_html_dimension_value)
+        {
+            push(PropertyValue::Width(LengthOrAuto::Length(width)));
+        }
+        return;
+    }
+    if !elem.tag_name().eq_ignore_ascii_case("table") {
+        return;
+    }
     if let Some(spacing) = elem
         .attr("cellspacing")
         .and_then(parse_non_negative_integer)

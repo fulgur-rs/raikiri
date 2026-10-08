@@ -268,7 +268,7 @@ fn omission(
     context: &RunContext,
     root: usize,
 ) -> Option<TextRunOmission> {
-    let node = document.get_node(root)?;
+    let node = document.ifc_layout_node(root)?;
     if node
         .ifc_writing_mode()
         .is_some_and(|mode| mode != WritingMode::HorizontalTb)
@@ -282,7 +282,7 @@ fn omission(
     {
         return Some(TextRunOmission::RelativeInlineOffset);
     }
-    let mut current = Some(root);
+    let mut current = Some(document.ifc_source_owner(root));
     while let Some(id) = current {
         // The painter places a fragmented box, and everything inside it, from
         // its column's fragment rather than from its layout.
@@ -556,7 +556,10 @@ impl Document {
             .iter()
             .filter_map(|root| {
                 let reason = omission(self, cascade, &context, root.node)?;
-                Some((NodeId::new(root.node as u64), reason.describe()))
+                Some((
+                    NodeId::new(self.ifc_source_owner(root.node) as u64),
+                    reason.describe(),
+                ))
             })
             .collect()
     }
