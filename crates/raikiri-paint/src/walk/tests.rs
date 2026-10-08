@@ -4713,6 +4713,36 @@ fn body_overflow_propagated_to_the_viewport_keeps_ink_outside_the_body() {
 }
 
 #[test]
+fn an_open_axis_clip_stays_finite_when_nested_scales_underflow() {
+    let mut markup = String::from("<body style='margin:0'>");
+    for _ in 0..6 {
+        markup.push_str("<div style='width:20px;height:20px;transform:scale(1e-30);transform-origin:0 0;overflow-x:clip;overflow-y:visible'>");
+    }
+    markup.push_str("<div style='width:60px;height:60px;background:green'></div>");
+    for _ in 0..6 {
+        markup.push_str("</div>");
+    }
+    markup.push_str("</body>");
+    let scene = transform_markup_scene(&markup);
+    let clips: Vec<_> = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::PushClipLayer(clip) if clip.transform.determinant() == 0.0 => {
+                Some(kurbo::Shape::bounding_box(&clip.clip))
+            }
+            _ => None,
+        })
+        .collect();
+    assert!(!clips.is_empty(), "the combined transform must underflow");
+    for bounds in clips {
+        assert!(bounds.is_finite());
+        assert_eq!(bounds.y0, 0.0);
+        assert_eq!(bounds.y1, 0.0);
+    }
+}
+
+#[test]
 fn cropped_corner_paths_stay_inside_each_inner_edge() {
     use kurbo::Shape;
     for vertical_radius in [80.0, 100.0] {

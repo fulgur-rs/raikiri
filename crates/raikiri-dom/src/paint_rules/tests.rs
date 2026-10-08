@@ -9,6 +9,75 @@ fn cascaded(doc: &Document) -> CascadeResult {
 }
 
 #[test]
+fn overflow_clip_rejects_an_unknown_document_node() {
+    let doc = Document::new();
+    let cascade = cascaded(&doc);
+    assert!(
+        overflow_clip(
+            &doc,
+            &cascade,
+            usize::MAX,
+            PaintRect::new(0.0, 0.0, 100.0, 50.0),
+            PaintInsets::new(0.0, 0.0, 0.0, 0.0),
+        )
+        .is_none()
+    );
+}
+
+#[test]
+fn overflow_clip_rejects_a_node_without_cascaded_values() {
+    let mut doc = Document::new();
+    let node = doc.append_element(
+        Some(doc.root_index()),
+        "div",
+        Style::default(),
+        Some("display:block;overflow:hidden"),
+    );
+    doc.mark_in_document_flags();
+    let mut cascade = cascaded(&doc);
+    cascade.computed.truncate(node);
+    assert!(
+        overflow_clip(
+            &doc,
+            &cascade,
+            node,
+            PaintRect::new(0.0, 0.0, 100.0, 50.0),
+            PaintInsets::new(0.0, 0.0, 0.0, 0.0),
+        )
+        .is_none()
+    );
+}
+
+#[test]
+fn overflow_clip_does_not_apply_to_an_ordinary_inline_box() {
+    let mut doc = Document::new();
+    let parent = doc.append_element(
+        Some(doc.root_index()),
+        "div",
+        Style::default(),
+        Some("display:block"),
+    );
+    let inline = doc.append_element(
+        Some(parent),
+        "span",
+        Style::default(),
+        Some("display:inline;overflow:hidden"),
+    );
+    doc.mark_in_document_flags();
+    let cascade = cascaded(&doc);
+    assert!(
+        overflow_clip(
+            &doc,
+            &cascade,
+            inline,
+            PaintRect::new(0.0, 0.0, 100.0, 50.0),
+            PaintInsets::new(0.0, 0.0, 0.0, 0.0),
+        )
+        .is_none()
+    );
+}
+
+#[test]
 fn negative_z_index_sorts_before_static_and_positive_after() {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);

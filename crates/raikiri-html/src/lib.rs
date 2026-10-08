@@ -75,10 +75,10 @@ pub mod computed {
 }
 pub use shodo::font::FontCollection;
 
+pub use raikiri_traits::PaintClip; // cov:ignore: type-only re-export has no executable code or lcov record.
 pub use raikiri_traits::{
     ConsumerPropertyEvent, ConsumerPropertyObserver, LayoutConfig, LayoutConfigBuilder, NodeId,
-    NodeKind, PageDefaults, PaintClip, PaintInsets, PaintRect, RenderError, RenderWarning,
-    WarningKind,
+    NodeKind, PageDefaults, PaintInsets, PaintRect, RenderError, RenderWarning, WarningKind,
 };
 
 #[cfg(test)]
