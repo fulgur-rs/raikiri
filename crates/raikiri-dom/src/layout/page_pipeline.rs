@@ -2418,13 +2418,11 @@ pub fn layout_pages_with_page_geometry_and_control(
         if name_participates_in_flow
             && candidate.is_flex_item
             && let Some(context) = candidate.named_flex_context
-        {
-            if let Some((_, height)) =
+            && let Some((_, height)) =
                 preceding_flex_items.insert(context, (node_id, candidate.height))
-                && height > 0.0
-            {
-                seen_named_flex_contexts.insert(context);
-            }
+            && height > 0.0
+        {
+            seen_named_flex_contexts.insert(context);
         }
         let (name_context_seen, comparison_page_name) = if !name_participates_in_flow {
             (false, current_page_name.clone())
