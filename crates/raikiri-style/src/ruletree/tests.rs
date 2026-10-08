@@ -2998,6 +2998,20 @@ fn contextual_highlight_mix_remains_a_valid_background() {
 }
 
 #[test]
+fn an_initial_highlight_background_does_not_create_a_rollback_marker() {
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "::highlight(mark){background-color:initial}",
+        Origin::Author,
+    );
+    let result = crate::cascade(&TestDoc::new(), &tree).unwrap();
+    assert_eq!(
+        result.custom_highlight_background("mark", crate::CssColor::BLACK),
+        None
+    );
+}
+
+#[test]
 fn contextual_highlight_sources_follow_literal_layer_and_important_precedence() {
     let blue = crate::CssColor {
         r: 0,
