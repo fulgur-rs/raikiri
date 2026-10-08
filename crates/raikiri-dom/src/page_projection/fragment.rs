@@ -1,5 +1,5 @@
 use super::records::{PageFragmentItem, PageFragmentKind, PageFragmentRect};
-use raikiri_traits::{NodeId, PaintRect};
+use raikiri_traits::{NodeId, PaintClip, PaintRect};
 
 /// What a fragment places on the page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,6 +21,22 @@ pub enum RepeatKind {
     EveryPage,
 }
 
+/// A local overflow clip that applies to content on one page.
+///
+/// The clipping element's own box need not intersect the page: descendants
+/// can reach another page along an open axis. Geometry is in page-local CSS
+/// pixels and retains the element's whole box before page cuts.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub struct OverflowClip {
+    /// The element that establishes this clip.
+    pub node: NodeId,
+    /// The element's whole border box, used to select a clipping placement.
+    pub border_box: PaintRect,
+    /// The resolved padding-edge clip.
+    pub clip: PaintClip,
+}
+
 /// One placement of a source node on a page.
 ///
 /// Rectangles are in CSS px with the origin at the top-left of the page box.
@@ -28,6 +44,7 @@ pub enum RepeatKind {
 pub struct Fragment<'a> {
     item: &'a PageFragmentItem,
     origin: (f32, f32),
+    overflow_clip: Option<PaintClip>,
 }
 
 impl<'a> Fragment<'a> {
@@ -35,7 +52,23 @@ impl<'a> Fragment<'a> {
         Self {
             item,
             origin: (content_box.x, content_box.y),
+            overflow_clip: None,
         }
+    }
+
+    pub(crate) fn with_overflow_clip(mut self, clip: Option<PaintClip>) -> Self {
+        self.overflow_clip = clip;
+        self
+    }
+
+    /// The element's resolved padding-edge overflow clip, if it clips locally.
+    ///
+    /// This is the shape of the whole box before page cuts, in page-local
+    /// coordinates. It can extend beyond this fragment and this page. Root or
+    /// body overflow propagated to the viewport does not create a local clip.
+    /// Inline boxes and text fragments do not create local overflow clips.
+    pub fn overflow_clip(&self) -> Option<PaintClip> {
+        self.overflow_clip
     }
 
     /// The source node.

@@ -1,4 +1,4 @@
-//! Shared colors, rectangles, insets, and rectangular clips.
+//! Shared colors, rectangles, insets, and clip geometry.
 
 /// A normalized RGBA color for a neutral paint operation.
 ///
@@ -82,17 +82,37 @@ impl PaintInsets {
     }
 }
 
-/// A rectangular clip operation.
+/// A resolved clip operation in page-local CSS pixels.
+///
+/// An open axis imposes no bound on that axis. Consumers must extend it to
+/// their current drawing bounds rather than clipping to the finite rectangle.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub struct PaintClip {
     /// Clip rectangle in page-local coordinates.
     pub rect: PaintRect,
+    /// Whether the left and right edges clip the content.
+    pub clip_x: bool,
+    /// Whether the top and bottom edges clip the content.
+    pub clip_y: bool,
+    /// Padding-edge ellipses in top-left, top-right, bottom-right, bottom-left
+    /// order, each as horizontal and vertical radii. `None` means square corners.
+    ///
+    /// Curves apply only when both axes clip. The producer resolves percentages
+    /// and overlap on the whole border box before subtracting border widths.
+    /// A radius can exceed this rectangle when an opposite border crops the
+    /// curve; consumers must not normalize the radii to the inner rectangle.
+    pub corner_radii: Option<[[f32; 2]; 4]>,
 }
 
 impl PaintClip {
-    /// Construct a clip to `rect`.
+    /// Construct a square-cornered clip to `rect` on both axes.
     pub const fn new(rect: PaintRect) -> Self {
-        Self { rect }
+        Self {
+            rect,
+            clip_x: true,
+            clip_y: true,
+            corner_radii: None,
+        }
     }
 }
