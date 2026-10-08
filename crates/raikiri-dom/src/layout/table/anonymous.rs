@@ -3,7 +3,7 @@
 use crate::Document;
 use crate::node::{Node, NodeFlags};
 use raikiri_style::CascadeResult;
-use raikiri_style::property::DisplayValue;
+use raikiri_style::property::{BreakBetween, DisplayValue, TableLayoutValue, VerticalAlign};
 use raikiri_traits::NodeKind;
 use std::collections::HashMap;
 
@@ -25,6 +25,7 @@ pub(crate) struct TableObjects {
     pub(crate) cells: Vec<AnonymousCell>,
     pub(crate) rows: HashMap<usize, Vec<Row>>,
     pub(crate) paragraph_owner: Vec<Option<usize>>,
+    pub(crate) part_background_cells: HashMap<usize, Vec<raikiri_traits::PaintRect>>,
 }
 
 fn whitespace(doc: &Document, id: usize) -> bool {
@@ -75,6 +76,18 @@ fn anonymous_cell(
     node.flags
         .remove(NodeFlags::IS_IFC_ROOT | NodeFlags::IN_IFC_SUBTREE);
     node.order_modified_children = Box::default();
+    // Anonymous boxes inherit text and table-spacing properties, while
+    // non-inherited properties and previous used layout state start fresh.
+    node.table_layout = TableLayoutValue::Auto;
+    node.table_vertical_align = VerticalAlign::Baseline;
+    node.table_grid_box = None;
+    node.table_first_baseline = None;
+    node.break_before = BreakBetween::Auto;
+    node.break_after = BreakBetween::Auto;
+    node.has_logical_min_block_size = false;
+    node.order = 0;
+    node.grid_item_row_starts = Box::default();
+    node.grid_column_count = 0;
     node.multicol = None;
     node.computed_border = None;
     node.collapsed_border = None;
@@ -254,6 +267,19 @@ impl Document {
             }
         }
         Some(out)
+    }
+
+    /// Cell areas of a source row or group, relative to its used box.
+    /// Separated table backgrounds leave the spaces between cells uncovered.
+    #[doc(hidden)]
+    pub fn anonymous_table_part_background_cells(
+        &self,
+        owner: usize,
+    ) -> Option<&[raikiri_traits::PaintRect]> {
+        self.table_objects
+            .part_background_cells
+            .get(&owner)
+            .map(Vec::as_slice)
     }
 
     /// Source owner of a paragraph, retaining real DOM ids for decorations.

@@ -3884,6 +3884,26 @@ pub(crate) fn paint_document_impl(
                             &cv.box_shadow,
                             cv.color,
                         );
+                        let table_part_clip =
+                            document.anonymous_table_part_background_cells(node_id);
+                        if let Some(cells) = table_part_clip {
+                            let mut path = BezPath::new();
+                            for cell in cells {
+                                let x = f64::from(cell.x);
+                                let y = f64::from(cell.y);
+                                let right = x + f64::from(cell.width);
+                                let bottom = y + f64::from(cell.height);
+                                path.move_to((x, y));
+                                path.line_to((right, y));
+                                path.line_to((right, bottom));
+                                path.line_to((x, bottom));
+                                path.close_path();
+                            }
+                            scene.scene.push_clip_layer(
+                                Affine::translate((f64::from(own_paint_x), f64::from(own_paint_y))),
+                                &path,
+                            );
+                        }
                         paint_element_background(
                             scene,
                             own_background_width,
@@ -3904,6 +3924,9 @@ pub(crate) fn paint_document_impl(
                             pixel_source,
                             warnings,
                         );
+                        if table_part_clip.is_some() {
+                            scene.pop_layer();
+                        }
                         if clip_background.is_some() {
                             scene.pop_layer();
                         }

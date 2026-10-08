@@ -851,7 +851,7 @@ fn text_line_bounds(document: &Document, node_id: usize) -> Option<Vec<(f32, f32
 /// have moved them from their unfragmented shaping offsets.
 fn positioned_text_line_bounds(document: &Document, node_id: usize) -> Option<Vec<(f32, f32)>> {
     let owned = document.ifc_text_lines(node_id)?;
-    let root = document.nodes.get(owned.root)?.ifc.as_ref()?;
+    let root = document.ifc_layout_node(owned.root)?.ifc.as_ref()?;
     let root_lines = root.lines.as_ref()?;
     let fragments = root.multicol_fragments.as_deref();
     let mut fragment_cursor = 0;
@@ -1756,8 +1756,17 @@ pub fn layout_pages_with_page_geometry_and_control(
     }
 
     fn current_abs_y(document: &Document, node_id: usize, parent_of: &[Option<usize>]) -> f32 {
-        let mut id = node_id;
-        let mut y = 0.0_f32;
+        let mut id = document.ifc_source_owner(node_id);
+        let mut y = if id != node_id {
+            document
+                .ifc_layout_node(node_id)
+                .expect("valid anonymous root")
+                .unrounded_layout
+                .location
+                .y
+        } else {
+            0.0
+        };
         let mut guard = 0_usize;
         while guard <= parent_of.len() {
             y += document.nodes[id].unrounded_layout.location.y;
@@ -1787,8 +1796,14 @@ pub fn layout_pages_with_page_geometry_and_control(
         let actual_y = current_abs_y(document, node_id, parent_of);
         let delta = desired_y - actual_y;
         if delta.is_finite() {
-            document.nodes[node_id].unrounded_layout.location.y += delta;
-            follow_moved_ifc_block(document, node_id, delta);
+            document
+                .table_layout_node_mut(node_id)
+                .unrounded_layout
+                .location
+                .y += delta;
+            if node_id < document.nodes.len() {
+                follow_moved_ifc_block(document, node_id, delta);
+            }
         }
     }
 
@@ -1808,9 +1823,12 @@ pub fn layout_pages_with_page_geometry_and_control(
         let first_top = positioned_text_line_bounds(document, text)
             .and_then(|lines| lines.first().map(|line| line.0))
             .unwrap_or(first.top);
-        let layout = document.nodes[root].unrounded_layout;
+        let layout = document
+            .ifc_layout_node(root)
+            .expect("valid paragraph root")
+            .unrounded_layout;
         let old_top = layout.border.top + layout.padding.top + first_top;
-        let Some(ifc) = document.nodes[root].ifc.as_mut() else {
+        let Some(ifc) = document.table_layout_node_mut(root).ifc.as_mut() else {
             return;
         };
         let Some(lines) = ifc.lines.as_mut() else {
@@ -1840,7 +1858,7 @@ pub fn layout_pages_with_page_geometry_and_control(
         };
         let old_bottom = document.nodes[node_id].unrounded_layout.location.y - delta
             + document.nodes[node_id].unrounded_layout.size.height;
-        let Some(ifc) = document.nodes[root].ifc.as_mut() else {
+        let Some(ifc) = document.table_layout_node_mut(root).ifc.as_mut() else {
             return;
         };
         let Some(lines) = ifc.lines.as_mut() else {
@@ -2082,7 +2100,15 @@ pub fn layout_pages_with_page_geometry_and_control(
                     // own, located like any other.
                     let (raw_y, height, ifc_root) = match document.ifc_text_lines(node_id) {
                         Some(owned) if owned.root != node_id => {
-                            let root_layout = document.nodes[owned.root].unrounded_layout;
+                            let root_layout = document
+                                .ifc_layout_node(owned.root)
+                                .expect("owned text lines require an IFC layout view")
+                                .unrounded_layout;
+                            let root_y = if owned.root >= document.nodes.len() {
+                                root_layout.location.y
+                            } else {
+                                0.0
+                            };
                             let positioned = positioned_text_line_bounds(document, node_id)
                                 // cov:ignore: ifc_text_lines returns Some only when these root line records exist.
                                 .unwrap_or_else(|| {
@@ -2100,7 +2126,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                             let offset =
                                 root_layout.border.top + root_layout.padding.top + first_top;
                             (
-                                parent_abs_y + offset,
+                                parent_abs_y + root_y + offset,
                                 (last_bottom - first_top).max(0.0),
                                 Some((owned.root, offset)),
                             )
@@ -2412,7 +2438,10 @@ pub fn layout_pages_with_page_geometry_and_control(
         check_candidate_page!('candidate_loop, current_page);
         let node_id = candidate.node_id;
         let moves_ifc_root = {
-            let mut first = true;
+            let mut first = candidate
+                .ifc_root
+                .filter(|(root, _)| *root >= document.nodes.len())
+                .is_none_or(|(root, _)| entered_ifc_roots.insert(root));
             let mut current = parent_of.get(node_id).copied().flatten();
             while let Some(id) = current {
                 if document.nodes[id].is_ifc_root() && !entered_ifc_roots.insert(id) {
@@ -2559,7 +2588,10 @@ pub fn layout_pages_with_page_geometry_and_control(
                 // A later text of a paragraph whose root already moved: its
                 // lines go where the flow puts them, and the ones after
                 // follow (an earlier box of the paragraph may have grown).
-                let layout = document.nodes[root].unrounded_layout;
+                let layout = document
+                    .ifc_layout_node(root)
+                    .expect("valid paragraph root")
+                    .unrounded_layout;
                 let first_top = positioned_text_line_bounds(document, node_id)
                     .and_then(|lines| lines.first().map(|line| line.0))
                     .unwrap_or(first.top);
@@ -2598,7 +2630,11 @@ pub fn layout_pages_with_page_geometry_and_control(
                         // The text of an ifc paragraph is painted from its
                         // root, so the root carries the movement.
                         let moved = ifc_root.map_or(node_id, |(root, _)| root);
-                        document.nodes[moved].unrounded_layout.location.y += node_delta;
+                        document
+                            .table_layout_node_mut(moved)
+                            .unrounded_layout
+                            .location
+                            .y += node_delta;
                         // A later text of a paragraph whose root already
                         // moved: its lines, and the ones after, move alone.
                         if ifc_root.is_none()

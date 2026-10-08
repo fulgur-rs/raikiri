@@ -18,6 +18,9 @@ pub enum ClipKind {
     Overflow,
     /// A column of a multi-column container.
     Fragmentainer,
+    /// One cell area of a source table row or group. The clip encloses only
+    /// the box event, preserving separated-border gaps for the table below.
+    TableCell,
 }
 
 /// One step of painting a page's body content, in paint order.
@@ -157,7 +160,26 @@ impl Document {
                             node.is_inline_svg_root() || self.is_canvas_element(node_id);
                         for &item in &own {
                             let fragment = items.fragment(item);
-                            events.push(PaintEvent::Box(fragment));
+                            if let Some(cells) = self.anonymous_table_part_background_cells(node_id)
+                            {
+                                let rect = fragment.paint_rect();
+                                let top = rect.y - item.rect.y + item.box_y;
+                                for cell in cells {
+                                    events.push(PaintEvent::PushClip(
+                                        PaintClip::new(PaintRect::new(
+                                            rect.x + cell.x,
+                                            top + cell.y,
+                                            cell.width,
+                                            cell.height,
+                                        )),
+                                        ClipKind::TableCell,
+                                    ));
+                                    events.push(PaintEvent::Box(fragment));
+                                    events.push(PaintEvent::PopClip);
+                                }
+                            } else {
+                                events.push(PaintEvent::Box(fragment));
+                            }
                             if item.kind == PageFragmentKind::Replaced || replaced_content {
                                 events.push(PaintEvent::Replaced(fragment));
                             }

@@ -888,7 +888,200 @@ fn compute_table_layout_checked(
             table_writing_mode(doc, table_idx),
         );
     }
+    position_anonymous_table_parts(
+        doc,
+        table_idx,
+        &grid,
+        &column_widths,
+        &row_heights,
+        (&col_origins, &row_origins),
+        vertical_writing,
+    );
     Ok(LayoutOutput::from_outer_size(wrapper_size))
+}
+
+/// Give source rows and groups used boxes, while cell placement remains
+/// measured in table coordinates until the final parent-relative projection.
+fn position_anonymous_table_parts(
+    doc: &mut Document,
+    table: usize,
+    grid: &TableGrid,
+    columns: &[f32],
+    rows: &[f32],
+    origins: (&[f32], &[f32]),
+    vertical: bool,
+) {
+    if !grid
+        .cells
+        .iter()
+        .any(|cell| cell.node_id >= doc.nodes.len())
+    {
+        return;
+    }
+    let mut parts: std::collections::HashMap<usize, TaffyLayout> = Default::default();
+    let (col_x, row_y) = origins;
+    let width = col_x
+        .get(columns.len().saturating_sub(1))
+        .zip(columns.last())
+        .map_or(0.0, |(x, width)| {
+            x + width - col_x.first().copied().unwrap_or(0.0)
+        });
+    let mut vertical_rows: std::collections::HashMap<usize, TaffyLayout> = Default::default();
+    if vertical {
+        for cell in &grid.cells {
+            if let Some(layout) = cell.resolved {
+                vertical_rows
+                    .entry(usize::from(cell.row))
+                    .and_modify(|row| extend_part_bounds(row, &layout))
+                    .or_insert(layout);
+            }
+        }
+    }
+    for (index, &marker) in grid.rows.iter().enumerate() {
+        let mut rect = TaffyLayout::new();
+        rect.location = Point {
+            x: col_x.first().copied().unwrap_or(0.0),
+            y: row_y[index],
+        };
+        rect.size = Size {
+            width,
+            height: rows[index],
+        };
+        if let Some(layout) = vertical_rows.get(&index) {
+            rect = *layout;
+        }
+        let mut source = Some(doc.ifc_source_owner(marker));
+        while let Some(id) = source {
+            if id == table {
+                break;
+            }
+            if matches!(
+                doc.nodes[id].display,
+                DisplayValue::TableRow
+                    | DisplayValue::TableRowGroup
+                    | DisplayValue::TableHeaderGroup
+                    | DisplayValue::TableFooterGroup
+            ) {
+                parts
+                    .entry(id)
+                    .and_modify(|part| extend_part_bounds(part, &rect))
+                    .or_insert(rect);
+            }
+            source = doc.parent_of(id);
+        }
+    }
+    if doc.nodes[table].border_collapse != BorderCollapseValue::Collapse {
+        for &id in parts.keys() {
+            doc.table_objects
+                .part_background_cells
+                .insert(id, Vec::new());
+        }
+        // Visit only the rows occupied by each cell and their group ancestors.
+        // Scanning the whole cell grid for every row would be quadratic.
+        for cell in &grid.cells {
+            let Some(layout) = cell.resolved else {
+                continue;
+            };
+            let mut listed = std::collections::HashSet::new();
+            let end_row = (usize::from(cell.row) + usize::from(cell.row_span)).min(grid.rows.len());
+            for &marker in &grid.rows[usize::from(cell.row)..end_row] {
+                let mut source = Some(doc.ifc_source_owner(marker));
+                while let Some(id) = source {
+                    if id == table {
+                        break;
+                    }
+                    if let Some(part) = parts.get(&id)
+                        && listed.insert(id)
+                    {
+                        let left = part.location.x.max(layout.location.x);
+                        let top = part.location.y.max(layout.location.y);
+                        let right = (part.location.x + part.size.width)
+                            .min(layout.location.x + layout.size.width);
+                        let bottom = (part.location.y + part.size.height)
+                            .min(layout.location.y + layout.size.height);
+                        if right > left && bottom > top {
+                            doc.table_objects
+                                .part_background_cells
+                                .get_mut(&id)
+                                .expect("table parts were initialized")
+                                .push(raikiri_traits::PaintRect::new(
+                                    left - part.location.x,
+                                    top - part.location.y,
+                                    right - left,
+                                    bottom - top,
+                                ));
+                        }
+                    }
+                    source = doc.parent_of(id);
+                }
+            }
+        }
+    }
+    let origin_of = |owner: usize| {
+        let mut ancestor = Some(owner);
+        while let Some(id) = ancestor {
+            if id == table {
+                break;
+            }
+            if let Some(part) = parts.get(&id) {
+                return part.location;
+            }
+            ancestor = doc.parent_of(id);
+        }
+        Point::ZERO
+    };
+    let mut projected = Vec::new();
+    for (&id, &part) in &parts {
+        let parent = doc.parent_of(id).map_or(Point::ZERO, origin_of);
+        let mut layout = part;
+        layout.location.x -= parent.x;
+        layout.location.y -= parent.y;
+        projected.push((id, layout));
+    }
+    let mut offsets = Vec::new();
+    for cell in &grid.cells {
+        let owner = doc.ifc_source_owner(cell.node_id);
+        let parent = if cell.node_id >= doc.nodes.len() {
+            Some(owner)
+        } else {
+            doc.parent_of(owner)
+        };
+        offsets.push((cell.node_id, parent.map_or(Point::ZERO, origin_of)));
+    }
+    for (id, layout) in projected {
+        doc.nodes[id].unrounded_layout =
+            super::sanitize_taffy_layout(&layout, &mut doc.layout_warnings);
+    }
+    for (key, offset) in offsets {
+        let node = doc.table_layout_node_mut(key);
+        node.unrounded_layout.location.x -= offset.x;
+        node.unrounded_layout.location.y -= offset.y;
+        if key >= doc.nodes.len() {
+            let root = doc
+                .ifc_layout_node(key)
+                .expect("anonymous cell layout view");
+            let children = if root.is_ifc_root() {
+                root.ifc_boxes()
+            } else {
+                root.children.clone()
+            };
+            for child in children {
+                doc.nodes[child].unrounded_layout.location.x -= offset.x;
+                doc.nodes[child].unrounded_layout.location.y -= offset.y;
+            }
+        }
+    }
+}
+
+fn extend_part_bounds(part: &mut TaffyLayout, other: &TaffyLayout) {
+    let right = (part.location.x + part.size.width).max(other.location.x + other.size.width);
+    let bottom = (part.location.y + part.size.height).max(other.location.y + other.size.height);
+    part.location.x = part.location.x.min(other.location.x);
+    part.location.y = part.location.y.min(other.location.y);
+    part.size = Size {
+        width: right - part.location.x,
+        height: bottom - part.location.y,
+    };
 }
 
 #[inline(always)]
