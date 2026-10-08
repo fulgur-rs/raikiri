@@ -2280,3 +2280,85 @@ fn positioned_captions_do_not_expand_or_shift_the_table_flow_box() {
         }
     }
 }
+
+#[test]
+fn floated_captions_do_not_expand_or_shift_the_table_flow_box() {
+    for float in ["left", "right"] {
+        for side in ["top", "bottom"] {
+            let (mut doc, body) = document();
+            let table = element(&mut doc, body, "display:table;width:40px;border-spacing:0");
+            let caption = element(
+                &mut doc,
+                table,
+                &format!(
+                    "display:table-caption;float:{float};width:100px;height:10px;background:green;caption-side:{side}"
+                ),
+            );
+            let row = element(&mut doc, table, "display:table-row");
+            let cell = element(
+                &mut doc,
+                row,
+                "display:table-cell;width:40px;height:20px;background:blue;vertical-align:top",
+            );
+            let after = element(
+                &mut doc,
+                body,
+                "display:block;width:10px;height:10px;background:red",
+            );
+            let computed = layout(&mut doc);
+            let table_box = doc.get_node(table).unwrap().unrounded_layout;
+            let caption_node = doc.get_node(caption).unwrap();
+            assert_eq!(
+                computed.computed[caption].display,
+                raikiri_style::DisplayValue::Block
+            );
+            assert_ne!(
+                computed.computed[caption].float,
+                raikiri_style::property::FloatValue::None
+            );
+            assert_eq!(
+                (table_box.size.width, table_box.size.height),
+                (40.0, 20.0),
+                "{float}/{side}"
+            );
+            let cell_box = doc.get_node(cell).unwrap().unrounded_layout;
+            assert_eq!(
+                (
+                    cell_box.location.x,
+                    cell_box.location.y,
+                    cell_box.size.width,
+                    cell_box.size.height
+                ),
+                (0.0, 0.0, 40.0, 20.0)
+            );
+            assert_eq!(
+                doc.get_node(after).unwrap().unrounded_layout.location.y,
+                20.0
+            );
+            assert_eq!(
+                (
+                    caption_node.unrounded_layout.location.x,
+                    caption_node.unrounded_layout.location.y
+                ),
+                (0.0, 0.0)
+            );
+            let (mut reference, body) = document();
+            element(
+                &mut reference,
+                body,
+                "position:absolute;left:0;top:0;width:40px;height:20px;background:blue",
+            );
+
+            element(
+                &mut reference,
+                body,
+                "position:absolute;left:0;top:20px;width:10px;height:10px;background:red",
+            );
+            let expected = layout(&mut reference);
+            let actual = raster(scene(&doc, &computed));
+            assert_exact_pixels(actual.clone(), raster(scene(&reference, &expected)));
+            let again = layout(&mut doc);
+            assert_eq!(actual, raster(scene(&doc, &again)));
+        }
+    }
+}
