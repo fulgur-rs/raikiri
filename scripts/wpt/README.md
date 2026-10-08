@@ -377,14 +377,19 @@ cargo test --locked -p raikiri-wpt --test css_break_between_reftests -- --ignore
 
 The parser keeps page and column constraints distinct, including `always`
 for the innermost fragmentation context. Pagination moves fitting connected
-ordinary block sibling runs at a legal boundary, using the destination page height
+direct-body block-level sibling runs (block, flow-root, list-item, flex and grid)
+at a legal boundary, using the destination page height
 when page sizes differ; oversized runs relax avoidance
 so they still advance. The bounded horizontal-column projection propagates
 first/last descendant constraints, resumes plain block wrappers, preserves
 atomic inline-blocks, flow-roots, text-bearing atomic boxes and inside-avoided boxes, admits block-level
 list items, gives forced column breaks
 priority, and treats floats as parallel flows. Floats do not enlarge a plain
-wrapper's normal-flow background area. Auto-sized atomic and replaced boxes
+wrapper's normal-flow background area. Flex/grid roots with outer constraints
+preserve their measured child geometry and stay monolithic.
+Internal flex/grid constraints retain the previous strategy
+because their row/order propagation is not supplied by this projection.
+Auto-sized atomic and replaced boxes
 retain their measured or intrinsic width. Replaced leaves remain monolithic,
 so their source content is painted once rather than rescaled into column
 continuations. Horizontal RTL containers order their columns from right to

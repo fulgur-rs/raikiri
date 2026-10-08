@@ -2555,7 +2555,14 @@ pub fn layout_pages_with_page_geometry_and_control(
             continue;
         }
         let eligible = candidate.is_direct_body_element
-            && matches!(computed.display, DisplayValue::Block)
+            && matches!(
+                computed.display,
+                DisplayValue::Block
+                    | DisplayValue::FlowRoot
+                    | DisplayValue::ListItem
+                    | DisplayValue::Flex
+                    | DisplayValue::Grid
+            )
             && !matches!(computed.position, PositionValue::Running(_));
         if !eligible {
             previous = None;

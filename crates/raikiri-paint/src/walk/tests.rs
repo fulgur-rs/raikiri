@@ -5088,6 +5088,30 @@ fn review_normal_forced_after_moves_float_ink_to_the_new_column() {
     assert_eq!(pixel(55, 5), &[0, 128, 0, 255]);
 }
 
+fn review_formatting_context_background_follows_its_forced_edge(display: &str) {
+    let scene = transform_markup_scene(&format!(
+        "<!DOCTYPE html><body style='margin:0;background:white'><div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:20px'></div><div style='display:{display};height:40px;break-before:column;background:green'><div style='width:10px;height:10px'></div></div></div></body>",
+    ));
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+        800,
+        600,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 800 + x) * 4..(y * 800 + x) * 4 + 4];
+    assert_eq!(pixel(40, 30), &[255, 255, 255, 255]);
+    assert_eq!(pixel(90, 30), &[0, 128, 0, 255]);
+}
+
+#[test]
+fn review_flex_root_background_follows_its_forced_column_edge() {
+    review_formatting_context_background_follows_its_forced_edge("flex");
+}
+
+#[test]
+fn review_grid_root_background_follows_its_forced_column_edge() {
+    review_formatting_context_background_follows_its_forced_edge("grid");
+}
+
 #[test]
 fn review_list_marker_preserves_unrelated_ancestor_fragment_state() {
     let scene = transform_markup_scene(

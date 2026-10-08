@@ -7560,6 +7560,58 @@ fn review_same_explicit_page_name_keeps_avoided_sibling_runs_connected() {
 }
 
 #[test]
+fn review_flow_root_page_siblings_keep_avoided_runs_connected() {
+    for edge in ["break-before:avoid", "break-before:avoid-page"] {
+        assert_eq!(
+            page_sibling_positions(
+                &[60, 30, 30],
+                edge,
+                "",
+                "display:flow-root;break-inside:avoid"
+            ),
+            (vec![0.0, 100.0, 130.0], 2)
+        );
+    }
+}
+
+#[test]
+fn review_list_item_page_siblings_keep_avoided_runs_connected() {
+    assert_eq!(
+        page_sibling_positions(
+            &[60, 30, 30],
+            "break-before:avoid-page",
+            "",
+            "display:list-item;list-style:none;break-inside:avoid"
+        ),
+        (vec![0.0, 100.0, 130.0], 2)
+    );
+}
+
+#[test]
+fn review_block_level_context_page_siblings_keep_outer_avoidance() {
+    for display in ["flex", "grid", "flow-root", "list-item"] {
+        assert_eq!(
+            page_sibling_positions(
+                &[60, 30, 30],
+                "",
+                "break-after:avoid-page",
+                &format!("display:{display};list-style:none;break-inside:avoid")
+            ),
+            (vec![0.0, 100.0, 130.0], 2)
+        );
+        assert_eq!(
+            page_sibling_positions(
+                &[60, 30, 30],
+                "break-before:page",
+                "break-after:avoid-page",
+                &format!("display:{display};list-style:none;break-inside:avoid")
+            ),
+            (vec![0.0, 60.0, 100.0], 2)
+        );
+    }
+}
+
+#[test]
 fn review_forced_page_edge_still_overrides_same_named_avoidance() {
     assert_eq!(
         page_sibling_positions(

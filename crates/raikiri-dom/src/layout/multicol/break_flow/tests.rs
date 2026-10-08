@@ -1180,3 +1180,89 @@ fn review_directly_projected_text_keeps_the_existing_strategy() {
             .unwrap()
     ));
 }
+
+fn review_formatting_context_forced_edges(display: &str) {
+    for edge in ["column", "always"] {
+        let doc = laid_out(&format!(
+            "<div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:20px'></div><div id='atomic' style='display:{display};height:40px;break-before:{edge}'><div style='width:10px;height:10px'></div></div></div>",
+        ));
+        assert_eq!(boxes(&doc, "atomic"), vec![(1, 50.0, 0.0, 50.0, 40.0)]);
+    }
+    let doc = laid_out(&format!(
+        "<div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='display:{display};height:40px;break-after:column'><div style='height:10px'></div></div><div id='next' style='height:20px'></div></div>",
+    ));
+    assert_eq!(boxes(&doc, "next"), vec![(1, 50.0, 0.0, 50.0, 20.0)]);
+}
+
+#[test]
+fn review_flex_root_observes_its_forced_outer_column_edges() {
+    review_formatting_context_forced_edges("flex");
+}
+
+#[test]
+fn review_grid_root_observes_its_forced_outer_column_edges() {
+    review_formatting_context_forced_edges("grid");
+}
+
+#[test]
+fn review_formatting_context_auto_height_keeps_measured_child_positions() {
+    for display in ["flex", "grid"] {
+        let doc = laid_out(&format!(
+            "<div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:20px'></div><div id='atomic' style='display:{display};break-before:column'><div id='child' style='width:10px;height:30px'></div></div></div>",
+        ));
+        assert_eq!(boxes(&doc, "atomic"), vec![(1, 50.0, 0.0, 50.0, 30.0)]);
+        assert!(boxes(&doc, "child").is_empty());
+        assert_eq!(
+            doc.nodes[id(&doc, "child")].unrounded_layout.location.y,
+            0.0
+        );
+        assert_eq!(
+            doc.nodes[id(&doc, "child")].unrounded_layout.size.height,
+            30.0
+        );
+    }
+}
+
+#[test]
+fn review_internal_flex_and_grid_breaks_keep_the_existing_strategy() {
+    for display in ["flex", "grid"] {
+        let (mut doc, cascade) = fixture(&format!(
+            "<div id='columns' style='columns:2;gap:0;width:100px;height:100px'><div style='height:20px'></div><div style='display:{display};break-before:column'><div style='height:20px;break-before:column'></div></div></div>",
+        ));
+        apply_computed_to_style(&mut doc, &cascade).unwrap();
+        let root = id(&doc, "columns");
+        assert!(!supports(
+            &doc,
+            root,
+            FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[root].multicol.unwrap())
+                .unwrap()
+        ));
+    }
+}
+
+#[test]
+fn review_formatting_context_declared_width_and_oversize_stay_monolithic() {
+    for display in ["flex", "grid"] {
+        let doc = laid_out(&format!(
+            "<div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:20px'></div><div id='atomic' style='display:{display};width:20px;height:150px;break-before:column'><div style='height:10px'></div></div></div>",
+        ));
+        assert_eq!(boxes(&doc, "atomic"), vec![(1, 50.0, 0.0, 20.0, 150.0)]);
+    }
+}
+
+#[test]
+fn review_inline_formatting_contexts_keep_the_existing_strategy() {
+    for display in ["inline-flex", "inline-grid"] {
+        let (mut doc, cascade) = fixture(&format!(
+            "<div id='columns' style='columns:2;gap:0;width:100px;height:100px'><div style='height:20px'></div><div style='display:{display};height:20px;break-before:column'></div></div>",
+        ));
+        apply_computed_to_style(&mut doc, &cascade).unwrap();
+        let root = id(&doc, "columns");
+        assert!(!supports(
+            &doc,
+            root,
+            FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[root].multicol.unwrap())
+                .unwrap()
+        ));
+    }
+}
