@@ -137,6 +137,70 @@ fn an_oversized_breakable_box_continues_across_additional_columns() {
 }
 
 #[test]
+fn review_fixed_height_descendants_are_not_replayed_across_columns() {
+    let doc = laid_out(
+        r#"<div style="columns:2;column-fill:auto;gap:0;width:100px;height:100px">
+        <div style="height:30px"></div>
+        <div id="atomic" style="height:150px;break-before:avoid"><div id="first" style="height:75px"></div><div id="second" style="height:75px"></div></div>
+        </div>"#,
+    );
+    assert_eq!(boxes(&doc, "atomic"), vec![(1, 50.0, 0.0, 50.0, 150.0)]);
+    assert_eq!(
+        doc.nodes[id(&doc, "first")].unrounded_layout.location.y,
+        0.0
+    );
+    assert_eq!(
+        doc.nodes[id(&doc, "second")].unrounded_layout.location.y,
+        75.0
+    );
+}
+
+#[test]
+fn review_container_fragment_keeps_its_border_box_width() {
+    for (width, expected) in [("120px", 120.0), ("50%", 400.0), ("auto", 800.0)] {
+        let doc = laid_out(&format!(
+            "<div id='columns' style='columns:2;column-fill:auto;gap:0;box-sizing:border-box;width:{width};height:130px;padding:10px;border:5px solid blue'><div style='height:20px;break-before:avoid'></div></div>",
+        ));
+        let root = id(&doc, "columns");
+        assert_eq!(doc.nodes[root].unrounded_layout.size.width, expected);
+        assert_eq!(boxes(&doc, "columns"), vec![(0, 0.0, 0.0, expected, 130.0)]);
+    }
+}
+
+#[test]
+fn review_an_oversized_unbreakable_box_moves_once_to_an_empty_column() {
+    let doc = laid_out(
+        r#"<div style="columns:2;column-fill:auto;gap:0;width:100px;height:100px">
+        <div style="height:30px"></div><div id="atomic" style="height:150px;break-inside:avoid-column"></div>
+        <div id="next" style="height:20px"></div></div>"#,
+    );
+    assert_eq!(boxes(&doc, "atomic"), vec![(1, 50.0, 0.0, 50.0, 150.0)]);
+    assert_eq!(boxes(&doc, "next"), vec![(2, 100.0, 0.0, 50.0, 20.0)]);
+}
+
+#[test]
+fn review_an_oversized_first_box_keeps_progress_on_the_empty_column() {
+    let doc = laid_out(
+        r#"<div style="columns:2;column-fill:auto;gap:0;width:100px;height:100px">
+        <div id="atomic" style="height:150px;break-inside:avoid-column"></div>
+        <div id="next" style="height:20px"></div></div>"#,
+    );
+    assert_eq!(boxes(&doc, "atomic"), vec![(0, 0.0, 0.0, 50.0, 150.0)]);
+    assert_eq!(boxes(&doc, "next"), vec![(1, 50.0, 0.0, 50.0, 20.0)]);
+}
+
+#[test]
+fn review_an_oversized_float_keeps_its_parallel_flow_position() {
+    let doc = laid_out(
+        r#"<div style="columns:2;column-fill:auto;gap:0;width:100px;height:100px">
+        <div style="height:30px"></div><div id="float" style="float:left;width:25px;height:150px;break-inside:avoid-column"></div>
+        <div id="next" style="height:20px"></div></div>"#,
+    );
+    assert_eq!(boxes(&doc, "float"), vec![(0, 0.0, 30.0, 25.0, 150.0)]);
+    assert_eq!(boxes(&doc, "next"), vec![(0, 0.0, 30.0, 50.0, 20.0)]);
+}
+
+#[test]
 fn fixed_height_flow_advance_preserves_visible_descendant_overflow() {
     let doc = laid_out(
         r#"<div style="columns:2;column-fill:auto;gap:0;width:100px;height:100px">
@@ -216,7 +280,15 @@ fn an_inline_block_that_fits_a_column_stays_atomic() {
     let context =
         FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[root].multicol.unwrap())
             .unwrap();
-    layout(&mut doc, root, context, 100.0);
+    layout(
+        &mut doc,
+        root,
+        context,
+        Size {
+            width: 100.0,
+            height: 100.0,
+        },
+    );
     assert_eq!(boxes(&doc, "atomic"), vec![(1, 50.0, 0.0, 50.0, 80.0)]);
     assert_eq!(
         doc.nodes[id(&doc, "first")].unrounded_layout.location.y,
@@ -395,13 +467,35 @@ fn fragment_budget_exhaustion_stops_each_projection_stage() {
     for limit in 0..=2 {
         let (mut doc, root, context) = prepared_flow();
         doc.fragment_tree.limit = limit;
-        assert_eq!(layout(&mut doc, root, context, 100.0), 100.0);
+        assert_eq!(
+            layout(
+                &mut doc,
+                root,
+                context,
+                Size {
+                    width: 100.0,
+                    height: 100.0
+                }
+            ),
+            100.0
+        );
         assert!(doc.fragment_tree.limit_exceeded);
         assert_eq!(doc.fragment_tree.fragments.len(), limit);
     }
     let (mut doc, root, mut context) = prepared_flow();
     context.available_height = None;
-    assert_eq!(layout(&mut doc, root, context, 100.0), 100.0);
+    assert_eq!(
+        layout(
+            &mut doc,
+            root,
+            context,
+            Size {
+                width: 100.0,
+                height: 100.0
+            }
+        ),
+        100.0
+    );
     assert!(doc.fragment_tree.fragments.is_empty());
 }
 
@@ -430,5 +524,16 @@ fn collection_stops_and_unwinds_ancestors_when_the_budget_was_exhausted() {
     collect(&mut doc, wrapper, context, &mut ancestors, &mut out);
     assert!(ancestors.is_empty());
     assert_eq!(out.len(), 1);
-    assert_eq!(layout(&mut doc, root, context, 100.0), 100.0);
+    assert_eq!(
+        layout(
+            &mut doc,
+            root,
+            context,
+            Size {
+                width: 100.0,
+                height: 100.0
+            }
+        ),
+        100.0
+    );
 }

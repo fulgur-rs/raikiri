@@ -1141,6 +1141,38 @@ fn transform_markup_scene(markup: &str) -> Scene {
 }
 
 #[test]
+fn review_atomic_column_descendants_paint_once_after_the_legal_break() {
+    let scene = transform_markup_scene(
+        "<!DOCTYPE html><body style='margin:0;background:white'><div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:30px'></div><div style='height:150px;break-before:avoid'><div style='height:75px;background:red'></div><div style='height:75px;background:green'></div></div></div></body>",
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+        800,
+        600,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 800 + x) * 4..(y * 800 + x) * 4 + 4];
+    assert_eq!(pixel(10, 50), &[255, 255, 255, 255]);
+    assert_eq!(pixel(60, 10), &[255, 0, 0, 255]);
+    assert_eq!(pixel(60, 100), &[0, 128, 0, 255]);
+}
+
+#[test]
+fn review_column_container_background_and_border_use_its_border_box() {
+    let scene = transform_markup_scene(
+        "<!DOCTYPE html><body style='margin:0;background:white'><div style='columns:2;column-fill:auto;gap:0;box-sizing:border-box;width:120px;height:130px;padding:10px;border:5px solid blue;background:red'><div style='height:20px;break-before:avoid'></div></div></body>",
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+        800,
+        600,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 800 + x) * 4..(y * 800 + x) * 4 + 4];
+    assert_eq!(pixel(110, 50), &[255, 0, 0, 255]);
+    assert_eq!(pixel(118, 50), &[0, 0, 255, 255]);
+    assert_eq!(pixel(125, 50), &[255, 255, 255, 255]);
+}
+
+#[test]
 fn relative_block_offsets_are_applied_once_to_boxes_and_descendants() {
     for display in [
         "block",

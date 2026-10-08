@@ -120,11 +120,15 @@ fn atomic(tree: &Document, id: usize) -> bool {
             node.break_inside,
             BreakInside::Avoid | BreakInside::AvoidColumn
         )
-        || !node.children.iter().any(|&child| {
-            tree.nodes[child].is_in_document()
-                && tree.nodes[child].style.display != Display::None
-                && matches!(tree.nodes[child].data, NodeData::Element(_))
-        })
+        || !has_rendered_element_child(tree, id)
+}
+
+fn has_rendered_element_child(tree: &Document, id: usize) -> bool {
+    tree.nodes[id].children.iter().any(|&child| {
+        tree.nodes[child].is_in_document()
+            && tree.nodes[child].style.display != Display::None
+            && matches!(tree.nodes[child].data, NodeData::Element(_))
+    })
 }
 
 fn propagated(outer: BreakBetween, inner: BreakBetween) -> BreakBetween {
@@ -217,6 +221,9 @@ fn collect(
             floated,
             splittable: !floated
                 && tree.nodes[id].display != DisplayValue::InlineBlock
+                // Descendants keep their measured subtree; this seam has no
+                // translated child continuations to replay in later columns.
+                && !has_rendered_element_child(tree, id)
                 && !matches!(
                     tree.nodes[id].break_inside,
                     BreakInside::Avoid | BreakInside::AvoidColumn
@@ -263,16 +270,16 @@ pub(super) fn layout(
     tree: &mut Document,
     root: usize,
     context: FragmentationContext,
-    fallback: f32,
+    fallback: Size<f32>,
 ) -> f32 {
     let Some(height) = context.available_height else {
-        return fallback;
+        return fallback.height;
     };
     let mut boxes = Vec::new();
     for child in tree.nodes[root].children.clone() {
         collect(tree, child, context, &mut Vec::new(), &mut boxes);
         if tree.fragment_tree.limit_exceeded {
-            return fallback;
+            return fallback.height;
         }
     }
     let Some(container) = tree.fragment_tree.try_push(fragment(
@@ -282,11 +289,11 @@ pub(super) fn layout(
         FragmentRect {
             x: context.origin_x,
             y: context.origin_y,
-            width: context.available_width,
-            height: fallback,
+            width: fallback.width,
+            height: fallback.height,
         },
     )) else {
-        return fallback;
+        return fallback.height;
     };
     // A lookahead run includes normal-flow siblings across parallel floats.
     // Floats occupy space for painting, but consume no block-flow advance.
@@ -323,7 +330,7 @@ pub(super) fn layout(
             && (forced(previous_after)
                 || forced(item.before)
                 || (run <= height && cursor + run > height)
-                || (cursor + item.height > height && item.height <= height))
+                || (cursor + item.height > height && (item.height <= height || !item.splittable)))
         {
             column = column.saturating_add(1);
             cursor = 0.0;
@@ -361,7 +368,7 @@ pub(super) fn layout(
                             height: used,
                         },
                     )) else {
-                        return fallback;
+                        return fallback.height;
                     };
                     wrappers.insert((column, ancestor), (id, y));
                     (id, y)
@@ -384,7 +391,7 @@ pub(super) fn layout(
                     height: used,
                 },
             )) else {
-                return fallback;
+                return fallback.height;
             };
             if first {
                 let mut layout = tree.nodes[item.node].unrounded_layout;
@@ -414,7 +421,7 @@ pub(super) fn layout(
             previous_after = item.after;
         }
     }
-    fallback
+    fallback.height
 }
 
 #[cfg(test)]

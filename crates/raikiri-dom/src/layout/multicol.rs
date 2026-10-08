@@ -143,7 +143,7 @@ pub(crate) fn compute_multicol_layout(
             *active = resolved;
         }
         let used_height = if break_flow_scope {
-            break_flow::layout(tree, index, resolved, output.size.height)
+            break_flow::layout(tree, index, resolved, output.size)
         } else {
             relayout_nested_multicol_children(
                 tree,

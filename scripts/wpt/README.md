@@ -375,7 +375,11 @@ priority, and treats floats as parallel flows. Projected boxes with margin,
 padding, border, inset or clearance, and splittable wrappers with definite
 width, minimum/maximum sizes or non-visible overflow retain the existing
 geometry strategies. Atomic subtrees preserve their measured child
-geometry. Nested columns, visible text, minimum block-size contexts
+geometry and remain monolithic when this projection has no child continuation.
+Oversized unbreakable boxes advance once from an occupied column before
+overflowing; empty columns and parallel floats still make progress. Column
+widths use the content box, while the container fragment retains the measured
+border-box size. Nested columns, visible text, minimum block-size contexts
 and unsupported box structures retain their existing paths. These fifteen
 references and native controls do not establish complete table/flex/grid,
 vertical-writing or general box-decoration fragmentation support.
