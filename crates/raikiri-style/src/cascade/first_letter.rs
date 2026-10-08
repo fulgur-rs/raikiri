@@ -65,26 +65,6 @@ fn property_applies(key: crate::property::PropertyKey) -> bool {
 }
 
 impl CascadeResult {
-    /// Resolve the actual inline parent's first-line inheritance before
-    /// applying first-letter rules. Ordinary custom-property environments
-    /// remain attached to the real elements, as for first-line fragments.
-    pub fn first_letter_parent_with_first_line<D: crate::StyleDom>(
-        &self,
-        dom: &D,
-        letter_origin: StyleNodeId,
-        line_origin: StyleNodeId,
-        actual_parent: StyleNodeId,
-        generated: Option<crate::PseudoElem>,
-    ) -> Option<ComputedValues> {
-        self.first_letter_parent_with_first_lines(
-            dom,
-            letter_origin,
-            &[line_origin],
-            actual_parent,
-            generated,
-        )
-    }
-
     /// Resolve enclosing first-line pseudos in outer-to-inner box-tree order.
     /// The ordinary custom-property inheritance channel remains unchanged.
     pub fn first_letter_parent_with_first_lines<D: crate::StyleDom>(
@@ -152,32 +132,34 @@ impl CascadeResult {
             .and_then(|pseudo| self.pseudo.get(&(id, pseudo)))
             .unwrap_or(&self.computed[id.0 as usize]);
         let mut specified = SpecifiedValues::inherit_from(inherited);
-        if let Some(values) = self.typographic_inheritance.get(&(id, pseudo)) {
-            let filtered;
-            let values = if pseudo == Some(crate::PseudoElem::FirstLine) {
-                filtered = values
-                    .iter()
-                    .filter(|(value, ..)| {
-                        matches!(value, crate::property::PropertyValue::AllRevertLayer)
-                            || super::first_line::first_line_property_applies(value.key())
-                    })
-                    .cloned()
-                    .collect::<Vec<_>>();
-                filtered.as_slice()
-            } else {
-                values.as_slice()
-            };
-            apply_winners(
-                values,
-                &mut Vec::new(),
-                &mut specified,
-                inherited,
-                &ordinary.custom_properties,
-                None,
-                None,
-                None,
-            );
-        }
+        let values = self
+            .typographic_inheritance
+            .get(&(id, pseudo))
+            .map_or(&[][..], Vec::as_slice);
+        let filtered;
+        let values = if pseudo == Some(crate::PseudoElem::FirstLine) {
+            filtered = values
+                .iter()
+                .filter(|(value, ..)| {
+                    matches!(value, crate::property::PropertyValue::AllRevertLayer)
+                        || super::first_line::first_line_property_applies(value.key())
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            filtered.as_slice()
+        } else {
+            values
+        };
+        apply_winners(
+            values,
+            &mut Vec::new(),
+            &mut specified,
+            inherited,
+            &ordinary.custom_properties,
+            None,
+            None,
+            None,
+        );
         let mut computed = specified.finalize(inherited, context);
         computed.custom_properties = ordinary.custom_properties.clone();
         computed.local_custom_properties = ordinary.local_custom_properties.clone();

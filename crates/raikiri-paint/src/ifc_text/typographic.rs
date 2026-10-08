@@ -22,72 +22,62 @@ pub(super) struct TypographicPaint {
 }
 
 impl TypographicPaint {
-    pub(super) fn new(root: Option<&Node>, pieces: &[InlineBoxPiece]) -> Self {
+    pub(super) fn new(root: &Node, pieces: &[InlineBoxPiece]) -> Self {
         let mut paint = Self {
             normal: Scene::new(),
             groups: Vec::new(),
             nearest_groups: HashMap::new(),
             piece_groups: HashMap::new(),
         };
-        if let Some(root) = root {
-            let mut by_box = HashMap::new();
-            let mut parents = HashMap::new();
-            for piece in pieces {
-                parents
-                    .entry(piece.node)
-                    .or_insert_with(|| root.ifc_typographic_parent(piece.node));
-                if by_box.contains_key(&piece.node) {
-                    continue;
-                }
-                if let Some((cv, _)) = root.ifc_typographic_fragment(
-                    piece.node,
-                    piece.source_container,
-                    piece.source_owner,
-                ) && cv.opacity < 1.0
-                {
-                    by_box.insert(piece.node, paint.groups.len());
-                    paint.groups.push(Group {
-                        scene: Scene::new(),
-                        opacity: cv.opacity,
-                        parent: None,
-                        insertion: None,
-                        children: Vec::new(),
-                    });
-                }
+        let mut by_box = HashMap::new();
+        let mut parents = HashMap::new();
+        for piece in pieces {
+            parents
+                .entry(piece.node)
+                .or_insert_with(|| root.ifc_typographic_parent(piece.node));
+            if by_box.contains_key(&piece.node) {
+                continue;
             }
-            // Resolve retained parents once per box, including ancestors whose
-            // pieces are absent on this line. Parent inspection scans styles.
-            let mut pending: Vec<_> = parents.values().copied().flatten().collect();
-            while let Some(id) = pending.pop() {
-                if let std::collections::hash_map::Entry::Vacant(entry) = parents.entry(id) {
-                    let parent = root.ifc_typographic_parent(id);
-                    entry.insert(parent);
-                    pending.extend(parent);
-                }
+            if let Some((cv, _)) = root.ifc_typographic_fragment(
+                piece.node,
+                piece.source_container,
+                piece.source_owner,
+            ) && cv.opacity < 1.0
+            {
+                by_box.insert(piece.node, paint.groups.len());
+                paint.groups.push(Group {
+                    scene: Scene::new(),
+                    opacity: cv.opacity,
+                    parent: None,
+                    insertion: None,
+                    children: Vec::new(),
+                });
             }
+        }
+        // Retained parents also have pieces on this line, including
+        // continued inline boxes. The first pass caches every parent.
+        paint
+            .nearest_groups
+            .extend(by_box.iter().map(|(&id, &group)| (id, Some(group))));
+        for &id in parents.keys() {
+            cached_group(id, &parents, &mut paint.nearest_groups);
+        }
+        for (&id, &index) in &by_box {
+            paint.groups[index].parent = parents[&id]
+                .and_then(|parent| paint.nearest_groups.get(&parent).copied().flatten());
+        }
+        let piece_parents: HashMap<_, _> = pieces
+            .iter()
+            .map(|piece| (piece.node, piece.parent))
+            .collect();
+        paint.piece_groups.extend(
             paint
                 .nearest_groups
-                .extend(by_box.iter().map(|(&id, &group)| (id, Some(group))));
-            for &id in parents.keys() {
-                cached_group(id, &parents, &mut paint.nearest_groups);
-            }
-            for (&id, &index) in &by_box {
-                paint.groups[index].parent = parents[&id]
-                    .and_then(|parent| paint.nearest_groups.get(&parent).copied().flatten());
-            }
-            let piece_parents: HashMap<_, _> = pieces
                 .iter()
-                .map(|piece| (piece.node, piece.parent))
-                .collect();
-            paint.piece_groups.extend(
-                paint
-                    .nearest_groups
-                    .iter()
-                    .filter_map(|(&id, &group)| group.map(|group| (id, Some(group)))),
-            );
-            for &id in piece_parents.keys() {
-                cached_group(id, &piece_parents, &mut paint.piece_groups);
-            }
+                .filter_map(|(&id, &group)| group.map(|group| (id, Some(group)))),
+        );
+        for &id in piece_parents.keys() {
+            cached_group(id, &piece_parents, &mut paint.piece_groups);
         }
         paint
     }

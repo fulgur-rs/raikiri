@@ -102,7 +102,9 @@ pub(crate) fn draw_ifc_lines_with_resources(
             f64::from(position.x),
             f64::from(position.y + position.shift_y),
         ));
-        let root_node = document.get_node(root_id);
+        let root_node = document
+            .get_node(root_id)
+            .expect("positioned lines require an existing IFC root");
         let mut paint = typographic::TypographicPaint::new(root_node, &pieces_by_line[line_index]);
         for fragment in line.fragments() {
             let Fragment::Atomic(atomic) = fragment else {
@@ -154,13 +156,11 @@ pub(crate) fn draw_ifc_lines_with_resources(
             {
                 continue;
             }
-            let retained = root_node.and_then(|root| {
-                root.ifc_typographic_fragment(
-                    piece.node,
-                    piece.source_container,
-                    piece.source_owner,
-                )
-            });
+            let retained = root_node.ifc_typographic_fragment(
+                piece.node,
+                piece.source_container,
+                piece.source_owner,
+            );
             let Some(cv) = retained
                 .map(|(style, _)| style)
                 .or_else(|| computed_for_id(cascade, piece.node))

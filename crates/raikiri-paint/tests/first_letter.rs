@@ -126,6 +126,49 @@ fn singular_ancestor_transform_leaves_no_first_letter_opacity_ink() {
 }
 
 #[test]
+fn cumulative_tiny_transforms_leave_no_first_letter_opacity_ink() {
+    let (mut doc, _, empty) = fixture(
+        "div{transform:scale(1e-40);transform-origin:0 0} div::first-letter{color:red;background:blue;opacity:.5}",
+        None,
+        "",
+    );
+    let mut root = doc.parent_of(empty).unwrap();
+    for _ in 0..3 {
+        root = doc.append_element(Some(root), "div", Style::default(), Some("display:block"));
+    }
+    doc.append_text(root, "XX");
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 80.0;
+    layout_single_page(&mut doc, &computed, page).unwrap();
+    let mut scene = Scene::new();
+    raikiri_paint::paint_single_page(&mut scene, &doc, &computed, page).unwrap();
+    let layers: Vec<_> = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::PushLayer(layer) if layer.alpha == 0.5 => Some(layer),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(layers.len(), 4);
+    assert!(layers.iter().all(|layer| {
+        layer
+            .transform
+            .as_coeffs()
+            .iter()
+            .all(|value| value.is_finite())
+    }));
+    assert!(
+        scene_pixels(scene)
+            .chunks_exact(4)
+            .all(|pixel| pixel == [255, 255, 255, 255])
+    );
+}
+
+#[test]
 fn first_letter_url_background_uses_the_image_pixel_source() {
     use raikiri_traits::{DecodedImage, ImagePixelSource};
     use std::sync::Arc;

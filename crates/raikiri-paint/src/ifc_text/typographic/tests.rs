@@ -42,7 +42,7 @@ fn inside_text_marker_group_lookup_has_a_work_bound() {
     assert!(!pieces.is_empty());
     assert!(pieces.iter().any(|piece| piece.parent == Some(piece.node)));
     PARENT_GROUP_VISITS.with(|visits| visits.set(0));
-    let paint = TypographicPaint::new(Some(root), &pieces);
+    let paint = TypographicPaint::new(root, &pieces);
     for piece in &pieces {
         assert_eq!(paint.piece_group(piece), None);
     }
@@ -94,8 +94,17 @@ fn nested_first_letter_group_lookup_has_a_document_wide_work_bound() {
         let root = doc.get_node(root).unwrap();
         let pieces = root.ifc_inline_boxes().unwrap();
         assert!(pieces.len() >= 64);
+        for piece in &pieces {
+            if let Some(parent) = root.ifc_typographic_parent(piece.node) {
+                assert!(
+                    pieces
+                        .iter()
+                        .any(|ancestor| { ancestor.node == parent && ancestor.line == piece.line })
+                );
+            }
+        }
         PARENT_GROUP_VISITS.with(|visits| visits.set(0));
-        let paint = TypographicPaint::new(Some(root), &pieces);
+        let paint = TypographicPaint::new(root, &pieces);
         for piece in &pieces {
             paint.piece_group(piece);
         }
