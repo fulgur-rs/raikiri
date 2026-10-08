@@ -9616,3 +9616,26 @@ fn marker_shorthand_direct_application_resets_all_three_inherited_fields() {
         marker
     );
 }
+
+#[test]
+fn deferred_radius_shorthand_rolls_back_each_corner() {
+    for keyword in ["revert-layer", "revert"] {
+        let cv = cascade_doc(
+            &format!(
+                "@layer base {{p {{border-top-left-radius:20px 30px}}}} @layer override {{p {{border-radius:var(--missing,{keyword})}}}}"
+            ),
+            "p",
+            None,
+        );
+        let expected = if keyword == "revert-layer" {
+            [20.0, 30.0]
+        } else {
+            [0.0, 0.0]
+        };
+        assert_eq!(
+            cv.border_radius.used(200.0, 100.0)[0],
+            expected,
+            "{keyword}"
+        );
+    }
+}

@@ -547,6 +547,12 @@ fn expand_deferred(
     mut push: impl FnMut(Declaration),
 ) {
     let keys: &[PropertyKey] = match deferred.key {
+        PropertyKey::BorderRadius => &[
+            PropertyKey::BorderRadiusTopLeft,
+            PropertyKey::BorderRadiusTopRight,
+            PropertyKey::BorderRadiusBottomRight,
+            PropertyKey::BorderRadiusBottomLeft,
+        ],
         PropertyKey::Padding => &[
             PropertyKey::PaddingTop,
             PropertyKey::PaddingRight,

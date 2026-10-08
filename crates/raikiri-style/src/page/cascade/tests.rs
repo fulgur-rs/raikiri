@@ -6846,3 +6846,20 @@ fn imported_media_chains_ignore_only_page_size() {
     assert_eq!(result.size(), None);
     assert!(result.declarations().contains_key(&PropertyKey::MarginTop));
 }
+
+#[test]
+fn page_deferred_radius_shorthand_rolls_back_each_corner() {
+    let result = page(
+        "@layer base {@page {border-top-left-radius:20px 30px}} @layer override {@page {border-radius:var(--missing,revert-layer)}}",
+        &root_with_font_size(20.0),
+    );
+    let Some(PropertyValue::BorderRadius(radius)) =
+        result.declarations().get(&PropertyKey::BorderRadius)
+    else {
+        panic!("effective radius")
+    };
+    assert_eq!(
+        radius.top_left,
+        crate::property::CornerRadius::new(Length::Px(20.0), Length::Px(30.0))
+    );
+}

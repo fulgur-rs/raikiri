@@ -214,3 +214,32 @@ fn anonymous_and_repeated_lines_have_complete_events_on_each_page() {
         );
     }
 }
+
+#[test]
+fn supplied_runs_cannot_reorder_intrinsic_text_lines() {
+    let result = lay_out_with_font(
+        "<p>First<br>Second<br>Third</p>",
+        "p {margin:0;line-height:0}",
+    );
+    let page = result.page(0).unwrap();
+    let mut runs = page.text_runs();
+    let expected: Vec<_> = page
+        .paint_order_for_text_runs(&runs)
+        .into_iter()
+        .filter_map(|event| match event {
+            PaintEvent::TextLine(line) => Some(line),
+            _ => None,
+        })
+        .collect();
+    assert!(expected.len() >= 3);
+    runs.reverse();
+    let actual: Vec<_> = page
+        .paint_order_for_text_runs(&runs)
+        .into_iter()
+        .filter_map(|event| match event {
+            PaintEvent::TextLine(line) => Some(line),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(actual, expected);
+}
