@@ -27,6 +27,7 @@ use std::convert::TryFrom;
 use std::sync::Arc;
 
 mod typographic;
+pub(crate) use typographic::BackgroundSlice;
 
 /// Content-box origin of an ifc root in page coordinates.
 #[derive(Clone, Copy, Debug)]
@@ -106,6 +107,7 @@ pub(crate) fn draw_ifc_lines_with_resources(
             .get_node(root_id)
             .expect("positioned lines require an existing IFC root");
         let mut paint = typographic::TypographicPaint::new(root_node, &pieces_by_line[line_index]);
+        let background_slices = typographic::background_slices(&pieces_by_line[line_index]);
         for fragment in line.fragments() {
             let Fragment::Atomic(atomic) = fragment else {
                 continue;
@@ -177,6 +179,9 @@ pub(crate) fn draw_ifc_lines_with_resources(
                 paint.target(group),
                 cv,
                 piece,
+                (!vertical)
+                    .then(|| background_slices.get(&piece.node))
+                    .flatten(),
                 position.x + dx,
                 position.y + position.shift_y + dy - line_shift,
                 pixel_source,
@@ -222,7 +227,7 @@ pub(crate) fn draw_ifc_lines_with_resources(
                 })
                 .collect();
             let offset = positioned_run.offset;
-            let group = paint.nearest(positioned_run.style_owner);
+            let group = paint.nearest(positioned_run.style_owner, positioned_run.owner);
             runs.push(RunDraw {
                 run,
                 style: cv,

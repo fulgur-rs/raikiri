@@ -1158,3 +1158,205 @@ fn word_break_elements_keep_the_chromium_typographic_boundary() {
         );
     }
 }
+
+#[test]
+fn split_first_letter_background_gradient_keeps_one_positioning_area() {
+    let sheet = "div::first-letter{font-size:20px;color:transparent;background-image:conic-gradient(red,blue)}";
+    let (mut split, _, quote) = fixture(sheet, Some("display:inline"), "“");
+    let root = split.parent_of(split.parent_of(quote).unwrap()).unwrap();
+    split.append_text(root, "A");
+    split.mark_in_document_flags();
+    let computed = cascade(&split, &build_rule_tree(&split)).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 80.0;
+    layout_single_page(&mut split, &computed, page).unwrap();
+    let (joined, joined_cv, _) = fixture(sheet, None, "“A");
+    let actual = pixels(&split, &computed);
+    let expected = pixels(&joined, &joined_cv);
+    let colors: std::collections::HashSet<_> = expected.chunks_exact(4).collect();
+    assert!(colors.len() > 20);
+    let differences = actual
+        .chunks_exact(4)
+        .zip(expected.chunks_exact(4))
+        .filter(|(a, b)| a != b)
+        .count();
+    assert_eq!(differences, 0);
+}
+
+#[test]
+fn image_only_first_letter_background_keeps_rounded_clip() {
+    let sheet = "div::first-letter{font-size:20px;color:transparent;border-radius:10px;background-image:linear-gradient(green,green)}";
+    let (doc, computed, _) = fixture(sheet, None, "A");
+    let (reference, reference_cv, _) = fixture(
+        "div::first-letter{font-size:20px;color:transparent;border-radius:10px;background:green}",
+        None,
+        "A",
+    );
+    let actual = pixels(&doc, &computed);
+    let expected = pixels(&reference, &reference_cv);
+    let differences = actual
+        .chunks_exact(4)
+        .zip(expected.chunks_exact(4))
+        .filter(|(a, b)| a != b)
+        .count();
+    assert_eq!(differences, 0);
+}
+
+#[test]
+fn split_first_letter_opacity_retains_each_inline_owners_variable() {
+    for (first_opacity, second_opacity, red_pixels) in
+        [("0", "1", 400), ("1", "0", 400), ("0.5", "1", 400)]
+    {
+        let sheet = "div::first-letter{font-size:20px;color:red;opacity:var(--o)}";
+        let (mut doc, _, quote) = fixture(
+            sheet,
+            Some(&format!("display:inline;--o:{first_opacity}")),
+            "“",
+        );
+        let root = doc.parent_of(doc.parent_of(quote).unwrap()).unwrap();
+        let span = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some(&format!("display:inline;--o:{second_opacity}")),
+        );
+        let letter = doc.append_text(span, "A");
+        doc.mark_in_document_flags();
+        let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 80.0;
+        layout_single_page(&mut doc, &computed, page).unwrap();
+        let positioned = raikiri_dom::PositionedLines::new(&doc, &computed, root, None).unwrap();
+        let runs: Vec<_> = positioned.lines().flat_map(|line| line.runs).collect();
+        for (owner, expected) in [(quote, first_opacity), (letter, second_opacity)] {
+            let run = runs.iter().find(|run| run.owner == owner).unwrap();
+            assert_eq!(run.style.opacity, expected.parse::<f32>().unwrap());
+        }
+        let actual = pixels(&doc, &computed);
+        let red = actual
+            .chunks_exact(4)
+            .filter(|pixel| *pixel == [255, 0, 0, 255])
+            .count();
+        assert_eq!(
+            red, red_pixels,
+            "first={first_opacity} second={second_opacity}"
+        );
+        if first_opacity == "0.5" {
+            assert_eq!(
+                actual
+                    .chunks_exact(4)
+                    .filter(|pixel| *pixel == [255, 127, 127, 255])
+                    .count(),
+                400
+            );
+        }
+    }
+}
+
+#[test]
+fn nested_split_first_letter_opacity_keeps_each_owners_enclosing_group() {
+    let sheet = "body::first-letter{opacity:var(--o)} div::first-letter{font-size:20px;color:red;background:blue;opacity:.5}";
+    let (mut doc, _, quote) = fixture(sheet, Some("display:inline;--o:0"), "“");
+    let root = doc.parent_of(doc.parent_of(quote).unwrap()).unwrap();
+    let span = doc.append_element(
+        Some(root),
+        "span",
+        Style::default(),
+        Some("display:inline;--o:1"),
+    );
+    doc.append_text(span, "A");
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 80.0;
+    layout_single_page(&mut doc, &computed, page).unwrap();
+    let rgba = pixels(&doc, &computed);
+    assert_eq!(
+        rgba.chunks_exact(4)
+            .filter(|pixel| *pixel == [255, 127, 127, 255])
+            .count(),
+        400
+    );
+    assert_eq!(
+        &rgba[(15 * 100 + 5) * 4..(15 * 100 + 5) * 4 + 4],
+        &[255, 255, 255, 255]
+    );
+}
+
+#[test]
+fn split_first_letter_url_background_keeps_one_positioning_area() {
+    use raikiri_traits::{DecodedImage, ImagePixelSource};
+    use std::sync::Arc;
+    struct Pixels;
+    impl ImagePixelSource for Pixels {
+        fn get_decoded(&self, url: &url::Url) -> Option<Arc<DecodedImage>> {
+            (url.as_str() == "file:///two-color.png").then(|| {
+                Arc::new(DecodedImage {
+                    width: 2,
+                    height: 1,
+                    rgba: vec![255, 0, 0, 255, 0, 0, 255, 255],
+                })
+            })
+        }
+    }
+    for geometry in [
+        "background-size:100% 100%",
+        "background-size:cover",
+        "background-size:100% 100%;border-radius:10px",
+    ] {
+        let sheet = format!(
+            "div::first-letter{{font-size:20px;color:transparent;background-image:url(file:///two-color.png);background-repeat:no-repeat;{geometry}}}"
+        );
+        let (mut split, _, quote) = fixture(&sheet, Some("display:inline"), "“");
+        let root = split.parent_of(split.parent_of(quote).unwrap()).unwrap();
+        split.append_text(root, "A");
+        split.mark_in_document_flags();
+        let computed = cascade(&split, &build_rule_tree(&split)).unwrap();
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 80.0;
+        layout_single_page(&mut split, &computed, page).unwrap();
+        let (joined, joined_cv, _) = fixture(&sheet, None, "“A");
+        let paint = |doc: &Document, cv: &CascadeResult| {
+            let mut scene = Scene::new();
+            raikiri_paint::paint_single_page_with_images(
+                &mut scene,
+                doc,
+                cv,
+                page,
+                &Pixels,
+                &mut raikiri_dom::CounterSnapshotBudget::default(),
+            )
+            .unwrap();
+            scene_pixels(scene)
+        };
+        let actual = paint(&split, &computed);
+        let expected = paint(&joined, &joined_cv);
+        assert!(
+            expected
+                .chunks_exact(4)
+                .filter(|pixel| pixel[0] > pixel[2])
+                .count()
+                > 200
+        );
+        assert!(
+            expected
+                .chunks_exact(4)
+                .filter(|pixel| pixel[2] > pixel[0])
+                .count()
+                > 200
+        );
+        assert_eq!(
+            actual
+                .chunks_exact(4)
+                .zip(expected.chunks_exact(4))
+                .filter(|(a, b)| a != b)
+                .count(),
+            0,
+            "{geometry}"
+        );
+    }
+}
