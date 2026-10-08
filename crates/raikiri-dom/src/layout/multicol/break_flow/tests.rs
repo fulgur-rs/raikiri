@@ -1303,9 +1303,16 @@ fn review_resumed_wrappers_keep_the_content_origin_only_at_the_root_edge() {
 #[test]
 fn review_between_box_constraints_preserve_joint_float_text_exclusion() {
     for edge in ["", "break-before:avoid"] {
-        let doc = laid_out(&format!(
-            "<div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='float:left;width:20px;height:40px'></div><div id='text' style='height:40px;font-size:20px;line-height:20px'>MMMM</div><div style='height:1px;{edge}'></div></div>",
+        let (mut doc, cascade) = fixture(&format!(
+            "<div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='float:left;width:20px;height:40px'></div><div id='text' style='height:40px;font-family:Ahem;font-size:20px;line-height:20px'>M M</div><div style='height:1px;{edge}'></div></div>",
         ));
+        doc.set_font_collection(crate::layout::test_support::ifc_ahem_fonts());
+        layout_single_page(
+            &mut doc,
+            &cascade,
+            crate::layout::test_support::page_box_800x600(),
+        )
+        .unwrap();
         let lines = doc.nodes[id(&doc, "text")]
             .ifc
             .as_ref()
@@ -1313,7 +1320,7 @@ fn review_between_box_constraints_preserve_joint_float_text_exclusion() {
             .lines
             .as_ref()
             .unwrap();
-        assert!(lines.beside_floats, "{edge}");
+        assert!(lines.beside_floats, "edge={edge:?}");
     }
 }
 

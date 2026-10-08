@@ -5199,9 +5199,30 @@ fn review_list_marker_preserves_unrelated_ancestor_fragment_state() {
 fn review_float_text_ink_keeps_joint_exclusion_when_a_break_constraint_is_added() {
     let mut baseline_ink = None;
     for edge in ["", "break-before:avoid"] {
-        let scene = transform_markup_scene(&format!(
-            "<!DOCTYPE html><body style='margin:0;background:white'><div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='float:left;width:20px;height:40px;background:green'></div><div style='height:40px;font-size:20px;line-height:20px;color:red'>MMMM</div><div style='height:1px;{edge}'></div></div></body>"
-        ));
+        let markup = format!(
+            "<!DOCTYPE html><body style='margin:0;background:white'><div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='float:left;width:20px;height:40px;background:green'></div><div style='height:40px;font-family:Ahem;font-size:20px;line-height:20px;color:red'>M M</div><div style='height:1px;{edge}'></div></div></body>"
+        );
+        let mut parsed = raikiri_html::parse(
+            markup.as_bytes(),
+            &raikiri_html::ParseOptions {
+                extra_stylesheets: &[],
+                network: None,
+                base_url: None,
+            },
+        )
+        .unwrap();
+        let fonts = raikiri_dom::build_wpt_font_collection(std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../raikiri-dom/tests/data/text-autospace"
+        )))
+        .unwrap();
+        parsed
+            .dom
+            .set_font_collection_with_limits(fonts, shodo::limits::Limits::default());
+        let cascade = raikiri_html::build_cascaded(&parsed);
+        raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
+        let mut scene = Scene::new();
+        crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4).unwrap();
         let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
             |renderer| renderer.append_scene(scene, Affine::IDENTITY),
             800,

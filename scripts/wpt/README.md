@@ -413,6 +413,9 @@ padding, border, inset or clearance, and splittable wrappers with definite
 width, minimum/maximum sizes or non-visible overflow retain the existing
 geometry strategies. Atomic subtrees preserve their measured child
 geometry and remain monolithic when this projection has no child continuation.
+Internal forced boundaries in fixed-height blocks and flow-roots remain an
+existing limitation tracked in `raikiri-spike-0vv.138`; this projection applies
+their outer constraints and does not claim to split their internal child flow.
 Oversized unbreakable boxes advance once from an occupied column before
 overflowing; empty columns and parallel floats still make progress. Column
 widths use the content box, while the container fragment retains the measured
