@@ -29,11 +29,13 @@ pub(super) fn supports(tree: &Document, root: usize, context: FragmentationConte
         if !node.is_in_document() || node.style.display == Display::None {
             continue;
         }
-        match &node.data {
-            NodeData::Text(text) if text.text_content.trim().is_empty() => continue,
-            NodeData::Text(_) => return false,
-            NodeData::Element(_) => {}
-            _ => continue,
+        // Rendered children are elements or text; flat-tree membership
+        // already excludes comments, processing instructions and fragments.
+        if let NodeData::Text(text) = &node.data {
+            if !text.text_content.trim().is_empty() {
+                return false;
+            }
+            continue;
         }
         visible = true;
         if node.style.position == TaffyPosition::Absolute {
@@ -64,13 +66,11 @@ pub(super) fn supports(tree: &Document, root: usize, context: FragmentationConte
         // Keep existing strategies for contexts whose only constraints are
         // inside avoidance, line breaking or sizing. This seam handles the
         // between-box constraints that require rollback and propagation.
-        if node.style.position != TaffyPosition::Absolute {
-            needs_break_flow |= forced(node.break_before)
-                || forced(node.break_after)
-                || avoided(node.break_before)
-                || avoided(node.break_after)
-                || matches!(node.break_inside, BreakInside::AvoidColumn);
-        }
+        needs_break_flow |= forced(node.break_before)
+            || forced(node.break_after)
+            || avoided(node.break_before)
+            || avoided(node.break_after)
+            || matches!(node.break_inside, BreakInside::AvoidColumn);
         if node.multicol.is_some()
             || !matches!(
                 node.display,

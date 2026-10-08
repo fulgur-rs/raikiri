@@ -346,3 +346,89 @@ fn geometry_clearance_preserves_the_existing_following_box_position() {
             .y,
     );
 }
+
+fn prepared_flow() -> (Document, usize, FragmentationContext) {
+    let (mut doc, cascade) = fixture(
+        "<div id='columns' style='columns:2;gap:0;width:100px;height:100px'><div id='wrapper'><div style='height:20px;break-before:avoid'></div><div style='height:20px'></div></div></div>",
+    );
+    apply_computed_to_style(&mut doc, &cascade).unwrap();
+    let root = id(&doc, "columns");
+    let context =
+        FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[root].multicol.unwrap())
+            .unwrap();
+    (doc, root, context)
+}
+
+#[test]
+fn unsupported_text_and_parallel_or_hidden_nodes_keep_the_scope_bounded() {
+    let (mut doc, root, context) = prepared_flow();
+    doc.append_comment(Some(root), "opaque");
+    doc.append_text(root, " ");
+    let hidden = doc.append_element(Some(root), "div", Style::default(), None::<&str>);
+    doc.nodes[hidden].style.display = Display::None;
+    let positioned = doc.append_element(Some(root), "div", Style::default(), None::<&str>);
+    doc.nodes[positioned].style.position = TaffyPosition::Absolute;
+    doc.mark_in_document_flags();
+    assert!(supports(&doc, root, context));
+    doc.append_text(root, "visible");
+    doc.mark_in_document_flags();
+    assert!(!supports(&doc, root, context));
+}
+
+#[test]
+fn an_outer_forced_edge_and_the_depth_limit_preserve_own_constraints() {
+    assert_eq!(
+        propagated(BreakBetween::Column, BreakBetween::AvoidColumn),
+        BreakBetween::Column,
+    );
+    let (mut doc, _, _) = prepared_flow();
+    let wrapper = id(&doc, "wrapper");
+    doc.nodes[wrapper].break_before = BreakBetween::Always;
+    assert_eq!(
+        descendant_edge(&doc, wrapper, true, 128),
+        BreakBetween::Always,
+    );
+}
+
+#[test]
+fn fragment_budget_exhaustion_stops_each_projection_stage() {
+    for limit in 0..=2 {
+        let (mut doc, root, context) = prepared_flow();
+        doc.fragment_tree.limit = limit;
+        assert_eq!(layout(&mut doc, root, context, 100.0), 100.0);
+        assert!(doc.fragment_tree.limit_exceeded);
+        assert_eq!(doc.fragment_tree.fragments.len(), limit);
+    }
+    let (mut doc, root, mut context) = prepared_flow();
+    context.available_height = None;
+    assert_eq!(layout(&mut doc, root, context, 100.0), 100.0);
+    assert!(doc.fragment_tree.fragments.is_empty());
+}
+
+#[test]
+fn collection_stops_and_unwinds_ancestors_when_the_budget_was_exhausted() {
+    let (mut doc, root, context) = prepared_flow();
+    doc.fragment_tree.limit = 0;
+    assert!(
+        doc.fragment_tree
+            .try_push(fragment(
+                root,
+                None,
+                0,
+                FragmentRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 1.0,
+                    height: 1.0
+                },
+            ))
+            .is_none()
+    );
+    let mut ancestors = Vec::new();
+    let mut out = Vec::new();
+    let wrapper = id(&doc, "wrapper");
+    collect(&mut doc, wrapper, context, &mut ancestors, &mut out);
+    assert!(ancestors.is_empty());
+    assert_eq!(out.len(), 1);
+    assert_eq!(layout(&mut doc, root, context, 100.0), 100.0);
+}

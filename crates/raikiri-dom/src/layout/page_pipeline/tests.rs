@@ -7449,3 +7449,16 @@ fn column_breaks_do_not_force_a_page_boundary() {
         (vec![0.0, 20.0, 40.0], 1)
     );
 }
+
+#[test]
+fn always_uses_the_nearest_column_context_but_page_stays_page_specific() {
+    let mut doc = Document::new();
+    let columns = doc.append_element(Some(0), "div", Style::default(), Some("columns:2"));
+    let child = doc.append_element(Some(columns), "div", Style::default(), None::<&str>);
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    apply_computed_to_style(&mut doc, &cascade).unwrap();
+    assert!(!page_break_is_forced(&doc, child, BreakBetween::Always));
+    assert!(page_break_is_forced(&doc, child, BreakBetween::Page));
+}
