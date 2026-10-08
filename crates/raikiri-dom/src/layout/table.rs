@@ -144,6 +144,7 @@ fn caption_minimum_width(doc: &mut Document, table: usize) -> f32 {
         .iter()
         .copied()
         .find(|&id| doc.nodes[id].display == DisplayValue::TableCaption)
+        .filter(|&id| doc.nodes[id].style.position != taffy::Position::Absolute)
     else {
         return 0.0;
     };
@@ -284,7 +285,14 @@ fn position_table_caption(
         .iter()
         .copied()
         .find(|&child| doc.nodes[child].display == DisplayValue::TableCaption);
-    let caption_size = caption_size.unwrap_or(Size::ZERO);
+    // Keep the legacy positioned caption layout and ink, but exclude it from flow.
+    let in_flow =
+        caption_id.is_some_and(|id| doc.nodes[id].style.position != taffy::Position::Absolute);
+    let caption_size = if in_flow {
+        caption_size.unwrap_or(Size::ZERO)
+    } else {
+        Size::ZERO
+    };
     let mode = table_writing_mode(doc, table_idx);
     let vertical = is_vertical_writing_mode(mode);
     let before =
@@ -305,7 +313,7 @@ fn position_table_caption(
             y: if before { caption_size.height } else { 0.0 },
         }
     };
-    if let Some(id) = caption_id {
+    if let Some(id) = caption_id.filter(|_| in_flow) {
         let mut layout = doc.nodes[id].unrounded_layout;
         if vertical {
             layout.location.x += if before == right_to_left {
@@ -319,7 +327,7 @@ fn position_table_caption(
         doc.nodes[id].unrounded_layout =
             super::sanitize_taffy_layout(&layout, &mut doc.layout_warnings);
     }
-    if run_mode == RunMode::PerformLayout && caption_id.is_some() {
+    if run_mode == RunMode::PerformLayout && in_flow {
         let grid_layout = super::sanitize_taffy_layout(
             &TaffyLayout {
                 location: grid_origin,
@@ -595,8 +603,10 @@ fn compute_table_layout_checked(
                         .ifc_layout_node(cell.node_id)
                         .expect("table cell layout view")
                         .style;
-                    if let Some(minimum) =
-                        resolve_dimension(style.min_size.width.into(), Some(avail))
+                    if let Some(minimum) = style
+                        .min_size
+                        .width
+                        .maybe_resolve(Some(avail), crate::taffy_impl::resolve_calc)
                     {
                         let padding = style
                             .padding
@@ -1700,6 +1710,15 @@ fn cell_baseline_aligned(align: VerticalAlign) -> bool {
 // its bottom content edge in the caller (CSS 2.2 section 17.5.3).
 fn first_cell_baseline(doc: &Document, root: usize, content_top: f32) -> Option<f32> {
     let node = doc.ifc_layout_node(root).expect("table cell layout view");
+    if matches!(
+        node.display,
+        DisplayValue::Table | DisplayValue::InlineTable
+    ) && !node.is_ifc_root()
+    {
+        // Captions are outside the grid and cannot supply its first row baseline.
+        return node.table_first_baseline;
+    }
+
     if let Some(lines) = node.ifc.as_ref().and_then(|ifc| ifc.lines.as_ref())
         && let Some(baseline) = super::ifc::flow::first_baseline(lines)
     {
@@ -1737,9 +1756,12 @@ fn first_cell_baseline(doc: &Document, root: usize, content_top: f32) -> Option<
         if matches!(
             node.display,
             DisplayValue::Table | DisplayValue::InlineTable
-        ) && let Some(baseline) = node.table_first_baseline
+        ) && !node.is_ifc_root()
         {
-            return Some(y + baseline);
+            if let Some(baseline) = node.table_first_baseline {
+                return Some(y + baseline);
+            }
+            continue;
         }
         if let Some(lines) = node.ifc.as_ref().and_then(|ifc| ifc.lines.as_ref())
             && let Some(baseline) = super::ifc::flow::first_baseline(lines)

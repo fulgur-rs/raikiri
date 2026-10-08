@@ -2033,3 +2033,332 @@ fn relative_vertical_block_controls_keep_rtl_priority_and_float_paint_offsets() 
         }
     }
 }
+
+#[test]
+fn an_empty_nested_table_caption_does_not_supply_a_cell_baseline() {
+    for trailing_text in [false, true] {
+        let (mut doc, body) = document();
+        let table = element(&mut doc, body, "display:table;border-spacing:0");
+        let row = element(&mut doc, table, "display:table-row");
+        let first = element(
+            &mut doc,
+            row,
+            "display:table-cell;width:10px;vertical-align:baseline;color:green",
+        );
+        let nested = element(&mut doc, first, "display:table;border-spacing:0");
+        let caption = element(
+            &mut doc,
+            nested,
+            "display:table-caption;width:10px;height:10px",
+        );
+        doc.append_text(caption, "X");
+        if trailing_text {
+            doc.append_text(first, "X");
+        }
+        let second = element(
+            &mut doc,
+            row,
+            "display:table-cell;width:20px;vertical-align:baseline;color:blue;font-size:20px;line-height:20px",
+        );
+        doc.append_text(second, "X");
+        let computed = layout(&mut doc);
+        let (mut reference, body) = document();
+        let caption_top = if trailing_text { 0 } else { 6 };
+        let second_top = if trailing_text { 2 } else { 0 };
+        element(
+            &mut reference,
+            body,
+            &format!(
+                "position:absolute;left:0;top:{caption_top}px;width:10px;height:10px;background:green"
+            ),
+        );
+        if trailing_text {
+            element(
+                &mut reference,
+                body,
+                "position:absolute;left:0;top:10px;width:10px;height:10px;background:green",
+            );
+        }
+        element(
+            &mut reference,
+            body,
+            &format!(
+                "position:absolute;left:10px;top:{second_top}px;width:20px;height:20px;background:blue"
+            ),
+        );
+        let expected = layout(&mut reference);
+        assert_exact_pixels(
+            raster(scene(&doc, &computed)),
+            raster(scene(&reference, &expected)),
+        );
+    }
+}
+
+#[test]
+fn fixed_span_minimum_resolves_mixed_calc_before_box_sizing() {
+    for (box_sizing, extra_style, first_width, last_width, height) in [
+        ("content-box", "", 46, 14, 10),
+        ("content-box", "padding:2px;border:1px solid red", 52, 8, 16),
+        ("border-box", "padding:2px;border:1px solid red", 46, 14, 10),
+    ] {
+        let (mut doc, body) = document();
+        let table = element(
+            &mut doc,
+            body,
+            "display:table;table-layout:fixed;width:60px;border-spacing:0",
+        );
+        let row = element(&mut doc, table, "display:table-row");
+        let first = element(
+            &mut doc,
+            row,
+            &format!(
+                "display:table-cell;box-sizing:{box_sizing};min-width:calc(40px + 10%);height:10px;background:green;vertical-align:top;{extra_style}"
+            ),
+        );
+        doc.set_element_attributes(first, vec![("colspan".into(), "2".into())]);
+        let last = element(
+            &mut doc,
+            row,
+            "display:table-cell;height:10px;background:blue;vertical-align:top",
+        );
+        let computed = layout(&mut doc);
+        assert_eq!(
+            doc.get_node(first).unwrap().unrounded_layout.size.width,
+            first_width as f32
+        );
+        assert_eq!(
+            doc.get_node(last).unwrap().unrounded_layout.size.width,
+            last_width as f32
+        );
+        let (mut reference, body) = document();
+        element(
+            &mut reference,
+            body,
+            &format!(
+                "position:absolute;left:0;top:0;box-sizing:border-box;width:{first_width}px;height:{height}px;background:green;{extra_style}"
+            ),
+        );
+        element(
+            &mut reference,
+            body,
+            &format!(
+                "position:absolute;left:{first_width}px;top:0;width:{last_width}px;height:{height}px;background:blue"
+            ),
+        );
+        let expected = layout(&mut reference);
+        assert_exact_pixels(
+            raster(scene(&doc, &computed)),
+            raster(scene(&reference, &expected)),
+        );
+    }
+}
+
+#[test]
+fn form_feed_and_other_visible_whitespace_keep_empty_cell_ink() {
+    for white_space in ["normal", "pre-line", "pre", "pre-wrap"] {
+        for text in ["\u{c}", "\u{a0}", "\u{2003}"] {
+            let (mut doc, body) = document();
+            let table = element(&mut doc, body, "display:table;border-spacing:0");
+            let row = element(&mut doc, table, "display:table-row");
+            let cell = element(
+                &mut doc,
+                row,
+                &format!(
+                    "display:table-cell;box-sizing:border-box;width:20px;height:20px;background:green;border:1px solid blue;empty-cells:hide;white-space:{white_space};color:green"
+                ),
+            );
+            doc.append_text(cell, text);
+            let computed = layout(&mut doc);
+            assert!(
+                !raikiri_dom::paint_rules::hides_empty_table_cell(&doc, &computed, cell),
+                "{white_space}/{text:?}"
+            );
+            let (mut reference, body) = document();
+            element(
+                &mut reference,
+                body,
+                "position:absolute;left:0;top:0;box-sizing:border-box;width:20px;height:20px;background:green;border:1px solid blue",
+            );
+            let expected = layout(&mut reference);
+            let mut actual = scene(&doc, &computed);
+            // Compare cell decorations independently of missing whitespace glyphs in Ahem.
+            actual
+                .commands
+                .retain(|command| !matches!(command, RenderCommand::GlyphRun(_)));
+            assert_exact_pixels(raster(actual), raster(scene(&reference, &expected)));
+        }
+    }
+}
+
+#[test]
+fn positioned_captions_do_not_expand_or_shift_the_table_flow_box() {
+    for position in ["absolute", "fixed"] {
+        for side in ["top", "bottom"] {
+            let (mut doc, body) = document();
+            let table = element(
+                &mut doc,
+                body,
+                "display:table;position:relative;left:8px;top:9px;width:40px;border-spacing:0",
+            );
+            let caption = element(
+                &mut doc,
+                table,
+                &format!(
+                    "display:table-caption;position:{position};left:60px;top:3px;width:100px;height:10px;background:green;caption-side:{side}"
+                ),
+            );
+            let row = element(&mut doc, table, "display:table-row");
+            let cell = element(
+                &mut doc,
+                row,
+                "display:table-cell;width:40px;height:20px;background:blue;vertical-align:top",
+            );
+            let after = element(
+                &mut doc,
+                body,
+                "display:block;width:10px;height:10px;background:red",
+            );
+            let computed = layout(&mut doc);
+            let table_box = doc.get_node(table).unwrap().unrounded_layout;
+            let caption_box = doc.get_node(caption).unwrap().unrounded_layout;
+            let cell_box = doc.get_node(cell).unwrap().unrounded_layout;
+            let after_box = doc.get_node(after).unwrap().unrounded_layout;
+            assert_eq!(
+                (
+                    table_box.location.x,
+                    table_box.location.y,
+                    table_box.size.width,
+                    table_box.size.height
+                ),
+                (8.0, 9.0, 40.0, 20.0),
+                "{position}/{side}"
+            );
+            assert_eq!(
+                (
+                    cell_box.location.x,
+                    cell_box.location.y,
+                    cell_box.size.width,
+                    cell_box.size.height
+                ),
+                (0.0, 0.0, 40.0, 20.0)
+            );
+            assert_eq!(
+                (
+                    caption_box.location.x,
+                    caption_box.location.y,
+                    caption_box.size.width,
+                    caption_box.size.height
+                ),
+                (0.0, 0.0, 100.0, 10.0)
+            );
+            assert_eq!((after_box.location.x, after_box.location.y), (0.0, 20.0));
+            let actual = raster(scene(&doc, &computed));
+            let (mut reference, body) = document();
+            element(
+                &mut reference,
+                body,
+                "position:absolute;left:0;top:20px;width:10px;height:10px;background:red",
+            );
+            element(
+                &mut reference,
+                body,
+                "position:absolute;left:8px;top:9px;width:40px;height:20px;background:blue",
+            );
+            // Absolute caption insets were already unsupported in the base runtime.
+            let (left, top) = if position == "fixed" { (60, 3) } else { (8, 9) };
+            element(
+                &mut reference,
+                body,
+                &format!(
+                    "position:absolute;left:{left}px;top:{top}px;width:100px;height:10px;background:green"
+                ),
+            );
+            let expected = layout(&mut reference);
+            assert_exact_pixels(actual.clone(), raster(scene(&reference, &expected)));
+            let again = layout(&mut doc);
+            assert_eq!(actual, raster(scene(&doc, &again)));
+        }
+    }
+}
+
+#[test]
+fn floated_captions_do_not_expand_or_shift_the_table_flow_box() {
+    for float in ["left", "right"] {
+        for side in ["top", "bottom"] {
+            let (mut doc, body) = document();
+            let table = element(&mut doc, body, "display:table;width:40px;border-spacing:0");
+            let caption = element(
+                &mut doc,
+                table,
+                &format!(
+                    "display:table-caption;float:{float};width:100px;height:10px;background:green;caption-side:{side}"
+                ),
+            );
+            let row = element(&mut doc, table, "display:table-row");
+            let cell = element(
+                &mut doc,
+                row,
+                "display:table-cell;width:40px;height:20px;background:blue;vertical-align:top",
+            );
+            let after = element(
+                &mut doc,
+                body,
+                "display:block;width:10px;height:10px;background:red",
+            );
+            let computed = layout(&mut doc);
+            let table_box = doc.get_node(table).unwrap().unrounded_layout;
+            let caption_node = doc.get_node(caption).unwrap();
+            assert_eq!(
+                computed.computed[caption].display,
+                raikiri_style::DisplayValue::Block
+            );
+            assert_ne!(
+                computed.computed[caption].float,
+                raikiri_style::property::FloatValue::None
+            );
+            assert_eq!(
+                (table_box.size.width, table_box.size.height),
+                (40.0, 20.0),
+                "{float}/{side}"
+            );
+            let cell_box = doc.get_node(cell).unwrap().unrounded_layout;
+            assert_eq!(
+                (
+                    cell_box.location.x,
+                    cell_box.location.y,
+                    cell_box.size.width,
+                    cell_box.size.height
+                ),
+                (0.0, 0.0, 40.0, 20.0)
+            );
+            assert_eq!(
+                doc.get_node(after).unwrap().unrounded_layout.location.y,
+                20.0
+            );
+            assert_eq!(
+                (
+                    caption_node.unrounded_layout.location.x,
+                    caption_node.unrounded_layout.location.y
+                ),
+                (0.0, 0.0)
+            );
+            let (mut reference, body) = document();
+            element(
+                &mut reference,
+                body,
+                "position:absolute;left:0;top:0;width:40px;height:20px;background:blue",
+            );
+
+            element(
+                &mut reference,
+                body,
+                "position:absolute;left:0;top:20px;width:10px;height:10px;background:red",
+            );
+            let expected = layout(&mut reference);
+            let actual = raster(scene(&doc, &computed));
+            assert_exact_pixels(actual.clone(), raster(scene(&reference, &expected)));
+            let again = layout(&mut doc);
+            assert_eq!(actual, raster(scene(&doc, &again)));
+        }
+    }
+}
