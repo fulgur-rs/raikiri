@@ -1094,3 +1094,67 @@ fn empty_ordinary_generated_text_does_not_lose_the_next_letters_paint() {
         }
     }
 }
+
+#[test]
+fn nested_first_line_uses_its_own_variable_for_the_letters_inherited_color() {
+    for inline_child in [false, true] {
+        let sheet = "body::first-line{color:red} div{--ink:blue} div::first-line{--ink:green;color:var(--ink)} div::first-letter{font-size:20px}";
+        let (mut doc, _, text) = fixture(sheet, None, if inline_child { "" } else { "A" });
+        if inline_child {
+            let root = doc.parent_of(text).unwrap();
+            let span = doc.append_element(Some(root), "span", Style::default(), None::<&str>);
+            doc.append_text(span, "A");
+        }
+        doc.mark_in_document_flags();
+        let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 80.0;
+        layout_single_page(&mut doc, &computed, page).unwrap();
+        assert!(glyph_sizes(&doc, &computed).contains(&(20.0, 1)));
+        let rgba = pixels(&doc, &computed);
+        assert_eq!(
+            rgba.chunks_exact(4)
+                .filter(|pixel| *pixel == [0, 128, 0, 255])
+                .count(),
+            400
+        );
+        assert_eq!(
+            rgba.chunks_exact(4)
+                .filter(|pixel| *pixel == [0, 0, 255, 255])
+                .count(),
+            0
+        );
+    }
+}
+
+#[test]
+fn word_break_elements_keep_the_chromium_typographic_boundary() {
+    for tag in [None, Some("wbr"), Some("br")] {
+        let (mut doc, _, first) = fixture("div::first-letter{font-size:20px;color:red}", None, "“");
+        let root = doc.parent_of(first).unwrap();
+        if let Some(tag) = tag {
+            doc.append_element(Some(root), tag, Style::default(), None::<&str>);
+        }
+        doc.append_text(root, "A");
+        doc.mark_in_document_flags();
+        let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 80.0;
+        layout_single_page(&mut doc, &computed, page).unwrap();
+        let rgba = pixels(&doc, &computed);
+        assert_eq!(
+            rgba.chunks_exact(4)
+                .filter(|pixel| *pixel == [255, 0, 0, 255])
+                .count(),
+            if tag.is_none() { 800 } else { 0 }
+        );
+        assert_eq!(
+            rgba.chunks_exact(4)
+                .filter(|pixel| *pixel == [0, 0, 0, 255])
+                .count(),
+            if tag.is_none() { 0 } else { 200 }
+        );
+    }
+}

@@ -149,3 +149,62 @@ fn enclosing_first_lines_preserve_relative_metrics_and_ordinary_custom_propertie
         (0, 128, 0)
     );
 }
+
+#[test]
+fn nested_first_line_resolves_its_own_variables_without_leaking_to_the_letter() {
+    for letter_declarations in ["font-size:2em", "font-size:2em;color:var(--ink)"] {
+        for inline_child in [false, true] {
+            let mut doc = TestDoc::new();
+            let sheet = doc.push_element(0, "style", None);
+            doc.push_text(
+                sheet,
+                &format!(
+                    "body::first-line{{color:red}} div::first-line{{--ink:green;color:var(--ink)}} div::first-letter{{{letter_declarations}}}"
+                ),
+            );
+            let outer = doc.push_element(0, "body", Some("font-size:10px"));
+            let inner = doc.push_element(outer, "div", Some("--ink:blue"));
+            let actual = if inline_child {
+                doc.push_element(inner, "span", None)
+            } else {
+                inner
+            };
+            doc.push_text(actual, "A");
+            let result = crate::cascade(&doc, &crate::build_rule_tree(&doc)).unwrap();
+            let parent = result
+                .first_letter_parent_with_first_lines(
+                    &doc,
+                    StyleNodeId::new(inner as u64),
+                    &[
+                        StyleNodeId::new(outer as u64),
+                        StyleNodeId::new(inner as u64),
+                    ],
+                    StyleNodeId::new(actual as u64),
+                    None,
+                )
+                .unwrap();
+            assert_eq!(
+                (parent.color.r, parent.color.g, parent.color.b),
+                (0, 128, 0)
+            );
+            assert_eq!(
+                parent.resolved_custom_property("--ink").as_deref(),
+                Some("blue")
+            );
+            let letter = result
+                .resolve_first_letter_style(StyleNodeId::new(inner as u64), &parent)
+                .unwrap();
+            let expected = if letter_declarations.contains("color:") {
+                (0, 0, 255)
+            } else {
+                (0, 128, 0)
+            };
+            assert_eq!((letter.color.r, letter.color.g, letter.color.b), expected);
+            assert_eq!(letter.font_size.px(), 20.0);
+            assert_eq!(
+                letter.resolved_custom_property("--ink").as_deref(),
+                Some("blue")
+            );
+        }
+    }
+}

@@ -150,12 +150,19 @@ impl CascadeResult {
         } else {
             values
         };
+        // Resolve a pseudo's own declarations with its custom properties;
+        // descendant inheritance still uses the ordinary parent's channel.
+        let declaration_custom = pseudo
+            .and_then(|pseudo| self.pseudo.get(&(id, pseudo)))
+            .map_or(&ordinary.custom_properties, |style| {
+                &style.custom_properties
+            });
         apply_winners(
             values,
             &mut Vec::new(),
             &mut specified,
             inherited,
-            &ordinary.custom_properties,
+            declaration_custom,
             None,
             None,
         );
