@@ -396,7 +396,15 @@ fn svg_node_declarations(
                 PropertyKey::FontWeight => "font-weight",
                 _ => continue,
             };
-            (name, "inherit".to_owned())
+            // SVG renderers such as usvg copy an ancestor's raw `font-size`
+            // for `inherit` and apply it again, compounding a relative size.
+            // `100%` has the same computed value without that copy.
+            let value = if property.property == PropertyKey::FontSize {
+                "100%"
+            } else {
+                "inherit"
+            };
+            (name, value.to_owned())
         } else {
             match property.property {
                 PropertyKey::Color => {

@@ -96,5 +96,8 @@ fn descendant_declarations_serialize_all_supported_computed_properties() {
         .collect();
     let mut budget = 4096;
     let css = svg_node_declarations(&ComputedValues::initial(), &properties, &mut budget).unwrap();
-    assert_eq!(css.matches(":inherit!important;").count(), 8);
+    // Inherited font sizes use `100%` so renderers do not reapply a relative
+    // ancestor size.
+    assert_eq!(css.matches(":inherit!important;").count(), 7, "{css}");
+    assert!(css.contains("font-size:100%!important;"), "{css}");
 }

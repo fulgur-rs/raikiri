@@ -1173,6 +1173,36 @@ fn inline_svg_definitions_resolve_ideographic_and_character_font_sizes_per_insta
 }
 
 #[test]
+fn inline_svg_inherited_font_size_below_a_relative_size_keeps_the_parent_size() {
+    // The inheriting group must use its parent's 8px, not apply 0.5 again.
+    for font_size in ["0.5ic", "0.5em", "50%"] {
+        let result = laid_out(&format!(
+            "<style>body{{font-size:16px}}svg{{display:block}}</style><svg width='20' height='20'><g style='font-size:{font_size}'><g style='font-size:inherit'><rect width='1em' height='1em'/></g></g></svg>"
+        ));
+        let page = result.page(0).unwrap();
+        let fragment = page
+            .fragments()
+            .find(|fragment| page.dom().local_name(fragment.node()) == Some("svg"))
+            .unwrap();
+        let svg = page.inline_svg(&fragment).unwrap().unwrap();
+        let image = raikiri_svg::SvgDocument::parse(svg.source.as_bytes())
+            .unwrap()
+            .rasterize(
+                raikiri_svg::SvgViewport {
+                    width: 20.0,
+                    height: 20.0,
+                },
+                raikiri_svg::SvgRootStyle::default(),
+                None,
+            )
+            .unwrap();
+        let alpha = |offset: usize| image.rgba[(offset * 20 + offset) * 4 + 3];
+        assert_eq!(alpha(7), 255, "{font_size}: {}", svg.source);
+        assert_eq!(alpha(9), 0, "{font_size}: {}", svg.source);
+    }
+}
+
+#[test]
 fn inline_svg_descendant_font_hints_and_relative_keywords_survive_export() {
     for (attributes, expected) in [
         ("font-size='18'", "font-size:18px"),
