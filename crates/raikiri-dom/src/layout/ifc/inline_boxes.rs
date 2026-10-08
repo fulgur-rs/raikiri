@@ -115,7 +115,7 @@ pub(crate) fn inline_box_pieces(
             let mut source_container = None;
             while let Some(index) = ancestor {
                 let Some(Fragment::InlineBox(parent)) = fragments.get(index) else {
-                    break;
+                    break; // cov:ignore: shodo's parent indices refer to an earlier InlineBox fragment of the same line.
                 };
                 let id = parent.node.0 as usize;
                 if !crate::generated_content::generated_origin(id)

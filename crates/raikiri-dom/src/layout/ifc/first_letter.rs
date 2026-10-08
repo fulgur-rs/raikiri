@@ -192,7 +192,7 @@ impl FirstLetter {
                         pseudo,
                         counters.get(doc, cascade)?,
                     ) else {
-                        continue;
+                        continue; // cov:ignore: in-flow generated text requires a retained pseudo style and nonempty content, so generated_text always returns Some.
                     };
                     (
                         generated_node_id(id, pseudo),

@@ -422,7 +422,7 @@ pub fn context_for_root(
         )
 }
 
-/// Build one context per text owner and reuse it across that owner's font slices.
+/// Cache decoration contexts by owner key across matching font slices.
 fn contexts_for_text_owners<K: Copy + Eq + std::hash::Hash>(
     owners: impl IntoIterator<Item = K>,
     mut context: impl FnMut(K) -> DecorationContext,

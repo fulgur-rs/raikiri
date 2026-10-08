@@ -401,3 +401,144 @@ fn generated_before_propagates_the_floating_letter_error_through_projection() {
         }) if node == fixture.root
     ));
 }
+
+#[test]
+fn adjacent_letter_selection_skips_hidden_and_out_of_flow_inline_subtrees() {
+    for (tag, css) in [
+        ("span", "display:none"),
+        ("script", "display:inline"),
+        ("span", "display:inline;position:absolute"),
+        ("span", "display:inline;float:left"),
+    ] {
+        let mut owner = 0;
+        let mut next = 0;
+        let fixture = sheet_fixture("div::first-letter{color:red}", "", |doc, root| {
+            owner = doc.append_text(root, "(");
+            let skipped = doc.append_element(Some(root), tag, taffy::Style::default(), Some(css));
+            doc.append_text(skipped, "Z");
+            let span = doc.append_element(
+                Some(root),
+                "span",
+                taffy::Style::default(),
+                Some("display:inline"),
+            );
+            next = doc.append_text(span, "Ab");
+        });
+        let mut letter = FirstLetter::new(
+            &fixture.doc,
+            &fixture.cascade,
+            fixture.root,
+            &Limits::default(),
+        );
+        let range = letter
+            .adjacent_range(
+                &fixture.doc,
+                &fixture.cascade,
+                TextSource::Dom {
+                    node: NodeId(owner as u64),
+                    offset: 0,
+                },
+                "(",
+                false,
+                &super::super::projection::GeneratedCounters::default(),
+            )
+            .unwrap();
+        assert_eq!(range, Some(0..1));
+        assert_eq!(letter.continuation, VecDeque::from([(next, 0..1)]));
+    }
+}
+
+#[test]
+fn adjacent_letter_selection_stops_at_a_line_break() {
+    for css in ["display:inline", "display:inline;visibility:hidden"] {
+        let mut owner = 0;
+        let fixture = sheet_fixture("div::first-letter{color:red}", "", |doc, root| {
+            owner = doc.append_text(root, " ");
+            doc.append_element(Some(root), "br", taffy::Style::default(), Some(css));
+            doc.append_text(root, "Ab");
+        });
+        let mut letter = FirstLetter::new(
+            &fixture.doc,
+            &fixture.cascade,
+            fixture.root,
+            &Limits::default(),
+        );
+        let range = letter
+            .adjacent_range(
+                &fixture.doc,
+                &fixture.cascade,
+                TextSource::Dom {
+                    node: NodeId(owner as u64),
+                    offset: 0,
+                },
+                " ",
+                false,
+                &super::super::projection::GeneratedCounters::default(),
+            )
+            .unwrap();
+        assert_eq!(range, None);
+        assert!(letter.continuation.is_empty());
+    }
+}
+
+#[test]
+fn an_earlier_block_generated_box_blocks_a_later_owner_lookahead() {
+    let mut owner = 0;
+    let fixture = sheet_fixture(
+        "div::first-letter{color:red} div::before{display:block;content:'X'}",
+        "",
+        |doc, root| {
+            owner = doc.append_text(root, "Ab");
+        },
+    );
+    let mut letter = FirstLetter::new(
+        &fixture.doc,
+        &fixture.cascade,
+        fixture.root,
+        &Limits::default(),
+    );
+    assert_eq!(
+        letter
+            .adjacent_range(
+                &fixture.doc,
+                &fixture.cascade,
+                TextSource::Dom {
+                    node: NodeId(owner as u64),
+                    offset: 0
+                },
+                "Ab",
+                false,
+                &super::super::projection::GeneratedCounters::default(),
+            )
+            .unwrap(),
+        None
+    );
+    assert!(letter.continuation.is_empty());
+}
+
+#[test]
+fn generated_text_in_a_preceding_contents_sibling_blocks_ancestor_letter_styling() {
+    let mut child = 0;
+    let fixture = sheet_fixture(
+        "div::first-letter{color:red} span::before{content:'X'}",
+        "",
+        |doc, root| {
+            doc.append_element(
+                Some(root),
+                "span",
+                taffy::Style::default(),
+                Some("display:contents"),
+            );
+            child = doc.append_element(
+                Some(root),
+                "section",
+                taffy::Style::default(),
+                Some("display:block"),
+            );
+            doc.append_text(child, "Ab");
+        },
+    );
+    let letter = FirstLetter::new(&fixture.doc, &fixture.cascade, child, &Limits::default());
+    assert!(letter.origins.is_empty());
+    assert!(!letter.pending);
+}
