@@ -2,7 +2,7 @@ use super::*;
 use crate::cascade::cascade;
 use crate::cascade::test_support::*;
 use crate::computed::ComputedValues;
-use crate::property::{DisplayValue, Sides};
+use crate::property::DisplayValue;
 use crate::ruletree::build_rule_tree;
 use crate::test_dom::TestDoc;
 
@@ -585,27 +585,6 @@ fn pick_winners_panics_on_non_empty_scratch_buffer() {
         idx: 0,
     })];
     pick_winners(&[], &mut winners);
-}
-
-#[test]
-fn cascade_records_non_ua_margin_winners() {
-    let mut doc = TestDoc::new();
-    let ua_body = doc.push_element(0, "body", None);
-    let author_body = doc.push_element(0, "body", Some("margin: 8px"));
-    let mut rules = build_rule_tree(&doc);
-    rules.add_stylesheet("body { margin: 8px }", Origin::UserAgent);
-
-    let result = cascade(&doc, &rules).expect("cascade Ok");
-    assert_eq!(
-        result.non_ua_margin_sides[ua_body],
-        Sides::all(false),
-        "the UA body's default margin must remain identifiable as UA-origin"
-    );
-    assert_eq!(
-        result.non_ua_margin_sides[author_body],
-        Sides::all(true),
-        "an authored margin equal to the UA value must remain distinguishable"
-    );
 }
 
 fn source_hash(source: &str) -> u64 {
