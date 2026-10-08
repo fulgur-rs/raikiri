@@ -224,6 +224,82 @@ fn anonymous_rows_share_a_rowspan_background_through_contents_groups() {
 }
 
 #[test]
+fn anonymous_block_cells_preserve_placement_without_an_inline_engine() {
+    let build = || {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+        (doc, body)
+    };
+    let (mut doc, body) = build();
+    let table = element(&mut doc, body, "display:table;border-spacing:0");
+    let group = element(&mut doc, table, "display:table-row-group");
+    let mut children = Vec::new();
+    for _ in 0..2 {
+        let row = element(&mut doc, group, "display:table-row");
+        children.push(element(
+            &mut doc,
+            row,
+            "display:block;width:20px;height:10px;background:green",
+        ));
+        children.push(element(
+            &mut doc,
+            row,
+            "display:block;width:20px;height:10px;background:blue",
+        ));
+        element(
+            &mut doc,
+            row,
+            "display:table-cell;width:10px;height:20px;background:red;vertical-align:top",
+        );
+    }
+    let computed = layout(&mut doc);
+    assert_eq!(
+        doc.get_node(table).unwrap().unrounded_layout.size,
+        taffy::Size {
+            width: 30.0,
+            height: 40.0
+        }
+    );
+    for (index, child) in children.into_iter().enumerate() {
+        let child = doc.get_node(child).unwrap();
+        assert_eq!(
+            (
+                child.unrounded_layout.location.x,
+                child.unrounded_layout.location.y
+            ),
+            (0.0, (index % 2) as f32 * 10.0)
+        );
+    }
+    let (mut reference, body) = build();
+    for y in [0, 20] {
+        element(
+            &mut reference,
+            body,
+            &format!("position:absolute;left:0;top:{y}px;width:20px;height:10px;background:green"),
+        );
+        element(
+            &mut reference,
+            body,
+            &format!(
+                "position:absolute;left:0;top:{}px;width:20px;height:10px;background:blue",
+                y + 10
+            ),
+        );
+    }
+    element(
+        &mut reference,
+        body,
+        "position:absolute;left:20px;top:0;width:10px;height:40px;background:red",
+    );
+    let expected = layout(&mut reference);
+    assert_exact_pixels(
+        raster(scene(&doc, &computed)),
+        raster(scene(&reference, &expected)),
+    );
+}
+
+#[test]
 fn anonymous_text_uses_page_content_clip_and_skips_other_page_ink() {
     let (mut doc, body) = document();
     let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
