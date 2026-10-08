@@ -7274,3 +7274,753 @@ fn an_inline_body_still_lays_its_text_out_as_a_paragraph() {
         (true, false, 1)
     );
 }
+
+fn page_sibling_positions(
+    heights: &[u32],
+    before: &str,
+    after: &str,
+    inside: &str,
+) -> (Vec<f32>, usize) {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let mut boxes = Vec::new();
+    for (index, height) in heights.iter().enumerate() {
+        let edge = match index {
+            1 => after,
+            2 => before,
+            _ => "",
+        };
+        boxes.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(&format!(
+                "display:block;width:100px;height:{height}px;{inside};{edge}"
+            )),
+        ));
+    }
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let pages = layout_pages(&mut doc, &cascade, page).unwrap();
+    (
+        boxes
+            .into_iter()
+            .map(|id| doc.get_node(id).unwrap().unrounded_layout.location.y)
+            .collect(),
+        pages.len(),
+    )
+}
+
+fn avoiding_sibling_positions(before: &str, after: &str) -> (Vec<f32>, usize) {
+    page_sibling_positions(&[60, 30, 30], before, after, "break-inside:avoid")
+}
+
+#[test]
+fn automatic_overflow_keeps_each_avoiding_block_intact() {
+    assert_eq!(
+        avoiding_sibling_positions("", ""),
+        (vec![0.0, 60.0, 100.0], 2)
+    );
+}
+
+#[test]
+fn before_avoid_moves_the_connected_sibling_run_to_the_next_page() {
+    assert_eq!(
+        avoiding_sibling_positions("break-before:avoid", ""),
+        (vec![0.0, 100.0, 130.0], 2)
+    );
+}
+
+#[test]
+fn running_templates_keep_the_normal_flow_computed_position() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    for position in ["static", "relative", "sticky", "absolute", "fixed"] {
+        let mut doc = Document::new();
+        let root = doc.append_element(
+            Some(0),
+            "div",
+            Style::default(),
+            Some(&format!(
+                "display:block;position:{position};position:running(header);break-before:page"
+            )),
+        );
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).unwrap();
+        // The winning running() value replaces the preceding declaration
+        // but records a template without changing the initial position.
+        assert_eq!(cascade.computed[root].position, PositionValue::Static);
+        assert_eq!(cascade.computed[root].running_templates.len(), 1);
+        assert_eq!(cascade.computed[root].running_templates[0].name, "header");
+    }
+
+    assert_eq!(
+        page_sibling_positions(
+            &[60, 30, 30],
+            "break-before:avoid",
+            "",
+            "position:running(header)"
+        ),
+        (vec![0.0, 100.0, 130.0], 2)
+    );
+    assert_eq!(
+        page_sibling_positions(
+            &[20, 20, 20],
+            "break-before:page",
+            "",
+            "position:running(header)"
+        ),
+        (vec![0.0, 20.0, 100.0], 2)
+    );
+}
+
+#[test]
+fn a_parallel_float_preserves_the_connected_normal_flow_run() {
+    use raikiri_style::{build_rule_tree, cascade};
+    let mut doc = Document::new();
+    let body = doc.append_element(
+        Some(0),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let mut normal = Vec::new();
+    for css in [
+        "height:60px",
+        "height:30px",
+        "float:left;height:20px;width:20px",
+        "height:30px;break-before:avoid;break-inside:avoid",
+    ] {
+        let id = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;width:100px;{css}")),
+        );
+        if !css.starts_with("float") {
+            normal.push(id);
+        }
+    }
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let pages = layout_pages(&mut doc, &cascade, page).unwrap();
+    let positions: Vec<_> = normal
+        .into_iter()
+        .map(|id| doc.nodes[id].unrounded_layout.location.y)
+        .collect();
+    assert_eq!(positions, vec![0.0, 100.0, 130.0]);
+    assert_eq!(pages.len(), 2);
+}
+
+#[test]
+fn after_avoid_moves_the_connected_sibling_run_to_the_next_page() {
+    assert_eq!(
+        avoiding_sibling_positions("", "break-after:avoid"),
+        (vec![0.0, 100.0, 130.0], 2)
+    );
+}
+
+#[test]
+fn page_specific_avoid_moves_the_connected_sibling_run_to_the_next_page() {
+    assert_eq!(
+        avoiding_sibling_positions("break-before:avoid-page", ""),
+        (vec![0.0, 100.0, 130.0], 2)
+    );
+}
+
+#[test]
+fn column_specific_avoid_does_not_forbid_a_page_boundary() {
+    assert_eq!(
+        avoiding_sibling_positions("break-before:avoid-column", ""),
+        (vec![0.0, 60.0, 100.0], 2)
+    );
+}
+
+#[test]
+fn between_avoid_moves_siblings_without_an_inside_constraint() {
+    assert_eq!(
+        page_sibling_positions(&[60, 30, 30], "break-before:avoid", "", ""),
+        (vec![0.0, 100.0, 130.0], 2)
+    );
+}
+
+#[test]
+fn oversized_avoided_sibling_run_relaxes_the_between_constraint() {
+    assert_eq!(
+        page_sibling_positions(
+            &[60, 70, 70],
+            "break-before:avoid",
+            "",
+            "break-inside:avoid"
+        ),
+        (vec![0.0, 100.0, 200.0], 3)
+    );
+}
+
+#[test]
+fn always_forces_a_page_boundary_outside_columns() {
+    assert_eq!(
+        page_sibling_positions(&[20, 20, 20], "break-before:always", "", ""),
+        (vec![0.0, 20.0, 100.0], 2)
+    );
+}
+
+#[test]
+fn a_forced_page_boundary_overrides_avoidance_at_the_same_edge() {
+    assert_eq!(
+        page_sibling_positions(&[20, 20, 20], "break-before:page", "break-after:avoid", ""),
+        (vec![0.0, 20.0, 100.0], 2)
+    );
+}
+
+#[test]
+fn column_breaks_do_not_force_a_page_boundary() {
+    assert_eq!(
+        page_sibling_positions(&[20, 20, 20], "break-before:column", "", ""),
+        (vec![0.0, 20.0, 40.0], 1)
+    );
+}
+
+#[test]
+fn always_uses_the_nearest_column_context_but_page_stays_page_specific() {
+    let mut doc = Document::new();
+    let columns = doc.append_element(Some(0), "div", Style::default(), Some("columns:2"));
+    let child = doc.append_element(Some(columns), "div", Style::default(), None::<&str>);
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    apply_computed_to_style(&mut doc, &cascade).unwrap();
+    assert!(!page_break_is_forced(&doc, child, BreakBetween::Always));
+    assert!(page_break_is_forced(&doc, child, BreakBetween::Page));
+}
+
+#[test]
+fn review_avoided_sibling_runs_use_the_destination_page_height() {
+    use raikiri_style::{build_rule_tree, cascade};
+    for (steps, prefix, expected) in [
+        ([50.0, 100.0], 20, [0.0, 50.0, 90.0]),
+        ([100.0, 50.0], 60, [0.0, 60.0, 100.0]),
+    ] {
+        let mut doc = Document::new();
+        let body = doc.append_element(
+            Some(0),
+            "body",
+            Style::default(),
+            Some("display:block;margin:0"),
+        );
+        let mut ids = Vec::new();
+        for css in [
+            format!("height:{prefix}px"),
+            "height:40px".into(),
+            "height:40px;break-before:avoid".into(),
+        ] {
+            ids.push(doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some(&format!("display:block;width:100px;{css}")),
+            ));
+        }
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).unwrap();
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 100.0;
+        layout_pages_with_page_steps(&mut doc, &cascade, page, &steps).unwrap();
+        let actual: Vec<_> = ids
+            .into_iter()
+            .map(|id| doc.nodes[id].unrounded_layout.location.y)
+            .collect();
+        assert_eq!(actual, expected, "{steps:?}");
+    }
+}
+
+#[test]
+fn review_same_explicit_page_name_keeps_avoided_sibling_runs_connected() {
+    for edge in ["break-before:avoid", "break-before:avoid-page"] {
+        assert_eq!(
+            page_sibling_positions(&[60, 30, 30], edge, "", "break-inside:avoid;page:chapter"),
+            (vec![0.0, 100.0, 130.0], 2)
+        );
+    }
+}
+
+#[test]
+fn review_flow_root_page_siblings_keep_avoided_runs_connected() {
+    for edge in ["break-before:avoid", "break-before:avoid-page"] {
+        assert_eq!(
+            page_sibling_positions(
+                &[60, 30, 30],
+                edge,
+                "",
+                "display:flow-root;break-inside:avoid"
+            ),
+            (vec![0.0, 100.0, 130.0], 2)
+        );
+    }
+}
+
+#[test]
+fn review_list_item_page_siblings_keep_avoided_runs_connected() {
+    assert_eq!(
+        page_sibling_positions(
+            &[60, 30, 30],
+            "break-before:avoid-page",
+            "",
+            "display:list-item;list-style:none;break-inside:avoid"
+        ),
+        (vec![0.0, 100.0, 130.0], 2)
+    );
+}
+
+#[test]
+fn review_block_level_context_page_siblings_keep_outer_avoidance() {
+    for display in ["flex", "grid", "flow-root", "list-item"] {
+        assert_eq!(
+            page_sibling_positions(
+                &[60, 30, 30],
+                "",
+                "break-after:avoid-page",
+                &format!("display:{display};list-style:none;break-inside:avoid")
+            ),
+            (vec![0.0, 100.0, 130.0], 2)
+        );
+        assert_eq!(
+            page_sibling_positions(
+                &[60, 30, 30],
+                "break-before:page",
+                "break-after:avoid-page",
+                &format!("display:{display};list-style:none;break-inside:avoid")
+            ),
+            (vec![0.0, 60.0, 100.0], 2)
+        );
+    }
+}
+
+#[test]
+fn review_forced_page_edge_still_overrides_same_named_avoidance() {
+    assert_eq!(
+        page_sibling_positions(
+            &[60, 30, 30],
+            "break-before:page",
+            "break-after:avoid",
+            "break-inside:avoid;page:chapter"
+        ),
+        (vec![0.0, 60.0, 100.0], 2)
+    );
+}
+
+#[test]
+fn review_a_changed_explicit_page_name_still_breaks_the_avoided_run() {
+    let mut doc = Document::new();
+    let body = doc.append_element(
+        Some(0),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let ids: Vec<_> = [
+        "height:60px;page:first",
+        "height:30px;page:first",
+        "height:30px;page:second;break-before:avoid",
+    ]
+    .into_iter()
+    .map(|css| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(&format!(
+                "display:block;width:100px;break-inside:avoid;{css}"
+            )),
+        )
+    })
+    .collect();
+    doc.mark_in_document_flags();
+    let tree = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &tree).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let pages = layout_pages(&mut doc, &cascade, page).unwrap();
+    let actual: Vec<_> = ids
+        .into_iter()
+        .map(|id| doc.nodes[id].unrounded_layout.location.y)
+        .collect();
+    assert_eq!(actual, vec![0.0, 60.0, 100.0]);
+    assert_eq!(pages.len(), 2);
+}
+
+fn review_body_boundary_document(body_css: &str) -> (Document, usize, Vec<usize>) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some(&format!("display:block;margin:0;{body_css}")),
+    );
+    let first = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;flex-shrink:0;width:100px;height:60px"),
+    );
+    (doc, body, vec![first])
+}
+
+fn review_body_boundary_positions(mut doc: Document, ids: &[usize]) -> Vec<f32> {
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    ids.iter()
+        .map(|&id| crate::layout::test_support::absolute_rect(&doc, id).1)
+        .collect()
+}
+
+#[test]
+fn review_ignored_flex_item_float_keeps_page_avoidance_connected() {
+    let (mut doc, body, mut ids) =
+        review_body_boundary_document("display:flex;flex-direction:column");
+    ids.push(doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some(
+            "display:block;flex-shrink:0;float:left;width:100px;height:30px;break-after:avoid-page",
+        ),
+    ));
+    ids.push(doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;flex-shrink:0;width:100px;height:30px;break-inside:avoid"),
+    ));
+    assert_eq!(
+        review_body_boundary_positions(doc, &ids),
+        vec![0.0, 100.0, 130.0]
+    );
+}
+
+#[test]
+fn review_contents_boxes_are_effective_body_siblings_for_avoidance() {
+    let (mut doc, body, mut ids) = review_body_boundary_document("");
+    let wrapper = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:contents"),
+    );
+    ids.push(doc.append_element(
+        Some(wrapper),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:30px;break-inside:avoid"),
+    ));
+    ids.push(doc.append_element(
+        Some(wrapper),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:30px;break-before:avoid;break-inside:avoid"),
+    ));
+    assert_eq!(
+        review_body_boundary_positions(doc, &ids),
+        vec![0.0, 100.0, 130.0]
+    );
+}
+
+#[test]
+fn review_plain_child_edges_propagate_page_avoidance_to_body_siblings() {
+    for (first_edge, last_edge) in [
+        ("break-after:avoid-page", ""),
+        ("", "break-before:avoid-page"),
+    ] {
+        let (mut doc, body, mut ids) = review_body_boundary_document("");
+        for edge in [first_edge, last_edge] {
+            let wrapper = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;width:100px;break-inside:avoid"),
+            );
+            doc.append_element(
+                Some(wrapper),
+                "div",
+                Style::default(),
+                Some(&format!("display:block;width:100px;height:30px;{edge}")),
+            );
+            ids.push(wrapper);
+        }
+        assert_eq!(
+            review_body_boundary_positions(doc, &ids),
+            vec![0.0, 100.0, 130.0],
+            "first={first_edge} last={last_edge}"
+        );
+    }
+}
+
+#[test]
+fn review_page_child_edges_respect_context_and_text_barriers() {
+    for (wrapper_css, child_css, text, expected) in [
+        (
+            "display:block",
+            "break-before:avoid-page;break-after:avoid-page",
+            "",
+            (false, true),
+        ),
+        (
+            "display:block",
+            "break-before:avoid-column;break-after:avoid-column",
+            "",
+            (false, false),
+        ),
+        (
+            "display:flex",
+            "break-before:avoid-page;break-after:avoid-page",
+            "",
+            (false, false),
+        ),
+        (
+            "display:grid",
+            "break-before:avoid-page;break-after:avoid-page",
+            "",
+            (false, false),
+        ),
+        (
+            "display:inline-block",
+            "break-before:avoid-page;break-after:avoid-page",
+            "",
+            (false, false),
+        ),
+        (
+            "display:block",
+            "break-before:avoid-page;break-after:avoid-page",
+            "M",
+            (false, false),
+        ),
+        (
+            "display:block;break-before:avoid;break-after:avoid",
+            "break-before:page;break-after:page",
+            "",
+            (true, true),
+        ),
+    ] {
+        let (mut doc, body, _) = review_body_boundary_document("");
+        let wrapper =
+            doc.append_element(Some(body), "article", Style::default(), Some(wrapper_css));
+        if !text.is_empty() {
+            doc.append_text(wrapper, text);
+        }
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;height:20px;{child_css}")),
+        );
+        if !text.is_empty() {
+            doc.append_text(wrapper, text);
+        }
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+        layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
+        for before in [false, true] {
+            assert_eq!(
+                page_edge_constraint(&doc, &cascade, wrapper, before),
+                expected,
+                "wrapper={wrapper_css} child={child_css} text={text} before={before}"
+            );
+        }
+    }
+}
+
+#[test]
+fn review_page_child_edges_elide_contents_and_skip_parallel_children() {
+    let (mut doc, body, _) = review_body_boundary_document("");
+    let wrapper = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+    for css in ["display:none", "position:absolute", "float:left"] {
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some(&format!("height:1px;{css}")),
+        );
+    }
+    let empty = doc.append_element(
+        Some(wrapper),
+        "div",
+        Style::default(),
+        Some("display:contents;break-before:page;break-after:page"),
+    );
+    doc.append_text(empty, " \n ");
+    doc.append_element(Some(empty), "div", Style::default(), Some("display:none"));
+    let contents = doc.append_element(
+        Some(wrapper),
+        "div",
+        Style::default(),
+        Some("display:contents"),
+    );
+    doc.append_text(contents, " \n ");
+    doc.append_element(
+        Some(contents),
+        "div",
+        Style::default(),
+        Some("display:block;height:20px;break-before:avoid-page;break-after:avoid-page"),
+    );
+    doc.append_element(
+        Some(wrapper),
+        "div",
+        Style::default(),
+        Some("display:none;height:1px"),
+    );
+    let empty = doc.append_element(
+        Some(wrapper),
+        "div",
+        Style::default(),
+        Some("display:contents;break-before:page;break-after:page"),
+    );
+    doc.append_text(empty, " \n ");
+    doc.append_element(Some(empty), "div", Style::default(), Some("display:none"));
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
+    for before in [false, true] {
+        assert_eq!(
+            page_edge_constraint(&doc, &cascade, wrapper, before),
+            (false, true)
+        );
+    }
+}
+
+#[test]
+fn review_page_generated_content_stops_child_edge_propagation() {
+    for display in ["block", "contents"] {
+        let (mut doc, body, _) = review_body_boundary_document("");
+        let wrapper =
+            doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        let generated = doc.append_element(
+            Some(wrapper),
+            "article",
+            Style::default(),
+            Some(&format!(
+                "display:{display};break-before:page;break-after:page"
+            )),
+        );
+        doc.append_element(
+            Some(generated),
+            "div",
+            Style::default(),
+            Some("display:block;height:20px;break-before:avoid-page;break-after:avoid-page"),
+        );
+        doc.mark_in_document_flags();
+        let mut rules = raikiri_style::build_rule_tree(&doc);
+        rules.add_stylesheet(
+            "article::before,article::after{content:'M'}",
+            raikiri_style::Origin::Author,
+        );
+        let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+        layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
+        assert!(doc.nodes[generated].has_before_or_after_content);
+        for before in [false, true] {
+            assert_eq!(
+                page_edge_constraint(&doc, &cascade, wrapper, before),
+                (display == "block", false),
+                "display={display} before={before}"
+            );
+        }
+    }
+}
+
+#[test]
+fn review_page_contents_edge_depth_exhaustion_is_an_opaque_boundary() {
+    let (mut doc, body, _) = review_body_boundary_document("");
+    let wrapper = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+    let mut parent = wrapper;
+    for _ in 0..129 {
+        parent = doc.append_element(
+            Some(parent),
+            "div",
+            Style::default(),
+            Some("display:contents"),
+        );
+    }
+    doc.append_element(
+        Some(parent),
+        "div",
+        Style::default(),
+        Some("display:block;height:1px"),
+    );
+    doc.append_element(
+        Some(wrapper),
+        "div",
+        Style::default(),
+        Some("display:block;height:1px;break-before:avoid-page"),
+    );
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
+    assert_eq!(
+        page_edge_constraint(&doc, &cascade, wrapper, true),
+        (false, false)
+    );
+}
+
+#[test]
+fn review_contents_nonempty_text_interrupts_avoided_body_sibling_runs() {
+    for text in ["M", " \n "] {
+        let (mut doc, body, mut ids) =
+            review_body_boundary_document("font-family:Ahem;font-size:20px;line-height:20px");
+        doc.set_font_collection(crate::layout::test_support::ifc_ahem_fonts());
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:30px;break-after:avoid-page;break-inside:avoid"),
+        ));
+        let contents = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:contents"),
+        );
+        doc.append_text(contents, text);
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:30px;break-before:avoid-page;break-inside:avoid"),
+        ));
+        let positions = review_body_boundary_positions(doc, &ids);
+        assert_eq!(
+            positions[1],
+            if text == "M" { 60.0 } else { 100.0 },
+            "text={text:?}"
+        );
+        assert!(positions[2] >= 100.0);
+    }
+}

@@ -4219,8 +4219,15 @@ pub(crate) fn paint_document_impl(
                             scene.pop_layer();
                         }
                     }
-                    // cov:ignore: paint_document layout traversal is covered by reftests; unit tests cover paint_list_marker directly.
-                    if !paints_as_absolute_continuation && cv.display == DisplayValue::ListItem {
+                    // A generated list marker belongs to the first principal
+                    // fragment; inherited ancestor fragment state is unrelated.
+                    if !paints_as_absolute_continuation
+                        && cv.display == DisplayValue::ListItem
+                        && fragment_id.is_none_or(|id| {
+                            layout_fragments[id].node_id != node_id
+                                || layout_fragments[id].fragment_index == 0
+                        })
+                    {
                         // An empty list item still owns a generated marker.
                         // Its principal box has zero width/height, which the
                         // marker helper intentionally rejects for ordinary

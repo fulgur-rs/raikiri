@@ -544,11 +544,8 @@ fn break_before_is_case_insensitive() {
 }
 
 #[test]
-fn break_before_after_rejects_out_of_scope_column_and_region_values() {
-    // (b) not supported — this crate has no multi-column or CSS
-    // Regions fragmentation context (`BreakBetween` doc's "Scope
-    // carving" section), not (a) spec-invalid.
-    for kw in ["avoid-column", "column", "avoid-region", "region"] {
+fn break_before_after_rejects_out_of_scope_region_values() {
+    for kw in ["avoid-region", "region"] {
         assert_eq!(parse(kw, "break-before"), None);
         assert_eq!(parse(kw, "break-after"), None);
     }
@@ -565,19 +562,9 @@ fn break_before_after_rejects_out_of_scope_page_spread_values() {
 }
 
 #[test]
-fn break_before_after_rejects_always_and_all() {
-    // `always`/`all` are not part of the current break-before/
-    // break-after grammar at all (`BreakBetween` doc's "Scope carving"
-    // section — Level 3's change log only names `always`, not `all`;
-    // both live in Level 4 instead, which this crate does not target).
-    // `always` is valid only as the `page-break-before`/
-    // `page-break-after` legacy shorthand's own keyword, never
-    // directly on `break-before`/`break-after`; `all` has no path in
-    // at all.
-    for kw in ["always", "all"] {
-        assert_eq!(parse(kw, "break-before"), None);
-        assert_eq!(parse(kw, "break-after"), None);
-    }
+fn break_before_after_rejects_unsupported_all() {
+    assert_eq!(parse("all", "break-before"), None);
+    assert_eq!(parse("all", "break-after"), None);
 }
 
 #[test]
@@ -746,16 +733,8 @@ fn break_inside_rejects_forced_break_values() {
 }
 
 #[test]
-fn break_inside_rejects_out_of_scope_avoid_values() {
-    // Unlike `page`/`column`/`region` above, `avoid-column` and
-    // `avoid-region` *are* in `break-inside`'s own propdef grammar
-    // (`auto | avoid | avoid-page | avoid-column | avoid-region`,
-    // `BreakInside` doc) — they are rejected here purely by this
-    // crate's scope carve (no multi-column / CSS Regions fragmentation
-    // context), not because the spec lacks them.
-    for kw in ["avoid-column", "avoid-region"] {
-        assert_eq!(parse(kw, "break-inside"), None);
-    }
+fn break_inside_rejects_out_of_scope_region_avoidance() {
+    assert_eq!(parse("avoid-region", "break-inside"), None);
 }
 
 #[test]
@@ -2877,4 +2856,64 @@ fn multicol_columns_accepts_both_orders_and_rejects_duplicate_non_auto_component
         parse_entire("auto auto", "columns"),
         Some(expected(ColumnCountValue::Auto, ColumnWidthValue::Auto))
     );
+}
+
+fn fragment_break_keyword(property: &str, source: &str) -> Option<String> {
+    let mut input = ParserInput::new(source);
+    let mut parser = Parser::new(&mut input);
+    match parse_value(property, &mut parser)? {
+        PropertyValue::BreakBefore(value) | PropertyValue::BreakAfter(value) => {
+            Some(value.as_css_str().to_owned())
+        }
+        PropertyValue::BreakInside(value) => Some(value.as_css_str().to_owned()),
+        _ => None,
+    }
+}
+
+#[test]
+fn modern_always_is_retained_for_each_fragmentation_context() {
+    for property in ["break-before", "break-after"] {
+        assert_eq!(
+            fragment_break_keyword(property, "ALWAYS"),
+            Some("always".to_owned())
+        );
+    }
+}
+
+#[test]
+fn column_avoidance_is_retained_as_a_distinct_value() {
+    for property in ["break-before", "break-after", "break-inside"] {
+        assert_eq!(
+            fragment_break_keyword(property, "avoid-column"),
+            Some("avoid-column".to_owned())
+        );
+    }
+}
+
+#[test]
+fn forced_column_boundaries_are_accepted() {
+    for property in ["break-before", "break-after"] {
+        assert_eq!(
+            fragment_break_keyword(property, "column"),
+            Some("column".to_owned())
+        );
+    }
+}
+
+#[test]
+fn inside_column_avoidance_is_retained_as_a_distinct_value() {
+    assert_eq!(
+        fragment_break_keyword("break-inside", "avoid-column"),
+        Some("avoid-column".to_owned())
+    );
+}
+
+#[test]
+fn legacy_always_still_selects_a_page_boundary() {
+    for property in ["page-break-before", "page-break-after"] {
+        assert_eq!(
+            fragment_break_keyword(property, "always"),
+            Some("page".to_owned())
+        );
+    }
 }
