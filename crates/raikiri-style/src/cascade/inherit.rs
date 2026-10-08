@@ -943,9 +943,19 @@ fn svg_property_is_inherited(key: crate::property::PropertyKey) -> bool {
 
 fn svg_property_expression(value: &PropertyValue) -> Option<String> {
     match value {
-        PropertyValue::FontSize(
-            Length::Em(_) | Length::Percent(_) | Length::Ex(_) | Length::Ch(_),
-        ) => crate::property::serialize_value(value),
+        PropertyValue::FontSize(Length::Em(_) | Length::Percent(_) | Length::Ex(_)) => {
+            crate::property::serialize_value(value)
+        }
+        // SVG 1.1 lengths, as SVG renderers such as usvg parse them, have no
+        // `ch` or `ic` unit. Export the em multiple of the fallback these units
+        // resolve with (see `Length::Ch` and `Length::Ic`), which stays
+        // relative to the font size of each instance.
+        PropertyValue::FontSize(Length::Ch(value)) => {
+            crate::property::serialize_value(&PropertyValue::FontSize(Length::Em(value * 0.5)))
+        }
+        PropertyValue::FontSize(Length::Ic(value)) => {
+            crate::property::serialize_value(&PropertyValue::FontSize(Length::Em(*value)))
+        }
         PropertyValue::FontSizeRelative(RelativeFontSize::Larger) => Some("larger".into()),
         PropertyValue::FontSizeRelative(RelativeFontSize::Smaller) => Some("smaller".into()),
         PropertyValue::FontWeight(FontWeightValue::Bolder) => Some("bolder".into()),

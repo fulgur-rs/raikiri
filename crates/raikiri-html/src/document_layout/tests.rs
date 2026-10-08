@@ -1142,6 +1142,37 @@ fn inline_svg_definitions_keep_instance_relative_fonts() {
 }
 
 #[test]
+fn inline_svg_definitions_resolve_ideographic_and_character_font_sizes_per_instance() {
+    // A 1em square measures the font size resolved inside the use instance:
+    // `ic` and `ch` keep their 1em and 0.5em fallbacks relative to it.
+    for (font_size, size_px) in [("2ic", 8), ("3ch", 6)] {
+        let result = laid_out(&format!(
+            "<style>body{{font-size:16px}}svg{{display:block}}</style><svg width='20' height='20'><defs><g id='box' style='font-size:{font_size}'><rect width='1em' height='1em'/></g></defs><use href='#box' style='font-size:4px'/></svg>"
+        ));
+        let page = result.page(0).unwrap();
+        let fragment = page
+            .fragments()
+            .find(|fragment| page.dom().local_name(fragment.node()) == Some("svg"))
+            .unwrap();
+        let svg = page.inline_svg(&fragment).unwrap().unwrap();
+        let image = raikiri_svg::SvgDocument::parse(svg.source.as_bytes())
+            .unwrap()
+            .rasterize(
+                raikiri_svg::SvgViewport {
+                    width: 20.0,
+                    height: 20.0,
+                },
+                raikiri_svg::SvgRootStyle::default(),
+                None,
+            )
+            .unwrap();
+        let alpha = |offset: usize| image.rgba[(offset * 20 + offset) * 4 + 3];
+        assert_eq!(alpha(size_px - 1), 255, "{font_size}: {}", svg.source);
+        assert_eq!(alpha(size_px + 1), 0, "{font_size}: {}", svg.source);
+    }
+}
+
+#[test]
 fn inline_svg_descendant_font_hints_and_relative_keywords_survive_export() {
     for (attributes, expected) in [
         ("font-size='18'", "font-size:18px"),
