@@ -7269,3 +7269,183 @@ fn an_inline_body_still_lays_its_text_out_as_a_paragraph() {
         (true, false, 1)
     );
 }
+
+fn page_sibling_positions(
+    heights: &[u32],
+    before: &str,
+    after: &str,
+    inside: &str,
+) -> (Vec<f32>, usize) {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let mut boxes = Vec::new();
+    for (index, height) in heights.iter().enumerate() {
+        let edge = match index {
+            1 => after,
+            2 => before,
+            _ => "",
+        };
+        boxes.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(&format!(
+                "display:block;width:100px;height:{height}px;{inside};{edge}"
+            )),
+        ));
+    }
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let pages = layout_pages(&mut doc, &cascade, page).unwrap();
+    (
+        boxes
+            .into_iter()
+            .map(|id| doc.get_node(id).unwrap().unrounded_layout.location.y)
+            .collect(),
+        pages.len(),
+    )
+}
+
+fn avoiding_sibling_positions(before: &str, after: &str) -> (Vec<f32>, usize) {
+    page_sibling_positions(&[60, 30, 30], before, after, "break-inside:avoid")
+}
+
+#[test]
+fn automatic_overflow_keeps_each_avoiding_block_intact() {
+    assert_eq!(
+        avoiding_sibling_positions("", ""),
+        (vec![0.0, 60.0, 100.0], 2)
+    );
+}
+
+#[test]
+fn before_avoid_moves_the_connected_sibling_run_to_the_next_page() {
+    assert_eq!(
+        avoiding_sibling_positions("break-before:avoid", ""),
+        (vec![0.0, 100.0, 130.0], 2)
+    );
+}
+
+#[test]
+fn a_parallel_float_preserves_the_connected_normal_flow_run() {
+    use raikiri_style::{build_rule_tree, cascade};
+    let mut doc = Document::new();
+    let body = doc.append_element(
+        Some(0),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let mut normal = Vec::new();
+    for css in [
+        "height:60px",
+        "height:30px",
+        "float:left;height:20px;width:20px",
+        "height:30px;break-before:avoid;break-inside:avoid",
+    ] {
+        let id = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;width:100px;{css}")),
+        );
+        if !css.starts_with("float") {
+            normal.push(id);
+        }
+    }
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let pages = layout_pages(&mut doc, &cascade, page).unwrap();
+    let positions: Vec<_> = normal
+        .into_iter()
+        .map(|id| doc.nodes[id].unrounded_layout.location.y)
+        .collect();
+    assert_eq!(positions, vec![0.0, 100.0, 130.0]);
+    assert_eq!(pages.len(), 2);
+}
+
+#[test]
+fn after_avoid_moves_the_connected_sibling_run_to_the_next_page() {
+    assert_eq!(
+        avoiding_sibling_positions("", "break-after:avoid"),
+        (vec![0.0, 100.0, 130.0], 2)
+    );
+}
+
+#[test]
+fn page_specific_avoid_moves_the_connected_sibling_run_to_the_next_page() {
+    assert_eq!(
+        avoiding_sibling_positions("break-before:avoid-page", ""),
+        (vec![0.0, 100.0, 130.0], 2)
+    );
+}
+
+#[test]
+fn column_specific_avoid_does_not_forbid_a_page_boundary() {
+    assert_eq!(
+        avoiding_sibling_positions("break-before:avoid-column", ""),
+        (vec![0.0, 60.0, 100.0], 2)
+    );
+}
+
+#[test]
+fn between_avoid_moves_siblings_without_an_inside_constraint() {
+    assert_eq!(
+        page_sibling_positions(&[60, 30, 30], "break-before:avoid", "", ""),
+        (vec![0.0, 100.0, 130.0], 2)
+    );
+}
+
+#[test]
+fn oversized_avoided_sibling_run_relaxes_the_between_constraint() {
+    assert_eq!(
+        page_sibling_positions(
+            &[60, 70, 70],
+            "break-before:avoid",
+            "",
+            "break-inside:avoid"
+        ),
+        (vec![0.0, 100.0, 200.0], 3)
+    );
+}
+
+#[test]
+fn always_forces_a_page_boundary_outside_columns() {
+    assert_eq!(
+        page_sibling_positions(&[20, 20, 20], "break-before:always", "", ""),
+        (vec![0.0, 20.0, 100.0], 2)
+    );
+}
+
+#[test]
+fn a_forced_page_boundary_overrides_avoidance_at_the_same_edge() {
+    assert_eq!(
+        page_sibling_positions(&[20, 20, 20], "break-before:page", "break-after:avoid", ""),
+        (vec![0.0, 20.0, 100.0], 2)
+    );
+}
+
+#[test]
+fn column_breaks_do_not_force_a_page_boundary() {
+    assert_eq!(
+        page_sibling_positions(&[20, 20, 20], "break-before:column", "", ""),
+        (vec![0.0, 20.0, 40.0], 1)
+    );
+}

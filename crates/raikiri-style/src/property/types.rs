@@ -5410,34 +5410,15 @@ css_keywords!(OverflowWrap {
 ///
 /// # Scope carving
 ///
-/// This type implements only 4 of the propdef's 12 keywords:
+/// This type preserves generic, page and column break values. `always`
+/// follows CSS Fragmentation Level 4 and forces a break in the immediately
+/// containing fragmentation context:
+/// <https://drafts.csswg.org/css-break-4/#break-between>.
 ///
-/// - `auto` / `avoid` — the "Generic Break Values" (§3.1): apply regardless
-///   of fragmentation context.
-/// - `avoid-page` / `page` — the "Page Break Values" (§3.1): the only
-///   fragmentation context this crate models is pagination, not
-///   multi-column or CSS Regions.
-///
-/// Excluded:
-///
-/// - `avoid-column` / `column` ("Column Break Values") and `avoid-region` /
-///   `region` ("Region Break Values") — this crate has no multi-column or
-///   CSS Regions fragmentation context to break within.
-/// - `left` / `right` / `recto` / `verso` — page-spread-parity forced
-///   breaks; this crate has no page-spread concept.
-/// - `always` / `all` — **not part of Level 3's spec grammar at all**.
-///   Level 3's own change log records "Dropped `any` and `always` values of
-///   `break-*`" (removed between the January 2015 Working Draft and the
-///   current text) — that entry does not mention `all`; both `always` and
-///   `all` instead reappear as forced-break values in CSS Fragmentation
-///   Module Level 4 <https://www.w3.org/TR/css-break-4/> (a First Public
-///   Working Draft as of this writing, with `all` itself marked at-risk
-///   there), a spec version this crate does not target. Of the two, only
-///   `always` has any path into this crate at all, and only indirectly:
-///   the CSS2.1 `page-break-before` / `page-break-after` legacy shorthand
-///   grammar below still has it, remapped to `page` — it is never a valid
-///   `break-before` / `break-after` value on its own. `all` has no path
-///   into this crate.
+/// Page-spread values (`left`, `right`, `recto`, `verso`), CSS Regions
+/// values (`avoid-region`, `region`), and the Level 4 `all` value remain
+/// unsupported. Column-specific values stay distinct from generic values
+/// so pagination does not apply column-only constraints.
 ///
 /// # `page-break-before` / `page-break-after` (CSS2.1 legacy shorthand)
 ///
@@ -5492,6 +5473,12 @@ pub enum BreakBetween {
     /// `page-break-after` legacy shorthand's remap target for `always`
     /// (this type's doc's "legacy shorthand" section).
     Page,
+    /// Forces a break in the immediately containing fragmentation context.
+    Always,
+    /// Avoids a column break before or after the principal box.
+    AvoidColumn,
+    /// Forces a column break before or after the principal box.
+    Column,
 }
 
 css_keywords!(BreakBetween {
@@ -5499,6 +5486,9 @@ css_keywords!(BreakBetween {
     Avoid => "avoid",
     AvoidPage => "avoid-page",
     Page => "page",
+    Always => "always",
+    AvoidColumn => "avoid-column",
+    Column => "column",
 });
 
 /// The value of the `break-inside` property.
@@ -5522,12 +5512,9 @@ css_keywords!(BreakBetween {
 ///
 /// # Scope carving
 ///
-/// This type implements only 3 of the propdef's 5 keywords — `auto` /
-/// `avoid` (apply regardless of fragmentation context) and `avoid-page`
-/// (the only fragmentation context this crate models). Excluded, same
-/// rationale as [`BreakBetween`] doc's "Scope carving" section: `avoid-column`
-/// (no multi-column fragmentation context) and `avoid-region` (no CSS
-/// Regions fragmentation context).
+/// This type implements `auto`, generic `avoid`, and the context-specific
+/// `avoid-page` and `avoid-column` values. `avoid-region` remains unsupported
+/// because CSS Regions fragmentation is not modeled.
 ///
 /// # `page-break-inside` (CSS2.1 legacy shorthand)
 ///
@@ -5556,12 +5543,15 @@ pub enum BreakInside {
     Avoid,
     /// `avoid-page` — "Avoid a page break within the box." (§3.2 verbatim)
     AvoidPage,
+    /// Avoids a column break within the box.
+    AvoidColumn,
 }
 
 css_keywords!(BreakInside {
     Auto => "auto",
     Avoid => "avoid",
     AvoidPage => "avoid-page",
+    AvoidColumn => "avoid-column",
 });
 
 /// The value of the `float` property.

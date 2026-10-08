@@ -159,6 +159,9 @@ pub(crate) fn apply_computed_to_style(
         doc.nodes[idx].border_spacing = cv.border_spacing;
         doc.nodes[idx].break_before = cv.break_before;
         doc.nodes[idx].break_after = cv.break_after;
+        doc.nodes[idx].break_inside = cv.break_inside;
+        doc.nodes[idx].multicol_auto_width =
+            matches!(cv.width, ComputedLengthPercentageOrAuto::Auto);
         doc.nodes[idx].authored_writing_mode = cascade
             .authored_writing_modes
             .get(idx)

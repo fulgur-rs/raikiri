@@ -1433,8 +1433,21 @@ fn finite_nonnegative(value: f32) -> f32 {
     }
 }
 
-pub(super) fn page_break_is_forced(value: BreakBetween) -> bool {
-    matches!(value, BreakBetween::Page)
+fn page_break_is_forced(document: &Document, node_id: usize, value: BreakBetween) -> bool {
+    if matches!(value, BreakBetween::Page) {
+        return true;
+    }
+    if !matches!(value, BreakBetween::Always) {
+        return false;
+    }
+    let mut ancestor = document.layout_parent_of(node_id);
+    while let Some(id) = ancestor {
+        if document.nodes[id].multicol.is_some() {
+            return false;
+        }
+        ancestor = document.layout_parent_of(id);
+    }
+    true
 }
 
 pub(crate) fn selected_page_name(cascade: &CascadeResult, node_id: usize) -> Option<String> {
@@ -2257,8 +2270,8 @@ pub fn layout_pages_with_page_geometry_and_control(
                         || grid_item_candidate
                         || own_page_name.is_some()
                         || inline_named_page
-                        || page_break_is_forced(computed.break_before)
-                        || page_break_is_forced(computed.break_after));
+                        || page_break_is_forced(document, node_id, computed.break_before)
+                        || page_break_is_forced(document, node_id, computed.break_after));
                 if is_break_candidate {
                     out.push(PageCandidate {
                         node_id,
@@ -2345,6 +2358,65 @@ pub fn layout_pages_with_page_geometry_and_control(
         &mut candidates,
         control,
     )?;
+    // Connected class-A sibling runs have a legal break before their first
+    // box. Move a run only when it fits in one page, otherwise relax its
+    // avoidance constraints so an oversized run still makes progress.
+    let mut avoided_run_ends = HashMap::<usize, f32>::new();
+    let mut previous: Option<&PageCandidate> = None;
+    let mut run_start: Option<usize> = None;
+    for candidate in &candidates {
+        if !candidate.is_direct_body_element && !candidate.is_direct_body_text {
+            continue;
+        }
+        let computed = &cascade.computed[candidate.node_id];
+        // Floats and positioned boxes form parallel flows. Their placement
+        // does not interrupt a connected run of normal-flow siblings.
+        if !matches!(computed.float, FloatValue::None)
+            || matches!(
+                computed.position,
+                PositionValue::Absolute | PositionValue::Fixed
+            )
+        {
+            continue;
+        }
+        let eligible = candidate.is_direct_body_element
+            && !candidate.is_named
+            && matches!(computed.display, DisplayValue::Block)
+            && matches!(computed.float, FloatValue::None)
+            && matches!(
+                computed.position,
+                PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+            );
+        if !eligible {
+            previous = None;
+            run_start = None;
+            continue;
+        }
+        let connected = previous.is_some_and(|prior| {
+            let prior_computed = &cascade.computed[prior.node_id];
+            !page_break_is_forced(document, prior.node_id, prior_computed.break_after)
+                && !page_break_is_forced(document, candidate.node_id, computed.break_before)
+                && prior.page_name == candidate.page_name
+                && (matches!(
+                    prior_computed.break_after,
+                    BreakBetween::Avoid | BreakBetween::AvoidPage
+                ) || matches!(
+                    computed.break_before,
+                    BreakBetween::Avoid | BreakBetween::AvoidPage
+                ))
+        });
+        if let Some(prior) = previous.filter(|_| connected) {
+            let start = *run_start.get_or_insert(prior.node_id);
+            let margin_bottom =
+                used_computed_length_percentage_or_auto(computed.margin.bottom, content_width)
+                    .unwrap_or(0.0)
+                    .max(0.0);
+            avoided_run_ends.insert(start, candidate.raw_y + candidate.height + margin_bottom);
+        } else {
+            run_start = None;
+        }
+        previous = Some(candidate);
+    }
     let mut flow_shift = 0.0_f32;
     let mut current_page = 0_u32;
     let mut max_page = 0_u32;
@@ -2635,8 +2707,9 @@ pub fn layout_pages_with_page_geometry_and_control(
             if consumes_pending_break {
                 pending_break_source = None;
             }
-            let candidate_break_after = page_break_is_forced(cascade.computed[node_id].break_after)
-                || candidate.deferred_named_break_after;
+            let candidate_break_after =
+                page_break_is_forced(document, node_id, cascade.computed[node_id].break_after)
+                    || candidate.deferred_named_break_after;
             let pending_source_is_ancestor = pending_break_source
                 .is_some_and(|source| is_descendant_or_self(document, node_id, source, &parent_of));
             if candidate_break_after && !pending_source_is_ancestor {
@@ -2677,8 +2750,8 @@ pub fn layout_pages_with_page_geometry_and_control(
         let height = candidate.height;
         let mut effective_y = raw_y + flow_shift + descendant_margin;
         materialize_y(document, node_id, effective_y, &parent_of);
-        let forced_before =
-            page_break_is_forced(computed.break_before) || candidate.inline_named_page;
+        let forced_before = page_break_is_forced(document, node_id, computed.break_before)
+            || candidate.inline_named_page;
         let style = &document.nodes[node_id].style;
         let margin_top = used_style_length_percentage_auto(style.margin.top, content_width)
             .or_else(|| used_computed_length_percentage_or_auto(computed.margin.top, content_width))
@@ -2693,6 +2766,16 @@ pub fn layout_pages_with_page_geometry_and_control(
         // block size plus its trailing margin would cross the current page.
         // This is the direct block-flow case; nested formatting contexts still
         // require fragment-level break opportunities.
+        let avoided_run_overflow = avoided_run_ends.get(&node_id).is_some_and(|end| {
+            let run_height = *end - raw_y;
+            let page_height = page_step_at(current_page);
+            run_height.is_finite()
+                && run_height > 0.0
+                && run_height + margin_top.max(0.0) <= page_height
+                && effective_y > page_origin(current_page)
+                && effective_y < page_origin(current_page) + page_height
+                && effective_y + run_height > page_origin(current_page) + page_height
+        });
         let page_overflow = matches!(
             computed.break_inside,
             raikiri_style::property::BreakInside::Avoid
@@ -2790,6 +2873,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                 || (forced_before && !forced_break_at_page_start)
                 || named_page_change
                 || page_overflow
+                || avoided_run_overflow
                 || table_row_overflow
                 || flex_item_overflow
                 || grid_item_overflow);
@@ -2940,7 +3024,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                 }
             }
         }
-        let candidate_break_after = page_break_is_forced(computed.break_after)
+        let candidate_break_after = page_break_is_forced(document, node_id, computed.break_after)
             || candidate.deferred_named_break_after
             || candidate.inline_named_page;
         let pending_source_is_ancestor = pending_break_source

@@ -11,7 +11,8 @@ use taffy::{Cache, Layout, Style};
 use crate::fragment::MulticolStyle;
 
 use raikiri_style::property::{
-    BorderCollapseValue, BreakBetween, DisplayValue, Sides, TableLayoutValue, WritingMode,
+    BorderCollapseValue, BreakBetween, BreakInside, DisplayValue, Sides, TableLayoutValue,
+    WritingMode,
 };
 use raikiri_style::{ComputedBorder, ComputedBorderSpacing};
 use raikiri_traits::{IntrinsicBox, NodeKind};
@@ -362,6 +363,10 @@ pub struct Node {
     pub(crate) break_before: BreakBetween,
     /// Computed `break-after` value consumed by column fragmentation.
     pub(crate) break_after: BreakBetween,
+    /// Computed context-specific constraints on breaks within this box.
+    pub(crate) break_inside: BreakInside,
+    /// Whether column layout must restore an authored automatic inline size.
+    pub(crate) multicol_auto_width: bool,
     /// Computed multicolumn settings consumed by the custom Taffy dispatch.
     pub(crate) multicol: Option<MulticolStyle>,
     /// Authored writing mode retained for layout features that need the logical axes.
@@ -469,6 +474,8 @@ impl Node {
             },
             break_before: BreakBetween::Auto,
             break_after: BreakBetween::Auto,
+            break_inside: BreakInside::Auto,
+            multicol_auto_width: true,
             multicol: None,
             authored_writing_mode: None,
             has_logical_min_block_size: false,
@@ -508,6 +515,8 @@ impl Node {
             },
             break_before: BreakBetween::Auto,
             break_after: BreakBetween::Auto,
+            break_inside: BreakInside::Auto,
+            multicol_auto_width: true,
             multicol: None,
             authored_writing_mode: None,
             has_logical_min_block_size: false,
@@ -551,6 +560,8 @@ impl Node {
             },
             break_before: BreakBetween::Auto,
             break_after: BreakBetween::Auto,
+            break_inside: BreakInside::Auto,
+            multicol_auto_width: true,
             multicol: None,
             authored_writing_mode: None,
             has_logical_min_block_size: false,
@@ -589,6 +600,8 @@ impl Node {
             },
             break_before: BreakBetween::Auto,
             break_after: BreakBetween::Auto,
+            break_inside: BreakInside::Auto,
+            multicol_auto_width: true,
             multicol: None,
             authored_writing_mode: None,
             has_logical_min_block_size: false,
@@ -624,6 +637,8 @@ impl Node {
             },
             break_before: BreakBetween::Auto,
             break_after: BreakBetween::Auto,
+            break_inside: BreakInside::Auto,
+            multicol_auto_width: true,
             multicol: None,
             authored_writing_mode: None,
             has_logical_min_block_size: false,
@@ -661,6 +676,8 @@ impl Node {
             },
             break_before: BreakBetween::Auto,
             break_after: BreakBetween::Auto,
+            break_inside: BreakInside::Auto,
+            multicol_auto_width: true,
             multicol: None,
             authored_writing_mode: None,
             has_logical_min_block_size: false,

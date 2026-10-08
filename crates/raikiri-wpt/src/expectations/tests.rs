@@ -795,7 +795,12 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS Inline image-loaded vertical-align length exact slice (+1).
     // + Remeasured exact regression pins (+8) and unsupported pins removed (-7).
     // + CSS Overflow inherited Ahem font-metric max-width:4ch exact slice (+1).
-    assert_eq!(set.baseline.entries.len(), 1444);
+    // + CSS Break between-box page/column avoidance exact slice (+15).
+    assert_eq!(set.baseline.entries.len(), 1459);
+    for index in 0..15 {
+        let id = format!("css/css-break/break-between-avoid-{index:03}.html");
+        assert!(set.baseline.entries.contains(id.as_str()));
+    }
     assert!(
         set.baseline
             .entries

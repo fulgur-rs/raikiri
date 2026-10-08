@@ -352,3 +352,28 @@ viewport basis. Page-context viewport units, including size and margin-box
 declarations, are resolved once against the existing nominal 480 × 288 basis used by
 the page probe, before ordinary declaration units expand. This adapter policy
 does not claim complete support for every paged-media viewport-unit behavior.
+
+
+The CSS Break `break-between-avoid-000` through `014` references are pinned as
+exact 800 × 600 PASS results with bundled WPT fonts. All fifteen failed on
+main a57ec313: thirteen differed by 10000 pixels, `007` by 11616 pixels, and
+`010` by 32500 pixels. After the runtime change, all fifteen match their
+references without tolerance changes. The 1450 existing report rows retain
+identical IDs, statuses and details.
+
+```sh
+cargo test --locked -p raikiri-wpt --test css_break_between_reftests -- --ignored
+```
+
+The parser keeps page and column constraints distinct, including `always`
+for the innermost fragmentation context. Pagination moves fitting connected
+ordinary block sibling runs at a legal boundary; oversized runs relax avoidance
+so they still advance. The bounded horizontal-column projection propagates
+first/last descendant constraints, resumes plain block wrappers, preserves
+atomic inline-blocks and inside-avoided boxes, gives forced column breaks
+priority, and treats floats as parallel flows. Decorated, block-margined or
+positioned boxes and definite-width splittable wrappers retain the existing
+geometry strategies. Nested columns, visible text, minimum block-size contexts
+and unsupported box structures retain their existing paths. These fifteen
+references and native controls do not establish complete table/flex/grid,
+vertical-writing or general box-decoration fragmentation support.

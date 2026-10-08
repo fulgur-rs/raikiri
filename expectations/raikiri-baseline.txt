@@ -1716,3 +1716,20 @@ css/css-grid/parsing/grid-template-shorthand-invalid.html
 
 # CSS Overflow inherited Ahem max-width:4ch (exact 800x600, bundled WPT fonts).
 css/css-overflow/text-overflow-ellipsis-002.html
+
+# CSS Break between-box page/column avoidance (exact 800x600, bundled WPT fonts).
+css/css-break/break-between-avoid-000.html
+css/css-break/break-between-avoid-001.html
+css/css-break/break-between-avoid-002.html
+css/css-break/break-between-avoid-003.html
+css/css-break/break-between-avoid-004.html
+css/css-break/break-between-avoid-005.html
+css/css-break/break-between-avoid-006.html
+css/css-break/break-between-avoid-007.html
+css/css-break/break-between-avoid-008.html
+css/css-break/break-between-avoid-009.html
+css/css-break/break-between-avoid-010.html
+css/css-break/break-between-avoid-011.html
+css/css-break/break-between-avoid-012.html
+css/css-break/break-between-avoid-013.html
+css/css-break/break-between-avoid-014.html
