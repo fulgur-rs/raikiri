@@ -431,6 +431,255 @@ fn prepared_flow() -> (Document, usize, FragmentationContext) {
     (doc, root, context)
 }
 
+fn fanout_markup(count: usize, atomic: bool) -> String {
+    let mut markup = String::from(
+        "<div id='columns' style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'>",
+    );
+    if atomic {
+        markup.push_str("<div style='height:150px;break-before:avoid'>");
+    }
+    for index in 0..count {
+        markup.push_str(&format!(
+            "<div style='break-before:avoid'><div id='leaf-{index}' style='height:1px'></div></div>"
+        ));
+    }
+    if atomic {
+        markup.push_str("</div>");
+    }
+    markup.push_str("</div>");
+    markup
+}
+
+fn fanout_flow(count: usize, atomic: bool) -> (Document, usize, FragmentationContext) {
+    let markup = fanout_markup(count, atomic);
+    let (mut doc, cascade) = fixture(&markup);
+    apply_computed_to_style(&mut doc, &cascade).unwrap();
+    let root = id(&doc, "columns");
+    let context =
+        FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[root].multicol.unwrap())
+            .unwrap();
+    (doc, root, context)
+}
+
+#[test]
+fn security_fanout_budget_stops_before_remeasuring_descendants() {
+    let mut observed = Vec::new();
+    for atomic in [false, true] {
+        let (mut doc, root, context) = fanout_flow(1024, atomic);
+        doc.fragment_tree.limit = 64;
+        let last = id(&doc, "leaf-1023");
+        assert_eq!(doc.nodes[last].unrounded_layout.size.height, 0.0);
+        layout(
+            &mut doc,
+            root,
+            context,
+            Size {
+                width: 100.0,
+                height: 100.0,
+            },
+        );
+        observed.push((
+            atomic,
+            doc.nodes[last].unrounded_layout.size.height,
+            doc.fragment_tree.limit_exceeded,
+            doc.fragment_tree.fragments.len(),
+        ));
+    }
+    assert_eq!(observed, vec![(false, 0.0, true, 0), (true, 0.0, true, 0)]);
+}
+
+#[test]
+fn security_fanout_budget_preserves_under_budget_layout_and_typed_error() {
+    for (count, limit) in [(4, 32), (1024, 64)] {
+        let (mut doc, _, _) = fanout_flow(count, false);
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+        doc.fragment_tree.limit = limit;
+        let mut page = raikiri_traits::PageBox::new();
+        page.width = 800.0;
+        page.height = 600.0;
+        let result = layout_single_page(&mut doc, &cascade, page);
+        if count == 4 {
+            assert!(result.is_ok());
+            assert!(!doc.fragment_tree.limit_exceeded);
+            assert_eq!(
+                doc.nodes[id(&doc, "leaf-3")].unrounded_layout.size.height,
+                1.0
+            );
+        } else {
+            assert!(matches!(
+                result,
+                Err(LayoutError::FragmentLimitExceeded { limit: 64 })
+            ));
+            doc.fragment_tree.limit = 4096;
+            assert!(layout_single_page(&mut doc, &cascade, page).is_ok());
+            assert!(!doc.fragment_tree.limit_exceeded);
+            assert_eq!(doc.fragment_tree.break_flow_work_used, 4096);
+        }
+    }
+    let markup = fanout_markup(4, false).replace("break-before:avoid", "");
+    let (mut doc, cascade) = fixture(&markup);
+    doc.fragment_tree.limit = 32;
+    assert!(layout_single_page(&mut doc, &cascade, raikiri_traits::PageBox::new()).is_ok());
+    assert_eq!(doc.fragment_tree.break_flow_work_used, 0);
+}
+
+#[test]
+fn security_atomic_measurement_work_is_shared_and_resets_on_clear() {
+    let first = fanout_markup(4, true);
+    let second = first
+        .replace("columns", "other-columns")
+        .replace("leaf-", "other-");
+    let (mut doc, cascade) = fixture(&format!("{first}{second}"));
+    apply_computed_to_style(&mut doc, &cascade).unwrap();
+    doc.fragment_tree.limit = 40;
+    let first = id(&doc, "columns");
+    let second = id(&doc, "other-columns");
+    let context =
+        FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[first].multicol.unwrap())
+            .unwrap();
+    let size = Size {
+        width: 100.0,
+        height: 100.0,
+    };
+    layout(&mut doc, first, context, size);
+    assert!(!doc.fragment_tree.limit_exceeded);
+    assert_eq!(doc.fragment_tree.break_flow_work_used, 23);
+    assert_eq!(doc.fragment_tree.fragments.len(), 2);
+    layout(&mut doc, second, context, size);
+    assert!(doc.fragment_tree.limit_exceeded);
+    assert_eq!(doc.fragment_tree.break_flow_work_used, 23);
+    assert_eq!(
+        doc.nodes[id(&doc, "other-3")].unrounded_layout.size.height,
+        0.0
+    );
+    doc.fragment_tree.clear();
+    assert_eq!(doc.fragment_tree.break_flow_work_used, 0);
+    layout(&mut doc, second, context, size);
+    assert!(!doc.fragment_tree.limit_exceeded);
+    assert_eq!(doc.fragment_tree.break_flow_work_used, 23);
+}
+
+#[test]
+fn security_remaining_fragment_capacity_bounds_measurement_work() {
+    let (mut doc, cascade) = fixture(
+        "<div id='first' style='columns:2;gap:0;width:100px;height:100px'><div style='height:900px;break-before:avoid'></div></div><div id='second' style='columns:2;gap:0;width:100px;height:100px'><div><div id='last' style='height:1px;break-before:avoid'></div></div></div>",
+    );
+    apply_computed_to_style(&mut doc, &cascade).unwrap();
+    doc.fragment_tree.limit = 12;
+    let first = id(&doc, "first");
+    let second = id(&doc, "second");
+    let context =
+        FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[first].multicol.unwrap())
+            .unwrap();
+    let size = Size {
+        width: 100.0,
+        height: 100.0,
+    };
+    layout(&mut doc, first, context, size);
+    assert_eq!(doc.fragment_tree.fragments.len(), 10);
+    assert_eq!(doc.fragment_tree.break_flow_work_used, 1);
+    layout(&mut doc, second, context, size);
+    assert!(doc.fragment_tree.limit_exceeded);
+    assert_eq!(
+        doc.nodes[id(&doc, "last")].unrounded_layout.size.height,
+        0.0
+    );
+    assert_eq!(doc.fragment_tree.fragments.len(), 10);
+}
+
+#[test]
+fn security_measurement_budget_charges_repeated_wrapper_visits_at_the_boundary() {
+    for limit in [8, 9] {
+        let (mut doc, cascade) = fixture(
+            "<div id='columns' style='columns:2;gap:0;width:100px;height:100px'><div><div><div id='last' style='height:1px;break-before:avoid'></div></div></div></div>",
+        );
+        apply_computed_to_style(&mut doc, &cascade).unwrap();
+        doc.fragment_tree.limit = limit;
+        let root = id(&doc, "columns");
+        let context =
+            FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[root].multicol.unwrap())
+                .unwrap();
+        layout(
+            &mut doc,
+            root,
+            context,
+            Size {
+                width: 100.0,
+                height: 100.0,
+            },
+        );
+        if limit == 8 {
+            assert!(doc.fragment_tree.limit_exceeded);
+            assert_eq!(
+                doc.nodes[id(&doc, "last")].unrounded_layout.size.height,
+                0.0
+            );
+        } else {
+            assert!(!doc.fragment_tree.limit_exceeded);
+            assert_eq!(doc.fragment_tree.break_flow_work_used, 9);
+            assert_eq!(
+                doc.nodes[id(&doc, "last")].unrounded_layout.size.height,
+                1.0
+            );
+        }
+    }
+}
+
+#[test]
+fn security_measurement_counts_nested_out_of_flow_but_skips_unmeasured_roots() {
+    let leaves = "<div style='height:1px'></div>".repeat(128);
+    let (mut doc, cascade) = fixture(&format!(
+        "<div id='columns' style='columns:2;gap:0;width:100px;height:100px'><div style='height:150px;break-before:avoid'><div style='position:absolute'>{leaves}</div></div></div>",
+    ));
+    apply_computed_to_style(&mut doc, &cascade).unwrap();
+    doc.fragment_tree.limit = 64;
+    let root = id(&doc, "columns");
+    let context =
+        FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[root].multicol.unwrap())
+            .unwrap();
+    assert!(supports(&doc, root, context));
+    assert!(!reserve_measurement_work(&mut doc, root));
+    assert!(doc.fragment_tree.limit_exceeded);
+
+    let (mut doc, cascade) = fixture(&format!(
+        "<div id='columns' style='columns:2;gap:0;width:100px;height:100px'><div style='display:none'>{leaves}</div><div style='position:absolute'>{leaves}</div> <div id='last' style='height:1px;break-before:avoid'></div></div>",
+    ));
+    apply_computed_to_style(&mut doc, &cascade).unwrap();
+    doc.fragment_tree.limit = 8;
+    let root = id(&doc, "columns");
+    assert!(reserve_measurement_work(&mut doc, root));
+    assert_eq!(doc.fragment_tree.break_flow_work_used, 1);
+}
+
+#[test]
+fn security_hidden_children_of_a_measured_atomic_box_consume_work_budget() {
+    let hidden = "<div style='display:none'></div>".repeat(128);
+    let (mut doc, cascade) = fixture(&format!(
+        "<div id='columns' style='columns:2;gap:0;width:100px;height:100px'><div style='height:150px;break-before:avoid'>{hidden}<div style='height:1px'></div></div></div>",
+    ));
+    doc.fragment_tree.limit = 64;
+    assert!(matches!(
+        layout_single_page(&mut doc, &cascade, raikiri_traits::PageBox::new()),
+        Err(LayoutError::FragmentLimitExceeded { limit: 64 })
+    ));
+}
+
+#[test]
+fn security_atomic_child_index_and_whitespace_scans_consume_work_budget() {
+    for leading in [String::new(), " ".repeat(128)] {
+        let children = "<div style='height:1px'></div>".repeat(16);
+        let (mut doc, cascade) = fixture(&format!(
+            "<div style='columns:2;gap:0;width:100px;height:100px'><div style='height:150px;break-before:avoid'>{leading}{children}</div></div>",
+        ));
+        doc.fragment_tree.limit = 64;
+        assert!(matches!(
+            layout_single_page(&mut doc, &cascade, raikiri_traits::PageBox::new()),
+            Err(LayoutError::FragmentLimitExceeded { limit: 64 })
+        ));
+    }
+}
+
 #[test]
 fn unsupported_text_and_parallel_or_hidden_nodes_keep_the_scope_bounded() {
     let (mut doc, root, context) = prepared_flow();
@@ -480,8 +729,48 @@ fn fragment_budget_exhaustion_stops_each_projection_stage() {
             100.0
         );
         assert!(doc.fragment_tree.limit_exceeded);
+        assert!(doc.fragment_tree.fragments.is_empty());
+    }
+    for limit in 4..=6 {
+        let (mut doc, cascade) = fixture(
+            "<div id='columns' style='columns:2;gap:0;width:100px;height:100px'><div><div style='height:350px;break-before:avoid'></div></div></div>",
+        );
+        apply_computed_to_style(&mut doc, &cascade).unwrap();
+        let root = id(&doc, "columns");
+        let context =
+            FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[root].multicol.unwrap())
+                .unwrap();
+        doc.fragment_tree.limit = limit;
+        layout(
+            &mut doc,
+            root,
+            context,
+            Size {
+                width: 100.0,
+                height: 100.0,
+            },
+        );
+        assert!(doc.fragment_tree.limit_exceeded);
         assert_eq!(doc.fragment_tree.fragments.len(), limit);
     }
+    let (mut empty, cascade) =
+        fixture("<div id='columns' style='columns:2;gap:0;width:100px;height:100px'></div>");
+    apply_computed_to_style(&mut empty, &cascade).unwrap();
+    let root = id(&empty, "columns");
+    let context =
+        FragmentationContext::resolve(100.0, Some(100.0), empty.nodes[root].multicol.unwrap())
+            .unwrap();
+    empty.fragment_tree.limit = 0;
+    layout(
+        &mut empty,
+        root,
+        context,
+        Size {
+            width: 100.0,
+            height: 100.0,
+        },
+    );
+    assert!(empty.fragment_tree.limit_exceeded);
     let (mut doc, root, mut context) = prepared_flow();
     context.available_height = None;
     assert_eq!(
@@ -523,7 +812,7 @@ fn collection_stops_and_unwinds_ancestors_when_the_budget_was_exhausted() {
     let wrapper = id(&doc, "wrapper");
     collect(&mut doc, wrapper, context, &mut ancestors, &mut out);
     assert!(ancestors.is_empty());
-    assert_eq!(out.len(), 1);
+    assert!(out.is_empty());
     assert_eq!(
         layout(
             &mut doc,

@@ -384,6 +384,19 @@ and unsupported box structures retain their existing paths. These fifteen
 references and native controls do not establish complete table/flex/grid,
 vertical-writing or general box-decoration fragmentation support.
 
+Before this projection remeasures a subtree, a depth-sized preflight reserves
+estimated node visits and filtered child-index scans, including repeated
+measurement through plain wrappers, atomic and out-of-flow descendants,
+hidden children of measured boxes, and whitespace predicate scans. Hidden
+subtrees and out-of-flow roots that this projection never measures are skipped. The layout
+pass shares a cumulative work counter across these projections and resets it
+on the next pass. The existing fragment limit also supplies a separate upper
+bound for this additional work; retained fragment capacity can lower the
+remaining allowance. Exceeding either bound returns `FragmentLimitExceeded`
+before additional measurement. Thus a constrained high-fanout atomic subtree
+can be rejected even when it would emit few fragments. The ordinary initial
+layout and flows outside this projection retain their existing policy.
+
 ## Contextual background colors
 
 `color` and `background-color` retain `currentcolor` operands until the cascade

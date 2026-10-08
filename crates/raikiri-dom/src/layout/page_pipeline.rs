@@ -123,7 +123,7 @@ fn realign_grid_abspos_static_positions(document: &mut Document, cascade: &Casca
 ///   are not supported yet) or an internal taffy error
 /// - `LayoutError::IfcUnsupported` / `LayoutError::IfcLimitExceeded` — a
 ///   paragraph the inline engine cannot lay out, or one over its limits
-/// - `LayoutError::FragmentLimitExceeded` — aggregate fragment budget exhausted
+/// - `LayoutError::FragmentLimitExceeded` — fragment or break-flow work budget exhausted
 ///
 /// # Current non-goals
 /// - Calling this repeatedly on one Document is safe (per-pass state is

@@ -80,11 +80,12 @@ pub(super) fn supports(tree: &Document, root: usize, context: FragmentationConte
         {
             return false;
         }
+        let descendants_projected = projected && !atomic(tree, id);
         pending.extend(
             node.children
                 .iter()
                 .copied()
-                .map(|child| (child, depth + 1, projected && !atomic(tree, id))),
+                .map(|child| (child, depth + 1, descendants_projected)),
         );
     }
     visible && needs_break_flow
@@ -175,7 +176,8 @@ fn collect(
     ancestors: &mut Vec<usize>,
     out: &mut Vec<FlowBox>,
 ) {
-    if !tree.nodes[id].is_in_document()
+    if tree.fragment_tree.limit_exceeded
+        || !tree.nodes[id].is_in_document()
         || tree.nodes[id].style.display == Display::None
         || !matches!(tree.nodes[id].data, NodeData::Element(_))
         || tree.nodes[id].style.position == TaffyPosition::Absolute
@@ -208,7 +210,6 @@ fn collect(
     let output = tree.compute_child_layout(TaffyNodeId::from(id), input);
     let before = descendant_edge(tree, id, true, 0);
     let after = descendant_edge(tree, id, false, 0);
-    let children = tree.nodes[id].children.clone();
     if atomic(tree, id) {
         out.push(FlowBox {
             node: id,
@@ -233,7 +234,8 @@ fn collect(
     }
     let start = out.len();
     ancestors.push(id);
-    for child in children {
+    for index in 0..tree.nodes[id].children.len() {
+        let child = tree.nodes[id].children[index];
         collect(tree, child, context, ancestors, out);
         if tree.fragment_tree.limit_exceeded {
             break;
@@ -245,6 +247,73 @@ fn collect(
         let last = out.len() - 1;
         out[last].after = propagated(after, out[last].after);
     }
+}
+
+fn reserve_measurement_work(tree: &mut Document, root: usize) -> bool {
+    let available = tree
+        .fragment_tree
+        .limit
+        .saturating_sub(tree.fragment_tree.fragments.len())
+        .min(
+            tree.fragment_tree
+                .limit
+                .saturating_sub(tree.fragment_tree.break_flow_work_used),
+        );
+    let mut remaining = available;
+    // Store one child cursor per ancestor, never an entire fanout. Each
+    // nonatomic collection ancestor remeasures its subtree. Taffy's filtered
+    // child indexing scans a prefix again, including hidden children and
+    // whitespace predicates. Charge those scans before any extra measurement.
+    let mut pending = vec![(root, 0usize, 0usize, true, 0usize)];
+    while let Some((parent, next, measurements, collect_children, scanned)) = pending.last_mut() {
+        let Some(&child) = tree.nodes[*parent].children.get(*next) else {
+            pending.pop();
+            continue;
+        };
+        *next += 1;
+        let node = &tree.nodes[child];
+        let in_document = node.is_in_document();
+        let raw_cost = match &node.data {
+            NodeData::Text(text) if in_document => text.text_content.len().max(1),
+            _ => 1,
+        };
+        *scanned = scanned.saturating_add(raw_cost);
+        let element = matches!(node.data, NodeData::Element(_));
+        let hidden = node.style.display == Display::None;
+        let collecting = *collect_children
+            && in_document
+            && element
+            && !hidden
+            && node.style.position != TaffyPosition::Absolute;
+        let cost = measurements
+            .saturating_mul(raw_cost)
+            .saturating_add(if in_document {
+                measurements.saturating_mul(*scanned)
+            } else {
+                0
+            })
+            .saturating_add(usize::from(collecting));
+        let Some(next_remaining) = remaining.checked_sub(cost) else {
+            tree.fragment_tree.limit_exceeded = true;
+            return false;
+        };
+        remaining = next_remaining;
+        // Hidden nodes are processed by a measured parent, but their own
+        // compute callback returns immediately without visiting descendants.
+        if !in_document || !element || hidden || (*parent == root && !collecting) {
+            continue;
+        }
+        let measurements = measurements.saturating_add(usize::from(collecting));
+        pending.push((
+            child,
+            0,
+            measurements,
+            collecting && !atomic(tree, child),
+            0,
+        ));
+    }
+    tree.fragment_tree.break_flow_work_used += available - remaining;
+    true
 }
 
 fn fragment(
@@ -275,8 +344,12 @@ pub(super) fn layout(
     let Some(height) = context.available_height else {
         return fallback.height;
     };
+    if tree.fragment_tree.limit_exceeded || !reserve_measurement_work(tree, root) {
+        return fallback.height;
+    }
     let mut boxes = Vec::new();
-    for child in tree.nodes[root].children.clone() {
+    for index in 0..tree.nodes[root].children.len() {
+        let child = tree.nodes[root].children[index];
         collect(tree, child, context, &mut Vec::new(), &mut boxes);
         if tree.fragment_tree.limit_exceeded {
             return fallback.height;
