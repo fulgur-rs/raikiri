@@ -9606,6 +9606,7 @@ fn marker_shorthand_direct_application_resets_all_three_inherited_fields() {
             marker.clone(),
             crate::property::CssColor::BLACK,
             crate::property::CssColor::TRANSPARENT,
+            None,
             ComputedLength(20.0)
         ),
         marker
