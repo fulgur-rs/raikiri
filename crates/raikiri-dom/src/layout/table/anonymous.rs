@@ -72,6 +72,7 @@ fn anonymous_cell(
     node.hides_empty_table_cell =
         crate::paint_rules::hides_anonymous_table_cell(doc, cascade, owner, &node.children);
     node.style = taffy::Style::default();
+    node.style.display = taffy::Display::Block;
     node.display = DisplayValue::TableCell;
     node.ifc = None;
     node.cache.clear();

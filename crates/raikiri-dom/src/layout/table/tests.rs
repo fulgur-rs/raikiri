@@ -8,6 +8,73 @@ use taffy::style::{Dimension, LengthPercentage, LengthPercentageAuto};
 use taffy::{AvailableSpace, LayoutInput, Rect, Size, Style};
 
 #[test]
+fn anonymous_blocks_keep_source_coordinates_in_the_table_callback_without_fonts() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let table = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:table;border-spacing:0"),
+    );
+    let group = doc.append_element(
+        Some(table),
+        "div",
+        Style::default(),
+        Some("display:table-row-group"),
+    );
+    let mut children = Vec::new();
+    for _ in 0..2 {
+        let row = doc.append_element(
+            Some(group),
+            "div",
+            Style::default(),
+            Some("display:table-row"),
+        );
+        for _ in 0..2 {
+            children.push(doc.append_element(
+                Some(row),
+                "div",
+                Style::default(),
+                Some("display:block;width:20px;height:10px"),
+            ));
+        }
+    }
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
+    assert!(doc.ifc.is_none());
+    assert_eq!(doc.table_objects.cells.len(), 2);
+    assert!(
+        doc.table_objects
+            .cells
+            .iter()
+            .all(|cell| !cell.node.is_ifc_root())
+    );
+    let output =
+        super::compute_table_layout(&mut doc, taffy::NodeId::from(table), column_probe_input());
+    assert_eq!(
+        output.size,
+        Size {
+            width: 20.0,
+            height: 40.0
+        }
+    );
+    assert!(doc.table_layout_error.is_none());
+    assert!(doc.ifc.is_none());
+    for (index, child) in children.into_iter().enumerate() {
+        assert_eq!(
+            doc.nodes[child].unrounded_layout.location,
+            taffy::Point {
+                x: 0.0,
+                y: (index % 2) as f32 * 10.0
+            }
+        );
+    }
+}
+
+#[test]
 fn spanning_only_cell_floors_the_first_row_at_its_natural_baseline() {
     let mut doc = Document::new();
     crate::layout::test_support::with_ahem(&mut doc);

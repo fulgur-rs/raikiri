@@ -224,7 +224,7 @@ fn anonymous_rows_share_a_rowspan_background_through_contents_groups() {
 }
 
 #[test]
-fn anonymous_block_cells_preserve_placement_without_an_inline_engine() {
+fn anonymous_block_cells_preserve_placement_with_installed_font_bootstrap() {
     let build = || {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
