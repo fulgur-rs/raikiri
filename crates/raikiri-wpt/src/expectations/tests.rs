@@ -798,7 +798,7 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS Overflow inherited Ahem max-width:4ch exact slice (+1).
     // + CSS2 table baseline, bottom caption and empty-cell exact slice (+18).
     // + CSS Color contextual background and color-mix exact references (+5).
-    assert_eq!(set.baseline.entries.len(), 1468);
+    assert_eq!(set.baseline.entries.len(), 1483);
     for id in [
         "css/css-pseudo/first-letter-004.html",
         "css/css-pseudo/first-letter-005.html",
@@ -816,6 +816,13 @@ fn load_from_workspace_root_reads_the_header_only_files() {
             .entries
             .contains("css/css-backgrounds/first-letter-space-not-selected.html")
     );
+
+    // + CSS Break between-box page/column avoidance exact slice (+15).
+    for index in 0..15 {
+        let id = format!("css/css-break/break-between-avoid-{index:03}.html");
+        assert!(set.baseline.entries.contains(id.as_str()));
+    }
+
     assert!(
         set.baseline
             .entries

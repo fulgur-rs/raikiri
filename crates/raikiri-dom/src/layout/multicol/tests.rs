@@ -1476,3 +1476,117 @@ fn max_height_multicol_fragment_does_not_expand_to_float_overflow() {
         fragment.rect.height
     );
 }
+
+fn break_flow_positions(edge: &str, before: bool, height: u32) -> Vec<(f32, f32, f32)> {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let columns = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some(&format!(
+            "display:block;columns:2;column-fill:auto;column-gap:0;width:100px;height:{height}px"
+        )),
+    );
+    let mut boxes = Vec::new();
+    for index in 0..4 {
+        let edge = if index == if before { 3 } else { 2 } {
+            edge
+        } else {
+            ""
+        };
+        boxes.push(doc.append_element(
+            Some(columns),
+            "div",
+            Style::default(),
+            Some(&format!(
+                "display:block;height:50px;break-inside:avoid;{edge}"
+            )),
+        ));
+    }
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    let mut page = raikiri_traits::PageBox::new();
+    page.width = 800.0;
+    page.height = 600.0;
+    super::super::layout_single_page(&mut doc, &cascade, page).unwrap();
+    boxes
+        .into_iter()
+        .map(|id| {
+            let layout = doc.nodes[id].unrounded_layout;
+            (layout.location.x, layout.location.y, layout.size.width)
+        })
+        .collect()
+}
+
+#[test]
+fn before_avoid_moves_a_connected_run_between_columns() {
+    assert_eq!(
+        break_flow_positions("break-before:avoid", true, 160),
+        vec![
+            (0.0, 0.0, 50.0),
+            (0.0, 50.0, 50.0),
+            (50.0, 0.0, 50.0),
+            (50.0, 50.0, 50.0)
+        ]
+    );
+}
+
+#[test]
+fn after_avoid_moves_a_connected_run_between_columns() {
+    assert_eq!(
+        break_flow_positions("break-after:avoid", false, 160),
+        vec![
+            (0.0, 0.0, 50.0),
+            (0.0, 50.0, 50.0),
+            (50.0, 0.0, 50.0),
+            (50.0, 50.0, 50.0)
+        ]
+    );
+}
+
+#[test]
+fn column_specific_avoid_moves_a_connected_run_between_columns() {
+    assert_eq!(
+        break_flow_positions("break-before:avoid-column", true, 160),
+        vec![
+            (0.0, 0.0, 50.0),
+            (0.0, 50.0, 50.0),
+            (50.0, 0.0, 50.0),
+            (50.0, 50.0, 50.0)
+        ]
+    );
+}
+
+#[test]
+fn always_forces_the_innermost_column_without_a_page_break() {
+    assert_eq!(
+        break_flow_positions("break-after:always", false, 250),
+        vec![
+            (0.0, 0.0, 50.0),
+            (0.0, 50.0, 50.0),
+            (0.0, 100.0, 50.0),
+            (50.0, 0.0, 50.0)
+        ]
+    );
+}
+
+#[test]
+fn column_forces_a_boundary_even_when_the_current_column_has_room() {
+    assert_eq!(
+        break_flow_positions("break-after:column", false, 250),
+        vec![
+            (0.0, 0.0, 50.0),
+            (0.0, 50.0, 50.0),
+            (0.0, 100.0, 50.0),
+            (50.0, 0.0, 50.0)
+        ]
+    );
+}

@@ -158,7 +158,8 @@ pub struct LayoutFragment {
     pub line_end: Option<usize>,
 }
 
-// The fixed cap bounds fragment amplification before paint construction.
+// The fixed cap separately bounds retained fragments and additional
+// break-flow measurement work before paint construction.
 const MAX_LAYOUT_FRAGMENTS: usize = 65_536;
 
 /// Per-layout-pass fragment storage.
@@ -167,9 +168,11 @@ pub(crate) struct FragmentTree {
     pub(crate) fragments: Vec<LayoutFragment>,
     /// Break points retained for a later incremental/reflow consumer.
     pub(crate) break_tokens: Vec<BreakToken>,
-    /// Aggregate cap for one layout pass, including all source nodes.
+    /// Separate caps for fragments and estimated break-flow measurement work.
     pub(crate) limit: usize,
-    /// Set when a fragment would exceed `limit`.
+    /// Estimated node visits and child scans reserved by break-flow projections.
+    pub(crate) break_flow_work_used: usize,
+    /// Set when fragment production or break-flow work would exceed `limit`.
     pub(crate) limit_exceeded: bool,
 }
 
@@ -179,6 +182,7 @@ impl Default for FragmentTree {
             fragments: Vec::new(),
             break_tokens: Vec::new(),
             limit: MAX_LAYOUT_FRAGMENTS,
+            break_flow_work_used: 0,
             limit_exceeded: false,
         }
     }
@@ -188,6 +192,7 @@ impl FragmentTree {
     pub(crate) fn clear(&mut self) {
         self.fragments.clear();
         self.break_tokens.clear();
+        self.break_flow_work_used = 0;
         self.limit_exceeded = false;
     }
 

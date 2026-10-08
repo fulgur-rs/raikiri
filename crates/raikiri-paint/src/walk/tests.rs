@@ -1141,6 +1141,38 @@ fn transform_markup_scene(markup: &str) -> Scene {
 }
 
 #[test]
+fn review_atomic_column_descendants_paint_once_after_the_legal_break() {
+    let scene = transform_markup_scene(
+        "<!DOCTYPE html><body style='margin:0;background:white'><div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:30px'></div><div style='height:150px;break-before:avoid'><div style='height:75px;background:red'></div><div style='height:75px;background:green'></div></div></div></body>",
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+        800,
+        600,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 800 + x) * 4..(y * 800 + x) * 4 + 4];
+    assert_eq!(pixel(10, 50), &[255, 255, 255, 255]);
+    assert_eq!(pixel(60, 10), &[255, 0, 0, 255]);
+    assert_eq!(pixel(60, 100), &[0, 128, 0, 255]);
+}
+
+#[test]
+fn review_column_container_background_and_border_use_its_border_box() {
+    let scene = transform_markup_scene(
+        "<!DOCTYPE html><body style='margin:0;background:white'><div style='columns:2;column-fill:auto;gap:0;box-sizing:border-box;width:120px;height:130px;padding:10px;border:5px solid blue;background:red'><div style='height:20px;break-before:avoid'></div></div></body>",
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+        800,
+        600,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 800 + x) * 4..(y * 800 + x) * 4 + 4];
+    assert_eq!(pixel(110, 50), &[255, 0, 0, 255]);
+    assert_eq!(pixel(118, 50), &[0, 0, 255, 255]);
+    assert_eq!(pixel(125, 50), &[255, 255, 255, 255]);
+}
+
+#[test]
 fn relative_block_offsets_are_applied_once_to_boxes_and_descendants() {
     for display in [
         "block",
@@ -4907,4 +4939,444 @@ fn corner_arc_flattening_preserves_endpoints_with_bounded_finite_output() {
         && point.y.is_finite()
         && (0.0..=extent).contains(&point.x)
         && (0.0..=extent).contains(&point.y)));
+}
+
+#[test]
+fn review_positioned_subtree_is_not_replayed_with_each_plain_wrapper_fragment() {
+    let scene = transform_markup_scene(
+        "<!DOCTYPE html><body style='margin:0;background:white'><div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='position:relative'><div style='height:75px;break-before:avoid'></div><div style='height:75px'></div><div style='position:absolute;left:0;top:0;width:10px;height:10px;background:red'></div></div></div></body>",
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+        800,
+        600,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 800 + x) * 4..(y * 800 + x) * 4 + 4];
+    assert_eq!(pixel(5, 5), &[255, 0, 0, 255]);
+    assert_eq!(pixel(55, 5), &[255, 255, 255, 255]);
+}
+
+#[test]
+fn review_float_overflow_does_not_extend_the_plain_wrapper_background() {
+    let scene = transform_markup_scene(
+        "<!DOCTYPE html><body style='margin:0;background:white'><div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='background:red'><div style='float:left;width:10px;height:80px'></div><div style='height:20px;break-before:avoid'></div></div></div></body>",
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+        800,
+        600,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 800 + x) * 4..(y * 800 + x) * 4 + 4];
+    assert_eq!(pixel(40, 10), &[255, 0, 0, 255]);
+    assert_eq!(pixel(40, 50), &[255, 255, 255, 255]);
+}
+
+#[test]
+fn review_replaced_canvas_paints_its_monolithic_content_once() {
+    let mut parsed = raikiri_html::parse(
+        "<!DOCTYPE html><body style='margin:0;background:white'><div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:30px;break-before:avoid'></div><canvas id='canvas' width='20' height='150' style='display:block;width:20px;height:150px'></canvas></div></body>".as_bytes(),
+        &raikiri_html::ParseOptions { extra_stylesheets: &[], network: None, base_url: None },
+    ).unwrap();
+    let canvas = (0..parsed.dom.node_count())
+        .find(|&id| parsed.dom.is_canvas_element(id))
+        .unwrap();
+    parsed
+        .dom
+        .canvas_fill_rect(canvas, 0, 0, 20, 75, [255, 0, 0, 255]);
+    parsed
+        .dom
+        .canvas_fill_rect(canvas, 0, 75, 20, 75, [0, 128, 0, 255]);
+    let cascade = raikiri_html::build_cascaded(&parsed);
+    raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
+    let mut scene = Scene::new();
+    crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4).unwrap();
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+        800,
+        600,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 800 + x) * 4..(y * 800 + x) * 4 + 4];
+    assert_eq!(pixel(10, 50), &[255, 255, 255, 255]);
+    assert_eq!(pixel(55, 10), &[255, 0, 0, 255]);
+    assert_eq!(pixel(55, 100), &[0, 128, 0, 255]);
+    assert_eq!(pixel(105, 10), &[255, 255, 255, 255]);
+}
+
+#[test]
+fn review_rtl_column_colors_follow_the_containers_inline_direction() {
+    let scene = transform_markup_scene(
+        "<!DOCTYPE html><body style='margin:0;background:white'><div style='direction:rtl;columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:60px;background:red'></div><div style='height:60px;break-before:avoid;background:green'></div></div></body>",
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+        800,
+        600,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 800 + x) * 4..(y * 800 + x) * 4 + 4];
+    assert_eq!(pixel(60, 10), &[255, 0, 0, 255]);
+    assert_eq!(pixel(10, 10), &[0, 128, 0, 255]);
+}
+
+#[test]
+fn review_zero_height_forced_boundary_paints_only_in_the_next_column() {
+    let scene = transform_markup_scene(
+        "<!DOCTYPE html><body style='margin:0;background:white'><div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:0;break-after:column'></div><div style='height:20px;background:green'></div></div></body>",
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+        800,
+        600,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 800 + x) * 4..(y * 800 + x) * 4 + 4];
+    assert_eq!(pixel(10, 10), &[255, 255, 255, 255]);
+    assert_eq!(pixel(60, 10), &[0, 128, 0, 255]);
+}
+
+#[test]
+fn review_fragmented_list_item_paints_its_marker_on_the_first_fragment_only() {
+    let scene = transform_markup_scene(
+        "<!DOCTYPE html><body style='margin:0;background:white'><div style='margin-left:40px;columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='display:list-item;list-style:disc outside'><div style='height:60px'></div><div style='height:60px;break-before:avoid'></div></div></div></body>",
+    );
+    let marker_runs = scene
+        .commands
+        .iter()
+        .filter(|c| matches!(c, RenderCommand::GlyphRun(_)))
+        .count();
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+        800,
+        600,
+    );
+    let ink = |start: usize, end: usize| {
+        (0..30)
+            .flat_map(|y| (start..end).map(move |x| (y * 800 + x) * 4))
+            .filter(|&i| rgba[i..i + 4] != [255, 255, 255, 255])
+            .count()
+    };
+    assert!(ink(15, 40) > 0);
+    assert_eq!(ink(65, 90), 0);
+    assert_eq!(marker_runs, 1);
+}
+
+#[test]
+fn review_text_bearing_box_background_follows_its_forced_column_edge() {
+    let scene = transform_markup_scene(
+        "<!DOCTYPE html><body style='margin:0;background:white'><div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:20px'></div><div style='height:40px;break-before:column;background:green;color:white'>X</div></div></body>",
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+        800,
+        600,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 800 + x) * 4..(y * 800 + x) * 4 + 4];
+    assert_eq!(pixel(40, 30), &[255, 255, 255, 255]);
+    assert_eq!(pixel(90, 30), &[0, 128, 0, 255]);
+}
+
+#[test]
+fn review_normal_forced_after_moves_float_ink_to_the_new_column() {
+    let scene = transform_markup_scene(
+        "<!DOCTYPE html><body style='margin:0;background:white'><div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:30px;break-after:column'></div><div style='float:left;width:10px;height:20px;background:green'></div><div style='height:20px'></div></div></body>",
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+        800,
+        600,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 800 + x) * 4..(y * 800 + x) * 4 + 4];
+    assert_eq!(pixel(5, 35), &[255, 255, 255, 255]);
+    assert_eq!(pixel(55, 5), &[0, 128, 0, 255]);
+}
+
+fn review_formatting_context_background_follows_its_forced_edge(display: &str) {
+    let scene = transform_markup_scene(&format!(
+        "<!DOCTYPE html><body style='margin:0;background:white'><div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:20px'></div><div style='display:{display};height:40px;break-before:column;background:green'><div style='width:10px;height:10px'></div></div></div></body>",
+    ));
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+        800,
+        600,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 800 + x) * 4..(y * 800 + x) * 4 + 4];
+    assert_eq!(pixel(40, 30), &[255, 255, 255, 255]);
+    assert_eq!(pixel(90, 30), &[0, 128, 0, 255]);
+}
+
+#[test]
+fn review_flex_root_background_follows_its_forced_column_edge() {
+    review_formatting_context_background_follows_its_forced_edge("flex");
+}
+
+#[test]
+fn review_grid_root_background_follows_its_forced_column_edge() {
+    review_formatting_context_background_follows_its_forced_edge("grid");
+}
+
+#[test]
+fn review_column_content_keeps_the_container_border_and_padding_clear() {
+    let scene = transform_markup_scene(
+        "<!DOCTYPE html><body style='margin:0;background:white'><div style='columns:2;column-fill:auto;gap:0;box-sizing:border-box;width:130px;height:130px;padding:10px;border:5px solid blue'><div style='height:20px;background:green;break-before:avoid'></div></div></body>",
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+        800,
+        600,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 800 + x) * 4..(y * 800 + x) * 4 + 4];
+    assert_eq!(pixel(2, 2), &[0, 0, 255, 255]);
+    assert_eq!(pixel(10, 10), &[255, 255, 255, 255]);
+    assert_eq!(pixel(20, 20), &[0, 128, 0, 255]);
+}
+
+fn review_generated_content_is_not_repeated_across_columns(atomic: bool) {
+    let wrapper_style = if atomic { "height:150px" } else { "" };
+    let children = if atomic {
+        ""
+    } else {
+        "<div style='height:60px'></div><div style='height:60px;break-before:avoid'></div>"
+    };
+    let scene = transform_markup_scene(&format!(
+        "<!DOCTYPE html><style>#wrapper::before{{content:'X';color:red}}#wrapper::after{{content:'Y';color:blue}}</style><body style='margin:0;background:white'><div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div id='wrapper' style='{wrapper_style}'>{children}</div><div style='height:1px;break-before:avoid'></div></div></body>",
+    ));
+    let glyph_runs = scene
+        .commands
+        .iter()
+        .filter(|command| matches!(command, RenderCommand::GlyphRun(_)))
+        .count();
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+        800,
+        600,
+    );
+    let red_ink = |start: usize, end: usize| {
+        (0..30)
+            .flat_map(|y| (start..end).map(move |x| (y * 800 + x) * 4))
+            .filter(|&i| rgba[i] > rgba[i + 1] && rgba[i] > rgba[i + 2])
+            .count()
+    };
+    assert!(red_ink(0, 50) > 0);
+    assert_eq!(red_ink(50, 100), 0);
+    assert_eq!(glyph_runs, 2);
+}
+
+#[test]
+fn review_resumed_wrapper_generated_content_paints_once() {
+    review_generated_content_is_not_repeated_across_columns(false);
+}
+
+#[test]
+fn review_generated_only_atomic_box_keeps_one_pseudo_subtree() {
+    review_generated_content_is_not_repeated_across_columns(true);
+}
+
+#[test]
+fn review_list_marker_preserves_unrelated_ancestor_fragment_state() {
+    let scene = transform_markup_scene(
+        "<!DOCTYPE html><body style='margin:0;background:white'><div style='margin-left:40px;columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:20px'></div><div style='height:60px;break-before:column'><div style='display:list-item;list-style:disc outside;height:20px'></div></div></div></body>",
+    );
+    let marker_runs = scene
+        .commands
+        .iter()
+        .filter(|c| matches!(c, RenderCommand::GlyphRun(_)))
+        .count();
+    assert_eq!(marker_runs, 1);
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+        800,
+        600,
+    );
+    let ink = |start: usize, end: usize| {
+        (0..30)
+            .flat_map(|y| (start..end).map(move |x| (y * 800 + x) * 4))
+            .filter(|&i| rgba[i..i + 4] != [255, 255, 255, 255])
+            .count()
+    };
+    assert_eq!(ink(15, 40), 0);
+    assert!(ink(65, 90) > 0);
+}
+
+#[test]
+fn review_float_text_ink_keeps_joint_exclusion_when_a_break_constraint_is_added() {
+    let mut baseline_ink = None;
+    for edge in ["", "break-before:avoid"] {
+        let markup = format!(
+            "<!DOCTYPE html><body style='margin:0;background:white'><div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='float:left;width:20px;height:40px;background:green'></div><div style='height:40px;font-family:Ahem;font-size:20px;line-height:20px;color:red'>M M</div><div style='height:1px;{edge}'></div></div></body>"
+        );
+        let mut parsed = raikiri_html::parse(
+            markup.as_bytes(),
+            &raikiri_html::ParseOptions {
+                extra_stylesheets: &[],
+                network: None,
+                base_url: None,
+            },
+        )
+        .unwrap();
+        let fonts = raikiri_dom::build_wpt_font_collection(std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../raikiri-dom/tests/data/text-autospace"
+        )))
+        .unwrap();
+        parsed
+            .dom
+            .set_font_collection_with_limits(fonts, shodo::limits::Limits::default());
+        let cascade = raikiri_html::build_cascaded(&parsed);
+        raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
+        let mut scene = Scene::new();
+        crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4).unwrap();
+        let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+            |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+            800,
+            600,
+        );
+        let red_over_float = (2..18)
+            .flat_map(|y| (2..18).map(move |x| (y * 800 + x) * 4))
+            .filter(|&i| rgba[i] > rgba[i + 1] && rgba[i] > rgba[i + 2])
+            .count();
+        let all_red = (0..40)
+            .flat_map(|y| (0..100).map(move |x| (y * 800 + x) * 4))
+            .filter(|&i| rgba[i] > rgba[i + 1] && rgba[i] > rgba[i + 2])
+            .count();
+        assert!(all_red > 0);
+        if let Some(expected) = baseline_ink {
+            assert_eq!(all_red, expected);
+        } else {
+            baseline_ink = Some(all_red);
+        }
+        assert_eq!(red_over_float, 0, "{edge}");
+    }
+}
+
+#[test]
+fn review_full_width_float_keeps_displaced_text_ink_when_avoidance_is_added() {
+    let mut baseline_ink = None;
+    for edge in ["", "break-before:avoid"] {
+        let markup = format!(
+            "<!DOCTYPE html><body style='margin:0;background:white'><div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='float:left;width:100px;height:40px;background:green'></div><div style='height:60px;font-family:Ahem;font-size:20px;line-height:20px;color:red'>M M</div><div style='height:1px;{edge}'></div></div></body>"
+        );
+        let mut parsed = raikiri_html::parse(
+            markup.as_bytes(),
+            &raikiri_html::ParseOptions {
+                extra_stylesheets: &[],
+                network: None,
+                base_url: None,
+            },
+        )
+        .unwrap();
+        let fonts = raikiri_dom::build_wpt_font_collection(std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../raikiri-dom/tests/data/text-autospace"
+        )))
+        .unwrap();
+        parsed
+            .dom
+            .set_font_collection_with_limits(fonts, shodo::limits::Limits::default());
+        let cascade = raikiri_html::build_cascaded(&parsed);
+        raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
+        let mut scene = Scene::new();
+        crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4).unwrap();
+        let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+            |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+            800,
+            600,
+        );
+        let red_over_float = (2..18)
+            .flat_map(|y| (2..18).map(move |x| (y * 800 + x) * 4))
+            .filter(|&i| rgba[i] > rgba[i + 1] && rgba[i] > rgba[i + 2])
+            .count();
+        let all_red = (0..100)
+            .flat_map(|y| (0..100).map(move |x| (y * 800 + x) * 4))
+            .filter(|&i| rgba[i] > rgba[i + 1] && rgba[i] > rgba[i + 2])
+            .count();
+        assert!(all_red > 0);
+        if let Some(expected) = baseline_ink {
+            assert_eq!(all_red, expected);
+        } else {
+            baseline_ink = Some(all_red);
+        }
+        assert_eq!(red_over_float, 0, "{edge}");
+    }
+}
+
+fn review_body_page_buffers(body_style: &str, content: &str) -> Vec<Vec<u8>> {
+    let markup = format!(
+        "<!DOCTYPE html><body style='margin:0;background:white;{body_style}'>{content}</body>"
+    );
+    let mut parsed = raikiri_html::parse(
+        markup.as_bytes(),
+        &raikiri_html::ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        },
+    )
+    .unwrap();
+    let cascade = raikiri_html::build_cascaded(&parsed);
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let pages = raikiri_dom::layout_pages(&mut parsed.dom, &cascade, page).unwrap();
+    assert_eq!(pages.len(), 2);
+    let mut budget = crate::CounterSnapshotBudget::default();
+    (0..2)
+        .map(|index| {
+            let mut scene = Scene::new();
+            crate::paint_single_page_with_origin_and_page(
+                &mut scene,
+                &parsed.dom,
+                &cascade,
+                page,
+                index as f32 * 100.0,
+                index,
+                2,
+                index == 1,
+                &mut budget,
+            )
+            .unwrap();
+            anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+                |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+                100,
+                100,
+            )
+        })
+        .collect()
+}
+
+fn review_fitting_page_pair_colors(body_style: &str, content: &str) {
+    let rgba = review_body_page_buffers(body_style, content);
+    let pixel =
+        |page: usize, x: usize, y: usize| &rgba[page][(y * 100 + x) * 4..(y * 100 + x) * 4 + 4];
+    assert_eq!(pixel(0, 10, 70), &[255, 255, 255, 255]);
+    assert_eq!(pixel(1, 10, 10), &[0, 128, 0, 255]);
+    assert_eq!(pixel(1, 10, 40), &[255, 0, 0, 255]);
+}
+
+#[test]
+fn review_ignored_flex_float_page_pair_keeps_both_colors_together() {
+    review_fitting_page_pair_colors(
+        "display:flex;flex-direction:column",
+        "<div style='flex-shrink:0;height:60px'></div><div style='flex-shrink:0;float:left;height:30px;background:green;break-after:avoid-page'></div><div style='flex-shrink:0;height:30px;background:red;break-inside:avoid'></div>",
+    );
+}
+
+#[test]
+fn review_contents_page_pair_keeps_both_colors_together() {
+    review_fitting_page_pair_colors(
+        "",
+        "<div style='height:60px'></div><div style='display:contents'><div style='height:30px;background:green;break-inside:avoid'></div><div style='height:30px;background:red;break-before:avoid;break-inside:avoid'></div></div>",
+    );
+}
+
+#[test]
+fn review_plain_child_page_edge_keeps_both_parent_colors_together() {
+    for (after, before) in [
+        ("break-after:avoid-page", ""),
+        ("", "break-before:avoid-page"),
+    ] {
+        review_fitting_page_pair_colors(
+            "",
+            &format!(
+                "<div style='height:60px'></div><div style='background:green;break-inside:avoid'><div style='height:30px;{after}'></div></div><div style='background:red;break-inside:avoid'><div style='height:30px;{before}'></div></div>"
+            ),
+        );
+    }
 }
