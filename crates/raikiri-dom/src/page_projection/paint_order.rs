@@ -2,7 +2,7 @@
 //! built-in painter draws it.
 
 use super::records::{PageFragmentItem, PageFragmentKind};
-use crate::{Document, Fragment, Node, paint_rules};
+use crate::{Document, Fragment, Node, PositionedGlyphRun, TextLineId, paint_rules};
 use raikiri_style::property::{ColumnCountValue, OverflowValue};
 use raikiri_style::{CascadeResult, ComputedValues};
 use raikiri_traits::{NodeId, NodeKind, PaintClip, PaintRect};
@@ -42,6 +42,9 @@ pub enum PaintEvent<'a> {
     Box(Fragment<'a>),
     /// The lines of a text node.
     Text(Fragment<'a>),
+    /// One paragraph line from the supplied positioned glyph runs, including
+    /// generated content and ellipses. Emitted once for all runs of the line.
+    TextLine(TextLineId),
     /// The content of a replaced element (an image, an inline SVG or a
     /// canvas). Follows the element's [`PaintEvent::Box`].
     Replaced(Fragment<'a>),
@@ -86,6 +89,39 @@ impl Document {
         cascade: &'a CascadeResult,
         page_index: u32,
         _page_name: Option<&str>,
+    ) -> Vec<PaintEvent<'a>> {
+        self.page_paint_order_impl(cascade, page_index, None)
+    }
+
+    /// Paint order with one text event per line in the supplied page runs.
+    ///
+    /// The runs must come from this document and page. Their line identities
+    /// replace text fragments without reshaping or extracting text again.
+    #[doc(hidden)]
+    pub fn page_paint_order_for_text_runs<'a>(
+        &'a self,
+        cascade: &'a CascadeResult,
+        page_index: u32,
+        runs: &[PositionedGlyphRun<'a>],
+    ) -> Vec<PaintEvent<'a>> {
+        let mut lines: HashMap<NodeId, Vec<TextLineId>> = HashMap::new();
+        let mut seen = HashSet::new();
+        for run in runs {
+            if seen.insert(run.line) {
+                lines.entry(run.line.root).or_default().push(run.line);
+            }
+        }
+        for paragraph in lines.values_mut() {
+            paragraph.sort_unstable_by_key(|line| line.index);
+        }
+        self.page_paint_order_impl(cascade, page_index, Some(&lines))
+    }
+
+    fn page_paint_order_impl<'a>(
+        &'a self,
+        cascade: &'a CascadeResult,
+        page_index: u32,
+        lines: Option<&HashMap<NodeId, Vec<TextLineId>>>,
     ) -> Vec<PaintEvent<'a>> {
         let Some(page) = self
             .page_projection
@@ -181,7 +217,7 @@ impl Document {
                         stack.push(Frame::PopClip);
                     }
                     if node.is_ifc_root() {
-                        push_paragraph(self, &items, node_id, &mut events);
+                        push_paragraph(self, &items, node_id, lines, &mut events);
                     }
                     let mut children = if node.is_inline_svg_root() {
                         Vec::new()
@@ -200,7 +236,7 @@ impl Document {
                 // paragraph of its own. Any other text node outside a
                 // paragraph has no lines to draw.
                 NodeKind::Text if node.is_ifc_root() => {
-                    push_paragraph(self, &items, node_id, &mut events);
+                    push_paragraph(self, &items, node_id, lines, &mut events);
                 }
                 _ => {} // cov:ignore: comments and other node kinds are out of the document
             }
@@ -271,6 +307,7 @@ fn push_paragraph<'a>(
     document: &'a Document,
     items: &PageItems<'a>,
     root: usize,
+    lines: Option<&HashMap<NodeId, Vec<TextLineId>>>,
     events: &mut Vec<PaintEvent<'a>>,
 ) {
     let Some(root_node) = document.get_node(root) else {
@@ -287,8 +324,24 @@ fn push_paragraph<'a>(
             }
         }
     };
+    let push_lines = |events: &mut Vec<PaintEvent<'a>>| {
+        if let Some(lines) = lines {
+            events.extend(
+                lines
+                    .get(&NodeId::new(root as u64))
+                    .into_iter()
+                    .flatten()
+                    .copied()
+                    .map(PaintEvent::TextLine),
+            );
+        }
+    };
     if root_node.kind() == NodeKind::Text {
-        push_kind(events, root, PageFragmentKind::Text);
+        if lines.is_some() {
+            push_lines(events);
+        } else {
+            push_kind(events, root, PageFragmentKind::Text);
+        }
         return;
     }
     let beside_lines: HashSet<usize> = root_node.ifc_boxes().into_iter().collect();
@@ -317,8 +370,12 @@ fn push_paragraph<'a>(
     for node_id in elements {
         push_kind(events, node_id, PageFragmentKind::Box);
     }
-    for node_id in texts {
-        push_kind(events, node_id, PageFragmentKind::Text);
+    if lines.is_some() {
+        push_lines(events);
+    } else {
+        for node_id in texts {
+            push_kind(events, node_id, PageFragmentKind::Text);
+        }
     }
 }
 

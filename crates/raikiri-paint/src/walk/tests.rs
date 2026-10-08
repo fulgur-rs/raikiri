@@ -477,31 +477,97 @@ fn paint_list_marker_emits_text_and_honors_display_none() {
 
 #[test]
 fn border_radius_normalization_scales_adjacent_edges() {
-    let normalized =
-        normalize_border_radii(100.0, 100.0, RoundedRectRadii::new(80.0, 80.0, 80.0, 80.0));
-    assert_eq!(normalized.top_left, 50.0);
-    assert_eq!(normalized.top_right, 50.0);
-    assert_eq!(normalized.bottom_right, 50.0);
-    assert_eq!(normalized.bottom_left, 50.0);
     assert_eq!(
-        used_border_radius(ComputedLengthPercentage::Percent(25.0), 200.0),
-        50.0
+        used_border_radii(
+            &ComputedBorderRadius::all(ComputedLength(80.0)),
+            100.0,
+            100.0
+        ),
+        [[50.0, 50.0]; 4]
     );
 }
 
 #[test]
-fn border_radius_paint_keeps_lengths_but_defers_percentages() {
-    let radius = ComputedBorderRadius::corners(
-        ComputedLengthPercentage::Px(12.0),
-        ComputedLengthPercentage::Percent(25.0),
-        ComputedLengthPercentage::Px(4.0),
-        ComputedLengthPercentage::Percent(50.0),
+fn elliptical_background_paths_keep_both_axes_and_independent_insets() {
+    let radius = ComputedBorderRadius::elliptical(
+        [ComputedLengthPercentage::Px(30.0); 4],
+        [ComputedLengthPercentage::Px(15.0); 4],
     );
-    let used = paintable_border_radius(&radius, true);
-    assert_eq!(used.top_left, ComputedLengthPercentage::Px(12.0));
-    assert_eq!(used.top_right, ComputedLengthPercentage::Px(0.0));
-    assert_eq!(used.bottom_right, ComputedLengthPercentage::Px(4.0));
-    assert_eq!(used.bottom_left, ComputedLengthPercentage::Px(0.0));
+    let path = rounded_background_path(
+        0.0,
+        0.0,
+        100.0,
+        50.0,
+        &radius,
+        (0.0, 0.0, 0.0, 0.0),
+        (100.0, 50.0),
+    )
+    .unwrap();
+    assert_eq!(
+        path.elements()[0],
+        kurbo::PathEl::MoveTo(Point::new(0.0, 15.0))
+    );
+    let inset = rounded_background_path(
+        4.0,
+        2.0,
+        94.0,
+        47.0,
+        &radius,
+        (4.0, 2.0, 6.0, 3.0),
+        (100.0, 50.0),
+    )
+    .unwrap();
+    assert_eq!(
+        inset.elements()[0],
+        kurbo::PathEl::MoveTo(Point::new(4.0, 15.0))
+    );
+    assert_eq!(
+        kurbo::Shape::bounding_box(&inset),
+        Rect::new(4.0, 2.0, 94.0, 47.0)
+    );
+}
+
+#[test]
+fn elliptical_background_raster_distinguishes_the_vertical_axis() {
+    let radius = ComputedBorderRadius::elliptical(
+        [ComputedLengthPercentage::Px(30.0); 4],
+        [ComputedLengthPercentage::Px(15.0); 4],
+    );
+    let mut scene = Scene::new();
+    fill_rounded_background(
+        &mut scene,
+        Color::from_rgba8(255, 0, 0, 255),
+        0.0,
+        0.0,
+        100.0,
+        50.0,
+        &radius,
+        (0.0, 0.0, 0.0, 0.0),
+        (100.0, 50.0),
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        100,
+        50,
+    );
+    assert_eq!(
+        &rgba[(8 * 100 + 8) * 4..(8 * 100 + 8) * 4 + 4],
+        &[255, 0, 0, 255]
+    );
+    assert_eq!(rgba[(2 * 100 + 8) * 4 + 3], 0);
+}
+
+#[test]
+fn border_radius_paint_keeps_both_axes_and_percentages() {
+    let radius = ComputedBorderRadius::elliptical(
+        [ComputedLengthPercentage::Px(12.0); 4],
+        [ComputedLengthPercentage::Percent(25.0); 4],
+    );
+    assert_eq!(paintable_border_radius(&radius, true), radius);
+    assert_eq!(
+        paintable_border_radius(&radius, false).used(100.0, 50.0),
+        [[0.0, 0.0]; 4]
+    );
 }
 
 #[test]
@@ -1958,7 +2024,7 @@ fn background_rounded_corners_clip_url_images() {
             50.0,
             &ComputedBorderRadius::all(ComputedLength(0.0)),
             (0.0, 0.0, 0.0, 0.0),
-            100.0,
+            (100.0, 50.0),
         )
         .is_none()
     );
@@ -1970,7 +2036,7 @@ fn background_rounded_corners_clip_url_images() {
         50.0,
         &ComputedBorderRadius::all(ComputedLength(12.0)),
         (0.0, 0.0, 0.0, 0.0),
-        100.0,
+        (100.0, 50.0),
     )
     .expect("nonzero radius must produce a rounded clip");
     let bounds = kurbo::Shape::bounding_box(&rounded);
@@ -2270,7 +2336,7 @@ fn background_rounded_clip_pixel_corners() {
         painting.y1,
         &ComputedBorderRadius::all(ComputedLength(8.0)),
         (0.0, 0.0, 0.0, 0.0),
-        20.0,
+        (20.0, 20.0),
     )
     .expect("rounded clip must exist");
     let mut scene = Scene::new();
@@ -2960,6 +3026,48 @@ fn overflow_hidden_preserves_descendant_ink_in_padding() {
             &[255, 0, 0, 255],
             "border at ({x}, {y})"
         );
+    }
+}
+
+#[test]
+fn elliptical_overflow_clips_descendants_without_an_own_background() {
+    for (radius, inside) in [("30px / 15px", (8, 8)), ("50% / 25%", (25, 8))] {
+        let scene = transform_markup_scene(&format!(
+            "<body style='margin:0'><div style='position:absolute;left:0;top:0;width:100px;height:50px;overflow:hidden;border-radius:{radius}'><div style='width:100px;height:50px;background:green'></div></div></body>"
+        ));
+        let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+            |out| out.append_scene(scene, Affine::IDENTITY),
+            100,
+            50,
+        );
+        let outside = (2 * 100 + 8) * 4;
+        assert_eq!(
+            &rgba[outside..outside + 4],
+            &[255, 255, 255, 255],
+            "{radius}"
+        );
+        let offset = (inside.1 * 100 + inside.0) * 4;
+        assert_eq!(&rgba[offset..offset + 4], &[0, 128, 0, 255], "{radius}");
+    }
+}
+
+#[test]
+fn elliptical_border_ring_has_independent_outer_and_inner_axes() {
+    let scene = transform_markup_scene(
+        "<body style='margin:0'><div style='position:absolute;left:0;top:0;box-sizing:border-box;width:100px;height:50px;border:4px solid red;border-radius:30px / 15px'></div></body>",
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        100,
+        50,
+    );
+    assert_eq!(
+        &rgba[(4 * 100 + 15) * 4..(4 * 100 + 15) * 4 + 4],
+        &[255, 0, 0, 255]
+    );
+    for (x, y) in [(8, 2), (30, 15)] {
+        let offset = (y * 100 + x) * 4;
+        assert_eq!(&rgba[offset..offset + 4], &[255, 255, 255, 255]);
     }
 }
 
@@ -3700,7 +3808,7 @@ fn conic_paint_covers_empty_square_and_rounded_boxes() {
         painting,
         &square_radius,
         (0.0, 0.0, 0.0, 0.0),
-        200.0,
+        (200.0, 200.0),
         current,
     );
     assert!(!scene.commands.is_empty());
@@ -3712,7 +3820,7 @@ fn conic_paint_covers_empty_square_and_rounded_boxes() {
         painting,
         &square_radius,
         (0.0, 0.0, 0.0, 0.0),
-        200.0,
+        (200.0, 200.0),
         current,
     );
     assert_eq!(scene.commands.len(), before);
@@ -3723,7 +3831,7 @@ fn conic_paint_covers_empty_square_and_rounded_boxes() {
         painting,
         &round_radius,
         (0.0, 0.0, 0.0, 0.0),
-        200.0,
+        (200.0, 200.0),
         current,
     );
     assert!(scene.commands.len() > before);
@@ -4477,3 +4585,326 @@ fn margin_box_layer_precedence_reaches_the_paint_consumer() {
 }
 
 mod css_wide_margin_tests;
+
+#[test]
+fn large_inset_corner_background_is_cropped_not_rescaled() {
+    for radius in ["100px 0 0 0", "100px 0 0 0 / 80px 0 0 0"] {
+        let scene = transform_markup_scene(&format!(
+            "<body style='margin:0'><div style='position:absolute;left:0;top:0;box-sizing:border-box;width:100px;height:100px;padding:20px;background:red;background-clip:content-box;border-radius:{radius}'></div></body>"
+        ));
+        let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+            |out| out.append_scene(scene, Affine::IDENTITY),
+            100,
+            100,
+        );
+        let offset = (21 * 100 + 85) * 4;
+        assert_eq!(
+            &rgba[offset..offset + 4],
+            &[255, 255, 255, 255],
+            "{radius}: outside content edge"
+        );
+        let inside = (70 * 100 + 70) * 4;
+        assert_eq!(
+            &rgba[inside..inside + 4],
+            &[255, 0, 0, 255],
+            "{radius}: missing inside curve"
+        );
+        if radius == "100px 0 0 0" {
+            let outside_curve = (30 * 100 + 50) * 4;
+            assert_eq!(
+                &rgba[outside_curve..outside_curve + 4],
+                &[255, 255, 255, 255],
+                "curve was rescaled instead of cropped"
+            );
+        }
+    }
+}
+
+#[test]
+fn large_inset_corner_border_has_no_hole_outside_padding_edge() {
+    let scene = transform_markup_scene(
+        "<body style='margin:0'><div style='position:absolute;left:0;top:0;box-sizing:border-box;width:100px;height:100px;border:20px solid red;border-radius:100px 0 0 0'></div></body>",
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        100,
+        100,
+    );
+    let border = (21 * 100 + 85) * 4;
+    assert_eq!(&rgba[border..border + 4], &[255, 0, 0, 255]);
+    let padding = (70 * 100 + 70) * 4;
+    assert_eq!(&rgba[padding..padding + 4], &[255, 255, 255, 255]);
+}
+
+#[test]
+fn one_visible_overflow_axis_keeps_corner_content() {
+    for axes in [
+        "overflow-x:clip;overflow-y:visible",
+        "overflow-x:visible;overflow-y:clip",
+    ] {
+        let scene = transform_markup_scene(&format!(
+            "<body style='margin:0'><div style='position:absolute;left:0;top:0;width:100px;height:50px;{axes};border-radius:30px / 15px'><div style='width:100px;height:50px;background:green'></div></div></body>"
+        ));
+        let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+            |out| out.append_scene(scene, Affine::IDENTITY),
+            100,
+            50,
+        );
+        let corner = (2 * 100 + 8) * 4;
+        assert_eq!(&rgba[corner..corner + 4], &[0, 128, 0, 255], "{axes}");
+    }
+}
+
+#[test]
+fn cropped_corner_paths_stay_inside_each_inner_edge() {
+    use kurbo::Shape;
+    for vertical_radius in [80.0, 100.0] {
+        for corner in 0..4 {
+            let mut horizontal = [ComputedLengthPercentage::Px(0.0); 4];
+            let mut vertical = horizontal;
+            horizontal[corner] = ComputedLengthPercentage::Px(100.0);
+            vertical[corner] = ComputedLengthPercentage::Px(vertical_radius);
+            let radius = ComputedBorderRadius::elliptical(horizontal, vertical);
+            let path = rounded_background_path(
+                20.0,
+                20.0,
+                80.0,
+                80.0,
+                &radius,
+                (20.0, 20.0, 20.0, 20.0),
+                (100.0, 100.0),
+            )
+            .unwrap();
+            let bounds = path.bounding_box();
+            assert!(
+                bounds.x0 >= 20.0 - 1e-8
+                    && bounds.y0 >= 20.0 - 1e-8
+                    && bounds.x1 <= 80.0 + 1e-8
+                    && bounds.y1 <= 80.0 + 1e-8,
+                "corner {corner}: {bounds:?}"
+            );
+            assert_ne!(path.winding(Point::new(50.0, 50.0)), 0);
+        }
+    }
+    let radius = ComputedBorderRadius::elliptical(
+        [
+            ComputedLengthPercentage::Px(100.0),
+            ComputedLengthPercentage::Px(0.0),
+            ComputedLengthPercentage::Px(0.0),
+            ComputedLengthPercentage::Px(0.0),
+        ],
+        [
+            ComputedLengthPercentage::Px(100.0),
+            ComputedLengthPercentage::Px(0.0),
+            ComputedLengthPercentage::Px(0.0),
+            ComputedLengthPercentage::Px(0.0),
+        ],
+    );
+    let empty = rounded_background_path(
+        60.0,
+        60.0,
+        70.0,
+        70.0,
+        &radius,
+        (60.0, 60.0, 30.0, 30.0),
+        (100.0, 100.0),
+    )
+    .unwrap();
+    assert!(empty.elements().is_empty());
+    assert!(
+        rounded_rect_path(0.0, 0.0, 0.0, 10.0, [[5.0, 5.0]; 4])
+            .elements()
+            .is_empty()
+    );
+}
+
+#[test]
+fn crossing_inner_corner_paths_keep_only_the_common_region() {
+    use kurbo::Shape;
+    for (pair, outside) in [
+        ([0, 2], Point::new(78.0, 21.0)),
+        ([1, 3], Point::new(21.0, 21.0)),
+    ] {
+        let mut values = [ComputedLengthPercentage::Px(0.0); 4];
+        for corner in pair {
+            values[corner] = ComputedLengthPercentage::Px(100.0);
+        }
+        let radius = ComputedBorderRadius::elliptical(values, values);
+        let path = rounded_background_path(
+            20.0,
+            20.0,
+            80.0,
+            80.0,
+            &radius,
+            (20.0, 20.0, 20.0, 20.0),
+            (100.0, 100.0),
+        )
+        .unwrap();
+        assert_eq!(path.winding(outside), 0);
+        assert_ne!(path.winding(Point::new(50.0, 50.0)), 0);
+        let empty = rounded_background_path(
+            40.0,
+            40.0,
+            60.0,
+            60.0,
+            &radius,
+            (40.0, 40.0, 40.0, 40.0),
+            (100.0, 100.0),
+        )
+        .unwrap();
+        assert!(empty.elements().is_empty());
+    }
+}
+
+const CROSSING_RADII: [&str; 2] = [
+    "border-top-left-radius:100px;border-bottom-right-radius:100px",
+    "border-top-right-radius:100px;border-bottom-left-radius:100px",
+];
+
+#[test]
+fn large_crossing_inner_ellipses_stay_inside_the_outer_outline() {
+    use kurbo::{PathEl, Shape};
+    for (pair, outside) in [
+        ([0, 2], Point::new(567.5, 6676.5)),
+        ([1, 3], Point::new(9432.5, 6676.5)),
+    ] {
+        let mut radii = [[0.0, 0.0]; 4];
+        for index in pair {
+            radii[index] = [10000.0, 10000.0];
+        }
+        let outer = rounded_rect_path(0.0, 0.0, 10000.0, 10000.0, radii);
+        assert_eq!(outer.winding(outside), 0);
+        let inner = rounded_rect_path(
+            1.0,
+            1.0,
+            9999.0,
+            9999.0,
+            inset_border_radii(radii, (1.0, 1.0, 1.0, 1.0)),
+        );
+        assert_eq!(inner.winding(outside), 0);
+        assert_ne!(inner.winding(Point::new(5000.0, 5000.0)), 0);
+        for element in inner.elements() {
+            if let PathEl::MoveTo(point) | PathEl::LineTo(point) = element {
+                assert_ne!(outer.winding(*point), 0);
+            }
+        }
+    }
+}
+
+#[test]
+fn large_crossing_ellipse_border_does_not_paint_outside_its_box_shape() {
+    for (radii, left) in [
+        (
+            "border-top-left-radius:10000px;border-bottom-right-radius:10000px",
+            -520,
+        ),
+        (
+            "border-top-right-radius:10000px;border-bottom-left-radius:10000px",
+            -9385,
+        ),
+    ] {
+        let scene = transform_markup_scene(&format!(
+            "<body style='margin:0'><div style='position:absolute;left:{left}px;top:-6640px;box-sizing:border-box;width:10000px;height:10000px;border:1px solid red;{radii}'></div></body>"
+        ));
+        let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+            |out| out.append_scene(scene, Affine::IDENTITY),
+            100,
+            100,
+        );
+        let offset = (36 * 100 + 47) * 4;
+        assert_eq!(&rgba[offset..offset + 4], &[255, 255, 255, 255]);
+        assert!(
+            rgba.chunks_exact(4)
+                .any(|pixel| u16::from(pixel[0]) > u16::from(pixel[1]) + 30)
+        );
+    }
+}
+
+fn crossing_corner_pixels(style: &str, content: &str) -> Vec<u8> {
+    let scene = transform_markup_scene(&format!(
+        "<body style='margin:0'><div style='position:absolute;left:0;top:0;box-sizing:border-box;width:100px;height:100px;{style}'>{content}</div></body>"
+    ));
+    anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        100,
+        100,
+    )
+}
+
+#[test]
+fn crossing_inner_corner_backgrounds_do_not_paint_reversed_islands() {
+    for (radii, outside) in CROSSING_RADII.into_iter().zip([(78, 21), (21, 21)]) {
+        let partial = crossing_corner_pixels(
+            &format!(
+                "{radii};border:20px solid transparent;background:red;background-clip:padding-box"
+            ),
+            "",
+        );
+        let offset = (outside.1 * 100 + outside.0) * 4;
+        assert_eq!(&partial[offset..offset + 4], &[255, 255, 255, 255]);
+        let center = (50 * 100 + 50) * 4;
+        assert_eq!(&partial[center..center + 4], &[255, 0, 0, 255]);
+        let empty = crossing_corner_pixels(
+            &format!(
+                "{radii};border:40px solid transparent;background:red;background-clip:padding-box"
+            ),
+            "",
+        );
+        assert_eq!(&empty[center..center + 4], &[255, 255, 255, 255]);
+    }
+}
+
+#[test]
+fn crossing_inner_corner_empty_ring_retains_the_outer_border() {
+    for radii in CROSSING_RADII {
+        let rgba = crossing_corner_pixels(
+            &format!("{radii};border:40px solid red;background:blue;background-clip:padding-box"),
+            "",
+        );
+        let center = (50 * 100 + 50) * 4;
+        assert_eq!(&rgba[center..center + 4], &[255, 0, 0, 255]);
+    }
+}
+
+#[test]
+fn crossing_inner_corner_empty_overflow_clip_hides_descendants() {
+    for radii in CROSSING_RADII {
+        let rgba = crossing_corner_pixels(
+            &format!("{radii};border:40px solid transparent;overflow:hidden"),
+            "<div style='width:100px;height:100px;background:red'></div>",
+        );
+        let center = (50 * 100 + 50) * 4;
+        assert_eq!(&rgba[center..center + 4], &[255, 255, 255, 255]);
+    }
+}
+
+#[test]
+fn corner_arc_flattening_preserves_endpoints_with_bounded_finite_output() {
+    let collapsed = Point::new(10.0, 20.0);
+    let mut points = vec![collapsed];
+    flatten_corner_arc(
+        Arc::new(collapsed, Vec2::ZERO, 0.0, FRAC_PI_2, 0.0),
+        FRAC_PI_2,
+        0,
+        &mut points,
+    );
+    assert!(points.iter().all(|point| *point == collapsed));
+    let extent = 1e18;
+    let arc = Arc::new(
+        Point::ORIGIN,
+        Vec2::new(extent, extent),
+        0.0,
+        FRAC_PI_2,
+        0.0,
+    );
+    let mut points = vec![Point::new(extent, 0.0)];
+    flatten_corner_arc(arc, FRAC_PI_2, 0, &mut points);
+    assert!(points.len() <= 1025);
+    assert_eq!(points.first(), Some(&Point::new(extent, 0.0)));
+    let (sin, cos) = FRAC_PI_2.sin_cos();
+    assert_eq!(points.last(), Some(&Point::new(extent * cos, extent * sin)));
+    assert!(points.iter().all(|point| point.x.is_finite()
+        && point.y.is_finite()
+        && (0.0..=extent).contains(&point.x)
+        && (0.0..=extent).contains(&point.y)));
+}

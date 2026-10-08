@@ -6774,6 +6774,10 @@ impl DeferredValue {
                 | PropertyKey::BackgroundColor
                 | PropertyKey::FontSize
                 | PropertyKey::VerticalAlign
+                | PropertyKey::BorderRadiusTopLeft
+                | PropertyKey::BorderRadiusTopRight
+                | PropertyKey::BorderRadiusBottomRight
+                | PropertyKey::BorderRadiusBottomLeft
                 | PropertyKey::ListStyleType
                 | PropertyKey::ListStylePosition
                 | PropertyKey::ListStyleImage
@@ -6784,25 +6788,87 @@ impl DeferredValue {
     }
 }
 
-/// A four-corner `<length>` value for `border-radius`.
+/// Horizontal and vertical radii of one physical corner.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CornerRadius<T> {
+    /// Radius along the horizontal edge.
+    pub horizontal: T,
+    /// Radius along the vertical edge.
+    pub vertical: T,
+}
+
+impl<T> CornerRadius<T> {
+    /// Build an elliptical corner from independent axes.
+    pub const fn new(horizontal: T, vertical: T) -> Self {
+        Self {
+            horizontal,
+            vertical,
+        }
+    }
+
+    /// Convert both axes without dropping their independent values.
+    pub fn map<U>(self, mut convert: impl FnMut(T) -> U) -> CornerRadius<U> {
+        CornerRadius::new(convert(self.horizontal), convert(self.vertical))
+    }
+}
+
+impl<T: Copy> CornerRadius<T> {
+    /// Use the same value on both axes.
+    pub const fn circular(value: T) -> Self {
+        Self::new(value, value)
+    }
+}
+
+impl<T: Copy> From<T> for CornerRadius<T> {
+    fn from(value: T) -> Self {
+        Self::circular(value)
+    }
+}
+
+/// Four physical corners of a `border-radius` shorthand.
 ///
-/// This is the shorthand from CSS Backgrounds and Borders Level 3 §5
+/// This is the shorthand from CSS Backgrounds and Borders Level 3 §4.1
 /// <https://www.w3.org/TR/css-backgrounds-3/#border-radius> expanded to
 /// the four corners at parse time. Corners are ordered top-left, top-right,
-/// bottom-right, bottom-left (clockwise). `parse_border_radius` also applies
-/// the omission rules for `1`/`2`/`3` values. `<percentage>`, slash-separated
-/// elliptical shapes, and longhands are outside this task's scope.
+/// bottom-right, bottom-left (clockwise). Both axes retain their independent
+/// `<length-percentage>` values. Omitted vertical values copy the horizontal
+/// values; one-to-four expansion applies separately to each axis.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BorderRadius {
     /// top-left corner radius.
-    pub top_left: Length,
+    pub top_left: CornerRadius<Length>,
     /// top-right corner radius.
-    pub top_right: Length,
+    pub top_right: CornerRadius<Length>,
     /// bottom-right corner radius.
-    pub bottom_right: Length,
+    pub bottom_right: CornerRadius<Length>,
     /// bottom-left corner radius.
-    pub bottom_left: Length,
+    pub bottom_left: CornerRadius<Length>,
+}
+
+impl BorderRadius {
+    /// Expand four horizontal and four vertical radii in clockwise order.
+    pub const fn elliptical(horizontal: [Length; 4], vertical: [Length; 4]) -> Self {
+        Self {
+            top_left: CornerRadius::new(horizontal[0], vertical[0]),
+            top_right: CornerRadius::new(horizontal[1], vertical[1]),
+            bottom_right: CornerRadius::new(horizontal[2], vertical[2]),
+            bottom_left: CornerRadius::new(horizontal[3], vertical[3]),
+        }
+    }
+
+    /// Expand four scalar corner values, using each value on both axes.
+    pub const fn corners(
+        top_left: Length,
+        top_right: Length,
+        bottom_right: Length,
+        bottom_left: Length,
+    ) -> Self {
+        Self::elliptical(
+            [top_left, top_right, bottom_right, bottom_left],
+            [top_left, top_right, bottom_right, bottom_left],
+        )
+    }
 }
 
 /// One entry in the comma-separated `box-shadow` list.
@@ -9446,19 +9512,18 @@ pub enum PropertyValue {
     TextShadow(Arc<Vec<TextShadowItem>>),
     /// `border-radius` — non-inherited. Expands the four-corner
     /// `<length-percentage>` shorthand into [`BorderRadius`]. Percentages are
-    /// retained through computed-value processing; the slash-separated
-    /// elliptical form is unsupported.
+    /// retained independently on both axes through computed-value processing.
     BorderRadius(BorderRadius),
     /// `border-radius: inherit` — resolved from the parent computed corners.
     BorderRadiusInherit,
-    /// `border-top-left-radius` longhand (circular `<length>` subset).
-    BorderRadiusTopLeft(Length),
-    /// `border-top-right-radius` longhand (circular `<length>` subset).
-    BorderRadiusTopRight(Length),
-    /// `border-bottom-right-radius` longhand (circular `<length>` subset).
-    BorderRadiusBottomRight(Length),
-    /// `border-bottom-left-radius` longhand (circular `<length>` subset).
-    BorderRadiusBottomLeft(Length),
+    /// `border-top-left-radius` with one or two `<length-percentage>` values.
+    BorderRadiusTopLeft(CornerRadius<Length>),
+    /// `border-top-right-radius` with one or two `<length-percentage>` values.
+    BorderRadiusTopRight(CornerRadius<Length>),
+    /// `border-bottom-right-radius` with one or two `<length-percentage>` values.
+    BorderRadiusBottomRight(CornerRadius<Length>),
+    /// `border-bottom-left-radius` with one or two `<length-percentage>` values.
+    BorderRadiusBottomLeft(CornerRadius<Length>),
     /// `box-shadow: none | <shadow>#` — non-inherited. Retains multiple entries.
     /// Each entry retains `inset` and omitted colors.
     BoxShadow(Arc<Vec<BoxShadowItem>>),
@@ -11804,6 +11869,11 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "border-right-color" => PropertyKey::BorderRightColor,
         "border-bottom-color" => PropertyKey::BorderBottomColor,
         "border-left-color" => PropertyKey::BorderLeftColor,
+        "border-radius" => PropertyKey::BorderRadius,
+        "border-top-left-radius" => PropertyKey::BorderRadiusTopLeft,
+        "border-top-right-radius" => PropertyKey::BorderRadiusTopRight,
+        "border-bottom-right-radius" => PropertyKey::BorderRadiusBottomRight,
+        "border-bottom-left-radius" => PropertyKey::BorderRadiusBottomLeft,
         "border" => PropertyKey::Border,
         "border-top" => PropertyKey::BorderTop,
         "border-right" => PropertyKey::BorderRight,

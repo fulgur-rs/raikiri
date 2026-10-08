@@ -3954,10 +3954,10 @@ fn border_radius_box_shadow_and_outline_compute_through_cascade() {
     assert_eq!(
         cv.border_radius,
         ComputedBorderRadius {
-            top_left: ComputedLengthPercentage::Px(16.0),
-            top_right: ComputedLengthPercentage::Px(32.0),
-            bottom_right: ComputedLengthPercentage::Px(48.0),
-            bottom_left: ComputedLengthPercentage::Px(64.0),
+            top_left: ComputedLengthPercentage::Px(16.0).into(),
+            top_right: ComputedLengthPercentage::Px(32.0).into(),
+            bottom_right: ComputedLengthPercentage::Px(48.0).into(),
+            bottom_left: ComputedLengthPercentage::Px(64.0).into(),
         }
     );
     assert_eq!(
@@ -3996,6 +3996,117 @@ fn border_radius_box_shadow_and_outline_compute_through_cascade() {
             b: 0,
             a: 255,
         })
+    );
+}
+
+#[test]
+fn elliptical_border_radius_inherits_computed_axes_without_resolving_percentages() {
+    let (parent, child) = cascade_parent_child(
+        "p",
+        Some("font-size:20px;border-radius:2em / 25%"),
+        "span",
+        Some("font-size:10px;border-radius:inherit"),
+    );
+    assert_eq!(parent.border_radius, child.border_radius);
+    assert_eq!(
+        child.border_radius.top_left.horizontal,
+        ComputedLengthPercentage::Px(40.0)
+    );
+    assert_eq!(
+        child.border_radius.top_left.vertical,
+        ComputedLengthPercentage::Percent(25.0)
+    );
+    assert_eq!(child.border_radius.used(200.0, 100.0), [[40.0, 25.0]; 4]);
+}
+
+#[test]
+fn elliptical_corner_longhands_and_shorthands_respect_declaration_order() {
+    let cv = cascade_doc(
+        "",
+        "p",
+        Some("font-size:20px;border-radius:30px / 15px;border-top-left-radius:5% 2em"),
+    );
+    assert_eq!(
+        cv.border_radius.top_left.horizontal,
+        ComputedLengthPercentage::Percent(5.0)
+    );
+    assert_eq!(
+        cv.border_radius.top_left.vertical,
+        ComputedLengthPercentage::Px(40.0)
+    );
+    assert_eq!(
+        cv.border_radius.top_right.horizontal,
+        ComputedLengthPercentage::Px(30.0)
+    );
+    assert_eq!(
+        cv.border_radius.top_right.vertical,
+        ComputedLengthPercentage::Px(15.0)
+    );
+    let cv = cascade_doc(
+        "",
+        "p",
+        Some("font-size:20px;border-top-left-radius:5% 2em;border-radius:30px / 15px"),
+    );
+    assert_eq!(cv.border_radius.used(200.0, 100.0), [[30.0, 15.0]; 4]);
+}
+
+#[test]
+fn elliptical_radius_priorities_include_important_and_invalid_custom_properties() {
+    let cv = cascade_doc(
+        "",
+        "p",
+        Some("border-top-left-radius:10px 20px!important;border-radius:30px / 15px"),
+    );
+    assert_eq!(
+        cv.border_radius.used(200.0, 100.0),
+        [[10.0, 20.0], [30.0, 15.0], [30.0, 15.0], [30.0, 15.0]]
+    );
+    let cv = cascade_doc(
+        "",
+        "p",
+        Some("border-top-left-radius:10px 20px;border-radius:30px / 15px!important"),
+    );
+    assert_eq!(cv.border_radius.used(200.0, 100.0), [[30.0, 15.0]; 4]);
+    let cv = cascade_doc(
+        "",
+        "p",
+        Some("border-top-left-radius:10px 20px;border-radius:var(--missing)"),
+    );
+    assert_eq!(cv.border_radius.used(200.0, 100.0), [[0.0, 0.0]; 4]);
+    let cv = cascade_doc(
+        "",
+        "p",
+        Some("border-radius:30px / 15px;border-top-left-radius:var(--missing)"),
+    );
+    assert_eq!(
+        cv.border_radius.used(200.0, 100.0),
+        [[0.0, 0.0], [30.0, 15.0], [30.0, 15.0], [30.0, 15.0]]
+    );
+}
+
+#[test]
+fn elliptical_radius_custom_property_fallback_can_select_inherited_axes() {
+    let (parent, child) = cascade_parent_child(
+        "p",
+        Some("border-radius:30px / 15px"),
+        "span",
+        Some("border-radius:var(--radius,inherit)"),
+    );
+    assert_eq!(child.border_radius, parent.border_radius);
+}
+
+#[test]
+fn independent_elliptical_corner_longhands_are_cascaded_without_a_shorthand() {
+    let cv = cascade_doc(
+        "",
+        "p",
+        Some(
+            "border-top-left-radius:1px 2px;border-top-right-radius:3px 4px;border-bottom-right-radius:5px 6px;border-bottom-left-radius:7px 8px",
+        ),
+    );
+    assert_eq!(
+        cv.border_radius.used(100.0, 100.0),
+        [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0], [7.0, 8.0]]
     );
 }
 
@@ -6612,23 +6723,26 @@ fn apply_value_direct_inset_longhands() {
 #[test]
 fn apply_value_direct_border_radius_corner_longhands() {
     let mut cv = SpecifiedValues::initial();
-    apply_value(PropertyValue::BorderRadiusTopLeft(Length::Px(1.0)), &mut cv);
-    assert_eq!(cv.border_radius.top_left, Length::Px(1.0));
     apply_value(
-        PropertyValue::BorderRadiusTopRight(Length::Px(2.0)),
+        PropertyValue::BorderRadiusTopLeft(Length::Px(1.0).into()),
         &mut cv,
     );
-    assert_eq!(cv.border_radius.top_right, Length::Px(2.0));
+    assert_eq!(cv.border_radius.top_left, Length::Px(1.0).into());
     apply_value(
-        PropertyValue::BorderRadiusBottomRight(Length::Px(3.0)),
+        PropertyValue::BorderRadiusTopRight(Length::Px(2.0).into()),
         &mut cv,
     );
-    assert_eq!(cv.border_radius.bottom_right, Length::Px(3.0));
+    assert_eq!(cv.border_radius.top_right, Length::Px(2.0).into());
     apply_value(
-        PropertyValue::BorderRadiusBottomLeft(Length::Px(4.0)),
+        PropertyValue::BorderRadiusBottomRight(Length::Px(3.0).into()),
         &mut cv,
     );
-    assert_eq!(cv.border_radius.bottom_left, Length::Px(4.0));
+    assert_eq!(cv.border_radius.bottom_right, Length::Px(3.0).into());
+    apply_value(
+        PropertyValue::BorderRadiusBottomLeft(Length::Px(4.0).into()),
+        &mut cv,
+    );
+    assert_eq!(cv.border_radius.bottom_left, Length::Px(4.0).into());
 }
 
 #[test]
@@ -6891,10 +7005,10 @@ fn apply_winners_direct_border_radius_inherit() {
     let mut specified = SpecifiedValues::initial();
     let mut inherited = ComputedValues::initial();
     inherited.border_radius = ComputedBorderRadius {
-        top_left: ComputedLengthPercentage::Percent(10.0),
-        top_right: ComputedLengthPercentage::Px(2.0),
-        bottom_right: ComputedLengthPercentage::Percent(30.0),
-        bottom_left: ComputedLengthPercentage::Px(4.0),
+        top_left: ComputedLengthPercentage::Percent(10.0).into(),
+        top_right: ComputedLengthPercentage::Px(2.0).into(),
+        bottom_right: ComputedLengthPercentage::Percent(30.0).into(),
+        bottom_left: ComputedLengthPercentage::Px(4.0).into(),
     };
     let custom_properties = CustomPropertyEnvironment::from_map(HashMap::new());
     apply_winners(
@@ -6907,10 +7021,16 @@ fn apply_winners_direct_border_radius_inherit() {
         None,
         None,
     );
-    assert_eq!(specified.border_radius.top_left, Length::Percent(10.0));
-    assert_eq!(specified.border_radius.top_right, Length::Px(2.0));
-    assert_eq!(specified.border_radius.bottom_right, Length::Percent(30.0));
-    assert_eq!(specified.border_radius.bottom_left, Length::Px(4.0));
+    assert_eq!(
+        specified.border_radius.top_left,
+        Length::Percent(10.0).into()
+    );
+    assert_eq!(specified.border_radius.top_right, Length::Px(2.0).into());
+    assert_eq!(
+        specified.border_radius.bottom_right,
+        Length::Percent(30.0).into()
+    );
+    assert_eq!(specified.border_radius.bottom_left, Length::Px(4.0).into());
 }
 
 #[test]
@@ -8461,12 +8581,12 @@ fn clear_non_inherited_child_starts_from_initial() {
 #[test]
 fn inherited_border_radius_handles_percent() {
     assert_eq!(
-        inherited_border_radius(ComputedLengthPercentage::Percent(25.0)),
-        Length::Percent(25.0)
+        inherited_border_radius(ComputedLengthPercentage::Percent(25.0).into()),
+        Length::Percent(25.0).into()
     );
     assert_eq!(
-        inherited_border_radius(ComputedLengthPercentage::Px(4.0)),
-        Length::Px(4.0)
+        inherited_border_radius(ComputedLengthPercentage::Px(4.0).into()),
+        Length::Px(4.0).into()
     );
 }
 
@@ -9550,6 +9670,69 @@ fn children_of_shared_siblings_share_with_their_cousins() {
 }
 
 #[test]
+fn elliptical_radius_longhand_defaulting_includes_variable_fallbacks() {
+    let names = [
+        "border-top-left-radius",
+        "border-top-right-radius",
+        "border-bottom-right-radius",
+        "border-bottom-left-radius",
+    ];
+    for (index, name) in names.iter().enumerate() {
+        for value in [
+            "var(--missing, inherit)",
+            "inherit",
+            "initial",
+            "var(--missing, initial)",
+            "unset",
+            "var(--missing, unset)",
+        ] {
+            let (_, child) = cascade_parent_child(
+                "p",
+                Some("font-size:20px;border-radius:2em / 25%"),
+                "span",
+                Some(&format!("font-size:10px;border-radius:10px;{name}:{value}")),
+            );
+            let expected = if value.contains("inherit") {
+                [40.0, 25.0]
+            } else {
+                [0.0, 0.0]
+            };
+            let mut corners = [[10.0, 10.0]; 4];
+            corners[index] = expected;
+            assert_eq!(
+                child.border_radius.used(200.0, 100.0),
+                corners,
+                "{name}:{value}"
+            );
+        }
+    }
+    let cv = cascade_doc(
+        "@layer base {p {border-top-left-radius:20px 30px}} @layer override {p {border-top-left-radius:var(--missing,revert-layer)}}",
+        "p",
+        None,
+    );
+    assert_eq!(cv.border_radius.used(200.0, 100.0)[0], [20.0, 30.0]);
+}
+
+#[test]
+fn color_font_defaulting_leaves_corner_radius_markers_for_the_radius_resolver() {
+    let mut input = cssparser::ParserInput::new("inherit");
+    let mut parser = cssparser::Parser::new(&mut input);
+    let value = crate::property::parse_value("border-top-left-radius", &mut parser)
+        .expect("corner defaulting marker");
+    assert_eq!(
+        resolve_css_wide_color_font(
+            value.clone(),
+            CssColor::BLACK,
+            CssColor::TRANSPARENT,
+            None,
+            ComputedLength(20.0)
+        ),
+        value
+    );
+}
+
+#[test]
 fn list_style_shorthand_defaults_css_wide_and_variables_follow_longhand_cascade() {
     use crate::property::BackgroundImage;
     let mut doc = TestDoc::new();
@@ -9639,4 +9822,81 @@ fn marker_shorthand_direct_application_resets_all_three_inherited_fields() {
         ),
         marker
     );
+}
+
+#[test]
+fn deferred_radius_shorthand_rolls_back_each_corner() {
+    for keyword in ["revert-layer", "revert"] {
+        let cv = cascade_doc(
+            &format!(
+                "@layer base {{p {{border-top-left-radius:20px 30px}}}} @layer override {{p {{border-radius:var(--missing,{keyword})}}}}"
+            ),
+            "p",
+            None,
+        );
+        let expected = if keyword == "revert-layer" {
+            [20.0, 30.0]
+        } else {
+            [0.0, 0.0]
+        };
+        assert_eq!(
+            cv.border_radius.used(200.0, 100.0)[0],
+            expected,
+            "{keyword}"
+        );
+    }
+}
+
+#[test]
+fn corner_rollback_restores_static_radius_shorthands() {
+    for value in ["revert-layer", "var(--missing,revert-layer)"] {
+        let cv = cascade_doc(
+            &format!(
+                "@layer base {{p {{border-radius:20px / 30px}}}} @layer override {{p {{border-top-left-radius:{value}}}}}"
+            ),
+            "p",
+            None,
+        );
+        assert_eq!(
+            cv.border_radius.used(200.0, 100.0),
+            [[20.0, 30.0]; 4],
+            "{value}"
+        );
+    }
+    let cv = cascade_doc(
+        "@layer base {p {border-top-left-radius:20px 30px}} @layer middle {p {border-radius:10px / 15px}} @layer override {p {border-radius:var(--missing,revert-layer)}}",
+        "p",
+        None,
+    );
+    assert_eq!(cv.border_radius.used(200.0, 100.0), [[10.0, 15.0]; 4]);
+}
+
+#[test]
+fn radius_shorthand_css_wide_defaults_follow_corner_cascade() {
+    for keyword in ["initial", "unset", "revert"] {
+        let cv = cascade_doc(
+            "",
+            "p",
+            Some(&format!("border-radius:10px 20px;border-radius:{keyword}")),
+        );
+        assert_eq!(
+            cv.border_radius.used(200.0, 100.0),
+            [[0.0, 0.0]; 4],
+            "{keyword}"
+        );
+    }
+    for value in ["revert-layer", "var(--missing,revert-layer)"] {
+        let cv = cascade_doc(
+            &format!(
+                "@layer base {{p {{border-radius:20px / 30px}}}} @layer override {{p {{border-radius:{value}}}}}"
+            ),
+            "p",
+            None,
+        );
+        assert_eq!(
+            cv.border_radius.used(200.0, 100.0),
+            [[20.0, 30.0]; 4],
+            "{value}"
+        );
+    }
 }
