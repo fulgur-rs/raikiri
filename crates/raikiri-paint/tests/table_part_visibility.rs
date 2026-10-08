@@ -1,3 +1,5 @@
+//! Hidden table parts preserve visible descendants without painting decorations.
+
 use anyrender::{PaintScene, Scene};
 use kurbo::Affine;
 use raikiri_html::{
