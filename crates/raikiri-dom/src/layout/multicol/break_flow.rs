@@ -40,9 +40,10 @@ pub(super) fn supports(tree: &Document, root: usize, context: FragmentationConte
             continue;
         }
         // This projection preserves already measured atomic subtrees, but
-        // does not reconstruct block margins or decorated wrapper fragments.
+        // does not reconstruct block margins, clearance or constrained wrapper sizes.
         // Leave those boxes to the existing geometry-preserving strategies.
         let zero = LengthPercentageAuto::length(0.0);
+        let defaults: taffy::Style = taffy::Style::default();
         if projected
             && (node.style.margin.top != zero
                 || node.style.margin.right != zero
@@ -51,7 +52,12 @@ pub(super) fn supports(tree: &Document, root: usize, context: FragmentationConte
                 || node.style.padding != Rect::zero()
                 || node.style.border != Rect::zero()
                 || node.style.inset != Rect::auto()
-                || (!atomic(tree, id) && !node.multicol_auto_width))
+                || node.style.clear != defaults.clear
+                || (!atomic(tree, id)
+                    && (!node.multicol_auto_width
+                        || node.style.min_size != defaults.min_size
+                        || node.style.max_size != defaults.max_size
+                        || node.style.overflow != defaults.overflow)))
         {
             return false;
         }

@@ -372,8 +372,9 @@ so they still advance. The bounded horizontal-column projection propagates
 first/last descendant constraints, resumes plain block wrappers, preserves
 atomic inline-blocks and inside-avoided boxes, gives forced column breaks
 priority, and treats floats as parallel flows. Projected boxes with margin,
-padding, border or inset, and definite-width splittable wrappers retain the
-existing geometry strategies. Atomic subtrees preserve their measured child
+padding, border, inset or clearance, and splittable wrappers with definite
+width, minimum/maximum sizes or non-visible overflow retain the existing
+geometry strategies. Atomic subtrees preserve their measured child
 geometry. Nested columns, visible text, minimum block-size contexts
 and unsupported box structures retain their existing paths. These fifteen
 references and native controls do not establish complete table/flex/grid,

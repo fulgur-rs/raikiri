@@ -276,3 +276,73 @@ fn geometry_inline_margins_keep_the_existing_unfragmented_geometry() {
         assert!(!supports(&doc, root, context), "{css}");
     }
 }
+
+#[test]
+fn geometry_wrapper_sizing_constraints_keep_the_existing_strategy() {
+    let mut differences = Vec::new();
+    for css in [
+        "min-height:60px",
+        "max-height:20px",
+        "min-width:60px",
+        "max-width:30px",
+    ] {
+        let markup = |constraint| {
+            format!(
+                "<div id='columns' style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div id='wrapper' style='{css}'><div style='height:20px'></div><div style='height:20px'></div></div><div id='next' style='height:20px;{constraint}'></div></div>"
+            )
+        };
+        let reference = laid_out(&markup(""));
+        let doc = laid_out(&markup("break-before:avoid-column"));
+        let geometry = |tree: &Document| {
+            (
+                tree.nodes[id(tree, "wrapper")].unrounded_layout.size,
+                tree.nodes[id(tree, "next")].unrounded_layout.location.y,
+            )
+        };
+        if geometry(&doc) != geometry(&reference) {
+            differences.push((css, geometry(&doc), geometry(&reference)));
+        }
+        let root = id(&doc, "columns");
+        let context =
+            FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[root].multicol.unwrap())
+                .unwrap();
+        assert!(!supports(&doc, root, context), "{css}");
+    }
+    assert!(differences.is_empty(), "{differences:?}");
+}
+
+#[test]
+fn geometry_overflow_wrapper_preserves_float_occupied_height() {
+    let markup = |constraint| {
+        format!(
+            "<div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div id='wrapper' style='overflow:hidden'><div style='float:left;width:20px;height:40px'></div></div><div id='next' style='height:20px;{constraint}'></div></div>"
+        )
+    };
+    let reference = laid_out(&markup(""));
+    let doc = laid_out(&markup("break-before:avoid-column"));
+    assert_eq!(
+        doc.nodes[id(&doc, "next")].unrounded_layout.location.y,
+        reference.nodes[id(&reference, "next")]
+            .unrounded_layout
+            .location
+            .y,
+    );
+}
+
+#[test]
+fn geometry_clearance_preserves_the_existing_following_box_position() {
+    let markup = |constraint| {
+        format!(
+            "<div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='float:left;width:20px;height:40px'></div><div id='next' style='clear:both;height:20px;{constraint}'></div></div>"
+        )
+    };
+    let reference = laid_out(&markup(""));
+    let doc = laid_out(&markup("break-before:avoid-column"));
+    assert_eq!(
+        doc.nodes[id(&doc, "next")].unrounded_layout.location.y,
+        reference.nodes[id(&reference, "next")]
+            .unrounded_layout
+            .location
+            .y,
+    );
+}
