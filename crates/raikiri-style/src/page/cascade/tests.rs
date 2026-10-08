@@ -3149,10 +3149,10 @@ fn cascade_page_computes_border_radius_box_shadow_and_outline() {
     assert_eq!(
         result.declarations().get(&PropertyKey::BorderRadius),
         Some(&PropertyValue::BorderRadius(BorderRadius {
-            top_left: Length::Percent(10.0),
-            top_right: Length::Px(40.0),
-            bottom_right: Length::Px(60.0),
-            bottom_left: Length::Px(80.0),
+            top_left: Length::Percent(10.0).into(),
+            top_right: Length::Px(40.0).into(),
+            bottom_right: Length::Px(60.0).into(),
+            bottom_left: Length::Px(80.0).into(),
         }))
     );
     assert_eq!(
@@ -3188,6 +3188,28 @@ fn cascade_page_computes_border_radius_box_shadow_and_outline() {
         result.declarations().get(&PropertyKey::OutlineColor),
         Some(&PropertyValue::OutlineColor(OutlineColor::Resolved(RED)))
     );
+}
+
+#[test]
+fn cascade_page_preserves_both_elliptical_axes_and_percentage_longhands() {
+    let result = page(
+        "@page {border-radius:2em / 25%;border-top-left-radius:50% 1em}",
+        &root_with_font_size(20.0),
+    );
+    let Some(PropertyValue::BorderRadius(radius)) =
+        result.declarations().get(&PropertyKey::BorderRadius)
+    else {
+        panic!("missing radius")
+    };
+    assert_eq!(radius.top_left.horizontal, Length::Percent(50.0));
+    assert_eq!(radius.top_left.vertical, Length::Px(20.0));
+    let Some(PropertyValue::BorderRadiusTopLeft(corner)) =
+        result.declarations().get(&PropertyKey::BorderRadiusTopLeft)
+    else {
+        panic!("missing corner")
+    };
+    assert_eq!(corner.horizontal, Length::Percent(50.0));
+    assert_eq!(corner.vertical, Length::Px(20.0));
 }
 
 /// CSS Basic User Interface Module Level 3 §4: page-context outline
@@ -3751,15 +3773,15 @@ property_key_samples! {
     // supported static-side properties; percentage radii remain symbolic
     // through this page conversion.
     BorderRadius => PropertyValue::BorderRadius(BorderRadius {
-        top_left: Length::Em(0.5),
-        top_right: Length::Rem(0.25),
-        bottom_right: Length::Pt(6.0),
-        bottom_left: Length::Px(1.0),
+        top_left: Length::Em(0.5).into(),
+        top_right: Length::Rem(0.25).into(),
+        bottom_right: Length::Pt(6.0).into(),
+        bottom_left: Length::Px(1.0).into(),
     }),
-    BorderRadiusTopLeft => PropertyValue::BorderRadiusTopLeft(Length::Em(0.5)),
-    BorderRadiusTopRight => PropertyValue::BorderRadiusTopRight(Length::Rem(0.25)),
-    BorderRadiusBottomRight => PropertyValue::BorderRadiusBottomRight(Length::Pt(6.0)),
-    BorderRadiusBottomLeft => PropertyValue::BorderRadiusBottomLeft(Length::Px(1.0)),
+    BorderRadiusTopLeft => PropertyValue::BorderRadiusTopLeft(Length::Em(0.5).into()),
+    BorderRadiusTopRight => PropertyValue::BorderRadiusTopRight(Length::Rem(0.25).into()),
+    BorderRadiusBottomRight => PropertyValue::BorderRadiusBottomRight(Length::Pt(6.0).into()),
+    BorderRadiusBottomLeft => PropertyValue::BorderRadiusBottomLeft(Length::Px(1.0).into()),
     BoxShadow => PropertyValue::BoxShadow(Arc::new(vec![BoxShadowItem {
         offset_x: Length::Em(0.5),
         offset_y: Length::Rem(0.25),
@@ -5121,11 +5143,11 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                 radius.bottom_left,
             ]
             .into_iter()
-            .find_map(length),
+            .find_map(|corner| length(corner.horizontal).or_else(|| length(corner.vertical))),
             PropertyValue::BorderRadiusTopLeft(radius)
             | PropertyValue::BorderRadiusTopRight(radius)
             | PropertyValue::BorderRadiusBottomRight(radius)
-            | PropertyValue::BorderRadiusBottomLeft(radius) => length(*radius),
+            | PropertyValue::BorderRadiusBottomLeft(radius) => length(radius.horizontal).or_else(|| length(radius.vertical)),
             // `box-shadow` stores four length components per item. Colors do
             // not participate in the layer check.
             PropertyValue::BoxShadow(shadows) => shadows.iter().find_map(|s| {
@@ -6743,6 +6765,115 @@ fn cascade_page_min_content_width_is_kept() {
 }
 
 #[test]
+fn page_elliptical_radius_settles_shorthand_and_longhand_precedence() {
+    for (declarations, expected) in [
+        (
+            "border-radius:30px / 15px;border-top-left-radius:5px 10px",
+            [5.0, 10.0],
+        ),
+        (
+            "border-top-left-radius:5px 10px;border-radius:30px / 15px",
+            [30.0, 15.0],
+        ),
+        (
+            "border-top-left-radius:5px 10px!important;border-radius:30px / 15px",
+            [5.0, 10.0],
+        ),
+        (
+            "border-radius:30px / 15px!important;border-top-left-radius:5px 10px",
+            [30.0, 15.0],
+        ),
+        (
+            "--r:30px / 15px;border-radius:var(--r);border-top-left-radius:5px 10px",
+            [5.0, 10.0],
+        ),
+        (
+            "border-radius:30px / 15px;border-top-left-radius:var(--missing)",
+            [0.0, 0.0],
+        ),
+        (
+            "border-top-left-radius:5px 10px;border-radius:var(--missing)",
+            [0.0, 0.0],
+        ),
+    ] {
+        let result = page(
+            &format!("@page {{{declarations}}}"),
+            &root_with_font_size(20.0),
+        );
+        let Some(PropertyValue::BorderRadius(radius)) =
+            result.declarations().get(&PropertyKey::BorderRadius)
+        else {
+            panic!("missing effective radius")
+        };
+        assert_eq!(
+            radius.top_left,
+            crate::property::CornerRadius::new(Length::Px(expected[0]), Length::Px(expected[1])),
+            "{declarations}"
+        );
+        if let Some(PropertyValue::BorderRadiusTopLeft(corner)) =
+            result.declarations().get(&PropertyKey::BorderRadiusTopLeft)
+        {
+            assert_eq!(
+                *corner, radius.top_left,
+                "longhand map agrees with effective shorthand"
+            );
+        }
+    }
+}
+
+#[test]
+fn page_elliptical_radius_longhands_work_independently_on_all_corners() {
+    let result = page(
+        "@page {border-top-left-radius:1em 2%;border-top-right-radius:3% 4em;border-bottom-right-radius:5em 6%;border-bottom-left-radius:7% 8em}",
+        &root_with_font_size(20.0),
+    );
+    let Some(PropertyValue::BorderRadius(radius)) =
+        result.declarations().get(&PropertyKey::BorderRadius)
+    else {
+        panic!("effective radius")
+    };
+    let corners = [
+        radius.top_left,
+        radius.top_right,
+        radius.bottom_right,
+        radius.bottom_left,
+    ];
+    let expected = [
+        (Length::Px(20.0), Length::Percent(2.0)),
+        (Length::Percent(3.0), Length::Px(80.0)),
+        (Length::Px(100.0), Length::Percent(6.0)),
+        (Length::Percent(7.0), Length::Px(160.0)),
+    ];
+    for (corner, (horizontal, vertical)) in corners.into_iter().zip(expected) {
+        assert_eq!(
+            corner,
+            crate::property::CornerRadius::new(horizontal, vertical)
+        );
+    }
+}
+
+#[test]
+fn page_elliptical_radius_rollback_restores_cross_property_precedence() {
+    let result = page(
+        "@layer base {@page {border-radius:30px / 15px;border-top-left-radius:5px 10px}} @layer override {@page {border-top-left-radius:var(--missing,revert-layer)}}",
+        &root_with_font_size(20.0),
+    );
+    let Some(PropertyValue::BorderRadius(radius)) =
+        result.declarations().get(&PropertyKey::BorderRadius)
+    else {
+        panic!("effective radius")
+    };
+    assert_eq!(
+        radius.top_left,
+        crate::property::CornerRadius::new(Length::Px(5.0), Length::Px(10.0))
+    );
+    assert_eq!(
+        radius.top_right,
+        crate::property::CornerRadius::new(Length::Px(30.0), Length::Px(15.0))
+    );
+}
+
+#[test]
 fn paper_dimension_guard_ignores_only_size_and_preserves_fallback() {
     for media in [
         "only print and (width >= 261px)",
@@ -6873,4 +7004,45 @@ fn imported_media_chains_ignore_only_page_size() {
     );
     assert_eq!(result.size(), None);
     assert!(result.declarations().contains_key(&PropertyKey::MarginTop));
+}
+
+#[test]
+fn page_deferred_radius_shorthand_rolls_back_each_corner() {
+    let result = page(
+        "@layer base {@page {border-top-left-radius:20px 30px}} @layer override {@page {border-radius:var(--missing,revert-layer)}}",
+        &root_with_font_size(20.0),
+    );
+    let Some(PropertyValue::BorderRadius(radius)) =
+        result.declarations().get(&PropertyKey::BorderRadius)
+    else {
+        panic!("effective radius")
+    };
+    assert_eq!(
+        radius.top_left,
+        crate::property::CornerRadius::new(Length::Px(20.0), Length::Px(30.0))
+    );
+}
+
+#[test]
+fn page_corner_rollback_restores_static_radius_shorthands() {
+    for declarations in [
+        "@layer base {@page {border-radius:20px / 30px}} @layer override {@page {border-top-left-radius:revert-layer}}",
+        "@layer base {@page {border-top-left-radius:20px 30px}} @layer middle {@page {border-radius:10px / 15px}} @layer override {@page {border-radius:var(--missing,revert-layer)}}",
+    ] {
+        let result = page(declarations, &root_with_font_size(20.0));
+        let Some(PropertyValue::BorderRadius(radius)) =
+            result.declarations().get(&PropertyKey::BorderRadius)
+        else {
+            panic!("effective radius")
+        };
+        let expected = if declarations.contains("middle") {
+            (10.0, 15.0)
+        } else {
+            (20.0, 30.0)
+        };
+        assert_eq!(
+            radius.top_left,
+            crate::property::CornerRadius::new(Length::Px(expected.0), Length::Px(expected.1))
+        );
+    }
 }
