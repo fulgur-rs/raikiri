@@ -2,212 +2,18 @@
 //! CSS painting order) and the text of page-margin boxes and generated
 //! content, which lies outside the paragraphs of the document.
 
-use std::sync::Arc;
-
 use anyrender::PaintScene;
 use kurbo::{Affine, BezPath, Cap, Circle, Point, Rect, Stroke, Vec2};
 use peniko::{Color, Fill};
 use raikiri_dom::{Document, StandaloneAlign};
-use raikiri_style::property::{
-    CssColor, Direction, DisplayValue, FloatValue, PositionValue, TextDecorationColor,
-    TextDecorationLine, TextDecorationStyle,
+use raikiri_style::property::{CssColor, TextDecorationStyle};
+
+pub(crate) use raikiri_dom::text_decoration::{DecorationContext, decorations_for_element};
+#[cfg(test)]
+use raikiri_dom::text_decoration::{
+    DecorationGeometry, DecorationSpec, decoration_span, decoration_spans, resolve_decoration_lines,
 };
-use raikiri_style::{ComputedTextDecorationInset, ComputedTextUnderlineOffset, ComputedValues};
-
-/// A decoration line carried from the element that originated it.
-///
-/// `text-decoration-line` is not an inherited property, but CSS Text
-/// Decoration propagates a line from an element to its in-flow descendants.
-/// The paint walker therefore carries these values separately from the
-/// computed-value inheritance walk. The origin metrics are retained so a
-/// descendant with a different font size cannot change the line's thickness
-/// or vertical offsets.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct DecorationSpec {
-    line: TextDecorationLine,
-    style: TextDecorationStyle,
-    color: CssColor,
-    origin_thickness: f64,
-    origin_ascent: f64,
-    origin_descent: f64,
-    /// Cumulative vertical-align shift at the decorating box.
-    ///
-    /// Descendant shifts must not change the decoration's initial position.
-    origin_shift_y: f32,
-    /// Inline-start/end endpoint offsets from `text-decoration-inset`.
-    inset_start: f64,
-    inset_end: f64,
-    /// Fixed offset for underlines originating at this element.
-    underline_offset: f64,
-    origin_rtl: bool,
-}
-
-/// Return whether an element is a boundary for decoration propagation.
-///
-/// CSS Text Decoration propagates through in-flow descendants, but not into
-/// out-of-flow boxes, floats, or atomic inline-level boxes. The boundary box
-/// may still originate its own decoration, which is added after the ancestor
-/// context has been cleared.
-fn is_decoration_propagation_boundary(cv: &ComputedValues) -> bool {
-    let out_of_flow = matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
-        || !matches!(cv.float, FloatValue::None);
-    let atomic_inline = matches!(
-        cv.display,
-        DisplayValue::InlineBlock
-            | DisplayValue::InlineFlex
-            | DisplayValue::InlineGrid
-            | DisplayValue::InlineTable
-    );
-    out_of_flow || atomic_inline
-}
-
-/// Persistent paint-only context for propagated decorations.
-///
-/// Each originating element adds one linked node. Cloning the context for a
-/// child frame only clones the outer `Arc`; ancestor specifications are never
-/// copied into a new vector, even for deeply nested decorated elements.
-#[derive(Clone, Debug, Default)]
-pub(crate) struct DecorationContext(Option<Arc<DecorationLink>>);
-
-#[derive(Debug)]
-struct DecorationLink {
-    spec: DecorationSpec,
-    parent: DecorationContext,
-}
-
-impl DecorationContext {
-    /// The specifications in paint order (ancestor to descendant).
-    pub(crate) fn specs(&self) -> Vec<&DecorationSpec> {
-        self.iter().collect()
-    }
-
-    fn push(&self, spec: DecorationSpec) -> Self {
-        Self(Some(Arc::new(DecorationLink {
-            spec,
-            parent: self.clone(),
-        })))
-    }
-
-    fn iter(&self) -> DecorationContextIter<'_> {
-        // The linked context is newest-first, while CSS paint order follows
-        // the originating elements from ancestor to descendant. This small
-        // per-text-node stack reverses traversal without copying contexts or
-        // their specifications during the tree walk.
-        let mut stack = Vec::new();
-        let mut next = self.0.as_deref();
-        while let Some(link) = next {
-            stack.push(link);
-            next = link.parent.0.as_deref();
-        }
-        DecorationContextIter { stack }
-    }
-}
-
-struct DecorationContextIter<'a> {
-    stack: Vec<&'a DecorationLink>,
-}
-
-impl<'a> Iterator for DecorationContextIter<'a> {
-    type Item = &'a DecorationSpec;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.stack.pop().map(|link| &link.spec)
-    }
-}
-
-fn element_decoration(cv: &ComputedValues, origin_shift_y: f32) -> Option<DecorationSpec> {
-    if !has_paintable_line(cv.text_decoration_line) {
-        return None;
-    }
-    let color = match cv.text_decoration_color {
-        TextDecorationColor::CurrentColor => cv.color,
-        TextDecorationColor::Resolved(color) => color,
-        // `TextDecorationColor` is non-exhaustive so a future value must not
-        // make the paint path silently lose an otherwise valid decoration.
-        // cov:ignore: `TextDecorationColor` has no future variant in this
-        // pinned implementation; this arm is a non-exhaustive forward guard.
-        _ => cv.color,
-    };
-    let (inset_start, inset_end) = match cv.text_decoration_inset {
-        // `auto` remains distinct in computed style. The current per-text-node
-        // paint segmentation already supplies the automatic boundary behavior,
-        // so no additional endpoint offset is needed here.
-        ComputedTextDecorationInset::Auto => (0.0, 0.0),
-        ComputedTextDecorationInset::Lengths { start, end } => (start.px() as f64, end.px() as f64),
-    };
-    let underline_offset = match cv.text_underline_offset {
-        ComputedTextUnderlineOffset::Auto => 0.0,
-        ComputedTextUnderlineOffset::Length(value) => value.px() as f64,
-        // A percentage is relative to 1em of the decorating element itself,
-        // not of the ancestor that declared it.
-        ComputedTextUnderlineOffset::Percent(percent) => {
-            cv.font_size.px() as f64 * percent as f64 / 100.0
-        }
-        ComputedTextUnderlineOffset::Calc(value) => {
-            value.px as f64 + cv.font_size.px() as f64 * value.percent as f64 / 100.0
-        }
-    };
-    let underline_offset = if underline_offset.is_finite() {
-        underline_offset
-    } else {
-        // cov:ignore: computed style values are sanitized before paint.
-        0.0
-    };
-    let raw_font_size = cv.font_size.px() as f64;
-    let origin_font_size = if raw_font_size.is_finite() {
-        raw_font_size.max(1.0)
-    } else {
-        // cov:ignore: computed font sizes are sanitized before paint; retain a
-        // finite fallback at this sink boundary for hostile/future inputs.
-        1.0
-    };
-    Some(DecorationSpec {
-        line: cv.text_decoration_line,
-        style: cv.text_decoration_style,
-        color,
-        origin_thickness: (origin_font_size / 16.0).max(1.0),
-        // These normalized metrics keep the position tied to the decorating
-        // element even when a descendant uses a different font size.
-        origin_ascent: origin_font_size * 0.8,
-        origin_descent: origin_font_size * 0.2,
-        origin_shift_y,
-        inset_start,
-        inset_end,
-        underline_offset,
-        origin_rtl: matches!(cv.direction, Direction::Rtl),
-    })
-}
-
-/// Build the decoration context for an element's children.
-///
-/// A boundary drops ancestor lines first, then retains a line originated by
-/// the boundary element itself. This models the CSS rule that a child cannot
-/// cancel an ancestor decoration while atomic/out-of-flow boxes do not receive
-/// that ancestor decoration.
-pub(crate) fn decorations_for_element(
-    decorations: &DecorationContext,
-    cv: &ComputedValues,
-    origin_shift_y: f32,
-) -> DecorationContext {
-    // `display: contents` generates no box, so its own decoration has no
-    // effect. It also must not block a decoration propagated through it.
-    if matches!(cv.display, DisplayValue::Contents) {
-        return decorations.clone();
-    }
-    let base = if is_decoration_propagation_boundary(cv) {
-        DecorationContext::default()
-    } else {
-        decorations.clone()
-    };
-    match element_decoration(cv, origin_shift_y) {
-        Some(spec) => base.push(spec),
-        None => base,
-    }
-}
-
-fn has_paintable_line(line: TextDecorationLine) -> bool {
-    line.underline || line.overline || line.line_through
-}
+use raikiri_dom::{DecorationKind, DecorationLine};
 
 pub(crate) fn synthetic_embolden(enabled: bool, font_size: f32) -> Vec2 {
     if enabled {
@@ -382,164 +188,46 @@ pub(crate) fn measure_margin_text_height(
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct DecorationGeometry {
-    pub(crate) x0: f64,
-    pub(crate) x1: f64,
-    pub(crate) abs_y: f64,
-    pub(crate) line_top: f32,
-    /// The line's baseline in page coordinates, when the layout engine
-    /// supplies it; each decoration adds its element's `origin_shift_y`.
-    /// `None` derives the baseline from the decorating element's metrics.
-    pub(crate) baseline: Option<f64>,
-}
-
-#[derive(Clone, Copy, Debug)]
 pub(crate) enum DecorationPhase {
     BeforeGlyphs,
     AfterGlyphs,
 }
 
-#[derive(Clone, Copy, Debug)]
-enum DecorationLineKind {
-    Underline,
-    Overline,
-    LineThrough,
-}
-
+#[cfg(test)]
 pub(crate) fn draw_decoration_phase(
     scene: &mut impl PaintScene,
     decorations: &[&DecorationSpec],
     geometry: DecorationGeometry,
     phase: DecorationPhase,
 ) {
-    // CSS Text Decoration 3 orders all underline lines below all overlines,
-    // then glyphs, then all line-through lines. The caller flattens the
-    // persistent chain once for both phases.
-    match phase {
-        DecorationPhase::BeforeGlyphs => {
-            paint_decoration_line(scene, decorations, geometry, DecorationLineKind::Underline);
-            paint_decoration_line(scene, decorations, geometry, DecorationLineKind::Overline);
-        }
-        DecorationPhase::AfterGlyphs => {
-            paint_decoration_line(
-                scene,
-                decorations,
-                geometry,
-                DecorationLineKind::LineThrough,
-            );
-        }
-    }
+    draw_resolved_decoration_phase(
+        scene,
+        &resolve_decoration_lines(decorations, geometry),
+        phase,
+    );
 }
 
-fn decoration_span(x0: f64, x1: f64, decoration: &DecorationSpec) -> Option<(f64, f64)> {
-    let (start, end) = if decoration.origin_rtl {
-        (decoration.inset_end, decoration.inset_start)
-    } else {
-        (decoration.inset_start, decoration.inset_end)
-    };
-    let line_x0 = x0 + start;
-    let line_x1 = x1 - end;
-    if !start.is_finite()
-        || !end.is_finite()
-        || !line_x0.is_finite()
-        || !line_x1.is_finite()
-        || line_x1 <= line_x0
-    {
-        None
-    } else {
-        Some((line_x0, line_x1))
-    }
-}
-
-/// Return the paint spans for one decoration segment.
-///
-/// A mixed-sign inset can be represented by two translated copies of the
-/// originating segment. Keeping those copies separate preserves the endpoint
-/// overlap produced by the CSS Text Decoration reference rendering. Equal
-/// translations collapse to the ordinary single span.
-fn decoration_spans(
-    x0: f64,
-    x1: f64,
-    decoration: &DecorationSpec,
-) -> Option<([(f64, f64); 2], usize)> {
-    let span = decoration_span(x0, x1, decoration)?;
-    if !decoration.origin_rtl
-        && decoration.inset_start > 0.0
-        && decoration.inset_end < 0.0
-        && (decoration.inset_start + decoration.inset_end).abs() > f64::EPSILON
-    {
-        let first = (x0 + decoration.inset_start, x1 + decoration.inset_start);
-        let second = (x0 - decoration.inset_end, x1 - decoration.inset_end);
-        if first.0.is_finite()
-            && first.1.is_finite()
-            && second.0.is_finite()
-            && second.1.is_finite()
-            && first.1 > first.0
-            && second.1 > second.0
-        // cov:ignore: asymmetric endpoint overlap is covered by the ignored exact WPT reftest.
-        {
-            return Some(([first, second], 2));
-        }
-    }
-    Some(([span, (0.0, 0.0)], 1))
-}
-
-fn paint_decoration_line(
+pub(crate) fn draw_resolved_decoration_phase(
     scene: &mut impl PaintScene,
-    decorations: &[&DecorationSpec],
-    geometry: DecorationGeometry,
-    kind: DecorationLineKind,
+    lines: &[DecorationLine],
+    phase: DecorationPhase,
 ) {
-    let DecorationGeometry {
-        x0,
-        x1,
-        abs_y,
-        line_top,
-        baseline: baseline_override,
-    } = geometry;
-    for decoration in decorations {
-        let enabled = match kind {
-            DecorationLineKind::Underline => decoration.line.underline,
-            DecorationLineKind::Overline => decoration.line.overline,
-            DecorationLineKind::LineThrough => decoration.line.line_through,
-        };
-        if !enabled {
+    for line in lines {
+        let before = line.kind != DecorationKind::LineThrough;
+        if before != matches!(phase, DecorationPhase::BeforeGlyphs) {
             continue;
         }
-        let Some((spans, span_count)) = decoration_spans(x0, x1, decoration) else {
-            continue;
-        };
-        let color = css_color_to_peniko(decoration.color);
-        let baseline = match baseline_override {
-            // The layout engine gave the line's baseline; the decorating
-            // element's baseline lies `origin_shift_y` below it.
-            Some(line_baseline) => line_baseline + decoration.origin_shift_y as f64,
-            None => {
-                abs_y
-                    + line_top as f64
-                    + decoration.origin_ascent
-                    + decoration.origin_shift_y as f64
-            }
-        };
-        let thickness = decoration.origin_thickness;
-        let center = match kind {
-            DecorationLineKind::Underline => {
-                baseline + decoration.origin_descent * 0.5 + decoration.underline_offset
-            }
-            DecorationLineKind::Overline => baseline - decoration.origin_ascent + thickness * 0.5,
-            DecorationLineKind::LineThrough => baseline - decoration.origin_ascent * 0.35,
-        };
-        for &(span_x0, span_x1) in spans.iter().take(span_count) {
-            paint_decoration_style(
-                scene,
-                decoration.style,
-                color,
-                span_x0,
-                span_x1,
-                center,
-                thickness,
-            );
-        }
+        paint_decoration_pattern(
+            scene,
+            line.style,
+            css_color_to_peniko(line.color),
+            f64::from(line.x_start),
+            f64::from(line.x_end),
+            f64::from(line.y),
+            f64::from(line.thickness),
+            f64::from(line.pattern_origin_x),
+            f64::from(line.pattern_end_x),
+        );
     }
 }
 
@@ -553,6 +241,7 @@ fn dashed_lengths(span: f64, thickness: f64) -> (f64, f64) {
     (natural_dash * scale, natural_gap * scale)
 }
 
+#[cfg(test)]
 fn paint_decoration_style(
     scene: &mut impl PaintScene,
     style: TextDecorationStyle,
@@ -562,7 +251,25 @@ fn paint_decoration_style(
     center: f64,
     thickness: f64,
 ) {
-    if !x0.is_finite()
+    paint_decoration_pattern(scene, style, color, x0, x1, center, thickness, x0, x1);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_decoration_pattern(
+    scene: &mut impl PaintScene,
+    style: TextDecorationStyle,
+    color: Color,
+    x0: f64,
+    x1: f64,
+    center: f64,
+    thickness: f64,
+    pattern_origin: f64,
+    pattern_end: f64,
+) {
+    if !pattern_end.is_finite()
+        || pattern_end <= pattern_origin
+        || !pattern_origin.is_finite()
+        || !x0.is_finite()
         || !x1.is_finite()
         || !center.is_finite()
         || !thickness.is_finite()
@@ -585,14 +292,20 @@ fn paint_decoration_style(
         }
         TextDecorationStyle::Dotted => {
             let radius = (thickness / 2.0).max(0.5);
-            let span = x1 - x0;
+            let span = pattern_end - pattern_origin;
             let natural_step = (radius * 4.0).max(2.0);
             // A hostile but finite letter-spacing/advance must not turn into
             // an unbounded number of scene commands.
             let step = natural_step.max(span / MAX_DECORATION_SEGMENTS as f64);
-            let mut x = x0 + radius;
+            let first_center = pattern_origin + radius;
+            let index = ((x0 - radius - first_center) / step).ceil();
+            let mut x = first_center + index * step;
+            scene.push_clip_layer(
+                Affine::IDENTITY,
+                &Rect::new(x0, center - radius, x1, center + radius),
+            );
             let mut segments = 0;
-            while x < x1 && segments < MAX_DECORATION_SEGMENTS {
+            while x - radius < x1 && segments < MAX_DECORATION_SEGMENTS {
                 scene.fill(
                     Fill::NonZero,
                     Affine::IDENTITY,
@@ -603,39 +316,58 @@ fn paint_decoration_style(
                 x += step;
                 segments += 1;
             }
+            scene.pop_layer();
         }
         TextDecorationStyle::Dashed => {
-            let (dash, gap) = dashed_lengths(x1 - x0, thickness);
+            let (dash, gap) = dashed_lengths(pattern_end - pattern_origin, thickness);
             let mut path = BezPath::new();
             path.move_to((x0, center));
             path.line_to((x1, center));
             let stroke = Stroke::new(thickness)
                 .with_caps(Cap::Butt)
-                .with_dashes(0.0, [dash, gap]);
+                .with_dashes((x0 - pattern_origin).rem_euclid(dash + gap), [dash, gap]);
             scene.stroke(&stroke, Affine::IDENTITY, color, None, &path);
         }
         TextDecorationStyle::Wavy => {
-            let span = x1 - x0;
+            let span = pattern_end - pattern_origin;
             let wavelength = (thickness * 4.0).max(4.0);
             let amplitude = (thickness * 1.5).max(0.75);
             // Limit path complexity while retaining more detail for normal
             // spans. The cap is important for huge finite advances.
             let half_wave = (wavelength * 0.5).max(span / MAX_DECORATION_SEGMENTS as f64);
             let mut path = BezPath::new();
-            path.move_to((x0, center));
-            let mut x = x0;
-            let mut sign = -1.0;
+            let mut index = ((x0 - pattern_origin) / half_wave).floor();
+            let mut x = pattern_origin + index * half_wave;
+            path.move_to((x, center));
             let mut segments = 0;
-            while x < x1 && segments < MAX_DECORATION_SEGMENTS {
-                let end = (x + half_wave).min(x1);
+            while x < x1 && segments <= MAX_DECORATION_SEGMENTS {
+                let end = x + half_wave;
+                if end <= x {
+                    break; // cov:ignore: valid segments lie within the shared extent; the bounded f64 step exceeds roundoff.
+                }
+                let sign = if index.rem_euclid(2.0) < 1.0 {
+                    -1.0
+                } else {
+                    1.0
+                };
                 let control_x = (x + end) * 0.5;
                 path.quad_to((control_x, center + sign * amplitude), (end, center));
                 x = end;
-                sign = -sign;
+                index += 1.0;
                 segments += 1;
             }
             let stroke = Stroke::new(thickness).with_caps(Cap::Round);
+            scene.push_clip_layer(
+                Affine::IDENTITY,
+                &Rect::new(
+                    x0,
+                    center - amplitude - thickness,
+                    x1,
+                    center + amplitude + thickness,
+                ),
+            );
             scene.stroke(&stroke, Affine::IDENTITY, color, None, &path);
+            scene.pop_layer();
         }
         // `TextDecorationStyle` is non-exhaustive. Treat a future style as a
         // solid line until a dedicated paint algorithm is added.

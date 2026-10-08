@@ -7,9 +7,11 @@ mod page;
 pub use dom_view::DomView;
 pub use navigation::{Anchor, AnchorIndex, Link};
 pub use page::{Page, PageGeometry, PageMode};
+// cov:ignore: public type re-exports have no executable mapping; API integration tests verify them.
 pub use raikiri_dom::{
-    ClipKind, FontBlob, FontId, FontRef, FontVariation, Fragment, FragmentKind, GeneratedKind,
-    Glyph, PaintEvent, PositionedGlyphRun, RepeatKind, RunSource, Synthesis, Tag,
+    ClipKind, DecorationKind, DecorationLine, DecorationStyle, FontBlob, FontId, FontRef,
+    FontVariation, Fragment, FragmentKind, GeneratedKind, Glyph, PaintEvent, PositionedGlyphRun,
+    RepeatKind, RunSource, Synthesis, Tag, TextLineId,
 };
 
 use crate::render::{PipelineInputs, PipelineOutput, PipelineRun, run_pipeline};

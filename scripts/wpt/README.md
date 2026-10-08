@@ -351,8 +351,41 @@ media feature or CSS function: orientation/aspect-ratio, device/display features
 calc/sign functions, custom media, scripting, and one dynamic script error
 still have separate failures in the wider 57-case survey.
 
-One related CSS Paged Media requirement is still open (0vv.117): `size`
-descriptors qualified by paper-dimension media queries must be ignored, while
-other qualified page declarations may apply. The current page cascade still
-applies such guarded `size` declarations. The fixed query basis above does not
-implement that separate descriptor rule.
+Following CSS Paged Media 3 §7.1, the page cascade ignores `size` descriptors
+qualified by paper-dimension media queries, including width, height, aspect
+ratio, and orientation. Other qualified page declarations still apply when
+the condition matches. This qualification includes inherited stylesheet and
+import media conditions; a media list keeps the union of paper dependencies
+from its valid arms even when another arm matches independently. Invalid arms
+do not contribute dependencies. Ignored sizes do not set the declaration
+viewport basis. Page-context viewport units, including size and margin-box
+declarations, are resolved once against the existing nominal 480 × 288 basis used by
+the page probe, before ordinary declaration units expand. This adapter policy
+does not claim complete support for every paged-media viewport-unit behavior.
+
+## Contextual background colors
+
+`color` and `background-color` retain `currentcolor` operands until the cascade
+knows their color basis, including operands in `color-mix()` and backgrounds
+expanded from a shorthand or a custom property. A `color` expression uses the
+inherited foreground; a background expression uses the receiving element's own
+foreground. Explicit `background-color: inherit` retains the expression for the
+receiver, including root-to-page and page-to-margin-box inheritance. See
+[CSS Color 4 §15.5](https://www.w3.org/TR/css-color-4/#resolving-other-colors),
+[CSS Color 5 §10.1](https://www.w3.org/TR/css-color-5/#resolving-color-values), and
+[CSS Paged Media 3 §6](https://www.w3.org/TR/css-page-3/#page-properties).
+
+The exact 800 × 600 bundled-font pass set includes the legacy currentcolor
+background reference and four color-mix currentcolor references. Universal
+`::highlight(name)` backgrounds also preserve winning contextual expressions
+through importance and layer rollback, resolving them against the originating
+text node's computed foreground when painted. Highlight-specific foreground
+styling, per-element highlight selectors, and multiple-overlay foreground/dual
+inheritance remain existing gaps tracked by 0vv.133. The wider
+`currentcolor-001` and `currentcolor-002` references still have an existing
+163-pixel text residual: replacing the authored contextual colors with literal
+colors produces the same residual on the original source. Those references are
+kept out of the PASS baseline. General `background: inherit` shorthand expansion
+is a separate existing parser gap (0vv.127); the supported longhand inheritance
+above does not establish all eight shorthand longhands. Color conversion still
+uses the existing bounded 8-bit sRGB model.

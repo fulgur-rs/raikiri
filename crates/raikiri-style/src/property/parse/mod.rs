@@ -274,11 +274,11 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
             input.expect_ident_matching("revert-layer").ok()?;
             Some(PropertyValue::AllRevertLayer)
         }
-        "color" => parse_color(input).map(PropertyValue::Color),
+        "color" => parse_element_color(input, PropertyKey::Color),
         // CSS Backgrounds 3 §2.2 <https://www.w3.org/TR/css-backgrounds-3/#background-color>
         // "Base Color: the background-color property". Its value grammar is
-        // `<color>`; reuse parse_color as in the `color` arm above.
-        "background-color" => parse_color(input).map(PropertyValue::BackgroundColor),
+        // `<color>`; preserve currentcolor as in the `color` arm above.
+        "background-color" => parse_element_color(input, PropertyKey::BackgroundColor),
         // Wrapping in Arc reduces cascade memory (following similar DoS fixes,
         // but for performance, not security). `parse_font_family` cannot return
         // an empty Vec: `<family-name>#` requires at least one item, enforced by
