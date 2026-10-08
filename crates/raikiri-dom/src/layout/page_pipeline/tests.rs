@@ -7864,6 +7864,14 @@ fn review_page_child_edges_elide_contents_and_skip_parallel_children() {
             Some(&format!("height:1px;{css}")),
         );
     }
+    let empty = doc.append_element(
+        Some(wrapper),
+        "div",
+        Style::default(),
+        Some("display:contents;break-before:page;break-after:page"),
+    );
+    doc.append_text(empty, " \n ");
+    doc.append_element(Some(empty), "div", Style::default(), Some("display:none"));
     let contents = doc.append_element(
         Some(wrapper),
         "div",
@@ -7883,6 +7891,14 @@ fn review_page_child_edges_elide_contents_and_skip_parallel_children() {
         Style::default(),
         Some("display:none;height:1px"),
     );
+    let empty = doc.append_element(
+        Some(wrapper),
+        "div",
+        Style::default(),
+        Some("display:contents;break-before:page;break-after:page"),
+    );
+    doc.append_text(empty, " \n ");
+    doc.append_element(Some(empty), "div", Style::default(), Some("display:none"));
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
@@ -7897,33 +7913,40 @@ fn review_page_child_edges_elide_contents_and_skip_parallel_children() {
 
 #[test]
 fn review_page_generated_content_stops_child_edge_propagation() {
-    let (mut doc, body, _) = review_body_boundary_document("");
-    let wrapper = doc.append_element(
-        Some(body),
-        "article",
-        Style::default(),
-        Some("display:block"),
-    );
-    doc.append_element(
-        Some(wrapper),
-        "div",
-        Style::default(),
-        Some("display:block;height:20px;break-before:avoid-page;break-after:avoid-page"),
-    );
-    doc.mark_in_document_flags();
-    let mut rules = raikiri_style::build_rule_tree(&doc);
-    rules.add_stylesheet(
-        "article::before,article::after{content:'M'}",
-        raikiri_style::Origin::Author,
-    );
-    let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
-    layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
-    assert!(doc.nodes[wrapper].has_before_or_after_content);
-    for before in [false, true] {
-        assert_eq!(
-            page_edge_constraint(&doc, &cascade, wrapper, before),
-            (false, false)
+    for display in ["block", "contents"] {
+        let (mut doc, body, _) = review_body_boundary_document("");
+        let wrapper =
+            doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        let generated = doc.append_element(
+            Some(wrapper),
+            "article",
+            Style::default(),
+            Some(&format!(
+                "display:{display};break-before:page;break-after:page"
+            )),
         );
+        doc.append_element(
+            Some(generated),
+            "div",
+            Style::default(),
+            Some("display:block;height:20px;break-before:avoid-page;break-after:avoid-page"),
+        );
+        doc.mark_in_document_flags();
+        let mut rules = raikiri_style::build_rule_tree(&doc);
+        rules.add_stylesheet(
+            "article::before,article::after{content:'M'}",
+            raikiri_style::Origin::Author,
+        );
+        let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+        layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
+        assert!(doc.nodes[generated].has_before_or_after_content);
+        for before in [false, true] {
+            assert_eq!(
+                page_edge_constraint(&doc, &cascade, wrapper, before),
+                (display == "block", false),
+                "display={display} before={before}"
+            );
+        }
     }
 }
 
