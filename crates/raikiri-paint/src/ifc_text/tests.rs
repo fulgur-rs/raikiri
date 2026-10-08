@@ -4,6 +4,7 @@ use anyrender::recording::RenderCommand;
 use raikiri_dom::{Document, layout_single_page};
 use raikiri_style::{build_rule_tree, cascade};
 use raikiri_traits::PageBox;
+use shodo::Fragment;
 use taffy::Style;
 
 const FONT_DIR: &str = concat!(

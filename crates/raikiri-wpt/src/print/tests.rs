@@ -557,3 +557,31 @@ fn print_probe_preserves_inactive_html_style_media() {
     let offset = (599 * 800 + 799) * 4;
     assert_eq!(&image.rgba[offset..offset + 4], &[0, 128, 0, 255]);
 }
+
+#[test]
+fn paper_guarded_fetched_size_preserves_other_declarations_and_viewport_basis() {
+    for head in [
+        "<link rel=stylesheet href=sheet.css media='print and (width:800px)'>",
+        "<style>@import url(sheet.css) print and (width:800px);</style>",
+    ] {
+        let html = format!("{head}<div class=box></div>");
+        let server = TestServer::start(HashMap::from([
+            ("/index.html", TestResponse::ok("text/html",html.into_bytes())),
+            ("/sheet.css", TestResponse::ok("text/css",b"@page{size:300px 200px;margin:0;background:red}html,body{margin:0}.box{width:100vw;height:100vh;background:green}".to_vec())),
+        ]));
+        let document = render_print_url(
+            &SystemHttpProvider::new(),
+            server.url("index.html"),
+            800,
+            600,
+        )
+        .unwrap();
+        let requests = server.finish();
+        assert!(requests.iter().any(|path| path == "/sheet.css"));
+        assert_eq!(document.pages.len(), 1);
+        let image = &document.pages[0];
+        assert_eq!((image.width, image.height), (800, 600));
+        let offset = (599 * 800 + 799) * 4;
+        assert_eq!(&image.rgba[offset..offset + 4], &[0, 128, 0, 255]);
+    }
+}

@@ -3048,7 +3048,12 @@ pub(crate) fn paint_document_impl(
     let empty_decorations = text::DecorationContext::default();
     let root_decorations = find_html(document)
         .map(|html_id| {
-            text::decorations_for_element(&empty_decorations, &cascade.computed[html_id], 0.0)
+            text::decorations_for_element(
+                &empty_decorations,
+                NodeId::new(html_id as u64),
+                &cascade.computed[html_id],
+                0.0,
+            )
         })
         .unwrap_or_else(|| empty_decorations.clone());
     let layout_fragments = document.layout_fragments();
@@ -4213,8 +4218,12 @@ pub(crate) fn paint_document_impl(
                 // layer, but its originating line is propagated to descendants
                 // by CSS Text Decoration. Keep that paint-only context separate
                 // from `CascadeResult`'s inheritance result.
-                let child_decorations =
-                    text::decorations_for_element(&decorations, cv, child_shift_y);
+                let child_decorations = text::decorations_for_element(
+                    &decorations,
+                    NodeId::new(node_id as u64),
+                    cv,
+                    child_shift_y,
+                );
                 // Paint positioned siblings in stacking order while keeping
                 // source order for equal stack levels. Flex/grid containers use
                 // order-modified document order within each stacking bucket,
