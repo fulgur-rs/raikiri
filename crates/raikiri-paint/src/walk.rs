@@ -17,6 +17,7 @@ use anyrender::PaintScene;
 use kurbo::{Affine, Arc, BezPath, Point, Rect, Vec2};
 use peniko::color::{AlphaColor, ColorSpaceTag, DynamicColor, HueDirection, Srgb};
 use peniko::{Color, Extend as PenikoExtend, Fill, Gradient as PenikoGradient, Mix};
+use raikiri_dom::image_geometry::position_offset;
 use raikiri_dom::{CounterSnapshot, Document, FragmentRect, StandaloneAlign};
 use raikiri_style::property::{
     AnglePercentage, BackgroundImage, BackgroundRepeatKeyword, Border, BorderColor, BorderStyle,
@@ -4156,7 +4157,7 @@ pub(crate) fn paint_document_impl(
                             paint_x,
                             paint_y,
                             &cv.border,
-                            &paint_padding,
+                            &layout.padding,
                             cv.object_fit,
                             &cv.object_position,
                             cv.visibility != Visibility::Hidden,
@@ -4791,23 +4792,10 @@ fn first_text_descendant(document: &Document, root: usize) -> Option<usize> {
     None
 }
 
-/// Reads the `src` attribute of `node_id` as an absolute URL, if the node
-/// is an `<img>` element with a `src` that parses directly.
-///
-/// This mirrors the same absolute-URL-only scope as
-/// `raikiri_dom::image_resolve::resolve_images` (relative-URL resolution
-/// against a document base URL is out of scope) — necessarily a separate
-/// implementation, since this crate cannot reach that crate's
-/// crate-private `Node::attributes` field and must go through the public
-/// `raikiri_traits::{Dom, Node, Element}` trait path instead.
+/// Image URL selected during layout, with an absolute-source fallback.
+/// Relative sources retain the document base chosen by the resolver pass.
 fn img_src_url(document: &Document, node_id: usize) -> Option<url::Url> {
-    use raikiri_traits::{Dom, Element as _, Node as _};
-    let node_ref = document.node(raikiri_traits::NodeId::new(node_id as u64))?;
-    let element = node_ref.as_element()?;
-    if element.tag_name() != "img" {
-        return None;
-    }
-    url::Url::parse(element.attr("src")?).ok()
+    document.resolved_image_url(node_id)
 }
 
 /// Return the padding values used by paint for this laid-out box.
@@ -4897,27 +4885,14 @@ fn paint_image(
         return true;
     }
 
-    let (natural_w, natural_h) = natural_object_size(natural);
-    let (image_w, image_h) = match object_fit {
-        ObjectFit::Fill => (content_w, content_h),
-        ObjectFit::Contain => {
-            let scale = (content_w / natural_w).min(content_h / natural_h);
-            (natural_w * scale, natural_h * scale)
-        }
-        ObjectFit::Cover => {
-            let scale = (content_w / natural_w).max(content_h / natural_h);
-            (natural_w * scale, natural_h * scale)
-        }
-        ObjectFit::None => (natural_w, natural_h),
-        ObjectFit::ScaleDown => {
-            let scale = (content_w / natural_w).min(content_h / natural_h).min(1.0);
-            (natural_w * scale, natural_h * scale)
-        }
-        _ => (content_w, content_h), // cov:ignore: defensive fallback for future ObjectFit variants
-    };
-    if !image_w.is_finite() || !image_h.is_finite() || image_w <= 0.0 || image_h <= 0.0 {
+    let Some((image_x, image_y, image_w, image_h)) = raikiri_dom::image_geometry::object_image_rect(
+        (content_x, content_y, content_w, content_h),
+        natural,
+        object_fit,
+        object_position,
+    ) else {
         return true;
-    }
+    };
     let raster_size = ImageRasterSize {
         width: image_w as f32,
         height: image_h as f32,
@@ -4946,9 +4921,6 @@ fn paint_image(
         });
         return true;
     }
-    let image_x = content_x + position_offset(object_position.horizontal, content_w - image_w);
-    let image_y = content_y + position_offset(object_position.vertical, content_h - image_h);
-
     let image_data = peniko::ImageData {
         data: peniko::Blob::from(decoded.rgba.clone()),
         format: peniko::ImageFormat::Rgba8,
@@ -5080,35 +5052,6 @@ fn paint_canvas(
         scene.pop_layer();
     }
     true
-}
-
-fn natural_object_size(natural: ImageIntrinsicSize) -> (f64, f64) {
-    const DEFAULT_WIDTH: f64 = 300.0;
-    const DEFAULT_HEIGHT: f64 = 150.0;
-    let valid = |value: Option<f32>| {
-        value
-            .filter(|value| value.is_finite() && *value > 0.0)
-            .map(f64::from)
-    };
-    let width = valid(natural.width);
-    let height = valid(natural.height);
-    let ratio = natural
-        .aspect_ratio
-        .filter(|ratio| ratio.is_finite() && *ratio > 0.0)
-        .map(f64::from)
-        .or_else(|| width.zip(height).map(|(w, h)| w / h));
-    match (width, height, ratio) {
-        (Some(width), Some(height), _) => (width, height),
-        (Some(width), None, Some(ratio)) => (width, width / ratio),
-        (None, Some(height), Some(ratio)) => (height * ratio, height),
-        (None, None, Some(ratio)) => {
-            let width = DEFAULT_WIDTH.min(DEFAULT_HEIGHT * ratio);
-            (width, width / ratio)
-        }
-        (Some(width), None, _) => (width, DEFAULT_HEIGHT),
-        (None, Some(height), _) => (DEFAULT_WIDTH, height),
-        _ => (DEFAULT_WIDTH, DEFAULT_HEIGHT),
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -5848,23 +5791,6 @@ fn paint_background_from_source(
             node_id: None,
             details: "CSS background image could not be rasterized; the image was skipped".into(),
         });
-    }
-}
-
-fn position_offset(offset: ComputedCssPositionOffset, free_space: f64) -> f64 {
-    match offset {
-        ComputedCssPositionOffset::Start(value) => match value {
-            ComputedLengthPercentage::Px(px) => px as f64,
-            ComputedLengthPercentage::Percent(percent) => free_space * percent as f64 / 100.0,
-        },
-        ComputedCssPositionOffset::End(value) => match value {
-            ComputedLengthPercentage::Px(px) => free_space - px as f64,
-            // cov:ignore: CSS percentage end offsets normalize to Start before this used-value helper
-            ComputedLengthPercentage::Percent(percent) => {
-                free_space * (1.0 - percent as f64 / 100.0)
-            }
-        },
-        _ => free_space / 2.0, // cov:ignore: defensive fallback for future position variants
     }
 }
 

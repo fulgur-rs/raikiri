@@ -51,6 +51,22 @@ pub struct Page<'a> {
     pub(super) cascade: &'a raikiri_style::CascadeResult,
 }
 
+/// Resolved raster pixels and their complete object placement on a page.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct RasterImage {
+    /// Source element.
+    pub node: NodeId,
+    /// Absolute URL resolved by layout, without changing source attributes.
+    pub url: url::Url,
+    /// Shared straight RGBA8 pixels from the configured source.
+    pub pixels: std::sync::Arc<raikiri_traits::DecodedImage>,
+    /// Object rectangle after object-fit and object-position.
+    pub rect: PaintRect,
+    /// Whole content-edge clip, before pagination cuts.
+    pub clip: raikiri_traits::PaintClip,
+}
+
 impl<'a> Page<'a> {
     /// Zero-based page index.
     pub fn index(&self) -> u32 {
@@ -86,6 +102,67 @@ impl<'a> Page<'a> {
     /// All fragments on this page. The order is not the paint order.
     pub fn fragments(&self) -> impl Iterator<Item = Fragment<'a>> + 'a + use<'a> {
         self.document.page_fragments(self.slice.page_index)
+    }
+
+    /// Resolve an image fragment from already cached pixels.
+    ///
+    /// Pass a fragment from this page and the source returned by
+    /// [`RenderResources::image_pixel_source_ref`](crate::RenderResources::image_pixel_source_ref)
+    /// so painting retains the configured resource policy and byte limits.
+    /// Empty, hidden, missing, and ordinary non-image elements return `None`.
+    /// Ancestor overflow and opacity remain represented by page paint events.
+    pub fn raster_image(
+        &self,
+        fragment: &Fragment<'a>,
+        source: &dyn raikiri_traits::ImagePixelSource,
+    ) -> Option<RasterImage> {
+        let node = usize::try_from(fragment.node().0).ok()?;
+        let url = self.document.resolved_image_url(node)?;
+        let computed = self.computed(fragment.node())?;
+        if computed.visibility != raikiri_style::property::Visibility::Visible {
+            return None;
+        }
+        let content = fragment.content_rect()?;
+        let natural = source.intrinsic_size(&url)?;
+        let (x, y, width, height) = raikiri_dom::image_geometry::object_image_rect(
+            (
+                content.x as f64,
+                content.y as f64,
+                content.width as f64,
+                content.height as f64,
+            ),
+            natural,
+            computed.object_fit,
+            &computed.object_position,
+        )?;
+        let rect = PaintRect::new(x as f32, y as f32, width as f32, height as f32);
+        if ![rect.x, rect.y, rect.width, rect.height]
+            .into_iter()
+            .all(f32::is_finite)
+        {
+            return None;
+        }
+        let pixels = source.get_decoded_at_size(
+            &url,
+            raikiri_traits::ImageRasterSize {
+                width: rect.width,
+                height: rect.height,
+            },
+            None,
+        )?;
+        let bytes = (pixels.width as usize)
+            .checked_mul(pixels.height as usize)?
+            .checked_mul(4)?;
+        if pixels.width == 0 || pixels.height == 0 || pixels.rgba.len() != bytes {
+            return None;
+        }
+        Some(RasterImage {
+            node: fragment.node(),
+            url,
+            pixels,
+            rect,
+            clip: raikiri_traits::PaintClip::new(content),
+        })
     }
 
     /// Prepares the vector source of an SVG root placed by this page.

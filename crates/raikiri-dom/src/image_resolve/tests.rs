@@ -384,3 +384,30 @@ fn canvas_intrinsic_handles_invalid_zero_overlong_and_foreign() {
     resolve_canvas_intrinsic_sizes(&mut doc);
     assert_eq!(doc.nodes[foreign].image_intrinsic_size(), None);
 }
+
+#[test]
+fn resolved_urls_follow_relative_sources_base_changes_and_attribute_mutation() {
+    let mut document = Document::new();
+    let root = document.root_index();
+    let image = document.append_element(Some(root), "img", Style::default(), None::<&str>);
+    document.set_element_attributes(image, vec![("src".into(), "image.png".into())]);
+    document.mark_in_document_flags();
+    let first = Url::parse("https://first.test/sub/document.html").unwrap();
+    resolve_images_with_base(&mut document, &FixedSizeResolver(4.0, 2.0), Some(&first)).unwrap();
+    assert_eq!(
+        document.resolved_image_url(image).unwrap().as_str(),
+        "https://first.test/sub/image.png"
+    );
+    assert_eq!(document.nodes[image].attribute("src"), Some("image.png"));
+    document.set_element_attributes(image, vec![("src".into(), "next.png".into())]);
+    assert_eq!(document.resolved_image_url(image), None);
+    let second = Url::parse("https://second.test/document.html").unwrap();
+    resolve_images_with_base(&mut document, &FixedSizeResolver(4.0, 2.0), Some(&second)).unwrap();
+    assert_eq!(
+        document.resolved_image_url(image).unwrap().as_str(),
+        "https://second.test/next.png"
+    );
+    document.set_element_attributes(image, Vec::new());
+    assert_eq!(document.resolved_image_url(image), None);
+    assert_eq!(document.resolved_image_url(usize::MAX), None);
+}

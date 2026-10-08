@@ -68,8 +68,9 @@ pub(crate) fn resolve_images_with_base(
     base_url: Option<&Url>,
 ) -> Result<(), ResolverError> {
     let mut intrinsic_size_changed = false;
+    document.resolved_image_urls.clear();
     let result = (|| {
-        for node in document.nodes.iter_mut() {
+        for (id, node) in document.nodes.iter_mut().enumerate() {
             if !node.is_in_document() {
                 continue;
             }
@@ -92,6 +93,9 @@ pub(crate) fn resolve_images_with_base(
                     .ok()
                     .or_else(|| base_url.and_then(|base| base.join(src).ok()));
                 if let Some(url) = url {
+                    document
+                        .resolved_image_urls
+                        .insert(id, (src.to_owned(), url.clone()));
                     match resolver.resolve(ResolverRequest::new(&url)) {
                         Ok(resolved) => Some(resolved.intrinsic),
                         Err(error) => {
