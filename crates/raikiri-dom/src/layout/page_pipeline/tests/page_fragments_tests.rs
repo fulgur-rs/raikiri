@@ -2253,6 +2253,212 @@ fn column_review_pages(mut doc: Document, ids: &[usize]) -> (Vec<Option<String>>
 }
 
 #[test]
+fn column_reverse_contents_items_follow_visual_page_order() {
+    for wrappers in [0, 1, 2] {
+        let (mut doc, _, flex) = column_review_document();
+        doc.set_element_inline_style(
+            flex,
+            Some("display:flex;flex-direction:column-reverse".into()),
+        );
+        let mut parent = flex;
+        for _ in 0..wrappers {
+            parent = doc.append_element(
+                Some(parent),
+                "div",
+                Style::default(),
+                Some("display:contents"),
+            );
+        }
+        let item = doc.append_element(Some(parent), "div", Style::default(), Some("display:block"));
+        let a = doc.append_element(
+            Some(item),
+            "div",
+            Style::default(),
+            Some("display:block;page:a"),
+        );
+        let a = doc.append_text(a, "A");
+        let item = doc.append_element(Some(parent), "div", Style::default(), Some("display:block"));
+        let b = doc.append_element(
+            Some(item),
+            "div",
+            Style::default(),
+            Some("display:block;page:b"),
+        );
+        let b = doc.append_text(b, "B");
+        assert_eq!(
+            column_review_pages(doc, &[a, b]),
+            (vec![Some("b".into()), Some("a".into())], vec![1, 0])
+        );
+    }
+}
+
+#[test]
+fn trailing_column_item_under_contents_can_fragment_at_page_edge() {
+    for wrappers in [0, 1, 2] {
+        let (mut doc, _, flex) = column_review_document();
+        doc.append_element(
+            Some(flex),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px;flex-shrink:0"),
+        );
+        let mut parent = flex;
+        for _ in 0..wrappers {
+            parent = doc.append_element(
+                Some(parent),
+                "div",
+                Style::default(),
+                Some("display:contents"),
+            );
+        }
+        let last = doc.append_element(
+            Some(parent),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;flex-shrink:0"),
+        );
+        assert_eq!(
+            column_review_pages(doc, &[last]),
+            (vec![None, None], vec![0])
+        );
+    }
+}
+
+#[test]
+fn row_inside_column_keeps_deferred_nested_named_boundary() {
+    for nested_item in [true, false] {
+        let (mut doc, body, column) = column_review_document();
+        let parent = if nested_item {
+            doc.append_element(Some(column), "div", Style::default(), Some("display:block"))
+        } else {
+            column
+        };
+        let row = doc.append_element(
+            Some(parent),
+            "div",
+            Style::default(),
+            Some("display:flex;flex-direction:row"),
+        );
+        let item = doc.append_element(Some(row), "div", Style::default(), Some("display:block"));
+        let named = doc.append_element(
+            Some(item),
+            "div",
+            Style::default(),
+            Some("display:block;page:a"),
+        );
+        let a = doc.append_text(named, "A");
+        let after = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        let b = doc.append_text(after, "B");
+        assert_eq!(
+            column_review_pages(doc, &[a, b]).1,
+            vec![1, 2],
+            "nested item: {nested_item}"
+        );
+    }
+}
+
+#[test]
+fn a_nested_row_does_not_coalesce_a_real_preceding_column_item() {
+    let (mut doc, body, column) = column_review_document();
+    doc.append_element(
+        Some(column),
+        "div",
+        Style::default(),
+        Some("display:block;height:10px;flex-shrink:0"),
+    );
+    let item = doc.append_element(Some(column), "div", Style::default(), Some("display:block"));
+    let row = doc.append_element(
+        Some(item),
+        "div",
+        Style::default(),
+        Some("display:flex;flex-direction:row"),
+    );
+    let item = doc.append_element(Some(row), "div", Style::default(), Some("display:block"));
+    let named = doc.append_element(
+        Some(item),
+        "div",
+        Style::default(),
+        Some("display:block;page:a"),
+    );
+    let a = doc.append_text(named, "A");
+    let after = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+    let b = doc.append_text(after, "B");
+    assert_eq!(column_review_pages(doc, &[a, b]).1, vec![2, 3]);
+}
+
+#[test]
+fn hidden_child_preserves_the_named_empty_run_boundary() {
+    let (mut doc, _, flex) = column_review_document();
+    let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
+    let first = doc.append_element(
+        Some(item),
+        "div",
+        Style::default(),
+        Some("display:block;page:a"),
+    );
+    doc.append_element(
+        Some(first),
+        "div",
+        Style::default(),
+        Some("display:none;height:10px"),
+    );
+    let next = doc.append_element(
+        Some(item),
+        "div",
+        Style::default(),
+        Some("display:block;page:b"),
+    );
+    let text = doc.append_text(next, "X");
+    assert_eq!(
+        column_review_pages(doc, &[text]),
+        (vec![Some("a".into()), Some("b".into())], vec![1])
+    );
+}
+
+#[test]
+fn inline_named_canvas_keeps_an_anonymous_page_boundary() {
+    let (mut doc, body, flex) = column_review_document();
+    doc.set_element_inline_style(flex, Some("display:none".into()));
+    let before = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:10px"),
+    );
+    let canvas = doc.append_element(
+        Some(body),
+        "canvas",
+        Style::default(),
+        Some("display:inline;page:a;width:10px;height:10px"),
+    );
+    assert_eq!(
+        column_review_pages(doc, &[before, canvas]),
+        (vec![None, None], vec![0, 1])
+    );
+}
+
+#[test]
+fn empty_table_row_does_not_move_following_body_text() {
+    let (mut doc, body, flex) = column_review_document();
+    doc.set_element_inline_style(flex, Some("display:none".into()));
+    let table = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:table;border-spacing:0"),
+    );
+    doc.append_element(
+        Some(table),
+        "div",
+        Style::default(),
+        Some("display:table-row"),
+    );
+    let after = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+    let text = doc.append_text(after, "X");
+    assert_eq!(column_review_pages(doc, &[text]), (vec![None], vec![0]));
+}
+
+#[test]
 fn column_review_contents_wrapper_does_not_count_as_a_preceding_item() {
     for wrappers in [0, 1, 2] {
         let (mut doc, _, flex) = column_review_document();

@@ -940,10 +940,11 @@ fn flex_pagination_child_order(
     document: &Document,
     cascade: &CascadeResult,
     parent_id: usize,
+    flex_parent_id: usize,
 ) -> Vec<usize> {
     let mut children = document.nodes[parent_id].layout_children().to_vec();
     if !matches!(
-        cascade.computed[parent_id].flex_direction,
+        cascade.computed[flex_parent_id].flex_direction,
         FlexDirectionValue::ColumnReverse
     ) {
         return children;
@@ -952,18 +953,61 @@ fn flex_pagination_child_order(
     let mut ordered_items: Vec<_> = children
         .iter()
         .copied()
-        .filter(|&child_id| is_in_flow_flex_child_for_pagination(document, parent_id, child_id))
+        .filter(|&child_id| {
+            is_in_flow_flex_child_for_pagination(document, flex_parent_id, child_id)
+        })
         .collect();
     ordered_items.reverse();
     let mut ordered_items = ordered_items.into_iter();
     for child_id in &mut children {
-        if is_in_flow_flex_child_for_pagination(document, parent_id, *child_id) {
+        if is_in_flow_flex_child_for_pagination(document, flex_parent_id, *child_id) {
             *child_id = ordered_items
                 .next()
                 .expect("each in-flow flex child has one reversed entry");
         }
     }
     children
+}
+
+/// Nearest ancestor box, skipping elements that do not generate a box.
+pub(crate) fn pagination_box_parent(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> Option<usize> {
+    let mut parent = document.parent_of(node_id);
+    while let Some(id) = parent
+        && cascade.computed[id].display == DisplayValue::Contents
+    {
+        parent = document.parent_of(id);
+    }
+    parent
+}
+
+/// Last in-flow effective item in the flex container's visual page order.
+pub(crate) fn trailing_flex_child_for_pagination(
+    document: &Document,
+    cascade: &CascadeResult,
+    parent_id: usize,
+) -> Option<usize> {
+    let mut pending = pagination_child_order(document, cascade, parent_id);
+    pending.reverse();
+    let mut trailing = None;
+    while let Some(child) = pending.pop() {
+        if !is_in_flow_flex_child_for_pagination(document, parent_id, child) {
+            continue;
+        }
+        if cascade.computed[child].display == DisplayValue::Contents {
+            pending.extend(
+                pagination_child_order(document, cascade, child)
+                    .into_iter()
+                    .rev(),
+            );
+        } else {
+            trailing = Some(child);
+        }
+    }
+    trailing
 }
 
 fn is_in_flow_grid_item_for_pagination(
@@ -998,7 +1042,18 @@ pub(crate) fn pagination_child_order(
         computed.display,
         DisplayValue::Flex | DisplayValue::InlineFlex
     ) {
-        return flex_pagination_child_order(document, cascade, parent_id);
+        return flex_pagination_child_order(document, cascade, parent_id, parent_id);
+    }
+    if computed.display == DisplayValue::Contents
+        && let Some(flex_parent) = pagination_box_parent(document, cascade, parent_id)
+        && matches!(
+            cascade.computed[flex_parent].display,
+            DisplayValue::Flex | DisplayValue::InlineFlex
+        )
+    {
+        // Keep each wrapper's layout offset while traversing its effective
+        // items in the enclosing flex container's visual order.
+        return flex_pagination_child_order(document, cascade, parent_id, flex_parent);
     }
     let is_single_column_grid = matches!(
         computed.display,

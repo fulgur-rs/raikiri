@@ -2168,12 +2168,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                 // The `page` property on an out-of-flow box does not open a
                 // normal-flow page boundary. Keep its inherited page context,
                 // but do not use its explicit name to split pagination.
-                let mut box_parent = node.parent;
-                while let Some(parent) = box_parent
-                    && cascade.computed[parent].display == DisplayValue::Contents
-                {
-                    box_parent = document.parent_of(parent);
-                }
+                let box_parent = pagination_box_parent(document, cascade, node_id);
                 let is_direct_flex_item = box_parent.is_some_and(|parent| {
                     matches!(
                         cascade.computed[parent].display,
@@ -2203,7 +2198,12 @@ pub fn layout_pages_with_page_geometry_and_control(
                     computed.flex_direction,
                     FlexDirectionValue::Column | FlexDirectionValue::ColumnReverse
                 );
-                let page_name = if column_flex || named_flex_context.is_some() {
+                let deferred_named_break_after = matches!(computed.display, DisplayValue::Flex)
+                    && !column_flex
+                    && has_nested_named_page_descendant(document, cascade, node_id, 0);
+                let page_name = if column_flex
+                    || (named_flex_context.is_some() && !deferred_named_break_after)
+                {
                     own_page_name.clone().or(inherited_page_name.clone())
                 } else if has_propagated_page_name {
                     propagated_page_name
@@ -2291,6 +2291,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                         || flex_item_candidate
                         || is_rendered_leaf
                         || grid_item_candidate
+                        || deferred_named_break_after
                         || own_page_name.is_some()
                         || inline_named_page
                         || page_break_is_forced(computed.break_before)
@@ -2312,9 +2313,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                         page_name: page_name.clone(),
                         named_flex_context,
                         inline_named_page,
-                        deferred_named_break_after: matches!(computed.display, DisplayValue::Flex)
-                            && !column_flex
-                            && has_nested_named_page_descendant(document, cascade, node_id, 0),
+                        deferred_named_break_after,
                         ifc_root: None,
                     });
                 }
@@ -2355,6 +2354,11 @@ pub fn layout_pages_with_page_geometry_and_control(
                         inside_flex || matches!(computed.display, DisplayValue::Flex),
                         if column_flex {
                             Some(node_id)
+                        } else if matches!(
+                            computed.display,
+                            DisplayValue::Flex | DisplayValue::InlineFlex
+                        ) {
+                            None
                         } else {
                             named_flex_context
                         },
@@ -2464,6 +2468,14 @@ pub fn layout_pages_with_page_geometry_and_control(
             (false, current_page_name.clone())
         } else {
             match candidate.named_flex_context {
+                Some(context) if candidate.deferred_named_break_after => {
+                    // Empty enclosing column boxes do not open an anonymous
+                    // page before the row's established deferred boundary.
+                    let seen =
+                        seen_named_flex_contexts.contains(&context) || current_page_name.is_some();
+                    outer_page_name = candidate.page_name.clone();
+                    (saw_child && seen, current_page_name.clone())
+                }
                 Some(context)
                     if candidate.is_named || candidate.is_text || candidate.is_rendered_leaf =>
                 {
@@ -2846,25 +2858,11 @@ pub fn layout_pages_with_page_geometry_and_control(
         // they would cross a fragmentainer, preserving the existing column
         // flex pagination behavior.
         let flex_item_is_last = candidate.is_flex_item
-            && parent_of[node_id].is_some_and(|parent_id| {
+            && pagination_box_parent(document, cascade, node_id).is_some_and(|parent_id| {
                 let trailing_child = trailing_flex_child_by_parent
                     .entry(parent_id)
                     .or_insert_with(|| {
-                        let children = document.nodes[parent_id].layout_children();
-                        let is_column_reverse = matches!(
-                            cascade.computed[parent_id].flex_direction,
-                            FlexDirectionValue::ColumnReverse
-                        );
-                        if is_column_reverse {
-                            children.iter().find(|&&child_id| {
-                                is_in_flow_flex_child_for_pagination(document, parent_id, child_id)
-                            })
-                        } else {
-                            children.iter().rev().find(|&&child_id| {
-                                is_in_flow_flex_child_for_pagination(document, parent_id, child_id)
-                            })
-                        }
-                        .copied()
+                        trailing_flex_child_for_pagination(document, cascade, parent_id)
                     });
                 *trailing_child == Some(node_id)
             });
@@ -2995,7 +2993,8 @@ pub fn layout_pages_with_page_geometry_and_control(
         if name_participates_in_flow
             && (candidate.is_direct_body_element
                 || candidate.is_named
-                || candidate.is_rendered_leaf)
+                || candidate.is_rendered_leaf
+                || candidate.deferred_named_break_after)
             && (!keep_local_page_type || page_transition || current_page > page_before_candidate)
         {
             current_page_name = candidate_page_name;
