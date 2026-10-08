@@ -1,7 +1,8 @@
 use super::*;
-use crate::OverflowClip;
+use crate::page_projection::records::OverflowClipSource;
 use raikiri_traits::{PaintInsets, PaintRect};
 use std::cell::Cell;
+use std::collections::BTreeMap;
 
 // Flex traversal skips Contents boxes when globally ordering effective
 // items; preserve their stored offsets relative to the visited parent.
@@ -1017,7 +1018,11 @@ pub(crate) fn project_slices(
     page_box: PageBox,
     slices: &[PageSlice],
     page_geometries: &[PageFragmentPageGeometry],
-) -> (Vec<PageFragment>, Vec<ProjectedTextRoot>) {
+) -> (
+    Vec<PageFragment>,
+    Vec<ProjectedTextRoot>,
+    BTreeMap<NodeId, OverflowClipSource>,
+) {
     let fallback_geometry = resolve_page_fragment_geometry(cascade, page_box, 0);
     let mut ordered_slices: Vec<&PageSlice> = slices.iter().collect();
     ordered_slices.sort_by(|left, right| {
@@ -1057,7 +1062,7 @@ pub(crate) fn project_slices(
 
     let mut text_roots = Vec::new();
     let Some(body_id) = find_body(document) else {
-        return (pages, text_roots);
+        return (pages, text_roots, BTreeMap::new());
     };
 
     // Collect absolute post-pagination coordinates.  The arena index is the
@@ -1317,62 +1322,34 @@ pub(crate) fn project_slices(
         }
     }
 
-    // Retain source geometry for clipping ancestors even if their own boxes
-    // do not intersect a page. Only ancestors of actual placements are cached,
-    // avoiding a clip-node by page cross product in the stored snapshot.
-    let clip_sources: HashMap<usize, _> = nodes
+    // Retain each clipping source once. Page-local clips are resolved on access,
+    // so a deep open-axis chain cannot multiply storage by the page count.
+    let clip_sources = nodes
         .iter()
         .filter_map(|source| {
             let id = source.node_id.0 as usize;
-            crate::paint_rules::clips_element_overflow(document, cascade, id)
-                .then_some((id, source))
-        })
-        .collect();
-    for page in &mut pages {
-        let mut visited = HashSet::new();
-        for item in &page.items {
-            let mut ancestor = Some(item.node_id.0 as usize);
-            while let Some(id) = ancestor {
-                if !visited.insert(id) {
-                    break;
-                }
-                let node = &document.nodes[id];
-                if let Some(source) = clip_sources.get(&id) {
-                    let border = node.unrounded_layout.border;
-                    let origin_y = if source.is_repeat {
-                        0.0
-                    } else {
-                        page.content_origin_y
-                    };
-                    let border_box = PaintRect::new(
-                        page.content_box.x + source.abs_x,
-                        page.content_box.y + source.abs_y - origin_y,
-                        source.width,
-                        source.height,
-                    );
-                    if let Some(clip) = crate::paint_rules::overflow_clip(
-                        document,
-                        cascade,
-                        id,
+            if !crate::paint_rules::clips_element_overflow(document, cascade, id) {
+                return None;
+            }
+            let border = document.nodes[id].unrounded_layout.border;
+            let border_box =
+                PaintRect::new(source.abs_x, source.abs_y, source.width, source.height);
+            Some((
+                source.node_id,
+                OverflowClipSource {
+                    border_box,
+                    geometry: crate::paint_rules::OverflowClipGeometry::new(
+                        &cascade.computed[id],
                         border_box,
                         PaintInsets::new(border.top, border.right, border.bottom, border.left),
-                    ) {
-                        page.overflow_clips.insert(
-                            source.node_id,
-                            OverflowClip {
-                                node: source.node_id,
-                                border_box,
-                                clip,
-                            },
-                        );
-                    }
-                }
-                ancestor = node.parent;
-            }
-        }
-    }
+                    ),
+                    is_repeat: source.is_repeat,
+                },
+            ))
+        })
+        .collect();
 
-    (pages, text_roots)
+    (pages, text_roots, clip_sources)
 }
 
 /// Collect deterministic page-local link events from page snapshots.

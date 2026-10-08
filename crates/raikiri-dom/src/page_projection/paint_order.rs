@@ -64,7 +64,7 @@ enum Frame {
 struct PageItems<'a> {
     by_node: HashMap<usize, Vec<&'a PageFragmentItem>>,
     content_box: super::records::PageFragmentRect,
-    overflow_clips: &'a BTreeMap<NodeId, OverflowClip>,
+    overflow_clips: BTreeMap<NodeId, OverflowClip>,
 }
 
 impl<'a> PageItems<'a> {
@@ -77,7 +77,7 @@ impl<'a> PageItems<'a> {
             self.overflow_clips
                 .get(&item.node_id)
                 .filter(|_| item.kind != PageFragmentKind::Text)
-                .map(|entry| &entry.clip),
+                .map(|entry| entry.clip),
         )
     }
 }
@@ -143,7 +143,7 @@ impl Document {
         let mut items = PageItems {
             by_node: HashMap::new(),
             content_box: page.content_box,
-            overflow_clips: &page.overflow_clips,
+            overflow_clips: self.overflow_clips_on_page(page),
         };
         for item in &page.items {
             if let Ok(node_id) = usize::try_from(item.node_id.0) {
@@ -207,7 +207,7 @@ impl Document {
                         }
                     }
                     // The clip is the padding box of the element's whole box
-                    // resolved at projection time. It opens after the element's own
+                    // resolved from shared source geometry. It opens after the element's own
                     // box and closes after its subtree.
                     if let Some(entry) = items.overflow_clips.get(&NodeId::new(node_id as u64)) {
                         // A closed vertical axis hides descendants on pages

@@ -44,7 +44,7 @@ pub struct OverflowClip {
 pub struct Fragment<'a> {
     item: &'a PageFragmentItem,
     origin: (f32, f32),
-    overflow_clip: Option<&'a PaintClip>,
+    overflow_clip: Option<PaintClip>,
 }
 
 impl<'a> Fragment<'a> {
@@ -56,7 +56,7 @@ impl<'a> Fragment<'a> {
         }
     }
 
-    pub(crate) fn with_overflow_clip(mut self, clip: Option<&'a PaintClip>) -> Self {
+    pub(crate) fn with_overflow_clip(mut self, clip: Option<PaintClip>) -> Self {
         self.overflow_clip = clip;
         self
     }
@@ -68,7 +68,7 @@ impl<'a> Fragment<'a> {
     /// body overflow propagated to the viewport does not create a local clip.
     /// Inline boxes and text fragments do not create local overflow clips.
     pub fn overflow_clip(&self) -> Option<PaintClip> {
-        self.overflow_clip.copied()
+        self.overflow_clip
     }
 
     /// The source node.

@@ -4,7 +4,7 @@
 use crate::Document;
 use raikiri_style::property::{
     BorderCollapseValue, ContentComponent, DisplayValue, EmptyCellsValue, FloatValue,
-    OverflowValue, PositionValue, Visibility, WhiteSpaceCollapse, ZIndexValue,
+    OverflowValue, OverflowXY, PositionValue, Visibility, WhiteSpaceCollapse, ZIndexValue,
 };
 use raikiri_style::{CascadeResult, ComputedValues, PseudoElem, StyleNodeId};
 use raikiri_traits::{NodeKind, PaintClip, PaintInsets, PaintRect};
@@ -125,48 +125,74 @@ pub fn overflow_clip(
     if !clips_element_overflow(document, cascade, node_id) {
         return None;
     }
-    let cv = &cascade.computed[node_id];
-    let x0 = (border_box.x + border.left).floor();
-    let y0 = (border_box.y + border.top).floor();
-    let right = border_box.x + border_box.width - border.right;
-    let bottom = border_box.y + border_box.height - border.bottom;
-    let x1 = if cv.overflow.x == OverflowValue::Clip {
-        right.floor()
-    } else {
-        right
-    };
-    let y1 = if cv.overflow.y == OverflowValue::Clip {
-        bottom.floor()
-    } else {
-        bottom
-    };
-    let mut clip = PaintClip::new(PaintRect::new(
-        x0,
-        y0,
-        (x1 - x0).max(0.0),
-        (y1 - y0).max(0.0),
-    ));
-    clip.clip_x = cv.overflow.x != OverflowValue::Visible;
-    clip.clip_y = cv.overflow.y != OverflowValue::Visible;
-    if clip.clip_x && clip.clip_y {
-        let mut radii = cv.border_radius.used(border_box.width, border_box.height);
-        for (corner, [x, y]) in radii.iter_mut().zip([
-            [border.left, border.top],
-            [border.right, border.top],
-            [border.right, border.bottom],
-            [border.left, border.bottom],
-        ]) {
-            let rx = (corner[0] - x).max(0.0);
-            let ry = (corner[1] - y).max(0.0);
-            *corner = if rx > 0.0 && ry > 0.0 {
-                [rx, ry]
+    Some(OverflowClipGeometry::new(&cascade.computed[node_id], border_box, border).at(border_box))
+}
+
+/// Position-independent clip geometry shared by every placement of a source.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct OverflowClipGeometry {
+    border: PaintInsets,
+    overflow: OverflowXY,
+    corner_radii: Option<[[f32; 2]; 4]>,
+}
+
+impl OverflowClipGeometry {
+    pub(crate) fn new(cv: &ComputedValues, border_box: PaintRect, border: PaintInsets) -> Self {
+        let corner_radii =
+            if cv.overflow.x != OverflowValue::Visible && cv.overflow.y != OverflowValue::Visible {
+                let mut radii = cv.border_radius.used(border_box.width, border_box.height);
+                for (corner, [x, y]) in radii.iter_mut().zip([
+                    [border.left, border.top],
+                    [border.right, border.top],
+                    [border.right, border.bottom],
+                    [border.left, border.bottom],
+                ]) {
+                    let rx = (corner[0] - x).max(0.0);
+                    let ry = (corner[1] - y).max(0.0);
+                    *corner = if rx > 0.0 && ry > 0.0 {
+                        [rx, ry]
+                    } else {
+                        [0.0; 2]
+                    };
+                }
+                radii.iter().any(|corner| corner[0] > 0.0).then_some(radii)
             } else {
-                [0.0; 2]
+                None
             };
+        Self {
+            border,
+            overflow: cv.overflow,
+            corner_radii,
         }
-        clip.corner_radii = radii.iter().any(|corner| corner[0] > 0.0).then_some(radii);
     }
-    Some(clip)
+
+    /// Snap edges only after translating the whole border box to its page.
+    pub(crate) fn at(self, border_box: PaintRect) -> PaintClip {
+        let x0 = (border_box.x + self.border.left).floor();
+        let y0 = (border_box.y + self.border.top).floor();
+        let right = border_box.x + border_box.width - self.border.right;
+        let bottom = border_box.y + border_box.height - self.border.bottom;
+        let x1 = if self.overflow.x == OverflowValue::Clip {
+            right.floor()
+        } else {
+            right
+        };
+        let y1 = if self.overflow.y == OverflowValue::Clip {
+            bottom.floor()
+        } else {
+            bottom
+        };
+        let mut clip = PaintClip::new(PaintRect::new(
+            x0,
+            y0,
+            (x1 - x0).max(0.0),
+            (y1 - y0).max(0.0),
+        ));
+        clip.clip_x = self.overflow.x != OverflowValue::Visible;
+        clip.clip_y = self.overflow.y != OverflowValue::Visible;
+        clip.corner_radii = self.corner_radii;
+        clip
+    }
 }
 
 /// The group opacity the element paints its subtree with, if any.
