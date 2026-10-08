@@ -2208,3 +2208,206 @@ fn row_flex_keeps_the_existing_deferred_nested_named_boundary() {
         [1, 2]
     );
 }
+
+fn column_review_document() -> (Document, usize, usize) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;font:10px/10px Ahem"),
+    );
+    let flex = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:flex;flex-direction:column"),
+    );
+    (doc, body, flex)
+}
+
+fn column_review_pages(mut doc: Document, ids: &[usize]) -> (Vec<Option<String>>, Vec<u32>) {
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 50.0;
+    let slices = layout_pages(with_ahem(&mut doc), &computed, page).unwrap();
+    let fragments = page_fragments_from_slices(&doc, &computed, page, &slices);
+    let positions = ids
+        .iter()
+        .map(|&id| {
+            fragments
+                .iter()
+                .flat_map(|p| &p.items)
+                .find(|item| item.node_id == NodeId::new(id as u64))
+                .unwrap()
+                .page_index
+        })
+        .collect();
+    (
+        slices.iter().map(|p| p.page_name.clone()).collect(),
+        positions,
+    )
+}
+
+#[test]
+fn column_review_contents_wrapper_does_not_count_as_a_preceding_item() {
+    for wrappers in [0, 1, 2] {
+        let (mut doc, _, flex) = column_review_document();
+        let mut parent = flex;
+        for _ in 0..wrappers {
+            parent = doc.append_element(
+                Some(parent),
+                "div",
+                Style::default(),
+                Some("display:contents"),
+            );
+        }
+        let item = doc.append_element(Some(parent), "div", Style::default(), Some("display:block"));
+        let named = doc.append_element(
+            Some(item),
+            "div",
+            Style::default(),
+            Some("display:block;page:a"),
+        );
+        let text = doc.append_text(named, "X");
+        assert_eq!(
+            column_review_pages(doc, &[text]),
+            (vec![Some("a".into())], vec![0])
+        );
+    }
+}
+
+#[test]
+fn column_review_first_item_retains_leading_non_text_content() {
+    let (mut doc, _, flex) = column_review_document();
+    let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
+    let leading = doc.append_element(
+        Some(item),
+        "div",
+        Style::default(),
+        Some("display:block;height:10px;background:red"),
+    );
+    let named = doc.append_element(
+        Some(item),
+        "div",
+        Style::default(),
+        Some("display:block;page:a"),
+    );
+    let text = doc.append_text(named, "X");
+    assert_eq!(
+        column_review_pages(doc, &[leading, text]),
+        (vec![None, Some("a".into())], vec![0, 1])
+    );
+}
+
+#[test]
+fn column_review_explicit_outer_name_matches_the_active_physical_page() {
+    let (mut doc, body, flex) = column_review_document();
+    let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
+    let mut texts = Vec::new();
+    for name in ["a", "c"] {
+        let named = doc.append_element(
+            Some(item),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;page:{name}")),
+        );
+        texts.push(doc.append_text(named, "X"));
+    }
+    let after = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;page:c"),
+    );
+    texts.push(doc.append_text(after, "Z"));
+    assert_eq!(
+        column_review_pages(doc, &texts),
+        (vec![Some("a".into()), Some("c".into())], vec![0, 1, 1])
+    );
+}
+
+#[test]
+fn column_review_empty_named_run_coalesces_inside_a_flex_item() {
+    let (mut doc, _, flex) = column_review_document();
+    let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
+    for name in ["a", "b", "c"] {
+        doc.append_element(
+            Some(item),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;page:{name}")),
+        );
+    }
+    let named = doc.append_element(
+        Some(item),
+        "div",
+        Style::default(),
+        Some("display:block;page:c"),
+    );
+    let text = doc.append_text(named, "X");
+    assert_eq!(
+        column_review_pages(doc, &[text]),
+        (vec![Some("c".into())], vec![0])
+    );
+}
+
+#[test]
+fn column_review_non_rendered_children_do_not_open_an_anonymous_page() {
+    for css in [
+        "display:none;height:10px",
+        "display:block;position:absolute;height:10px",
+        "display:block;float:left;height:10px",
+    ] {
+        let (mut doc, _, flex) = column_review_document();
+        let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
+        doc.append_element(Some(item), "div", Style::default(), Some(css));
+        doc.append_comment(Some(item), "ignored");
+        doc.append_text(item, " ");
+        let named = doc.append_element(
+            Some(item),
+            "div",
+            Style::default(),
+            Some("display:block;page:a"),
+        );
+        let text = doc.append_text(named, "X");
+        assert_eq!(
+            column_review_pages(doc, &[text]),
+            (vec![Some("a".into())], vec![0])
+        );
+    }
+}
+
+#[test]
+fn column_review_empty_children_do_not_hide_a_rendered_leading_box() {
+    let (mut doc, _, flex) = column_review_document();
+    let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
+    let leading = doc.append_element(
+        Some(item),
+        "div",
+        Style::default(),
+        Some("display:block;height:10px;background:red"),
+    );
+    doc.append_comment(Some(leading), "ignored");
+    doc.append_text(leading, " ");
+    doc.append_element(
+        Some(leading),
+        "div",
+        Style::default(),
+        Some("display:block"),
+    );
+    let named = doc.append_element(
+        Some(item),
+        "div",
+        Style::default(),
+        Some("display:block;page:a"),
+    );
+    let text = doc.append_text(named, "X");
+    assert_eq!(
+        column_review_pages(doc, &[leading, text]),
+        (vec![None, Some("a".into())], vec![0, 1])
+    );
+}

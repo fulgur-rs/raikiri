@@ -1882,6 +1882,7 @@ pub fn layout_pages_with_page_geometry_and_control(
         raw_y: f32,
         height: f32,
         is_text: bool,
+        is_rendered_leaf: bool,
         is_direct_body_element: bool,
         is_table_row: bool,
         is_flex_item: bool,
@@ -2082,6 +2083,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                         raw_y,
                         height,
                         is_text: true,
+                        is_rendered_leaf: false,
                         is_direct_body_element: false,
                         is_table_row: false,
                         is_flex_item: false,
@@ -2248,7 +2250,38 @@ pub fn layout_pages_with_page_geometry_and_control(
                 } else {
                     (raw_y, node.unrounded_layout.size.height.max(0.0))
                 };
+                // Non-text content can establish the anonymous page before
+                // a later named descendant, even within the first flex item.
+                // Container geometry alone does not establish that context.
+                let is_rendered_leaf = named_flex_context.is_some()
+                    && computed.display != DisplayValue::Contents
+                    && !float_subtree
+                    && !out_of_flow_subtree
+                    && candidate_height > 0.0
+                    && !node.children.iter().any(|&child| {
+                        let child_node = &document.nodes[child];
+                        if child_node.is_display_none()
+                            || child_node.is_non_rendered_html_element()
+                            || matches!(
+                                cascade.computed[child].position,
+                                PositionValue::Absolute | PositionValue::Fixed
+                            )
+                            || !matches!(cascade.computed[child].float, FloatValue::None)
+                        {
+                            return false;
+                        }
+                        match &child_node.data {
+                            crate::node::NodeData::Text(text) => {
+                                !text.text_content.trim().is_empty()
+                            }
+                            crate::node::NodeData::Element(_) => {
+                                child_node.unrounded_layout.size.height > 0.0
+                            }
+                            _ => false,
+                        }
+                    });
                 let is_break_candidate = !is_body
+                    && computed.display != DisplayValue::Contents
                     && !inside_float
                     && ((participates_in_flow
                         && direct_body_child
@@ -2256,6 +2289,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                         || is_tall_direct_absolute
                         || table_row_candidate
                         || flex_item_candidate
+                        || is_rendered_leaf
                         || grid_item_candidate
                         || own_page_name.is_some()
                         || inline_named_page
@@ -2267,6 +2301,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                         raw_y: candidate_raw_y,
                         height: candidate_height,
                         is_text: false,
+                        is_rendered_leaf,
                         is_direct_body_element: direct_body_child,
                         is_table_row: table_row_candidate,
                         is_flex_item: flex_item_candidate,
@@ -2373,6 +2408,7 @@ pub fn layout_pages_with_page_geometry_and_control(
     // This coalesces zero-height named runs such as a/b/c/d/e without creating
     // one blank page per zero-height box.
     let mut last_named_raw_y: Option<f32> = None;
+    let mut last_named_context: Option<usize> = None;
     let mut last_named_was_zero_height = false;
     let mut last_named_had_display_none_descendant = false;
     let mut saw_child = false;
@@ -2428,7 +2464,9 @@ pub fn layout_pages_with_page_geometry_and_control(
             (false, current_page_name.clone())
         } else {
             match candidate.named_flex_context {
-                Some(context) if candidate.is_named || candidate.is_text => {
+                Some(context)
+                    if candidate.is_named || candidate.is_text || candidate.is_rendered_leaf =>
+                {
                     // Nested column flows share the physical page opened by
                     // their preceding sibling, including an inner flow's end.
                     // A previously seen anonymous type is still a page type.
@@ -2438,7 +2476,11 @@ pub fn layout_pages_with_page_geometry_and_control(
                 }
                 Some(_) => (false, candidate.page_name.clone()),
                 None => {
-                    let previous = outer_page_name.clone();
+                    let previous = if candidate.is_named {
+                        current_page_name.clone()
+                    } else {
+                        outer_page_name.clone()
+                    };
                     if !candidate.is_float_descendant {
                         outer_page_name = candidate.page_name.clone();
                     }
@@ -2764,7 +2806,8 @@ pub fn layout_pages_with_page_geometry_and_control(
         // at the same source coordinate are coalesced into one transition;
         // this matters for chains of empty named boxes with overflowing text.
         let same_named_coordinate = candidate.is_named
-            && candidate.is_direct_body_element
+            && (candidate.is_direct_body_element || candidate.named_flex_context.is_some())
+            && candidate.named_flex_context == last_named_context
             && height <= 0.001
             && last_named_was_zero_height
             && !last_named_had_display_none_descendant
@@ -2950,11 +2993,14 @@ pub fn layout_pages_with_page_geometry_and_control(
         }
 
         if name_participates_in_flow
-            && (candidate.is_direct_body_element || candidate.is_named)
+            && (candidate.is_direct_body_element
+                || candidate.is_named
+                || candidate.is_rendered_leaf)
             && (!keep_local_page_type || page_transition || current_page > page_before_candidate)
         {
             current_page_name = candidate_page_name;
-            if candidate.is_direct_body_element {
+            if candidate.is_direct_body_element || candidate.named_flex_context.is_some() {
+                last_named_context = candidate.named_flex_context;
                 last_named_raw_y = candidate.is_named.then_some(raw_y);
                 last_named_was_zero_height = candidate.is_named && height <= 0.001;
                 last_named_had_display_none_descendant =
