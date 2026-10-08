@@ -252,7 +252,18 @@ fn push_generated(
     else {
         return Ok(());
     };
+    let atomic = pseudo != PseudoElem::Marker
+        && matches!(
+            cv.display,
+            DisplayValue::InlineBlock
+                | DisplayValue::InlineFlex
+                | DisplayValue::InlineGrid
+                | DisplayValue::InlineTable
+        );
     if text.is_empty() {
+        if atomic {
+            first_letter.stop();
+        }
         return Ok(());
     }
     let id = NodeId(generated_node_id(element, pseudo) as u64);
@@ -262,14 +273,6 @@ fn push_generated(
             DisplayValue::Inline
                 | DisplayValue::Contents
                 | DisplayValue::InlineBlock
-                | DisplayValue::InlineFlex
-                | DisplayValue::InlineGrid
-                | DisplayValue::InlineTable
-        );
-    let atomic = pseudo != PseudoElem::Marker
-        && matches!(
-            cv.display,
-            DisplayValue::InlineBlock
                 | DisplayValue::InlineFlex
                 | DisplayValue::InlineGrid
                 | DisplayValue::InlineTable
@@ -649,14 +652,8 @@ pub(crate) fn project_ifc_builder_with(
     let mut boxes = Vec::new();
     let mut offsets = Vec::new();
     let mut cleared_breaks = Vec::new();
-    let mut first_letter = FirstLetter::new_with_predecessors(
-        doc,
-        cascade,
-        root,
-        limits,
-        &counters.predecessors,
-        counters,
-    )?;
+    let mut first_letter =
+        FirstLetter::new_with_predecessors(doc, cascade, root, limits, &counters.predecessors);
     let marker_atomic = if crate::generated_content::inside_marker_in_flow(cascade, root)
         && let Some(size) = doc.list_marker_image_size(root)
     {

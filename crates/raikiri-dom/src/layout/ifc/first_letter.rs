@@ -59,15 +59,7 @@ impl FirstLetter {
         origin: usize,
         limits: &shodo::limits::Limits,
     ) -> Self {
-        Self::new_with_predecessors(
-            doc,
-            cascade,
-            origin,
-            limits,
-            &PredecessorCache::default(),
-            &super::projection::GeneratedCounters::default(),
-        )
-        .unwrap()
+        Self::new_with_predecessors(doc, cascade, origin, limits, &PredecessorCache::default())
     }
 
     pub(crate) fn new_with_predecessors(
@@ -76,8 +68,7 @@ impl FirstLetter {
         origin: usize,
         limits: &shodo::limits::Limits,
         predecessors: &PredecessorCache,
-        counters: &super::projection::GeneratedCounters,
-    ) -> Result<Self, IfcError> {
+    ) -> Self {
         let mut origins = Vec::new();
         let mut line_origins = Vec::new();
         let mut current = cascade.has_first_letter_styles().then_some(origin);
@@ -127,10 +118,14 @@ impl FirstLetter {
             let Some(parent) = doc.parent_of(id) else {
                 break; // cov:ignore: eligible IFC element roots have a document parent; the document root is not a block-container cascade node.
             };
-            if predecessors.has_before(doc, cascade, parent, counters)? {
+            if crate::generated_content::is_in_flow_generated_text(
+                cascade,
+                parent,
+                PseudoElem::Before,
+            ) {
                 break;
             }
-            let blocked = predecessors.has_preceding(doc, cascade, id, counters)?;
+            let blocked = predecessors.has_preceding(doc, cascade, id);
             if blocked {
                 break;
             }
@@ -138,7 +133,7 @@ impl FirstLetter {
         }
         origins.reverse();
         line_origins.reverse();
-        Ok(Self {
+        Self {
             origin,
             pending: !origins.is_empty(),
             origins,
@@ -150,7 +145,7 @@ impl FirstLetter {
             item_limit: limits.max_items,
             checked_through: None,
             styles: Vec::new(),
-        })
+        }
     }
 
     pub(crate) fn stop(&mut self) {
@@ -202,7 +197,9 @@ impl FirstLetter {
                     ) else {
                         continue; // cov:ignore: in-flow generated text requires a retained pseudo style and nonempty content, so generated_text always returns Some.
                     };
-                    if value.is_empty() {
+                    if value.is_empty()
+                        && matches!(cv.display, DisplayValue::Inline | DisplayValue::Contents)
+                    {
                         continue;
                     }
                     (
@@ -592,12 +589,7 @@ mod tests;
 /// Each source node and sibling edge takes bounded work, including transparent
 /// subtrees; a wide comment prefix is never scanned again for another root.
 #[derive(Default)]
-pub(crate) struct PredecessorCache(std::cell::OnceCell<Result<Predecessors, IfcError>>);
-
-struct Predecessors {
-    blocked: Vec<bool>,
-    before: Vec<bool>,
-}
+pub(crate) struct PredecessorCache(std::cell::OnceCell<Vec<bool>>);
 
 fn outside_ancestor_line(cv: &ComputedValues) -> bool {
     // Logical float sides remain in flow in the bridge and IFC projection.
@@ -614,46 +606,13 @@ thread_local! {
 }
 
 impl PredecessorCache {
-    fn data(
-        &self,
-        doc: &Document,
-        cascade: &CascadeResult,
-        counters: &super::projection::GeneratedCounters,
-    ) -> Result<&Predecessors, IfcError> {
-        self.0
-            .get_or_init(|| Self::build(doc, cascade, counters))
-            .as_ref()
-            .map_err(Clone::clone)
+    fn has_preceding(&self, doc: &Document, cascade: &CascadeResult, node: usize) -> bool {
+        self.0.get_or_init(|| Self::build(doc, cascade))[node]
     }
 
-    fn has_preceding(
-        &self,
-        doc: &Document,
-        cascade: &CascadeResult,
-        node: usize,
-        counters: &super::projection::GeneratedCounters,
-    ) -> Result<bool, IfcError> {
-        Ok(self.data(doc, cascade, counters)?.blocked[node])
-    }
-
-    fn has_before(
-        &self,
-        doc: &Document,
-        cascade: &CascadeResult,
-        node: usize,
-        counters: &super::projection::GeneratedCounters,
-    ) -> Result<bool, IfcError> {
-        Ok(self.data(doc, cascade, counters)?.before[node])
-    }
-
-    fn build(
-        doc: &Document,
-        cascade: &CascadeResult,
-        counters: &super::projection::GeneratedCounters,
-    ) -> Result<Predecessors, IfcError> {
+    fn build(doc: &Document, cascade: &CascadeResult) -> Vec<bool> {
         let mut contributes = vec![false; doc.node_count()];
         let mut blocked = vec![false; doc.node_count()];
-        let mut before = vec![false; doc.node_count()];
         let mut pending: Vec<_> = doc
             .nodes
             .iter()
@@ -663,33 +622,14 @@ impl PredecessorCache {
             .collect();
         while let Some((id, visited)) = pending.pop() {
             let node = &doc.nodes[id];
-            let cv = &cascade.computed[id];
             if !visited {
-                if cv.display == DisplayValue::None || node.is_non_rendered_html_element() {
-                    continue;
-                }
                 pending.push((id, true));
                 pending.extend(node.children.iter().map(|&child| (child, false)));
                 continue;
             }
             #[cfg(test)]
             PREDECESSOR_VISITS.with(|visits| visits.set(visits.get() + 1));
-            let generated_contributes = |pseudo| -> Result<bool, IfcError> {
-                if !crate::generated_content::is_in_flow_generated_text(cascade, id, pseudo) {
-                    return Ok(false);
-                }
-                Ok(crate::generated_content::generated_text(
-                    doc,
-                    cascade,
-                    id,
-                    pseudo,
-                    counters.get(doc, cascade)?,
-                )
-                .is_some_and(|(_, text)| !text.is_empty()))
-            };
-            if cv.display == DisplayValue::Contents || !outside_ancestor_line(cv) {
-                before[id] = generated_contributes(PseudoElem::Before)?;
-            }
+            let cv = &cascade.computed[id];
             let child_contributes = || {
                 node.children.iter().any(|&child| {
                     #[cfg(test)]
@@ -697,23 +637,36 @@ impl PredecessorCache {
                     contributes[child]
                 })
             };
-            contributes[id] = if cv.display == DisplayValue::Contents {
-                before[id] || generated_contributes(PseudoElem::After)? || child_contributes()
-            } else if outside_ancestor_line(cv) {
-                false
-            } else {
-                match node.kind() {
-                    NodeKind::Text => super::assign::text_makes_a_line(doc, cascade, id),
-                    NodeKind::Element => {
-                        super::projection::box_kind(cascade, doc, id).is_some()
-                            || matches!(node.tag_name(), Some("br" | "wbr"))
-                            || before[id]
-                            || generated_contributes(PseudoElem::After)?
-                            || child_contributes()
+            contributes[id] =
+                if cv.display == DisplayValue::None || node.is_non_rendered_html_element() {
+                    false
+                } else if cv.display == DisplayValue::Contents {
+                    [PseudoElem::Before, PseudoElem::After]
+                        .iter()
+                        .any(|&pseudo| {
+                            crate::generated_content::is_in_flow_generated_text(cascade, id, pseudo)
+                        })
+                        || child_contributes()
+                } else if outside_ancestor_line(cv) {
+                    false
+                } else {
+                    match node.kind() {
+                        NodeKind::Text => super::assign::text_makes_a_line(doc, cascade, id),
+                        NodeKind::Element => {
+                            super::projection::box_kind(cascade, doc, id).is_some()
+                                || matches!(node.tag_name(), Some("br" | "wbr"))
+                                || [PseudoElem::Before, PseudoElem::After]
+                                    .iter()
+                                    .any(|&pseudo| {
+                                        crate::generated_content::is_in_flow_generated_text(
+                                            cascade, id, pseudo,
+                                        )
+                                    })
+                                || child_contributes()
+                        }
+                        _ => false,
                     }
-                    _ => false,
-                }
-            };
+                };
             let mut preceding = false;
             for &child in &node.children {
                 #[cfg(test)]
@@ -722,6 +675,6 @@ impl PredecessorCache {
                 preceding |= contributes[child];
             }
         }
-        Ok(Predecessors { blocked, before })
+        blocked
     }
 }

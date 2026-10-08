@@ -1014,31 +1014,83 @@ fn soft_wrapped_first_letter_remainder_uses_ordinary_style() {
 }
 
 #[test]
-fn empty_generated_ancestor_and_converted_breaks_paint_the_real_letter() {
-    for (sheet, text) in [
+fn generated_empty_boxes_keep_their_first_letter_boundary_and_converted_breaks() {
+    for (sheet, text, styled_letter) in [
+        ("body::first-letter{font-size:20px;color:red}", "A", true),
         (
             "body::before{content:attr(missing)} body::first-letter{font-size:20px;color:red}",
             "A",
+            false,
+        ),
+        (
+            "div::before{content:attr(missing)} div::first-letter{font-size:20px;color:red}",
+            "A",
+            true,
+        ),
+        (
+            "div::before{display:inline-block;content:attr(missing)} div::first-letter{font-size:20px;color:red}",
+            "A",
+            false,
         ),
         (
             "div{white-space-collapse:preserve-spaces} div::first-letter{font-size:20px;color:red}",
             "\nA",
+            true,
         ),
     ] {
         let (doc, computed, _) = fixture(sheet, None, text);
-        assert!(glyph_sizes(&doc, &computed).contains(&(20.0, 1)));
+        assert!(
+            glyph_sizes(&doc, &computed).contains(&(if styled_letter { 20.0 } else { 10.0 }, 1))
+        );
         let rgba = pixels(&doc, &computed);
         assert_eq!(
             rgba.chunks_exact(4)
                 .filter(|pixel| *pixel == [255, 0, 0, 255])
                 .count(),
-            400
+            if styled_letter { 400 } else { 0 }
         );
         assert_eq!(
             rgba.chunks_exact(4)
                 .filter(|pixel| *pixel == [0, 0, 0, 255])
                 .count(),
-            0
+            if styled_letter { 0 } else { 100 }
         );
+    }
+}
+
+#[test]
+fn empty_ordinary_generated_text_does_not_lose_the_next_letters_paint() {
+    for display in ["inline", "contents"] {
+        for pseudo in ["before", "after"] {
+            let (mut doc, _, first) = fixture(
+                &format!(
+                    "div::first-letter{{font-size:20px;color:red}} span::{pseudo}{{display:{display};content:attr(missing)}}"
+                ),
+                None,
+                "(",
+            );
+            let root = doc.parent_of(first).unwrap();
+            doc.append_element(Some(root), "span", Style::default(), None::<&str>);
+            doc.append_text(root, "A");
+            doc.mark_in_document_flags();
+            let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+            let mut page = PageBox::new();
+            page.width = 100.0;
+            page.height = 80.0;
+            layout_single_page(&mut doc, &computed, page).unwrap();
+            let rgba = pixels(&doc, &computed);
+            assert_eq!(
+                rgba.chunks_exact(4)
+                    .filter(|pixel| *pixel == [255, 0, 0, 255])
+                    .count(),
+                800
+            );
+            assert_eq!(
+                rgba.chunks_exact(4)
+                    .filter(|pixel| *pixel == [0, 0, 0, 255])
+                    .count(),
+                0
+            );
+        }
     }
 }
