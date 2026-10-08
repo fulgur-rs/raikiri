@@ -12,27 +12,41 @@ pub(crate) struct BackgroundSlice {
     pub(crate) content: raikiri_dom::BoxRect,
 }
 
-pub(super) fn background_slices(pieces: &[InlineBoxPiece]) -> HashMap<usize, BackgroundSlice> {
-    fn extend(rect: &mut raikiri_dom::BoxRect, next: raikiri_dom::BoxRect) {
-        let end = (rect.x + rect.width).max(next.x + next.width);
-        rect.x = rect.x.min(next.x);
-        rect.width = end - rect.x;
-    }
-    let mut slices = HashMap::<usize, BackgroundSlice>::new();
-    for piece in pieces {
+pub(super) fn background_slices(pieces: &[InlineBoxPiece]) -> Vec<Option<BackgroundSlice>> {
+    let mut groups = HashMap::<usize, Vec<usize>>::new();
+    for (index, piece) in pieces.iter().enumerate() {
         if raikiri_dom::generated_content::generated_origin(piece.node)
             .is_some_and(|(_, pseudo)| pseudo == raikiri_style::PseudoElem::FirstLetter)
         {
-            slices
-                .entry(piece.node)
-                .and_modify(|slice| {
-                    extend(&mut slice.outer, piece.border_box);
-                    extend(&mut slice.content, piece.content_box);
-                })
-                .or_insert(BackgroundSlice {
-                    outer: piece.border_box,
-                    content: piece.content_box,
-                });
+            groups.entry(piece.node).or_default().push(index);
+        }
+    }
+    let mut slices = vec![None; pieces.len()];
+    for indices in groups.values_mut() {
+        // Join the boxes in visual order, excluding their owners' margins.
+        // Keep each fragment's own height and move the virtual composite
+        // origin so its slice aligns with the fragment's physical position.
+        indices.sort_by(|&a, &b| pieces[a].border_box.x.total_cmp(&pieces[b].border_box.x));
+        let first = &pieces[indices[0]];
+        let last = &pieces[*indices.last().expect("nonempty pseudo fragment group")];
+        let left = first.content_box.x - first.border_box.x;
+        let right =
+            last.border_box.x + last.border_box.width - last.content_box.x - last.content_box.width;
+        let width = indices
+            .iter()
+            .map(|&index| pieces[index].border_box.width)
+            .sum::<f32>();
+        let mut offset = 0.0;
+        for &index in indices.iter() {
+            let piece = &pieces[index];
+            let mut outer = piece.border_box;
+            outer.x -= offset;
+            outer.width = width;
+            let mut content = piece.content_box;
+            content.x = outer.x + left;
+            content.width = width - left - right;
+            slices[index] = Some(BackgroundSlice { outer, content });
+            offset += piece.border_box.width;
         }
     }
     slices
@@ -96,7 +110,13 @@ impl TypographicPaint {
         }
         // Resolve parents before children. Equal opacities share a group only
         // when their enclosing fragment groups also agree.
-        for &key in parents.keys() {
+        // Allocate groups in fragment paint order so overlapping owner groups
+        // with equal insertion positions do not depend on hash iteration.
+        for piece in pieces {
+            let key = FragmentKey {
+                node: piece.node,
+                owner: piece.source_owner,
+            };
             let mut path = Vec::new();
             let mut next = key;
             let mut group = loop {

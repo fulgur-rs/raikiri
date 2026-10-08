@@ -152,7 +152,7 @@ pub(crate) fn draw_ifc_lines_with_resources(
         // The boxes of the inline elements on this line go below its text
         // (CSS 2.1 Appendix E: an inline box's background and borders, then
         // its text).
-        for piece in &pieces_by_line[line_index] {
+        for (piece_index, piece) in pieces_by_line[line_index].iter().enumerate() {
             if generated_origin(piece.node)
                 .is_some_and(|(_, pseudo)| pseudo == raikiri_style::PseudoElem::Marker)
             {
@@ -180,7 +180,7 @@ pub(crate) fn draw_ifc_lines_with_resources(
                 cv,
                 piece,
                 (!vertical)
-                    .then(|| background_slices.get(&piece.node))
+                    .then(|| background_slices[piece_index].as_ref())
                     .flatten(),
                 position.x + dx,
                 position.y + position.shift_y + dy - line_shift,

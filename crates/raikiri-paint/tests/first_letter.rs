@@ -1287,6 +1287,88 @@ fn nested_split_first_letter_opacity_keeps_each_owners_enclosing_group() {
 }
 
 #[test]
+fn overlapping_split_first_letter_opacity_keeps_source_paint_order() {
+    let (mut doc, _, quote) = fixture(
+        "div::first-letter{font-size:20px;color:var(--c);opacity:var(--o)}",
+        Some("display:inline;--c:red;--o:.25"),
+        "“",
+    );
+    let root = doc.parent_of(doc.parent_of(quote).unwrap()).unwrap();
+    let span = doc.append_element(
+        Some(root),
+        "span",
+        Style::default(),
+        Some("display:inline;--c:blue;--o:.75;position:relative;left:-20px"),
+    );
+    doc.append_text(span, "A");
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 80.0;
+    layout_single_page(&mut doc, &computed, page).unwrap();
+    for _ in 0..64 {
+        let rgba = pixels(&doc, &computed);
+        let first = (15 * 100 + 5) * 4;
+        assert_eq!(&rgba[first..first + 4], &[64, 48, 239, 255]);
+    }
+}
+
+#[test]
+fn split_first_letter_background_excludes_inline_margin_from_its_composite_width() {
+    let sheet = "div::first-letter{font-size:20px;color:transparent;background-image:conic-gradient(red,blue)}";
+    let (mut split, _, quote) = fixture(sheet, Some("display:inline"), "“");
+    let root = split.parent_of(split.parent_of(quote).unwrap()).unwrap();
+    let span = split.append_element(
+        Some(root),
+        "span",
+        Style::default(),
+        Some("display:inline;margin-left:10px"),
+    );
+    split.append_text(span, "A");
+    split.mark_in_document_flags();
+    let computed = cascade(&split, &build_rule_tree(&split)).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 80.0;
+    layout_single_page(&mut split, &computed, page).unwrap();
+    let pieces: Vec<_> = split
+        .get_node(root)
+        .unwrap()
+        .ifc_inline_boxes()
+        .unwrap()
+        .into_iter()
+        .filter(|piece| {
+            raikiri_dom::generated_content::generated_origin(piece.node)
+                .is_some_and(|(_, pseudo)| pseudo == raikiri_style::PseudoElem::FirstLetter)
+        })
+        .collect();
+    assert_eq!(pieces.len(), 2);
+    assert_eq!(pieces[0].border_box.width, 20.0);
+    assert_eq!(pieces[1].border_box.width, 20.0);
+    assert_eq!(pieces[1].border_box.x - pieces[0].border_box.x, 30.0);
+    let (joined, joined_cv, _) = fixture(sheet, None, "“A");
+    let source = pixels(&joined, &joined_cv);
+    let mut expected = vec![255; source.len()];
+    for y in 0..80 {
+        for x in 0..40 {
+            let target_x = if x < 20 { x } else { x + 10 };
+            expected[(y * 100 + target_x) * 4..(y * 100 + target_x) * 4 + 4]
+                .copy_from_slice(&source[(y * 100 + x) * 4..(y * 100 + x) * 4 + 4]);
+        }
+    }
+    let actual = pixels(&split, &computed);
+    assert_eq!(
+        actual
+            .chunks_exact(4)
+            .zip(expected.chunks_exact(4))
+            .filter(|(a, b)| a != b)
+            .count(),
+        0
+    );
+}
+
+#[test]
 fn split_first_letter_url_background_keeps_one_positioning_area() {
     use raikiri_traits::{DecodedImage, ImagePixelSource};
     use std::sync::Arc;
@@ -1302,17 +1384,29 @@ fn split_first_letter_url_background_keeps_one_positioning_area() {
             })
         }
     }
-    for geometry in [
-        "background-size:100% 100%",
-        "background-size:cover",
-        "background-size:100% 100%;border-radius:10px",
+    for (geometry, gap) in [
+        ("background-size:100% 100%", 0),
+        ("background-size:cover", 0),
+        ("background-size:100% 100%;border-radius:10px", 0),
+        ("background-size:100% 100%", 10),
+        ("background-size:100% 100%", -10),
     ] {
         let sheet = format!(
             "div::first-letter{{font-size:20px;color:transparent;background-image:url(file:///two-color.png);background-repeat:no-repeat;{geometry}}}"
         );
         let (mut split, _, quote) = fixture(&sheet, Some("display:inline"), "“");
         let root = split.parent_of(split.parent_of(quote).unwrap()).unwrap();
-        split.append_text(root, "A");
+        if gap == 0 {
+            split.append_text(root, "A");
+        } else {
+            let span = split.append_element(
+                Some(root),
+                "span",
+                Style::default(),
+                Some(&format!("display:inline;margin-left:{gap}px")),
+            );
+            split.append_text(span, "A");
+        }
         split.mark_in_document_flags();
         let computed = cascade(&split, &build_rule_tree(&split)).unwrap();
         let mut page = PageBox::new();
@@ -1334,16 +1428,28 @@ fn split_first_letter_url_background_keeps_one_positioning_area() {
             scene_pixels(scene)
         };
         let actual = paint(&split, &computed);
-        let expected = paint(&joined, &joined_cv);
+        let joined_pixels = paint(&joined, &joined_cv);
+        let mut expected = vec![255; joined_pixels.len()];
+        for y in 0..80 {
+            for x in 0..40 {
+                let target_x = if x < 20 {
+                    x
+                } else {
+                    usize::try_from(i32::try_from(x).unwrap() + gap).unwrap()
+                };
+                expected[(y * 100 + target_x) * 4..(y * 100 + target_x) * 4 + 4]
+                    .copy_from_slice(&joined_pixels[(y * 100 + x) * 4..(y * 100 + x) * 4 + 4]);
+            }
+        }
         assert!(
-            expected
+            joined_pixels
                 .chunks_exact(4)
                 .filter(|pixel| pixel[0] > pixel[2])
                 .count()
                 > 200
         );
         assert!(
-            expected
+            joined_pixels
                 .chunks_exact(4)
                 .filter(|pixel| pixel[2] > pixel[0])
                 .count()
@@ -1356,7 +1462,7 @@ fn split_first_letter_url_background_keeps_one_positioning_area() {
                 .filter(|(a, b)| a != b)
                 .count(),
             0,
-            "{geometry}"
+            "{geometry} gap={gap}"
         );
     }
 }
