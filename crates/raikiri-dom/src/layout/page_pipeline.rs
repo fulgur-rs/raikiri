@@ -2382,10 +2382,7 @@ pub fn layout_pages_with_page_geometry_and_control(
         let eligible = candidate.is_direct_body_element
             && !candidate.is_named
             && matches!(computed.display, DisplayValue::Block)
-            && matches!(
-                computed.position,
-                PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
-            );
+            && !matches!(computed.position, PositionValue::Running(_));
         if !eligible {
             previous = None;
             run_start = None;

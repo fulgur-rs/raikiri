@@ -7340,6 +7340,50 @@ fn before_avoid_moves_the_connected_sibling_run_to_the_next_page() {
 }
 
 #[test]
+fn running_templates_keep_the_normal_flow_computed_position() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    for position in ["static", "relative", "sticky", "absolute", "fixed"] {
+        let mut doc = Document::new();
+        let root = doc.append_element(
+            Some(0),
+            "div",
+            Style::default(),
+            Some(&format!(
+                "display:block;position:{position};position:running(header);break-before:page"
+            )),
+        );
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).unwrap();
+        // The winning running() value replaces the preceding declaration
+        // but records a template without changing the initial position.
+        assert_eq!(cascade.computed[root].position, PositionValue::Static);
+        assert_eq!(cascade.computed[root].running_templates.len(), 1);
+        assert_eq!(cascade.computed[root].running_templates[0].name, "header");
+    }
+
+    assert_eq!(
+        page_sibling_positions(
+            &[60, 30, 30],
+            "break-before:avoid",
+            "",
+            "position:running(header)"
+        ),
+        (vec![0.0, 100.0, 130.0], 2)
+    );
+    assert_eq!(
+        page_sibling_positions(
+            &[20, 20, 20],
+            "break-before:page",
+            "",
+            "position:running(header)"
+        ),
+        (vec![0.0, 20.0, 100.0], 2)
+    );
+}
+
+#[test]
 fn a_parallel_float_preserves_the_connected_normal_flow_run() {
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();
