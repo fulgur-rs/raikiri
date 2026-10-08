@@ -2,6 +2,16 @@ use super::*;
 use raikiri_style::{build_rule_tree, cascade};
 use taffy::Style;
 
+pub(super) fn record_owner_clone(source: &Node) {
+    OWNER_CLONE_ENTRIES.with(|entries| {
+        let attributes = match &source.data {
+            crate::node::NodeData::Element(element) => element.attributes.len(),
+            _ => 0,
+        };
+        entries.set(entries.get() + source.children.len() + attributes);
+    });
+}
+
 #[test]
 fn deep_contents_wrappers_keep_source_order_on_a_small_stack() {
     let mut doc = Document::new();

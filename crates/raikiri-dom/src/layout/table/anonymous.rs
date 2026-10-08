@@ -131,18 +131,6 @@ fn anonymous_prototype(doc: &Document, owner: usize) -> Node {
     node
 }
 
-fn clone_prototype(source: &Node) -> Node {
-    #[cfg(test)]
-    OWNER_CLONE_ENTRIES.with(|entries| {
-        let attributes = match &source.data {
-            crate::node::NodeData::Element(element) => element.attributes.len(),
-            _ => 0,
-        };
-        entries.set(entries.get() + source.children.len() + attributes);
-    });
-    source.clone()
-}
-
 fn anonymous_cell(
     doc: &Document,
     cascade: &CascadeResult,
@@ -154,7 +142,9 @@ fn anonymous_cell(
         .prototypes_by_owner
         .entry(owner)
         .or_insert_with(|| anonymous_prototype(doc, owner));
-    let mut node = clone_prototype(prototype);
+    #[cfg(test)]
+    tests::record_owner_clone(prototype);
+    let mut node = prototype.clone();
     node.children = content
         .iter()
         .filter_map(|entry| match entry {
