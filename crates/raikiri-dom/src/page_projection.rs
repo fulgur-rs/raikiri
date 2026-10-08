@@ -18,8 +18,10 @@ use std::collections::{BTreeMap, HashSet};
 pub(crate) struct PageProjection {
     pages: Vec<PageFragment>,
     links: Vec<Vec<(NodeId, String, Vec<PaintRect>)>>,
-    /// Paragraphs laid out by the inline engine, in document order.
+    /// Paragraphs and standalone markers, in document order.
     text_roots: Vec<ProjectedTextRoot>,
+    /// Standalone marker text shaped once, shared by every page placement.
+    markers: BTreeMap<usize, text_runs::MarkerText>,
     /// Source clip geometry shared across pages rather than copied per page.
     overflow_clips: BTreeMap<NodeId, OverflowClipSource>,
 }
@@ -29,6 +31,7 @@ impl PageProjection {
         self.pages.clear();
         self.links.clear();
         self.text_roots.clear();
+        self.markers.clear();
         self.overflow_clips.clear();
     }
 }
@@ -42,7 +45,7 @@ impl Document {
         fallback_page_box: PageBox,
         slices: &[PageSlice],
         geometries: &[(PageBox, PageMargins, PageContentInsets)],
-    ) {
+    ) -> Result<(), raikiri_traits::LayoutError> {
         let geometries: Vec<_> = slices
             .iter()
             .zip(geometries)
@@ -73,6 +76,7 @@ impl Document {
             .collect();
         let (pages, text_roots, overflow_clips) =
             crate::layout::project_slices(self, cascade, fallback_page_box, slices, &geometries);
+        let markers = text_runs::prepare_markers(self, cascade, &text_roots, &pages)?;
         let events = crate::layout::page_fragment_events_from_pages(self, &pages);
         let mut links: Vec<Vec<(NodeId, String, Vec<PaintRect>)>> =
             pages.iter().map(|_| Vec::new()).collect();
@@ -105,8 +109,10 @@ impl Document {
             pages,
             links,
             text_roots,
+            markers,
             overflow_clips,
         };
+        Ok(())
     }
 
     /// Borrow the final placements on one page.

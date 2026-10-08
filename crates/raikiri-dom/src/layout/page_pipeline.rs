@@ -1121,6 +1121,23 @@ pub(crate) fn project_slices(
             NodeKind::Element => true,
             _ => false, // cov:ignore: non-rendered node kinds are filtered by the document invariant.
         };
+        if cascade
+            .computed
+            .get(node_id)
+            .is_some_and(|cv| cv.display == DisplayValue::ListItem)
+            && !(crate::generated_content::inside_marker_in_flow(cascade, node_id)
+                && node.is_ifc_root())
+        {
+            text_roots.push(ProjectedTextRoot {
+                node: crate::generated_content::generated_node_id(
+                    node_id,
+                    raikiri_style::PseudoElem::Marker,
+                ),
+                x: abs_x,
+                y: abs_y,
+                is_repeat,
+            });
+        }
         for (root_id, root_node) in std::iter::once((node_id, node))
             .filter(|(_, node)| node.is_ifc_root())
             .chain(document.anonymous_table_cells(node_id))

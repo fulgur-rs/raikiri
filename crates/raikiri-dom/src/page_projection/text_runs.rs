@@ -10,10 +10,110 @@ use raikiri_style::resolve::ComputedLengthPercentageOrAuto;
 use raikiri_style::{CascadeResult, ComputedValues, PseudoElem};
 use raikiri_traits::{NodeId, NodeKind};
 use shodo::geometry::WritingMode;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 use std::ops::Range;
 use std::sync::Arc;
+
+#[derive(Clone)]
+pub(super) struct MarkerText {
+    shaped: Arc<crate::StandaloneText>,
+    offset_x: f32,
+    color: CssColor,
+    first_page: Option<u32>,
+}
+
+impl fmt::Debug for MarkerText {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("MarkerText")
+            .field("lines", &self.shaped.lines().len())
+            .field("offset_x", &self.offset_x)
+            .field("color", &self.color)
+            .finish()
+    }
+}
+
+pub(super) fn prepare_markers(
+    document: &Document,
+    cascade: &CascadeResult,
+    roots: &[ProjectedTextRoot],
+    pages: &[PageFragment],
+) -> Result<BTreeMap<usize, MarkerText>, raikiri_traits::LayoutError> {
+    let owners: Vec<_> = roots
+        .iter()
+        .filter_map(|root| {
+            generated_origin(root.node)
+                .filter(|(_, pseudo)| *pseudo == PseudoElem::Marker)
+                .map(|(owner, _)| owner)
+        })
+        .collect();
+    let mut markers = BTreeMap::new();
+    if owners.is_empty() {
+        return Ok(markers);
+    }
+    let snapshots = crate::counter_snapshots(document, cascade).map_err(|error| {
+        raikiri_traits::LayoutError::CounterSnapshotLimitExceeded {
+            limit: error.limit,
+            actual: error.actual,
+        }
+    })?;
+    let mut first_pages = BTreeMap::new();
+    for page in pages {
+        for item in &page.items {
+            if item.fragment_index == 0 {
+                first_pages
+                    .entry(item.node_id.0 as usize)
+                    .or_insert(page.page_index);
+            }
+        }
+    }
+    for owner in owners {
+        let node = &document.nodes[owner];
+        let layout = node.unrounded_layout;
+        // Image markers need decoded-resource placement, outside this text API.
+        if matches!(
+            cascade.computed[owner].list_style_image,
+            raikiri_style::property::BackgroundImage::Url(_)
+        ) && cascade
+            .pseudo
+            .get(&(
+                raikiri_style::StyleNodeId::new(owner as u64),
+                PseudoElem::Marker,
+            ))
+            .is_none_or(|style| style.content.is_empty())
+        {
+            continue;
+        }
+        if !node.children.is_empty() && (layout.size.width <= 0.0 || layout.size.height <= 0.0) {
+            continue;
+        }
+        let Some((style, content)) =
+            crate::generated_content::markers::marker_render_info_with_snapshots(
+                document, cascade, owner, &snapshots,
+            )
+        else {
+            continue;
+        };
+        if style.visibility == raikiri_style::property::Visibility::Hidden {
+            continue;
+        }
+        if let Some((shaped, offset_x)) =
+            document.shape_list_marker_text(&content, style, owner, layout.padding.left)
+        {
+            markers.insert(
+                owner,
+                MarkerText {
+                    shaped: Arc::new(shaped),
+                    offset_x,
+                    color: style.color,
+                    first_page: first_pages.get(&owner).copied(),
+                },
+            );
+        }
+    }
+    Ok(markers)
+}
 
 /// Identifies one line of a paragraph, independent of its paint coordinates.
 ///
@@ -24,7 +124,8 @@ use std::sync::Arc;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub struct TextLineId {
-    /// The paragraph's inline formatting context root.
+    /// The paragraph's inline formatting context root, or a synthetic key
+    /// for a standalone list marker. Synthetic keys are not DOM nodes.
     pub root: NodeId,
     /// Zero-based line index in that paragraph, before page slicing.
     pub index: usize,
@@ -74,6 +175,18 @@ pub struct PositionedGlyphRun<'a> {
     /// Used decoration segments, including lines propagated from ancestors.
     /// Generated text and ellipses have no decoration segments in this version.
     pub decorations: Vec<crate::DecorationLine>,
+}
+
+impl PositionedGlyphRun<'_> {
+    /// Whether this run belongs to a list marker painted separately from
+    /// the item's inline content. Such markers use a separate line identity
+    /// and are painted before the item's own overflow clip, while remaining
+    /// inside its ancestor clips and opacity group.
+    pub fn is_standalone_marker(&self) -> bool {
+        matches!(self.source, RunSource::Generated(_, GeneratedKind::Marker))
+            && generated_origin(self.line.root.0 as usize)
+                .is_some_and(|(_, pseudo)| pseudo == PseudoElem::Marker)
+    }
 }
 
 /// One glyph of a [`PositionedGlyphRun`].
@@ -268,6 +381,7 @@ fn omission(
     context: &RunContext,
     root: usize,
 ) -> Option<TextRunOmission> {
+    let root = generated_origin(root).map_or(root, |(owner, _)| owner);
     let node = document.ifc_layout_node(root)?;
     if node
         .ifc_writing_mode()
@@ -296,6 +410,121 @@ fn omission(
     }
     node.ifc_multicol_fragments()
         .map(|_| TextRunOmission::MulticolLines)
+}
+
+fn marker_runs<'a>(
+    document: &'a Document,
+    page: &PageFragment,
+    root: &ProjectedTextRoot,
+    owner: usize,
+    out: &mut Vec<PositionedGlyphRun<'a>>,
+) {
+    let Some(marker) = document.page_projection.markers.get(&owner) else {
+        return;
+    };
+    // A marker belongs to the first principal fragment, including when the
+    // item is empty; it is never duplicated on the item's continuation pages.
+    if !root.is_repeat && marker.first_page != Some(page.page_index) {
+        return;
+    }
+    let x = page.content_box.x + root.x + marker.offset_x;
+    let y = page.content_box.y + root.y
+        - if root.is_repeat {
+            0.0
+        } else {
+            page.content_origin_y
+        };
+    for (index, line) in marker.shaped.lines().iter().enumerate() {
+        let converter = shodo::geometry::PhysicalConverter::new(
+            line.writing_mode(),
+            line.used_direction(),
+            marker.shaped.container(),
+        );
+        for fragment in line.fragments() {
+            let shodo::Fragment::GlyphRun(run) = fragment else {
+                continue;
+            };
+            let Some(font) = run.font_data() else {
+                continue; // cov:ignore: plain marker glyph runs shaped with the document's font set always have a face
+            };
+            let font_index = font.index;
+            let (bytes, blob) = font.data.into_raw_parts();
+            let text_range = run.text_range();
+            let shaped: Vec<_> = run.glyphs().collect();
+            let clusters: Vec<_> = shaped.iter().map(|glyph| glyph.cluster).collect();
+            let ranges = glyph_text_ranges(&clusters, text_range.start, text_range.end);
+            let mut placed: Vec<_> = shaped
+                .iter()
+                .enumerate()
+                .zip(ranges)
+                .filter_map(|((i, glyph), range)| {
+                    let (gx, gy) = run.glyph_origin(i)?;
+                    let (gx, gy) = converter.point(
+                        gx + marker.shaped.hang_shift(index),
+                        gy + line.block_offset(),
+                    );
+                    Some((x + gx, y + gy, glyph, range))
+                })
+                .collect();
+            if run.bidi_level() % 2 == 1 {
+                placed.reverse();
+            }
+            let Some(first) = placed.first() else {
+                continue; // cov:ignore: enumerated marker glyphs always have origins; empty glyph runs are a defensive engine edge
+            };
+            let origin = (first.0, y + line.block_offset() + run.baseline());
+            let mut pen = origin.0;
+            let glyphs = placed
+                .into_iter()
+                .map(|(gx, gy, shaped, text_range)| {
+                    let glyph = Glyph {
+                        id: shaped.id,
+                        advance: shaped.advance,
+                        x_offset: gx - pen,
+                        y_offset: gy - origin.1,
+                        text_range,
+                    };
+                    pen += shaped.advance;
+                    glyph
+                })
+                .collect();
+            let metrics = run.metrics();
+            out.push(PositionedGlyphRun {
+                line: TextLineId {
+                    root: NodeId::new(root.node as u64),
+                    index,
+                },
+                source: RunSource::Generated(NodeId::new(owner as u64), GeneratedKind::Marker),
+                font: FontRef {
+                    id: FontId {
+                        blob,
+                        index: font_index,
+                    },
+                    data: FontBlob(bytes),
+                    index: font_index,
+                },
+                font_size: run.font_size(),
+                variations: run.variations().iter().map(font_variation).collect(),
+                normalized_coords: run
+                    .normalized_coords()
+                    .iter()
+                    .map(|coord| coord.to_bits())
+                    .collect(),
+                synthesis: Synthesis {
+                    embolden: run.embolden(),
+                    skew: run.skew(),
+                },
+                origin,
+                advance: run.inline_size(),
+                ascent: metrics.ascent,
+                descent: metrics.descent,
+                text: line.text().get(text_range).unwrap_or_default(),
+                glyphs,
+                color: marker.color,
+                decorations: Vec::new(),
+            });
+        }
+    }
 }
 
 /// The raikiri-owned form of a shodo variation axis setting.
@@ -540,7 +769,13 @@ impl Document {
         let pages = projection.pages.iter();
         for page in pages.filter(|page| page.page_index == page_index) {
             for root in &projection.text_roots {
-                root_runs(self, cascade, page, &context, root, &mut runs);
+                if let Some((owner, PseudoElem::Marker)) = generated_origin(root.node) {
+                    if omission(self, cascade, &context, root.node).is_none() {
+                        marker_runs(self, page, root, owner, &mut runs);
+                    }
+                } else {
+                    root_runs(self, cascade, page, &context, root, &mut runs);
+                }
             }
         }
         runs
@@ -551,16 +786,27 @@ impl Document {
     #[doc(hidden)]
     pub fn omitted_text_run_roots(&self, cascade: &CascadeResult) -> Vec<(NodeId, &'static str)> {
         let context = RunContext::new(self);
+        let mut seen = HashSet::new();
         self.page_projection
             .text_roots
             .iter()
             .filter_map(|root| {
+                if let Some((owner, PseudoElem::Marker)) = generated_origin(root.node)
+                    && !self.page_projection.markers.contains_key(&owner)
+                {
+                    return None;
+                }
                 let reason = omission(self, cascade, &context, root.node)?;
                 Some((
-                    NodeId::new(self.ifc_source_owner(root.node) as u64),
+                    NodeId::new(
+                        generated_origin(root.node)
+                            .map_or_else(|| self.ifc_source_owner(root.node), |(owner, _)| owner)
+                            as u64,
+                    ),
                     reason.describe(),
                 ))
             })
+            .filter(|entry| seen.insert(*entry))
             .collect()
     }
 }

@@ -4295,6 +4295,20 @@ fn a_list_marker_is_measured_and_drawn_with_the_document_font() {
 }
 
 #[test]
+fn whitespace_only_marker_content_has_no_glyph_paint() {
+    let (document, cascade, first, _) = list_fixture(
+        "display:list-item",
+        "display:none",
+        Some("li::marker{content:' '}"),
+    );
+    let mut scene = Scene::new();
+    paint_list_marker(
+        &mut scene, &document, &cascade, first, 0.0, 0.0, 200.0, 30.0, 0.0,
+    );
+    assert!(scene.commands.is_empty());
+}
+
+#[test]
 fn margin_box_flow_inherits_from_root_and_page_and_allows_local_override() {
     use shodo::geometry::{Direction, WritingMode as Mode};
     use shodo::style::TextOrientation as Orientation;
