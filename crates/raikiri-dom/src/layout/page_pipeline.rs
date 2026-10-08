@@ -2537,8 +2537,8 @@ pub fn layout_pages_with_page_geometry_and_control(
     let mut previous: Option<&PageCandidate> = None;
     let mut run_start: Option<usize> = None;
     for candidate in &candidates {
-        if !candidate.is_direct_body_element
-            && !(document.nodes[candidate.node_id].kind() == NodeKind::Text
+        if !(candidate.is_direct_body_element
+            || document.nodes[candidate.node_id].kind() == NodeKind::Text
                 && parent_of[candidate.node_id] == Some(body_id))
         {
             continue;
