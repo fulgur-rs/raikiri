@@ -796,6 +796,38 @@ impl Node {
             .map(|lines| lines.lines.as_slice())
     }
 
+    /// Retained style and source of one fragment of a typographic inline.
+    pub fn ifc_typographic_fragment(
+        &self,
+        box_id: usize,
+        source_container: Option<usize>,
+        source_owner: Option<usize>,
+    ) -> Option<(&raikiri_style::ComputedValues, usize)> {
+        #[cfg(test)]
+        tests::record_typographic_probe();
+        self.ifc
+            .as_ref()?
+            .typographic_fragment(box_id, source_container, source_owner)
+            .map(|style| (&style.computed, style.source_owner))
+    }
+
+    /// Retained typographic style for the original owner of a glyph run.
+    pub fn ifc_typographic_style_for_owner(
+        &self,
+        box_id: usize,
+        owner: usize,
+    ) -> Option<&raikiri_style::ComputedValues> {
+        self.ifc
+            .as_ref()?
+            .typographic_owner(box_id, owner)
+            .map(|style| &style.computed)
+    }
+
+    /// Enclosing typographic pseudo box, when ancestor block letters nest.
+    pub fn ifc_typographic_parent(&self, box_id: usize) -> Option<usize> {
+        self.ifc.as_ref()?.typographic_parent(box_id)
+    }
+
     /// Pieces of the inline elements of an ifc root on its lines, in the
     /// root's content box; `None` for a node without lines.
     #[doc(hidden)]
@@ -812,6 +844,30 @@ impl Node {
             root.writing_mode,
             content_size,
         );
+        // A first letter never retains paint boxes on a later formatted line.
+        pieces.retain(|piece| {
+            piece.line == 0
+                || !crate::generated_content::generated_origin(piece.node)
+                    .is_some_and(|(_, pseudo)| pseudo == raikiri_style::PseudoElem::FirstLetter)
+        });
+        // A typographic unit can be sliced around ordinary inline boxes.
+        // Those slices retain one set of start/end edges across the unit.
+        let mut starts = std::collections::HashSet::new();
+        let mut ends = std::collections::HashSet::new();
+        for piece in &mut pieces {
+            if crate::generated_content::generated_origin(piece.node)
+                .is_some_and(|(_, pseudo)| pseudo == raikiri_style::PseudoElem::FirstLetter)
+            {
+                piece.has_start_edge &= starts.insert(piece.node);
+            }
+        }
+        for piece in pieces.iter_mut().rev() {
+            if crate::generated_content::generated_origin(piece.node)
+                .is_some_and(|(_, pseudo)| pseudo == raikiri_style::PseudoElem::FirstLetter)
+            {
+                piece.has_end_edge &= ends.insert(piece.node);
+            }
+        }
         // Lines moved by pagination carry their pieces with them.
         for piece in &mut pieces {
             let shift = lines.shift_of(piece.line);

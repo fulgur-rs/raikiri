@@ -11,6 +11,7 @@
 
 use super::boxes::{IfcBox, IfcBoxKind};
 use super::error::IfcError;
+use super::first_letter::{FirstLetter, LetterStyle};
 use super::style;
 use crate::Document;
 use crate::generated_content::{generated_node_id, generated_text, is_in_flow_generated_text};
@@ -65,6 +66,7 @@ pub(crate) struct ProjectedIfc {
     pub(crate) fixed: bool,
     /// The root's lines end in an ellipsis where they overflow it.
     pub(crate) ellipsis: bool,
+    pub(crate) letter_styles: Vec<LetterStyle>,
 }
 
 /// Whether `node` or one of its ancestors has an authored vertical writing
@@ -95,7 +97,7 @@ fn under_vertical_writing(doc: &Document, cascade: &CascadeResult, node: usize) 
 
 /// The text style of `node` with its document context: its `lang`, and no
 /// autospacing under a vertical writing mode.
-fn styled(
+pub(super) fn styled(
     doc: &Document,
     cascade: &CascadeResult,
     cv: &ComputedValues,
@@ -175,9 +177,10 @@ fn line_height_quirk(doc: &Document) -> bool {
 /// The counters of the document, computed once per layout pass and only when
 /// some paragraph lays out generated text.
 #[derive(Default)]
-pub(crate) struct GeneratedCounters(
-    std::cell::OnceCell<Result<Vec<CounterSnapshot>, CounterSnapshotLimitExceeded>>,
-);
+pub(crate) struct GeneratedCounters {
+    counters: std::cell::OnceCell<Result<Vec<CounterSnapshot>, CounterSnapshotLimitExceeded>>,
+    pub(super) predecessors: super::first_letter::PredecessorCache,
+}
 
 impl GeneratedCounters {
     pub(super) fn get(
@@ -186,7 +189,7 @@ impl GeneratedCounters {
         cascade: &CascadeResult,
     ) -> Result<&[CounterSnapshot], CounterSnapshotLimitExceeded> {
         match self
-            .0
+            .counters
             .get_or_init(|| crate::target::counter_snapshots(doc, cascade))
         {
             Ok(snapshots) => Ok(snapshots),
@@ -239,6 +242,7 @@ fn push_generated(
     pseudo: PseudoElem,
     fonts: &FontCollection,
     counters: &GeneratedCounters,
+    first_letter: &mut FirstLetter,
 ) -> Result<(), IfcError> {
     if !is_in_flow_generated_text(cascade, element, pseudo) {
         return Ok(());
@@ -248,7 +252,18 @@ fn push_generated(
     else {
         return Ok(());
     };
+    let atomic = pseudo != PseudoElem::Marker
+        && matches!(
+            cv.display,
+            DisplayValue::InlineBlock
+                | DisplayValue::InlineFlex
+                | DisplayValue::InlineGrid
+                | DisplayValue::InlineTable
+        );
     if text.is_empty() {
+        if atomic {
+            first_letter.stop();
+        }
         return Ok(());
     }
     let id = NodeId(generated_node_id(element, pseudo) as u64);
@@ -262,6 +277,10 @@ fn push_generated(
                 | DisplayValue::InlineGrid
                 | DisplayValue::InlineTable
         );
+    // Atomic text is outside this IFC; a block after-pseudo starts a later line.
+    if atomic || (!inline_level && pseudo == PseudoElem::After) {
+        first_letter.stop();
+    }
     let marker_fallback;
     let cv = if pseudo == PseudoElem::Marker
         && !cascade
@@ -296,14 +315,29 @@ fn push_generated(
     if !inline_level && pseudo == PseudoElem::After {
         builder.push_forced_break(id);
     }
-    if let Some(body_style) = marker_body_style {
-        let body = text.trim_end_matches([' ', '\t']);
-        builder.open_inline(id, &body_style, InlineEdges::default());
-        builder.push_text(TextSource::Generated { node: id }, body);
-        builder.close_inline();
-        builder.push_text(TextSource::Generated { node: id }, &text[body.len()..]);
-    } else {
+    if pseudo == PseudoElem::Marker {
+        if let Some(body_style) = marker_body_style {
+            let body = text.trim_end_matches([' ', '\t']);
+            builder.open_inline(id, &body_style, InlineEdges::default());
+            builder.push_text(TextSource::Generated { node: id }, body);
+            builder.close_inline();
+            builder.push_text(TextSource::Generated { node: id }, &text[body.len()..]);
+        } else {
+            builder.push_text(TextSource::Generated { node: id }, &text);
+        }
+    } else if atomic {
         builder.push_text(TextSource::Generated { node: id }, &text);
+    } else {
+        first_letter.push_with_counters(
+            builder,
+            doc,
+            cascade,
+            TextSource::Generated { node: id },
+            cv,
+            &text,
+            fonts,
+            counters,
+        )?;
     }
     if !inline_level && pseudo == PseudoElem::Before {
         builder.push_forced_break(id);
@@ -423,6 +457,7 @@ pub(crate) struct ProjectedBuilder {
     pub(crate) fixed: bool,
     /// The root's lines end in an ellipsis where they overflow it.
     pub(crate) ellipsis: bool,
+    pub(crate) letter_styles: Vec<LetterStyle>,
 }
 
 impl ProjectedBuilder {
@@ -448,6 +483,7 @@ impl ProjectedBuilder {
             cleared_breaks: self.cleared_breaks,
             fixed: self.fixed,
             ellipsis: self.ellipsis,
+            letter_styles: self.letter_styles,
         })
     }
 }
@@ -545,6 +581,7 @@ pub(crate) fn project_ifc_text_builder(
         fixed: false,
         // An anonymous flex or grid item has no overflow of its own.
         ellipsis: false,
+        letter_styles: Vec::new(),
     })
 }
 
@@ -615,6 +652,8 @@ pub(crate) fn project_ifc_builder_with(
     let mut boxes = Vec::new();
     let mut offsets = Vec::new();
     let mut cleared_breaks = Vec::new();
+    let mut first_letter =
+        FirstLetter::new_with_predecessors(doc, cascade, root, limits, &counters.predecessors);
     let marker_atomic = if crate::generated_content::inside_marker_in_flow(cascade, root)
         && let Some(size) = doc.list_marker_image_size(root)
     {
@@ -664,6 +703,7 @@ pub(crate) fn project_ifc_builder_with(
             PseudoElem::Marker,
             fonts,
             counters,
+            &mut first_letter,
         )?;
         None
     };
@@ -675,6 +715,7 @@ pub(crate) fn project_ifc_builder_with(
         PseudoElem::Before,
         fonts,
         counters,
+        &mut first_letter,
     )?;
 
     let mut stack: Vec<Step> = root_node
@@ -698,6 +739,7 @@ pub(crate) fn project_ifc_builder_with(
                     PseudoElem::After,
                     fonts,
                     counters,
+                    &mut first_letter,
                 )?;
                 continue;
             }
@@ -710,13 +752,19 @@ pub(crate) fn project_ifc_builder_with(
         match node.kind() {
             NodeKind::Text => {
                 let text = node.text_content().ok_or(IfcError::InvalidNode(id))?;
-                builder.push_text(
+                first_letter.push_with_counters(
+                    &mut builder,
+                    doc,
+                    cascade,
                     TextSource::Dom {
                         node: NodeId(id as u64),
                         offset: 0,
                     },
+                    &cascade.computed[doc.parent_of(id).unwrap_or(id)],
                     text,
-                );
+                    fonts,
+                    counters,
+                )?;
             }
             NodeKind::Comment | NodeKind::ProcessingInstruction => {}
             NodeKind::Element => {
@@ -747,6 +795,7 @@ pub(crate) fn project_ifc_builder_with(
                         PseudoElem::Before,
                         fonts,
                         counters,
+                        &mut first_letter,
                     )?;
                     stack.push(Step::After(id));
                     stack.extend(node.children.iter().rev().map(|&child| Step::Enter(child)));
@@ -778,6 +827,7 @@ pub(crate) fn project_ifc_builder_with(
                     continue;
                 }
                 if box_kind(cascade, doc, id) == Some(IfcBoxKind::Atomic) {
+                    first_letter.stop();
                     let atomic_style = styled(doc, cascade, cv, id, fonts)?;
                     // shodo sizes an atomic from `AtomicSize` alone, margins
                     // included; the edges are not read for atomics.
@@ -795,6 +845,7 @@ pub(crate) fn project_ifc_builder_with(
                 // it (CSS 2.1 9.2.1.1): the lines before and after it are the
                 // element's, the block sits between them.
                 if box_kind(cascade, doc, id) == Some(IfcBoxKind::Block) {
+                    first_letter.stop();
                     builder.push_block_in_inline(NodeId(id as u64));
                     boxes.push(IfcBox {
                         node: id,
@@ -823,6 +874,7 @@ pub(crate) fn project_ifc_builder_with(
                     cleared_breaks.push((id, clear));
                 }
                 if tag == "br" {
+                    first_letter.stop();
                     // The break is not wrapped in an inline box of its own: in
                     // quirks mode a box would credit its strut to every line it
                     // ends, while a `<br>` adds its strut only to a line
@@ -848,6 +900,7 @@ pub(crate) fn project_ifc_builder_with(
                         PseudoElem::Before,
                         fonts,
                         counters,
+                        &mut first_letter,
                     )?;
                     if tag == "wbr" {
                         builder.push_text(
@@ -881,6 +934,7 @@ pub(crate) fn project_ifc_builder_with(
         PseudoElem::After,
         fonts,
         counters,
+        &mut first_letter,
     )?;
     Ok(ProjectedBuilder {
         builder,
@@ -894,6 +948,7 @@ pub(crate) fn project_ifc_builder_with(
         cleared_breaks,
         fixed: root_cv.position == PositionValue::Fixed,
         ellipsis: style::ends_in_ellipsis(root_cv),
+        letter_styles: first_letter.styles,
     })
 }
 
