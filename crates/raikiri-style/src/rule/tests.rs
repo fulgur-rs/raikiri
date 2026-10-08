@@ -1176,3 +1176,77 @@ fn text_decoration_line_duplicate_and_none_combination_declarations_dropped() {
     assert!(parse_block("text-decoration-line: none underline;").is_empty());
     assert!(parse_block("text-decoration-line: underline none;").is_empty());
 }
+
+#[test]
+fn list_style_shorthand_expands_every_component_in_any_order() {
+    use crate::property::{BackgroundImage, ListStylePosition, ListStyleType};
+    for value in [
+        "square inside url(marker.png)",
+        "square url(marker.png) inside",
+        "inside square url(marker.png)",
+        "inside url(marker.png) square",
+        "url(marker.png) square inside",
+        "url(marker.png) inside square",
+    ] {
+        let decls = parse_block(&format!("list-style: {value} !important"));
+        assert_eq!(decls.len(), 3, "{value}");
+        assert!(decls.iter().all(|d| d.important));
+        assert_eq!(
+            decls[0].value(),
+            &PropertyValue::ListStyleType(ListStyleType::Named("square".into()))
+        );
+        assert_eq!(
+            decls[1].value(),
+            &PropertyValue::ListStylePosition(ListStylePosition::Inside)
+        );
+        assert_eq!(
+            decls[2].value(),
+            &PropertyValue::ListStyleImage(BackgroundImage::Url("marker.png".into()))
+        );
+    }
+}
+
+#[test]
+fn list_style_none_resolves_only_unspecified_components() {
+    use crate::property::{BackgroundImage, ListStylePosition, ListStyleType};
+    for (value, kind, image) in [
+        ("none", ListStyleType::None, BackgroundImage::None),
+        ("none none", ListStyleType::None, BackgroundImage::None),
+        ("disc none", ListStyleType::Disc, BackgroundImage::None),
+        (
+            "none url(marker.png)",
+            ListStyleType::None,
+            BackgroundImage::Url("marker.png".into()),
+        ),
+        ("inside", ListStyleType::Disc, BackgroundImage::None),
+    ] {
+        let decls = parse_block(&format!("list-style: {value}"));
+        assert_eq!(decls.len(), 3, "{value}");
+        assert_eq!(decls[0].value(), &PropertyValue::ListStyleType(kind));
+        assert_eq!(
+            decls[1].value(),
+            &PropertyValue::ListStylePosition(if value == "inside" {
+                ListStylePosition::Inside
+            } else {
+                ListStylePosition::Outside
+            })
+        );
+        assert_eq!(decls[2].value(), &PropertyValue::ListStyleImage(image));
+    }
+    for value in [
+        "inside outside",
+        "square circle",
+        "none none none",
+        "disc url(a) none",
+        "disc none none",
+        "none none url(a)",
+        "inherit inside",
+        "",
+        "url(a) url(b)",
+    ] {
+        assert!(
+            parse_block(&format!("list-style: {value}")).is_empty(),
+            "{value}"
+        );
+    }
+}

@@ -116,6 +116,8 @@ pub enum GeneratedKind {
     Before,
     /// `::after`.
     After,
+    /// `::marker`.
+    Marker,
 }
 
 /// A font face and its data.
@@ -310,7 +312,8 @@ fn run_source(document: &Document, owner: usize) -> Option<RunSource> {
     if let Some((element, pseudo)) = generated_origin(owner) {
         let kind = match pseudo {
             PseudoElem::After => GeneratedKind::After,
-            _ => GeneratedKind::Before,
+            PseudoElem::Marker => GeneratedKind::Marker,
+            PseudoElem::Before | PseudoElem::FirstLine => GeneratedKind::Before,
         };
         return Some(RunSource::Generated(NodeId::new(element as u64), kind));
     }

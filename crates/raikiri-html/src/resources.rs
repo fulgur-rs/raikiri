@@ -857,6 +857,47 @@ impl<'a> RenderResources<'a> {
         self.preload_background_urls(raw_urls, warnings, seen, attempts, signal);
     }
 
+    /// Fetch image markers before layout because their dimensions affect lines.
+    pub(crate) fn preload_list_marker_images(
+        &self,
+        cascade: &raikiri_style::CascadeResult,
+        base_url: Option<&Url>,
+        warnings: &SharedRenderWarnings,
+        seen: &mut std::collections::HashSet<Url>,
+        attempts: &mut usize,
+        signal: Option<&AbortSignal>,
+    ) {
+        let urls: Vec<String> = cascade
+            .computed
+            .iter()
+            .enumerate()
+            .filter(|(element, _)| {
+                raikiri_dom::generated_content::inside_marker_in_flow(cascade, *element)
+                    && cascade
+                        .pseudo
+                        .get(&(
+                            raikiri_style::StyleNodeId::new(*element as u64),
+                            raikiri_style::PseudoElem::Marker,
+                        ))
+                        .is_none_or(|marker| marker.content.is_empty())
+            })
+            .filter_map(|(_, cv)| match &cv.list_style_image {
+                BackgroundImage::Url(raw) => Url::parse(raw)
+                    .ok()
+                    .or_else(|| base_url.and_then(|base| base.join(raw).ok()))
+                    .map(|url| url.to_string()),
+                _ => None,
+            })
+            .collect();
+        self.preload_background_urls(
+            urls.iter().map(String::as_str),
+            warnings,
+            seen,
+            attempts,
+            signal,
+        );
+    }
+
     /// Preload the page-context and page-margin-box background images of one
     /// page.
     pub(crate) fn preload_page_context_background_images(

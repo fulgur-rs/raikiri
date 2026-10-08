@@ -58,6 +58,30 @@ use crate::ruletree::build_rule_tree;
 use crate::test_dom::TestDoc;
 use std::sync::Arc;
 
+#[test]
+fn invalid_or_never_matching_paper_query_arms_keep_page_size() {
+    for prelude in [
+        "print, (width:red)",
+        "print, (width:clamp(1px))",
+        "print, (width:1px/2)",
+        "print, (device-width:1px/2)",
+        "print, projection and (width:1px)",
+    ] {
+        let result = page(
+            &format!("@media {prelude}{{@page{{size:300px 200px;margin:10px}}}}"),
+            &ComputedValues::initial(),
+        );
+        assert_eq!(
+            result.size(),
+            Some(PageSize::Lengths {
+                width: Length::Px(300.0),
+                height: Length::Px(200.0)
+            }),
+            "{prelude}"
+        );
+    }
+}
+
 const RED: CssColor = CssColor {
     r: 255,
     g: 0,
@@ -3088,7 +3112,7 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
 /// determines the classification.
 // Includes page-only inherit markers, which are resolved before this
 // phase and therefore remain unchanged here.
-const PHASE_3_PASS_THROUGH_VARIANTS: usize = 166;
+const PHASE_3_PASS_THROUGH_VARIANTS: usize = 167;
 /// Number of corpus variants transformed by page-context resolution.
 /// This is derived from the corpus size and the pass-through count.
 fn phase_3_transformed_variants() -> usize {
@@ -3774,6 +3798,7 @@ property_key_samples! {
     ListStyleType => PropertyValue::ListStyleType(ListStyleType::Named("decimal".into())),
     ListStylePosition => PropertyValue::ListStylePosition(ListStylePosition::Inside),
     ListStyleImage => PropertyValue::ListStyleImage(BackgroundImage::Url("marker.png".into())),
+    ListStyle => PropertyValue::ListStyle(crate::property::ListStyleShorthand { kind: ListStyleType::Disc, position: ListStylePosition::Inside, image: BackgroundImage::None }),
     ColumnCount => PropertyValue::ColumnCount(ColumnCountValue::Count(3)),
     ColumnFill => PropertyValue::ColumnFill(ColumnFillValue::BalanceAll),
     ColumnWidth => PropertyValue::ColumnWidth(ColumnWidthValue::Length(Length::Em(2.0))),
@@ -4002,6 +4027,7 @@ property_value_variant_registry! {
     ListStyleType,
     ListStylePosition,
     ListStyleImage,
+    ListStyle,
     CounterReset,
     CounterIncrement,
     CounterSet,
@@ -4683,6 +4709,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | PropertyValue::FontFamily(_)
             | PropertyValue::Display(_)
             | PropertyValue::ListStyleType(_)
+        | PropertyValue::ListStyle(_)
         | PropertyValue::ListStyleImage(_)
             | PropertyValue::ListStylePosition(_)
             | PropertyValue::CounterReset(_)
@@ -6296,8 +6323,8 @@ fn hyphenate_limit_chars_passes_through_page_value_resolution() {
 }
 
 #[test]
-fn media_guarded_page_size_applies_only_when_media_matches() {
-    // Basic media-conditional page size from the issue example.
+fn paper_dimension_guarded_page_size_is_ignored() {
+    // CSS Paged Media 3 ignores size descriptors guarded by paper dimensions.
     let mut tree = RuleTree::empty();
     tree.add_stylesheet(
         "@media print and (min-width:261px){@page{size:300px 200px}}",
@@ -6310,13 +6337,7 @@ fn media_guarded_page_size_applies_only_when_media_matches() {
         PageInheritance::LegacyInitialValues,
         &matching,
     );
-    assert_eq!(
-        result.size(),
-        Some(PageSize::Lengths {
-            width: Length::Px(300.0),
-            height: Length::Px(200.0),
-        })
-    );
+    assert_eq!(result.size(), None);
     let non_matching = MediaContext::with_viewport(crate::media::MediaType::Print, 260, 160);
     let result = cascade_page_with_media_context(
         &tree,
@@ -6329,7 +6350,7 @@ fn media_guarded_page_size_applies_only_when_media_matches() {
 
 #[test]
 fn media_guarded_page_background_applies_only_when_media_matches() {
-    // Page backgrounds must follow the same media gate as size.
+    // Ordinary page declarations retain the normal media gate.
     let mut tree = RuleTree::empty();
     tree.add_stylesheet(
         "@media print and (min-width:261px){@page{background-color:red}}",
@@ -6391,7 +6412,7 @@ fn media_guarded_page_nested_media_conditions_intersect() {
         PageInheritance::LegacyInitialValues,
         &matching,
     );
-    assert!(result.size().is_some());
+    assert_eq!(result.size(), None);
     let non_matching = MediaContext::with_viewport(crate::media::MediaType::Print, 260, 160);
     let result = cascade_page_with_media_context(
         &tree,
@@ -6560,4 +6581,137 @@ fn cascade_page_min_content_width_is_kept() {
         result.declarations().get(&PropertyKey::Width),
         Some(&PropertyValue::Width(LengthOrAuto::MinContent)),
     );
+}
+
+#[test]
+fn paper_dimension_guard_ignores_only_size_and_preserves_fallback() {
+    for media in [
+        "only print and (width >= 261px)",
+        "(200px < width <= 300px)",
+        "print and (HEIGHT:160px)",
+        "print and ((width))",
+        "print and not (height < 100px)",
+        "not screen and (width < 261px)",
+        "(width >= 261px) or (unknown-feature)",
+        "print, (orientation: landscape)",
+        "print, (device-width: 261px)",
+        "print, (device-height: 160px)",
+        "print, (aspect-ratio: 261/160)",
+        "print, (device-aspect-ratio: 261/160)",
+        r"print and (\77 idth:261px)",
+    ] {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            &format!("@page {{ size:100px 80px }} @media {media} {{ @page {{ size:300px 200px !important; margin:10px; background-color:red; @top-left {{ content:'kept' }} }} }}"),
+            Origin::Author,
+        );
+        let result = cascade_page_with_media_context(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::LegacyInitialValues,
+            &MediaContext::with_viewport(crate::media::MediaType::Print, 261, 160),
+        );
+        assert_eq!(
+            result.size(),
+            Some(PageSize::Lengths {
+                width: Length::Px(100.0),
+                height: Length::Px(80.0)
+            }),
+            "{media}"
+        );
+        assert!(
+            result.declarations().contains_key(&PropertyKey::MarginTop),
+            "{media}"
+        );
+        assert!(
+            result
+                .declarations()
+                .contains_key(&PropertyKey::BackgroundColor),
+            "{media}"
+        );
+        assert_eq!(result.margin_boxes().len(), 1, "{media}");
+    }
+}
+
+#[test]
+fn media_type_only_guards_keep_page_size() {
+    for media in [
+        "print",
+        "only print",
+        "not screen",
+        "all",
+        "print, (hover: hover)",
+        "print, (unknown-feature: width)",
+        "print, (unknown-feature: (width:200px))",
+        "print, (unknown-feature: 0 < width)",
+        "print, unknown(width)",
+        "print, only (width:200px)",
+        "print, print and (width:200px) unexpected",
+    ] {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            &format!("@media {media} {{ @page {{ size:300px 200px }} }}"),
+            Origin::Author,
+        );
+        let result = cascade_page(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::LegacyInitialValues,
+        );
+        assert_eq!(
+            result.size(),
+            Some(PageSize::Lengths {
+                width: Length::Px(300.0),
+                height: Length::Px(200.0)
+            }),
+            "{media}"
+        );
+    }
+}
+
+#[test]
+fn stylesheet_and_nested_media_preserve_paper_dimension_guard() {
+    for (source, media) in [
+        (
+            "@media print { @page { size:300px 200px; margin:10px } }",
+            "(min-width:261px)",
+        ),
+        (
+            "@media (min-width:261px) { @page { size:300px 200px; margin:10px } }",
+            "print",
+        ),
+        (
+            "@media print { @media (min-width:261px) { @page { size:300px 200px; margin:10px } } }",
+            "all",
+        ),
+    ] {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet_with_media(source, Origin::Author, Some(media));
+        let result = cascade_page_with_media_context(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::LegacyInitialValues,
+            &MediaContext::with_viewport(crate::media::MediaType::Print, 261, 160),
+        );
+        assert_eq!(result.size(), None, "{source} / {media}");
+        assert!(result.declarations().contains_key(&PropertyKey::MarginTop));
+    }
+}
+
+#[test]
+fn imported_media_chains_ignore_only_page_size() {
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet_with_media_conditions(
+        "@page { size:300px 200px; margin:10px }",
+        Origin::Author,
+        &["print", "(min-width:261px)"],
+    );
+    let result = cascade_page_with_media_context(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::LegacyInitialValues,
+        &MediaContext::with_viewport(crate::media::MediaType::Print, 261, 160),
+    );
+    assert_eq!(result.size(), None);
+    assert!(result.declarations().contains_key(&PropertyKey::MarginTop));
 }

@@ -81,6 +81,64 @@ fn box_ch_provenance_keeps_authored_factor_and_font() {
     assert!(ordinary.margin_ch.top.is_none());
 }
 
+#[test]
+fn min_max_ch_provenance_tracks_the_declaring_font_and_logical_axis() {
+    for mode in [
+        WritingMode::HorizontalTb,
+        WritingMode::VerticalRl,
+        WritingMode::VerticalLr,
+        WritingMode::SidewaysRl,
+        WritingMode::SidewaysLr,
+    ] {
+        let mut specified = SpecifiedValues::initial();
+        specified.font_family = std::sync::Arc::new(vec![FontFamilyName::named("Ahem")]);
+        specified.font_size = Length::Px(16.0);
+        specified.font_weight = 700.0;
+        specified.writing_mode = mode;
+        specified.max_width = LengthOrAuto::Length(Length::Ch(2.0));
+        specified.max_height = LengthOrAuto::Length(Length::Ch(3.0));
+        specified.min_width = LengthOrAuto::Length(Length::Ch(4.0));
+        specified.min_height = LengthOrAuto::Length(Length::Ch(5.0));
+        specified.min_block_size = Some(LengthOrAuto::Length(Length::Ch(6.0)));
+        let computed = specified.clone().finalize(&ComputedValues::initial(), &CTX);
+        let (min_width, min_height) = if mode == WritingMode::HorizontalTb {
+            (4.0, 6.0)
+        } else {
+            (6.0, 5.0)
+        };
+        for (provenance, factor) in [
+            (&computed.max_width_ch, 2.0),
+            (&computed.max_height_ch, 3.0),
+            (&computed.min_width_ch, min_width),
+            (&computed.min_height_ch, min_height),
+            (&computed.min_block_size_ch, 6.0),
+        ] {
+            let provenance = provenance.as_ref().unwrap();
+            assert_eq!(provenance.factor, factor);
+            assert_eq!(provenance.font.family, computed.font_family);
+            assert_eq!(provenance.font.size.0, 16.0);
+            assert_eq!(provenance.font.weight, 700.0);
+        }
+        specified.max_width = LengthOrAuto::Length(Length::Percent(25.0));
+        specified.max_height = LengthOrAuto::Auto;
+        specified.min_width = LengthOrAuto::Length(Length::Px(7.0));
+        specified.min_height = LengthOrAuto::Auto;
+        specified.min_block_size = Some(LengthOrAuto::Length(Length::Px(9.0)));
+        let ordinary = specified.finalize(&ComputedValues::initial(), &CTX);
+        assert!(
+            [
+                ordinary.max_width_ch,
+                ordinary.max_height_ch,
+                ordinary.min_width_ch,
+                ordinary.min_height_ch,
+                ordinary.min_block_size_ch
+            ]
+            .iter()
+            .all(Option::is_none)
+        );
+    }
+}
+
 /// The specified initial border has `medium` (3px) / `none` / `currentcolor`; style gating
 /// reduces its width to 0px in the computed layer (CSS Backgrounds 3 §3.3: "Computed value: …
 /// zero if the border style is `none` or `hidden`").
@@ -270,10 +328,15 @@ fn parent_fixture() -> ComputedValues {
         height: ComputedLengthPercentageOrAuto::Px(200.0),
         height_ch: None,
         max_width: ComputedLengthPercentageOrAuto::Auto,
+        max_width_ch: None,
         max_height: ComputedLengthPercentageOrAuto::Auto,
+        max_height_ch: None,
         min_width: ComputedLengthPercentageOrAuto::Auto,
+        min_width_ch: None,
         min_height: ComputedLengthPercentageOrAuto::Auto,
+        min_height_ch: None,
         min_block_size: None,
+        min_block_size_ch: None,
         vertical_logical_size: None,
         top: ComputedLengthPercentageOrAuto::Px(10.0),
         right: ComputedLengthPercentageOrAuto::Px(20.0),

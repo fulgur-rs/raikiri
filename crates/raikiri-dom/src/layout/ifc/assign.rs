@@ -169,9 +169,10 @@ fn needs_ifc_layout(
     cascade: &CascadeResult,
     idx: usize,
     fonts: &shodo::font::FontCollection,
-) -> bool {
-    if has_in_flow_generated_text(cascade, idx) {
-        return true;
+    counters: &GeneratedCounters,
+) -> Result<bool, IfcError> {
+    if has_in_flow_generated_text(doc, cascade, idx, counters)? {
+        return Ok(true);
     }
     let cv = &cascade.computed[idx];
     let vertical_block_children = matches!(
@@ -189,14 +190,14 @@ fn needs_ifc_layout(
         match node.kind() {
             NodeKind::Text => {
                 if text_makes_a_line(doc, cascade, id) {
-                    return true;
+                    return Ok(true);
                 }
             }
             NodeKind::Element => match box_kind(cascade, doc, id) {
-                Some(IfcBoxKind::Atomic) => return true,
+                Some(IfcBoxKind::Atomic) => return Ok(true),
                 Some(IfcBoxKind::Block) if vertical_block_children => {
-                    if has_in_flow_generated_text(cascade, id) {
-                        return true;
+                    if has_in_flow_generated_text(doc, cascade, id, counters)? {
+                        return Ok(true);
                     }
                     stack.extend(node.children.iter().copied());
                 }
@@ -209,12 +210,12 @@ fn needs_ifc_layout(
                     {
                         continue;
                     }
-                    if has_in_flow_generated_text(cascade, id) {
-                        return true;
+                    if has_in_flow_generated_text(doc, cascade, id, counters)? {
+                        return Ok(true);
                     }
                     if cv.display == DisplayValue::Inline {
                         if node.tag_name() == Some("br") {
-                            return true;
+                            return Ok(true);
                         }
                         // An edge the engine cannot map yet keeps the
                         // paragraph out at projection; counting it here only
@@ -223,7 +224,7 @@ fn needs_ifc_layout(
                             e.inline_start_total() + e.inline_end_total() != 0.0
                         });
                         if edged {
-                            return true;
+                            return Ok(true);
                         }
                     }
                     stack.extend(node.children.iter().copied());
@@ -232,7 +233,7 @@ fn needs_ifc_layout(
             _ => {}
         }
     }
-    false
+    Ok(false)
 }
 
 /// A paragraph the walk accepted, waiting to be shaped.
@@ -385,7 +386,11 @@ fn collect_candidates(
             || taken[idx]
             || is_ruby_multicol_flex_projection(doc, cascade, idx)
             || !can_be_ifc_root(doc, cascade, idx)
-            || !needs_ifc_layout(doc, cascade, idx, &state.fonts)
+        {
+            continue;
+        }
+        if !needs_ifc_layout(doc, cascade, idx, &state.fonts, &counters)
+            .map_err(|error| projection_error(idx, error))?
         {
             continue;
         }
@@ -473,6 +478,99 @@ fn is_ruby_multicol_flex_projection(doc: &Document, cascade: &CascadeResult, idx
     }
 
     true
+}
+
+/// Reserve marker advances only on the legacy ruby/multicol projection path.
+/// Authored padding, including font-resolved `ch` and percentages, is preserved.
+pub(crate) fn prepare_legacy_inside_markers_before_taffy(
+    doc: &mut Document,
+    cascade: &CascadeResult,
+) -> Result<(), LayoutError> {
+    doc.legacy_inside_marker_advances.clear();
+    let counters = GeneratedCounters::default();
+    for idx in 0..doc.nodes.len() {
+        if !crate::generated_content::inside_marker_in_flow(cascade, idx)
+            || doc.nodes[idx].is_ifc_root()
+            || !is_ruby_multicol_flex_projection(doc, cascade, idx)
+        {
+            continue;
+        }
+        let snapshots = counters
+            .get(doc, cascade)
+            .map_err(|error| projection_error(idx, IfcError::CounterSnapshots(error)))?;
+        let Some((cv, text)) = crate::generated_content::markers::marker_render_info_with_snapshots(
+            doc, cascade, idx, snapshots,
+        ) else {
+            continue;
+        };
+        let image_width = doc.list_marker_image_size(idx).map(|size| size.width);
+        // Match the legacy painter's normal face, first family and usable size.
+        let family = cv
+            .font_family
+            .first()
+            .map(|family| family.as_str())
+            .unwrap_or("serif");
+        let font_size = cv.font_size.px();
+        let style = crate::StandaloneStyle {
+            families: family
+                .split(',')
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(str::to_owned)
+                .collect(),
+            font_size: if font_size.is_finite() && font_size > 0.0 {
+                font_size
+            } else {
+                16.0
+            },
+            ..crate::StandaloneStyle::default()
+        };
+        let text = if image_width.is_some() { " " } else { &text };
+        let advance = image_width.unwrap_or(0.0)
+            + doc
+                .shape_standalone_text(text, &style, None, crate::StandaloneAlign::Start)
+                .map_or(0.0, |shaped| shaped.advance());
+        if advance <= 0.0 {
+            continue;
+        }
+        let padding = doc.nodes[idx].style.padding.left.into_raw();
+        let deferred = if padding.is_calc() {
+            Some(
+                *doc.calc_values
+                    .iter()
+                    .find(|value| {
+                        std::ptr::eq(
+                            std::sync::Arc::as_ptr(value).cast::<()>(),
+                            padding.calc_value(),
+                        )
+                    })
+                    .ok_or_else(|| LayoutError::Internal {
+                        message: "legacy marker padding calc handle is not registered".to_owned(),
+                    })?
+                    .as_ref(),
+            )
+        } else if padding.tag() == taffy::CompactLength::PERCENT_TAG {
+            Some(raikiri_style::property::CalcLengthPercentage {
+                percent: padding.value() * 100.0,
+                px: 0.0,
+            })
+        } else {
+            None
+        };
+        doc.nodes[idx].style.padding.left = if let Some(base) = deferred {
+            let payload = std::sync::Arc::new(raikiri_style::property::CalcLengthPercentage {
+                percent: base.percent,
+                px: base.px + advance,
+            });
+            let pointer = std::sync::Arc::as_ptr(&payload).cast();
+            doc.calc_values.push(payload);
+            taffy::LengthPercentage::calc(pointer)
+        } else {
+            taffy::LengthPercentage::length(padding.value() + advance)
+        };
+        doc.legacy_inside_marker_advances.insert(idx, advance);
+    }
+    Ok(())
 }
 
 /// Whether the text node `id` puts something on a line: a character other

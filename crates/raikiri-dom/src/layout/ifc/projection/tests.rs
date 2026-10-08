@@ -2,6 +2,30 @@ use super::*;
 use crate::layout::ifc::test_support::{Fixture, ahem_fonts, block_fixture, span};
 use shodo::AtomicSizes;
 
+#[test]
+fn marker_eligibility_preserves_counter_snapshot_errors() {
+    let fixture = crate::layout::ifc::test_support::sheet_fixture(
+        "div::marker {content:counters(section, '.')}",
+        "display:list-item;list-style:inside none",
+        |_, _| {},
+    );
+    let counters = GeneratedCounters::default();
+    counters
+        .0
+        .set(Err(CounterSnapshotLimitExceeded {
+            limit: 32,
+            actual: 33,
+        }))
+        .unwrap();
+    assert!(matches!(
+        has_in_flow_generated_text(&fixture.doc, &fixture.cascade, fixture.root, &counters),
+        Err(IfcError::CounterSnapshots(CounterSnapshotLimitExceeded {
+            limit: 32,
+            actual: 33
+        }))
+    ));
+}
+
 fn project(fixture: &Fixture) -> Result<ProjectedIfc, IfcError> {
     let mut cx = LayoutContext::new();
     project_ifc(
@@ -24,6 +48,7 @@ fn line_texts(projected: &ProjectedIfc, width: f32) -> Vec<String> {
         .map(|line| {
             line.text()[line.text_range()]
                 .replace('\u{FFFC}', "")
+                .replace(['\u{2066}', '\u{2067}', '\u{2068}', '\u{2069}'], "")
                 .trim_end()
                 .to_owned()
         })
@@ -809,4 +834,196 @@ fn an_inline_table_is_an_atomic_and_table_internal_boxes_are_blocks() {
         let projected = project(&fixture).expect(css);
         assert_eq!(projected.boxes.first().map(|b| b.kind), kind, "{css}");
     }
+}
+
+#[test]
+fn inside_marker_is_first_inline_content_and_only_indents_the_first_line() {
+    let fixture = block_fixture(
+        "display:list-item;list-style-position:inside;list-style-type:'X '",
+        |doc, root| {
+            doc.append_text(root, "aaaa bbbb");
+        },
+    );
+    let projected = project(&fixture).expect("project");
+    assert_eq!(projected.paragraph.text(), "\u{2066}X \u{2069}aaaa bbbb");
+    assert_eq!(line_texts(&projected, 70.0), ["X aaaa", "bbbb"]);
+    assert_eq!(
+        fixture.doc.nodes[fixture.root]
+            .style
+            .padding
+            .left
+            .into_raw()
+            .value(),
+        0.0
+    );
+}
+
+#[test]
+fn inside_marker_precedes_before_and_increases_empty_item_height() {
+    let mut fixture = block_fixture(
+        "display:list-item;list-style-position:inside;list-style-type:'X'",
+        |doc, root| {
+            doc.append_text(root, "b");
+        },
+    );
+    let head = fixture
+        .doc
+        .append_element(Some(0), "style", taffy::Style::default(), None::<&str>);
+    fixture.doc.append_text(
+        head,
+        r#"div::before { content: "a" } div::marker { color:red;font-size:20px }"#,
+    );
+    fixture.doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&fixture.doc);
+    fixture.cascade = raikiri_style::cascade(&fixture.doc, &rules).expect("cascade");
+    let projected = project(&fixture).expect("project");
+    assert_eq!(projected.paragraph.text(), "\u{2066}X\u{2069}ab");
+    let empty = block_fixture(
+        "display:list-item;list-style-position:inside;list-style-type:'X'",
+        |_, _| {},
+    );
+    let projected_empty = project(&empty).expect("project");
+    assert_eq!(line_texts(&projected_empty, 100.0), ["X"]);
+    let lines = projected_empty.paragraph.break_all(
+        &mut LayoutContext::new(),
+        &projected_empty.options,
+        100.0,
+        &AtomicSizes::EMPTY,
+    );
+    assert_eq!(lines.len(), 1);
+    assert!(lines[0].block_size() >= 10.0);
+}
+
+#[test]
+fn inside_marker_preserves_spaces_does_not_wrap_or_inherit_text_transform() {
+    for author_marker in ["", "div::marker {color:red}"] {
+        let mut fixture = block_fixture(
+            "display:list-item;list-style:inside '  x  y  ';text-transform:uppercase",
+            |doc, root| {
+                doc.append_text(root, "ab");
+            },
+        );
+        let sheet =
+            fixture
+                .doc
+                .append_element(Some(0), "style", taffy::Style::default(), None::<&str>);
+        fixture.doc.append_text(sheet, author_marker);
+        fixture.doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&fixture.doc);
+        fixture.cascade = raikiri_style::cascade(&fixture.doc, &rules).expect("cascade");
+        let projected = project(&fixture).expect("project");
+        assert_eq!(projected.paragraph.text(), "\u{2066}  x  y  \u{2069}AB");
+        assert_eq!(line_texts(&projected, 30.0).first().unwrap(), "  x  y");
+    }
+}
+
+#[test]
+fn suppressed_inside_image_marker_consumes_no_inline_space() {
+    struct Pixels;
+    impl raikiri_traits::ImagePixelSource for Pixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
+                width: 16,
+                height: 8,
+                rgba: [0, 128, 0, 255].repeat(16 * 8),
+            }))
+        }
+    }
+    let mut fixture = crate::layout::ifc::test_support::sheet_fixture(
+        "div::marker {display:none}",
+        "display:list-item;list-style:inside url(https://images.test/marker.png)",
+        |doc, root| {
+            doc.append_text(root, "a");
+        },
+    );
+    fixture
+        .doc
+        .prepare_list_marker_images(&fixture.cascade, &Pixels, None);
+    let projected = project(&fixture).unwrap();
+    assert!(projected.marker_atomic.is_none());
+    assert_eq!(projected.paragraph.text(), "a");
+}
+
+#[test]
+fn image_marker_has_intrinsic_extents_and_uses_authored_style_in_vertical_and_rtl_layout() {
+    struct Pixels;
+    impl raikiri_traits::ImagePixelSource for Pixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
+                width: 16,
+                height: 8,
+                rgba: [0, 128, 0, 255].repeat(16 * 8),
+            }))
+        }
+    }
+    for (extra, expected) in [
+        ("direction:rtl", (16.0, 8.0)),
+        ("writing-mode:vertical-rl", (8.0, 16.0)),
+    ] {
+        let mut fixture = crate::layout::ifc::test_support::sheet_fixture(
+            "div::marker {color:red}",
+            &format!(
+                "display:list-item;list-style:inside url(https://images.test/marker.png);{extra}"
+            ),
+            |doc, root| {
+                doc.append_text(root, "a");
+            },
+        );
+        fixture
+            .doc
+            .prepare_list_marker_images(&fixture.cascade, &Pixels, None);
+        let projected = project(&fixture).expect("project marker");
+        let (_, size) = projected.marker_atomic.unwrap();
+        assert_eq!((size.inline_size, size.block_size), expected);
+        fixture.doc.set_font_collection(ahem_fonts());
+        crate::layout::layout_single_page(
+            &mut fixture.doc,
+            &fixture.cascade,
+            crate::layout::test_support::page_box_800x600(),
+        )
+        .unwrap();
+        let inputs =
+            crate::layout::ifc::boxes::intrinsics_of_boxes(&mut fixture.doc, fixture.root, 100.0);
+        let root = fixture.doc.nodes[fixture.root].ifc.as_ref().unwrap();
+        let extents = root.paragraph.intrinsic_sizes(
+            &mut LayoutContext::new(),
+            &root.options,
+            &inputs.engine,
+        );
+        assert!(extents.min_content >= expected.0);
+        assert!(extents.max_content >= expected.0 + 10.0);
+    }
+}
+
+#[test]
+fn unsupported_marker_style_returns_an_explicit_projection_error() {
+    let mut fixture = crate::layout::ifc::test_support::sheet_fixture(
+        "div::marker {font-variation-settings:\"wdth\" 1}",
+        "display:list-item;list-style:inside 'x'",
+        |_, _| {},
+    );
+    let marker = fixture
+        .cascade
+        .pseudo
+        .get_mut(&(
+            raikiri_style::StyleNodeId::new(fixture.root as u64),
+            PseudoElem::Marker,
+        ))
+        .unwrap();
+    let raikiri_style::property::FontVariationSettings::Settings(values) =
+        &mut marker.font_variation_settings
+    else {
+        panic!("parsed axis")
+    };
+    values[0].tag = "bad".into();
+    assert!(matches!(
+        project(&fixture),
+        Err(IfcError::Unsupported { .. })
+    ));
 }

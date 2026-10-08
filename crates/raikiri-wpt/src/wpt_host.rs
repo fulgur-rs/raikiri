@@ -261,8 +261,12 @@ impl DocumentHost for WptDocumentHost {
         self.flushes.set(self.flushes.get() + 1);
         self.resync_stylesheets();
         self.setup.uncascaded.dom.mark_in_document_flags();
-        let cascade = raikiri::build_cascaded_with_media_context_for_page(
+        let resolved = crate::reftest::resolved_live_viewport_document(
             &self.setup.uncascaded,
+            &self.setup.media_context,
+        );
+        let cascade = raikiri::build_cascaded_with_media_context_for_page(
+            &resolved,
             &self.setup.media_context,
             &self.setup.page_query,
         );
@@ -271,6 +275,40 @@ impl DocumentHost for WptDocumentHost {
             .dom
             .set_font_collection(self.setup.fonts.clone());
         let image_resolver = raikiri_net::ImageResolver::new(raikiri_net::FileNetworkProvider);
+        for (element, computed) in cascade.computed.iter().enumerate() {
+            if !raikiri_dom::generated_content::inside_marker_in_flow(&cascade, element)
+                || cascade
+                    .pseudo
+                    .get(&(
+                        raikiri_style::StyleNodeId::new(element as u64),
+                        raikiri_style::PseudoElem::Marker,
+                    ))
+                    .is_some_and(|marker| !marker.content.is_empty())
+            {
+                continue;
+            }
+            let raikiri_style::property::BackgroundImage::Url(raw) = &computed.list_style_image
+            else {
+                continue;
+            };
+            if let Some(url) = raikiri::Url::parse(raw).ok().or_else(|| {
+                self.setup
+                    .document_base_url
+                    .as_ref()
+                    .and_then(|base| base.join(raw).ok())
+            }) {
+                // CSS image loading keeps the text marker fallback on failure.
+                let _ = raikiri_traits::ReplacedResolver::resolve(
+                    &image_resolver,
+                    raikiri_traits::ResolverRequest::new(&url),
+                );
+            }
+        }
+        self.setup.uncascaded.dom.prepare_list_marker_images(
+            &cascade,
+            &image_resolver,
+            self.setup.document_base_url.as_ref(),
+        );
         raikiri_dom::layout_single_page_with_resolver_and_base_url(
             &mut self.setup.uncascaded.dom,
             &cascade,

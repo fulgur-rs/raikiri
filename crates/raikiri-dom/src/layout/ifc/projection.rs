@@ -51,6 +51,8 @@ pub(crate) struct ProjectedIfc {
     pub(crate) indent: ComputedTextIndent,
     /// Children laid out as boxes of their own, in document order.
     pub(crate) boxes: Vec<IfcBox>,
+    /// Fixed-size image marker inserted ahead of the root's ordinary content.
+    pub(crate) marker_atomic: Option<(NodeId, shodo::AtomicSize)>,
     /// The root's `direction` is `rtl`: its lines start at the right edge.
     pub(crate) rtl: bool,
     /// Paint offsets of the relatively positioned inline elements, by DOM
@@ -178,7 +180,7 @@ pub(crate) struct GeneratedCounters(
 );
 
 impl GeneratedCounters {
-    fn get(
+    pub(super) fn get(
         &self,
         doc: &Document,
         cascade: &CascadeResult,
@@ -193,12 +195,31 @@ impl GeneratedCounters {
     }
 }
 
-/// Whether `element` has a `::before` or `::after` that the paragraph lays
-/// out as text.
-pub(crate) fn has_in_flow_generated_text(cascade: &CascadeResult, element: usize) -> bool {
-    [PseudoElem::Before, PseudoElem::After]
-        .into_iter()
-        .any(|pseudo| is_in_flow_generated_text(cascade, element, pseudo))
+/// Whether `element` has generated text or a prepared inside marker image.
+pub(crate) fn has_in_flow_generated_text(
+    doc: &Document,
+    cascade: &CascadeResult,
+    element: usize,
+    counters: &GeneratedCounters,
+) -> Result<bool, IfcError> {
+    for pseudo in [PseudoElem::Marker, PseudoElem::Before, PseudoElem::After] {
+        if !is_in_flow_generated_text(cascade, element, pseudo) {
+            continue;
+        }
+        if pseudo != PseudoElem::Marker
+            || doc.list_marker_image_size(element).is_some()
+            || crate::generated_content::markers::marker_render_info_with_snapshots(
+                doc,
+                cascade,
+                element,
+                counters.get(doc, cascade)?,
+            )
+            .is_some_and(|(_, text)| !text.is_empty())
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Push the text of the `pseudo` of `element` into the paragraph, as an
@@ -231,17 +252,42 @@ fn push_generated(
         return Ok(());
     }
     let id = NodeId(generated_node_id(element, pseudo) as u64);
-    let inline_level = matches!(
-        cv.display,
-        DisplayValue::Inline
-            | DisplayValue::Contents
-            | DisplayValue::InlineBlock
-            | DisplayValue::InlineFlex
-            | DisplayValue::InlineGrid
-            | DisplayValue::InlineTable
-    );
-    let inline_style = styled(doc, cascade, cv, element, fonts)?;
-    let edges = if inline_level {
+    let inline_level = pseudo == PseudoElem::Marker
+        || matches!(
+            cv.display,
+            DisplayValue::Inline
+                | DisplayValue::Contents
+                | DisplayValue::InlineBlock
+                | DisplayValue::InlineFlex
+                | DisplayValue::InlineGrid
+                | DisplayValue::InlineTable
+        );
+    let marker_fallback;
+    let cv = if pseudo == PseudoElem::Marker
+        && !cascade
+            .pseudo
+            .contains_key(&(raikiri_style::StyleNodeId::new(element as u64), pseudo))
+    {
+        marker_fallback = raikiri_style::ComputedValues::inherit_marker_from(cv);
+        &marker_fallback
+    } else {
+        cv
+    };
+    let mut inline_style = styled(doc, cascade, cv, element, fonts)?;
+    let marker_body_style = if pseudo == PseudoElem::Marker
+        && inline_style.text_wrap_mode == shodo::style::TextWrapMode::NoWrap
+        && text.ends_with([' ', '\t'])
+    {
+        let mut body = inline_style.clone();
+        body.unicode_bidi = shodo::style::UnicodeBidi::Normal;
+        // Keep the marker's text indivisible while exposing the whitespace
+        // boundary to the enclosing paragraph's wrapping rules.
+        inline_style.text_wrap_mode = shodo::style::TextWrapMode::Wrap;
+        Some(body)
+    } else {
+        None
+    };
+    let edges = if inline_level && pseudo != PseudoElem::Marker {
         style::inline_edges(cv, element, fonts)?
     } else {
         InlineEdges::default()
@@ -250,7 +296,15 @@ fn push_generated(
     if !inline_level && pseudo == PseudoElem::After {
         builder.push_forced_break(id);
     }
-    builder.push_text(TextSource::Generated { node: id }, &text);
+    if let Some(body_style) = marker_body_style {
+        let body = text.trim_end_matches([' ', '\t']);
+        builder.open_inline(id, &body_style, InlineEdges::default());
+        builder.push_text(TextSource::Generated { node: id }, body);
+        builder.close_inline();
+        builder.push_text(TextSource::Generated { node: id }, &text[body.len()..]);
+    } else {
+        builder.push_text(TextSource::Generated { node: id }, &text);
+    }
     if !inline_level && pseudo == PseudoElem::Before {
         builder.push_forced_break(id);
     }
@@ -355,6 +409,8 @@ pub(crate) struct ProjectedBuilder {
     pub(crate) indent: ComputedTextIndent,
     /// Children laid out as boxes of their own, in document order.
     pub(crate) boxes: Vec<IfcBox>,
+    /// Fixed-size image marker inserted ahead of the root's ordinary content.
+    pub(crate) marker_atomic: Option<(NodeId, shodo::AtomicSize)>,
     /// The root's `direction` is `rtl`: its lines start at the right edge.
     pub(crate) rtl: bool,
     /// Paint offsets of the relatively positioned inline elements, by DOM
@@ -386,6 +442,7 @@ impl ProjectedBuilder {
             options: self.options,
             indent: self.indent,
             boxes: self.boxes,
+            marker_atomic: self.marker_atomic,
             rtl: self.rtl,
             offsets: self.offsets,
             cleared_breaks: self.cleared_breaks,
@@ -481,6 +538,7 @@ pub(crate) fn project_ifc_text_builder(
         options,
         indent,
         boxes: Vec::new(),
+        marker_atomic: None,
         rtl: cv.direction == Direction::Rtl,
         offsets: Vec::new(),
         cleared_breaks,
@@ -557,6 +615,58 @@ pub(crate) fn project_ifc_builder_with(
     let mut boxes = Vec::new();
     let mut offsets = Vec::new();
     let mut cleared_breaks = Vec::new();
+    let marker_atomic = if crate::generated_content::inside_marker_in_flow(cascade, root)
+        && let Some(size) = doc.list_marker_image_size(root)
+    {
+        let id = NodeId(generated_node_id(root, PseudoElem::Marker) as u64);
+        let marker_cv = crate::generated_content::computed_for_id(cascade, id.0 as usize)
+            .ok_or(IfcError::InvalidNode(root))?;
+        let marker_fallback;
+        let marker_cv = if cascade.pseudo.contains_key(&(
+            raikiri_style::StyleNodeId::new(root as u64),
+            PseudoElem::Marker,
+        )) {
+            marker_cv
+        } else {
+            marker_fallback = raikiri_style::ComputedValues::inherit_marker_from(marker_cv);
+            &marker_fallback
+        };
+        let mut marker_style = styled(doc, cascade, marker_cv, root, fonts)?;
+        // The image is indivisible. Permit a break after its preserved suffix
+        // space so the next word can move independently to the following line.
+        marker_style.text_wrap_mode = shodo::style::TextWrapMode::Wrap;
+        builder.open_inline(id, &marker_style, InlineEdges::default());
+        builder.push_atomic(id, &marker_style, InlineEdges::default());
+        builder.push_text(TextSource::Generated { node: id }, " ");
+        builder.close_inline();
+        Some((
+            id,
+            shodo::AtomicSize {
+                inline_size: if writing_mode == shodo::geometry::WritingMode::HorizontalTb {
+                    size.width
+                } else {
+                    size.height
+                },
+                block_size: if writing_mode == shodo::geometry::WritingMode::HorizontalTb {
+                    size.height
+                } else {
+                    size.width
+                },
+                ..shodo::AtomicSize::default()
+            },
+        ))
+    } else {
+        push_generated(
+            &mut builder,
+            doc,
+            cascade,
+            root,
+            PseudoElem::Marker,
+            fonts,
+            counters,
+        )?;
+        None
+    };
     push_generated(
         &mut builder,
         doc,
@@ -778,6 +888,7 @@ pub(crate) fn project_ifc_builder_with(
         options,
         indent,
         boxes,
+        marker_atomic,
         rtl: root_cv.direction == Direction::Rtl,
         offsets,
         cleared_breaks,
