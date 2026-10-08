@@ -324,6 +324,22 @@ impl Document {
         inputs: LayoutInput,
         block_ctx: Option<&mut BlockContext<'_>>,
     ) -> LayoutOutput {
+        if usize::from(node_id) >= self.nodes.len() {
+            let index = usize::from(node_id) - self.table_objects.arena_len;
+            let owner = self.table_objects.cells[index].owner;
+            // The wrapper exists only in the layout view. Its source children
+            // retain their DOM parents and their own styles throughout.
+            let view = self.table_objects.cells[index].node.clone();
+            let source = std::mem::replace(&mut self.nodes[owner], view);
+            let output = self.compute_child_layout_with_block_ctx_inner(
+                NodeId::from(owner),
+                inputs,
+                block_ctx,
+            );
+            self.table_objects.cells[index].node =
+                std::mem::replace(&mut self.nodes[owner], source);
+            return output;
+        }
         // Lazy layout cache invalidation — mutations only set a flag; we
         // clear all node caches on the first compute after the flag flips
         // (amortized O(1) per mutation over N-node batches).

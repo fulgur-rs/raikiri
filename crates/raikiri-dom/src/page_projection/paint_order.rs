@@ -183,6 +183,9 @@ impl Document {
                     if node.is_ifc_root() {
                         push_paragraph(self, &items, node_id, &mut events);
                     }
+                    for (key, _) in self.anonymous_table_cells(node_id) {
+                        push_paragraph(self, &items, key, &mut events);
+                    }
                     let mut children = if node.is_inline_svg_root() {
                         Vec::new()
                     } else if node.is_ifc_root() {
@@ -190,6 +193,8 @@ impl Document {
                         // listed above; only the boxes laid out beside its
                         // lines are visited like ordinary children.
                         node.ifc_boxes()
+                    } else if let Some(children) = self.anonymous_table_paint_children(node_id) {
+                        children
                     } else {
                         node.children.clone()
                     };
@@ -273,7 +278,7 @@ fn push_paragraph<'a>(
     root: usize,
     events: &mut Vec<PaintEvent<'a>>,
 ) {
-    let Some(root_node) = document.get_node(root) else {
+    let Some(root_node) = document.ifc_layout_node(root) else {
         return; // cov:ignore: paragraph roots come from the arena
     };
     let push_kind = |events: &mut Vec<PaintEvent<'a>>, node_id: usize, kind| {

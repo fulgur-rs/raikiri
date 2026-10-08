@@ -4,7 +4,7 @@ use super::boxes::IfcBoxKind;
 use super::error::IfcError;
 use super::projection::{
     GeneratedCounters, ProjectedBuilder, ProjectedIfc, box_kind, has_in_flow_generated_text,
-    project_ifc_builder_with, project_ifc_text_builder,
+    project_anonymous_cell_builder, project_ifc_builder_with, project_ifc_text_builder,
 };
 use super::root::{IfcBuildMode, IfcRoot, IfcState};
 use super::style;
@@ -299,6 +299,7 @@ pub(crate) fn assign_ifc_roots(
             .remove(NodeFlags::IS_IFC_ROOT | NodeFlags::IN_IFC_SUBTREE);
         node.ifc = None;
     }
+    crate::layout::table::anonymous::prepare(doc, cascade);
     // Take the engine state out so the walk can borrow the document.
     let Some(mut state) = doc.ifc.take() else {
         return Ok(());
@@ -308,6 +309,23 @@ pub(crate) fn assign_ifc_roots(
     doc.layout_dirty = true;
     let built = collect_candidates(doc, cascade, &state).and_then(|mut candidates| {
         candidates.extend(collect_text_candidates(doc, cascade, &state)?);
+        let counters = GeneratedCounters::default();
+        for (index, cell) in doc.table_objects.cells.iter().enumerate() {
+            let projected = project_anonymous_cell_builder(
+                doc,
+                cascade,
+                cell.owner,
+                &cell.node.children,
+                &state.fonts,
+                &state.limits,
+                &counters,
+            )
+            .map_err(|error| projection_error(cell.owner, error))?;
+            candidates.push(Candidate {
+                idx: doc.table_objects.arena_len + index,
+                projected,
+            });
+        }
         candidates.sort_by_key(|candidate| candidate.idx);
         build_all(&mut state, candidates)
     });
@@ -702,14 +720,18 @@ fn write_roots(doc: &mut Document, built: Vec<(usize, ProjectedIfc)>) {
         // Boxes are laid out and painted as nodes of their own, so neither
         // they nor their content belong to the paragraph's subtree.
         let boxes: Vec<usize> = projected.boxes.iter().map(|b| b.node).collect();
-        doc.nodes[idx].flags.insert(NodeFlags::IS_IFC_ROOT);
-        doc.nodes[idx].ifc = Some(Box::new(IfcRoot::new(projected)));
-        let mut stack = doc.nodes[idx].children.clone();
+        let root = doc.table_layout_node_mut(idx);
+        root.flags.insert(NodeFlags::IS_IFC_ROOT);
+        root.ifc = Some(Box::new(IfcRoot::new(projected)));
+        let mut stack = root.children.clone();
         while let Some(id) = stack.pop() {
             if boxes.contains(&id) {
                 continue;
             }
             doc.nodes[id].flags.insert(NodeFlags::IN_IFC_SUBTREE);
+            if idx >= doc.table_objects.arena_len {
+                doc.table_objects.paragraph_owner[id] = Some(idx);
+            }
             stack.extend(doc.nodes[id].children.iter().copied());
         }
     }

@@ -1029,25 +1029,37 @@ pub(crate) fn project_slices(
             NodeKind::Element => true,
             _ => false, // cov:ignore: non-rendered node kinds are filtered by the document invariant.
         };
-        if node.is_ifc_root() {
+        for (root_id, root_node) in std::iter::once((node_id, node))
+            .filter(|(_, node)| node.is_ifc_root())
+            .chain(document.anonymous_table_cells(node_id))
+        {
+            let root_layout = root_node.unrounded_layout;
+            let (root_x, root_y) = if root_id == node_id {
+                (abs_x, abs_y)
+            } else {
+                (
+                    abs_x + root_layout.location.x,
+                    abs_y + root_layout.location.y,
+                )
+            };
             // The content-box origin of a paragraph laid out by the inline
             // engine: its text nodes have no layout of their own, and their
             // lines are measured from here. A root is visited before its text.
             let origin = (
-                abs_x + layout.border.left + layout.padding.left,
-                abs_y + layout.border.top + layout.padding.top,
+                root_x + root_layout.border.left + root_layout.padding.left,
+                root_y + root_layout.border.top + root_layout.padding.top,
             );
-            ifc_origin.insert(node_id, origin);
+            ifc_origin.insert(root_id, origin);
             if origin.0.is_finite() && origin.1.is_finite() {
                 text_roots.push(ProjectedTextRoot {
-                    node: node_id,
+                    node: root_id,
                     x: origin.0,
                     y: origin.1,
                     is_repeat,
                 });
             }
             let mut bounds_by_node: HashMap<usize, BoxRect> = HashMap::new();
-            for piece in node.ifc_inline_boxes().unwrap_or_default() {
+            for piece in root_node.ifc_inline_boxes().unwrap_or_default() {
                 bounds_by_node
                     .entry(piece.node)
                     .and_modify(|bounds| {
@@ -1063,8 +1075,8 @@ pub(crate) fn project_slices(
                     })
                     .or_insert(piece.border_box);
             }
-            ifc_piece_bounds.insert(node_id, bounds_by_node);
-            ifc_text_lines.extend(document.ifc_text_lines_by_node(node_id));
+            ifc_piece_bounds.insert(root_id, bounds_by_node);
+            ifc_text_lines.extend(document.ifc_text_lines_by_node(root_id));
         }
         // An inline element of an inline engine paragraph is where its pieces
         // are on the lines; its recorded location is relative to its nearest

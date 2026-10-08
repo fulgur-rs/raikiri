@@ -165,7 +165,7 @@ impl PageFragment {
 /// the shared flow space (the space of [`PageFragment::content_origin_y`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct ProjectedTextRoot {
-    /// DOM node id of the paragraph root.
+    /// Internal paragraph key (a DOM node or a layout-only anonymous cell).
     pub(crate) node: usize,
     /// Left edge of the content box.
     pub(crate) x: f32,

@@ -46,6 +46,7 @@ fn context_for_text(
     base: &DecorationContext,
     shifts: &HashMap<usize, f32>,
 ) -> DecorationContext {
+    let root_id = document.ifc_source_owner(root_id);
     let mut chain = Vec::new();
     // The text of a pseudo-element is owned by the pseudo-element's own box,
     // which is decorated like an inline element child of its element.
@@ -134,7 +135,7 @@ pub(crate) fn draw_ifc_lines(
     let size = positioned.size;
     let vertical = writing_mode != WritingMode::HorizontalTb;
     let pieces = document
-        .get_node(root_id)
+        .ifc_layout_node(root_id)
         .and_then(|node| node.ifc_inline_boxes())
         .unwrap_or_default();
     let mut pieces_by_line = vec![Vec::new(); positioned.all_lines().len()];

@@ -20,7 +20,7 @@ pub struct IfcTextLine {
 /// The lines a text node of an ifc paragraph has, in order.
 #[derive(Clone, Debug, PartialEq)]
 pub struct IfcTextLines {
-    /// DOM node id of the paragraph root.
+    /// Internal paragraph key; anonymous table cells have no DOM node of their own.
     pub root: usize,
     /// Content width the lines were broken at.
     pub width: f32,
@@ -32,6 +32,15 @@ pub struct IfcTextLines {
 /// node laid out as an anonymous flex or grid item), else its nearest
 /// `IS_IFC_ROOT` ancestor.
 fn root_of(doc: &Document, node: usize) -> Option<usize> {
+    if let Some(key) = doc
+        .table_objects
+        .paragraph_owner
+        .get(node)
+        .copied()
+        .flatten()
+    {
+        return Some(key);
+    }
     let mut current = Some(node);
     while let Some(id) = current {
         if doc.nodes[id].flags.contains(NodeFlags::IS_IFC_ROOT) {
@@ -55,7 +64,7 @@ pub(crate) fn lines_of(doc: &Document, node: usize) -> Option<IfcTextLines> {
         return None;
     }
     let root_id = root_of(doc, node)?;
-    let lines = doc.nodes[root_id].ifc.as_ref()?.lines.as_ref()?;
+    let lines = doc.ifc_layout_node(root_id)?.ifc.as_ref()?.lines.as_ref()?;
     let owned: Vec<IfcTextLine> = lines
         .lines
         .iter()
@@ -89,8 +98,7 @@ impl Document {
     pub fn ifc_text_lines_by_node(&self, root: usize) -> HashMap<usize, IfcTextLines> {
         let mut by_node = HashMap::new();
         let Some(lines) = self
-            .nodes
-            .get(root)
+            .ifc_layout_node(root)
             .and_then(|node| node.ifc.as_ref())
             .and_then(|ifc| ifc.lines.as_ref())
         else {

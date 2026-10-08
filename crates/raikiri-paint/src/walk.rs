@@ -4229,6 +4229,8 @@ pub(crate) fn paint_document_impl(
                     // from the lines; only the boxes laid out beside them are
                     // visited like ordinary children.
                     node.ifc_boxes()
+                } else if let Some(children) = document.anonymous_table_paint_children(node_id) {
+                    children
                 } else {
                     node.children.clone()
                 };
@@ -4423,6 +4425,64 @@ pub(crate) fn paint_document_impl(
                         crate::ifc_text::IfcPosition {
                             x: content_x,
                             y: content_y,
+                            shift_y: child_shift_y,
+                        },
+                        &child_decorations,
+                        fragmentainer,
+                        custom_highlights,
+                    );
+                    if text_clip.is_some() {
+                        scene.pop_layer();
+                    }
+                }
+                for (key, cell) in document.anonymous_table_cells(node_id) {
+                    let cell_layout = cell.unrounded_layout;
+                    let cell_x = child_parent_x + cell_layout.location.x;
+                    let cell_y = child_parent_y + cell_layout.location.y;
+                    let page_probe = cell
+                        .children
+                        .iter()
+                        .find_map(|&child| {
+                            if document
+                                .get_node(child)
+                                .is_some_and(|node| node.kind() == NodeKind::Text)
+                            {
+                                Some(child)
+                            } else {
+                                first_text_descendant(document, child)
+                            }
+                        })
+                        .unwrap_or(node_id);
+                    if !named_page_matches(page_probe)
+                        || (!box_intersects_page(
+                            cell_y,
+                            ifc_paint_extent(cell, &cell_layout),
+                            page_top,
+                            page_bottom,
+                        ) && !ifc_inside_fixed)
+                    {
+                        continue;
+                    }
+                    let text_clip = text_page_clip(ifc_inside_fixed);
+                    if let Some(clip) = &text_clip {
+                        scene.scene.push_clip_layer(Affine::IDENTITY, clip);
+                    }
+                    crate::ifc_text::draw_ifc_lines(
+                        scene,
+                        document,
+                        cascade,
+                        key,
+                        crate::ifc_text::IfcPosition {
+                            x: cell_x
+                                + page_offset_x
+                                + child_transform_x
+                                + cell_layout.border.left
+                                + cell_layout.padding.left,
+                            y: cell_y
+                                + page_offset_y
+                                + child_transform_y
+                                + cell_layout.border.top
+                                + cell_layout.padding.top,
                             shift_y: child_shift_y,
                         },
                         &child_decorations,

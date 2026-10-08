@@ -48,6 +48,8 @@ use taffy::{
 use crate::document::Document;
 use taffy::util::{MaybeResolve, ResolveOrZero};
 
+pub(crate) mod anonymous;
+
 // ---------------------------------------------------------------------------
 // Depth cap — fail-closed for nested tables.
 // ---------------------------------------------------------------------------
@@ -116,7 +118,7 @@ struct CellPlacement {
 // ---------------------------------------------------------------------------
 
 fn table_writing_mode(doc: &Document, table_idx: usize) -> WritingMode {
-    let mut current = Some(table_idx);
+    let mut current = Some(doc.ifc_source_owner(table_idx));
     while let Some(id) = current {
         if let Some(mode) = doc.nodes[id].authored_writing_mode {
             return mode;
@@ -589,7 +591,10 @@ fn compute_table_layout_checked(
                     if cell.row != 0 {
                         continue;
                     }
-                    let style = &doc.nodes[cell.node_id].style;
+                    let style = &doc
+                        .ifc_layout_node(cell.node_id)
+                        .expect("table cell layout view")
+                        .style;
                     if let Some(minimum) =
                         resolve_dimension(style.min_size.width.into(), Some(avail))
                     {
@@ -839,7 +844,12 @@ fn compute_table_layout_checked(
         .cells
         .iter()
         .filter(|cell| {
-            cell.row == 0 && cell_baseline_aligned(doc.nodes[cell.node_id].table_vertical_align)
+            cell.row == 0
+                && cell_baseline_aligned(
+                    doc.ifc_layout_node(cell.node_id)
+                        .expect("table cell layout view")
+                        .table_vertical_align,
+                )
         })
         .map(|cell| cell.baseline)
         .reduce(f32::max)
@@ -848,7 +858,7 @@ fn compute_table_layout_checked(
                 .iter()
                 .filter(|cell| cell.row == 0)
                 .map(|cell| {
-                    let layout = doc.nodes[cell.node_id].unrounded_layout;
+                    let layout = doc.table_layout_node_mut(cell.node_id).unrounded_layout;
                     layout.size.height - layout.padding.bottom - layout.border.bottom
                 })
                 .fold(0.0, f32::max)
@@ -916,7 +926,54 @@ fn build_table_grid(
     let mut rows: Vec<usize> = Vec::new();
     let mut cells: Vec<CellPlacement> = Vec::new();
     let mut n_cols: u16 = 0;
-    collect_rows(doc, table_idx, &mut rows, &mut cells, &mut n_cols)?;
+    if let Some(projected_rows) = doc.table_objects.rows.get(&table_idx) {
+        for projected in projected_rows {
+            rows.push(projected.marker);
+            let row = u16::try_from(rows.len() - 1).map_err(|_| table_column_error())?;
+            let mut col = 0;
+            for &node_id in &projected.cells {
+                let anonymous = node_id >= doc.nodes.len();
+                let col_span = if anonymous {
+                    1
+                } else {
+                    get_colspan(doc, node_id)
+                };
+                let row_span = if anonymous {
+                    1
+                } else {
+                    get_rowspan(doc, node_id)
+                };
+                let next_col = next_table_column(col, col_span)?;
+                cells.push(CellPlacement {
+                    node_id,
+                    row,
+                    col_start: col,
+                    col_span,
+                    row_span,
+                    specified_width: doc
+                        .ifc_layout_node(node_id)
+                        .expect("table cell layout view")
+                        .style
+                        .size
+                        .width,
+                    specified_min_width: doc
+                        .ifc_layout_node(node_id)
+                        .expect("table cell layout view")
+                        .style
+                        .min_size
+                        .width
+                        .into(),
+                    resolved: None,
+                    natural_height: 0.0,
+                    baseline: 0.0,
+                });
+                col = next_col;
+            }
+            n_cols = n_cols.max(col);
+        }
+    } else {
+        collect_rows(doc, table_idx, &mut rows, &mut cells, &mut n_cols)?;
+    }
     let col_widths = collect_col_widths(doc, table_idx)?;
     n_cols = n_cols.max(col_widths.len() as u16);
     Ok(TableGrid {
@@ -948,7 +1005,11 @@ fn collect_col_widths(
     table_idx: usize,
 ) -> Result<Vec<ColSizing>, raikiri_traits::LayoutError> {
     fn col_span(doc: &Document, node_id: usize) -> usize {
-        if let crate::node::NodeData::Element(data) = &doc.nodes[node_id].data {
+        if let crate::node::NodeData::Element(data) = &doc
+            .ifc_layout_node(node_id)
+            .expect("table box layout view")
+            .data
+        {
             for a in &data.attributes {
                 if a.namespace.is_none()
                     && a.local.as_str() == "span"
@@ -1216,7 +1277,11 @@ fn collect_cells_in_row(
 /// the value must parse as a plain unsigned integer, anything else falls
 /// back to 1.
 fn get_colspan(doc: &Document, node_id: usize) -> u16 {
-    if let crate::node::NodeData::Element(data) = &doc.nodes[node_id].data {
+    if let crate::node::NodeData::Element(data) = &doc
+        .ifc_layout_node(node_id)
+        .expect("table box layout view")
+        .data
+    {
         for a in &data.attributes {
             if a.namespace.is_none()
                 && a.local.as_str() == "colspan"
@@ -1233,7 +1298,11 @@ fn get_colspan(doc: &Document, node_id: usize) -> u16 {
 }
 
 fn get_rowspan(doc: &Document, node_id: usize) -> u16 {
-    if let crate::node::NodeData::Element(data) = &doc.nodes[node_id].data {
+    if let crate::node::NodeData::Element(data) = &doc
+        .ifc_layout_node(node_id)
+        .expect("table box layout view")
+        .data
+    {
         for a in &data.attributes {
             if a.namespace.is_none()
                 && a.local.as_str() == "rowspan"
@@ -1630,7 +1699,7 @@ fn cell_baseline_aligned(align: VerticalAlign) -> bool {
 // Baselines are relative to the border edge; a cell without a line uses
 // its bottom content edge in the caller (CSS 2.2 section 17.5.3).
 fn first_cell_baseline(doc: &Document, root: usize, content_top: f32) -> Option<f32> {
-    let node = &doc.nodes[root];
+    let node = doc.ifc_layout_node(root).expect("table cell layout view");
     if let Some(lines) = node.ifc.as_ref().and_then(|ifc| ifc.lines.as_ref())
         && let Some(baseline) = super::ifc::flow::first_baseline(lines)
     {
@@ -1702,7 +1771,12 @@ fn resolve_row_heights(
     // model (css/css-tables/paint/col-paint-vrl-rtl.html covers it and needs
     // full vertical-table support plus transform:rotate on its reference).
     for (r, &row_id) in grid.rows.iter().enumerate() {
-        let h = doc.nodes[row_id].style.size.height;
+        let h = doc
+            .ifc_layout_node(row_id)
+            .expect("table row layout view")
+            .style
+            .size
+            .height;
         if h.tag() == CompactLength::LENGTH_TAG {
             row_heights[r] = f32_max_compat(row_heights[r], h.value());
         }
@@ -1712,10 +1786,15 @@ fn resolve_row_heights(
         let cell_width = spanned_size(&column_widths[columns], spacing.0);
         // Cell height floors the row rather than stretching the content used
         // for alignment. Preserve ordinary block border and margin sizing.
-        let authored_height = doc.nodes[cell.node_id].style.size.height;
+        let authored_height = doc
+            .ifc_layout_node(cell.node_id)
+            .expect("table cell layout view")
+            .style
+            .size
+            .height;
         if !authored_height.is_auto() {
-            doc.nodes[cell.node_id].style.size.height = Dimension::auto();
-            doc.nodes[cell.node_id].cache.clear();
+            doc.table_layout_node_mut(cell.node_id).style.size.height = Dimension::auto();
+            doc.table_layout_node_mut(cell.node_id).cache.clear();
         }
         let output = doc.compute_child_layout(
             NodeId::from(cell.node_id),
@@ -1743,12 +1822,15 @@ fn resolve_row_heights(
             },
         );
         if !authored_height.is_auto() {
-            doc.nodes[cell.node_id].style.size.height = authored_height;
-            doc.nodes[cell.node_id].cache.clear();
+            doc.table_layout_node_mut(cell.node_id).style.size.height = authored_height;
+            doc.table_layout_node_mut(cell.node_id).cache.clear();
         }
         // Distribute rowspan height across spanned rows (simple: equally)
         cell.natural_height = output.size.height;
-        let style = &doc.nodes[cell.node_id].style;
+        let style = &doc
+            .ifc_layout_node(cell.node_id)
+            .expect("table cell layout view")
+            .style;
         let padding = style
             .padding
             .resolve_or_zero(Some(cell_width), crate::taffy_impl::resolve_calc);
@@ -1776,7 +1858,11 @@ fn resolve_row_heights(
             if cnt > 0.0 {
                 // The first spanned row must contain the cell's baseline
                 // before the remaining span height is distributed (CSS 2.2 17.5.3).
-                if cell_baseline_aligned(doc.nodes[cell.node_id].table_vertical_align) {
+                if cell_baseline_aligned(
+                    doc.ifc_layout_node(cell.node_id)
+                        .expect("table cell layout view")
+                        .table_vertical_align,
+                ) {
                     row_heights[start] = row_heights[start].max(cell.baseline);
                 }
                 // Need to ensure span can accommodate h: if sum current < h, distribute deficit
@@ -1794,13 +1880,22 @@ fn resolve_row_heights(
     // cell: the maximum ascent and descent need not belong to the same cell.
     let mut row_baselines = vec![0.0f32; grid.rows.len()];
     for cell in &grid.cells {
-        if cell_baseline_aligned(doc.nodes[cell.node_id].table_vertical_align) {
+        if cell_baseline_aligned(
+            doc.ifc_layout_node(cell.node_id)
+                .expect("table cell layout view")
+                .table_vertical_align,
+        ) {
             let row = cell.row as usize;
             row_baselines[row] = row_baselines[row].max(cell.baseline);
         }
     }
     for cell in &grid.cells {
-        if cell.row_span == 1 && cell_baseline_aligned(doc.nodes[cell.node_id].table_vertical_align)
+        if cell.row_span == 1
+            && cell_baseline_aligned(
+                doc.ifc_layout_node(cell.node_id)
+                    .expect("table cell layout view")
+                    .table_vertical_align,
+            )
         {
             let row = cell.row as usize;
             row_heights[row] =
@@ -1852,7 +1947,11 @@ fn place_cells(
     let (col_x, row_y) = origins;
     let mut row_baselines = vec![0.0f32; row_heights.len()];
     for cell in &grid.cells {
-        if cell_baseline_aligned(doc.nodes[cell.node_id].table_vertical_align) {
+        if cell_baseline_aligned(
+            doc.ifc_layout_node(cell.node_id)
+                .expect("table cell layout view")
+                .table_vertical_align,
+        ) {
             let row = cell.row as usize;
             row_baselines[row] = row_baselines[row].max(cell.baseline);
         }
@@ -1898,7 +1997,10 @@ fn place_cells(
         // lines are drawn from its content box, which its own border and
         // padding (as the engine measured them) place inside the cell.
         let (mut padding, border) = {
-            let style = &doc.nodes[cell.node_id].style;
+            let style = &doc
+                .ifc_layout_node(cell.node_id)
+                .expect("table cell layout view")
+                .style;
             (
                 style
                     .padding
@@ -1915,7 +2017,11 @@ fn place_cells(
         } else {
             (cell_height - cell.natural_height).max(0.0)
         };
-        let shift = match doc.nodes[cell.node_id].table_vertical_align {
+        let shift = match doc
+            .ifc_layout_node(cell.node_id)
+            .expect("table cell layout view")
+            .table_vertical_align
+        {
             VerticalAlign::Top => 0.0,
             VerticalAlign::Middle => extra / 2.0,
             VerticalAlign::Bottom => extra,
@@ -1924,7 +2030,12 @@ fn place_cells(
         };
         padding.top += shift;
         padding.bottom += (extra - shift).max(0.0);
-        for child in doc.nodes[cell.node_id].children.clone() {
+        for child in doc
+            .ifc_layout_node(cell.node_id)
+            .expect("table cell layout view")
+            .children
+            .clone()
+        {
             if doc.nodes[child].style.position != taffy::Position::Absolute {
                 let mut child_layout = doc.nodes[child].unrounded_layout;
                 child_layout.location.y += shift;
@@ -1952,7 +2063,21 @@ fn place_cells(
         // Write via Document's layout storage (includes sanitize)
         {
             let sanitized = super::sanitize_taffy_layout(&layout, &mut doc.layout_warnings);
-            doc.nodes[cell.node_id].unrounded_layout = sanitized;
+            doc.table_layout_node_mut(cell.node_id).unrounded_layout = sanitized;
+        }
+        if cell.node_id >= doc.nodes.len() {
+            let root = doc
+                .ifc_layout_node(cell.node_id)
+                .expect("anonymous cell layout view");
+            let children = if root.is_ifc_root() {
+                root.ifc_boxes()
+            } else {
+                root.children.clone()
+            };
+            for child in children {
+                doc.nodes[child].unrounded_layout.location.x += cell_x;
+                doc.nodes[child].unrounded_layout.location.y += cell_y;
+            }
         }
         let _ = output;
     }
@@ -1993,7 +2118,7 @@ fn reposition_cells_for_vertical_writing(
         if !is_vertical_writing_mode(table_writing_mode(doc, cell.node_id)) {
             // A horizontal cell in a vertical table still aligns content on
             // its own block axis. Preserve the normal pass's vertical shift.
-            doc.nodes[cell.node_id].unrounded_layout =
+            doc.table_layout_node_mut(cell.node_id).unrounded_layout =
                 super::sanitize_taffy_layout(layout, &mut doc.layout_warnings);
             continue;
         }
@@ -2025,7 +2150,9 @@ fn reposition_cells_for_vertical_writing(
                 vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
             },
         );
-        let node = &doc.nodes[cell.node_id];
+        let node = doc
+            .ifc_layout_node(cell.node_id)
+            .expect("table cell layout view");
         let mut padding = node
             .style
             .padding
@@ -2110,7 +2237,12 @@ fn reposition_cells_for_vertical_writing(
             padding.left += shift;
             padding.right += extra - shift;
         }
-        for child in doc.nodes[cell.node_id].children.clone() {
+        for child in doc
+            .ifc_layout_node(cell.node_id)
+            .expect("table cell layout view")
+            .children
+            .clone()
+        {
             if doc.nodes[child].style.position != taffy::Position::Absolute {
                 let mut layout = doc.nodes[child].unrounded_layout;
                 layout.location.x += child_shift;
@@ -2121,7 +2253,7 @@ fn reposition_cells_for_vertical_writing(
         layout.padding = padding;
         layout.border = border;
         let sanitized = super::sanitize_taffy_layout(layout, &mut doc.layout_warnings);
-        doc.nodes[cell.node_id].unrounded_layout = sanitized;
+        doc.table_layout_node_mut(cell.node_id).unrounded_layout = sanitized;
     }
 }
 
@@ -2378,7 +2510,10 @@ impl CollapsedLines {
 
 /// Border-box side widths of one cell's `style.border`.
 fn cell_border_sides(doc: &Document, cell_id: usize, basis: Option<f32>) -> Rect<f32> {
-    let s = &doc.nodes[cell_id].style;
+    let s = &doc
+        .ifc_layout_node(cell_id)
+        .expect("table cell layout view")
+        .style;
     Rect {
         left: resolve_length(s.border.left, basis),
         right: resolve_length(s.border.right, basis),
@@ -2417,16 +2552,44 @@ fn border_candidate(
     side: CellBorderSide,
 ) -> Option<CollapsedBorderCandidate> {
     // An earlier resolution step may already have replaced a side.
-    let node = &doc.nodes[node_id];
+    let node = &doc.ifc_layout_node(node_id).expect("table box layout view");
     let borders = node
         .collapsed_border
         .as_ref()
         .or(node.computed_border.as_ref())?;
     let (border, taffy_width) = match side {
-        CellBorderSide::Top => (borders.top, doc.nodes[node_id].style.border.top),
-        CellBorderSide::Right => (borders.right, doc.nodes[node_id].style.border.right),
-        CellBorderSide::Bottom => (borders.bottom, doc.nodes[node_id].style.border.bottom),
-        CellBorderSide::Left => (borders.left, doc.nodes[node_id].style.border.left),
+        CellBorderSide::Top => (
+            borders.top,
+            doc.ifc_layout_node(node_id)
+                .expect("table box layout view")
+                .style
+                .border
+                .top,
+        ),
+        CellBorderSide::Right => (
+            borders.right,
+            doc.ifc_layout_node(node_id)
+                .expect("table box layout view")
+                .style
+                .border
+                .right,
+        ),
+        CellBorderSide::Bottom => (
+            borders.bottom,
+            doc.ifc_layout_node(node_id)
+                .expect("table box layout view")
+                .style
+                .border
+                .bottom,
+        ),
+        CellBorderSide::Left => (
+            borders.left,
+            doc.ifc_layout_node(node_id)
+                .expect("table box layout view")
+                .style
+                .border
+                .left,
+        ),
     };
     Some(CollapsedBorderCandidate {
         border,
@@ -2507,7 +2670,7 @@ fn set_collapsed_side(
     border: ComputedBorder,
     taffy_width: LengthPercentage,
 ) {
-    let node = &mut doc.nodes[node_id];
+    let node = doc.table_layout_node_mut(node_id);
     match side {
         CellBorderSide::Top => node.style.border.top = taffy_width,
         CellBorderSide::Right => node.style.border.right = taffy_width,
@@ -2665,10 +2828,10 @@ fn resolve_collapsed_row_borders(doc: &mut Document, grid: &TableGrid) {
         // An anonymous row is recorded by its first cell, which has no row
         // border of its own to contribute.
         let row_box = |index: usize| {
-            grid.rows
-                .get(index)
-                .copied()
-                .filter(|&row| doc.nodes[row].display == DisplayValue::TableRow)
+            grid.rows.get(index).copied().filter(|&row| {
+                doc.ifc_layout_node(row)
+                    .is_some_and(|node| node.display == DisplayValue::TableRow)
+            })
         };
         let first_row = row_box(usize::from(cell.row));
         let last_row =
@@ -2701,7 +2864,10 @@ fn resolve_collapsed_row_borders(doc: &mut Document, grid: &TableGrid) {
         }
     }
     for &row in &grid.rows {
-        if doc.nodes[row].display != DisplayValue::TableRow {
+        if doc
+            .ifc_layout_node(row)
+            .is_none_or(|node| node.display != DisplayValue::TableRow)
+        {
             continue;
         }
         if let Some(computed) = doc.nodes[row].computed_border {
