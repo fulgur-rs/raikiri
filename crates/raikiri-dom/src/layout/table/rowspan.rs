@@ -11,8 +11,8 @@ use raikiri_style::property::DisplayValue;
 use raikiri_traits::LayoutError;
 
 fn row_group(doc: &Document, table: usize, marker: usize) -> usize {
-    let mut source = doc.ifc_source_owner(marker);
-    while source != table {
+    let mut ancestor = Some(doc.ifc_source_owner(marker));
+    while let Some(source) = ancestor.filter(|&source| source != table) {
         if matches!(
             doc.nodes[source].display,
             DisplayValue::TableRowGroup
@@ -21,10 +21,7 @@ fn row_group(doc: &Document, table: usize, marker: usize) -> usize {
         ) {
             return source;
         }
-        let Some(parent) = doc.parent_of(source) else {
-            break;
-        };
-        source = parent;
+        ancestor = doc.parent_of(source);
     }
     table
 }

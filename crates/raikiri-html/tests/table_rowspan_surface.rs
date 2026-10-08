@@ -92,3 +92,25 @@ fn a_rowspan_does_not_reserve_columns_in_the_next_row_group() {
         assert_eq!(rect(&document, "span").height, 10.0);
     }
 }
+
+#[test]
+fn a_zero_rowspan_reserves_columns_until_its_multirow_group_ends() {
+    let document = lay_out(
+        "<table><tbody><tr><td id='span' rowspan='0'><div style='height:30px'></div></td><td><div></div></td></tr><tr><td id='c'><div></div></td></tr><tr><td id='d'><div></div></td></tr></tbody><tbody><tr><td id='e'><div></div></td><td id='f'><div></div></td></tr></tbody></table>",
+    );
+    assert_eq!(rect(&document, "span").height, 30.0);
+    assert_eq!(rect(&document, "c").x, 10.0);
+    assert_eq!(rect(&document, "d").x, 10.0);
+    assert_eq!(rect(&document, "e").x, 0.0);
+    assert_eq!(rect(&document, "f").x, 10.0);
+}
+
+#[test]
+fn a_reservation_survives_an_empty_source_row() {
+    let document = lay_out(
+        "<table><tr><td rowspan='3'><div style='height:20px'></div></td><td><div></div></td></tr><tr></tr><tr><td id='c'><div></div></td></tr><tr><td id='d'><div></div></td><td id='e'><div></div></td></tr></table>",
+    );
+    assert_eq!(rect(&document, "c").x, 10.0);
+    assert_eq!(rect(&document, "d").x, 0.0);
+    assert_eq!(rect(&document, "e").x, 10.0);
+}
