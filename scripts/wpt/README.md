@@ -105,6 +105,16 @@ does not mean every file is supported by the runner. Keep the shared roots
 stable while runner coverage grows; use a reviewed project-level change if the
 shared checkout scope must expand.
 
+Native table cell top/middle/bottom/baseline alignment, single top/bottom
+captions, separate-mode `empty-cells: hide`, fixed first-row min-width floors,
+and HTML row/cell alignment defaults have literal geometry and bundled-Ahem
+exact raster coverage in `raikiri-paint/tests/table_alignment.rs`. The
+800x600 table survey improved 18 exact reftests, now pinned in the baseline.
+Multiple captions remain tracked by `raikiri-spike-0vv.121`. Anonymous table
+objects (`caption-position-001.xht` and `table-vertical-align-baseline-009.xht`)
+remain tracked by `raikiri-spike-0vv.122`, and general `display: inherit`
+(`caption-side-applies-to-017.xht`) by `raikiri-spike-0vv.123`.
+
 ## Running CSS Text i18n testharness pages
 
 The `run-css-text-i18n` binary runs the testharness pages under

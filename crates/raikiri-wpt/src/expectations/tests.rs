@@ -795,8 +795,10 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS Inline image-loaded vertical-align length exact slice (+1).
     // + Genuine non-floating first-letter pairs (+3), remove two vacuous pins (-2).
     // + Remeasured baseline pins (+8 PASS, -7 inaccurate pins).
+    // + CSS Overflow inherited Ahem max-width:4ch exact slice (+1).
+    // + CSS2 table baseline, bottom caption and empty-cell exact slice (+18).
     // + CSS Color contextual background and color-mix exact references (+5).
-    assert_eq!(set.baseline.entries.len(), 1450);
+    assert_eq!(set.baseline.entries.len(), 1468);
     for id in [
         "css/css-pseudo/first-letter-004.html",
         "css/css-pseudo/first-letter-005.html",
@@ -820,6 +822,9 @@ fn load_from_workspace_root_reads_the_header_only_files() {
             .contains("css/css-overflow/text-overflow-ellipsis-002.html")
     );
     for id in [
+        "css/CSS2/tables/caption-side-applies-to-006.xht",
+        "css/CSS2/tables/empty-cells-applies-to-014.xht",
+        "css/CSS2/tables/table-vertical-align-baseline-007.xht",
         "css/css-color/t44-currentcolor-background-b.xht",
         "css/css-color/color-mix-currentcolor-001.html",
         "css/css-color/color-mix-currentcolor-002.html",

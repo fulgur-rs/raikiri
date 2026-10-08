@@ -38,7 +38,7 @@ use crate::media::MediaContext;
 use crate::page::{
     PageCascadeResult, PageContextQuery, PageInheritance, cascade_page_with_media_context,
 };
-use crate::property::{CssColor, PropertyKey, Sides, WritingMode};
+use crate::property::{CssColor, PropertyKey, WritingMode};
 use crate::ruletree::RuleTree;
 use crate::style_dom::{StyleDom, StyleNode, StyleNodeId, StyleNodeKind};
 
@@ -79,13 +79,6 @@ pub struct CascadeResult {
     /// `background-color` declaration. Inline SVG painting uses this to omit
     /// a source-root background when the host declaration computes transparent.
     pub background_color_specified: Vec<bool>,
-    /// Per-node flags identifying margin sides whose winning declaration came
-    /// from an origin other than the user-agent stylesheet.  The paged DOM
-    /// adapter uses this to distinguish an authored `margin: 8px` from the
-    /// minimal UA body's default `margin: 8px` before it builds the synthetic
-    /// page root.  The side order is [`Sides`] top/right/bottom/left and the
-    /// vector follows the same node-index contract as [`Self::computed`].
-    pub non_ua_margin_sides: Vec<Sides<bool>>,
     /// Authored `writing-mode` winners before the computed-value normalization
     /// that currently collapses vertical modes to `horizontal-tb`.  This keeps
     /// paged consumers able to apply physical page-context mapping without
@@ -366,7 +359,6 @@ fn cascade_from_candidates<D: StyleDom>(
     // fills any skipped slot with initial(); the trailing resize below covers
     // unvisited nodes past the last visited id.
     let mut computed: Vec<ComputedValues> = Vec::with_capacity(dom.node_count());
-    let mut non_ua_margin_sides = vec![Sides::all(false); dom.node_count()];
     let mut authored_writing_modes = vec![None; dom.node_count()];
     let mut page_values = vec![crate::property::PageValue::Auto; dom.node_count()];
     let mut pseudo: HashMap<(StyleNodeId, PseudoElem), ComputedValues> = HashMap::new();
@@ -377,7 +369,6 @@ fn cascade_from_candidates<D: StyleDom>(
         &ComputedValues::initial(),
         cascaded,
         &mut computed,
-        &mut non_ua_margin_sides,
         &mut authored_writing_modes,
         &mut page_values,
         &mut pseudo,
@@ -426,7 +417,6 @@ fn cascade_from_candidates<D: StyleDom>(
         computed,
         opacity_specified,
         background_color_specified,
-        non_ua_margin_sides,
         authored_writing_modes,
         page,
         counter_styles: rule_tree.counter_styles_for(media_context),

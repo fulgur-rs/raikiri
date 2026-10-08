@@ -5062,10 +5062,9 @@ pub enum PageValue {
 ///   [`crate::computed::ComputedValues::line_height`]. It is a documented
 ///   deviation like the `None` → `0px` fallback for `Length::Lh` and
 ///   `Length::Rlh` (see [`crate::resolve::resolve_length`]).
-/// - **(b) Unsupported**: CSS-wide keywords are not implemented yet and are
-///   silently dropped. See the "CSS-wide keywords" section in the
-///   [`PropertyValue`] documentation for the canonical list of five keywords
-///   and the reason.
+/// - **Implemented**: CSS-wide defaulting and cascade rollback use deferred
+///   longhand markers. Explicit `inherit` copies the parent's computed value;
+///   `initial` and `unset` use `baseline`, since this property is not inherited.
 /// - **(a) Invalid under the spec**: Any other ident is silently dropped
 ///   as `None`.
 /// - **Calculating the baseline shift is raikiri-paint's responsibility**:
@@ -6774,6 +6773,7 @@ impl DeferredValue {
             PropertyKey::Color
                 | PropertyKey::BackgroundColor
                 | PropertyKey::FontSize
+                | PropertyKey::VerticalAlign
                 | PropertyKey::BorderRadiusTopLeft
                 | PropertyKey::BorderRadiusTopRight
                 | PropertyKey::BorderRadiusBottomRight
@@ -8296,6 +8296,7 @@ pub enum FilterFunction {
 /// — CSS Cascade 5 §7.3.5 "Rolling Back Cascade Layers: the revert-layer
 /// keyword" <https://www.w3.org/TR/css-cascade-5/#revert-layer>) is not yet
 /// implemented in this crate, except for `color`, `background-color`, `font-size`,
+/// `vertical-align`,
 /// the border longhands and the `border` /
 /// `border-right` shorthands, which accept all five keywords through
 /// [`CssWideKeyword`] (see that type's docs for resolution). The `all` shorthand

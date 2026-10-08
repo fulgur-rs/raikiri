@@ -502,6 +502,12 @@ pub fn build_page_scene_for_page_named(
             let layout = node.unrounded_layout;
             let abs_x = parent_abs_x + layout.location.x;
             let abs_y = parent_abs_y + layout.location.y;
+            // Descendants keep the wrapper origin; only the table's own
+            // border box and style snapshot exclude the caption area.
+            let border_box = node.table_grid_box().map_or(
+                (abs_x, abs_y, layout.size.width, layout.size.height),
+                |rect| (abs_x + rect.x, abs_y + rect.y, rect.width, rect.height),
+            );
             let is_body = idx == body_idx;
             if node.is_ifc_root() {
                 let origin = (
@@ -561,7 +567,7 @@ pub fn build_page_scene_for_page_named(
                         (layout.size.height - body_block_start_margin).max(0.0),
                     )]
                 } else if pieces.is_empty() {
-                    vec![(abs_x, abs_y, layout.size.width, layout.size.height)]
+                    vec![border_box]
                 } else {
                     pieces
                 }
@@ -613,7 +619,7 @@ pub fn build_page_scene_for_page_named(
                                 cv.border.left.width().0,
                             ),
                             id: element_id(dom, node_id),
-                            layout_size: Some((layout.size.width, layout.size.height)),
+                            layout_size: Some((border_box.2, border_box.3)),
                             ..BlockEntry::default()
                         };
                         drawables.block_styles.insert(node_id, entry);
