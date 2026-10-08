@@ -279,6 +279,8 @@ pub(crate) struct PageFragmentItem {
     pub(crate) fragment_count: u32,
     /// True when this placement repeats the complete source content.
     pub(crate) is_repeat: bool,
+    /// The complete repeat belongs only to this table's pages.
+    pub(crate) is_table_header_repeat: bool,
     /// Optional line range for a text placement (`start..end`, end exclusive).
     /// Non-text placements leave this as `None`.
     pub(crate) line_range: Option<PageFragmentLineRange>,
@@ -399,6 +401,7 @@ impl PageFragmentItem {
             fragment_index,
             fragment_count,
             is_repeat,
+            is_table_header_repeat: false,
             line_range: None,
             box_y: rect.y,
             box_height: rect.height,
@@ -444,9 +447,10 @@ impl PageFragmentItem {
 /// `fragments` vector is ordered by page and fragment index, while
 /// `is_repeat` distinguishes complete per-page copies from split content. The
 /// `raikiri-dom` producer emits repeat placements for fixed-position subtrees
-/// when its existing layout produces the subtree geometry. Table header/footer
-/// repetition is not synthesized until pagination owns a corresponding
-/// repeated placement; that unsupported semantic remains explicit.
+/// when its existing layout produces the subtree geometry. Eligible first
+/// table-header groups have complete copies only on their table's pages,
+/// using placements and body-space reservations owned by pagination.
+/// Table footers remain ordinary in-flow content.
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 #[cfg(test)]

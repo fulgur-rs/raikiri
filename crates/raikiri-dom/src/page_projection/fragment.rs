@@ -19,6 +19,8 @@ pub enum FragmentKind {
 pub enum RepeatKind {
     /// Painted on every page (`position: fixed` in paged media).
     EveryPage,
+    /// A complete copy of the first header group on a table's pages.
+    TableHeader,
 }
 
 /// A local overflow clip that applies to content on one page.
@@ -141,7 +143,13 @@ impl<'a> Fragment<'a> {
 
     /// How this fragment is repeated, if it is.
     pub fn repeat(&self) -> Option<RepeatKind> {
-        self.item.is_repeat.then_some(RepeatKind::EveryPage)
+        self.item
+            .is_repeat
+            .then_some(if self.item.is_table_header_repeat {
+                RepeatKind::TableHeader
+            } else {
+                RepeatKind::EveryPage
+            })
     }
 
     /// Whether this fragment is the continuation of an absolutely positioned

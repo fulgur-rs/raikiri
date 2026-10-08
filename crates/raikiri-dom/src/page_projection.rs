@@ -159,6 +159,12 @@ impl Document {
                 }
                 let node_id = NodeId::new(id as u64);
                 if let Some(source) = self.page_projection.overflow_clips.get(&node_id) {
+                    let mut source = *source;
+                    if let Some(Some(shift)) =
+                        self.table_objects.headers.shift(id, page.content_origin_y)
+                    {
+                        source.border_box.y += shift;
+                    }
                     clips.insert(node_id, source.on_page(node_id, page));
                 }
                 ancestor = self.nodes[id].parent;

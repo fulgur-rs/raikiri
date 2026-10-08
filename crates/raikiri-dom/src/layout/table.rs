@@ -49,6 +49,7 @@ use crate::document::Document;
 use taffy::util::{MaybeResolve, ResolveOrZero};
 
 pub(crate) mod anonymous;
+pub(crate) mod headers;
 mod rowspan;
 
 // ---------------------------------------------------------------------------

@@ -716,8 +716,9 @@ impl PageOrigins {
 /// additionally carry a neutral line range based on each line's CSS-px center;
 /// the pass does not expose the shaping engine or re-shape the text. Fixed-
 /// positioned subtrees use their existing post-layout geometry as complete
-/// per-page repeat records; table header/footer repetition is not synthesized
-/// without corresponding pagination support. The projection is deterministic
+/// per-page repeat records. Eligible first table-header groups likewise use
+/// complete copies on their table's committed pages; footers remain in flow.
+/// The projection is deterministic
 /// and keeps source-node identity stable, so a consumer can select
 /// continuation lines without re-running pagination.
 /// Resolve `ch` lengths on box properties to px in the taffy style, with
@@ -1293,6 +1294,11 @@ pub(crate) fn project_slices(
     nodes.sort_by_key(|node| node.node_id);
 
     for source in &nodes {
+        let is_table_header = document
+            .table_objects
+            .headers
+            .owner(source.node_id.0 as usize)
+            .is_some();
         let kind = match source.node_kind {
             NodeKind::Text => PageFragmentKind::Text,
             NodeKind::Element if source.tag_name.as_deref() == Some("img") => {
@@ -1310,6 +1316,17 @@ pub(crate) fn project_slices(
             let Some((page_start, page_end)) = page.flow_range else {
                 continue;
             };
+            if let Some(shift) = document
+                .table_objects
+                .headers
+                .shift(source.node_id.0 as usize, page_start)
+            {
+                if let Some(shift) = shift {
+                    let y = source.abs_y + shift - page_start;
+                    placements.push((page_slot, y, source.height, repeat_line_range, y));
+                }
+                continue;
+            }
             if source.is_repeat {
                 placements.push((
                     page_slot,
@@ -1357,13 +1374,13 @@ pub(crate) fn project_slices(
             let Some(page) = pages.get_mut(page_slot) else {
                 continue; // cov:ignore: placements are indexed from the same slices used to build pages.
             };
-            let item = PageFragmentItem::new(
+            let mut item = PageFragmentItem::new(
                 source.node_id,
                 PageFragmentRect::new(source.abs_x, y, source.width, fragment_height),
                 kind,
                 fragment_index as u32,
                 fragment_count,
-                source.is_repeat,
+                source.is_repeat || is_table_header,
             )
             .with_page_index(page.page_index)
             .with_box_extent(box_y, source.height)
@@ -1375,6 +1392,7 @@ pub(crate) fn project_slices(
                     (source.height - insets.top - insets.bottom).max(0.0),
                 )
             }));
+            item.is_table_header_repeat = is_table_header;
             page.items.push(match line_range {
                 Some(range) => item.with_line_range(range),
                 None => item,
@@ -1737,8 +1755,13 @@ pub(crate) fn selected_page_name(cascade: &CascadeResult, node_id: usize) -> Opt
 /// than a page is exposed on each intersecting slice; splitting its internal
 /// line/child fragments is deliberately left to the next fragmentation pass.
 /// Direct tables additionally keep a row whose cell boxes would cross a page
-/// together by moving that row to the next fragmentainer. Rowspans, repeated
-/// header/footer groups, and cell-internal breaks remain outside this pass.
+/// together by moving that row to the next fragmentainer. Ordinary horizontal
+/// direct-body tables repeat their first header group, reserving its height
+/// before continuation rows and keeping the initial header with the first row.
+/// Headers taller than a quarter page, spanning rows, bottom captions, fixed
+/// header descendants, header page boundaries, and multicolumn tables retain
+/// ordinary fragmentation. Repeated footers and cell-internal breaks remain
+/// outside this pass.
 /// Column-direction flex containers likewise keep a direct flex item together;
 /// row-direction flex, wrapping-line, and intrinsic-item fragmentation remain
 /// outside this pass. A single explicit-column grid likewise keeps direct
@@ -2744,6 +2767,13 @@ pub fn layout_pages_with_page_geometry_and_control(
         &mut candidates,
         control,
     )?;
+    let mut table_headers = super::table::headers::HeaderRepeats::prepare(
+        document,
+        cascade,
+        body_id,
+        page_step,
+        |id| root_flow_offset + current_abs_y(document, id, &parent_of),
+    );
     // Connected class-A sibling runs have a legal break before their first
     // box. Move a run only when it fits in one page, otherwise relax its
     // avoidance constraints so an oversized run still makes progress.
@@ -2864,6 +2894,11 @@ pub fn layout_pages_with_page_geometry_and_control(
     'candidate_loop: for candidate in candidates {
         check_candidate_page!('candidate_loop, current_page);
         let node_id = candidate.node_id;
+        // Header lines stay together and are placed from the table's rows,
+        // rather than acquiring independent text-page shifts.
+        if table_headers.owner(node_id).is_some() {
+            continue;
+        }
         let name_participates_in_flow =
             !candidate.is_float_descendant && !candidate.is_out_of_flow_descendant;
         if name_participates_in_flow
@@ -3240,6 +3275,19 @@ pub fn layout_pages_with_page_geometry_and_control(
         // borrow does not overlap the in-place location update below.
         let raw_y = candidate.raw_y;
         let height = candidate.height;
+        if let Some(&header_id) = table_headers.rows.get(&node_id) {
+            let header = table_headers
+                .headers
+                .get_mut(&header_id)
+                .expect("prepared header");
+            if header.placements.is_empty() {
+                let y = header.source_y + flow_shift;
+                materialize_y(document, header_id, y, &parent_of);
+                header.source_y = y;
+                let page = page_index_for_y(y);
+                header.placements.insert(page, (page_origin(page), y));
+            }
+        }
         let mut effective_y = raw_y + flow_shift + descendant_margin;
         materialize_y(document, node_id, effective_y, &parent_of);
         let forced_before = page_break_is_forced(document, node_id, computed.break_before)
@@ -3314,8 +3362,7 @@ pub fn layout_pages_with_page_geometry_and_control(
         // Keep an ordinary table row intact when it would cross the current
         // page. The row is a class-A boundary owned by the table engine; its
         // cells and descendants follow the same flow shift below. Rowspans,
-        // repeated header groups, and cell-internal breaks remain out of this
-        // narrow row-boundary pass.
+        // cell-internal breaks remain out of this narrow row-boundary pass.
         let table_row_overflow = candidate.is_table_row
             && height <= page_step_at(current_page) + 0.001
             && effective_y.is_finite()
@@ -3460,6 +3507,46 @@ pub fn layout_pages_with_page_geometry_and_control(
             current_page = 0;
         }
 
+        if let Some(&header_id) = table_headers.rows.get(&node_id) {
+            let header = table_headers
+                .headers
+                .get_mut(&header_id)
+                .expect("prepared header");
+            if !header.body_started {
+                if header
+                    .placements
+                    .keys()
+                    .next()
+                    .is_some_and(|&page| page < current_page)
+                {
+                    // The first header belongs with the first body row, even
+                    // when the remaining space cannot fit both intact.
+                    let origin = page_origin(current_page);
+                    let table_y = current_abs_y(document, header.table, &parent_of);
+                    materialize_y(
+                        document,
+                        header.table,
+                        table_y + origin - header.source_y,
+                        &parent_of,
+                    );
+                    materialize_y(document, header_id, origin, &parent_of);
+                    header.source_y = origin;
+                    header.placements.clear();
+                }
+                header.body_started = true;
+            }
+            if !header.placements.contains_key(&current_page)
+                && header.height + header.gap + height <= page_step_at(current_page) + 0.001
+            {
+                let origin = page_origin(current_page);
+                let delta = (origin + header.height + header.gap - effective_y).max(0.0);
+                effective_y += delta;
+                materialize_y(document, node_id, effective_y, &parent_of);
+                flow_shift += delta;
+                header.placements.insert(current_page, (origin, origin));
+            }
+        }
+
         if name_participates_in_flow
             && (candidate.is_direct_body_element
                 || candidate.is_named
@@ -3542,6 +3629,9 @@ pub fn layout_pages_with_page_geometry_and_control(
             pending_break_source = Some(node_id);
         }
     }
+
+    super::table::headers::finish_boxes(document, &table_headers);
+    document.table_objects.headers = table_headers;
 
     if !page_widths.is_empty() {
         let base_width = page_widths
