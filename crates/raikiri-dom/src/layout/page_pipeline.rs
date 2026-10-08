@@ -2537,7 +2537,10 @@ pub fn layout_pages_with_page_geometry_and_control(
     let mut previous: Option<&PageCandidate> = None;
     let mut run_start: Option<usize> = None;
     for candidate in &candidates {
-        if !candidate.is_direct_body_element && !candidate.is_direct_body_text {
+        if !candidate.is_direct_body_element
+            && !(document.nodes[candidate.node_id].kind() == NodeKind::Text
+                && parent_of[candidate.node_id] == Some(body_id))
+        {
             continue;
         }
         let computed = &cascade.computed[candidate.node_id];
@@ -3031,9 +3034,10 @@ pub fn layout_pages_with_page_geometry_and_control(
         let avoided_run_overflow = avoided_run_ends.get(&node_id).is_some_and(|end| {
             let run_height = *end - raw_y;
             let page_height = page_step_at(current_page);
+            let destination_height = page_step_at(current_page.saturating_add(1));
             run_height.is_finite()
                 && run_height > 0.0
-                && run_height + margin_top.max(0.0) <= page_height
+                && run_height + margin_top.max(0.0) <= destination_height
                 && effective_y > page_origin(current_page)
                 && effective_y < page_origin(current_page) + page_height
                 && effective_y + run_height > page_origin(current_page) + page_height

@@ -868,3 +868,157 @@ fn collection_stops_and_unwinds_ancestors_when_the_budget_was_exhausted() {
         100.0
     );
 }
+
+#[test]
+fn review_nested_positioned_children_of_projected_wrappers_keep_the_previous_strategy() {
+    let (mut doc, cascade) = fixture(
+        "<div id='columns' style='columns:2;gap:0;width:100px;height:100px'><div style='position:relative'><div style='height:75px;break-before:avoid'></div><div style='height:75px'></div><div style='position:absolute;left:0;top:0;width:10px;height:10px'></div></div></div>",
+    );
+    apply_computed_to_style(&mut doc, &cascade).unwrap();
+    let root = id(&doc, "columns");
+    let context =
+        FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[root].multicol.unwrap())
+            .unwrap();
+    assert!(!supports(&doc, root, context));
+}
+
+#[test]
+fn review_parallel_float_does_not_enlarge_its_normal_flow_wrapper() {
+    let doc = laid_out(
+        "<div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div id='wrapper'><div style='float:left;width:10px;height:80px'></div><div style='height:20px;break-before:avoid'></div></div></div>",
+    );
+    assert_eq!(boxes(&doc, "wrapper"), vec![(0, 0.0, 0.0, 50.0, 20.0)]);
+}
+
+#[test]
+fn review_interacting_floats_keep_the_existing_geometry_strategy() {
+    let (mut doc, cascade) = fixture(
+        "<div id='columns' style='columns:2;gap:0;width:100px;height:100px'><div style='float:left;width:30px;height:20px'></div><div style='float:left;width:30px;height:20px'></div><div style='height:20px;break-before:avoid'></div></div>",
+    );
+    apply_computed_to_style(&mut doc, &cascade).unwrap();
+    let root = id(&doc, "columns");
+    let context =
+        FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[root].multicol.unwrap())
+            .unwrap();
+    assert!(!supports(&doc, root, context));
+}
+
+#[test]
+fn review_other_block_displays_observe_forced_column_boundaries() {
+    for display in ["flow-root", "list-item"] {
+        let doc = laid_out(&format!(
+            "<div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:20px'></div><div id='next' style='display:{display};list-style:none;height:20px;break-before:column'></div></div>"
+        ));
+        assert_eq!(
+            boxes(&doc, "next"),
+            vec![(1, 50.0, 0.0, 50.0, 20.0)],
+            "{display}"
+        );
+    }
+}
+
+#[test]
+fn review_auto_width_atomic_inline_box_preserves_its_measured_width() {
+    let mut doc = laid_out(
+        "<div id='columns' style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:20px;break-before:avoid'></div><div id='atomic' style='display:inline-block'><div style='width:20px;height:20px'></div></div></div>",
+    );
+    let root = id(&doc, "columns");
+    let context =
+        FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[root].multicol.unwrap())
+            .unwrap();
+    doc.fragment_tree.clear();
+    layout(
+        &mut doc,
+        root,
+        context,
+        Size {
+            width: 100.0,
+            height: 100.0,
+        },
+    );
+    assert_eq!(boxes(&doc, "atomic")[0].3, 20.0);
+}
+
+#[test]
+fn review_auto_width_replaced_box_preserves_its_intrinsic_size() {
+    let (mut doc, _) = fixture(
+        "<div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:20px;break-before:avoid'></div><img id='image'></div>",
+    );
+    let image = id(&doc, "image");
+    doc.set_element_attribute(image, "src", "green.png")
+        .unwrap();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    let mut page = raikiri_traits::PageBox::new();
+    page.width = 800.0;
+    page.height = 600.0;
+    layout_single_page(&mut doc, &cascade, page).unwrap();
+    assert_eq!(boxes(&doc, "image")[0].3, 100.0);
+    assert_eq!(boxes(&doc, "image")[0].4, 50.0);
+}
+
+struct ReviewIntrinsicResolver;
+impl raikiri_traits::ReplacedResolver for ReviewIntrinsicResolver {
+    fn resolve(
+        &self,
+        _request: raikiri_traits::ResolverRequest<'_>,
+    ) -> Result<raikiri_traits::ResolvedIntrinsic, raikiri_traits::ResolverError> {
+        Ok(raikiri_traits::ResolvedIntrinsic {
+            intrinsic: raikiri_traits::IntrinsicBox::new(20.0, 10.0),
+            disposition: raikiri_traits::ResolveDisposition::Ok,
+        })
+    }
+}
+
+#[test]
+fn review_resolved_and_unresolved_images_keep_their_natural_auto_width() {
+    for resolved in [false, true] {
+        let (mut doc, _) = fixture(
+            "<div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:20px;break-before:avoid'></div><img id='image'></div>",
+        );
+        let image = id(&doc, "image");
+        doc.set_element_attribute(image, "src", "https://example.test/intrinsic.png")
+            .unwrap();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+        let mut page = raikiri_traits::PageBox::new();
+        page.width = 800.0;
+        page.height = 600.0;
+        if resolved {
+            crate::layout::layout_single_page_with_resolver(
+                &mut doc,
+                &cascade,
+                page,
+                &ReviewIntrinsicResolver,
+            )
+            .unwrap();
+        } else {
+            layout_single_page(&mut doc, &cascade, page).unwrap();
+        }
+        assert_eq!(boxes(&doc, "image")[0].3, if resolved { 20.0 } else { 0.0 });
+        assert_eq!(boxes(&doc, "image")[0].4, if resolved { 10.0 } else { 0.0 });
+    }
+}
+
+#[test]
+fn review_multiple_float_fallback_matches_the_unconstrained_geometry() {
+    let mut observed = Vec::new();
+    for edge in ["", "break-before:avoid"] {
+        let doc = laid_out(&format!(
+            "<div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div id='a' style='float:left;width:30px;height:20px'></div><div id='b' style='float:left;width:30px;height:20px'></div><div style='height:20px;{edge}'></div></div>"
+        ));
+        observed.push([
+            doc.nodes[id(&doc, "a")].unrounded_layout,
+            doc.nodes[id(&doc, "b")].unrounded_layout,
+        ]);
+    }
+    assert_eq!(observed[0], observed[1]);
+}
+
+#[test]
+fn review_flow_root_preserves_float_height_inside_its_atomic_box() {
+    let doc = laid_out(
+        "<div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:70px'></div><div id='atomic' style='display:flow-root;break-before:avoid'><div style='float:left;width:10px;height:40px'></div></div></div>",
+    );
+    assert_eq!(boxes(&doc, "atomic"), vec![(1, 50.0, 0.0, 50.0, 40.0)]);
+}

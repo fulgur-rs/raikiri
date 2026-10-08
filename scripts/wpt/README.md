@@ -377,11 +377,19 @@ cargo test --locked -p raikiri-wpt --test css_break_between_reftests -- --ignore
 
 The parser keeps page and column constraints distinct, including `always`
 for the innermost fragmentation context. Pagination moves fitting connected
-ordinary block sibling runs at a legal boundary; oversized runs relax avoidance
+ordinary block sibling runs at a legal boundary, using the destination page height
+when page sizes differ; oversized runs relax avoidance
 so they still advance. The bounded horizontal-column projection propagates
 first/last descendant constraints, resumes plain block wrappers, preserves
-atomic inline-blocks and inside-avoided boxes, gives forced column breaks
-priority, and treats floats as parallel flows. Projected boxes with margin,
+atomic inline-blocks, flow-roots and inside-avoided boxes, admits block-level
+list items, gives forced column breaks
+priority, and treats floats as parallel flows. Floats do not enlarge a plain
+wrapper's normal-flow background area. Auto-sized atomic and replaced boxes
+retain their measured or intrinsic width. Positioned descendants of resumed
+plain wrappers and multiple projected floats retain the previous strategy,
+which avoids subtree replay and isolated float packing. Root positioned
+siblings and positioned descendants of monolithic atomic boxes remain eligible.
+Projected boxes with margin,
 padding, border, inset or clearance, and splittable wrappers with definite
 width, minimum/maximum sizes or non-visible overflow retain the existing
 geometry strategies. Atomic subtrees preserve their measured child

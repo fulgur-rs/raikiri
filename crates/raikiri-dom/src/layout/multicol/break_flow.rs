@@ -21,6 +21,7 @@ pub(super) fn supports(tree: &Document, root: usize, context: FragmentationConte
         .collect();
     let mut visible = false;
     let mut needs_break_flow = false;
+    let mut projected_floats = 0usize;
     while let Some((id, depth, projected)) = pending.pop() {
         if depth >= 128 {
             return false;
@@ -39,7 +40,20 @@ pub(super) fn supports(tree: &Document, root: usize, context: FragmentationConte
         }
         visible = true;
         if node.style.position == TaffyPosition::Absolute {
+            // A resumed plain wrapper would replay this unfragmented subtree
+            // in every continuation. Atomic parents and root siblings paint once.
+            if projected && depth > 0 {
+                return false;
+            }
             continue;
+        }
+        if projected && node.style.float.is_floated() {
+            projected_floats += 1;
+            // Isolated float measurement cannot reconstruct sibling packing
+            // against the narrower column. Preserve the previous strategy.
+            if projected_floats > 1 {
+                return false;
+            }
         }
         // This projection preserves already measured atomic subtrees, but
         // does not reconstruct block margins, clearance or constrained wrapper sizes.
@@ -74,7 +88,10 @@ pub(super) fn supports(tree: &Document, root: usize, context: FragmentationConte
         if node.multicol.is_some()
             || !matches!(
                 node.display,
-                DisplayValue::Block | DisplayValue::InlineBlock
+                DisplayValue::Block
+                    | DisplayValue::InlineBlock
+                    | DisplayValue::FlowRoot
+                    | DisplayValue::ListItem
             )
             || node.has_logical_min_block_size
         {
@@ -115,7 +132,10 @@ fn avoided(value: BreakBetween) -> bool {
 fn atomic(tree: &Document, id: usize) -> bool {
     let node = &tree.nodes[id];
     node.style.float.is_floated()
-        || node.display == DisplayValue::InlineBlock
+        || matches!(
+            node.display,
+            DisplayValue::InlineBlock | DisplayValue::FlowRoot
+        )
         || node.style.size.height != Dimension::auto()
         || matches!(
             node.break_inside,
@@ -190,7 +210,16 @@ fn collect(
         sizing_mode: SizingMode::InherentSize,
         axis: RequestedAxis::Both,
         known_dimensions: Size {
-            width: (tree.nodes[id].multicol_auto_width && !floated).then_some(context.column_width),
+            width: (tree.nodes[id].multicol_auto_width
+                && !floated
+                && matches!(
+                    tree.nodes[id].display,
+                    DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
+                )
+                && tree.nodes[id].style.size.width == Dimension::auto()
+                && tree.nodes[id].image_intrinsic_box().is_none()
+                && tree.nodes[id].tag_name() != Some("img"))
+            .then_some(context.column_width),
             height: None,
         },
         known_dimensions_are_definite: Size {
@@ -426,8 +455,10 @@ pub(super) fn layout(
             let mut parent_y = 0.0;
             for &ancestor in &item.ancestors {
                 let (id, top) = if let Some(&(id, top)) = wrappers.get(&(column, ancestor)) {
-                    tree.fragment_tree.fragments[id].rect.height =
-                        (y + used - top).max(tree.fragment_tree.fragments[id].rect.height);
+                    if !item.floated {
+                        tree.fragment_tree.fragments[id].rect.height =
+                            (y + used - top).max(tree.fragment_tree.fragments[id].rect.height);
+                    }
                     (id, top)
                 } else {
                     let Some(id) = tree.fragment_tree.try_push(fragment(
@@ -438,7 +469,7 @@ pub(super) fn layout(
                             x: if parent_fragment == container { x } else { 0.0 },
                             y: y - parent_y,
                             width: context.column_width,
-                            height: used,
+                            height: if item.floated { 0.0 } else { used },
                         },
                     )) else {
                         return fallback.height;

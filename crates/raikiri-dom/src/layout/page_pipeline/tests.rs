@@ -7506,3 +7506,45 @@ fn always_uses_the_nearest_column_context_but_page_stays_page_specific() {
     assert!(!page_break_is_forced(&doc, child, BreakBetween::Always));
     assert!(page_break_is_forced(&doc, child, BreakBetween::Page));
 }
+
+#[test]
+fn review_avoided_sibling_runs_use_the_destination_page_height() {
+    use raikiri_style::{build_rule_tree, cascade};
+    for (steps, prefix, expected) in [
+        ([50.0, 100.0], 20, [0.0, 50.0, 90.0]),
+        ([100.0, 50.0], 60, [0.0, 60.0, 100.0]),
+    ] {
+        let mut doc = Document::new();
+        let body = doc.append_element(
+            Some(0),
+            "body",
+            Style::default(),
+            Some("display:block;margin:0"),
+        );
+        let mut ids = Vec::new();
+        for css in [
+            format!("height:{prefix}px"),
+            "height:40px".into(),
+            "height:40px;break-before:avoid".into(),
+        ] {
+            ids.push(doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some(&format!("display:block;width:100px;{css}")),
+            ));
+        }
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).unwrap();
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 100.0;
+        layout_pages_with_page_steps(&mut doc, &cascade, page, &steps).unwrap();
+        let actual: Vec<_> = ids
+            .into_iter()
+            .map(|id| doc.nodes[id].unrounded_layout.location.y)
+            .collect();
+        assert_eq!(actual, expected, "{steps:?}");
+    }
+}

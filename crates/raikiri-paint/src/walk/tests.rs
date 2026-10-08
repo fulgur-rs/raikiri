@@ -4940,3 +4940,33 @@ fn corner_arc_flattening_preserves_endpoints_with_bounded_finite_output() {
         && (0.0..=extent).contains(&point.x)
         && (0.0..=extent).contains(&point.y)));
 }
+
+#[test]
+fn review_positioned_subtree_is_not_replayed_with_each_plain_wrapper_fragment() {
+    let scene = transform_markup_scene(
+        "<!DOCTYPE html><body style='margin:0;background:white'><div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='position:relative'><div style='height:75px;break-before:avoid'></div><div style='height:75px'></div><div style='position:absolute;left:0;top:0;width:10px;height:10px;background:red'></div></div></div></body>",
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+        800,
+        600,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 800 + x) * 4..(y * 800 + x) * 4 + 4];
+    assert_eq!(pixel(5, 5), &[255, 0, 0, 255]);
+    assert_eq!(pixel(55, 5), &[255, 255, 255, 255]);
+}
+
+#[test]
+fn review_float_overflow_does_not_extend_the_plain_wrapper_background() {
+    let scene = transform_markup_scene(
+        "<!DOCTYPE html><body style='margin:0;background:white'><div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='background:red'><div style='float:left;width:10px;height:80px'></div><div style='height:20px;break-before:avoid'></div></div></div></body>",
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+        800,
+        600,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 800 + x) * 4..(y * 800 + x) * 4 + 4];
+    assert_eq!(pixel(40, 10), &[255, 0, 0, 255]);
+    assert_eq!(pixel(40, 50), &[255, 255, 255, 255]);
+}
