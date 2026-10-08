@@ -54,6 +54,10 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
                 | PropertyKey::BackgroundColor
                 | PropertyKey::FontSize
                 | PropertyKey::VerticalAlign
+                | PropertyKey::BorderRadiusTopLeft
+                | PropertyKey::BorderRadiusTopRight
+                | PropertyKey::BorderRadiusBottomRight
+                | PropertyKey::BorderRadiusBottomLeft
                 | PropertyKey::ListStyle
                 | PropertyKey::ListStyleType
                 | PropertyKey::ListStylePosition
@@ -274,11 +278,11 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
             input.expect_ident_matching("revert-layer").ok()?;
             Some(PropertyValue::AllRevertLayer)
         }
-        "color" => parse_color(input).map(PropertyValue::Color),
+        "color" => parse_element_color(input, PropertyKey::Color),
         // CSS Backgrounds 3 §2.2 <https://www.w3.org/TR/css-backgrounds-3/#background-color>
         // "Base Color: the background-color property". Its value grammar is
-        // `<color>`; reuse parse_color as in the `color` arm above.
-        "background-color" => parse_color(input).map(PropertyValue::BackgroundColor),
+        // `<color>`; preserve currentcolor as in the `color` arm above.
+        "background-color" => parse_element_color(input, PropertyKey::BackgroundColor),
         // Wrapping in Arc reduces cascade memory (following similar DoS fixes,
         // but for performance, not security). `parse_font_family` cannot return
         // an empty Vec: `<family-name>#` requires at least one item, enforced by
@@ -1027,30 +1031,33 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
                 PropertyValue::TextShadow(Arc::new(v))
             }
         }),
-        // CSS Backgrounds and Borders 3 §5: this task supports the four
-        // circular `<length>` radii only; percentages and slash-separated
-        // elliptical radii remain a follow-up.
+        // CSS Backgrounds and Borders 3 §4.1: independent axes per corner.
         "border-radius" => {
-            if input
-                .try_parse(|i| i.expect_ident_matching("inherit"))
-                .is_ok()
-            {
-                Some(PropertyValue::BorderRadiusInherit)
+            if let Ok(keyword) = input.try_parse(parse_css_wide_keyword_res) {
+                if keyword == CssWideKeyword::Inherit {
+                    Some(PropertyValue::BorderRadiusInherit)
+                } else {
+                    Some(PropertyValue::Deferred(DeferredValue {
+                        property: "border-radius".into(),
+                        value: keyword.as_css_str().into(),
+                        key: PropertyKey::BorderRadius,
+                    }))
+                }
             } else {
                 parse_border_radius(input).map(PropertyValue::BorderRadius)
             }
         }
         "border-top-left-radius" => {
-            parse_non_negative_length_percentage(input).map(PropertyValue::BorderRadiusTopLeft)
+            parse_border_radius_corner(input).map(PropertyValue::BorderRadiusTopLeft)
         }
         "border-top-right-radius" => {
-            parse_non_negative_length_percentage(input).map(PropertyValue::BorderRadiusTopRight)
+            parse_border_radius_corner(input).map(PropertyValue::BorderRadiusTopRight)
         }
         "border-bottom-right-radius" => {
-            parse_non_negative_length_percentage(input).map(PropertyValue::BorderRadiusBottomRight)
+            parse_border_radius_corner(input).map(PropertyValue::BorderRadiusBottomRight)
         }
         "border-bottom-left-radius" => {
-            parse_non_negative_length_percentage(input).map(PropertyValue::BorderRadiusBottomLeft)
+            parse_border_radius_corner(input).map(PropertyValue::BorderRadiusBottomLeft)
         }
         // CSS Backgrounds and Borders 3 §6.1: multiple comma-separated
         // shadows are stored as an Arc list. `inset` is intentionally outside

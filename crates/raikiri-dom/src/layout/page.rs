@@ -548,6 +548,9 @@ fn initial_page_child_order(
         parent_style.display,
         DisplayValue::Flex | DisplayValue::InlineFlex
     );
+    if is_flex {
+        return flex_pagination_child_order(document, cascade, parent_id);
+    }
     let is_auto_row_grid = matches!(
         parent_style.display,
         DisplayValue::Grid | DisplayValue::InlineGrid
@@ -572,7 +575,7 @@ fn initial_page_child_order(
                 GridLineValue::Auto | GridLineValue::Line(1)
             )
         });
-    if !is_flex && !is_auto_row_grid {
+    if !is_auto_row_grid {
         return children;
     }
 
@@ -589,15 +592,6 @@ fn initial_page_child_order(
         .filter(|&child_id| is_in_flow(child_id))
         .collect();
     ordered_items.sort_by_key(|&child_id| cascade.computed[child_id].order);
-    if is_flex
-        && matches!(
-            parent_style.flex_direction,
-            FlexDirectionValue::ColumnReverse
-        )
-    {
-        ordered_items.reverse();
-    }
-
     let mut ordered_items = ordered_items.into_iter();
     let mut ordered_children = children;
     for child_id in &mut ordered_children {
@@ -677,7 +671,7 @@ pub fn first_page_name(document: &Document, cascade: &CascadeResult) -> Option<S
                     raikiri_style::property::PositionValue::Static
                         | raikiri_style::property::PositionValue::Relative
                         | raikiri_style::property::PositionValue::Sticky
-                ) || !matches!(computed.float, FloatValue::None)
+                ) || is_floating_box_for_pagination(document, cascade, child_id)
                 {
                     continue;
                 }
@@ -934,36 +928,113 @@ pub(crate) fn is_in_flow_flex_child_for_pagination(
         && document.nodes[parent_id].style.display == Display::Flex
 }
 
-/// Return a flex parent's page-traversal order, which follows top-to-bottom
-/// visual order for `column-reverse` and Taffy's order-modified order otherwise.
+/// Return effective flex items in CSS order-modified order, reversed for
+/// top-to-bottom visual traversal of `column-reverse`.
 fn flex_pagination_child_order(
     document: &Document,
     cascade: &CascadeResult,
     parent_id: usize,
 ) -> Vec<usize> {
-    let mut children = document.nodes[parent_id].layout_children().to_vec();
-    if !matches!(
-        cascade.computed[parent_id].flex_direction,
-        FlexDirectionValue::ColumnReverse
-    ) {
-        return children;
+    // Contents wrappers do not delimit order-modified flex item sequences.
+    // Flatten the complete effective sequence before stable sorting so items
+    // in different wrappers can interleave without changing DOM box layout.
+    let mut pending: Vec<_> = document.nodes[parent_id]
+        .children
+        .iter()
+        .rev()
+        .copied()
+        .collect();
+    let mut children = Vec::new();
+    while let Some(child) = pending.pop() {
+        if cascade.computed[child].display == DisplayValue::Contents {
+            pending.extend(document.nodes[child].children.iter().rev().copied());
+        } else {
+            children.push(child);
+        }
     }
-
+    let is_in_flow = |child_id: usize| {
+        let child = &document.nodes[child_id];
+        child.is_in_document()
+            && cascade.computed[child_id].display != DisplayValue::None
+            && !matches!(
+                cascade.computed[child_id].position,
+                PositionValue::Absolute | PositionValue::Fixed
+            )
+            && !matches!(&child.data, NodeData::Text(text) if text.text_content.chars().all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{000c}')))
+    };
     let mut ordered_items: Vec<_> = children
         .iter()
         .copied()
-        .filter(|&child_id| is_in_flow_flex_child_for_pagination(document, parent_id, child_id))
+        .filter(|&id| is_in_flow(id))
         .collect();
-    ordered_items.reverse();
+    ordered_items.sort_by_key(|&id| cascade.computed[id].order);
+    if matches!(
+        cascade.computed[parent_id].flex_direction,
+        FlexDirectionValue::ColumnReverse
+    ) {
+        ordered_items.reverse();
+    }
+
     let mut ordered_items = ordered_items.into_iter();
     for child_id in &mut children {
-        if is_in_flow_flex_child_for_pagination(document, parent_id, *child_id) {
+        if is_in_flow(*child_id) {
             *child_id = ordered_items
                 .next()
-                .expect("each in-flow flex child has one reversed entry");
+                .expect("each in-flow flex child has one ordered entry");
         }
     }
     children
+}
+
+/// Nearest ancestor box, skipping elements that do not generate a box.
+pub(crate) fn pagination_box_parent(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> Option<usize> {
+    let mut parent = document.parent_of(node_id);
+    while let Some(id) = parent
+        && cascade.computed[id].display == DisplayValue::Contents
+    {
+        parent = document.parent_of(id);
+    }
+    parent
+}
+
+/// Whether a float declaration creates a floating box in pagination.
+/// Ordinary floats on flex items remain in normal flow. Footnotes retain
+/// their existing page-local placement; Contents elements generate no box.
+pub(crate) fn is_floating_box_for_pagination(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    let computed = &cascade.computed[node_id];
+    !matches!(computed.float, FloatValue::None)
+        && !matches!(
+            computed.display,
+            DisplayValue::None | DisplayValue::Contents
+        )
+        && (matches!(computed.float, FloatValue::Footnote)
+            || !pagination_box_parent(document, cascade, node_id).is_some_and(|parent| {
+                matches!(
+                    cascade.computed[parent].display,
+                    DisplayValue::Flex | DisplayValue::InlineFlex
+                )
+            }))
+}
+
+/// Last in-flow effective item in the flex container's visual page order.
+pub(crate) fn trailing_flex_child_for_pagination(
+    document: &Document,
+    cascade: &CascadeResult,
+    parent_id: usize,
+) -> Option<usize> {
+    // The effective flex sequence already flattens all Contents wrappers.
+    pagination_child_order(document, cascade, parent_id)
+        .into_iter()
+        .rev()
+        .find(|&child| is_in_flow_flex_child_for_pagination(document, parent_id, child))
 }
 
 fn is_in_flow_grid_item_for_pagination(
@@ -1092,7 +1163,7 @@ fn propagated_start_page_name_with_order(
                             !matches!(
                                 child_computed.position,
                                 PositionValue::Absolute | PositionValue::Fixed
-                            ) && matches!(child_computed.float, FloatValue::None)
+                            ) && !is_floating_box_for_pagination(document, cascade, child_id)
                         })
                 });
                 if let Some(child_id) = next {
@@ -1148,7 +1219,7 @@ fn propagated_start_page_name_with_order(
                     !matches!(
                         child_computed.position,
                         PositionValue::Absolute | PositionValue::Fixed
-                    ) && matches!(child_computed.float, FloatValue::None)
+                    ) && !is_floating_box_for_pagination(document, cascade, child_id)
                 })
         });
         if let Some(child_id) = next {

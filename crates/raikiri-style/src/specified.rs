@@ -164,6 +164,8 @@ pub struct SpecifiedValues {
     pub color: CssColor,
     /// Staging value for [`ComputedValues::background_color`]; computed-equivalent.
     pub background_color: CssColor,
+    /// Symbolic background color retained for explicit inheritance.
+    pub(crate) background_color_expression: Option<SmolStr>,
     /// Staging value for [`ComputedValues::font_family`]; computed-equivalent.
     pub font_family: Arc<Vec<FontFamilyName>>,
     /// **Specified** `font-size`; phase 2 ([`resolve_font_size`]) absolutizes it
@@ -738,6 +740,7 @@ impl SpecifiedValues {
         Self {
             color: CssColor::BLACK,
             background_color: CssColor::TRANSPARENT,
+            background_color_expression: None,
             // Shared Arc slot avoids an allocation per node (see the `initial_font_family` docs).
             font_family: initial_font_family(),
             // CSS Fonts 4 §2.5: the initial value is `medium` (16px here).
@@ -790,10 +793,10 @@ impl SpecifiedValues {
             // covers border-image, so do not restore 5.x here merely for "consistency".
             border: Sides::all(INITIAL_BORDER),
             border_radius: BorderRadius {
-                top_left: Length::Px(0.0),
-                top_right: Length::Px(0.0),
-                bottom_right: Length::Px(0.0),
-                bottom_left: Length::Px(0.0),
+                top_left: Length::Px(0.0).into(),
+                top_right: Length::Px(0.0).into(),
+                bottom_right: Length::Px(0.0).into(),
+                bottom_left: Length::Px(0.0).into(),
             },
             box_shadow: empty_box_shadow_list(),
             outline: Outline {
@@ -1267,6 +1270,7 @@ impl SpecifiedValues {
             // CSS Writing Modes 3 §2.2: unicode-bidi is non-inherited.
             unicode_bidi: UnicodeBidi::Normal,
             background_color: CssColor::TRANSPARENT,
+            background_color_expression: None,
             display: DisplayValue::Inline,
             counter_reset: empty_counter_entries(),
             counter_increment: empty_counter_entries(),
@@ -1279,10 +1283,10 @@ impl SpecifiedValues {
             margin: Sides::all(LengthOrAuto::Length(Length::Px(0.0))),
             border: Sides::all(INITIAL_BORDER),
             border_radius: BorderRadius {
-                top_left: Length::Px(0.0),
-                top_right: Length::Px(0.0),
-                bottom_right: Length::Px(0.0),
-                bottom_left: Length::Px(0.0),
+                top_left: Length::Px(0.0).into(),
+                top_right: Length::Px(0.0).into(),
+                bottom_right: Length::Px(0.0).into(),
+                bottom_left: Length::Px(0.0).into(),
             },
             box_shadow: empty_box_shadow_list(),
             outline: Outline {
@@ -1880,7 +1884,12 @@ impl SpecifiedValues {
         };
         ComputedValues {
             color: self.color,
-            background_color: self.background_color,
+            background_color: self
+                .background_color_expression
+                .as_ref()
+                .and_then(|source| crate::property::resolve_contextual_color(source, self.color))
+                .unwrap_or(self.background_color),
+            background_color_expression: self.background_color_expression,
             font_family: self.font_family,
             font_size,
             font_weight: self.font_weight,

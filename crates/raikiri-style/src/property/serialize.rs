@@ -54,6 +54,7 @@ fn serialize_text_decoration_line(value: TextDecorationLine) -> Option<String> {
 /// back to echoing the raw input string when this returns `None`.
 pub fn serialize_value(value: &PropertyValue) -> Option<String> {
     match value {
+        PropertyValue::ContextualColor(color) => serialize_one_color(color.source.as_ref()),
         PropertyValue::AllRevertLayer => Some("revert-layer".to_owned()),
         PropertyValue::FontSize(l)
         | PropertyValue::PaddingTop(l)
@@ -64,12 +65,20 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::BorderRightWidth(l)
         | PropertyValue::BorderBottomWidth(l)
         | PropertyValue::BorderLeftWidth(l)
-        | PropertyValue::BorderRadiusTopLeft(l)
-        | PropertyValue::BorderRadiusTopRight(l)
-        | PropertyValue::BorderRadiusBottomRight(l)
-        | PropertyValue::BorderRadiusBottomLeft(l)
         | PropertyValue::OutlineWidth(l)
         | PropertyValue::OutlineOffset(l) => Some(serialize_length(l)),
+
+        PropertyValue::BorderRadiusTopLeft(corner)
+        | PropertyValue::BorderRadiusTopRight(corner)
+        | PropertyValue::BorderRadiusBottomRight(corner)
+        | PropertyValue::BorderRadiusBottomLeft(corner) => {
+            let horizontal = serialize_length(&corner.horizontal);
+            Some(if corner.horizontal == corner.vertical {
+                horizontal
+            } else {
+                format!("{horizontal} {}", serialize_length(&corner.vertical))
+            })
+        }
 
         PropertyValue::BorderTopWidthCssWide(kw)
         | PropertyValue::BorderRightWidthCssWide(kw)

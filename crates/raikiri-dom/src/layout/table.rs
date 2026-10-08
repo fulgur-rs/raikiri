@@ -138,7 +138,7 @@ fn is_vertical_writing_mode(mode: WritingMode) -> bool {
     )
 }
 
-fn caption_minimum_width(doc: &mut Document, table: usize) -> f32 {
+fn caption_minimum_inline_size(doc: &mut Document, table: usize, vertical: bool) -> f32 {
     let Some(caption) = doc.nodes[table]
         .children
         .iter()
@@ -153,12 +153,24 @@ fn caption_minimum_width(doc: &mut Document, table: usize) -> f32 {
         LayoutInput {
             run_mode: RunMode::ComputeSize,
             sizing_mode: SizingMode::InherentSize,
-            axis: taffy::tree::RequestedAxis::Horizontal,
+            axis: if vertical {
+                taffy::tree::RequestedAxis::Vertical
+            } else {
+                taffy::tree::RequestedAxis::Horizontal
+            },
             known_dimensions: Size::NONE,
             parent_size: Size::NONE,
             available_space: Size {
-                width: AvailableSpace::MinContent,
-                height: AvailableSpace::MaxContent,
+                width: if vertical {
+                    AvailableSpace::MaxContent
+                } else {
+                    AvailableSpace::MinContent
+                },
+                height: if vertical {
+                    AvailableSpace::MinContent
+                } else {
+                    AvailableSpace::MaxContent
+                },
             },
             known_dimensions_are_definite: Size {
                 width: false,
@@ -168,9 +180,14 @@ fn caption_minimum_width(doc: &mut Document, table: usize) -> f32 {
         },
     );
     let margins = doc.nodes[caption].style.margin;
-    output.size.width
-        + super::used_style_length_percentage_auto(margins.left, 0.0).unwrap_or(0.0)
-        + super::used_style_length_percentage_auto(margins.right, 0.0).unwrap_or(0.0)
+    let (minimum, start, end) = if vertical {
+        (output.size.height, margins.top, margins.bottom)
+    } else {
+        (output.size.width, margins.left, margins.right)
+    };
+    minimum
+        + super::used_style_length_percentage_auto(start, 0.0).unwrap_or(0.0)
+        + super::used_style_length_percentage_auto(end, 0.0).unwrap_or(0.0)
 }
 
 fn layout_table_caption(
@@ -441,12 +458,13 @@ fn compute_table_layout_checked(
         resolve_collapsed_table_edges(doc, &grid, table_idx);
     }
     let vertical_writing = is_vertical_writing_mode(table_writing_mode(doc, table_idx));
-    // CAPMIN constrains the grid before columns are assigned; widening only
-    // the wrapper would leave its background and containing block too narrow.
+    // CAPMIN constrains the grid's inline axis before its tracks are assigned;
+    // growing only the wrapper would leave the cells and grid paint too small.
+    let caption_inline_minimum = caption_minimum_inline_size(doc, table_idx, vertical_writing);
     let caption_minimum = if vertical_writing {
         0.0
     } else {
-        caption_minimum_width(doc, table_idx)
+        caption_inline_minimum
     };
 
     // Container metrics, split so collapse can substitute collapsed outer
@@ -531,12 +549,15 @@ fn compute_table_layout_checked(
             doc.nodes[table_idx].style.size.height,
             inputs.parent_size.height,
         );
-        let height = specified_h.unwrap_or_else(|| {
+        let mut height = specified_h.unwrap_or_else(|| {
             effective_known
                 .height
                 .unwrap_or(0.0)
                 .max(padding_border_size.height)
         });
+        if vertical_writing {
+            height = height.max(caption_inline_minimum);
+        }
         let caption_size = layout_table_caption(
             doc,
             table_idx,
@@ -552,7 +573,7 @@ fn compute_table_layout_checked(
             },
         );
         if !vertical_writing && let Some(size) = caption_size {
-            width = width.max(size.width + padding_border_size.width);
+            width = width.max(size.width);
         }
         let (wrapper_size, _) = position_table_caption(
             doc,
@@ -576,9 +597,17 @@ fn compute_table_layout_checked(
     // edge, so n tracks take n + 1 gaps. The spacing belongs to the table's
     // content box, so it is part of the extents the tracks share but not of
     // `padding_border_size`. Collapse zeroes `border_spacing`.
+    // A row whose overlapping cells all hide their empty boxes has zero
+    // height and only one spacing side (CSS 2.2 section 17.6.1.1).
+    let hidden_rows = hidden_empty_rows(doc, &grid);
+    let row_gaps: Vec<_> = hidden_rows
+        .iter()
+        .map(|hidden| if *hidden { 0.0 } else { border_spacing.1 })
+        .collect();
     let spacing = Size {
         width: border_spacing.0 * (grid.n_cols as f32 + 1.0),
-        height: border_spacing.1 * (grid.rows.len() as f32 + 1.0),
+        height: border_spacing.1
+            * (hidden_rows.iter().filter(|hidden| !**hidden).count() as f32 + 1.0),
     };
     let distrib_insets = Size {
         width: padding_border_size.width - overlap_w + spacing.width,
@@ -725,6 +754,11 @@ fn compute_table_layout_checked(
 
     // Row heights
     let mut row_heights = resolve_row_heights(doc, &mut grid, &column_widths, border_spacing)?;
+    for (height, hidden) in row_heights.iter_mut().zip(&hidden_rows) {
+        if *hidden {
+            *height = 0.0;
+        }
+    }
     // An authored definite table height also establishes the containing block
     // for percentage-sized children of a single-row cell. Fragmentation can
     // impose a definite height on a single-row table without doing so; keep
@@ -733,7 +767,7 @@ fn compute_table_layout_checked(
     if effective_known.height.is_some() && (grid.rows.len() > 1 || specified_height.is_some()) {
         let known_h = effective_known.height.unwrap(); // cov:ignore: exercised by ignored exact table-fragmentation WPT.
         let target = f32_max_compat(known_h - distrib_insets.height, 0.0);
-        distribute_extra_height(&mut row_heights, target);
+        distribute_extra_height(&mut row_heights, &hidden_rows, target);
     }
 
     // Extra min-height grows rows (same path as a definite height);
@@ -742,7 +776,16 @@ fn compute_table_layout_checked(
     // `min_content + overlap`, the track sum that yields `min_content`.
     if let Some(mn) = min_h_outer {
         let target = f32_max_compat(mn - distrib_insets.height, 0.0);
-        distribute_extra_height(&mut row_heights, target);
+        distribute_extra_height(&mut row_heights, &hidden_rows, target);
+    }
+    if vertical_writing {
+        // Vertical columns stack the same row track along the physical
+        // inline axis. Share CAPMIN across those stacks after removing the
+        // grid's own edges and the intervening inline spacing.
+        let columns = grid.n_cols as f32;
+        let edges = padding_border_size.height + border_spacing.1 * (columns + 1.0);
+        let target = (caption_inline_minimum - edges).max(0.0) / columns;
+        distribute_extra_height(&mut row_heights, &hidden_rows, target);
     }
 
     // Content extents net of collapsed-line overlaps, plus the separated
@@ -869,7 +912,7 @@ fn compute_table_layout_checked(
     let row_steps = if collapse {
         collapsed.row_overlaps.clone()
     } else {
-        vec![-border_spacing.1; grid.rows.len().saturating_sub(1)]
+        row_gaps.iter().map(|gap| -*gap).collect()
     };
     let col_origins = track_origins(&column_widths, &col_steps, x_origin);
     let row_origins = track_origins(&row_heights, &row_steps, y_origin);
@@ -877,7 +920,7 @@ fn compute_table_layout_checked(
         doc,
         &mut grid,
         &column_widths,
-        &row_heights,
+        (&row_heights, &row_gaps),
         (&col_origins, &row_origins),
         border_spacing,
         vertical_writing,
@@ -887,6 +930,7 @@ fn compute_table_layout_checked(
         .iter()
         .filter(|cell| {
             cell.row == 0
+                && !hidden_rows[0]
                 && cell_baseline_aligned(
                     doc.ifc_layout_node(cell.node_id)
                         .expect("table cell layout view")
@@ -898,7 +942,7 @@ fn compute_table_layout_checked(
         .unwrap_or_else(|| {
             grid.cells
                 .iter()
-                .filter(|cell| cell.row == 0)
+                .filter(|cell| cell.row == 0 && !hidden_rows[0])
                 .map(|cell| {
                     let layout = doc.table_layout_node_mut(cell.node_id).unrounded_layout;
                     layout.size.height - layout.padding.bottom - layout.border.bottom
@@ -917,7 +961,6 @@ fn compute_table_layout_checked(
                 y: y_origin,
             },
             border_spacing.1,
-            table_writing_mode(doc, table_idx),
         );
     }
     position_anonymous_table_parts(
@@ -1873,8 +1916,26 @@ fn distribute_columns_with_authored(
     w
 }
 
-fn distribute_extra_height(row_heights: &mut [f32], target: f32) {
-    let n = row_heights.len();
+fn hidden_empty_rows(doc: &Document, grid: &TableGrid) -> Vec<bool> {
+    let mut rows = vec![None; grid.rows.len()];
+    for cell in &grid.cells {
+        let start = cell.row as usize;
+        let end = (start + cell.row_span as usize).min(rows.len());
+        for row in &mut rows[start..end] {
+            *row = Some(
+                row.unwrap_or(true)
+                    && doc
+                        .ifc_layout_node(cell.node_id)
+                        .expect("table cell layout view")
+                        .hides_empty_table_cell,
+            );
+        }
+    }
+    rows.into_iter().map(|row| row.unwrap_or(false)).collect()
+}
+
+fn distribute_extra_height(row_heights: &mut [f32], hidden_rows: &[bool], target: f32) {
+    let n = hidden_rows.iter().filter(|hidden| !**hidden).count();
     if n == 0 {
         return;
     }
@@ -1884,13 +1945,17 @@ fn distribute_extra_height(row_heights: &mut [f32], target: f32) {
     }
     let extra = target - current;
     if current > 0.0 {
-        for h in row_heights.iter_mut() {
-            *h += extra * (*h) / current;
+        for (h, hidden) in row_heights.iter_mut().zip(hidden_rows) {
+            if !*hidden {
+                *h += extra * (*h) / current;
+            }
         }
     } else {
         let share = extra / n as f32;
-        for h in row_heights.iter_mut() {
-            *h += share;
+        for (h, hidden) in row_heights.iter_mut().zip(hidden_rows) {
+            if !*hidden {
+                *h += share;
+            }
         }
     }
 }
@@ -2187,11 +2252,12 @@ fn place_cells(
     doc: &mut Document,
     grid: &mut TableGrid,
     column_widths: &[f32],
-    row_heights: &[f32],
+    row_tracks: (&[f32], &[f32]),
     origins: (&[f32], &[f32]),
     spacing: (f32, f32),
     vertical_writing: bool,
 ) -> Result<(), raikiri_traits::LayoutError> {
+    let (row_heights, row_gaps) = row_tracks;
     let (col_x, row_y) = origins;
     let mut row_baselines = vec![0.0f32; row_heights.len()];
     for cell in &grid.cells {
@@ -2214,7 +2280,13 @@ fn place_cells(
         // well would double-count the absorbed line. Separated borders add
         // the spanned gaps instead, matching the origin differences.
         let cell_width = spanned_size(&column_widths[columns], spacing.0);
-        let cell_height = spanned_size(&row_heights[cell.row as usize..end_row], spacing.1);
+        let start_row = cell.row as usize;
+        let cell_height = row_heights[start_row..end_row].iter().sum::<f32>()
+            + row_gaps[start_row..end_row.saturating_sub(1)]
+                .iter()
+                .filter(|gap| **gap != 0.0)
+                .count() as f32
+                * spacing.1;
         // Final layout for cell contents with definite size
         let output = doc.compute_child_layout(
             NodeId::from(cell.node_id),
@@ -2244,7 +2316,7 @@ fn place_cells(
         // A cell laid out by the inline engine has no child layouts: its
         // lines are drawn from its content box, which its own border and
         // padding (as the engine measured them) place inside the cell.
-        let (mut padding, border) = {
+        let (mut padding, mut border) = {
             let style = &doc
                 .ifc_layout_node(cell.node_id)
                 .expect("table cell layout view")
@@ -2260,6 +2332,20 @@ fn place_cells(
         };
         let vertical_cell =
             vertical_writing && is_vertical_writing_mode(table_writing_mode(doc, cell.node_id));
+        let collapsed_empty = cell_height == 0.0
+            && doc
+                .ifc_layout_node(cell.node_id)
+                .expect("table cell layout view")
+                .hides_empty_table_cell;
+        if collapsed_empty {
+            // Hidden empty rows have no block extent, including the cell's
+            // otherwise retained padding/border. Keep the zero content box
+            // valid without resetting its positioned out-of-flow subtree.
+            padding.top = 0.0;
+            padding.bottom = 0.0;
+            border.top = 0.0;
+            border.bottom = 0.0;
+        }
         let extra = if vertical_cell {
             0.0
         } else {
@@ -2270,6 +2356,7 @@ fn place_cells(
             .expect("table cell layout view")
             .table_vertical_align
         {
+            _ if collapsed_empty => 0.0,
             VerticalAlign::Top => 0.0,
             VerticalAlign::Middle => extra / 2.0,
             VerticalAlign::Bottom => extra,
@@ -2343,7 +2430,6 @@ fn reposition_cells_for_vertical_writing(
     cell_width: f32,
     origin: Point<f32>,
     spacing: f32,
-    writing_mode: WritingMode,
 ) {
     let vertical_track = row_heights.iter().sum::<f32>();
     if !vertical_track.is_finite() || vertical_track <= 0.0 {
@@ -2363,7 +2449,8 @@ fn reposition_cells_for_vertical_writing(
         layout.location = Point { x: origin.x, y };
         layout.size.width = cell_width;
         layout.size.height = height;
-        if !is_vertical_writing_mode(table_writing_mode(doc, cell.node_id)) {
+        let cell_writing_mode = table_writing_mode(doc, cell.node_id);
+        if !is_vertical_writing_mode(cell_writing_mode) {
             // A horizontal cell in a vertical table still aligns content on
             // its own block axis. Preserve the normal pass's vertical shift.
             doc.table_layout_node_mut(cell.node_id).unrounded_layout =
@@ -2469,10 +2556,13 @@ fn reposition_cells_for_vertical_writing(
             VerticalAlign::Bottom => extra,
             _ => 0.0,
         };
+        // Baseline-aligned block content retains its normal-flow placement;
+        // without an inline baseline, treating it as block-start alignment
+        // would move it across the entire physical cell in vertical-rl.
         let rtl = matches!(
-            writing_mode,
+            cell_writing_mode,
             WritingMode::VerticalRl | WritingMode::SidewaysRl
-        );
+        ) && (has_lines || !cell_baseline_aligned(node.table_vertical_align));
         let child_shift = if rtl {
             if has_lines { -shift } else { extra - shift }
         } else {

@@ -154,6 +154,8 @@ pub(crate) fn apply_computed_to_style(
         // has no table layout), carried Node-side like `display` above.
         doc.nodes[idx].table_layout = cv.table_layout;
         doc.nodes[idx].table_vertical_align = cv.vertical_align;
+        doc.nodes[idx].hides_empty_table_cell =
+            crate::paint_rules::hides_empty_table_cell(doc, cascade, idx);
         doc.nodes[idx].caption_side = cv.caption_side;
         if !matches!(cv.display, DisplayValue::Table | DisplayValue::InlineTable) {
             doc.nodes[idx].table_grid_box = None;

@@ -6,7 +6,7 @@ use crate::computed::{
     ComputedValues, CustomPropertyEnvironment, RunningTemplate, empty_custom_properties,
 };
 use crate::property::{
-    Border, BorderColor, BorderRadius, BorderStyle, CssWideKeyword, FontWeightValue,
+    Border, BorderColor, BorderRadius, BorderStyle, CornerRadius, CssWideKeyword, FontWeightValue,
     GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, Length, LengthOrAuto,
     LetterSpacingValue, PositionValue, PropertyValue, RelativeFontSize, Sides, TextIndentLength,
     TextWrapMode, WhiteSpace, WhiteSpaceCollapse, WordSpacingValue, WritingMode,
@@ -27,7 +27,6 @@ use crate::rule::{
     expand_padding_inline, expand_place_content, expand_place_items, expand_place_self,
     expand_text_decoration,
 };
-use crate::ruletree::Origin;
 use crate::specified::{INITIAL_BORDER, SpecifiedValues};
 use crate::style_dom::{StyleDom, StyleNode, StyleNodeId, StyleNodeKind};
 
@@ -138,7 +137,6 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
     parent_computed: &ComputedValues,
     cascaded: &CascadedArena,
     out: &mut Vec<ComputedValues>,
-    non_ua_margin_sides: &mut Vec<Sides<bool>>,
     authored_writing_modes: &mut Vec<Option<WritingMode>>,
     page_values: &mut [crate::property::PageValue],
     pseudo_out: &mut HashMap<(StyleNodeId, PseudoElem), ComputedValues>,
@@ -149,7 +147,6 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         parent_computed,
         cascaded,
         out,
-        non_ua_margin_sides,
         authored_writing_modes,
         page_values,
         pseudo_out,
@@ -167,7 +164,6 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
     parent_computed: &ComputedValues,
     cascaded: &CascadedArena,
     out: &mut Vec<ComputedValues>,
-    non_ua_margin_sides: &mut Vec<Sides<bool>>,
     authored_writing_modes: &mut Vec<Option<WritingMode>>,
     page_values: &mut [crate::property::PageValue],
     pseudo_out: &mut HashMap<(StyleNodeId, PseudoElem), ComputedValues>,
@@ -228,7 +224,7 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
             _ => None,
         };
 
-        let (computed, node_non_ua_margin, custom_properties, child_ctx, children_share_parent) =
+        let (computed, custom_properties, child_ctx, children_share_parent) =
             if let Some(source) = share_source {
                 shared_nodes += 1;
                 let src = source.0 as usize;
@@ -246,13 +242,7 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
                 // nodes are remembered), and this node now has exactly its
                 // results, so this node's children see the same parent
                 // context as `source`'s children and may share with them.
-                (
-                    computed,
-                    non_ua_margin_sides[src],
-                    custom_properties,
-                    root_ctx,
-                    source,
-                )
+                (computed, custom_properties, root_ctx, source)
             } else {
                 let local_custom_properties = cascaded.custom_candidates(id).map(|candidates| {
                     resolve_custom_properties(&parent_custom_properties, candidates)
@@ -268,7 +258,6 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
                 // computed values; non-inherited fields initialized). The target is a
                 // staging representation, so winner application order does not matter.
                 let mut specified = SpecifiedValues::inherit_from(parent_computed);
-                let mut node_non_ua_margin = Sides::all(false);
                 if let Some(candidates) = cascaded.candidates(id) {
                     apply_winners(
                         candidates,
@@ -277,7 +266,6 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
                         parent_computed,
                         &custom_properties,
                         Some(&mut page_values[id.0 as usize]),
-                        Some(&mut node_non_ua_margin),
                         Some(&mut authored_writing_modes[id.0 as usize]),
                     );
                 }
@@ -419,7 +407,6 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
                                 &pseudo_custom_properties,
                                 None,
                                 None,
-                                None,
                             );
                         }
 
@@ -442,13 +429,7 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
                 if sibling_sharing && root_ctx.is_some() {
                     share_caches[depth].remember(id);
                 }
-                (
-                    computed,
-                    node_non_ua_margin,
-                    custom_properties,
-                    child_ctx,
-                    id,
-                )
+                (computed, custom_properties, child_ctx, id)
             };
 
         // `out` may be shorter than node_count(): `cascade()` only reserves
@@ -464,10 +445,6 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
         } else {
             out[idx] = computed;
         }
-        if non_ua_margin_sides.len() <= idx {
-            non_ua_margin_sides.resize(idx + 1, Sides::all(false));
-        }
-        non_ua_margin_sides[idx] = node_non_ua_margin;
 
         // Push children onto the stack, looking up their already-written
         // parent's computed value by ID. The stack is LIFO, so reverse the
@@ -741,7 +718,6 @@ fn resolve_border_css_wide(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_winners(
     candidates: &[CascadedDecl],
     winners: &mut Vec<Option<RankedDecl>>,
@@ -749,7 +725,6 @@ pub(crate) fn apply_winners(
     inherited: &ComputedValues,
     custom_properties: &CustomPropertyEnvironment,
     mut page_value: Option<&mut crate::property::PageValue>,
-    mut non_ua_margin_sides: Option<&mut Sides<bool>>,
     mut authored_writing_mode: Option<&mut Option<WritingMode>>,
 ) {
     pick_winners(candidates, winners);
@@ -757,27 +732,12 @@ pub(crate) fn apply_winners(
     // first; their applied values are collected during the drain.
     let white_space_winners = WhiteSpaceWinners::read(winners);
     let mut white_space_applied = WhiteSpaceApplied::default();
+    let radius_winners = BorderRadiusWinners::read(winners);
+    let initial_radius = specified.border_radius;
+    let mut radius_applied = BorderRadiusApplied::default();
     for slot in winners.iter_mut() {
         if let Some(winner) = slot.take() {
             let value = &candidates[winner.idx].0;
-            if let Some(sides) = non_ua_margin_sides.as_deref_mut() {
-                let non_ua = candidates[winner.idx].2 != Origin::UserAgent;
-                match value.key() {
-                    crate::property::PropertyKey::MarginTop => sides.top = non_ua,
-                    crate::property::PropertyKey::MarginRight => sides.right = non_ua,
-                    crate::property::PropertyKey::MarginBottom => sides.bottom = non_ua,
-                    crate::property::PropertyKey::MarginLeft => sides.left = non_ua,
-                    crate::property::PropertyKey::Margin
-                    | crate::property::PropertyKey::MarginInline
-                    | crate::property::PropertyKey::MarginBlock => {
-                        sides.top = non_ua;
-                        sides.right = non_ua;
-                        sides.bottom = non_ua;
-                        sides.left = non_ua;
-                    }
-                    _ => {}
-                }
-            }
             let winner_key = value.key();
             let value = match value {
                 PropertyValue::BorderRadiusInherit => Some(PropertyValue::BorderRadius(
@@ -819,6 +779,9 @@ pub(crate) fn apply_winners(
                     };
                     match resolved {
                         None => None,
+                        Some(PropertyValue::BorderRadiusInherit) => Some(
+                            PropertyValue::BorderRadius(inherited_border_radius_value(inherited)),
+                        ),
                         Some(
                             PropertyValue::BorderTopWidthCssWide(kw)
                             | PropertyValue::BorderRightWidthCssWide(kw)
@@ -898,11 +861,13 @@ pub(crate) fn apply_winners(
                     *page_slot = page.clone();
                 }
                 white_space_applied.note(&value);
+                radius_applied.note(&value);
                 apply_value(value, specified);
             }
         }
     }
     let (collapse, wrap) = white_space_winners.settle(&white_space_applied);
+    specified.border_radius = radius_winners.settle(&radius_applied, initial_radius);
     // A half no declaration on this element decides keeps the value
     // `inherit_from` seeded, which is the parent's effective value.
     if let Some(collapse) = collapse {
@@ -931,6 +896,78 @@ fn declared_later(a: RankedDecl, b: RankedDecl) -> bool {
         b.source_order,
         b.idx,
     )
+}
+
+/// Winners of the retained radius shorthand and its four corner longhands.
+struct BorderRadiusWinners {
+    shorthand: Option<RankedDecl>,
+    corners: [Option<RankedDecl>; 4],
+}
+
+#[derive(Default)]
+struct BorderRadiusApplied {
+    shorthand: Option<BorderRadius>,
+    corners: [Option<CornerRadius<Length>>; 4],
+}
+
+impl BorderRadiusApplied {
+    fn note(&mut self, value: &PropertyValue) {
+        match value {
+            PropertyValue::BorderRadius(radius) => self.shorthand = Some(*radius),
+            PropertyValue::BorderRadiusTopLeft(corner) => self.corners[0] = Some(*corner),
+            PropertyValue::BorderRadiusTopRight(corner) => self.corners[1] = Some(*corner),
+            PropertyValue::BorderRadiusBottomRight(corner) => self.corners[2] = Some(*corner),
+            PropertyValue::BorderRadiusBottomLeft(corner) => self.corners[3] = Some(*corner),
+            _ => {}
+        }
+    }
+}
+
+impl BorderRadiusWinners {
+    fn read(winners: &[Option<RankedDecl>]) -> Self {
+        use crate::property::PropertyKey as K;
+        let at = |key: K| winners.get(key as usize).copied().flatten();
+        Self {
+            shorthand: at(K::BorderRadius),
+            corners: [
+                K::BorderRadiusTopLeft,
+                K::BorderRadiusTopRight,
+                K::BorderRadiusBottomRight,
+                K::BorderRadiusBottomLeft,
+            ]
+            .map(at),
+        }
+    }
+
+    fn settle(&self, applied: &BorderRadiusApplied, initial: BorderRadius) -> BorderRadius {
+        let corners = |radius: BorderRadius| {
+            [
+                radius.top_left,
+                radius.top_right,
+                radius.bottom_right,
+                radius.bottom_left,
+            ]
+        };
+        let initial = corners(initial);
+        let shorthand = applied.shorthand.map(corners).unwrap_or(initial);
+        let [top_left, top_right, bottom_right, bottom_left] =
+            std::array::from_fn(|index| match (self.corners[index], self.shorthand) {
+                (Some(longhand), Some(shorthand_winner))
+                    if declared_later(longhand, shorthand_winner) =>
+                {
+                    applied.corners[index].unwrap_or(initial[index])
+                }
+                (_, Some(_)) => shorthand[index],
+                (Some(_), None) => applied.corners[index].unwrap_or(initial[index]),
+                (None, None) => initial[index],
+            });
+        BorderRadius {
+            top_left,
+            top_right,
+            bottom_right,
+            bottom_left,
+        }
+    }
 }
 
 /// The cascade winners of the legacy `white-space` shorthand and of the
@@ -1236,11 +1273,13 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
 /// reuses it here and in phase 3 (`absolutize_in_page_context` in
 /// [`crate::page`]). Because `inherited` is unchanged throughout the function,
 /// computing it twice would yield the same result (see the caller's docs).
-pub(crate) fn inherited_border_radius(value: ComputedLengthPercentage) -> Length {
-    match value {
+pub(crate) fn inherited_border_radius(
+    value: crate::property::CornerRadius<ComputedLengthPercentage>,
+) -> crate::property::CornerRadius<Length> {
+    value.map(|axis| match axis {
         ComputedLengthPercentage::Px(px) => Length::Px(px),
         ComputedLengthPercentage::Percent(percent) => Length::Percent(percent),
-    }
+    })
 }
 
 /// Resolve one border width longhand CSS-wide marker for the page path
@@ -1411,6 +1450,11 @@ fn resolve_defaulting_value(value: PropertyValue, inherited: &ComputedValues) ->
     if let PropertyValue::Deferred(marker) = &value
         && let Some(keyword) = marker.css_wide_keyword()
     {
+        let radius = if keyword == CssWideKeyword::Inherit {
+            inherited_border_radius_value(inherited)
+        } else {
+            BorderRadius::elliptical([Length::Px(0.0); 4], [Length::Px(0.0); 4])
+        };
         let initial = keyword == CssWideKeyword::Initial;
         match marker.key {
             crate::property::PropertyKey::VerticalAlign => {
@@ -1419,6 +1463,18 @@ fn resolve_defaulting_value(value: PropertyValue, inherited: &ComputedValues) ->
                 } else {
                     crate::property::VerticalAlign::Baseline
                 });
+            }
+            crate::property::PropertyKey::BorderRadiusTopLeft => {
+                return PropertyValue::BorderRadiusTopLeft(radius.top_left);
+            }
+            crate::property::PropertyKey::BorderRadiusTopRight => {
+                return PropertyValue::BorderRadiusTopRight(radius.top_right);
+            }
+            crate::property::PropertyKey::BorderRadiusBottomRight => {
+                return PropertyValue::BorderRadiusBottomRight(radius.bottom_right);
+            }
+            crate::property::PropertyKey::BorderRadiusBottomLeft => {
+                return PropertyValue::BorderRadiusBottomLeft(radius.bottom_left);
             }
             crate::property::PropertyKey::ListStyleType => {
                 return PropertyValue::ListStyleType(if initial {
@@ -1448,6 +1504,7 @@ fn resolve_defaulting_value(value: PropertyValue, inherited: &ComputedValues) ->
         value,
         inherited.color,
         inherited.background_color,
+        inherited.background_color_expression.as_ref(),
         inherited.font_size,
     )
 }
@@ -1457,6 +1514,7 @@ pub(crate) fn resolve_css_wide_color_font(
     value: PropertyValue,
     inherited_color: crate::property::CssColor,
     inherited_background: crate::property::CssColor,
+    inherited_background_expression: Option<&smol_str::SmolStr>,
     inherited_font_size: ComputedLength,
 ) -> PropertyValue {
     let PropertyValue::Deferred(marker) = &value else {
@@ -1473,6 +1531,15 @@ pub(crate) fn resolve_css_wide_color_font(
     let Some(keyword) = marker.css_wide_keyword() else {
         return value;
     };
+    if marker.key == crate::property::PropertyKey::BackgroundColor
+        && keyword == CssWideKeyword::Inherit
+        && let Some(source) = inherited_background_expression
+    {
+        return PropertyValue::ContextualColor(crate::property::ContextualColor {
+            source: source.clone(),
+            key: marker.key,
+        });
+    }
     let inherit = keyword == CssWideKeyword::Inherit
         || (keyword != CssWideKeyword::Initial
             && marker.key != crate::property::PropertyKey::BackgroundColor);
@@ -2078,6 +2145,7 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::AllRevertLayer
         | PropertyValue::CustomProperty(_)
         | PropertyValue::Deferred(_)
+        | PropertyValue::ContextualColor(_)
         | PropertyValue::Grid(_)
         | PropertyValue::GridArea(_)
         | PropertyValue::LineBreak(_)
@@ -2164,7 +2232,22 @@ impl ResolvedAgainstInherited {
 pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
     match value {
         PropertyValue::Color(c) => target.color = c,
-        PropertyValue::BackgroundColor(c) => target.background_color = c,
+        PropertyValue::BackgroundColor(c) => {
+            target.background_color = c;
+            target.background_color_expression = None;
+        }
+        PropertyValue::ContextualColor(value) => {
+            if value.key == crate::property::PropertyKey::Color {
+                // Color is applied while the staging value still holds its inherited basis.
+                if let Some(color) =
+                    crate::property::resolve_contextual_color(&value.source, target.color)
+                {
+                    target.color = color;
+                }
+            } else {
+                target.background_color_expression = Some(value.source);
+            }
+        }
         PropertyValue::FontFamily(f) => target.font_family = f,
         PropertyValue::FontSize(s) => target.font_size = s,
         PropertyValue::FontSizeRelative(rel) => {

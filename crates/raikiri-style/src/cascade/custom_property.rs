@@ -61,9 +61,16 @@ pub(crate) fn resolve_deferred_value(
             return calc_length_percentage_value(deferred.key, value);
         }
     };
+    let property = if deferred.property.as_str() == "border-radius"
+        && crate::property::CssWideKeyword::from_css_ident(simplified.trim()).is_some()
+    {
+        radius_corner_property(deferred.key).unwrap_or(&deferred.property)
+    } else {
+        &deferred.property
+    };
     let mut input = ParserInput::new(simplified.as_ref());
     let mut parser = Parser::new(&mut input);
-    let value = parse_value(&deferred.property, &mut parser)?;
+    let value = parse_value(property, &mut parser)?;
     parser.expect_exhausted().ok()?;
     project_deferred_value(value, deferred.key)
 }
@@ -145,6 +152,16 @@ pub(crate) fn parse_simple_calc_length_percentage(input: &str) -> Option<CalcLen
     (result.percent.is_finite() && result.px.is_finite()).then_some(result)
 }
 
+fn radius_corner_property(key: PropertyKey) -> Option<&'static str> {
+    Some(match key {
+        PropertyKey::BorderRadiusTopLeft => "border-top-left-radius",
+        PropertyKey::BorderRadiusTopRight => "border-top-right-radius",
+        PropertyKey::BorderRadiusBottomRight => "border-bottom-right-radius",
+        PropertyKey::BorderRadiusBottomLeft => "border-bottom-left-radius",
+        _ => return None,
+    })
+}
+
 pub(crate) fn project_deferred_value(
     value: PropertyValue,
     key: crate::property::PropertyKey,
@@ -173,6 +190,19 @@ pub(crate) fn project_deferred_value(
         return Some(value);
     }
     Some(match value {
+        PropertyValue::BorderRadius(radius) => match key {
+            PropertyKey::BorderRadiusTopLeft => PropertyValue::BorderRadiusTopLeft(radius.top_left),
+            PropertyKey::BorderRadiusTopRight => {
+                PropertyValue::BorderRadiusTopRight(radius.top_right)
+            }
+            PropertyKey::BorderRadiusBottomRight => {
+                PropertyValue::BorderRadiusBottomRight(radius.bottom_right)
+            }
+            PropertyKey::BorderRadiusBottomLeft => {
+                PropertyValue::BorderRadiusBottomLeft(radius.bottom_left)
+            }
+            _ => return None,
+        },
         PropertyValue::Padding(sides) => match key {
             crate::property::PropertyKey::PaddingTop => PropertyValue::PaddingTop(sides.top),
             crate::property::PropertyKey::PaddingRight => PropertyValue::PaddingRight(sides.right),
@@ -620,9 +650,12 @@ pub(crate) fn project_deferred_value(
             _ => return None,
         },
         PropertyValue::Background(shorthand) => match key {
-            crate::property::PropertyKey::BackgroundColor => {
-                PropertyValue::BackgroundColor(shorthand.color)
-            }
+            crate::property::PropertyKey::BackgroundColor => match shorthand.color_expression {
+                Some(source) => {
+                    PropertyValue::ContextualColor(crate::property::ContextualColor { source, key })
+                }
+                None => PropertyValue::BackgroundColor(shorthand.color),
+            },
             crate::property::PropertyKey::BackgroundImage => {
                 PropertyValue::BackgroundImage(shorthand.image)
             }

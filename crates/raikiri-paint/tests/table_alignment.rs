@@ -12,6 +12,601 @@ const AHEM: &[u8] = include_bytes!(concat!(
     "/../raikiri-dom/tests/data/text-autospace/Ahem.ttf"
 ));
 
+#[test]
+fn fifth_review_empty_caption_uses_grid_border_box_without_double_padding() {
+    for (caption_css, width, caption_width, x, height) in [
+        ("", 20.0, 20.0, 0, 10),
+        ("width:100px", 100.0, 100.0, 0, 10),
+        (
+            "width:80px;padding:0 3px;border:2px solid blue;margin:0 5px",
+            100.0,
+            90.0,
+            5,
+            14,
+        ),
+    ] {
+        let (mut doc, body) = document();
+        let table = element(
+            &mut doc,
+            body,
+            "display:table;padding:0 10px;border-spacing:0;background:green",
+        );
+        let caption = element(
+            &mut doc,
+            table,
+            &format!("display:table-caption;height:10px;background:blue;{caption_css}"),
+        );
+        let computed = layout(&mut doc);
+        assert_eq!(
+            doc.get_node(table).unwrap().unrounded_layout.size.width,
+            width
+        );
+        assert_eq!(
+            doc.get_node(caption).unwrap().unrounded_layout.size.width,
+            caption_width
+        );
+        assert_eq!(
+            doc.get_node(caption).unwrap().unrounded_layout.location.x,
+            x as f32
+        );
+        let (mut reference, body) = document();
+        element(
+            &mut reference,
+            body,
+            &format!(
+                "position:absolute;left:{x}px;top:0;width:{caption_width}px;height:{height}px;background:blue"
+            ),
+        );
+        let expected = layout(&mut reference);
+        assert_exact_pixels(
+            raster(scene(&doc, &computed)),
+            raster(scene(&reference, &expected)),
+        );
+    }
+}
+
+#[test]
+fn fifth_review_all_hidden_empty_row_has_zero_height_and_one_spacing_side() {
+    for rows in [1, 2] {
+        let (mut doc, body) = document();
+        let table = element(
+            &mut doc,
+            body,
+            "display:table;width:40px;border-spacing:0 5px;empty-cells:hide;background:green",
+        );
+        let mut cells = Vec::new();
+        for _ in 0..rows {
+            let row = element(&mut doc, table, "display:table-row;height:30px");
+            cells.push(element(
+                &mut doc,
+                row,
+                "display:table-cell;height:20px;padding:2px;border:1px solid red;background:red",
+            ));
+        }
+        for _ in 0..2 {
+            let computed = layout(&mut doc);
+            assert_eq!(
+                doc.get_node(table).unwrap().unrounded_layout.size.height,
+                5.0
+            );
+            for &cell in &cells {
+                assert_eq!(
+                    doc.get_node(cell).unwrap().unrounded_layout.size.height,
+                    0.0
+                );
+                assert_eq!(doc.get_node(cell).unwrap().unrounded_layout.location.y, 5.0);
+            }
+            let (mut reference, body) = document();
+            element(
+                &mut reference,
+                body,
+                "position:absolute;left:0;top:0;width:40px;height:5px;background:green",
+            );
+            let expected = layout(&mut reference);
+            assert_exact_pixels(
+                raster(scene(&doc, &computed)),
+                raster(scene(&reference, &expected)),
+            );
+        }
+    }
+}
+
+#[test]
+fn fifth_review_hidden_first_middle_and_last_rows_keep_visible_row_origins() {
+    for hidden_row in 0..3 {
+        let (mut doc, body) = document();
+        let table = element(
+            &mut doc,
+            body,
+            "display:table;width:40px;border-spacing:0 5px;empty-cells:hide;background:green",
+        );
+        let mut cells = Vec::new();
+        for index in 0..3 {
+            let row = element(&mut doc, table, "display:table-row");
+            let cell = element(
+                &mut doc,
+                row,
+                "display:table-cell;background:blue;vertical-align:top",
+            );
+            if index != hidden_row {
+                element(&mut doc, cell, "display:block;height:10px");
+            }
+            cells.push(cell);
+        }
+        let computed = layout(&mut doc);
+        assert_eq!(
+            doc.get_node(table).unwrap().unrounded_layout.size.height,
+            35.0
+        );
+        let mut next_y = 5.0;
+        for (index, cell) in cells.into_iter().enumerate() {
+            let actual = doc.get_node(cell).unwrap().unrounded_layout;
+            assert_eq!(actual.location.y, next_y);
+            assert_eq!(
+                actual.size.height,
+                if index == hidden_row { 0.0 } else { 10.0 }
+            );
+            if index != hidden_row {
+                next_y += 15.0;
+            }
+        }
+        let (mut reference, body) = document();
+        element(
+            &mut reference,
+            body,
+            "position:absolute;left:0;top:0;width:40px;height:35px;background:green",
+        );
+        for y in [5, 20] {
+            element(
+                &mut reference,
+                body,
+                &format!(
+                    "position:absolute;left:0;top:{y}px;width:40px;height:10px;background:blue"
+                ),
+            );
+        }
+        let expected = layout(&mut reference);
+        assert_exact_pixels(
+            raster(scene(&doc, &computed)),
+            raster(scene(&reference, &expected)),
+        );
+    }
+}
+
+#[test]
+fn fifth_review_empty_row_classification_resets_for_show_collapse_and_new_content() {
+    let (mut doc, body) = document();
+    let table = element(
+        &mut doc,
+        body,
+        "display:table;width:40px;border-spacing:0 5px;empty-cells:hide;background:green",
+    );
+    let row = element(&mut doc, table, "display:table-row");
+    let cell = element(
+        &mut doc,
+        row,
+        "display:table-cell;height:20px;background:blue",
+    );
+    for (model, empty, height) in [
+        ("separate", "hide", 5.0),
+        ("separate", "show", 30.0),
+        ("separate", "hide", 5.0),
+        ("collapse", "hide", 20.0),
+        ("separate", "hide", 5.0),
+    ] {
+        doc.set_element_attribute(table, "style", format!("display:table;width:40px;border-spacing:0 5px;empty-cells:{empty};border-collapse:{model};background:green")).unwrap();
+        let computed = layout(&mut doc);
+        assert_eq!(
+            doc.get_node(table).unwrap().unrounded_layout.size.height,
+            height
+        );
+        assert_eq!(
+            raikiri_dom::paint_rules::hides_empty_table_cell(&doc, &computed, cell),
+            height == 5.0
+        );
+    }
+    element(&mut doc, cell, "display:block;height:10px");
+    let computed = layout(&mut doc);
+    assert!(!raikiri_dom::paint_rules::hides_empty_table_cell(
+        &doc, &computed, cell
+    ));
+    assert_eq!(
+        doc.get_node(table).unwrap().unrounded_layout.size.height,
+        30.0
+    );
+}
+
+#[test]
+fn fifth_review_nonempty_rowspan_prevents_empty_rows_from_collapsing() {
+    let (mut doc, body) = document();
+    let table = element(
+        &mut doc,
+        body,
+        "display:table;width:40px;border-spacing:0 5px;empty-cells:hide;background:green",
+    );
+    let first = element(&mut doc, table, "display:table-row");
+    let span = element(
+        &mut doc,
+        first,
+        "display:table-cell;width:20px;height:25px;vertical-align:top;background:blue",
+    );
+    doc.set_element_attributes(span, vec![("rowspan".into(), "2".into())]);
+    element(&mut doc, span, "display:block;height:25px");
+    element(&mut doc, first, "display:table-cell;width:20px");
+    let second = element(&mut doc, table, "display:table-row");
+    let empty = element(&mut doc, second, "display:table-cell;width:20px");
+    let computed = layout(&mut doc);
+    assert_eq!(
+        doc.get_node(table).unwrap().unrounded_layout.size.height,
+        35.0
+    );
+    assert_eq!(
+        doc.get_node(span).unwrap().unrounded_layout.size.height,
+        25.0
+    );
+    assert_eq!(
+        doc.get_node(empty).unwrap().unrounded_layout.location.y,
+        20.0
+    );
+    assert_eq!(
+        doc.get_node(empty).unwrap().unrounded_layout.size.height,
+        10.0
+    );
+    let (mut reference, body) = document();
+    element(
+        &mut reference,
+        body,
+        "position:absolute;left:0;top:0;width:40px;height:35px;background:green",
+    );
+    element(
+        &mut reference,
+        body,
+        "position:absolute;left:0;top:5px;width:20px;height:25px;background:blue",
+    );
+    let expected = layout(&mut reference);
+    assert_exact_pixels(
+        raster(scene(&doc, &computed)),
+        raster(scene(&reference, &expected)),
+    );
+}
+
+#[test]
+fn fifth_review_extra_table_height_skips_hidden_rows_and_preserves_mixed_rows() {
+    for visible in [false, true] {
+        let (mut doc, body) = document();
+        let table = element(
+            &mut doc,
+            body,
+            "display:table;width:40px;height:50px;border-spacing:0 5px;empty-cells:hide",
+        );
+        let first = element(&mut doc, table, "display:table-row");
+        let hidden = element(&mut doc, first, "display:table-cell");
+        let second = element(&mut doc, table, "display:table-row");
+        let other = element(
+            &mut doc,
+            second,
+            if visible {
+                "display:table-cell;empty-cells:show"
+            } else {
+                "display:table-cell"
+            },
+        );
+        layout(&mut doc);
+        assert_eq!(
+            doc.get_node(table).unwrap().unrounded_layout.size.height,
+            50.0
+        );
+        assert_eq!(
+            doc.get_node(hidden).unwrap().unrounded_layout.size.height,
+            0.0
+        );
+        assert_eq!(
+            doc.get_node(other).unwrap().unrounded_layout.size.height,
+            if visible { 40.0 } else { 0.0 }
+        );
+    }
+    let (mut doc, body) = document();
+    let table = element(
+        &mut doc,
+        body,
+        "display:table;width:40px;height:50px;border-spacing:0 5px;empty-cells:hide",
+    );
+    let mut cells = Vec::new();
+    for index in 0..3 {
+        let row = element(&mut doc, table, "display:table-row");
+        let cell = element(&mut doc, row, "display:table-cell;vertical-align:top");
+        if index != 1 {
+            element(&mut doc, cell, "display:block;height:10px");
+        }
+        cells.push(cell);
+    }
+    layout(&mut doc);
+    assert_eq!(
+        doc.get_node(table).unwrap().unrounded_layout.size.height,
+        50.0
+    );
+    for (cell, height) in cells.into_iter().zip([17.5, 0.0, 17.5]) {
+        assert_eq!(
+            doc.get_node(cell).unwrap().unrounded_layout.size.height,
+            height
+        );
+    }
+    let (mut doc, body) = document();
+    let table = element(
+        &mut doc,
+        body,
+        "display:table;width:40px;border-spacing:0 5px;empty-cells:hide",
+    );
+    let row = element(&mut doc, table, "display:table-row");
+    element(&mut doc, row, "display:table-cell;width:20px;height:20px");
+    let show = element(
+        &mut doc,
+        row,
+        "display:table-cell;width:20px;height:10px;empty-cells:show",
+    );
+    layout(&mut doc);
+    assert_eq!(
+        doc.get_node(table).unwrap().unrounded_layout.size.height,
+        30.0
+    );
+    assert_eq!(
+        doc.get_node(show).unwrap().unrounded_layout.size.height,
+        20.0
+    );
+}
+
+#[test]
+fn fourth_review_vertical_caption_minimum_constrains_inline_grid_size() {
+    for mode in ["vertical-lr", "vertical-rl"] {
+        for columns in [0, 1, 2] {
+            let (mut doc, body) = document();
+            let table = element(
+                &mut doc,
+                body,
+                &format!(
+                    "display:table;writing-mode:{mode};width:40px;height:40px;border-spacing:0;background:green"
+                ),
+            );
+            element(
+                &mut doc,
+                table,
+                "display:table-caption;caption-side:bottom;width:10px;min-height:100px;background:blue",
+            );
+            let row = element(&mut doc, table, "display:table-row");
+            let cells: Vec<_> = (0..columns)
+                .map(|_| {
+                    element(
+                        &mut doc,
+                        row,
+                        "display:table-cell;height:40px;vertical-align:top",
+                    )
+                })
+                .collect();
+            let computed = layout(&mut doc);
+            let grid = doc.get_node(table).unwrap().table_grid_box().unwrap();
+            assert_eq!(grid.height, 100.0, "{mode}/{columns}");
+            for (index, cell) in cells.into_iter().enumerate() {
+                let cell = doc.get_node(cell).unwrap().unrounded_layout;
+                assert_eq!(cell.size.height, 100.0 / columns as f32);
+                assert_eq!(cell.location.y, index as f32 * 100.0 / columns as f32);
+            }
+            let (grid_x, caption_x) = if mode == "vertical-lr" {
+                (0, 40)
+            } else {
+                (10, 0)
+            };
+            let (mut reference, body) = document();
+            element(
+                &mut reference,
+                body,
+                &format!(
+                    "position:absolute;left:{grid_x}px;top:0;width:40px;height:100px;background:green"
+                ),
+            );
+            element(
+                &mut reference,
+                body,
+                &format!(
+                    "position:absolute;left:{caption_x}px;top:0;width:10px;height:100px;background:blue"
+                ),
+            );
+            let expected = layout(&mut reference);
+            assert_exact_pixels(
+                raster(scene(&doc, &computed)),
+                raster(scene(&reference, &expected)),
+            );
+        }
+    }
+}
+
+#[test]
+fn fourth_review_opposite_vertical_cells_use_their_own_block_direction() {
+    for (table_mode, cell_mode) in [
+        ("vertical-lr", "vertical-rl"),
+        ("vertical-rl", "vertical-lr"),
+    ] {
+        for (align, x) in [
+            ("top", if cell_mode == "vertical-rl" { 30 } else { 0 }),
+            ("middle", 15),
+            ("bottom", if cell_mode == "vertical-rl" { 0 } else { 30 }),
+        ] {
+            let (mut doc, body) = document();
+            let table = element(
+                &mut doc,
+                body,
+                &format!(
+                    "display:table;writing-mode:{table_mode};width:40px;height:30px;border-spacing:0;background:blue"
+                ),
+            );
+            let row = element(&mut doc, table, "display:table-row");
+            let cell = element(
+                &mut doc,
+                row,
+                &format!("display:table-cell;writing-mode:{cell_mode};vertical-align:{align}"),
+            );
+            let child = element(
+                &mut doc,
+                cell,
+                "display:block;width:10px;height:10px;background:green",
+            );
+            for _ in 0..2 {
+                let computed = layout(&mut doc);
+                assert_eq!(
+                    doc.get_node(child).unwrap().unrounded_layout.location.x,
+                    x as f32,
+                    "{table_mode}/{cell_mode}/{align}"
+                );
+                let (mut reference, body) = document();
+                element(
+                    &mut reference,
+                    body,
+                    "position:absolute;left:0;top:0;width:40px;height:30px;background:blue",
+                );
+                element(
+                    &mut reference,
+                    body,
+                    &format!(
+                        "position:absolute;left:{x}px;top:0;width:10px;height:10px;background:green"
+                    ),
+                );
+                let expected = layout(&mut reference);
+                assert_exact_pixels(
+                    raster(scene(&doc, &computed)),
+                    raster(scene(&reference, &expected)),
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn fourth_review_opposite_vertical_inline_ink_uses_cell_padding_direction() {
+    for (table_mode, cell_mode, align, x) in [
+        ("vertical-lr", "vertical-rl", "top", 35),
+        ("vertical-lr", "vertical-rl", "middle", 20),
+        ("vertical-lr", "vertical-rl", "bottom", 5),
+        ("vertical-rl", "vertical-lr", "top", 5),
+        ("vertical-rl", "vertical-lr", "middle", 20),
+        ("vertical-rl", "vertical-lr", "bottom", 35),
+    ] {
+        let (mut doc, body) = document();
+        let table = element(
+            &mut doc,
+            body,
+            &format!(
+                "display:table;writing-mode:{table_mode};width:46px;height:36px;border-spacing:0"
+            ),
+        );
+        let row = element(&mut doc, table, "display:table-row");
+        let cell = element(
+            &mut doc,
+            row,
+            &format!(
+                "display:table-cell;writing-mode:{cell_mode};box-sizing:border-box;width:46px;height:36px;padding:2px 0 2px 4px;border:1px solid black;background:blue;color:green;vertical-align:{align}"
+            ),
+        );
+        doc.append_text(cell, "X");
+        let (mut reference, body) = document();
+        element(
+            &mut reference,
+            body,
+            "position:absolute;left:0;top:0;box-sizing:border-box;width:46px;height:36px;border:1px solid black;background:blue",
+        );
+        element(
+            &mut reference,
+            body,
+            &format!(
+                "position:absolute;left:{x}px;top:3px;width:10px;height:10px;background:green"
+            ),
+        );
+        let expected = layout(&mut reference);
+        let expected = raster(scene(&reference, &expected));
+        for _ in 0..2 {
+            let computed = layout(&mut doc);
+            assert_exact_pixels(raster(scene(&doc, &computed)), expected.clone());
+        }
+    }
+}
+
+#[test]
+fn fourth_review_vertical_caption_minimum_includes_margins_and_grid_edges() {
+    for mode in ["vertical-lr", "vertical-rl"] {
+        for (columns, cell_height, ys) in [(1, 90.0, vec![5.0]), (2, 44.0, vec![5.0, 51.0])] {
+            let (mut doc, body) = document();
+            let table = element(
+                &mut doc,
+                body,
+                &format!(
+                    "display:table;writing-mode:{mode};width:40px;height:40px;padding:2px;border:1px solid black;border-spacing:0 2px;background:green"
+                ),
+            );
+            let caption = element(
+                &mut doc,
+                table,
+                "display:table-caption;caption-side:bottom;width:10px;min-height:90px;margin-top:5px;margin-bottom:5px;background:blue",
+            );
+            let row = element(&mut doc, table, "display:table-row");
+            let cells: Vec<_> = (0..columns)
+                .map(|_| {
+                    element(
+                        &mut doc,
+                        row,
+                        "display:table-cell;height:40px;vertical-align:top",
+                    )
+                })
+                .collect();
+            let computed = layout(&mut doc);
+            let (grid_x, caption_x) = if mode == "vertical-lr" {
+                (0.0, 46.0)
+            } else {
+                (10.0, 0.0)
+            };
+            let grid = doc.get_node(table).unwrap().table_grid_box().unwrap();
+            assert_eq!((grid.x, grid.width, grid.height), (grid_x, 46.0, 100.0));
+            let caption = doc.get_node(caption).unwrap().unrounded_layout;
+            assert_eq!(
+                (caption.location.x, caption.location.y, caption.size.height),
+                (caption_x, 5.0, 90.0)
+            );
+            for (cell, y) in cells.into_iter().zip(ys) {
+                let cell = doc.get_node(cell).unwrap().unrounded_layout;
+                assert_eq!(
+                    (cell.location.x, cell.location.y, cell.size.height),
+                    (grid_x + 3.0, y, cell_height)
+                );
+            }
+            let (mut reference, body) = document();
+            element(
+                &mut reference,
+                body,
+                &format!(
+                    "position:absolute;left:{grid_x}px;top:0;width:46px;height:100px;background:black"
+                ),
+            );
+            element(
+                &mut reference,
+                body,
+                &format!(
+                    "position:absolute;left:{}px;top:1px;width:44px;height:98px;background:green",
+                    grid_x + 1.0
+                ),
+            );
+            element(
+                &mut reference,
+                body,
+                &format!(
+                    "position:absolute;left:{caption_x}px;top:5px;width:10px;height:90px;background:blue"
+                ),
+            );
+            let expected = layout(&mut reference);
+            assert_exact_pixels(
+                raster(scene(&doc, &computed)),
+                raster(scene(&reference, &expected)),
+            );
+        }
+    }
+}
+
 fn document() -> (Document, usize) {
     let mut doc = Document::new();
     doc.set_font_collection(
@@ -81,6 +676,62 @@ fn assert_exact_pixels(actual: Vec<u8>, expected: Vec<u8>) {
         .map(|(index, colors)| (index % 120, index / 120, colors))
         .collect();
     assert_eq!(differences.len(), 0, "first pixel differences: {first:?}");
+}
+
+#[test]
+fn vertical_baseline_block_children_keep_asymmetric_content_boxes() {
+    for mode in ["vertical-lr", "vertical-rl"] {
+        let parse = |source: &str| {
+            let options = raikiri_html::ParseOptions {
+                extra_stylesheets: &[],
+                network: None,
+                base_url: None,
+            };
+            let mut parsed = raikiri_html::parse(source.as_bytes(), &options).unwrap();
+            let computed = raikiri_html::build_cascaded(&parsed);
+            layout_single_page(&mut parsed.dom, &computed, page()).unwrap();
+            (parsed.dom, computed)
+        };
+        let css = "html,body{margin:0}table,tr,td,.box{border:solid black;border-width:1px 2px 3px 4px;padding:5px 6px 7px 8px;border-spacing:0}td{vertical-align:baseline;background:red;background-clip:content-box}.ink{width:10px;height:20px;background:green}.box{width:fit-content}";
+        let source = format!(
+            "<!doctype html><style>{css}</style><table style='writing-mode:{mode}'><tr><td><div class=ink></div></td><td><div class=ink></div></td></tr></table>"
+        );
+        let (doc, computed) = parse(&source);
+        let cells: Vec<_> = (0..doc.node_count())
+            .filter_map(|id| {
+                let node = doc.get_node(id).unwrap();
+                (node.tag_name() == Some("td")).then_some(node.unrounded_layout)
+            })
+            .collect();
+        assert_eq!(cells.len(), 2);
+        for (index, cell) in cells.iter().enumerate() {
+            assert_eq!(
+                (cell.location.x, cell.location.y),
+                (12.0, 6.0 + 36.0 * index as f32)
+            );
+            assert_eq!((cell.size.width, cell.size.height), (100.0, 36.0));
+            assert_eq!((cell.padding.left, cell.padding.right), (8.0, 76.0));
+        }
+        let children: Vec<_> = (0..doc.node_count())
+            .filter_map(|id| {
+                let node = doc.get_node(id).unwrap();
+                (node.tag_name() == Some("div")).then_some(node.unrounded_layout)
+            })
+            .collect();
+        assert_eq!(children.len(), 2);
+        for child in children {
+            assert_eq!((child.location.x, child.location.y), (12.0, 6.0));
+            assert_eq!((child.size.width, child.size.height), (10.0, 20.0));
+        }
+        let source = format!(
+            "<!doctype html><style>{css}</style><div class=box><div class=box><div class=ink></div></div><div class=box><div class=ink></div></div></div>"
+        );
+        let (reference, reference_computed) = parse(&source);
+        assert_exact_pixels(
+            raster(scene(&doc, &computed)),
+            raster(scene(&reference, &reference_computed)),
+        );
+    }
 }
 
 #[test]
@@ -254,7 +905,7 @@ fn empty_cells_hide_only_separated_empty_backgrounds_and_borders() {
             &mut doc,
             body,
             &format!(
-                "display:table;border-spacing:0;width:20px;border-collapse:{collapse};background:green"
+                "display:table;border-spacing:0;width:20px;height:20px;border-collapse:{collapse};background:green"
             ),
         );
         let row = element(&mut doc, table, "display:table-row;height:20px");

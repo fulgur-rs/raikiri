@@ -38,7 +38,7 @@ use crate::media::MediaContext;
 use crate::page::{
     PageCascadeResult, PageContextQuery, PageInheritance, cascade_page_with_media_context,
 };
-use crate::property::{CssColor, PropertyKey, Sides, WritingMode};
+use crate::property::{CssColor, PropertyKey, WritingMode};
 use crate::ruletree::RuleTree;
 use crate::style_dom::{StyleDom, StyleNode, StyleNodeId, StyleNodeKind};
 
@@ -60,7 +60,11 @@ pub struct CascadeResult {
     /// root element, or the Document node when the tree has no element child.
     root_element_index: usize,
     /// Winning custom-highlight background colors keyed by highlight name.
+    /// Contextual expressions use initial black in this inspection view. Use
+    /// [`Self::custom_highlight_background`] with the originating foreground
+    /// for painting.
     pub custom_highlight_styles: HashMap<String, CssColor>,
+    custom_highlight_sources: HashMap<String, smol_str::SmolStr>,
     /// Per-node computed values (indexed by NodeId.0 as usize).
     /// Populated for Element / Text / Document kinds; out-of-range access
     /// panics and is the caller's responsibility.
@@ -73,13 +77,6 @@ pub struct CascadeResult {
     /// `background-color` declaration. Inline SVG painting uses this to omit
     /// a source-root background when the host declaration computes transparent.
     pub background_color_specified: Vec<bool>,
-    /// Per-node flags identifying margin sides whose winning declaration came
-    /// from an origin other than the user-agent stylesheet.  The paged DOM
-    /// adapter uses this to distinguish an authored `margin: 8px` from the
-    /// minimal UA body's default `margin: 8px` before it builds the synthetic
-    /// page root.  The side order is [`Sides`] top/right/bottom/left and the
-    /// vector follows the same node-index contract as [`Self::computed`].
-    pub non_ua_margin_sides: Vec<Sides<bool>>,
     /// Authored `writing-mode` winners before the computed-value normalization
     /// that currently collapses vertical modes to `horizontal-tb`.  This keeps
     /// paged consumers able to apply physical page-context mapping without
@@ -186,6 +183,22 @@ pub struct CascadeResult {
 }
 
 impl CascadeResult {
+    /// Resolve a named highlight background against its originating foreground.
+    /// Literal backgrounds use the same winning declaration as
+    /// [`Self::custom_highlight_styles`]; contextual expressions remain deferred
+    /// until the caller supplies the foreground of the highlighted text.
+    pub fn custom_highlight_background(
+        &self,
+        name: &str,
+        foreground: CssColor,
+    ) -> Option<CssColor> {
+        if let Some(source) = self.custom_highlight_sources.get(name) {
+            crate::property::resolve_contextual_color(source, foreground)
+        } else {
+            self.custom_highlight_styles.get(name).copied()
+        }
+    }
+
     /// Opaque identity for the cascade run that produced this result.
     ///
     /// Layout caches use it to avoid reusing placement data after a new cascade.
@@ -344,7 +357,6 @@ fn cascade_from_candidates<D: StyleDom>(
     // fills any skipped slot with initial(); the trailing resize below covers
     // unvisited nodes past the last visited id.
     let mut computed: Vec<ComputedValues> = Vec::with_capacity(dom.node_count());
-    let mut non_ua_margin_sides = vec![Sides::all(false); dom.node_count()];
     let mut authored_writing_modes = vec![None; dom.node_count()];
     let mut page_values = vec![crate::property::PageValue::Auto; dom.node_count()];
     let mut pseudo: HashMap<(StyleNodeId, PseudoElem), ComputedValues> = HashMap::new();
@@ -354,7 +366,6 @@ fn cascade_from_candidates<D: StyleDom>(
         &ComputedValues::initial(),
         cascaded,
         &mut computed,
-        &mut non_ua_margin_sides,
         &mut authored_writing_modes,
         &mut page_values,
         &mut pseudo,
@@ -375,10 +386,10 @@ fn cascade_from_candidates<D: StyleDom>(
         generation: NEXT_CASCADE_GENERATION.fetch_add(1, Ordering::Relaxed),
         root_element_index,
         custom_highlight_styles: rule_tree.custom_highlight_styles().clone(),
+        custom_highlight_sources: rule_tree.custom_highlight_sources().clone(),
         computed,
         opacity_specified,
         background_color_specified,
-        non_ua_margin_sides,
         authored_writing_modes,
         page,
         counter_styles: rule_tree.counter_styles_for(media_context),

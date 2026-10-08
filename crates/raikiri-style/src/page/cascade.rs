@@ -89,6 +89,7 @@ pub struct PageContextQuery {
 struct MarginBoxInheritance {
     color: CssColor,
     background_color: CssColor,
+    background_color_expression: Option<SmolStr>,
     font_size: ComputedLength,
     custom_properties: Arc<CustomPropertyEnvironment>,
 }
@@ -98,6 +99,7 @@ impl Default for MarginBoxInheritance {
         Self {
             color: CssColor::BLACK,
             background_color: CssColor::TRANSPARENT,
+            background_color_expression: None,
             font_size: ComputedLength(crate::computed::INITIAL_FONT_SIZE_PX),
             custom_properties: empty_custom_properties(),
         }
@@ -298,12 +300,43 @@ impl PageMarginBoxCascadeResult {
                         value,
                         inherited.color,
                         inherited.background_color,
+                        inherited.background_color_expression.as_ref(),
                         inherited.font_size,
                     ),
                     important: decl.important,
                 })
             })
             .collect();
+        let own_color = merged
+            .declarations
+            .iter()
+            .find_map(|declaration| match &declaration.value {
+                PropertyValue::Color(color) => Some(*color),
+                PropertyValue::ContextualColor(color) if color.key == PropertyKey::Color => {
+                    crate::property::resolve_contextual_color(&color.source, inherited.color)
+                }
+                _ => None,
+            })
+            .unwrap_or(inherited.color);
+        for declaration in &mut merged.declarations {
+            if let PropertyValue::ContextualColor(expression) = &declaration.value {
+                let is_color = expression.key == PropertyKey::Color;
+                let color = crate::property::resolve_contextual_color(
+                    &expression.source,
+                    if is_color { inherited.color } else { own_color },
+                )
+                .unwrap_or(if is_color {
+                    inherited.color
+                } else {
+                    CssColor::TRANSPARENT
+                });
+                declaration.value = if is_color {
+                    PropertyValue::Color(color)
+                } else {
+                    PropertyValue::BackgroundColor(color)
+                };
+            }
+        }
         Some(merged)
     }
 }
@@ -1070,9 +1103,10 @@ pub fn cascade_page_with_media_context(
     // Winner selection — sibling arm to `cascade::pick_winners`.
     let mut best: HashMap<PropertyKey, (u8, u32, PageSpecificity, u32, PropertyValue)> =
         HashMap::new();
+    let mut winner_indices = HashMap::new();
     let mut has_rollback = false;
     let mut has_property_rollback = false;
-    for (value, important, origin, layer, spec, order) in &candidates {
+    for (index, (value, important, origin, layer, spec, order)) in candidates.iter().enumerate() {
         if matches!(value, PropertyValue::AllRevertLayer) {
             has_rollback = true;
             continue;
@@ -1086,10 +1120,12 @@ pub fn cascade_page_with_media_context(
             Some(existing) => {
                 if page_beats(&candidate, existing) {
                     best.insert(key, candidate);
+                    winner_indices.insert(key, index);
                 }
             }
             None => {
                 best.insert(key, candidate);
+                winner_indices.insert(key, index);
             }
         }
     }
@@ -1132,6 +1168,7 @@ pub fn cascade_page_with_media_context(
                 },
             );
             if let Some(index) = selected {
+                winner_indices.insert(*key, index);
                 let (value, important, origin, layer, spec, order) = &candidates[index];
                 *winner = (
                     cascade_rank(*origin, *important),
@@ -1168,7 +1205,23 @@ pub fn cascade_page_with_media_context(
         inherited.font_size,
         used_line_height_length(inherited.line_height, inherited.font_size),
     );
-    let resolved: HashMap<PropertyKey, ResolvedAgainstInherited> = best
+    let radius_keys = [
+        PropertyKey::BorderRadiusTopLeft,
+        PropertyKey::BorderRadiusTopRight,
+        PropertyKey::BorderRadiusBottomRight,
+        PropertyKey::BorderRadiusBottomLeft,
+    ];
+    let radius_precedence: HashMap<_, _> = best
+        .iter()
+        .filter(|(key, _)| **key == PropertyKey::BorderRadius || radius_keys.contains(key))
+        .map(|(&key, winner)| {
+            (
+                key,
+                (winner.0, winner.1, winner.2, winner.3, winner_indices[&key]),
+            )
+        })
+        .collect();
+    let mut resolved: HashMap<PropertyKey, ResolvedAgainstInherited> = best
         .into_iter()
         .filter_map(|(k, (_, _, _, _, value))| {
             let value = match value {
@@ -1180,6 +1233,116 @@ pub fn cascade_page_with_media_context(
             Some((k, resolve_against_inherited(value, inherited, &ctx)))
         })
         .collect();
+
+    // Settle the retained shorthand and corner winners before exposing a map
+    // that no longer carries declaration order. Invalid winning values reset
+    // their corners instead of revealing an older declaration.
+    if !radius_precedence.is_empty() {
+        let zero = crate::property::CornerRadius::circular(Length::Px(0.0));
+        let shorthand = match resolved
+            .get(&PropertyKey::BorderRadius)
+            .map(ResolvedAgainstInherited::as_property_value)
+        {
+            Some(PropertyValue::BorderRadius(radius)) => *radius,
+            _ => crate::property::BorderRadius::elliptical(
+                [Length::Px(0.0); 4],
+                [Length::Px(0.0); 4],
+            ),
+        };
+        let mut corners = [
+            shorthand.top_left,
+            shorthand.top_right,
+            shorthand.bottom_right,
+            shorthand.bottom_left,
+        ];
+        let values: [fn(crate::property::CornerRadius<Length>) -> PropertyValue; 4] = [
+            PropertyValue::BorderRadiusTopLeft,
+            PropertyValue::BorderRadiusTopRight,
+            PropertyValue::BorderRadiusBottomRight,
+            PropertyValue::BorderRadiusBottomLeft,
+        ];
+        for (index, key) in radius_keys.into_iter().enumerate() {
+            let longhand_wins = radius_precedence.get(&key).is_some_and(|rank| {
+                radius_precedence
+                    .get(&PropertyKey::BorderRadius)
+                    .is_none_or(|shorthand| rank > shorthand)
+            });
+            if longhand_wins {
+                corners[index] = match resolved
+                    .get(&key)
+                    .map(ResolvedAgainstInherited::as_property_value)
+                {
+                    Some(
+                        PropertyValue::BorderRadiusTopLeft(corner)
+                        | PropertyValue::BorderRadiusTopRight(corner)
+                        | PropertyValue::BorderRadiusBottomRight(corner)
+                        | PropertyValue::BorderRadiusBottomLeft(corner),
+                    ) => *corner,
+                    _ => zero,
+                };
+            }
+            if radius_precedence.contains_key(&key) {
+                resolved.insert(
+                    key,
+                    resolve_against_inherited(values[index](corners[index]), inherited, &ctx),
+                );
+            }
+        }
+        let [top_left, top_right, bottom_right, bottom_left] = corners;
+        resolved.insert(
+            PropertyKey::BorderRadius,
+            resolve_against_inherited(
+                PropertyValue::BorderRadius(crate::property::BorderRadius {
+                    top_left,
+                    top_right,
+                    bottom_right,
+                    bottom_left,
+                }),
+                inherited,
+                &ctx,
+            ),
+        );
+    }
+
+    // Page winner iteration has no ordering guarantee. Settle its color first,
+    // then use that same color for every contextual background expression.
+    let own_color = match resolved
+        .get(&PropertyKey::Color)
+        .map(ResolvedAgainstInherited::as_property_value)
+    {
+        Some(PropertyValue::Color(color)) => *color,
+        Some(PropertyValue::ContextualColor(color)) => {
+            crate::property::resolve_contextual_color(&color.source, inherited.color)
+                .unwrap_or(inherited.color)
+        }
+        _ => inherited.color,
+    };
+    let background_color_expression = match resolved
+        .get(&PropertyKey::BackgroundColor)
+        .map(ResolvedAgainstInherited::as_property_value)
+    {
+        Some(PropertyValue::ContextualColor(expression)) => Some(expression.source.clone()),
+        _ => None,
+    };
+    for (key, value) in &mut resolved {
+        if let PropertyValue::ContextualColor(color) = value.as_property_value()
+            && let Some(color) = crate::property::resolve_contextual_color(
+                &color.source,
+                if *key == PropertyKey::Color {
+                    inherited.color
+                } else {
+                    own_color
+                },
+            )
+        {
+            let value_resolved = if *key == PropertyKey::Color {
+                PropertyValue::Color(color)
+            } else {
+                PropertyValue::BackgroundColor(color)
+            };
+            *value = resolve_against_inherited(value_resolved, inherited, &ctx);
+        }
+    }
 
     // Step 4 (phase 3): absolutize the remaining lengths against the page
     // context's own font-size and apply the `border-*-width` style gate.
@@ -1206,6 +1369,7 @@ pub fn cascade_page_with_media_context(
     // the page context's *own* resolved line-height, not the root's.
     let own_line_height = page_context_line_height_basis(&resolved, inherited, font_size, &ctx);
     let margin_box_inheritance = MarginBoxInheritance {
+        background_color_expression,
         color: match resolved
             .get(&PropertyKey::Color)
             .map(ResolvedAgainstInherited::as_property_value)

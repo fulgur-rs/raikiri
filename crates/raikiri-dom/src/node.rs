@@ -361,6 +361,9 @@ pub struct Node {
     pub(crate) border_spacing: ComputedBorderSpacing,
     /// Computed alignment used by the native table cell placement pass.
     pub(crate) table_vertical_align: VerticalAlign,
+    /// Whether separate-border empty-cell rules suppress this cell's box.
+    /// Recomputed by the style bridge before every layout pass.
+    pub(crate) hides_empty_table_cell: bool,
     /// Computed caption position consumed by the native table layout.
     pub(crate) caption_side: CaptionSideValue,
     /// The table grid's border box within its wrapper, excluding captions.
@@ -470,6 +473,7 @@ impl Node {
             display: DisplayValue::Inline,
             table_layout: TableLayoutValue::Auto,
             table_vertical_align: VerticalAlign::Baseline,
+            hides_empty_table_cell: false,
             caption_side: CaptionSideValue::Top,
             table_grid_box: None,
             table_first_baseline: None,
@@ -513,6 +517,7 @@ impl Node {
             display: DisplayValue::Inline,
             table_layout: TableLayoutValue::Auto,
             table_vertical_align: VerticalAlign::Baseline,
+            hides_empty_table_cell: false,
             caption_side: CaptionSideValue::Top,
             table_grid_box: None,
             table_first_baseline: None,
@@ -560,6 +565,7 @@ impl Node {
             display: DisplayValue::Inline,
             table_layout: TableLayoutValue::Auto,
             table_vertical_align: VerticalAlign::Baseline,
+            hides_empty_table_cell: false,
             caption_side: CaptionSideValue::Top,
             table_grid_box: None,
             table_first_baseline: None,
@@ -602,6 +608,7 @@ impl Node {
             display: DisplayValue::Inline,
             table_layout: TableLayoutValue::Auto,
             table_vertical_align: VerticalAlign::Baseline,
+            hides_empty_table_cell: false,
             caption_side: CaptionSideValue::Top,
             table_grid_box: None,
             table_first_baseline: None,
@@ -641,6 +648,7 @@ impl Node {
             display: DisplayValue::Inline,
             table_layout: TableLayoutValue::Auto,
             table_vertical_align: VerticalAlign::Baseline,
+            hides_empty_table_cell: false,
             caption_side: CaptionSideValue::Top,
             table_grid_box: None,
             table_first_baseline: None,
@@ -682,6 +690,7 @@ impl Node {
             display: DisplayValue::Inline,
             table_layout: TableLayoutValue::Auto,
             table_vertical_align: VerticalAlign::Baseline,
+            hides_empty_table_cell: false,
             caption_side: CaptionSideValue::Top,
             table_grid_box: None,
             table_first_baseline: None,

@@ -305,6 +305,8 @@ pub struct ComputedValues {
     /// the background-color property"
     /// <https://www.w3.org/TR/css-backgrounds-3/#background-color>.
     pub background_color: CssColor,
+    /// Symbolic background color retained for explicit inheritance.
+    pub(crate) background_color_expression: Option<SmolStr>,
     /// `font-family`, in priority order. Inherited. CSS Fonts 4 §2.1
     /// <https://www.w3.org/TR/css-fonts-4/#font-family-prop> specifies an initial
     /// value of "depends on user agent" rather than a particular family name
@@ -700,9 +702,9 @@ pub struct ComputedValues {
     ///   [`border-color`](https://www.w3.org/TR/css-backgrounds-3/#border-color) /
     ///   [`border shorthand`](https://www.w3.org/TR/css-backgrounds-3/#border-shorthands).
     pub border: Sides<ComputedBorder>,
-    /// Computed lengths at the four `border-radius` corners. **Not inherited**;
-    /// initial: `0px` at every corner. Percentages and elliptical forms are
-    /// outside the specified parser's scope.
+    /// Independent computed horizontal and vertical radii at each physical
+    /// corner. **Not inherited**; initial: `0px` on both axes. Percentages are
+    /// retained until [`ComputedBorderRadius::used`] resolves the border box.
     pub border_radius: ComputedBorderRadius,
     /// Computed `box-shadow` list. **Not inherited**; initial: empty list
     /// (`none`). Painting the shadows is the paint layer's responsibility.
@@ -1805,6 +1807,7 @@ impl ComputedValues {
             color: CssColor::BLACK,
             // CSS Backgrounds 3 §2.2: initial background-color is `transparent`.
             background_color: CssColor::TRANSPARENT,
+            background_color_expression: None,
             // Shared Arc slot avoids a per-node allocation (see the
             // documentation for `initial_font_family`).
             font_family: initial_font_family(),

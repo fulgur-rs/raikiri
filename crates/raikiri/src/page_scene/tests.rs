@@ -3,6 +3,146 @@ use crate::LimitKind;
 use crate::build_cascaded;
 use raikiri_html::{ParseOptions, parse};
 
+#[test]
+fn table_scene_geometry_excludes_caption_wrapper_space() {
+    for (mode, side, table_size, caption_size, grid, caption) in [
+        (
+            "horizontal-tb",
+            "top",
+            (40.0, 20.0),
+            (40.0, 10.0),
+            (0.0, 10.0, 40.0, 20.0),
+            (0.0, 0.0, 40.0, 10.0),
+        ),
+        (
+            "horizontal-tb",
+            "bottom",
+            (40.0, 20.0),
+            (40.0, 10.0),
+            (0.0, 0.0, 40.0, 20.0),
+            (0.0, 20.0, 40.0, 10.0),
+        ),
+        (
+            "vertical-lr",
+            "top",
+            (20.0, 40.0),
+            (10.0, 40.0),
+            (10.0, 0.0, 20.0, 40.0),
+            (0.0, 0.0, 10.0, 40.0),
+        ),
+        (
+            "vertical-rl",
+            "top",
+            (20.0, 40.0),
+            (10.0, 40.0),
+            (0.0, 0.0, 20.0, 40.0),
+            (20.0, 0.0, 10.0, 40.0),
+        ),
+    ] {
+        let html = format!(
+            "<!doctype html><style>html,body{{margin:0;padding:0}} table{{border-spacing:0;writing-mode:{mode};width:{}px;height:{}px}} caption{{caption-side:{side};margin:0;padding:0;width:{}px;height:{}px}} td{{padding:0;width:{}px;height:{}px}}</style><table id=t><caption id=c></caption><tr><td id=d></td></tr></table>",
+            table_size.0, table_size.1, caption_size.0, caption_size.1, table_size.0, table_size.1
+        );
+        let opts = ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        };
+        let uncascaded = parse(html.as_bytes(), &opts).unwrap();
+        let cascade = build_cascaded(&uncascaded);
+        let mut dom = uncascaded.dom;
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 100.0;
+        raikiri_dom::layout_single_page(&mut dom, &cascade, page).unwrap();
+        let scene = build_page_scene(&dom, &cascade, page);
+        let id = |name| {
+            NodeId::new(
+                (0..dom.node_count())
+                    .find(|&i| dom.element_attribute(i, "id") == Some(name))
+                    .unwrap() as u64,
+            )
+        };
+        let table = id("t");
+        let rect = scene.fragments[&table].first().unwrap();
+        assert_eq!(
+            (rect.x, rect.y, rect.width, rect.height),
+            grid,
+            "{mode}/{side}"
+        );
+        assert_eq!(
+            scene.drawables.block_styles[&table].layout_size,
+            Some(table_size)
+        );
+        let rect = scene.fragments[&id("c")].first().unwrap();
+        assert_eq!((rect.x, rect.y, rect.width, rect.height), caption);
+        let rect = scene.fragments[&id("d")].first().unwrap();
+        assert_eq!((rect.x, rect.y, rect.width, rect.height), grid);
+        let wrapper = dom.get_node(table.0 as usize).unwrap().unrounded_layout;
+        let wrapper_size = if mode == "horizontal-tb" {
+            (40.0, 30.0)
+        } else {
+            (30.0, 40.0)
+        };
+        assert_eq!((wrapper.size.width, wrapper.size.height), wrapper_size);
+    }
+}
+
+#[test]
+fn table_scene_grid_does_not_intersect_a_caption_only_page() {
+    for caption in ["", "<caption id=c></caption>"] {
+        let html = format!(
+            "<!doctype html><style>html,body{{margin:0;padding:0}} table{{width:40px;height:20px;border-spacing:0}} caption{{width:40px;height:10px;padding:0;margin:0}} td{{padding:0;height:20px}}</style><table id=t>{caption}<tr><td></td></tr></table>"
+        );
+        let opts = ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        };
+        let uncascaded = parse(html.as_bytes(), &opts).unwrap();
+        let cascade = build_cascaded(&uncascaded);
+        let mut dom = uncascaded.dom;
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 10.0;
+        raikiri_dom::layout_single_page(&mut dom, &cascade, page).unwrap();
+        let table = NodeId::new(
+            (0..dom.node_count())
+                .find(|&i| dom.element_attribute(i, "id") == Some("t"))
+                .unwrap() as u64,
+        );
+        let first = build_page_scene_for_page(&dom, &cascade, page, 0, 0.0);
+        assert_eq!(first.fragments.contains_key(&table), caption.is_empty());
+        assert_eq!(
+            first.drawables.block_styles.contains_key(&table),
+            caption.is_empty()
+        );
+        if !caption.is_empty() {
+            let caption = NodeId::new(
+                (0..dom.node_count())
+                    .find(|&i| dom.element_attribute(i, "id") == Some("c"))
+                    .unwrap() as u64,
+            );
+            assert!(first.fragments.contains_key(&caption));
+        }
+        let second = build_page_scene_for_page(&dom, &cascade, page, 1, 10.0);
+        let rect = second.fragments[&table].first().unwrap();
+        assert_eq!(
+            (rect.x, rect.y, rect.width, rect.height),
+            (
+                0.0,
+                if caption.is_empty() { -10.0 } else { 0.0 },
+                40.0,
+                20.0
+            )
+        );
+        assert_eq!(
+            second.drawables.block_styles[&table].layout_size,
+            Some((40.0, 20.0))
+        );
+    }
+}
+
 /// Parse, cascade, and lay out a hello-world HTML document, then return
 /// the post-layout Document and CascadeResult. Shared smoke-test setup
 /// for build_page_scene.

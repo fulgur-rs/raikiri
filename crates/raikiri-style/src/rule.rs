@@ -214,6 +214,26 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
             push_longhand(PropertyValue::ListStylePosition(value.position));
             push_longhand(PropertyValue::ListStyleImage(value.image.clone()));
         }
+        PropertyValue::BorderRadius(radius) => {
+            push_longhand(PropertyValue::BorderRadiusTopLeft(radius.top_left));
+            push_longhand(PropertyValue::BorderRadiusTopRight(radius.top_right));
+            push_longhand(PropertyValue::BorderRadiusBottomRight(radius.bottom_right));
+            push_longhand(PropertyValue::BorderRadiusBottomLeft(radius.bottom_left));
+        }
+        PropertyValue::BorderRadiusInherit => {
+            for (key, property) in [
+                (PropertyKey::BorderRadiusTopLeft, "border-top-left-radius"),
+                (PropertyKey::BorderRadiusTopRight, "border-top-right-radius"),
+                (PropertyKey::BorderRadiusBottomRight, "border-bottom-right-radius"),
+                (PropertyKey::BorderRadiusBottomLeft, "border-bottom-left-radius"),
+            ] {
+                push_longhand(PropertyValue::Deferred(DeferredValue {
+                    key,
+                    property: property.into(),
+                    value: "inherit".into(),
+                }));
+            }
+        }
         PropertyValue::Margin(sides) => expand_margin(sides, push_longhand),
         PropertyValue::MarginInherit => expand_margin_inherit(push_longhand),
         PropertyValue::Padding(sides) => expand_padding(sides, push_longhand),
@@ -265,6 +285,7 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         | PropertyValue::Grid(_)
         | PropertyValue::GridArea(_)
         | PropertyValue::Color(_)
+        | PropertyValue::ContextualColor(_)
         | PropertyValue::BackgroundColor(_)
         | PropertyValue::FontFamily(_)
         | PropertyValue::FontSize(_)
@@ -411,8 +432,6 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         | PropertyValue::FontVariantCaps(_)
         | PropertyValue::Quotes(_)
         | PropertyValue::TextShadow(_)
-        | PropertyValue::BorderRadius(_)
-        | PropertyValue::BorderRadiusInherit
         | PropertyValue::BorderRadiusTopLeft(_)
         | PropertyValue::BorderRadiusTopRight(_)
         | PropertyValue::BorderRadiusBottomRight(_)
@@ -547,6 +566,12 @@ fn expand_deferred(
     mut push: impl FnMut(Declaration),
 ) {
     let keys: &[PropertyKey] = match deferred.key {
+        PropertyKey::BorderRadius => &[
+            PropertyKey::BorderRadiusTopLeft,
+            PropertyKey::BorderRadiusTopRight,
+            PropertyKey::BorderRadiusBottomRight,
+            PropertyKey::BorderRadiusBottomLeft,
+        ],
         PropertyKey::Padding => &[
             PropertyKey::PaddingTop,
             PropertyKey::PaddingRight,
@@ -1156,7 +1181,16 @@ pub(crate) fn expand_background(
     shorthand: &BackgroundShorthand,
     mut push: impl FnMut(PropertyValue),
 ) {
-    push(PropertyValue::BackgroundColor(shorthand.color));
+    if let Some(source) = &shorthand.color_expression {
+        push(PropertyValue::ContextualColor(
+            crate::property::ContextualColor {
+                source: source.clone(),
+                key: PropertyKey::BackgroundColor,
+            },
+        ));
+    } else {
+        push(PropertyValue::BackgroundColor(shorthand.color));
+    }
     push(PropertyValue::BackgroundImage(shorthand.image.clone()));
     push(PropertyValue::BackgroundRepeat(shorthand.repeat));
     push(PropertyValue::BackgroundAttachment(shorthand.attachment));
