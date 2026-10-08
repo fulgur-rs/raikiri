@@ -54,13 +54,11 @@ pub(crate) fn push_table_attribute_hints<D: StyleDom>(
     };
     if elem.tag_name().eq_ignore_ascii_case("td") || elem.tag_name().eq_ignore_ascii_case("th") {
         for ancestor in ancestors.iter().rev() {
-            let Some(node) = dom.node(*ancestor) else {
-                continue; // cov:ignore: The cascade ancestor path contains IDs of elements already visited.
-            };
-            let Some(table) = node.as_element() else {
-                continue; // cov:ignore: The cascade only puts element nodes in the ancestor path.
-            };
-            if table.namespace_uri().is_none() && table.tag_name().eq_ignore_ascii_case("table") {
+            if let Some(node) = dom.node(*ancestor)
+                && let Some(table) = node.as_element()
+                && table.namespace_uri().is_none()
+                && table.tag_name().eq_ignore_ascii_case("table")
+            {
                 if let Some(padding) = table
                     .attr("cellpadding")
                     .and_then(parse_non_negative_integer)
