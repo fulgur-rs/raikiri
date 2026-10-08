@@ -861,3 +861,245 @@ fn removing_anonymous_content_restores_fresh_explicit_row_geometry() {
         assert_eq!(actual_runs, expected_runs);
     }
 }
+
+#[test]
+fn anonymous_cells_share_css22_empty_row_classification_after_main_integration() {
+    for (row_visibility, child_style, policy, expected_row_height, expected_table_height) in [
+        (
+            "hidden",
+            "visibility:visible",
+            "empty-cells:hide",
+            0.0,
+            30.0,
+        ),
+        (
+            "visible",
+            "visibility:hidden",
+            "empty-cells:hide",
+            0.0,
+            30.0,
+        ),
+        (
+            "visible",
+            "position:absolute;visibility:visible",
+            "empty-cells:hide",
+            0.0,
+            30.0,
+        ),
+        (
+            "visible",
+            "visibility:visible",
+            "empty-cells:hide",
+            20.0,
+            55.0,
+        ),
+        (
+            "hidden",
+            "visibility:visible",
+            "empty-cells:show",
+            20.0,
+            55.0,
+        ),
+        (
+            "hidden",
+            "visibility:visible",
+            "empty-cells:hide;border-collapse:collapse",
+            20.0,
+            40.0,
+        ),
+    ] {
+        let build = |anonymous: bool| {
+            let (mut doc, body) = document();
+            let table = element(
+                &mut doc,
+                body,
+                &format!("display:table;width:40px;border-spacing:0 5px;{policy}"),
+            );
+            let row = element(
+                &mut doc,
+                table,
+                &format!("display:table-row;visibility:{row_visibility}"),
+            );
+            let owner = if anonymous {
+                row
+            } else {
+                element(&mut doc, row, "display:table-cell")
+            };
+            element(
+                &mut doc,
+                owner,
+                &format!("display:block;width:40px;height:20px;background:blue;{child_style}"),
+            );
+            let following_row = element(&mut doc, table, "display:table-row");
+            let following_cell = element(
+                &mut doc,
+                following_row,
+                "display:table-cell;vertical-align:top",
+            );
+            element(
+                &mut doc,
+                following_cell,
+                "display:block;width:40px;height:20px;background:green",
+            );
+            let computed = layout(&mut doc);
+            (doc, computed, table, row, following_row)
+        };
+        let (mut actual, computed, table, row, following_row) = build(true);
+        let (reference, reference_computed, _, _, _) = build(false);
+        assert_eq!(
+            actual.get_node(table).unwrap().unrounded_layout.size.height,
+            expected_table_height
+        );
+        assert_eq!(
+            actual.get_node(row).unwrap().unrounded_layout.size.height,
+            expected_row_height
+        );
+        let virtual_cell = actual.anonymous_table_cells(row).next().unwrap().1;
+        assert_eq!(
+            virtual_cell.unrounded_layout.size.height,
+            expected_row_height
+        );
+        let expected_following_y = if policy.contains("collapse") {
+            20.0
+        } else {
+            5.0 + expected_row_height + if expected_row_height > 0.0 { 5.0 } else { 0.0 }
+        };
+        assert_eq!(
+            actual
+                .get_node(following_row)
+                .unwrap()
+                .unrounded_layout
+                .location
+                .y,
+            expected_following_y
+        );
+        assert_exact_pixels(
+            raster(scene(&actual, &computed)),
+            raster(scene(&reference, &reference_computed)),
+        );
+        let (mut rectangles, body) = document();
+        if expected_row_height > 0.0 {
+            let top = if policy.contains("collapse") {
+                0.0
+            } else {
+                5.0
+            };
+            element(
+                &mut rectangles,
+                body,
+                &format!(
+                    "display:block;position:absolute;left:0;top:{top}px;width:40px;height:20px;background:blue"
+                ),
+            );
+        }
+        element(
+            &mut rectangles,
+            body,
+            &format!(
+                "display:block;position:absolute;left:0;top:{expected_following_y}px;width:40px;height:20px;background:green"
+            ),
+        );
+        let rectangles_computed = layout(&mut rectangles);
+        assert_exact_pixels(
+            raster(scene(&actual, &computed)),
+            raster(scene(&rectangles, &rectangles_computed)),
+        );
+        let computed_again = layout(&mut actual);
+        assert_eq!(
+            actual.get_node(table).unwrap().unrounded_layout.size.height,
+            expected_table_height
+        );
+        assert_exact_pixels(
+            raster(scene(&actual, &computed_again)),
+            raster(scene(&reference, &reference_computed)),
+        );
+    }
+}
+
+#[test]
+fn anonymous_empty_cell_flags_rebuild_across_policy_and_content_changes() {
+    let (mut actual, body) = document();
+    let table = element(
+        &mut actual,
+        body,
+        "display:table;width:40px;border-spacing:0 5px;empty-cells:hide",
+    );
+    let row = element(&mut actual, table, "display:table-row");
+    let child = element(
+        &mut actual,
+        row,
+        "display:block;width:40px;height:20px;visibility:hidden",
+    );
+    for (policy, child_visibility, expected) in [
+        ("hide", "hidden", 5.0),
+        ("show", "hidden", 30.0),
+        ("hide", "visible", 30.0),
+        ("hide", "hidden", 5.0),
+    ] {
+        actual.set_element_inline_style(
+            table,
+            Some(
+                format!("display:table;width:40px;border-spacing:0 5px;empty-cells:{policy}")
+                    .into(),
+            ),
+        );
+        actual.set_element_inline_style(
+            child,
+            Some(
+                format!("display:block;width:40px;height:20px;visibility:{child_visibility}")
+                    .into(),
+            ),
+        );
+        let count = actual.node_count();
+        let computed = layout(&mut actual);
+        assert_eq!(actual.node_count(), count);
+        assert_eq!(
+            actual.get_node(table).unwrap().unrounded_layout.size.height,
+            expected
+        );
+        assert_eq!(actual.anonymous_table_cells(row).count(), 1);
+        let (mut reference, body) = document();
+        element(&mut reference, body, "display:block;width:40px;height:5px");
+        let expected_computed = layout(&mut reference);
+        assert_exact_pixels(
+            raster(scene(&actual, &computed)),
+            raster(scene(&reference, &expected_computed)),
+        );
+    }
+    let cell = element(
+        &mut actual,
+        row,
+        "display:table-cell;height:20px;empty-cells:show",
+    );
+    let computed = layout(&mut actual);
+    assert_eq!(
+        actual.get_node(table).unwrap().unrounded_layout.size.height,
+        30.0
+    );
+    assert_eq!(
+        actual.get_node(cell).unwrap().unrounded_layout.size.height,
+        20.0
+    );
+    assert_eq!(
+        actual.get_node(row).unwrap().unrounded_layout.size.height,
+        20.0
+    );
+    assert_eq!(
+        actual
+            .anonymous_table_cells(row)
+            .next()
+            .unwrap()
+            .1
+            .unrounded_layout
+            .size
+            .height,
+        20.0
+    );
+    let (mut reference, body) = document();
+    element(&mut reference, body, "display:block;width:40px;height:30px");
+    let expected_computed = layout(&mut reference);
+    assert_exact_pixels(
+        raster(scene(&actual, &computed)),
+        raster(scene(&reference, &expected_computed)),
+    );
+}

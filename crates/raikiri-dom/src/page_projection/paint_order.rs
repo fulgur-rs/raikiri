@@ -242,7 +242,7 @@ impl Document {
                         push_paragraph(self, &items, node_id, lines, &mut events);
                     }
                     for (key, _) in self.anonymous_table_cells(node_id) {
-                        push_paragraph(self, &items, key, &mut events);
+                        push_paragraph(self, &items, key, lines, &mut events);
                     }
                     let mut children = if node.is_inline_svg_root() {
                         Vec::new()

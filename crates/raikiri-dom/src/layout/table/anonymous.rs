@@ -62,12 +62,15 @@ fn children(doc: &Document, owner: usize) -> Vec<usize> {
 
 fn anonymous_cell(
     doc: &Document,
+    cascade: &CascadeResult,
     objects: &mut TableObjects,
     owner: usize,
     content: Vec<usize>,
 ) -> usize {
     let mut node = doc.nodes[owner].clone();
     node.children = content;
+    node.hides_empty_table_cell =
+        crate::paint_rules::hides_anonymous_table_cell(doc, cascade, owner, &node.children);
     node.style = taffy::Style::default();
     node.display = DisplayValue::TableCell;
     node.ifc = None;
@@ -104,6 +107,7 @@ fn anonymous_cell(
 
 fn row(
     doc: &Document,
+    cascade: &CascadeResult,
     objects: &mut TableObjects,
     owner: usize,
     ids: &[usize],
@@ -115,7 +119,13 @@ fn row(
         // Inter-cell white space generates no anonymous cell. Keep white
         // space within an actual content run for the paragraph to collapse.
         if pending.iter().any(|&id| !whitespace(doc, id)) {
-            cells.push(anonymous_cell(doc, objects, owner, std::mem::take(pending)));
+            cells.push(anonymous_cell(
+                doc,
+                cascade,
+                objects,
+                owner,
+                std::mem::take(pending),
+            ));
         } else {
             pending.clear();
         }
@@ -135,7 +145,13 @@ fn row(
     }
 }
 
-fn rows(doc: &Document, objects: &mut TableObjects, owner: usize, reorder: bool) -> Vec<Row> {
+fn rows(
+    doc: &Document,
+    cascade: &CascadeResult,
+    objects: &mut TableObjects,
+    owner: usize,
+    reorder: bool,
+) -> Vec<Row> {
     let mut ids = children(doc, owner);
     if reorder {
         let first_head = ids
@@ -160,7 +176,7 @@ fn rows(doc: &Document, objects: &mut TableObjects, owner: usize, reorder: bool)
     let mut pending = Vec::new();
     let flush = |pending: &mut Vec<usize>, out: &mut Vec<Row>, objects: &mut TableObjects| {
         if pending.iter().any(|&id| !whitespace(doc, id)) {
-            out.push(row(doc, objects, owner, pending, None));
+            out.push(row(doc, cascade, objects, owner, pending, None));
         }
         pending.clear();
     };
@@ -168,13 +184,13 @@ fn rows(doc: &Document, objects: &mut TableObjects, owner: usize, reorder: bool)
         match doc.nodes[id].display {
             DisplayValue::TableRow => {
                 flush(&mut pending, &mut out, objects);
-                out.push(row(doc, objects, id, &children(doc, id), Some(id)));
+                out.push(row(doc, cascade, objects, id, &children(doc, id), Some(id)));
             }
             DisplayValue::TableRowGroup
             | DisplayValue::TableHeaderGroup
             | DisplayValue::TableFooterGroup => {
                 flush(&mut pending, &mut out, objects);
-                out.extend(rows(doc, objects, id, false));
+                out.extend(rows(doc, cascade, objects, id, false));
             }
             DisplayValue::TableCaption
             | DisplayValue::TableColumn
@@ -208,7 +224,7 @@ pub(crate) fn prepare(doc: &mut Document, cascade: &CascadeResult) {
             )
             && !super::super::ifc::assign::can_be_ifc_root(doc, cascade, id)
         {
-            let table_rows = rows(doc, &mut objects, id, true);
+            let table_rows = rows(doc, cascade, &mut objects, id, true);
             objects.rows.insert(id, table_rows);
         }
     }
