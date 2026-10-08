@@ -245,11 +245,14 @@ impl SvgDocument {
     /// Style rules with selectors in the subset this crate matches are frozen
     /// to the elements they match in the original source and emitted with
     /// equal specificity in their original cascade order. CSS at-rules, and
-    /// style rules with any other selector, are retained without
-    /// interpretation after the frozen rules, in source order; retained style
-    /// rules are wrapped in `@media all`. Retained CSS therefore does not keep
-    /// its original order or specificity relative to frozen rules. The vector
-    /// consumer determines which retained CSS it supports.
+    /// style rules with any other selector, follow the frozen rules in source
+    /// order without interpretation. Those style rules are wrapped in
+    /// `@media all`, and retained CSS that a SimpleCSS-based renderer would
+    /// not skip as one unit, such as a rule with a brace inside a string, is
+    /// removed. Retained CSS therefore does not keep its original order or
+    /// specificity relative to frozen rules. A stylesheet without frozen rules
+    /// is kept as written. The vector consumer determines which retained CSS
+    /// it supports.
     pub fn styled_source(
         &self,
         viewport: SvgViewport,
@@ -2946,9 +2949,7 @@ fn freeze_svg_stylesheet_selectors(
             stylesheet.parse_more(text);
         }
     }
-    // Style text without matched rules is still rewritten so retained style
-    // rules are wrapped before later rewrites split their selector lists.
-    if stylesheet.rules.is_empty() && stylesheet_ranges.is_empty() {
+    if stylesheet.rules.is_empty() {
         return Ok(source.to_owned());
     }
 
@@ -3069,11 +3070,13 @@ fn freeze_svg_stylesheet_selectors(
     apply_selector_edits(source, edits, budget)
 }
 
-// SimpleCSS ignores at-rules and style rules with a selector-list entry it
-// cannot parse. Keep their source for other vector consumers while freezing
-// only the qualified rules that SimpleCSS actually matched. Retained style
-// rules are wrapped in `@media all`, which SimpleCSS and the later stylesheet
-// rewrites skip, so their selectors never match the rewritten source there.
+// SimpleCSS ignores at-rules and the selector-list entries it cannot parse, and
+// stops reading a list at some of those entries. Keep that CSS for other vector
+// consumers while freezing only the qualified rules SimpleCSS matched: at-rules
+// verbatim, and each style rule with such an entry whole, wrapped in
+// `@media all`, so neither SimpleCSS nor the later stylesheet rewrites match its
+// selectors against the rewritten source. SimpleCSS must skip each retained
+// item as one at-rule; anything else could expose or swallow nearby rules.
 fn retain_unfrozen_svg_css(
     source: &str,
     budget: &mut SelectorFreezeBudget,
@@ -3109,9 +3112,11 @@ fn retain_unfrozen_svg_css(
                 }
             }
             let raw = parser.slice_from(start);
-            budget.bytes(raw.len().saturating_add(1))?;
-            retained.push_str(raw);
-            retained.push('\n');
+            if simplecss_skips_at_rule_exactly(raw) {
+                budget.bytes(raw.len().saturating_add(1))?;
+                retained.push_str(raw);
+                retained.push('\n');
+            }
             continue;
         }
 
@@ -3124,12 +3129,16 @@ fn retain_unfrozen_svg_css(
                 | cssparser::Token::CloseCurlyBracket
                 | cssparser::Token::Semicolon
         );
-        let mut prelude_end = matches!(token, cssparser::Token::CurlyBracketBlock).then_some(start);
+        let mut prelude_end =
+            matches!(token, cssparser::Token::CurlyBracketBlock).then_some(start.byte_index());
         while prelude_end.is_none() {
-            let position = parser.position();
             SelectorFreezeBudget::consume(&mut budget.checks, 1)?;
             match parser.next_including_whitespace_and_comments() {
-                Ok(cssparser::Token::CurlyBracketBlock) => prelude_end = Some(position),
+                // A pending block before this token has now been skipped, so
+                // the prelude ends at the `{` just before the current position.
+                Ok(cssparser::Token::CurlyBracketBlock) => {
+                    prelude_end = Some(parser.position().byte_index() - 1);
+                }
                 Ok(cssparser::Token::CloseCurlyBracket | cssparser::Token::Semicolon) => {
                     wrappable = false;
                 }
@@ -3144,7 +3153,7 @@ fn retain_unfrozen_svg_css(
         if !wrappable {
             continue;
         }
-        let prelude = parser.slice(start..prelude_end);
+        let prelude = &source[start.byte_index()..prelude_end];
         let selector_count = prelude
             .bytes()
             .filter(|byte| *byte == b',')
@@ -3160,11 +3169,49 @@ fn retain_unfrozen_svg_css(
         }
         let raw = parser.slice_from(start);
         budget.bytes(raw.len().saturating_add(16))?;
-        retained.push_str("@media all { ");
-        retained.push_str(raw);
-        retained.push_str(" }\n");
+        let wrapped = format!("@media all {{ {raw} }}");
+        // The wrapper adds a nesting level that the exported-source reference
+        // check must still accept.
+        if simplecss_skips_at_rule_exactly(&wrapped)
+            && reject_external_css_references(&wrapped).is_ok()
+        {
+            retained.push_str(&wrapped);
+            retained.push('\n');
+        }
     }
     Ok(retained)
+}
+
+// SimpleCSS reads `@`, an optional `-` and a name start, skips to the first `;`
+// or `{` byte, and ends a block at the brace that balances a count of every
+// brace byte, including those in strings and comments.
+fn simplecss_skips_at_rule_exactly(at_rule: &str) -> bool {
+    let Some(name) = at_rule.strip_prefix('@') else {
+        return false;
+    };
+    let name = name.strip_prefix('-').unwrap_or(name);
+    if !name.chars().next().is_some_and(|character| {
+        character == '_' || character.is_ascii_alphabetic() || u32::from(character) > 237
+    }) {
+        return false;
+    }
+    let bytes = at_rule.as_bytes();
+    let Some(start) = bytes.iter().position(|byte| matches!(byte, b';' | b'{')) else {
+        return false;
+    };
+    if bytes[start] == b';' {
+        return start + 1 == bytes.len();
+    }
+    let mut depth = 0usize;
+    for (index, byte) in bytes.iter().enumerate().skip(start + 1) {
+        match byte {
+            b'{' => depth += 1,
+            b'}' if depth == 0 => return index + 1 == bytes.len(),
+            b'}' => depth -= 1,
+            _ => {}
+        }
+    }
+    false
 }
 
 fn skip_css_block(parser: &mut cssparser::Parser<'_, '_>) {
@@ -3828,22 +3875,29 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for ScopedStylesheetParser<'_> {
             let selector_storage =
                 selector_count.and_then(|count| count.checked_mul(2 * std::mem::size_of::<&str>()));
             consume_css_budget(input, self.budget, selector_storage, self.budget_exceeded)?;
-            for selector in split_css_selector_list(&selector_list) {
-                let selector = selector.trim();
-                if selector.is_empty() {
-                    continue;
-                }
+            let selectors = split_css_selector_list(&selector_list)
+                .into_iter()
+                .map(str::trim)
+                .collect::<Vec<_>>();
+            // SimpleCSS drops a list's later entries after some entries it
+            // cannot parse. Keep such a list in one scoped rule so it drops
+            // the same entries there as in the original rule.
+            let groups = if selectors
+                .iter()
+                .all(|selector| simplecss::Selector::parse(selector).is_some())
+            {
+                selectors.chunks(1).collect::<Vec<_>>()
+            } else {
+                vec![selectors.as_slice()]
+            };
+            for group in groups {
                 if let Some(rule_len) =
-                    scoped_property_rule_len(selector, scope_attribute, &raw_declarations)
+                    scoped_property_rule_len(group, scope_attribute, &raw_declarations)
                 {
                     let storage = rule_len.checked_add(2 * std::mem::size_of::<String>());
                     consume_css_budget(input, self.budget, storage, self.budget_exceeded)?;
-                    let rule = scoped_property_rule(
-                        selector,
-                        scope_attribute,
-                        &raw_declarations,
-                        rule_len,
-                    );
+                    let rule =
+                        scoped_property_rule(group, scope_attribute, &raw_declarations, rule_len);
                     self.scoped_rules.push(rule);
                 }
             }
@@ -3853,18 +3907,25 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for ScopedStylesheetParser<'_> {
 }
 
 fn scoped_property_rule(
-    selector: &str,
+    selectors: &[&str],
     scope_attribute: &str,
     declarations: &[String],
     capacity: usize,
 ) -> String {
-    let insertion = selector_scope_insertion(selector);
     let mut scoped_rule = String::with_capacity(capacity);
-    scoped_rule.push_str(&selector[..insertion]);
-    scoped_rule.push('[');
-    scoped_rule.push_str(scope_attribute);
-    scoped_rule.push(']');
-    scoped_rule.push_str(&selector[insertion..]);
+    for (index, selector) in selectors.iter().enumerate() {
+        if index > 0 {
+            scoped_rule.push_str(", ");
+        }
+        let insertion = selector_scope_insertion(selector);
+        scoped_rule.push_str(&selector[..insertion]);
+        if insertion > 0 {
+            scoped_rule.push('[');
+            scoped_rule.push_str(scope_attribute);
+            scoped_rule.push(']');
+        }
+        scoped_rule.push_str(&selector[insertion..]);
+    }
     scoped_rule.push_str(" {");
     for declaration in declarations {
         scoped_rule.push(' ');
@@ -3876,20 +3937,38 @@ fn scoped_property_rule(
 }
 
 fn scoped_property_rule_len(
-    selector: &str,
+    selectors: &[&str],
     scope_attribute: &str,
     declarations: &[String],
 ) -> Option<usize> {
-    if selector_scope_insertion(selector) == 0 {
+    if selectors
+        .iter()
+        .all(|selector| selector_scope_insertion(selector) == 0)
+    {
         return None;
     }
-    declarations.iter().try_fold(
-        selector
-            .len()
-            .checked_add(scope_attribute.len())?
-            .checked_add(6)?,
-        |length, declaration| length.checked_add(declaration.len())?.checked_add(2),
-    )
+    // Two bytes each for ` {`, ` }`, the brackets around the scope attribute
+    // and every `, ` separator.
+    let selectors_len =
+        selectors
+            .iter()
+            .enumerate()
+            .try_fold(4usize, |length, (index, selector)| {
+                let scoped = if selector_scope_insertion(selector) == 0 {
+                    0
+                } else {
+                    scope_attribute.len().checked_add(2)?
+                };
+                length
+                    .checked_add(selector.len())?
+                    .checked_add(scoped)?
+                    .checked_add(if index > 0 { 2 } else { 0 })
+            })?;
+    declarations
+        .iter()
+        .try_fold(selectors_len, |length, declaration| {
+            length.checked_add(declaration.len())?.checked_add(2)
+        })
 }
 
 fn scope_stylesheet_properties(

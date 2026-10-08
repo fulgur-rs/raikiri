@@ -736,7 +736,11 @@ fn stylesheet_rewrite_rejects_invalid_removal_ranges() {
 #[test]
 fn scoped_property_rule_omits_selectors_without_a_scopeable_component() {
     assert_eq!(
-        scoped_property_rule_len("/* only a comment */", "scope", &["background:red".into()]),
+        scoped_property_rule_len(
+            &["/* only a comment */"],
+            "scope",
+            &["background:red".into()]
+        ),
         None
     );
 }
@@ -2016,8 +2020,10 @@ fn at_rule_retention_respects_tokens_and_original_style_elements() {
     assert_eq!(styles.len(), 2);
     assert!(styles[0].contains("@charset \"UTF-8\";"));
     assert!(styles[0].contains(&first[first.find("@media").unwrap()..]));
-    assert!(styles[1].contains("@unknown \"a;b{c\";"));
-    assert!(styles[1].contains("@unfinished"));
+    // SimpleCSS ends `@unknown` at the `;` inside its string and never ends
+    // `@unfinished`, so retaining either would change what it parses next.
+    assert!(!styles[1].contains("@unknown"), "{}", styles[1]);
+    assert!(!styles[1].contains("@unfinished"), "{}", styles[1]);
     assert!(!styles[1].contains("@discard"));
 }
 
@@ -2055,8 +2061,13 @@ fn source_export_without_frozen_rules_keeps_unmatched_selectors_inert() {
             [0, 0, 0, 255],
         )
         .unwrap();
+    // The scoped copy keeps the list together, so SimpleCSS still drops its
+    // supported `rect` entry after the unsupported one.
+    assert!(exported.contains("rect:is(.hot), rect {"), "{exported}");
     assert!(
-        exported.contains("@media all { rect:is(.hot), rect { color:red } }"),
+        exported.contains(
+            "rect:is(.hot)[data-raikiri-root-opacity-scope], rect[data-raikiri-root-opacity-scope] {"
+        ),
         "{exported}"
     );
     let image = SvgDocument::parse(exported.as_bytes())
@@ -2098,6 +2109,83 @@ fn style_rule_retention_charges_the_shared_rewrite_budget() {
             super::retain_unfrozen_svg_css(rule, &mut budget),
             Err(SvgError::InvalidDocument(_))
         ));
+    }
+}
+
+#[test]
+fn style_rule_retention_reads_the_whole_prelude_before_a_block() {
+    // A block token directly before `{` must not cut the prelude short, or a
+    // rule SimpleCSS applies would also be retained.
+    let mut budget = SelectorFreezeBudget::new();
+    assert_eq!(
+        super::retain_unfrozen_svg_css(
+            "rect[width]{fill:red} rect:lang(en){fill:blue}",
+            &mut budget
+        )
+        .unwrap(),
+        ""
+    );
+}
+
+#[test]
+fn css_retention_skips_text_simplecss_would_not_skip_exactly() {
+    let mut budget = SelectorFreezeBudget::new();
+    for stylesheet in [
+        "rect:is(.a) { /* } */ fill:red }",
+        "rect:is(.a) { font-family:\"{\" }",
+        "rect:is(.a) { fill:blue",
+        "@media all { rect { content:\"}\" } }",
+        "@unknown \"a;b{c\";",
+        "@unfinished",
+        "@--custom { }",
+    ] {
+        assert_eq!(
+            super::retain_unfrozen_svg_css(stylesheet, &mut budget).unwrap(),
+            "",
+            "{stylesheet}"
+        );
+    }
+    assert_eq!(
+        super::retain_unfrozen_svg_css(
+            "@-custom { a { } } rect:is(.a) { content:\"{}\" }",
+            &mut budget
+        )
+        .unwrap(),
+        "@-custom { a { } }\n@media all { rect:is(.a) { content:\"{}\" } }\n"
+    );
+}
+
+#[test]
+fn source_export_keeps_simplecss_rules_beside_retained_css_with_braces() {
+    // Unsafe retained text would expose `* { fill:red }` or swallow the scoped
+    // `color:blue` rule appended after it.
+    for unsafe_rule in ["g:not(.x) /* } */ { fill:red }", "g:not(.x) { fill:red"] {
+        let source = format!(
+            "<svg xmlns='{SVG_NAMESPACE}' width='10' height='10'><style>rect {{ color:blue }} {unsafe_rule}</style><rect width='10' height='10' fill='currentColor'/></svg>"
+        );
+        let exported = SvgDocument::parse(source.as_bytes())
+            .unwrap()
+            .styled_source_with_root_color(
+                SvgViewport {
+                    width: 10.0,
+                    height: 10.0,
+                },
+                SvgRootStyle::default(),
+                [0, 0, 0, 255],
+            )
+            .unwrap();
+        let image = SvgDocument::parse(exported.as_bytes())
+            .unwrap()
+            .rasterize(
+                SvgViewport {
+                    width: 10.0,
+                    height: 10.0,
+                },
+                SvgRootStyle::default(),
+                None,
+            )
+            .unwrap();
+        assert_eq!(&image.rgba[..4], &[0, 0, 255, 255], "{exported}");
     }
 }
 
