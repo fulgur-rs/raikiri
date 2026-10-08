@@ -3363,7 +3363,8 @@ pub(crate) fn paint_document_impl(
                 {
                     events.push(crate::PaintTraceEvent::Text(document.ifc_source_owner(key)));
                 }
-                crate::ifc_text::draw_ifc_lines(
+                let paint_transform = scene.transform;
+                crate::ifc_text::draw_ifc_lines_with_resources(
                     scene,
                     document,
                     cascade,
@@ -3379,6 +3380,10 @@ pub(crate) fn paint_document_impl(
                     &decorations,
                     fragmentainer,
                     custom_highlights,
+                    pixel_source,
+                    warnings,
+                    page_box,
+                    paint_transform,
                 );
                 if clip.is_some() {
                     scene.pop_layer();
