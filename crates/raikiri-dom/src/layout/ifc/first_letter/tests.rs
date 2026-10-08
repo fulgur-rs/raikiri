@@ -695,3 +695,274 @@ fn review_atomic_generated_text_is_outside_the_parent_first_letter() {
         }
     }
 }
+
+fn ancestor_letter_projection(fixture: &Fixture, root: usize) -> Vec<LetterStyle> {
+    super::super::projection::project_ifc(
+        &fixture.doc,
+        &fixture.cascade,
+        root,
+        &mut LayoutContext::new(),
+        &ahem_fonts(),
+        &Limits::default(),
+    )
+    .unwrap()
+    .letter_styles
+}
+
+#[test]
+fn review_logical_float_predecessors_follow_the_projected_in_flow_blocks() {
+    for (float, in_flow) in [
+        ("inline-start", true),
+        ("inline-end", true),
+        ("none", true),
+        ("left", false),
+        ("right", false),
+        ("footnote", false),
+    ] {
+        let mut roots = Vec::new();
+        let mut texts = Vec::new();
+        let fixture = sheet_fixture("div::first-letter{font-size:20px}", "", |doc, root| {
+            for (text, css) in [
+                ("A", format!("display:block;float:{float}")),
+                ("B", "display:block".into()),
+            ] {
+                let child = doc.append_element(
+                    Some(root),
+                    "p",
+                    taffy::Style::default(),
+                    Some(css.as_str()),
+                );
+                roots.push(child);
+                texts.push(doc.append_text(child, text));
+            }
+        });
+        let first = ancestor_letter_projection(&fixture, roots[0]);
+        let second = ancestor_letter_projection(&fixture, roots[1]);
+        assert_eq!(first.len(), usize::from(in_flow), "{float} first block");
+        assert_eq!(second.len(), usize::from(!in_flow), "{float} later block");
+        let selected = if in_flow { &first } else { &second };
+        assert_eq!(selected[0].source_owner, texts[usize::from(!in_flow)]);
+        assert_eq!(selected[0].source_range, Some(0..1));
+        assert_eq!(selected[0].computed.font_size.px(), 20.0);
+    }
+}
+
+#[test]
+fn review_pre_line_predecessor_spaces_match_anonymous_line_eligibility() {
+    for (text, blocks) in [
+        (" ", false),
+        ("\t\u{000c}", false),
+        ("", false),
+        ("\n", true),
+        ("\r\n", true),
+        ("A", true),
+        ("\u{00a0}", true),
+    ] {
+        let mut child = 0;
+        let fixture = sheet_fixture(
+            "div::first-letter{font-size:20px}",
+            "white-space:pre-line",
+            |doc, root| {
+                doc.append_text(root, text);
+                child = doc.append_element(
+                    Some(root),
+                    "p",
+                    taffy::Style::default(),
+                    Some("display:block"),
+                );
+                doc.append_text(child, "B");
+            },
+        );
+        let selected = ancestor_letter_projection(&fixture, child);
+        assert_eq!(selected.is_empty(), blocks, "{text:?}");
+        if !blocks {
+            assert_eq!(selected[0].source_range, Some(0..1));
+            assert_eq!(selected[0].computed.font_size.px(), 20.0);
+        }
+    }
+}
+
+#[test]
+fn review_empty_inline_predecessors_do_not_form_a_first_letter_barrier() {
+    for (display, nested, contributes) in [
+        ("inline", false, false),
+        ("inline", true, false),
+        ("contents", false, false),
+        ("contents", true, false),
+        ("block", false, true),
+        ("inline-block", false, true),
+        ("inline-flex", false, true),
+        ("inline-grid", false, true),
+        ("inline-table", false, true),
+    ] {
+        let mut child = 0;
+        let fixture = sheet_fixture("div::first-letter{font-size:20px}", "", |doc, root| {
+            let span = doc.append_element(
+                Some(root),
+                "span",
+                taffy::Style::default(),
+                Some(format!("display:{display}").as_str()),
+            );
+            if nested {
+                doc.append_element(
+                    Some(span),
+                    "span",
+                    taffy::Style::default(),
+                    Some("display:inline"),
+                );
+            }
+            child = doc.append_element(
+                Some(root),
+                "p",
+                taffy::Style::default(),
+                Some("display:block"),
+            );
+            doc.append_text(child, "A");
+        });
+        let selected = ancestor_letter_projection(&fixture, child);
+        assert_eq!(
+            selected.is_empty(),
+            contributes,
+            "{display} nested={nested}"
+        );
+        if !contributes {
+            assert_eq!(selected[0].source_range, Some(0..1));
+            assert_eq!(selected[0].computed.font_size.px(), 20.0);
+        }
+    }
+}
+
+#[test]
+fn review_inline_predecessors_keep_text_generated_and_forced_line_barriers() {
+    for (tag, content, generated) in [
+        ("span", "A", false),
+        ("span", "\u{00a0}", false),
+        ("span", "", true),
+        ("br", "", false),
+        ("wbr", "", false),
+        ("img", "", false),
+    ] {
+        let mut child = 0;
+        let sheet = if generated {
+            "div::first-letter{font-size:20px} span::before{content:'A'}"
+        } else {
+            "div::first-letter{font-size:20px}"
+        };
+        let fixture = sheet_fixture(sheet, "", |doc, root| {
+            let inline = doc.append_element(
+                Some(root),
+                tag,
+                taffy::Style::default(),
+                Some("display:inline"),
+            );
+            doc.append_text(inline, content);
+            child = doc.append_element(
+                Some(root),
+                "p",
+                taffy::Style::default(),
+                Some("display:block"),
+            );
+            doc.append_text(child, "B");
+        });
+        assert!(
+            ancestor_letter_projection(&fixture, child).is_empty(),
+            "{tag} {content:?} generated={generated}"
+        );
+    }
+}
+
+#[test]
+fn review_empty_inline_subtree_work_stays_document_bounded() {
+    let mut roots = Vec::new();
+    let fixture = sheet_fixture("div::first-letter{color:red}", "", |doc, root| {
+        let mut nested = root;
+        for _ in 0..64 {
+            nested = doc.append_element(
+                Some(nested),
+                "span",
+                taffy::Style::default(),
+                Some("display:inline"),
+            );
+            for _ in 0..8 {
+                doc.append_element(
+                    Some(nested),
+                    "span",
+                    taffy::Style::default(),
+                    Some("display:inline"),
+                );
+            }
+        }
+        for _ in 0..200 {
+            let block = doc.append_element(
+                Some(root),
+                "p",
+                taffy::Style::default(),
+                Some("display:block"),
+            );
+            doc.append_text(block, "A");
+            roots.push(block);
+        }
+    });
+    PREDECESSOR_VISITS.with(|visits| visits.set(0));
+    let predecessors = PredecessorCache::default();
+    for (index, root) in roots.into_iter().enumerate() {
+        let letter = FirstLetter::new_with_predecessors(
+            &fixture.doc,
+            &fixture.cascade,
+            root,
+            &Limits::default(),
+            &predecessors,
+        );
+        assert_eq!(
+            letter.origins,
+            if index == 0 {
+                vec![fixture.root]
+            } else {
+                vec![]
+            }
+        );
+    }
+    let visits = PREDECESSOR_VISITS.with(|visits| visits.get());
+    assert!(visits <= fixture.doc.node_count() * 3);
+}
+
+#[test]
+fn review_generated_inline_predecessors_keep_before_after_atomic_barriers() {
+    for pseudo in ["before", "after"] {
+        for display in [
+            "inline",
+            "contents",
+            "inline-block",
+            "inline-flex",
+            "inline-grid",
+            "inline-table",
+        ] {
+            let mut child = 0;
+            let fixture = sheet_fixture(
+                &format!(
+                    "div::first-letter{{font-size:20px}} span::{pseudo}{{content:'X';display:{display}}}"
+                ),
+                "",
+                |doc, root| {
+                    doc.append_element(
+                        Some(root),
+                        "span",
+                        taffy::Style::default(),
+                        Some("display:inline"),
+                    );
+                    child = doc.append_element(
+                        Some(root),
+                        "p",
+                        taffy::Style::default(),
+                        Some("display:block"),
+                    );
+                    doc.append_text(child, "A");
+                },
+            );
+            assert!(
+                ancestor_letter_projection(&fixture, child).is_empty(),
+                "{pseudo} {display}"
+            );
+        }
+    }
+}

@@ -111,8 +111,7 @@ impl FirstLetter {
                 && (matches!(
                     cv.display,
                     DisplayValue::InlineBlock | DisplayValue::TableCell
-                ) || cv.float != FloatValue::None
-                    || matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed))
+                ) || outside_ancestor_line(cv))
             {
                 break;
             }
@@ -542,10 +541,19 @@ impl FirstLetter {
 mod tests;
 
 /// Immutable eligibility data shared by all roots in one projection pass.
-/// Each source node and sibling edge is inspected once, including Contents
+/// Each source node and sibling edge takes bounded work, including transparent
 /// subtrees; a wide comment prefix is never scanned again for another root.
 #[derive(Default)]
 pub(crate) struct PredecessorCache(std::cell::OnceCell<Vec<bool>>);
+
+fn outside_ancestor_line(cv: &ComputedValues) -> bool {
+    // Logical float sides remain in flow in the bridge and IFC projection.
+    // Footnotes retain their separate ancestor-line eligibility boundary.
+    matches!(
+        cv.float,
+        FloatValue::Left | FloatValue::Right | FloatValue::Footnote
+    ) || matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
+}
 
 #[cfg(test)]
 thread_local! {
@@ -577,6 +585,13 @@ impl PredecessorCache {
             #[cfg(test)]
             PREDECESSOR_VISITS.with(|visits| visits.set(visits.get() + 1));
             let cv = &cascade.computed[id];
+            let child_contributes = || {
+                node.children.iter().any(|&child| {
+                    #[cfg(test)]
+                    PREDECESSOR_VISITS.with(|visits| visits.set(visits.get() + 1));
+                    contributes[child]
+                })
+            };
             contributes[id] =
                 if cv.display == DisplayValue::None || node.is_non_rendered_html_element() {
                     false
@@ -586,24 +601,24 @@ impl PredecessorCache {
                         .any(|&pseudo| {
                             crate::generated_content::is_in_flow_generated_text(cascade, id, pseudo)
                         })
-                        || node.children.iter().any(|&child| contributes[child])
-                } else if cv.float != FloatValue::None
-                    || matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
-                {
+                        || child_contributes()
+                } else if outside_ancestor_line(cv) {
                     false
                 } else {
                     match node.kind() {
-                        NodeKind::Text => {
-                            node.text_content()
-                                .unwrap_or("")
-                                .chars()
-                                .any(|ch| !ch.is_whitespace())
-                                || !matches!(
-                                    cv.effective_white_space_collapse,
-                                    WhiteSpaceCollapse::Collapse | WhiteSpaceCollapse::Discard
-                                )
+                        NodeKind::Text => super::assign::text_makes_a_line(doc, cascade, id),
+                        NodeKind::Element => {
+                            super::projection::box_kind(cascade, doc, id).is_some()
+                                || matches!(node.tag_name(), Some("br" | "wbr"))
+                                || [PseudoElem::Before, PseudoElem::After]
+                                    .iter()
+                                    .any(|&pseudo| {
+                                        crate::generated_content::is_in_flow_generated_text(
+                                            cascade, id, pseudo,
+                                        )
+                                    })
+                                || child_contributes()
                         }
-                        NodeKind::Element => true,
                         _ => false,
                     }
                 };
