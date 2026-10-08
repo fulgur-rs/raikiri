@@ -2965,3 +2965,92 @@ mod group_rule_tests;
 mod supports_condition_tests;
 
 mod nesting_tests;
+
+#[test]
+fn contextual_highlight_background_wins_over_an_earlier_literal() {
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "::highlight(mark){background-color:red;background-color:currentcolor}",
+        Origin::Author,
+    );
+    assert_eq!(
+        tree.custom_highlight_styles().get("mark"),
+        Some(&crate::CssColor::BLACK)
+    );
+}
+
+#[test]
+fn contextual_highlight_mix_remains_a_valid_background() {
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "::highlight(mark){background-color:color-mix(in srgb,currentcolor,white)}",
+        Origin::Author,
+    );
+    assert_eq!(
+        tree.custom_highlight_styles().get("mark"),
+        Some(&crate::CssColor {
+            r: 128,
+            g: 128,
+            b: 128,
+            a: 255
+        })
+    );
+}
+
+#[test]
+fn contextual_highlight_sources_follow_literal_layer_and_important_precedence() {
+    let blue = crate::CssColor {
+        r: 0,
+        g: 0,
+        b: 255,
+        a: 255,
+    };
+    let red = crate::CssColor {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
+    let cases = [
+        ("::highlight(mark){background-color:currentcolor}", blue),
+        (
+            "::highlight(mark){background-color:color-mix(in srgb,currentcolor,red)}",
+            crate::CssColor {
+                r: 128,
+                g: 0,
+                b: 128,
+                a: 255,
+            },
+        ),
+        (
+            "::highlight(mark){background-color:red!important;background-color:currentcolor}",
+            red,
+        ),
+        (
+            "::highlight(mark){background-color:currentcolor!important;background-color:red}",
+            blue,
+        ),
+        (
+            "@layer a,b; @layer a{::highlight(mark){background-color:red}} @layer b{::highlight(mark){background-color:currentcolor}}",
+            blue,
+        ),
+        (
+            "@layer a,b; @layer a{::highlight(mark){background-color:red}} @layer b{::highlight(mark){background-color:currentcolor;background-color:revert-layer}}",
+            red,
+        ),
+        (
+            "::highlight(mark){background-color:red;color:currentcolor}",
+            red,
+        ),
+    ];
+    for (css, expected) in cases {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(css, Origin::Author);
+        let result = crate::cascade(&TestDoc::new(), &tree).unwrap();
+        assert_eq!(
+            result.custom_highlight_background("mark", blue),
+            Some(expected)
+        );
+        assert_eq!(result.custom_highlight_background("missing", blue), None);
+    }
+}

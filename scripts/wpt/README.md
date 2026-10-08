@@ -366,7 +366,12 @@ receiver, including root-to-page and page-to-margin-box inheritance. See
 [CSS Paged Media 3 §6](https://www.w3.org/TR/css-page-3/#page-properties).
 
 The exact 800 × 600 bundled-font pass set includes the legacy currentcolor
-background reference and four color-mix currentcolor references. The wider
+background reference and four color-mix currentcolor references. Universal
+`::highlight(name)` backgrounds also preserve winning contextual expressions
+through importance and layer rollback, resolving them against the originating
+text node's computed foreground when painted. Highlight-specific foreground
+styling, per-element highlight selectors, and multiple-overlay foreground/dual
+inheritance remain existing gaps tracked by 0vv.133. The wider
 `currentcolor-001` and `currentcolor-002` references still have an existing
 163-pixel text residual: replacing the authored contextual colors with literal
 colors produces the same residual on the original source. Those references are
