@@ -669,6 +669,19 @@ pub(crate) fn prepare_ch_box_values_before_taffy(doc: &mut Document, cascade: &C
             };
         let width = measure(width_ch).map(|value| value.max(0.0));
         let height = measure(height_ch).map(|value| value.max(0.0));
+        let min_width = measure(&cv.min_width_ch).map(|value| value.max(0.0));
+        // Use the same normalized logical block axis as the min/max bridge.
+        let min_height_ch = if cv.writing_mode == WritingMode::HorizontalTb
+            && cv.cssom_writing_mode != WritingMode::HorizontalTb
+            && matches!(cv.min_height, ComputedLengthPercentageOrAuto::Auto)
+        {
+            &cv.min_block_size_ch
+        } else {
+            &cv.min_height_ch
+        };
+        let min_height = measure(min_height_ch).map(|value| value.max(0.0));
+        let max_width = measure(&cv.max_width_ch).map(|value| value.max(0.0));
+        let max_height = measure(&cv.max_height_ch).map(|value| value.max(0.0));
         let padding = (
             measure(&cv.padding_ch.top).map(|value| value.max(0.0)),
             measure(&cv.padding_ch.right).map(|value| value.max(0.0)),
@@ -687,6 +700,18 @@ pub(crate) fn prepare_ch_box_values_before_taffy(doc: &mut Document, cascade: &C
         }
         if let Some(height) = height {
             style.size.height = Dimension::length(height);
+        }
+        if let Some(width) = min_width {
+            style.min_size.width = LengthPercentageAuto::length(width);
+        }
+        if let Some(height) = min_height {
+            style.min_size.height = LengthPercentageAuto::length(height);
+        }
+        if let Some(width) = max_width {
+            style.max_size.width = LengthPercentageAuto::length(width);
+        }
+        if let Some(height) = max_height {
+            style.max_size.height = LengthPercentageAuto::length(height);
         }
         if let Some(top) = padding.0 {
             style.padding.top = LengthPercentage::length(top);

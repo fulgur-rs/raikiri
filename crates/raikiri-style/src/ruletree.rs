@@ -220,6 +220,7 @@ pub struct RuleTree {
     pub(crate) style_rules: Vec<StyleRule>,
     /// Winning unconditional custom-highlight background colors.
     custom_highlight_styles: HashMap<String, CssColor>,
+    custom_highlight_sources: HashMap<String, smol_str::SmolStr>,
     highlight_log: Vec<Registration<(Arc<str>, HighlightColor, bool)>>,
     /// `@page` at-rules. `source_order` starts at zero independently of `style_rules`.
     /// [`crate::page::cascade_page`] applies the cascade; per-page `PageBox`
@@ -304,8 +305,15 @@ impl RuleTree {
     }
 
     /// Return the winning background color for each parsed `::highlight(name)` rule.
+    /// Contextual expressions use initial black for this inspection view;
+    /// [`crate::CascadeResult::custom_highlight_background`] resolves them with
+    /// the foreground of the highlighted text.
     pub fn custom_highlight_styles(&self) -> &HashMap<String, CssColor> {
         &self.custom_highlight_styles
+    }
+
+    pub(crate) fn custom_highlight_sources(&self) -> &HashMap<String, smol_str::SmolStr> {
+        &self.custom_highlight_sources
     }
 
     /// Read-only accessor for the `@counter-style` registry.
@@ -439,6 +447,7 @@ impl RuleTree {
         Self {
             style_rules: Vec::new(),
             custom_highlight_styles: HashMap::new(),
+            custom_highlight_sources: HashMap::new(),
             highlight_log: Vec::new(),
             page_rules: Vec::new(),
             counter_styles: CounterStyleRegistry::new(),
@@ -585,7 +594,7 @@ impl RuleTree {
                 .or_default()
                 .push((index, registration));
         }
-        self.custom_highlight_styles = highlights
+        let winning_highlights: Vec<_> = highlights
             .into_iter()
             .filter_map(|(name, registrations)| {
                 let winner = crate::cascade::rollback::select_layered_winner(
@@ -613,13 +622,22 @@ impl RuleTree {
                         ))
                     },
                 )?;
-                registrations[winner]
-                    .1
-                    .rule
-                    .1
-                    .0
-                    .map(|color| (name.to_owned(), color))
+                registrations[winner].1.rule.1.0.map(|color| {
+                    (
+                        name.to_owned(),
+                        color,
+                        registrations[winner].1.rule.1.1.clone(),
+                    )
+                })
             })
+            .collect();
+        self.custom_highlight_styles = winning_highlights
+            .iter()
+            .map(|(name, color, _)| (name.clone(), *color))
+            .collect();
+        self.custom_highlight_sources = winning_highlights
+            .into_iter()
+            .filter_map(|(name, _, source)| source.map(|source| (name, source)))
             .collect();
         if !self.layers.is_empty() {
             self.font_faces = replay_layered(
@@ -1701,19 +1719,41 @@ fn parse_qualified_prelude<'i>(
 }
 
 /// A missing paint requests layer rollback.
-#[derive(Clone, Copy)]
-struct HighlightColor(Option<CssColor>);
+#[derive(Clone)]
+struct HighlightColor(Option<CssColor>, Option<smol_str::SmolStr>);
 
 fn custom_highlight_color(declarations: &[Declaration]) -> Option<(HighlightColor, bool)> {
     declarations
         .iter()
         .enumerate()
         .filter_map(|(index, declaration)| match declaration.value() {
-            PropertyValue::BackgroundColor(color) => {
-                Some((declaration.important, index, HighlightColor(Some(*color))))
+            PropertyValue::BackgroundColor(color) => Some((
+                declaration.important,
+                index,
+                HighlightColor(Some(*color), None),
+            )),
+            PropertyValue::ContextualColor(value)
+                if value.key == crate::property::PropertyKey::BackgroundColor =>
+            {
+                let color =
+                    crate::property::resolve_contextual_color(&value.source, CssColor::BLACK)?;
+                Some((
+                    declaration.important,
+                    index,
+                    HighlightColor(Some(color), Some(value.source.clone())),
+                ))
+            }
+            PropertyValue::Deferred(value)
+                if value.key == crate::property::PropertyKey::BackgroundColor
+                    && matches!(
+                        value.css_wide_keyword(),
+                        Some(crate::property::CssWideKeyword::RevertLayer)
+                    ) =>
+            {
+                Some((declaration.important, index, HighlightColor(None, None)))
             }
             PropertyValue::AllRevertLayer => {
-                Some((declaration.important, index, HighlightColor(None)))
+                Some((declaration.important, index, HighlightColor(None, None)))
             }
             _ => None,
         })

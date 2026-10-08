@@ -794,8 +794,20 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS2 relative block positioning exact slice (+14).
     // + CSS Inline image-loaded vertical-align length exact slice (+1).
     // + Remeasured exact regression pins (+8) and unsupported pins removed (-7).
-    assert_eq!(set.baseline.entries.len(), 1443);
+    // + CSS Overflow inherited Ahem font-metric max-width:4ch exact slice (+1).
+    // + CSS Color contextual background and color-mix exact references (+5).
+    assert_eq!(set.baseline.entries.len(), 1449);
+    assert!(
+        set.baseline
+            .entries
+            .contains("css/css-overflow/text-overflow-ellipsis-002.html")
+    );
     for id in [
+        "css/css-color/t44-currentcolor-background-b.xht",
+        "css/css-color/color-mix-currentcolor-001.html",
+        "css/css-color/color-mix-currentcolor-002.html",
+        "css/css-color/color-mix-currentcolor-003.html",
+        "css/css-color/color-mix-currentcolor-nested-for-color-property.html",
         "css/css-lists/list-style-type-string-001a.html",
         "css/css-lists/list-style-type-string-001b.html",
         "css/css-lists/content-property/marker-text-matches-decimal.html",

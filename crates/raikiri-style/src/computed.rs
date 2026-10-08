@@ -305,6 +305,8 @@ pub struct ComputedValues {
     /// the background-color property"
     /// <https://www.w3.org/TR/css-backgrounds-3/#background-color>.
     pub background_color: CssColor,
+    /// Symbolic background color retained for explicit inheritance.
+    pub(crate) background_color_expression: Option<SmolStr>,
     /// `font-family`, in priority order. Inherited. CSS Fonts 4 §2.1
     /// <https://www.w3.org/TR/css-fonts-4/#font-family-prop> specifies an initial
     /// value of "depends on user agent" rather than a particular family name
@@ -766,18 +768,28 @@ pub struct ComputedValues {
     pub height_ch: Option<ChLengthProvenance>,
     /// `max-width` — **non-inherited**, initial `none` (mapped to Auto as placeholder).
     pub max_width: ComputedLengthPercentageOrAuto,
+    /// Authored `ch` provenance of [`Self::max_width`].
+    pub max_width_ch: Option<ChLengthProvenance>,
     /// `max-height` — **non-inherited**, initial `none` (mapped to Auto as placeholder).
     pub max_height: ComputedLengthPercentageOrAuto,
+    /// Authored `ch` provenance of [`Self::max_height`].
+    pub max_height_ch: Option<ChLengthProvenance>,
     /// `min-width` — **non-inherited**, initial `auto` (CSS Sizing 3 §4
     /// <https://www.w3.org/TR/css-sizing-3/#min-size-properties>).
     pub min_width: ComputedLengthPercentageOrAuto,
+    /// Authored `ch` provenance of [`Self::min_width`], after logical mapping.
+    pub min_width_ch: Option<ChLengthProvenance>,
     /// `min-height` — **non-inherited**, initial `auto` (CSS Sizing 3 §4
     /// <https://www.w3.org/TR/css-sizing-3/#min-size-properties>).
     pub min_height: ComputedLengthPercentageOrAuto,
+    /// Authored `ch` provenance of [`Self::min_height`], after logical mapping.
+    pub min_height_ch: Option<ChLengthProvenance>,
     /// Authored logical `min-block-size`, retained so layout can distinguish
     /// its fragmentation behavior from a physical `min-height` declaration.
     /// The used value is already mapped into `min_width`/`min_height`.
     pub min_block_size: Option<ComputedLengthPercentageOrAuto>,
+    /// Authored `ch` provenance of [`Self::min_block_size`].
+    pub min_block_size_ch: Option<ChLengthProvenance>,
     /// Physical `(width, height)` of the authored `inline-size` /
     /// `block-size` mapped through a `vertical-rl` or `vertical-lr`
     /// writing mode (CSS Logical Properties 1 §4.1). `None` without a logical
@@ -1795,6 +1807,7 @@ impl ComputedValues {
             color: CssColor::BLACK,
             // CSS Backgrounds 3 §2.2: initial background-color is `transparent`.
             background_color: CssColor::TRANSPARENT,
+            background_color_expression: None,
             // Shared Arc slot avoids a per-node allocation (see the
             // documentation for `initial_font_family`).
             font_family: initial_font_family(),
@@ -1901,10 +1914,15 @@ impl ComputedValues {
             height: ComputedLengthPercentageOrAuto::Auto,
             height_ch: None,
             max_width: ComputedLengthPercentageOrAuto::Auto,
+            max_width_ch: None,
             max_height: ComputedLengthPercentageOrAuto::Auto,
+            max_height_ch: None,
             min_width: ComputedLengthPercentageOrAuto::Auto,
+            min_width_ch: None,
             min_height: ComputedLengthPercentageOrAuto::Auto,
+            min_height_ch: None,
             min_block_size: None,
+            min_block_size_ch: None,
             vertical_logical_size: None,
             top: ComputedLengthPercentageOrAuto::Auto,
             right: ComputedLengthPercentageOrAuto::Auto,

@@ -2227,3 +2227,66 @@ fn trace_records_box_clip_opacity_and_text_in_walk_order() {
         ]
     );
 }
+
+#[test]
+fn contextual_custom_highlight_uses_the_texts_inherited_foreground() {
+    use anyrender::types::Paint;
+    use peniko::Color;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+    let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+    doc.append_text(
+        style,
+        "::highlight(sample) { background-color: red; background-color: color-mix(in srgb,currentcolor,red); }",
+    );
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let paragraph = doc.append_element(
+        Some(body),
+        "p",
+        Style::default(),
+        Some("display:block;color:blue"),
+    );
+    let text = doc.append_text(paragraph, "a!");
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
+    let mut scene = Scene::new();
+    let mut budget = CounterSnapshotBudget::default();
+    paint_single_page_with_origin_and_page_context_named_with_fixed_page_width_and_highlights(
+        &mut scene,
+        &doc,
+        &cr,
+        PageBox::A4,
+        0.0,
+        0,
+        1,
+        false,
+        None,
+        None,
+        PageBox::A4.width,
+        &[TextHighlightRange {
+            name: "sample".to_owned(),
+            node: text,
+            start_byte: 1,
+            end_byte: 2,
+        }],
+        &mut budget,
+    )
+    .expect("paint succeeds");
+
+    let highlight_index = scene
+        .commands
+        .iter()
+        .position(|command| {
+            matches!(command, RenderCommand::Fill(fill) if fill.brush == Paint::Solid(Color::from_rgba8(128, 0, 128, 255)))
+        })
+        .expect("selected text should have a custom highlight fill");
+    let glyph_index = scene
+        .commands
+        .iter()
+        .position(|command| matches!(command, RenderCommand::GlyphRun(_)))
+        .expect("paragraph glyphs should be painted");
+    assert!(highlight_index < glyph_index);
+}

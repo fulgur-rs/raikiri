@@ -164,6 +164,8 @@ pub struct SpecifiedValues {
     pub color: CssColor,
     /// Staging value for [`ComputedValues::background_color`]; computed-equivalent.
     pub background_color: CssColor,
+    /// Symbolic background color retained for explicit inheritance.
+    pub(crate) background_color_expression: Option<SmolStr>,
     /// Staging value for [`ComputedValues::font_family`]; computed-equivalent.
     pub font_family: Arc<Vec<FontFamilyName>>,
     /// **Specified** `font-size`; phase 2 ([`resolve_font_size`]) absolutizes it
@@ -738,6 +740,7 @@ impl SpecifiedValues {
         Self {
             color: CssColor::BLACK,
             background_color: CssColor::TRANSPARENT,
+            background_color_expression: None,
             // Shared Arc slot avoids an allocation per node (see the `initial_font_family` docs).
             font_family: initial_font_family(),
             // CSS Fonts 4 §2.5: the initial value is `medium` (16px here).
@@ -1267,6 +1270,7 @@ impl SpecifiedValues {
             // CSS Writing Modes 3 §2.2: unicode-bidi is non-inherited.
             unicode_bidi: UnicodeBidi::Normal,
             background_color: CssColor::TRANSPARENT,
+            background_color_expression: None,
             display: DisplayValue::Inline,
             counter_reset: empty_counter_entries(),
             counter_increment: empty_counter_entries(),
@@ -1852,9 +1856,40 @@ impl SpecifiedValues {
             | WritingMode::SidewaysRl
             | WritingMode::SidewaysLr => (physical_min_block.unwrap_or(min_width), min_height),
         };
+        let max_width_ch = size_ch(self.max_width);
+        let max_height_ch = size_ch(self.max_height);
+        let min_block_size_ch = self.min_block_size.and_then(size_ch);
+        let min_width_ch = size_ch(self.min_width);
+        let min_height_ch = size_ch(self.min_height);
+        let (min_width_ch, min_height_ch) = match self.writing_mode {
+            WritingMode::HorizontalTb => (
+                min_width_ch,
+                if self.min_block_size.is_some() {
+                    min_block_size_ch.clone()
+                } else {
+                    min_height_ch
+                },
+            ),
+            WritingMode::VerticalRl
+            | WritingMode::VerticalLr
+            | WritingMode::SidewaysRl
+            | WritingMode::SidewaysLr => (
+                if self.min_block_size.is_some() {
+                    min_block_size_ch.clone()
+                } else {
+                    min_width_ch
+                },
+                min_height_ch,
+            ),
+        };
         ComputedValues {
             color: self.color,
-            background_color: self.background_color,
+            background_color: self
+                .background_color_expression
+                .as_ref()
+                .and_then(|source| crate::property::resolve_contextual_color(source, self.color))
+                .unwrap_or(self.background_color),
+            background_color_expression: self.background_color_expression,
             font_family: self.font_family,
             font_size,
             font_weight: self.font_weight,
@@ -1954,15 +1989,20 @@ impl SpecifiedValues {
                 own_line_height,
                 ctx,
             ),
+            max_width_ch,
             max_height: resolve_length_percentage_or_auto(
                 self.max_height,
                 font_size,
                 own_line_height,
                 ctx,
             ),
+            max_height_ch,
             min_width,
+            min_width_ch,
             min_height,
+            min_height_ch,
             min_block_size: physical_min_block,
+            min_block_size_ch,
             vertical_logical_size,
             top: resolve_length_percentage_or_auto(self.top, font_size, own_line_height, ctx),
             right: resolve_length_percentage_or_auto(self.right, font_size, own_line_height, ctx),

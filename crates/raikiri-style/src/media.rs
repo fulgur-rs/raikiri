@@ -176,7 +176,18 @@ impl ViewportFeature {
     }
 }
 
-type FeatureCondition = Condition<ViewportFeature>;
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum MediaFeature {
+    Viewport(ViewportFeature),
+    // Valid paper-feature syntax whose value this evaluator cannot resolve.
+    UnsupportedPaper,
+}
+
+type FeatureCondition = Condition<MediaFeature>;
+
+fn viewport_condition(feature: ViewportFeature) -> FeatureCondition {
+    Condition::Leaf(MediaFeature::Viewport(feature))
+}
 
 /// One entry of a `<media-query-list>`.
 #[derive(Clone, Debug, PartialEq)]
@@ -194,7 +205,10 @@ enum MediaQuery {
 impl MediaQuery {
     /// Evaluate the query. An unknown result is `not all` (MQ4 §3.2).
     fn matches(&self, context: &MediaContext) -> bool {
-        let feature = |feature: &ViewportFeature| Some(feature.matches(context));
+        let feature = |feature: &MediaFeature| match feature {
+            MediaFeature::Viewport(feature) => Some(feature.matches(context)),
+            MediaFeature::UnsupportedPaper => None,
+        };
         let value = match self {
             Self::Condition(condition) => condition.eval(&feature),
             Self::Typed {
@@ -209,6 +223,21 @@ impl MediaQuery {
             }
         };
         value == Some(true)
+    }
+
+    fn depends_on_paper_size(&self) -> bool {
+        fn dependent(condition: &FeatureCondition) -> bool {
+            match condition {
+                Condition::Leaf(_) => true,
+                Condition::Unknown => false,
+                Condition::Not(inner) => dependent(inner),
+                Condition::And(terms) | Condition::Or(terms) => terms.iter().any(dependent),
+            }
+        }
+        match self {
+            Self::Condition(condition) => dependent(condition),
+            Self::Typed { condition, .. } => condition.as_ref().is_some_and(dependent),
+        }
     }
 
     fn can_match(&self) -> bool {
@@ -241,11 +270,13 @@ impl MediaQuery {
 
 /// The condition guarding a rule: every nested `@media` list must match.
 ///
-/// Each list holds only the queries that can match in some context; queries
-/// that are malformed or always `not all` are dropped while parsing.
+/// Each list holds queries that can match in some context, including valid
+/// paper features not yet evaluated by this implementation. Queries that are
+/// malformed or always `not all` are dropped while parsing.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct MediaCondition {
     lists: Arc<[Vec<MediaQuery>]>,
+    paper_dependent: bool,
 }
 
 /// A parsed qualified rule that is guarded by a media condition.
@@ -258,6 +289,12 @@ pub(crate) struct MediaRule {
 }
 
 impl MediaCondition {
+    /// Whether a containing query qualifies declarations by paper dimensions.
+    /// CSS Paged Media 3 §7.1 excludes only `size` under these conditions.
+    pub(crate) fn depends_on_paper_size(&self) -> bool {
+        self.paper_dependent
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.lists.iter().any(Vec::is_empty)
     }
@@ -276,6 +313,7 @@ impl MediaCondition {
                 .chain(other.lists.iter())
                 .cloned()
                 .collect(),
+            paper_dependent: self.paper_dependent || other.paper_dependent,
         }
     }
 }
@@ -287,9 +325,10 @@ impl MediaCondition {
 pub(crate) fn parse_media_prelude(source: &str) -> Option<MediaCondition> {
     let mut input = ParserInput::new(source);
     let mut parser = Parser::new(&mut input);
-    let list = parse_media_query_list(&mut parser).ok()?;
+    let (list, paper_dependent) = parse_media_query_list(&mut parser).ok()?;
     (!list.is_empty()).then(|| MediaCondition {
         lists: Arc::from([list]),
+        paper_dependent,
     })
 }
 
@@ -306,7 +345,7 @@ pub(crate) fn parse_media_prelude(source: &str) -> Option<MediaCondition> {
 /// A malformed `<media-query>` becomes `not all` (MQ4 §3.2) and is dropped
 /// together with queries that can never match. An empty entry or a tokenizer
 /// error token invalidates the whole list instead.
-fn parse_media_query_list<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, Vec<MediaQuery>> {
+fn parse_media_query_list<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, (Vec<MediaQuery>, bool)> {
     let queries = input.parse_comma_separated(|input| {
         if input.is_exhausted() {
             return Err(input.new_custom_error(()));
@@ -319,11 +358,13 @@ fn parse_media_query_list<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, Vec<Med
         input.expect_no_error_token()?;
         Ok(query)
     })?;
-    Ok(queries
+    let list: Vec<_> = queries
         .into_iter()
         .flatten()
         .filter(MediaQuery::can_match)
-        .collect())
+        .collect();
+    let paper_dependent = list.iter().any(MediaQuery::depends_on_paper_size);
+    Ok((list, paper_dependent))
 }
 
 /// `<media-query> = <media-condition>
@@ -459,16 +500,228 @@ fn parse_general_enclosed<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, ()> {
 
 /// `<media-feature> = [ <mf-plain> | <mf-boolean> | <mf-range> ]`
 ///
-/// `<mf-boolean>` is tried last because it is a prefix of the other forms.
-/// Only `width` and `height` are evaluated; any other feature, or a value of
-/// the wrong type, falls through to `<general-enclosed>` and is unknown.
+/// Boolean forms require complete input because they prefix the other forms.
+/// Only `width` and `height` with resolvable lengths are evaluated. Valid
+/// unsupported paper features retain their identity; invalid values and other
+/// features fall through to `<general-enclosed>` and are unknown.
 fn parse_media_feature<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, FeatureCondition> {
     first_of(
         input,
         &[
-            &|input| parse_mf_plain(input).map(Condition::Leaf),
+            &|input| parse_mf_plain(input).map(viewport_condition),
             &|input| parse_mf_range(input),
-            &|input| parse_mf_boolean(input).map(Condition::Leaf),
+            &|input| {
+                input
+                    .parse_entirely(parse_mf_boolean)
+                    .map(viewport_condition)
+            },
+            &|input| {
+                parse_valid_paper_feature(input)
+                    .map(|()| Condition::Leaf(MediaFeature::UnsupportedPaper))
+            },
+        ],
+    )
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum PaperFeatureKind {
+    Length,
+    Ratio,
+    Orientation,
+}
+
+fn parse_paper_feature_name<'i>(
+    input: &mut Parser<'i, '_>,
+) -> PResult<'i, (PaperFeatureKind, bool)> {
+    let name = input.expect_ident()?.to_ascii_lowercase();
+    let (name, prefixed) = name
+        .strip_prefix("min-")
+        .or_else(|| name.strip_prefix("max-"))
+        .map_or((name.as_str(), false), |name| (name, true));
+    let kind = match name {
+        "width" | "height" | "device-width" | "device-height" => PaperFeatureKind::Length,
+        "aspect-ratio" | "device-aspect-ratio" => PaperFeatureKind::Ratio,
+        "orientation" if !prefixed => PaperFeatureKind::Orientation,
+        _ => return Err(input.new_custom_error(())),
+    };
+    Ok((kind, prefixed))
+}
+
+// Capture one feature value, including a ratio's second component. Reparse
+// its complete source only after the name has supplied the required type.
+fn paper_component_source<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, &'i str> {
+    let start = input.position();
+    match input.next()? {
+        Token::Number { .. }
+        | Token::Dimension { .. }
+        | Token::Percentage { .. }
+        | Token::Ident(_) => {}
+        Token::Function(_) => {
+            input.parse_nested_block(|input| Ok(input.expect_no_error_token()?))?
+        }
+        _ => return Err(input.new_custom_error(())),
+    }
+    Ok(input.slice_from(start))
+}
+
+fn paper_value_source<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, &'i str> {
+    let start = input.position();
+    paper_component_source(input)?;
+    let _ = input.try_parse(|input| {
+        input.expect_delim('/')?;
+        paper_component_source(input)
+    });
+    Ok(input.slice_from(start))
+}
+
+fn parse_ratio_number<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, ()> {
+    if let Ok(number) = input.try_parse(|input| input.expect_number()) {
+        return if number >= 0.0 {
+            Ok(())
+        } else {
+            Err(input.new_custom_error(()))
+        };
+    }
+    let state = input.state();
+    input.expect_function()?;
+    input.reset(&state);
+    let source = paper_component_source(input)?;
+    if !crate::property::contains_function_in_source(source, "var")
+        && crate::property::math_value_has_type(source, crate::property::MediaNumericType::Number)
+    {
+        Ok(())
+    } else {
+        Err(input.new_custom_error(()))
+    }
+}
+
+fn valid_paper_value(source: &str, kind: PaperFeatureKind) -> bool {
+    let mut parser_input = ParserInput::new(source);
+    let mut input = Parser::new(&mut parser_input);
+    match kind {
+        PaperFeatureKind::Orientation => input
+            .parse_entirely(|input| {
+                let value = input.expect_ident()?;
+                if value.eq_ignore_ascii_case("portrait") || value.eq_ignore_ascii_case("landscape")
+                {
+                    Ok::<_, cssparser::ParseError<'_, ()>>(())
+                } else {
+                    Err(input.new_custom_error(()))
+                }
+            })
+            .is_ok(),
+        PaperFeatureKind::Ratio => input
+            .parse_entirely(|input| {
+                parse_ratio_number(input)?;
+                if !input.is_exhausted() {
+                    input.expect_delim('/')?;
+                    parse_ratio_number(input)?;
+                }
+                Ok(())
+            })
+            .is_ok(),
+        PaperFeatureKind::Length => {
+            if input
+                .try_parse(|input| {
+                    input.parse_entirely(|input| {
+                        parse_length_allow_negative(input)
+                            .ok_or_else(|| input.new_custom_error::<_, ()>(()))
+                    })
+                })
+                .is_ok()
+            {
+                return true;
+            }
+            // Viewport lengths are syntactically valid before the adapter
+            // resolves them, even though the native feature evaluator cannot.
+            if input
+                .try_parse(|input| {
+                    input.parse_entirely(|input| match input.next()? {
+                        Token::Dimension { unit, .. }
+                            if crate::property::color_math_dimension_type(unit)
+                                == crate::property::ColorMathType::Length =>
+                        {
+                            Ok::<_, cssparser::ParseError<'_, ()>>(())
+                        }
+                        _ => Err(input.new_custom_error(())),
+                    })
+                })
+                .is_ok()
+            {
+                return true;
+            }
+            input.expect_function().is_ok()
+                && !crate::property::contains_function_in_source(source, "var")
+                && crate::property::math_value_has_type(
+                    source,
+                    crate::property::MediaNumericType::Length,
+                )
+        }
+    }
+}
+
+fn parse_valid_paper_feature<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, ()> {
+    first_of(
+        input,
+        &[
+            &|input| {
+                let (kind, _) = parse_paper_feature_name(input)?;
+                input.expect_colon()?;
+                let source = paper_value_source(input)?;
+                if valid_paper_value(source, kind) {
+                    Ok(())
+                } else {
+                    Err(input.new_custom_error(()))
+                }
+            },
+            &|input| {
+                let (kind, prefixed) = parse_paper_feature_name(input)?;
+                if prefixed || kind == PaperFeatureKind::Orientation {
+                    return Err(input.new_custom_error(()));
+                }
+                parse_mf_comparison(input)?;
+                let source = paper_value_source(input)?;
+                if valid_paper_value(source, kind) {
+                    Ok(())
+                } else {
+                    Err(input.new_custom_error(()))
+                }
+            },
+            &|input| {
+                let source = paper_value_source(input)?;
+                let comparison = parse_mf_comparison(input)?;
+                let (kind, prefixed) = parse_paper_feature_name(input)?;
+                if prefixed
+                    || kind == PaperFeatureKind::Orientation
+                    || !valid_paper_value(source, kind)
+                {
+                    return Err(input.new_custom_error(()));
+                }
+                if input.is_exhausted() {
+                    return Ok(());
+                }
+                let second = parse_mf_lt_or_gt(input)?;
+                if comparison == Cmp::Eq
+                    || matches!(comparison, Cmp::Lt | Cmp::Le)
+                        != matches!(second, Cmp::Lt | Cmp::Le)
+                {
+                    return Err(input.new_custom_error(()));
+                }
+                let source = paper_value_source(input)?;
+                if valid_paper_value(source, kind) {
+                    Ok(())
+                } else {
+                    Err(input.new_custom_error(()))
+                }
+            },
+            &|input| {
+                let (_, prefixed) = parse_paper_feature_name(input)?;
+                if prefixed {
+                    Err(input.new_custom_error(()))
+                } else {
+                    Ok(())
+                }
+            },
         ],
     )
 }
@@ -522,12 +775,12 @@ fn parse_mf_range<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, FeatureConditio
                     return Err(input.new_custom_error(()));
                 }
                 Ok(Condition::And(vec![
-                    Condition::Leaf(ViewportFeature {
+                    viewport_condition(ViewportFeature {
                         axis,
                         cmp: first.flipped(),
                         px: low,
                     }),
-                    Condition::Leaf(ViewportFeature {
+                    viewport_condition(ViewportFeature {
                         axis,
                         cmp: second,
                         px: high,
@@ -538,13 +791,13 @@ fn parse_mf_range<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, FeatureConditio
                 let axis = parse_mf_name(input)?;
                 let cmp = parse_mf_comparison(input)?;
                 let px = parse_mf_value(input)?;
-                Ok(Condition::Leaf(ViewportFeature { axis, cmp, px }))
+                Ok(viewport_condition(ViewportFeature { axis, cmp, px }))
             },
             &|input| {
                 let px = parse_mf_value(input)?;
                 let cmp = parse_mf_comparison(input)?;
                 let axis = parse_mf_name(input)?;
-                Ok(Condition::Leaf(ViewportFeature {
+                Ok(viewport_condition(ViewportFeature {
                     axis,
                     cmp: cmp.flipped(),
                     px,
