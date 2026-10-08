@@ -6904,6 +6904,7 @@ fn resolve_inheritance_grows_undersized_output_vectors() {
         &mut authored_writing_modes,
         &mut page_values,
         &mut pseudo_out,
+        &mut HashMap::new(),
     );
     assert!(out.len() > deepest);
     assert!(authored_writing_modes.len() > deepest);
@@ -6941,6 +6942,7 @@ fn resolve_inheritance_panics_when_root_parent_font_size_is_not_initial() {
         &mut authored_writing_modes,
         &mut page_values,
         &mut pseudo_out,
+        &mut HashMap::new(),
     );
 }
 
@@ -9430,6 +9432,7 @@ fn walk_outputs(doc: &TestDoc, tree: &RuleTree, sibling_sharing: bool) -> (WalkO
         &mut authored_writing_modes,
         &mut page_values,
         &mut pseudo_out,
+        &mut HashMap::new(),
         sibling_sharing,
     );
     let mut pseudo = pseudo_out

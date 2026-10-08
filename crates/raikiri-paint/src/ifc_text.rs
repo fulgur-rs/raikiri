@@ -26,6 +26,9 @@ use shodo::node::NodeId;
 use std::convert::TryFrom;
 use std::sync::Arc;
 
+mod typographic;
+pub(crate) use typographic::BackgroundSlice;
+
 /// Content-box origin of an ifc root in page coordinates.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct IfcPosition {
@@ -37,13 +40,13 @@ pub(crate) struct IfcPosition {
 /// One glyph run ready to draw, with its decoration context.
 struct RunDraw<'a> {
     run: shodo::GlyphRunView<'a>,
-    /// The text node the run belongs to.
-    owner: usize,
+    style: &'a raikiri_style::ComputedValues,
     color: peniko::Color,
     glyphs: Vec<AnyrenderGlyph>,
     decorations: Vec<raikiri_dom::DecorationLine>,
     /// The relative offsets of the run's inline ancestors.
     offset: (f32, f32),
+    group: Option<usize>,
 }
 
 /// Draw the glyph runs of an ifc root.
@@ -52,7 +55,7 @@ struct RunDraw<'a> {
 /// glyphs, then the line-throughs (CSS Text Decoration 3 §3: underlines and
 /// overlines below the text, line-throughs over it).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn draw_ifc_lines(
+pub(crate) fn draw_ifc_lines_with_resources(
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,
@@ -61,6 +64,10 @@ pub(crate) fn draw_ifc_lines(
     base_decorations: &DecorationContext,
     fragmentainer: Option<usize>,
     custom_highlights: &[crate::TextHighlightRange],
+    pixel_source: Option<&dyn raikiri_traits::ImagePixelSource>,
+    warnings: &mut Vec<raikiri_traits::RenderWarning>,
+    page_box: raikiri_traits::PageBox,
+    paint_transform: Affine,
 ) {
     let Some(positioned) = PositionedLines::new(document, cascade, root_id, fragmentainer) else {
         return;
@@ -96,6 +103,11 @@ pub(crate) fn draw_ifc_lines(
             f64::from(position.x),
             f64::from(position.y + position.shift_y),
         ));
+        let root_node = document
+            .get_node(root_id)
+            .expect("positioned lines require an existing IFC root");
+        let mut paint = typographic::TypographicPaint::new(root_node, &pieces_by_line[line_index]);
+        let background_slices = typographic::background_slices(&pieces_by_line[line_index]);
         for fragment in line.fragments() {
             let Fragment::Atomic(atomic) = fragment else {
                 continue;
@@ -123,7 +135,7 @@ pub(crate) fn draw_ifc_lines(
                 width: image.width,
                 height: image.height,
             });
-            scene.fill(
+            paint.target(None).fill(
                 Fill::NonZero,
                 Affine::translate((
                     f64::from(position.x + rect.x),
@@ -140,30 +152,45 @@ pub(crate) fn draw_ifc_lines(
         // The boxes of the inline elements on this line go below its text
         // (CSS 2.1 Appendix E: an inline box's background and borders, then
         // its text).
-        for piece in &pieces_by_line[line_index] {
+        for (piece_index, piece) in pieces_by_line[line_index].iter().enumerate() {
             if generated_origin(piece.node)
                 .is_some_and(|(_, pseudo)| pseudo == raikiri_style::PseudoElem::Marker)
             {
                 continue;
             }
-            let Some(cv) = computed_for_id(cascade, piece.node) else {
+            let retained = root_node.ifc_typographic_fragment(
+                piece.node,
+                piece.source_container,
+                piece.source_owner,
+            );
+            let Some(cv) = retained
+                .map(|(style, _)| style)
+                .or_else(|| computed_for_id(cascade, piece.node))
+            else {
                 continue;
             };
-            let (dx, dy) = cumulative_offset(document, root_id, offsets, piece.node);
+            let source = retained.map(|(_, owner)| owner).unwrap_or(piece.node);
+            let (dx, dy) = cumulative_offset(document, root_id, offsets, source);
             // The pieces already carry the line's pagination shift, which
             // `position` holds too.
             let line_shift = shifts.get(line_index).copied().unwrap_or(0.0);
+            let group = paint.piece_group(piece);
             crate::walk::paint_inline_box(
-                scene,
+                paint.target(group),
                 cv,
                 piece,
+                (!vertical)
+                    .then(|| background_slices[piece_index].as_ref())
+                    .flatten(),
                 position.x + dx,
                 position.y + position.shift_y + dy - line_shift,
+                pixel_source,
+                warnings,
             );
         }
         if !vertical && let Some(hit_layout) = hit_layout.as_ref() {
             draw_custom_highlights(
-                scene,
+                paint.target(None),
                 document,
                 cascade,
                 root_id,
@@ -189,10 +216,7 @@ pub(crate) fn draw_ifc_lines(
             positioned_line.runs.into_iter().zip(resolved_decorations)
         {
             let run = positioned_run.run;
-            let owner = positioned_run.owner;
-            let Some(cv) = computed_for_id(cascade, owner) else {
-                continue; // cov:ignore: the enumerator keeps only runs with computed values.
-            };
+            let cv = positioned_run.style;
             let glyphs: Vec<AnyrenderGlyph> = positioned_run
                 .glyphs
                 .iter()
@@ -203,25 +227,33 @@ pub(crate) fn draw_ifc_lines(
                 })
                 .collect();
             let offset = positioned_run.offset;
+            let group = paint.nearest(positioned_run.style_owner, positioned_run.owner);
             runs.push(RunDraw {
                 run,
-                owner,
+                style: cv,
                 color: css_color_to_peniko(cv.color),
                 glyphs,
                 decorations,
                 offset,
+                group,
             });
         }
         if !vertical {
-            draw_decorations(scene, &runs, DecorationPhase::BeforeGlyphs);
+            for draw in &runs {
+                draw_decorations(
+                    paint.target(draw.group),
+                    std::slice::from_ref(draw),
+                    DecorationPhase::BeforeGlyphs,
+                );
+            }
         }
         for draw in &runs {
             let Some(font) = draw.run.font_data() else {
                 continue;
             };
-            let Some(owner_style) = computed_for_id(cascade, draw.owner) else {
-                continue;
-            };
+            let owner_style = draw.style;
+            paint.start_glyphs(draw.group);
+            let scene = paint.target(draw.group);
             let font_size = draw.run.font_size();
             // shodo's normalized coordinates are `F2Dot14` newtypes; the scene
             // takes the raw `i16` bits.
@@ -289,9 +321,53 @@ pub(crate) fn draw_ifc_lines(
             }
         }
         if !vertical {
-            draw_decorations(scene, &runs, DecorationPhase::AfterGlyphs);
+            for draw in &runs {
+                draw_decorations(
+                    paint.target(draw.group),
+                    std::slice::from_ref(draw),
+                    DecorationPhase::AfterGlyphs,
+                );
+            }
         }
+        paint.finish(
+            scene,
+            Rect::new(
+                0.0,
+                0.0,
+                f64::from(page_box.width.max(0.0)),
+                f64::from(page_box.height.max(0.0)),
+            ),
+            paint_transform,
+        );
     }
+}
+
+#[cfg(test)]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn draw_ifc_lines(
+    scene: &mut impl PaintScene,
+    document: &Document,
+    cascade: &CascadeResult,
+    root_id: usize,
+    position: IfcPosition,
+    base_decorations: &DecorationContext,
+    fragmentainer: Option<usize>,
+    custom_highlights: &[crate::TextHighlightRange],
+) {
+    draw_ifc_lines_with_resources(
+        scene,
+        document,
+        cascade,
+        root_id,
+        position,
+        base_decorations,
+        fragmentainer,
+        custom_highlights,
+        None,
+        &mut Vec::new(),
+        raikiri_traits::PageBox::A4,
+        Affine::IDENTITY,
+    );
 }
 
 fn physical_glyph_transform(

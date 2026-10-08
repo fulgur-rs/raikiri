@@ -793,13 +793,31 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS Lists shorthand and inside marker text exact slice (+8).
     // + CSS2 relative block positioning exact slice (+14).
     // + CSS Inline image-loaded vertical-align length exact slice (+1).
-    // + Remeasured exact regression pins (+8) and unsupported pins removed (-7).
-    // + CSS Overflow inherited Ahem font-metric max-width:4ch exact slice (+1).
+    // + Genuine non-floating first-letter pairs (+3), remove two vacuous pins (-2).
+    // + Remeasured baseline pins (+8 PASS, -7 inaccurate pins).
+    // + CSS Overflow inherited Ahem max-width:4ch exact slice (+1).
     // + CSS2 table baseline, bottom caption and empty-cell exact slice (+18).
     // + CSS Color contextual background and color-mix exact references (+5).
+    assert_eq!(set.baseline.entries.len(), 1483);
+    for id in [
+        "css/css-pseudo/first-letter-004.html",
+        "css/css-pseudo/first-letter-005.html",
+        "css/css-pseudo/first-letter-with-before-after.html",
+    ] {
+        assert!(set.baseline.entries.contains(id));
+    }
+    assert!(
+        !set.baseline
+            .entries
+            .contains("css/css-pseudo/first-letter-003.html")
+    );
+    assert!(
+        !set.baseline
+            .entries
+            .contains("css/css-backgrounds/first-letter-space-not-selected.html")
+    );
 
     // + CSS Break between-box page/column avoidance exact slice (+15).
-    assert_eq!(set.baseline.entries.len(), 1482);
     for index in 0..15 {
         let id = format!("css/css-break/break-between-avoid-{index:03}.html");
         assert!(set.baseline.entries.contains(id.as_str()));

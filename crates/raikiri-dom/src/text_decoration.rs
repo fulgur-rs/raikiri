@@ -422,10 +422,10 @@ pub fn context_for_root(
         )
 }
 
-/// Build one context per text owner and reuse it across that owner's font slices.
-fn contexts_for_text_owners(
-    owners: impl IntoIterator<Item = usize>,
-    mut context: impl FnMut(usize) -> DecorationContext,
+/// Cache decoration contexts by owner key across matching font slices.
+fn contexts_for_text_owners<K: Copy + Eq + std::hash::Hash>(
+    owners: impl IntoIterator<Item = K>,
+    mut context: impl FnMut(K) -> DecorationContext,
 ) -> Vec<DecorationContext> {
     let mut cache = HashMap::new();
     owners
@@ -542,9 +542,35 @@ pub fn positioned_line_decorations(
     let baseline = f64::from(origin.1)
         + f64::from(line.line.block_offset())
         + f64::from(line.line.baseline(BaselineKind::Alphabetic));
-    let contexts = contexts_for_text_owners(line.runs.iter().map(|run| run.owner), |owner| {
-        context_for_text(document, cascade, root, owner, base, &shifts)
-    });
+    let contexts = contexts_for_text_owners(
+        line.runs.iter().map(|run| (run.style_owner, run.owner)),
+        |(style_owner, owner)| {
+            let context = context_for_text(document, cascade, root, owner, base, &shifts);
+            if style_owner == owner {
+                return context;
+            }
+            let Some(root_node) = document.get_node(root) else {
+                return context; // cov:ignore: PositionedLines validated this root before producing any styled run.
+            };
+            let mut chain = Vec::new();
+            let mut current = Some(style_owner);
+            while let Some(id) = current {
+                chain.push(id);
+                current = root_node.ifc_typographic_parent(id);
+            }
+            chain.iter().rev().fold(context, |context, &id| {
+                let Some(style) = root_node.ifc_typographic_style_for_owner(id, owner) else {
+                    return context; // cov:ignore: style owner and parent IDs come from this root's retained letter styles.
+                };
+                decorations_for_element(
+                    &context,
+                    NodeId::new(id as u64),
+                    style,
+                    shifts.get(&id).copied().unwrap_or(0.0),
+                )
+            })
+        },
+    );
     let geometries: Vec<_> = line
         .runs
         .iter()

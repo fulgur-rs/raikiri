@@ -579,7 +579,7 @@ pub(crate) fn prepare_legacy_inside_markers_before_taffy(
 /// not zero-height (CSS 2.1, 9.4.2): any white space under `preserve`,
 /// `preserve-spaces` and `break-spaces`, and a segment break under
 /// `preserve-breaks`.
-fn text_makes_a_line(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
+pub(super) fn text_makes_a_line(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
     let Some(text) = doc.nodes[id].text_content() else {
         return false; // cov:ignore: callers pass text nodes, which always hold character data.
     };

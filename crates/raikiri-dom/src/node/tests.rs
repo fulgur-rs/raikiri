@@ -1,6 +1,73 @@
 use super::*;
 use crate::layout::test_support::with_ahem;
 
+thread_local! {
+    static TYPOGRAPHIC_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+pub(super) fn record_typographic_probe() {
+    TYPOGRAPHIC_PROBES.with(|count| count.set(count.get() + 1));
+}
+
+#[test]
+fn retained_typographic_lookup_has_linear_work_across_many_inline_owners() {
+    use crate::layout::ifc::test_support::{ahem_fonts, sheet_fixture};
+    let mut fixture = sheet_fixture(
+        "div::first-letter{color:red}",
+        "width:10000px",
+        |doc, root| {
+            for _ in 0..128 {
+                let span = doc.append_element(
+                    Some(root),
+                    "span",
+                    taffy::Style::default(),
+                    Some("display:inline"),
+                );
+                doc.append_text(span, "“");
+            }
+            doc.append_text(root, "A");
+            for _ in 0..32 {
+                let span = doc.append_element(
+                    Some(root),
+                    "span",
+                    taffy::Style::default(),
+                    Some("display:inline"),
+                );
+                doc.append_text(span, "Y");
+            }
+        },
+    );
+    fixture.doc.set_font_collection(ahem_fonts());
+    crate::layout::layout_single_page(
+        &mut fixture.doc,
+        &fixture.cascade,
+        crate::layout::test_support::page_box_800x600(),
+    )
+    .unwrap();
+    let node = fixture.doc.get_node(fixture.root).unwrap();
+    assert_eq!(node.ifc.as_ref().unwrap().letter_styles.len(), 129);
+    let pieces = node.ifc_inline_boxes().unwrap();
+    TYPOGRAPHIC_PROBES.with(|count| count.set(0));
+    let mut retained = 0;
+    for piece in &pieces {
+        let result =
+            node.ifc_typographic_fragment(piece.node, piece.source_container, piece.source_owner);
+        if let Some((style, owner)) = result {
+            retained += 1;
+            assert_eq!(style.color.r, 255);
+            assert_eq!(Some(owner), piece.source_owner);
+        }
+    }
+    assert_eq!(retained, 129);
+    let work = TYPOGRAPHIC_PROBES.with(std::cell::Cell::get);
+    assert!(work > 0);
+    assert!(
+        work <= pieces.len() * 2,
+        "{work} candidate probes for {} pieces",
+        pieces.len()
+    );
+}
+
 #[cfg(test)]
 mod ifc_geometry_tests {
     use super::*;
