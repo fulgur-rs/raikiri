@@ -405,4 +405,3 @@ kept out of the PASS baseline. General `background: inherit` shorthand expansion
 is a separate existing parser gap (0vv.127); the supported longhand inheritance
 above does not establish all eight shorthand longhands. Color conversion still
 uses the existing bounded 8-bit sRGB model.
-
