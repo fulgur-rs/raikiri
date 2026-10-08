@@ -1170,7 +1170,8 @@ fn table_grid_projection_and_relayout_exclude_caption_space() {
                     raikiri_dom::PageMargins::default(),
                     raikiri_dom::PageContentInsets::default(),
                 )],
-            );
+            )
+            .unwrap();
             let rect = doc
                 .page_fragments(0)
                 .find(|fragment| fragment.node().0 == table as u64)
@@ -1293,7 +1294,8 @@ fn empty_cell_classification_preserves_in_flow_content_and_absolute_descendants(
                 raikiri_dom::PageMargins::default(),
                 raikiri_dom::PageContentInsets::default(),
             )],
-        );
+        )
+        .unwrap();
         let boxes=doc.page_paint_order(&computed,0,None).iter().filter(|event|matches!(event,raikiri_dom::PaintEvent::Box(fragment) if fragment.node().0==cell as u64)).count();
         assert_eq!(boxes, usize::from(!hidden), "{contents}");
         if contents == 4 {
@@ -2338,7 +2340,8 @@ fn vertical_caption_margins_reserve_their_margin_box_without_shifting_inline_flo
                 raikiri_dom::PageMargins::default(),
                 raikiri_dom::PageContentInsets::default(),
             )],
-        );
+        )
+        .unwrap();
         let projected = doc
             .page_fragments(0)
             .find(|fragment| fragment.node().0 == table as u64)
@@ -3169,7 +3172,8 @@ fn third_review_relative_caption_retains_paint_side_insets() {
             raikiri_dom::PageMargins::default(),
             raikiri_dom::PageContentInsets::default(),
         )],
-    );
+    )
+    .unwrap();
     let api = doc
         .page_paint_order(&computed, 0, None)
         .into_iter()

@@ -1622,42 +1622,17 @@ fn paint_list_marker_with_snapshots(
     if content.is_empty() {
         return;
     }
-    let family = computed
-        .font_family
-        .first()
-        .map(|family| family.as_str().to_string())
-        .unwrap_or_else(|| "serif".to_string());
-    let marker_width =
-        text::measure_margin_text(document, &content, computed.font_size.px(), &family);
-    if marker_width <= 0.0 {
-        return; // cov:ignore: zero-advance glyphs are a defensive font-metric edge
-    }
-    // Legacy content reserves the marker advance in its used padding.
-    // Subtract it to place the marker at the authored padding edge.
-    const MARKER_GAP: f32 = 4.0;
-    let marker_x = match computed.list_style_position {
-        raikiri_style::ListStylePosition::Outside => {
-            paint_x + padding_left - marker_width - MARKER_GAP
-        }
-        raikiri_style::ListStylePosition::Inside => {
-            paint_x + padding_left - document.legacy_inside_marker_advance(node_id)
-        }
-        // cov:ignore: non-exhaustive enum fallback is not constructible here
-        _ => paint_x + padding_left - marker_width - MARKER_GAP,
+    let Some((shaped, offset_x)) =
+        document.shape_list_marker_text(&content, computed, node_id, padding_left)
+    else {
+        return;
     };
-    text::draw_margin_text(
-        document,
+    crate::standalone_text::draw(
         scene,
-        &content,
-        marker_x, // cov:ignore: argument mapping has no executable location
+        &shaped,
+        paint_x + offset_x,
         paint_y,
-        marker_width,
-        height,
         css_color(computed.color),
-        computed.font_size.px(),
-        &family,
-        StandaloneAlign::Start,
-        text::MarginTextVerticalAlign::Top, // cov:ignore: argument mapping has no executable location
     );
 }
 

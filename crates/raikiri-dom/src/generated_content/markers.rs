@@ -10,6 +10,53 @@ use raikiri_style::property::{
 };
 use raikiri_style::{CascadeResult, CounterStyleRegistry, resolve_custom_counter};
 
+impl Document {
+    /// Shape a standalone marker and resolve its horizontal offset from the
+    /// principal box, sharing the built-in painter's trailing-space handling.
+    #[doc(hidden)]
+    pub fn shape_list_marker_text(
+        &self,
+        content: &str,
+        computed: &raikiri_style::ComputedValues,
+        node_id: usize,
+        padding_left: f32,
+    ) -> Option<(crate::StandaloneText, f32)> {
+        let size = computed.font_size.px();
+        let style = crate::StandaloneStyle {
+            families: computed
+                .font_family
+                .first()
+                .map(|family| vec![family.as_str().to_owned()])
+                .unwrap_or_else(|| vec!["serif".to_owned()]),
+            font_size: if size.is_finite() && size > 0.0 {
+                size
+            } else {
+                16.0
+            },
+            ..crate::StandaloneStyle::default()
+        };
+        let measured =
+            self.shape_standalone_text(content, &style, None, crate::StandaloneAlign::Start)?;
+        let width = measured.width();
+        if width <= 0.0 {
+            return None;
+        }
+        let offset = match computed.list_style_position {
+            raikiri_style::ListStylePosition::Inside => {
+                padding_left - self.legacy_inside_marker_advance(node_id)
+            }
+            _ => padding_left - width - 4.0,
+        };
+        let shaped = self.shape_standalone_text(
+            content,
+            &style,
+            Some(width),
+            crate::StandaloneAlign::Start,
+        )?;
+        Some((shaped, offset))
+    }
+}
+
 fn list_item_counter_value(counters: &impl CounterSnapshotLookup, ordinal: u32) -> i32 {
     counters
         .values_for("list-item")

@@ -98,7 +98,8 @@ fn shared_source_clips_snap_after_fractional_page_translation() {
         },
         PageContentInsets::default(),
     );
-    doc.project_pages(&cascade, page, &slices, &[geometry, geometry]);
+    doc.project_pages(&cascade, page, &slices, &[geometry, geometry])
+        .unwrap();
     for (index, y) in [(0, 1.0), (1, -100.0)] {
         let clip = doc
             .page_overflow_clips(index)
@@ -186,7 +187,8 @@ fn project(doc: &mut Document, cascade: &CascadeResult, page: PageBox, slices: &
             )
         })
         .collect();
-    doc.project_pages(cascade, page, slices, &geometries);
+    doc.project_pages(cascade, page, slices, &geometries)
+        .unwrap();
 }
 
 #[test]

@@ -239,6 +239,10 @@ impl<'a> Page<'a> {
     /// a paragraph repeated on every page (inside `position: fixed`) appears
     /// on each. Propagated text decorations are included; margin boxes and
     /// shadows are not included yet.
+    /// Text list markers are included, including standalone markers of
+    /// empty items. A standalone marker belongs to its item's first
+    /// principal fragment and is not repeated on continuation pages. Image
+    /// markers are not included.
     /// A paragraph whose text is placed by geometry the runs do not model
     /// has no runs here: a vertical writing mode, a multicol container's
     /// columns, relatively positioned inline elements, a transform or
@@ -286,6 +290,8 @@ impl<'a> Page<'a> {
     /// DOM text fragments. Each [`PaintEvent::TextLine`] identifies all runs
     /// of one paragraph line, including generated text and ellipses, inside
     /// the paragraph's ancestor clips and opacity groups.
+    /// Standalone list markers have their own line events, before the list
+    /// item's overflow clip and inside its opacity group.
     ///
     /// Pass the runs from this page. No text is extracted or shaped again.
     /// Boxes, replaced content and the approximations of [`Self::paint_order`]

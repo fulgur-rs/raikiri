@@ -122,30 +122,10 @@ pub(crate) fn draw_margin_text_styled(
     crate::standalone_text::draw(scene, &shaped, x, y + offset_y, color);
 }
 
-/// Measure one-line generated margin text using the same font defaults as
-/// [`draw_margin_text`].  Replaced content such as an image can use the result
-/// as its inline origin without leaking URL syntax into the painted text.
-pub(crate) fn measure_margin_text(
-    document: &Document,
-    content: &str,
-    font_size: f32,
-    font_family: &str,
-) -> f32 {
-    crate::standalone_text::shape(
-        document,
-        content,
-        font_size,
-        font_family,
-        None,
-        StandaloneAlign::Start,
-    )
-    .map_or(0.0, |shaped| shaped.width())
-}
-
 /// Measure one-line generated text including trailing whitespace.
 ///
-/// [`measure_margin_text`] intentionally returns the ink/content width used by
-/// markers and margin boxes, where trailing whitespace must not move the box.
+/// Standalone text width excludes trailing whitespace for markers and margin
+/// boxes, where trailing whitespace must not move the box.
 /// A generated `::before` run is different: its trailing spaces are part of
 /// the inline advance consumed before `::after`, so use the first line's
 /// advance, which keeps them.

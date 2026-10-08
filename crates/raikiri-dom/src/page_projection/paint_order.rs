@@ -233,6 +233,20 @@ impl Document {
                             }
                         }
                     }
+                    if let Some(lines) = lines {
+                        let marker = crate::generated_content::generated_node_id(
+                            node_id,
+                            raikiri_style::PseudoElem::Marker,
+                        );
+                        events.extend(
+                            lines
+                                .get(&NodeId::new(marker as u64))
+                                .into_iter()
+                                .flatten()
+                                .copied()
+                                .map(PaintEvent::TextLine),
+                        );
+                    }
                     // The clip is the padding box of the element's whole box
                     // resolved from shared source geometry. It opens after the element's own
                     // box and closes after its subtree.

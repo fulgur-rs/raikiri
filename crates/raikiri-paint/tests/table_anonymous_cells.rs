@@ -623,7 +623,7 @@ fn anonymous_text_trace_interleaves_generated_and_real_text_with_cells() {
         ];
         assert_eq!(traced, expected);
         let slices = raikiri_dom::layout_pages(&mut doc, &computed, page()).unwrap();
-        doc.project_pages(&computed, page(), &slices, &[]);
+        doc.project_pages(&computed, page(), &slices, &[]).unwrap();
         let runs = doc.page_text_runs(&computed, 0);
         let mut projected = Vec::new();
         let mut previous_line_root = None;
@@ -1156,7 +1156,7 @@ fn anonymous_groups_keep_distinct_columns_and_public_text_source_ids() {
         40.0
     );
     let slices = raikiri_dom::layout_pages(&mut doc, &computed, page()).unwrap();
-    doc.project_pages(&computed, page(), &slices, &[]);
+    doc.project_pages(&computed, page(), &slices, &[]).unwrap();
     let runs = doc.page_text_runs(&computed, 0);
     let glyphs: Vec<_> = runs
         .iter()
@@ -1458,7 +1458,7 @@ fn anonymous_row_backgrounds_leave_separated_border_gaps_on_the_table() {
         raster(scene(&reference, &expected)),
     );
     let slices = raikiri_dom::layout_pages(&mut doc, &computed, page()).unwrap();
-    doc.project_pages(&computed, page(), &slices, &[]);
+    doc.project_pages(&computed, page(), &slices, &[]).unwrap();
     let events = doc.page_paint_order(&computed, 0, None);
     let mut group_clips = Vec::new();
     for triple in events.windows(3) {
@@ -1500,7 +1500,7 @@ fn anonymous_cell_text_runs_keep_ancestor_decoration_context() {
     );
     let computed = layout(&mut doc);
     let slices = raikiri_dom::layout_pages(&mut doc, &computed, page()).unwrap();
-    doc.project_pages(&computed, page(), &slices, &[]);
+    doc.project_pages(&computed, page(), &slices, &[]).unwrap();
     let runs = doc.page_text_runs(&computed, 0);
     let run = runs
         .iter()
@@ -1711,9 +1711,13 @@ fn removing_anonymous_content_restores_fresh_explicit_row_geometry() {
             raster(scene(&reference, &expected)),
         );
         let slices = raikiri_dom::layout_pages(&mut actual, &computed, page()).unwrap();
-        actual.project_pages(&computed, page(), &slices, &[]);
+        actual
+            .project_pages(&computed, page(), &slices, &[])
+            .unwrap();
         let slices = raikiri_dom::layout_pages(&mut reference, &expected, page()).unwrap();
-        reference.project_pages(&expected, page(), &slices, &[]);
+        reference
+            .project_pages(&expected, page(), &slices, &[])
+            .unwrap();
         let actual_runs: Vec<_> = actual
             .page_text_runs(&computed, 0)
             .into_iter()
@@ -1991,7 +1995,7 @@ fn review_anonymous_paragraphs_interleave_with_explicit_cell_events() {
         let last = doc.append_text(span, "A");
         let computed = layout(&mut doc);
         let slices = raikiri_dom::layout_pages(&mut doc, &computed, page()).unwrap();
-        doc.project_pages(&computed, page(), &slices, &[]);
+        doc.project_pages(&computed, page(), &slices, &[]).unwrap();
         let events = doc.page_paint_order(&computed, 0, None);
         let owners: Vec<_> = events
             .iter()
@@ -2211,7 +2215,7 @@ fn review_contents_pseudo_runs_keep_real_owners_and_utf8_sources() {
     let count = doc.node_count();
     let computed = layout(&mut doc);
     let slices = raikiri_dom::layout_pages(&mut doc, &computed, page()).unwrap();
-    doc.project_pages(&computed, page(), &slices, &[]);
+    doc.project_pages(&computed, page(), &slices, &[]).unwrap();
     let runs = doc.page_text_runs(&computed, 0);
     assert_eq!(doc.node_count(), count);
     assert_eq!(doc.parent_of(text), Some(span));
@@ -2269,7 +2273,7 @@ fn review_contents_pseudo_lines_interleave_with_structural_cell_events() {
     let computed = layout(&mut doc);
     let keys: Vec<_> = doc.anonymous_table_cells(row).map(|(key, _)| key).collect();
     let slices = raikiri_dom::layout_pages(&mut doc, &computed, page()).unwrap();
-    doc.project_pages(&computed, page(), &slices, &[]);
+    doc.project_pages(&computed, page(), &slices, &[]).unwrap();
     let runs = doc.page_text_runs(&computed, 0);
     let mut texts = runs.iter().map(|run| run.text).collect::<Vec<_>>();
     texts.sort_unstable();
@@ -2561,7 +2565,7 @@ fn contents_overlay_keeps_projected_pseudos_and_real_cells_single() {
                     .unwrap();
             assert_eq!(trace.iter().filter(|event| matches!(event, raikiri_paint::PaintTraceEvent::Box(id) if *id == cell)).count(), 1);
             let slices = raikiri_dom::layout_pages(&mut doc, &computed, page()).unwrap();
-            doc.project_pages(&computed, page(), &slices, &[]);
+            doc.project_pages(&computed, page(), &slices, &[]).unwrap();
             let runs = doc.page_text_runs(&computed, 0);
             let events = doc.page_paint_order_for_text_runs(&computed, 0, &runs);
             assert_eq!(events.iter().filter(|event| matches!(event, raikiri_dom::PaintEvent::Box(fragment) if fragment.node().0 as usize == cell)).count(), 1);

@@ -162,11 +162,11 @@ impl PageFragment {
     }
 }
 
-/// A paragraph laid out by the inline engine, at its content-box origin in
+/// A paragraph or standalone list marker, at its origin in
 /// the shared flow space (the space of [`PageFragment::content_origin_y`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct ProjectedTextRoot {
-    /// Internal paragraph key (a DOM node or a layout-only anonymous cell).
+    /// Internal text key (a DOM node, anonymous cell or generated marker).
     pub(crate) node: usize,
     /// Left edge of the content box.
     pub(crate) x: f32,

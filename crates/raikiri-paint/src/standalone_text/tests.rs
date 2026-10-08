@@ -1,4 +1,4 @@
-use crate::text::{measure_margin_text, measure_margin_text_advance, measure_margin_text_height};
+use crate::text::{measure_margin_text_advance, measure_margin_text_height};
 use raikiri_dom::{Document, StandaloneAlign};
 use shodo::limits::Limits;
 
@@ -13,6 +13,12 @@ fn engine_document() -> Document {
         .expect("the Ahem layer");
     doc.set_font_collection_with_limits(collection, Limits::default());
     doc
+}
+
+fn measure_margin_text(doc: &Document, text: &str, size: f32, family: &str) -> f32 {
+    super::shape(doc, text, size, family, None, StandaloneAlign::Start)
+        .unwrap()
+        .width()
 }
 
 #[test]
