@@ -4037,10 +4037,9 @@ pub(crate) fn paint_document_impl(
                                 && matches!(side.color, BorderColor::Resolved(c) if c == cv.background_color)
                         });
                     // Paint border on top of background (CSS Backgrounds 3 §5).
-                    if paints_table_part
-                        && !border_covered_by_background
-                        && paints_as_absolute_continuation
-                    {
+                    let paints_continuation_border =
+                        paints_table_part && paints_as_absolute_continuation;
+                    if !border_covered_by_background && paints_continuation_border {
                         paint_element_border_with_top(
                             scene,
                             own_paint_width, // cov:ignore: absolute continuation fragments are exercised by the ignored fragmentation WPT reftests.
