@@ -1265,11 +1265,18 @@ pub(super) fn parse_z_index(input: &mut Parser<'_, '_>) -> Option<ZIndexValue> {
         .map(ZIndexValue::Integer)
 }
 
-/// Expand one to four circular `<length>` values of `border-radius` across the four corners.
-///
-/// CSS Backgrounds and Borders 3 §5 orders them top-left, top-right, bottom-right, bottom-left.
-/// Percentages are accepted; elliptical radii after a slash and negative values are not.
+/// Expand one to four values per axis in clockwise order (CSS Backgrounds 3 §4.1).
 pub(super) fn parse_border_radius(input: &mut Parser<'_, '_>) -> Option<BorderRadius> {
+    let horizontal = parse_border_radius_axis(input)?;
+    let vertical = if input.try_parse(|i| i.expect_delim('/')).is_ok() {
+        parse_border_radius_axis(input)?
+    } else {
+        horizontal
+    };
+    Some(BorderRadius::elliptical(horizontal, vertical))
+}
+
+fn parse_border_radius_axis(input: &mut Parser<'_, '_>) -> Option<[Length; 4]> {
     let first = parse_non_negative_length_percentage(input)?;
     let second = input
         .try_parse(parse_non_negative_length_percentage_res)
@@ -1280,33 +1287,22 @@ pub(super) fn parse_border_radius(input: &mut Parser<'_, '_>) -> Option<BorderRa
     let fourth = input
         .try_parse(parse_non_negative_length_percentage_res)
         .ok();
+    let second = second.unwrap_or(first);
+    let third = third.unwrap_or(first);
+    let fourth = fourth.unwrap_or(second);
+    Some([first, second, third, fourth])
+}
 
-    Some(match (second, third, fourth) {
-        (None, _, _) => BorderRadius {
-            top_left: first,
-            top_right: first,
-            bottom_right: first,
-            bottom_left: first,
-        },
-        (Some(opposite), None, _) => BorderRadius {
-            top_left: first,
-            top_right: opposite,
-            bottom_right: first,
-            bottom_left: opposite,
-        },
-        (Some(horizontal), Some(bottom), None) => BorderRadius {
-            top_left: first,
-            top_right: horizontal,
-            bottom_right: bottom,
-            bottom_left: horizontal,
-        },
-        (Some(top_right), Some(bottom_right), Some(bottom_left)) => BorderRadius {
-            top_left: first,
-            top_right,
-            bottom_right,
-            bottom_left,
-        },
-    })
+/// A corner longhand accepts one or two non-negative axis values.
+pub(super) fn parse_border_radius_corner(
+    input: &mut Parser<'_, '_>,
+) -> Option<CornerRadius<Length>> {
+    let horizontal = parse_non_negative_length_percentage(input)?;
+    let vertical = input
+        .try_parse(parse_non_negative_length_percentage_res)
+        .ok()
+        .unwrap_or(horizontal);
+    Some(CornerRadius::new(horizontal, vertical))
 }
 
 pub(super) fn parse_non_negative_length_percentage(input: &mut Parser<'_, '_>) -> Option<Length> {

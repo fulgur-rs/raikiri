@@ -305,10 +305,10 @@ fn parent_fixture() -> ComputedValues {
             color: BorderColor::Resolved(CssColor::BLACK),
         }),
         border_radius: ComputedBorderRadius {
-            top_left: ComputedLengthPercentage::Px(1.0),
-            top_right: ComputedLengthPercentage::Px(2.0),
-            bottom_right: ComputedLengthPercentage::Px(3.0),
-            bottom_left: ComputedLengthPercentage::Px(4.0),
+            top_left: ComputedLengthPercentage::Px(1.0).into(),
+            top_right: ComputedLengthPercentage::Px(2.0).into(),
+            bottom_right: ComputedLengthPercentage::Px(3.0).into(),
+            bottom_left: ComputedLengthPercentage::Px(4.0).into(),
         },
         box_shadow: Arc::new(vec![ComputedBoxShadowItem {
             offset_x: ComputedLength(1.0),

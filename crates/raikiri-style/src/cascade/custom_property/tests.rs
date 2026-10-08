@@ -1405,3 +1405,27 @@ fn clamp_min_wins_when_bounds_are_reversed() {
     let cv = cascade_doc("", "div", Some("width: clamp(20px, 0px, 10px)"));
     assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Px(20.0));
 }
+
+#[test]
+fn radius_inheritance_substitution_retains_shorthand_type_before_expansion() {
+    let environment = CustomPropertyEnvironment::from_map(HashMap::new());
+    let deferred = DeferredValue {
+        property: "border-radius".into(),
+        value: "var(--missing, inherit)".into(),
+        key: PropertyKey::BorderRadius,
+    };
+    assert_eq!(
+        resolve_deferred_value(&deferred, &environment),
+        Some(PropertyValue::BorderRadiusInherit)
+    );
+    assert_eq!(
+        project_deferred_value(
+            PropertyValue::BorderRadius(crate::property::BorderRadius::elliptical(
+                [Length::Px(5.0); 4],
+                [Length::Px(5.0); 4]
+            )),
+            PropertyKey::Color
+        ),
+        None
+    );
+}
