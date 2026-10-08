@@ -4,7 +4,7 @@ use super::boxes::IfcBoxKind;
 use super::error::IfcError;
 use super::projection::{
     GeneratedCounters, ProjectedBuilder, ProjectedIfc, box_kind, has_in_flow_generated_text,
-    project_ifc_builder_with, project_ifc_text_builder,
+    project_anonymous_cell_builder, project_ifc_builder_with, project_ifc_text_builder,
 };
 use super::root::{IfcBuildMode, IfcRoot, IfcState};
 use super::style;
@@ -99,8 +99,8 @@ fn box_parent(doc: &Document, cascade: &CascadeResult, idx: usize) -> Option<usi
 
 /// Whether `idx` is a box that lays its own inline content out in lines: a
 /// block container (`block`, `flow-root`, `inline-block`, `list-item`, a
-/// table cell), a blockified inline flex or grid item, or a table box holding
-/// only inline-level children. Flex and grid boxes and tables with rows lay
+/// table cell), or a blockified inline flex or grid item. Flex and grid boxes
+/// and tables lay
 /// their children out by algorithms of their own. A table caption is a block
 /// container (the table algorithm lays it out at the table's width). A
 /// multicol container is a root like any block container: its lines are
@@ -132,29 +132,8 @@ pub(crate) fn can_be_ifc_root(doc: &Document, cascade: &CascadeResult, idx: usiz
         | DisplayValue::TableCaption => true,
         // The body is a block whatever its display (see `generates_own_box`).
         DisplayValue::Contents => is_layout_root(doc, idx),
-        // A table box whose children are all inline-level is one anonymous
-        // cell's content (CSS 2.1 17.2.1); one with rows, row groups or
-        // block children is laid out by the table algorithm.
-        DisplayValue::Table | DisplayValue::InlineTable => {
-            holds_only_inline_level_children(doc, cascade, idx)
-        }
         _ => false,
     }
-}
-
-/// Whether every in-document element child of `idx` is inline-level
-/// (`inline`, or an atomic `inline-block`), so its children form one run of
-/// inline content.
-fn holds_only_inline_level_children(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
-    doc.nodes[idx].children.iter().all(|&child| {
-        let node = &doc.nodes[child];
-        node.kind() != NodeKind::Element
-            || !node.is_in_document()
-            || matches!(
-                cascade.computed[child].display,
-                DisplayValue::Inline | DisplayValue::InlineBlock | DisplayValue::None
-            )
-    })
 }
 
 /// Whether a block qualifies for the IFC path. Inline content that makes a
@@ -289,7 +268,8 @@ fn build_error(root: usize, error: IfcError) -> LayoutError {
 /// # Errors
 /// [`LayoutError::IfcLimitExceeded`] when a paragraph exceeds a limit of the
 /// engine, and [`LayoutError::IfcUnsupported`] for a paragraph the engine
-/// refuses. Nothing is marked then.
+/// refuses. [`LayoutError::Internal`] if a table exceeds the native grid's
+/// supported row or column bounds. Nothing is marked then.
 pub(crate) fn assign_ifc_roots(
     doc: &mut Document,
     cascade: &CascadeResult,
@@ -299,6 +279,7 @@ pub(crate) fn assign_ifc_roots(
             .remove(NodeFlags::IS_IFC_ROOT | NodeFlags::IN_IFC_SUBTREE);
         node.ifc = None;
     }
+    crate::layout::table::anonymous::prepare(doc, cascade)?;
     // Take the engine state out so the walk can borrow the document.
     let Some(mut state) = doc.ifc.take() else {
         return Ok(());
@@ -308,6 +289,23 @@ pub(crate) fn assign_ifc_roots(
     doc.layout_dirty = true;
     let built = collect_candidates(doc, cascade, &state).and_then(|mut candidates| {
         candidates.extend(collect_text_candidates(doc, cascade, &state)?);
+        let counters = GeneratedCounters::default();
+        for (index, cell) in doc.table_objects.cells.iter().enumerate() {
+            let projected = project_anonymous_cell_builder(
+                doc,
+                cascade,
+                cell.owner,
+                &cell.content,
+                &state.fonts,
+                &state.limits,
+                &counters,
+            )
+            .map_err(|error| projection_error(cell.owner, error))?;
+            candidates.push(Candidate {
+                idx: doc.table_objects.arena_len + index,
+                projected,
+            });
+        }
         candidates.sort_by_key(|candidate| candidate.idx);
         build_all(&mut state, candidates)
     });
@@ -702,14 +700,18 @@ fn write_roots(doc: &mut Document, built: Vec<(usize, ProjectedIfc)>) {
         // Boxes are laid out and painted as nodes of their own, so neither
         // they nor their content belong to the paragraph's subtree.
         let boxes: Vec<usize> = projected.boxes.iter().map(|b| b.node).collect();
-        doc.nodes[idx].flags.insert(NodeFlags::IS_IFC_ROOT);
-        doc.nodes[idx].ifc = Some(Box::new(IfcRoot::new(projected)));
-        let mut stack = doc.nodes[idx].children.clone();
+        let root = doc.table_layout_node_mut(idx);
+        root.flags.insert(NodeFlags::IS_IFC_ROOT);
+        root.ifc = Some(Box::new(IfcRoot::new(projected)));
+        let mut stack = root.children.clone();
         while let Some(id) = stack.pop() {
             if boxes.contains(&id) {
                 continue;
             }
             doc.nodes[id].flags.insert(NodeFlags::IN_IFC_SUBTREE);
+            if idx >= doc.table_objects.arena_len {
+                doc.table_objects.paragraph_owner[id] = Some(idx);
+            }
             stack.extend(doc.nodes[id].children.iter().copied());
         }
     }

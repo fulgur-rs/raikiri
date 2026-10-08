@@ -1155,6 +1155,11 @@ fn layout_block_child(
     match (style_margin.left.is_auto(), style_margin.right.is_auto()) {
         (true, true) => margin.left = free / 2.0,
         (true, false) => margin.left = free,
+        (false, false) if geometry.axes.direction() == Direction::Rtl => {
+            // CSS 2.2 10.3.3 solves an over-constrained RTL block by changing
+            // its used left margin. Apply it before creating the child BFC.
+            margin.left = geometry.width - width - margin.right;
+        }
         _ => {}
     }
     // Placed where its own top margin alone puts it. Margins that leave the

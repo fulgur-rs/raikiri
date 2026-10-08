@@ -405,7 +405,7 @@ pub fn context_for_root(
     root: usize,
 ) -> DecorationContext {
     let mut ancestors = Vec::new();
-    let mut current = Some(root);
+    let mut current = Some(document.ifc_source_owner(root));
     while let Some(id) = current {
         ancestors.push(id);
         current = document.parent_of(id);
@@ -445,6 +445,7 @@ fn context_for_text(
     base: &DecorationContext,
     shifts: &HashMap<usize, f32>,
 ) -> DecorationContext {
+    let root_id = document.ifc_source_owner(root_id);
     // Anonymous flex/grid text roots already carry their complete ancestor
     // context. Starting at their parent would fold those ancestors twice.
     if root_id == text_node {

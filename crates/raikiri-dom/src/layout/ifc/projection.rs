@@ -426,6 +426,7 @@ enum Step {
     Enter(usize),
     /// The `::after` of an element, after its content.
     After(usize),
+    Before(usize),
     Close,
 }
 
@@ -625,6 +626,32 @@ pub(crate) fn project_ifc_builder_with(
     limits: &Limits,
     counters: &GeneratedCounters,
 ) -> Result<ProjectedBuilder, IfcError> {
+    project_children_builder(doc, cascade, root, None, fonts, limits, counters)
+}
+
+/// Project an anonymous cell's source children using its owner's inherited text style.
+pub(crate) fn project_anonymous_cell_builder(
+    doc: &Document,
+    cascade: &CascadeResult,
+    owner: usize,
+    children: &[crate::layout::table::anonymous::Content],
+    fonts: &FontCollection,
+    limits: &Limits,
+    counters: &GeneratedCounters,
+) -> Result<ProjectedBuilder, IfcError> {
+    project_children_builder(doc, cascade, owner, Some(children), fonts, limits, counters)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn project_children_builder(
+    doc: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    anonymous_children: Option<&[crate::layout::table::anonymous::Content]>,
+    fonts: &FontCollection,
+    limits: &Limits,
+    counters: &GeneratedCounters,
+) -> Result<ProjectedBuilder, IfcError> {
     let root_node = doc.get_node(root).ok_or(IfcError::InvalidNode(root))?;
     let root_cv = cascade
         .computed
@@ -632,7 +659,7 @@ pub(crate) fn project_ifc_builder_with(
         .ok_or(IfcError::InvalidNode(root))?;
     if !root_node.is_in_document()
         || root_node.kind() != NodeKind::Element
-        || !super::assign::can_be_ifc_root(doc, cascade, root)
+        || (anonymous_children.is_none() && !super::assign::can_be_ifc_root(doc, cascade, root))
     {
         return Err(IfcError::Unsupported {
             node: root,
@@ -654,7 +681,9 @@ pub(crate) fn project_ifc_builder_with(
     let mut cleared_breaks = Vec::new();
     let mut first_letter =
         FirstLetter::new_with_predecessors(doc, cascade, root, limits, &counters.predecessors);
-    let marker_atomic = if crate::generated_content::inside_marker_in_flow(cascade, root)
+    let marker_atomic = if anonymous_children.is_some() {
+        None
+    } else if crate::generated_content::inside_marker_in_flow(cascade, root)
         && let Some(size) = doc.list_marker_image_size(root)
     {
         let id = NodeId(generated_node_id(root, PseudoElem::Marker) as u64);
@@ -707,27 +736,53 @@ pub(crate) fn project_ifc_builder_with(
         )?;
         None
     };
-    push_generated(
-        &mut builder,
-        doc,
-        cascade,
-        root,
-        PseudoElem::Before,
-        fonts,
-        counters,
-        &mut first_letter,
-    )?;
+    if anonymous_children.is_none() {
+        push_generated(
+            &mut builder,
+            doc,
+            cascade,
+            root,
+            PseudoElem::Before,
+            fonts,
+            counters,
+            &mut first_letter,
+        )?;
+    }
 
-    let mut stack: Vec<Step> = root_node
-        .children
-        .iter()
-        .rev()
-        .map(|&child| Step::Enter(child))
-        .collect();
+    let mut stack: Vec<Step> = match anonymous_children {
+        Some(children) => children
+            .iter()
+            .rev()
+            .map(|entry| match entry {
+                crate::layout::table::anonymous::Content::Node(id) => Step::Enter(*id),
+                crate::layout::table::anonymous::Content::Before(id) => Step::Before(*id),
+                crate::layout::table::anonymous::Content::After(id) => Step::After(*id),
+            })
+            .collect(),
+        None => root_node
+            .children
+            .iter()
+            .rev()
+            .map(|&id| Step::Enter(id))
+            .collect(),
+    };
     while let Some(step) = stack.pop() {
         let id = match step {
             Step::Close => {
                 builder.close_inline();
+                continue;
+            }
+            Step::Before(id) => {
+                push_generated(
+                    &mut builder,
+                    doc,
+                    cascade,
+                    id,
+                    PseudoElem::Before,
+                    fonts,
+                    counters,
+                    &mut first_letter,
+                )?;
                 continue;
             }
             Step::After(id) => {
@@ -926,16 +981,18 @@ pub(crate) fn project_ifc_builder_with(
             return Err(IfcError::Limit(error));
         }
     }
-    push_generated(
-        &mut builder,
-        doc,
-        cascade,
-        root,
-        PseudoElem::After,
-        fonts,
-        counters,
-        &mut first_letter,
-    )?;
+    if anonymous_children.is_none() {
+        push_generated(
+            &mut builder,
+            doc,
+            cascade,
+            root,
+            PseudoElem::After,
+            fonts,
+            counters,
+            &mut first_letter,
+        )?;
+    }
     Ok(ProjectedBuilder {
         builder,
         writing_mode,
@@ -946,8 +1003,8 @@ pub(crate) fn project_ifc_builder_with(
         rtl: root_cv.direction == Direction::Rtl,
         offsets,
         cleared_breaks,
-        fixed: root_cv.position == PositionValue::Fixed,
-        ellipsis: style::ends_in_ellipsis(root_cv),
+        fixed: anonymous_children.is_none() && root_cv.position == PositionValue::Fixed,
+        ellipsis: anonymous_children.is_none() && style::ends_in_ellipsis(root_cv),
         letter_styles: first_letter.styles,
     })
 }

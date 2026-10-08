@@ -8,6 +8,235 @@ use taffy::style::{Dimension, LengthPercentage, LengthPercentageAuto};
 use taffy::{AvailableSpace, LayoutInput, Rect, Size, Style};
 
 #[test]
+fn native_callback_keeps_proper_cell_geometry_without_prepared_objects() {
+    for prepared in [false, true] {
+        let mut doc = Document::new();
+        let html = doc.append_element(
+            Some(0),
+            "html",
+            Style {
+                display: taffy::Display::Block,
+                ..Style::default()
+            },
+            Some("display:block"),
+        );
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Style {
+                display: taffy::Display::Block,
+                ..Style::default()
+            },
+            Some("display:block"),
+        );
+        let table = doc.append_element(
+            Some(body),
+            "table",
+            Style {
+                display: taffy::Display::Block,
+                size: Size {
+                    width: Dimension::length(40.0),
+                    height: Dimension::auto(),
+                },
+                ..Style::default()
+            },
+            Some("display:table;width:40px;border-spacing:0"),
+        );
+        doc.nodes[table].display = DisplayValue::Table;
+        let row = doc.append_element(
+            Some(table),
+            "tr",
+            Style {
+                display: taffy::Display::Block,
+                ..Style::default()
+            },
+            Some("display:table-row"),
+        );
+        doc.nodes[row].display = DisplayValue::TableRow;
+        let mut children = Vec::new();
+        for _ in 0..2 {
+            let cell = doc.append_element(
+                Some(row),
+                "td",
+                Style {
+                    display: taffy::Display::Block,
+                    size: Size {
+                        width: Dimension::length(20.0),
+                        height: Dimension::length(10.0),
+                    },
+                    ..Style::default()
+                },
+                Some("display:table-cell;width:20px;height:10px"),
+            );
+            doc.nodes[cell].display = DisplayValue::TableCell;
+            children.push(cell);
+        }
+        doc.mark_in_document_flags();
+        if prepared {
+            let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+            crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
+        }
+        // Native callers may supply typed styles without running the CSS bridge.
+        // Keep their real-cell grid identical to the prepared CSS path.
+        assert_eq!(doc.table_objects.rows.contains_key(&table), prepared);
+        let grid = super::build_table_grid(&doc, table).unwrap();
+        assert_eq!(grid.n_cols, 2);
+        assert_eq!(grid.rows.len(), 1);
+        assert_eq!(
+            grid.cells
+                .iter()
+                .map(|cell| cell.node_id)
+                .collect::<Vec<_>>(),
+            children
+        );
+        let mut inputs = column_probe_input();
+        inputs.known_dimensions.width = Some(40.0);
+        let output = super::compute_table_layout(&mut doc, taffy::NodeId::from(table), inputs);
+        assert_eq!(
+            output.size,
+            Size {
+                width: 40.0,
+                height: 10.0
+            }
+        );
+        assert!(doc.table_layout_error.is_none());
+        for (column, &cell) in children.iter().enumerate() {
+            let layout = &doc.nodes[cell].unrounded_layout;
+            assert_eq!(
+                layout.size,
+                Size {
+                    width: 20.0,
+                    height: 10.0
+                }
+            );
+            assert_eq!(
+                layout.location,
+                taffy::Point {
+                    x: column as f32 * 20.0,
+                    y: 0.0
+                }
+            );
+        }
+        assert_eq!(doc.nodes[table].children, [row]);
+        assert_eq!(doc.nodes[row].children, children);
+        assert_eq!(doc.table_objects.rows.contains_key(&table), prepared);
+    }
+}
+
+#[test]
+fn anonymous_block_direction_reaches_the_native_callback() {
+    for direction in ["ltr", "rtl"] {
+        let mut doc = Document::new();
+        let table = doc.append_element(
+            Some(0),
+            "div",
+            Style::default(),
+            Some(
+                format!("display:table;width:100px;border-spacing:0;direction:{direction}")
+                    .as_str(),
+            ),
+        );
+        let row = doc.append_element(
+            Some(table),
+            "div",
+            Style::default(),
+            Some("display:table-row"),
+        );
+        let block = doc.append_element(
+            Some(row),
+            "div",
+            Style::default(),
+            Some("display:block;width:20px;height:10px"),
+        );
+        doc.mark_in_document_flags();
+        let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
+        assert!(doc.ifc.is_none());
+        let mut inputs = column_probe_input();
+        inputs.known_dimensions.width = Some(100.0);
+        let output = super::compute_table_layout(&mut doc, taffy::NodeId::from(table), inputs);
+        assert_eq!(
+            output.size,
+            Size {
+                width: 100.0,
+                height: 10.0
+            }
+        );
+        assert_eq!(
+            doc.nodes[block].unrounded_layout.location.x,
+            if direction == "rtl" { 80.0 } else { 0.0 }
+        );
+    }
+}
+
+#[test]
+fn anonymous_blocks_keep_source_coordinates_in_the_table_callback_without_fonts() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let table = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:table;border-spacing:0"),
+    );
+    let group = doc.append_element(
+        Some(table),
+        "div",
+        Style::default(),
+        Some("display:table-row-group"),
+    );
+    let mut children = Vec::new();
+    for _ in 0..2 {
+        let row = doc.append_element(
+            Some(group),
+            "div",
+            Style::default(),
+            Some("display:table-row"),
+        );
+        for _ in 0..2 {
+            children.push(doc.append_element(
+                Some(row),
+                "div",
+                Style::default(),
+                Some("display:block;width:20px;height:10px"),
+            ));
+        }
+    }
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
+    assert!(doc.ifc.is_none());
+    assert_eq!(doc.table_objects.cells.len(), 2);
+    assert!(
+        doc.table_objects
+            .cells
+            .iter()
+            .all(|cell| !cell.node.is_ifc_root())
+    );
+    let output =
+        super::compute_table_layout(&mut doc, taffy::NodeId::from(table), column_probe_input());
+    assert_eq!(
+        output.size,
+        Size {
+            width: 20.0,
+            height: 40.0
+        }
+    );
+    assert!(doc.table_layout_error.is_none());
+    assert!(doc.ifc.is_none());
+    for (index, child) in children.into_iter().enumerate() {
+        assert_eq!(
+            doc.nodes[child].unrounded_layout.location,
+            taffy::Point {
+                x: 0.0,
+                y: (index % 2) as f32 * 10.0
+            }
+        );
+    }
+}
+
+#[test]
 fn spanning_only_cell_floors_the_first_row_at_its_natural_baseline() {
     let mut doc = Document::new();
     crate::layout::test_support::with_ahem(&mut doc);
@@ -113,11 +342,11 @@ fn table_column_grid_accepts_exact_representable_boundary() {
         let mut doc = oversized_columns_document(explicit, columns);
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).unwrap();
-        crate::layout::apply_computed_to_style(&mut doc, &cr).unwrap();
         let table = 3;
         let last = doc.nodes.len() - 1;
         let attribute = if columns { "span" } else { "colspan" };
         doc.set_element_attributes(last, vec![(attribute.into(), "535".into())]);
+        crate::layout::apply_computed_to_style(&mut doc, &cr).unwrap();
         let grid = super::build_table_grid(&doc, table).unwrap();
         assert_eq!(grid.n_cols, u16::MAX);
         if columns {

@@ -2933,7 +2933,7 @@ fn positioned_captions_do_not_expand_or_shift_the_table_flow_box() {
 }
 
 #[test]
-fn floated_captions_do_not_expand_or_shift_the_table_flow_box() {
+fn floated_captions_blockify_into_anonymous_cell_content() {
     for float in ["left", "right"] {
         for side in ["top", "bottom"] {
             let (mut doc, body) = document();
@@ -2969,7 +2969,7 @@ fn floated_captions_do_not_expand_or_shift_the_table_flow_box() {
             );
             assert_eq!(
                 (table_box.size.width, table_box.size.height),
-                (40.0, 20.0),
+                (100.0, 30.0),
                 "{float}/{side}"
             );
             let cell_box = doc.get_node(cell).unwrap().unrounded_layout;
@@ -2980,11 +2980,11 @@ fn floated_captions_do_not_expand_or_shift_the_table_flow_box() {
                     cell_box.size.width,
                     cell_box.size.height
                 ),
-                (0.0, 0.0, 40.0, 20.0)
+                (0.0, 0.0, 100.0, 20.0)
             );
             assert_eq!(
                 doc.get_node(after).unwrap().unrounded_layout.location.y,
-                20.0
+                30.0
             );
             assert_eq!(
                 (
@@ -2993,17 +2993,38 @@ fn floated_captions_do_not_expand_or_shift_the_table_flow_box() {
                 ),
                 (0.0, 0.0)
             );
+            assert_eq!(
+                (
+                    caption_node.unrounded_layout.size.width,
+                    caption_node.unrounded_layout.size.height
+                ),
+                (100.0, 10.0)
+            );
+            assert_eq!(
+                (
+                    doc.get_node(row).unwrap().unrounded_layout.location.y,
+                    doc.get_node(row).unwrap().unrounded_layout.size.height
+                ),
+                (10.0, 20.0)
+            );
+            // Chromium's anonymous-cell fixup gives the blockified float its
+            // own first row; caption-side no longer applies to a block box.
             let (mut reference, body) = document();
             element(
                 &mut reference,
                 body,
-                "position:absolute;left:0;top:0;width:40px;height:20px;background:blue",
+                "position:absolute;left:0;top:10px;width:100px;height:20px;background:blue",
             );
 
             element(
                 &mut reference,
                 body,
-                "position:absolute;left:0;top:20px;width:10px;height:10px;background:red",
+                "position:absolute;left:0;top:0;width:100px;height:10px;background:green",
+            );
+            element(
+                &mut reference,
+                body,
+                "position:absolute;left:0;top:30px;width:10px;height:10px;background:red",
             );
             let expected = layout(&mut reference);
             let actual = raster(scene(&doc, &computed));
