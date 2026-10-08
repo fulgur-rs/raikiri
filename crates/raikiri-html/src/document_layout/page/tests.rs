@@ -3,6 +3,22 @@ use raikiri_style::cascade::SvgStyleProperty;
 use raikiri_style::property::PropertyKey;
 
 #[test]
+fn descendant_declarations_ignore_properties_outside_the_svg_contract() {
+    for inherited in [false, true] {
+        let properties = [SvgStyleProperty {
+            property: PropertyKey::Width,
+            inherited,
+            expression: None,
+        }];
+        let mut budget = 1024;
+        assert_eq!(
+            svg_node_declarations(&ComputedValues::initial(), &properties, &mut budget).unwrap(),
+            ""
+        );
+    }
+}
+
+#[test]
 fn descendant_declaration_budget_rejects_before_serializing() {
     let properties = [SvgStyleProperty {
         property: PropertyKey::Opacity,

@@ -2687,13 +2687,14 @@ fn with_element_style_overrides(
             }
         }
         if changed {
+            // cov:ignore: roxmltree has validated this paired style element and its nonempty text, so its content range cannot be missing.
             let range = xml_element_content_range(source, node).ok_or_else(|| {
                 SvgError::InvalidDocument("unterminated SVG style element".into())
             })?;
             budget.bytes(xml_text_escape_allocation_bytes(&rewritten)?)?;
             budget.bytes(2 * std::mem::size_of::<(Range<usize>, String)>())?;
             edits.push((range, escape_xml_text(&rewritten)));
-        }
+        } // cov:ignore: LLVM assigns the unreachable content-range error above to this closing brace; successful rewrites and budget failures are exercised.
     }
     for (index, node) in xml
         .descendants()

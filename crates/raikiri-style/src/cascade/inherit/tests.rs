@@ -9414,6 +9414,7 @@ struct WalkOutputs {
     authored_writing_modes: Vec<Option<WritingMode>>,
     page_values: Vec<PageValue>,
     pseudo: Vec<((u64, PseudoElem), ComputedValues)>,
+    svg_properties: HashMap<StyleNodeId, Vec<SvgStyleProperty>>,
 }
 
 fn walk_outputs(doc: &TestDoc, tree: &RuleTree, sibling_sharing: bool) -> (WalkOutputs, usize) {
@@ -9425,6 +9426,7 @@ fn walk_outputs(doc: &TestDoc, tree: &RuleTree, sibling_sharing: bool) -> (WalkO
     let mut authored_writing_modes = vec![None; n];
     let mut page_values = vec![PageValue::Auto; n];
     let mut pseudo_out = HashMap::new();
+    let mut svg_properties = HashMap::new();
     let shared = resolve_inheritance_with(
         doc,
         root,
@@ -9434,7 +9436,7 @@ fn walk_outputs(doc: &TestDoc, tree: &RuleTree, sibling_sharing: bool) -> (WalkO
         &mut authored_writing_modes,
         &mut page_values,
         &mut pseudo_out,
-        &mut HashMap::new(),
+        &mut svg_properties,
         sibling_sharing,
     );
     let mut pseudo = pseudo_out
@@ -9448,6 +9450,7 @@ fn walk_outputs(doc: &TestDoc, tree: &RuleTree, sibling_sharing: bool) -> (WalkO
             authored_writing_modes,
             page_values,
             pseudo,
+            svg_properties,
         },
         shared,
     )
@@ -9601,6 +9604,31 @@ fn identical_text_siblings_share() {
     let shared = assert_sharing_is_transparent(&doc, &tree);
     // Everything after the first text node and the first comment shares.
     assert_eq!(shared, 18);
+}
+
+#[test]
+fn identical_svg_siblings_share_their_exported_style_properties() {
+    let mut doc = TestDoc::new();
+    let style = doc.push_element(0, "style", None);
+    doc.push_text(style, "rect { color:blue; opacity:.25 }");
+    let svg = doc.push_element_with_namespace(0, "svg", "http://www.w3.org/2000/svg", &[]);
+    let mut rects = Vec::new();
+    for _ in 0..3 {
+        rects.push(doc.push_element_with_namespace(svg, "rect", "http://www.w3.org/2000/svg", &[]));
+    }
+    let tree = build_rule_tree(&doc);
+    assert!(assert_sharing_is_transparent(&doc, &tree) > 0);
+    let result = cascade(&doc, &tree).unwrap();
+    let first = result.svg_style_properties(StyleNodeId(rects[0] as u64));
+    assert!(
+        first
+            .iter()
+            .any(|value| value.property == PropertyKey::Opacity)
+    );
+    for rect in rects {
+        assert_eq!(result.svg_style_properties(StyleNodeId(rect as u64)), first);
+        assert_eq!(result.computed[rect].opacity, 0.25);
+    }
 }
 
 #[test]

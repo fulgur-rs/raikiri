@@ -1141,6 +1141,28 @@ fn inline_svg_definitions_keep_instance_relative_fonts() {
     );
 }
 
+#[test]
+fn inline_svg_descendant_font_hints_and_relative_keywords_survive_export() {
+    for (attributes, expected) in [
+        ("font-size='18'", "font-size:18px"),
+        ("style='font-size:larger'", "font-size:larger"),
+        ("style='font-size:smaller'", "font-size:smaller"),
+        ("style='font-weight:lighter'", "font-weight:lighter"),
+    ] {
+        let result = laid_out(&format!(
+            "<svg width='100' height='40'><defs><g id='label' {attributes}><text y='20'>TEST</text></g></defs><use href='#label'/></svg>"
+        ));
+        let page = result.page(0).unwrap();
+        let fragment = page
+            .fragments()
+            .find(|fragment| page.dom().local_name(fragment.node()) == Some("svg"))
+            .unwrap();
+        let svg = page.inline_svg(&fragment).unwrap().unwrap();
+        assert!(svg.source.contains(expected), "{}", svg.source);
+        raikiri_svg::SvgDocument::parse(svg.source.as_bytes()).unwrap();
+    }
+}
+
 fn svg_document_ink(html: &str) -> Vec<u8> {
     let result = laid_out(html);
     let page = result.page(0).unwrap();

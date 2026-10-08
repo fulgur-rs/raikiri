@@ -2176,3 +2176,87 @@ fn descendant_overrides_share_the_selector_rewrite_budget() {
     budget.checks = 1;
     assert!(super::with_element_style_overrides(source, &styles, &mut budget).is_err());
 }
+
+#[test]
+fn descendant_rewrites_fail_cleanly_at_intermediate_resource_limits() {
+    let source = "<svg xmlns='http://www.w3.org/2000/svg'><style>rect{color:red;opacity:.8}</style><rect style='opacity:.5;fill:currentColor'/></svg>";
+    let styles = [super::SvgElementStyle {
+        element_index: 2,
+        declarations: "color:blue;opacity:.25",
+    }];
+    let expected =
+        super::with_element_style_overrides(source, &styles, &mut SelectorFreezeBudget::new())
+            .unwrap();
+    for bytes in (0..10_000).step_by(17) {
+        let mut budget = SelectorFreezeBudget::new();
+        budget.bytes = bytes;
+        match super::with_element_style_overrides(source, &styles, &mut budget) {
+            Ok(prepared) => assert_eq!(prepared, expected),
+            Err(SvgError::InvalidDocument(message)) => {
+                assert!(
+                    message.contains("selector freezing resource limit"),
+                    "{message}"
+                );
+            }
+            other => panic!("unexpected result: {other:?}"),
+        }
+    }
+    for checks in 0..30 {
+        let mut budget = SelectorFreezeBudget::new();
+        budget.checks = checks;
+        match super::with_element_style_overrides(source, &styles, &mut budget) {
+            Ok(prepared) => assert_eq!(prepared, expected),
+            Err(SvgError::InvalidDocument(message)) => {
+                assert!(
+                    message.contains("selector freezing resource limit"),
+                    "{message}"
+                );
+            }
+            other => panic!("unexpected result: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn descendant_scope_names_reject_exhausted_collision_suffixes() {
+    let source = format!(
+        "<svg data-raikiri-svg-color-scope-{}=''><rect/></svg>",
+        usize::MAX,
+    );
+    let styles = [super::SvgElementStyle {
+        element_index: 1,
+        declarations: "color:blue",
+    }];
+    assert!(matches!(
+        super::with_element_style_overrides(&source, &styles, &mut SelectorFreezeBudget::new()),
+        Err(SvgError::InvalidDocument(message))
+            if message.contains("selector freezing resource limit")
+    ));
+}
+
+#[test]
+fn font_shorthand_expansion_fails_cleanly_at_intermediate_byte_limits() {
+    for (source, stylesheet) in [
+        ("font:italic bold 12px serif!important", false),
+        ("text{font:italic bold 12px serif!important}", true),
+    ] {
+        let expected =
+            super::expand_font_shorthands(source, stylesheet, &mut SelectorFreezeBudget::new())
+                .unwrap();
+        assert!(expected.as_ref().unwrap().contains("font-size:12px"));
+        for bytes in (0..5_000).step_by(17) {
+            let mut budget = SelectorFreezeBudget::new();
+            budget.bytes = bytes;
+            match super::expand_font_shorthands(source, stylesheet, &mut budget) {
+                Ok(prepared) => assert_eq!(prepared, expected),
+                Err(SvgError::InvalidDocument(message)) => {
+                    assert!(
+                        message.contains("selector freezing resource limit"),
+                        "{message}"
+                    );
+                }
+                other => panic!("unexpected result: {other:?}"),
+            }
+        }
+    }
+}
