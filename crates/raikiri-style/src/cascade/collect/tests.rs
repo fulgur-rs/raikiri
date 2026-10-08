@@ -183,6 +183,7 @@ fn outer_svg_dimension_hints_accept_both_axes_and_reject_intrinsic_keywords() {
     for (raw, expected) in [
         ("12pt", Dimension::Px(16.0)),
         ("25%", Dimension::Percent(25.0)),
+        ("1e999px", Dimension::Auto),
         ("min-content", Dimension::Auto),
         ("max-content", Dimension::Auto),
     ] {

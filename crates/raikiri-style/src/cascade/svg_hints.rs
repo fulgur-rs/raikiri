@@ -56,8 +56,6 @@ fn parse_dimension(name: &str, raw: &str) -> Option<PropertyValue> {
             {
                 LengthOrAuto::Length(length)
             }
-            PropertyValue::Width(LengthOrAuto::Calc(calc))
-            | PropertyValue::Height(LengthOrAuto::Calc(calc)) => LengthOrAuto::Calc(calc),
             PropertyValue::Deferred(_) if parser.expect_exhausted().is_ok() => return Some(value),
             _ => return None,
         }
