@@ -49,6 +49,7 @@ use crate::document::Document;
 use taffy::util::{MaybeResolve, ResolveOrZero};
 
 pub(crate) mod anonymous;
+mod rowspan;
 
 // ---------------------------------------------------------------------------
 // Depth cap — fail-closed for nested tables.
@@ -1265,6 +1266,7 @@ fn build_table_grid(
     } else {
         collect_rows(doc, table_idx, &mut rows, &mut cells, &mut n_cols)?;
     }
+    n_cols = n_cols.max(rowspan::reserve_columns(doc, table_idx, &rows, &mut cells)?);
     let col_widths = collect_col_widths(doc, table_idx)?;
     n_cols = n_cols.max(col_widths.len() as u16);
     Ok(TableGrid {
@@ -1600,9 +1602,8 @@ fn get_rowspan(doc: &Document, node_id: usize) -> u16 {
                 && let Ok(v) = a.value.parse::<u16>()
             {
                 // HTML §4.9.9: rowspan=0 spans to the end of the table
-                // section. The grid is section-flat, so approximate with a
-                // saturating span — every consumer clamps to the row count
-                // (table end == section end for single-section tables).
+                // section. The reservation pass clamps this sentinel to
+                // the source row group before layout consumes the grid.
                 if v == 0 {
                     return u16::MAX;
                 }

@@ -7,6 +7,120 @@ use raikiri_traits::PageBox;
 use taffy::style::{Dimension, LengthPercentage, LengthPercentageAuto};
 use taffy::{AvailableSpace, LayoutInput, Rect, Size, Style};
 
+fn append_grid_part(
+    doc: &mut Document,
+    parent: usize,
+    tag: &str,
+    display: DisplayValue,
+    css: &str,
+) -> usize {
+    let id = doc.append_element(Some(parent), tag, Style::default(), Some(css));
+    doc.nodes[id].display = display;
+    id
+}
+
+#[test]
+fn rowspans_reserve_columns_in_native_and_prepared_grids() {
+    for prepared in [false, true] {
+        let mut doc = Document::new();
+        let table = append_grid_part(&mut doc, 0, "table", DisplayValue::Table, "display:table");
+        let row1 = append_grid_part(
+            &mut doc,
+            table,
+            "tr",
+            DisplayValue::TableRow,
+            "display:table-row",
+        );
+        let span = append_grid_part(
+            &mut doc,
+            row1,
+            "td",
+            DisplayValue::TableCell,
+            "display:table-cell",
+        );
+        doc.set_element_attribute(span, "rowspan", "2").unwrap();
+        append_grid_part(
+            &mut doc,
+            row1,
+            "td",
+            DisplayValue::TableCell,
+            "display:table-cell",
+        );
+        let row2 = append_grid_part(
+            &mut doc,
+            table,
+            "tr",
+            DisplayValue::TableRow,
+            "display:table-row",
+        );
+        append_grid_part(
+            &mut doc,
+            row2,
+            "td",
+            DisplayValue::TableCell,
+            "display:table-cell",
+        );
+        doc.mark_in_document_flags();
+        if prepared {
+            let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+            crate::layout::apply_computed_to_style(&mut doc, &cascade).unwrap();
+        }
+        let grid = super::build_table_grid(&doc, table).unwrap();
+        assert_eq!(grid.n_cols, 2);
+        assert_eq!(
+            grid.cells
+                .iter()
+                .map(|cell| (cell.row, cell.col_start))
+                .collect::<Vec<_>>(),
+            [(0, 0), (0, 1), (1, 1)]
+        );
+    }
+}
+
+#[test]
+fn a_rowspan_that_fills_the_column_limit_rejects_a_cell_beyond_it() {
+    let mut doc = Document::new();
+    let table = append_grid_part(&mut doc, 0, "table", DisplayValue::Table, "display:table");
+    let row1 = append_grid_part(
+        &mut doc,
+        table,
+        "tr",
+        DisplayValue::TableRow,
+        "display:table-row",
+    );
+    for colspan in std::iter::repeat_n(1000, 65).chain([535]) {
+        let cell = append_grid_part(
+            &mut doc,
+            row1,
+            "td",
+            DisplayValue::TableCell,
+            "display:table-cell",
+        );
+        doc.set_element_attribute(cell, "rowspan", "2").unwrap();
+        doc.set_element_attribute(cell, "colspan", colspan.to_string())
+            .unwrap();
+    }
+    let row2 = append_grid_part(
+        &mut doc,
+        table,
+        "tr",
+        DisplayValue::TableRow,
+        "display:table-row",
+    );
+    append_grid_part(
+        &mut doc,
+        row2,
+        "td",
+        DisplayValue::TableCell,
+        "display:table-cell",
+    );
+    doc.mark_in_document_flags();
+    let error = super::build_table_grid(&doc, table).unwrap_err();
+    assert!(
+        matches!(error, raikiri_traits::LayoutError::Internal { message } if message == "table column grid exceeds supported bounds")
+    );
+}
+
 #[test]
 fn native_callback_keeps_proper_cell_geometry_without_prepared_objects() {
     for prepared in [false, true] {
