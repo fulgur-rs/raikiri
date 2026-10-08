@@ -392,6 +392,7 @@ enum Step {
     Enter(usize),
     /// The `::after` of an element, after its content.
     After(usize),
+    Before(usize),
     Close,
 }
 
@@ -596,7 +597,7 @@ pub(crate) fn project_anonymous_cell_builder(
     doc: &Document,
     cascade: &CascadeResult,
     owner: usize,
-    children: &[usize],
+    children: &[crate::layout::table::anonymous::Content],
     fonts: &FontCollection,
     limits: &Limits,
     counters: &GeneratedCounters,
@@ -609,7 +610,7 @@ fn project_children_builder(
     doc: &Document,
     cascade: &CascadeResult,
     root: usize,
-    anonymous_children: Option<&[usize]>,
+    anonymous_children: Option<&[crate::layout::table::anonymous::Content]>,
     fonts: &FontCollection,
     limits: &Limits,
     counters: &GeneratedCounters,
@@ -707,16 +708,39 @@ fn project_children_builder(
         )?;
     }
 
-    let mut stack: Vec<Step> = anonymous_children
-        .unwrap_or(&root_node.children)
-        .iter()
-        .rev()
-        .map(|&child| Step::Enter(child))
-        .collect();
+    let mut stack: Vec<Step> = match anonymous_children {
+        Some(children) => children
+            .iter()
+            .rev()
+            .map(|entry| match entry {
+                crate::layout::table::anonymous::Content::Node(id) => Step::Enter(*id),
+                crate::layout::table::anonymous::Content::Before(id) => Step::Before(*id),
+                crate::layout::table::anonymous::Content::After(id) => Step::After(*id),
+            })
+            .collect(),
+        None => root_node
+            .children
+            .iter()
+            .rev()
+            .map(|&id| Step::Enter(id))
+            .collect(),
+    };
     while let Some(step) = stack.pop() {
         let id = match step {
             Step::Close => {
                 builder.close_inline();
+                continue;
+            }
+            Step::Before(id) => {
+                push_generated(
+                    &mut builder,
+                    doc,
+                    cascade,
+                    id,
+                    PseudoElem::Before,
+                    fonts,
+                    counters,
+                )?;
                 continue;
             }
             Step::After(id) => {

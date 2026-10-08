@@ -59,6 +59,7 @@ const COLUMNS_WITHOUT_CLIPS: &str = "columns are listed without column clips";
 
 enum Frame {
     Visit(usize),
+    Paragraph(usize),
     PopClip,
     PopOpacity,
 }
@@ -153,6 +154,10 @@ impl Document {
         let mut stack = vec![Frame::Visit(root)];
         while let Some(frame) = stack.pop() {
             let node_id = match frame {
+                Frame::Paragraph(key) => {
+                    push_paragraph(self, &items, key, lines, &mut events);
+                    continue;
+                }
                 Frame::PopClip => {
                     events.push(PaintEvent::PopClip);
                     continue;
@@ -241,9 +246,6 @@ impl Document {
                     if node.is_ifc_root() {
                         push_paragraph(self, &items, node_id, lines, &mut events);
                     }
-                    for (key, _) in self.anonymous_table_cells(node_id) {
-                        push_paragraph(self, &items, key, lines, &mut events);
-                    }
                     let mut children = if node.is_inline_svg_root() {
                         Vec::new()
                     } else if node.is_ifc_root() {
@@ -251,13 +253,19 @@ impl Document {
                         // listed above; only the boxes laid out beside its
                         // lines are visited like ordinary children.
                         node.ifc_boxes()
-                    } else if let Some(children) = self.anonymous_table_paint_children(node_id) {
+                    } else if let Some(children) = self.anonymous_table_paint_sequence(node_id) {
                         children
                     } else {
                         node.children.clone()
                     };
                     paint_rules::sort_paint_children(&mut children, cv.display, cascade);
-                    stack.extend(children.into_iter().rev().map(Frame::Visit));
+                    stack.extend(children.into_iter().rev().map(|key| {
+                        if self.get_node(key).is_none() && self.ifc_layout_node(key).is_some() {
+                            Frame::Paragraph(key)
+                        } else {
+                            Frame::Visit(key)
+                        }
+                    }));
                 }
                 // A text node laid out as an anonymous flex or grid item is a
                 // paragraph of its own. Any other text node outside a

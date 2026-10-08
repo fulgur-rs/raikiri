@@ -315,7 +315,7 @@ pub(crate) fn assign_ifc_roots(
                 doc,
                 cascade,
                 cell.owner,
-                &cell.node.children,
+                &cell.content,
                 &state.fonts,
                 &state.limits,
                 &counters,

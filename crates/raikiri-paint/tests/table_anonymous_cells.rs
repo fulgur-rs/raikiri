@@ -1355,3 +1355,491 @@ fn anonymous_empty_cell_flags_rebuild_across_policy_and_content_changes() {
         raster(scene(&reference, &expected_computed)),
     );
 }
+
+#[test]
+fn review_anonymous_paragraphs_interleave_with_explicit_cell_events() {
+    for relative in [false, true] {
+        let (mut doc, body) = document();
+        let table = element(&mut doc, body, "display:table;border-spacing:0");
+        let row = element(&mut doc, table, "display:table-row;color:green");
+        let first = doc.append_text(row, "A");
+        let cell = element(
+            &mut doc,
+            row,
+            if relative {
+                "display:table-cell;color:red;position:relative"
+            } else {
+                "display:table-cell;color:red"
+            },
+        );
+        let middle = doc.append_text(cell, "A");
+        let span = element(&mut doc, row, "display:inline;color:blue;margin-left:-10px");
+        let last = doc.append_text(span, "A");
+        let computed = layout(&mut doc);
+        let slices = raikiri_dom::layout_pages(&mut doc, &computed, page()).unwrap();
+        doc.project_pages(&computed, page(), &slices, &[]);
+        let events = doc.page_paint_order(&computed, 0, None);
+        let owners: Vec<_> = events
+            .iter()
+            .filter_map(|event| match event {
+                raikiri_dom::PaintEvent::Text(fragment) => Some(fragment.node()),
+                _ => None,
+            })
+            .collect();
+        let (mut reference, body) = document();
+        for (left, color) in [(0, "green"), (10, if relative { "red" } else { "blue" })] {
+            element(
+                &mut reference,
+                body,
+                &format!(
+                    "position:absolute;left:{left}px;top:0;width:10px;height:10px;background:{color}"
+                ),
+            );
+        }
+        let expected = layout(&mut reference);
+        assert_exact_pixels(
+            raster(scene(&doc, &computed)),
+            raster(scene(&reference, &expected)),
+        );
+        assert_eq!(
+            owners,
+            (if relative {
+                vec![first, last, middle]
+            } else {
+                vec![first, middle, last]
+            })
+            .into_iter()
+            .map(|id| raikiri_traits::NodeId::new(id as u64))
+            .collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
+fn review_anonymous_named_page_probe_ignores_unprojected_hidden_text() {
+    let (mut doc, body) = document();
+    let table = element(&mut doc, body, "display:table;border-spacing:0;page:good");
+    let row = element(&mut doc, table, "display:table-row");
+    let span = element(&mut doc, row, "display:inline");
+    let hidden = element(&mut doc, span, "display:none;page:wrong");
+    let hidden_text = doc.append_text(hidden, "H");
+    let visible = doc.append_text(span, "A");
+    let computed = layout(&mut doc);
+    assert!(matches!(
+        computed.page_values[hidden],
+        raikiri_style::property::PageValue::Named(_)
+    ));
+    assert!(matches!(
+        computed.page_values[hidden_text],
+        raikiri_style::property::PageValue::Auto
+    ));
+    assert!(matches!(
+        computed.page_values[visible],
+        raikiri_style::property::PageValue::Auto
+    ));
+    let key = doc.anonymous_table_cells(row).next().unwrap().0;
+    assert_eq!(
+        doc.ifc_text_lines_by_node(key)
+            .keys()
+            .copied()
+            .collect::<Vec<_>>(),
+        vec![visible]
+    );
+    let mut actual = Scene::new();
+    raikiri_paint::paint_single_page_with_origin_and_page_context_named(
+        &mut actual,
+        &doc,
+        &computed,
+        page(),
+        0.0,
+        0,
+        1,
+        false,
+        None,
+        Some("good"),
+        &mut Default::default(),
+    )
+    .unwrap();
+    let (mut reference, body) = document();
+    element(
+        &mut reference,
+        body,
+        "position:absolute;left:0;top:0;width:10px;height:10px;background:black",
+    );
+    let expected = layout(&mut reference);
+    assert_exact_pixels(raster(actual), raster(scene(&reference, &expected)));
+}
+
+#[test]
+fn review_contents_pseudos_survive_anonymous_cell_projection() {
+    for real_content in [false, true] {
+        let (mut doc, body) = document();
+        let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+        doc.append_text(
+            sheet,
+            "span::before{content:'X';color:red}span::after{content:'Y';color:blue}",
+        );
+        let table = element(&mut doc, body, "display:table;border-spacing:0");
+        let row = element(&mut doc, table, "display:table-row");
+        let span = doc.append_element(
+            Some(row),
+            "span",
+            Style::default(),
+            Some("display:contents"),
+        );
+        if real_content {
+            doc.append_text(span, "A");
+        }
+        element(
+            &mut doc,
+            row,
+            "display:table-cell;width:10px;height:10px;background:green;vertical-align:top",
+        );
+        let computed = layout(&mut doc);
+        let (mut reference, body) = document();
+        let colors: &[&str] = if real_content {
+            &["red", "black", "blue", "green"]
+        } else {
+            &["red", "blue", "green"]
+        };
+        for (index, color) in colors.iter().enumerate() {
+            element(
+                &mut reference,
+                body,
+                &format!(
+                    "position:absolute;left:{}px;top:0;width:10px;height:10px;background:{color}",
+                    index * 10
+                ),
+            );
+        }
+        let expected = layout(&mut reference);
+        assert_exact_pixels(
+            raster(scene(&doc, &computed)),
+            raster(scene(&reference, &expected)),
+        );
+    }
+}
+
+#[test]
+fn review_contents_generated_cells_stay_around_structural_cells_in_source_order() {
+    for owner_display in ["table", "table-row-group", "table-row"] {
+        let (mut doc, body) = document();
+        let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+        doc.append_text(
+            sheet,
+            "span::before{content:'X';color:red}span::after{content:'Y';color:blue}",
+        );
+        let table = element(&mut doc, body, "display:table;border-spacing:0");
+        let owner = if owner_display == "table" {
+            table
+        } else {
+            element(&mut doc, table, &format!("display:{owner_display}"))
+        };
+        let span = doc.append_element(
+            Some(owner),
+            "span",
+            Style::default(),
+            Some("display:contents"),
+        );
+        let nested = element(&mut doc, span, "display:contents");
+        element(
+            &mut doc,
+            nested,
+            "display:table-cell;width:10px;height:10px;background:green;vertical-align:top",
+        );
+        let original_children = doc.get_node(owner).unwrap().children.clone();
+        let count = doc.node_count();
+        let computed = layout(&mut doc);
+        assert_eq!(doc.node_count(), count);
+        assert_eq!(doc.get_node(owner).unwrap().children, original_children);
+        assert_eq!(doc.anonymous_table_cells(owner).count(), 2);
+        let (mut reference, body) = document();
+        for (index, color) in ["red", "green", "blue"].iter().enumerate() {
+            element(
+                &mut reference,
+                body,
+                &format!(
+                    "position:absolute;left:{}px;top:0;width:10px;height:10px;background:{color}",
+                    index * 10
+                ),
+            );
+        }
+        let expected = layout(&mut reference);
+        assert_exact_pixels(
+            raster(scene(&doc, &computed)),
+            raster(scene(&reference, &expected)),
+        );
+        let again = layout(&mut doc);
+        assert_exact_pixels(
+            raster(scene(&doc, &again)),
+            raster(scene(&reference, &expected)),
+        );
+    }
+}
+
+#[test]
+fn review_contents_pseudo_runs_keep_real_owners_and_utf8_sources() {
+    let (mut doc, body) = document();
+    let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+    doc.append_text(
+        sheet,
+        "span::before{content:'X';color:red}span::after{content:'Y';color:blue}",
+    );
+    let table = element(&mut doc, body, "display:table;border-spacing:0");
+    let row = element(&mut doc, table, "display:table-row");
+    let span = doc.append_element(
+        Some(row),
+        "span",
+        Style::default(),
+        Some("display:contents"),
+    );
+    let text = doc.append_text(span, "Ω");
+    let count = doc.node_count();
+    let computed = layout(&mut doc);
+    let slices = raikiri_dom::layout_pages(&mut doc, &computed, page()).unwrap();
+    doc.project_pages(&computed, page(), &slices, &[]);
+    let runs = doc.page_text_runs(&computed, 0);
+    assert_eq!(doc.node_count(), count);
+    assert_eq!(doc.parent_of(text), Some(span));
+    assert_eq!(
+        runs.iter().map(|run| run.text).collect::<Vec<_>>(),
+        vec!["X", "Ω", "Y"]
+    );
+    assert_eq!(
+        runs.iter().map(|run| run.source).collect::<Vec<_>>(),
+        vec![
+            raikiri_dom::RunSource::Generated(
+                raikiri_traits::NodeId::new(span as u64),
+                raikiri_dom::GeneratedKind::Before
+            ),
+            raikiri_dom::RunSource::Text(raikiri_traits::NodeId::new(text as u64)),
+            raikiri_dom::RunSource::Generated(
+                raikiri_traits::NodeId::new(span as u64),
+                raikiri_dom::GeneratedKind::After
+            ),
+        ]
+    );
+    let (mut reference, body) = document();
+    for (index, color) in ["red", "black", "blue"].iter().enumerate() {
+        element(
+            &mut reference,
+            body,
+            &format!(
+                "position:absolute;left:{}px;top:0;width:10px;height:10px;background:{color}",
+                index * 10
+            ),
+        );
+    }
+    let expected = layout(&mut reference);
+    assert_exact_pixels(
+        raster(scene(&doc, &computed)),
+        raster(scene(&reference, &expected)),
+    );
+}
+
+#[test]
+fn review_contents_pseudo_lines_interleave_with_structural_cell_events() {
+    let (mut doc, body) = document();
+    let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+    doc.append_text(sheet, "span::before{content:'X'}span::after{content:'Y'}");
+    let table = element(&mut doc, body, "display:table;border-spacing:0");
+    let row = element(&mut doc, table, "display:table-row");
+    let span = doc.append_element(
+        Some(row),
+        "span",
+        Style::default(),
+        Some("display:contents"),
+    );
+    let cell = element(&mut doc, span, "display:table-cell");
+    doc.append_text(cell, "A");
+    let computed = layout(&mut doc);
+    let keys: Vec<_> = doc.anonymous_table_cells(row).map(|(key, _)| key).collect();
+    let slices = raikiri_dom::layout_pages(&mut doc, &computed, page()).unwrap();
+    doc.project_pages(&computed, page(), &slices, &[]);
+    let runs = doc.page_text_runs(&computed, 0);
+    let mut texts = runs.iter().map(|run| run.text).collect::<Vec<_>>();
+    texts.sort_unstable();
+    assert_eq!(texts, vec!["A", "X", "Y"]);
+    let roots: Vec<_> = doc
+        .page_paint_order_for_text_runs(&computed, 0, &runs)
+        .iter()
+        .filter_map(|event| match event {
+            raikiri_dom::PaintEvent::TextLine(line) => Some(line.root),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        roots,
+        vec![keys[0], cell, keys[1]]
+            .into_iter()
+            .map(|id| raikiri_traits::NodeId::new(id as u64))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn review_contents_pseudos_remain_outside_a_structural_row() {
+    let (mut doc, body) = document();
+    let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+    doc.append_text(
+        sheet,
+        "span::before{content:'X';color:red}span::after{content:'Y';color:blue}",
+    );
+    let table = element(&mut doc, body, "display:table;border-spacing:0");
+    let span = doc.append_element(
+        Some(table),
+        "span",
+        Style::default(),
+        Some("display:contents"),
+    );
+    let row = element(&mut doc, span, "display:table-row");
+    let cell = element(&mut doc, row, "display:table-cell;color:green");
+    doc.append_text(cell, "A");
+    let source_children = doc.get_node(span).unwrap().children.clone();
+    for _ in 0..2 {
+        let computed = layout(&mut doc);
+        assert_eq!(doc.get_node(span).unwrap().children, source_children);
+        assert_eq!(doc.parent_of(row), Some(span));
+        assert_eq!(doc.anonymous_table_cells(table).count(), 2);
+        assert_eq!(doc.get_node(row).unwrap().unrounded_layout.location.y, 10.0);
+        let (mut reference, body) = document();
+        for (index, color) in ["red", "green", "blue"].iter().enumerate() {
+            element(
+                &mut reference,
+                body,
+                &format!(
+                    "position:absolute;left:0;top:{}px;width:10px;height:10px;background:{color}",
+                    index * 10
+                ),
+            );
+        }
+        let expected = layout(&mut reference);
+        assert_exact_pixels(
+            raster(scene(&doc, &computed)),
+            raster(scene(&reference, &expected)),
+        );
+    }
+}
+
+#[test]
+fn review_contents_generated_values_share_counters_and_keep_empty_negatives() {
+    for declaration in [
+        "content:attr(data-label)",
+        "content:counter(sample)",
+        "content:open-quote",
+    ] {
+        let (mut doc, body) = document();
+        let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+        doc.append_text(sheet, format!(
+            "span{{counter-reset:sample 1;quotes:'X' 'Y'}}span::before{{{declaration};color:red}}"
+        ));
+        let table = element(&mut doc, body, "display:table;border-spacing:0");
+        let span = doc.append_element(
+            Some(table),
+            "span",
+            Style::default(),
+            Some("display:contents"),
+        );
+        doc.set_element_attribute(span, "data-label", "X").unwrap();
+        let computed = layout(&mut doc);
+        let (mut reference, body) = document();
+        element(
+            &mut reference,
+            body,
+            "position:absolute;left:0;top:0;width:10px;height:10px;background:red",
+        );
+        let expected = layout(&mut reference);
+        assert_exact_pixels(
+            raster(scene(&doc, &computed)),
+            raster(scene(&reference, &expected)),
+        );
+    }
+    for (pseudo_style, overlay) in [
+        ("content:none", false),
+        ("content:''", false),
+        ("content:'X';display:none", false),
+        ("content:'X';position:absolute", true),
+    ] {
+        let (mut doc, body) = document();
+        let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+        doc.append_text(sheet, format!("span::before{{{pseudo_style}}}"));
+        let table = element(&mut doc, body, "display:table;border-spacing:0");
+        doc.append_element(
+            Some(table),
+            "span",
+            Style::default(),
+            Some("display:contents"),
+        );
+        let computed = layout(&mut doc);
+        if overlay {
+            assert_eq!(doc.anonymous_table_cells(table).count(), 0);
+        }
+        let (mut reference, body) = document();
+        if overlay {
+            // Out-of-flow generated text keeps the existing overlay path;
+            // it must not become an in-flow anonymous cell.
+            element(
+                &mut reference,
+                body,
+                "position:absolute;left:0;top:0;width:10px;height:10px;background:black",
+            );
+        }
+        let expected = layout(&mut reference);
+        assert_exact_pixels(
+            raster(scene(&doc, &computed)),
+            raster(scene(&reference, &expected)),
+        );
+    }
+}
+
+#[test]
+fn review_contents_generated_cells_survive_cancelled_pagination() {
+    let (mut doc, body) = document();
+    let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+    doc.append_text(
+        sheet,
+        "span::before{content:'X';color:red}span::after{content:'Y';color:blue}",
+    );
+    let table = element(&mut doc, body, "display:table;border-spacing:0");
+    let span = doc.append_element(
+        Some(table),
+        "span",
+        Style::default(),
+        Some("display:contents"),
+    );
+    let count = doc.node_count();
+    let computed = layout(&mut doc);
+    let abort = || true;
+    let control = raikiri_dom::PageLayoutControl::new(Some(10)).with_abort_check(&abort);
+    assert!(matches!(
+        raikiri_dom::layout_pages_with_page_geometry_and_control(
+            &mut doc,
+            &computed,
+            page(),
+            &[],
+            &[],
+            &control
+        ),
+        Err(raikiri_traits::LayoutError::Aborted)
+    ));
+    let computed = layout(&mut doc);
+    assert_eq!(doc.node_count(), count);
+    assert_eq!(doc.parent_of(span), Some(table));
+    assert!(doc.get_node(span).unwrap().children.is_empty());
+    let (mut reference, body) = document();
+    for (index, color) in ["red", "blue"].iter().enumerate() {
+        element(
+            &mut reference,
+            body,
+            &format!(
+                "position:absolute;left:{}px;top:0;width:10px;height:10px;background:{color}",
+                index * 10
+            ),
+        );
+    }
+    let expected = layout(&mut reference);
+    assert_exact_pixels(
+        raster(scene(&doc, &computed)),
+        raster(scene(&reference, &expected)),
+    );
+}

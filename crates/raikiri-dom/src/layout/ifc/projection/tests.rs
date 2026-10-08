@@ -1050,3 +1050,43 @@ fn unsupported_marker_style_returns_an_explicit_projection_error() {
         Err(IfcError::Unsupported { .. })
     ));
 }
+
+#[test]
+fn anonymous_contents_generated_tokens_preserve_projection_limits() {
+    for pseudo in ["before", "after"] {
+        let mut fixture = crate::layout::ifc::test_support::sheet_fixture(
+            &format!("span::{pseudo}{{content:'X'}}"),
+            "display:table",
+            |doc, root| {
+                span(doc, root, "display:contents");
+            },
+        );
+        crate::layout::apply_computed_to_style(&mut fixture.doc, &fixture.cascade).unwrap();
+        let cell = &fixture.doc.table_objects.cells[0];
+        assert_eq!(cell.content.len(), 1);
+        assert!(cell.node.children.is_empty());
+        for limits in [
+            Limits {
+                max_items: Some(0),
+                ..Limits::default()
+            },
+            Limits {
+                max_text_bytes: Some(0),
+                ..Limits::default()
+            },
+        ] {
+            assert!(matches!(
+                project_anonymous_cell_builder(
+                    &fixture.doc,
+                    &fixture.cascade,
+                    cell.owner,
+                    &cell.content,
+                    &ahem_fonts(),
+                    &limits,
+                    &GeneratedCounters::default()
+                ),
+                Err(IfcError::Limit(_))
+            ));
+        }
+    }
+}

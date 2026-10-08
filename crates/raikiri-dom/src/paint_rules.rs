@@ -94,7 +94,11 @@ pub fn sort_paint_children(
     // their order were zero, while in-flow (including relative) items use the
     // computed `order` value. Stacking buckets stay primary.
     children.sort_by_key(|&child| {
-        let computed = &cascade.computed[child];
+        // Anonymous paragraph keys are outside the source DOM arena. Their
+        // non-inherited position, float and order use initial values.
+        let Some(computed) = cascade.computed.get(child) else {
+            return ((1, 0), 0, 0);
+        };
         let stack =
             if order_sensitive_container && matches!(computed.position, PositionValue::Static) {
                 // A flex/grid item can use integer z-index even when static.

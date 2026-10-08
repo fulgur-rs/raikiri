@@ -3067,7 +3067,7 @@ pub(crate) fn paint_document_impl(
             .or_default()
             .push(fragment_id);
     }
-    enum PaintFrame {
+    enum PaintFrame<'a> {
         Visit {
             node_id: usize,
             parent_abs_x: f32,
@@ -3086,6 +3086,18 @@ pub(crate) fn paint_document_impl(
             is_fragment_visit: bool,
             inside_fixed: bool,
             inside_fixed_containing_block: bool,
+            decorations: text::DecorationContext,
+        },
+        AnonymousParagraph {
+            key: usize,
+            cell: &'a raikiri_dom::Node,
+            x: f32,
+            y: f32,
+            shift_y: f32,
+            transform_x: f32,
+            transform_y: f32,
+            fragmentainer: Option<usize>,
+            inside_fixed: bool,
             decorations: text::DecorationContext,
         },
         RestoreTransform(Affine),
@@ -3287,6 +3299,73 @@ pub(crate) fn paint_document_impl(
             inside_fixed_containing_block,
             decorations,
         ) = match frame {
+            PaintFrame::AnonymousParagraph {
+                key,
+                cell,
+                x,
+                y,
+                shift_y,
+                transform_x,
+                transform_y,
+                fragmentainer,
+                inside_fixed,
+                decorations,
+            } => {
+                let layout = cell.unrounded_layout;
+                let probe = cell
+                    .ifc_lines()
+                    .and_then(|lines| {
+                        lines
+                            .iter()
+                            .flat_map(|line| line.fragments())
+                            .find_map(|fragment| {
+                                let shodo::Fragment::GlyphRun(run) = fragment else {
+                                    return None;
+                                };
+                                let owner = run.node()?.0 as usize;
+                                document
+                                    .get_node(owner)
+                                    .filter(|node| node.kind() == NodeKind::Text)
+                                    .map(|_| owner)
+                            })
+                    })
+                    .unwrap_or(document.ifc_source_owner(key));
+                if !named_page_matches(probe)
+                    || (!box_intersects_page(
+                        y,
+                        ifc_paint_extent(cell, &layout),
+                        page_top,
+                        page_bottom,
+                    ) && !inside_fixed)
+                {
+                    continue;
+                }
+                let clip = text_page_clip(inside_fixed);
+                if let Some(clip) = &clip {
+                    scene.scene.push_clip_layer(Affine::IDENTITY, clip);
+                }
+                crate::ifc_text::draw_ifc_lines(
+                    scene,
+                    document,
+                    cascade,
+                    key,
+                    crate::ifc_text::IfcPosition {
+                        x: x + page_offset_x
+                            + transform_x
+                            + layout.border.left
+                            + layout.padding.left,
+                        y: y + page_offset_y + transform_y + layout.border.top + layout.padding.top,
+                        shift_y,
+                    },
+                    &decorations,
+                    fragmentainer,
+                    custom_highlights,
+                );
+                if clip.is_some() {
+                    scene.pop_layer();
+                }
+                continue;
+            }
             PaintFrame::RestoreTransform(transform) => {
                 scene.transform = transform;
                 continue;
@@ -4285,7 +4364,7 @@ pub(crate) fn paint_document_impl(
                     // from the lines; only the boxes laid out beside them are
                     // visited like ordinary children.
                     node.ifc_boxes()
-                } else if let Some(children) = document.anonymous_table_paint_children(node_id) {
+                } else if let Some(children) = document.anonymous_table_paint_sequence(node_id) {
                     children
                 } else {
                     node.children.clone()
@@ -4491,64 +4570,6 @@ pub(crate) fn paint_document_impl(
                         scene.pop_layer();
                     }
                 }
-                for (key, cell) in document.anonymous_table_cells(node_id) {
-                    let cell_layout = cell.unrounded_layout;
-                    let cell_x = child_parent_x + cell_layout.location.x;
-                    let cell_y = child_parent_y + cell_layout.location.y;
-                    let page_probe = cell
-                        .children
-                        .iter()
-                        .find_map(|&child| {
-                            if document
-                                .get_node(child)
-                                .is_some_and(|node| node.kind() == NodeKind::Text)
-                            {
-                                Some(child)
-                            } else {
-                                first_text_descendant(document, child)
-                            }
-                        })
-                        .unwrap_or(node_id);
-                    if !named_page_matches(page_probe)
-                        || (!box_intersects_page(
-                            cell_y,
-                            ifc_paint_extent(cell, &cell_layout),
-                            page_top,
-                            page_bottom,
-                        ) && !ifc_inside_fixed)
-                    {
-                        continue;
-                    }
-                    let text_clip = text_page_clip(ifc_inside_fixed);
-                    if let Some(clip) = &text_clip {
-                        scene.scene.push_clip_layer(Affine::IDENTITY, clip);
-                    }
-                    crate::ifc_text::draw_ifc_lines(
-                        scene,
-                        document,
-                        cascade,
-                        key,
-                        crate::ifc_text::IfcPosition {
-                            x: cell_x
-                                + page_offset_x
-                                + child_transform_x
-                                + cell_layout.border.left
-                                + cell_layout.padding.left,
-                            y: cell_y
-                                + page_offset_y
-                                + child_transform_y
-                                + cell_layout.border.top
-                                + cell_layout.padding.top,
-                            shift_y: child_shift_y,
-                        },
-                        &child_decorations,
-                        fragmentainer,
-                        custom_highlights,
-                    );
-                    if text_clip.is_some() {
-                        scene.pop_layer();
-                    }
-                }
                 let own_multicol_clip_height = match cv.column_count {
                     ColumnCountValue::Count(count) if count > 1 && layout.size.height > 0.0 => {
                         Some(layout.size.height)
@@ -4556,6 +4577,24 @@ pub(crate) fn paint_document_impl(
                     _ => None,
                 };
                 for child in children.into_iter().rev() {
+                    if let Some(cell) = document
+                        .ifc_layout_node(child)
+                        .filter(|_| document.get_node(child).is_none())
+                    {
+                        stack.push(PaintFrame::AnonymousParagraph {
+                            key: child,
+                            cell,
+                            x: child_parent_x + cell.unrounded_layout.location.x,
+                            y: child_parent_y + cell.unrounded_layout.location.y,
+                            shift_y: child_shift_y,
+                            transform_x: child_transform_x,
+                            transform_y: child_transform_y,
+                            fragmentainer,
+                            inside_fixed: ifc_inside_fixed,
+                            decorations: child_decorations.clone(),
+                        });
+                        continue;
+                    }
                     let child_fragment_clip_height = match own_multicol_clip_height {
                         Some(clip_height)
                             if document.get_node(child).is_some_and(|child_node| {

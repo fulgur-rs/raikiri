@@ -2,14 +2,30 @@
 
 use crate::Document;
 use crate::node::{Node, NodeFlags};
-use raikiri_style::CascadeResult;
 use raikiri_style::property::{BreakBetween, DisplayValue, TableLayoutValue, VerticalAlign};
+use raikiri_style::{CascadeResult, PseudoElem};
 use raikiri_traits::NodeKind;
 use std::collections::{HashMap, HashSet};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum Content {
+    Node(usize),
+    Before(usize),
+    After(usize),
+}
+
+impl Content {
+    fn node(self) -> usize {
+        match self {
+            Self::Node(id) | Self::Before(id) | Self::After(id) => id,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct AnonymousCell {
     pub(crate) owner: usize,
+    pub(crate) content: Vec<Content>,
     pub(crate) node: Node,
 }
 
@@ -24,14 +40,18 @@ pub(crate) struct TableObjects {
     pub(crate) arena_len: usize,
     pub(crate) cells: Vec<AnonymousCell>,
     cells_by_owner: HashMap<usize, Vec<usize>>,
-    cell_by_child: Vec<Option<usize>>,
+    cell_by_content: HashMap<Content, usize>,
+    content_by_owner: HashMap<usize, Vec<Content>>,
     pub(crate) rows: HashMap<usize, Vec<Row>>,
     pub(crate) paragraph_owner: Vec<Option<usize>>,
     pub(crate) part_background_cells: HashMap<usize, Vec<raikiri_traits::PaintRect>>,
     pub(crate) materialized_parts: HashSet<usize>,
 }
 
-fn whitespace(doc: &Document, id: usize) -> bool {
+fn whitespace(doc: &Document, content: Content) -> bool {
+    let Content::Node(id) = content else {
+        return false;
+    };
     doc.nodes[id].kind() == NodeKind::Text
         && doc.nodes[id].text_content().is_some_and(|text| {
             text.chars()
@@ -39,10 +59,19 @@ fn whitespace(doc: &Document, id: usize) -> bool {
         })
 }
 
-fn children(doc: &Document, owner: usize) -> Vec<usize> {
+fn children(doc: &Document, cascade: &CascadeResult, owner: usize) -> Vec<Content> {
     let mut out = Vec::new();
-    let mut pending: Vec<_> = doc.nodes[owner].children.iter().rev().copied().collect();
-    while let Some(id) = pending.pop() {
+    let mut pending: Vec<_> = doc.nodes[owner]
+        .children
+        .iter()
+        .rev()
+        .map(|&id| Content::Node(id))
+        .collect();
+    while let Some(content) = pending.pop() {
+        let Content::Node(id) = content else {
+            out.push(content);
+            continue;
+        };
         let node = &doc.nodes[id];
         if !node.is_in_document()
             || node.is_non_rendered_html_element()
@@ -52,9 +81,21 @@ fn children(doc: &Document, owner: usize) -> Vec<usize> {
             continue;
         }
         if node.display == DisplayValue::Contents {
-            pending.extend(node.children.iter().rev().copied());
+            if crate::generated_content::is_in_flow_generated_text(cascade, id, PseudoElem::After) {
+                pending.push(Content::After(id));
+            }
+            pending.extend(
+                node.children
+                    .iter()
+                    .rev()
+                    .map(|&child| Content::Node(child)),
+            );
+            if crate::generated_content::is_in_flow_generated_text(cascade, id, PseudoElem::Before)
+            {
+                pending.push(Content::Before(id));
+            }
         } else {
-            out.push(id);
+            out.push(content);
         }
     }
     out
@@ -65,12 +106,31 @@ fn anonymous_cell(
     cascade: &CascadeResult,
     objects: &mut TableObjects,
     owner: usize,
-    content: Vec<usize>,
+    content: Vec<Content>,
 ) -> usize {
     let mut node = doc.nodes[owner].clone();
-    node.children = content;
+    node.children = content
+        .iter()
+        .filter_map(|entry| match entry {
+            Content::Node(id) => Some(*id),
+            _ => None,
+        })
+        .collect();
+    let visible_generated = content.iter().any(|entry| {
+        let pseudo = match entry {
+            Content::Node(_) => return false,
+            Content::Before(_) => PseudoElem::Before,
+            Content::After(_) => PseudoElem::After,
+        };
+        cascade
+            .pseudo
+            .get(&(raikiri_style::StyleNodeId::new(entry.node() as u64), pseudo))
+            .is_some_and(|cv| cv.visibility != raikiri_style::property::Visibility::Hidden)
+    });
     node.hides_empty_table_cell =
-        crate::paint_rules::hides_anonymous_table_cell(doc, cascade, owner, &node.children);
+        crate::paint_rules::hides_anonymous_table_cell(doc, cascade, owner, &node.children)
+            && (cascade.computed[owner].visibility == raikiri_style::property::Visibility::Hidden
+                || !visible_generated);
     node.style = taffy::Style::default();
     node.style.display = taffy::Display::Block;
     node.display = DisplayValue::TableCell;
@@ -99,10 +159,14 @@ fn anonymous_cell(
     let key = objects.arena_len + objects.cells.len();
     let index = objects.cells.len();
     objects.cells_by_owner.entry(owner).or_default().push(index);
-    for &child in &node.children {
-        objects.cell_by_child[child] = Some(index);
+    for &entry in &content {
+        objects.cell_by_content.insert(entry, index);
     }
-    objects.cells.push(AnonymousCell { owner, node });
+    objects.cells.push(AnonymousCell {
+        owner,
+        content,
+        node,
+    });
     key
 }
 
@@ -111,12 +175,12 @@ fn row(
     cascade: &CascadeResult,
     objects: &mut TableObjects,
     owner: usize,
-    ids: &[usize],
+    ids: &[Content],
     marker: Option<usize>,
 ) -> Row {
     let mut cells = Vec::new();
     let mut pending = Vec::new();
-    let flush = |pending: &mut Vec<usize>, cells: &mut Vec<usize>, objects: &mut TableObjects| {
+    let flush = |pending: &mut Vec<Content>, cells: &mut Vec<usize>, objects: &mut TableObjects| {
         // Inter-cell white space generates no anonymous cell. Keep white
         // space within an actual content run for the paragraph to collapse.
         if pending.iter().any(|&id| !whitespace(doc, id)) {
@@ -131,12 +195,16 @@ fn row(
             pending.clear();
         }
     };
-    for &id in ids {
-        if doc.nodes[id].display == DisplayValue::TableCell {
+    if marker.is_some() {
+        objects.content_by_owner.insert(owner, ids.to_vec());
+    }
+    for &entry in ids {
+        let id = entry.node();
+        if matches!(entry, Content::Node(_)) && doc.nodes[id].display == DisplayValue::TableCell {
             flush(&mut pending, &mut cells, objects);
             cells.push(id);
         } else {
-            pending.push(id);
+            pending.push(entry);
         }
     }
     flush(&mut pending, &mut cells, objects);
@@ -153,16 +221,17 @@ fn rows(
     owner: usize,
     reorder: bool,
 ) -> Vec<Row> {
-    let mut ids = children(doc, owner);
+    let mut ids = children(doc, cascade, owner);
+    objects.content_by_owner.insert(owner, ids.clone());
     if reorder {
-        let first_head = ids
-            .iter()
-            .copied()
-            .find(|&id| doc.nodes[id].display == DisplayValue::TableHeaderGroup);
-        let first_foot = ids
-            .iter()
-            .copied()
-            .find(|&id| doc.nodes[id].display == DisplayValue::TableFooterGroup);
+        let first_head = ids.iter().copied().find(|&id| {
+            matches!(id, Content::Node(_))
+                && doc.nodes[id.node()].display == DisplayValue::TableHeaderGroup
+        });
+        let first_foot = ids.iter().copied().find(|&id| {
+            matches!(id, Content::Node(_))
+                && doc.nodes[id.node()].display == DisplayValue::TableFooterGroup
+        });
         ids.sort_by_key(|&id| {
             if Some(id) == first_head {
                 0
@@ -175,17 +244,29 @@ fn rows(
     }
     let mut out = Vec::new();
     let mut pending = Vec::new();
-    let flush = |pending: &mut Vec<usize>, out: &mut Vec<Row>, objects: &mut TableObjects| {
+    let flush = |pending: &mut Vec<Content>, out: &mut Vec<Row>, objects: &mut TableObjects| {
         if pending.iter().any(|&id| !whitespace(doc, id)) {
             out.push(row(doc, cascade, objects, owner, pending, None));
         }
         pending.clear();
     };
-    for id in ids {
+    for entry in ids {
+        let id = entry.node();
+        if !matches!(entry, Content::Node(_)) {
+            pending.push(entry);
+            continue;
+        }
         match doc.nodes[id].display {
             DisplayValue::TableRow => {
                 flush(&mut pending, &mut out, objects);
-                out.push(row(doc, cascade, objects, id, &children(doc, id), Some(id)));
+                out.push(row(
+                    doc,
+                    cascade,
+                    objects,
+                    id,
+                    &children(doc, cascade, id),
+                    Some(id),
+                ));
             }
             DisplayValue::TableRowGroup
             | DisplayValue::TableHeaderGroup
@@ -198,7 +279,7 @@ fn rows(
             | DisplayValue::TableColumnGroup => {
                 flush(&mut pending, &mut out, objects);
             }
-            _ => pending.push(id),
+            _ => pending.push(entry),
         }
     }
     flush(&mut pending, &mut out, objects);
@@ -214,7 +295,6 @@ pub(crate) fn prepare(doc: &mut Document, cascade: &CascadeResult) {
     let mut objects = TableObjects {
         arena_len: doc.nodes.len(),
         paragraph_owner: vec![None; doc.nodes.len()],
-        cell_by_child: vec![None; doc.nodes.len()],
         ..TableObjects::default()
     };
     for id in 0..doc.nodes.len() {
@@ -274,22 +354,34 @@ impl Document {
     /// Source boxes painted beside anonymous paragraphs, in source child order.
     #[doc(hidden)]
     pub fn anonymous_table_paint_children(&self, owner: usize) -> Option<Vec<usize>> {
+        self.anonymous_table_paint_sequence(owner).map(|items| {
+            items
+                .into_iter()
+                .filter(|&key| key < self.nodes.len())
+                .collect()
+        })
+    }
+
+    /// Paragraph keys and source boxes in reconstructed anonymous-cell order.
+    #[doc(hidden)]
+    pub fn anonymous_table_paint_sequence(&self, owner: usize) -> Option<Vec<usize>> {
         self.table_objects.cells_by_owner.get(&owner)?;
         let mut out = Vec::new();
-        for child in children(self, owner) {
+        for &content in &self.table_objects.content_by_owner[&owner] {
             #[cfg(test)]
             OWNER_CELL_VISITS.with(|visits| visits.set(visits.get() + 1));
-            if let Some(index) = self.table_objects.cell_by_child[child] {
+            if let Some(&index) = self.table_objects.cell_by_content.get(&content) {
                 let cell = &self.table_objects.cells[index];
-                if cell.node.children.first() == Some(&child) {
+                if cell.content.first() == Some(&content) {
                     if cell.node.is_ifc_root() {
+                        out.push(self.table_objects.arena_len + index);
                         out.extend(cell.node.ifc_boxes());
                     } else {
                         out.extend(cell.node.children.iter().copied());
                     }
                 }
             } else {
-                out.push(child);
+                out.push(content.node());
             }
         }
         Some(out)
