@@ -542,3 +542,47 @@ fn generated_text_in_a_preceding_contents_sibling_blocks_ancestor_letter_styling
     assert!(letter.origins.is_empty());
     assert!(!letter.pending);
 }
+
+#[test]
+fn first_letter_predecessor_work_is_bounded_across_many_ifc_roots() {
+    let mut roots = Vec::new();
+    let fixture = sheet_fixture("div::first-letter{color:red}", "", |doc, parent| {
+        for _ in 0..200 {
+            doc.append_comment(Some(parent), "ignored");
+        }
+        for _ in 0..200 {
+            let root = doc.append_element(
+                Some(parent),
+                "section",
+                taffy::Style::default(),
+                Some("display:block"),
+            );
+            doc.append_text(root, "A");
+            roots.push(root);
+        }
+    });
+    PREDECESSOR_VISITS.with(|visits| visits.set(0));
+    let predecessors = PredecessorCache::default();
+    for (index, root) in roots.into_iter().enumerate() {
+        let letter = FirstLetter::new_with_predecessors(
+            &fixture.doc,
+            &fixture.cascade,
+            root,
+            &Limits::default(),
+            &predecessors,
+        );
+        assert_eq!(
+            letter.origins,
+            if index == 0 {
+                vec![fixture.root]
+            } else {
+                vec![]
+            }
+        );
+    }
+    let visited = PREDECESSOR_VISITS.with(|visits| visits.get());
+    assert!(
+        visited <= fixture.doc.node_count() * 3,
+        "predecessor work {visited} exceeds the document-wide bound"
+    );
+}

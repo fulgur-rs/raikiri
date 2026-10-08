@@ -52,11 +52,22 @@ pub(crate) struct FirstLetter {
 }
 
 impl FirstLetter {
+    #[cfg(test)]
     pub(crate) fn new(
         doc: &Document,
         cascade: &CascadeResult,
         origin: usize,
         limits: &shodo::limits::Limits,
+    ) -> Self {
+        Self::new_with_predecessors(doc, cascade, origin, limits, &PredecessorCache::default())
+    }
+
+    pub(crate) fn new_with_predecessors(
+        doc: &Document,
+        cascade: &CascadeResult,
+        origin: usize,
+        limits: &shodo::limits::Limits,
+        predecessors: &PredecessorCache,
     ) -> Self {
         let mut origins = Vec::new();
         let mut line_origin = None;
@@ -116,14 +127,7 @@ impl FirstLetter {
             ) {
                 break;
             }
-            let Some(node) = doc.get_node(parent) else {
-                break; // cov:ignore: parent IDs were validated by the document tree and cascade traversal.
-            };
-            let blocked = node
-                .children
-                .iter()
-                .take_while(|&&sibling| sibling != id)
-                .any(|&sibling| preceding_content(doc, cascade, sibling));
+            let blocked = predecessors.has_preceding(doc, cascade, id);
             if blocked {
                 break;
             }
@@ -531,49 +535,80 @@ impl FirstLetter {
 #[cfg(test)]
 mod tests;
 
-fn preceding_content(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
-    let mut stack = vec![id];
-    while let Some(id) = stack.pop() {
-        let cv = &cascade.computed[id];
-        let node = doc.get_node(id).expect("validated document child");
-        if cv.display == DisplayValue::None || node.is_non_rendered_html_element() {
-            continue;
-        }
-        if cv.display == DisplayValue::Contents {
-            if [PseudoElem::Before, PseudoElem::After]
-                .iter()
-                .any(|&pseudo| {
-                    crate::generated_content::is_in_flow_generated_text(cascade, id, pseudo)
-                })
-            {
-                return true;
-            }
-            stack.extend(node.children.iter().copied());
-            continue;
-        }
-        if cv.float != FloatValue::None
-            || matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
-        {
-            continue;
-        }
-        match node.kind() {
-            NodeKind::Text => {
-                if node
-                    .text_content()
-                    .unwrap_or("")
-                    .chars()
-                    .any(|ch| !ch.is_whitespace())
-                    || !matches!(
-                        cv.effective_white_space_collapse,
-                        WhiteSpaceCollapse::Collapse | WhiteSpaceCollapse::Discard
-                    )
-                {
-                    return true;
-                }
-            }
-            NodeKind::Element => return true,
-            _ => {}
-        }
+/// Immutable eligibility data shared by all roots in one projection pass.
+/// Each source node and sibling edge is inspected once, including Contents
+/// subtrees; a wide comment prefix is never scanned again for another root.
+#[derive(Default)]
+pub(crate) struct PredecessorCache(std::cell::OnceCell<Vec<bool>>);
+
+#[cfg(test)]
+thread_local! {
+    static PREDECESSOR_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+impl PredecessorCache {
+    fn has_preceding(&self, doc: &Document, cascade: &CascadeResult, node: usize) -> bool {
+        self.0.get_or_init(|| Self::build(doc, cascade))[node]
     }
-    false
+
+    fn build(doc: &Document, cascade: &CascadeResult) -> Vec<bool> {
+        let mut contributes = vec![false; doc.node_count()];
+        let mut blocked = vec![false; doc.node_count()];
+        let mut pending: Vec<_> = doc
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| node.parent.is_none())
+            .map(|(id, _)| (id, false))
+            .collect();
+        while let Some((id, visited)) = pending.pop() {
+            let node = &doc.nodes[id];
+            if !visited {
+                pending.push((id, true));
+                pending.extend(node.children.iter().map(|&child| (child, false)));
+                continue;
+            }
+            #[cfg(test)]
+            PREDECESSOR_VISITS.with(|visits| visits.set(visits.get() + 1));
+            let cv = &cascade.computed[id];
+            contributes[id] =
+                if cv.display == DisplayValue::None || node.is_non_rendered_html_element() {
+                    false
+                } else if cv.display == DisplayValue::Contents {
+                    [PseudoElem::Before, PseudoElem::After]
+                        .iter()
+                        .any(|&pseudo| {
+                            crate::generated_content::is_in_flow_generated_text(cascade, id, pseudo)
+                        })
+                        || node.children.iter().any(|&child| contributes[child])
+                } else if cv.float != FloatValue::None
+                    || matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
+                {
+                    false
+                } else {
+                    match node.kind() {
+                        NodeKind::Text => {
+                            node.text_content()
+                                .unwrap_or("")
+                                .chars()
+                                .any(|ch| !ch.is_whitespace())
+                                || !matches!(
+                                    cv.effective_white_space_collapse,
+                                    WhiteSpaceCollapse::Collapse | WhiteSpaceCollapse::Discard
+                                )
+                        }
+                        NodeKind::Element => true,
+                        _ => false,
+                    }
+                };
+            let mut preceding = false;
+            for &child in &node.children {
+                #[cfg(test)]
+                PREDECESSOR_VISITS.with(|visits| visits.set(visits.get() + 1));
+                blocked[child] = preceding;
+                preceding |= contributes[child];
+            }
+        }
+        blocked
+    }
 }

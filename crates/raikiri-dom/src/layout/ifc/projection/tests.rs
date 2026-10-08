@@ -11,7 +11,7 @@ fn marker_eligibility_preserves_counter_snapshot_errors() {
     );
     let counters = GeneratedCounters::default();
     counters
-        .0
+        .counters
         .set(Err(CounterSnapshotLimitExceeded {
             limit: 32,
             actual: 33,

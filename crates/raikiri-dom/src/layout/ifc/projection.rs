@@ -177,9 +177,10 @@ fn line_height_quirk(doc: &Document) -> bool {
 /// The counters of the document, computed once per layout pass and only when
 /// some paragraph lays out generated text.
 #[derive(Default)]
-pub(crate) struct GeneratedCounters(
-    std::cell::OnceCell<Result<Vec<CounterSnapshot>, CounterSnapshotLimitExceeded>>,
-);
+pub(crate) struct GeneratedCounters {
+    counters: std::cell::OnceCell<Result<Vec<CounterSnapshot>, CounterSnapshotLimitExceeded>>,
+    pub(super) predecessors: super::first_letter::PredecessorCache,
+}
 
 impl GeneratedCounters {
     pub(super) fn get(
@@ -188,7 +189,7 @@ impl GeneratedCounters {
         cascade: &CascadeResult,
     ) -> Result<&[CounterSnapshot], CounterSnapshotLimitExceeded> {
         match self
-            .0
+            .counters
             .get_or_init(|| crate::target::counter_snapshots(doc, cascade))
         {
             Ok(snapshots) => Ok(snapshots),
@@ -634,7 +635,8 @@ pub(crate) fn project_ifc_builder_with(
     let mut boxes = Vec::new();
     let mut offsets = Vec::new();
     let mut cleared_breaks = Vec::new();
-    let mut first_letter = FirstLetter::new(doc, cascade, root, limits);
+    let mut first_letter =
+        FirstLetter::new_with_predecessors(doc, cascade, root, limits, &counters.predecessors);
     let marker_atomic = if crate::generated_content::inside_marker_in_flow(cascade, root)
         && let Some(size) = doc.list_marker_image_size(root)
     {
