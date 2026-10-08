@@ -6235,16 +6235,69 @@ pub(crate) fn paint_inline_box(
     }
     let abs_x = x + outer.x;
     let abs_y = y + outer.y;
-    paint_element_box_shadows(
-        scene,
-        outer.width,
-        outer.height,
-        abs_x,
-        abs_y,
-        &radius,
-        &cv.box_shadow,
-        cv.color,
-    );
+    let shadow_slice = background_slice.filter(|slice| {
+        !cv.box_shadow.is_empty() && (slice.outer.x != outer.x || slice.outer.width != outer.width)
+    });
+    if let Some(slice) = shadow_slice {
+        // Only artificial inline edges clip a sliced shadow. Its real outer
+        // edges and its block-axis overflow remain visible.
+        let (mut overflow_x, mut overflow_y) = (1.0_f32, 1.0_f32);
+        for shadow in cv.box_shadow.iter() {
+            let spread = shadow.spread_radius.px().abs();
+            let blur = shadow.blur_radius.px().max(0.0) * 4.0;
+            overflow_x = overflow_x.max(shadow.offset_x.px().abs() + spread + blur + 1.0);
+            overflow_y = overflow_y.max(shadow.offset_y.px().abs() + spread + blur + 1.0);
+        }
+        let left = if slice.outer.x < outer.x {
+            abs_x
+        } else {
+            x + slice.outer.x - overflow_x
+        };
+        let right = if slice.outer.x + slice.outer.width > outer.x + outer.width {
+            abs_x + outer.width
+        } else {
+            x + slice.outer.x + slice.outer.width + overflow_x
+        };
+        scene.push_clip_layer(
+            Affine::IDENTITY,
+            &Rect::new(
+                f64::from(left),
+                f64::from(abs_y - overflow_y),
+                f64::from(right),
+                f64::from(abs_y + outer.height + overflow_y),
+            ),
+        );
+        let joined_radius = paintable_border_radius(
+            &cv.border_radius,
+            (has_border
+                || cv.background_color.a > 0
+                || !matches!(background_image, BackgroundImage::None))
+                && cv.transform.is_empty()
+                && cv.filter.is_empty(),
+        );
+        paint_element_box_shadows(
+            scene,
+            slice.outer.width,
+            outer.height,
+            x + slice.outer.x,
+            abs_y,
+            &joined_radius,
+            &cv.box_shadow,
+            cv.color,
+        );
+        scene.pop_layer();
+    } else {
+        paint_element_box_shadows(
+            scene,
+            outer.width,
+            outer.height,
+            abs_x,
+            abs_y,
+            &radius,
+            &cv.box_shadow,
+            cv.color,
+        );
+    }
     // A typographic pseudo split across source owners has one background
     // positioning area. Slice that image before applying each owner's offset;
     // fragment heights remain local when their inherited fonts differ.

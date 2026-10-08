@@ -2,6 +2,7 @@
 //! the last performed layout, and the document-level engine handles.
 
 use super::boxes::IfcBox;
+use super::first_letter::LetterStyle;
 use super::projection::ProjectedIfc;
 use raikiri_style::ComputedTextIndent;
 use shodo::font::FontCollection;
@@ -9,6 +10,7 @@ use shodo::geometry::WritingMode;
 use shodo::limits::Limits;
 use shodo::style::LineOptions;
 use shodo::{LayoutContext, Line, Paragraph};
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
@@ -48,6 +50,46 @@ pub(crate) struct IfcRoot {
     /// (`text-overflow: ellipsis`).
     pub(crate) ellipsis: bool,
     pub(crate) letter_styles: Vec<super::first_letter::LetterStyle>,
+    letter_style_index: Arc<LetterStyleIndex>,
+}
+
+#[derive(Default)]
+struct LetterStyleIndex {
+    fragments: HashMap<(usize, Option<usize>, Option<usize>), usize>,
+    owners: HashMap<(usize, usize), usize>,
+    parents: HashMap<usize, usize>,
+    dom_sources: HashMap<usize, Vec<usize>>,
+    generated_sources: HashMap<usize, usize>,
+}
+
+impl LetterStyleIndex {
+    fn new(styles: &[LetterStyle]) -> Self {
+        let mut index = Self::default();
+        for (position, style) in styles.iter().enumerate() {
+            for owner in [Some(style.source_owner), None] {
+                index
+                    .fragments
+                    .entry((style.box_id, style.source_container, owner))
+                    .or_insert(position);
+            }
+            index
+                .owners
+                .entry((style.box_id, style.source_owner))
+                .or_insert(position);
+            index.parents.entry(style.box_id).or_insert(position);
+            if style.source_range.is_some() {
+                index
+                    .dom_sources
+                    .entry(style.source_owner)
+                    .or_default()
+                    .push(position);
+            }
+            // Generated runs use the last matching retained style; the other
+            // public accessors preserve the first matching projection entry.
+            index.generated_sources.insert(style.box_id, position);
+        }
+        index
+    }
 }
 
 /// Lines broken for one content-box width.
@@ -120,6 +162,7 @@ impl IfcRoot {
     }
 
     pub(crate) fn new(projected: ProjectedIfc) -> Self {
+        let letter_style_index = Arc::new(LetterStyleIndex::new(&projected.letter_styles));
         Self {
             paragraph: projected.paragraph,
             writing_mode: projected.writing_mode,
@@ -135,6 +178,7 @@ impl IfcRoot {
             multicol_fragments: None,
             ellipsis: projected.ellipsis,
             letter_styles: projected.letter_styles,
+            letter_style_index,
         }
     }
 
@@ -155,6 +199,54 @@ impl IfcRoot {
             multicol_fragments: None,
             ellipsis: self.ellipsis,
             letter_styles: self.letter_styles.clone(),
+            letter_style_index: self.letter_style_index.clone(),
+        }
+    }
+
+    pub(crate) fn typographic_fragment(
+        &self,
+        box_id: usize,
+        container: Option<usize>,
+        owner: Option<usize>,
+    ) -> Option<&LetterStyle> {
+        self.letter_style_index
+            .fragments
+            .get(&(box_id, container, owner))
+            .and_then(|index| self.letter_styles.get(*index))
+    }
+
+    pub(crate) fn typographic_owner(&self, box_id: usize, owner: usize) -> Option<&LetterStyle> {
+        self.letter_style_index
+            .owners
+            .get(&(box_id, owner))
+            .and_then(|index| self.letter_styles.get(*index))
+    }
+
+    pub(crate) fn typographic_parent(&self, box_id: usize) -> Option<usize> {
+        self.letter_style_index
+            .parents
+            .get(&box_id)
+            .and_then(|index| self.letter_styles[*index].parent_box)
+    }
+
+    pub(crate) fn typographic_source(
+        &self,
+        source: shodo::node::TextSource,
+    ) -> Option<&LetterStyle> {
+        match source {
+            shodo::node::TextSource::Dom { node, .. } => self
+                .letter_style_index
+                .dom_sources
+                .get(&(node.0 as usize))?
+                .iter()
+                .rev()
+                .map(|index| &self.letter_styles[*index])
+                .find(|style| style.owns(source)),
+            shodo::node::TextSource::Generated { node } => self
+                .letter_style_index
+                .generated_sources
+                .get(&(node.0 as usize))
+                .and_then(|index| self.letter_styles.get(*index)),
         }
     }
 }

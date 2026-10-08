@@ -201,12 +201,8 @@ impl<'a> PositionedLines<'a> {
                 .filter(|_| index == 0)
                 .and_then(|node| node.ifc.as_ref())
                 .and_then(|ifc| {
-                    run.source().and_then(|source| {
-                        ifc.letter_styles
-                            .iter()
-                            .rev()
-                            .find(|style| style.owns(source))
-                    })
+                    run.source()
+                        .and_then(|source| ifc.typographic_source(source))
                 });
             let Some(style) = letter
                 .map(|letter| &letter.computed)

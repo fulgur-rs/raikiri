@@ -778,15 +778,11 @@ impl Node {
         source_container: Option<usize>,
         source_owner: Option<usize>,
     ) -> Option<(&raikiri_style::ComputedValues, usize)> {
+        #[cfg(test)]
+        tests::record_typographic_probe();
         self.ifc
             .as_ref()?
-            .letter_styles
-            .iter()
-            .find(|style| {
-                style.box_id == box_id
-                    && style.source_container == source_container
-                    && source_owner.is_none_or(|owner| style.source_owner == owner)
-            })
+            .typographic_fragment(box_id, source_container, source_owner)
             .map(|style| (&style.computed, style.source_owner))
     }
 
@@ -798,20 +794,13 @@ impl Node {
     ) -> Option<&raikiri_style::ComputedValues> {
         self.ifc
             .as_ref()?
-            .letter_styles
-            .iter()
-            .find(|style| style.box_id == box_id && style.source_owner == owner)
+            .typographic_owner(box_id, owner)
             .map(|style| &style.computed)
     }
 
     /// Enclosing typographic pseudo box, when ancestor block letters nest.
     pub fn ifc_typographic_parent(&self, box_id: usize) -> Option<usize> {
-        self.ifc
-            .as_ref()?
-            .letter_styles
-            .iter()
-            .find(|style| style.box_id == box_id)
-            .and_then(|style| style.parent_box)
+        self.ifc.as_ref()?.typographic_parent(box_id)
     }
 
     /// Pieces of the inline elements of an ifc root on its lines, in the

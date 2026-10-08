@@ -1466,3 +1466,108 @@ fn split_first_letter_url_background_keeps_one_positioning_area() {
         );
     }
 }
+
+#[test]
+fn split_first_letter_outer_shadow_matches_one_joined_box() {
+    for (shadow, extra) in [
+        ("0 0 0 4px lime", ""),
+        ("3px 2px 3px 2px lime", ""),
+        ("-3px -2px 3px 2px lime", ""),
+        ("3px 2px 3px 2px lime", "border-radius:8px"),
+        ("3px 2px 3px 2px lime", "opacity:.5"),
+        ("3px 2px 3px 2px rgba(0,255,0,.5)", ""),
+    ] {
+        let sheet = format!(
+            "div{{padding:10px}}div::first-letter{{font-size:20px;color:transparent;background:white;box-shadow:{shadow};{extra}}}"
+        );
+        let (mut split, _, quote) = fixture(&sheet, Some("display:inline"), "“");
+        let root = split.parent_of(split.parent_of(quote).unwrap()).unwrap();
+        split.append_text(root, "A");
+        split.mark_in_document_flags();
+        let computed = cascade(&split, &build_rule_tree(&split)).unwrap();
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 80.0;
+        layout_single_page(&mut split, &computed, page).unwrap();
+        let (joined, joined_cv, _) = fixture(&sheet, None, "“A");
+        let expected = pixels(&joined, &joined_cv);
+        assert!(expected.chunks_exact(4).filter(|p| p[1] > p[0]).count() > 100);
+        let actual = pixels(&split, &computed);
+        assert_eq!(
+            actual
+                .chunks_exact(4)
+                .zip(expected.chunks_exact(4))
+                .filter(|(a, b)| a != b)
+                .count(),
+            0,
+            "{shadow};{extra}"
+        );
+    }
+}
+
+#[test]
+fn first_letter_shadow_slices_exclude_real_owner_margins() {
+    use anyrender::PaintScene;
+    use kurbo::{Affine, Rect, Shape};
+    for gap in [-10, 10] {
+        for shadow in ["0 0 0 4px lime", "3px 2px 3px 2px rgba(0,255,0,.5)"] {
+            let sheet = format!(
+                "div{{padding:10px}}div::first-letter{{font-size:20px;color:transparent;background:white;box-shadow:{shadow}}}"
+            );
+            let (mut split, _, quote) = fixture(&sheet, Some("display:inline"), "“");
+            let root = split.parent_of(split.parent_of(quote).unwrap()).unwrap();
+            let second = split.append_element(
+                Some(root),
+                "span",
+                Style::default(),
+                Some(&format!("display:inline;margin-left:{gap}px")),
+            );
+            split.append_text(second, "A");
+            split.mark_in_document_flags();
+            let computed = cascade(&split, &build_rule_tree(&split)).unwrap();
+            let mut page = PageBox::new();
+            page.width = 100.0;
+            page.height = 80.0;
+            layout_single_page(&mut split, &computed, page).unwrap();
+            let (joined, joined_cv, _) = fixture(&sheet, None, "“A");
+            let mut source = Scene::new();
+            raikiri_paint::paint_single_page(&mut source, &joined, &joined_cv, page).unwrap();
+            let paper = Rect::new(0.0, 0.0, 100.0, 80.0);
+            // The page fill is independent of the pseudo's decoration and
+            // must not be translated or repeated with either slice.
+            assert!(
+                matches!(source.commands.first(), Some(RenderCommand::Fill(fill)) if fill.shape.bounding_box() == paper)
+            );
+            source.commands.remove(0);
+            let mut reference = Scene::new();
+            reference.fill(
+                peniko::Fill::NonZero,
+                Affine::IDENTITY,
+                peniko::Color::from_rgba8(255, 255, 255, 255),
+                None,
+                &paper,
+            );
+            // The Ahem slices meet at 10px padding + 20px glyph advance.
+            reference.push_clip_layer(Affine::IDENTITY, &Rect::new(0.0, 0.0, 30.0, 80.0));
+            reference.append_scene(source.clone(), Affine::IDENTITY);
+            reference.pop_layer();
+            reference.push_clip_layer(
+                Affine::IDENTITY,
+                &Rect::new(30.0 + f64::from(gap), 0.0, 100.0, 80.0),
+            );
+            reference.append_scene(source, Affine::translate((f64::from(gap), 0.0)));
+            reference.pop_layer();
+            let expected = scene_pixels(reference);
+            assert!(expected.chunks_exact(4).filter(|p| p[1] > p[0]).count() > 100);
+            assert_eq!(
+                pixels(&split, &computed)
+                    .chunks_exact(4)
+                    .zip(expected.chunks_exact(4))
+                    .filter(|(a, b)| a != b)
+                    .count(),
+                0,
+                "gap={gap};{shadow}"
+            );
+        }
+    }
+}
