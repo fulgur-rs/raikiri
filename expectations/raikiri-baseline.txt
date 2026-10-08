@@ -1714,6 +1714,13 @@ css/css-color/parsing/color-valid.html
 css/css-grid/parsing/grid-shorthand-invalid.html
 css/css-grid/parsing/grid-template-shorthand-invalid.html
 
+# --- CSS Color symbolic currentcolor exact 800x600 / bundled fonts (+5) ---
+css/css-color/t44-currentcolor-background-b.xht
+css/css-color/color-mix-currentcolor-001.html
+css/css-color/color-mix-currentcolor-002.html
+css/css-color/color-mix-currentcolor-003.html
+css/css-color/color-mix-currentcolor-nested-for-color-property.html
+
 # CSS Overflow inherited Ahem max-width:4ch (exact 800x600, bundled WPT fonts).
 css/css-overflow/text-overflow-ellipsis-002.html
 

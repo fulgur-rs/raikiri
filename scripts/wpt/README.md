@@ -356,7 +356,7 @@ does not claim complete support for every paged-media viewport-unit behavior.
 
 The CSS Break `break-between-avoid-000` through `014` references are pinned as
 exact 800 × 600 PASS results with bundled WPT fonts. All fifteen failed on
-main a57ec313: thirteen differed by 10000 pixels, `007` by 11616 pixels, and
+main a57ec313 with shodo 0.0.23: thirteen differed by 10000 pixels, `007` by 11616 pixels, and
 `010` by 32500 pixels. After the runtime change, all fifteen match their
 references without tolerance changes. The 1450 existing report rows retain
 identical IDs, statuses and details.
@@ -371,9 +371,38 @@ ordinary block sibling runs at a legal boundary; oversized runs relax avoidance
 so they still advance. The bounded horizontal-column projection propagates
 first/last descendant constraints, resumes plain block wrappers, preserves
 atomic inline-blocks and inside-avoided boxes, gives forced column breaks
-priority, and treats floats as parallel flows. Decorated, block-margined or
-positioned boxes and definite-width splittable wrappers retain the existing
-geometry strategies. Nested columns, visible text, minimum block-size contexts
+priority, and treats floats as parallel flows. Projected boxes with margin,
+padding, border or inset, and definite-width splittable wrappers retain the
+existing geometry strategies. Atomic subtrees preserve their measured child
+geometry. Nested columns, visible text, minimum block-size contexts
 and unsupported box structures retain their existing paths. These fifteen
 references and native controls do not establish complete table/flex/grid,
 vertical-writing or general box-decoration fragmentation support.
+
+## Contextual background colors
+
+`color` and `background-color` retain `currentcolor` operands until the cascade
+knows their color basis, including operands in `color-mix()` and backgrounds
+expanded from a shorthand or a custom property. A `color` expression uses the
+inherited foreground; a background expression uses the receiving element's own
+foreground. Explicit `background-color: inherit` retains the expression for the
+receiver, including root-to-page and page-to-margin-box inheritance. See
+[CSS Color 4 §15.5](https://www.w3.org/TR/css-color-4/#resolving-other-colors),
+[CSS Color 5 §10.1](https://www.w3.org/TR/css-color-5/#resolving-color-values), and
+[CSS Paged Media 3 §6](https://www.w3.org/TR/css-page-3/#page-properties).
+
+The exact 800 × 600 bundled-font pass set includes the legacy currentcolor
+background reference and four color-mix currentcolor references. Universal
+`::highlight(name)` backgrounds also preserve winning contextual expressions
+through importance and layer rollback, resolving them against the originating
+text node's computed foreground when painted. Highlight-specific foreground
+styling, per-element highlight selectors, and multiple-overlay foreground/dual
+inheritance remain existing gaps tracked by 0vv.133. The wider
+`currentcolor-001` and `currentcolor-002` references still have an existing
+163-pixel text residual: replacing the authored contextual colors with literal
+colors produces the same residual on the original source. Those references are
+kept out of the PASS baseline. General `background: inherit` shorthand expansion
+is a separate existing parser gap (0vv.127); the supported longhand inheritance
+above does not establish all eight shorthand longhands. Color conversion still
+uses the existing bounded 8-bit sRGB model.
+

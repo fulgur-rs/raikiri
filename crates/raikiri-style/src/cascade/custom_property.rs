@@ -620,9 +620,12 @@ pub(crate) fn project_deferred_value(
             _ => return None,
         },
         PropertyValue::Background(shorthand) => match key {
-            crate::property::PropertyKey::BackgroundColor => {
-                PropertyValue::BackgroundColor(shorthand.color)
-            }
+            crate::property::PropertyKey::BackgroundColor => match shorthand.color_expression {
+                Some(source) => {
+                    PropertyValue::ContextualColor(crate::property::ContextualColor { source, key })
+                }
+                None => PropertyValue::BackgroundColor(shorthand.color),
+            },
             crate::property::PropertyKey::BackgroundImage => {
                 PropertyValue::BackgroundImage(shorthand.image)
             }

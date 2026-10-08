@@ -6749,6 +6749,13 @@ pub struct DeferredValue {
     pub(crate) key: PropertyKey,
 }
 
+/// A validated element color that retains `currentcolor` until its color basis is known.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ContextualColor {
+    pub(crate) source: SmolStr,
+    pub(crate) key: PropertyKey,
+}
+
 impl DeferredValue {
     /// Return a canonical defaulting marker for the supported deferred longhands.
     pub(crate) fn css_wide_keyword(&self) -> Option<CssWideKeyword> {
@@ -7592,6 +7599,8 @@ pub enum BackgroundSize {
 /// [`SpecifiedValues`]: crate::specified::SpecifiedValues
 #[derive(Clone, Debug, PartialEq)]
 pub struct BackgroundShorthand {
+    /// Symbolic color component, when it contains `currentcolor`.
+    pub(crate) color_expression: Option<SmolStr>,
     /// `background-color` component: [`CssColor::TRANSPARENT`] if omitted (the spec
     /// initial value).
     pub color: CssColor,
@@ -8303,6 +8312,8 @@ pub enum PropertyValue {
     CustomProperty(CustomProperty),
     /// A known property value containing `var()` or a math function.
     Deferred(DeferredValue),
+    /// A `color` or `background-color` expression containing `currentcolor`.
+    ContextualColor(ContextualColor),
     /// `color: <color>` — inherited, initial: black.
     Color(CssColor),
     /// `background-color: <color>` — **non-inherited**, initial: `transparent`.
@@ -10478,6 +10489,7 @@ impl PropertyValue {
             PropertyValue::AllRevertLayer => PropertyKey::All,
             PropertyValue::CustomProperty(_) => PropertyKey::Custom,
             PropertyValue::Deferred(value) => value.key,
+            PropertyValue::ContextualColor(value) => value.key,
             PropertyValue::Grid(_) => PropertyKey::Grid,
             PropertyValue::GridArea(_) => PropertyKey::GridArea,
             PropertyValue::Color(_) => PropertyKey::Color,
