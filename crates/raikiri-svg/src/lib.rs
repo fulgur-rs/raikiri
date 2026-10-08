@@ -24,7 +24,7 @@ pub struct SvgIntrinsicSize {
     pub aspect_ratio: Option<f32>,
 }
 
-/// The concrete viewport used to rasterize an SVG.
+/// The concrete CSS viewport used to prepare or rasterize an SVG.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SvgViewport {
     /// CSS pixel width.
@@ -47,6 +47,8 @@ pub struct SvgRootStyle {
     pub opacity: f32,
     /// Remove the SVG root group's opacity from the raster when the caller
     /// composites the computed opacity around the SVG and its box decorations.
+    /// Source-only preparation retains this opacity for inheritance; see
+    /// [`SvgDocument::styled_source`].
     pub neutralize_root_opacity: bool,
     /// The host controls the SVG root's `background-color`, including when it
     /// computes to transparent, so omit the source background from the raster.
@@ -201,6 +203,8 @@ impl SvgDocument {
     /// explicit `inherit` values. A vector consumer must remove only the
     /// resolved root group's opacity after parsing, then composite the host
     /// box and SVG together with that opacity.
+    /// `root_style.visible` controls rasterization only; a vector consumer
+    /// handles the host's visibility before drawing this source.
     pub fn styled_source(
         &self,
         viewport: SvgViewport,
