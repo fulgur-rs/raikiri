@@ -6228,16 +6228,10 @@ fn rounded_rect_path(x0: f64, y0: f64, x1: f64, y1: f64, radii: [[f64; 2]; 4]) -
             (point, Some(arc))
         };
         if let (Some(polygon), Some(arc)) = (common.as_mut(), arc) {
-            // One tangent cubic per cropped quarter arc keeps subdivision
-            // bounded independently of the coordinate magnitudes.
-            let alpha = (4.0 / 3.0) * (arc.sweep_angle / 4.0).tan();
-            let (sin0, cos0) = arc.start_angle.sin_cos();
-            let (sin1, cos1) = (arc.start_angle + arc.sweep_angle).sin_cos();
-            let to = arc.center + Vec2::new(arc.radii.x * cos1, arc.radii.y * sin1);
-            let a = point + Vec2::new(-arc.radii.x * sin0, arc.radii.y * cos0) * alpha;
-            let b = to - Vec2::new(-arc.radii.x * sin1, arc.radii.y * cos1) * alpha;
+            // Subdivide the actual ellipse so cubic approximation error cannot
+            // move an inner contour outside the existing outer arc.
             let mut points = vec![point];
-            flatten_corner_curve([point, a, b, to], 0, &mut points);
+            flatten_corner_arc(arc, arc.start_angle + arc.sweep_angle, 0, &mut points);
             for edge in points.windows(2) {
                 *polygon = clip_corner_polygon(std::mem::take(polygon), edge[0], edge[1]);
                 if polygon.len() < 3 {
@@ -6271,32 +6265,23 @@ fn rounded_rect_path(x0: f64, y0: f64, x1: f64, y1: f64, radii: [[f64; 2]; 4]) -
     path
 }
 
-/// Flatten a convex corner cubic to a 0.05px control-hull target, bounded
-/// to 1024 chords per cubic for extreme coordinates.
-fn flatten_corner_curve(curve: [Point; 4], depth: u8, points: &mut Vec<Point>) {
-    let [from, a, b, to] = curve;
-    let delta = to - from;
-    let length = delta.hypot();
-    let distance = |point: Point| {
-        let offset = point - from;
-        if length == 0.0 {
-            offset.hypot()
-        } else {
-            delta.cross(offset).abs() / length
-        }
-    };
-    if depth == 10 || distance(a).max(distance(b)) <= 0.05 {
-        points.push(to);
+/// Flatten an axis-aligned ellipse to a 0.05px chord-error target, bounded
+/// to 1024 chords per corner for extreme coordinates.
+fn flatten_corner_arc(arc: Arc, end_angle: f64, depth: u8, points: &mut Vec<Point>) {
+    // The norm of the ellipse's second derivative is bounded by its larger
+    // radius; linear interpolation error is at most that bound times h²/8.
+    let sweep = end_angle - arc.start_angle;
+    let chord_error = arc.radii.x.abs().max(arc.radii.y.abs()) * sweep.abs() * sweep.abs() / 8.0;
+    if depth == 10 || chord_error <= 0.05 {
+        let (sin, cos) = end_angle.sin_cos();
+        points.push(arc.center + Vec2::new(arc.radii.x * cos, arc.radii.y * sin));
         return;
     }
-    let ab = from.lerp(a, 0.5);
-    let bc = a.lerp(b, 0.5);
-    let cd = b.lerp(to, 0.5);
-    let abc = ab.lerp(bc, 0.5);
-    let bcd = bc.lerp(cd, 0.5);
-    let center = abc.lerp(bcd, 0.5);
-    flatten_corner_curve([from, ab, abc, center], depth + 1, points);
-    flatten_corner_curve([center, bcd, cd, to], depth + 1, points);
+    let middle = arc.start_angle + sweep * 0.5;
+    flatten_corner_arc(arc, middle, depth + 1, points);
+    let mut right = arc;
+    right.start_angle = middle;
+    flatten_corner_arc(right, end_angle, depth + 1, points);
 }
 
 /// Clip a nonempty convex polygon to the clockwise edge's interior side.

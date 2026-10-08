@@ -4857,6 +4857,65 @@ const CROSSING_RADII: [&str; 2] = [
     "border-top-right-radius:100px;border-bottom-left-radius:100px",
 ];
 
+#[test]
+fn large_crossing_inner_ellipses_stay_inside_the_outer_outline() {
+    use kurbo::{PathEl, Shape};
+    for (pair, outside) in [
+        ([0, 2], Point::new(567.5, 6676.5)),
+        ([1, 3], Point::new(9432.5, 6676.5)),
+    ] {
+        let mut radii = [[0.0, 0.0]; 4];
+        for index in pair {
+            radii[index] = [10000.0, 10000.0];
+        }
+        let outer = rounded_rect_path(0.0, 0.0, 10000.0, 10000.0, radii);
+        assert_eq!(outer.winding(outside), 0);
+        let inner = rounded_rect_path(
+            1.0,
+            1.0,
+            9999.0,
+            9999.0,
+            inset_border_radii(radii, (1.0, 1.0, 1.0, 1.0)),
+        );
+        assert_eq!(inner.winding(outside), 0);
+        assert_ne!(inner.winding(Point::new(5000.0, 5000.0)), 0);
+        for element in inner.elements() {
+            if let PathEl::MoveTo(point) | PathEl::LineTo(point) = element {
+                assert_ne!(outer.winding(*point), 0);
+            }
+        }
+    }
+}
+
+#[test]
+fn large_crossing_ellipse_border_does_not_paint_outside_its_box_shape() {
+    for (radii, left) in [
+        (
+            "border-top-left-radius:10000px;border-bottom-right-radius:10000px",
+            -520,
+        ),
+        (
+            "border-top-right-radius:10000px;border-bottom-left-radius:10000px",
+            -9385,
+        ),
+    ] {
+        let scene = transform_markup_scene(&format!(
+            "<body style='margin:0'><div style='position:absolute;left:{left}px;top:-6640px;box-sizing:border-box;width:10000px;height:10000px;border:1px solid red;{radii}'></div></body>"
+        ));
+        let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+            |out| out.append_scene(scene, Affine::IDENTITY),
+            100,
+            100,
+        );
+        let offset = (36 * 100 + 47) * 4;
+        assert_eq!(&rgba[offset..offset + 4], &[255, 255, 255, 255]);
+        assert!(
+            rgba.chunks_exact(4)
+                .any(|pixel| u16::from(pixel[0]) > u16::from(pixel[1]) + 30)
+        );
+    }
+}
+
 fn crossing_corner_pixels(style: &str, content: &str) -> Vec<u8> {
     let scene = transform_markup_scene(&format!(
         "<body style='margin:0'><div style='position:absolute;left:0;top:0;box-sizing:border-box;width:100px;height:100px;{style}'>{content}</div></body>"
@@ -4916,23 +4975,30 @@ fn crossing_inner_corner_empty_overflow_clip_hides_descendants() {
 }
 
 #[test]
-fn corner_curve_flattening_preserves_endpoints_with_bounded_finite_output() {
+fn corner_arc_flattening_preserves_endpoints_with_bounded_finite_output() {
     let collapsed = Point::new(10.0, 20.0);
     let mut points = vec![collapsed];
-    flatten_corner_curve([collapsed; 4], 0, &mut points);
+    flatten_corner_arc(
+        Arc::new(collapsed, Vec2::ZERO, 0.0, FRAC_PI_2, 0.0),
+        FRAC_PI_2,
+        0,
+        &mut points,
+    );
     assert!(points.iter().all(|point| *point == collapsed));
     let extent = 1e18;
-    let curve = [
-        Point::new(0.0, extent),
-        Point::new(0.0, extent * 0.447_715_2),
-        Point::new(extent * 0.447_715_2, 0.0),
-        Point::new(extent, 0.0),
-    ];
-    let mut points = vec![curve[0]];
-    flatten_corner_curve(curve, 0, &mut points);
+    let arc = Arc::new(
+        Point::ORIGIN,
+        Vec2::new(extent, extent),
+        0.0,
+        FRAC_PI_2,
+        0.0,
+    );
+    let mut points = vec![Point::new(extent, 0.0)];
+    flatten_corner_arc(arc, FRAC_PI_2, 0, &mut points);
     assert!(points.len() <= 1025);
-    assert_eq!(points.first(), Some(&curve[0]));
-    assert_eq!(points.last(), Some(&curve[3]));
+    assert_eq!(points.first(), Some(&Point::new(extent, 0.0)));
+    let (sin, cos) = FRAC_PI_2.sin_cos();
+    assert_eq!(points.last(), Some(&Point::new(extent * cos, extent * sin)));
     assert!(points.iter().all(|point| point.x.is_finite()
         && point.y.is_finite()
         && (0.0..=extent).contains(&point.x)
