@@ -729,16 +729,6 @@ impl Node {
             .map(|lines| lines.lines.as_slice())
     }
 
-    /// Retained late-resolved style of a typographic pseudo inline box.
-    pub fn ifc_typographic_style(&self, box_id: usize) -> Option<&raikiri_style::ComputedValues> {
-        self.ifc
-            .as_ref()?
-            .letter_styles
-            .iter()
-            .find(|style| style.box_id == box_id)
-            .map(|style| &style.computed)
-    }
-
     /// Retained style and source of one fragment of a typographic inline.
     pub fn ifc_typographic_fragment(
         &self,
@@ -770,16 +760,6 @@ impl Node {
             .iter()
             .find(|style| style.box_id == box_id && style.source_owner == owner)
             .map(|style| &style.computed)
-    }
-
-    /// Source owner whose inline ancestors move a typographic pseudo box.
-    pub fn ifc_typographic_source(&self, box_id: usize) -> Option<usize> {
-        self.ifc
-            .as_ref()?
-            .letter_styles
-            .iter()
-            .find(|style| style.box_id == box_id)
-            .map(|style| style.source_owner)
     }
 
     /// Enclosing typographic pseudo box, when ancestor block letters nest.

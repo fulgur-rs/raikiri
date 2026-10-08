@@ -15,6 +15,21 @@ use std::fmt;
 use std::ops::Range;
 use std::sync::Arc;
 
+/// Identifies one line of a paragraph, independent of its paint coordinates.
+///
+/// Runs with different colors or fonts on the same line share this identity.
+/// Coincident lines, including lines with zero line height, remain distinct.
+/// The identity is scoped to the laid-out document and remains the same for
+/// a repeated paragraph on different pages.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub struct TextLineId {
+    /// The paragraph's inline formatting context root.
+    pub root: NodeId,
+    /// Zero-based line index in that paragraph, before page slicing.
+    pub index: usize,
+}
+
 /// One run of glyphs in one font and color, positioned on the page.
 ///
 /// Positions are in CSS px with the origin at the top-left of the page box and
@@ -25,6 +40,8 @@ use std::sync::Arc;
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct PositionedGlyphRun<'a> {
+    /// The line containing this run, for painting decorations per line.
+    pub line: TextLineId,
     /// What the text of the run comes from.
     pub source: RunSource,
     /// The font face.
@@ -54,6 +71,9 @@ pub struct PositionedGlyphRun<'a> {
     pub glyphs: Vec<Glyph>,
     /// Text color (used value).
     pub color: CssColor,
+    /// Used decoration segments, including lines propagated from ancestors.
+    /// Generated text and ellipses have no decoration segments in this version.
+    pub decorations: Vec<crate::DecorationLine>,
 }
 
 /// One glyph of a [`PositionedGlyphRun`].
@@ -349,6 +369,7 @@ fn glyph_run<'a>(
     line: &PositionedLine<'a>,
     positioned: &PositionedRun<'a>,
     (x, y): (f32, f32),
+    line_id: TextLineId,
 ) -> Option<PositionedGlyphRun<'a>> {
     let run = &positioned.run;
     let ellipsis = run.is_ellipsis();
@@ -414,6 +435,7 @@ fn glyph_run<'a>(
         .collect();
     let metrics = run.metrics();
     Some(PositionedGlyphRun {
+        line: line_id,
         source,
         font: FontRef {
             id: FontId { blob, index },
@@ -438,6 +460,7 @@ fn glyph_run<'a>(
         text,
         glyphs,
         color,
+        decorations: Vec::new(),
     })
 }
 
@@ -464,6 +487,7 @@ fn root_runs<'a>(
     // is placed in its page's slice of the flow.
     let x = page.content_box.x + root.x;
     let y = page.content_box.y + root.y - flow_range.map_or(0.0, |(start, _)| start);
+    let decoration_context = crate::text_decoration::context_for_root(document, cascade, root.node);
     for line in positioned.lines() {
         if let Some((start, end)) = flow_range {
             let top = root.y + line.offset.1 + line.line.block_offset();
@@ -472,11 +496,31 @@ fn root_runs<'a>(
             }
         }
         let line_origin = (x + line.offset.0, y + line.offset.1);
-        out.extend(
-            line.runs
-                .iter()
-                .filter_map(|run| glyph_run(document, &line, run, line_origin)),
+        let decorations = crate::text_decoration::positioned_line_decorations(
+            document,
+            cascade,
+            root.node,
+            &decoration_context,
+            &line,
+            line_origin,
         );
+        for (run, lines) in line.runs.iter().zip(decorations) {
+            if let Some(mut run) = glyph_run(
+                document,
+                &line,
+                run,
+                line_origin,
+                TextLineId {
+                    root: NodeId::new(root.node as u64),
+                    index: line.index,
+                },
+            ) {
+                if matches!(run.source, RunSource::Text(_)) {
+                    run.decorations = lines;
+                }
+                out.push(run);
+            } // cov:ignore: current positioned body runs have a source, style, font and nonempty glyphs; future element-owned runs may be omitted.
+        }
     }
     Some(())
 }

@@ -8,8 +8,8 @@
 //! such as vertical fragmentation and decorations remains horizontal-only.
 
 use crate::text::{
-    DecorationContext, DecorationGeometry, DecorationPhase, css_color_to_peniko,
-    decorations_for_element, draw_decoration_phase, synthetic_embolden,
+    DecorationContext, DecorationPhase, css_color_to_peniko, draw_resolved_decoration_phase,
+    synthetic_embolden,
 };
 use anyrender::filters::{Filter, FilterEffect};
 use anyrender::{Glyph as AnyrenderGlyph, PaintScene};
@@ -20,10 +20,9 @@ use raikiri_dom::{Document, PositionedLines, cumulative_offset};
 use raikiri_style::CascadeResult;
 use raikiri_style::property::TextShadowColor;
 use shodo::Fragment;
-use shodo::geometry::{BaselineKind, PhysicalConverter, WritingMode};
+use shodo::geometry::{PhysicalConverter, WritingMode};
 use shodo::hit::{LineLayout, TextPosition};
 use shodo::node::NodeId;
-use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::sync::Arc;
 
@@ -35,75 +34,13 @@ pub(crate) struct IfcPosition {
     pub(crate) shift_y: f32,
 }
 
-/// The decoration context of a text node: the context after the ifc root,
-/// folded through the elements between the root and the text. Each element's
-/// decoration sits at that element's baseline, `shifts` below the line's.
-fn context_for_text(
-    document: &Document,
-    cascade: &CascadeResult,
-    root_id: usize,
-    text_node: usize,
-    base: &DecorationContext,
-    shifts: &HashMap<usize, f32>,
-) -> DecorationContext {
-    let mut chain = Vec::new();
-    // The text of a pseudo-element is owned by the pseudo-element's own box,
-    // which is decorated like an inline element child of its element.
-    let mut current = match generated_origin(text_node) {
-        Some((element, _)) => {
-            chain.push(text_node);
-            (element != root_id).then_some(element)
-        }
-        None => document.parent_of(text_node),
-    };
-    while let Some(id) = current {
-        if id == root_id {
-            break;
-        }
-        chain.push(id);
-        current = document.parent_of(id);
-    }
-    chain.iter().rev().fold(base.clone(), |context, &id| {
-        let Some(cv) = computed_for_id(cascade, id) else {
-            return context;
-        };
-        decorations_for_element(&context, cv, shifts.get(&id).copied().unwrap_or(0.0))
-    })
-}
-
-/// How far each inline element's baseline lies below the line's baseline, on
-/// this line. An element with no fragment on the line is not in the map.
-///
-/// A fragment's content area starts at the top of its font's ascent, so the
-/// element's baseline is that top plus the ascent.
-fn baseline_shifts(document: &Document, line: &shodo::Line) -> HashMap<usize, f32> {
-    let line_baseline = line.baseline(BaselineKind::Alphabetic);
-    let mut shifts = HashMap::new();
-    for fragment in line.fragments() {
-        let Fragment::InlineBox(inline_box) = fragment else {
-            continue;
-        };
-        let Some(metrics) = document.ifc_font_metrics(inline_box.font, inline_box.font_size) else {
-            continue;
-        };
-        let baseline = inline_box.content_rect.block_start + metrics.ascent;
-        shifts.insert(inline_box.node.0 as usize, baseline - line_baseline);
-    }
-    shifts
-}
-
 /// One glyph run ready to draw, with its decoration context.
 struct RunDraw<'a> {
     run: shodo::GlyphRunView<'a>,
     style: &'a raikiri_style::ComputedValues,
     color: peniko::Color,
     glyphs: Vec<AnyrenderGlyph>,
-    /// Horizontal extent of the run in page coordinates.
-    x0: f64,
-    x1: f64,
-    /// The line's baseline in page coordinates.
-    baseline: f64,
-    decorations: DecorationContext,
+    decorations: Vec<raikiri_dom::DecorationLine>,
     /// The relative offsets of the run's inline ancestors.
     offset: (f32, f32),
 }
@@ -249,17 +186,21 @@ pub(crate) fn draw_ifc_lines(
                 custom_highlights,
             );
         }
-        // An element's shift can differ from line to line, so the contexts
-        // are built per line.
-        let shifts = baseline_shifts(document, line);
-        let mut contexts: HashMap<(usize, usize), DecorationContext> = HashMap::new();
+        let resolved_decorations = raikiri_dom::text_decoration::positioned_line_decorations(
+            document,
+            cascade,
+            root_id,
+            base_decorations,
+            &positioned_line,
+            (position.x, position.y + position.shift_y),
+        );
         let mut runs: Vec<RunDraw<'_>> = Vec::new();
         let converter = positioned_line.converter;
-        for positioned_run in positioned_line.runs {
+        for (positioned_run, decorations) in
+            positioned_line.runs.into_iter().zip(resolved_decorations)
+        {
             let run = positioned_run.run;
-            let owner = positioned_run.owner;
             let cv = positioned_run.style;
-            let style_owner = positioned_run.style_owner;
             let glyphs: Vec<AnyrenderGlyph> = positioned_run
                 .glyphs
                 .iter()
@@ -269,73 +210,15 @@ pub(crate) fn draw_ifc_lines(
                     y: glyph.y,
                 })
                 .collect();
-            // The run spans from its leftmost glyph origin to the right end
-            // of its rightmost advance, in either direction.
-            let mut first_x = f64::INFINITY;
-            let mut last_x = f64::NEG_INFINITY;
-            for (glyph, shaped) in glyphs.iter().zip(run.glyphs()) {
-                first_x = first_x.min(f64::from(glyph.x));
-                last_x = last_x.max(f64::from(glyph.x) + f64::from(shaped.advance));
-            }
             let offset = positioned_run.offset;
-            let decorations = contexts
-                .entry((style_owner, owner))
-                .or_insert_with(|| {
-                    let context = context_for_text(
-                        document,
-                        cascade,
-                        root_id,
-                        owner,
-                        base_decorations,
-                        &shifts,
-                    );
-                    if style_owner == owner {
-                        return context;
-                    }
-                    let Some(root) = document.get_node(root_id) else {
-                        return context; // cov:ignore: PositionedLines validated this root before producing any styled run.
-                    };
-                    let mut chain = Vec::new();
-                    let mut current = Some(style_owner);
-                    while let Some(id) = current {
-                        chain.push(id);
-                        current = root.ifc_typographic_parent(id);
-                    }
-                    chain.iter().rev().fold(context, |context, &id| {
-                        let Some(style) = root.ifc_typographic_style_for_owner(id, owner) else {
-                            return context; // cov:ignore: style owner and parent IDs come from this root's retained letter styles.
-                        };
-                        decorations_for_element(
-                            &context,
-                            style,
-                            shifts.get(&id).copied().unwrap_or(0.0),
-                        )
-                    })
-                })
-                .clone();
             runs.push(RunDraw {
                 run,
                 style: cv,
                 color: css_color_to_peniko(cv.color),
                 glyphs,
-                x0: f64::from(position.x) + first_x,
-                x1: f64::from(position.x) + last_x,
-                baseline: f64::from(position.y + position.shift_y)
-                    + f64::from(line.block_offset())
-                    + f64::from(line.baseline(BaselineKind::Alphabetic)),
                 decorations,
                 offset,
             });
-        }
-        if !vertical {
-            clip_runs_to_the_line_content(line, &mut runs);
-        }
-        // The line content is clipped in the line's own coordinates; the
-        // relative offsets move the runs afterwards.
-        for run in &mut runs {
-            run.x0 += f64::from(run.offset.0);
-            run.x1 += f64::from(run.offset.0);
-            run.baseline += f64::from(run.offset.1);
         }
         if !vertical {
             draw_decorations(scene, &runs, DecorationPhase::BeforeGlyphs);
@@ -588,45 +471,9 @@ fn draw_shadows(
     }
 }
 
-/// Stop the decoration extents of a line's runs at the end of its content.
-///
-/// A collapsible space at the end of a wrapped line hangs past the content;
-/// a decoration does not cover it. `inline_size` is the width of the content
-/// without it, but also without a punctuation mark that hangs before the line
-/// start (`hang_start`), which the decoration does cover, so that is added
-/// back. The content starts at the leftmost run in a left-to-right line and
-/// ends at the rightmost one in a right-to-left line. A run left with no
-/// extent draws no decoration.
-fn clip_runs_to_the_line_content(line: &shodo::Line, runs: &mut [RunDraw<'_>]) {
-    let content = f64::from(line.inline_size());
-    let hang_start = f64::from(line.hang_start());
-    if line.used_direction() == shodo::geometry::Direction::Rtl {
-        let right = runs.iter().map(|r| r.x1).fold(f64::NEG_INFINITY, f64::max);
-        for run in runs.iter_mut() {
-            run.x0 = run.x0.max(right - hang_start - content);
-        }
-    } else {
-        let left = runs.iter().map(|r| r.x0).fold(f64::INFINITY, f64::min);
-        for run in runs.iter_mut() {
-            run.x1 = run.x1.min(left + hang_start + content);
-        }
-    }
-}
-
 fn draw_decorations(scene: &mut impl PaintScene, runs: &[RunDraw<'_>], phase: DecorationPhase) {
     for draw in runs {
-        let specs = draw.decorations.specs();
-        if specs.is_empty() {
-            continue;
-        }
-        let geometry = DecorationGeometry {
-            x0: draw.x0,
-            x1: draw.x1,
-            abs_y: draw.baseline,
-            line_top: 0.0,
-            baseline: Some(draw.baseline),
-        };
-        draw_decoration_phase(scene, &specs, geometry, phase);
+        draw_resolved_decoration_phase(scene, &draw.decorations, phase);
     }
 }
 

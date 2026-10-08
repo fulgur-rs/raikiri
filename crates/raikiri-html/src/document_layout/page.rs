@@ -78,7 +78,8 @@ impl<'a> Page<'a> {
     /// A line belongs to the page that holds its center, the same rule as
     /// [`Fragment::line_range`], so every line appears on exactly one page;
     /// a paragraph repeated on every page (inside `position: fixed`) appears
-    /// on each. Margin boxes, decorations and shadows are not included yet.
+    /// on each. Propagated text decorations are included; margin boxes and
+    /// shadows are not included yet.
     /// A paragraph whose text is placed by geometry the runs do not model
     /// has no runs here: a vertical writing mode, a multicol container's
     /// columns, relatively positioned inline elements, a transform or

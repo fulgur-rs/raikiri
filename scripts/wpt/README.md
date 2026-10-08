@@ -341,8 +341,14 @@ media feature or CSS function: orientation/aspect-ratio, device/display features
 calc/sign functions, custom media, scripting, and one dynamic script error
 still have separate failures in the wider 57-case survey.
 
-One related CSS Paged Media requirement is still open (0vv.117): `size`
-descriptors qualified by paper-dimension media queries must be ignored, while
-other qualified page declarations may apply. The current page cascade still
-applies such guarded `size` declarations. The fixed query basis above does not
-implement that separate descriptor rule.
+Following CSS Paged Media 3 §7.1, the page cascade ignores `size` descriptors
+qualified by paper-dimension media queries, including width, height, aspect
+ratio, and orientation. Other qualified page declarations still apply when
+the condition matches. This qualification includes inherited stylesheet and
+import media conditions; a media list keeps the union of paper dependencies
+from its valid arms even when another arm matches independently. Invalid arms
+do not contribute dependencies. Ignored sizes do not set the declaration
+viewport basis. Page-context viewport units, including size and margin-box
+declarations, are resolved once against the existing nominal 480 × 288 basis used by
+the page probe, before ordinary declaration units expand. This adapter policy
+does not claim complete support for every paged-media viewport-unit behavior.
