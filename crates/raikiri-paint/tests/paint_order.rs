@@ -144,13 +144,25 @@ fn node_index(id: raikiri_html::NodeId) -> usize {
 /// The public list's steps. Inline element boxes are dropped (the walker
 /// draws them with the lines and does not record them), and the text of one
 /// paragraph is one step, as the walker draws a paragraph's lines at once.
+/// Per-cell table background clips wrap repeated decoration events in the
+/// public API; the native trace records one box event for the same table part.
 fn api_steps(page: &Page<'_>) -> Vec<Step> {
     let (document, _, _, _) = page.paint_inputs();
     let mut steps = Vec::new();
+    let mut table_background_clip = false;
+    let mut table_background_nodes = std::collections::HashSet::new();
     for event in page.paint_order() {
         let step = match event {
             PaintEvent::PushClip(_, ClipKind::Fragmentainer) => {
                 panic!("column clips are not listed yet")
+            }
+            PaintEvent::PushClip(_, ClipKind::TableCell) => {
+                table_background_clip = true;
+                continue;
+            }
+            PaintEvent::PopClip if table_background_clip => {
+                table_background_clip = false;
+                continue;
             }
             PaintEvent::PushClip(..) => Step::PushClip,
             PaintEvent::PopClip => Step::PopClip,
@@ -158,6 +170,9 @@ fn api_steps(page: &Page<'_>) -> Vec<Step> {
             PaintEvent::PopOpacity => Step::PopOpacity,
             PaintEvent::Box(fragment) => {
                 let node = node_index(fragment.node());
+                if table_background_clip && !table_background_nodes.insert(node) {
+                    continue;
+                }
                 if document
                     .get_node(node)
                     .is_some_and(|n| n.kind() == NodeKind::Element && n.in_ifc_subtree())
@@ -274,6 +289,20 @@ fn assert_multi_page(result: &DocumentLayout) {
         "expected several pages, got {}",
         result.page_count()
     );
+}
+
+#[test]
+fn repeated_table_headers_keep_native_and_public_subtree_order() {
+    let rows = "<tr><td>X</td></tr>".repeat(9);
+    for header in ["H", "<span style='overflow:hidden;display:block'>H</span>"] {
+        let result = assert_same_order(
+            &format!(
+                "<table style='opacity:0.5'><thead style='background:red'><tr><th>{header}</th></tr></thead><tbody style='background:blue'>{rows}</tbody></table>"
+            ),
+            "@page{size:100px 100px;margin:0}body{margin:0}table{border-spacing:0}td,th{padding:0;width:20px;vertical-align:top}th{height:10px;font-weight:400}td{height:20px}",
+        );
+        assert_eq!(result.page_count(), 3);
+    }
 }
 
 /// The walker draws the body's box on every page, as the root of the page's

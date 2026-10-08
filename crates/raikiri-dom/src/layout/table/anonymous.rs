@@ -39,6 +39,7 @@ pub(crate) struct Row {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct TableObjects {
     pub(crate) project_explicit_parts: bool,
+    pub(crate) headers: super::headers::HeaderRepeats,
     pub(crate) arena_len: usize,
     pub(crate) cells: Vec<AnonymousCell>,
     cells_by_owner: HashMap<usize, Vec<usize>>,

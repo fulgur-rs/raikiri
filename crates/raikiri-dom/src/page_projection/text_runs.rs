@@ -769,12 +769,26 @@ impl Document {
         let pages = projection.pages.iter();
         for page in pages.filter(|page| page.page_index == page_index) {
             for root in &projection.text_roots {
+                let mut root = *root;
+                let source = generated_origin(root.node)
+                    .map_or_else(|| self.ifc_source_owner(root.node), |(owner, _)| owner);
+                if let Some(shift) = self
+                    .table_objects
+                    .headers
+                    .shift(source, page.content_origin_y)
+                {
+                    let Some(shift) = shift else {
+                        continue;
+                    };
+                    root.y += shift - page.content_origin_y;
+                    root.is_repeat = true;
+                }
                 if let Some((owner, PseudoElem::Marker)) = generated_origin(root.node) {
                     if omission(self, cascade, &context, root.node).is_none() {
-                        marker_runs(self, page, root, owner, &mut runs);
+                        marker_runs(self, page, &root, owner, &mut runs);
                     }
                 } else {
-                    root_runs(self, cascade, page, &context, root, &mut runs);
+                    root_runs(self, cascade, page, &context, &root, &mut runs);
                 }
             }
         }

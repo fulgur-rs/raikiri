@@ -3256,7 +3256,7 @@ pub(crate) fn paint_document_impl(
         let (
             node_id,
             parent_abs_x,
-            parent_abs_y,
+            mut parent_abs_y,
             parent_font_size,
             shift_y,
             transform_x,
@@ -3446,6 +3446,12 @@ pub(crate) fn paint_document_impl(
                 decorations,
             ),
         };
+        if let Some(shift) = document.repeated_table_header_root_shift(node_id, content_origin_y) {
+            let Some(shift) = shift else {
+                continue;
+            };
+            parent_abs_y += shift;
+        }
         let Some(node) = document.get_node(node_id) else {
             continue;
         };
