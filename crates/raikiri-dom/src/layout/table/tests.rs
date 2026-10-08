@@ -166,7 +166,7 @@ fn invalid_cell_column_ranges_are_rejected_before_both_slice_sinks() {
                 &mut doc,
                 &mut grid,
                 &[1.0, 1.0],
-                &[1.0],
+                (&[1.0], &[0.0]),
                 (&[0.0, 1.0, 2.0], &[0.0, 1.0]),
                 (0.0, 0.0),
                 false

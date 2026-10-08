@@ -13,6 +13,349 @@ const AHEM: &[u8] = include_bytes!(concat!(
 ));
 
 #[test]
+fn fifth_review_empty_caption_uses_grid_border_box_without_double_padding() {
+    for (caption_css, width, caption_width, x, height) in [
+        ("", 20.0, 20.0, 0, 10),
+        ("width:100px", 100.0, 100.0, 0, 10),
+        (
+            "width:80px;padding:0 3px;border:2px solid blue;margin:0 5px",
+            100.0,
+            90.0,
+            5,
+            14,
+        ),
+    ] {
+        let (mut doc, body) = document();
+        let table = element(
+            &mut doc,
+            body,
+            "display:table;padding:0 10px;border-spacing:0;background:green",
+        );
+        let caption = element(
+            &mut doc,
+            table,
+            &format!("display:table-caption;height:10px;background:blue;{caption_css}"),
+        );
+        let computed = layout(&mut doc);
+        assert_eq!(
+            doc.get_node(table).unwrap().unrounded_layout.size.width,
+            width
+        );
+        assert_eq!(
+            doc.get_node(caption).unwrap().unrounded_layout.size.width,
+            caption_width
+        );
+        assert_eq!(
+            doc.get_node(caption).unwrap().unrounded_layout.location.x,
+            x as f32
+        );
+        let (mut reference, body) = document();
+        element(
+            &mut reference,
+            body,
+            &format!(
+                "position:absolute;left:{x}px;top:0;width:{caption_width}px;height:{height}px;background:blue"
+            ),
+        );
+        let expected = layout(&mut reference);
+        assert_exact_pixels(
+            raster(scene(&doc, &computed)),
+            raster(scene(&reference, &expected)),
+        );
+    }
+}
+
+#[test]
+fn fifth_review_all_hidden_empty_row_has_zero_height_and_one_spacing_side() {
+    for rows in [1, 2] {
+        let (mut doc, body) = document();
+        let table = element(
+            &mut doc,
+            body,
+            "display:table;width:40px;border-spacing:0 5px;empty-cells:hide;background:green",
+        );
+        let mut cells = Vec::new();
+        for _ in 0..rows {
+            let row = element(&mut doc, table, "display:table-row;height:30px");
+            cells.push(element(
+                &mut doc,
+                row,
+                "display:table-cell;height:20px;padding:2px;border:1px solid red;background:red",
+            ));
+        }
+        for _ in 0..2 {
+            let computed = layout(&mut doc);
+            assert_eq!(
+                doc.get_node(table).unwrap().unrounded_layout.size.height,
+                5.0
+            );
+            for &cell in &cells {
+                assert_eq!(
+                    doc.get_node(cell).unwrap().unrounded_layout.size.height,
+                    0.0
+                );
+                assert_eq!(doc.get_node(cell).unwrap().unrounded_layout.location.y, 5.0);
+            }
+            let (mut reference, body) = document();
+            element(
+                &mut reference,
+                body,
+                "position:absolute;left:0;top:0;width:40px;height:5px;background:green",
+            );
+            let expected = layout(&mut reference);
+            assert_exact_pixels(
+                raster(scene(&doc, &computed)),
+                raster(scene(&reference, &expected)),
+            );
+        }
+    }
+}
+
+#[test]
+fn fifth_review_hidden_first_middle_and_last_rows_keep_visible_row_origins() {
+    for hidden_row in 0..3 {
+        let (mut doc, body) = document();
+        let table = element(
+            &mut doc,
+            body,
+            "display:table;width:40px;border-spacing:0 5px;empty-cells:hide;background:green",
+        );
+        let mut cells = Vec::new();
+        for index in 0..3 {
+            let row = element(&mut doc, table, "display:table-row");
+            let cell = element(
+                &mut doc,
+                row,
+                "display:table-cell;background:blue;vertical-align:top",
+            );
+            if index != hidden_row {
+                element(&mut doc, cell, "display:block;height:10px");
+            }
+            cells.push(cell);
+        }
+        let computed = layout(&mut doc);
+        assert_eq!(
+            doc.get_node(table).unwrap().unrounded_layout.size.height,
+            35.0
+        );
+        let mut next_y = 5.0;
+        for (index, cell) in cells.into_iter().enumerate() {
+            let actual = doc.get_node(cell).unwrap().unrounded_layout;
+            assert_eq!(actual.location.y, next_y);
+            assert_eq!(
+                actual.size.height,
+                if index == hidden_row { 0.0 } else { 10.0 }
+            );
+            if index != hidden_row {
+                next_y += 15.0;
+            }
+        }
+        let (mut reference, body) = document();
+        element(
+            &mut reference,
+            body,
+            "position:absolute;left:0;top:0;width:40px;height:35px;background:green",
+        );
+        for y in [5, 20] {
+            element(
+                &mut reference,
+                body,
+                &format!(
+                    "position:absolute;left:0;top:{y}px;width:40px;height:10px;background:blue"
+                ),
+            );
+        }
+        let expected = layout(&mut reference);
+        assert_exact_pixels(
+            raster(scene(&doc, &computed)),
+            raster(scene(&reference, &expected)),
+        );
+    }
+}
+
+#[test]
+fn fifth_review_empty_row_classification_resets_for_show_collapse_and_new_content() {
+    let (mut doc, body) = document();
+    let table = element(
+        &mut doc,
+        body,
+        "display:table;width:40px;border-spacing:0 5px;empty-cells:hide;background:green",
+    );
+    let row = element(&mut doc, table, "display:table-row");
+    let cell = element(
+        &mut doc,
+        row,
+        "display:table-cell;height:20px;background:blue",
+    );
+    for (model, empty, height) in [
+        ("separate", "hide", 5.0),
+        ("separate", "show", 30.0),
+        ("separate", "hide", 5.0),
+        ("collapse", "hide", 20.0),
+        ("separate", "hide", 5.0),
+    ] {
+        doc.set_element_attribute(table, "style", format!("display:table;width:40px;border-spacing:0 5px;empty-cells:{empty};border-collapse:{model};background:green")).unwrap();
+        let computed = layout(&mut doc);
+        assert_eq!(
+            doc.get_node(table).unwrap().unrounded_layout.size.height,
+            height
+        );
+        assert_eq!(
+            raikiri_dom::paint_rules::hides_empty_table_cell(&doc, &computed, cell),
+            height == 5.0
+        );
+    }
+    element(&mut doc, cell, "display:block;height:10px");
+    let computed = layout(&mut doc);
+    assert!(!raikiri_dom::paint_rules::hides_empty_table_cell(
+        &doc, &computed, cell
+    ));
+    assert_eq!(
+        doc.get_node(table).unwrap().unrounded_layout.size.height,
+        30.0
+    );
+}
+
+#[test]
+fn fifth_review_nonempty_rowspan_prevents_empty_rows_from_collapsing() {
+    let (mut doc, body) = document();
+    let table = element(
+        &mut doc,
+        body,
+        "display:table;width:40px;border-spacing:0 5px;empty-cells:hide;background:green",
+    );
+    let first = element(&mut doc, table, "display:table-row");
+    let span = element(
+        &mut doc,
+        first,
+        "display:table-cell;width:20px;height:25px;vertical-align:top;background:blue",
+    );
+    doc.set_element_attributes(span, vec![("rowspan".into(), "2".into())]);
+    element(&mut doc, span, "display:block;height:25px");
+    element(&mut doc, first, "display:table-cell;width:20px");
+    let second = element(&mut doc, table, "display:table-row");
+    let empty = element(&mut doc, second, "display:table-cell;width:20px");
+    let computed = layout(&mut doc);
+    assert_eq!(
+        doc.get_node(table).unwrap().unrounded_layout.size.height,
+        35.0
+    );
+    assert_eq!(
+        doc.get_node(span).unwrap().unrounded_layout.size.height,
+        25.0
+    );
+    assert_eq!(
+        doc.get_node(empty).unwrap().unrounded_layout.location.y,
+        20.0
+    );
+    assert_eq!(
+        doc.get_node(empty).unwrap().unrounded_layout.size.height,
+        10.0
+    );
+    let (mut reference, body) = document();
+    element(
+        &mut reference,
+        body,
+        "position:absolute;left:0;top:0;width:40px;height:35px;background:green",
+    );
+    element(
+        &mut reference,
+        body,
+        "position:absolute;left:0;top:5px;width:20px;height:25px;background:blue",
+    );
+    let expected = layout(&mut reference);
+    assert_exact_pixels(
+        raster(scene(&doc, &computed)),
+        raster(scene(&reference, &expected)),
+    );
+}
+
+#[test]
+fn fifth_review_extra_table_height_skips_hidden_rows_and_preserves_mixed_rows() {
+    for visible in [false, true] {
+        let (mut doc, body) = document();
+        let table = element(
+            &mut doc,
+            body,
+            "display:table;width:40px;height:50px;border-spacing:0 5px;empty-cells:hide",
+        );
+        let first = element(&mut doc, table, "display:table-row");
+        let hidden = element(&mut doc, first, "display:table-cell");
+        let second = element(&mut doc, table, "display:table-row");
+        let other = element(
+            &mut doc,
+            second,
+            if visible {
+                "display:table-cell;empty-cells:show"
+            } else {
+                "display:table-cell"
+            },
+        );
+        layout(&mut doc);
+        assert_eq!(
+            doc.get_node(table).unwrap().unrounded_layout.size.height,
+            50.0
+        );
+        assert_eq!(
+            doc.get_node(hidden).unwrap().unrounded_layout.size.height,
+            0.0
+        );
+        assert_eq!(
+            doc.get_node(other).unwrap().unrounded_layout.size.height,
+            if visible { 40.0 } else { 0.0 }
+        );
+    }
+    let (mut doc, body) = document();
+    let table = element(
+        &mut doc,
+        body,
+        "display:table;width:40px;height:50px;border-spacing:0 5px;empty-cells:hide",
+    );
+    let mut cells = Vec::new();
+    for index in 0..3 {
+        let row = element(&mut doc, table, "display:table-row");
+        let cell = element(&mut doc, row, "display:table-cell;vertical-align:top");
+        if index != 1 {
+            element(&mut doc, cell, "display:block;height:10px");
+        }
+        cells.push(cell);
+    }
+    layout(&mut doc);
+    assert_eq!(
+        doc.get_node(table).unwrap().unrounded_layout.size.height,
+        50.0
+    );
+    for (cell, height) in cells.into_iter().zip([17.5, 0.0, 17.5]) {
+        assert_eq!(
+            doc.get_node(cell).unwrap().unrounded_layout.size.height,
+            height
+        );
+    }
+    let (mut doc, body) = document();
+    let table = element(
+        &mut doc,
+        body,
+        "display:table;width:40px;border-spacing:0 5px;empty-cells:hide",
+    );
+    let row = element(&mut doc, table, "display:table-row");
+    element(&mut doc, row, "display:table-cell;width:20px;height:20px");
+    let show = element(
+        &mut doc,
+        row,
+        "display:table-cell;width:20px;height:10px;empty-cells:show",
+    );
+    layout(&mut doc);
+    assert_eq!(
+        doc.get_node(table).unwrap().unrounded_layout.size.height,
+        30.0
+    );
+    assert_eq!(
+        doc.get_node(show).unwrap().unrounded_layout.size.height,
+        20.0
+    );
+}
+
+#[test]
 fn fourth_review_vertical_caption_minimum_constrains_inline_grid_size() {
     for mode in ["vertical-lr", "vertical-rl"] {
         for columns in [0, 1, 2] {
@@ -562,7 +905,7 @@ fn empty_cells_hide_only_separated_empty_backgrounds_and_borders() {
             &mut doc,
             body,
             &format!(
-                "display:table;border-spacing:0;width:20px;border-collapse:{collapse};background:green"
+                "display:table;border-spacing:0;width:20px;height:20px;border-collapse:{collapse};background:green"
             ),
         );
         let row = element(&mut doc, table, "display:table-row;height:20px");
