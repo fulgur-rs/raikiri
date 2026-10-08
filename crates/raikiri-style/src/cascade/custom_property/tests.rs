@@ -598,6 +598,21 @@ fn direct_apply_ignores_precomputed_custom_values() {
 }
 
 #[test]
+fn list_style_defaulting_marker_cannot_project_to_an_unrelated_property() {
+    assert_eq!(
+        project_deferred_value(
+            PropertyValue::Deferred(DeferredValue {
+                property: "list-style".into(),
+                value: "inherit".into(),
+                key: PropertyKey::ListStyle,
+            }),
+            PropertyKey::Color
+        ),
+        None
+    );
+}
+
+#[test]
 fn math_helpers_cover_nested_and_rejected_forms() {
     assert_eq!(
         simplify_math_functions(r#"rgb(calc(1px + 1px), 0, 0)"#),

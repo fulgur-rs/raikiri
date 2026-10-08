@@ -151,9 +151,10 @@ fn serialize(
     document: &raikiri_dom::Document,
     report: &raikiri_js::runtime::RunReport,
 ) -> Result<String, ReftestError> {
+    // Script fetch failures already fire an element error event and allow
+    // later scripts and document load to run. They are not document failures.
     if report.aborted.is_some()
         || !report.host_failures.is_empty()
-        || !report.fetch_errors.is_empty()
         || !report.uncaught_errors.is_empty()
     {
         return Err(ReftestError::RaikiriRender(format!(

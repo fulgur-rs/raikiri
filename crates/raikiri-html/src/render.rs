@@ -520,6 +520,8 @@ fn preload_page_background_images(
     resources: &RenderResources<'_>,
     warnings: &SharedRenderWarnings,
     signal: Option<&raikiri_traits::AbortSignal>,
+    seen: &mut HashSet<url::Url>,
+    attempts: &mut usize,
 ) {
     // Element backgrounds are page-independent: scan them once, before the
     // page-context backgrounds of the first page. A per-slice rescan would
@@ -528,24 +530,16 @@ fn preload_page_background_images(
     if slices.is_empty() {
         return; // cov:ignore: a successful document with a body always emits a page slice.
     }
-    let mut seen = HashSet::new();
-    let mut attempts = 0usize;
     resources.preload_element_background_images(
         &cascader.base.computed,
         warnings,
-        &mut seen,
-        &mut attempts,
+        seen,
+        attempts,
         signal,
     );
     for slice in slices {
         let page = cascader.page(&page_query_for_slice(slice));
-        resources.preload_page_context_background_images(
-            &page,
-            warnings,
-            &mut seen,
-            &mut attempts,
-            signal,
-        );
+        resources.preload_page_context_background_images(&page, warnings, seen, attempts, signal);
     }
 }
 
@@ -668,19 +662,13 @@ pub(crate) fn run_pipeline(
         effective_base_url.as_ref(),
         Arc::clone(&warnings),
     );
-    let runtime = RenderExecutionResources {
-        font_faces: &doc.font_faces,
-        font_face_loader: &font_loader,
-        effective_base_url: effective_base_url.as_ref(),
-        warnings: Arc::clone(&warnings),
-    };
     let noop_resolver = NoopReplacedResolver;
     let inner_resolver = resources.resolver().unwrap_or(&noop_resolver);
     let resolver = FallbackRecordingResolver {
         inner: inner_resolver,
         policy: resources.policy(),
         image_pixel_source: resources.raw_image_pixel_source(),
-        warnings,
+        warnings: Arc::clone(&warnings),
         seen: Mutex::new(HashSet::new()),
     };
     let signal = config.signal.clone();
@@ -705,6 +693,18 @@ pub(crate) fn run_pipeline(
     // Every cascade of this run reads the same parsed document, stylesheets,
     // consumer registrations, and media context, so the rule tree is built once.
     let tree = build_rule_tree_with_consumer_properties(&doc.uncascaded, consumer_properties);
+
+    // The parse-time font registry is cached for the default environment.
+    // Other layout environments must select faces using their own dimensions,
+    // just like the element and page cascades below.
+    let layout_font_faces =
+        (*media_context != MediaContext::default()).then(|| tree.font_faces_for(media_context));
+    let runtime = RenderExecutionResources {
+        font_faces: layout_font_faces.as_ref().unwrap_or(&doc.font_faces),
+        font_face_loader: &font_loader,
+        effective_base_url: effective_base_url.as_ref(),
+        warnings: Arc::clone(&warnings),
+    };
 
     // Resolve the first page context before layout so `:first` and the first
     // resolved `@page size` participate in the initial fragmentainer.
@@ -738,6 +738,19 @@ pub(crate) fn run_pipeline(
         runtime.font_faces,
         runtime.font_face_loader,
     );
+    let mut marker_image_seen = HashSet::new();
+    let mut marker_image_attempts = 0;
+    resources.preload_list_marker_images(
+        &first_cascade,
+        runtime.effective_base_url,
+        &runtime.warnings,
+        &mut marker_image_seen,
+        &mut marker_image_attempts,
+        signal.as_ref(),
+    );
+    if let Some(source) = resources.image_pixel_source_ref() {
+        dom.prepare_list_marker_images(&first_cascade, source, runtime.effective_base_url);
+    }
     let resolved_initial_context = resolve_initial_page_context(
         &dom,
         first_query.page_name.as_ref().map(ToString::to_string),
@@ -922,6 +935,8 @@ pub(crate) fn run_pipeline(
             resources,
             &runtime.warnings,
             signal.as_ref(),
+            &mut marker_image_seen,
+            &mut marker_image_attempts,
         );
     }
 

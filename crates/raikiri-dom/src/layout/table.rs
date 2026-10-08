@@ -27,8 +27,8 @@
 //!   width, and top/left tie-breaking before intrinsic track sizing. Row,
 //!   row-group, column, and column-group candidates and half-border centering
 //!   remain out of scope.
-//! - `border-spacing` (separate model gaps) is not implemented — separate
-//!   cells abut exactly.
+//! - The separate model applies horizontal and vertical `border-spacing`
+//!   between cells and at the table edges; collapse ignores those gaps.
 //! - Nested tables are depth-capped fail-closed (`MAX_TABLE_NESTING`).
 
 use raikiri_style::ComputedBorder;

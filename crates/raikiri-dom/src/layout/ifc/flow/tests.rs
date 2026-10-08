@@ -312,3 +312,59 @@ fn text_overflow_ellipsis_truncates_only_overflowing_horizontal_lines() {
         vec![false]
     );
 }
+
+#[test]
+fn rebreaking_lines_preserves_inside_marker_image_dimensions() {
+    struct Pixels;
+    impl raikiri_traits::ImagePixelSource for Pixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
+                width: 8,
+                height: 8,
+                rgba: [255, 0, 0, 255].repeat(64),
+            }))
+        }
+    }
+    let mut fixture = block_fixture(
+        "display:list-item;list-style:inside url(https://images.test/marker.png)",
+        |doc, root| {
+            doc.append_text(root, "body");
+        },
+    );
+    fixture
+        .doc
+        .prepare_list_marker_images(&fixture.cascade, &Pixels, None);
+    let mut cx = LayoutContext::new();
+    let projected = project_ifc(
+        &fixture.doc,
+        &fixture.cascade,
+        fixture.root,
+        &mut cx,
+        &ahem_fonts(),
+        &Limits::default(),
+    )
+    .unwrap();
+    let root = IfcRoot::new(projected);
+    for width in [100.0, 120.0] {
+        let lines = break_lines(&root, &mut cx, width);
+        let atomic = lines
+            .lines
+            .iter()
+            .flat_map(|line| line.fragments())
+            .find_map(|fragment| match fragment {
+                shodo::Fragment::Atomic(atomic) => Some(atomic),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(
+            (
+                atomic.border_rect.inline_size,
+                atomic.border_rect.block_size
+            ),
+            (8.0, 8.0)
+        );
+    }
+}

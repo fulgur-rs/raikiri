@@ -14,7 +14,7 @@ use raikiri_net::{ImageResolver, SystemHttpProvider};
 use crate::http_resources::{
     NetworkFontLoader, StylesheetUrlProvider, absolutize_img_sources, prepare_cascade_images,
 };
-use crate::reftest::{RenderedImage, wpt_document_fonts};
+use crate::reftest::{RenderedImage, expand_document_viewport_units, wpt_document_fonts};
 
 /// Fetches and renders one HTTP document at the requested screen viewport.
 pub fn render_screen_url(
@@ -51,11 +51,15 @@ pub fn render_screen_url(
             "HTML parse failed for {fallback_base_url} (declared encoding: {encoding}): {error:?}"
         ))
     })?;
+    // Expand the already decoded and imported stylesheet sources before the
+    // first rule-tree parse. This covers inline and external CSS without
+    // rewriting document bytes or changing their encoding and resource URLs.
+    let media_context = MediaContext::with_viewport(raikiri::MediaType::Screen, width, height);
+    expand_document_viewport_units(&mut uncascaded, width as f32, height as f32, &media_context);
     let base_url = effective_document_base_url(&uncascaded, Some(&fallback_base_url))
         .unwrap_or(fallback_base_url);
     absolutize_img_sources(&mut uncascaded.dom, &base_url);
 
-    let media_context = MediaContext::screen();
     let page_query = PageContextQuery::default();
     let font_face_tree = raikiri::build_rule_tree(&uncascaded);
     let (fonts, bundled_only) = wpt_document_fonts(
@@ -76,6 +80,9 @@ pub fn render_screen_url(
     page_box.height = size.height() as f32;
     let image_resolver = ImageResolver::new(provider.clone());
     prepare_cascade_images(&mut cascade, &base_url, &image_resolver);
+    uncascaded
+        .dom
+        .prepare_list_marker_images(&cascade, &image_resolver, Some(&base_url));
     raikiri_dom::layout_single_page_with_resolver_and_base_url(
         &mut uncascaded.dom,
         &cascade,

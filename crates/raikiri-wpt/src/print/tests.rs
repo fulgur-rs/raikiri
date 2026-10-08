@@ -7,6 +7,96 @@ use crate::reftest::RenderedImage;
 use crate::test_http_server::{TestResponse, TestServer};
 
 #[test]
+fn fetched_print_stylesheet_viewport_units_use_distinct_query_and_page_bases() {
+    let server = TestServer::start(HashMap::from([
+        ("/index.html", TestResponse::ok("text/html", b"<style>@page{size:200px 100px;margin:0}html,body{margin:0}</style><link rel=stylesheet href=sheet.css><div class=box></div>".to_vec())),
+        ("/sheet.css", TestResponse::ok("text/css", b".box{width:100vw;height:100vh;background:red}@media print and (width:100vw) and (height:100vh){.box{background:green}}".to_vec())),
+    ]));
+    let document = render_print_url(
+        &SystemHttpProvider::new(),
+        server.url("index.html"),
+        800,
+        600,
+    )
+    .unwrap();
+    assert_eq!(document.pages.len(), 1);
+    let image = &document.pages[0];
+    assert_eq!((image.width, image.height), (200, 100));
+    let offset = (90 * 200 + 190) * 4;
+    assert_eq!(&image.rgba[offset..offset + 4], &[0, 128, 0, 255]);
+    assert_eq!(server.finish(), ["/index.html", "/sheet.css"]);
+}
+
+#[test]
+fn fetched_page_size_sets_the_same_viewport_unit_basis_as_inline_css() {
+    let server = TestServer::start(HashMap::from([
+        ("/index.html", TestResponse::ok("text/html", b"<link rel=stylesheet href=sheet.css><div class=box></div>".to_vec())),
+        ("/sheet.css", TestResponse::ok("text/css", b"@page{size:200px 100px;margin:0}html,body{margin:0}.box{width:100vw;height:100vh;background:green}".to_vec())),
+    ]));
+    let document = render_print_url(
+        &SystemHttpProvider::new(),
+        server.url("index.html"),
+        800,
+        600,
+    )
+    .unwrap();
+    assert_eq!(document.pages.len(), 1);
+    assert_eq!(
+        (document.pages[0].width, document.pages[0].height),
+        (200, 100)
+    );
+    let offset = (90 * 200 + 190) * 4;
+    assert_eq!(
+        &document.pages[0].rgba[offset..offset + 4],
+        &[0, 128, 0, 255]
+    );
+    assert_eq!(server.finish(), ["/index.html", "/sheet.css"]);
+}
+
+#[test]
+fn inactive_fetched_page_sizes_do_not_change_the_print_viewport_unit_basis() {
+    let ordinary = "<style>html,body{margin:0}.box{width:100vw;height:100vh;background:green}</style><div class=box></div>";
+    let server = TestServer::start(HashMap::from([
+        (
+            "/link.html",
+            TestResponse::ok(
+                "text/html",
+                format!("<link rel=stylesheet href=sheet.css media=screen>{ordinary}").into_bytes(),
+            ),
+        ),
+        (
+            "/import.html",
+            TestResponse::ok(
+                "text/html",
+                format!("<style>@import url(sheet.css) screen;</style>{ordinary}").into_bytes(),
+            ),
+        ),
+        (
+            "/sheet.css",
+            TestResponse::ok("text/css", b"@page{size:200px 100px;margin:0}".to_vec()),
+        ),
+    ]));
+    for path in ["link.html", "import.html"] {
+        let document =
+            render_print_url(&SystemHttpProvider::new(), server.url(path), 800, 600).unwrap();
+        assert_eq!(document.pages.len(), 1);
+        assert_eq!(
+            (document.pages[0].width, document.pages[0].height),
+            (800, 600)
+        );
+        let offset = (500 * 800 + 700) * 4;
+        assert_eq!(
+            &document.pages[0].rgba[offset..offset + 4],
+            &[0, 128, 0, 255]
+        );
+    }
+    assert_eq!(
+        server.finish(),
+        ["/link.html", "/sheet.css", "/import.html", "/sheet.css"]
+    );
+}
+
+#[test]
 fn print_render_error_falls_back_for_non_raster_errors() {
     let error = super::PrintRenderError::from_render_error(Box::new(std::io::Error::other(
         "print pipeline failed",
@@ -444,4 +534,54 @@ fn paints_margin_box_background_with_origin_and_clip() {
 
     assert!(requests.iter().any(|path| path == "/pages/red.png"));
     assert!(contains_red_pixel(&document.pages[0]));
+}
+
+#[test]
+fn print_probe_preserves_inactive_html_style_media() {
+    let server = TestServer::start(HashMap::from([
+        ("/index.html", TestResponse::ok("text/html", b"<style media=screen>@page{size:200px 100px;margin:0}</style><link rel=stylesheet href=sheet.css><div class=box></div>".to_vec())),
+        ("/sheet.css", TestResponse::ok("text/css", b"@page{margin:0}html,body{margin:0}.box{width:100vw;height:100vh;background:green}".to_vec())),
+    ]));
+    let document = render_print_url(
+        &SystemHttpProvider::new(),
+        server.url("index.html"),
+        800,
+        600,
+    )
+    .unwrap();
+    let requests = server.finish();
+    assert!(requests.iter().any(|path| path == "/sheet.css"));
+    assert_eq!(document.pages.len(), 1);
+    let image = &document.pages[0];
+    assert_eq!((image.width, image.height), (800, 600));
+    let offset = (599 * 800 + 799) * 4;
+    assert_eq!(&image.rgba[offset..offset + 4], &[0, 128, 0, 255]);
+}
+
+#[test]
+fn paper_guarded_fetched_size_preserves_other_declarations_and_viewport_basis() {
+    for head in [
+        "<link rel=stylesheet href=sheet.css media='print and (width:800px)'>",
+        "<style>@import url(sheet.css) print and (width:800px);</style>",
+    ] {
+        let html = format!("{head}<div class=box></div>");
+        let server = TestServer::start(HashMap::from([
+            ("/index.html", TestResponse::ok("text/html",html.into_bytes())),
+            ("/sheet.css", TestResponse::ok("text/css",b"@page{size:300px 200px;margin:0;background:red}html,body{margin:0}.box{width:100vw;height:100vh;background:green}".to_vec())),
+        ]));
+        let document = render_print_url(
+            &SystemHttpProvider::new(),
+            server.url("index.html"),
+            800,
+            600,
+        )
+        .unwrap();
+        let requests = server.finish();
+        assert!(requests.iter().any(|path| path == "/sheet.css"));
+        assert_eq!(document.pages.len(), 1);
+        let image = &document.pages[0];
+        assert_eq!((image.width, image.height), (800, 600));
+        let offset = (599 * 800 + 799) * 4;
+        assert_eq!(&image.rgba[offset..offset + 4], &[0, 128, 0, 255]);
+    }
 }

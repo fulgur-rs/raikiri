@@ -57,6 +57,10 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
                 | PropertyKey::BorderRadiusTopRight
                 | PropertyKey::BorderRadiusBottomRight
                 | PropertyKey::BorderRadiusBottomLeft
+                | PropertyKey::ListStyle
+                | PropertyKey::ListStyleType
+                | PropertyKey::ListStylePosition
+                | PropertyKey::ListStyleImage
         )
     ) && let Ok(keyword) = input.try_parse(|parser| {
         let keyword = parse_css_wide_keyword_res(parser)?;
@@ -291,6 +295,7 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // reject negatives and other keywords as invalid under the grammar.
         "line-height" => parse_line_height(input).map(PropertyValue::LineHeight),
         "display" => parse_display(input).map(PropertyValue::Display),
+        "list-style" => parse_list_style(input).map(PropertyValue::ListStyle),
         "list-style-type" => parse_list_style_type(input).map(PropertyValue::ListStyleType),
         "list-style-position" => {
             parse_list_style_position(input).map(PropertyValue::ListStylePosition)
