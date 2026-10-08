@@ -867,3 +867,33 @@ fn inline_svg_payload_reports_unsupported_resources() {
         Err(raikiri_svg::SvgError::ExternalReference)
     ));
 }
+
+#[test]
+fn inline_svg_payload_reports_source_preparation_limits() {
+    let source = format!(
+        "<svg xmlns='http://www.w3.org/2000/svg' width='1' height='1'><style>{}</style>{}</svg>",
+        "rect {fill:red}".repeat(257),
+        "<rect width='1' height='1'/>".repeat(256),
+    );
+    raikiri_svg::SvgDocument::parse(source.as_bytes()).expect("initial source is admitted");
+    let document = dom(&source);
+    let layout = completed(
+        layout(
+            &document,
+            PageDefaults::default(),
+            LayoutConfig::default(),
+            LayoutOptions::new(),
+        )
+        .unwrap(),
+    );
+    let page = layout.page(0).unwrap();
+    let fragment = page
+        .fragments()
+        .find(|f| page.dom().local_name(f.node()) == Some("svg"))
+        .unwrap();
+    assert!(matches!(
+        page.inline_svg(&fragment),
+        Err(raikiri_svg::SvgError::InvalidDocument(message))
+            if message.contains("selector freezing resource limit")
+    ));
+}

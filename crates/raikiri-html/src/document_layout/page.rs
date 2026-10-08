@@ -98,7 +98,7 @@ impl<'a> Page<'a> {
         fragment: &Fragment<'a>,
     ) -> Result<Option<InlineSvg>, raikiri_svg::SvgError> {
         let Some(id) = usize::try_from(fragment.node().0).ok() else {
-            return Ok(None);
+            return Ok(None); // cov:ignore: Fragment node IDs originate from usize arena indices.
         };
         if !self
             .document
@@ -108,10 +108,10 @@ impl<'a> Page<'a> {
             return Ok(None);
         }
         let Some(viewport) = fragment.content_rect() else {
-            return Ok(None);
+            return Ok(None); // cov:ignore: Page fragments of an SVG element always cache its content box.
         };
         let Some(computed) = self.computed(fragment.node()) else {
-            return Ok(None);
+            return Ok(None); // cov:ignore: Completed layout cascades cover the entire source node arena.
         };
         if viewport.width <= 0.0
             || viewport.height <= 0.0
@@ -124,7 +124,7 @@ impl<'a> Page<'a> {
             .serialize_svg_subtree(id)
             .map_err(raikiri_svg::SvgError::InvalidDocument)?
         else {
-            return Ok(None);
+            return Ok(None); // cov:ignore: The checked SVG namespace/root predicate guarantees a serializable root.
         };
         let document = raikiri_svg::SvgDocument::parse(source.as_bytes())?;
         let host_opacity = self

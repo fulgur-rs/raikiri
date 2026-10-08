@@ -176,6 +176,47 @@ fn inline_svg_root_opacity_attribute_is_a_stylesheet_overridable_hint() {
 }
 
 #[test]
+fn outer_svg_dimension_hints_accept_both_axes_and_reject_intrinsic_keywords() {
+    use crate::resolve::ComputedLengthPercentageOrAuto as Dimension;
+    const NS: &str = "http://www.w3.org/2000/svg";
+
+    for (raw, expected) in [
+        ("12pt", Dimension::Px(16.0)),
+        ("25%", Dimension::Percent(25.0)),
+        ("min-content", Dimension::Auto),
+        ("max-content", Dimension::Auto),
+    ] {
+        let mut doc = TestDoc::new();
+        let svg = doc.push_element_with_namespace(0, "svg", NS, &[("width", raw), ("height", raw)]);
+        let result = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        assert_eq!(result.computed[svg].width, expected, "width={raw}");
+        assert_eq!(result.computed[svg].height, expected, "height={raw}");
+    }
+
+    let mut doc = TestDoc::new();
+    let hinted = doc.push_element_with_namespace(
+        0,
+        "svg",
+        NS,
+        &[
+            ("width", "calc(50% + 10px)"),
+            ("height", "calc(25% + 20px)"),
+        ],
+    );
+    let styled = doc.push_element_with_namespace(0, "svg", NS, &[]);
+    doc.nodes[styled].inline_style =
+        Some("width:calc(50% + 10px);height:calc(25% + 20px)".to_owned());
+    let result = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    assert_ne!(result.computed[hinted].width, Dimension::Auto);
+    assert_ne!(result.computed[hinted].height, Dimension::Auto);
+    assert_eq!(result.computed[hinted].width, result.computed[styled].width);
+    assert_eq!(
+        result.computed[hinted].height,
+        result.computed[styled].height
+    );
+}
+
+#[test]
 fn comma_separated_selector_list_uses_max_specificity_across_matches() {
     // `match_complex_selector_list` tracks the *best* (highest)
     // specificity across every selector in a comma-separated list that
