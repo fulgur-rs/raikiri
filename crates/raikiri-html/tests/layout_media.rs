@@ -178,9 +178,13 @@ fn background_preload_uses_configured_media() {
 }
 
 #[test]
-fn media_page_size_changes_page_geometry() {
-    let html = "<style>body{margin:0} p{margin:0;height:10px}         @page{size:280px 180px;margin:10px}         @media print and (min-width:261px){@page{size:300px 200px;margin:20px}}         </style><p></p>";
-    for (width, expected) in [(260, (280.0, 180.0, 10.0)), (261, (300.0, 200.0, 20.0))] {
+fn paper_dependent_media_ignores_page_size_but_applies_matching_margins() {
+    // CSS Paged Media 3 §7.1 ignores only size declarations qualified by paper dimensions.
+    let html = "<style>body{margin:0} p{margin:0;height:10px} \
+        @page{size:280px 180px;margin:10px} \
+        @media print and (min-width:261px){@page{size:300px 200px;margin:20px}} \
+        </style><p></p>";
+    for (width, expected) in [(260, (280.0, 180.0, 10.0)), (261, (280.0, 180.0, 20.0))] {
         let result = completed(
             html,
             MediaContext::with_viewport(MediaType::Print, width, 160),
@@ -192,6 +196,31 @@ fn media_page_size_changes_page_geometry() {
         assert_eq!(geometry.margins.top, expected.2);
         assert_eq!(geometry.content_box.x, expected.2);
         assert_eq!(geometry.content_box.y, expected.2);
+        assert_eq!(geometry.content_box.width, expected.0 - 2.0 * expected.2);
+        assert_eq!(geometry.content_box.height, expected.1 - 2.0 * expected.2);
+    }
+}
+
+#[test]
+fn paper_independent_media_applies_page_size() {
+    let html = "<style>body{margin:0} p{margin:0;height:10px} \
+        @page{size:280px 180px;margin:10px} \
+        @media print{@page{size:300px 200px;margin:20px}} \
+        </style><p></p>";
+    for width in [260, 261] {
+        let result = completed(
+            html,
+            MediaContext::with_viewport(MediaType::Print, width, 160),
+        );
+        let page = result.page(0).unwrap();
+        let geometry = page.geometry();
+        assert_eq!(geometry.page_box.width, 300.0);
+        assert_eq!(geometry.page_box.height, 200.0);
+        assert_eq!(geometry.margins.top, 20.0);
+        assert_eq!(geometry.content_box.x, 20.0);
+        assert_eq!(geometry.content_box.y, 20.0);
+        assert_eq!(geometry.content_box.width, 260.0);
+        assert_eq!(geometry.content_box.height, 160.0);
     }
 }
 

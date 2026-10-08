@@ -93,7 +93,11 @@ jobs:
         # runtime but not the development headers, so the build script failed
         # at pkg-config in the initial CI run. Add platform-specific
         # installation if macOS/Windows jobs are introduced.
-        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev pkg-config
+        run: |
+          apt_options=(-o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20)
+          # Bound package acquisition and fail on incomplete index updates.
+          sudo timeout --kill-after=10s 180s apt-get "${apt_options[@]}" --error-on=any update
+          sudo timeout --kill-after=10s 180s apt-get "${apt_options[@]}" install -y libfontconfig1-dev pkg-config
 
       - name: Cache cargo registry + target
         uses: Swatinem/rust-cache@v2
@@ -174,7 +178,11 @@ jobs:
         run: rustup show active-toolchain || rustup toolchain install
 
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev pkg-config
+        run: |
+          apt_options=(-o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20)
+          # Bound package acquisition and fail on incomplete index updates.
+          sudo timeout --kill-after=10s 180s apt-get "${apt_options[@]}" --error-on=any update
+          sudo timeout --kill-after=10s 180s apt-get "${apt_options[@]}" install -y libfontconfig1-dev pkg-config
 
       - name: Cache cargo registry + target
         uses: Swatinem/rust-cache@v2

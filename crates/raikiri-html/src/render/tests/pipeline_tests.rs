@@ -838,3 +838,101 @@ fn pipeline_preloads_element_backgrounds_once_then_page_backgrounds_in_page_orde
         ["/element.svg", "/page.svg", "/top.svg", "/left.svg"]
     );
 }
+
+#[test]
+fn pipeline_selects_font_faces_using_layout_media_dimensions() {
+    #[derive(Default)]
+    struct RecordingFontProvider(Mutex<Vec<String>>);
+    impl raikiri_traits::NetworkProvider for RecordingFontProvider {
+        fn fetch_one_hop(
+            &self,
+            request: raikiri_traits::Request,
+        ) -> Result<raikiri_traits::FetchOutcome, raikiri_traits::NetworkError> {
+            self.0.lock().unwrap().push(request.url.path().to_owned());
+            Ok(raikiri_traits::FetchOutcome::Body(
+                raikiri_traits::FetchedResource {
+                    bytes: super::AHEM.into(),
+                    content_type: Some("font/ttf".into()),
+                    final_url: request.url,
+                    encoding: None,
+                },
+            ))
+        }
+    }
+    let doc = parse(
+        "<style>@media print and (width:640px) and (height:480px){@font-face{font-family:MediaFont;src:url('https://fonts.test/matching.ttf')}}@media print and (width:480px){@font-face{font-family:OtherFont;src:url('https://fonts.test/other.ttf')}}body{font-family:MediaFont}</style><body>XX</body>",
+    );
+    let provider = RecordingFontProvider::default();
+    let resources = RenderResources::new()
+        .network_provider(&provider)
+        .fonts(super::ahem_fonts());
+    let config = LayoutConfig::builder()
+        .media_context(MediaContext::with_viewport(
+            crate::MediaType::Print,
+            640,
+            480,
+        ))
+        .build();
+    let result = run_pipeline(
+        &doc,
+        PageDefaults::default(),
+        &config,
+        PipelineInputs {
+            resources: Some(&resources),
+            consumer_properties: &[],
+            property_observer: None,
+            preload_background_images: true,
+        },
+    )
+    .unwrap();
+    assert!(matches!(result, PipelineRun::Completed(_)));
+    assert_eq!(*provider.0.lock().unwrap(), ["/matching.ttf"]);
+}
+
+#[test]
+fn pipeline_keeps_the_media_page_box_independent_of_authored_page_geometry() {
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:10px}body{color:red}@media print and (width:640px) and (height:480px){body{color:blue}}</style><body id='body'>text</body>",
+    );
+    let config = LayoutConfig::builder()
+        .media_context(MediaContext::with_viewport(
+            crate::MediaType::Print,
+            640,
+            480,
+        ))
+        .build();
+    let out = match run_pipeline(
+        &doc,
+        PageDefaults::default(),
+        &config,
+        PipelineInputs {
+            resources: None,
+            consumer_properties: &[],
+            property_observer: None,
+            preload_background_images: true,
+        },
+    )
+    .unwrap()
+    {
+        PipelineRun::Completed(out) => out,
+        PipelineRun::Aborted => panic!("unexpected abort"),
+    };
+    assert_eq!(out.geometries[0].page_box.width, 200.0);
+    assert_eq!(out.geometries[0].page_box.height, 100.0);
+    let body = (0..out.document.node_count())
+        .find(|&id| {
+            out.document
+                .get_node(id)
+                .is_some_and(|node| node.tag_name() == Some("body"))
+        })
+        .unwrap();
+    assert_eq!(
+        out.cascade.computed[body].color,
+        raikiri_style::CssColor {
+            r: 0,
+            g: 0,
+            b: 255,
+            a: 255
+        }
+    );
+}

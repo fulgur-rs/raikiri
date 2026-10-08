@@ -144,18 +144,21 @@ fn list_style_image_parses_none_and_url() {
 
 #[test]
 fn list_style_type_rejects_reserved_or_trailing_values() {
-    for value in [
-        "inherit",
-        "initial",
-        "unset",
-        "revert",
-        "revert-layer",
-        "default",
-    ] {
-        assert_eq!(parse_entire(value, "list-style-type"), None, "{value}");
-    }
+    assert_eq!(parse_entire("default", "list-style-type"), None);
     assert_eq!(parse_entire("disc none", "list-style-type"), None);
     assert_eq!(parse_entire("url(marker.svg)", "list-style-type"), None);
+}
+
+#[test]
+fn list_style_longhands_accept_css_wide_keywords() {
+    for property in ["list-style-type", "list-style-position", "list-style-image"] {
+        for value in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+            assert!(matches!(
+                parse_entire(value, property),
+                Some(PropertyValue::Deferred(_))
+            ));
+        }
+    }
 }
 
 #[test]

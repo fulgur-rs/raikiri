@@ -41,6 +41,8 @@ const XHTML_NAMESPACE_URI: &str = "http://www.w3.org/1999/xhtml";
 // A WPT pair can hold one sidecar beside the other document and its paint blob.
 // Capping each side at 32 MiB keeps these three canvas buffers at 96 MiB total.
 const MAX_DOCUMENT_CANVAS_BITMAP_BYTES: usize = 32 * 1024 * 1024;
+// Bound all size variants retained beyond the source cache's current raster.
+const MAX_DOCUMENT_LIST_MARKER_IMAGE_BYTES: u64 = 128 * 1024 * 1024;
 
 fn is_xml_name_start(ch: char) -> bool {
     matches!(
@@ -280,6 +282,12 @@ impl Clone for CanvasBitmapByteCount {
     }
 }
 
+#[derive(Debug, Clone)]
+struct ListMarkerImage {
+    pixels: std::sync::Arc<raikiri_traits::DecodedImage>,
+    size: raikiri_traits::ImageRasterSize,
+}
+
 /// DOM Document (root plus a Vec-backed node arena).
 ///
 /// `nodes` is flat storage keyed by arena indices. Index 0 is the virtual
@@ -290,6 +298,10 @@ pub struct Document {
     pub(crate) page_projection: crate::page_projection::PageProjection,
     pub(crate) nodes: Vec<Node>,
     canvas_bitmap_bytes: CanvasBitmapByteCount,
+    /// Decoded inside-marker images retained for both sizing and painting.
+    list_marker_images: std::collections::HashMap<usize, ListMarkerImage>,
+    /// Measured marker advances reserved by the current legacy layout pass.
+    pub(crate) legacy_inside_marker_advances: std::collections::HashMap<usize, f32>,
     /// Arena index of the Document root (normally 0, stored explicitly to
     /// accommodate unusual future cases such as detaching the root).
     pub(crate) root: usize,
@@ -478,6 +490,8 @@ impl Document {
             page_projection: crate::page_projection::PageProjection::default(),
             nodes,
             canvas_bitmap_bytes: CanvasBitmapByteCount(Some(0)),
+            list_marker_images: Default::default(),
+            legacy_inside_marker_advances: Default::default(),
             root: 0,
             layout_dirty: false,
             ifc: None,
@@ -2579,3 +2593,151 @@ impl Default for Document {
 
 #[cfg(test)]
 mod tests;
+
+impl Document {
+    /// Prepare inside image markers before layout from already resolved pixels.
+    /// A failed image keeps the text fallback; explicit `::marker` content wins.
+    /// Retained pixel allocations share a 128 MiB document budget.
+    pub fn prepare_list_marker_images(
+        &mut self,
+        cascade: &raikiri_style::CascadeResult,
+        source: &dyn raikiri_traits::ImagePixelSource,
+        base_url: Option<&url::Url>,
+    ) {
+        self.prepare_list_marker_images_with_budget(
+            cascade,
+            source,
+            base_url,
+            MAX_DOCUMENT_LIST_MARKER_IMAGE_BYTES,
+        );
+    }
+
+    fn prepare_list_marker_images_with_budget(
+        &mut self,
+        cascade: &raikiri_style::CascadeResult,
+        source: &dyn raikiri_traits::ImagePixelSource,
+        base_url: Option<&url::Url>,
+        mut remaining: u64,
+    ) {
+        self.list_marker_images.clear();
+        let mut variants =
+            HashMap::<(url::Url, u32, u32), Arc<raikiri_traits::DecodedImage>>::new();
+        let mut allocations = std::collections::HashSet::new();
+        for (element, cv) in cascade.computed.iter().enumerate() {
+            if !crate::generated_content::inside_marker_in_flow(cascade, element)
+                || cascade
+                    .pseudo
+                    .get(&(
+                        raikiri_style::StyleNodeId::new(element as u64),
+                        raikiri_style::PseudoElem::Marker,
+                    ))
+                    .is_some_and(|marker| !marker.content.is_empty())
+            {
+                continue;
+            }
+            let raikiri_style::property::BackgroundImage::Url(raw) = &cv.list_style_image else {
+                continue;
+            };
+            let Some(url) = url::Url::parse(raw)
+                .ok()
+                .or_else(|| base_url.and_then(|base| base.join(raw).ok()))
+            else {
+                continue;
+            };
+            let Some(intrinsic) = source.intrinsic_size(&url) else {
+                continue;
+            };
+            let em = cascade
+                .pseudo
+                .get(&(
+                    raikiri_style::StyleNodeId::new(element as u64),
+                    raikiri_style::PseudoElem::Marker,
+                ))
+                .unwrap_or(cv)
+                .font_size
+                .0;
+            let size = marker_image_size(intrinsic, em);
+            let key = (url.clone(), size.width.to_bits(), size.height.to_bits());
+            let image = if let Some(image) = variants.get(&key) {
+                Arc::clone(image)
+            } else {
+                let Some(image) = source.get_decoded_at_size(&url, size, Some(remaining)) else {
+                    continue;
+                };
+                if image.width == 0 || image.height == 0 {
+                    continue;
+                }
+                let allocation = Arc::as_ptr(&image);
+                if !allocations.contains(&allocation) {
+                    // Sources may ignore the requested limit or reserve extra capacity.
+                    let bytes = image.rgba.capacity() as u64;
+                    if bytes > remaining {
+                        continue;
+                    }
+                    remaining -= bytes;
+                    allocations.insert(allocation);
+                }
+                variants.insert(key, Arc::clone(&image));
+                image
+            };
+            self.list_marker_images.insert(
+                element,
+                ListMarkerImage {
+                    pixels: image,
+                    size,
+                },
+            );
+        }
+        self.layout_dirty = true;
+    }
+
+    /// Pixels of an inside marker prepared by [`Self::prepare_list_marker_images`].
+    pub fn list_marker_image(&self, element: usize) -> Option<&raikiri_traits::DecodedImage> {
+        self.list_marker_images
+            .get(&element)
+            .map(|marker| marker.pixels.as_ref())
+    }
+
+    /// Inline space reserved before legacy ruby/multicol list-item content.
+    /// The painter subtracts it from the used padding to recover the marker origin.
+    #[doc(hidden)]
+    pub fn legacy_inside_marker_advance(&self, element: usize) -> f32 {
+        self.legacy_inside_marker_advances
+            .get(&element)
+            .copied()
+            .unwrap_or(0.0)
+    }
+
+    /// CSS dimensions of a prepared marker, independent of raster rounding.
+    pub fn list_marker_image_size(
+        &self,
+        element: usize,
+    ) -> Option<raikiri_traits::ImageRasterSize> {
+        self.list_marker_images
+            .get(&element)
+            .map(|marker| marker.size)
+    }
+}
+
+fn marker_image_size(
+    intrinsic: raikiri_traits::ImageIntrinsicSize,
+    em: f32,
+) -> raikiri_traits::ImageRasterSize {
+    let valid = |value: f32| value.is_finite() && value > 0.0;
+    let width = intrinsic.width.filter(|value| valid(*value));
+    let height = intrinsic.height.filter(|value| valid(*value));
+    let ratio = intrinsic.aspect_ratio.filter(|value| valid(*value));
+    let (width, height) = match (width, height, ratio) {
+        (Some(width), Some(height), _) => (width, height),
+        (Some(width), None, Some(ratio)) => (width, width / ratio),
+        (None, Some(height), Some(ratio)) => (height * ratio, height),
+        (None, None, Some(ratio)) => {
+            let width = em.min(em * ratio);
+            (width, width / ratio)
+        }
+        (Some(width), None, None) => (width, em),
+        (None, Some(height), None) => (em, height),
+        (None, None, None) => (em, em),
+    };
+    raikiri_traits::ImageRasterSize { width, height }
+}
