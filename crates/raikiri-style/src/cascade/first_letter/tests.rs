@@ -111,3 +111,41 @@ fn locally_declared_custom_values_resolve_in_the_letter_environment() {
         Some("blue")
     );
 }
+
+#[test]
+fn enclosing_first_lines_preserve_relative_metrics_and_ordinary_custom_properties() {
+    let mut doc = TestDoc::new();
+    let sheet = doc.push_element(0, "style", None);
+    doc.push_text(sheet,"body::first-line{font-size:30px;color:red;--ink:blue} div::first-line{font-size:2em;color:inherit;direction:rtl} div::first-letter{font-size:2em;color:var(--ink)}");
+    let outer = doc.push_element(0, "body", Some("font-size:10px;--ink:red;direction:ltr"));
+    let inner = doc.push_element(outer, "div", Some("font-size:20px;--ink:green"));
+    let span = doc.push_element(inner, "span", Some("font-size:150%"));
+    doc.push_text(span, "AB");
+    let result = crate::cascade(&doc, &crate::build_rule_tree(&doc)).unwrap();
+    let parent = result
+        .first_letter_parent_with_first_lines(
+            &doc,
+            StyleNodeId::new(inner as u64),
+            &[
+                StyleNodeId::new(outer as u64),
+                StyleNodeId::new(inner as u64),
+            ],
+            StyleNodeId::new(span as u64),
+            None,
+        )
+        .unwrap();
+    assert_eq!(parent.font_size.px(), 90.0);
+    assert_eq!(
+        (parent.color.r, parent.color.g, parent.color.b),
+        (255, 0, 0)
+    );
+    assert_eq!(parent.direction, crate::property::Direction::Ltr);
+    let letter = result
+        .resolve_first_letter_style(StyleNodeId::new(inner as u64), &parent)
+        .unwrap();
+    assert_eq!(letter.font_size.px(), 180.0);
+    assert_eq!(
+        (letter.color.r, letter.color.g, letter.color.b),
+        (0, 128, 0)
+    );
+}

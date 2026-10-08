@@ -76,6 +76,26 @@ impl CascadeResult {
         actual_parent: StyleNodeId,
         generated: Option<crate::PseudoElem>,
     ) -> Option<ComputedValues> {
+        self.first_letter_parent_with_first_lines(
+            dom,
+            letter_origin,
+            &[line_origin],
+            actual_parent,
+            generated,
+        )
+    }
+
+    /// Resolve enclosing first-line pseudos in outer-to-inner box-tree order.
+    /// The ordinary custom-property inheritance channel remains unchanged.
+    pub fn first_letter_parent_with_first_lines<D: crate::StyleDom>(
+        &self,
+        dom: &D,
+        letter_origin: StyleNodeId,
+        line_origins: &[StyleNodeId],
+        actual_parent: StyleNodeId,
+        generated: Option<crate::PseudoElem>,
+    ) -> Option<ComputedValues> {
+        let &line_origin = line_origins.first()?;
         let inputs = self.first_letter_inputs.get(&letter_origin)?;
         let mut computed = self
             .pseudo
@@ -99,7 +119,10 @@ impl CascadeResult {
                 &self.computed[parent_id.0 as usize],
                 &computed,
             );
-            computed = self.recompute_typographic_child(id, None, &inherited, &inputs.context);
+            let pseudo = line_origins
+                .contains(&id)
+                .then_some(crate::PseudoElem::FirstLine);
+            computed = self.recompute_typographic_child(id, pseudo, &inherited, &inputs.context);
             parent_id = id;
         }
         if let Some(pseudo) = generated {
@@ -125,10 +148,25 @@ impl CascadeResult {
         context: &ResolveContext,
     ) -> ComputedValues {
         let ordinary = pseudo
+            .filter(|&pseudo| pseudo != crate::PseudoElem::FirstLine)
             .and_then(|pseudo| self.pseudo.get(&(id, pseudo)))
             .unwrap_or(&self.computed[id.0 as usize]);
         let mut specified = SpecifiedValues::inherit_from(inherited);
         if let Some(values) = self.typographic_inheritance.get(&(id, pseudo)) {
+            let filtered;
+            let values = if pseudo == Some(crate::PseudoElem::FirstLine) {
+                filtered = values
+                    .iter()
+                    .filter(|(value, ..)| {
+                        matches!(value, crate::property::PropertyValue::AllRevertLayer)
+                            || super::first_line::first_line_property_applies(value.key())
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                filtered.as_slice()
+            } else {
+                values.as_slice()
+            };
             apply_winners(
                 values,
                 &mut Vec::new(),

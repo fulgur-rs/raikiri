@@ -387,8 +387,10 @@ fn cascade_from_candidates<D: StyleDom>(
                 .map(|(id, values)| ((id, None), values.to_vec())),
         );
         for &(id, pseudo) in pseudo.keys() {
-            if matches!(pseudo, PseudoElem::Before | PseudoElem::After)
-                && let Some(values) = cascaded.pseudo_candidates(id, pseudo)
+            if matches!(
+                pseudo,
+                PseudoElem::Before | PseudoElem::After | PseudoElem::FirstLine
+            ) && let Some(values) = cascaded.pseudo_candidates(id, pseudo)
             {
                 typographic_inheritance.insert((id, Some(pseudo)), values.to_vec());
             }

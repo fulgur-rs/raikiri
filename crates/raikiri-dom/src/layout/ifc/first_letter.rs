@@ -40,7 +40,7 @@ impl LetterStyle {
 pub(crate) struct FirstLetter {
     origin: usize,
     origins: Vec<usize>,
-    line_origin: Option<usize>,
+    line_origins: Vec<usize>,
     pending: bool,
     continuation: VecDeque<(usize, Range<usize>)>,
     started: bool,
@@ -70,7 +70,7 @@ impl FirstLetter {
         predecessors: &PredecessorCache,
     ) -> Self {
         let mut origins = Vec::new();
-        let mut line_origin = None;
+        let mut line_origins = Vec::new();
         let mut current = cascade.has_first_letter_styles().then_some(origin);
         while let Some(id) = current {
             let cv = &cascade.computed[id];
@@ -92,12 +92,11 @@ impl FirstLetter {
                 break;
             }
             if !transparent
-                && line_origin.is_none()
                 && cascade
                     .pseudo
                     .contains_key(&(StyleNodeId::new(id as u64), PseudoElem::FirstLine))
             {
-                line_origin = Some(id);
+                line_origins.push(id);
             }
             if !transparent
                 && cascade
@@ -134,11 +133,12 @@ impl FirstLetter {
             current = Some(parent);
         }
         origins.reverse();
+        line_origins.reverse();
         Self {
             origin,
             pending: !origins.is_empty(),
             origins,
-            line_origin,
+            line_origins,
             continuation: VecDeque::new(),
             started: false,
             open_boxes: 0,
@@ -249,6 +249,10 @@ impl FirstLetter {
                     continue;
                 }
                 started = true;
+            }
+            // A later line or atomic box cannot complete this typographic unit.
+            if barrier && id != owner {
+                break;
             }
             let value = if id == owner { text } else { value.as_ref() };
             let length = joined.len().saturating_add(value.len()) as u64;
@@ -405,17 +409,19 @@ impl FirstLetter {
                     || (doc.parent_of(source_owner).unwrap_or(source_owner), None),
                     |(element, pseudo)| (element, Some(pseudo)),
                 );
-            let mut resolved = self
-                .line_origin
-                .and_then(|line_origin| {
-                    cascade.first_letter_parent_with_first_line(
-                        doc,
-                        StyleNodeId::new(self.origins[0] as u64),
-                        StyleNodeId::new(line_origin as u64),
-                        StyleNodeId::new(actual_parent as u64),
-                        generated,
-                    )
-                })
+            let line_origins: Vec<_> = self
+                .line_origins
+                .iter()
+                .map(|&id| StyleNodeId::new(id as u64))
+                .collect();
+            let mut resolved = cascade
+                .first_letter_parent_with_first_lines(
+                    doc,
+                    StyleNodeId::new(self.origins[0] as u64),
+                    &line_origins,
+                    StyleNodeId::new(actual_parent as u64),
+                    generated,
+                )
                 .unwrap_or_else(|| parent.clone());
             let context_node = crate::generated_content::generated_origin(source_owner)
                 .map_or(source_owner, |(element, _)| element);

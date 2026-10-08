@@ -586,3 +586,112 @@ fn first_letter_predecessor_work_is_bounded_across_many_ifc_roots() {
         "predecessor work {visited} exceeds the document-wide bound"
     );
 }
+
+#[test]
+fn review_nested_first_lines_supply_the_full_letter_parent() {
+    let fixture = sheet_fixture(
+        "body::first-line{color:red} div::first-line{font-size:20px} div::first-letter{border:1px solid currentColor;font-size:2em}",
+        "",
+        |doc, root| {
+            doc.append_text(root, "AB");
+        },
+    );
+    let projected = super::super::projection::project_ifc(
+        &fixture.doc,
+        &fixture.cascade,
+        fixture.root,
+        &mut LayoutContext::new(),
+        &ahem_fonts(),
+        &Limits::default(),
+    )
+    .unwrap();
+    assert_eq!(projected.letter_styles.len(), 1);
+    let cv = &projected.letter_styles[0].computed;
+    assert_eq!((cv.color.r, cv.color.g, cv.color.b), (255, 0, 0));
+    assert_eq!(
+        cv.border.top.color,
+        raikiri_style::property::BorderColor::CurrentColor
+    );
+    assert_eq!(cv.font_size.px(), 40.0);
+}
+
+#[test]
+fn review_block_after_does_not_join_punctuation_on_the_previous_line() {
+    for display in ["block", "inline"] {
+        let fixture = sheet_fixture(
+            &format!(
+                "div::after{{display:{display};content:'A'}} div::first-letter{{font-size:20px}}"
+            ),
+            "",
+            |doc, root| {
+                doc.append_text(root, "(");
+            },
+        );
+        let projected = super::super::projection::project_ifc(
+            &fixture.doc,
+            &fixture.cascade,
+            fixture.root,
+            &mut LayoutContext::new(),
+            &ahem_fonts(),
+            &Limits::default(),
+        )
+        .unwrap();
+        assert_eq!(projected.letter_styles.is_empty(), display == "block");
+    }
+    let fixture = sheet_fixture(
+        "div::before{display:block;content:'A'} div::first-letter{font-size:20px}",
+        "",
+        |doc, root| {
+            doc.append_text(root, "B");
+        },
+    );
+    let projected = super::super::projection::project_ifc(
+        &fixture.doc,
+        &fixture.cascade,
+        fixture.root,
+        &mut LayoutContext::new(),
+        &ahem_fonts(),
+        &Limits::default(),
+    )
+    .unwrap();
+    assert_eq!(projected.letter_styles.len(), 1);
+    assert_eq!(
+        projected.letter_styles[0].source_owner,
+        generated_node_id(fixture.root, PseudoElem::Before)
+    );
+}
+
+#[test]
+fn review_atomic_generated_text_is_outside_the_parent_first_letter() {
+    for display in [
+        "inline-block",
+        "inline-flex",
+        "inline-grid",
+        "inline-table",
+        "inline",
+        "contents",
+    ] {
+        for pseudo in ["before", "after"] {
+            let sheet = format!(
+                "div::{pseudo}{{display:{display};content:'A'}} div::first-letter{{font-size:20px}}"
+            );
+            let fixture = sheet_fixture(&sheet, "", |doc, root| {
+                doc.append_text(root, if pseudo == "before" { "B" } else { "(" });
+            });
+            let projected = super::super::projection::project_ifc(
+                &fixture.doc,
+                &fixture.cascade,
+                fixture.root,
+                &mut LayoutContext::new(),
+                &ahem_fonts(),
+                &Limits::default(),
+            )
+            .unwrap();
+            assert_eq!(
+                projected.letter_styles.is_empty(),
+                !matches!(display, "inline" | "contents"),
+                "{pseudo} {display}"
+            );
+        }
+    }
+}

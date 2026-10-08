@@ -266,6 +266,17 @@ fn push_generated(
                 | DisplayValue::InlineGrid
                 | DisplayValue::InlineTable
         );
+    let atomic = matches!(
+        cv.display,
+        DisplayValue::InlineBlock
+            | DisplayValue::InlineFlex
+            | DisplayValue::InlineGrid
+            | DisplayValue::InlineTable
+    );
+    // Atomic text is outside this IFC; a block after-pseudo starts a later line.
+    if atomic || (!inline_level && pseudo == PseudoElem::After) {
+        first_letter.stop();
+    }
     let marker_fallback;
     let cv = if pseudo == PseudoElem::Marker
         && !cascade
@@ -310,6 +321,8 @@ fn push_generated(
         } else {
             builder.push_text(TextSource::Generated { node: id }, &text);
         }
+    } else if atomic {
+        builder.push_text(TextSource::Generated { node: id }, &text);
     } else {
         first_letter.push_with_counters(
             builder,

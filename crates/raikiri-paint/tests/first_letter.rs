@@ -11,6 +11,164 @@ const AHEM: &[u8] = include_bytes!(concat!(
     "/../raikiri-dom/tests/data/text-autospace/Ahem.ttf"
 ));
 
+fn pixels(doc: &Document, computed: &CascadeResult) -> Vec<u8> {
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 80.0;
+    let mut scene = Scene::new();
+    raikiri_paint::paint_single_page(&mut scene, doc, computed, page).unwrap();
+    scene_pixels(scene)
+}
+
+fn scene_pixels(scene: Scene) -> Vec<u8> {
+    anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| {
+            use anyrender::PaintScene;
+            out.append_scene(scene, kurbo::Affine::IDENTITY);
+        },
+        100,
+        80,
+    )
+}
+
+#[test]
+fn nested_first_letter_opacity_keeps_each_group_and_remainder_separate() {
+    let (doc, computed, _) = fixture(
+        "body::first-letter{opacity:.5} div::first-letter{font-size:20px;color:red;background:blue;opacity:.5}",
+        None,
+        "XX",
+    );
+    let rgba = pixels(&doc, &computed);
+    let first = (15 * 100 + 5) * 4;
+    let rest = (20 * 100 + 25) * 4;
+    assert_eq!(&rgba[first..first + 4], &[255, 191, 191, 255]);
+    assert_eq!(&rgba[rest..rest + 4], &[0, 0, 0, 255]);
+}
+
+#[test]
+fn transformed_first_letter_opacity_keeps_its_clip_in_page_coordinates() {
+    let (doc, computed, _) = fixture(
+        "div{position:absolute;left:900px;top:0;transform:matrix(1,0,0,1,-900,0)} div::first-letter{font-size:20px;color:red;background:blue;opacity:.5}",
+        None,
+        "XX",
+    );
+    let rgba = pixels(&doc, &computed);
+    let first = (15 * 100 + 5) * 4;
+    let rest = (20 * 100 + 25) * 4;
+    assert_eq!(&rgba[first..first + 4], &[255, 127, 127, 255]);
+    assert_eq!(&rgba[rest..rest + 4], &[0, 0, 0, 255]);
+}
+
+#[test]
+fn singular_ancestor_transform_leaves_no_first_letter_opacity_ink() {
+    let (doc, computed, _) = fixture(
+        "div{transform:matrix(0,0,0,0,0,0)} div::first-letter{font-size:20px;color:red;background:blue;opacity:.5}",
+        None,
+        "XX",
+    );
+    assert!(
+        pixels(&doc, &computed)
+            .chunks_exact(4)
+            .all(|pixel| pixel == [255, 255, 255, 255])
+    );
+}
+
+#[test]
+fn first_letter_url_background_uses_the_image_pixel_source() {
+    use raikiri_traits::{DecodedImage, ImagePixelSource};
+    use std::sync::Arc;
+    use url::Url;
+    struct Pixels;
+    impl ImagePixelSource for Pixels {
+        fn get_decoded(&self, url: &Url) -> Option<Arc<DecodedImage>> {
+            (url.as_str() == "file:///first-letter.png").then(|| {
+                Arc::new(DecodedImage {
+                    width: 1,
+                    height: 1,
+                    rgba: vec![0, 128, 0, 255],
+                })
+            })
+        }
+    }
+    let (doc, computed, _) = fixture(
+        "div::first-letter{font-size:20px;color:transparent;background-color:blue;background-image:url(file:///first-letter.png)}",
+        None,
+        "XX",
+    );
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 80.0;
+    let mut scene = Scene::new();
+    raikiri_paint::paint_single_page_with_images(
+        &mut scene,
+        &doc,
+        &computed,
+        page,
+        &Pixels,
+        &mut raikiri_dom::CounterSnapshotBudget::default(),
+    )
+    .unwrap();
+    let rgba = scene_pixels(scene);
+    let first = (15 * 100 + 5) * 4;
+    assert_eq!(&rgba[first..first + 4], &[0, 128, 0, 255]);
+}
+
+#[test]
+fn first_letter_opacity_spans_punctuation_split_by_an_inline_boundary() {
+    let sheet = "div::first-letter{font-size:20px;color:red;background:blue;opacity:.5}";
+    let (mut split, _, text) = fixture(sheet, Some("display:inline"), "\"");
+    let root = split.parent_of(split.parent_of(text).unwrap()).unwrap();
+    split.append_text(root, "XY");
+    split.mark_in_document_flags();
+    let computed = cascade(&split, &build_rule_tree(&split)).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 80.0;
+    layout_single_page(&mut split, &computed, page).unwrap();
+    let (joined, joined_cv, _) = fixture(sheet, None, "\"XY");
+    let rgba = pixels(&split, &computed);
+    assert_eq!(rgba, pixels(&joined, &joined_cv));
+    assert_eq!(
+        &rgba[(15 * 100 + 5) * 4..(15 * 100 + 5) * 4 + 4],
+        &[255, 127, 127, 255]
+    );
+    assert_eq!(
+        &rgba[(15 * 100 + 25) * 4..(15 * 100 + 25) * 4 + 4],
+        &[255, 127, 127, 255]
+    );
+    assert_eq!(rgba[(20 * 100 + 45) * 4 + 3], 255);
+}
+
+#[test]
+fn first_letter_opacity_composites_overlapping_background_and_glyph_once() {
+    for (opacity, expected) in [("0", [255, 255, 255, 255]), ("0.5", [255, 127, 127, 255])] {
+        let (doc, computed, _) = fixture(
+            &format!(
+                "div::first-letter{{font-size:20px;color:red;background:blue;opacity:{opacity}}}"
+            ),
+            None,
+            "XX",
+        );
+        let rgba = pixels(&doc, &computed);
+        let first = (15 * 100 + 5) * 4;
+        let rest = (20 * 100 + 25) * 4;
+        assert_eq!(&rgba[first..first + 4], &expected, "opacity={opacity}");
+        assert_eq!(&rgba[rest..rest + 4], &[0, 0, 0, 255]);
+    }
+}
+
+#[test]
+fn first_letter_background_gradient_is_painted_over_its_color() {
+    let (doc, computed, _) = fixture(
+        "div::first-letter{font-size:20px;color:transparent;background-color:blue;background-image:linear-gradient(green,green)}",
+        None,
+        "XX",
+    );
+    let rgba = pixels(&doc, &computed);
+    let first = (15 * 100 + 5) * 4;
+    assert_eq!(&rgba[first..first + 4], &[0, 128, 0, 255]);
+}
+
 fn fixture(
     sheet: &str,
     nested_style: Option<&str>,

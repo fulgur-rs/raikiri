@@ -4413,7 +4413,8 @@ pub(crate) fn paint_document_impl(
                     {
                         t.push(crate::PaintTraceEvent::Text(node_id));
                     }
-                    crate::ifc_text::draw_ifc_lines(
+                    let paint_transform = scene.transform;
+                    crate::ifc_text::draw_ifc_lines_with_resources(
                         scene,
                         document,
                         cascade,
@@ -4426,6 +4427,10 @@ pub(crate) fn paint_document_impl(
                         &child_decorations,
                         fragmentainer,
                         custom_highlights,
+                        pixel_source,
+                        warnings,
+                        page_box,
+                        paint_transform,
                     );
                     if text_clip.is_some() {
                         scene.pop_layer();
@@ -4528,7 +4533,8 @@ pub(crate) fn paint_document_impl(
                         if let Some(t) = trace.as_deref_mut() {
                             t.push(crate::PaintTraceEvent::Text(node_id));
                         }
-                        crate::ifc_text::draw_ifc_lines(
+                        let paint_transform = scene.transform;
+                        crate::ifc_text::draw_ifc_lines_with_resources(
                             scene,
                             document,
                             cascade,
@@ -4541,6 +4547,10 @@ pub(crate) fn paint_document_impl(
                             &decorations,
                             fragmentainer,
                             custom_highlights,
+                            pixel_source,
+                            warnings,
+                            page_box,
+                            paint_transform,
                         );
                     }
                     // Any other text node lies outside every paragraph and
@@ -5997,12 +6007,15 @@ pub(crate) fn paintable_border_radius(
 /// another line there) has no border, padding or corner radius: the box is
 /// sliced (CSS Fragmentation 3 `box-decoration-break: slice`). The padding is
 /// what the piece leaves around its content box once the border is taken off.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_inline_box(
     scene: &mut impl PaintScene,
     cv: &ComputedValues,
     piece: &raikiri_dom::InlineBoxPiece,
     x: f32,
     y: f32,
+    pixel_source: Option<&dyn ImagePixelSource>,
+    warnings: &mut Vec<RenderWarning>,
 ) {
     let outer = piece.border_box;
     let content = piece.content_box;
@@ -6069,7 +6082,7 @@ pub(crate) fn paint_inline_box(
         abs_x,
         abs_y,
         cv.background_color,
-        &BackgroundImage::None,
+        &cv.background_image,
         cv.color,
         cv.background_clip,
         cv.background_origin,
@@ -6079,8 +6092,8 @@ pub(crate) fn paint_inline_box(
         &cv.background_size,
         &cv.background_position,
         &cv.background_repeat,
-        None,
-        &mut Vec::new(),
+        pixel_source,
+        warnings,
     );
     paint_element_border_rounded(
         scene,
