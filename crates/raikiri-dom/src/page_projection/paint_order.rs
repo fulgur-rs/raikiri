@@ -5,7 +5,7 @@ use super::records::{PageFragmentItem, PageFragmentKind};
 use crate::{Document, Fragment, OverflowClip, PositionedGlyphRun, TextLineId, paint_rules};
 use raikiri_style::CascadeResult;
 use raikiri_style::property::ColumnCountValue;
-use raikiri_traits::{NodeId, NodeKind, PaintClip};
+use raikiri_traits::{NodeId, NodeKind, PaintClip, PaintRect};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// What a clip in [`PaintEvent::PushClip`] comes from.
