@@ -6863,3 +6863,27 @@ fn page_deferred_radius_shorthand_rolls_back_each_corner() {
         crate::property::CornerRadius::new(Length::Px(20.0), Length::Px(30.0))
     );
 }
+
+#[test]
+fn page_corner_rollback_restores_static_radius_shorthands() {
+    for declarations in [
+        "@layer base {@page {border-radius:20px / 30px}} @layer override {@page {border-top-left-radius:revert-layer}}",
+        "@layer base {@page {border-top-left-radius:20px 30px}} @layer middle {@page {border-radius:10px / 15px}} @layer override {@page {border-radius:var(--missing,revert-layer)}}",
+    ] {
+        let result = page(declarations, &root_with_font_size(20.0));
+        let Some(PropertyValue::BorderRadius(radius)) =
+            result.declarations().get(&PropertyKey::BorderRadius)
+        else {
+            panic!("effective radius")
+        };
+        let expected = if declarations.contains("middle") {
+            (10.0, 15.0)
+        } else {
+            (20.0, 30.0)
+        };
+        assert_eq!(
+            radius.top_left,
+            crate::property::CornerRadius::new(Length::Px(expected.0), Length::Px(expected.1))
+        );
+    }
+}

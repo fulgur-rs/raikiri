@@ -1032,11 +1032,16 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         }),
         // CSS Backgrounds and Borders 3 §4.1: independent axes per corner.
         "border-radius" => {
-            if input
-                .try_parse(|i| i.expect_ident_matching("inherit"))
-                .is_ok()
-            {
-                Some(PropertyValue::BorderRadiusInherit)
+            if let Ok(keyword) = input.try_parse(parse_css_wide_keyword_res) {
+                if keyword == CssWideKeyword::Inherit {
+                    Some(PropertyValue::BorderRadiusInherit)
+                } else {
+                    Some(PropertyValue::Deferred(DeferredValue {
+                        property: "border-radius".into(),
+                        value: keyword.as_css_str().into(),
+                        key: PropertyKey::BorderRadius,
+                    }))
+                }
             } else {
                 parse_border_radius(input).map(PropertyValue::BorderRadius)
             }
