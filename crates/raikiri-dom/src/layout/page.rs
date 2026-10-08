@@ -1007,24 +1007,11 @@ pub(crate) fn trailing_flex_child_for_pagination(
     cascade: &CascadeResult,
     parent_id: usize,
 ) -> Option<usize> {
-    let mut pending = pagination_child_order(document, cascade, parent_id);
-    pending.reverse();
-    let mut trailing = None;
-    while let Some(child) = pending.pop() {
-        if !is_in_flow_flex_child_for_pagination(document, parent_id, child) {
-            continue;
-        }
-        if cascade.computed[child].display == DisplayValue::Contents {
-            pending.extend(
-                pagination_child_order(document, cascade, child)
-                    .into_iter()
-                    .rev(),
-            );
-        } else {
-            trailing = Some(child);
-        }
-    }
-    trailing
+    // The effective flex sequence already flattens all Contents wrappers.
+    pagination_child_order(document, cascade, parent_id)
+        .into_iter()
+        .rev()
+        .find(|&child| is_in_flow_flex_child_for_pagination(document, parent_id, child))
 }
 
 fn is_in_flow_grid_item_for_pagination(
