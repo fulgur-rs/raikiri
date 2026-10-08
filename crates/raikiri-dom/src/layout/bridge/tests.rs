@@ -178,7 +178,7 @@ fn apply_computed_to_style_bridges_direction_to_taffy() {
 }
 
 #[test]
-fn apply_computed_to_style_reserves_inside_list_marker_gutter() {
+fn apply_computed_to_style_preserves_authored_list_item_padding() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
@@ -205,10 +205,7 @@ fn apply_computed_to_style_reserves_inside_list_marker_gutter() {
 
     apply_computed_to_style(&mut doc, &cr).expect("styles");
 
-    assert_eq!(
-        doc.nodes[inside].style.padding.left.into_raw().value(),
-        24.0
-    );
+    assert_eq!(doc.nodes[inside].style.padding.left.into_raw().value(), 0.0);
     assert_eq!(
         doc.nodes[outside].style.padding.left.into_raw().value(),
         0.0

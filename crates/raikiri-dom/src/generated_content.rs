@@ -3,6 +3,9 @@
 //! the inline engine, which lays the text of in-flow pseudo-elements out in
 //! their paragraphs, and the painter, which draws the rest as overlays.
 
+/// Marker resolution shared by inline layout and painting.
+pub mod markers;
+
 use crate::Document;
 use crate::target::CounterSnapshot;
 use raikiri_style::property::{
@@ -22,7 +25,13 @@ const GENERATED_ID_BIT: usize = 1 << (usize::BITS - 2);
 
 /// The node id the inline engine gives the `pseudo` of `element`.
 pub fn generated_node_id(element: usize, pseudo: PseudoElem) -> usize {
-    GENERATED_ID_BIT | (element << 1) | usize::from(pseudo == PseudoElem::After)
+    GENERATED_ID_BIT
+        | (element << 1)
+        | match pseudo {
+            PseudoElem::After => 1,
+            PseudoElem::Marker => 1 << (usize::BITS - 1),
+            _ => 0,
+        }
 }
 
 /// The element and pseudo-element an id of [`generated_node_id`] stands for;
@@ -31,8 +40,11 @@ pub fn generated_origin(id: usize) -> Option<(usize, PseudoElem)> {
     if id & GENERATED_ID_BIT == 0 {
         return None;
     }
-    let raw = id & !GENERATED_ID_BIT;
-    let pseudo = if raw & 1 == 1 {
+    let marker_bit = 1 << (usize::BITS - 1);
+    let raw = id & !(GENERATED_ID_BIT | marker_bit);
+    let pseudo = if id & marker_bit != 0 {
+        PseudoElem::Marker
+    } else if raw & 1 == 1 {
         PseudoElem::After
     } else {
         PseudoElem::Before
@@ -46,7 +58,12 @@ pub fn computed_for_id(cascade: &CascadeResult, id: usize) -> Option<&ComputedVa
     match generated_origin(id) {
         Some((element, pseudo)) => cascade
             .pseudo
-            .get(&(StyleNodeId::new(element as u64), pseudo)),
+            .get(&(StyleNodeId::new(element as u64), pseudo))
+            .or_else(|| {
+                (pseudo == PseudoElem::Marker)
+                    .then(|| cascade.computed.get(element))
+                    .flatten()
+            }),
         None => cascade.computed.get(id),
     }
 }
@@ -61,6 +78,27 @@ pub fn is_in_flow_generated_text(
     element: usize,
     pseudo: PseudoElem,
 ) -> bool {
+    if pseudo == PseudoElem::Marker {
+        if !inside_marker_in_flow(cascade, element) {
+            return false;
+        }
+        let cv = &cascade.computed[element];
+        if cascade
+            .pseudo
+            .get(&(StyleNodeId::new(element as u64), pseudo))
+            .is_some_and(|marker| !marker.content.is_empty())
+        {
+            return true;
+        }
+        return matches!(
+            cv.list_style_image,
+            raikiri_style::property::BackgroundImage::Url(_)
+        ) || match &cv.list_style_type {
+            raikiri_style::ListStyleType::None => false,
+            raikiri_style::ListStyleType::String(text) => !text.is_empty(),
+            _ => true,
+        };
+    }
     let Some(cv) = cascade
         .pseudo
         .get(&(StyleNodeId::new(element as u64), pseudo))
@@ -99,6 +137,9 @@ pub fn generated_text<'a>(
     pseudo: PseudoElem,
     snapshots: &[CounterSnapshot],
 ) -> Option<(&'a ComputedValues, String)> {
+    if pseudo == PseudoElem::Marker {
+        return markers::marker_render_info_with_snapshots(document, cascade, element, snapshots);
+    }
     let computed = cascade
         .pseudo
         .get(&(StyleNodeId::new(element as u64), pseudo))?;
@@ -455,3 +496,21 @@ pub fn format_counter(value: i32, style: &CounterStyle, registry: &CounterStyleR
 
 #[cfg(test)]
 mod tests;
+
+/// Whether this list item's marker belongs to its inline formatting context.
+pub fn inside_marker_in_flow(cascade: &CascadeResult, element: usize) -> bool {
+    cascade.computed.get(element).is_some_and(|cv| {
+        cv.display == DisplayValue::ListItem
+            && cv.list_style_position == raikiri_style::ListStylePosition::Inside
+            && cascade
+                .pseudo
+                .get(&(StyleNodeId::new(element as u64), PseudoElem::Marker))
+                .is_none_or(|marker| {
+                    marker.display != DisplayValue::None
+                        && !marker
+                            .content
+                            .iter()
+                            .any(|part| matches!(part, ContentComponent::None))
+                })
+    })
+}

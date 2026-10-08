@@ -3,6 +3,9 @@
 #
 # Format: one test_id per line. Lines starting with '#' are comments.
 # Empty lines are ignored.
+# Baseline PASS records output equality or assertion success only, not feature coverage.
+# Invalid-value parsing guards can pass by rejecting an unsupported property.
+# See README.md for retained non-evidentiary visual guards.
 #
 # ── Populate policy ─────────────────────────────────────────────────
 # This file is *runner-generated*, NOT hand-authored:
@@ -210,12 +213,6 @@ css/motion/parsing/offset-parsing-invalid.html
 css/motion/parsing/offset-path-parsing-invalid.html
 css/motion/parsing/offset-position-parsing-invalid.html
 css/motion/parsing/offset-rotate-parsing-invalid.html
-grid-auto-flow-valid.html
-grid-column-shorthand.html
-grid-row-shorthand.html
-grid-shorthand-invalid.html
-grid-template-areas-valid.html
-grid-template-shorthand-invalid.html
 
 # --- additional batch 2026-09-13 (remaining categories) ---
 css/css-forced-color-adjust/parsing/forced-color-adjust-invalid.html
@@ -325,6 +322,7 @@ css/css-backgrounds/background-size/background-size-near-zero-png.html
 css/css-backgrounds/background-size/background-size-near-zero-svg.html
 css/css-backgrounds/border-radius-clipping-with-transform-001.html
 css/css-backgrounds/border-radius-horizontal-value-is-zero.html
+# Both sides ignore elliptical radii; this PASS does not establish elliptical radius support.
 css/css-backgrounds/border-radius-shorthand-002.html
 css/css-backgrounds/border-width-pixel-snapping-001-a.html
 css/css-backgrounds/border-width-small-values-001-a.html
@@ -339,6 +337,7 @@ css/css-backgrounds/css3-background-clip-border-box.html
 css/css-backgrounds/css3-background-clip-content-box.html
 css/css-backgrounds/css3-background-clip-padding-box.html
 css/css-backgrounds/css3-background-clip.html
+# Both sides omit inset shadows; this PASS does not establish inset shadow support.
 css/css-backgrounds/fieldset-inset-shadow.html
 css/css-backgrounds/first-letter-space-not-selected.html
 css/css-backgrounds/inline-background-rtl-001.html
@@ -610,7 +609,6 @@ css/css-text-decor/parsing/text-decoration-line-invalid.html
 css/css-text-decor/parsing/text-decoration-line-valid.html
 css/css-text-decor/parsing/text-decoration-skip-ink-valid.html
 css/css-text-decor/parsing/text-decoration-skip-spaces-valid.html
-css/css-text-decor/parsing/text-decoration-valid.html
 css/css-text-decor/parsing/text-emphasis-position-valid.html
 css/css-text-decor/parsing/text-underline-position-valid.html
 # --- css-text-decor parsing pin 2026-09-14 (retry E1, 8 files PASS, 152/201 vectors) ---
@@ -1449,7 +1447,9 @@ css/css-transforms/css-skew-002.html
 css/css-transforms/transform-origin-003.html
 css/css-transforms/transform-origin-004.html
 css/css-transforms/transform-origin-005.html
+# Empty selection has no visible selected ink; this PASS does not establish selection painting.
 css/css-pseudo/active-selection-056.html
+# Occluded first-letter ink; this PASS does not establish first-letter support.
 css/css-pseudo/first-letter-003.html
 css/selectors/case-insensitive-parent.html
 css/selectors/child-indexed-no-parent.html
@@ -1652,6 +1652,39 @@ css/css-text-decor/text-emphasis-punctuation-2.html
 css/css-text-decor/text-emphasis-style-001.html
 css/css-text-decor/text-emphasis-style-property-001.html
 
+# --- css-lists list-style shorthand and inside marker text (exact, 800x600, bundled fonts) ---
+css/css-lists/content-property/marker-text-matches-decimal-leading-zero.html
+css/css-lists/content-property/marker-text-matches-decimal.html
+css/css-lists/content-property/marker-text-matches-lower-latin.html
+css/css-lists/content-property/marker-text-matches-lower-roman.html
+css/css-lists/content-property/marker-text-matches-upper-latin.html
+css/css-lists/content-property/marker-text-matches-upper-roman.html
+css/css-lists/list-style-type-string-001a.html
+css/css-lists/list-style-type-string-001b.html
+
+# --- Media queries: 800x600, bundled WPT fonts, WPT 97ea26e2 (0vv.95) ---
+css/mediaqueries/aspect-ratio-002.html
+css/mediaqueries/device-aspect-ratio-004.html
+css/mediaqueries/device-aspect-ratio-006.html
+css/mediaqueries/mq-calc-006.html
+css/mediaqueries/mq-calc-sign-function-006.html
+css/mediaqueries/mq-deprecated-001.html
+css/mediaqueries/mq-gamut-003.html
+css/mediaqueries/mq-gamut-005.html
+css/mediaqueries/mq-invalid-media-type-001.html
+css/mediaqueries/mq-invalid-media-type-002.html
+css/mediaqueries/mq-invalid-media-type-003.html
+css/mediaqueries/mq-invalid-media-type-004.html
+css/mediaqueries/mq-invalid-media-type-layer-001.html
+css/mediaqueries/mq-range-001.html
+css/mediaqueries/prefers-color-scheme-svg-image-normal-with-meta-dark.html
+css/mediaqueries/prefers-color-scheme-svg-image-normal-with-meta-light.html
+css/mediaqueries/prefers-color-scheme-svg-image-normal.html
+css/mediaqueries/prefers-color-scheme-svg-image.html
+css/mediaqueries/relative-units-001.html
+css/mediaqueries/relative-units-002.html
+css/mediaqueries/relative-units-003.html
+css/mediaqueries/relative-units-004.html
 # --- CSS2 relative block positioning exact 800x600 PASS-only (+14) ---
 css/CSS2/positioning/position-relative-004.xht
 css/CSS2/positioning/position-relative-005.xht
@@ -1667,3 +1700,19 @@ css/CSS2/positioning/position-relative-018.xht
 css/CSS2/positioning/position-relative-019.xht
 css/CSS2/positioning/position-relative-037.xht
 css/CSS2/positioning/position-relative-038.xht
+
+# Remeasured EXACT 800x600 / bundled WPT fonts (0vv.99, 2026-10-08).
+# PASS here is a regression guard, not a count of supported CSS features.
+css/css-backgrounds/box-shadow-005.html
+css/css-backgrounds/box-shadow-overlapping-003.html
+# These three also PASS with test-side shadows removed; no shadow coverage claim.
+css/css-backgrounds/box-shadow-body.html
+css/css-backgrounds/box-shadow-overlapping-002.html
+css/css-backgrounds/box-shadow-overlapping-004.html
+css/css-color/parsing/color-valid.html
+# Negative-only rejection guards; these do not establish valid grid support.
+css/css-grid/parsing/grid-shorthand-invalid.html
+css/css-grid/parsing/grid-template-shorthand-invalid.html
+
+# CSS Overflow inherited Ahem max-width:4ch (exact 800x600, bundled WPT fonts).
+css/css-overflow/text-overflow-ellipsis-002.html
