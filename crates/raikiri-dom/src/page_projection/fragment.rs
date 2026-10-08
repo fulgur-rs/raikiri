@@ -65,11 +65,13 @@ impl<'a> Fragment<'a> {
         self.rect()
     }
 
-    /// Whole element content box in CSS page coordinates, before page cuts.
+    /// Whole element content box in CSS page layout coordinates, before page cuts.
     ///
     /// Border and padding use the layout engine's resolved values, including
     /// percentage padding. A continuation may start above the page. Text
-    /// fragments return `None`.
+    /// fragments and inline elements with multiple pieces return `None`.
+    /// Paint-time transforms, relative offsets and fixed-position adjustments
+    /// are not applied, as with [`Self::rect`].
     pub fn content_rect(&self) -> Option<PaintRect> {
         self.item
             .content_rect

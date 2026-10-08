@@ -997,6 +997,7 @@ pub(crate) fn project_slices(
     // Each inline element's rectangle is the union of its pieces after
     // pagination moves their lines.
     let mut ifc_piece_bounds: HashMap<usize, HashMap<usize, BoxRect>> = HashMap::new();
+    let mut fragmented_inline_nodes = HashSet::new();
     let mut ifc_text_lines = HashMap::new();
     let mut stack = vec![(body_id, 0.0_f32, 0.0_f32, false)];
     while let Some((node_id, parent_abs_x, parent_abs_y, inherited_repeat)) = stack.pop() {
@@ -1052,6 +1053,7 @@ pub(crate) fn project_slices(
                 bounds_by_node
                     .entry(piece.node)
                     .and_modify(|bounds| {
+                        fragmented_inline_nodes.insert(piece.node);
                         let rect = piece.border_box;
                         let x = bounds.x.min(rect.x);
                         let y = bounds.y.min(rect.y);
@@ -1131,7 +1133,9 @@ pub(crate) fn project_slices(
                 abs_y,
                 width,
                 height,
-                content_insets: (node.kind() == NodeKind::Element).then(|| {
+                content_insets: (node.kind() == NodeKind::Element
+                    && !fragmented_inline_nodes.contains(&node_id))
+                .then(|| {
                     PageFragmentInsets::new(
                         layout.border.top + layout.padding.top,
                         layout.border.right + layout.padding.right,

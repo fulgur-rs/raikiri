@@ -77,7 +77,7 @@ pub enum SvgError {
     InvalidDocument(String),
     /// The document contains a DTD other than the inert SVG 1.1 public declaration.
     UnsupportedDoctype,
-    /// An SVG `<image>` reference would access a resource outside this file.
+    /// An SVG resource reference would access a resource outside this file.
     ExternalReference,
     /// Filter effects are outside the supported static SVG subset.
     UnsupportedFilterEffects,
@@ -102,7 +102,7 @@ impl std::fmt::Display for SvgError {
             Self::InvalidDocument(message) => write!(f, "invalid SVG document: {message}"),
             Self::UnsupportedDoctype => f.write_str("SVG documents with a DOCTYPE are unsupported"),
             Self::ExternalReference => {
-                f.write_str("SVG image references outside the document are disabled")
+                f.write_str("SVG resource references outside the document are disabled")
             }
             Self::UnsupportedFilterEffects => {
                 f.write_str("SVG filter effects are outside the supported subset")
@@ -205,6 +205,9 @@ impl SvgDocument {
     /// box and SVG together with that opacity.
     /// `root_style.visible` controls rasterization only; a vector consumer
     /// handles the host's visibility before drawing this source.
+    /// External resource references, CSS imports and XML stylesheet processing
+    /// instructions are rejected before source is exported. SVG navigation
+    /// links and same-document fragment references remain available.
     pub fn styled_source(
         &self,
         viewport: SvgViewport,
@@ -271,7 +274,8 @@ impl SvgDocument {
         if !root_style.opacity.is_finite() || !(0.0..=1.0).contains(&root_style.opacity) {
             return Err(SvgError::InvalidOpacity);
         }
-        self.prepare_source(viewport, root_style, root_color, root_font)
+        reject_exported_external_references(&self.source)?;
+        self.prepare_source(viewport, root_style, root_color, root_font, true)
     }
 
     fn prepare_source(
@@ -280,14 +284,16 @@ impl SvgDocument {
         root_style: SvgRootStyle,
         root_color: Option<[u8; 4]>,
         root_font: Option<(f32, &str)>,
+        exact_viewport: bool,
     ) -> Result<String, SvgError> {
         let viewport_matches = viewport_matches_tree(
             &self.tree,
             viewport.width,
             viewport.height,
-            self.has_view_box,
+            self.has_view_box && !exact_viewport,
         );
-        let modifies_source = !viewport_matches
+        let modifies_source = exact_viewport
+            || !viewport_matches
             || root_color.is_some()
             || root_font.is_some()
             || root_style.neutralize_root_opacity
@@ -299,6 +305,11 @@ impl SvgDocument {
             freeze_svg_stylesheet_selectors(&self.source, &mut rewrite_budget)?
         } else {
             self.source.clone()
+        };
+        let source = if exact_viewport {
+            normalize_svg_css_types(&source, &mut rewrite_budget)?.unwrap_or(source)
+        } else {
+            source
         };
         let source = if root_font.is_some() {
             normalize_svg_font_shorthands(&source, &mut rewrite_budget)?
@@ -388,7 +399,7 @@ impl SvgDocument {
         };
 
         if root_style.visible && root_style.opacity > 0.0 {
-            let source = self.prepare_source(viewport, root_style, None, None)?;
+            let source = self.prepare_source(viewport, root_style, None, None, false)?;
             let raster_opacity = if root_style.neutralize_root_opacity {
                 1.0
             } else {
@@ -1238,15 +1249,46 @@ fn skip_simplecss_at_rule(bytes: &[u8], cursor: usize) -> usize {
     }
 }
 
+fn svg_style_has_css_type(node: roxmltree::Node<'_, '_>) -> bool {
+    node.attribute("type").is_none_or(|mime| {
+        mime.trim().is_empty()
+            || mime
+                .split(';')
+                .next()
+                .is_some_and(|essence| essence.trim().eq_ignore_ascii_case("text/css"))
+    })
+}
+
+fn normalize_svg_css_types(
+    source: &str,
+    budget: &mut SelectorFreezeBudget,
+) -> Result<Option<String>, SvgError> {
+    // Freeze selectors first so matching the original type attribute still works.
+    budget.bytes(source.len())?;
+    let xml = roxmltree::Document::parse(source)
+        .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
+    let mut edits = Vec::new();
+    for node in xml.descendants().filter(|node| node.has_tag_name("style")) {
+        if svg_style_has_css_type(node)
+            && let Some(attribute) = node.attribute_node("type")
+            && attribute.value() != "text/css"
+        {
+            budget.bytes(8 + std::mem::size_of::<(Range<usize>, String)>())?;
+            edits.push((attribute.range_value(), "text/css".to_owned()));
+        }
+    }
+    if edits.is_empty() {
+        return Ok(None);
+    }
+    apply_selector_edits(source, edits, budget).map(Some)
+}
+
 fn preflight_initial_svg_selectors(xml: &roxmltree::Document<'_>) -> Result<(), SvgError> {
     let mut budget = InitialParseSelectorBudget::new();
     let mut selectors = Vec::new();
     let mut total_rules = 0usize;
     for node in xml.descendants().filter(|node| node.has_tag_name("style")) {
-        if node
-            .attribute("type")
-            .is_some_and(|style_type| style_type != "text/css")
-        {
+        if !svg_style_has_css_type(node) {
             continue;
         }
         let Some(stylesheet_text) = node.text() else {
@@ -1616,16 +1658,118 @@ fn reject_external_image_references(root: roxmltree::Node<'_, '_>) -> Result<(),
     Ok(())
 }
 
+fn reject_exported_external_references(source: &str) -> Result<(), SvgError> {
+    let mut budget = SelectorFreezeBudget::new();
+    budget.bytes(source.len())?;
+    let xml = roxmltree::Document::parse(source)
+        .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
+    for node in xml.descendants() {
+        if node.pi().is_some_and(|pi| pi.target == "xml-stylesheet") {
+            return Err(SvgError::ExternalReference);
+        }
+        if !node.is_element() {
+            continue;
+        }
+        let navigation_link = node.tag_name().name() == "a"
+            && node
+                .tag_name()
+                .namespace()
+                .is_none_or(|ns| ns == SVG_NAMESPACE);
+        for attribute in node.attributes() {
+            if matches!(attribute.name(), "href" | "src")
+                && !(navigation_link && attribute.name() == "href")
+                && !attribute.value().trim().starts_with('#')
+            {
+                return Err(SvgError::ExternalReference);
+            }
+            if attribute.namespace() == Some(XML_NAMESPACE)
+                && attribute.name() == "base"
+                && !attribute.value().trim().is_empty()
+            {
+                return Err(SvgError::ExternalReference);
+            }
+            if matches!(
+                attribute.name(),
+                "style"
+                    | "fill"
+                    | "stroke"
+                    | "filter"
+                    | "clip-path"
+                    | "mask"
+                    | "cursor"
+                    | "marker"
+                    | "marker-start"
+                    | "marker-mid"
+                    | "marker-end"
+            ) {
+                reject_external_css_references(attribute.value())?;
+            }
+        }
+        if node.tag_name().name() == "style"
+            && let Some(text) = node.text()
+        {
+            reject_external_css_references(text)?;
+        }
+    }
+    Ok(())
+}
+
+fn reject_external_css_references(source: &str) -> Result<(), SvgError> {
+    let mut input = cssparser::ParserInput::new(source);
+    let mut parser = cssparser::Parser::new(&mut input);
+    reject_external_css_tokens(&mut parser, 0).map_err(|error| match error.kind {
+        cssparser::ParseErrorKind::Custom(error) => error,
+        cssparser::ParseErrorKind::Basic(error) => {
+            SvgError::InvalidDocument(format!("invalid SVG CSS resource reference: {error:?}"))
+        }
+    })
+}
+
+fn reject_external_css_tokens<'i>(
+    input: &mut cssparser::Parser<'i, '_>,
+    depth: usize,
+) -> Result<(), cssparser::ParseError<'i, SvgError>> {
+    if depth >= MAX_FILTER_CSS_NESTING {
+        return Err(input.new_custom_error(SvgError::InvalidDocument(
+            "SVG CSS resource reference nesting limit exceeded".into(),
+        )));
+    }
+    while let Ok(token) = input.next().cloned() {
+        match token {
+            cssparser::Token::AtKeyword(name) if name.eq_ignore_ascii_case("import") => {
+                return Err(input.new_custom_error(SvgError::ExternalReference));
+            }
+            cssparser::Token::UnquotedUrl(url) if !url.trim().starts_with('#') => {
+                return Err(input.new_custom_error(SvgError::ExternalReference));
+            }
+            cssparser::Token::Function(name) if name.eq_ignore_ascii_case("url") => {
+                input.parse_nested_block(|nested| {
+                    let url = nested.expect_string_cloned()?;
+                    if !url.trim().starts_with('#') {
+                        return Err(nested.new_custom_error(SvgError::ExternalReference));
+                    }
+                    Ok(())
+                })?;
+            }
+            cssparser::Token::Function(_)
+            | cssparser::Token::ParenthesisBlock
+            | cssparser::Token::SquareBracketBlock
+            | cssparser::Token::CurlyBracketBlock => {
+                input.parse_nested_block(|nested| reject_external_css_tokens(nested, depth + 1))?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 fn reject_filter_effects(root: roxmltree::Node<'_, '_>) -> Result<(), SvgError> {
     for node in root.descendants().filter(|node| node.is_element()) {
         let is_svg = node
             .tag_name()
             .namespace()
             .is_none_or(|namespace| namespace == SVG_NAMESPACE);
-        let is_style = node.tag_name().name() == "style"
-            && node
-                .attribute("type")
-                .is_none_or(|style_type| style_type == "text/css");
+        let is_style = node.tag_name().name() == "style" && svg_style_has_css_type(node);
         if !is_svg && !is_style {
             continue;
         }
@@ -2415,12 +2559,7 @@ fn freeze_svg_stylesheet_selectors(
     let root = xml.root_element();
     let style_nodes = xml
         .descendants()
-        .filter(|node| {
-            node.has_tag_name("style")
-                && node
-                    .attribute("type")
-                    .is_none_or(|style_type| style_type == "text/css")
-        })
+        .filter(|node| node.has_tag_name("style") && svg_style_has_css_type(*node))
         .collect::<Vec<_>>();
 
     let mut stylesheet_ranges = style_nodes
@@ -2604,10 +2743,7 @@ fn normalize_svg_opacity_cascade(
     let root = xml.root_element();
     let mut stylesheets = Vec::new();
     for node in xml.descendants().filter(|node| node.has_tag_name("style")) {
-        if node
-            .attribute("type")
-            .is_some_and(|style_type| style_type != "text/css")
-        {
+        if !svg_style_has_css_type(node) {
             continue;
         }
         // Match usvg's stylesheet loader, which reads only `node.text()`.

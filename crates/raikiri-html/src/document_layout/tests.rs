@@ -816,6 +816,35 @@ fn inline_svg_payload_retains_the_whole_viewport_across_page_cuts() {
 }
 
 #[test]
+fn inline_svg_rejects_fixed_placements_not_represented_by_the_projection() {
+    for placement in [
+        "position:fixed;right:0;bottom:0",
+        "position:fixed;left:10%;top:10%",
+    ] {
+        for nested in [false, true] {
+            let svg = "<svg xmlns='http://www.w3.org/2000/svg' width='20' height='10'><rect width='20' height='10'/></svg>";
+            let body = if nested {
+                format!("<div style='{placement};width:30px;height:20px'>{svg}</div>")
+            } else {
+                svg.replace("width='20'", &format!("style='{placement}' width='20'"))
+            };
+            let result = laid_out(&format!(
+                "<style>@page{{size:100px 100px;margin:10px}}body{{margin:0}}svg{{display:block}}</style>{body}"
+            ));
+            let page = result.page(0).unwrap();
+            let fragment = page
+                .fragments()
+                .find(|f| page.dom().local_name(f.node()) == Some("svg"))
+                .unwrap();
+            assert!(
+                matches!(page.inline_svg(&fragment), Err(raikiri_svg::SvgError::InvalidDocument(message)) if message.contains("fixed placement")),
+                "placement: {placement}; nested: {nested}"
+            );
+        }
+    }
+}
+
+#[test]
 fn inline_svg_payload_preserves_negative_fixed_offsets_on_each_page() {
     let document = dom(
         "<style>@page{size:100px 100px;margin:10px}body{margin:0}div{height:180px}svg{display:block;position:fixed;top:-5px;left:3px;width:20px;height:10px;padding:4px;border:2px solid black}</style><div></div><svg xmlns='http://www.w3.org/2000/svg' width='20' height='10'><rect width='20' height='10' fill='red'/></svg>",

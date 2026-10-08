@@ -1529,6 +1529,131 @@ fn styled_source_validates_inputs_without_allocating_a_raster() {
 }
 
 #[test]
+fn styled_source_resolves_absolute_viewport_even_with_matching_view_box_ratio() {
+    let svg = SvgDocument::parse(
+        br#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50" viewBox="0 0 100 50"><rect width="100%" height="100%"/></svg>"#,
+    )
+    .unwrap();
+    let source = svg
+        .styled_source(
+            SvgViewport {
+                width: 200.0,
+                height: 100.0,
+            },
+            SvgRootStyle::default(),
+        )
+        .unwrap();
+    let reparsed = SvgDocument::parse(source.as_bytes()).unwrap();
+    assert_eq!(reparsed.tree.size().width(), 200.0);
+    assert_eq!(reparsed.tree.size().height(), 100.0);
+}
+
+#[test]
+fn styled_source_rejects_external_resources_before_exporting_xml() {
+    for content in [
+        "<use href='file:///outside.svg#shape'/>",
+        "<use xmlns:xlink='http://www.w3.org/1999/xlink' xlink:href='https://example.com/a.svg#shape'/>",
+        "<style>@import 'https://example.com/style.css'; rect{fill:red}</style>",
+        "<style>rect{fill:url(https://example.com/paint.svg#p)}</style>",
+        "<style>rect{fill:u\\72l('file:///paint.svg#p')}</style>",
+        "<rect fill='url(https://example.com/paint.svg#p)'/>",
+        "<rect style='fill:url(&quot;file:///paint.svg#p&quot;)'/>",
+        "<g xml:base='https://example.com/'><use href='#shape'/></g>",
+        "<foreignObject><img xmlns='http://www.w3.org/1999/xhtml' src='https://example.com/image.png'/></foreignObject>",
+        "<?xml-stylesheet type='text/css' href='https://example.com/style.css'?>",
+    ] {
+        let source = format!("<svg xmlns='{SVG_NAMESPACE}' width='10' height='10'>{content}</svg>");
+        let svg = SvgDocument::parse(source.as_bytes()).unwrap();
+        assert!(
+            matches!(
+                svg.styled_source(
+                    SvgViewport {
+                        width: 10.0,
+                        height: 10.0
+                    },
+                    SvgRootStyle::default()
+                ),
+                Err(SvgError::ExternalReference)
+            ),
+            "external resource retained: {content}"
+        );
+    }
+}
+
+#[test]
+fn exported_css_reference_validation_is_bounded_and_preserves_literal_strings() {
+    use super::{MAX_FILTER_CSS_NESTING, reject_external_css_references};
+    reject_external_css_references(
+        "rect{fill:url(#paint);font-family:'url(https://example.com/)'}",
+    )
+    .unwrap();
+    assert!(matches!(
+        reject_external_css_references("rect{fill:url(\"#paint\" trailing)}"),
+        Err(SvgError::InvalidDocument(_))
+    ));
+    let nested = format!(
+        "{}url(#paint){}",
+        "fn(".repeat(MAX_FILTER_CSS_NESTING),
+        ")".repeat(MAX_FILTER_CSS_NESTING)
+    );
+    assert!(matches!(
+        reject_external_css_references(&nested),
+        Err(SvgError::InvalidDocument(_))
+    ));
+}
+
+#[test]
+fn styled_source_css_mime_variants_keep_original_attribute_selector_matches() {
+    for mime in ["TEXT/CSS", " text/css ", "text/css; charset=utf-8"] {
+        let original = format!(
+            "<svg xmlns='{SVG_NAMESPACE}' width='10' height='10'><style type='{mime}'>style[type=\"{mime}\"] + rect{{fill:red}}</style><rect width='10' height='10' fill='blue'/></svg>"
+        );
+        let svg = SvgDocument::parse(original.as_bytes()).unwrap();
+        let source = svg
+            .styled_source(
+                SvgViewport {
+                    width: 10.0,
+                    height: 10.0,
+                },
+                SvgRootStyle::default(),
+            )
+            .unwrap();
+        let prepared = SvgDocument::parse(source.as_bytes()).unwrap();
+        let image = prepared
+            .rasterize(
+                SvgViewport {
+                    width: 10.0,
+                    height: 10.0,
+                },
+                SvgRootStyle::default(),
+                None,
+            )
+            .unwrap();
+        assert_eq!(&image.rgba[..4], &[255, 0, 0, 255], "CSS MIME: {mime}");
+    }
+}
+
+#[test]
+fn styled_source_keeps_local_resources_and_navigation_links() {
+    let source = format!(
+        "<svg xmlns='{SVG_NAMESPACE}' width='10' height='10'><defs><linearGradient id='paint'><stop stop-color='red'/></linearGradient><rect id='shape' width='10' height='10'/></defs><style>use{{fill:url('#paint')}}</style><use href='#shape'/><a href='https://example.com/'><rect width='1' height='1'/></a></svg>"
+    );
+    let svg = SvgDocument::parse(source.as_bytes()).unwrap();
+    let prepared = svg
+        .styled_source(
+            SvgViewport {
+                width: 10.0,
+                height: 10.0,
+            },
+            SvgRootStyle::default(),
+        )
+        .unwrap();
+    assert!(prepared.contains("#paint"));
+    assert!(prepared.contains("#shape"));
+    assert!(prepared.contains("https://example.com/"));
+}
+
+#[test]
 fn styled_source_freezes_attribute_selectors_before_viewport_rewrites() {
     let svg = SvgDocument::parse(br#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"><style>svg[width="2"] rect { fill:red }</style><rect width="2" height="1"/></svg>"#).unwrap();
     let viewport = SvgViewport {

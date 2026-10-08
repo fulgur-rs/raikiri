@@ -93,6 +93,9 @@ impl<'a> Page<'a> {
     /// Pass a fragment from [`Self::fragments`]. Ordinary elements, text and
     /// empty or hidden SVG viewports return `None`. The host box is drawn
     /// separately; source admission and preparation errors are returned.
+    /// Fixed boxes placed through other insets than `top` and `left` lengths
+    /// are rejected, including when the fixed box is an ancestor. Their paint
+    /// placement is not represented by the fragment projection yet.
     pub fn inline_svg(
         &self,
         fragment: &Fragment<'a>,
@@ -118,6 +121,25 @@ impl<'a> Page<'a> {
             || computed.visibility != raikiri_style::property::Visibility::Visible
         {
             return Ok(None);
+        }
+        let dom = self.dom();
+        let mut current = Some(fragment.node());
+        while let Some(node) = current {
+            if let Some(style) = self.computed(node)
+                && style.position == raikiri_style::property::PositionValue::Fixed
+                && !(matches!(
+                    style.left,
+                    raikiri_style::resolve::ComputedLengthPercentageOrAuto::Px(_)
+                ) && matches!(
+                    style.top,
+                    raikiri_style::resolve::ComputedLengthPercentageOrAuto::Px(_)
+                ))
+            {
+                return Err(raikiri_svg::SvgError::InvalidDocument(
+                    "SVG fixed placement is not represented by the fragment projection".into(),
+                ));
+            }
+            current = dom.parent(node);
         }
         let Some(source) = self
             .document
