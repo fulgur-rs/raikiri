@@ -46,7 +46,7 @@ use taffy::{
 };
 
 use crate::document::Document;
-use taffy::util::ResolveOrZero;
+use taffy::util::{MaybeResolve, ResolveOrZero};
 
 // ---------------------------------------------------------------------------
 // Depth cap — fail-closed for nested tables.
@@ -2047,8 +2047,42 @@ fn reposition_cells_for_vertical_writing(
                 .iter()
                 .filter(|&&child| doc.nodes[child].style.position != taffy::Position::Absolute)
                 .map(|&child| {
-                    let child = &doc.nodes[child].unrounded_layout;
-                    child.location.x + child.size.width + child.margin.right
+                    let child = &doc.nodes[child];
+                    // Relative insets move ink after normal flow; they must
+                    // not consume the cell's alignment space. Taffy leaves
+                    // floated boxes at their normal positions, so their
+                    // paint-side offsets are not removed here.
+                    let offset = if child.style.float == taffy::Float::None {
+                        let inner_width = cell_width
+                            - padding.left
+                            - padding.right
+                            - border.left
+                            - border.right
+                            - if node.style.overflow.y == taffy::Overflow::Scroll {
+                                node.style.scrollbar_width
+                            } else {
+                                0.0
+                            };
+                        let left = child
+                            .style
+                            .inset
+                            .left
+                            .maybe_resolve(Some(inner_width), crate::taffy_impl::resolve_calc);
+                        let right = child
+                            .style
+                            .inset
+                            .right
+                            .maybe_resolve(Some(inner_width), crate::taffy_impl::resolve_calc);
+                        if node.style.direction == taffy::Direction::Rtl {
+                            right.map(|right| -right).or(left).unwrap_or(0.0)
+                        } else {
+                            left.or(right.map(|right| -right)).unwrap_or(0.0)
+                        }
+                    } else {
+                        0.0
+                    };
+                    let child = &child.unrounded_layout;
+                    child.location.x - offset + child.size.width + child.margin.right
                 })
                 .fold(padding.left + border.left, f32::max)
                 + padding.right

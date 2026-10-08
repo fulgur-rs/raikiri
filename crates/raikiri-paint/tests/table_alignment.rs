@@ -1889,3 +1889,147 @@ fn a_leading_empty_block_keeps_the_following_text_as_the_cell_baseline() {
     let expected = layout(&mut reference);
     assert_exact_pixels(raster(actual), raster(scene(&reference, &expected)));
 }
+
+#[test]
+fn vertical_cell_alignment_keeps_relative_insets_out_of_natural_size() {
+    for (mode, align, normal_left) in [
+        ("vertical-lr", "top", 0),
+        ("vertical-lr", "middle", 15),
+        ("vertical-lr", "bottom", 30),
+        ("vertical-rl", "top", 30),
+        ("vertical-rl", "middle", 15),
+        ("vertical-rl", "bottom", 0),
+    ] {
+        for (insets, offset) in [
+            ("left:10px", 10),
+            ("right:10px", -10),
+            ("left:3px;right:7px", 3),
+        ] {
+            let (mut doc, body) = document();
+            let table = element(
+                &mut doc,
+                body,
+                &format!(
+                    "display:table;writing-mode:{mode};width:40px;height:30px;border-spacing:0"
+                ),
+            );
+            let row = element(&mut doc, table, "display:table-row");
+            let cell = element(
+                &mut doc,
+                row,
+                &format!(
+                    "display:table-cell;width:40px;height:30px;background:blue;vertical-align:{align}"
+                ),
+            );
+            let child = element(
+                &mut doc,
+                cell,
+                &format!(
+                    "display:block;width:10px;height:10px;position:relative;{insets};background:green"
+                ),
+            );
+            let left = normal_left + offset;
+            let (mut reference, body) = document();
+            element(
+                &mut reference,
+                body,
+                "position:absolute;left:0;top:0;width:40px;height:30px;background:blue",
+            );
+            element(
+                &mut reference,
+                body,
+                &format!(
+                    "position:absolute;left:{left}px;top:0;width:10px;height:10px;background:green"
+                ),
+            );
+            let expected = layout(&mut reference);
+            let expected = raster(scene(&reference, &expected));
+            for _ in 0..2 {
+                let computed = layout(&mut doc);
+                assert_eq!(
+                    doc.get_node(child).unwrap().unrounded_layout.location.x,
+                    left as f32,
+                    "{mode}/{align}/{insets}"
+                );
+                assert_exact_pixels(raster(scene(&doc, &computed)), expected.clone());
+            }
+        }
+    }
+}
+
+#[test]
+fn relative_vertical_block_controls_keep_rtl_priority_and_float_paint_offsets() {
+    for mode in ["vertical-lr", "vertical-rl"] {
+        for (cell_direction, child_style, raw_left, painted_left, width) in [
+            (
+                "direction:ltr;overflow:scroll",
+                "width:10px;left:10px",
+                25,
+                25,
+                10,
+            ),
+            (
+                "direction:rtl",
+                "width:40px;left:3px;right:10px",
+                -10,
+                -10,
+                40,
+            ),
+            (
+                "direction:ltr",
+                "width:10px;float:left;left:10px",
+                15,
+                25,
+                10,
+            ),
+        ] {
+            let (mut doc, body) = document();
+            let table = element(
+                &mut doc,
+                body,
+                &format!(
+                    "display:table;writing-mode:{mode};width:40px;height:30px;border-spacing:0"
+                ),
+            );
+            let row = element(&mut doc, table, "display:table-row");
+            let cell = element(
+                &mut doc,
+                row,
+                &format!(
+                    "display:table-cell;width:40px;height:30px;background:blue;vertical-align:middle;{cell_direction}"
+                ),
+            );
+            let child = element(
+                &mut doc,
+                cell,
+                &format!(
+                    "display:block;height:10px;position:relative;{child_style};background:green"
+                ),
+            );
+            let computed = layout(&mut doc);
+            assert_eq!(
+                doc.get_node(child).unwrap().unrounded_layout.location.x,
+                raw_left as f32,
+                "{mode}/{child_style}"
+            );
+            let (mut reference, body) = document();
+            element(
+                &mut reference,
+                body,
+                "position:absolute;left:0;top:0;width:40px;height:30px;background:blue",
+            );
+            element(
+                &mut reference,
+                body,
+                &format!(
+                    "position:absolute;left:{painted_left}px;top:0;width:{width}px;height:10px;background:green"
+                ),
+            );
+            let expected = layout(&mut reference);
+            assert_exact_pixels(
+                raster(scene(&doc, &computed)),
+                raster(scene(&reference, &expected)),
+            );
+        }
+    }
+}
