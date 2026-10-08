@@ -416,10 +416,10 @@ impl SvgDocument {
             || !self.root_has_color;
         // Freeze matches before rewriting attributes inspected by selectors.
         let mut rewrite_budget = SelectorFreezeBudget::new();
-        let source = if modifies_source {
+        let (source, rewrite_stylesheets) = if modifies_source {
             freeze_svg_stylesheet_selectors(&self.source, &mut rewrite_budget)?
         } else {
-            self.source.clone()
+            (self.source.clone(), false)
         };
         let source = if exact_viewport {
             normalize_svg_css_types(&source, &mut rewrite_budget)?.unwrap_or(source)
@@ -427,14 +427,19 @@ impl SvgDocument {
             source
         };
         let source = if source_style.font.is_some() {
-            normalize_svg_font_shorthands(&source, &mut rewrite_budget)?
+            normalize_svg_font_shorthands(&source, rewrite_stylesheets, &mut rewrite_budget)?
         } else {
             source
         };
         let source = if source_style.elements.is_empty() {
             source
         } else {
-            with_element_style_overrides(&source, source_style.elements, &mut rewrite_budget)?
+            with_element_style_overrides(
+                &source,
+                source_style.elements,
+                rewrite_stylesheets,
+                &mut rewrite_budget,
+            )?
         };
         let source = if viewport_matches {
             source
@@ -442,7 +447,7 @@ impl SvgDocument {
             with_root_viewport_size(&source, viewport.width, viewport.height)?
         };
         let source = if root_style.neutralize_root_opacity {
-            normalize_svg_opacity_cascade(&source, &mut rewrite_budget)?
+            normalize_svg_opacity_cascade(&source, rewrite_stylesheets, &mut rewrite_budget)?
         } else {
             source
         };
@@ -458,6 +463,7 @@ impl SvgDocument {
                 root_style.neutralize_root_opacity,
                 root_style.host_controls_root_background || root_style.neutralize_root_opacity,
                 source_style,
+                rewrite_stylesheets,
                 &mut rewrite_budget,
             )?
         } else {
@@ -2186,6 +2192,7 @@ fn with_root_viewport_size(source: &str, width: f32, height: f32) -> Result<Stri
 
 fn normalize_svg_font_shorthands(
     source: &str,
+    rewrite_stylesheets: bool,
     budget: &mut SelectorFreezeBudget,
 ) -> Result<String, SvgError> {
     budget.bytes(source.len())?;
@@ -2203,7 +2210,7 @@ fn normalize_svg_font_shorthands(
             let escaped = escape_xml_attribute(&style);
             edits.push((attribute.range(), format!("style=\"{escaped}\"")));
         }
-        if node.tag_name().name() == "style" {
+        if rewrite_stylesheets && node.tag_name().name() == "style" {
             for child in node.children().filter(|child| child.is_text()) {
                 if let Some(style) =
                     expand_font_shorthands(child.text().unwrap_or(""), true, budget)?
@@ -2331,6 +2338,7 @@ fn with_root_style_overrides(
     neutralize_root_opacity: bool,
     host_controls_root_background: bool,
     source_style: SourceRootStyle<'_>,
+    rewrite_stylesheets: bool,
     budget: &mut SelectorFreezeBudget,
 ) -> Result<String, SvgError> {
     let SourceRootStyle {
@@ -2493,10 +2501,9 @@ fn with_root_style_overrides(
 
     let scope_attribute = unique_scope_attribute(source, budget)?;
     let mut has_scoped_stylesheet_properties = false;
-    for node in root
-        .descendants()
-        .filter(|node| node.is_element() && node.tag_name().name() == "style")
-    {
+    for node in root.descendants().filter(|node| {
+        rewrite_stylesheets && node.is_element() && node.tag_name().name() == "style"
+    }) {
         if node
             .attribute("type")
             .is_some_and(|value| value != "text/css")
@@ -2594,6 +2601,7 @@ fn with_root_style_overrides(
 fn with_element_style_overrides(
     source: &str,
     elements: &[SvgElementStyle<'_>],
+    rewrite_stylesheets: bool,
     budget: &mut SelectorFreezeBudget,
 ) -> Result<String, SvgError> {
     const PROPERTIES: &[&str] = &[
@@ -2678,10 +2686,9 @@ fn with_element_style_overrides(
         }
     }
     let mut edits = Vec::new();
-    for node in xml
-        .descendants()
-        .filter(|node| node.has_tag_name("style") && svg_style_has_css_type(*node))
-    {
+    for node in xml.descendants().filter(|node| {
+        rewrite_stylesheets && node.has_tag_name("style") && svg_style_has_css_type(*node)
+    }) {
         let Some(text) = node.text() else { continue };
         budget.bytes(text.len())?;
         let mut rewritten = text.to_owned();
@@ -2919,7 +2926,7 @@ impl InitialParseSelectorBudget {
 fn freeze_svg_stylesheet_selectors(
     source: &str,
     budget: &mut SelectorFreezeBudget,
-) -> Result<String, SvgError> {
+) -> Result<(String, bool), SvgError> {
     budget.bytes(source.len())?;
     let xml = roxmltree::Document::parse(source)
         .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
@@ -2949,8 +2956,11 @@ fn freeze_svg_stylesheet_selectors(
             stylesheet.parse_more(text);
         }
     }
+    // Without a rule SimpleCSS applies there is nothing to freeze. Report it
+    // so later passes keep these stylesheets as written: a cssparser rewrite
+    // could make SimpleCSS apply a rule it ignored.
     if stylesheet.rules.is_empty() {
-        return Ok(source.to_owned());
+        return Ok((source.to_owned(), false));
     }
 
     let marker_prefix = unique_attribute_name(source, "data-raikiri-svg-selector", budget)?;
@@ -3067,7 +3077,7 @@ fn freeze_svg_stylesheet_selectors(
         ));
     }
 
-    apply_selector_edits(source, edits, budget)
+    apply_selector_edits(source, edits, budget).map(|source| (source, true))
 }
 
 // SimpleCSS ignores at-rules and the selector-list entries it cannot parse, and
@@ -3293,6 +3303,7 @@ fn apply_selector_edits(
 
 fn normalize_svg_opacity_cascade(
     source: &str,
+    rewrite_stylesheets: bool,
     budget: &mut SelectorFreezeBudget,
 ) -> Result<String, SvgError> {
     // Freeze winning opacity declarations before removing them from
@@ -3414,7 +3425,7 @@ fn normalize_svg_opacity_cascade(
         }
     }
 
-    for (node, text) in &stylesheets {
+    for (node, text) in stylesheets.iter().filter(|_| rewrite_stylesheets) {
         let Some(rewritten) = strip_stylesheet_properties(text, &["opacity"], budget)? else {
             continue;
         };
@@ -3917,29 +3928,22 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for ScopedStylesheetParser<'_> {
             let selector_storage =
                 selector_count.and_then(|count| count.checked_mul(2 * std::mem::size_of::<&str>()));
             consume_css_budget(input, self.budget, selector_storage, self.budget_exceeded)?;
-            let selectors = split_css_selector_list(&selector_list)
-                .into_iter()
-                .map(str::trim)
-                .collect::<Vec<_>>();
-            // SimpleCSS drops a list's later entries after some entries it
-            // cannot parse. Keep such a list in one scoped rule so it drops
-            // the same entries there as in the original rule.
-            let groups = if selectors
-                .iter()
-                .all(|selector| simplecss::Selector::parse(selector).is_some())
-            {
-                selectors.chunks(1).collect::<Vec<_>>()
-            } else {
-                vec![selectors.as_slice()]
-            };
-            for group in groups {
+            for selector in split_css_selector_list(&selector_list) {
+                let selector = selector.trim();
+                if selector.is_empty() {
+                    continue;
+                }
                 if let Some(rule_len) =
-                    scoped_property_rule_len(group, scope_attribute, &raw_declarations)
+                    scoped_property_rule_len(selector, scope_attribute, &raw_declarations)
                 {
                     let storage = rule_len.checked_add(2 * std::mem::size_of::<String>());
                     consume_css_budget(input, self.budget, storage, self.budget_exceeded)?;
-                    let rule =
-                        scoped_property_rule(group, scope_attribute, &raw_declarations, rule_len);
+                    let rule = scoped_property_rule(
+                        selector,
+                        scope_attribute,
+                        &raw_declarations,
+                        rule_len,
+                    );
                     self.scoped_rules.push(rule);
                 }
             }
@@ -3949,25 +3953,18 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for ScopedStylesheetParser<'_> {
 }
 
 fn scoped_property_rule(
-    selectors: &[&str],
+    selector: &str,
     scope_attribute: &str,
     declarations: &[String],
     capacity: usize,
 ) -> String {
+    let insertion = selector_scope_insertion(selector);
     let mut scoped_rule = String::with_capacity(capacity);
-    for (index, selector) in selectors.iter().enumerate() {
-        if index > 0 {
-            scoped_rule.push_str(", ");
-        }
-        let insertion = selector_scope_insertion(selector);
-        scoped_rule.push_str(&selector[..insertion]);
-        if insertion > 0 {
-            scoped_rule.push('[');
-            scoped_rule.push_str(scope_attribute);
-            scoped_rule.push(']');
-        }
-        scoped_rule.push_str(&selector[insertion..]);
-    }
+    scoped_rule.push_str(&selector[..insertion]);
+    scoped_rule.push('[');
+    scoped_rule.push_str(scope_attribute);
+    scoped_rule.push(']');
+    scoped_rule.push_str(&selector[insertion..]);
     scoped_rule.push_str(" {");
     for declaration in declarations {
         scoped_rule.push(' ');
@@ -3979,38 +3976,20 @@ fn scoped_property_rule(
 }
 
 fn scoped_property_rule_len(
-    selectors: &[&str],
+    selector: &str,
     scope_attribute: &str,
     declarations: &[String],
 ) -> Option<usize> {
-    if selectors
-        .iter()
-        .all(|selector| selector_scope_insertion(selector) == 0)
-    {
+    if selector_scope_insertion(selector) == 0 {
         return None;
     }
-    // Two bytes each for ` {`, ` }`, the brackets around the scope attribute
-    // and every `, ` separator.
-    let selectors_len =
-        selectors
-            .iter()
-            .enumerate()
-            .try_fold(4usize, |length, (index, selector)| {
-                let scoped = if selector_scope_insertion(selector) == 0 {
-                    0
-                } else {
-                    scope_attribute.len().checked_add(2)?
-                };
-                length
-                    .checked_add(selector.len())?
-                    .checked_add(scoped)?
-                    .checked_add(if index > 0 { 2 } else { 0 })
-            })?;
-    declarations
-        .iter()
-        .try_fold(selectors_len, |length, declaration| {
-            length.checked_add(declaration.len())?.checked_add(2)
-        })
+    declarations.iter().try_fold(
+        selector
+            .len()
+            .checked_add(scope_attribute.len())?
+            .checked_add(6)?,
+        |length, declaration| length.checked_add(declaration.len())?.checked_add(2),
+    )
 }
 
 fn scope_stylesheet_properties(

@@ -490,6 +490,7 @@ fn root_style_rewrite_obeys_the_shared_selector_match_budget() {
         false,
         true,
         SourceRootStyle::default(),
+        true,
         &mut budget,
     );
 
@@ -513,6 +514,7 @@ fn root_style_rewrite_charges_scoped_css_expansion_before_allocation() {
         false,
         true,
         SourceRootStyle::default(),
+        true,
         &mut budget,
     );
 
@@ -535,6 +537,7 @@ fn root_style_rewrite_rejects_budget_exhaustion_before_removing_root_attributes(
         false,
         true,
         SourceRootStyle::default(),
+        true,
         &mut budget,
     );
 
@@ -557,6 +560,7 @@ fn root_style_rewrite_rejects_budget_exhaustion_before_copying_existing_style() 
         true,
         false,
         SourceRootStyle::default(),
+        true,
         &mut budget,
     );
 
@@ -585,6 +589,7 @@ fn root_style_rewrite_rejects_budget_exhaustion_before_replacing_existing_style(
         true,
         false,
         SourceRootStyle::default(),
+        true,
         &mut budget,
     );
 
@@ -608,6 +613,7 @@ fn root_style_rewrite_rejects_budget_exhaustion_before_copying_stylesheet_text()
         false,
         true,
         SourceRootStyle::default(),
+        true,
         &mut budget,
     );
 
@@ -629,6 +635,7 @@ fn root_style_rewrite_rejects_budget_exhaustion_before_copying_scope_attributes(
         false,
         true,
         SourceRootStyle::default(),
+        true,
         &mut full_budget,
     )
     .unwrap();
@@ -645,6 +652,7 @@ fn root_style_rewrite_rejects_budget_exhaustion_before_copying_scope_attributes(
         false,
         true,
         SourceRootStyle::default(),
+        true,
         &mut limited_budget,
     );
 
@@ -656,7 +664,7 @@ fn root_style_rewrite_rejects_budget_exhaustion_before_copying_scope_attributes(
 fn opacity_normalizer_skips_non_css_and_empty_style_elements() {
     let source = "<svg><style type=\"text/plain\">opacity:.5</style><style><!-- empty --></style><style><![CDATA[]]></style></svg>";
     let rewritten =
-        normalize_svg_opacity_cascade(source, &mut SelectorFreezeBudget::new()).unwrap();
+        normalize_svg_opacity_cascade(source, true, &mut SelectorFreezeBudget::new()).unwrap();
 
     assert_eq!(rewritten, source);
 }
@@ -736,11 +744,7 @@ fn stylesheet_rewrite_rejects_invalid_removal_ranges() {
 #[test]
 fn scoped_property_rule_omits_selectors_without_a_scopeable_component() {
     assert_eq!(
-        scoped_property_rule_len(
-            &["/* only a comment */"],
-            "scope",
-            &["background:red".into()]
-        ),
+        scoped_property_rule_len("/* only a comment */", "scope", &["background:red".into()]),
         None
     );
 }
@@ -2047,41 +2051,53 @@ fn at_rule_retention_charges_the_shared_rewrite_budget() {
 
 #[test]
 fn source_export_without_frozen_rules_keeps_unmatched_selectors_inert() {
-    let source = format!(
-        "<svg xmlns='{SVG_NAMESPACE}' width='10' height='10'><style>rect:is(.hot), rect {{ color:red }}</style><rect class='hot' width='10' height='10' fill='currentColor'/></svg>"
-    );
-    let exported = SvgDocument::parse(source.as_bytes())
-        .unwrap()
-        .styled_source_with_root_color(
-            SvgViewport {
-                width: 10.0,
-                height: 10.0,
-            },
-            SvgRootStyle::default(),
-            [0, 0, 0, 255],
-        )
-        .unwrap();
-    // The scoped copy keeps the list together, so SimpleCSS still drops its
-    // supported `rect` entry after the unsupported one.
-    assert!(exported.contains("rect:is(.hot), rect {"), "{exported}");
-    assert!(
-        exported.contains(
-            "rect:is(.hot)[data-raikiri-root-opacity-scope], rect[data-raikiri-root-opacity-scope] {"
-        ),
-        "{exported}"
-    );
-    let image = SvgDocument::parse(exported.as_bytes())
-        .unwrap()
-        .rasterize(
-            SvgViewport {
-                width: 10.0,
-                height: 10.0,
-            },
-            SvgRootStyle::default(),
-            None,
-        )
-        .unwrap();
-    assert_eq!(&image.rgba[..4], &[0, 0, 0, 255]);
+    // SimpleCSS applies none of these rules. Scoping or stripping them with
+    // cssparser could make it apply one, so they stay as written.
+    for stylesheet in [
+        "rect:is(.hot), rect { color:red }",
+        "rect { color: ; fill: blue }",
+        "rect { opacity: ; fill: blue }",
+        "@media print { .x { content:\"}\" } } rect, circle { color:red }",
+        "<!-- note -->rect { color:red }",
+        "g >, rect:is(.a) { color:red }",
+        "rect\u{a0}, circle { color:red }",
+        "text::selection, rect { color:red }",
+    ] {
+        let source = format!(
+            "<svg xmlns='{SVG_NAMESPACE}' width='10' height='10'><style>{stylesheet}</style><g><rect class='hot' width='10' height='10' fill='currentColor'/></g></svg>"
+        );
+        let exported = SvgDocument::parse(source.as_bytes())
+            .unwrap()
+            .styled_source_with_root_color(
+                SvgViewport {
+                    width: 10.0,
+                    height: 10.0,
+                },
+                SvgRootStyle {
+                    opacity: 0.5,
+                    neutralize_root_opacity: true,
+                    ..SvgRootStyle::default()
+                },
+                [0, 0, 0, 255],
+            )
+            .unwrap();
+        assert!(
+            exported.contains(&format!("<style>{stylesheet}</style>")),
+            "{exported}"
+        );
+        let image = SvgDocument::parse(exported.as_bytes())
+            .unwrap()
+            .rasterize(
+                SvgViewport {
+                    width: 10.0,
+                    height: 10.0,
+                },
+                SvgRootStyle::default(),
+                None,
+            )
+            .unwrap();
+        assert_eq!(&image.rgba[..3], &[0, 0, 0], "{stylesheet}: {exported}");
+    }
 }
 
 #[test]
@@ -2428,10 +2444,10 @@ fn descendant_overrides_share_the_selector_rewrite_budget() {
     }];
     let mut budget = SelectorFreezeBudget::new();
     budget.bytes = 1;
-    assert!(super::with_element_style_overrides(source, &styles, &mut budget).is_err());
+    assert!(super::with_element_style_overrides(source, &styles, true, &mut budget).is_err());
     let mut budget = SelectorFreezeBudget::new();
     budget.checks = 1;
-    assert!(super::with_element_style_overrides(source, &styles, &mut budget).is_err());
+    assert!(super::with_element_style_overrides(source, &styles, true, &mut budget).is_err());
 }
 
 #[test]
@@ -2441,13 +2457,17 @@ fn descendant_rewrites_fail_cleanly_at_intermediate_resource_limits() {
         element_index: 2,
         declarations: "color:blue;opacity:.25",
     }];
-    let expected =
-        super::with_element_style_overrides(source, &styles, &mut SelectorFreezeBudget::new())
-            .unwrap();
+    let expected = super::with_element_style_overrides(
+        source,
+        &styles,
+        true,
+        &mut SelectorFreezeBudget::new(),
+    )
+    .unwrap();
     for bytes in (0..10_000).step_by(17) {
         let mut budget = SelectorFreezeBudget::new();
         budget.bytes = bytes;
-        match super::with_element_style_overrides(source, &styles, &mut budget) {
+        match super::with_element_style_overrides(source, &styles, true, &mut budget) {
             Ok(prepared) => assert_eq!(prepared, expected),
             Err(SvgError::InvalidDocument(message)) => {
                 assert!(
@@ -2461,7 +2481,7 @@ fn descendant_rewrites_fail_cleanly_at_intermediate_resource_limits() {
     for checks in 0..30 {
         let mut budget = SelectorFreezeBudget::new();
         budget.checks = checks;
-        match super::with_element_style_overrides(source, &styles, &mut budget) {
+        match super::with_element_style_overrides(source, &styles, true, &mut budget) {
             Ok(prepared) => assert_eq!(prepared, expected),
             Err(SvgError::InvalidDocument(message)) => {
                 assert!(
@@ -2485,7 +2505,7 @@ fn descendant_scope_names_reject_exhausted_collision_suffixes() {
         declarations: "color:blue",
     }];
     assert!(matches!(
-        super::with_element_style_overrides(&source, &styles, &mut SelectorFreezeBudget::new()),
+        super::with_element_style_overrides(&source, &styles, true, &mut SelectorFreezeBudget::new()),
         Err(SvgError::InvalidDocument(message))
             if message.contains("selector freezing resource limit")
     ));
