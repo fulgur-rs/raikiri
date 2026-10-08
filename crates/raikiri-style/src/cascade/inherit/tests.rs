@@ -9639,3 +9639,57 @@ fn deferred_radius_shorthand_rolls_back_each_corner() {
         );
     }
 }
+
+#[test]
+fn corner_rollback_restores_static_radius_shorthands() {
+    for value in ["revert-layer", "var(--missing,revert-layer)"] {
+        let cv = cascade_doc(
+            &format!(
+                "@layer base {{p {{border-radius:20px / 30px}}}} @layer override {{p {{border-top-left-radius:{value}}}}}"
+            ),
+            "p",
+            None,
+        );
+        assert_eq!(
+            cv.border_radius.used(200.0, 100.0),
+            [[20.0, 30.0]; 4],
+            "{value}"
+        );
+    }
+    let cv = cascade_doc(
+        "@layer base {p {border-top-left-radius:20px 30px}} @layer middle {p {border-radius:10px / 15px}} @layer override {p {border-radius:var(--missing,revert-layer)}}",
+        "p",
+        None,
+    );
+    assert_eq!(cv.border_radius.used(200.0, 100.0), [[10.0, 15.0]; 4]);
+}
+
+#[test]
+fn radius_shorthand_css_wide_defaults_follow_corner_cascade() {
+    for keyword in ["initial", "unset", "revert"] {
+        let cv = cascade_doc(
+            "",
+            "p",
+            Some(&format!("border-radius:10px 20px;border-radius:{keyword}")),
+        );
+        assert_eq!(
+            cv.border_radius.used(200.0, 100.0),
+            [[0.0, 0.0]; 4],
+            "{keyword}"
+        );
+    }
+    for value in ["revert-layer", "var(--missing,revert-layer)"] {
+        let cv = cascade_doc(
+            &format!(
+                "@layer base {{p {{border-radius:20px / 30px}}}} @layer override {{p {{border-radius:{value}}}}}"
+            ),
+            "p",
+            None,
+        );
+        assert_eq!(
+            cv.border_radius.used(200.0, 100.0),
+            [[20.0, 30.0]; 4],
+            "{value}"
+        );
+    }
+}
