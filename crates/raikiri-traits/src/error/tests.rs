@@ -53,7 +53,10 @@ fn layout_error_resolver_variant_converts_to_render_error_resolver() {
 #[test]
 fn fragment_limit_error_reports_the_aggregate_cap() {
     let error = LayoutError::FragmentLimitExceeded { limit: 65_536 };
-    assert_eq!(error.to_string(), "Layout fragment limit exceeded: 65536");
+    assert_eq!(
+        error.to_string(),
+        "Layout fragment or break-flow work limit exceeded: 65536"
+    );
 }
 
 #[test]

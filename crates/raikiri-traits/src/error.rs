@@ -523,9 +523,10 @@ pub enum LayoutError {
         /// Estimated cumulative bytes after the rejected snapshot.
         actual: u64,
     },
-    /// One layout pass would create more fragments than the aggregate cap.
+    /// One layout pass would exceed its fragment or break-flow work cap.
     FragmentLimitExceeded {
-        /// Maximum number of retained fragments in one layout pass.
+        /// Separate maximum for retained fragments and estimated additional
+        /// break-flow measurement and child-scan work units in one layout pass.
         limit: usize,
     },
     /// Pagination would produce more pages than the configured limit.
@@ -559,7 +560,10 @@ impl std::fmt::Display for LayoutError {
                 "Layout counter snapshot limit exceeded: {actual} bytes (limit {limit})"
             ),
             Self::FragmentLimitExceeded { limit } => {
-                write!(f, "Layout fragment limit exceeded: {limit}")
+                write!(
+                    f,
+                    "Layout fragment or break-flow work limit exceeded: {limit}"
+                )
             }
             Self::PageLimitExceeded { limit, actual } => {
                 write!(

@@ -1416,13 +1416,9 @@ pub(super) fn parse_columns_shorthand(input: &mut Parser<'_, '_>) -> Option<Colu
 /// Fragmentation Module Level 3 §3.1
 /// <https://www.w3.org/TR/css-break-3/#break-between>).
 ///
-/// This crate accepts four keywords within its scope (see "Scope carving"
-/// in the [`BreakBetween`] docs): `auto`, `avoid`, `avoid-page`, and `page`.
-/// The eight remaining keywords in the property definition (`left`, `right`,
-/// `recto`, `verso`, `avoid-column`, `column`, `avoid-region`, `region`), along
-/// with `always` and `all` (absent from the current spec grammar), silently
-/// drop with `None` like other unknown idents. Idents are compared ASCII
-/// case-insensitively, as in sibling
+/// Accepts generic, page and column values, including Level 4 `always`.
+/// Unsupported page-spread and region values, and `all`, drop with `None`.
+/// Idents are compared ASCII case-insensitively, as in
 /// [`parse_word_break`](super::text::parse_word_break).
 pub(super) fn parse_break_between(input: &mut Parser<'_, '_>) -> Option<BreakBetween> {
     BreakBetween::from_css_ident(input.expect_ident().ok()?)
@@ -1431,11 +1427,9 @@ pub(super) fn parse_break_between(input: &mut Parser<'_, '_>) -> Option<BreakBet
 /// Parses `break-inside: <ident>` (CSS Fragmentation Module Level 3
 /// §3.2 <https://www.w3.org/TR/css-break-3/#break-within>).
 ///
-/// This crate accepts three keywords within its scope (see "Scope carving"
-/// in the [`BreakInside`] docs): `auto`, `avoid`, and `avoid-page`.
-/// The other two keywords in the property definition, `avoid-column` and
-/// `avoid-region`, silently drop with `None` like other unknown idents.
-/// Idents are compared ASCII case-insensitively, as in [`parse_break_between`].
+/// Accepts `auto`, `avoid`, `avoid-page`, and `avoid-column`.
+/// The unsupported region value drops with `None`. Idents are compared
+/// ASCII case-insensitively, as in [`parse_break_between`].
 pub(super) fn parse_break_inside(input: &mut Parser<'_, '_>) -> Option<BreakInside> {
     BreakInside::from_css_ident(input.expect_ident().ok()?)
 }

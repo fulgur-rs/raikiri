@@ -363,6 +363,92 @@ declarations, are resolved once against the existing nominal 480 × 288 basis us
 the page probe, before ordinary declaration units expand. This adapter policy
 does not claim complete support for every paged-media viewport-unit behavior.
 
+
+The CSS Break `break-between-avoid-000` through `014` references are pinned as
+exact 800 × 600 PASS results with bundled WPT fonts. All fifteen failed on
+main a57ec313 with shodo 0.0.23: thirteen differed by 10000 pixels, `007` by 11616 pixels, and
+`010` by 32500 pixels. After the runtime change, all fifteen match their
+references without tolerance changes. The 1450 existing report rows retain
+identical IDs, statuses and details.
+
+```sh
+cargo test --locked -p raikiri-wpt --test css_break_between_reftests -- --ignored
+```
+
+The parser keeps page and column constraints distinct, including `always`
+for the innermost fragmentation context. Pagination moves fitting connected
+direct-body block-level sibling runs (block, flow-root, list-item, flex and grid)
+at a legal boundary, using the destination page height
+when page sizes differ; oversized runs relax avoidance
+so they still advance. The bounded horizontal-column projection propagates
+first/last descendant constraints, resumes plain block wrappers, preserves
+atomic inline-blocks, flow-roots, text-bearing atomic boxes and inside-avoided boxes, admits block-level
+list items, gives forced column breaks
+priority, and treats floats as parallel flows. Floats do not enlarge a plain
+wrapper's normal-flow background area. Flex/grid roots with outer constraints
+preserve their measured child geometry and stay monolithic.
+Internal flex/grid constraints retain the previous strategy
+because their row/order propagation is not supplied by this projection.
+Auto-sized atomic and replaced boxes
+retain their measured or intrinsic width. Replaced leaves remain monolithic,
+so their source content is painted once rather than rescaled into column
+continuations. Horizontal RTL containers order their columns from right to
+left, including overflow columns; block alignment uses the immediate
+containing block's inline direction, while float sides remain physical.
+Forced boundaries after zero-height normal-flow boxes still advance, without
+introducing a blank column for a leading forced edge or a parallel float.
+A forced boundary on prior normal flow determines an adjacent float's column
+and is consumed once; the float still contributes no normal-flow height.
+Float-own outer forced edges remain an interoperability/policy followup in
+`raikiri-spike-0vv.136` (CSS Break 3 specifies SHOULD; the measured Chromium
+152 fixtures ignore them). Internal float breaks remain independent of normal
+flow. Explicit sibling page names that are identical retain avoided runs;
+a changed page name or a forced page edge still breaks the run. Page sibling
+adjacency uses generated box parents through `display: contents` and the
+effective float status of flex/grid items. Nonempty text through Contents
+interrupts the run. First/last in-flow child edges propagate through plain
+block wrappers, stopping at text, generated content, flex/grid/inline contexts
+and the bounded traversal limit; forced edges keep priority over avoidance.
+Fragmented list items paint their marker on the first principal fragment only. Positioned descendants of resumed
+plain wrappers and multiple projected floats retain the previous strategy,
+which avoids subtree replay and isolated float packing. Root positioned
+siblings and positioned descendants of monolithic atomic boxes remain eligible.
+Projected boxes with margin,
+padding, border, inset or clearance, and splittable wrappers with definite
+width, minimum/maximum sizes or non-visible overflow retain the existing
+geometry strategies. Atomic subtrees preserve their measured child
+geometry and remain monolithic when this projection has no child continuation.
+Internal forced boundaries in fixed-height blocks and flow-roots remain an
+existing limitation tracked in `raikiri-spike-0vv.138`; this projection applies
+their outer constraints and does not claim to split their internal child flow.
+Oversized unbreakable boxes advance once from an occupied column before
+overflowing; empty columns and parallel floats still make progress. Column
+widths use the content box, while the container fragment retains the measured
+border-box size. Root child fragments start at the used padding/border content
+origin, including percentage insets and RTL columns; nested fragments retain
+parent-relative coordinates. Enabled before/after content on resumable plain
+wrappers keeps the previous strategy, while generated-only atomic boxes remain
+monolithic. A normal-flow IFC beside a projected float retains its joint measurement,
+including lines displaced below a full-width float without a narrowed line
+space, rather than losing exclusion or vertical placement during isolated
+remeasurement. Nested columns, directly projected text, minimum block-size contexts
+and unsupported box structures retain their existing paths. These fifteen
+references and native controls do not establish complete table/flex/grid,
+vertical-writing or general box-decoration fragmentation support.
+
+Before this projection remeasures a subtree, a depth-sized preflight reserves
+estimated node visits and filtered child-index scans, including repeated
+measurement through plain wrappers, atomic and out-of-flow descendants,
+hidden children of measured boxes, and whitespace predicate scans. Hidden
+subtrees and out-of-flow roots that this projection never measures are skipped. The layout
+pass shares a cumulative work counter across these projections and resets it
+on the next pass. The existing fragment limit also supplies a separate upper
+bound for this additional work; retained fragment capacity can lower the
+remaining allowance. Exceeding either bound returns `FragmentLimitExceeded`
+before additional measurement. Thus a constrained high-fanout atomic subtree
+can be rejected even when it would emit few fragments. The ordinary initial
+layout and flows outside this projection retain their existing policy.
+
 ## Contextual background colors
 
 `color` and `background-color` retain `currentcolor` operands until the cascade
