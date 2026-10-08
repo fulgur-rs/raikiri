@@ -3,6 +3,20 @@
 use super::*;
 
 #[test]
+fn contextual_color_resolution_rejects_excessive_function_nesting() {
+    let mut source = String::from("currentcolor");
+    for _ in 0..MAX_COLOR_MIX_NESTING_DEPTH {
+        source = format!("color-mix(in srgb,{source},currentcolor)");
+    }
+    assert_eq!(
+        resolve_contextual_color(&source, CssColor::BLACK),
+        Some(CssColor::BLACK)
+    );
+    source = format!("color-mix(in srgb,{source},currentcolor)");
+    assert_eq!(resolve_contextual_color(&source, CssColor::BLACK), None);
+}
+
+#[test]
 fn contextual_color_serialization_preserves_the_keyword_and_function_boundary() {
     let keyword = parse(r"CuRrEnT\63 oLoR", "background-color").unwrap();
     assert_eq!(serialize_value(&keyword).as_deref(), Some("currentcolor"));

@@ -2,6 +2,7 @@
 
 use cssparser::color::parse_named_color;
 use cssparser::{ParseError, Parser, ParserInput, Token};
+use smol_str::SmolStr;
 
 use crate::property::types::*;
 
@@ -11,12 +12,10 @@ pub(crate) fn parse_element_color(
     input: &mut Parser<'_, '_>,
     key: PropertyKey,
 ) -> Option<PropertyValue> {
-    let start = input.position();
-    let color = parse_color(input)?;
-    let source = input.slice_from(start);
-    if !currentcolor_ranges(source)?.is_empty() {
+    let (color, expression) = parse_contextual_color(input)?;
+    if let Some(source) = expression {
         Some(PropertyValue::ContextualColor(ContextualColor {
-            source: source.into(),
+            source,
             key,
         }))
     } else if key == PropertyKey::Color {
@@ -24,6 +23,16 @@ pub(crate) fn parse_element_color(
     } else {
         Some(PropertyValue::BackgroundColor(color))
     }
+}
+
+pub(super) fn parse_contextual_color(
+    input: &mut Parser<'_, '_>,
+) -> Option<(CssColor, Option<SmolStr>)> {
+    let start = input.position();
+    let color = parse_color(input)?;
+    let source = input.slice_from(start);
+    let expression = (!currentcolor_ranges(source)?.is_empty()).then(|| source.into());
+    Some((color, expression))
 }
 
 fn currentcolor_ranges(source: &str) -> Option<Vec<(usize, usize)>> {

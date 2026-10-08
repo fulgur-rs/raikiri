@@ -2291,19 +2291,16 @@ pub(crate) fn parse_background_shorthand(
             continue;
         }
         if color.is_none()
-            && let Ok(v) = input.try_parse(|i| -> Result<PropertyValue, ParseError<'_, ()>> {
-                super::color::parse_element_color(i, PropertyKey::BackgroundColor)
-                    .ok_or_else(|| i.new_custom_error(()))
+            && let Ok((value, expression)) = input.try_parse(|i| -> Result<_, ParseError<'_, ()>> {
+                super::color::parse_contextual_color(i).ok_or_else(|| i.new_custom_error(()))
             })
         {
-            match v {
-                PropertyValue::BackgroundColor(value) => color = Some(value),
-                PropertyValue::ContextualColor(value) => {
-                    color = Some(CssColor::TRANSPARENT);
-                    color_expression = Some(value.source);
-                }
-                _ => return None,
-            }
+            color = Some(if expression.is_some() {
+                CssColor::TRANSPARENT
+            } else {
+                value
+            });
+            color_expression = expression;
             continue;
         }
 
