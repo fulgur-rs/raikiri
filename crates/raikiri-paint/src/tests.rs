@@ -1979,15 +1979,21 @@ fn img_padding_percentage_resolves_against_width_not_height() {
     // CSS 2.1 §8.4 <https://www.w3.org/TR/CSS21/box.html#propdef-padding-top>:
     // every `padding-*` percentage — top/bottom included — resolves
     // against the containing block's *inline size* (width), never the
-    // element's own height. width=100px, height=50px, padding-top:20%
+    // element's own height. Containing width=100px, image height=50px, padding-top:20%
     // deliberately makes "resolved against width" (20px) and "resolved
     // against height" (10px) disagree, so a wrong reference axis
     // produces a different, assertion-failing offset.
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let img = doc.append_element(
+    let container = doc.append_element(
         Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px"),
+    );
+    let img = doc.append_element(
+        Some(container),
         "img",
         Style::default(),
         Some(
@@ -2031,15 +2037,16 @@ fn img_padding_percentage_resolves_against_width_not_height() {
         .expect("expected an image fill command in the recorded scene");
 
     let body_loc = doc.get_node(body).unwrap().unrounded_layout.location;
+    let container_loc = doc.get_node(container).unwrap().unrounded_layout.location;
     let img_loc = doc.get_node(img).unwrap().unrounded_layout.location;
-    // border-box top + padding-top resolved against width (100px * 20% = 20px).
-    let expected_content_y = (body_loc.y + img_loc.y + 20.0) as f64;
+    // Border-box top plus 20% of the containing block width (100px).
+    let expected_content_y = (body_loc.y + container_loc.y + img_loc.y + 20.0) as f64;
     let coeffs = fill.transform.as_coeffs();
     let epsilon = 1e-4;
     assert!(
         (coeffs[5] - expected_content_y).abs() < epsilon,
         "content-box y translation = {}, expected {} (padding-top:20% of \
-             width=100px is 20px, not 20% of height=50px which would be 10px)",
+             containing width=100px is 20px, not 20% of height=50px which would be 10px)",
         coeffs[5],
         expected_content_y
     );

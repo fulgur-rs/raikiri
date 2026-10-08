@@ -171,3 +171,31 @@ fn raster_content_boxes_use_layout_resolved_percentage_padding() {
     assert_eq!(image.rect, PaintRect::new(20.0, 20.0, 80.0, 80.0));
     assert_eq!(image.clip.rect, image.rect);
 }
+
+#[test]
+fn malformed_and_zero_sized_raster_pixels_are_omitted() {
+    for (width, height, rgba) in [
+        (0, 1, vec![]),
+        (1, 0, vec![]),
+        (4, 2, vec![255; 31]),
+        (4, 2, vec![255; 33]),
+        (u32::MAX, u32::MAX, vec![]),
+    ] {
+        let layout_pixels = Pixels::new();
+        let document = lay_out("<img src='image.png'>", "", &layout_pixels);
+        let page = document.page(0).unwrap();
+        let fragment = page
+            .fragments()
+            .find(|fragment| page.dom().local_name(fragment.node()) == Some("img"))
+            .unwrap();
+        let malformed = Pixels {
+            image: Arc::new(DecodedImage {
+                width,
+                height,
+                rgba,
+            }),
+            requests: Mutex::new(Vec::new()),
+        };
+        assert!(page.raster_image(&fragment, &malformed).is_none());
+    }
+}
