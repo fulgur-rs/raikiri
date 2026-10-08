@@ -683,6 +683,21 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                             "font-family",
                             crate::property::PropertyKey::FontFamily,
                         ),
+                        (
+                            "font-weight",
+                            "font-weight",
+                            crate::property::PropertyKey::FontWeight,
+                        ),
+                        (
+                            "font-style",
+                            "font-style",
+                            crate::property::PropertyKey::FontStyle,
+                        ),
+                        (
+                            "visibility",
+                            "visibility",
+                            crate::property::PropertyKey::Visibility,
+                        ),
                         ("opacity", "opacity", crate::property::PropertyKey::Opacity),
                         (
                             "background-color",

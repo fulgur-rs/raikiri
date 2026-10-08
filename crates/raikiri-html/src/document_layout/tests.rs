@@ -127,6 +127,102 @@ fn inline_svg_root_font_attributes_join_the_host_cascade() {
 }
 
 #[test]
+fn inline_svg_exports_resolved_font_weight_and_style() {
+    for (css, attrs, weight, style) in [
+        (
+            "body{font-weight:700;font-style:italic}",
+            "",
+            700.0,
+            "italic",
+        ),
+        (
+            "body{font-weight:700;font-style:italic}svg{font-weight:400;font-style:normal}",
+            "",
+            400.0,
+            "normal",
+        ),
+        (
+            "",
+            "font-weight='600' font-style='oblique'",
+            600.0,
+            "oblique",
+        ),
+        (
+            "@layer x{svg{font-weight:500;font-style:normal}}",
+            "font-weight='600' font-style='italic'",
+            500.0,
+            "normal",
+        ),
+        (
+            "body{font-weight:400}svg{font-weight:bolder;font-style:inherit}",
+            "",
+            700.0,
+            "normal",
+        ),
+        (
+            "body{font-style:oblique}svg{font:italic bold 12px serif !important}",
+            "",
+            700.0,
+            "italic",
+        ),
+    ] {
+        let result = laid_out(&format!(
+            "<style>@page{{size:100px 100px;margin:0}}svg{{display:block}}{css}</style><svg width='60' height='30' {attrs}><text y='20'>Font</text></svg>"
+        ));
+        let page = result.page(0).unwrap();
+        let fragment = page
+            .fragments()
+            .find(|f| page.dom().local_name(f.node()) == Some("svg"))
+            .unwrap();
+        let computed = page.computed(fragment.node()).unwrap();
+        assert_eq!(computed.font_weight, weight, "host weight: {css} / {attrs}");
+        assert_eq!(computed.font_style.as_css_str(), style);
+        let payload = page.inline_svg(&fragment).unwrap().unwrap();
+        let standalone = laid_out(&payload.source);
+        let standalone_page = standalone.page(0).unwrap();
+        let root = standalone_page
+            .fragments()
+            .find(|f| standalone_page.dom().local_name(f.node()) == Some("svg"))
+            .unwrap();
+        let exported = standalone_page.computed(root.node()).unwrap();
+        assert_eq!(
+            exported.font_weight, weight,
+            "exported weight: {css} / {attrs}"
+        );
+        assert_eq!(exported.font_style.as_css_str(), style);
+    }
+}
+
+#[test]
+fn inline_svg_hidden_root_keeps_explicitly_visible_descendants() {
+    let result = laid_out(
+        "<style>@page{size:100px 100px;margin:0}svg{display:block;visibility:hidden}</style><svg width='20' height='10'><rect width='10' height='10' fill='red'/><rect x='10' width='10' height='10' fill='blue' visibility='visible'/></svg>",
+    );
+    let page = result.page(0).unwrap();
+    let fragment = page
+        .fragments()
+        .find(|f| page.dom().local_name(f.node()) == Some("svg"))
+        .unwrap();
+    let payload = page
+        .inline_svg(&fragment)
+        .unwrap()
+        .expect("hidden roots can have visible descendants");
+    let prepared = raikiri_svg::SvgDocument::parse(payload.source.as_bytes()).unwrap();
+    let image = prepared
+        .rasterize(
+            raikiri_svg::SvgViewport {
+                width: 20.0,
+                height: 10.0,
+            },
+            raikiri_svg::SvgRootStyle::default(),
+            None,
+        )
+        .unwrap();
+    assert_eq!(&image.rgba[..4], &[0, 0, 0, 0]);
+    assert_eq!(&image.rgba[10 * 4..11 * 4], &[0, 0, 255, 255]);
+}
+
+#[test]
 fn inline_svg_presentation_dimensions_yield_to_layered_author_css() {
     let document = dom(
         "<style>@page{size:200px 100px;margin:0}body{margin:0}svg{display:block}@layer x{svg{width:30px;height:15px}}</style><svg width='10' height='10'><rect width='10' height='10'/></svg>",
@@ -895,12 +991,8 @@ fn text_fragments_have_no_element_content_box() {
 }
 
 #[test]
-fn inline_svg_payload_skips_empty_and_hidden_content_boxes() {
-    for style in [
-        "width:0;height:10px",
-        "width:10px;height:0",
-        "width:10px;height:10px;visibility:hidden",
-    ] {
+fn inline_svg_payload_skips_empty_content_boxes() {
+    for style in ["width:0;height:10px", "width:10px;height:0"] {
         let document = dom(&format!(
             "<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' style='display:block;{style}'><rect width='10' height='10'/></svg>"
         ));

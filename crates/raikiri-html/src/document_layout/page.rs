@@ -91,7 +91,8 @@ impl<'a> Page<'a> {
     /// Prepares the vector source of an SVG root placed by this page.
     ///
     /// Pass a fragment from [`Self::fragments`]. Ordinary elements, text and
-    /// empty or hidden SVG viewports return `None`. The host box is drawn
+    /// empty SVG viewports return `None`. Hidden roots retain source so their
+    /// explicitly visible descendants can still be drawn. The host box is drawn
     /// separately; source admission and preparation errors are returned.
     /// Fixed boxes placed through other insets than `top` and `left` lengths
     /// are rejected, including when the fixed box is an ancestor. Their paint
@@ -116,10 +117,7 @@ impl<'a> Page<'a> {
         let Some(computed) = self.computed(fragment.node()) else {
             return Ok(None); // cov:ignore: Completed layout cascades cover the entire source node arena.
         };
-        if viewport.width <= 0.0
-            || viewport.height <= 0.0
-            || computed.visibility != raikiri_style::property::Visibility::Visible
-        {
+        if viewport.width <= 0.0 || viewport.height <= 0.0 {
             return Ok(None);
         }
         let dom = self.dom();
@@ -157,7 +155,7 @@ impl<'a> Page<'a> {
             .unwrap_or(false)
             .then_some(computed.opacity);
         let color = computed.color;
-        let source = document.styled_source_with_root_color_and_font(
+        let source = document.styled_source_with_resolved_root_style(
             raikiri_svg::SvgViewport {
                 width: viewport.width,
                 height: viewport.height,
@@ -172,29 +170,33 @@ impl<'a> Page<'a> {
                     .get(id)
                     .copied()
                     .unwrap_or(false),
-                visible: true,
+                visible: computed.visibility == raikiri_style::property::Visibility::Visible,
             },
             [color.r, color.g, color.b, color.a],
-            computed.font_size.0,
-            &computed
-                .font_family
-                .iter()
-                .map(|family| {
-                    if family.1 == raikiri_style::property::FontFamilyKind::Generic {
-                        family.as_str().to_owned()
-                    } else {
-                        let name = family
-                            .as_str()
-                            .replace('\\', "\\\\")
-                            .replace('"', "\\\"")
-                            .replace('\n', "\\a ")
-                            .replace('\r', "\\d ")
-                            .replace('\u{c}', "\\c ");
-                        format!("\"{name}\"")
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join(","),
+            raikiri_svg::SvgRootFont {
+                size: computed.font_size.0,
+                weight: computed.font_weight,
+                style: computed.font_style.as_css_str(),
+                family: &computed
+                    .font_family
+                    .iter()
+                    .map(|family| {
+                        if family.1 == raikiri_style::property::FontFamilyKind::Generic {
+                            family.as_str().to_owned()
+                        } else {
+                            let name = family
+                                .as_str()
+                                .replace('\\', "\\\\")
+                                .replace('"', "\\\"")
+                                .replace('\n', "\\a ")
+                                .replace('\r', "\\d ")
+                                .replace('\u{c}', "\\c ");
+                            format!("\"{name}\"")
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(","),
+            },
         )?;
         Ok(Some(InlineSvg {
             source,

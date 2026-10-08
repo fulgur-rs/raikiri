@@ -69,6 +69,27 @@ impl Default for SvgRootStyle {
     }
 }
 
+/// Resolved font properties inherited by a standalone SVG root.
+#[derive(Debug, Clone, Copy)]
+pub struct SvgRootFont<'a> {
+    /// Finite non-negative font size in CSS pixels.
+    pub size: f32,
+    /// CSS family candidate list, preserving all fallback names.
+    pub family: &'a str,
+    /// Finite absolute weight in the inclusive range 1 to 1000.
+    pub weight: f32,
+    /// CSS `font-style` keyword: `normal`, `italic` or `oblique`.
+    pub style: &'a str,
+}
+
+#[derive(Clone, Copy, Default)]
+struct SourceRootStyle<'a> {
+    color: Option<[u8; 4]>,
+    font: Option<(f32, &'a str)>,
+    font_face: Option<(f32, &'a str)>,
+    visible: Option<bool>,
+}
+
 /// SVG parsing, viewport, or allocation failure.
 #[derive(Debug)]
 #[non_exhaustive]
@@ -213,7 +234,7 @@ impl SvgDocument {
         viewport: SvgViewport,
         root_style: SvgRootStyle,
     ) -> Result<String, SvgError> {
-        self.styled_source_impl(viewport, root_style, None, None)
+        self.styled_source_impl(viewport, root_style, SourceRootStyle::default())
     }
 
     /// Prepares source with the host cascade's effective SVG root color.
@@ -228,7 +249,14 @@ impl SvgDocument {
         root_style: SvgRootStyle,
         root_color: [u8; 4],
     ) -> Result<String, SvgError> {
-        self.styled_source_impl(viewport, root_style, Some(root_color), None)
+        self.styled_source_impl(
+            viewport,
+            root_style,
+            SourceRootStyle {
+                color: Some(root_color),
+                ..SourceRootStyle::default()
+            },
+        )
     }
 
     /// Prepares source with resolved root color and font inheritance.
@@ -244,7 +272,7 @@ impl SvgDocument {
         font_size: f32,
         font_family: &str,
     ) -> Result<String, SvgError> {
-        if !font_size.is_finite() || font_size < 0.0 || font_family.trim().is_empty() {
+        if !valid_root_font(font_size, font_family) {
             return Err(SvgError::InvalidDocument(
                 "invalid SVG root font style".into(),
             ));
@@ -252,8 +280,49 @@ impl SvgDocument {
         self.styled_source_impl(
             viewport,
             root_style,
-            Some(root_color),
-            Some((font_size, font_family)),
+            SourceRootStyle {
+                color: Some(root_color),
+                font: Some((font_size, font_family)),
+                ..SourceRootStyle::default()
+            },
+        )
+    }
+
+    /// Prepares source with the host's resolved root color, font and visibility.
+    ///
+    /// Resolve presentation attributes and author CSS before calling this
+    /// method. Original selector matches are frozen before root overrides.
+    /// Descendant declarations, including explicit visibility and font
+    /// overrides, are preserved. Unlike [`Self::styled_source`], this method
+    /// applies `root_style.visible` to the source root, so a hidden root can
+    /// still contain visible descendants.
+    pub fn styled_source_with_resolved_root_style(
+        &self,
+        viewport: SvgViewport,
+        root_style: SvgRootStyle,
+        root_color: [u8; 4],
+        font: SvgRootFont<'_>,
+    ) -> Result<String, SvgError> {
+        if !valid_root_font(font.size, font.family)
+            || !font.weight.is_finite()
+            || !(1.0..=1000.0).contains(&font.weight)
+            || !["normal", "italic", "oblique"]
+                .iter()
+                .any(|keyword| font.style.eq_ignore_ascii_case(keyword))
+        {
+            return Err(SvgError::InvalidDocument(
+                "invalid SVG root font style".into(),
+            ));
+        }
+        self.styled_source_impl(
+            viewport,
+            root_style,
+            SourceRootStyle {
+                color: Some(root_color),
+                font: Some((font.size, font.family)),
+                font_face: Some((font.weight, font.style)),
+                visible: Some(root_style.visible),
+            },
         )
     }
 
@@ -261,8 +330,7 @@ impl SvgDocument {
         &self,
         viewport: SvgViewport,
         root_style: SvgRootStyle,
-        root_color: Option<[u8; 4]>,
-        root_font: Option<(f32, &str)>,
+        source_style: SourceRootStyle<'_>,
     ) -> Result<String, SvgError> {
         if !viewport.width.is_finite()
             || !viewport.height.is_finite()
@@ -275,15 +343,14 @@ impl SvgDocument {
             return Err(SvgError::InvalidOpacity);
         }
         reject_exported_external_references(&self.source)?;
-        self.prepare_source(viewport, root_style, root_color, root_font, true)
+        self.prepare_source(viewport, root_style, source_style, true)
     }
 
     fn prepare_source(
         &self,
         viewport: SvgViewport,
         root_style: SvgRootStyle,
-        root_color: Option<[u8; 4]>,
-        root_font: Option<(f32, &str)>,
+        source_style: SourceRootStyle<'_>,
         exact_viewport: bool,
     ) -> Result<String, SvgError> {
         let viewport_matches = viewport_matches_tree(
@@ -294,8 +361,9 @@ impl SvgDocument {
         );
         let modifies_source = exact_viewport
             || !viewport_matches
-            || root_color.is_some()
-            || root_font.is_some()
+            || source_style.color.is_some()
+            || source_style.font.is_some()
+            || source_style.visible.is_some()
             || root_style.neutralize_root_opacity
             || root_style.host_controls_root_background
             || !self.root_has_color;
@@ -311,7 +379,7 @@ impl SvgDocument {
         } else {
             source
         };
-        let source = if root_font.is_some() {
+        let source = if source_style.font.is_some() {
             normalize_svg_font_shorthands(&source, &mut rewrite_budget)?
         } else {
             source
@@ -328,16 +396,16 @@ impl SvgDocument {
         };
         let source = if root_style.neutralize_root_opacity
             || root_style.host_controls_root_background
-            || root_color.is_some()
-            || root_font.is_some()
+            || source_style.color.is_some()
+            || source_style.font.is_some()
+            || source_style.visible.is_some()
         {
             with_root_style_overrides(
                 &source,
                 root_style.opacity,
                 root_style.neutralize_root_opacity,
                 root_style.host_controls_root_background || root_style.neutralize_root_opacity,
-                root_color,
-                root_font,
+                source_style,
                 &mut rewrite_budget,
             )?
         } else {
@@ -399,7 +467,8 @@ impl SvgDocument {
         };
 
         if root_style.visible && root_style.opacity > 0.0 {
-            let source = self.prepare_source(viewport, root_style, None, None, false)?;
+            let source =
+                self.prepare_source(viewport, root_style, SourceRootStyle::default(), false)?;
             let raster_opacity = if root_style.neutralize_root_opacity {
                 1.0
             } else {
@@ -2179,15 +2248,45 @@ fn expand_font_shorthands(
     apply_selector_edits(source, edits, budget).map(Some)
 }
 
+fn valid_root_font(size: f32, family: &str) -> bool {
+    if !size.is_finite() || size < 0.0 {
+        return false;
+    }
+    let mut input = cssparser::ParserInput::new(family);
+    let mut parser = cssparser::Parser::new(&mut input);
+    let mut has_name = false;
+    let mut quoted = false;
+    while let Ok(token) = parser.next() {
+        match token {
+            cssparser::Token::Ident(_) if !quoted => has_name = true,
+            cssparser::Token::QuotedString(_) if !has_name => {
+                has_name = true;
+                quoted = true;
+            }
+            cssparser::Token::Comma if has_name => {
+                has_name = false;
+                quoted = false;
+            }
+            _ => return false,
+        }
+    }
+    has_name
+}
+
 fn with_root_style_overrides(
     source: &str,
     inherited_root_opacity: f32,
     neutralize_root_opacity: bool,
     host_controls_root_background: bool,
-    root_color: Option<[u8; 4]>,
-    root_font: Option<(f32, &str)>,
+    source_style: SourceRootStyle<'_>,
     budget: &mut SelectorFreezeBudget,
 ) -> Result<String, SvgError> {
+    let SourceRootStyle {
+        color: root_color,
+        font: root_font,
+        font_face,
+        visible,
+    } = source_style;
     budget.bytes(source.len())?;
     let xml = roxmltree::Document::parse(source)
         .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
@@ -2218,6 +2317,21 @@ fn with_root_style_overrides(
             budget.bytes(2 * std::mem::size_of::<(Range<usize>, String)>())?;
             edits.push((attribute.range(), String::new()));
         }
+    }
+    if font_face.is_some() {
+        root_style_properties.extend(["font-weight", "font-style"]);
+        stylesheet_properties.extend(["font-weight", "font-style"]);
+    }
+    if visible.is_some() {
+        root_style_properties.push("visibility");
+        stylesheet_properties.push("visibility");
+    }
+    for attribute in root.attributes().filter(|attribute| {
+        (font_face.is_some() && matches!(attribute.name(), "font-weight" | "font-style"))
+            || (visible.is_some() && attribute.name() == "visibility")
+    }) {
+        budget.bytes(2 * std::mem::size_of::<(Range<usize>, String)>())?;
+        edits.push((attribute.range(), String::new()));
     }
     if host_controls_root_background {
         root_style_properties.extend(["background-color", "background"]);
@@ -2269,6 +2383,25 @@ fn with_root_style_overrides(
                 &format!("font-size:{size}px;font-family:{family}"),
             );
         }
+        if let Some((weight, style)) = font_face {
+            style_value = append_inline_declarations(
+                &style_value,
+                &format!(
+                    "font-weight:{weight};font-style:{}",
+                    style.to_ascii_lowercase()
+                ),
+            );
+        }
+        if let Some(visible) = visible {
+            style_value = append_inline_declarations(
+                &style_value,
+                if visible {
+                    "visibility:visible"
+                } else {
+                    "visibility:hidden"
+                },
+            );
+        }
         let escaped_bytes = xml_attribute_escape_allocation_bytes(&style_value)?;
         budget.bytes(escaped_bytes)?;
         let escaped_style_value = escape_xml_attribute(&style_value);
@@ -2289,7 +2422,11 @@ fn with_root_style_overrides(
                 attribute.range(),
                 format!("style=\"{escaped_style_value}\""),
             ));
-        } else if neutralize_root_opacity || root_color.is_some() || root_font.is_some() {
+        } else if neutralize_root_opacity
+            || root_color.is_some()
+            || root_font.is_some()
+            || visible.is_some()
+        {
             let attribute_len = escaped_style_value
                 .len()
                 .checked_add(8)

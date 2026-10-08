@@ -1,7 +1,7 @@
 use super::{
     INITIAL_PARSE_DECLARATION_CAPACITY_FACTOR, InitialParseSelectorBudget,
     MAX_INITIAL_PARSE_DECLARATION_STORAGE_BYTES, MAX_INITIAL_PARSE_XML_DEPTH, ParsedCssDeclaration,
-    SelectorFreezeBudget, SvgDocument, SvgError, SvgRootStyle, SvgViewport,
+    SelectorFreezeBudget, SourceRootStyle, SvgDocument, SvgError, SvgRootStyle, SvgViewport,
     append_inline_declarations, apply_css_rewrite, apply_selector_edits,
     charge_initial_parse_node_count, estimate_initial_stylesheet_resources,
     freeze_svg_stylesheet_selectors, is_simplecss_name_start, normalize_svg_opacity_cascade,
@@ -484,7 +484,14 @@ fn root_style_rewrite_obeys_the_shared_selector_match_budget() {
         checks: usize::MAX,
     };
 
-    let result = with_root_style_overrides(source, 1.0, false, true, None, None, &mut budget);
+    let result = with_root_style_overrides(
+        source,
+        1.0,
+        false,
+        true,
+        SourceRootStyle::default(),
+        &mut budget,
+    );
 
     assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
         if message.contains("selector freezing resource limit")));
@@ -500,7 +507,14 @@ fn root_style_rewrite_charges_scoped_css_expansion_before_allocation() {
         checks: usize::MAX,
     };
 
-    let result = with_root_style_overrides(&source, 1.0, false, true, None, None, &mut budget);
+    let result = with_root_style_overrides(
+        &source,
+        1.0,
+        false,
+        true,
+        SourceRootStyle::default(),
+        &mut budget,
+    );
 
     assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
         if message.contains("selector freezing resource limit")));
@@ -515,7 +529,14 @@ fn root_style_rewrite_rejects_budget_exhaustion_before_removing_root_attributes(
         checks: usize::MAX,
     };
 
-    let result = with_root_style_overrides(source, 1.0, false, true, None, None, &mut budget);
+    let result = with_root_style_overrides(
+        source,
+        1.0,
+        false,
+        true,
+        SourceRootStyle::default(),
+        &mut budget,
+    );
 
     assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
         if message.contains("selector freezing resource limit")));
@@ -530,7 +551,14 @@ fn root_style_rewrite_rejects_budget_exhaustion_before_copying_existing_style() 
         checks: usize::MAX,
     };
 
-    let result = with_root_style_overrides(source, 1.0, true, false, None, None, &mut budget);
+    let result = with_root_style_overrides(
+        source,
+        1.0,
+        true,
+        false,
+        SourceRootStyle::default(),
+        &mut budget,
+    );
 
     assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
         if message.contains("selector freezing resource limit")));
@@ -551,7 +579,14 @@ fn root_style_rewrite_rejects_budget_exhaustion_before_replacing_existing_style(
         checks: usize::MAX,
     };
 
-    let result = with_root_style_overrides(source, 1.0, true, false, None, None, &mut budget);
+    let result = with_root_style_overrides(
+        source,
+        1.0,
+        true,
+        false,
+        SourceRootStyle::default(),
+        &mut budget,
+    );
 
     assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
         if message.contains("selector freezing resource limit")));
@@ -567,7 +602,14 @@ fn root_style_rewrite_rejects_budget_exhaustion_before_copying_stylesheet_text()
         checks: usize::MAX,
     };
 
-    let result = with_root_style_overrides(source, 1.0, false, true, None, None, &mut budget);
+    let result = with_root_style_overrides(
+        source,
+        1.0,
+        false,
+        true,
+        SourceRootStyle::default(),
+        &mut budget,
+    );
 
     assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
         if message.contains("selector freezing resource limit")));
@@ -581,8 +623,15 @@ fn root_style_rewrite_rejects_budget_exhaustion_before_copying_scope_attributes(
         matches: usize::MAX,
         checks: usize::MAX,
     };
-    let rewritten =
-        with_root_style_overrides(source, 1.0, false, true, None, None, &mut full_budget).unwrap();
+    let rewritten = with_root_style_overrides(
+        source,
+        1.0,
+        false,
+        true,
+        SourceRootStyle::default(),
+        &mut full_budget,
+    )
+    .unwrap();
     let bytes_through_scope_rewrite = usize::MAX - full_budget.bytes - rewritten.len() - 1;
     let mut limited_budget = SelectorFreezeBudget {
         bytes: bytes_through_scope_rewrite,
@@ -590,8 +639,14 @@ fn root_style_rewrite_rejects_budget_exhaustion_before_copying_scope_attributes(
         checks: usize::MAX,
     };
 
-    let result =
-        with_root_style_overrides(source, 1.0, false, true, None, None, &mut limited_budget);
+    let result = with_root_style_overrides(
+        source,
+        1.0,
+        false,
+        true,
+        SourceRootStyle::default(),
+        &mut limited_budget,
+    );
 
     assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
         if message.contains("selector freezing resource limit")));
@@ -1686,6 +1741,104 @@ fn styled_source_keeps_text_for_a_consumers_font_database() {
     assert!(source.contains("<text"));
     assert!(source.contains("Consumer Bundled Font"));
     assert!(source.contains("PDF text"));
+}
+
+#[test]
+fn styled_source_root_family_is_a_css_list_without_extra_declarations() {
+    let svg = SvgDocument::parse(HALF_RED_RECT).unwrap();
+    for family in [
+        "serif;fill:url(https://example.com/paint.svg)",
+        "serif;opacity:0",
+        "serif,",
+        "serif,,sans-serif",
+    ] {
+        assert!(
+            matches!(
+                svg.styled_source_with_root_color_and_font(
+                    SvgViewport {
+                        width: 2.0,
+                        height: 1.0
+                    },
+                    SvgRootStyle::default(),
+                    [0, 0, 0, 255],
+                    12.0,
+                    family
+                ),
+                Err(SvgError::InvalidDocument(_))
+            ),
+            "invalid family list: {family}"
+        );
+    }
+}
+
+#[test]
+fn resolved_root_style_keeps_font_faces_and_original_visibility_selectors() {
+    use super::SvgRootFont;
+    let svg = SvgDocument::parse(br#"<svg width="50" height="30" visibility="visible" font-weight="400" style="font:normal 12px Ahem"><style>svg[visibility=visible][font-weight="400"] text{fill:red}</style><text y="20">Font</text></svg>"#).unwrap();
+    let source = svg
+        .styled_source_with_resolved_root_style(
+            SvgViewport {
+                width: 50.0,
+                height: 30.0,
+            },
+            SvgRootStyle {
+                visible: false,
+                ..SvgRootStyle::default()
+            },
+            [0, 0, 0, 255],
+            SvgRootFont {
+                size: 12.0,
+                family: "Ahem",
+                weight: 700.0,
+                style: "italic",
+            },
+        )
+        .unwrap();
+    let xml = roxmltree::Document::parse(&source).unwrap();
+    let root = xml.root_element();
+    assert!(root.attribute("font-weight").is_none());
+    assert!(root.attribute("visibility").is_none());
+    assert!(
+        root.attribute("style")
+            .unwrap()
+            .contains("visibility:hidden")
+    );
+    let style = root.attribute("style").unwrap();
+    assert!(style.contains("font-weight:700"));
+    assert!(style.contains("font-style:italic"));
+    assert!(source.contains("fill:red"));
+}
+
+#[test]
+fn resolved_root_style_rejects_invalid_font_faces() {
+    use super::SvgRootFont;
+    let svg = SvgDocument::parse(HALF_RED_RECT).unwrap();
+    for (weight, style) in [
+        (0.0, "normal"),
+        (1001.0, "normal"),
+        (f32::NAN, "normal"),
+        (f32::INFINITY, "normal"),
+        (400.0, "unknown"),
+        (400.0, "italic;fill:red"),
+    ] {
+        assert!(matches!(
+            svg.styled_source_with_resolved_root_style(
+                SvgViewport {
+                    width: 2.0,
+                    height: 1.0
+                },
+                SvgRootStyle::default(),
+                [0, 0, 0, 255],
+                SvgRootFont {
+                    size: 12.0,
+                    family: "serif",
+                    weight,
+                    style
+                }
+            ),
+            Err(SvgError::InvalidDocument(_))
+        ));
+    }
 }
 
 #[test]
