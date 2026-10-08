@@ -1,6 +1,18 @@
 use super::*;
 use std::cell::Cell;
 
+// Flex traversal skips Contents boxes when globally ordering effective
+// items; preserve their stored offsets relative to the visited parent.
+fn pagination_child_parent_y(document: &Document, parent: usize, child: usize, raw_y: f32) -> f32 {
+    let mut child_parent_y = raw_y;
+    let mut skipped_parent = document.parent_of(child);
+    while let Some(id) = skipped_parent.filter(|&id| id != parent) {
+        child_parent_y += document.nodes[id].unrounded_layout.location.y;
+        skipped_parent = document.parent_of(id);
+    }
+    child_parent_y
+}
+
 /// Break the lines of every paragraph again for a page-specific
 /// containing-block width.
 ///
@@ -1918,6 +1930,19 @@ pub fn layout_pages_with_page_geometry_and_control(
             .map(|child_id| (child_id, depth.saturating_add(1)))
             .collect();
         while let Some((current_id, current_depth)) = pending.pop() {
+            let node = &document.nodes[current_id];
+            let computed = &cascade.computed[current_id];
+            if !node.is_in_document()
+                || node.is_non_rendered_html_element()
+                || computed.display == DisplayValue::None
+                || matches!(
+                    computed.position,
+                    PositionValue::Absolute | PositionValue::Fixed
+                )
+                || !matches!(computed.float, FloatValue::None)
+            {
+                continue;
+            }
             if current_depth >= 2 && selected_page_name(cascade, current_id).is_some() {
                 return true;
             }
@@ -2317,15 +2342,16 @@ pub fn layout_pages_with_page_geometry_and_control(
                         ifc_root: None,
                     });
                 }
-                let child_is_direct_body = node_id == body_id;
                 let child_order = pagination_child_order(document, cascade, node_id);
                 for child_id in child_order {
+                    let child_parent_y =
+                        pagination_child_parent_y(document, node_id, child_id, raw_y);
                     collect_candidates(
                         document,
                         cascade,
                         child_id,
-                        raw_y,
-                        child_is_direct_body,
+                        child_parent_y,
+                        document.parent_of(child_id) == Some(body_id),
                         body_id,
                         node.unrounded_layout.size.height.max(0.0),
                         page_step,

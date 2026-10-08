@@ -2617,3 +2617,159 @@ fn column_review_empty_children_do_not_hide_a_rendered_leading_box() {
         (vec![None, Some("a".into())], vec![0, 1])
     );
 }
+
+#[test]
+fn contents_items_use_global_order_for_named_page_traversal() {
+    for separate_wrappers in [false, true] {
+        for reverse in [false, true] {
+            let (mut doc, _, flex) = column_review_document();
+            if reverse {
+                doc.set_element_inline_style(
+                    flex,
+                    Some("display:flex;flex-direction:column-reverse".into()),
+                );
+            }
+            let wrapper = doc.append_element(
+                Some(flex),
+                "div",
+                Style::default(),
+                Some("display:contents"),
+            );
+            let mut texts = Vec::new();
+            for (name, order) in [("a", 2), ("b", 1)] {
+                let parent = if separate_wrappers {
+                    doc.append_element(
+                        Some(flex),
+                        "div",
+                        Style::default(),
+                        Some("display:contents"),
+                    )
+                } else {
+                    wrapper
+                };
+                let item = doc.append_element(
+                    Some(parent),
+                    "div",
+                    Style::default(),
+                    Some(&format!("display:block;order:{order}")),
+                );
+                let named = doc.append_element(
+                    Some(item),
+                    "div",
+                    Style::default(),
+                    Some(&format!("display:block;page:{name}")),
+                );
+                texts.push(doc.append_text(named, "X"));
+            }
+            let expected = if reverse {
+                (vec![Some("a".into()), Some("b".into())], vec![0, 1])
+            } else {
+                (vec![Some("b".into()), Some("a".into())], vec![1, 0])
+            };
+            assert_eq!(
+                column_review_pages(doc, &texts),
+                expected,
+                "separate={separate_wrappers}/reverse={reverse}"
+            );
+        }
+    }
+}
+
+#[test]
+fn nested_row_out_of_flow_names_do_not_defer_normal_content() {
+    for css in [
+        "position:absolute",
+        "position:fixed",
+        "float:left",
+        "float:left;visibility:hidden",
+        "display:none",
+    ] {
+        let (mut doc, body, flex) = column_review_document();
+        let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
+        let row = doc.append_element(
+            Some(item),
+            "div",
+            Style::default(),
+            Some("display:flex;flex-direction:row"),
+        );
+        let inner = doc.append_element(Some(row), "div", Style::default(), Some("display:block"));
+        doc.append_element(
+            Some(inner),
+            "div",
+            Style::default(),
+            Some(&format!("page:a;{css}")),
+        );
+        let after = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        let text = doc.append_text(after, "X");
+        assert_eq!(
+            column_review_pages(doc, &[text]),
+            (vec![None], vec![0]),
+            "{css}"
+        );
+    }
+}
+
+#[test]
+fn effective_order_interleaves_items_from_separate_contents_wrappers() {
+    let (mut doc, _, flex) = column_review_document();
+    let outer = doc.append_element(
+        Some(flex),
+        "div",
+        Style::default(),
+        Some("display:contents"),
+    );
+    let other = doc.append_element(
+        Some(flex),
+        "div",
+        Style::default(),
+        Some("display:contents"),
+    );
+    let mut texts = Vec::new();
+    for (name, order, parent) in [("a", 3, outer), ("b", 2, other), ("c", 1, outer)] {
+        let item = doc.append_element(
+            Some(parent),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;order:{order}")),
+        );
+        let named = doc.append_element(
+            Some(item),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;page:{name}")),
+        );
+        texts.push(doc.append_text(named, "X"));
+    }
+    assert_eq!(
+        column_review_pages(doc, &texts),
+        (
+            vec![Some("c".into()), Some("b".into()), Some("a".into())],
+            vec![2, 1, 0]
+        )
+    );
+}
+
+#[test]
+fn global_contents_order_preserves_stored_wrapper_source_offsets() {
+    let (mut doc, _, flex) = column_review_document();
+    let outer = doc.append_element(
+        Some(flex),
+        "div",
+        Style::default(),
+        Some("display:contents"),
+    );
+    let inner = doc.append_element(
+        Some(outer),
+        "div",
+        Style::default(),
+        Some("display:contents"),
+    );
+    let item = doc.append_element(Some(inner), "div", Style::default(), Some("display:block"));
+    doc.nodes[outer].unrounded_layout.location.y = 10.0;
+    doc.nodes[inner].unrounded_layout.location.y = 5.0;
+    let offset = super::super::pagination_child_parent_y;
+    assert_eq!(offset(&doc, flex, item, 100.0), 115.0);
+    assert_eq!(offset(&doc, inner, item, 100.0), 100.0);
+    assert_eq!(doc.nodes[outer].unrounded_layout.location.y, 10.0);
+    assert_eq!(doc.nodes[inner].unrounded_layout.location.y, 5.0);
+}

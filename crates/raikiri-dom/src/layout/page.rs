@@ -548,6 +548,9 @@ fn initial_page_child_order(
         parent_style.display,
         DisplayValue::Flex | DisplayValue::InlineFlex
     );
+    if is_flex {
+        return flex_pagination_child_order(document, cascade, parent_id);
+    }
     let is_auto_row_grid = matches!(
         parent_style.display,
         DisplayValue::Grid | DisplayValue::InlineGrid
@@ -572,7 +575,7 @@ fn initial_page_child_order(
                 GridLineValue::Auto | GridLineValue::Line(1)
             )
         });
-    if !is_flex && !is_auto_row_grid {
+    if !is_auto_row_grid {
         return children;
     }
 
@@ -589,15 +592,6 @@ fn initial_page_child_order(
         .filter(|&child_id| is_in_flow(child_id))
         .collect();
     ordered_items.sort_by_key(|&child_id| cascade.computed[child_id].order);
-    if is_flex
-        && matches!(
-            parent_style.flex_direction,
-            FlexDirectionValue::ColumnReverse
-        )
-    {
-        ordered_items.reverse();
-    }
-
     let mut ordered_items = ordered_items.into_iter();
     let mut ordered_children = children;
     for child_id in &mut ordered_children {
@@ -934,36 +928,59 @@ pub(crate) fn is_in_flow_flex_child_for_pagination(
         && document.nodes[parent_id].style.display == Display::Flex
 }
 
-/// Return a flex parent's page-traversal order, which follows top-to-bottom
-/// visual order for `column-reverse` and Taffy's order-modified order otherwise.
+/// Return effective flex items in CSS order-modified order, reversed for
+/// top-to-bottom visual traversal of `column-reverse`.
 fn flex_pagination_child_order(
     document: &Document,
     cascade: &CascadeResult,
     parent_id: usize,
-    flex_parent_id: usize,
 ) -> Vec<usize> {
-    let mut children = document.nodes[parent_id].layout_children().to_vec();
-    if !matches!(
-        cascade.computed[flex_parent_id].flex_direction,
-        FlexDirectionValue::ColumnReverse
-    ) {
-        return children;
+    // Contents wrappers do not delimit order-modified flex item sequences.
+    // Flatten the complete effective sequence before stable sorting so items
+    // in different wrappers can interleave without changing DOM box layout.
+    let mut pending: Vec<_> = document.nodes[parent_id]
+        .children
+        .iter()
+        .rev()
+        .copied()
+        .collect();
+    let mut children = Vec::new();
+    while let Some(child) = pending.pop() {
+        if cascade.computed[child].display == DisplayValue::Contents {
+            pending.extend(document.nodes[child].children.iter().rev().copied());
+        } else {
+            children.push(child);
+        }
     }
-
+    let is_in_flow = |child_id: usize| {
+        let child = &document.nodes[child_id];
+        child.is_in_document()
+            && cascade.computed[child_id].display != DisplayValue::None
+            && !matches!(
+                cascade.computed[child_id].position,
+                PositionValue::Absolute | PositionValue::Fixed
+            )
+            && !matches!(&child.data, NodeData::Text(text) if text.text_content.chars().all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{000c}')))
+    };
     let mut ordered_items: Vec<_> = children
         .iter()
         .copied()
-        .filter(|&child_id| {
-            is_in_flow_flex_child_for_pagination(document, flex_parent_id, child_id)
-        })
+        .filter(|&id| is_in_flow(id))
         .collect();
-    ordered_items.reverse();
+    ordered_items.sort_by_key(|&id| cascade.computed[id].order);
+    if matches!(
+        cascade.computed[parent_id].flex_direction,
+        FlexDirectionValue::ColumnReverse
+    ) {
+        ordered_items.reverse();
+    }
+
     let mut ordered_items = ordered_items.into_iter();
     for child_id in &mut children {
-        if is_in_flow_flex_child_for_pagination(document, flex_parent_id, *child_id) {
+        if is_in_flow(*child_id) {
             *child_id = ordered_items
                 .next()
-                .expect("each in-flow flex child has one reversed entry");
+                .expect("each in-flow flex child has one ordered entry");
         }
     }
     children
@@ -1042,18 +1059,7 @@ pub(crate) fn pagination_child_order(
         computed.display,
         DisplayValue::Flex | DisplayValue::InlineFlex
     ) {
-        return flex_pagination_child_order(document, cascade, parent_id, parent_id);
-    }
-    if computed.display == DisplayValue::Contents
-        && let Some(flex_parent) = pagination_box_parent(document, cascade, parent_id)
-        && matches!(
-            cascade.computed[flex_parent].display,
-            DisplayValue::Flex | DisplayValue::InlineFlex
-        )
-    {
-        // Keep each wrapper's layout offset while traversing its effective
-        // items in the enclosing flex container's visual order.
-        return flex_pagination_child_order(document, cascade, parent_id, flex_parent);
+        return flex_pagination_child_order(document, cascade, parent_id);
     }
     let is_single_column_grid = matches!(
         computed.display,
