@@ -99,7 +99,11 @@ fn parses_media_type_with_viewport_features() {
 
 #[test]
 fn rejects_unsupported_viewport_features() {
-    assert_eq!(parse_media_prelude("(orientation: landscape)"), None);
+    assert!(
+        !parse_media_prelude("(orientation: landscape)")
+            .unwrap()
+            .matches(&MediaContext::print())
+    );
     assert_eq!(parse_media_prelude("screen and (color)"), None);
 }
 
@@ -176,7 +180,11 @@ fn keywords_are_case_insensitive_and_comments_are_skipped() {
 #[test]
 fn and_inside_identifiers_is_not_a_separator() {
     // A name containing "and" must not be split into separate terms.
-    assert_eq!(parse_media_prelude("(orientation: landscape)"), None);
+    assert!(
+        !parse_media_prelude("(orientation: landscape)")
+            .unwrap()
+            .matches(&MediaContext::print())
+    );
     assert_eq!(parse_media_prelude("handheld and (min-width: 1px)"), None);
 }
 
@@ -270,7 +278,11 @@ fn relative_lengths_use_the_initial_font_size() {
         192
     ));
     // `lh` has no initial length, so the feature is unknown.
-    assert_eq!(parse_media_prelude("(min-width: 1lh)"), None);
+    assert!(
+        !parse_media_prelude("(min-width: 1lh)")
+            .unwrap()
+            .matches(&MediaContext::print())
+    );
 }
 
 #[test]
@@ -314,4 +326,126 @@ fn error_tokens_anywhere_invalidate_the_list() {
         let condition = parse_media_prelude(source).unwrap();
         assert!(condition.matches(&MediaContext::print()), "{source:?}");
     }
+}
+
+#[test]
+fn paper_dimension_provenance_uses_valid_retained_features() {
+    for (source, dependent) in [
+        ("print", false),
+        ("print, (orientation: landscape)", true),
+        ("print, (min-device-aspect-ratio: 1/2)", true),
+        ("print, (200px < width <= 300px)", true),
+        ("print, (calc(100px) < width)", true),
+        ("print, (width:100vw)", true),
+        ("print, (width:1lh)", true),
+        ("print, (device-width:0)", true),
+        ("print, (aspect-ratio:0)", true),
+        ("print, (aspect-ratio:calc(2))", true),
+        ("print, (aspect-ratio:1 / calc(2))", true),
+        ("print, (calc(1) / calc(2) < aspect-ratio)", true),
+        ("print, (orientation)", true),
+        ("print, (device-height >= 1px)", true),
+        ("print, (2 > aspect-ratio >= 1)", true),
+        ("print, (width:1cap)", true),
+        ("print, (width:calc(1rex + 1rch + 1ric + 1rcap))", true),
+        ("print, (aspect-ratio > 1/2)", true),
+        ("print, (1/2 < aspect-ratio < 3/2)", true),
+        ("print, (width:calc(100px + 1em))", true),
+        ("print, (width:calc(1px/2))", true),
+        ("print, (device-width:calc(1px/2))", true),
+        ("print, (width:clamp(1px, 2em, 3px))", true),
+        ("print, (width:min(1px))", true),
+        ("print, (width:max(1px, 2em))", true),
+        ("print, (100% < width)", false),
+        ("print, (1/2 < aspect-ratio)", true),
+        ("print, (unknown-feature < width)", false),
+        ("print, (\"width\")", false),
+        ("print, ((hover:width) or (width:261px))", true),
+        ("print, (not (width:200px))", true),
+        (r"print, (\77 idth: 200px)", true),
+        ("print, (hover: width)", false),
+        ("print, (unknown-feature: (width:200px))", false),
+        ("print, (unknown-feature: 0 < width)", false),
+        ("print, (unknown-feature: 'width')", false),
+        ("print, (unknown-feature: calc(width))", false),
+        ("print, unknown(width)", false),
+        ("print /* (width: 200px) */", false),
+        ("print, only (width:200px)", false),
+        ("print, print and (width:200px) unexpected", false),
+    ] {
+        assert_eq!(
+            parse_media_prelude(source).unwrap().depends_on_paper_size(),
+            dependent,
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn invalid_paper_feature_values_do_not_qualify_matching_query_arms() {
+    for source in [
+        "print, (width: red)",
+        "print, (width: red blue)",
+        "print, (width: [1px])",
+        "print, (orientation > landscape)",
+        "print, (min-device-width > 1px)",
+        "print, (1px < min-device-width)",
+        "print, (1px < orientation)",
+        "print, (1 < aspect-ratio > 2)",
+        "print, (1 = aspect-ratio < 2)",
+        "print, (1 < aspect-ratio < red)",
+        "print, (aspect-ratio: -1)",
+        "print, (aspect-ratio: 1/red)",
+        "print, (aspect-ratio: calc(1px))",
+        "print, (aspect-ratio: calc(1 + var(--x)))",
+        "print, (min-device-height)",
+        "print, (width: 100%)",
+        "print, (width < red)",
+        "print, (100% < width)",
+        "print, (orientation: sideways)",
+        "print, (min-orientation: landscape)",
+        "print, (aspect-ratio: red)",
+        "print, (aspect-ratio: pi)",
+        "print, (aspect-ratio: 1/-2)",
+        "print, (width: calc(red))",
+        "print, (width: clamp(1px))",
+        "print, (width: 1px/2)",
+        "print, (device-width: 1px/2)",
+        "print, (width: clamp(1px, 2px))",
+        "print, (width: clamp(1px, 2px, 3px, 4px))",
+        "print, (width: min())",
+        "print, (width: calc(1px, 2px))",
+        "print, (width: mod(1px))",
+        "print, (width: round(sideways, 1px, 1px))",
+        "print, (width: calc(1deg))",
+        "print, (width: calc(1px * 1px))",
+        "print, (width: calc(1px + 1%))",
+        "print, (width: calc(0))",
+        "print, (width: var(--x))",
+        "print, (width: calc(1px + var(--x)))",
+    ] {
+        let condition = parse_media_prelude(source).unwrap();
+        assert!(condition.matches(&MediaContext::print()));
+        assert!(!condition.depends_on_paper_size(), "{source}");
+    }
+}
+
+#[test]
+fn never_matching_media_types_do_not_qualify_matching_query_arms() {
+    for source in [
+        "print, projection and (width: 1px)",
+        "print, only projection and (orientation: landscape)",
+    ] {
+        let condition = parse_media_prelude(source).unwrap();
+        assert!(condition.matches(&MediaContext::print()));
+        assert!(!condition.depends_on_paper_size(), "{source}");
+    }
+}
+
+#[test]
+fn excessive_paper_math_nesting_remains_general_enclosed() {
+    let value = format!("{}1px{}", "calc(".repeat(130), ")".repeat(130));
+    let condition = parse_media_prelude(&format!("print, (width:{value})")).unwrap();
+    assert!(condition.matches(&MediaContext::print()));
+    assert!(!condition.depends_on_paper_size());
 }

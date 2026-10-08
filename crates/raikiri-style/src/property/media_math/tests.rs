@@ -1,0 +1,177 @@
+use super::*;
+
+#[test]
+fn line_width_rounding_qualifies_only_length_media_values() {
+    use crate::page::{PageContextQuery, PageInheritance, PageSize, cascade_page};
+    use crate::property::Length;
+    use crate::ruletree::{Origin, RuleTree};
+
+    for (value, dependent) in [
+        ("round(line-width,1px)", true),
+        ("round(line-width,1px,2em)", true),
+        ("round(line-width,1)", false),
+        ("round(line-width,1deg)", false),
+        ("round(line-width,1%)", false),
+        ("round(line-width,1px,2px,3px)", false),
+    ] {
+        let prelude = format!("print, (width:{value})");
+        let condition = crate::media::parse_media_prelude(&prelude).unwrap();
+        assert_eq!(condition.depends_on_paper_size(), dependent);
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            &format!("@media {prelude}{{@page{{size:300px 200px}}}}"),
+            Origin::Author,
+        );
+        let result = cascade_page(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::LegacyInitialValues,
+        );
+        assert_eq!(
+            result.size(),
+            (!dependent).then_some(PageSize::Lengths {
+                width: Length::Px(300.0),
+                height: Length::Px(200.0)
+            })
+        );
+    }
+}
+
+#[test]
+fn dimensional_exponents_reject_overflow_without_wrapping() {
+    let maximum = NumericType([i32::MAX, 0, 0, 0, 0, 0, 0]);
+    let minimum = NumericType([i32::MIN, 0, 0, 0, 0, 0, 0]);
+    let length = NumericType::dimension(0);
+    assert_eq!(maximum.product(length, '*'), None);
+    assert_eq!(minimum.product(length, '/'), None);
+    assert_eq!(maximum.product(maximum, '/'), Some(NumericType::NUMBER));
+}
+
+#[test]
+fn valid_functions_keep_their_numeric_types() {
+    for value in [
+        "clamp(1px, 2em, 3px)",
+        "clamp(none, 2em, none)",
+        "min(1px)",
+        "max(1px, 2em)",
+        "abs(-1px)",
+        "round(nearest, 1px, 2em)",
+        "round(up, 1px, 2em)",
+        "round(down, 1px, 2em)",
+        "round(to-zero, 1px, 2em)",
+        "round(line-width, 1px)",
+        "round(line-width, 1px, 2em)",
+        "RoUnD(LINE-WIDTH, -1px)",
+        "mod(1px, 2em)",
+        "rem(1px, 2em)",
+        "hypot(1px, 2em)",
+        "calc(1px * 1em / 1rem)",
+        "calc(1px * (2 + 1))",
+        "calc(1px /**/ + /**/ 2em)",
+    ] {
+        assert!(
+            math_value_has_type(value, MediaNumericType::Length),
+            "{value}"
+        );
+    }
+    for value in [
+        "round(1.5)",
+        "round(up, 1.5)",
+        "sign(1px)",
+        "pow(2, 3)",
+        "sqrt(4)",
+        "exp(1)",
+        "log(2)",
+        "log(2, 10)",
+        "sin(1deg)",
+        "cos(1)",
+        "tan(1rad)",
+        "calc(1px / 2em)",
+        "calc(1s / 2ms)",
+        "calc(1Hz / 2kHz)",
+        "calc(1dpi / 2dppx)",
+        "calc(1fr / 2fr)",
+        "calc(1% / 2%)",
+        "calc(asin(1) / acos(1))",
+        "calc(atan(1) / atan2(1px, 2em))",
+    ] {
+        assert!(
+            math_value_has_type(value, MediaNumericType::Number),
+            "{value}"
+        );
+    }
+}
+
+#[test]
+fn malformed_functions_and_wrong_types_remain_invalid() {
+    for value in [
+        "clamp(1px)",
+        "clamp(1px, 2px)",
+        "clamp(1px, 2px, 3px, 4px)",
+        "clamp(1px, none, 2px)",
+        "clamp(1px, 2deg, 3px)",
+        "min()",
+        "min(1px,)",
+        "min(1px,,2px)",
+        "calc(1px, 2px)",
+        "calc(1px + 1deg)",
+        "calc(- (1px))",
+        "calc(1px/**/+/**/2px)",
+        "calc(1px +/**/2px)",
+        "calc(1px + - 2px)",
+        "calc(1unknown)",
+        "round(1px)",
+        "round(sideways, 1px, 2px)",
+        "round(line-width)",
+        "round(line-width, 1px, 2px, 3px)",
+        "round(line-width, 1)",
+        "round(line-width, -1)",
+        "round(line-width, 1, 2)",
+        "round(line-width, 1deg)",
+        "round(line-width, 1deg, 2deg)",
+        "round(line-width, 1%)",
+        "round(line-width, 1%, 2%)",
+        "mod(1px)",
+        "sign(1px, 2px)",
+        "pow(1px, 2)",
+        "sqrt(1px)",
+        "log(1px)",
+        "log(1,2,3)",
+        "exp(1,2)",
+        "sin(1px)",
+        "asin(1px)",
+        "atan2(1px, 2deg)",
+        "mystery(1px)",
+        "var(--length)",
+    ] {
+        assert!(
+            !math_value_has_type(value, MediaNumericType::Length),
+            "{value}"
+        );
+        assert!(
+            !math_value_has_type(value, MediaNumericType::Number),
+            "{value}"
+        );
+    }
+    assert!(!math_value_has_type(
+        "calc(1px * 1px)",
+        MediaNumericType::Length
+    ));
+    assert!(!math_value_has_type("asin(1)", MediaNumericType::Number));
+}
+
+#[test]
+fn grammar_storage_and_nesting_are_bounded() {
+    assert!(math_value_has_type(
+        &format!("min({})", vec!["1px"; 128].join(",")),
+        MediaNumericType::Length
+    ));
+    assert!(!math_value_has_type(
+        &format!("min({})", vec!["1px"; 129].join(",")),
+        MediaNumericType::Length
+    ));
+    assert!(!math_value_has_type(
+        &format!("{}1px{}", "calc(".repeat(130), ")".repeat(130)),
+        MediaNumericType::Length
+    ));
+}
