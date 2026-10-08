@@ -97,7 +97,7 @@ fn tables_reset_inherited_indent_and_use_border_box_sizing() {
     let document = lay_out(
         "<table id='outer' style='width:80px;border:5px solid'>\
          <tr><td><table id='inner'><tr><td>A</td></tr></table></td></tr></table>",
-        "body{ text-indent:30px }td{ text-indent:20px }",
+        "body{ text-indent:30px }#outer > tbody > tr > td{ text-indent:20px }",
     );
     let page = document.page(0).unwrap();
     let dom = page.dom();
@@ -114,6 +114,10 @@ fn tables_reset_inherited_indent_and_use_border_box_sizing() {
         .unwrap()
         .rect();
     assert_eq!(rect.width, 80.0);
+    let runs = page.text_runs();
+    let inner_text = runs.iter().find(|run| run.text == "A").unwrap();
+    // 5px outer border, two 2px table gaps and two 1px cell paddings.
+    assert_eq!(inner_text.origin.0, 11.0);
 }
 
 #[test]
