@@ -671,7 +671,7 @@ pub fn first_page_name(document: &Document, cascade: &CascadeResult) -> Option<S
                     raikiri_style::property::PositionValue::Static
                         | raikiri_style::property::PositionValue::Relative
                         | raikiri_style::property::PositionValue::Sticky
-                ) || !matches!(computed.float, FloatValue::None)
+                ) || is_floating_box_for_pagination(document, cascade, child_id)
                 {
                     continue;
                 }
@@ -1001,6 +1001,29 @@ pub(crate) fn pagination_box_parent(
     parent
 }
 
+/// Whether a float declaration creates a floating box in pagination.
+/// Ordinary floats on flex items remain in normal flow. Footnotes retain
+/// their existing page-local placement; Contents elements generate no box.
+pub(crate) fn is_floating_box_for_pagination(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    let computed = &cascade.computed[node_id];
+    !matches!(computed.float, FloatValue::None)
+        && !matches!(
+            computed.display,
+            DisplayValue::None | DisplayValue::Contents
+        )
+        && (matches!(computed.float, FloatValue::Footnote)
+            || !pagination_box_parent(document, cascade, node_id).is_some_and(|parent| {
+                matches!(
+                    cascade.computed[parent].display,
+                    DisplayValue::Flex | DisplayValue::InlineFlex
+                )
+            }))
+}
+
 /// Last in-flow effective item in the flex container's visual page order.
 pub(crate) fn trailing_flex_child_for_pagination(
     document: &Document,
@@ -1140,7 +1163,7 @@ fn propagated_start_page_name_with_order(
                             !matches!(
                                 child_computed.position,
                                 PositionValue::Absolute | PositionValue::Fixed
-                            ) && matches!(child_computed.float, FloatValue::None)
+                            ) && !is_floating_box_for_pagination(document, cascade, child_id)
                         })
                 });
                 if let Some(child_id) = next {
@@ -1196,7 +1219,7 @@ fn propagated_start_page_name_with_order(
                     !matches!(
                         child_computed.position,
                         PositionValue::Absolute | PositionValue::Fixed
-                    ) && matches!(child_computed.float, FloatValue::None)
+                    ) && !is_floating_box_for_pagination(document, cascade, child_id)
                 })
         });
         if let Some(child_id) = next {

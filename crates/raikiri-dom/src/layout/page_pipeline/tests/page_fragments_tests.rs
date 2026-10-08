@@ -2773,3 +2773,212 @@ fn global_contents_order_preserves_stored_wrapper_source_offsets() {
     assert_eq!(doc.nodes[outer].unrounded_layout.location.y, 10.0);
     assert_eq!(doc.nodes[inner].unrounded_layout.location.y, 5.0);
 }
+
+#[test]
+fn anonymous_nested_column_content_establishes_enclosing_page_context() {
+    let (mut doc, _, flex) = column_review_document();
+    let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
+    let inner = doc.append_element(
+        Some(item),
+        "div",
+        Style::default(),
+        Some("display:flex;flex-direction:column"),
+    );
+    let anonymous = doc.append_element(Some(inner), "div", Style::default(), Some("display:block"));
+    let before = doc.append_text(anonymous, "X");
+    let named = doc.append_element(
+        Some(item),
+        "div",
+        Style::default(),
+        Some("display:block;page:a"),
+    );
+    let after = doc.append_text(named, "X");
+    assert_eq!(
+        column_review_pages(doc, &[before, after]),
+        (vec![None, Some("a".into())], vec![0, 1])
+    );
+}
+
+#[test]
+fn ignored_float_on_effective_column_flex_item_keeps_named_descendants() {
+    for float in ["none", "left", "right", "inline-start", "inline-end"] {
+        for wrappers in [0, 1, 2] {
+            let (mut doc, _, flex) = column_review_document();
+            let mut parent = flex;
+            for _ in 0..wrappers {
+                parent = doc.append_element(
+                    Some(parent),
+                    "div",
+                    Style::default(),
+                    Some("display:contents;float:left"),
+                );
+            }
+            let item = doc.append_element(
+                Some(parent),
+                "div",
+                Style::default(),
+                Some(&format!("display:block;float:{float}")),
+            );
+            let mut texts = Vec::new();
+            for name in ["a", "b"] {
+                let named = doc.append_element(
+                    Some(item),
+                    "div",
+                    Style::default(),
+                    Some(&format!("display:block;page:{name}")),
+                );
+                texts.push(doc.append_text(named, "X"));
+            }
+            assert_eq!(
+                column_review_pages(doc, &texts),
+                (vec![Some("a".into()), Some("b".into())], vec![0, 1]),
+                "{float}/{wrappers}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_real_float_below_the_flex_item_does_not_establish_named_pages() {
+    for float in ["left", "right"] {
+        let (mut doc, _, flex) = column_review_document();
+        let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
+        let floated = doc.append_element(
+            Some(item),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;float:{float}")),
+        );
+        let mut texts = Vec::new();
+        for name in ["a", "b"] {
+            let named = doc.append_element(
+                Some(floated),
+                "div",
+                Style::default(),
+                Some(&format!("display:block;page:{name}")),
+            );
+            texts.push(doc.append_text(named, "X"));
+        }
+        assert_eq!(
+            column_review_pages(doc, &texts),
+            (vec![None], vec![0, 0]),
+            "{float}"
+        );
+    }
+}
+
+#[test]
+fn enclosing_anonymous_content_precedes_a_new_inner_named_context() {
+    for outer_direction in ["column", "row"] {
+        let (mut doc, _, flex) = column_review_document();
+        let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
+        let before_box = doc.append_element(
+            Some(item),
+            "div",
+            Style::default(),
+            Some(&format!("display:flex;flex-direction:{outer_direction}")),
+        );
+        let before = doc.append_text(before_box, "X");
+        let inner = doc.append_element(
+            Some(item),
+            "div",
+            Style::default(),
+            Some("display:flex;flex-direction:column"),
+        );
+        let inner_item =
+            doc.append_element(Some(inner), "div", Style::default(), Some("display:block"));
+        let named = doc.append_element(
+            Some(inner_item),
+            "div",
+            Style::default(),
+            Some("display:block;page:a"),
+        );
+        let after = doc.append_text(named, "X");
+        assert_eq!(
+            column_review_pages(doc, &[before, after]),
+            (vec![None, Some("a".into())], vec![0, 1]),
+            "{outer_direction}"
+        );
+    }
+}
+
+#[test]
+fn a_fresh_empty_page_can_take_the_first_inner_named_type() {
+    for boundary in ["before", "after", "natural"] {
+        let (mut doc, _, flex) = column_review_document();
+        let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
+        let before_css = match boundary {
+            "after" => "display:block;break-after:page",
+            "natural" => "display:block;height:50px",
+            _ => "display:block",
+        };
+        let before_box = doc.append_element(Some(item), "div", Style::default(), Some(before_css));
+        let before = doc.append_text(before_box, "X");
+        let empty_css = if boundary == "before" {
+            "display:block;break-before:page"
+        } else {
+            "display:block"
+        };
+        let empty = doc.append_element(Some(item), "div", Style::default(), Some(empty_css));
+        let inner = doc.append_element(
+            Some(empty),
+            "div",
+            Style::default(),
+            Some("display:flex;flex-direction:column"),
+        );
+        let inner_item =
+            doc.append_element(Some(inner), "div", Style::default(), Some("display:block"));
+        let named = doc.append_element(
+            Some(inner_item),
+            "div",
+            Style::default(),
+            Some("display:block;page:a"),
+        );
+        let after = doc.append_text(named, "X");
+        assert_eq!(
+            column_review_pages(doc, &[before, after]),
+            (vec![None, Some("a".into())], vec![0, 1]),
+            "{boundary}"
+        );
+    }
+}
+
+#[test]
+fn page_local_footnote_keeps_its_text_attached_inside_flex() {
+    let (mut doc, _, flex) = column_review_document();
+    doc.append_element(
+        Some(flex),
+        "div",
+        Style::default(),
+        Some("display:block;height:20px"),
+    );
+    let note = doc.append_element(
+        Some(flex),
+        "aside",
+        Style::default(),
+        Some("display:block;float:footnote;height:10px;width:50px"),
+    );
+    let text = doc.append_text(note, "note");
+    let following = doc.append_element(
+        Some(flex),
+        "div",
+        Style::default(),
+        Some("display:block;height:10px"),
+    );
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 50.0;
+    let slices = layout_pages(with_ahem(&mut doc), &computed, page).unwrap();
+    assert_eq!(slices.len(), 1);
+    assert_eq!(doc.nodes[note].unrounded_layout.location.y, 40.0);
+    assert_eq!(doc.nodes[following].unrounded_layout.location.y, 20.0);
+    let fragments = page_fragments_from_slices(&doc, &computed, page, &slices);
+    let rendered_text = fragments[0]
+        .items
+        .iter()
+        .find(|fragment| fragment.node_id == NodeId::new(text as u64))
+        .unwrap();
+    assert_eq!(rendered_text.rect.y, 40.0);
+}

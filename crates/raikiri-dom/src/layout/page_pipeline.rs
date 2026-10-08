@@ -13,6 +13,77 @@ fn pagination_child_parent_y(document: &Document, parent: usize, child: usize, r
     child_parent_y
 }
 
+// Cache the nearest column context for each visited source node. Row flex
+// suppresses local named-flow ownership, but its content still occupies the
+// enclosing physical page. Each source edge is resolved once per layout pass.
+fn enclosing_column_context(
+    node_id: usize,
+    parent_of: &[Option<usize>],
+    cascade: &CascadeResult,
+    cache: &mut [Option<Option<usize>>],
+) -> Option<usize> {
+    let mut current = node_id;
+    let mut visited = Vec::new();
+    let context = loop {
+        if let Some(cached) = cache[current] {
+            break cached;
+        }
+        visited.push(current);
+        let Some(parent) = parent_of[current] else {
+            break None;
+        };
+        let computed = &cascade.computed[parent];
+        if matches!(
+            computed.display,
+            DisplayValue::Flex | DisplayValue::InlineFlex
+        ) && matches!(
+            computed.flex_direction,
+            FlexDirectionValue::Column | FlexDirectionValue::ColumnReverse
+        ) {
+            break Some(parent);
+        }
+        current = parent;
+    };
+    for node in visited {
+        cache[node] = Some(context);
+    }
+    context
+}
+
+fn column_context_occupied(
+    context: usize,
+    page: u32,
+    occupied: &HashMap<usize, u32>,
+    parent_of: &[Option<usize>],
+    cascade: &CascadeResult,
+    cache: &mut [Option<Option<usize>>],
+) -> bool {
+    let mut current = Some(context);
+    while let Some(id) = current {
+        if occupied.get(&id) == Some(&page) {
+            return true;
+        }
+        current = enclosing_column_context(id, parent_of, cascade, cache);
+    }
+    false
+}
+
+fn occupy_column_contexts(
+    mut context: Option<usize>,
+    page: u32,
+    occupied: &mut HashMap<usize, u32>,
+    parent_of: &[Option<usize>],
+    cascade: &CascadeResult,
+    cache: &mut [Option<Option<usize>>],
+) {
+    while let Some(id) = context {
+        if occupied.insert(id, page) == Some(page) {
+            break;
+        }
+        context = enclosing_column_context(id, parent_of, cascade, cache);
+    }
+}
+
 /// Break the lines of every paragraph again for a page-specific
 /// containing-block width.
 ///
@@ -1964,7 +2035,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                     computed.position,
                     PositionValue::Absolute | PositionValue::Fixed
                 )
-                || !matches!(computed.float, FloatValue::None)
+                || is_floating_box_for_pagination(document, cascade, current_id)
             {
                 continue;
             }
@@ -2196,7 +2267,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                 // because it carries an inherited/explicit `page` value.  In
                 // particular, CSS Page 3 keeps a float in the preceding
                 // fragmentainer in the page-name-float cases.
-                let is_float = !matches!(computed.float, FloatValue::None);
+                let is_float = is_floating_box_for_pagination(document, cascade, node_id);
                 let float_subtree = inside_float || is_float;
                 let out_of_flow_subtree = inside_out_of_flow
                     || matches!(
@@ -2316,7 +2387,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                                 cascade.computed[child].position,
                                 PositionValue::Absolute | PositionValue::Fixed
                             )
-                            || !matches!(cascade.computed[child].float, FloatValue::None)
+                            || is_floating_box_for_pagination(document, cascade, child)
                         {
                             return false;
                         }
@@ -2480,8 +2551,9 @@ pub fn layout_pages_with_page_geometry_and_control(
         selected_page_name(cascade, body_id).or_else(|| first_page_name(document, cascade));
     let mut page_names = vec![current_page_name.clone()];
     let mut outer_page_name = current_page_name.clone();
-    let mut seen_named_flex_contexts = HashSet::new();
-    let mut preceding_flex_items = HashMap::<usize, (usize, f32)>::new();
+    let mut seen_named_flex_contexts = HashMap::new();
+    let mut column_context_cache = vec![None; parent_of.len()];
+    let mut preceding_flex_items = HashMap::<usize, (usize, f32, u32)>::new();
 
     let mut trailing_flex_child_by_parent = HashMap::<usize, Option<usize>>::new();
     // Paragraphs laid out by the inline engine that already had a candidate
@@ -2509,11 +2581,19 @@ pub fn layout_pages_with_page_geometry_and_control(
         if name_participates_in_flow
             && candidate.is_flex_item
             && let Some(context) = candidate.named_flex_context
-            && let Some((_, height)) =
-                preceding_flex_items.insert(context, (node_id, candidate.height))
+            && let Some((_, height, page)) =
+                preceding_flex_items.insert(context, (node_id, candidate.height, current_page))
             && height > 0.0
+            && page == current_page
         {
-            seen_named_flex_contexts.insert(context);
+            occupy_column_contexts(
+                Some(context),
+                current_page,
+                &mut seen_named_flex_contexts,
+                &parent_of,
+                cascade,
+                &mut column_context_cache,
+            );
         }
         let (name_context_seen, comparison_page_name) = if !name_participates_in_flow {
             (false, current_page_name.clone())
@@ -2522,8 +2602,14 @@ pub fn layout_pages_with_page_geometry_and_control(
                 Some(context) if candidate.deferred_named_break_after => {
                     // Empty enclosing column boxes do not open an anonymous
                     // page before the row's established deferred boundary.
-                    let seen =
-                        seen_named_flex_contexts.contains(&context) || current_page_name.is_some();
+                    let seen = column_context_occupied(
+                        context,
+                        current_page,
+                        &seen_named_flex_contexts,
+                        &parent_of,
+                        cascade,
+                        &mut column_context_cache,
+                    ) || current_page_name.is_some();
                     outer_page_name = candidate.page_name.clone();
                     (saw_child && seen, current_page_name.clone())
                 }
@@ -2533,8 +2619,14 @@ pub fn layout_pages_with_page_geometry_and_control(
                     // Nested column flows share the physical page opened by
                     // their preceding sibling, including an inner flow's end.
                     // A previously seen anonymous type is still a page type.
-                    let seen =
-                        !seen_named_flex_contexts.insert(context) || current_page_name.is_some();
+                    let seen = column_context_occupied(
+                        context,
+                        current_page,
+                        &seen_named_flex_contexts,
+                        &parent_of,
+                        cascade,
+                        &mut column_context_cache,
+                    ) || current_page_name.is_some();
                     (saw_child && seen, current_page_name.clone())
                 }
                 Some(_) => (false, candidate.page_name.clone()),
@@ -2782,6 +2874,22 @@ pub fn layout_pages_with_page_geometry_and_control(
             }
             page_names[current_page as usize] = current_page_name.clone();
             max_page = max_page.max(current_page);
+            if name_participates_in_flow && height > 0.0 {
+                let context = enclosing_column_context(
+                    node_id,
+                    &parent_of,
+                    cascade,
+                    &mut column_context_cache,
+                );
+                occupy_column_contexts(
+                    context,
+                    current_page,
+                    &mut seen_named_flex_contexts,
+                    &parent_of,
+                    cascade,
+                    &mut column_context_cache,
+                );
+            }
             if height > 0.0 && effective_y.is_finite() && effective_y >= 0.0 {
                 let end = (effective_y + height).max(effective_y);
                 if end.is_finite() && end > 0.0 {
@@ -3092,6 +3200,25 @@ pub fn layout_pages_with_page_geometry_and_control(
                     max_page = max_page.max(end_page);
                 }
             }
+        }
+        if name_participates_in_flow
+            && (candidate.is_named || (candidate.is_rendered_leaf && height > 0.0))
+        {
+            let context =
+                enclosing_column_context(node_id, &parent_of, cascade, &mut column_context_cache);
+            occupy_column_contexts(
+                context,
+                current_page,
+                &mut seen_named_flex_contexts,
+                &parent_of,
+                cascade,
+                &mut column_context_cache,
+            );
+        }
+        if candidate.is_flex_item
+            && let Some(context) = candidate.named_flex_context
+        {
+            preceding_flex_items.insert(context, (node_id, height, current_page));
         }
         let candidate_break_after = page_break_is_forced(computed.break_after)
             || candidate.inline_named_page
