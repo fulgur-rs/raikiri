@@ -6,7 +6,7 @@ use crate::computed::{
     ComputedValues, CustomPropertyEnvironment, RunningTemplate, empty_custom_properties,
 };
 use crate::property::{
-    Border, BorderColor, BorderRadius, BorderStyle, CssWideKeyword, FontWeightValue,
+    Border, BorderColor, BorderRadius, BorderStyle, CornerRadius, CssWideKeyword, FontWeightValue,
     GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, Length, LengthOrAuto,
     LetterSpacingValue, PositionValue, PropertyValue, RelativeFontSize, Sides, TextIndentLength,
     TextWrapMode, WhiteSpace, WhiteSpaceCollapse, WordSpacingValue, WritingMode,
@@ -757,6 +757,9 @@ pub(crate) fn apply_winners(
     // first; their applied values are collected during the drain.
     let white_space_winners = WhiteSpaceWinners::read(winners);
     let mut white_space_applied = WhiteSpaceApplied::default();
+    let radius_winners = BorderRadiusWinners::read(winners);
+    let initial_radius = specified.border_radius;
+    let mut radius_applied = BorderRadiusApplied::default();
     for slot in winners.iter_mut() {
         if let Some(winner) = slot.take() {
             let value = &candidates[winner.idx].0;
@@ -819,6 +822,9 @@ pub(crate) fn apply_winners(
                     };
                     match resolved {
                         None => None,
+                        Some(PropertyValue::BorderRadiusInherit) => Some(
+                            PropertyValue::BorderRadius(inherited_border_radius_value(inherited)),
+                        ),
                         Some(
                             PropertyValue::BorderTopWidthCssWide(kw)
                             | PropertyValue::BorderRightWidthCssWide(kw)
@@ -898,11 +904,13 @@ pub(crate) fn apply_winners(
                     *page_slot = page.clone();
                 }
                 white_space_applied.note(&value);
+                radius_applied.note(&value);
                 apply_value(value, specified);
             }
         }
     }
     let (collapse, wrap) = white_space_winners.settle(&white_space_applied);
+    specified.border_radius = radius_winners.settle(&radius_applied, initial_radius);
     // A half no declaration on this element decides keeps the value
     // `inherit_from` seeded, which is the parent's effective value.
     if let Some(collapse) = collapse {
@@ -931,6 +939,78 @@ fn declared_later(a: RankedDecl, b: RankedDecl) -> bool {
         b.source_order,
         b.idx,
     )
+}
+
+/// Winners of the retained radius shorthand and its four corner longhands.
+struct BorderRadiusWinners {
+    shorthand: Option<RankedDecl>,
+    corners: [Option<RankedDecl>; 4],
+}
+
+#[derive(Default)]
+struct BorderRadiusApplied {
+    shorthand: Option<BorderRadius>,
+    corners: [Option<CornerRadius<Length>>; 4],
+}
+
+impl BorderRadiusApplied {
+    fn note(&mut self, value: &PropertyValue) {
+        match value {
+            PropertyValue::BorderRadius(radius) => self.shorthand = Some(*radius),
+            PropertyValue::BorderRadiusTopLeft(corner) => self.corners[0] = Some(*corner),
+            PropertyValue::BorderRadiusTopRight(corner) => self.corners[1] = Some(*corner),
+            PropertyValue::BorderRadiusBottomRight(corner) => self.corners[2] = Some(*corner),
+            PropertyValue::BorderRadiusBottomLeft(corner) => self.corners[3] = Some(*corner),
+            _ => {}
+        }
+    }
+}
+
+impl BorderRadiusWinners {
+    fn read(winners: &[Option<RankedDecl>]) -> Self {
+        use crate::property::PropertyKey as K;
+        let at = |key: K| winners.get(key as usize).copied().flatten();
+        Self {
+            shorthand: at(K::BorderRadius),
+            corners: [
+                K::BorderRadiusTopLeft,
+                K::BorderRadiusTopRight,
+                K::BorderRadiusBottomRight,
+                K::BorderRadiusBottomLeft,
+            ]
+            .map(at),
+        }
+    }
+
+    fn settle(&self, applied: &BorderRadiusApplied, initial: BorderRadius) -> BorderRadius {
+        let corners = |radius: BorderRadius| {
+            [
+                radius.top_left,
+                radius.top_right,
+                radius.bottom_right,
+                radius.bottom_left,
+            ]
+        };
+        let initial = corners(initial);
+        let shorthand = applied.shorthand.map(corners).unwrap_or(initial);
+        let [top_left, top_right, bottom_right, bottom_left] =
+            std::array::from_fn(|index| match (self.corners[index], self.shorthand) {
+                (Some(longhand), Some(shorthand_winner))
+                    if declared_later(longhand, shorthand_winner) =>
+                {
+                    applied.corners[index].unwrap_or(initial[index])
+                }
+                (_, Some(_)) => shorthand[index],
+                (Some(_), None) => applied.corners[index].unwrap_or(initial[index]),
+                (None, None) => initial[index],
+            });
+        BorderRadius {
+            top_left,
+            top_right,
+            bottom_right,
+            bottom_left,
+        }
+    }
 }
 
 /// The cascade winners of the legacy `white-space` shorthand and of the
@@ -1236,11 +1316,13 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
 /// reuses it here and in phase 3 (`absolutize_in_page_context` in
 /// [`crate::page`]). Because `inherited` is unchanged throughout the function,
 /// computing it twice would yield the same result (see the caller's docs).
-pub(crate) fn inherited_border_radius(value: ComputedLengthPercentage) -> Length {
-    match value {
+pub(crate) fn inherited_border_radius(
+    value: crate::property::CornerRadius<ComputedLengthPercentage>,
+) -> crate::property::CornerRadius<Length> {
+    value.map(|axis| match axis {
         ComputedLengthPercentage::Px(px) => Length::Px(px),
         ComputedLengthPercentage::Percent(percent) => Length::Percent(percent),
-    }
+    })
 }
 
 /// Resolve one border width longhand CSS-wide marker for the page path
@@ -1411,8 +1493,25 @@ fn resolve_defaulting_value(value: PropertyValue, inherited: &ComputedValues) ->
     if let PropertyValue::Deferred(marker) = &value
         && let Some(keyword) = marker.css_wide_keyword()
     {
+        let radius = if keyword == CssWideKeyword::Inherit {
+            inherited_border_radius_value(inherited)
+        } else {
+            BorderRadius::elliptical([Length::Px(0.0); 4], [Length::Px(0.0); 4])
+        };
         let initial = keyword == CssWideKeyword::Initial;
         match marker.key {
+            crate::property::PropertyKey::BorderRadiusTopLeft => {
+                return PropertyValue::BorderRadiusTopLeft(radius.top_left);
+            }
+            crate::property::PropertyKey::BorderRadiusTopRight => {
+                return PropertyValue::BorderRadiusTopRight(radius.top_right);
+            }
+            crate::property::PropertyKey::BorderRadiusBottomRight => {
+                return PropertyValue::BorderRadiusBottomRight(radius.bottom_right);
+            }
+            crate::property::PropertyKey::BorderRadiusBottomLeft => {
+                return PropertyValue::BorderRadiusBottomLeft(radius.bottom_left);
+            }
             crate::property::PropertyKey::ListStyleType => {
                 return PropertyValue::ListStyleType(if initial {
                     Default::default()

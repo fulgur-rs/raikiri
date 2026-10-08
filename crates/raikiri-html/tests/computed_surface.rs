@@ -8,8 +8,8 @@ use raikiri_html::computed::{
     BorderColor, BorderStyle, ComputedBackgroundImage, ComputedBorder, ComputedBorderRadius,
     ComputedBoxShadowItem, ComputedDisplay, ComputedGradient, ComputedLengthPercentage,
     ComputedOverflow, ComputedTextDecorationColor, ComputedTextDecorationLine,
-    ComputedTextDecorationStyle, ComputedValues, ComputedVisibility, CssColor, GradientColorStop,
-    Length, OverflowValue, Sides, TextShadowColor,
+    ComputedTextDecorationStyle, ComputedValues, ComputedVisibility, CornerRadius, CssColor,
+    GradientColorStop, Length, OverflowValue, Sides, TextShadowColor,
 };
 use raikiri_html::{
     LayoutOptions, LayoutStatus, NodeId, PageSize, RenderResources, layout,
@@ -45,7 +45,7 @@ fn border_summary(
 }
 
 fn radius_px(radius: &ComputedBorderRadius) -> Option<f32> {
-    match radius.top_left {
+    match radius.top_left.horizontal {
         ComputedLengthPercentage::Px(px) => Some(px),
         _ => None,
     }
@@ -137,6 +137,10 @@ fn painter_reads_typed_computed_values_through_raikiri_html_only() {
         (3.0, BorderStyle::Dashed, GREEN)
     );
     assert_eq!(radius_px(&cv.border_radius), Some(4.0));
+    let corner: CornerRadius<ComputedLengthPercentage> = cv.border_radius.top_left;
+    assert_eq!(corner.horizontal, ComputedLengthPercentage::Px(4.0));
+    assert_eq!(corner.vertical, ComputedLengthPercentage::Px(4.0));
+    assert_eq!(cv.border_radius.used(200.0, 100.0), [[4.0, 4.0]; 4]);
     let shadows: &[ComputedBoxShadowItem] = &cv.box_shadow;
     assert_eq!(shadows.len(), 1);
     assert_eq!(shadow_summary(&shadows[0], cv.color), (5.0, 7.0, GREEN));

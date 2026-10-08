@@ -264,6 +264,18 @@ impl PageLengthBasis<'_> {
     /// The page bag has the same computed-value contract as the element path's
     /// `ComputedValues`, but reuses specified-side payload types to preserve
     /// the existing bag API.
+    fn corner_radius_value(
+        self,
+        specified: crate::property::CornerRadius<Length>,
+    ) -> crate::property::CornerRadius<Length> {
+        specified.map(|axis| match axis {
+            Length::Percent(percent) => Length::Percent(percent),
+            value => Length::Px(
+                resolve_length(value, self.font_size, self.own_line_height, self.ctx).px(),
+            ),
+        })
+    }
+
     fn border_radius_value(self, specified: BorderRadius) -> BorderRadius {
         let computed =
             resolve_border_radius(specified, self.font_size, self.own_line_height, self.ctx);
@@ -272,10 +284,10 @@ impl PageLengthBasis<'_> {
             ComputedLengthPercentage::Percent(percent) => Length::Percent(percent),
         };
         BorderRadius {
-            top_left: length(computed.top_left),
-            top_right: length(computed.top_right),
-            bottom_right: length(computed.bottom_right),
-            bottom_left: length(computed.bottom_left),
+            top_left: computed.top_left.map(length),
+            top_right: computed.top_right.map(length),
+            bottom_right: computed.bottom_right.map(length),
+            bottom_left: computed.bottom_left.map(length),
         }
     }
 
@@ -734,20 +746,10 @@ pub(super) fn absolutize_in_page_context(
         // ── border-radius / box-shadow / outline ─────────────────────────
         PropertyValue::BorderRadius(v) => PropertyValue::BorderRadius(basis.border_radius_value(v)),
         PropertyValue::BorderRadiusInherit => PropertyValue::BorderRadiusInherit,
-        PropertyValue::BorderRadiusTopLeft(v) => PropertyValue::BorderRadiusTopLeft(Length::Px(
-            resolve_length(v, font_size, own_line_height, ctx).px(),
-        )),
-        PropertyValue::BorderRadiusTopRight(v) => PropertyValue::BorderRadiusTopRight(Length::Px(
-            resolve_length(v, font_size, own_line_height, ctx).px(),
-        )),
-        PropertyValue::BorderRadiusBottomRight(v) => {
-            PropertyValue::BorderRadiusBottomRight(Length::Px(
-                resolve_length(v, font_size, own_line_height, ctx).px(),
-            ))
-        }
-        PropertyValue::BorderRadiusBottomLeft(v) => PropertyValue::BorderRadiusBottomLeft(Length::Px(
-            resolve_length(v, font_size, own_line_height, ctx).px(),
-        )),
+        PropertyValue::BorderRadiusTopLeft(v) => PropertyValue::BorderRadiusTopLeft(basis.corner_radius_value(v)),
+        PropertyValue::BorderRadiusTopRight(v) => PropertyValue::BorderRadiusTopRight(basis.corner_radius_value(v)),
+        PropertyValue::BorderRadiusBottomRight(v) => PropertyValue::BorderRadiusBottomRight(basis.corner_radius_value(v)),
+        PropertyValue::BorderRadiusBottomLeft(v) => PropertyValue::BorderRadiusBottomLeft(basis.corner_radius_value(v)),
         PropertyValue::BoxShadow(items) => PropertyValue::BoxShadow(if items.is_empty() {
             items
         } else {

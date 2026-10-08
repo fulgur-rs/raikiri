@@ -12,6 +12,72 @@ const CTX: ResolveContext = ResolveContext {
     root_line_height: None,
 };
 
+#[test]
+fn border_radius_used_values_resolve_percentages_on_each_axis() {
+    let radius = ComputedBorderRadius::elliptical(
+        [ComputedLengthPercentage::Percent(50.0); 4],
+        [ComputedLengthPercentage::Percent(25.0); 4],
+    );
+    assert_eq!(radius.used(200.0, 100.0), [[100.0, 25.0]; 4]);
+}
+
+#[test]
+fn border_radius_used_values_scale_both_axes_by_one_edge_ratio() {
+    let radius = ComputedBorderRadius::elliptical(
+        [ComputedLengthPercentage::Px(80.0); 4],
+        [ComputedLengthPercentage::Px(20.0); 4],
+    );
+    assert_eq!(radius.used(100.0, 100.0), [[50.0, 12.5]; 4]);
+    let radius = ComputedBorderRadius::elliptical(
+        [ComputedLengthPercentage::Px(10.0); 4],
+        [ComputedLengthPercentage::Px(80.0); 4],
+    );
+    assert_eq!(radius.used(100.0, 100.0), [[6.25, 50.0]; 4]);
+}
+
+#[test]
+fn border_radius_used_values_make_zero_axis_corners_square() {
+    let radius = ComputedBorderRadius::elliptical(
+        [
+            ComputedLengthPercentage::Px(0.0),
+            ComputedLengthPercentage::Px(20.0),
+            ComputedLengthPercentage::Px(10.0),
+            ComputedLengthPercentage::Px(10.0),
+        ],
+        [
+            ComputedLengthPercentage::Px(20.0),
+            ComputedLengthPercentage::Px(0.0),
+            ComputedLengthPercentage::Px(10.0),
+            ComputedLengthPercentage::Px(10.0),
+        ],
+    );
+    assert_eq!(
+        radius.used(100.0, 100.0),
+        [[0.0, 0.0], [0.0, 0.0], [10.0, 10.0], [10.0, 10.0]]
+    );
+    assert_eq!(radius.used(0.0, 0.0), [[0.0, 0.0]; 4]);
+}
+
+#[test]
+fn border_radius_used_values_sanitize_non_finite_or_negative_inputs() {
+    let radius = ComputedBorderRadius::elliptical(
+        [
+            ComputedLengthPercentage::Px(f32::NAN),
+            ComputedLengthPercentage::Px(f32::INFINITY),
+            ComputedLengthPercentage::Px(-1.0),
+            ComputedLengthPercentage::Px(10.0),
+        ],
+        [ComputedLengthPercentage::Px(10.0); 4],
+    );
+    assert_eq!(
+        radius.used(100.0, 100.0),
+        [[0.0, 0.0], [0.0, 0.0], [0.0, 0.0], [10.0, 10.0]]
+    );
+    for (width, height) in [(f32::NAN, 100.0), (100.0, f32::INFINITY), (-1.0, 100.0)] {
+        assert_eq!(radius.used(width, height), [[0.0, 0.0]; 4]);
+    }
+}
+
 // -----------------------------------------------------------------
 // Basic contracts for ComputedLength / ResolveContext
 // -----------------------------------------------------------------
@@ -1081,10 +1147,10 @@ fn border_pc_width_is_absolutized_and_still_gated_by_style() {
 #[test]
 fn border_radius_and_box_shadow_resolve_all_length_components() {
     let radius = BorderRadius {
-        top_left: Length::Em(1.0),
-        top_right: Length::Rem(0.5),
-        bottom_right: Length::Pt(12.0),
-        bottom_left: Length::Lh(2.0),
+        top_left: Length::Em(1.0).into(),
+        top_right: Length::Rem(0.5).into(),
+        bottom_right: Length::Pt(12.0).into(),
+        bottom_left: Length::Lh(2.0).into(),
     };
     assert_eq!(
         resolve_border_radius(
@@ -1094,10 +1160,10 @@ fn border_radius_and_box_shadow_resolve_all_length_components() {
             &CTX,
         ),
         ComputedBorderRadius {
-            top_left: ComputedLengthPercentage::Px(20.0),
-            top_right: ComputedLengthPercentage::Px(8.0),
-            bottom_right: ComputedLengthPercentage::Px(16.0),
-            bottom_left: ComputedLengthPercentage::Px(20.0),
+            top_left: ComputedLengthPercentage::Px(20.0).into(),
+            top_right: ComputedLengthPercentage::Px(8.0).into(),
+            bottom_right: ComputedLengthPercentage::Px(16.0).into(),
+            bottom_left: ComputedLengthPercentage::Px(20.0).into(),
         }
     );
 
@@ -1703,5 +1769,16 @@ fn text_decoration_thickness_preserves_keywords_and_resolves_lengths() {
     assert_eq!(
         computed,
         ComputedTextDecorationThickness::Length(ComputedLength(10.0))
+    );
+}
+
+#[test]
+fn circular_corner_constructor_preserves_each_value_until_axis_resolution() {
+    use ComputedLengthPercentage::{Percent, Px};
+    let [tl, tr, br, bl] = std::hint::black_box([Percent(25.0), Px(10.0), Percent(40.0), Px(0.0)]);
+    let radius = ComputedBorderRadius::corners(tl, tr, br, bl);
+    assert_eq!(
+        radius.used(200.0, 100.0),
+        [[50.0, 25.0], [10.0, 10.0], [80.0, 40.0], [0.0, 0.0]]
     );
 }

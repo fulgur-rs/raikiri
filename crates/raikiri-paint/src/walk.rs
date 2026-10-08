@@ -14,7 +14,7 @@
 //! paint-order generator shares them with this walker.
 
 use anyrender::PaintScene;
-use kurbo::{Affine, Arc, BezPath, Point, Rect, RoundedRectRadii, Vec2};
+use kurbo::{Affine, Arc, BezPath, Point, Rect, Vec2};
 use peniko::color::{AlphaColor, ColorSpaceTag, DynamicColor, HueDirection, Srgb};
 use peniko::{Color, Extend as PenikoExtend, Fill, Gradient as PenikoGradient, Mix};
 use raikiri_dom::{CounterSnapshot, Document, FragmentRect, StandaloneAlign};
@@ -4177,7 +4177,31 @@ pub(crate) fn paint_document_impl(
                             clip_bottom as f64
                         },
                     );
-                    scene.push_clip_layer(Affine::IDENTITY, &clip);
+                    let rounded = if !matches!(cv.overflow.x, OverflowValue::Visible)
+                        && !matches!(cv.overflow.y, OverflowValue::Visible)
+                    {
+                        rounded_background_path(
+                            clip.x0,
+                            clip.y0,
+                            clip.x1,
+                            clip.y1,
+                            &cv.border_radius,
+                            (
+                                layout.border.left as f64,
+                                layout.border.top as f64,
+                                layout.border.right as f64,
+                                layout.border.bottom as f64,
+                            ),
+                            (layout.size.width as f64, paint_height as f64),
+                        )
+                    } else {
+                        None
+                    };
+                    if let Some(rounded) = rounded {
+                        scene.push_clip_layer(Affine::IDENTITY, &rounded);
+                    } else {
+                        scene.push_clip_layer(Affine::IDENTITY, &clip);
+                    }
                     stack.push(PaintFrame::PopClip);
                     if let Some(t) = trace.as_deref_mut() {
                         t.push(crate::PaintTraceEvent::PushOverflowClip(
@@ -5219,7 +5243,7 @@ pub(crate) fn paint_element_background(
         ((abs_x + width) as f64).round(),
         ((abs_y + height) as f64).round(),
     );
-    let radius_reference = bx1 - bx0;
+    let radius_reference = (bx1 - bx0, by1 - by0);
     let bl = border.left.width().px() as f64;
     let bt = border.top.width().px() as f64;
     let br = border.right.width().px() as f64;
@@ -5451,11 +5475,10 @@ pub(crate) fn paint_element_background(
     }
 }
 
-/// Rounded background clip matching [`fill_rounded_background`].
+/// Rounded background clip matching the color fill.
 ///
-/// Returns `None` when all corner radii are zero so callers can skip the extra
-/// clip layer. Percentages resolve against the border-box `reference` width
-/// before the clip inset, mirroring the color path.
+/// Resolve outer percentages on each border-box axis before subtracting the
+/// painting-area inset, so the curve follows CSS Backgrounds 3 §4.2.
 fn rounded_background_path(
     x0: f64,
     y0: f64,
@@ -5463,23 +5486,14 @@ fn rounded_background_path(
     y1: f64,
     radius: &ComputedBorderRadius,
     inset: (f64, f64, f64, f64),
-    reference: f64,
+    reference: (f64, f64),
 ) -> Option<BezPath> {
-    let (left, top, right, bottom) = inset;
-    let radii = RoundedRectRadii::new(
-        (used_border_radius(radius.top_left, reference) - left.max(top)).max(0.0),
-        (used_border_radius(radius.top_right, reference) - right.max(top)).max(0.0),
-        (used_border_radius(radius.bottom_right, reference) - right.max(bottom)).max(0.0),
-        (used_border_radius(radius.bottom_left, reference) - left.max(bottom)).max(0.0),
-    );
-    if radii.top_left == 0.0
-        && radii.top_right == 0.0
-        && radii.bottom_right == 0.0
-        && radii.bottom_left == 0.0
-    {
-        return None;
+    let radii = inset_border_radii(used_border_radii(radius, reference.0, reference.1), inset);
+    if radii.iter().flatten().all(|value| *value == 0.0) {
+        None
+    } else {
+        Some(rounded_rect_path(x0, y0, x1, y1, radii))
     }
-    Some(rounded_rect_path(x0, y0, x1, y1, radii))
 }
 
 fn background_length(value: ComputedLengthPercentageOrAuto, basis: f64) -> Option<f64> {
@@ -5885,108 +5899,194 @@ fn axis_origins(
     }
 }
 
-fn used_border_radius(value: ComputedLengthPercentage, reference: f64) -> f64 {
-    match value {
-        ComputedLengthPercentage::Px(px) => px as f64,
-        ComputedLengthPercentage::Percent(percent) => reference * percent as f64 / 100.0,
-    }
+fn used_border_radii(radius: &ComputedBorderRadius, width: f64, height: f64) -> [[f64; 2]; 4] {
+    radius
+        .used(width as f32, height as f32)
+        .map(|corner| corner.map(f64::from))
 }
 
-/// Normalize CSS corner radii so adjacent horizontal and vertical radii fit
-/// their corresponding edges.  Unlike kurbo's `RoundedRect`, CSS permits one
-/// corner to consume an entire edge (for example `100% 0 0 0`).
-fn normalize_border_radii(width: f64, height: f64, radii: RoundedRectRadii) -> RoundedRectRadii {
-    let scale = [
-        width / (radii.top_left + radii.top_right),
-        width / (radii.bottom_left + radii.bottom_right),
-        height / (radii.top_left + radii.bottom_left),
-        height / (radii.top_right + radii.bottom_right),
-    ]
-    .into_iter()
-    .filter(|value| value.is_finite() && *value >= 0.0)
-    .fold(1.0, f64::min)
-    .min(1.0);
-    RoundedRectRadii::new(
-        radii.top_left * scale,
-        radii.top_right * scale,
-        radii.bottom_right * scale,
-        radii.bottom_left * scale,
-    )
+fn inset_border_radii(radii: [[f64; 2]; 4], inset: (f64, f64, f64, f64)) -> [[f64; 2]; 4] {
+    let (left, top, right, bottom) = inset;
+    let insets = [[left, top], [right, top], [right, bottom], [left, bottom]];
+    std::array::from_fn(|index| {
+        let x = (radii[index][0] - insets[index][0]).max(0.0);
+        let y = (radii[index][1] - insets[index][1]).max(0.0);
+        if x == 0.0 || y == 0.0 {
+            [0.0; 2]
+        } else {
+            [x, y]
+        }
+    })
 }
 
-fn append_border_arc(path: &mut BezPath, center: Point, start_angle: f64, radius: f64) {
-    if radius <= 0.0 {
-        return;
-    }
-    let corner = Arc {
-        center,
-        radii: Vec2::new(radius, radius),
-        start_angle,
-        sweep_angle: FRAC_PI_2,
-        x_rotation: 0.0,
-    };
-    for element in corner.append_iter(0.1) {
-        path.push(element);
-    }
-}
-
-/// Construct a circular CSS rounded-rectangle path without kurbo's stricter
-/// per-corner half-side clamp.
-fn rounded_rect_path(x0: f64, y0: f64, x1: f64, y1: f64, radii: RoundedRectRadii) -> BezPath {
-    let radii = normalize_border_radii((x1 - x0).max(0.0), (y1 - y0).max(0.0), radii);
+/// A CSS rounded rectangle with used corner pairs.
+///
+/// Insets can make a curve reach past the opposite edge. Crop its quarter
+/// ellipse at that edge, preserving its center and radii (CSS Backgrounds 3
+/// section 4.2), rather than rescaling the curve to the smaller rectangle.
+/// When cropped diagonal curves cross, use their common convex outline.
+/// Ordinary and single-corner paths retain their cubic arcs.
+fn rounded_rect_path(x0: f64, y0: f64, x1: f64, y1: f64, radii: [[f64; 2]; 4]) -> BezPath {
     let mut path = BezPath::new();
-    path.move_to(Point::new(x0, y0 + radii.top_left));
-    append_border_arc(
-        &mut path,
-        Point::new(x0 + radii.top_left, y0 + radii.top_left),
-        PI,
-        radii.top_left,
-    );
-    path.line_to(Point::new(x1 - radii.top_right, y0));
-    append_border_arc(
-        &mut path,
-        Point::new(x1 - radii.top_right, y0 + radii.top_right),
-        3.0 * FRAC_PI_2,
-        radii.top_right,
-    );
-    path.line_to(Point::new(x1, y1 - radii.bottom_right));
-    append_border_arc(
-        &mut path,
-        Point::new(x1 - radii.bottom_right, y1 - radii.bottom_right),
-        0.0,
-        radii.bottom_right,
-    );
-    path.line_to(Point::new(x0 + radii.bottom_left, y1));
-    append_border_arc(
-        &mut path,
-        Point::new(x0 + radii.bottom_left, y1 - radii.bottom_left),
-        FRAC_PI_2,
-        radii.bottom_left,
-    );
+    if x1 <= x0 || y1 <= y0 {
+        return path;
+    }
+    let (width, height) = (x1 - x0, y1 - y0);
+    let cropped = radii.iter().any(|r| r[0] > width || r[1] > height);
+    let diagonal_overlap = [(0, 2), (1, 3)].into_iter().any(|(a, b)| {
+        radii[a].iter().chain(&radii[b]).all(|r| *r > 0.0)
+            && radii[a][0] + radii[b][0] > width
+            && radii[a][1] + radii[b][1] > height
+    });
+    let mut common = (cropped && diagonal_overlap).then(|| {
+        vec![
+            Point::new(x0, y0),
+            Point::new(x1, y0),
+            Point::new(x1, y1),
+            Point::new(x0, y1),
+        ]
+    });
+    let [tl, tr, br, bl] = radii;
+    let centers = [
+        Point::new(x0 + tl[0], y0 + tl[1]),
+        Point::new(x1 - tr[0], y0 + tr[1]),
+        Point::new(x1 - br[0], y1 - br[1]),
+        Point::new(x0 + bl[0], y1 - bl[1]),
+    ];
+    let square = [
+        Point::new(x0, y0),
+        Point::new(x1, y0),
+        Point::new(x1, y1),
+        Point::new(x0, y1),
+    ];
+    let angles = [PI, 3.0 * FRAC_PI_2, 0.0, FRAC_PI_2];
+    for (index, ([rx, ry], center)) in radii.into_iter().zip(centers).enumerate() {
+        let (point, arc) = if rx == 0.0 || ry == 0.0 {
+            (square[index], None)
+        } else {
+            let (lower, upper) = match index {
+                0 => ((center.y - y1) / ry, (center.x - x1) / rx),
+                1 => ((x0 - center.x) / rx, (center.y - y1) / ry),
+                2 => ((y0 - center.y) / ry, (x0 - center.x) / rx),
+                _ => ((center.x - x1) / rx, (y0 - center.y) / ry),
+            };
+            let start = lower.clamp(0.0, 1.0).asin();
+            let end = upper.clamp(0.0, 1.0).acos();
+            if start >= end {
+                // The whole rectangle lies outside this corner's ellipse.
+                return BezPath::new();
+            }
+            let point = if start == 0.0 {
+                match index {
+                    0 => Point::new(x0, center.y),
+                    1 => Point::new(center.x, y0),
+                    2 => Point::new(x1, center.y),
+                    _ => Point::new(center.x, y1),
+                }
+            } else {
+                match index {
+                    0 => Point::new(center.x - rx * start.cos(), y1),
+                    1 => Point::new(x0, center.y - ry * start.cos()),
+                    2 => Point::new(center.x + rx * start.cos(), y0),
+                    _ => Point::new(x1, center.y + ry * start.cos()),
+                }
+            };
+            let arc = Arc {
+                center,
+                radii: Vec2::new(rx, ry),
+                start_angle: angles[index] + start,
+                sweep_angle: end - start,
+                x_rotation: 0.0,
+            };
+            (point, Some(arc))
+        };
+        if let (Some(polygon), Some(arc)) = (common.as_mut(), arc) {
+            // Subdivide the actual ellipse so cubic approximation error cannot
+            // move an inner contour outside the existing outer arc.
+            let mut points = vec![point];
+            flatten_corner_arc(arc, arc.start_angle + arc.sweep_angle, 0, &mut points);
+            for edge in points.windows(2) {
+                *polygon = clip_corner_polygon(std::mem::take(polygon), edge[0], edge[1]);
+                if polygon.len() < 3 {
+                    return BezPath::new();
+                }
+            }
+        }
+        if common.is_none() {
+            if index == 0 {
+                path.move_to(point);
+            } else {
+                path.line_to(point);
+            }
+            if let Some(arc) = arc {
+                for element in arc.append_iter(0.1) {
+                    path.push(element);
+                }
+            }
+        }
+    }
+    if let Some(polygon) = common {
+        let mut outline = BezPath::new();
+        outline.move_to(polygon[0]);
+        for point in &polygon[1..] {
+            outline.line_to(*point);
+        }
+        outline.close_path();
+        return outline;
+    }
     path.close_path();
     path
+}
+
+/// Flatten an axis-aligned ellipse to a 0.05 layout-pixel chord-error target, bounded
+/// to 1024 chords per corner for extreme coordinates.
+fn flatten_corner_arc(arc: Arc, end_angle: f64, depth: u8, points: &mut Vec<Point>) {
+    // The norm of the ellipse's second derivative is bounded by its larger
+    // radius; linear interpolation error is at most that bound times h²/8.
+    let sweep = end_angle - arc.start_angle;
+    let chord_error = arc.radii.x.abs().max(arc.radii.y.abs()) * sweep.abs() * sweep.abs() / 8.0;
+    if depth == 10 || chord_error <= 0.05 {
+        let (sin, cos) = end_angle.sin_cos();
+        points.push(arc.center + Vec2::new(arc.radii.x * cos, arc.radii.y * sin));
+        return;
+    }
+    let middle = arc.start_angle + sweep * 0.5;
+    flatten_corner_arc(arc, middle, depth + 1, points);
+    let mut right = arc;
+    right.start_angle = middle;
+    flatten_corner_arc(right, end_angle, depth + 1, points);
+}
+
+/// Clip a nonempty convex polygon to the clockwise edge's interior side.
+fn clip_corner_polygon(polygon: Vec<Point>, a: Point, b: Point) -> Vec<Point> {
+    let distance = |point: Point| (b - a).cross(point - a);
+    let mut out = Vec::with_capacity(polygon.len() + 1);
+    let mut previous = polygon[polygon.len() - 1];
+    let mut previous_distance = distance(previous);
+    for current in polygon {
+        let current_distance = distance(current);
+        if (previous_distance >= 0.0) != (current_distance >= 0.0) {
+            let t = previous_distance / (previous_distance - current_distance);
+            out.push(previous.lerp(current, t));
+        }
+        if current_distance >= 0.0 {
+            out.push(current);
+        }
+        previous = current;
+        previous_distance = current_distance;
+    }
+    out
 }
 
 pub(crate) fn paintable_border_radius(
     radius: &ComputedBorderRadius,
     enabled: bool,
 ) -> ComputedBorderRadius {
-    if !enabled {
-        return ComputedBorderRadius::all(ComputedLength(0.0));
+    if enabled {
+        *radius
+    } else {
+        ComputedBorderRadius::all(ComputedLength(0.0))
     }
-    let zero_percent = |value: ComputedLengthPercentage| match value {
-        ComputedLengthPercentage::Px(px) => ComputedLengthPercentage::Px(px),
-        // Keep percentages in the style/computed layers. The first paint
-        // slice deliberately leaves percentage geometry to the follow-up
-        // clipping implementation rather than using a width-only circle.
-        ComputedLengthPercentage::Percent(_) => ComputedLengthPercentage::Px(0.0),
-    };
-    ComputedBorderRadius::corners(
-        zero_percent(radius.top_left),
-        zero_percent(radius.top_right),
-        zero_percent(radius.bottom_right),
-        zero_percent(radius.bottom_left),
-    )
 }
 
 /// Paint the shadows, background, borders and outline of one piece of an
@@ -6041,7 +6141,7 @@ pub(crate) fn paint_inline_box(
             && cv.transform.is_empty()
             && cv.filter.is_empty(),
     );
-    let square = ComputedLengthPercentage::Px(0.0);
+    let square = raikiri_style::property::CornerRadius::circular(ComputedLengthPercentage::Px(0.0));
     if !left_edge {
         radius.top_left = square;
         radius.bottom_left = square;
@@ -6104,9 +6204,7 @@ pub(crate) fn paint_inline_box(
     );
 }
 
-/// Fill a background using the computed circular corner radii.  The shape is
-/// kept rectangular for the common zero-radius path, while non-zero corners
-/// use kurbo's anti-aliased `RoundedRect` through the same PaintScene API.
+/// Fill a background using the same elliptical curve as its image clip.
 #[allow(clippy::too_many_arguments)]
 fn fill_rounded_background(
     scene: &mut impl PaintScene,
@@ -6117,30 +6215,17 @@ fn fill_rounded_background(
     y1: f64,
     radius: &ComputedBorderRadius,
     inset: (f64, f64, f64, f64),
-    reference: f64,
+    reference: (f64, f64),
 ) {
-    let (left, top, right, bottom) = inset;
-    let radii = RoundedRectRadii::new(
-        (used_border_radius(radius.top_left, reference) - left.max(top)).max(0.0),
-        (used_border_radius(radius.top_right, reference) - right.max(top)).max(0.0),
-        (used_border_radius(radius.bottom_right, reference) - right.max(bottom)).max(0.0),
-        (used_border_radius(radius.bottom_left, reference) - left.max(bottom)).max(0.0),
-    );
-    if radii.top_left == 0.0
-        && radii.top_right == 0.0
-        && radii.bottom_right == 0.0
-        && radii.bottom_left == 0.0
-    {
-        let rect = Rect::new(x0, y0, x1, y1);
-        scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, color, None, &rect);
+    if let Some(path) = rounded_background_path(x0, y0, x1, y1, radius, inset, reference) {
+        scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &path);
     } else {
-        let rounded = rounded_rect_path(x0, y0, x1, y1, radii);
         scene.fill(
             Fill::NonZero,
-            kurbo::Affine::IDENTITY,
+            Affine::IDENTITY,
             color,
             None,
-            &rounded,
+            &Rect::new(x0, y0, x1, y1),
         );
     }
 }
@@ -6164,14 +6249,10 @@ pub(crate) fn paint_element_box_shadows(
     if width <= 0.0 || height <= 0.0 {
         return;
     }
-    let radius = [
-        used_border_radius(border_radius.top_left, width as f64),
-        used_border_radius(border_radius.top_right, width as f64),
-        used_border_radius(border_radius.bottom_right, width as f64),
-        used_border_radius(border_radius.bottom_left, width as f64),
-    ]
-    .into_iter()
-    .fold(0.0, f64::max);
+    let radius = used_border_radii(border_radius, width as f64, height as f64)
+        .into_iter()
+        .flatten()
+        .fold(0.0, f64::max);
     for shadow in shadows.iter().filter(|shadow| !shadow.inset) {
         let color = match shadow.color {
             TextShadowColor::CurrentColor => current_color,
@@ -6222,17 +6303,8 @@ pub(crate) fn paint_element_border_rounded(
     current_color: CssColor,
     radius: &ComputedBorderRadius,
 ) {
-    let reference = width as f64;
-    let radii = RoundedRectRadii::new(
-        used_border_radius(radius.top_left, reference),
-        used_border_radius(radius.top_right, reference),
-        used_border_radius(radius.bottom_right, reference),
-        used_border_radius(radius.bottom_left, reference),
-    );
-    let has_radius = radii.top_left > 0.0
-        || radii.top_right > 0.0
-        || radii.bottom_right > 0.0
-        || radii.bottom_left > 0.0;
+    let radii = used_border_radii(radius, width as f64, height as f64);
+    let has_radius = radii.iter().flatten().any(|value| *value > 0.0);
     if !has_radius {
         paint_element_border(scene, width, height, abs_x, abs_y, border, current_color);
         return;
@@ -6285,11 +6357,9 @@ pub(crate) fn paint_element_border_rounded(
         (abs_y + height) as f64,
         radii,
     );
-    let inner_radii = RoundedRectRadii::new(
-        (radii.top_left - stroke_width).max(0.0),
-        (radii.top_right - stroke_width).max(0.0),
-        (radii.bottom_right - stroke_width).max(0.0),
-        (radii.bottom_left - stroke_width).max(0.0),
+    let inner_radii = inset_border_radii(
+        radii,
+        (stroke_width, stroke_width, stroke_width, stroke_width),
     );
     let inner = rounded_rect_path(
         abs_x as f64 + stroke_width,
@@ -6307,23 +6377,23 @@ pub(crate) fn paint_element_border_rounded(
     let y1 = (abs_y + height) as f64;
     for (corner, rect) in [
         (
-            radii.top_right,
+            radii[1],
             Rect::new(x1 - stroke_width, y0, x1, y0 + stroke_width),
         ),
         (
-            radii.bottom_right,
+            radii[2],
             Rect::new(x1 - stroke_width, y1 - stroke_width, x1, y1),
         ),
         (
-            radii.bottom_left,
+            radii[3],
             Rect::new(x0, y1 - stroke_width, x0 + stroke_width, y1),
         ),
         (
-            radii.top_left,
+            radii[0],
             Rect::new(x0, y0, x0 + stroke_width, y0 + stroke_width),
         ),
     ] {
-        if corner == 0.0 {
+        if corner == [0.0; 2] {
             scene.fill(Fill::NonZero, kurbo::Affine::IDENTITY, color, None, &rect);
         }
     }
@@ -6833,7 +6903,7 @@ fn paint_conic_gradient(
     painting: Rect,
     border_radius: &ComputedBorderRadius,
     radius_inset: (f64, f64, f64, f64),
-    radius_reference: f64,
+    radius_reference: (f64, f64),
     current_color: CssColor,
 ) {
     if positioning.width() <= 0.0 || positioning.height() <= 0.0 {

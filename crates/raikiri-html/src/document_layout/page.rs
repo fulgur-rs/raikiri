@@ -123,6 +123,23 @@ impl<'a> Page<'a> {
         )
     }
 
+    /// Body paint order using the supplied [`Self::text_runs`] instead of
+    /// DOM text fragments. Each [`PaintEvent::TextLine`] identifies all runs
+    /// of one paragraph line, including generated text and ellipses, inside
+    /// the paragraph's ancestor clips and opacity groups.
+    ///
+    /// Pass the runs from this page. No text is extracted or shaped again.
+    /// Boxes, replaced content and the approximations of [`Self::paint_order`]
+    /// retain their existing order; paragraphs omitted by [`Self::text_runs`]
+    /// have no text events here. Inline element opacity is not represented.
+    pub fn paint_order_for_text_runs(
+        &self,
+        runs: &[PositionedGlyphRun<'a>],
+    ) -> Vec<PaintEvent<'a>> {
+        self.document
+            .page_paint_order_for_text_runs(self.cascade, self.slice.page_index, runs)
+    }
+
     /// The laid-out document, its cascade, the page box and the page's
     /// origin in the shared flow, for painting the page with the built-in
     /// painter.
