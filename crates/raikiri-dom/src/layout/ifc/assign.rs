@@ -289,7 +289,8 @@ fn build_error(root: usize, error: IfcError) -> LayoutError {
 /// # Errors
 /// [`LayoutError::IfcLimitExceeded`] when a paragraph exceeds a limit of the
 /// engine, and [`LayoutError::IfcUnsupported`] for a paragraph the engine
-/// refuses. Nothing is marked then.
+/// refuses. [`LayoutError::Internal`] if a table exceeds the native grid's
+/// supported row or column bounds. Nothing is marked then.
 pub(crate) fn assign_ifc_roots(
     doc: &mut Document,
     cascade: &CascadeResult,
@@ -299,7 +300,7 @@ pub(crate) fn assign_ifc_roots(
             .remove(NodeFlags::IS_IFC_ROOT | NodeFlags::IN_IFC_SUBTREE);
         node.ifc = None;
     }
-    crate::layout::table::anonymous::prepare(doc, cascade);
+    crate::layout::table::anonymous::prepare(doc, cascade)?;
     // Take the engine state out so the walk can borrow the document.
     let Some(mut state) = doc.ifc.take() else {
         return Ok(());

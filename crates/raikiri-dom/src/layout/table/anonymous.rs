@@ -2,8 +2,9 @@
 
 use crate::Document;
 use crate::node::{Node, NodeFlags};
-use raikiri_style::property::{BreakBetween, DisplayValue, TableLayoutValue, VerticalAlign};
+use raikiri_style::property::DisplayValue;
 use raikiri_style::{CascadeResult, PseudoElem};
+use raikiri_traits::LayoutError;
 use raikiri_traits::NodeKind;
 use std::collections::{HashMap, HashSet};
 
@@ -42,6 +43,7 @@ pub(crate) struct TableObjects {
     cells_by_owner: HashMap<usize, Vec<usize>>,
     cell_by_content: HashMap<Content, usize>,
     content_by_owner: HashMap<usize, Vec<Content>>,
+    prototypes_by_owner: HashMap<usize, Node>,
     pub(crate) rows: HashMap<usize, Vec<Row>>,
     pub(crate) paragraph_owner: Vec<Option<usize>>,
     pub(crate) part_background_cells: HashMap<usize, Vec<raikiri_traits::PaintRect>>,
@@ -101,6 +103,46 @@ fn children(doc: &Document, cascade: &CascadeResult, owner: usize) -> Vec<Conten
     out
 }
 
+fn anonymous_prototype(doc: &Document, owner: usize) -> Node {
+    let source = &doc.nodes[owner];
+    // Anonymous boxes have no source attributes, children or retained layout
+    // payloads. Text/style projection reads the original owner before layout;
+    // the temporary Taffy view is restored before any source metadata is read.
+    let mut node = Node::new_element(
+        source.tag_name().unwrap_or("div").into(),
+        taffy::Style::default(),
+        None,
+    );
+    if let crate::node::NodeData::Element(source_data) = &source.data {
+        let target = node.data.as_element_mut().expect("element prototype");
+        target.namespace = source_data.namespace.clone();
+        target.prefix = source_data.prefix.clone();
+    }
+    node.parent = source.parent;
+    node.flags = source.flags;
+    node.flags
+        .remove(NodeFlags::IS_IFC_ROOT | NodeFlags::IN_IFC_SUBTREE);
+    node.style.display = taffy::Display::Block;
+    node.display = DisplayValue::TableCell;
+    node.border_collapse = source.border_collapse;
+    node.border_spacing = source.border_spacing;
+    node.caption_side = source.caption_side;
+    node.authored_writing_mode = source.authored_writing_mode;
+    node
+}
+
+fn clone_prototype(source: &Node) -> Node {
+    #[cfg(test)]
+    OWNER_CLONE_ENTRIES.with(|entries| {
+        let attributes = match &source.data {
+            crate::node::NodeData::Element(element) => element.attributes.len(),
+            _ => 0,
+        };
+        entries.set(entries.get() + source.children.len() + attributes);
+    });
+    source.clone()
+}
+
 fn anonymous_cell(
     doc: &Document,
     cascade: &CascadeResult,
@@ -108,7 +150,11 @@ fn anonymous_cell(
     owner: usize,
     content: Vec<Content>,
 ) -> usize {
-    let mut node = doc.nodes[owner].clone();
+    let prototype = objects
+        .prototypes_by_owner
+        .entry(owner)
+        .or_insert_with(|| anonymous_prototype(doc, owner));
+    let mut node = clone_prototype(prototype);
     node.children = content
         .iter()
         .filter_map(|entry| match entry {
@@ -131,31 +177,6 @@ fn anonymous_cell(
         crate::paint_rules::hides_anonymous_table_cell(doc, cascade, owner, &node.children)
             && (cascade.computed[owner].visibility == raikiri_style::property::Visibility::Hidden
                 || !visible_generated);
-    node.style = taffy::Style::default();
-    node.style.display = taffy::Display::Block;
-    node.display = DisplayValue::TableCell;
-    node.ifc = None;
-    node.cache.clear();
-    node.flags
-        .remove(NodeFlags::IS_IFC_ROOT | NodeFlags::IN_IFC_SUBTREE);
-    node.order_modified_children = Box::default();
-    // Anonymous boxes inherit text and table-spacing properties, while
-    // non-inherited properties and previous used layout state start fresh.
-    node.table_layout = TableLayoutValue::Auto;
-    node.table_vertical_align = VerticalAlign::Baseline;
-    node.table_grid_box = None;
-    node.table_first_baseline = None;
-    node.break_before = BreakBetween::Auto;
-    node.break_after = BreakBetween::Auto;
-    node.has_logical_min_block_size = false;
-    node.order = 0;
-    node.grid_item_row_starts = Box::default();
-    node.grid_column_count = 0;
-    node.multicol = None;
-    node.computed_border = None;
-    node.collapsed_border = None;
-    node.needs_relative_block_paint_offset = false;
-    node.unrounded_layout = taffy::Layout::new();
     let key = objects.arena_len + objects.cells.len();
     let index = objects.cells.len();
     objects.cells_by_owner.entry(owner).or_default().push(index);
@@ -177,13 +198,24 @@ fn row(
     owner: usize,
     ids: &[Content],
     marker: Option<usize>,
-) -> Row {
+    row_count: &mut usize,
+) -> Result<Row, LayoutError> {
+    // Apply the native grid's exact row-index bound before allocating a
+    // projected row or its anonymous cells.
+    u16::try_from(*row_count).map_err(|_| super::table_column_error())?;
+    *row_count += 1;
     let mut cells = Vec::new();
     let mut pending = Vec::new();
-    let flush = |pending: &mut Vec<Content>, cells: &mut Vec<usize>, objects: &mut TableObjects| {
+    let mut column = 0;
+    let flush = |pending: &mut Vec<Content>,
+                 cells: &mut Vec<usize>,
+                 objects: &mut TableObjects,
+                 column: &mut u16|
+     -> Result<(), LayoutError> {
         // Inter-cell white space generates no anonymous cell. Keep white
         // space within an actual content run for the paragraph to collapse.
         if pending.iter().any(|&id| !whitespace(doc, id)) {
+            *column = super::next_table_column(*column, 1)?;
             cells.push(anonymous_cell(
                 doc,
                 cascade,
@@ -194,6 +226,7 @@ fn row(
         } else {
             pending.clear();
         }
+        Ok(())
     };
     if marker.is_some() {
         objects.content_by_owner.insert(owner, ids.to_vec());
@@ -201,17 +234,18 @@ fn row(
     for &entry in ids {
         let id = entry.node();
         if matches!(entry, Content::Node(_)) && doc.nodes[id].display == DisplayValue::TableCell {
-            flush(&mut pending, &mut cells, objects);
+            flush(&mut pending, &mut cells, objects, &mut column)?;
+            column = super::next_table_column(column, super::get_colspan(doc, id))?;
             cells.push(id);
         } else {
             pending.push(entry);
         }
     }
-    flush(&mut pending, &mut cells, objects);
-    Row {
+    flush(&mut pending, &mut cells, objects, &mut column)?;
+    Ok(Row {
         marker: marker.unwrap_or_else(|| cells.first().copied().unwrap_or(owner)),
         cells,
-    }
+    })
 }
 
 fn rows(
@@ -220,7 +254,8 @@ fn rows(
     objects: &mut TableObjects,
     owner: usize,
     reorder: bool,
-) -> Vec<Row> {
+    row_count: &mut usize,
+) -> Result<Vec<Row>, LayoutError> {
     let mut ids = children(doc, cascade, owner);
     objects.content_by_owner.insert(owner, ids.clone());
     if reorder {
@@ -244,11 +279,16 @@ fn rows(
     }
     let mut out = Vec::new();
     let mut pending = Vec::new();
-    let flush = |pending: &mut Vec<Content>, out: &mut Vec<Row>, objects: &mut TableObjects| {
+    let flush = |pending: &mut Vec<Content>,
+                 out: &mut Vec<Row>,
+                 objects: &mut TableObjects,
+                 row_count: &mut usize|
+     -> Result<(), LayoutError> {
         if pending.iter().any(|&id| !whitespace(doc, id)) {
-            out.push(row(doc, cascade, objects, owner, pending, None));
+            out.push(row(doc, cascade, objects, owner, pending, None, row_count)?);
         }
         pending.clear();
+        Ok(())
     };
     for entry in ids {
         let id = entry.node();
@@ -258,7 +298,7 @@ fn rows(
         }
         match doc.nodes[id].display {
             DisplayValue::TableRow => {
-                flush(&mut pending, &mut out, objects);
+                flush(&mut pending, &mut out, objects, row_count)?;
                 out.push(row(
                     doc,
                     cascade,
@@ -266,32 +306,35 @@ fn rows(
                     id,
                     &children(doc, cascade, id),
                     Some(id),
-                ));
+                    row_count,
+                )?);
             }
             DisplayValue::TableRowGroup
             | DisplayValue::TableHeaderGroup
             | DisplayValue::TableFooterGroup => {
-                flush(&mut pending, &mut out, objects);
-                out.extend(rows(doc, cascade, objects, id, false));
+                flush(&mut pending, &mut out, objects, row_count)?;
+                out.extend(rows(doc, cascade, objects, id, false, row_count)?);
             }
             DisplayValue::TableCaption
             | DisplayValue::TableColumn
             | DisplayValue::TableColumnGroup => {
-                flush(&mut pending, &mut out, objects);
+                flush(&mut pending, &mut out, objects, row_count)?;
             }
             _ => pending.push(entry),
         }
     }
-    flush(&mut pending, &mut out, objects);
-    out
+    flush(&mut pending, &mut out, objects, row_count)?;
+    Ok(out)
 }
 
-pub(crate) fn prepare(doc: &mut Document, cascade: &CascadeResult) {
+pub(crate) fn prepare(doc: &mut Document, cascade: &CascadeResult) -> Result<(), LayoutError> {
     // Source parts may no longer contain anonymous cells on this pass. Their
     // previous parent-relative boxes must not shift ordinary table cells.
     for &id in &doc.table_objects.materialized_parts {
         doc.nodes[id].unrounded_layout = taffy::Layout::new();
     }
+    // An unsuccessful rebuild must not expose cells from the previous pass.
+    doc.table_objects = TableObjects::default();
     let mut objects = TableObjects {
         arena_len: doc.nodes.len(),
         paragraph_owner: vec![None; doc.nodes.len()],
@@ -305,11 +348,13 @@ pub(crate) fn prepare(doc: &mut Document, cascade: &CascadeResult) {
             )
             && !super::super::ifc::assign::can_be_ifc_root(doc, cascade, id)
         {
-            let table_rows = rows(doc, cascade, &mut objects, id, true);
+            let table_rows = rows(doc, cascade, &mut objects, id, true, &mut 0)?;
             objects.rows.insert(id, table_rows);
+            objects.prototypes_by_owner.clear();
         }
     }
     doc.table_objects = objects;
+    Ok(())
 }
 
 impl Document {
@@ -413,6 +458,7 @@ impl Document {
 #[cfg(test)]
 thread_local! {
     static OWNER_CELL_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static OWNER_CLONE_ENTRIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]

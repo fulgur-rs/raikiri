@@ -180,11 +180,11 @@ fn table_column_grid_accepts_exact_representable_boundary() {
         let mut doc = oversized_columns_document(explicit, columns);
         let rules = build_rule_tree(&doc);
         let cr = cascade(&doc, &rules).unwrap();
-        crate::layout::apply_computed_to_style(&mut doc, &cr).unwrap();
         let table = 3;
         let last = doc.nodes.len() - 1;
         let attribute = if columns { "span" } else { "colspan" };
         doc.set_element_attributes(last, vec![(attribute.into(), "535".into())]);
+        crate::layout::apply_computed_to_style(&mut doc, &cr).unwrap();
         let grid = super::build_table_grid(&doc, table).unwrap();
         assert_eq!(grid.n_cols, u16::MAX);
         if columns {

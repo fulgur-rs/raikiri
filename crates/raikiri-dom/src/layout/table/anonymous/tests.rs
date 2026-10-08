@@ -65,7 +65,7 @@ fn source_owner_enumeration_is_linear_across_many_anonymous_rows() {
     for (node, cv) in doc.nodes.iter_mut().zip(&computed.computed) {
         node.display = cv.display;
     }
-    prepare(&mut doc, &computed);
+    prepare(&mut doc, &computed).unwrap();
     OWNER_CELL_VISITS.with(|visits| visits.set(0));
     for owner in owners {
         let cells: Vec<_> = doc.anonymous_table_cells(owner).collect();
@@ -181,4 +181,224 @@ fn deep_generated_contents_stream_is_bounded_and_keeps_real_children() {
         .unwrap()
         .join()
         .unwrap();
+}
+
+#[test]
+fn owner_clone_volume_is_linear_across_many_anonymous_rows() {
+    for count in [200, 400] {
+        let mut doc = Document::new();
+        let table = doc.append_element(Some(0), "div", Style::default(), Some("display:table"));
+        for index in 0..count {
+            doc.set_element_attribute(table, format!("data-item-{index}"), "source")
+                .unwrap();
+            doc.append_element(Some(table), "div", Style::default(), Some("display:block"));
+            doc.append_element(
+                Some(table),
+                "div",
+                Style::default(),
+                Some("display:table-row"),
+            );
+        }
+        doc.mark_in_document_flags();
+        let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        OWNER_CLONE_ENTRIES.with(|entries| entries.set(0));
+        crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
+        assert_eq!(doc.anonymous_table_cells(table).count(), count);
+        assert_eq!(doc.get_node(table).unwrap().children.len(), count * 2);
+        assert_eq!(doc.element_attribute(table, "data-item-0"), Some("source"));
+        let copied = OWNER_CLONE_ENTRIES.with(|entries| entries.get());
+        assert!(
+            copied <= (doc.node_count() + count) * 3,
+            "owner cloning copied {copied} entries for {count} cells"
+        );
+    }
+}
+
+#[test]
+fn column_bounds_are_checked_before_projection_and_recover_without_stale_cells() {
+    let mut doc = Document::new();
+    let table = doc.append_element(Some(0), "div", Style::default(), Some("display:table"));
+    let row = doc.append_element(
+        Some(table),
+        "div",
+        Style::default(),
+        Some("display:table-row"),
+    );
+    for _ in 0..65 {
+        let cell = doc.append_element(
+            Some(row),
+            "div",
+            Style::default(),
+            Some("display:table-cell"),
+        );
+        doc.set_element_attribute(cell, "colspan", "1000").unwrap();
+    }
+    let last = doc.append_element(
+        Some(row),
+        "div",
+        Style::default(),
+        Some("display:table-cell"),
+    );
+    doc.set_element_attribute(last, "colspan", "534").unwrap();
+    let content = doc.append_element(Some(row), "div", Style::default(), Some("display:block"));
+    doc.set_element_attribute(table, "data-source", "kept")
+        .unwrap();
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
+    assert_eq!(
+        super::super::build_table_grid(&doc, table).unwrap().n_cols,
+        u16::MAX
+    );
+    assert_eq!(doc.anonymous_table_cells(row).count(), 1);
+
+    let extra = doc.append_element(
+        Some(row),
+        "div",
+        Style::default(),
+        Some("display:table-cell"),
+    );
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    assert!(crate::layout::apply_computed_to_style(&mut doc, &computed).is_err());
+    assert!(doc.table_objects.cells.is_empty());
+    assert!(doc.table_objects.rows.is_empty());
+    assert_eq!(doc.element_attribute(table, "data-source"), Some("kept"));
+    assert_eq!(doc.get_node(content).unwrap().parent, Some(row));
+    doc.detach_from_parent(extra);
+    doc.set_element_attribute(last, "colspan", "535").unwrap();
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    assert!(crate::layout::apply_computed_to_style(&mut doc, &computed).is_err());
+    assert!(doc.table_objects.cells.is_empty());
+    doc.set_element_attribute(last, "colspan", "534").unwrap();
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
+    assert_eq!(
+        super::super::build_table_grid(&doc, table).unwrap().n_cols,
+        u16::MAX
+    );
+    assert_eq!(doc.anonymous_table_cells(row).count(), 1);
+}
+
+#[test]
+fn row_bounds_are_checked_before_projection_at_the_existing_exact_boundary() {
+    let mut doc = Document::new();
+    let table = doc.append_element(Some(0), "div", Style::default(), Some("display:table"));
+    let group = doc.append_element(
+        Some(table),
+        "div",
+        Style::default(),
+        Some("display:table-row-group"),
+    );
+    for index in 0..=u16::MAX {
+        doc.append_element(
+            Some(if index < 32768 { table } else { group }),
+            "div",
+            Style::default(),
+            Some("display:table-row"),
+        );
+    }
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
+    assert_eq!(
+        doc.table_objects.rows[&table].len(),
+        usize::from(u16::MAX) + 1
+    );
+    assert_eq!(
+        super::super::build_table_grid(&doc, table)
+            .unwrap()
+            .rows
+            .len(),
+        65536
+    );
+    let extra = doc.append_element(
+        Some(table),
+        "div",
+        Style::default(),
+        Some("display:table-row"),
+    );
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    assert!(crate::layout::apply_computed_to_style(&mut doc, &computed).is_err());
+    assert!(doc.table_objects.rows.is_empty());
+    doc.detach_from_parent(extra);
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
+    assert_eq!(doc.table_objects.rows[&table].len(), 65536);
+}
+
+#[test]
+fn prototypes_exclude_real_canvas_payloads_and_rebuild_with_source_changes() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let table = doc.append_element(
+        Some(body),
+        "canvas",
+        Style::default(),
+        Some("display:table;border-spacing:0"),
+    );
+    doc.set_element_attribute(table, "width", "32").unwrap();
+    doc.set_element_attribute(table, "height", "16").unwrap();
+    doc.set_element_attribute(table, "lang", "tr").unwrap();
+    assert_eq!(doc.try_ensure_canvas_bitmap(table).unwrap(), Some((32, 16)));
+    assert!(doc.canvas_fill_rect(table, 0, 0, 32, 16, [1, 2, 3, 255]));
+    let block = doc.append_element(
+        Some(table),
+        "div",
+        Style::default(),
+        Some("display:block;width:20px;height:10px"),
+    );
+    let row = doc.append_element(
+        Some(table),
+        "div",
+        Style::default(),
+        Some("display:table-row"),
+    );
+    doc.append_element(
+        Some(table),
+        "div",
+        Style::default(),
+        Some("display:block;width:20px;height:10px"),
+    );
+    let children = doc.nodes[table].children.clone();
+    for mode in ["horizontal-tb", "vertical-rl", "horizontal-tb"] {
+        doc.set_element_inline_style(
+            table,
+            Some(format!("display:table;border-spacing:0;writing-mode:{mode}").into()),
+        );
+        doc.mark_in_document_flags();
+        let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        assert!(anonymous_prototype(&doc, table).ifc.is_none());
+        crate::layout::layout_single_page(&mut doc, &computed, raikiri_traits::PageBox::A4)
+            .unwrap();
+        assert_eq!(doc.anonymous_table_cells(table).count(), 2);
+        assert!(doc.table_objects.prototypes_by_owner.is_empty());
+        for (_, cell) in doc.anonymous_table_cells(table) {
+            let crate::node::NodeData::Element(element) = &cell.data else {
+                panic!("anonymous cell element");
+            };
+            assert!(element.attributes.is_empty());
+            assert!(element.canvas_bitmap.is_none());
+            assert!(cell.order_modified_children.is_empty());
+            assert!(cell.grid_item_row_starts.is_empty());
+            assert_eq!(cell.style.display, taffy::Display::Block);
+            assert_eq!(
+                cell.authored_writing_mode,
+                doc.nodes[table].authored_writing_mode
+            );
+        }
+        assert_eq!(doc.nodes[table].children, children);
+        assert_eq!(doc.element_attribute(table, "lang"), Some("tr"));
+        assert_eq!(
+            doc.canvas_bitmap_ref(table).unwrap().rgba,
+            [1, 2, 3, 255].repeat(512)
+        );
+        assert_eq!(doc.nodes[block].parent, Some(table));
+        assert_eq!(doc.nodes[row].parent, Some(table));
+    }
 }
