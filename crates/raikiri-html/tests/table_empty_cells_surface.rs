@@ -40,7 +40,11 @@ fn find_by_id(node: NodeId, dom: &raikiri_html::DomView<'_>, id: &str) -> Option
 }
 
 fn rect(document: &DocumentLayout, id: &str) -> PaintRect {
-    let page = document.page(0).unwrap();
+    rect_on_page(document, id, 0)
+}
+
+fn rect_on_page(document: &DocumentLayout, id: &str, page_index: u32) -> PaintRect {
+    let page = document.page(page_index).unwrap();
     let dom = page.dom();
     let node = find_by_id(dom.root(), &dom, id).unwrap();
     page.fragments()
@@ -89,4 +93,20 @@ fn empty_cells_keep_row_and_group_offsets_separate() {
     assert_eq!(rect(&document, "a").y, 0.0);
     assert_eq!(rect(&document, "b").y, 10.0);
     assert_eq!(rect(&document, "c").y, 20.0);
+}
+
+#[test]
+fn empty_and_block_cells_restart_at_the_next_page_origin() {
+    for content in ["", "<div></div>"] {
+        let rows: String = (0..6)
+            .map(|row| format!("<tr><td id='r{row}'>{content}</td></tr>"))
+            .collect();
+        let document = lay_out(&format!(
+            "<style>td{{height:40px}}</style><table>{rows}</table>"
+        ));
+        assert!(document.page(1).is_some());
+        assert_eq!(rect_on_page(&document, "r4", 0).y, 160.0);
+        assert_eq!(rect_on_page(&document, "r5", 1).y, 0.0);
+        assert_eq!(rect_on_page(&document, "r5", 1).height, 40.0);
+    }
 }

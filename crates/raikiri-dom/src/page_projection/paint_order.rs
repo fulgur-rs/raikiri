@@ -4,7 +4,7 @@
 use super::records::{PageFragmentItem, PageFragmentKind};
 use crate::{Document, Fragment, OverflowClip, PositionedGlyphRun, TextLineId, paint_rules};
 use raikiri_style::CascadeResult;
-use raikiri_style::property::ColumnCountValue;
+use raikiri_style::property::{ColumnCountValue, Visibility};
 use raikiri_traits::{NodeId, NodeKind, PaintClip, PaintRect};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -208,7 +208,9 @@ impl Document {
                             node.is_inline_svg_root() || self.is_canvas_element(node_id);
                         for &item in &own {
                             let fragment = items.fragment(item);
-                            if let Some(cells) = self.anonymous_table_part_background_cells(node_id)
+                            if let Some(cells) = self
+                                .anonymous_table_part_background_cells(node_id)
+                                .filter(|_| cv.visibility != Visibility::Hidden)
                             {
                                 let rect = fragment.paint_rect();
                                 let top = rect.y - item.rect.y + item.box_y;
