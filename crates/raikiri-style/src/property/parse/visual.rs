@@ -2244,6 +2244,7 @@ pub(crate) fn parse_background_shorthand(
     let mut attachment: Option<BackgroundAttachment> = None;
     let mut visual_boxes: Vec<VisualBox> = Vec::new();
     let mut color: Option<CssColor> = None;
+    let mut color_expression = None;
 
     loop {
         if image.is_none()
@@ -2290,11 +2291,19 @@ pub(crate) fn parse_background_shorthand(
             continue;
         }
         if color.is_none()
-            && let Ok(v) = input.try_parse(|i| -> Result<CssColor, ParseError<'_, ()>> {
-                parse_color(i).ok_or_else(|| i.new_custom_error(()))
+            && let Ok(v) = input.try_parse(|i| -> Result<PropertyValue, ParseError<'_, ()>> {
+                super::color::parse_element_color(i, PropertyKey::BackgroundColor)
+                    .ok_or_else(|| i.new_custom_error(()))
             })
         {
-            color = Some(v);
+            match v {
+                PropertyValue::BackgroundColor(value) => color = Some(value),
+                PropertyValue::ContextualColor(value) => {
+                    color = Some(CssColor::TRANSPARENT);
+                    color_expression = Some(value.source);
+                }
+                _ => return None,
+            }
             continue;
         }
 
@@ -2348,6 +2357,7 @@ pub(crate) fn parse_background_shorthand(
     };
 
     Some(BackgroundShorthand {
+        color_expression,
         color: color.unwrap_or(CssColor::TRANSPARENT),
         image: image.unwrap_or(BackgroundImage::None),
         repeat: repeat.unwrap_or(BackgroundRepeat {

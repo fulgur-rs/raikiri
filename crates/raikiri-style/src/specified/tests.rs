@@ -192,6 +192,7 @@ fn parent_fixture() -> ComputedValues {
             b: 50,
             a: 255,
         },
+        background_color_expression: None,
         background_color: CssColor {
             r: 10,
             g: 20,

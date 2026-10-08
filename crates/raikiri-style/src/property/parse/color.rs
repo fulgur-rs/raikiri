@@ -1,11 +1,84 @@
 //! `<color>` parsing, plus color-space conversion and interpolation math.
 
 use cssparser::color::parse_named_color;
-use cssparser::{ParseError, Parser, Token};
+use cssparser::{ParseError, Parser, ParserInput, Token};
 
 use crate::property::types::*;
 
 use super::common::*;
+
+pub(crate) fn parse_element_color(
+    input: &mut Parser<'_, '_>,
+    key: PropertyKey,
+) -> Option<PropertyValue> {
+    let start = input.position();
+    let color = parse_color(input)?;
+    let source = input.slice_from(start);
+    if !currentcolor_ranges(source)?.is_empty() {
+        Some(PropertyValue::ContextualColor(ContextualColor {
+            source: source.into(),
+            key,
+        }))
+    } else if key == PropertyKey::Color {
+        Some(PropertyValue::Color(color))
+    } else {
+        Some(PropertyValue::BackgroundColor(color))
+    }
+}
+
+fn currentcolor_ranges(source: &str) -> Option<Vec<(usize, usize)>> {
+    fn visit<'i>(
+        input: &mut Parser<'i, '_>,
+        ranges: &mut Vec<(usize, usize)>,
+        depth: usize,
+    ) -> Result<(), ParseError<'i, ()>> {
+        if depth > MAX_COLOR_MIX_NESTING_DEPTH {
+            return Err(input.new_custom_error(()));
+        }
+        while !input.is_exhausted() {
+            let start = input.position().byte_index();
+            match input.next_including_whitespace_and_comments()?.clone() {
+                Token::Ident(name) if name.eq_ignore_ascii_case("currentcolor") => {
+                    ranges.push((start, input.position().byte_index()));
+                }
+                Token::Function(_)
+                | Token::ParenthesisBlock
+                | Token::SquareBracketBlock
+                | Token::CurlyBracketBlock => {
+                    input.parse_nested_block(|nested| visit(nested, ranges, depth + 1))?;
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+    let mut parser_input = ParserInput::new(source);
+    let mut parser = Parser::new(&mut parser_input);
+    let mut ranges = Vec::new();
+    visit(&mut parser, &mut ranges, 0).ok()?;
+    Some(ranges)
+}
+
+pub(crate) fn resolve_contextual_color(source: &str, current: CssColor) -> Option<CssColor> {
+    let ranges = currentcolor_ranges(source)?;
+    let replacement = format!(
+        "#{:02x}{:02x}{:02x}{:02x}",
+        current.r, current.g, current.b, current.a
+    );
+    let mut resolved = String::with_capacity(source.len());
+    let mut end = 0;
+    for (start, next) in ranges {
+        resolved.push_str(&source[end..start]);
+        resolved.push_str(&replacement);
+        end = next;
+    }
+    resolved.push_str(&source[end..]);
+    let mut parser_input = ParserInput::new(&resolved);
+    let mut parser = Parser::new(&mut parser_input);
+    let color = parse_color(&mut parser)?;
+    parser.expect_exhausted().ok()?;
+    Some(color)
+}
 
 /// Parse `<color>`.
 ///

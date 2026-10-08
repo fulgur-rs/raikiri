@@ -466,6 +466,7 @@ pub(super) fn absolutize_in_page_context(
         | PropertyValue::Deferred(_)
         | PropertyValue::Grid(_)
         | PropertyValue::GridArea(_)
+        | PropertyValue::ContextualColor(_)
         | PropertyValue::BackgroundColor(_)
         | PropertyValue::FontFamily(_)
         | PropertyValue::FontSize(_)
@@ -785,6 +786,7 @@ pub(super) fn absolutize_in_page_context(
             PropertyValue::BackgroundPosition(basis.css_position(v))
         }
         PropertyValue::Background(shorthand) => PropertyValue::Background(BackgroundShorthand {
+            color_expression: shorthand.color_expression,
             image: crate::resolve::resolve_background_image(
                 shorthand.image,
                 font_size,

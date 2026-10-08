@@ -1,6 +1,30 @@
 use super::*;
 
 #[test]
+fn print_margin_currentcolor_and_inherited_expression_match_literal_pixels() {
+    for (page_background, margin_background) in
+        [("white", "currentcolor"), ("currentcolor", "inherit")]
+    {
+        let html = |background: &str| {
+            format!(
+                "<style>@page{{size:200px 100px;margin:20px;color:red;background-color:{page_background};@top-center{{content:'X';width:60px;height:20px;font-size:1px;background-color:{background};color:green}}}}html,body{{margin:0}}</style><div></div>"
+            )
+        };
+        let actual = render_raikiri_pages(&html(margin_background), 800, 600).unwrap();
+        let expected = render_raikiri_pages(&html("green"), 800, 600).unwrap();
+        assert_eq!(actual.pages.len(), 1);
+        let actual = &actual.pages[0];
+        assert_eq!((actual.width, actual.height), (200, 100));
+        let offset = (10 * actual.width as usize + 50) * 4;
+        assert_eq!(
+            &expected.pages[0].rgba[offset..offset + 4],
+            &[0, 128, 0, 255]
+        );
+        assert!(actual.rgba == expected.pages[0].rgba);
+    }
+}
+
+#[test]
 fn css_viewport_units_preserve_identifiers_strings_urls_and_non_dimensions() {
     let source = r#".foo100vw,#100vw,.日本100vw,.\31 00vw{--size100vw:100vw;--\31 00vw:1e2vw;width:var(--size100vw);content:"style='100vw'";background:url(a100vw.png);--a:1vw2;--b:1vw_foo;height:100v\68}"#;
     let expected = r#".foo100vw,#100vw,.日本100vw,.\31 00vw{--size100vw:32.000000px;--\31 00vw:32.000000px;width:var(--size100vw);content:"style='100vw'";background:url(a100vw.png);--a:1vw2;--b:1vw_foo;height:24.000000px}"#;

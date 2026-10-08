@@ -793,7 +793,17 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS2 relative block positioning exact slice (+14).
     // + CSS Inline image-loaded vertical-align length exact slice (+1).
     // + Remeasured baseline pins (+8 PASS, -7 inaccurate pins).
-    assert_eq!(set.baseline.entries.len(), 1435);
+    // + CSS Color contextual background and color-mix exact references (+5).
+    assert_eq!(set.baseline.entries.len(), 1440);
+    for id in [
+        "css/css-color/t44-currentcolor-background-b.xht",
+        "css/css-color/color-mix-currentcolor-001.html",
+        "css/css-color/color-mix-currentcolor-002.html",
+        "css/css-color/color-mix-currentcolor-003.html",
+        "css/css-color/color-mix-currentcolor-nested-for-color-property.html",
+    ] {
+        assert!(set.baseline.entries.contains(id));
+    }
     assert!(
         set.baseline
             .entries

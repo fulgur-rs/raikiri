@@ -346,3 +346,25 @@ descriptors qualified by paper-dimension media queries must be ignored, while
 other qualified page declarations may apply. The current page cascade still
 applies such guarded `size` declarations. The fixed query basis above does not
 implement that separate descriptor rule.
+
+## Contextual background colors
+
+`color` and `background-color` retain `currentcolor` operands until the cascade
+knows their color basis, including operands in `color-mix()` and backgrounds
+expanded from a shorthand or a custom property. A `color` expression uses the
+inherited foreground; a background expression uses the receiving element's own
+foreground. Explicit `background-color: inherit` retains the expression for the
+receiver, including root-to-page and page-to-margin-box inheritance. See
+[CSS Color 4 §15.5](https://www.w3.org/TR/css-color-4/#resolving-other-colors),
+[CSS Color 5 §10.1](https://www.w3.org/TR/css-color-5/#resolving-color-values), and
+[CSS Paged Media 3 §6](https://www.w3.org/TR/css-page-3/#page-properties).
+
+The exact 800 × 600 bundled-font pass set includes the legacy currentcolor
+background reference and four color-mix currentcolor references. The wider
+`currentcolor-001` and `currentcolor-002` references still have an existing
+163-pixel text residual: replacing the authored contextual colors with literal
+colors produces the same residual on the original source. Those references are
+kept out of the PASS baseline. General `background: inherit` shorthand expansion
+is a separate existing parser gap (0vv.127); the supported longhand inheritance
+above does not establish all eight shorthand longhands. Color conversion still
+uses the existing bounded 8-bit sRGB model.
