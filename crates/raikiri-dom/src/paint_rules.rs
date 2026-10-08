@@ -4,10 +4,10 @@
 use crate::Document;
 use raikiri_style::property::{
     BorderCollapseValue, ContentComponent, DisplayValue, EmptyCellsValue, FloatValue,
-    OverflowValue, PositionValue, Visibility, WhiteSpaceCollapse, ZIndexValue,
+    OverflowValue, OverflowXY, PositionValue, Visibility, WhiteSpaceCollapse, ZIndexValue,
 };
 use raikiri_style::{CascadeResult, ComputedValues, PseudoElem, StyleNodeId};
-use raikiri_traits::NodeKind;
+use raikiri_traits::{NodeKind, PaintClip, PaintInsets, PaintRect};
 
 /// Whether `node_id` is painted on the page whose name is `active_page_name`.
 ///
@@ -76,6 +76,136 @@ pub fn clips_overflow(cv: &ComputedValues) -> bool {
     }
     !matches!(cv.overflow.x, OverflowValue::Visible)
         || !matches!(cv.overflow.y, OverflowValue::Visible)
+}
+
+pub(crate) fn clips_element_overflow(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    let Some(node) = document.get_node(node_id) else {
+        return false;
+    };
+    let Some(cv) = cascade.computed.get(node_id) else {
+        return false;
+    };
+    if !node.is_in_document()
+        || node.is_non_rendered_html_element()
+        || node.kind() != NodeKind::Element
+        || !clips_overflow(cv)
+        || matches!(cv.display, DisplayValue::None | DisplayValue::Contents)
+        || (cv.display == DisplayValue::Inline
+            && !node.is_inline_svg_root()
+            && !matches!(node.tag_name(), Some("img" | "canvas")))
+    {
+        return false;
+    }
+    if node.tag_name() == Some("html") && node.parent == Some(document.root_index()) {
+        return false;
+    }
+    if node.tag_name() == Some("body")
+        && let Some(parent_id) = node.parent
+        && let Some(parent) = document.get_node(parent_id)
+        && parent.tag_name() == Some("html")
+        && parent.parent == Some(document.root_index())
+        && cascade
+            .computed
+            .get(parent_id)
+            .is_some_and(|root| !clips_overflow(root))
+    {
+        return false;
+    }
+    true
+}
+
+/// Resolve the local overflow clip of a whole border box in paint coordinates.
+///
+/// The caller supplies the box before page cuts and its used physical border
+/// widths. Percentages and overlap are resolved on that box before insetting;
+/// padding-edge curves are never normalized again after an opposite edge crops
+/// them. Open axes impose no bound and do not form rounded corners.
+///
+/// The padding origin is floored to include pixel-snapped descendants. An
+/// `overflow: clip` far edge is floored too. Viewport-propagated overflow and
+/// ordinary inline boxes do not produce a local clip.
+pub fn overflow_clip(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    border_box: PaintRect,
+    border: PaintInsets,
+) -> Option<PaintClip> {
+    if !clips_element_overflow(document, cascade, node_id) {
+        return None;
+    }
+    Some(OverflowClipGeometry::new(&cascade.computed[node_id], border_box, border).at(border_box))
+}
+
+/// Position-independent clip geometry shared by every placement of a source.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct OverflowClipGeometry {
+    border: PaintInsets,
+    overflow: OverflowXY,
+    corner_radii: Option<[[f32; 2]; 4]>,
+}
+
+impl OverflowClipGeometry {
+    pub(crate) fn new(cv: &ComputedValues, border_box: PaintRect, border: PaintInsets) -> Self {
+        let corner_radii =
+            if cv.overflow.x != OverflowValue::Visible && cv.overflow.y != OverflowValue::Visible {
+                let mut radii = cv.border_radius.used(border_box.width, border_box.height);
+                for (corner, [x, y]) in radii.iter_mut().zip([
+                    [border.left, border.top],
+                    [border.right, border.top],
+                    [border.right, border.bottom],
+                    [border.left, border.bottom],
+                ]) {
+                    let rx = (corner[0] - x).max(0.0);
+                    let ry = (corner[1] - y).max(0.0);
+                    *corner = if rx > 0.0 && ry > 0.0 {
+                        [rx, ry]
+                    } else {
+                        [0.0; 2]
+                    };
+                }
+                radii.iter().any(|corner| corner[0] > 0.0).then_some(radii)
+            } else {
+                None
+            };
+        Self {
+            border,
+            overflow: cv.overflow,
+            corner_radii,
+        }
+    }
+
+    /// Snap edges only after translating the whole border box to its page.
+    pub(crate) fn at(self, border_box: PaintRect) -> PaintClip {
+        let x0 = (border_box.x + self.border.left).floor();
+        let y0 = (border_box.y + self.border.top).floor();
+        let right = border_box.x + border_box.width - self.border.right;
+        let bottom = border_box.y + border_box.height - self.border.bottom;
+        let x1 = if self.overflow.x == OverflowValue::Clip {
+            right.floor()
+        } else {
+            right
+        };
+        let y1 = if self.overflow.y == OverflowValue::Clip {
+            bottom.floor()
+        } else {
+            bottom
+        };
+        let mut clip = PaintClip::new(PaintRect::new(
+            x0,
+            y0,
+            (x1 - x0).max(0.0),
+            (y1 - y0).max(0.0),
+        ));
+        clip.clip_x = self.overflow.x != OverflowValue::Visible;
+        clip.clip_y = self.overflow.y != OverflowValue::Visible;
+        clip.corner_radii = self.corner_radii;
+        clip
+    }
 }
 
 /// The group opacity the element paints its subtree with, if any.

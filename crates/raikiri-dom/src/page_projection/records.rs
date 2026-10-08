@@ -1,3 +1,4 @@
+use super::fragment::OverflowClip;
 use raikiri_traits::{NodeId, PageBox};
 #[cfg(test)]
 use std::collections::BTreeMap;
@@ -498,3 +499,29 @@ impl PageFragmentLineRange {
 
 #[cfg(test)]
 mod tests;
+
+/// Whole-box source geometry retained once, independently of page count.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct OverflowClipSource {
+    pub(crate) border_box: raikiri_traits::PaintRect,
+    pub(crate) geometry: crate::paint_rules::OverflowClipGeometry,
+    pub(crate) is_repeat: bool,
+}
+
+impl OverflowClipSource {
+    pub(crate) fn on_page(self, node: NodeId, page: &PageFragment) -> OverflowClip {
+        let mut border_box = self.border_box;
+        border_box.x += page.content_box.x;
+        let origin_y = if self.is_repeat {
+            0.0
+        } else {
+            page.content_origin_y
+        };
+        border_box.y = page.content_box.y + border_box.y - origin_y;
+        OverflowClip {
+            node,
+            border_box,
+            clip: self.geometry.at(border_box),
+        }
+    }
+}
