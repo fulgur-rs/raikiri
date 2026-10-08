@@ -1,4 +1,6 @@
 use super::*;
+use crate::OverflowClip;
+use raikiri_traits::{PaintInsets, PaintRect};
 use std::cell::Cell;
 
 // Flex traversal skips Contents boxes when globally ordering effective
@@ -1233,7 +1235,7 @@ pub(crate) fn project_slices(
     }
     nodes.sort_by_key(|node| node.node_id);
 
-    for source in nodes {
+    for source in &nodes {
         let kind = match source.node_kind {
             NodeKind::Text => PageFragmentKind::Text,
             NodeKind::Element if source.tag_name.as_deref() == Some("img") => {
@@ -1312,6 +1314,61 @@ pub(crate) fn project_slices(
                 Some(range) => item.with_line_range(range),
                 None => item,
             });
+        }
+    }
+
+    // Retain source geometry for clipping ancestors even if their own boxes
+    // do not intersect a page. Only ancestors of actual placements are cached,
+    // avoiding a clip-node by page cross product in the stored snapshot.
+    let clip_sources: HashMap<usize, _> = nodes
+        .iter()
+        .filter_map(|source| {
+            let id = source.node_id.0 as usize;
+            crate::paint_rules::clips_element_overflow(document, cascade, id)
+                .then_some((id, source))
+        })
+        .collect();
+    for page in &mut pages {
+        let mut visited = HashSet::new();
+        for item in &page.items {
+            let mut ancestor = Some(item.node_id.0 as usize);
+            while let Some(id) = ancestor {
+                if !visited.insert(id) {
+                    break;
+                }
+                let node = &document.nodes[id];
+                if let Some(source) = clip_sources.get(&id) {
+                    let border = node.unrounded_layout.border;
+                    let origin_y = if source.is_repeat {
+                        0.0
+                    } else {
+                        page.content_origin_y
+                    };
+                    let border_box = PaintRect::new(
+                        page.content_box.x + source.abs_x,
+                        page.content_box.y + source.abs_y - origin_y,
+                        source.width,
+                        source.height,
+                    );
+                    if let Some(clip) = crate::paint_rules::overflow_clip(
+                        document,
+                        cascade,
+                        id,
+                        border_box,
+                        PaintInsets::new(border.top, border.right, border.bottom, border.left),
+                    ) {
+                        page.overflow_clips.insert(
+                            source.node_id,
+                            OverflowClip {
+                                node: source.node_id,
+                                border_box,
+                                clip,
+                            },
+                        );
+                    }
+                }
+                ancestor = node.parent;
+            }
         }
     }
 

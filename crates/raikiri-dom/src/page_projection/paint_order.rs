@@ -2,11 +2,11 @@
 //! built-in painter draws it.
 
 use super::records::{PageFragmentItem, PageFragmentKind};
-use crate::{Document, Fragment, PositionedGlyphRun, TextLineId, paint_rules};
+use crate::{Document, Fragment, OverflowClip, PositionedGlyphRun, TextLineId, paint_rules};
 use raikiri_style::CascadeResult;
 use raikiri_style::property::ColumnCountValue;
 use raikiri_traits::{NodeId, NodeKind, PaintClip};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// What a clip in [`PaintEvent::PushClip`] comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,7 +64,7 @@ enum Frame {
 struct PageItems<'a> {
     by_node: HashMap<usize, Vec<&'a PageFragmentItem>>,
     content_box: super::records::PageFragmentRect,
-    overflow_clips: &'a HashMap<(NodeId, u32), PaintClip>,
+    overflow_clips: &'a BTreeMap<NodeId, OverflowClip>,
 }
 
 impl<'a> PageItems<'a> {
@@ -74,12 +74,10 @@ impl<'a> PageItems<'a> {
 
     fn fragment(&self, item: &'a PageFragmentItem) -> Fragment<'a> {
         Fragment::new(item, self.content_box).with_overflow_clip(
-            (item.kind != PageFragmentKind::Text)
-                .then(|| {
-                    self.overflow_clips
-                        .get(&(item.node_id, item.fragment_index))
-                })
-                .flatten(),
+            self.overflow_clips
+                .get(&item.node_id)
+                .filter(|_| item.kind != PageFragmentKind::Text)
+                .map(|entry| &entry.clip),
         )
     }
 }
@@ -211,20 +209,15 @@ impl Document {
                     // The clip is the padding box of the element's whole box
                     // resolved at projection time. It opens after the element's own
                     // box and closes after its subtree.
-                    if paint_rules::clips_element_overflow(self, cascade, node_id) {
-                        let Some(&item) = own.first() else {
-                            // The element's box is not on this page, so the
-                            // painter's clip for it, built from the whole box,
-                            // lies wholly outside the page and nothing inside
-                            // it is drawn here. Any opacity group opened above
-                            // is still closed by its pending frame.
+                    if let Some(entry) = items.overflow_clips.get(&NodeId::new(node_id as u64)) {
+                        // A closed vertical axis hides descendants on pages
+                        // the box does not reach. An open vertical axis still
+                        // admits them and must preserve the horizontal clip.
+                        if own.is_empty() && entry.clip.clip_y {
                             continue;
-                        };
-                        let fragment = items.fragment(item);
-                        if let Some(clip) = fragment.overflow_clip() {
-                            events.push(PaintEvent::PushClip(clip, ClipKind::Overflow));
-                            stack.push(Frame::PopClip);
                         }
+                        events.push(PaintEvent::PushClip(entry.clip, ClipKind::Overflow));
+                        stack.push(Frame::PopClip);
                     }
                     if node.is_ifc_root() {
                         push_paragraph(self, &items, node_id, lines, &mut events);

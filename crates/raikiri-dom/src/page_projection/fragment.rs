@@ -21,6 +21,22 @@ pub enum RepeatKind {
     EveryPage,
 }
 
+/// A local overflow clip that applies to content on one page.
+///
+/// The clipping element's own box need not intersect the page: descendants
+/// can reach another page along an open axis. Geometry is in page-local CSS
+/// pixels and retains the element's whole box before page cuts.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub struct OverflowClip {
+    /// The element that establishes this clip.
+    pub node: NodeId,
+    /// The element's whole border box, used to select a clipping placement.
+    pub border_box: PaintRect,
+    /// The resolved padding-edge clip.
+    pub clip: PaintClip,
+}
+
 /// One placement of a source node on a page.
 ///
 /// Rectangles are in CSS px with the origin at the top-left of the page box.

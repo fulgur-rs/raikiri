@@ -162,3 +162,41 @@ fn a_fixed_clip_repeats_at_the_same_page_coordinates() {
         assert_eq!(clip.corner_radii, Some([[6.0; 2]; 4]));
     }
 }
+
+#[test]
+fn an_off_page_parent_clip_keeps_its_child_in_paint_order() {
+    for height in [0, 20] {
+        let result = laid_out(
+            "<div id='parent'><div id='child'></div></div><div style='height:150px'></div>",
+            &format!(
+                "#parent{{width:40px;height:{height}px;overflow-x:clip;overflow-y:visible}}#child{{width:80px;height:150px;background:green}}"
+            ),
+        );
+        let page = result.page(1).unwrap();
+        assert!(
+            page.fragments()
+                .all(|fragment| page.dom().attr(fragment.node(), "id") != Some("parent"))
+        );
+        let parent_clip = page
+            .overflow_clips()
+            .find(|clip| page.dom().attr(clip.node, "id") == Some("parent"))
+            .expect("an off-page ancestor still clips its child's closed axis");
+        assert_eq!(
+            parent_clip.border_box,
+            PaintRect::new(0.0, -100.0, 40.0, height as f32)
+        );
+        assert_eq!(parent_clip.clip.rect, parent_clip.border_box);
+        assert!(parent_clip.clip.clip_x && !parent_clip.clip.clip_y);
+        let events = page.paint_order();
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, PaintEvent::Box(fragment)
+            if page.dom().attr(fragment.node(), "id") == Some("child")))
+        );
+        assert!(events.iter().any(
+            |event| matches!(event, PaintEvent::PushClip(clip, ClipKind::Overflow)
+            if *clip == parent_clip.clip)
+        ));
+    }
+}

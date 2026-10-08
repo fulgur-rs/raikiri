@@ -1,7 +1,6 @@
-use raikiri_traits::{NodeId, PageBox, PaintClip};
-#[cfg(test)]
+use super::fragment::OverflowClip;
+use raikiri_traits::{NodeId, PageBox};
 use std::collections::BTreeMap;
-use std::collections::HashMap;
 
 /// Resolved geometry metadata for one page in a page-fragment stream.
 ///
@@ -97,8 +96,8 @@ pub(crate) struct PageFragment {
     pub(crate) orientation: PageFragmentOrientation,
     /// Per-node placements intersecting this page, in deterministic order.
     pub(crate) items: Vec<PageFragmentItem>,
-    /// Whole-box clips, stored only for placements that clip locally.
-    pub(crate) overflow_clips: HashMap<(NodeId, u32), PaintClip>,
+    /// Whole-box clips of placements and their clipping ancestors.
+    pub(crate) overflow_clips: BTreeMap<NodeId, OverflowClip>,
 }
 
 impl PageFragment {
@@ -126,7 +125,7 @@ impl PageFragment {
             page_name,
             orientation: geometry.orientation,
             items: Vec::new(),
-            overflow_clips: HashMap::new(),
+            overflow_clips: BTreeMap::new(),
         }
     }
 
