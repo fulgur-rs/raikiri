@@ -12,6 +12,258 @@ const AHEM: &[u8] = include_bytes!(concat!(
     "/../raikiri-dom/tests/data/text-autospace/Ahem.ttf"
 ));
 
+#[test]
+fn fourth_review_vertical_caption_minimum_constrains_inline_grid_size() {
+    for mode in ["vertical-lr", "vertical-rl"] {
+        for columns in [0, 1, 2] {
+            let (mut doc, body) = document();
+            let table = element(
+                &mut doc,
+                body,
+                &format!(
+                    "display:table;writing-mode:{mode};width:40px;height:40px;border-spacing:0;background:green"
+                ),
+            );
+            element(
+                &mut doc,
+                table,
+                "display:table-caption;caption-side:bottom;width:10px;min-height:100px;background:blue",
+            );
+            let row = element(&mut doc, table, "display:table-row");
+            let cells: Vec<_> = (0..columns)
+                .map(|_| {
+                    element(
+                        &mut doc,
+                        row,
+                        "display:table-cell;height:40px;vertical-align:top",
+                    )
+                })
+                .collect();
+            let computed = layout(&mut doc);
+            let grid = doc.get_node(table).unwrap().table_grid_box().unwrap();
+            assert_eq!(grid.height, 100.0, "{mode}/{columns}");
+            for (index, cell) in cells.into_iter().enumerate() {
+                let cell = doc.get_node(cell).unwrap().unrounded_layout;
+                assert_eq!(cell.size.height, 100.0 / columns as f32);
+                assert_eq!(cell.location.y, index as f32 * 100.0 / columns as f32);
+            }
+            let (grid_x, caption_x) = if mode == "vertical-lr" {
+                (0, 40)
+            } else {
+                (10, 0)
+            };
+            let (mut reference, body) = document();
+            element(
+                &mut reference,
+                body,
+                &format!(
+                    "position:absolute;left:{grid_x}px;top:0;width:40px;height:100px;background:green"
+                ),
+            );
+            element(
+                &mut reference,
+                body,
+                &format!(
+                    "position:absolute;left:{caption_x}px;top:0;width:10px;height:100px;background:blue"
+                ),
+            );
+            let expected = layout(&mut reference);
+            assert_exact_pixels(
+                raster(scene(&doc, &computed)),
+                raster(scene(&reference, &expected)),
+            );
+        }
+    }
+}
+
+#[test]
+fn fourth_review_opposite_vertical_cells_use_their_own_block_direction() {
+    for (table_mode, cell_mode) in [
+        ("vertical-lr", "vertical-rl"),
+        ("vertical-rl", "vertical-lr"),
+    ] {
+        for (align, x) in [
+            ("top", if cell_mode == "vertical-rl" { 30 } else { 0 }),
+            ("middle", 15),
+            ("bottom", if cell_mode == "vertical-rl" { 0 } else { 30 }),
+        ] {
+            let (mut doc, body) = document();
+            let table = element(
+                &mut doc,
+                body,
+                &format!(
+                    "display:table;writing-mode:{table_mode};width:40px;height:30px;border-spacing:0;background:blue"
+                ),
+            );
+            let row = element(&mut doc, table, "display:table-row");
+            let cell = element(
+                &mut doc,
+                row,
+                &format!("display:table-cell;writing-mode:{cell_mode};vertical-align:{align}"),
+            );
+            let child = element(
+                &mut doc,
+                cell,
+                "display:block;width:10px;height:10px;background:green",
+            );
+            for _ in 0..2 {
+                let computed = layout(&mut doc);
+                assert_eq!(
+                    doc.get_node(child).unwrap().unrounded_layout.location.x,
+                    x as f32,
+                    "{table_mode}/{cell_mode}/{align}"
+                );
+                let (mut reference, body) = document();
+                element(
+                    &mut reference,
+                    body,
+                    "position:absolute;left:0;top:0;width:40px;height:30px;background:blue",
+                );
+                element(
+                    &mut reference,
+                    body,
+                    &format!(
+                        "position:absolute;left:{x}px;top:0;width:10px;height:10px;background:green"
+                    ),
+                );
+                let expected = layout(&mut reference);
+                assert_exact_pixels(
+                    raster(scene(&doc, &computed)),
+                    raster(scene(&reference, &expected)),
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn fourth_review_opposite_vertical_inline_ink_uses_cell_padding_direction() {
+    for (table_mode, cell_mode, align, x) in [
+        ("vertical-lr", "vertical-rl", "top", 35),
+        ("vertical-lr", "vertical-rl", "middle", 20),
+        ("vertical-lr", "vertical-rl", "bottom", 5),
+        ("vertical-rl", "vertical-lr", "top", 5),
+        ("vertical-rl", "vertical-lr", "middle", 20),
+        ("vertical-rl", "vertical-lr", "bottom", 35),
+    ] {
+        let (mut doc, body) = document();
+        let table = element(
+            &mut doc,
+            body,
+            &format!(
+                "display:table;writing-mode:{table_mode};width:46px;height:36px;border-spacing:0"
+            ),
+        );
+        let row = element(&mut doc, table, "display:table-row");
+        let cell = element(
+            &mut doc,
+            row,
+            &format!(
+                "display:table-cell;writing-mode:{cell_mode};box-sizing:border-box;width:46px;height:36px;padding:2px 0 2px 4px;border:1px solid black;background:blue;color:green;vertical-align:{align}"
+            ),
+        );
+        doc.append_text(cell, "X");
+        let (mut reference, body) = document();
+        element(
+            &mut reference,
+            body,
+            "position:absolute;left:0;top:0;box-sizing:border-box;width:46px;height:36px;border:1px solid black;background:blue",
+        );
+        element(
+            &mut reference,
+            body,
+            &format!(
+                "position:absolute;left:{x}px;top:3px;width:10px;height:10px;background:green"
+            ),
+        );
+        let expected = layout(&mut reference);
+        let expected = raster(scene(&reference, &expected));
+        for _ in 0..2 {
+            let computed = layout(&mut doc);
+            assert_exact_pixels(raster(scene(&doc, &computed)), expected.clone());
+        }
+    }
+}
+
+#[test]
+fn fourth_review_vertical_caption_minimum_includes_margins_and_grid_edges() {
+    for mode in ["vertical-lr", "vertical-rl"] {
+        for (columns, cell_height, ys) in [(1, 90.0, vec![5.0]), (2, 44.0, vec![5.0, 51.0])] {
+            let (mut doc, body) = document();
+            let table = element(
+                &mut doc,
+                body,
+                &format!(
+                    "display:table;writing-mode:{mode};width:40px;height:40px;padding:2px;border:1px solid black;border-spacing:0 2px;background:green"
+                ),
+            );
+            let caption = element(
+                &mut doc,
+                table,
+                "display:table-caption;caption-side:bottom;width:10px;min-height:90px;margin-top:5px;margin-bottom:5px;background:blue",
+            );
+            let row = element(&mut doc, table, "display:table-row");
+            let cells: Vec<_> = (0..columns)
+                .map(|_| {
+                    element(
+                        &mut doc,
+                        row,
+                        "display:table-cell;height:40px;vertical-align:top",
+                    )
+                })
+                .collect();
+            let computed = layout(&mut doc);
+            let (grid_x, caption_x) = if mode == "vertical-lr" {
+                (0.0, 46.0)
+            } else {
+                (10.0, 0.0)
+            };
+            let grid = doc.get_node(table).unwrap().table_grid_box().unwrap();
+            assert_eq!((grid.x, grid.width, grid.height), (grid_x, 46.0, 100.0));
+            let caption = doc.get_node(caption).unwrap().unrounded_layout;
+            assert_eq!(
+                (caption.location.x, caption.location.y, caption.size.height),
+                (caption_x, 5.0, 90.0)
+            );
+            for (cell, y) in cells.into_iter().zip(ys) {
+                let cell = doc.get_node(cell).unwrap().unrounded_layout;
+                assert_eq!(
+                    (cell.location.x, cell.location.y, cell.size.height),
+                    (grid_x + 3.0, y, cell_height)
+                );
+            }
+            let (mut reference, body) = document();
+            element(
+                &mut reference,
+                body,
+                &format!(
+                    "position:absolute;left:{grid_x}px;top:0;width:46px;height:100px;background:black"
+                ),
+            );
+            element(
+                &mut reference,
+                body,
+                &format!(
+                    "position:absolute;left:{}px;top:1px;width:44px;height:98px;background:green",
+                    grid_x + 1.0
+                ),
+            );
+            element(
+                &mut reference,
+                body,
+                &format!(
+                    "position:absolute;left:{caption_x}px;top:5px;width:10px;height:90px;background:blue"
+                ),
+            );
+            let expected = layout(&mut reference);
+            assert_exact_pixels(
+                raster(scene(&doc, &computed)),
+                raster(scene(&reference, &expected)),
+            );
+        }
+    }
+}
+
 fn document() -> (Document, usize) {
     let mut doc = Document::new();
     doc.set_font_collection(

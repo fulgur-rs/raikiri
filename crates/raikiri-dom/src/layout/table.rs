@@ -136,7 +136,7 @@ fn is_vertical_writing_mode(mode: WritingMode) -> bool {
     )
 }
 
-fn caption_minimum_width(doc: &mut Document, table: usize) -> f32 {
+fn caption_minimum_inline_size(doc: &mut Document, table: usize, vertical: bool) -> f32 {
     let Some(caption) = doc.nodes[table]
         .children
         .iter()
@@ -151,12 +151,24 @@ fn caption_minimum_width(doc: &mut Document, table: usize) -> f32 {
         LayoutInput {
             run_mode: RunMode::ComputeSize,
             sizing_mode: SizingMode::InherentSize,
-            axis: taffy::tree::RequestedAxis::Horizontal,
+            axis: if vertical {
+                taffy::tree::RequestedAxis::Vertical
+            } else {
+                taffy::tree::RequestedAxis::Horizontal
+            },
             known_dimensions: Size::NONE,
             parent_size: Size::NONE,
             available_space: Size {
-                width: AvailableSpace::MinContent,
-                height: AvailableSpace::MaxContent,
+                width: if vertical {
+                    AvailableSpace::MaxContent
+                } else {
+                    AvailableSpace::MinContent
+                },
+                height: if vertical {
+                    AvailableSpace::MinContent
+                } else {
+                    AvailableSpace::MaxContent
+                },
             },
             known_dimensions_are_definite: Size {
                 width: false,
@@ -166,9 +178,14 @@ fn caption_minimum_width(doc: &mut Document, table: usize) -> f32 {
         },
     );
     let margins = doc.nodes[caption].style.margin;
-    output.size.width
-        + super::used_style_length_percentage_auto(margins.left, 0.0).unwrap_or(0.0)
-        + super::used_style_length_percentage_auto(margins.right, 0.0).unwrap_or(0.0)
+    let (minimum, start, end) = if vertical {
+        (output.size.height, margins.top, margins.bottom)
+    } else {
+        (output.size.width, margins.left, margins.right)
+    };
+    minimum
+        + super::used_style_length_percentage_auto(start, 0.0).unwrap_or(0.0)
+        + super::used_style_length_percentage_auto(end, 0.0).unwrap_or(0.0)
 }
 
 fn layout_table_caption(
@@ -439,12 +456,13 @@ fn compute_table_layout_checked(
         resolve_collapsed_table_edges(doc, &grid, table_idx);
     }
     let vertical_writing = is_vertical_writing_mode(table_writing_mode(doc, table_idx));
-    // CAPMIN constrains the grid before columns are assigned; widening only
-    // the wrapper would leave its background and containing block too narrow.
+    // CAPMIN constrains the grid's inline axis before its tracks are assigned;
+    // growing only the wrapper would leave the cells and grid paint too small.
+    let caption_inline_minimum = caption_minimum_inline_size(doc, table_idx, vertical_writing);
     let caption_minimum = if vertical_writing {
         0.0
     } else {
-        caption_minimum_width(doc, table_idx)
+        caption_inline_minimum
     };
 
     // Container metrics, split so collapse can substitute collapsed outer
@@ -529,12 +547,15 @@ fn compute_table_layout_checked(
             doc.nodes[table_idx].style.size.height,
             inputs.parent_size.height,
         );
-        let height = specified_h.unwrap_or_else(|| {
+        let mut height = specified_h.unwrap_or_else(|| {
             effective_known
                 .height
                 .unwrap_or(0.0)
                 .max(padding_border_size.height)
         });
+        if vertical_writing {
+            height = height.max(caption_inline_minimum);
+        }
         let caption_size = layout_table_caption(
             doc,
             table_idx,
@@ -739,6 +760,15 @@ fn compute_table_layout_checked(
         let target = f32_max_compat(mn - distrib_insets.height, 0.0);
         distribute_extra_height(&mut row_heights, target);
     }
+    if vertical_writing {
+        // Vertical columns stack the same row track along the physical
+        // inline axis. Share CAPMIN across those stacks after removing the
+        // grid's own edges and the intervening inline spacing.
+        let columns = grid.n_cols as f32;
+        let edges = padding_border_size.height + border_spacing.1 * (columns + 1.0);
+        let target = (caption_inline_minimum - edges).max(0.0) / columns;
+        distribute_extra_height(&mut row_heights, target);
+    }
 
     // Content extents net of collapsed-line overlaps, plus the separated
     // spacing (one of the two is always zero).
@@ -907,7 +937,6 @@ fn compute_table_layout_checked(
                 y: y_origin,
             },
             border_spacing.1,
-            table_writing_mode(doc, table_idx),
         );
     }
     Ok(LayoutOutput::from_outer_size(wrapper_size))
@@ -2023,7 +2052,6 @@ fn reposition_cells_for_vertical_writing(
     cell_width: f32,
     origin: Point<f32>,
     spacing: f32,
-    writing_mode: WritingMode,
 ) {
     let vertical_track = row_heights.iter().sum::<f32>();
     if !vertical_track.is_finite() || vertical_track <= 0.0 {
@@ -2043,7 +2071,8 @@ fn reposition_cells_for_vertical_writing(
         layout.location = Point { x: origin.x, y };
         layout.size.width = cell_width;
         layout.size.height = height;
-        if !is_vertical_writing_mode(table_writing_mode(doc, cell.node_id)) {
+        let cell_writing_mode = table_writing_mode(doc, cell.node_id);
+        if !is_vertical_writing_mode(cell_writing_mode) {
             // A horizontal cell in a vertical table still aligns content on
             // its own block axis. Preserve the normal pass's vertical shift.
             doc.nodes[cell.node_id].unrounded_layout =
@@ -2151,7 +2180,7 @@ fn reposition_cells_for_vertical_writing(
         // without an inline baseline, treating it as block-start alignment
         // would move it across the entire physical cell in vertical-rl.
         let rtl = matches!(
-            writing_mode,
+            cell_writing_mode,
             WritingMode::VerticalRl | WritingMode::SidewaysRl
         ) && (has_lines || !cell_baseline_aligned(node.table_vertical_align));
         let child_shift = if rtl {
