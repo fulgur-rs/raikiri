@@ -234,14 +234,19 @@ impl IfcRoot {
         source: shodo::node::TextSource,
     ) -> Option<&LetterStyle> {
         match source {
-            shodo::node::TextSource::Dom { node, .. } => self
+            shodo::node::TextSource::Dom { node, offset } => self
                 .letter_style_index
                 .dom_sources
                 .get(&(node.0 as usize))?
                 .iter()
                 .rev()
                 .map(|index| &self.letter_styles[*index])
-                .find(|style| style.owns(source)),
+                .find(|style| {
+                    style
+                        .source_range
+                        .as_ref()
+                        .is_some_and(|range| range.contains(&offset))
+                }),
             shodo::node::TextSource::Generated { node } => self
                 .letter_style_index
                 .generated_sources

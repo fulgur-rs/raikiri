@@ -22,21 +22,6 @@ pub(crate) struct LetterStyle {
     pub(crate) computed: ComputedValues,
 }
 
-impl LetterStyle {
-    pub(crate) fn owns(&self, source: TextSource) -> bool {
-        match source {
-            TextSource::Dom { node, offset } => {
-                node.0 as usize == self.source_owner
-                    && self
-                        .source_range
-                        .as_ref()
-                        .is_some_and(|range| range.contains(&offset))
-            }
-            TextSource::Generated { node } => node.0 as usize == self.box_id,
-        }
-    }
-}
-
 pub(crate) struct FirstLetter {
     origin: usize,
     origins: Vec<usize>,

@@ -1476,6 +1476,7 @@ fn split_first_letter_outer_shadow_matches_one_joined_box() {
         ("3px 2px 3px 2px lime", "border-radius:8px"),
         ("3px 2px 3px 2px lime", "opacity:.5"),
         ("3px 2px 3px 2px rgba(0,255,0,.5)", ""),
+        ("3px 2px 3px 2px lime", "background:transparent"),
     ] {
         let sheet = format!(
             "div{{padding:10px}}div::first-letter{{font-size:20px;color:transparent;background:white;box-shadow:{shadow};{extra}}}"
