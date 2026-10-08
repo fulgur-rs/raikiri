@@ -172,7 +172,7 @@ pub(crate) fn draw_ifc_lines_with_resources(
             // The pieces already carry the line's pagination shift, which
             // `position` holds too.
             let line_shift = shifts.get(line_index).copied().unwrap_or(0.0);
-            let group = paint.piece_group(root_node, piece);
+            let group = paint.piece_group(piece);
             crate::walk::paint_inline_box(
                 paint.target(group),
                 cv,
@@ -222,8 +222,7 @@ pub(crate) fn draw_ifc_lines_with_resources(
                 })
                 .collect();
             let offset = positioned_run.offset;
-            let group =
-                root_node.and_then(|root| paint.nearest(root, Some(positioned_run.style_owner)));
+            let group = paint.nearest(positioned_run.style_owner);
             runs.push(RunDraw {
                 run,
                 style: cv,

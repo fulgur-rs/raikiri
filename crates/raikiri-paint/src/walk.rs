@@ -6065,6 +6065,14 @@ pub(crate) fn paint_inline_box(
     }
     let abs_x = x + outer.x;
     let abs_y = y + outer.y;
+    // Other inline image fragmentation remains a separate follow-up.
+    let background_image = if raikiri_dom::generated_content::generated_origin(piece.node)
+        .is_some_and(|(_, pseudo)| pseudo == raikiri_style::PseudoElem::FirstLetter)
+    {
+        &cv.background_image
+    } else {
+        &BackgroundImage::None
+    };
     paint_element_box_shadows(
         scene,
         outer.width,
@@ -6082,7 +6090,7 @@ pub(crate) fn paint_inline_box(
         abs_x,
         abs_y,
         cv.background_color,
-        &cv.background_image,
+        background_image,
         cv.color,
         cv.background_clip,
         cv.background_origin,

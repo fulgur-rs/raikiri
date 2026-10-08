@@ -17,8 +17,8 @@ struct Group {
 pub(super) struct TypographicPaint {
     normal: Scene,
     groups: Vec<Group>,
-    by_box: HashMap<usize, usize>,
-    parents: HashMap<usize, Option<usize>>,
+    nearest_groups: HashMap<usize, Option<usize>>,
+    piece_groups: HashMap<usize, Option<usize>>,
 }
 
 impl TypographicPaint {
@@ -26,15 +26,16 @@ impl TypographicPaint {
         let mut paint = Self {
             normal: Scene::new(),
             groups: Vec::new(),
-            by_box: HashMap::new(),
-            parents: pieces
-                .iter()
-                .map(|piece| (piece.node, piece.parent))
-                .collect(),
+            nearest_groups: HashMap::new(),
+            piece_groups: HashMap::new(),
         };
         if let Some(root) = root {
+            let mut by_box = HashMap::new();
+            let mut parents = HashMap::new();
             for piece in pieces {
-                if paint.by_box.contains_key(&piece.node) {
+                parents.entry(piece.node)
+                    .or_insert_with(|| root.ifc_typographic_parent(piece.node));
+                if by_box.contains_key(&piece.node) {
                     continue;
                 }
                 if let Some((cv, _)) = root.ifc_typographic_fragment(
@@ -43,7 +44,7 @@ impl TypographicPaint {
                     piece.source_owner,
                 ) && cv.opacity < 1.0
                 {
-                    paint.by_box.insert(piece.node, paint.groups.len());
+                    by_box.insert(piece.node, paint.groups.len());
                     paint.groups.push(Group {
                         scene: Scene::new(),
                         opacity: cv.opacity,
@@ -53,36 +54,49 @@ impl TypographicPaint {
                     });
                 }
             }
-            for (&id, &index) in &paint.by_box {
-                paint.groups[index].parent = paint.nearest(root, root.ifc_typographic_parent(id));
+            // Resolve retained parents once per box, including ancestors whose
+            // pieces are absent on this line. Parent inspection scans styles.
+            let mut pending: Vec<_> = parents.values().copied().flatten().collect();
+            while let Some(id) = pending.pop() {
+                if let std::collections::hash_map::Entry::Vacant(entry) = parents.entry(id) {
+                    let parent = root.ifc_typographic_parent(id);
+                    entry.insert(parent);
+                    pending.extend(parent);
+                }
+            }
+            paint
+                .nearest_groups
+                .extend(by_box.iter().map(|(&id, &group)| (id, Some(group))));
+            for &id in parents.keys() {
+                cached_group(id, &parents, &mut paint.nearest_groups);
+            }
+            for (&id, &index) in &by_box {
+                paint.groups[index].parent = parents[&id]
+                    .and_then(|parent| paint.nearest_groups.get(&parent).copied().flatten());
+            }
+            let piece_parents: HashMap<_, _> = pieces
+                .iter()
+                .map(|piece| (piece.node, piece.parent))
+                .collect();
+            paint.piece_groups.extend(
+                paint
+                    .nearest_groups
+                    .iter()
+                    .filter_map(|(&id, &group)| group.map(|group| (id, Some(group)))),
+            );
+            for &id in piece_parents.keys() {
+                cached_group(id, &piece_parents, &mut paint.piece_groups);
             }
         }
         paint
     }
 
-    pub(super) fn nearest(&self, root: &Node, mut id: Option<usize>) -> Option<usize> {
-        while let Some(current) = id {
-            if let Some(&index) = self.by_box.get(&current) {
-                return Some(index);
-            }
-            id = root.ifc_typographic_parent(current);
-        }
-        None
+    pub(super) fn nearest(&self, id: usize) -> Option<usize> {
+        self.nearest_groups.get(&id).copied().flatten()
     }
 
-    pub(super) fn piece_group(&self, root: Option<&Node>, piece: &InlineBoxPiece) -> Option<usize> {
-        let root = root?;
-        if let Some(group) = self.nearest(root, Some(piece.node)) {
-            return Some(group);
-        }
-        let mut parent = piece.parent;
-        while let Some(id) = parent {
-            if let Some(group) = self.nearest(root, Some(id)) {
-                return Some(group);
-            }
-            parent = self.parents.get(&id).copied().flatten();
-        }
-        None
+    pub(super) fn piece_group(&self, piece: &InlineBoxPiece) -> Option<usize> {
+        self.piece_groups.get(&piece.node).copied().flatten()
     }
 
     pub(super) fn target(&mut self, group: Option<usize>) -> &mut Scene {
@@ -95,9 +109,10 @@ impl TypographicPaint {
     pub(super) fn start_glyphs(&mut self, mut group: Option<usize>) {
         while let Some(index) = group {
             let parent = self.groups[index].parent;
-            if self.groups[index].insertion.is_none() {
-                self.groups[index].insertion = Some(self.target(parent).commands.len());
+            if self.groups[index].insertion.is_some() {
+                break;
             }
+            self.groups[index].insertion = Some(self.target(parent).commands.len());
             group = parent;
         }
     }
@@ -117,18 +132,19 @@ impl TypographicPaint {
             // A singular ancestor transform has no drawable two-dimensional ink.
             Affine::IDENTITY
         };
-        let mut order: Vec<_> = (0..self.groups.len()).collect();
-        order.sort_by_key(|&index| {
-            let mut depth = 0;
-            let mut parent = self.groups[index].parent;
-            while let Some(index) = parent {
-                depth += 1;
-                parent = self.groups[index].parent;
+        let mut remaining = vec![0; self.groups.len()];
+        for group in &self.groups {
+            if let Some(parent) = group.parent {
+                remaining[parent] += 1;
             }
-            std::cmp::Reverse(depth)
-        });
+        }
+        let mut order: Vec<_> = remaining
+            .iter()
+            .enumerate()
+            .filter_map(|(index, &children)| (children == 0).then_some(index))
+            .collect();
         let mut roots = Vec::new();
-        for index in order {
+        while let Some(index) = order.pop() {
             let group = &mut self.groups[index];
             let content = merge_children(
                 std::mem::take(&mut group.scene),
@@ -150,12 +166,42 @@ impl TypographicPaint {
             let insertion = insertion.unwrap_or_else(|| self.target(parent).commands.len());
             let child = (insertion, index, composite);
             match parent {
-                Some(parent) => self.groups[parent].children.push(child),
+                Some(parent) => {
+                    self.groups[parent].children.push(child);
+                    remaining[parent] -= 1;
+                    if remaining[parent] == 0 {
+                        order.push(parent);
+                    }
+                }
                 None => roots.push(child),
             }
         }
         scene.append_scene(merge_children(self.normal, roots), Affine::IDENTITY);
     }
+}
+
+fn cached_group(
+    mut id: usize,
+    parents: &HashMap<usize, Option<usize>>,
+    cache: &mut HashMap<usize, Option<usize>>,
+) -> Option<usize> {
+    let mut path = Vec::new();
+    let group = loop {
+        if let Some(&group) = cache.get(&id) {
+            break group;
+        }
+        #[cfg(test)]
+        PARENT_GROUP_VISITS.with(|visits| visits.set(visits.get() + 1));
+        path.push(id);
+        match parents.get(&id).copied().flatten() {
+            Some(parent) => id = parent,
+            None => break None,
+        }
+    };
+    for id in path {
+        cache.insert(id, group);
+    }
+    group
 }
 
 fn merge_children(scene: Scene, mut children: Vec<(usize, usize, Scene)>) -> Scene {
@@ -181,3 +227,11 @@ fn merge_children(scene: Scene, mut children: Vec<(usize, usize, Scene)>) -> Sce
     }
     result
 }
+
+#[cfg(test)]
+thread_local! {
+    static PARENT_GROUP_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+mod tests;
