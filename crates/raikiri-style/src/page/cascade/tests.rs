@@ -3260,8 +3260,9 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
 /// conversion. The exhaustive match in `absolutize_in_page_context`
 /// determines the classification.
 // Includes page-only inherit markers, which are resolved before this
-// phase and therefore remain unchanged here.
-const PHASE_3_PASS_THROUGH_VARIANTS: usize = 167;
+// phase and therefore remain unchanged here. ContextualColor is also a
+// computed expression; it requires no page-context length conversion.
+const PHASE_3_PASS_THROUGH_VARIANTS: usize = 168;
 /// Number of corpus variants transformed by page-context resolution.
 /// This is derived from the corpus size and the pass-through count.
 fn phase_3_transformed_variants() -> usize {
