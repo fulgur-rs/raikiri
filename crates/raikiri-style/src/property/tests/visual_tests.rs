@@ -1650,6 +1650,7 @@ fn background_shorthand_color_only_fills_the_other_7_with_initial_values() {
     assert_eq!(
         got,
         BackgroundShorthand {
+            color_expression: None,
             color: CssColor {
                 r: 255,
                 g: 0,
@@ -1946,6 +1947,7 @@ fn background_shorthand_rejects_size_without_a_preceding_position() {
 #[test]
 fn background_shorthand_key_maps_to_background_property_key() {
     let v = PropertyValue::Background(BackgroundShorthand {
+        color_expression: None,
         color: CssColor::TRANSPARENT,
         image: BackgroundImage::None,
         repeat: BackgroundRepeat {

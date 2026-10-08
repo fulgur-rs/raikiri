@@ -62,7 +62,11 @@ pub struct CascadeResult {
     /// root element, or the Document node when the tree has no element child.
     root_element_index: usize,
     /// Winning custom-highlight background colors keyed by highlight name.
+    /// Contextual expressions use initial black in this inspection view. Use
+    /// [`Self::custom_highlight_background`] with the originating foreground
+    /// for painting.
     pub custom_highlight_styles: HashMap<String, CssColor>,
+    custom_highlight_sources: HashMap<String, smol_str::SmolStr>,
     /// Per-node computed values (indexed by NodeId.0 as usize).
     /// Populated for Element / Text / Document kinds; out-of-range access
     /// panics and is the caller's responsibility.
@@ -188,6 +192,22 @@ pub struct CascadeResult {
 }
 
 impl CascadeResult {
+    /// Resolve a named highlight background against its originating foreground.
+    /// Literal backgrounds use the same winning declaration as
+    /// [`Self::custom_highlight_styles`]; contextual expressions remain deferred
+    /// until the caller supplies the foreground of the highlighted text.
+    pub fn custom_highlight_background(
+        &self,
+        name: &str,
+        foreground: CssColor,
+    ) -> Option<CssColor> {
+        if let Some(source) = self.custom_highlight_sources.get(name) {
+            crate::property::resolve_contextual_color(source, foreground)
+        } else {
+            self.custom_highlight_styles.get(name).copied()
+        }
+    }
+
     /// Opaque identity for the cascade run that produced this result.
     ///
     /// Layout caches use it to avoid reusing placement data after a new cascade.
@@ -402,6 +422,7 @@ fn cascade_from_candidates<D: StyleDom>(
         typographic_inheritance,
         root_element_index,
         custom_highlight_styles: rule_tree.custom_highlight_styles().clone(),
+        custom_highlight_sources: rule_tree.custom_highlight_sources().clone(),
         computed,
         opacity_specified,
         background_color_specified,

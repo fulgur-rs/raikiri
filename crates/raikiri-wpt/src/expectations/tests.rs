@@ -795,7 +795,8 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS Inline image-loaded vertical-align length exact slice (+1).
     // + Genuine non-floating first-letter pairs (+3), remove two vacuous pins (-2).
     // + Remeasured baseline pins (+8 PASS, -7 inaccurate pins).
-    assert_eq!(set.baseline.entries.len(), 1445);
+    // + CSS Color contextual background and color-mix exact references (+5).
+    assert_eq!(set.baseline.entries.len(), 1450);
     for id in [
         "css/css-pseudo/first-letter-004.html",
         "css/css-pseudo/first-letter-005.html",
@@ -819,6 +820,11 @@ fn load_from_workspace_root_reads_the_header_only_files() {
             .contains("css/css-overflow/text-overflow-ellipsis-002.html")
     );
     for id in [
+        "css/css-color/t44-currentcolor-background-b.xht",
+        "css/css-color/color-mix-currentcolor-001.html",
+        "css/css-color/color-mix-currentcolor-002.html",
+        "css/css-color/color-mix-currentcolor-003.html",
+        "css/css-color/color-mix-currentcolor-nested-for-color-property.html",
         "css/css-lists/list-style-type-string-001a.html",
         "css/css-lists/list-style-type-string-001b.html",
         "css/css-lists/content-property/marker-text-matches-decimal.html",

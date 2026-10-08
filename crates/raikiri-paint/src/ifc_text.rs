@@ -406,7 +406,11 @@ fn draw_custom_highlights(
         return;
     };
     for highlight in custom_highlights {
-        let Some(color) = cascade.custom_highlight_styles.get(&highlight.name) else {
+        let foreground = cascade
+            .computed
+            .get(highlight.node)
+            .map_or(raikiri_style::CssColor::BLACK, |values| values.color);
+        let Some(color) = cascade.custom_highlight_background(&highlight.name, foreground) else {
             continue;
         };
         let (Ok(start_byte), Ok(end_byte)) = (
@@ -444,7 +448,7 @@ fn draw_custom_highlights(
         if selection.is_empty() {
             continue;
         }
-        let color = css_color_to_peniko(*color);
+        let color = css_color_to_peniko(color);
         let (offset_x, offset_y) = cumulative_offset(document, root_id, offsets, highlight.node);
         for selected in selection {
             let rect = Rect::new(

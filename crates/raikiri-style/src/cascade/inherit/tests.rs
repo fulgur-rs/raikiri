@@ -30,6 +30,182 @@ use crate::test_dom::TestDoc;
 use smol_str::SmolStr;
 
 #[test]
+fn background_currentcolor_uses_the_elements_own_color() {
+    for source in [
+        "background-color: currentcolor; color: red",
+        "color: red; background-color: CURRENTCOLOR",
+        r"color: red; background-color: current\63 olor",
+        "--shade: currentcolor; background-color: var(--shade); color: red",
+    ] {
+        let values = cascade_doc("", "div", Some(source));
+        assert_eq!(values.background_color, RED, "{source}");
+    }
+}
+
+#[test]
+fn currentcolor_mix_uses_inherited_color_for_color_and_own_color_for_background() {
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "div", Some("color: blue"));
+    let child = doc.push_element(parent, "div", Some("color: color-mix(in srgb, currentcolor, red); background-color: color-mix(in srgb, currentcolor, white)"));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+    let values = &result.computed[child];
+    assert_eq!(
+        values.color,
+        CssColor {
+            r: 128,
+            g: 0,
+            b: 128,
+            a: 255
+        }
+    );
+    assert_eq!(
+        values.background_color,
+        CssColor {
+            r: 192,
+            g: 128,
+            b: 192,
+            a: 255
+        }
+    );
+}
+
+#[test]
+fn variable_background_shorthand_keeps_its_contextual_color() {
+    for (source, expected) in [
+        ("currentcolor", BLUE),
+        (
+            "color-mix(in srgb,currentcolor,white)",
+            CssColor {
+                r: 128,
+                g: 128,
+                b: 255,
+                a: 255,
+            },
+        ),
+    ] {
+        let mut doc = TestDoc::new();
+        let parent = doc.push_element(0, "div", Some(&format!("color:red;--background:{source}")));
+        let child = doc.push_element(
+            parent,
+            "div",
+            Some("color:blue;background:var(--background)"),
+        );
+        let tree = build_rule_tree(&doc);
+        let result = cascade(&doc, &tree).unwrap();
+        assert_eq!(result.computed[child].background_color, expected);
+    }
+}
+
+#[test]
+fn explicit_background_inheritance_keeps_currentcolor_symbolic() {
+    for source in [
+        "currentcolor",
+        "color-mix(in srgb, currentcolor, white)",
+        "color-mix(in srgb, color-mix(in srgb, currentcolor, black), white)",
+    ] {
+        let mut doc = TestDoc::new();
+        let parent = doc.push_element(
+            0,
+            "div",
+            Some(&format!("color: red; background-color: {source}")),
+        );
+        let child = doc.push_element(
+            parent,
+            "div",
+            Some("color: blue; background-color: inherit"),
+        );
+        let grandchild =
+            doc.push_element(child, "div", Some("color: red; background-color: inherit"));
+        let untouched = doc.push_element(parent, "div", Some("color: blue"));
+        let tree = build_rule_tree(&doc);
+        let result = cascade(&doc, &tree).expect("cascade Ok");
+        let blue_background = match source {
+            "currentcolor" => BLUE,
+            "color-mix(in srgb, currentcolor, white)" => CssColor {
+                r: 128,
+                g: 128,
+                b: 255,
+                a: 255,
+            },
+            _ => CssColor {
+                r: 128,
+                g: 128,
+                b: 191,
+                a: 255,
+            },
+        };
+        assert_eq!(
+            result.computed[child].background_color, blue_background,
+            "{source}"
+        );
+        let red_background = match source {
+            "currentcolor" => RED,
+            "color-mix(in srgb, currentcolor, white)" => CssColor {
+                r: 255,
+                g: 128,
+                b: 128,
+                a: 255,
+            },
+            _ => CssColor {
+                r: 191,
+                g: 128,
+                b: 128,
+                a: 255,
+            },
+        };
+        assert_eq!(result.computed[parent].background_color, red_background);
+        assert_eq!(result.computed[grandchild].background_color, red_background);
+        assert_eq!(
+            result.computed[untouched].background_color,
+            CssColor::TRANSPARENT
+        );
+    }
+}
+
+#[test]
+fn currentcolor_background_shorthand_uses_own_color() {
+    let values = cascade_doc("", "div", Some("color: red; background: currentcolor"));
+    assert_eq!(values.background_color, RED);
+}
+
+#[test]
+fn currentcolor_resolution_preserves_alpha_and_color_recursion_boundaries() {
+    let values = cascade_doc(
+        "",
+        "div",
+        Some("color: rgb(255 0 0 / 0.5); background-color: color-mix(in srgb, currentcolor, blue)"),
+    );
+    assert_eq!(
+        values.background_color,
+        CssColor {
+            r: 85,
+            g: 0,
+            b: 170,
+            a: 192
+        }
+    );
+    let mut source = String::from("currentcolor");
+    for _ in 0..crate::property::MAX_COLOR_MIX_NESTING_DEPTH {
+        source = format!("color-mix(in srgb, {source}, currentcolor)");
+    }
+    let boundary = cascade_doc(
+        "",
+        "div",
+        Some(&format!("color: red; background-color: {source}")),
+    );
+    assert_eq!(boundary.background_color, RED);
+    let too_deep = cascade_doc(
+        "",
+        "div",
+        Some(&format!(
+            "color: red; background-color: blue; background-color: color-mix(in srgb, {source}, currentcolor)"
+        )),
+    );
+    assert_eq!(too_deep.background_color, BLUE);
+}
+
+#[test]
 fn min_block_size_maps_to_the_authored_block_axis() {
     let horizontal = cascade_doc(
         "",
@@ -7157,6 +7333,7 @@ fn apply_value_direct_background_shorthand_fall_through() {
     };
     let mut cv = SpecifiedValues::initial();
     let shorthand = BackgroundShorthand {
+        color_expression: None,
         color: RED,
         image: BackgroundImage::Url("tile.png".to_string()),
         repeat: BackgroundRepeat {
@@ -9432,6 +9609,7 @@ fn marker_shorthand_direct_application_resets_all_three_inherited_fields() {
             marker.clone(),
             crate::property::CssColor::BLACK,
             crate::property::CssColor::TRANSPARENT,
+            None,
             ComputedLength(20.0)
         ),
         marker
