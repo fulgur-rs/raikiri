@@ -4970,3 +4970,64 @@ fn review_float_overflow_does_not_extend_the_plain_wrapper_background() {
     assert_eq!(pixel(40, 10), &[255, 0, 0, 255]);
     assert_eq!(pixel(40, 50), &[255, 255, 255, 255]);
 }
+
+#[test]
+fn review_replaced_canvas_paints_its_monolithic_content_once() {
+    let mut parsed = raikiri_html::parse(
+        "<!DOCTYPE html><body style='margin:0;background:white'><div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:30px;break-before:avoid'></div><canvas id='canvas' width='20' height='150' style='display:block;width:20px;height:150px'></canvas></div></body>".as_bytes(),
+        &raikiri_html::ParseOptions { extra_stylesheets: &[], network: None, base_url: None },
+    ).unwrap();
+    let canvas = (0..parsed.dom.node_count())
+        .find(|&id| parsed.dom.is_canvas_element(id))
+        .unwrap();
+    parsed
+        .dom
+        .canvas_fill_rect(canvas, 0, 0, 20, 75, [255, 0, 0, 255]);
+    parsed
+        .dom
+        .canvas_fill_rect(canvas, 0, 75, 20, 75, [0, 128, 0, 255]);
+    let cascade = raikiri_html::build_cascaded(&parsed);
+    raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
+    let mut scene = Scene::new();
+    crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4).unwrap();
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+        800,
+        600,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 800 + x) * 4..(y * 800 + x) * 4 + 4];
+    assert_eq!(pixel(10, 50), &[255, 255, 255, 255]);
+    assert_eq!(pixel(55, 10), &[255, 0, 0, 255]);
+    assert_eq!(pixel(55, 100), &[0, 128, 0, 255]);
+    assert_eq!(pixel(105, 10), &[255, 255, 255, 255]);
+}
+
+#[test]
+fn review_rtl_column_colors_follow_the_containers_inline_direction() {
+    let scene = transform_markup_scene(
+        "<!DOCTYPE html><body style='margin:0;background:white'><div style='direction:rtl;columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:60px;background:red'></div><div style='height:60px;break-before:avoid;background:green'></div></div></body>",
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+        800,
+        600,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 800 + x) * 4..(y * 800 + x) * 4 + 4];
+    assert_eq!(pixel(60, 10), &[255, 0, 0, 255]);
+    assert_eq!(pixel(10, 10), &[0, 128, 0, 255]);
+}
+
+#[test]
+fn review_zero_height_forced_boundary_paints_only_in_the_next_column() {
+    let scene = transform_markup_scene(
+        "<!DOCTYPE html><body style='margin:0;background:white'><div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:0;break-after:column'></div><div style='height:20px;background:green'></div></div></body>",
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+        800,
+        600,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 800 + x) * 4..(y * 800 + x) * 4 + 4];
+    assert_eq!(pixel(10, 10), &[255, 255, 255, 255]);
+    assert_eq!(pixel(60, 10), &[0, 128, 0, 255]);
+}

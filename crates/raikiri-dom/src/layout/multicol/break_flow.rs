@@ -1,5 +1,6 @@
 use super::*;
 use crate::fragment::{FragmentRect, LayoutFragment};
+use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
 use raikiri_style::property::BreakInside;
 use std::collections::HashMap;
 
@@ -245,12 +246,32 @@ fn collect(
             ancestors: ancestors.clone(),
             width: output.size.width,
             height: output.size.height.max(0.0),
-            inline_offset: tree.nodes[id].unrounded_layout.location.x,
+            // The measured box belongs to a column, not the original full-width
+            // containing block. Its parent determines block inline alignment;
+            // physical float sides remain independent of inline direction.
+            inline_offset: match tree.nodes[id].style.float {
+                taffy::Float::Right => context.column_width - output.size.width,
+                taffy::Float::Left => 0.0,
+                taffy::Float::None => {
+                    if tree.nodes[id].parent.is_some_and(|parent| {
+                        tree.nodes[parent].style.direction == taffy::Direction::Rtl
+                    }) {
+                        context.column_width - output.size.width
+                    } else {
+                        0.0
+                    }
+                }
+            },
             before,
             after,
             floated,
             splittable: !floated
                 && tree.nodes[id].display != DisplayValue::InlineBlock
+                // Replaced content has no internal break points. Painting a
+                // continuation would rescale and replay the entire source.
+                && !tree.nodes[id].tag_name().is_some_and(|tag| {
+                    ATOMIC_TAGS.contains(&tag) || REPLACED_BOX_TAGS.contains(&tag)
+                })
                 // Descendants keep their measured subtree; this seam has no
                 // translated child continuations to replay in later columns.
                 && !has_rendered_element_child(tree, id)
@@ -424,15 +445,16 @@ pub(super) fn layout(
     let mut column = 0usize;
     let mut cursor = 0.0f32;
     let mut previous_after = BreakBetween::Auto;
+    let mut saw_flow_box = false;
     let mut wrappers = HashMap::<(usize, usize), (usize, f32)>::new();
     for (index, item) in boxes.iter().enumerate() {
         let run = runs.get(&index).copied().unwrap_or(item.height);
         if !item.floated
-            && cursor > 0.0
-            && (forced(previous_after)
-                || forced(item.before)
-                || (run <= height && cursor + run > height)
-                || (cursor + item.height > height && (item.height <= height || !item.splittable)))
+            && ((saw_flow_box && (forced(previous_after) || forced(item.before)))
+                || (cursor > 0.0
+                    && ((run <= height && cursor + run > height)
+                        || (cursor + item.height > height
+                            && (item.height <= height || !item.splittable)))))
         {
             column = column.saturating_add(1);
             cursor = 0.0;
@@ -449,7 +471,12 @@ pub(super) fn layout(
             } else {
                 remaining
             };
-            let x = context.column_offset_x(column);
+            let offset = context.column_offset_x(column);
+            let x = if tree.nodes[root].style.direction == taffy::Direction::Rtl {
+                context.available_width - context.column_width - offset
+            } else {
+                offset
+            };
             let y = cursor;
             let mut parent_fragment = container;
             let mut parent_y = 0.0;
@@ -523,6 +550,7 @@ pub(super) fn layout(
         }
         if !item.floated {
             previous_after = item.after;
+            saw_flow_box = true;
         }
     }
     fallback.height

@@ -1022,3 +1022,109 @@ fn review_flow_root_preserves_float_height_inside_its_atomic_box() {
     );
     assert_eq!(boxes(&doc, "atomic"), vec![(1, 50.0, 0.0, 50.0, 40.0)]);
 }
+
+#[test]
+fn review_replaced_leaves_overflow_once_without_replaying_columns() {
+    for tag in ["img", "canvas"] {
+        let doc = laid_out(&format!(
+            "<div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:30px;break-before:avoid'></div><{tag} id='replaced' style='width:20px;height:150px'></{tag}></div>",
+        ));
+        assert_eq!(boxes(&doc, "replaced"), vec![(1, 50.0, 0.0, 20.0, 150.0)]);
+    }
+}
+
+#[test]
+fn review_replaced_first_leaf_overflows_its_empty_column_once() {
+    for tag in ["img", "canvas"] {
+        let doc = laid_out(&format!(
+            "<div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><{tag} id='replaced' style='width:20px;height:150px;break-before:avoid'></{tag}></div>",
+        ));
+        assert_eq!(boxes(&doc, "replaced"), vec![(0, 0.0, 0.0, 20.0, 150.0)]);
+    }
+}
+
+#[test]
+fn review_rtl_columns_progress_leftward_including_overflow_columns() {
+    let doc = laid_out(
+        "<div style='direction:rtl;columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div id='first' style='height:60px'></div><div id='second' style='height:60px;break-before:avoid'></div><div id='third' style='height:60px;break-before:column'></div></div>",
+    );
+    assert_eq!(boxes(&doc, "first"), vec![(0, 50.0, 0.0, 50.0, 60.0)]);
+    assert_eq!(boxes(&doc, "second"), vec![(1, 0.0, 0.0, 50.0, 60.0)]);
+    assert_eq!(boxes(&doc, "third"), vec![(2, -50.0, 0.0, 50.0, 60.0)]);
+}
+
+#[test]
+fn review_rtl_narrow_boxes_use_their_containing_blocks_inline_direction() {
+    for direction in ["ltr", "rtl"] {
+        let doc = laid_out(&format!(
+            "<div style='direction:rtl;columns:2;column-fill:auto;gap:10px;width:110px;height:100px'><div id='first' style='direction:{direction};width:20px;height:20px'></div><div id='second' style='direction:{direction};width:20px;height:20px;break-before:column'></div></div>",
+        ));
+        assert_eq!(boxes(&doc, "first"), vec![(0, 90.0, 0.0, 20.0, 20.0)]);
+        assert_eq!(boxes(&doc, "second"), vec![(1, 30.0, 0.0, 20.0, 20.0)]);
+    }
+}
+
+#[test]
+fn review_empty_flow_box_keeps_its_forced_after_boundary() {
+    for edge in ["column", "always"] {
+        let doc = laid_out(&format!(
+            "<div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:0;break-after:{edge}'></div><div id='next' style='height:20px'></div></div>",
+        ));
+        assert_eq!(boxes(&doc, "next"), vec![(1, 50.0, 0.0, 50.0, 20.0)]);
+    }
+}
+
+#[test]
+fn review_empty_flow_box_allows_a_following_forced_before_boundary() {
+    let doc = laid_out(
+        "<div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:0'></div><div id='next' style='height:20px;break-before:column'></div></div>",
+    );
+    assert_eq!(boxes(&doc, "next"), vec![(1, 50.0, 0.0, 50.0, 20.0)]);
+}
+
+#[test]
+fn review_leading_forced_edge_and_parallel_float_do_not_make_empty_columns() {
+    for prefix in [
+        "",
+        "<div style='height:0'></div>",
+        "<div style='float:left;width:10px;height:20px;break-after:column'></div>",
+    ] {
+        let doc = laid_out(&format!(
+            "<div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'>{prefix}<div id='next' style='height:20px;break-before:avoid'></div></div>",
+        ));
+        assert_eq!(boxes(&doc, "next"), vec![(0, 0.0, 0.0, 50.0, 20.0)]);
+    }
+    let doc = laid_out(
+        "<div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div id='next' style='height:20px;break-before:column'></div></div>",
+    );
+    assert_eq!(boxes(&doc, "next"), vec![(0, 0.0, 0.0, 50.0, 20.0)]);
+}
+
+#[test]
+fn review_rtl_column_alignment_preserves_physical_float_sides() {
+    for direction in ["ltr", "rtl"] {
+        for (side, inline_offset) in [("left", 0.0), ("right", 30.0)] {
+            let doc = laid_out(&format!(
+                "<div style='direction:{direction};columns:2;column-fill:auto;gap:10px;width:110px;height:100px'><div style='height:20px;break-before:avoid'></div><div id='float' style='float:{side};width:20px;height:20px'></div></div>",
+            ));
+            let column_origin = if direction == "rtl" { 60.0 } else { 0.0 };
+            assert_eq!(
+                boxes(&doc, "float"),
+                vec![(0, column_origin + inline_offset, 20.0, 20.0, 20.0)]
+            );
+        }
+    }
+}
+
+#[test]
+fn review_nested_rtl_column_wrapper_keeps_local_inline_alignment() {
+    let doc = laid_out(
+        "<div style='direction:rtl;columns:2;column-fill:auto;gap:10px;width:110px;height:100px'><div id='wrapper'><div id='first' style='width:20px;height:60px'></div><div id='second' style='width:20px;height:60px;break-before:avoid'></div></div></div>",
+    );
+    assert_eq!(
+        boxes(&doc, "wrapper"),
+        vec![(0, 60.0, 0.0, 50.0, 60.0), (1, 0.0, 0.0, 50.0, 60.0)]
+    );
+    assert_eq!(boxes(&doc, "first"), vec![(0, 30.0, 0.0, 20.0, 60.0)]);
+    assert_eq!(boxes(&doc, "second"), vec![(1, 30.0, 0.0, 20.0, 60.0)]);
+}

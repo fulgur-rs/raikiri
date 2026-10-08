@@ -385,7 +385,13 @@ atomic inline-blocks, flow-roots and inside-avoided boxes, admits block-level
 list items, gives forced column breaks
 priority, and treats floats as parallel flows. Floats do not enlarge a plain
 wrapper's normal-flow background area. Auto-sized atomic and replaced boxes
-retain their measured or intrinsic width. Positioned descendants of resumed
+retain their measured or intrinsic width. Replaced leaves remain monolithic,
+so their source content is painted once rather than rescaled into column
+continuations. Horizontal RTL containers order their columns from right to
+left, including overflow columns; block alignment uses the immediate
+containing block's inline direction, while float sides remain physical.
+Forced boundaries after zero-height normal-flow boxes still advance, without
+introducing a blank column for a leading forced edge or a parallel float. Positioned descendants of resumed
 plain wrappers and multiple projected floats retain the previous strategy,
 which avoids subtree replay and isolated float packing. Root positioned
 siblings and positioned descendants of monolithic atomic boxes remain eligible.
