@@ -645,6 +645,7 @@ fn block_level_siblings_do_not_disqualify_a_paragraph() {
             add_sibling(doc, root, display);
         });
         enable(&mut fixture);
+        crate::layout::apply_computed_to_style(&mut fixture.doc, &fixture.cascade).unwrap();
         assign(&mut fixture);
         assert!(is_root(&fixture, fixture.root), "{display}");
     }
@@ -665,6 +666,7 @@ fn inline_level_siblings_do_not_disqualify_a_paragraph() {
             add_sibling(doc, root, display);
         });
         enable(&mut fixture);
+        crate::layout::apply_computed_to_style(&mut fixture.doc, &fixture.cascade).unwrap();
         assign(&mut fixture);
         assert!(is_root(&fixture, fixture.root), "{display}");
     }

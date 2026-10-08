@@ -56,6 +56,40 @@ fn overflow_and_opacity_predicates() {
 }
 
 #[test]
+fn internal_table_tracks_do_not_clip_but_containers_do() {
+    for (display, clips) in [
+        ("table-row", false),
+        ("table-row-group", false),
+        ("table-header-group", false),
+        ("table-footer-group", false),
+        ("table-column", false),
+        ("table-column-group", false),
+        ("block", true),
+        ("table-cell", true),
+        ("table-caption", true),
+        ("flex", true),
+        ("grid", true),
+    ] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let node = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(&format!("display:{display};overflow:hidden")),
+        );
+        doc.mark_in_document_flags();
+        let cr = cascaded(&doc);
+        assert_eq!(
+            clips_overflow(&cr.computed[node]),
+            clips,
+            "display={display}"
+        );
+    }
+}
+
+#[test]
 fn named_page_matching_skips_check_when_no_active_page() {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);

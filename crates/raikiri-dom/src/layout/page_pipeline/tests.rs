@@ -5187,13 +5187,15 @@ fn a_table_cell_is_laid_out() {
 }
 
 #[test]
-fn an_all_inline_table_box_is_laid_out_by_the_ifc_branch() {
-    // `display:table` whose children are all inline: the root's IFC branch
-    // runs, not compute_table_layout.
+fn an_all_inline_table_box_shapes_its_anonymous_cell() {
+    // The table algorithm sizes its anonymous row/cell; the cell shapes text.
     let (mut doc, cascade, table) =
         crate::layout::test_support::ahem_table_with_only_text("", "aaaa bbbb");
     lay_out(&mut doc, &cascade);
-    assert!(doc.nodes[table].is_ifc_root());
+    assert!(!doc.nodes[table].is_ifc_root());
+    let cells: Vec<_> = doc.anonymous_table_cells(table).collect();
+    assert_eq!(cells.len(), 1);
+    assert!(cells[0].1.is_ifc_root());
     let size = doc.nodes[table].unrounded_layout.size;
     // Hand-computed: the table shrinks to "aaaa bbbb", one 10px line.
     assert_eq!((size.width, size.height), (90.0, 10.0));
@@ -5259,7 +5261,10 @@ fn bare_text_directly_in_a_table_is_laid_out() {
                 text,
             );
             lay_out(&mut doc, &cascade);
-            assert!(doc.nodes[table].is_ifc_root());
+            assert!(!doc.nodes[table].is_ifc_root());
+            let cells: Vec<_> = doc.anonymous_table_cells(table).collect();
+            assert_eq!(cells.len(), 1);
+            assert!(cells[0].1.is_ifc_root());
             doc.nodes[table].unrounded_layout.size.height
         };
         assert_eq!(height(), 10.0 * lines, "{text:?}");

@@ -1270,7 +1270,7 @@ fn laid_out_in_lines(
     pseudo: raikiri_style::PseudoElem,
 ) -> bool {
     document.get_node(node_id).is_some_and(|node| {
-        node.is_ifc_root() || document.anonymous_table_contents_paint_only(node_id)
+        node.is_ifc_root() || document.anonymous_table_pseudo_is_projected(node_id, pseudo)
     }) && raikiri_dom::generated_content::is_in_flow_generated_text(cascade, node_id, pseudo)
 }
 
@@ -3342,6 +3342,20 @@ pub(crate) fn paint_document_impl(
                 let clip = text_page_clip(inside_fixed);
                 if let Some(clip) = &clip {
                     scene.scene.push_clip_layer(Affine::IDENTITY, clip);
+                }
+                let owner = document.ifc_source_owner(key);
+                if cascade.computed[owner].visibility != Visibility::Hidden
+                    && let Some(border) = cell.collapsed_border()
+                {
+                    paint_element_border(
+                        scene,
+                        layout.size.width,
+                        layout.size.height,
+                        x + page_offset_x + transform_x,
+                        y + page_offset_y + transform_y,
+                        border,
+                        cascade.computed[owner].color,
+                    );
                 }
                 if let Some(events) = trace.as_deref_mut()
                     && raikiri_dom::PositionedLines::new(document, cascade, key, fragmentainer)

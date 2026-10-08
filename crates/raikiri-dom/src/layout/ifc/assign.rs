@@ -99,8 +99,8 @@ fn box_parent(doc: &Document, cascade: &CascadeResult, idx: usize) -> Option<usi
 
 /// Whether `idx` is a box that lays its own inline content out in lines: a
 /// block container (`block`, `flow-root`, `inline-block`, `list-item`, a
-/// table cell), a blockified inline flex or grid item, or a table box holding
-/// only inline-level children. Flex and grid boxes and tables with rows lay
+/// table cell), or a blockified inline flex or grid item. Flex and grid boxes
+/// and tables lay
 /// their children out by algorithms of their own. A table caption is a block
 /// container (the table algorithm lays it out at the table's width). A
 /// multicol container is a root like any block container: its lines are
@@ -132,29 +132,8 @@ pub(crate) fn can_be_ifc_root(doc: &Document, cascade: &CascadeResult, idx: usiz
         | DisplayValue::TableCaption => true,
         // The body is a block whatever its display (see `generates_own_box`).
         DisplayValue::Contents => is_layout_root(doc, idx),
-        // A table box whose children are all inline-level is one anonymous
-        // cell's content (CSS 2.1 17.2.1); one with rows, row groups or
-        // block children is laid out by the table algorithm.
-        DisplayValue::Table | DisplayValue::InlineTable => {
-            holds_only_inline_level_children(doc, cascade, idx)
-        }
         _ => false,
     }
-}
-
-/// Whether every in-document element child of `idx` is inline-level
-/// (`inline`, or an atomic `inline-block`), so its children form one run of
-/// inline content.
-fn holds_only_inline_level_children(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
-    doc.nodes[idx].children.iter().all(|&child| {
-        let node = &doc.nodes[child];
-        node.kind() != NodeKind::Element
-            || !node.is_in_document()
-            || matches!(
-                cascade.computed[child].display,
-                DisplayValue::Inline | DisplayValue::InlineBlock | DisplayValue::None
-            )
-    })
 }
 
 /// Whether a block qualifies for the IFC path. Inline content that makes a

@@ -48,6 +48,97 @@ fn deep_contents_wrappers_keep_source_order_on_a_small_stack() {
 }
 
 #[test]
+fn owner_generated_cells_keep_source_children_and_shared_projection_limits() {
+    use crate::layout::ifc::error::IfcError;
+    use crate::layout::ifc::projection::{GeneratedCounters, project_anonymous_cell_builder};
+    use shodo::limits::{LimitKind, Limits};
+
+    let mut doc = Document::new();
+    let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+    doc.append_text(
+        sheet,
+        "#owner::before{content:'X'}#owner::after{content:'Y'}",
+    );
+    let table = doc.append_element(Some(0), "div", Style::default(), Some("display:table"));
+    let owner = doc.append_element(
+        Some(table),
+        "div",
+        Style::default(),
+        Some("display:table-row"),
+    );
+    doc.set_element_attributes(owner, vec![("id".into(), "owner".into())]);
+    let proper = doc.append_element(
+        Some(owner),
+        "div",
+        Style::default(),
+        Some("display:table-cell"),
+    );
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
+    assert_eq!(doc.nodes[owner].children, vec![proper]);
+    assert_eq!(doc.table_objects.cells.len(), 2);
+    assert_eq!(
+        doc.table_objects.cells[0].content,
+        vec![Content::Before(owner)]
+    );
+    assert_eq!(
+        doc.table_objects.cells[1].content,
+        vec![Content::After(owner)]
+    );
+    let fonts = crate::layout::ifc::test_support::ahem_fonts();
+    for cell in &doc.table_objects.cells {
+        assert!(cell.node.children.is_empty());
+        let border = cell.node.computed_border.unwrap();
+        assert_eq!(
+            border.top.style(),
+            raikiri_style::property::BorderStyle::None
+        );
+        assert_eq!(border.top.width().0, 0.0);
+        for (limits, expected) in [
+            (
+                Limits {
+                    max_items: Some(0),
+                    ..Limits::default()
+                },
+                LimitKind::Items,
+            ),
+            (
+                Limits {
+                    max_text_bytes: Some(0),
+                    ..Limits::default()
+                },
+                LimitKind::TextBytes,
+            ),
+        ] {
+            let result = project_anonymous_cell_builder(
+                &doc,
+                &computed,
+                owner,
+                &cell.content,
+                &fonts,
+                &limits,
+                &GeneratedCounters::default(),
+            );
+            assert!(matches!(result, Err(IfcError::Limit(error)) if error.kind == expected));
+        }
+        assert!(
+            project_anonymous_cell_builder(
+                &doc,
+                &computed,
+                owner,
+                &cell.content,
+                &fonts,
+                &Limits::default(),
+                &GeneratedCounters::default(),
+            )
+            .is_ok()
+        );
+    }
+    assert_eq!(doc.nodes[owner].children, vec![proper]);
+}
+
+#[test]
 fn source_owner_enumeration_is_linear_across_many_anonymous_rows() {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));

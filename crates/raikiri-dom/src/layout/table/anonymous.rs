@@ -76,6 +76,12 @@ fn children(
         .rev()
         .map(|&id| Content::Node(id))
         .collect();
+    if crate::generated_content::is_in_flow_generated_text(cascade, owner, PseudoElem::After) {
+        pending.insert(0, Content::After(owner));
+    }
+    if crate::generated_content::is_in_flow_generated_text(cascade, owner, PseudoElem::Before) {
+        pending.push(Content::Before(owner));
+    }
     while let Some(content) = pending.pop() {
         let Content::Node(id) = content else {
             out.push(content);
@@ -154,6 +160,7 @@ fn anonymous_prototype(doc: &Document, owner: usize) -> Node {
         .remove(NodeFlags::IS_IFC_ROOT | NodeFlags::IN_IFC_SUBTREE);
     node.style.display = taffy::Display::Block;
     node.style.direction = source.style.direction;
+    node.computed_border = Some(raikiri_style::ComputedValues::initial().border);
     node.display = DisplayValue::TableCell;
     node.border_collapse = source.border_collapse;
     node.border_spacing = source.border_spacing;
@@ -368,7 +375,6 @@ pub(crate) fn prepare(doc: &mut Document, cascade: &CascadeResult) -> Result<(),
                 doc.nodes[id].display,
                 DisplayValue::Table | DisplayValue::InlineTable
             )
-            && !super::super::ifc::assign::can_be_ifc_root(doc, cascade, id)
         {
             let table_rows = rows(doc, cascade, &mut objects, id, true, &mut 0)?;
             objects.rows.insert(id, table_rows);
@@ -470,6 +476,17 @@ impl Document {
             .overlay_contents_owner
             .get(&id)
             .is_some_and(|owner| self.table_objects.cells_by_owner.contains_key(owner))
+    }
+
+    /// Whether this generated source was projected into an anonymous cell.
+    #[doc(hidden)]
+    pub fn anonymous_table_pseudo_is_projected(&self, id: usize, pseudo: PseudoElem) -> bool {
+        let content = match pseudo {
+            PseudoElem::Before => Content::Before(id),
+            PseudoElem::After => Content::After(id),
+            _ => return false,
+        };
+        self.table_objects.cell_by_content.contains_key(&content)
     }
 
     /// Cell areas of a source row or group, relative to its used box.

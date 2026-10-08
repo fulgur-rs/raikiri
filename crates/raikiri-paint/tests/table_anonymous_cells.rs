@@ -34,6 +34,306 @@ fn document() -> (Document, usize) {
     (doc, body)
 }
 
+#[test]
+fn review_owner_pseudos_form_cells_around_a_proper_cell() {
+    for kind in ["table", "group", "row"] {
+        let (mut doc, body) = document();
+        let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+        doc.append_text(
+            sheet,
+            "#owner::before{content:'X';color:red} #owner::after{content:'Y';color:green}",
+        );
+        let table = element(
+            &mut doc,
+            body,
+            "display:table;width:30px;table-layout:fixed;border-spacing:0",
+        );
+        let owner = match kind {
+            "group" => element(&mut doc, table, "display:table-row-group"),
+            "row" => element(&mut doc, table, "display:table-row"),
+            _ => table,
+        };
+        doc.set_element_attributes(owner, vec![("id".into(), "owner".into())]);
+        let cell = element(
+            &mut doc,
+            owner,
+            "display:table-cell;height:10px;background:blue",
+        );
+        let computed = layout(&mut doc);
+        assert_eq!(doc.anonymous_table_cells(owner).count(), 2, "kind={kind}");
+        assert!(doc.anonymous_table_pseudo_is_projected(owner, raikiri_style::PseudoElem::Before));
+        assert!(doc.anonymous_table_pseudo_is_projected(owner, raikiri_style::PseudoElem::After));
+        assert!(!doc.anonymous_table_pseudo_is_projected(owner, raikiri_style::PseudoElem::Marker));
+        assert_eq!(
+            doc.get_node(cell).unwrap().unrounded_layout.location.x,
+            10.0
+        );
+        let (mut reference, body) = document();
+        for (x, color) in [(0, "red"), (10, "blue"), (20, "green")] {
+            element(
+                &mut reference,
+                body,
+                &format!(
+                    "position:absolute;left:{x}px;top:0;width:10px;height:10px;background:{color}"
+                ),
+            );
+        }
+        let expected = layout(&mut reference);
+        assert_exact_pixels(
+            raster(scene(&doc, &computed)),
+            raster(scene(&reference, &expected)),
+        );
+        let replay = layout(&mut doc);
+        assert_exact_pixels(
+            raster(scene(&doc, &replay)),
+            raster(scene(&reference, &expected)),
+        );
+        doc.set_element_text_content(sheet, "#owner::before,#owner::after{content:none}")
+            .unwrap();
+        let cleared = layout(&mut doc);
+        assert_eq!(doc.anonymous_table_cells(owner).count(), 0);
+        assert!(!doc.anonymous_table_pseudo_is_projected(owner, raikiri_style::PseudoElem::Before));
+        let (mut cleared_reference, body) = document();
+        element(
+            &mut cleared_reference,
+            body,
+            "position:absolute;left:0;top:0;width:30px;height:10px;background:blue",
+        );
+        let cleared_expected = layout(&mut cleared_reference);
+        assert_exact_pixels(
+            raster(scene(&doc, &cleared)),
+            raster(scene(&cleared_reference, &cleared_expected)),
+        );
+    }
+}
+
+#[test]
+fn review_hidden_anonymous_cell_excludes_row_background() {
+    for group_background in [false, true] {
+        let (mut doc, body) = document();
+        let table = element(
+            &mut doc,
+            body,
+            "display:table;width:40px;table-layout:fixed;border-spacing:0;background:green;empty-cells:hide",
+        );
+        let parent = if group_background {
+            element(&mut doc, table, "display:table-row-group;background:red")
+        } else {
+            table
+        };
+        let row = element(
+            &mut doc,
+            parent,
+            if group_background {
+                "display:table-row"
+            } else {
+                "display:table-row;background:red"
+            },
+        );
+        element(
+            &mut doc,
+            row,
+            "display:block;width:20px;height:0;visibility:hidden",
+        );
+        let cell = element(
+            &mut doc,
+            row,
+            "display:table-cell;width:20px;height:20px;background:blue;color:transparent",
+        );
+        doc.append_text(cell, "A");
+        let computed = layout(&mut doc);
+        assert_eq!(doc.anonymous_table_cells(row).count(), 1);
+        let (mut reference, body) = document();
+        element(
+            &mut reference,
+            body,
+            "position:absolute;left:0;top:0;width:40px;height:20px;background:green",
+        );
+        element(
+            &mut reference,
+            body,
+            "position:absolute;left:20px;top:0;width:20px;height:20px;background:blue",
+        );
+        let expected = layout(&mut reference);
+        assert_exact_pixels(
+            raster(scene(&doc, &computed)),
+            raster(scene(&reference, &expected)),
+        );
+        for (policy, color) in [("empty-cells:show", "red"), ("empty-cells:hide", "green")] {
+            doc.set_element_inline_style(table, Some(format!("display:table;width:40px;table-layout:fixed;border-spacing:0;background:green;{policy}").into()));
+            let replay = layout(&mut doc);
+            let background = reference.get_node(body).unwrap().children[0];
+            reference.set_element_inline_style(
+                background,
+                Some(
+                    format!(
+                        "position:absolute;left:0;top:0;width:40px;height:20px;background:{color}"
+                    )
+                    .into(),
+                ),
+            );
+            let expected = layout(&mut reference);
+            assert_exact_pixels(
+                raster(scene(&doc, &replay)),
+                raster(scene(&reference, &expected)),
+            );
+        }
+    }
+}
+
+#[test]
+fn review_anonymous_cell_keeps_winning_collapsed_row_border() {
+    let (mut doc, body) = document();
+    let table = element(&mut doc, body, "display:table;border-collapse:collapse");
+    let row = element(
+        &mut doc,
+        table,
+        "display:table-row;border:2px solid red;color:transparent",
+    );
+    doc.append_text(row, "A");
+    element(&mut doc, row, "display:table-cell;width:10px;height:10px");
+    let computed = layout(&mut doc);
+    let virtual_cell = doc.anonymous_table_cells(row).next().unwrap().1;
+    let border = virtual_cell
+        .collapsed_border()
+        .expect("the row's winning borders must reach the anonymous cell");
+    assert_eq!(border.top.width().0, 2.0);
+    assert_eq!(border.bottom.width().0, 2.0);
+    assert_eq!(border.left.width().0, 2.0);
+    let (mut reference, body) = document();
+    element(
+        &mut reference,
+        body,
+        "position:absolute;left:2px;top:2px;width:20px;height:10px;border:2px solid red",
+    );
+    let expected = layout(&mut reference);
+    assert_exact_pixels(
+        raster(scene(&doc, &computed)),
+        raster(scene(&reference, &expected)),
+    );
+}
+
+#[test]
+fn review_inline_only_table_uses_spaced_anonymous_cell() {
+    for display in ["table", "inline-table"] {
+        for content in ["text", "inline", "inline-block"] {
+            let (mut doc, body) = document();
+            let table = element(
+                &mut doc,
+                body,
+                &format!("display:{display};border-spacing:10px;color:red;vertical-align:top"),
+            );
+            if content == "text" {
+                doc.append_text(table, "A");
+            } else {
+                let child = element(
+                    &mut doc,
+                    table,
+                    if content == "inline" {
+                        "display:inline"
+                    } else {
+                        "display:inline-block;vertical-align:top"
+                    },
+                );
+                doc.append_text(child, "A");
+            }
+            let computed = layout(&mut doc);
+            assert_eq!(doc.anonymous_table_cells(table).count(), 1);
+            assert_eq!(
+                doc.get_node(table).unwrap().unrounded_layout.size.width,
+                30.0
+            );
+            assert_eq!(
+                doc.get_node(table).unwrap().unrounded_layout.size.height,
+                30.0
+            );
+            let (mut reference, body) = document();
+            element(
+                &mut reference,
+                body,
+                "position:absolute;left:10px;top:10px;width:10px;height:10px;background:red",
+            );
+            let expected = layout(&mut reference);
+            assert_exact_pixels(
+                raster(scene(&doc, &computed)),
+                raster(scene(&reference, &expected)),
+            );
+            let replay = layout(&mut doc);
+            assert_exact_pixels(
+                raster(scene(&doc, &replay)),
+                raster(scene(&reference, &expected)),
+            );
+        }
+    }
+}
+
+#[test]
+fn review_inline_table_flex_item_keeps_its_flexed_width_and_contents_boundary() {
+    for contents in [false, true] {
+        let (mut doc, body) = document();
+        let flex = element(&mut doc, body, "display:flex;width:100px");
+        let parent = if contents {
+            element(&mut doc, flex, "display:contents")
+        } else {
+            flex
+        };
+        let table = element(
+            &mut doc,
+            parent,
+            "display:table;flex-grow:1;min-width:50%;border-spacing:0;background:cyan;color:transparent",
+        );
+        doc.append_text(table, "A");
+        let computed = layout(&mut doc);
+        // The existing contents layout path does not forward the flexed width.
+        // Restoring the previous inline-table IFC route also produces 10px here.
+        let expected_width = if contents { 10.0 } else { 100.0 };
+        assert_eq!(
+            doc.get_node(table).unwrap().unrounded_layout.size.width,
+            expected_width,
+            "contents={contents}"
+        );
+        let (mut reference, body) = document();
+        element(
+            &mut reference,
+            body,
+            &format!(
+                "position:absolute;left:0;top:0;width:{expected_width}px;height:10px;background:cyan"
+            ),
+        );
+        let expected = layout(&mut reference);
+        assert_exact_pixels(
+            raster(scene(&doc, &computed)),
+            raster(scene(&reference, &expected)),
+        );
+    }
+}
+
+#[test]
+fn review_row_overflow_does_not_clip_generated_cell_text() {
+    let (mut doc, body) = document();
+    let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+    doc.append_text(sheet, "#row::before{content:'AAAA';display:table-cell;color:red;white-space:nowrap;text-overflow:ellipsis}");
+    let table = element(
+        &mut doc,
+        body,
+        "display:table;table-layout:fixed;width:10px;border-spacing:0",
+    );
+    let row = element(&mut doc, table, "display:table-row;overflow:hidden");
+    doc.set_element_attributes(row, vec![("id".into(), "row".into())]);
+    let computed = layout(&mut doc);
+    let (mut reference, body) = document();
+    element(
+        &mut reference,
+        body,
+        "position:absolute;left:0;top:0;width:40px;height:10px;background:red",
+    );
+    let expected = layout(&mut reference);
+    assert_exact_pixels(
+        raster(scene(&doc, &computed)),
+        raster(scene(&reference, &expected)),
+    );
+}
+
 fn element(doc: &mut Document, parent: usize, style: &str) -> usize {
     doc.append_element(Some(parent), "div", Style::default(), Some(style))
 }

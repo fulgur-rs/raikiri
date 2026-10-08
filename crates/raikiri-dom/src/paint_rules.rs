@@ -61,6 +61,19 @@ pub fn named_page_matches(
 
 /// Whether the element clips its descendants to its padding box.
 pub fn clips_overflow(cv: &ComputedValues) -> bool {
+    // Internal table tracks are not block, flex, or grid containers, so
+    // overflow does not turn their materialized boxes into clipping boxes.
+    if matches!(
+        cv.display,
+        DisplayValue::TableRow
+            | DisplayValue::TableRowGroup
+            | DisplayValue::TableHeaderGroup
+            | DisplayValue::TableFooterGroup
+            | DisplayValue::TableColumn
+            | DisplayValue::TableColumnGroup
+    ) {
+        return false;
+    }
     !matches!(cv.overflow.x, OverflowValue::Visible)
         || !matches!(cv.overflow.y, OverflowValue::Visible)
 }

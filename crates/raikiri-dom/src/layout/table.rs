@@ -449,6 +449,12 @@ fn compute_table_layout_checked(
         doc.nodes[table_idx].table_first_baseline = None;
     }
     let abspos_table = doc.nodes[table_idx].style.position == taffy::Position::Absolute;
+    let parent_is_flex_or_grid = doc.parent_of(table_idx).is_some_and(|parent| {
+        matches!(
+            doc.nodes[parent].style.display,
+            taffy::Display::Flex | taffy::Display::Grid
+        )
+    });
     let mut grid = build_table_grid(doc, table_idx)?;
     let table_layout = doc.nodes[table_idx].table_layout;
     let collapse = doc.nodes[table_idx].border_collapse == BorderCollapseValue::Collapse;
@@ -522,12 +528,6 @@ fn compute_table_layout_checked(
         // flexing/tracking. It must override the table's percentage width
         // (which is only the item's hypothetical basis); otherwise a
         // shrinking table item snaps back to its pre-flex percentage width.
-        let parent_is_flex_or_grid = doc.parent_of(table_idx).is_some_and(|parent| {
-            matches!(
-                doc.nodes[parent].style.display,
-                taffy::Display::Flex | taffy::Display::Grid
-            )
-        });
         let mut width = if parent_is_flex_or_grid {
             effective_known.width.or(specified_w).unwrap_or_else(|| {
                 let natural = padding_border_size.width;
@@ -628,19 +628,19 @@ fn compute_table_layout_checked(
     // (CSS 2.1 §17.5.2.1: a fixed-layout table with `width: auto` uses the
     // automatic layout algorithm; §17.5.2: such a table does not fill its
     // containing block).
-    // Both auto and fixed+auto resolve columns against the SPECIFIED width
-    // only (`None` when auto): with `known_dimensions.width = None` the
+    // Auto and fixed+auto columns use the specified width, or the used width
+    // assigned by a flex/grid parent. Otherwise, with `known_dimensions.width = None` the
     // resolver takes its cap branch (preferred size capped by the definite
     // container, §17.5.2.2) instead of stretch-to-fill. A specified width
     // keeps the previous basis (`effective_known`, the taffy-resolved outer
     // width — subtracting insets recovers the content box).
     let inputs_for_columns = LayoutInput {
         known_dimensions: Size {
-            width: match specified_width {
-                Some(_) => effective_known
+            width: match (specified_width, parent_is_flex_or_grid) {
+                (Some(_), _) | (_, true) => effective_known
                     .width
                     .map(|width| width.max(caption_minimum)),
-                None => None,
+                (None, false) => None,
             },
             height: effective_known.height,
         },
@@ -821,6 +821,10 @@ fn compute_table_layout_checked(
         // the containing block; retaining the probe would leave a narrow strip
         // missing from the table background.
         inputs.parent_size.width.or(effective_known.width)
+    } else if parent_is_flex_or_grid {
+        // Flex/grid supplies a used item width even when the table's own
+        // width is auto. Keep that width instead of shrink-wrapping again.
+        effective_known.width
     } else {
         match specified_width {
             Some(_) => effective_known.width,
@@ -1055,6 +1059,13 @@ fn position_anonymous_table_parts(
         // Visit only the rows occupied by each cell and their group ancestors.
         // Scanning the whole cell grid for every row would be quadratic.
         for cell in &grid.cells {
+            if doc
+                .ifc_layout_node(cell.node_id)
+                .expect("table box layout view")
+                .hides_empty_table_cell
+            {
+                continue;
+            }
             let layout = cell
                 .resolved
                 .expect("cells were positioned before source parts");
