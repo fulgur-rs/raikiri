@@ -229,6 +229,8 @@ impl SvgDocument {
     /// External resource references, CSS imports and XML stylesheet processing
     /// instructions are rejected before source is exported. SVG navigation
     /// links and same-document fragment references remain available.
+    /// CSS at-rules are retained without interpretation; the vector consumer
+    /// determines which of them it supports.
     pub fn styled_source(
         &self,
         viewport: SvgViewport,
@@ -2173,7 +2175,7 @@ fn expand_font_shorthands(
         source
             .len()
             .checked_mul(8)
-            .ok_or_else(selector_freeze_limit_error)?,
+            .ok_or_else(selector_freeze_limit_error)?, // cov:ignore: The shared rewrite budget bounds source to 32 MiB, far below usize multiplication overflow.
     )?;
     let sheet;
     let declarations = if stylesheet {
@@ -2233,7 +2235,7 @@ fn expand_font_shorthands(
                 .value
                 .len()
                 .checked_add(1024)
-                .ok_or_else(selector_freeze_limit_error)?,
+                .ok_or_else(selector_freeze_limit_error)?, // cov:ignore: A declaration is a slice of budget-bounded source, so adding 1024 cannot overflow usize.
         )?;
         let replacement = properties
             .iter()
@@ -2803,9 +2805,12 @@ fn freeze_svg_stylesheet_selectors(
     }
 
     let mut stylesheet_inserted = false;
-    for (_, range) in stylesheet_ranges {
+    for (node, range) in stylesheet_ranges {
+        let retained = retain_svg_at_rules(node.text().unwrap_or_default(), budget)?;
         let replacement = if !stylesheet_inserted {
             stylesheet_inserted = true;
+            budget.bytes(retained.len())?;
+            frozen_stylesheet.push_str(&retained);
             let escaped_len = frozen_stylesheet.bytes().try_fold(0usize, |len, byte| {
                 len.checked_add(match byte {
                     b'&' => 5,
@@ -2823,7 +2828,8 @@ fn freeze_svg_stylesheet_selectors(
             )?;
             escape_xml_text(&frozen_stylesheet)
         } else {
-            String::new()
+            budget.bytes(xml_attribute_escape_allocation_bytes(&retained)?)?;
+            escape_xml_text(&retained)
         };
         edits.push((range, replacement));
     }
@@ -2834,6 +2840,46 @@ fn freeze_svg_stylesheet_selectors(
     }
 
     apply_selector_edits(source, edits, budget)
+}
+
+// SimpleCSS ignores at-rules. Keep their source for other vector consumers
+// while freezing only the qualified rules that SimpleCSS actually matched.
+fn retain_svg_at_rules(
+    source: &str,
+    budget: &mut SelectorFreezeBudget,
+) -> Result<String, SvgError> {
+    let mut input = cssparser::ParserInput::new(source);
+    let mut parser = cssparser::Parser::new(&mut input);
+    let mut retained = String::new();
+    loop {
+        let start = parser.position();
+        let Ok(token) = parser.next_including_whitespace_and_comments() else {
+            break;
+        };
+        SelectorFreezeBudget::consume(&mut budget.checks, 1)?;
+        if !matches!(token, cssparser::Token::AtKeyword(_)) {
+            continue;
+        }
+        loop {
+            SelectorFreezeBudget::consume(&mut budget.checks, 1)?;
+            match parser.next_including_whitespace_and_comments() {
+                Ok(cssparser::Token::Semicolon) | Err(_) => break,
+                Ok(cssparser::Token::CurlyBracketBlock) => {
+                    let _ = parser.parse_nested_block(|body| {
+                        while body.next().is_ok() {}
+                        Ok::<(), cssparser::ParseError<'_, ()>>(())
+                    });
+                    break;
+                }
+                _ => {}
+            }
+        }
+        let raw = parser.slice_from(start);
+        budget.bytes(raw.len().saturating_add(1))?;
+        retained.push_str(raw);
+        retained.push('\n');
+    }
+    Ok(retained)
 }
 
 fn apply_selector_edits(

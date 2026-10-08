@@ -916,6 +916,7 @@ fn inline_svg_rejects_fixed_placements_not_represented_by_the_projection() {
     for placement in [
         "position:fixed;right:0;bottom:0",
         "position:fixed;left:10%;top:10%",
+        "position:fixed;left:0;top:10%",
     ] {
         for nested in [false, true] {
             let svg = "<svg xmlns='http://www.w3.org/2000/svg' width='20' height='10'><rect width='20' height='10'/></svg>";
@@ -1067,4 +1068,21 @@ fn inline_svg_payload_reports_source_preparation_limits() {
         Err(raikiri_svg::SvgError::InvalidDocument(message))
             if message.contains("selector freezing resource limit")
     ));
+}
+
+#[test]
+fn inline_svg_font_family_escapes_round_trip_through_source_export() {
+    let layout = laid_out(
+        r#"<style>body{font-family:'A\\B\"C\a D\d E\c F'}svg{display:block}</style><svg width='20' height='10'><text>TEST</text></svg>"#,
+    );
+    let page = layout.page(0).unwrap();
+    let fragment = page
+        .fragments()
+        .find(|fragment| page.dom().local_name(fragment.node()) == Some("svg"))
+        .unwrap();
+    let family = page.computed(fragment.node()).unwrap().font_family[0].as_str();
+    assert_eq!(family, "A\\B\"C\nD\rE\u{c}F");
+    let svg = page.inline_svg(&fragment).unwrap().unwrap();
+    assert!(svg.source.contains("font-family:"));
+    raikiri_svg::SvgDocument::parse(svg.source.as_bytes()).unwrap();
 }
