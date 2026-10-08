@@ -790,3 +790,74 @@ fn anonymous_cell_keeps_generated_text_of_its_inline_source_child() {
         raster(scene(&reference, &expected)),
     );
 }
+
+#[test]
+fn removing_anonymous_content_restores_fresh_explicit_row_geometry() {
+    for collapse in ["separate", "collapse"] {
+        let build = |anonymous: bool| {
+            let (mut doc, body) = document();
+            let table = element(
+                &mut doc,
+                body,
+                &format!("display:table;border-spacing:0;border-collapse:{collapse}"),
+            );
+            let group = element(&mut doc, table, "display:table-row-group;background:cyan");
+            let mut texts = Vec::new();
+            let mut rows = Vec::new();
+            for _ in 0..2 {
+                let row = element(&mut doc, group, "display:table-row");
+                if anonymous {
+                    texts.push(doc.append_text(row, "A"));
+                }
+                let cell = element(
+                    &mut doc,
+                    row,
+                    "display:table-cell;width:10px;height:10px;background:red;vertical-align:top",
+                );
+                doc.append_text(cell, "B");
+                rows.push(row);
+            }
+            (doc, texts, rows, group)
+        };
+        let (mut actual, texts, rows, group) = build(true);
+        layout(&mut actual);
+        for text in texts {
+            actual.detach_from_parent(text);
+        }
+        let computed = layout(&mut actual);
+        let (mut reference, _, reference_rows, reference_group) = build(false);
+        let expected = layout(&mut reference);
+        for (actual_row, reference_row) in rows.into_iter().zip(reference_rows) {
+            assert_eq!(
+                actual.get_node(actual_row).unwrap().unrounded_layout,
+                reference.get_node(reference_row).unwrap().unrounded_layout
+            );
+        }
+        assert_eq!(
+            actual.get_node(group).unwrap().unrounded_layout,
+            reference
+                .get_node(reference_group)
+                .unwrap()
+                .unrounded_layout
+        );
+        assert_exact_pixels(
+            raster(scene(&actual, &computed)),
+            raster(scene(&reference, &expected)),
+        );
+        let slices = raikiri_dom::layout_pages(&mut actual, &computed, page()).unwrap();
+        actual.project_pages(&computed, page(), &slices, &[]);
+        let slices = raikiri_dom::layout_pages(&mut reference, &expected, page()).unwrap();
+        reference.project_pages(&expected, page(), &slices, &[]);
+        let actual_runs: Vec<_> = actual
+            .page_text_runs(&computed, 0)
+            .into_iter()
+            .map(|run| (run.text, run.origin))
+            .collect();
+        let expected_runs: Vec<_> = reference
+            .page_text_runs(&expected, 0)
+            .into_iter()
+            .map(|run| (run.text, run.origin))
+            .collect();
+        assert_eq!(actual_runs, expected_runs);
+    }
+}

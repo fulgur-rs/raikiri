@@ -1081,6 +1081,7 @@ fn position_anonymous_table_parts(
         offsets.push((cell.node_id, parent.map_or(Point::ZERO, origin_of)));
     }
     for (id, layout) in projected {
+        doc.table_objects.materialized_parts.insert(id);
         doc.nodes[id].unrounded_layout =
             super::sanitize_taffy_layout(&layout, &mut doc.layout_warnings);
     }
