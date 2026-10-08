@@ -422,6 +422,18 @@ pub fn context_for_root(
         )
 }
 
+/// Build one context per text owner and reuse it across that owner's font slices.
+fn contexts_for_text_owners(
+    owners: impl IntoIterator<Item = usize>,
+    mut context: impl FnMut(usize) -> DecorationContext,
+) -> Vec<DecorationContext> {
+    let mut cache = HashMap::new();
+    owners
+        .into_iter()
+        .map(|owner| cache.entry(owner).or_insert_with(|| context(owner)).clone())
+        .collect()
+}
+
 /// The decoration context of a text node: the context after the ifc root,
 /// folded through the elements between the root and the text. Each element's
 /// decoration sits at that element's baseline, `shifts` below the line's.
@@ -529,11 +541,9 @@ pub fn positioned_line_decorations(
     let baseline = f64::from(origin.1)
         + f64::from(line.line.block_offset())
         + f64::from(line.line.baseline(BaselineKind::Alphabetic));
-    let contexts: Vec<_> = line
-        .runs
-        .iter()
-        .map(|run| context_for_text(document, cascade, root, run.owner, base, &shifts))
-        .collect();
+    let contexts = contexts_for_text_owners(line.runs.iter().map(|run| run.owner), |owner| {
+        context_for_text(document, cascade, root, owner, base, &shifts)
+    });
     let geometries: Vec<_> = line
         .runs
         .iter()
