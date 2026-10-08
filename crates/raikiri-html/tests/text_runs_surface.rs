@@ -266,3 +266,96 @@ fn first_letter_runs_keep_original_sources_and_resolved_paint() {
         }
     }
 }
+
+#[test]
+fn first_letter_across_generated_sources_preserves_each_owner_kind_and_remainder() {
+    let html = br#"<!doctype html><style>
+        @page {size:300px 200px;margin:0}
+        body {margin:0;font:10px/40px Ahem;color:black}
+        div::before {content:'(';color:red;font-size:20px}
+        span::before {content:'A';color:blue;font-size:30px}
+        span::after {content:')Y';color:green;font-size:40px}
+        div::first-letter {font-size:50%}
+        </style><div id="outer"><span id="inner"></span>Z</div>"#;
+    let fonts = FontCollectionBuilder::new()
+        .font_bytes("Ahem", AHEM.to_vec())
+        .build()
+        .unwrap();
+    let resources = RenderResources::new().fonts(fonts);
+    let doc = parse_html_with_resources(&html[..], &resources).unwrap();
+    let LayoutStatus::Completed(result) = layout(
+        &doc,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        LayoutOptions::new().resources(&resources),
+    )
+    .unwrap() else {
+        panic!("expected complete layout");
+    };
+    let page = result.pages().next().unwrap();
+    let runs = page.text_runs();
+    for (text, size, id, kind, color) in [
+        (
+            "(",
+            10.0,
+            "outer",
+            GeneratedKind::Before,
+            CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255,
+            },
+        ),
+        (
+            "A",
+            15.0,
+            "inner",
+            GeneratedKind::Before,
+            CssColor {
+                r: 0,
+                g: 0,
+                b: 255,
+                a: 255,
+            },
+        ),
+        (
+            ")",
+            20.0,
+            "inner",
+            GeneratedKind::After,
+            CssColor {
+                r: 0,
+                g: 128,
+                b: 0,
+                a: 255,
+            },
+        ),
+        (
+            "Y",
+            40.0,
+            "inner",
+            GeneratedKind::After,
+            CssColor {
+                r: 0,
+                g: 128,
+                b: 0,
+                a: 255,
+            },
+        ),
+    ] {
+        let run = runs.iter().find(|run| run.text == text).unwrap();
+        assert_eq!(run.font_size, size);
+        assert_eq!(run.color, color);
+        let RunSource::Generated(owner, actual_kind) = run.source else {
+            panic!("original generated source");
+        };
+        assert_eq!(actual_kind, kind);
+        assert_eq!(page.dom().attr(owner, "id"), Some(id));
+    }
+    let body = runs.iter().find(|run| run.text == "Z").unwrap();
+    let RunSource::Text(owner) = body.source else {
+        panic!("original DOM source");
+    };
+    assert_eq!(page.dom().text(owner), Some("Z"));
+}

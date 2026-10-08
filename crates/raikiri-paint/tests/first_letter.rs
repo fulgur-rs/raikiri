@@ -468,3 +468,251 @@ fn only_the_first_in_flow_block_supplies_an_ancestors_letter() {
         assert_eq!(run(prefix), [10.0], "{prefix}");
     }
 }
+
+#[test]
+fn inline_boundary_slices_keep_one_set_of_first_letter_edges() {
+    use kurbo::Affine;
+    let sheet = "div::first-letter{font-size:20px;color:red;padding:0 1px;border-left:1px solid blue;border-right:1px solid green;background:yellow}";
+    let render = |doc: &Document, computed: &CascadeResult| {
+        let mut scene = Scene::new();
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 80.0;
+        raikiri_paint::paint_single_page(&mut scene, doc, computed, page).unwrap();
+        anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+            |out| {
+                use anyrender::PaintScene;
+                out.append_scene(scene, Affine::IDENTITY);
+            },
+            100,
+            80,
+        )
+    };
+    for trailing in [false, true] {
+        let (mut split, _, text) = fixture(
+            sheet,
+            if trailing {
+                None
+            } else {
+                Some("display:inline")
+            },
+            if trailing { "A" } else { "\"" },
+        );
+        let parent = split.parent_of(text).unwrap();
+        let root = if trailing {
+            parent
+        } else {
+            split.parent_of(parent).unwrap()
+        };
+        if trailing {
+            let span =
+                split.append_element(Some(root), "span", Style::default(), Some("display:inline"));
+            split.append_text(span, "\"");
+        } else {
+            split.append_text(root, "A");
+        }
+        split.append_text(root, "Y");
+        split.mark_in_document_flags();
+        let computed = cascade(&split, &build_rule_tree(&split)).unwrap();
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 80.0;
+        layout_single_page(&mut split, &computed, page).unwrap();
+        let (joined, joined_computed, _) =
+            fixture(sheet, None, if trailing { "A\"Y" } else { "\"AY" });
+        assert!(
+            render(&split, &computed) == render(&joined, &joined_computed),
+            "trailing={trailing}"
+        );
+    }
+}
+
+#[test]
+fn split_first_letter_uses_each_inline_parents_source_font_color_and_offsets() {
+    use shodo::node::{NodeId, TextSource};
+    for (transparent, first_line) in [(false, false), (true, false), (false, true), (true, true)] {
+        let sheet = format!(
+            "div::first-letter{{font-size:50%;background:currentcolor;text-decoration:underline}} {}",
+            if first_line {
+                "div::first-line{font-size:20px}"
+            } else {
+                ""
+            }
+        );
+        let nested = if transparent {
+            "display:contents;font-size:200%;color:red"
+        } else {
+            "display:inline;font-size:200%;color:red;position:relative;left:3px"
+        };
+        let (mut doc, _, quote) = fixture(&sheet, Some(nested), "  “");
+        let parent = doc.parent_of(quote).unwrap();
+        let root = doc.parent_of(parent).unwrap();
+        let letter = doc.append_text(root, "A");
+        doc.append_text(root, "Y");
+        doc.mark_in_document_flags();
+        let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 80.0;
+        layout_single_page(&mut doc, &computed, page).unwrap();
+        let positioned = raikiri_dom::PositionedLines::new(&doc, &computed, root, None).unwrap();
+        let runs: Vec<_> = positioned
+            .lines()
+            .flat_map(|line| line.runs)
+            .filter(|run| run.owner == quote || run.owner == letter)
+            .collect();
+        let selected_quote = runs
+            .iter()
+            .find(|run| run.owner == quote && run.style_owner != quote)
+            .unwrap();
+        assert_eq!(
+            selected_quote.run.source(),
+            Some(TextSource::Dom {
+                node: NodeId(quote as u64),
+                offset: 2
+            })
+        );
+        let quote_size = if first_line { 20.0 } else { 10.0 };
+        let letter_size = if first_line { 10.0 } else { 5.0 };
+        assert_eq!(selected_quote.run.font_size(), quote_size);
+        assert_eq!(
+            selected_quote.offset,
+            if transparent { (0.0, 0.0) } else { (3.0, 0.0) }
+        );
+        assert_eq!(
+            selected_quote.style.color,
+            raikiri_style::property::CssColor::from_hex("ff0000").unwrap()
+        );
+        let selected_letter = runs.iter().find(|run| run.owner == letter).unwrap();
+        assert_eq!(selected_letter.run.font_size(), letter_size);
+        assert_eq!(
+            selected_letter.style.color,
+            raikiri_style::property::CssColor::from_hex("000000").unwrap()
+        );
+        assert_eq!(
+            selected_letter.run.source(),
+            Some(TextSource::Dom {
+                node: NodeId(letter as u64),
+                offset: 0
+            })
+        );
+        assert_eq!(selected_letter.offset, (0.0, 0.0));
+        let pieces = doc.get_node(root).unwrap().ifc_inline_boxes().unwrap();
+        let letter_id = raikiri_dom::generated_content::generated_node_id(
+            root,
+            raikiri_style::PseudoElem::FirstLetter,
+        );
+        let pseudo: Vec<_> = pieces
+            .iter()
+            .filter(|piece| piece.node == letter_id)
+            .collect();
+        assert_eq!(pseudo.len(), 2);
+        for (piece, font, source) in [
+            (pseudo[0], quote_size, quote),
+            (pseudo[1], letter_size, letter),
+        ] {
+            let (style, owner) = doc
+                .get_node(root)
+                .unwrap()
+                .ifc_typographic_fragment(piece.node, piece.source_container, piece.source_owner)
+                .unwrap();
+            assert_eq!(style.font_size.0, font);
+            assert_eq!(owner, source);
+        }
+        let mut scene = Scene::new();
+        raikiri_paint::paint_single_page(&mut scene, &doc, &computed, page).unwrap();
+    }
+}
+
+#[test]
+fn generated_first_letter_slices_match_independent_inline_paint_and_geometry() {
+    use kurbo::Affine;
+    use raikiri_dom::generated_content::generated_node_id;
+    use raikiri_style::PseudoElem;
+    let sheet = "div::before{content:'(';color:red;font-size:20px} span::before{content:'A';color:blue;font-size:30px} span::after{content:')Y';color:green;font-size:40px} div::first-letter{font-size:50%;background:currentcolor;border-bottom:1px solid currentcolor;text-decoration:underline}";
+    let (mut actual, _, empty) = fixture(sheet, None, "");
+    let root = actual.parent_of(empty).unwrap();
+    let span = actual.append_element(Some(root), "span", Style::default(), Some("display:inline"));
+    actual.append_text(root, "Z");
+    actual.mark_in_document_flags();
+    let computed = cascade(&actual, &build_rule_tree(&actual)).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 80.0;
+    layout_single_page(&mut actual, &computed, page).unwrap();
+    let id = generated_node_id(root, PseudoElem::FirstLetter);
+    let pieces = actual.get_node(root).unwrap().ifc_inline_boxes().unwrap();
+    let pieces: Vec<_> = pieces.iter().filter(|piece| piece.node == id).collect();
+    assert_eq!(pieces.len(), 3);
+    for (piece, owner, size, x, width) in [
+        (
+            pieces[0],
+            generated_node_id(root, PseudoElem::Before),
+            10.0,
+            0.0,
+            10.0,
+        ),
+        (
+            pieces[1],
+            generated_node_id(span, PseudoElem::Before),
+            15.0,
+            10.0,
+            15.0,
+        ),
+        (
+            pieces[2],
+            generated_node_id(span, PseudoElem::After),
+            20.0,
+            25.0,
+            20.0,
+        ),
+    ] {
+        assert_eq!(piece.source_owner, Some(owner));
+        let (style, source) = actual
+            .get_node(root)
+            .unwrap()
+            .ifc_typographic_fragment(id, piece.source_container, piece.source_owner)
+            .unwrap();
+        assert_eq!(source, owner);
+        assert_eq!(style.font_size.0, size);
+        assert_eq!(piece.content_box.x, x);
+        assert_eq!(piece.content_box.width, width);
+    }
+    let (mut reference, _, empty) = fixture("", None, "");
+    let root = reference.parent_of(empty).unwrap();
+    for (text, size, color, decorated) in [
+        ("(", 10, "red", true),
+        ("A", 15, "blue", true),
+        (")", 20, "green", true),
+        ("Y", 40, "green", false),
+        ("Z", 10, "black", false),
+    ] {
+        let css = format!(
+            "display:inline;font-size:{size}px;color:{color};{}",
+            if decorated {
+                "background:currentcolor;border-bottom:1px solid currentcolor;text-decoration:underline"
+            } else {
+                ""
+            }
+        );
+        let span =
+            reference.append_element(Some(root), "span", Style::default(), Some(css.as_str()));
+        reference.append_text(span, text);
+    }
+    reference.mark_in_document_flags();
+    let reference_computed = cascade(&reference, &build_rule_tree(&reference)).unwrap();
+    layout_single_page(&mut reference, &reference_computed, page).unwrap();
+    let render = |doc: &Document, computed: &CascadeResult| {
+        let mut scene = Scene::new();
+        raikiri_paint::paint_single_page(&mut scene, doc, computed, page).unwrap();
+        anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+            |out| {
+                use anyrender::PaintScene;
+                out.append_scene(scene, Affine::IDENTITY);
+            },
+            100,
+            80,
+        )
+    };
+    assert!(render(&actual, &computed) == render(&reference, &reference_computed));
+}

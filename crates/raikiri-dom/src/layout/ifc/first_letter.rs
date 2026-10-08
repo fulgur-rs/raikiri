@@ -10,13 +10,14 @@ use shodo::{
     font::FontCollection,
     node::{NodeId, TextSource},
 };
-use std::ops::Range;
+use std::{collections::VecDeque, ops::Range};
 
 #[derive(Clone, Debug)]
 pub(crate) struct LetterStyle {
     pub(crate) box_id: usize,
     pub(crate) parent_box: Option<usize>,
     pub(crate) source_owner: usize,
+    pub(crate) source_container: Option<usize>,
     pub(crate) source_range: Option<Range<u32>>,
     pub(crate) computed: ComputedValues,
 }
@@ -41,7 +42,8 @@ pub(crate) struct FirstLetter {
     origins: Vec<usize>,
     line_origin: Option<usize>,
     pending: bool,
-    continuation: Option<(usize, Range<usize>)>,
+    continuation: VecDeque<(usize, Range<usize>)>,
+    started: bool,
     open_boxes: usize,
     text_limit: Option<u64>,
     item_limit: Option<u64>,
@@ -61,37 +63,46 @@ impl FirstLetter {
         let mut current = cascade.has_first_letter_styles().then_some(origin);
         while let Some(id) = current {
             let cv = &cascade.computed[id];
-            if !matches!(
-                cv.display,
-                DisplayValue::Block
-                    | DisplayValue::FlowRoot
-                    | DisplayValue::ListItem
-                    | DisplayValue::InlineBlock
-                    | DisplayValue::TableCell
-                    | DisplayValue::TableCaption
-            ) {
+            let transparent =
+                cv.display == DisplayValue::Contents && !super::assign::is_layout_root(doc, id);
+            if !transparent
+                && (!matches!(
+                    cv.display,
+                    DisplayValue::Block
+                        | DisplayValue::FlowRoot
+                        | DisplayValue::ListItem
+                        | DisplayValue::InlineBlock
+                        | DisplayValue::TableCell
+                        | DisplayValue::TableCaption
+                        | DisplayValue::Inline
+                        | DisplayValue::Contents
+                ) || !super::assign::can_be_ifc_root(doc, cascade, id))
+            {
                 break;
             }
-            if line_origin.is_none()
+            if !transparent
+                && line_origin.is_none()
                 && cascade
                     .pseudo
                     .contains_key(&(StyleNodeId::new(id as u64), PseudoElem::FirstLine))
             {
                 line_origin = Some(id);
             }
-            if cascade
-                .pseudo
-                .contains_key(&(StyleNodeId::new(id as u64), PseudoElem::FirstLetter))
+            if !transparent
+                && cascade
+                    .pseudo
+                    .contains_key(&(StyleNodeId::new(id as u64), PseudoElem::FirstLetter))
             {
                 origins.push(id);
             }
             // Atomic/BFC roots do not contribute their text to an ancestor's
             // first formatted line. A first block child can contribute it.
-            if matches!(
-                cv.display,
-                DisplayValue::InlineBlock | DisplayValue::TableCell
-            ) || cv.float != FloatValue::None
-                || matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
+            if !transparent
+                && (matches!(
+                    cv.display,
+                    DisplayValue::InlineBlock | DisplayValue::TableCell
+                ) || cv.float != FloatValue::None
+                    || matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed))
             {
                 break;
             }
@@ -112,36 +123,7 @@ impl FirstLetter {
                 .children
                 .iter()
                 .take_while(|&&sibling| sibling != id)
-                .any(|&sibling| {
-                    let sibling_cv = &cascade.computed[sibling];
-                    let Some(node) = doc.get_node(sibling) else {
-                        return false; // cov:ignore: this document owns and validates the sibling IDs in its child graph.
-                    };
-                    if sibling_cv.display == DisplayValue::None
-                        || sibling_cv.float != FloatValue::None
-                        || matches!(
-                            sibling_cv.position,
-                            PositionValue::Absolute | PositionValue::Fixed
-                        )
-                        || node.is_non_rendered_html_element()
-                    {
-                        return false;
-                    }
-                    match node.kind() {
-                        NodeKind::Text => {
-                            node.text_content()
-                                .unwrap_or("")
-                                .chars()
-                                .any(|ch| !ch.is_whitespace())
-                                || !matches!(
-                                    sibling_cv.effective_white_space_collapse,
-                                    WhiteSpaceCollapse::Collapse | WhiteSpaceCollapse::Discard
-                                )
-                        }
-                        NodeKind::Element => true,
-                        _ => false,
-                    }
-                });
+                .any(|&sibling| preceding_content(doc, cascade, sibling));
             if blocked {
                 break;
             }
@@ -153,7 +135,8 @@ impl FirstLetter {
             pending: !origins.is_empty(),
             origins,
             line_origin,
-            continuation: None,
+            continuation: VecDeque::new(),
+            started: false,
             open_boxes: 0,
             text_limit: limits.max_text_bytes,
             item_limit: limits.max_items,
@@ -164,74 +147,154 @@ impl FirstLetter {
 
     pub(crate) fn stop(&mut self) {
         self.pending = false;
-        self.continuation = None;
+        self.continuation.clear();
     }
 
     fn adjacent_range(
         &mut self,
         doc: &Document,
+        cascade: &CascadeResult,
         source: TextSource,
         text: &str,
         preserve_breaks: bool,
+        counters: &super::projection::GeneratedCounters,
     ) -> Result<Option<Range<usize>>, IfcError> {
-        let TextSource::Dom { node, .. } = source else {
-            return Ok(None);
+        // Follow the projected inline stream, rather than DOM siblinghood:
+        // punctuation and graphemes can cross ordinary inline box boundaries.
+        enum Visit {
+            Enter(usize),
+            Pseudo(usize, PseudoElem),
+        }
+        let mut stack = vec![Visit::Pseudo(self.origin, PseudoElem::After)];
+        stack.extend(
+            doc.get_node(self.origin)
+                .into_iter()
+                .flat_map(|node| node.children.iter().rev())
+                .map(|&id| Visit::Enter(id)),
+        );
+        stack.push(Visit::Pseudo(self.origin, PseudoElem::Before));
+        let owner = match source {
+            TextSource::Dom { node, .. } | TextSource::Generated { node } => node.0 as usize,
         };
-        let id = node.0 as usize;
-        let Some(parent) = doc.parent_of(id).and_then(|parent| doc.get_node(parent)) else {
-            return Ok(None); // cov:ignore: projected text sources retain a parent in the validated document graph.
-        };
+        let mut started = false;
+        let mut joined = String::new();
         let mut pieces = Vec::new();
-        let mut length = text.len() as u64;
-        for &sibling in parent
-            .children
-            .iter()
-            .skip_while(|&&sibling| sibling != id)
-            .skip(1)
-        {
-            let Some(node) = doc.get_node(sibling) else {
-                break; // cov:ignore: source lookahead visits only this document's validated child IDs.
-            };
-            match node.kind() {
-                NodeKind::Comment | NodeKind::ProcessingInstruction => continue,
-                NodeKind::Text => {
-                    let next = node.text_content().unwrap_or("");
-                    length = length.saturating_add(next.len() as u64);
-                    if let Some(limit) = self.text_limit
-                        && length > limit
-                    {
-                        return Err(IfcError::Limit(shodo::limits::LimitExceeded {
-                            kind: shodo::limits::LimitKind::TextBytes,
-                            limit,
-                            actual: length,
-                        }));
+        while let Some(visit) = stack.pop() {
+            let (id, value, barrier) = match visit {
+                Visit::Pseudo(id, pseudo) => {
+                    if !crate::generated_content::is_in_flow_generated_text(cascade, id, pseudo) {
+                        continue;
                     }
-                    if let Some(limit) = self.item_limit
-                        && pieces.len() as u64 >= limit
-                    {
-                        return Err(IfcError::Limit(shodo::limits::LimitExceeded {
-                            kind: shodo::limits::LimitKind::Items,
-                            limit,
-                            actual: pieces.len() as u64 + 1,
-                        }));
-                    }
-                    pieces.push(next);
-                    self.checked_through = Some(sibling);
+                    let Some((cv, value)) = crate::generated_content::generated_text(
+                        doc,
+                        cascade,
+                        id,
+                        pseudo,
+                        counters.get(doc, cascade)?,
+                    ) else {
+                        continue;
+                    };
+                    (
+                        generated_node_id(id, pseudo),
+                        std::borrow::Cow::Owned(value),
+                        !matches!(cv.display, DisplayValue::Inline | DisplayValue::Contents),
+                    )
                 }
-                _ => break,
+                Visit::Enter(id) => {
+                    let node = doc.get_node(id).ok_or(IfcError::InvalidNode(id))?;
+                    match node.kind() {
+                        NodeKind::Text => (
+                            id,
+                            std::borrow::Cow::Borrowed(node.text_content().unwrap_or("")),
+                            false,
+                        ),
+                        NodeKind::Element => {
+                            let cv = &cascade.computed[id];
+                            if cv.display == DisplayValue::None
+                                || node.is_non_rendered_html_element()
+                            {
+                                continue;
+                            }
+                            if cv.display != DisplayValue::Contents {
+                                match super::projection::box_kind(cascade, doc, id) {
+                                    Some(
+                                        super::boxes::IfcBoxKind::OutOfFlow
+                                        | super::boxes::IfcBoxKind::Float,
+                                    ) => continue,
+                                    Some(_) => break,
+                                    None => {}
+                                }
+                                if node.tag_name() == Some("br") || node.tag_name() == Some("wbr") {
+                                    break;
+                                }
+                            }
+                            stack.push(Visit::Pseudo(id, PseudoElem::After));
+                            stack.extend(node.children.iter().rev().map(|&id| Visit::Enter(id)));
+                            stack.push(Visit::Pseudo(id, PseudoElem::Before));
+                            continue;
+                        }
+                        _ => continue,
+                    }
+                }
+            };
+            if !started {
+                if id != owner {
+                    if barrier {
+                        break;
+                    }
+                    continue;
+                }
+                started = true;
+            }
+            let value = if id == owner { text } else { value.as_ref() };
+            let length = joined.len().saturating_add(value.len()) as u64;
+            if let Some(limit) = self.text_limit
+                && length > limit
+            {
+                return Err(IfcError::Limit(shodo::limits::LimitExceeded {
+                    kind: shodo::limits::LimitKind::TextBytes,
+                    limit,
+                    actual: length,
+                }));
+            }
+            if id != owner
+                && let Some(limit) = self.item_limit
+                && pieces.len() as u64 > limit
+            {
+                return Err(IfcError::Limit(shodo::limits::LimitExceeded {
+                    kind: shodo::limits::LimitKind::Items,
+                    limit,
+                    actual: pieces.len() as u64,
+                }));
+            }
+            let start = joined.len();
+            joined.push_str(value);
+            pieces.push((id, start..joined.len()));
+            self.checked_through = Some(id);
+            if barrier
+                || shodo::first_letter_range(&joined, preserve_breaks)
+                    .is_some_and(|range| range.end < joined.len())
+            {
+                break;
             }
         }
-        if pieces.is_empty() {
+        let Some(range) = shodo::first_letter_range(&joined, preserve_breaks) else {
             return Ok(None);
+        };
+        for (id, piece) in pieces.iter().skip(1) {
+            if piece.start >= range.end {
+                break;
+            }
+            self.continuation.push_back((
+                *id,
+                range.start.saturating_sub(piece.start).min(piece.len())
+                    ..range.end.min(piece.end) - piece.start,
+            ));
         }
-        let mut joined = String::with_capacity(length as usize);
-        joined.push_str(text);
-        for piece in pieces {
-            joined.push_str(piece);
-        }
-        Ok(shodo::first_letter_range(&joined, preserve_breaks))
+        Ok(Some(range.start.min(text.len())..range.end.min(text.len())))
     }
 
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn push(
         &mut self,
@@ -243,11 +306,47 @@ impl FirstLetter {
         text: &str,
         fonts: &FontCollection,
     ) -> Result<(), IfcError> {
+        self.push_with_counters(
+            builder,
+            doc,
+            cascade,
+            source,
+            parent,
+            text,
+            fonts,
+            &super::projection::GeneratedCounters::default(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn push_with_counters(
+        &mut self,
+        builder: &mut ParagraphBuilder,
+        doc: &Document,
+        cascade: &CascadeResult,
+        source: TextSource,
+        parent: &ComputedValues,
+        text: &str,
+        fonts: &FontCollection,
+        counters: &super::projection::GeneratedCounters,
+    ) -> Result<(), IfcError> {
         if let Some(error) = builder.error() {
             return Err(IfcError::Limit(error));
         }
+        if self.origins.is_empty() {
+            builder.push_text(source, text);
+            return Ok(());
+        }
+        // Generated pseudo text has its own virtual text identity. Retain
+        // byte offsets just as for DOM text so several generated owners and
+        // an unselected remainder cannot share one typographic source ID.
+        let (node, offset) = match source {
+            TextSource::Dom { node, offset } => (node, offset),
+            TextSource::Generated { node } => (node, 0),
+        };
+        let source = TextSource::Dom { node, offset };
         let lookahead = self.checked_through.is_none();
-        if matches!(source, TextSource::Dom {node, ..} if self.checked_through == Some(node.0 as usize))
+        if matches!(source, TextSource::Dom {node, ..} | TextSource::Generated {node} if self.checked_through == Some(node.0 as usize))
         {
             self.checked_through = None;
         }
@@ -255,20 +354,19 @@ impl FirstLetter {
             parent.effective_white_space_collapse,
             WhiteSpaceCollapse::Collapse | WhiteSpaceCollapse::Discard
         );
-        let dom_parent = match source {
-            TextSource::Dom { node, .. } => doc.parent_of(node.0 as usize),
-            TextSource::Generated { .. } => None,
+        let source_owner = match source {
+            TextSource::Dom { node, .. } | TextSource::Generated { node } => node.0 as usize,
         };
-        let selected = if let Some((owner, range)) = self.continuation.take() {
-            if dom_parent == Some(owner) {
-                Some(range)
-            } else {
-                None // cov:ignore: adjacent-range continuation contains same-parent text only; entering another box calls stop.
-            }
+        let selected = if self
+            .continuation
+            .front()
+            .is_some_and(|(owner, _)| *owner == source_owner)
+        {
+            self.continuation.pop_front().map(|(_, range)| range)
         } else if self.pending && !text.is_empty() {
             let range = shodo::first_letter_range(text, preserve_breaks);
             if lookahead && range.as_ref().is_none_or(|range| range.end == text.len()) {
-                self.adjacent_range(doc, source, text, preserve_breaks)?
+                self.adjacent_range(doc, cascade, source, text, preserve_breaks, counters)?
                     .or(range)
             } else {
                 range
@@ -278,30 +376,19 @@ impl FirstLetter {
         };
         if let Some(full_range) = selected {
             self.pending = false;
-            if full_range.end > text.len()
-                && let Some(parent) = dom_parent
-            {
-                self.continuation = Some((
-                    parent,
-                    full_range.start.saturating_sub(text.len())..full_range.end - text.len(),
-                ));
-            }
             let range = full_range.start.min(text.len())..full_range.end.min(text.len());
             if range.is_empty() {
                 builder.push_text(source, text);
                 return Ok(());
             }
             let offset_at = |index: usize| -> Result<u32, IfcError> {
-                match source {
-                    TextSource::Dom { offset, .. } => u32::try_from(index)
-                        .ok()
-                        .and_then(|index| offset.checked_add(index))
-                        .ok_or(IfcError::Unsupported {
-                            node: self.origin,
-                            reason: "first-letter source offset exceeds shodo's address range",
-                        }),
-                    TextSource::Generated { .. } => Ok(0),
-                }
+                u32::try_from(index)
+                    .ok()
+                    .and_then(|index| offset.checked_add(index))
+                    .ok_or(IfcError::Unsupported {
+                        node: self.origin,
+                        reason: "first-letter source offset exceeds shodo's address range",
+                    })
             };
             let source_start = offset_at(range.start)?;
             let source_end = offset_at(range.end)?;
@@ -345,7 +432,25 @@ impl FirstLetter {
                 let parent_box = (box_id != 0).then_some(box_id);
                 box_id = generated_node_id(origin, PseudoElem::FirstLetter);
                 let inline = styled(doc, cascade, &cv, context_node, fonts)?;
-                let edges = style::inline_edges(&cv, context_node, fonts)?;
+                let mut edges = style::inline_edges(&cv, context_node, fonts)?;
+                if self.started && !continuing_box {
+                    edges.margin.inline_start = 0.0;
+                    edges.border.inline_start = 0.0;
+                    edges.padding.inline_start = 0.0;
+                }
+                let container = |owner| {
+                    crate::generated_content::generated_origin(owner)
+                        .map_or_else(|| doc.parent_of(owner), |_| Some(owner))
+                };
+                let crosses_box = self
+                    .continuation
+                    .iter()
+                    .any(|(owner, _)| container(*owner) != container(source_owner));
+                if crosses_box {
+                    edges.margin.inline_end = 0.0;
+                    edges.border.inline_end = 0.0;
+                    edges.padding.inline_end = 0.0;
+                }
                 if !continuing_box {
                     builder.open_inline(NodeId(box_id as u64), &inline, edges);
                     self.open_boxes += 1;
@@ -353,43 +458,58 @@ impl FirstLetter {
                 if let Some(error) = builder.error() {
                     return Err(IfcError::Limit(error));
                 }
-                let source_range = match source {
-                    TextSource::Dom { .. } => Some(source_start..source_end),
-                    TextSource::Generated { .. } => None,
-                };
+                let source_range = Some(source_start..source_end);
                 self.styles.push(LetterStyle {
                     box_id,
                     parent_box,
                     source_owner,
+                    source_container: crate::generated_content::generated_origin(source_owner)
+                        .map_or_else(
+                            || {
+                                let mut container = doc.parent_of(source_owner);
+                                while let Some(id) = container {
+                                    if id == self.origin {
+                                        return None;
+                                    }
+                                    if cascade.computed[id].display != DisplayValue::Contents {
+                                        break;
+                                    }
+                                    container = doc.parent_of(id);
+                                }
+                                container
+                            },
+                            |_| Some(source_owner),
+                        ),
                     source_range,
                     computed: cv.clone(),
                 });
                 resolved = cv;
             }
-            let first_source = match source {
-                TextSource::Dom { node, .. } => TextSource::Dom {
-                    node,
-                    offset: source_start,
-                },
-                TextSource::Generated { .. } => TextSource::Generated {
-                    node: NodeId(box_id as u64),
-                },
+            let first_source = TextSource::Dom {
+                node,
+                offset: source_start,
             };
             // Source offsets refer to the original UTF-8 text, including
             // the unstyled whitespace preceding the typographic unit.
             builder.push_text(first_source, &text[range.clone()]);
-            if self.continuation.is_none() {
+            self.started = true;
+            let container = |owner| {
+                crate::generated_content::generated_origin(owner)
+                    .map_or_else(|| doc.parent_of(owner), |_| Some(owner))
+            };
+            if self
+                .continuation
+                .front()
+                .is_none_or(|(owner, _)| container(*owner) != container(source_owner))
+            {
                 for _ in 0..self.open_boxes {
                     builder.close_inline();
                 }
                 self.open_boxes = 0;
             }
-            let rest_source = match source {
-                TextSource::Dom { node, .. } => TextSource::Dom {
-                    node,
-                    offset: source_end,
-                },
-                TextSource::Generated { .. } => source,
+            let rest_source = TextSource::Dom {
+                node,
+                offset: source_end,
             };
             builder.push_text(rest_source, &text[range.end..]);
             return Ok(());
@@ -410,3 +530,50 @@ impl FirstLetter {
 
 #[cfg(test)]
 mod tests;
+
+fn preceding_content(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
+    let mut stack = vec![id];
+    while let Some(id) = stack.pop() {
+        let cv = &cascade.computed[id];
+        let node = doc.get_node(id).expect("validated document child");
+        if cv.display == DisplayValue::None || node.is_non_rendered_html_element() {
+            continue;
+        }
+        if cv.display == DisplayValue::Contents {
+            if [PseudoElem::Before, PseudoElem::After]
+                .iter()
+                .any(|&pseudo| {
+                    crate::generated_content::is_in_flow_generated_text(cascade, id, pseudo)
+                })
+            {
+                return true;
+            }
+            stack.extend(node.children.iter().copied());
+            continue;
+        }
+        if cv.float != FloatValue::None
+            || matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
+        {
+            continue;
+        }
+        match node.kind() {
+            NodeKind::Text => {
+                if node
+                    .text_content()
+                    .unwrap_or("")
+                    .chars()
+                    .any(|ch| !ch.is_whitespace())
+                    || !matches!(
+                        cv.effective_white_space_collapse,
+                        WhiteSpaceCollapse::Collapse | WhiteSpaceCollapse::Discard
+                    )
+                {
+                    return true;
+                }
+            }
+            NodeKind::Element => return true,
+            _ => {}
+        }
+    }
+    false
+}

@@ -1166,15 +1166,218 @@ fn inside_marker_does_not_consume_the_first_letter_of_body_or_before_content() {
                 generated_node_id(fixture.root, PseudoElem::Before)
             }
         );
-        assert_eq!(
-            letter.source_range,
-            if before.is_empty() { Some(0..1) } else { None }
-        );
+        assert_eq!(letter.source_range, Some(0..1));
         assert_ne!(
             letter.source_owner,
             generated_node_id(fixture.root, PseudoElem::Marker)
         );
         assert!(projected.paragraph.text().contains("M "));
         assert!(projected.paragraph.text().ends_with("AB"));
+    }
+}
+
+#[test]
+fn typographic_punctuation_crosses_non_atomic_inline_boundaries() {
+    for trailing in [false, true] {
+        let fixture = crate::layout::ifc::test_support::sheet_fixture(
+            "div::first-letter{font-size:20px;color:red}",
+            "font:10px/30px Ahem",
+            |doc, root| {
+                if trailing {
+                    doc.append_text(root, "A");
+                    let span = span(doc, root, "display:inline");
+                    doc.append_text(span, "”");
+                } else {
+                    let span = span(doc, root, "display:inline");
+                    doc.append_text(span, "“");
+                    doc.append_text(root, "A");
+                }
+                doc.append_text(root, "B");
+            },
+        );
+        let projected = project(&fixture).unwrap();
+        let lines = projected.paragraph.break_all(
+            &mut LayoutContext::new(),
+            &projected.options,
+            100.0,
+            &AtomicSizes::EMPTY,
+        );
+        let glyphs: Vec<_> = lines
+            .iter()
+            .flat_map(|line| line.fragments())
+            .filter_map(|fragment| match fragment {
+                shodo::Fragment::GlyphRun(run) => {
+                    Some((run.node().unwrap().0 as usize, run.font_size()))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            glyphs.iter().map(|(_, size)| *size).collect::<Vec<_>>(),
+            [20.0, 20.0, 10.0]
+        );
+        assert_eq!(projected.letter_styles.len(), 2);
+        for style in &projected.letter_styles {
+            assert!(
+                fixture
+                    .doc
+                    .get_node(style.source_owner)
+                    .unwrap()
+                    .text_content()
+                    .is_some()
+            );
+        }
+    }
+}
+
+#[test]
+fn transparent_contents_ancestors_preserve_the_first_block_descendant_letter() {
+    let fixture = crate::layout::ifc::test_support::sheet_fixture(
+        "body::first-letter{font-size:20px}",
+        "display:contents",
+        |doc, root| {
+            let inner = span(doc, root, "display:block;font:10px/30px Ahem");
+            doc.append_text(inner, "AB");
+        },
+    );
+    let inner = fixture.doc.get_node(fixture.root).unwrap().children[0];
+    let projected = project_ifc(
+        &fixture.doc,
+        &fixture.cascade,
+        inner,
+        &mut LayoutContext::new(),
+        &ahem_fonts(),
+        &Limits::default(),
+    )
+    .unwrap();
+    assert_eq!(projected.letter_styles.len(), 1);
+    assert_eq!(projected.letter_styles[0].computed.font_size.0, 20.0);
+}
+
+#[test]
+fn blockified_inline_items_and_absolute_roots_admit_their_own_first_letter() {
+    for container in ["display:flex", "display:grid", "display:block"] {
+        let item_style = if container == "display:block" {
+            "display:inline;position:absolute;font:10px/30px Ahem"
+        } else {
+            "display:inline;font:10px/30px Ahem"
+        };
+        let fixture = crate::layout::ifc::test_support::sheet_fixture(
+            "span::first-letter{font-size:20px}",
+            container,
+            |doc, root| {
+                let item = span(doc, root, item_style);
+                doc.append_text(item, "AB");
+            },
+        );
+        let item = fixture.doc.get_node(fixture.root).unwrap().children[0];
+        assert_eq!(fixture.cascade.computed[item].display, DisplayValue::Inline);
+        assert!(super::super::assign::can_be_ifc_root(
+            &fixture.doc,
+            &fixture.cascade,
+            item
+        ));
+        let projected = project_ifc(
+            &fixture.doc,
+            &fixture.cascade,
+            item,
+            &mut LayoutContext::new(),
+            &ahem_fonts(),
+            &Limits::default(),
+        )
+        .unwrap();
+        assert_eq!(projected.letter_styles.len(), 1, "{container}");
+        assert_eq!(projected.letter_styles[0].computed.font_size.0, 20.0);
+    }
+}
+
+#[test]
+fn generated_punctuation_lookahead_reuses_counters_and_keeps_each_original_owner() {
+    for (before, expected) in [
+        ("content:'('", "(3)Y"),
+        (
+            "content:open-quote no-open-quote close-quote;quotes:'(' ')' '[' ']'",
+            "(]3)Y",
+        ),
+    ] {
+        let fixture = crate::layout::ifc::test_support::sheet_fixture(
+            &format!(
+                "div{{counter-reset:n 2}} div::before{{{before}}} span::before{{counter-increment:n;content:counter(n)}} span::after{{content:')'}} div::first-letter{{font-size:20px}}"
+            ),
+            "",
+            |doc, root| {
+                span(doc, root, "display:inline");
+                doc.append_text(root, "Y");
+            },
+        );
+        let span = fixture.doc.get_node(fixture.root).unwrap().children[0];
+        let counters = GeneratedCounters::default();
+        let snapshots = counters.get(&fixture.doc, &fixture.cascade).unwrap();
+        let pointer = snapshots.as_ptr();
+        let mut cx = LayoutContext::new();
+        let projected = project_ifc_builder_with(
+            &fixture.doc,
+            &fixture.cascade,
+            fixture.root,
+            &ahem_fonts(),
+            &Limits::default(),
+            &counters,
+        )
+        .unwrap()
+        .build(&mut cx, &ahem_fonts())
+        .unwrap();
+        assert_eq!(projected.paragraph.text(), expected);
+        assert_eq!(
+            counters
+                .get(&fixture.doc, &fixture.cascade)
+                .unwrap()
+                .as_ptr(),
+            pointer
+        );
+        assert_eq!(
+            projected
+                .letter_styles
+                .iter()
+                .map(|style| style.source_owner)
+                .collect::<Vec<_>>(),
+            [
+                generated_node_id(fixture.root, PseudoElem::Before),
+                generated_node_id(span, PseudoElem::Before),
+                generated_node_id(span, PseudoElem::After),
+            ]
+        );
+        assert!(
+            projected
+                .letter_styles
+                .iter()
+                .all(|style| style.computed.font_size.0 == 20.0)
+        );
+    }
+}
+
+#[test]
+fn contents_siblings_block_ancestor_selection_only_when_they_render_content() {
+    for (prefix, expected) in [("", 1), ("prefix", 0)] {
+        let fixture = crate::layout::ifc::test_support::sheet_fixture(
+            "body::first-letter{font-size:20px}",
+            "display:contents",
+            |doc, root| {
+                let contents = span(doc, root, "display:contents;float:left;position:absolute");
+                doc.append_text(contents, prefix);
+                let inner = span(doc, root, "display:block;font:10px/30px Ahem");
+                doc.append_text(inner, "AB");
+            },
+        );
+        let inner = fixture.doc.get_node(fixture.root).unwrap().children[1];
+        let projected = project_ifc(
+            &fixture.doc,
+            &fixture.cascade,
+            inner,
+            &mut LayoutContext::new(),
+            &ahem_fonts(),
+            &Limits::default(),
+        )
+        .unwrap();
+        assert_eq!(projected.letter_styles.len(), expected, "{prefix}");
     }
 }

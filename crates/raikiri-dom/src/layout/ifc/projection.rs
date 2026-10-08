@@ -310,7 +310,7 @@ fn push_generated(
             builder.push_text(TextSource::Generated { node: id }, &text);
         }
     } else {
-        first_letter.push(
+        first_letter.push_with_counters(
             builder,
             doc,
             cascade,
@@ -318,6 +318,7 @@ fn push_generated(
             cv,
             &text,
             fonts,
+            counters,
         )?;
     }
     if !inline_level && pseudo == PseudoElem::Before {
@@ -732,7 +733,7 @@ pub(crate) fn project_ifc_builder_with(
         match node.kind() {
             NodeKind::Text => {
                 let text = node.text_content().ok_or(IfcError::InvalidNode(id))?;
-                first_letter.push(
+                first_letter.push_with_counters(
                     &mut builder,
                     doc,
                     cascade,
@@ -743,6 +744,7 @@ pub(crate) fn project_ifc_builder_with(
                     &cascade.computed[doc.parent_of(id).unwrap_or(id)],
                     text,
                     fonts,
+                    counters,
                 )?;
             }
             NodeKind::Comment | NodeKind::ProcessingInstruction => {}

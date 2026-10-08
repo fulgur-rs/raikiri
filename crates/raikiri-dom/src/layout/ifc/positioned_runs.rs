@@ -26,6 +26,12 @@ pub struct LineGlyph {
 #[derive(Clone, Debug)]
 pub struct PositionedRun<'a> {
     /// The run as shodo laid it out.
+    ///
+    /// In an IFC with first-letter styling, generated text retains its original
+    /// pseudo-element's virtual ID and UTF-8 byte offset using
+    /// [`shodo::node::TextSource::Dom`]. That ID does not index the DOM arena;
+    /// decode it with [`crate::generated_content::generated_origin`]. The
+    /// typographic box ID is distinct from the text's original owner.
     pub run: shodo::GlyphRunView<'a>,
     /// The node the run is painted for: a text node, the id of a generated
     /// text, or an element that supplied text of its own.

@@ -179,10 +179,9 @@ fn one_generated_before_letter_uses_its_generated_source_without_dom_lookahead()
             &fonts,
         )
         .unwrap();
-    let letter_id = generated_node_id(fixture.root, PseudoElem::FirstLetter);
     assert_eq!(letter.styles.len(), 1);
     assert_eq!(letter.styles[0].source_owner, before);
-    assert_eq!(letter.styles[0].source_range, None);
+    assert_eq!(letter.styles[0].source_range, Some(0..1));
     let mut cx = LayoutContext::new();
     let paragraph = builder.build(&mut cx, &fonts).unwrap();
     assert_eq!(paragraph.text(), "A");
@@ -197,8 +196,9 @@ fn one_generated_before_letter_uses_its_generated_source_without_dom_lookahead()
     assert_eq!(run.font_size(), 20.0);
     assert_eq!(
         run.source(),
-        Some(TextSource::Generated {
-            node: NodeId(letter_id as u64)
+        Some(TextSource::Dom {
+            node: NodeId(before as u64),
+            offset: 0,
         })
     );
 }

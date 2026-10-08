@@ -209,15 +209,20 @@ pub(crate) fn draw_ifc_lines(
                 continue;
             }
             let root_node = document.get_node(root_id);
-            let Some(cv) = root_node
-                .and_then(|root| root.ifc_typographic_style(piece.node))
+            let retained = root_node.and_then(|root| {
+                root.ifc_typographic_fragment(
+                    piece.node,
+                    piece.source_container,
+                    piece.source_owner,
+                )
+            });
+            let Some(cv) = retained
+                .map(|(style, _)| style)
                 .or_else(|| computed_for_id(cascade, piece.node))
             else {
                 continue;
             };
-            let source = root_node
-                .and_then(|root| root.ifc_typographic_source(piece.node))
-                .unwrap_or(piece.node);
+            let source = retained.map(|(_, owner)| owner).unwrap_or(piece.node);
             let (dx, dy) = cumulative_offset(document, root_id, offsets, source);
             // The pieces already carry the line's pagination shift, which
             // `position` holds too.
@@ -247,7 +252,7 @@ pub(crate) fn draw_ifc_lines(
         // An element's shift can differ from line to line, so the contexts
         // are built per line.
         let shifts = baseline_shifts(document, line);
-        let mut contexts: HashMap<usize, DecorationContext> = HashMap::new();
+        let mut contexts: HashMap<(usize, usize), DecorationContext> = HashMap::new();
         let mut runs: Vec<RunDraw<'_>> = Vec::new();
         let converter = positioned_line.converter;
         for positioned_run in positioned_line.runs {
@@ -274,7 +279,7 @@ pub(crate) fn draw_ifc_lines(
             }
             let offset = positioned_run.offset;
             let decorations = contexts
-                .entry(style_owner)
+                .entry((style_owner, owner))
                 .or_insert_with(|| {
                     let context = context_for_text(
                         document,
@@ -297,7 +302,7 @@ pub(crate) fn draw_ifc_lines(
                         current = root.ifc_typographic_parent(id);
                     }
                     chain.iter().rev().fold(context, |context, &id| {
-                        let Some(style) = root.ifc_typographic_style(id) else {
+                        let Some(style) = root.ifc_typographic_style_for_owner(id, owner) else {
                             return context; // cov:ignore: style owner and parent IDs come from this root's retained letter styles.
                         };
                         decorations_for_element(
