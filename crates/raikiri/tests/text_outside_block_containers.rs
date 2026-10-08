@@ -64,22 +64,17 @@ fn the_text_of_a_textarea_is_drawn() {
 }
 
 #[test]
-fn text_directly_in_a_table_row_fails_the_layout() {
-    // CSS 2.1 17.2.1 wraps such text in an anonymous cell; the table
-    // algorithm builds no anonymous cells, so no paragraph holds the text.
+fn text_directly_in_table_rows_and_groups_is_drawn_in_anonymous_cells() {
+    let block = render("<div>Hello</div>").expect("block reference");
+    let rectangles = render("<div style=\"position:absolute;left:0;top:0;width:100px;height:20px;background:black\"></div>").expect("rectangle reference");
+    assert_eq!(block, rectangles);
     for body in [
         r#"<div style="display:table"><div style="display:table-row">Hello</div></div>"#,
         r#"<div style="display:table"><div style="display:table-row-group">Hello</div></div>"#,
+        r#"<div style="display:table">Hello</div>"#,
     ] {
-        assert!(
-            matches!(
-                render(body),
-                Err(raikiri::RenderError::Layout(
-                    raikiri::LayoutError::IfcUnsupported { .. }
-                ))
-            ),
-            "{body}"
-        );
+        assert_eq!(ink(body), 2000);
+        assert_eq!(render(body).expect("anonymous cell"), rectangles);
     }
 }
 
