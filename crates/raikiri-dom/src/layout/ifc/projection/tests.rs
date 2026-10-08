@@ -1145,6 +1145,14 @@ fn inside_marker_does_not_consume_the_first_letter_of_body_or_before_content() {
         ("", ""),
         ("div::marker{content:'M '}", ""),
         ("div::marker{content:'M '}", "div::before{content:'XY'}"),
+        ("div::marker{display:inline-block;content:'M '}", ""),
+        (
+            "div::marker{display:inline-block;content:'M '}",
+            "div::before{content:'XY'}",
+        ),
+        ("div::marker{display:inline-flex;content:'M '}", ""),
+        ("div::marker{display:inline-grid;content:'M '}", ""),
+        ("div::marker{display:inline-table;content:'M '}", ""),
     ] {
         let fixture = crate::layout::ifc::test_support::sheet_fixture(
             &format!("div::first-letter{{font-size:20px;color:red}} {marker} {before}"),
@@ -1173,6 +1181,22 @@ fn inside_marker_does_not_consume_the_first_letter_of_body_or_before_content() {
         );
         assert!(projected.paragraph.text().contains("M "));
         assert!(projected.paragraph.text().ends_with("AB"));
+        let lines = projected.paragraph.break_all(
+            &mut LayoutContext::new(),
+            &projected.options,
+            100.0,
+            &AtomicSizes::EMPTY,
+        );
+        let sizes: Vec<_> = lines
+            .iter()
+            .flat_map(|line| line.fragments())
+            .filter_map(|fragment| match fragment {
+                shodo::Fragment::GlyphRun(run) => Some(run.font_size()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(sizes.iter().filter(|size| **size == 20.0).count(), 1);
+        assert!(sizes.iter().filter(|size| **size == 10.0).count() >= 2);
     }
 }
 
