@@ -194,6 +194,78 @@ impl SvgDocument {
         self.intrinsic
     }
 
+    /// Prepares SVG source for the resolved CSS viewport and host style.
+    ///
+    /// No pixels are allocated. When `neutralize_root_opacity` is set, the
+    /// source retains the host's root opacity so an SVG parser can resolve
+    /// explicit `inherit` values. A vector consumer must remove only the
+    /// resolved root group's opacity after parsing, then composite the host
+    /// box and SVG together with that opacity.
+    pub fn styled_source(
+        &self,
+        viewport: SvgViewport,
+        root_style: SvgRootStyle,
+    ) -> Result<String, SvgError> {
+        if !viewport.width.is_finite()
+            || !viewport.height.is_finite()
+            || viewport.width <= 0.0
+            || viewport.height <= 0.0
+        {
+            return Err(SvgError::InvalidViewport);
+        }
+        if !root_style.opacity.is_finite() || !(0.0..=1.0).contains(&root_style.opacity) {
+            return Err(SvgError::InvalidOpacity);
+        }
+        self.prepare_source(viewport, root_style)
+    }
+
+    fn prepare_source(
+        &self,
+        viewport: SvgViewport,
+        root_style: SvgRootStyle,
+    ) -> Result<String, SvgError> {
+        let viewport_matches = viewport_matches_tree(
+            &self.tree,
+            viewport.width,
+            viewport.height,
+            self.has_view_box,
+        );
+        let modifies_source = !viewport_matches
+            || root_style.neutralize_root_opacity
+            || root_style.host_controls_root_background
+            || !self.root_has_color;
+        // Freeze matches before rewriting attributes inspected by selectors.
+        let mut rewrite_budget = SelectorFreezeBudget::new();
+        let source = if modifies_source {
+            freeze_svg_stylesheet_selectors(&self.source, &mut rewrite_budget)?
+        } else {
+            self.source.clone()
+        };
+        let source = if viewport_matches {
+            source
+        } else {
+            with_root_viewport_size(&source, viewport.width, viewport.height)?
+        };
+        let source = if root_style.neutralize_root_opacity {
+            normalize_svg_opacity_cascade(&source, &mut rewrite_budget)?
+        } else {
+            source
+        };
+        let source =
+            if root_style.neutralize_root_opacity || root_style.host_controls_root_background {
+                with_root_style_overrides(
+                    &source,
+                    root_style.opacity,
+                    root_style.neutralize_root_opacity,
+                    root_style.host_controls_root_background || root_style.neutralize_root_opacity,
+                    &mut rewrite_budget,
+                )?
+            } else {
+                source
+            };
+        with_inherited_color(&source, root_style.inherited_color)
+    }
+
     /// Rasterizes the SVG to straight-alpha RGBA8 at `viewport`.
     ///
     /// The effective output limit is the smaller of 32 MiB and
@@ -247,48 +319,7 @@ impl SvgDocument {
         };
 
         if root_style.visible && root_style.opacity > 0.0 {
-            let viewport_matches = viewport_matches_tree(
-                &self.tree,
-                viewport.width,
-                viewport.height,
-                self.has_view_box,
-            );
-            let modifies_source = !viewport_matches
-                || root_style.neutralize_root_opacity
-                || root_style.host_controls_root_background
-                || !self.root_has_color;
-            // Freeze selector matches before viewport, host-style, and opacity
-            // rewrites change attributes that selectors can inspect.
-            let mut rewrite_budget = SelectorFreezeBudget::new();
-            let source = if modifies_source {
-                freeze_svg_stylesheet_selectors(&self.source, &mut rewrite_budget)?
-            } else {
-                self.source.clone()
-            };
-            let source = if viewport_matches {
-                source
-            } else {
-                with_root_viewport_size(&source, viewport.width, viewport.height)?
-            };
-            let source = if root_style.neutralize_root_opacity {
-                normalize_svg_opacity_cascade(&source, &mut rewrite_budget)?
-            } else {
-                source
-            };
-            let source = if root_style.neutralize_root_opacity
-                || root_style.host_controls_root_background
-            {
-                with_root_style_overrides(
-                    &source,
-                    root_style.opacity,
-                    root_style.neutralize_root_opacity,
-                    root_style.host_controls_root_background || root_style.neutralize_root_opacity,
-                    &mut rewrite_budget,
-                )?
-            } else {
-                source
-            };
-            let source = with_inherited_color(&source, root_style.inherited_color)?;
+            let source = self.prepare_source(viewport, root_style)?;
             let raster_opacity = if root_style.neutralize_root_opacity {
                 1.0
             } else {

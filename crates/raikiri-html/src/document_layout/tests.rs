@@ -77,6 +77,109 @@ fn completed(status: LayoutStatus) -> DocumentLayout {
 }
 
 #[test]
+fn inline_svg_payload_uses_the_resolved_content_box_and_host_style() {
+    let document = dom(
+        "<style>@page {size:300px 200px;margin:10px} body {margin:0} svg {box-sizing:border-box;width:200px;height:120px;border:2px solid black;padding:10%;color:blue;opacity:.5}</style><svg xmlns='http://www.w3.org/2000/svg' width='200' height='120' style='display:block'><rect width='10' height='10' fill='currentColor' opacity='inherit'/></svg>",
+    );
+    let layout = completed(
+        layout(
+            &document,
+            PageDefaults::default(),
+            LayoutConfig::default(),
+            LayoutOptions::new(),
+        )
+        .unwrap(),
+    );
+    let page = layout.page(0).unwrap();
+    let fragment = page
+        .fragments()
+        .find(|f| page.dom().local_name(f.node()) == Some("svg"))
+        .unwrap();
+    let content = fragment.content_rect().unwrap();
+    assert_eq!(
+        (content.x, content.y, content.width, content.height),
+        (40.0, 30.0, 140.0, 80.0)
+    );
+    let svg = page.inline_svg(&fragment).unwrap().unwrap();
+    assert_eq!(svg.viewport, content);
+    assert_eq!(svg.host_opacity, Some(0.5));
+    let prepared = raikiri_svg::SvgDocument::parse(svg.source.as_bytes()).unwrap();
+    assert_eq!(prepared.intrinsic_size().width, Some(140.0));
+    assert_eq!(prepared.intrinsic_size().height, Some(80.0));
+    let image = prepared
+        .rasterize(
+            raikiri_svg::SvgViewport {
+                width: content.width,
+                height: content.height,
+            },
+            raikiri_svg::SvgRootStyle::default(),
+            None,
+        )
+        .unwrap();
+    let offset = (2 * image.width as usize + 2) * 4;
+    assert_eq!(&image.rgba[offset..offset + 4], &[0, 0, 255, 64]);
+}
+
+#[test]
+fn inline_svg_payload_does_not_fold_parent_opacity_into_the_svg_source() {
+    let document = dom(
+        "<style>@page {size:200px 100px;margin:0} body {margin:0} div {opacity:.4} svg {display:block;opacity:.5}</style><div><svg xmlns='http://www.w3.org/2000/svg' width='20' height='10'><rect width='20' height='10' fill='red'/></svg></div>",
+    );
+    let layout = completed(
+        layout(
+            &document,
+            PageDefaults::default(),
+            LayoutConfig::default(),
+            LayoutOptions::new(),
+        )
+        .unwrap(),
+    );
+    let page = layout.page(0).unwrap();
+    let fragment = page
+        .fragments()
+        .find(|f| page.dom().local_name(f.node()) == Some("svg"))
+        .unwrap();
+    let svg = page.inline_svg(&fragment).unwrap().unwrap();
+    assert_eq!(svg.host_opacity, Some(0.5));
+    let alphas: Vec<_> = page
+        .paint_order()
+        .into_iter()
+        .filter_map(|event| match event {
+            PaintEvent::PushOpacity(alpha) => Some(alpha),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(alphas, [0.4, 0.5]);
+}
+
+#[test]
+fn ordinary_boxes_have_content_geometry_and_no_inline_svg_payload() {
+    let document = dom(
+        "<style>@page {size:200px 100px;margin:0} body {margin:0} div {width:100px;height:50px;padding:5px;border:2px solid black}</style><div></div>",
+    );
+    let layout = completed(
+        layout(
+            &document,
+            PageDefaults::default(),
+            LayoutConfig::default(),
+            LayoutOptions::new(),
+        )
+        .unwrap(),
+    );
+    let page = layout.page(0).unwrap();
+    let fragment = page
+        .fragments()
+        .find(|f| page.dom().local_name(f.node()) == Some("div"))
+        .unwrap();
+    let content = fragment.content_rect().unwrap();
+    assert_eq!(
+        (content.x, content.y, content.width, content.height),
+        (7.0, 7.0, 100.0, 50.0)
+    );
+    assert!(page.inline_svg(&fragment).unwrap().is_none());
+}
+
+#[test]
 fn layout_exposes_the_cascade_used_for_layout_and_page_styles() {
     let doc = dom(PAGED);
     let layout = completed(
@@ -454,4 +557,137 @@ fn table_cells_are_separated_by_the_ua_border_spacing() {
     };
     assert_eq!(cell_x(""), [(2.0, 2.0), (14.0, 2.0)]);
     assert_eq!(cell_x("table{border-spacing:0}"), [(0.0, 0.0), (10.0, 0.0)]);
+}
+
+#[test]
+fn inline_svg_payload_retains_the_whole_viewport_across_page_cuts() {
+    let document = dom(
+        "<style>@page{size:100px 100px;margin:10px}body{margin:0}svg{display:block;width:20px;height:180px;padding:5px;border:2px solid black}</style><svg xmlns='http://www.w3.org/2000/svg' width='20' height='180'><rect width='20' height='180' fill='red'/></svg>",
+    );
+    let layout = completed(
+        layout(
+            &document,
+            PageDefaults::default(),
+            LayoutConfig::default(),
+            LayoutOptions::new(),
+        )
+        .unwrap(),
+    );
+    assert_eq!(layout.pages().count(), 3);
+    for (index, page) in layout.pages().enumerate() {
+        let fragment = page
+            .fragments()
+            .find(|f| page.dom().local_name(f.node()) == Some("svg"))
+            .unwrap();
+        let payload = page.inline_svg(&fragment).unwrap().unwrap();
+        assert_eq!(
+            payload.viewport,
+            raikiri_traits::PaintRect::new(17.0, 17.0 - index as f32 * 80.0, 20.0, 180.0)
+        );
+        assert_eq!(payload.host_opacity, None);
+        assert!(fragment.paint_rect().height < payload.viewport.height);
+    }
+}
+
+#[test]
+fn inline_svg_payload_preserves_negative_fixed_offsets_on_each_page() {
+    let document = dom(
+        "<style>@page{size:100px 100px;margin:10px}body{margin:0}div{height:180px}svg{display:block;position:fixed;top:-5px;left:3px;width:20px;height:10px;padding:4px;border:2px solid black}</style><div></div><svg xmlns='http://www.w3.org/2000/svg' width='20' height='10'><rect width='20' height='10' fill='red'/></svg>",
+    );
+    let layout = completed(
+        layout(
+            &document,
+            PageDefaults::default(),
+            LayoutConfig::default(),
+            LayoutOptions::new(),
+        )
+        .unwrap(),
+    );
+    assert!(layout.pages().count() > 1);
+    for page in layout.pages() {
+        let fragment = page
+            .fragments()
+            .find(|f| page.dom().local_name(f.node()) == Some("svg"))
+            .unwrap();
+        assert_eq!(fragment.repeat(), Some(RepeatKind::EveryPage));
+        assert_eq!(fragment.paint_rect().y, 5.0);
+        assert_eq!(
+            page.inline_svg(&fragment).unwrap().unwrap().viewport,
+            raikiri_traits::PaintRect::new(19.0, 11.0, 20.0, 10.0)
+        );
+    }
+}
+
+#[test]
+fn text_fragments_have_no_element_content_box() {
+    let document = dom("<p>content</p>");
+    let layout = completed(
+        layout(
+            &document,
+            PageDefaults::default(),
+            LayoutConfig::default(),
+            LayoutOptions::new(),
+        )
+        .unwrap(),
+    );
+    let page = layout.page(0).unwrap();
+    let text = page
+        .fragments()
+        .find(|f| f.kind() == FragmentKind::Text)
+        .unwrap();
+    assert_eq!(text.content_rect(), None);
+    assert!(page.inline_svg(&text).unwrap().is_none());
+}
+
+#[test]
+fn inline_svg_payload_skips_empty_and_hidden_content_boxes() {
+    for style in [
+        "width:0;height:10px",
+        "width:10px;height:0",
+        "width:10px;height:10px;visibility:hidden",
+    ] {
+        let document = dom(&format!(
+            "<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' style='display:block;{style}'><rect width='10' height='10'/></svg>"
+        ));
+        let layout = completed(
+            layout(
+                &document,
+                PageDefaults::default(),
+                LayoutConfig::default(),
+                LayoutOptions::new(),
+            )
+            .unwrap(),
+        );
+        let page = layout.page(0).unwrap();
+        let fragment = page
+            .fragments()
+            .find(|f| page.dom().local_name(f.node()) == Some("svg"))
+            .unwrap();
+        assert!(page.inline_svg(&fragment).unwrap().is_none());
+    }
+}
+
+#[test]
+fn inline_svg_payload_reports_unsupported_resources() {
+    let document = dom(
+        "<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10' style='display:block'><image href='https://example.invalid/image.png' width='10' height='10'/></svg>",
+    );
+    let layout = completed(
+        layout(
+            &document,
+            PageDefaults::default(),
+            LayoutConfig::default(),
+            LayoutOptions::new(),
+        )
+        .unwrap(),
+    );
+    let page = layout.page(0).unwrap();
+    let fragment = page
+        .fragments()
+        .find(|f| page.dom().local_name(f.node()) == Some("svg"))
+        .unwrap();
+    assert!(matches!(
+        page.inline_svg(&fragment),
+        Err(raikiri_svg::SvgError::ExternalReference)
+    ));
 }

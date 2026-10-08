@@ -19,6 +19,31 @@ use super::{
 const HALF_RED_RECT: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1" viewBox="0 0 2 1"><rect width="1" height="1" fill="#ff0000" fill-opacity="0.5"/></svg>"##;
 const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
 
+#[test]
+fn styled_svg_source_preserves_inherited_opacity_without_rasterizing() {
+    let svg = SvgDocument::parse(br#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"><rect width="2" height="1" fill="currentColor" opacity="inherit"/></svg>"#).unwrap();
+    let viewport = SvgViewport {
+        width: 2.0,
+        height: 1.0,
+    };
+    let source = svg
+        .styled_source(
+            viewport,
+            SvgRootStyle {
+                inherited_color: [0, 0, 255, 255],
+                opacity: 0.5,
+                neutralize_root_opacity: true,
+                ..SvgRootStyle::default()
+            },
+        )
+        .unwrap();
+    let prepared = SvgDocument::parse(source.as_bytes()).unwrap();
+    let image = prepared
+        .rasterize(viewport, SvgRootStyle::default(), None)
+        .unwrap();
+    assert_eq!(&image.rgba[..4], &[0, 0, 255, 64]);
+}
+
 fn preflight_initial_svg(source: &str) -> Result<(), SvgError> {
     let xml = roxmltree::Document::parse(source).expect("test SVG is valid XML");
     preflight_initial_svg_selectors(&xml)
@@ -1457,4 +1482,81 @@ fn fractional_image_rasterization_keeps_the_full_buffer_mapping() {
         )
         .unwrap();
     assert_ne!(css.rgba, fractional.rgba);
+}
+
+#[test]
+fn styled_source_validates_inputs_without_allocating_a_raster() {
+    let svg = SvgDocument::parse(HALF_RED_RECT).unwrap();
+    for width in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+        assert!(matches!(
+            svg.styled_source(SvgViewport { width, height: 1.0 }, SvgRootStyle::default()),
+            Err(SvgError::InvalidViewport)
+        ));
+        assert!(matches!(
+            svg.styled_source(
+                SvgViewport {
+                    width: 1.0,
+                    height: width
+                },
+                SvgRootStyle::default()
+            ),
+            Err(SvgError::InvalidViewport)
+        ));
+    }
+    let viewport = SvgViewport {
+        width: 100_000.0,
+        height: 50_000.0,
+    };
+    for opacity in [-0.1, 1.1, f32::NAN, f32::INFINITY] {
+        assert!(matches!(
+            svg.styled_source(
+                viewport,
+                SvgRootStyle {
+                    opacity,
+                    ..SvgRootStyle::default()
+                }
+            ),
+            Err(SvgError::InvalidOpacity)
+        ));
+    }
+    assert!(svg.styled_source(viewport, SvgRootStyle::default()).is_ok());
+    assert!(matches!(
+        svg.rasterize(viewport, SvgRootStyle::default(), None),
+        Err(SvgError::OutputLimitExceeded { .. })
+    ));
+}
+
+#[test]
+fn styled_source_freezes_attribute_selectors_before_viewport_rewrites() {
+    let svg = SvgDocument::parse(br#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"><style>svg[width="2"] rect { fill:red }</style><rect width="2" height="1"/></svg>"#).unwrap();
+    let viewport = SvgViewport {
+        width: 4.0,
+        height: 2.0,
+    };
+    let source = svg
+        .styled_source(viewport, SvgRootStyle::default())
+        .unwrap();
+    let prepared = SvgDocument::parse(source.as_bytes()).unwrap();
+    assert_eq!(prepared.intrinsic_size().width, Some(4.0));
+    let image = prepared
+        .rasterize(viewport, SvgRootStyle::default(), None)
+        .unwrap();
+    assert_eq!(&image.rgba[..4], &[255, 0, 0, 255]);
+}
+
+#[test]
+fn styled_source_keeps_text_for_a_consumers_font_database() {
+    let svg = SvgDocument::parse(br#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="30"><text x="0" y="20" font-family="Consumer Bundled Font">PDF text</text></svg>"#).unwrap();
+    let source = svg
+        .styled_source(
+            SvgViewport {
+                width: 100.0,
+                height: 30.0,
+            },
+            SvgRootStyle::default(),
+        )
+        .unwrap();
+    assert!(source.contains("<text"));
+    assert!(source.contains("Consumer Bundled Font"));
+    assert!(source.contains("PDF text"));
 }

@@ -6,7 +6,7 @@ mod page;
 
 pub use dom_view::DomView;
 pub use navigation::{Anchor, AnchorIndex, Link};
-pub use page::{Page, PageGeometry, PageMode};
+pub use page::{InlineSvg, Page, PageGeometry, PageMode};
 // cov:ignore: public type re-exports have no executable mapping; API integration tests verify them.
 pub use raikiri_dom::{
     ClipKind, DecorationKind, DecorationLine, DecorationStyle, FontBlob, FontId, FontRef,

@@ -37,7 +37,7 @@ pub use document::HtmlDocument;
 pub use document_layout::{
     Anchor, AnchorIndex, ClipKind, DecorationKind, DecorationLine, DecorationStyle, DocumentLayout,
     DomView, FontBlob, FontId, FontRef, FontVariation, Fragment, FragmentKind, GeneratedKind,
-    Glyph, LayoutOptions, LayoutStatus, Link, Page, PageGeometry, PageMode, PaintEvent,
+    Glyph, InlineSvg, LayoutOptions, LayoutStatus, Link, Page, PageGeometry, PageMode, PaintEvent,
     PositionedGlyphRun, RepeatKind, RunSource, Synthesis, Tag, TextLineId, layout,
 };
 pub use document_parse::{parse_html, parse_html_with_limits};

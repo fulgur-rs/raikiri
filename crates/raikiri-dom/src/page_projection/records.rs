@@ -287,6 +287,9 @@ pub(crate) struct PageFragmentItem {
     pub(crate) box_y: f32,
     /// Height of the whole border box, before the page cut it.
     pub(crate) box_height: f32,
+    /// Whole element content box before pagination, relative to the page's
+    /// content origin. Text placements do not have an element content box.
+    pub(crate) content_rect: Option<PageFragmentRect>,
 }
 
 /// Neutral link metadata attached to a page-local event.
@@ -398,6 +401,7 @@ impl PageFragmentItem {
             line_range: None,
             box_y: rect.y,
             box_height: rect.height,
+            content_rect: None,
         }
     }
 
@@ -405,6 +409,12 @@ impl PageFragmentItem {
     pub(crate) fn with_box_extent(mut self, box_y: f32, box_height: f32) -> Self {
         self.box_y = box_y;
         self.box_height = box_height;
+        self
+    }
+
+    /// Attach the resolved content geometry of this element placement.
+    pub(crate) fn with_content_rect(mut self, rect: Option<PageFragmentRect>) -> Self {
+        self.content_rect = rect;
         self
     }
 

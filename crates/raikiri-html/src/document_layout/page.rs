@@ -25,6 +25,22 @@ pub struct PageGeometry {
     pub mode: PageMode,
 }
 
+/// Prepared vector source and resolved placement of an inline SVG root.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct InlineSvg {
+    /// Standalone XML with the viewport and inherited host color resolved.
+    pub source: String,
+    /// Whole content box in CSS page coordinates, before pagination cuts.
+    pub viewport: PaintRect,
+    /// Host root opacity represented by the page's paint events.
+    ///
+    /// When present, resolve SVG inheritance first, then remove only the
+    /// parsed root group's opacity. Descendant opacity remains in the SVG;
+    /// ancestor opacity remains in the surrounding page paint events.
+    pub host_opacity: Option<f32>,
+}
+
 /// One laid-out page, borrowed from a [`super::DocumentLayout`].
 #[derive(Clone, Copy)]
 pub struct Page<'a> {
@@ -70,6 +86,78 @@ impl<'a> Page<'a> {
     /// All fragments on this page. The order is not the paint order.
     pub fn fragments(&self) -> impl Iterator<Item = Fragment<'a>> + 'a + use<'a> {
         self.document.page_fragments(self.slice.page_index)
+    }
+
+    /// Prepares the vector source of an SVG root placed by this page.
+    ///
+    /// Pass a fragment from [`Self::fragments`]. Ordinary elements, text and
+    /// empty or hidden SVG viewports return `None`. The host box is drawn
+    /// separately; source admission and preparation errors are returned.
+    pub fn inline_svg(
+        &self,
+        fragment: &Fragment<'a>,
+    ) -> Result<Option<InlineSvg>, raikiri_svg::SvgError> {
+        let Some(id) = usize::try_from(fragment.node().0).ok() else {
+            return Ok(None);
+        };
+        if !self
+            .document
+            .get_node(id)
+            .is_some_and(|node| node.is_inline_svg_root())
+        {
+            return Ok(None);
+        }
+        let Some(viewport) = fragment.content_rect() else {
+            return Ok(None);
+        };
+        let Some(computed) = self.computed(fragment.node()) else {
+            return Ok(None);
+        };
+        if viewport.width <= 0.0
+            || viewport.height <= 0.0
+            || computed.visibility != raikiri_style::property::Visibility::Visible
+        {
+            return Ok(None);
+        }
+        let Some(source) = self
+            .document
+            .serialize_svg_subtree(id)
+            .map_err(raikiri_svg::SvgError::InvalidDocument)?
+        else {
+            return Ok(None);
+        };
+        let document = raikiri_svg::SvgDocument::parse(source.as_bytes())?;
+        let host_opacity = self
+            .cascade
+            .opacity_specified
+            .get(id)
+            .copied()
+            .unwrap_or(false)
+            .then_some(computed.opacity);
+        let color = computed.color;
+        let source = document.styled_source(
+            raikiri_svg::SvgViewport {
+                width: viewport.width,
+                height: viewport.height,
+            },
+            raikiri_svg::SvgRootStyle {
+                inherited_color: [color.r, color.g, color.b, color.a],
+                opacity: host_opacity.unwrap_or(1.0),
+                neutralize_root_opacity: host_opacity.is_some(),
+                host_controls_root_background: self
+                    .cascade
+                    .background_color_specified
+                    .get(id)
+                    .copied()
+                    .unwrap_or(false),
+                visible: true,
+            },
+        )?;
+        Ok(Some(InlineSvg {
+            source,
+            viewport,
+            host_opacity,
+        }))
     }
 
     /// Positioned glyph runs of the body text on this page, in document

@@ -961,6 +961,7 @@ pub(crate) fn project_slices(
         abs_y: f32,
         width: f32,
         height: f32,
+        content_insets: Option<PageFragmentInsets>,
         line_metrics: Option<Vec<(f32, f32)>>,
         is_repeat: bool,
     }
@@ -1104,6 +1105,14 @@ pub(crate) fn project_slices(
                 abs_y,
                 width,
                 height,
+                content_insets: (node.kind() == NodeKind::Element).then(|| {
+                    PageFragmentInsets::new(
+                        layout.border.top + layout.padding.top,
+                        layout.border.right + layout.padding.right,
+                        layout.border.bottom + layout.padding.bottom,
+                        layout.border.left + layout.padding.left,
+                    )
+                }),
                 line_metrics,
                 is_repeat,
             });
@@ -1145,10 +1154,10 @@ pub(crate) fn project_slices(
             if source.is_repeat {
                 placements.push((
                     page_slot,
-                    source.abs_y.max(0.0),
+                    source.abs_y,
                     source.height,
                     repeat_line_range,
-                    source.abs_y.max(0.0),
+                    source.abs_y,
                 ));
                 continue;
             }
@@ -1198,7 +1207,15 @@ pub(crate) fn project_slices(
                 source.is_repeat,
             )
             .with_page_index(page.page_index)
-            .with_box_extent(box_y, source.height);
+            .with_box_extent(box_y, source.height)
+            .with_content_rect(source.content_insets.map(|insets| {
+                PageFragmentRect::new(
+                    source.abs_x + insets.left,
+                    box_y + insets.top,
+                    (source.width - insets.left - insets.right).max(0.0),
+                    (source.height - insets.top - insets.bottom).max(0.0),
+                )
+            }));
             page.items.push(match line_range {
                 Some(range) => item.with_line_range(range),
                 None => item,
