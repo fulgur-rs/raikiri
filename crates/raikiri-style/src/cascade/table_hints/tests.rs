@@ -5,6 +5,8 @@ use crate::resolve::ComputedLength;
 use crate::ruletree::build_rule_tree;
 use crate::test_dom::TestDoc;
 
+mod cellpadding_scaling_tests;
+
 #[test]
 fn col_width_attribute_maps_html_dimensions_below_author_css() {
     use crate::resolve::ComputedLengthPercentageOrAuto as Width;
@@ -125,4 +127,40 @@ fn table_hints_apply_only_to_html_table() {
         r.computed[div].border_spacing.horizontal,
         ComputedLength(0.0)
     );
+}
+
+#[test]
+fn cellpadding_uses_the_nearest_html_table_and_preserves_author_padding() {
+    use crate::resolve::ComputedLengthPercentage as Padding;
+    for (attribute, expected) in [("0", 0.0), (" 5px", 5.0), ("-1", 0.0), ("", 0.0)] {
+        let mut doc = TestDoc::new();
+        let table = doc.push_element_with_attrs(0, "TABLE", None, &[("cellpadding", attribute)]);
+        let row = doc.push_element(table, "tr", None);
+        let cell = doc.push_element(row, "TD", None);
+        let header = doc.push_element(row, "th", Some("padding-left:9px"));
+        let nested = doc.push_element(cell, "table", None);
+        let nested_cell = doc.push_element(nested, "td", None);
+        let padded_nested =
+            doc.push_element_with_attrs(cell, "table", None, &[("cellpadding", "3")]);
+        let padded_cell = doc.push_element(padded_nested, "td", None);
+        let foreign = doc.push_element_with_namespace(row, "td", "http://www.w3.org/2000/svg", &[]);
+        let unrelated = doc.push_element(row, "div", None);
+        let orphan = doc.push_element(0, "td", None);
+        let result = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        let cv = &result.computed[cell];
+        for side in [
+            cv.padding.top,
+            cv.padding.right,
+            cv.padding.bottom,
+            cv.padding.left,
+        ] {
+            assert_eq!(side, Padding::Px(expected), "{attribute:?}");
+        }
+        assert_eq!(result.computed[header].padding.top, Padding::Px(expected));
+        assert_eq!(result.computed[header].padding.left, Padding::Px(9.0));
+        assert_eq!(result.computed[padded_cell].padding.left, Padding::Px(3.0));
+        for node in [nested_cell, foreign, unrelated, orphan] {
+            assert_eq!(result.computed[node].padding.left, Padding::Px(0.0));
+        }
+    }
 }

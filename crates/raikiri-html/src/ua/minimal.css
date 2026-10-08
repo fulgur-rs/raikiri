@@ -471,15 +471,17 @@ img {
  * raikiri-dom lays these display types out with its table formatting
  * (`layout/table.rs`), which reads the separated-borders `border-spacing`
  * set below. */
-table { display: table; }
-caption { display: table-caption; }
+/* The initial text-indent is 0. Spell it explicitly until the property
+ * parser accepts CSS-wide keywords, so inherited indentation is reset. */
+table { display: table; box-sizing: border-box; text-indent: 0; }
+caption { display: table-caption; text-align: center; }
 col { display: table-column; }
 colgroup { display: table-column-group; }
 tbody { display: table-row-group; }
 thead { display: table-header-group; }
 tfoot { display: table-footer-group; }
 tr { display: table-row; }
-td, th { display: table-cell; }
+td, th { display: table-cell; padding: 1px; }
 thead, tbody, tfoot, table > tr { vertical-align: middle; }
 tr, td, th { vertical-align: inherit; }
 /* HTML LS §15.3.8 gives tables a 2px separated-borders spacing:
@@ -501,4 +503,4 @@ table { border-spacing: 2px; border-collapse: separate; }
 /* HTML UA behavior: the internal center value centers a header only when
  * its inherited table alignment is the initial `start` value; otherwise it
  * follows the inherited alignment. */
-th { text-align: -internal-center; }
+th { text-align: -internal-center; font-weight: bold; }

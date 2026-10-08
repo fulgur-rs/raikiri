@@ -15,6 +15,7 @@
 //!   border-collapse: collapse; }`
 //! - The `col` element's `width` attribute maps to the width dimension property,
 //!   using the same HTML dimension-value algorithm as image attributes.
+//! - `cellpadding` maps to all four padding lengths of the table's HTML cells.
 //!
 //! The UA stylesheet gives every table `border-spacing: 2px`, so honoring
 //! `cellspacing="0"` is what lets legacy markup remove that gap.
@@ -23,14 +24,21 @@ use crate::property::{
     BorderCollapseValue, BorderSpacingValue, BorderStyle, Length, LengthOrAuto, PropertyValue,
 };
 use crate::ruletree::Origin;
-use crate::style_dom::StyleElement;
+use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId};
+use std::collections::HashMap;
 
 use super::collect::{
     CascadedDecl, PRESENTATIONAL_HINT_SOURCE_ORDER, PRESENTATIONAL_HINT_SPECIFICITY,
 };
 
-/// Pushes an HTML table's `cellspacing`/`rules` hints and a column's width hint.
-pub(crate) fn push_table_attribute_hints(elem: &impl StyleElement, decls: &mut Vec<CascadedDecl>) {
+/// Pushes HTML table and column hints, including the containing table's cell padding.
+pub(crate) fn push_table_attribute_hints<D: StyleDom>(
+    dom: &D,
+    elem: &impl StyleElement,
+    ancestors: &[StyleNodeId],
+    cell_padding_cache: &mut HashMap<StyleNodeId, Option<u32>>,
+    decls: &mut Vec<CascadedDecl>,
+) {
     // The mapping belongs to the HTML namespace; `namespace_uri()` is `None`
     // for it.
     if elem.namespace_uri().is_some() {
@@ -46,6 +54,31 @@ pub(crate) fn push_table_attribute_hints(elem: &impl StyleElement, decls: &mut V
             crate::layer::LayerPosition::default(),
         ));
     };
+    if elem.tag_name().eq_ignore_ascii_case("td") || elem.tag_name().eq_ignore_ascii_case("th") {
+        for ancestor in ancestors.iter().rev() {
+            if let Some(node) = dom.node(*ancestor)
+                && let Some(table) = node.as_element()
+                && table.namespace_uri().is_none()
+                && table.tag_name().eq_ignore_ascii_case("table")
+            {
+                // Cache missing and invalid values as well as valid ones for this cascade.
+                if let Some(padding) = *cell_padding_cache.entry(*ancestor).or_insert_with(|| {
+                    table
+                        .attr("cellpadding")
+                        .and_then(parse_non_negative_integer)
+                }) {
+                    let px = Length::Px(padding as f32);
+                    push(PropertyValue::PaddingTop(px));
+                    push(PropertyValue::PaddingRight(px));
+                    push(PropertyValue::PaddingBottom(px));
+                    push(PropertyValue::PaddingLeft(px));
+                }
+                // A nested table without a valid hint does not borrow the outer table's hint.
+                break;
+            }
+        }
+        return;
+    }
     if elem.tag_name().eq_ignore_ascii_case("col") {
         if let Some(width) = elem
             .attr("width")
