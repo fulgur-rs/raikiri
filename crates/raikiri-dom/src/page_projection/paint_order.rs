@@ -4,7 +4,7 @@
 use super::records::{PageFragmentItem, PageFragmentKind};
 use crate::{Document, Fragment, OverflowClip, PositionedGlyphRun, TextLineId, paint_rules};
 use raikiri_style::CascadeResult;
-use raikiri_style::property::{ColumnCountValue, Visibility};
+use raikiri_style::property::ColumnCountValue;
 use raikiri_traits::{NodeId, NodeKind, PaintClip, PaintRect};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -210,7 +210,7 @@ impl Document {
                             let fragment = items.fragment(item);
                             if let Some(cells) = self
                                 .anonymous_table_part_background_cells(node_id)
-                                .filter(|_| cv.visibility != Visibility::Hidden)
+                                .filter(|_| !paint_rules::is_visibility_hidden_table_part(cv))
                             {
                                 let rect = fragment.paint_rect();
                                 let top = rect.y - item.rect.y + item.box_y;

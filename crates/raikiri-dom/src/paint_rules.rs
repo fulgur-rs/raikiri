@@ -219,6 +219,18 @@ pub fn is_visibility_hidden_table(cv: &ComputedValues) -> bool {
         && matches!(cv.display, DisplayValue::Table | DisplayValue::InlineTable)
 }
 
+/// A hidden table row or row group does not paint its own decorations.
+pub fn is_visibility_hidden_table_part(cv: &ComputedValues) -> bool {
+    cv.visibility == Visibility::Hidden
+        && matches!(
+            cv.display,
+            DisplayValue::TableRow
+                | DisplayValue::TableRowGroup
+                | DisplayValue::TableHeaderGroup
+                | DisplayValue::TableFooterGroup
+        )
+}
+
 /// Stable-sorts a parent's children into paint order.
 pub fn sort_paint_children(
     children: &mut [usize],
