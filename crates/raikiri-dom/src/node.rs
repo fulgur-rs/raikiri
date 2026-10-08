@@ -830,6 +830,12 @@ impl Node {
             root.writing_mode,
             content_size,
         );
+        // A first letter never retains paint boxes on a later formatted line.
+        pieces.retain(|piece| {
+            piece.line == 0
+                || !crate::generated_content::generated_origin(piece.node)
+                    .is_some_and(|(_, pseudo)| pseudo == raikiri_style::PseudoElem::FirstLetter)
+        });
         // A typographic unit can be sliced around ordinary inline boxes.
         // Those slices retain one set of start/end edges across the unit.
         let mut starts = std::collections::HashSet::new();

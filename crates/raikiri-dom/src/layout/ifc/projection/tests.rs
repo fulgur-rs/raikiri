@@ -846,7 +846,14 @@ fn generated_first_letter_retains_the_originating_elements_language() {
         },
     );
     let projected = project(&fixture).unwrap();
-    assert_eq!(projected.paragraph.text(), "İx");
+    let lines = projected.paragraph.break_all(
+        &mut LayoutContext::new(),
+        &projected.options,
+        100.0,
+        &AtomicSizes::EMPTY,
+    );
+    assert_eq!(lines[0].text(), "İx");
+    assert_eq!(projected.paragraph.text(), "ix");
 }
 
 #[test]

@@ -198,6 +198,7 @@ impl<'a> PositionedLines<'a> {
             let letter = self
                 .document
                 .get_node(self.root_id)
+                .filter(|_| index == 0)
                 .and_then(|node| node.ifc.as_ref())
                 .and_then(|ifc| {
                     run.source().and_then(|source| {

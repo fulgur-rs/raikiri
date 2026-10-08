@@ -461,7 +461,45 @@ impl FirstLetter {
                     edges.padding.inline_end = 0.0;
                 }
                 if !continuing_box {
-                    builder.open_inline(NodeId(box_id as u64), &inline, edges);
+                    // Shodo shapes the retained range with its ordinary source style
+                    // after the first line, even when punctuation wraps.
+                    let ordinary = styled(doc, cascade, parent, context_node, fonts)?;
+                    // First-line alternatives cover shaping and paint. Keep the
+                    // existing box geometry until the paragraph is reprojected.
+                    let mut normal = inline.clone();
+                    normal.font_families = ordinary.font_families;
+                    normal.font_size = ordinary.font_size;
+                    normal.font_weight = ordinary.font_weight;
+                    normal.font_width = ordinary.font_width;
+                    normal.font_style = ordinary.font_style;
+                    normal.font_variations = ordinary.font_variations;
+                    normal.font_features = ordinary.font_features;
+                    normal.font_kerning = ordinary.font_kerning;
+                    normal.font_variant_ligatures = ordinary.font_variant_ligatures;
+                    normal.font_variant_caps = ordinary.font_variant_caps;
+                    normal.font_variant_numeric = ordinary.font_variant_numeric;
+                    normal.font_variant_east_asian = ordinary.font_variant_east_asian;
+                    normal.font_variant_position = ordinary.font_variant_position;
+                    normal.font_variant_alternates = ordinary.font_variant_alternates;
+                    normal.font_optical_sizing = ordinary.font_optical_sizing;
+                    normal.font_synthesis = ordinary.font_synthesis;
+                    normal.font_size_adjust = ordinary.font_size_adjust;
+                    normal.lang = ordinary.lang;
+                    normal.line_height = ordinary.line_height;
+                    normal.letter_spacing = ordinary.letter_spacing;
+                    normal.word_spacing = ordinary.word_spacing;
+                    normal.word_spacing_percent = ordinary.word_spacing_percent;
+                    normal.text_transform = ordinary.text_transform;
+                    normal.word_space_transform = ordinary.word_space_transform;
+                    normal.text_emphasis = ordinary.text_emphasis;
+                    normal.paint = ordinary.paint;
+
+                    builder.open_inline_with_first_line(
+                        NodeId(box_id as u64),
+                        &normal,
+                        &inline,
+                        edges,
+                    );
                     self.open_boxes += 1;
                 }
                 if let Some(error) = builder.error() {

@@ -969,3 +969,46 @@ fn generated_first_letter_slices_match_independent_inline_paint_and_geometry() {
     };
     assert!(render(&actual, &computed) == render(&reference, &reference_computed));
 }
+
+#[test]
+fn soft_wrapped_first_letter_remainder_uses_ordinary_style() {
+    for (text, wrap) in [
+        ("! A", ""),
+        ("“ A", "overflow-wrap:anywhere"),
+        ("( A", "white-space:pre-wrap"),
+    ] {
+        let sheet = format!(
+            "div{{width:20px!important;line-height:20px!important;{wrap}}} div::first-letter{{font-size:20px;color:red;background:blue;opacity:.5;text-decoration:underline}}"
+        );
+        let (doc, computed, text) = fixture(&sheet, None, text);
+        let root = doc.parent_of(text).unwrap();
+        let positioned = raikiri_dom::PositionedLines::new(&doc, &computed, root, None).unwrap();
+        let lines: Vec<_> = positioned.lines().collect();
+        assert_eq!(lines.len(), 2);
+        let sizes = glyph_sizes(&doc, &computed);
+        assert_eq!(sizes.last(), Some(&(10.0, 1)));
+        assert_eq!(sizes[0].0, 20.0);
+        assert_eq!(lines[1].runs[0].style_owner, text);
+        let rgba = pixels(&doc, &computed);
+        assert_eq!(
+            rgba.chunks_exact(4)
+                .filter(|p| *p == [0, 0, 0, 255])
+                .count(),
+            100
+        );
+        assert!(
+            doc.get_node(root)
+                .unwrap()
+                .ifc_inline_boxes()
+                .unwrap()
+                .iter()
+                .all(|piece| {
+                    piece.line == 0
+                        || !matches!(
+                            raikiri_dom::generated_content::generated_origin(piece.node),
+                            Some((_, raikiri_style::PseudoElem::FirstLetter))
+                        )
+                })
+        );
+    }
+}
