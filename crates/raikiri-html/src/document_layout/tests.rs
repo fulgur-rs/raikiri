@@ -77,6 +77,68 @@ fn completed(status: LayoutStatus) -> DocumentLayout {
 }
 
 #[test]
+fn inline_svg_attribute_dimensions_define_the_viewport_before_css_overrides() {
+    for (css, width, height) in [
+        ("", 60.0, 40.0),
+        ("width:90px", 90.0, 40.0),
+        ("height:20px", 60.0, 20.0),
+        ("width:20px;height:10px", 20.0, 10.0),
+    ] {
+        let document = dom(&format!(
+            "<style>@page {{size:200px 150px;margin:0}} body {{margin:0}} svg {{display:block;{css}}}</style><svg width='60' height='40'><rect width='60' height='40'/></svg>"
+        ));
+        let layout = completed(
+            layout(
+                &document,
+                PageDefaults::default(),
+                LayoutConfig::default(),
+                LayoutOptions::new(),
+            )
+            .unwrap(),
+        );
+        assert_eq!(layout.pages().count(), 1);
+        let page = layout.page(0).unwrap();
+        let fragment = page
+            .fragments()
+            .find(|f| page.dom().local_name(f.node()) == Some("svg"))
+            .unwrap();
+        let payload = page.inline_svg(&fragment).unwrap().unwrap();
+        assert_eq!(
+            (payload.viewport.width, payload.viewport.height),
+            (width, height)
+        );
+    }
+}
+
+#[test]
+fn inline_svg_attribute_height_paginates_with_one_original_viewport() {
+    let document = dom(
+        "<style>@page {size:200px 100px;margin:10px} body {margin:0} svg {display:block}</style><svg width='40' height='180'><rect width='40' height='180'/></svg>",
+    );
+    let layout = completed(
+        layout(
+            &document,
+            PageDefaults::default(),
+            LayoutConfig::default(),
+            LayoutOptions::new(),
+        )
+        .unwrap(),
+    );
+    assert_eq!(layout.pages().count(), 3);
+    for (index, page) in layout.pages().enumerate() {
+        let fragment = page
+            .fragments()
+            .find(|f| page.dom().local_name(f.node()) == Some("svg"))
+            .unwrap();
+        let viewport = page.inline_svg(&fragment).unwrap().unwrap().viewport;
+        assert_eq!(
+            (viewport.x, viewport.y, viewport.width, viewport.height),
+            (10.0, 10.0 - 80.0 * index as f32, 40.0, 180.0)
+        );
+    }
+}
+
+#[test]
 fn inline_svg_payload_uses_the_resolved_content_box_and_host_style() {
     let document = dom(
         "<style>@page {size:300px 200px;margin:10px} body {margin:0} svg {box-sizing:border-box;width:200px;height:120px;border:2px solid black;padding:10%;color:blue;opacity:.5}</style><svg xmlns='http://www.w3.org/2000/svg' width='200' height='120' style='display:block'><rect width='10' height='10' fill='currentColor' opacity='inherit'/></svg>",

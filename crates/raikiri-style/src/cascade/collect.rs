@@ -675,6 +675,7 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                         })
                     });
                 if is_svg_root {
+                    super::svg_hints::push_dimension_hints(&elem, &mut out.decls);
                     for (attribute, property, expected_key) in [
                         ("opacity", "opacity", crate::property::PropertyKey::Opacity),
                         (
