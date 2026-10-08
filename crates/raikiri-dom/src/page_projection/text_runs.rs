@@ -45,7 +45,7 @@ pub(super) fn prepare_markers(
         .filter_map(|root| {
             generated_origin(root.node)
                 .filter(|(_, pseudo)| *pseudo == PseudoElem::Marker)
-                .map(|(owner, _)| (owner, root))
+                .map(|(owner, _)| owner)
         })
         .collect();
     let mut markers = BTreeMap::new();
@@ -68,18 +68,20 @@ pub(super) fn prepare_markers(
             }
         }
     }
-    for (owner, root) in owners {
+    for owner in owners {
         let node = &document.nodes[owner];
         let layout = node.unrounded_layout;
-        // Loaded images take precedence over the textual fallback.
-        if document.list_marker_image(owner).is_some()
-            && cascade
-                .pseudo
-                .get(&(
-                    raikiri_style::StyleNodeId::new(owner as u64),
-                    PseudoElem::Marker,
-                ))
-                .is_none_or(|style| style.content.is_empty())
+        // Image markers need decoded-resource placement, outside this text API.
+        if matches!(
+            cascade.computed[owner].list_style_image,
+            raikiri_style::property::BackgroundImage::Url(_)
+        ) && cascade
+            .pseudo
+            .get(&(
+                raikiri_style::StyleNodeId::new(owner as u64),
+                PseudoElem::Marker,
+            ))
+            .is_none_or(|style| style.content.is_empty())
         {
             continue;
         }
@@ -105,18 +107,7 @@ pub(super) fn prepare_markers(
                     shaped: Arc::new(shaped),
                     offset_x,
                     color: style.color,
-                    first_page: first_pages.get(&owner).copied().or_else(|| {
-                        if !node.children.is_empty() {
-                            return None;
-                        }
-                        pages
-                            .iter()
-                            .find(|page| {
-                                page.flow_range
-                                    .is_some_and(|(start, end)| root.y >= start && root.y < end)
-                            })
-                            .map(|page| page.page_index)
-                    }),
+                    first_page: first_pages.get(&owner).copied(),
                 },
             );
         }
@@ -454,7 +445,7 @@ fn marker_runs<'a>(
                 continue;
             };
             let Some(font) = run.font_data() else {
-                continue;
+                continue; // cov:ignore: plain marker glyph runs shaped with the document's font set always have a face
             };
             let font_index = font.index;
             let (bytes, blob) = font.data.into_raw_parts();
@@ -479,7 +470,7 @@ fn marker_runs<'a>(
                 placed.reverse();
             }
             let Some(first) = placed.first() else {
-                continue;
+                continue; // cov:ignore: enumerated marker glyphs always have origins; empty glyph runs are a defensive engine edge
             };
             let origin = (first.0, y + line.block_offset() + run.baseline());
             let mut pen = origin.0;

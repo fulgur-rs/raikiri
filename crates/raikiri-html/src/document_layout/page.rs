@@ -241,8 +241,8 @@ impl<'a> Page<'a> {
     /// shadows are not included yet.
     /// Text list markers are included, including standalone markers of
     /// empty items. A standalone marker belongs to its item's first
-    /// principal fragment and is not repeated on continuation pages. Image
-    /// markers are not included.
+    /// principal fragment and is not repeated on continuation pages. Standalone
+    /// image markers and their resource-dependent text fallbacks are not included.
     /// A paragraph whose text is placed by geometry the runs do not model
     /// has no runs here: a vertical writing mode, a multicol container's
     /// columns, relatively positioned inline elements, a transform or

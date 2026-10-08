@@ -47,13 +47,8 @@ impl Document {
             }
             _ => padding_left - width - 4.0,
         };
-        let shaped = self.shape_standalone_text(
-            content,
-            &style,
-            Some(width),
-            crate::StandaloneAlign::Start,
-        )?;
-        Some((shaped, offset))
+        self.shape_standalone_text(content, &style, Some(width), crate::StandaloneAlign::Start)
+            .map(|shaped| (shaped, offset))
     }
 }
 

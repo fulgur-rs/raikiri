@@ -197,6 +197,8 @@ fn suppressed_markers_have_no_runs_or_events() {
         "li{list-style-type:none}",
         "li::marker{content:''}",
         "li{visibility:hidden}",
+        "li::marker{content:' '}",
+        "li{width:0;height:0}",
     ] {
         let document = lay_out("<ul><li>A</li></ul>", css);
         assert!(
@@ -206,6 +208,67 @@ fn suppressed_markers_have_no_runs_or_events() {
                 .any(|run| run.is_standalone_marker())
         );
     }
+}
+
+#[test]
+fn a_zero_sized_empty_item_still_exposes_its_marker() {
+    let document = lay_out("<ol><li></li></ol>", "li{width:0;height:0}");
+    assert!(
+        document
+            .pages()
+            .flat_map(|page| page.text_runs())
+            .any(|run| run.is_standalone_marker() && run.text.trim_end() == "1.")
+    );
+}
+
+#[test]
+fn resource_dependent_image_markers_are_excluded_but_authored_text_wins() {
+    let document = lay_out(
+        "<ul><li>A</li></ul>",
+        "li{list-style-image:url(https://example.invalid/marker.png)}",
+    );
+    assert!(
+        !document
+            .pages()
+            .flat_map(|page| page.text_runs())
+            .any(|run| run.is_standalone_marker())
+    );
+    let document = lay_out(
+        "<ul><li>A</li></ul>",
+        "li{list-style-image:url(https://example.invalid/marker.png)}li::marker{content:'X'}",
+    );
+    assert!(
+        document
+            .pages()
+            .flat_map(|page| page.text_runs())
+            .any(|run| run.is_standalone_marker() && run.text == "X")
+    );
+}
+
+#[test]
+fn right_to_left_marker_glyphs_keep_visual_order_and_byte_ranges() {
+    let document = lay_out("<ul><li>A</li></ul>", "li::marker{content:'אב'}");
+    let runs = document.page(0).unwrap().text_runs();
+    let run = runs.iter().find(|run| run.is_standalone_marker()).unwrap();
+    assert_eq!(run.text, "אב");
+    assert_eq!(
+        run.glyphs
+            .iter()
+            .map(|glyph| glyph.text_range.clone())
+            .collect::<Vec<_>>(),
+        vec![2..4, 0..2]
+    );
+    let mut pen = run.origin.0;
+    let positions: Vec<_> = run
+        .glyphs
+        .iter()
+        .map(|glyph| {
+            let x = pen + glyph.x_offset;
+            pen += glyph.advance;
+            x
+        })
+        .collect();
+    assert!(positions[0] <= positions[1]);
 }
 
 #[test]
