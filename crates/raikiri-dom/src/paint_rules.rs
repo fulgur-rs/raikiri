@@ -244,7 +244,7 @@ pub fn hides_empty_table_cell(
             NodeKind::Text => {
                 let text = node.text_content().unwrap_or("");
                 if text.chars().any(|c| {
-                    !matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{c}')
+                    !matches!(c, ' ' | '\t' | '\n' | '\r')
                         || match cv.effective_white_space_collapse {
                             WhiteSpaceCollapse::Collapse | WhiteSpaceCollapse::Discard => false,
                             WhiteSpaceCollapse::PreserveBreaks => matches!(c, '\n' | '\r'),
