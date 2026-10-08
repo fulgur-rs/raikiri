@@ -4656,6 +4656,63 @@ fn one_visible_overflow_axis_keeps_corner_content() {
 }
 
 #[test]
+fn an_open_overflow_axis_keeps_ink_beyond_the_box() {
+    for (axes, transform, inside, outside) in [
+        (
+            "overflow-x:clip;overflow-y:visible",
+            "none",
+            (30, 70),
+            (70, 30),
+        ),
+        (
+            "overflow-x:visible;overflow-y:clip",
+            "none",
+            (70, 30),
+            (30, 70),
+        ),
+        (
+            "overflow-x:clip;overflow-y:visible",
+            "scale(2)",
+            (30, 110),
+            (110, 30),
+        ),
+        (
+            "overflow-x:visible;overflow-y:clip",
+            "scale(2)",
+            (110, 30),
+            (30, 110),
+        ),
+    ] {
+        let scene = transform_markup_scene(&format!(
+            "<body style='margin:0'><div style='position:absolute;left:20px;top:20px;width:20px;height:20px;{axes};border-radius:10px;transform:{transform};transform-origin:0 0'><div style='width:60px;height:60px;background:green'></div></div></body>"
+        ));
+        let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+            |out| out.append_scene(scene, Affine::IDENTITY),
+            160,
+            160,
+        );
+        for ((x, y), expected) in [(inside, [0, 128, 0, 255]), (outside, [255; 4])] {
+            let offset = (y * 160 + x) * 4;
+            assert_eq!(&rgba[offset..offset + 4], &expected, "{axes}; {transform}");
+        }
+    }
+}
+
+#[test]
+fn body_overflow_propagated_to_the_viewport_keeps_ink_outside_the_body() {
+    let scene = transform_markup_scene(
+        "<body style='margin:0;width:20px;height:20px;overflow:hidden'><div style='width:80px;height:60px;background:green'></div></body>",
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        100,
+        80,
+    );
+    let offset = (40 * 100 + 50) * 4;
+    assert_eq!(&rgba[offset..offset + 4], &[0, 128, 0, 255]);
+}
+
+#[test]
 fn cropped_corner_paths_stay_inside_each_inner_edge() {
     use kurbo::Shape;
     for vertical_radius in [80.0, 100.0] {

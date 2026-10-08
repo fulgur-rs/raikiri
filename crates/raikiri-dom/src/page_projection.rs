@@ -7,7 +7,7 @@ pub(crate) mod text_runs;
 
 use crate::{Document, Fragment, PageContentInsets, PageMargins, PageSlice};
 use raikiri_style::CascadeResult;
-use raikiri_traits::{NodeId, PageBox, PaintRect};
+use raikiri_traits::{NodeId, PageBox, PaintInsets, PaintRect};
 use records::{
     PageFragment, PageFragmentEvent, PageFragmentInsets, PageFragmentOrientation,
     PageFragmentPageGeometry, PageFragmentRect, ProjectedTextRoot,
@@ -67,8 +67,38 @@ impl Document {
                 )
             })
             .collect();
-        let (pages, text_roots) =
+        let (mut pages, text_roots) =
             crate::layout::project_slices(self, cascade, fallback_page_box, slices, &geometries);
+        for page in &mut pages {
+            for item in &page.items {
+                if item.kind == records::PageFragmentKind::Text {
+                    continue;
+                }
+                let Ok(node_id) = usize::try_from(item.node_id.0) else {
+                    continue;
+                };
+                let Some(node) = self.get_node(node_id) else {
+                    continue;
+                };
+                let border = node.unrounded_layout.border;
+                let whole_box = PaintRect::new(
+                    page.content_box.x + item.rect.x,
+                    page.content_box.y + item.box_y,
+                    item.rect.width,
+                    item.box_height,
+                );
+                if let Some(clip) = crate::paint_rules::overflow_clip(
+                    self,
+                    cascade,
+                    node_id,
+                    whole_box,
+                    PaintInsets::new(border.top, border.right, border.bottom, border.left),
+                ) {
+                    page.overflow_clips
+                        .insert((item.node_id, item.fragment_index), clip);
+                }
+            }
+        }
         let events = crate::layout::page_fragment_events_from_pages(self, &pages);
         let mut links: Vec<Vec<(NodeId, String, Vec<PaintRect>)>> =
             pages.iter().map(|_| Vec::new()).collect();
@@ -113,9 +143,16 @@ impl Document {
             .find(|page| page.page_index == page_index)
             .into_iter()
             .flat_map(|page| {
-                page.items
-                    .iter()
-                    .map(move |item| Fragment::new(item, page.content_box))
+                page.items.iter().map(move |item| {
+                    Fragment::new(item, page.content_box).with_overflow_clip(
+                        (item.kind != records::PageFragmentKind::Text)
+                            .then(|| {
+                                page.overflow_clips
+                                    .get(&(item.node_id, item.fragment_index))
+                            })
+                            .flatten(),
+                    )
+                })
             })
     }
 

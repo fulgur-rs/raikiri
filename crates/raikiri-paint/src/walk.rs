@@ -34,8 +34,8 @@ use raikiri_style::{
     resolve_border, resolve_css_position,
 };
 use raikiri_traits::{
-    ImageIntrinsicSize, ImagePixelSource, ImageRasterSize, NodeId, NodeKind, PageBox,
-    RenderWarning, WarningKind,
+    ImageIntrinsicSize, ImagePixelSource, ImageRasterSize, NodeId, NodeKind, PageBox, PaintInsets,
+    PaintRect, RenderWarning, WarningKind,
 };
 use std::f64::consts::{FRAC_PI_2, PI};
 
@@ -4170,44 +4170,56 @@ pub(crate) fn paint_document_impl(
                 // clip origin flooring. The clip is pushed only after painting the
                 // element itself, then popped after its complete subtree via the
                 // explicit stack frame.
-                let clips_overflow = raikiri_dom::paint_rules::clips_overflow(cv);
-                if clips_overflow {
-                    let clip_right = paint_x + layout.size.width - layout.border.right;
-                    let clip_bottom = paint_y + paint_height - layout.border.bottom;
-                    let clip = Rect::new(
-                        (paint_x + layout.border.left).floor() as f64,
-                        (paint_y + layout.border.top).floor() as f64,
-                        if matches!(cv.overflow.x, OverflowValue::Clip) {
-                            clip_right.floor() as f64
-                        } else {
-                            clip_right as f64
-                        },
-                        if matches!(cv.overflow.y, OverflowValue::Clip) {
-                            clip_bottom.floor() as f64
-                        } else {
-                            clip_bottom as f64
-                        },
+                if let Some(resolved) = raikiri_dom::paint_rules::overflow_clip(
+                    document,
+                    cascade,
+                    node_id,
+                    PaintRect::new(paint_x, paint_y, layout.size.width, paint_height),
+                    PaintInsets::new(
+                        layout.border.top,
+                        layout.border.right,
+                        layout.border.bottom,
+                        layout.border.left,
+                    ),
+                ) {
+                    let mut clip = Rect::new(
+                        resolved.rect.x as f64,
+                        resolved.rect.y as f64,
+                        (resolved.rect.x + resolved.rect.width) as f64,
+                        (resolved.rect.y + resolved.rect.height) as f64,
                     );
-                    let rounded = if !matches!(cv.overflow.x, OverflowValue::Visible)
-                        && !matches!(cv.overflow.y, OverflowValue::Visible)
-                    {
-                        rounded_background_path(
+                    if !resolved.clip_x || !resolved.clip_y {
+                        // Bound an open axis by the page in the clip's local
+                        // coordinate system, including transformed ancestors.
+                        let determinant = scene.transform.determinant();
+                        let bounds = if determinant.is_finite() && determinant != 0.0 {
+                            scene.transform.inverse().transform_rect_bbox(Rect::new(
+                                0.0,
+                                0.0,
+                                page_box.width as f64,
+                                page_box.height as f64,
+                            ))
+                        } else {
+                            Rect::ZERO
+                        };
+                        if !resolved.clip_x {
+                            clip.x0 = bounds.x0;
+                            clip.x1 = bounds.x1;
+                        }
+                        if !resolved.clip_y {
+                            clip.y0 = bounds.y0;
+                            clip.y1 = bounds.y1;
+                        }
+                    }
+                    let rounded = resolved.corner_radii.map(|radii| {
+                        rounded_rect_path(
                             clip.x0,
                             clip.y0,
                             clip.x1,
                             clip.y1,
-                            &cv.border_radius,
-                            (
-                                layout.border.left as f64,
-                                layout.border.top as f64,
-                                layout.border.right as f64,
-                                layout.border.bottom as f64,
-                            ),
-                            (layout.size.width as f64, paint_height as f64),
+                            radii.map(|corner| corner.map(f64::from)),
                         )
-                    } else {
-                        None
-                    };
+                    });
                     if let Some(rounded) = rounded {
                         scene.push_clip_layer(Affine::IDENTITY, &rounded);
                     } else {

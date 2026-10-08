@@ -77,7 +77,8 @@ pub use shodo::font::FontCollection;
 
 pub use raikiri_traits::{
     ConsumerPropertyEvent, ConsumerPropertyObserver, LayoutConfig, LayoutConfigBuilder, NodeId,
-    NodeKind, PageDefaults, PaintInsets, PaintRect, RenderError, RenderWarning, WarningKind,
+    NodeKind, PageDefaults, PaintClip, PaintInsets, PaintRect, RenderError, RenderWarning,
+    WarningKind,
 };
 
 #[cfg(test)]

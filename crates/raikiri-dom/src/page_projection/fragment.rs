@@ -1,5 +1,5 @@
 use super::records::{PageFragmentItem, PageFragmentKind, PageFragmentRect};
-use raikiri_traits::{NodeId, PaintRect};
+use raikiri_traits::{NodeId, PaintClip, PaintRect};
 
 /// What a fragment places on the page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,6 +28,7 @@ pub enum RepeatKind {
 pub struct Fragment<'a> {
     item: &'a PageFragmentItem,
     origin: (f32, f32),
+    overflow_clip: Option<&'a PaintClip>,
 }
 
 impl<'a> Fragment<'a> {
@@ -35,7 +36,23 @@ impl<'a> Fragment<'a> {
         Self {
             item,
             origin: (content_box.x, content_box.y),
+            overflow_clip: None,
         }
+    }
+
+    pub(crate) fn with_overflow_clip(mut self, clip: Option<&'a PaintClip>) -> Self {
+        self.overflow_clip = clip;
+        self
+    }
+
+    /// The element's resolved padding-edge overflow clip, if it clips locally.
+    ///
+    /// This is the shape of the whole box before page cuts, in page-local
+    /// coordinates. It can extend beyond this fragment and this page. Root or
+    /// body overflow propagated to the viewport does not create a local clip.
+    /// Inline boxes and text fragments do not create local overflow clips.
+    pub fn overflow_clip(&self) -> Option<PaintClip> {
+        self.overflow_clip.copied()
     }
 
     /// The source node.

@@ -2,10 +2,10 @@
 //! built-in painter draws it.
 
 use super::records::{PageFragmentItem, PageFragmentKind};
-use crate::{Document, Fragment, Node, PositionedGlyphRun, TextLineId, paint_rules};
-use raikiri_style::property::{ColumnCountValue, OverflowValue};
-use raikiri_style::{CascadeResult, ComputedValues};
-use raikiri_traits::{NodeId, NodeKind, PaintClip, PaintRect};
+use crate::{Document, Fragment, PositionedGlyphRun, TextLineId, paint_rules};
+use raikiri_style::CascadeResult;
+use raikiri_style::property::ColumnCountValue;
+use raikiri_traits::{NodeId, NodeKind, PaintClip};
 use std::collections::{HashMap, HashSet};
 
 /// What a clip in [`PaintEvent::PushClip`] comes from.
@@ -64,6 +64,7 @@ enum Frame {
 struct PageItems<'a> {
     by_node: HashMap<usize, Vec<&'a PageFragmentItem>>,
     content_box: super::records::PageFragmentRect,
+    overflow_clips: &'a HashMap<(NodeId, u32), PaintClip>,
 }
 
 impl<'a> PageItems<'a> {
@@ -72,7 +73,14 @@ impl<'a> PageItems<'a> {
     }
 
     fn fragment(&self, item: &'a PageFragmentItem) -> Fragment<'a> {
-        Fragment::new(item, self.content_box)
+        Fragment::new(item, self.content_box).with_overflow_clip(
+            (item.kind != PageFragmentKind::Text)
+                .then(|| {
+                    self.overflow_clips
+                        .get(&(item.node_id, item.fragment_index))
+                })
+                .flatten(),
+        )
     }
 }
 
@@ -137,6 +145,7 @@ impl Document {
         let mut items = PageItems {
             by_node: HashMap::new(),
             content_box: page.content_box,
+            overflow_clips: &page.overflow_clips,
         };
         for item in &page.items {
             if let Ok(node_id) = usize::try_from(item.node_id.0) {
@@ -200,9 +209,9 @@ impl Document {
                         }
                     }
                     // The clip is the padding box of the element's whole box
-                    // (see `overflow_clip`). It opens after the element's own
+                    // resolved at projection time. It opens after the element's own
                     // box and closes after its subtree.
-                    if paint_rules::clips_overflow(cv) {
+                    if paint_rules::clips_element_overflow(self, cascade, node_id) {
                         let Some(&item) = own.first() else {
                             // The element's box is not on this page, so the
                             // painter's clip for it, built from the whole box,
@@ -212,9 +221,10 @@ impl Document {
                             continue;
                         };
                         let fragment = items.fragment(item);
-                        let clip = overflow_clip(node, cv, item, fragment);
-                        events.push(PaintEvent::PushClip(clip, ClipKind::Overflow));
-                        stack.push(Frame::PopClip);
+                        if let Some(clip) = fragment.overflow_clip() {
+                            events.push(PaintEvent::PushClip(clip, ClipKind::Overflow));
+                            stack.push(Frame::PopClip);
+                        }
                     }
                     if node.is_ifc_root() {
                         push_paragraph(self, &items, node_id, lines, &mut events);
@@ -377,37 +387,4 @@ fn push_paragraph<'a>(
             push_kind(events, node_id, PageFragmentKind::Text);
         }
     }
-}
-
-/// The padding box of the element's whole border box, snapped the way the
-/// painter snaps an overflow clip: the origin is floored so pixel-snapped
-/// descendant backgrounds are not cut by antialiasing, and an
-/// `overflow: clip` edge is floored too.
-///
-/// Like the painter's clip, it is built from the box before a page break cut
-/// it, so on a page holding only part of the box it runs past the page.
-fn overflow_clip(
-    node: &Node,
-    cv: &ComputedValues,
-    item: &PageFragmentItem,
-    fragment: Fragment<'_>,
-) -> PaintClip {
-    let rect = fragment.paint_rect();
-    let top = rect.y - item.rect.y + item.box_y;
-    let border = node.unrounded_layout.border;
-    let right = rect.x + rect.width - border.right;
-    let bottom = top + item.box_height - border.bottom;
-    let x0 = (rect.x + border.left).floor();
-    let y0 = (top + border.top).floor();
-    let x1 = if matches!(cv.overflow.x, OverflowValue::Clip) {
-        right.floor()
-    } else {
-        right
-    };
-    let y1 = if matches!(cv.overflow.y, OverflowValue::Clip) {
-        bottom.floor()
-    } else {
-        bottom
-    };
-    PaintClip::new(PaintRect::new(x0, y0, x1 - x0, y1 - y0))
 }
