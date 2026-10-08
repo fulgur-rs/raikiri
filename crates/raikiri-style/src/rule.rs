@@ -214,6 +214,26 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
             push_longhand(PropertyValue::ListStylePosition(value.position));
             push_longhand(PropertyValue::ListStyleImage(value.image.clone()));
         }
+        PropertyValue::BorderRadius(radius) => {
+            push_longhand(PropertyValue::BorderRadiusTopLeft(radius.top_left));
+            push_longhand(PropertyValue::BorderRadiusTopRight(radius.top_right));
+            push_longhand(PropertyValue::BorderRadiusBottomRight(radius.bottom_right));
+            push_longhand(PropertyValue::BorderRadiusBottomLeft(radius.bottom_left));
+        }
+        PropertyValue::BorderRadiusInherit => {
+            for (key, property) in [
+                (PropertyKey::BorderRadiusTopLeft, "border-top-left-radius"),
+                (PropertyKey::BorderRadiusTopRight, "border-top-right-radius"),
+                (PropertyKey::BorderRadiusBottomRight, "border-bottom-right-radius"),
+                (PropertyKey::BorderRadiusBottomLeft, "border-bottom-left-radius"),
+            ] {
+                push_longhand(PropertyValue::Deferred(DeferredValue {
+                    key,
+                    property: property.into(),
+                    value: "inherit".into(),
+                }));
+            }
+        }
         PropertyValue::Margin(sides) => expand_margin(sides, push_longhand),
         PropertyValue::MarginInherit => expand_margin_inherit(push_longhand),
         PropertyValue::Padding(sides) => expand_padding(sides, push_longhand),
@@ -411,8 +431,6 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         | PropertyValue::FontVariantCaps(_)
         | PropertyValue::Quotes(_)
         | PropertyValue::TextShadow(_)
-        | PropertyValue::BorderRadius(_)
-        | PropertyValue::BorderRadiusInherit
         | PropertyValue::BorderRadiusTopLeft(_)
         | PropertyValue::BorderRadiusTopRight(_)
         | PropertyValue::BorderRadiusBottomRight(_)
