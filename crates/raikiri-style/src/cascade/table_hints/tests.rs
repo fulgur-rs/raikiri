@@ -5,6 +5,8 @@ use crate::resolve::ComputedLength;
 use crate::ruletree::build_rule_tree;
 use crate::test_dom::TestDoc;
 
+mod cellpadding_scaling_tests;
+
 #[test]
 fn col_width_attribute_maps_html_dimensions_below_author_css() {
     use crate::resolve::ComputedLengthPercentageOrAuto as Width;

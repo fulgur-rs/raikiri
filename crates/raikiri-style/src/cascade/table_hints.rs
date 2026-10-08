@@ -25,6 +25,7 @@ use crate::property::{
 };
 use crate::ruletree::Origin;
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId};
+use std::collections::HashMap;
 
 use super::collect::{
     CascadedDecl, PRESENTATIONAL_HINT_SOURCE_ORDER, PRESENTATIONAL_HINT_SPECIFICITY,
@@ -35,6 +36,7 @@ pub(crate) fn push_table_attribute_hints<D: StyleDom>(
     dom: &D,
     elem: &impl StyleElement,
     ancestors: &[StyleNodeId],
+    cell_padding_cache: &mut HashMap<StyleNodeId, Option<u32>>,
     decls: &mut Vec<CascadedDecl>,
 ) {
     // The mapping belongs to the HTML namespace; `namespace_uri()` is `None`
@@ -59,10 +61,12 @@ pub(crate) fn push_table_attribute_hints<D: StyleDom>(
                 && table.namespace_uri().is_none()
                 && table.tag_name().eq_ignore_ascii_case("table")
             {
-                if let Some(padding) = table
-                    .attr("cellpadding")
-                    .and_then(parse_non_negative_integer)
-                {
+                // Cache missing and invalid values as well as valid ones for this cascade.
+                if let Some(padding) = *cell_padding_cache.entry(*ancestor).or_insert_with(|| {
+                    table
+                        .attr("cellpadding")
+                        .and_then(parse_non_negative_integer)
+                }) {
                     let px = Length::Px(padding as f32);
                     push(PropertyValue::PaddingTop(px));
                     push(PropertyValue::PaddingRight(px));

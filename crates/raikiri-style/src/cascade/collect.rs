@@ -582,6 +582,7 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
     let rule_index = RuleIndex::new(style_rules);
     let mut candidate_rules: Vec<u32> = Vec::new();
     let mut block_cache = DeclarationBlockCache::default();
+    let mut cell_padding_cache = HashMap::new();
 
     // Stack entries pair a node id with the `ancestor_path` length it should
     // be truncated to *before* that node is processed.
@@ -665,7 +666,13 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                 // `img_width_attribute_overridable_by_author_stylesheet_regardless_of_specificity`
                 // continues to check the outcome this comment claims.
                 push_img_dimension_hints(&elem, &mut out.decls);
-                push_table_attribute_hints(dom, &elem, &ancestor_path, &mut out.decls);
+                push_table_attribute_hints(
+                    dom,
+                    &elem,
+                    &ancestor_path,
+                    &mut cell_padding_cache,
+                    &mut out.decls,
+                );
                 const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
                 let is_svg_root = elem.tag_name() == "svg"
                     && elem.namespace_uri() == Some(SVG_NAMESPACE)
