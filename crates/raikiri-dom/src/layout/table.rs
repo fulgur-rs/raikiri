@@ -185,6 +185,11 @@ fn layout_table_caption(
     let style = doc.nodes[caption_id].style.clone();
     // Let block layout apply authored sizes in their box-sizing domain.
     let vertical = is_vertical_writing_mode(table_writing_mode(doc, table_idx));
+    let inline_basis = if vertical {
+        parent_height.unwrap_or(0.0)
+    } else {
+        parent_width
+    };
     let known_width = if !vertical && style.size.width.is_auto() {
         let left = super::used_style_length_percentage_auto(style.margin.left, parent_width)
             .unwrap_or(0.0);
@@ -196,10 +201,10 @@ fn layout_table_caption(
     };
     let known_height = if vertical && style.size.height.is_auto() {
         parent_height.map(|height| {
-            let top = super::used_style_length_percentage_auto(style.margin.top, parent_width)
+            let top = super::used_style_length_percentage_auto(style.margin.top, inline_basis)
                 .unwrap_or(0.0);
             let bottom =
-                super::used_style_length_percentage_auto(style.margin.bottom, parent_width)
+                super::used_style_length_percentage_auto(style.margin.bottom, inline_basis)
                     .unwrap_or(0.0);
             (height - top - bottom).max(0.0)
         })
@@ -233,14 +238,41 @@ fn layout_table_caption(
             vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
         },
     );
-    let margin_left =
-        super::used_style_length_percentage_auto(style.margin.left, parent_width).unwrap_or(0.0);
-    let margin_top =
-        super::used_style_length_percentage_auto(style.margin.top, parent_width).unwrap_or(0.0);
-    let margin_right =
-        super::used_style_length_percentage_auto(style.margin.right, parent_width).unwrap_or(0.0);
-    let margin_bottom =
-        super::used_style_length_percentage_auto(style.margin.bottom, parent_width).unwrap_or(0.0);
+    let mut margin_left =
+        super::used_style_length_percentage_auto(style.margin.left, inline_basis).unwrap_or(0.0);
+    let mut margin_top =
+        super::used_style_length_percentage_auto(style.margin.top, inline_basis).unwrap_or(0.0);
+    let mut margin_right =
+        super::used_style_length_percentage_auto(style.margin.right, inline_basis).unwrap_or(0.0);
+    let mut margin_bottom =
+        super::used_style_length_percentage_auto(style.margin.bottom, inline_basis).unwrap_or(0.0);
+    let (start, end, start_auto, end_auto, available) = if vertical {
+        (
+            &mut margin_top,
+            &mut margin_bottom,
+            style.margin.top.is_auto(),
+            style.margin.bottom.is_auto(),
+            parent_height.unwrap_or(output.size.height) - output.size.height,
+        )
+    } else {
+        (
+            &mut margin_left,
+            &mut margin_right,
+            style.margin.left.is_auto(),
+            style.margin.right.is_auto(),
+            parent_width - output.size.width,
+        )
+    };
+    let remaining = (available - *start - *end).max(0.0);
+    match (start_auto, end_auto) {
+        (true, true) => {
+            *start = remaining / 2.0;
+            *end = remaining / 2.0;
+        }
+        (true, false) => *start = remaining,
+        (false, true) => *end = remaining,
+        (false, false) => {}
+    }
     let layout = TaffyLayout {
         order: 0,
         location: Point {

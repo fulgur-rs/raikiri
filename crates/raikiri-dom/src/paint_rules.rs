@@ -212,6 +212,7 @@ pub fn hides_empty_table_cell(
                     .get(&(StyleNodeId::new(id as u64), *pseudo))
                     .is_some_and(|cv| {
                         cv.display != DisplayValue::None
+                            && cv.visibility != Visibility::Hidden
                             && !matches!(
                                 cv.position,
                                 PositionValue::Absolute | PositionValue::Fixed
@@ -238,6 +239,13 @@ pub fn hides_empty_table_cell(
             || cv.display == DisplayValue::None
             || matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
         {
+            continue;
+        }
+        if cv.visibility == Visibility::Hidden {
+            if has_generated_box(id) {
+                return false;
+            }
+            stack.extend(&node.children);
             continue;
         }
         match node.kind() {
