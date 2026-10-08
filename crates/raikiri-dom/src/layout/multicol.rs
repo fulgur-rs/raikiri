@@ -1,3 +1,5 @@
+mod break_flow;
+
 use super::*;
 
 /// Dispatch a multicolumn container through the nested fragmentation seam.
@@ -129,7 +131,8 @@ pub(crate) fn compute_multicol_layout(
             .fold(0.0_f32, f32::max);
         output.size.height = output.size.height.min(min_child_height);
     }
-    if custom_scope && inputs.run_mode == RunMode::PerformLayout {
+    let break_flow_scope = break_flow::supports(tree, index, context);
+    if (custom_scope || break_flow_scope) && inputs.run_mode == RunMode::PerformLayout {
         // Taffy's input width is normally already the content width for this
         // bridge. Correct it for authored padding/border before deriving the
         // child column width, so percentage gaps use the used content box.
@@ -139,13 +142,28 @@ pub(crate) fn compute_multicol_layout(
         if let Some(active) = tree.fragmentation_stack.last_mut() {
             *active = resolved;
         }
-        let used_height = relayout_nested_multicol_children(
-            tree,
-            node_id,
-            resolved,
-            output.size.height,
-            fragmentainer_height.is_some(),
-        );
+        let used_height = if break_flow_scope {
+            // The parent writes the container's Taffy layout only after this
+            // callback returns. Resolve the content origin from the same used
+            // percentage basis instead of reading its stale layout insets.
+            let css = &tree.nodes[index].style;
+            let basis = parent_width.unwrap_or(output.size.width).max(0.0);
+            let content_origin = Point {
+                x: multicol_resolve_inset(tree, css.padding.left, basis)
+                    + multicol_resolve_inset(tree, css.border.left, basis),
+                y: multicol_resolve_inset(tree, css.padding.top, basis)
+                    + multicol_resolve_inset(tree, css.border.top, basis),
+            };
+            break_flow::layout(tree, index, resolved, output.size, content_origin)
+        } else {
+            relayout_nested_multicol_children(
+                tree,
+                node_id,
+                resolved,
+                output.size.height,
+                fragmentainer_height.is_some(),
+            )
+        };
         if fragmentainer_height.is_none() {
             output.size.height = used_height.max(0.0);
         }

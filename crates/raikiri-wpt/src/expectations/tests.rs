@@ -797,7 +797,14 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS Overflow inherited Ahem font-metric max-width:4ch exact slice (+1).
     // + CSS2 table baseline, bottom caption and empty-cell exact slice (+18).
     // + CSS Color contextual background and color-mix exact references (+5).
-    assert_eq!(set.baseline.entries.len(), 1467);
+
+    // + CSS Break between-box page/column avoidance exact slice (+15).
+    assert_eq!(set.baseline.entries.len(), 1482);
+    for index in 0..15 {
+        let id = format!("css/css-break/break-between-avoid-{index:03}.html");
+        assert!(set.baseline.entries.contains(id.as_str()));
+    }
+
     assert!(
         set.baseline
             .entries
