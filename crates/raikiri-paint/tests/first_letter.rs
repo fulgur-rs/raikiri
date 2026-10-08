@@ -32,6 +32,58 @@ fn scene_pixels(scene: Scene) -> Vec<u8> {
 }
 
 #[test]
+fn inside_text_marker_keeps_its_ink_with_and_without_first_letter_opacity() {
+    for opacity in [false, true] {
+        let sheet = if opacity {
+            "li::first-letter{color:red;opacity:.5}"
+        } else {
+            ""
+        };
+        let (mut doc, _, empty) = fixture(sheet, None, "");
+        let root = doc.parent_of(empty).unwrap();
+        let ol = doc.append_element(
+            Some(root),
+            "ol",
+            Style::default(),
+            Some("display:block;list-style:decimal-leading-zero inside"),
+        );
+        let li = doc.append_element(Some(ol), "li", Style::default(), Some("display:list-item"));
+        doc.append_text(li, "XX");
+        let (mut reference, _, prefix) = fixture("", None, "01. ");
+        let reference_root = reference.parent_of(prefix).unwrap();
+        let first = reference.append_element(
+            Some(reference_root),
+            "span",
+            Style::default(),
+            Some(if opacity {
+                "color:#ff7f7f"
+            } else {
+                "color:black"
+            }),
+        );
+        reference.append_text(first, "X");
+        reference.append_text(reference_root, "X");
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 80.0;
+        doc.mark_in_document_flags();
+        reference.mark_in_document_flags();
+        let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        let reference_cv = cascade(&reference, &build_rule_tree(&reference)).unwrap();
+        layout_single_page(&mut doc, &computed, page).unwrap();
+        layout_single_page(&mut reference, &reference_cv, page).unwrap();
+        let rgba = pixels(&doc, &computed);
+        assert_eq!(rgba, pixels(&reference, &reference_cv));
+        assert_eq!(
+            rgba.chunks_exact(4)
+                .filter(|pixel| *pixel == [0, 0, 0, 255])
+                .count(),
+            if opacity { 400 } else { 500 }
+        );
+    }
+}
+
+#[test]
 fn nested_first_letter_opacity_keeps_each_group_and_remainder_separate() {
     let (doc, computed, _) = fixture(
         "body::first-letter{opacity:.5} div::first-letter{font-size:20px;color:red;background:blue;opacity:.5}",

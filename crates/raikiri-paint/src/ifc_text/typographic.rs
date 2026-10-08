@@ -193,6 +193,10 @@ fn cached_group(
         }
         #[cfg(test)]
         PARENT_GROUP_VISITS.with(|visits| visits.set(visits.get() + 1));
+        // Nested marker fragments can share an id and form an alias cycle.
+        // Mark the path before following parents, then replace it with any
+        // active group reached below; all active groups were seeded earlier.
+        cache.insert(id, None);
         path.push(id);
         match parents.get(&id).copied().flatten() {
             Some(parent) => id = parent,
