@@ -793,10 +793,10 @@ impl SpecifiedValues {
             // covers border-image, so do not restore 5.x here merely for "consistency".
             border: Sides::all(INITIAL_BORDER),
             border_radius: BorderRadius {
-                top_left: Length::Px(0.0),
-                top_right: Length::Px(0.0),
-                bottom_right: Length::Px(0.0),
-                bottom_left: Length::Px(0.0),
+                top_left: Length::Px(0.0).into(),
+                top_right: Length::Px(0.0).into(),
+                bottom_right: Length::Px(0.0).into(),
+                bottom_left: Length::Px(0.0).into(),
             },
             box_shadow: empty_box_shadow_list(),
             outline: Outline {
@@ -1283,10 +1283,10 @@ impl SpecifiedValues {
             margin: Sides::all(LengthOrAuto::Length(Length::Px(0.0))),
             border: Sides::all(INITIAL_BORDER),
             border_radius: BorderRadius {
-                top_left: Length::Px(0.0),
-                top_right: Length::Px(0.0),
-                bottom_right: Length::Px(0.0),
-                bottom_left: Length::Px(0.0),
+                top_left: Length::Px(0.0).into(),
+                top_right: Length::Px(0.0).into(),
+                bottom_right: Length::Px(0.0).into(),
+                bottom_left: Length::Px(0.0).into(),
             },
             box_shadow: empty_box_shadow_list(),
             outline: Outline {

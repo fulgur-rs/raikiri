@@ -26,7 +26,7 @@
 //! type; that is a breaking change for code that names the variant payloads.
 
 pub use crate::computed::ComputedValues;
-pub use crate::property::{CssColor, Sides};
+pub use crate::property::{CornerRadius, CssColor, Sides};
 pub use crate::resolve::{
     ComputedBackgroundSize, ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem,
     ComputedCssPosition, ComputedCssPositionOffset, ComputedLength, ComputedLengthPercentage,

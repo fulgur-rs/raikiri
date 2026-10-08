@@ -1093,13 +1093,13 @@ pub fn lift_text_shadow_item(computed: ComputedTextShadow) -> TextShadowItem {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ComputedBorderRadius {
     /// Top-left corner radius.
-    pub top_left: ComputedLengthPercentage,
+    pub top_left: crate::property::CornerRadius<ComputedLengthPercentage>,
     /// Top-right corner radius.
-    pub top_right: ComputedLengthPercentage,
+    pub top_right: crate::property::CornerRadius<ComputedLengthPercentage>,
     /// Bottom-right corner radius.
-    pub bottom_right: ComputedLengthPercentage,
+    pub bottom_right: crate::property::CornerRadius<ComputedLengthPercentage>,
     /// Bottom-left corner radius.
-    pub bottom_left: ComputedLengthPercentage,
+    pub bottom_left: crate::property::CornerRadius<ComputedLengthPercentage>,
 }
 
 impl ComputedBorderRadius {
@@ -1107,10 +1107,10 @@ impl ComputedBorderRadius {
     pub fn all(value: ComputedLength) -> Self {
         let value = ComputedLengthPercentage::Px(value.0);
         Self {
-            top_left: value,
-            top_right: value,
-            bottom_right: value,
-            bottom_left: value,
+            top_left: value.into(),
+            top_right: value.into(),
+            bottom_right: value.into(),
+            bottom_left: value.into(),
         }
     }
 
@@ -1122,11 +1122,78 @@ impl ComputedBorderRadius {
         bottom_left: ComputedLengthPercentage,
     ) -> Self {
         Self {
-            top_left,
-            top_right,
-            bottom_right,
-            bottom_left,
+            top_left: crate::property::CornerRadius::circular(top_left),
+            top_right: crate::property::CornerRadius::circular(top_right),
+            bottom_right: crate::property::CornerRadius::circular(bottom_right),
+            bottom_left: crate::property::CornerRadius::circular(bottom_left),
         }
+    }
+
+    /// Build four corners from independent horizontal and vertical axes.
+    pub const fn elliptical(
+        horizontal: [ComputedLengthPercentage; 4],
+        vertical: [ComputedLengthPercentage; 4],
+    ) -> Self {
+        Self {
+            top_left: crate::property::CornerRadius::new(horizontal[0], vertical[0]),
+            top_right: crate::property::CornerRadius::new(horizontal[1], vertical[1]),
+            bottom_right: crate::property::CornerRadius::new(horizontal[2], vertical[2]),
+            bottom_left: crate::property::CornerRadius::new(horizontal[3], vertical[3]),
+        }
+    }
+
+    /// Resolve clockwise corner pairs against the border-box width and height.
+    ///
+    /// Percentages use their corresponding axis. CSS Backgrounds 3 §4.5
+    /// scales every radius by the same factor when adjacent corners exceed
+    /// an edge. A zero on either axis makes that corner square. Negative or
+    /// non-finite dimensions and radii are treated as zero.
+    pub fn used(&self, width: f32, height: f32) -> [[f32; 2]; 4] {
+        let finite_non_negative = |value: f64| {
+            if value.is_finite() {
+                value.max(0.0)
+            } else {
+                0.0
+            }
+        };
+        let width = finite_non_negative(width as f64);
+        let height = finite_non_negative(height as f64);
+        let axis = |value: ComputedLengthPercentage, reference: f64| {
+            finite_non_negative(match value {
+                ComputedLengthPercentage::Px(px) => px as f64,
+                ComputedLengthPercentage::Percent(percent) => reference * percent as f64 / 100.0,
+            })
+        };
+        let radii = [
+            self.top_left,
+            self.top_right,
+            self.bottom_right,
+            self.bottom_left,
+        ]
+        .map(|corner| {
+            let x = axis(corner.horizontal, width);
+            let y = axis(corner.vertical, height);
+            if x == 0.0 || y == 0.0 {
+                [0.0; 2]
+            } else {
+                [x, y]
+            }
+        });
+        let scale = [
+            (width, radii[0][0] + radii[1][0]),
+            (width, radii[3][0] + radii[2][0]),
+            (height, radii[0][1] + radii[3][1]),
+            (height, radii[1][1] + radii[2][1]),
+        ]
+        .into_iter()
+        .fold(1.0_f64, |scale, (edge, sum)| {
+            if sum > 0.0 {
+                scale.min(edge / sum)
+            } else {
+                scale
+            }
+        });
+        radii.map(|[x, y]| [(x * scale) as f32, (y * scale) as f32])
     }
 }
 
@@ -1271,10 +1338,10 @@ pub fn resolve_border_radius(
         ),
     };
     ComputedBorderRadius {
-        top_left: resolve_corner(specified.top_left),
-        top_right: resolve_corner(specified.top_right),
-        bottom_right: resolve_corner(specified.bottom_right),
-        bottom_left: resolve_corner(specified.bottom_left),
+        top_left: specified.top_left.map(resolve_corner),
+        top_right: specified.top_right.map(resolve_corner),
+        bottom_right: specified.bottom_right.map(resolve_corner),
+        bottom_left: specified.bottom_left.map(resolve_corner),
     }
 }
 

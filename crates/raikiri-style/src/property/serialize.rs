@@ -65,12 +65,20 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::BorderRightWidth(l)
         | PropertyValue::BorderBottomWidth(l)
         | PropertyValue::BorderLeftWidth(l)
-        | PropertyValue::BorderRadiusTopLeft(l)
-        | PropertyValue::BorderRadiusTopRight(l)
-        | PropertyValue::BorderRadiusBottomRight(l)
-        | PropertyValue::BorderRadiusBottomLeft(l)
         | PropertyValue::OutlineWidth(l)
         | PropertyValue::OutlineOffset(l) => Some(serialize_length(l)),
+
+        PropertyValue::BorderRadiusTopLeft(corner)
+        | PropertyValue::BorderRadiusTopRight(corner)
+        | PropertyValue::BorderRadiusBottomRight(corner)
+        | PropertyValue::BorderRadiusBottomLeft(corner) => {
+            let horizontal = serialize_length(&corner.horizontal);
+            Some(if corner.horizontal == corner.vertical {
+                horizontal
+            } else {
+                format!("{horizontal} {}", serialize_length(&corner.vertical))
+            })
+        }
 
         PropertyValue::BorderTopWidthCssWide(kw)
         | PropertyValue::BorderRightWidthCssWide(kw)
