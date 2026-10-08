@@ -1012,3 +1012,33 @@ fn soft_wrapped_first_letter_remainder_uses_ordinary_style() {
         );
     }
 }
+
+#[test]
+fn empty_generated_ancestor_and_converted_breaks_paint_the_real_letter() {
+    for (sheet, text) in [
+        (
+            "body::before{content:attr(missing)} body::first-letter{font-size:20px;color:red}",
+            "A",
+        ),
+        (
+            "div{white-space-collapse:preserve-spaces} div::first-letter{font-size:20px;color:red}",
+            "\nA",
+        ),
+    ] {
+        let (doc, computed, _) = fixture(sheet, None, text);
+        assert!(glyph_sizes(&doc, &computed).contains(&(20.0, 1)));
+        let rgba = pixels(&doc, &computed);
+        assert_eq!(
+            rgba.chunks_exact(4)
+                .filter(|pixel| *pixel == [255, 0, 0, 255])
+                .count(),
+            400
+        );
+        assert_eq!(
+            rgba.chunks_exact(4)
+                .filter(|pixel| *pixel == [0, 0, 0, 255])
+                .count(),
+            0
+        );
+    }
+}

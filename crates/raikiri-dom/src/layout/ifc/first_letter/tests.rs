@@ -563,6 +563,7 @@ fn first_letter_predecessor_work_is_bounded_across_many_ifc_roots() {
     });
     PREDECESSOR_VISITS.with(|visits| visits.set(0));
     let predecessors = PredecessorCache::default();
+    let counters = super::super::projection::GeneratedCounters::default();
     for (index, root) in roots.into_iter().enumerate() {
         let letter = FirstLetter::new_with_predecessors(
             &fixture.doc,
@@ -570,7 +571,9 @@ fn first_letter_predecessor_work_is_bounded_across_many_ifc_roots() {
             root,
             &Limits::default(),
             &predecessors,
-        );
+            &counters,
+        )
+        .unwrap();
         assert_eq!(
             letter.origins,
             if index == 0 {
@@ -707,6 +710,119 @@ fn ancestor_letter_projection(fixture: &Fixture, root: usize) -> Vec<LetterStyle
     )
     .unwrap()
     .letter_styles
+}
+
+#[test]
+fn review_empty_generated_ancestors_and_predecessors_leave_the_letter_eligible() {
+    for content in ["''", "attr(missing)", "no-open-quote", "no-close-quote"] {
+        for ancestor in [true, false] {
+            let target = if ancestor { "div" } else { "span" };
+            let sheet = format!(
+                "div::first-letter{{font-size:20px}} {target}::before{{content:{content}}}"
+            );
+            let mut text = 0;
+            let mut child = 0;
+            let fixture = sheet_fixture(&sheet, "", |doc, root| {
+                if !ancestor {
+                    doc.append_element(
+                        Some(root),
+                        "span",
+                        taffy::Style::default(),
+                        Some("display:contents"),
+                    );
+                }
+                child = doc.append_element(
+                    Some(root),
+                    "p",
+                    taffy::Style::default(),
+                    Some("display:block"),
+                );
+                text = doc.append_text(child, "A");
+            });
+            let selected = ancestor_letter_projection(&fixture, child);
+            assert_eq!(selected.len(), 1, "{content}: ancestor={ancestor}");
+            assert_eq!(selected[0].source_owner, text);
+            assert_eq!(selected[0].source_range, Some(0..1));
+        }
+    }
+}
+
+#[test]
+fn review_preserve_spaces_converts_initial_segment_breaks_before_letter_selection() {
+    for text in ["\nA", "\tA", "\r\nA"] {
+        let fixture = sheet_fixture(
+            "div::first-letter{font-size:20px}",
+            "white-space-collapse:preserve-spaces",
+            |doc, root| {
+                doc.append_text(root, text);
+            },
+        );
+        let selected = ancestor_letter_projection(&fixture, fixture.root);
+        assert_eq!(selected.len(), 1, "{text:?}");
+        assert_eq!(selected[0].source_owner, first_text(&fixture));
+        assert_eq!(
+            selected[0].source_range,
+            Some((text.len() as u32 - 1)..text.len() as u32)
+        );
+    }
+}
+
+#[test]
+fn review_resolved_nonempty_generated_predecessors_still_block_ancestor_letters() {
+    for content in ["'B'", "attr(title)", "counter(section)", "open-quote"] {
+        for ancestor in [true, false] {
+            let target = if ancestor { "div" } else { "span" };
+            let sheet = format!(
+                "div::first-letter{{font-size:20px}} {target}::before{{content:{content}}}"
+            );
+            let mut child = 0;
+            let fixture = sheet_fixture(&sheet, "", |doc, root| {
+                let owner = if ancestor {
+                    root
+                } else {
+                    doc.append_element(
+                        Some(root),
+                        "span",
+                        taffy::Style::default(),
+                        Some("display:contents"),
+                    )
+                };
+                doc.set_element_attributes(owner, vec![("title".into(), "B".into())]);
+                child = doc.append_element(
+                    Some(root),
+                    "p",
+                    taffy::Style::default(),
+                    Some("display:block"),
+                );
+                doc.append_text(child, "A");
+            });
+            assert!(ancestor_letter_projection(&fixture, child).is_empty());
+        }
+    }
+}
+
+#[test]
+fn review_empty_atomic_generated_text_does_not_split_the_selected_unit() {
+    for pseudo in ["before", "after"] {
+        let mut owners = Vec::new();
+        let fixture = sheet_fixture(
+            &format!(
+                "div::first-letter{{font-size:20px}} span::{pseudo}{{display:inline-block;content:attr(missing)}}"
+            ),
+            "",
+            |doc, root| {
+                owners.push(doc.append_text(root, "("));
+                doc.append_element(Some(root), "span", taffy::Style::default(), None::<&str>);
+                owners.push(doc.append_text(root, "A"));
+            },
+        );
+        let selected = ancestor_letter_projection(&fixture, fixture.root);
+        assert_eq!(selected.len(), 2, "{pseudo}");
+        assert_eq!(selected[0].source_owner, owners[0]);
+        assert_eq!(selected[1].source_owner, owners[1]);
+        assert_eq!(selected[0].source_range, Some(0..1));
+        assert_eq!(selected[1].source_range, Some(0..1));
+    }
 }
 
 #[test]
@@ -905,6 +1021,7 @@ fn review_empty_inline_subtree_work_stays_document_bounded() {
     });
     PREDECESSOR_VISITS.with(|visits| visits.set(0));
     let predecessors = PredecessorCache::default();
+    let counters = super::super::projection::GeneratedCounters::default();
     for (index, root) in roots.into_iter().enumerate() {
         let letter = FirstLetter::new_with_predecessors(
             &fixture.doc,
@@ -912,7 +1029,9 @@ fn review_empty_inline_subtree_work_stays_document_bounded() {
             root,
             &Limits::default(),
             &predecessors,
-        );
+            &counters,
+        )
+        .unwrap();
         assert_eq!(
             letter.origins,
             if index == 0 {
