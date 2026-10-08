@@ -22,6 +22,15 @@ pub(crate) struct LetterStyle {
     pub(crate) computed: ComputedValues,
 }
 
+fn preserves_segment_breaks(computed: &ComputedValues) -> bool {
+    !matches!(
+        computed.effective_white_space_collapse,
+        WhiteSpaceCollapse::Collapse
+            | WhiteSpaceCollapse::Discard
+            | WhiteSpaceCollapse::PreserveSpaces
+    )
+}
+
 pub(crate) struct FirstLetter {
     origin: usize,
     origins: Vec<usize>,
@@ -168,7 +177,7 @@ impl FirstLetter {
         let mut joined = String::new();
         let mut pieces = Vec::new();
         while let Some(visit) = stack.pop() {
-            let (id, value, barrier) = match visit {
+            let (id, value, barrier, source_preserves_breaks) = match visit {
                 Visit::Pseudo(id, pseudo) => {
                     if !crate::generated_content::is_in_flow_generated_text(cascade, id, pseudo) {
                         continue;
@@ -191,6 +200,7 @@ impl FirstLetter {
                         generated_node_id(id, pseudo),
                         std::borrow::Cow::Owned(value),
                         !matches!(cv.display, DisplayValue::Inline | DisplayValue::Contents),
+                        preserves_segment_breaks(cv),
                     )
                 }
                 Visit::Enter(id) => {
@@ -200,6 +210,9 @@ impl FirstLetter {
                             id,
                             std::borrow::Cow::Borrowed(node.text_content().unwrap_or("")),
                             false,
+                            preserves_segment_breaks(
+                                &cascade.computed[doc.parent_of(id).unwrap_or(id)],
+                            ),
                         ),
                         NodeKind::Element => {
                             let cv = &cascade.computed[id];
@@ -265,17 +278,30 @@ impl FirstLetter {
                 }));
             }
             let start = joined.len();
-            joined.push_str(value);
+            // Collapse only the scan copy, preserving every source byte offset.
+            // Preserved segment breaks stay barriers even across owner changes.
+            let preserve = if id == owner {
+                preserve_breaks
+            } else {
+                source_preserves_breaks
+            };
+            joined.extend(value.chars().map(|ch| {
+                if !preserve && matches!(ch, '\t' | '\n' | '\r') {
+                    ' '
+                } else {
+                    ch
+                }
+            }));
             pieces.push((id, start..joined.len()));
             self.checked_through = Some(id);
             if barrier
-                || shodo::first_letter_range(&joined, preserve_breaks)
+                || shodo::first_letter_range(&joined, true)
                     .is_some_and(|range| range.end < joined.len())
             {
                 break;
             }
         }
-        let Some(range) = shodo::first_letter_range(&joined, preserve_breaks) else {
+        let Some(range) = shodo::first_letter_range(&joined, true) else {
             return Ok(None);
         };
         for (id, piece) in pieces.iter().skip(1) {
@@ -347,12 +373,7 @@ impl FirstLetter {
         {
             self.checked_through = None;
         }
-        let preserve_breaks = !matches!(
-            parent.effective_white_space_collapse,
-            WhiteSpaceCollapse::Collapse
-                | WhiteSpaceCollapse::Discard
-                | WhiteSpaceCollapse::PreserveSpaces
-        );
+        let preserve_breaks = preserves_segment_breaks(parent);
         let source_owner = match source {
             TextSource::Dom { node, .. } | TextSource::Generated { node } => node.0 as usize,
         };

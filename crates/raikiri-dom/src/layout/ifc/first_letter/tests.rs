@@ -1115,3 +1115,84 @@ fn review_empty_ordinary_generated_text_keeps_adjacent_source_continuations() {
         }
     }
 }
+
+#[test]
+fn review_adjacent_owners_use_their_own_segment_break_modes() {
+    for (first_mode, second_mode, selected) in [
+        ("pre", "normal", true),
+        ("normal", "normal", true),
+        ("normal", "pre", false),
+        ("pre", "pre", false),
+    ] {
+        for generated in [false, true] {
+            let mut owners = Vec::new();
+            let fixture = sheet_fixture(
+                &format!(
+                    "div::first-letter{{font-size:20px}} span#second::before{{content:{};white-space:{second_mode}}}",
+                    if generated { "'\\A A'" } else { "none" }
+                ),
+                "",
+                |doc, root| {
+                    let first = doc.append_element(
+                        Some(root),
+                        "span",
+                        taffy::Style::default(),
+                        Some(&format!("white-space:{first_mode}")),
+                    );
+                    owners.push(doc.append_text(first, "“"));
+                    let second = doc.append_element(
+                        Some(root),
+                        "span",
+                        taffy::Style::default(),
+                        Some(&format!("white-space:{second_mode}")),
+                    );
+                    doc.set_element_attributes(second, vec![("id".into(), "second".into())]);
+                    if generated {
+                        owners.push(generated_node_id(second, PseudoElem::Before));
+                    } else {
+                        owners.push(doc.append_text(second, "\nA"));
+                    }
+                },
+            );
+            let mut cx = LayoutContext::new();
+            let projected = super::super::projection::project_ifc(
+                &fixture.doc,
+                &fixture.cascade,
+                fixture.root,
+                &mut cx,
+                &ahem_fonts(),
+                &Limits::default(),
+            )
+            .unwrap();
+            let lines = projected.paragraph.break_all(
+                &mut cx,
+                &projected.options,
+                200.0,
+                &AtomicSizes::EMPTY,
+            );
+            for owner in &owners {
+                assert!(lines.iter().flat_map(glyph_runs).any(|run| {
+                    matches!(run.source(), Some(TextSource::Dom { node, .. }) if node.0 as usize == *owner)
+                        && run.font_size() == if selected { 20.0 } else { 10.0 }
+                }), "owner={owner} first={first_mode} second={second_mode} generated={generated}");
+            }
+            let styles = projected.letter_styles;
+            assert_eq!(
+                styles.len(),
+                if selected { 2 } else { 0 },
+                "first={first_mode} second={second_mode} generated={generated}"
+            );
+            if selected {
+                assert_eq!(styles[0].source_owner, owners[0]);
+                assert_eq!(styles[0].source_range, Some(0..3));
+                assert_eq!(styles[1].source_owner, owners[1]);
+                assert_eq!(styles[1].source_range, Some(0..2));
+                assert!(
+                    styles
+                        .iter()
+                        .all(|style| style.computed.font_size.px() == 20.0)
+                );
+            }
+        }
+    }
+}
