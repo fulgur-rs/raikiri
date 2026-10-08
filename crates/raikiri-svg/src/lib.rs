@@ -3075,8 +3075,9 @@ fn freeze_svg_stylesheet_selectors(
 // consumers while freezing only the qualified rules SimpleCSS matched: at-rules
 // verbatim, and each style rule with such an entry whole, wrapped in
 // `@media all`, so neither SimpleCSS nor the later stylesheet rewrites match its
-// selectors against the rewritten source. SimpleCSS must skip each retained
-// item as one at-rule; anything else could expose or swallow nearby rules.
+// selectors against the rewritten source. Each retained item must end at the
+// same byte for SimpleCSS and for those rewrites; anything else could expose
+// or swallow nearby rules.
 fn retain_unfrozen_svg_css(
     source: &str,
     budget: &mut SelectorFreezeBudget,
@@ -3112,7 +3113,7 @@ fn retain_unfrozen_svg_css(
                 }
             }
             let raw = parser.slice_from(start);
-            if simplecss_skips_at_rule_exactly(raw) {
+            if retained_css_is_delimited(raw, budget)? {
                 budget.bytes(raw.len().saturating_add(1))?;
                 retained.push_str(raw);
                 retained.push('\n');
@@ -3172,7 +3173,7 @@ fn retain_unfrozen_svg_css(
         let wrapped = format!("@media all {{ {raw} }}");
         // The wrapper adds a nesting level that the exported-source reference
         // check must still accept.
-        if simplecss_skips_at_rule_exactly(&wrapped)
+        if retained_css_is_delimited(&wrapped, budget)?
             && reject_external_css_references(&wrapped).is_ok()
         {
             retained.push_str(&wrapped);
@@ -3180,6 +3181,47 @@ fn retain_unfrozen_svg_css(
         }
     }
     Ok(retained)
+}
+
+// cssparser, which the stylesheet rewrites use, keeps an unterminated string,
+// comment or block open until the end of the text, so an at-rule that follows
+// the item must stay outside it.
+fn retained_css_is_delimited(
+    item: &str,
+    budget: &mut SelectorFreezeBudget,
+) -> Result<bool, SvgError> {
+    if !simplecss_skips_at_rule_exactly(item) {
+        return Ok(false);
+    }
+    budget.bytes(item.len().saturating_add(4))?;
+    let text = format!("{item}\n@a;");
+    let mut input = cssparser::ParserInput::new(&text);
+    let mut parser = cssparser::Parser::new(&mut input);
+    loop {
+        match parser.next_including_whitespace_and_comments() {
+            Ok(cssparser::Token::Semicolon) => break,
+            Ok(cssparser::Token::CurlyBracketBlock) => {
+                skip_css_block(&mut parser);
+                break;
+            }
+            Ok(_) => {}
+            Err(_) => return Ok(false),
+        }
+    }
+    Ok(parser.position().byte_index() == item.len()
+        && matches!(
+            parser.next_including_whitespace_and_comments(),
+            Ok(cssparser::Token::WhiteSpace(_))
+        )
+        && matches!(
+            parser.next_including_whitespace_and_comments(),
+            Ok(cssparser::Token::AtKeyword(name)) if &**name == "a"
+        )
+        && matches!(
+            parser.next_including_whitespace_and_comments(),
+            Ok(cssparser::Token::Semicolon)
+        )
+        && parser.next_including_whitespace_and_comments().is_err())
 }
 
 // SimpleCSS reads `@`, an optional `-` and a name start, skips to the first `;`

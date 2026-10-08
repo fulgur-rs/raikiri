@@ -2138,6 +2138,10 @@ fn css_retention_skips_text_simplecss_would_not_skip_exactly() {
         "@unknown \"a;b{c\";",
         "@unfinished",
         "@--custom { }",
+        // Closed for a brace count, but open for cssparser.
+        "rect:is(.a) { content:\"}\"",
+        "@media print { rect { content:\"}\" }",
+        "@x /* ;",
     ] {
         assert_eq!(
             super::retain_unfrozen_svg_css(stylesheet, &mut budget).unwrap(),
@@ -2274,6 +2278,43 @@ fn source_with_descendant_styles(
         },
         styles,
     )
+}
+
+#[test]
+fn retained_css_that_cssparser_leaves_open_does_not_hide_later_scoped_rules() {
+    // A `}` in a string or comment closes these unterminated items for a brace
+    // count only. Retained, they would hide the scoped rule appended by the
+    // descendant pass from the root pass, so `color:blue !important` reached
+    // the root.
+    for tail in [
+        "rect:is(.a) { content:\"}\"",
+        "rect:is(.a) { /* } */",
+        "@media print { rect { content:\"}\" }",
+    ] {
+        let source = format!(
+            "<svg xmlns='{SVG_NAMESPACE}' width='20' height='10'><style>svg {{ color: blue !important }} {tail}</style><g/><rect width='10' height='10' fill='currentColor'/></svg>"
+        );
+        let prepared = source_with_descendant_styles(
+            source.as_bytes(),
+            &[super::SvgElementStyle {
+                element_index: 2,
+                declarations: "color:rgba(0,128,0,1)!important",
+            }],
+        )
+        .unwrap();
+        let image = SvgDocument::parse(prepared.as_bytes())
+            .unwrap()
+            .rasterize(
+                SvgViewport {
+                    width: 20.0,
+                    height: 10.0,
+                },
+                SvgRootStyle::default(),
+                None,
+            )
+            .unwrap();
+        assert_eq!(&image.rgba[..4], &[0, 0, 0, 255], "{tail}: {prepared}");
+    }
 }
 
 #[test]
