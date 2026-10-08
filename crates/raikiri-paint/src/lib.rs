@@ -495,7 +495,7 @@ pub enum PaintTraceEvent {
     Box(usize),
     /// The content of a replaced element (`<img>`, `<canvas>`, inline `<svg>`).
     Replaced(usize),
-    /// The lines of a paragraph root.
+    /// The lines of a paragraph root, or an anonymous cell's real source owner.
     Text(usize),
 }
 

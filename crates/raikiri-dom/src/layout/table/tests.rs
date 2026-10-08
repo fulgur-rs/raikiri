@@ -8,6 +8,52 @@ use taffy::style::{Dimension, LengthPercentage, LengthPercentageAuto};
 use taffy::{AvailableSpace, LayoutInput, Rect, Size, Style};
 
 #[test]
+fn anonymous_block_direction_reaches_the_native_callback() {
+    for direction in ["ltr", "rtl"] {
+        let mut doc = Document::new();
+        let table = doc.append_element(
+            Some(0),
+            "div",
+            Style::default(),
+            Some(
+                format!("display:table;width:100px;border-spacing:0;direction:{direction}")
+                    .as_str(),
+            ),
+        );
+        let row = doc.append_element(
+            Some(table),
+            "div",
+            Style::default(),
+            Some("display:table-row"),
+        );
+        let block = doc.append_element(
+            Some(row),
+            "div",
+            Style::default(),
+            Some("display:block;width:20px;height:10px"),
+        );
+        doc.mark_in_document_flags();
+        let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
+        assert!(doc.ifc.is_none());
+        let mut inputs = column_probe_input();
+        inputs.known_dimensions.width = Some(100.0);
+        let output = super::compute_table_layout(&mut doc, taffy::NodeId::from(table), inputs);
+        assert_eq!(
+            output.size,
+            Size {
+                width: 100.0,
+                height: 10.0
+            }
+        );
+        assert_eq!(
+            doc.nodes[block].unrounded_layout.location.x,
+            if direction == "rtl" { 80.0 } else { 0.0 }
+        );
+    }
+}
+
+#[test]
 fn anonymous_blocks_keep_source_coordinates_in_the_table_callback_without_fonts() {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));

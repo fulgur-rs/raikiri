@@ -123,6 +123,7 @@ fn anonymous_prototype(doc: &Document, owner: usize) -> Node {
     node.flags
         .remove(NodeFlags::IS_IFC_ROOT | NodeFlags::IN_IFC_SUBTREE);
     node.style.display = taffy::Display::Block;
+    node.style.direction = source.style.direction;
     node.display = DisplayValue::TableCell;
     node.border_collapse = source.border_collapse;
     node.border_spacing = source.border_spacing;

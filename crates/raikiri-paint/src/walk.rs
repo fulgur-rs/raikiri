@@ -3344,6 +3344,12 @@ pub(crate) fn paint_document_impl(
                 if let Some(clip) = &clip {
                     scene.scene.push_clip_layer(Affine::IDENTITY, clip);
                 }
+                if let Some(events) = trace.as_deref_mut()
+                    && raikiri_dom::PositionedLines::new(document, cascade, key, fragmentainer)
+                        .is_some_and(|lines| lines.lines().any(|line| !line.runs.is_empty()))
+                {
+                    events.push(crate::PaintTraceEvent::Text(document.ifc_source_owner(key)));
+                }
                 crate::ifc_text::draw_ifc_lines(
                     scene,
                     document,

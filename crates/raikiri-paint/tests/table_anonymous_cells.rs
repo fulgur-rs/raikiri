@@ -84,6 +84,320 @@ fn assert_exact_pixels(actual: Vec<u8>, expected: Vec<u8>) {
 }
 
 #[test]
+fn anonymous_block_cells_inherit_direction_and_rebuild() {
+    for owner_kind in ["table", "group", "row"] {
+        for direction in ["ltr", "rtl"] {
+            let (mut doc, body) = document();
+            let table = element(
+                &mut doc,
+                body,
+                &format!(
+                    "display:table;width:100px;table-layout:fixed;border-spacing:0;direction:{direction}"
+                ),
+            );
+            let owner = match owner_kind {
+                "group" => element(&mut doc, table, "display:table-row-group"),
+                "row" => element(&mut doc, table, "display:table-row"),
+                _ => table,
+            };
+            let block = element(
+                &mut doc,
+                owner,
+                "display:block;width:20px;height:10px;background:green",
+            );
+            let left = if direction == "rtl" { 80.0 } else { 0.0 };
+            let computed = layout(&mut doc);
+            assert_eq!(
+                doc.get_node(block).unwrap().unrounded_layout.location.x,
+                left
+            );
+            let (mut reference, body) = document();
+            element(
+                &mut reference,
+                body,
+                &format!(
+                    "position:absolute;left:{left}px;top:0;width:20px;height:10px;background:green"
+                ),
+            );
+            let expected = layout(&mut reference);
+            assert_exact_pixels(
+                raster(scene(&doc, &computed)),
+                raster(scene(&reference, &expected)),
+            );
+            let again = layout(&mut doc);
+            assert_eq!(
+                doc.get_node(block).unwrap().unrounded_layout.location.x,
+                left
+            );
+            assert_exact_pixels(
+                raster(scene(&doc, &again)),
+                raster(scene(&reference, &expected)),
+            );
+            let reversed = if direction == "rtl" { "ltr" } else { "rtl" };
+            doc.set_element_inline_style(table, Some(format!("display:table;width:100px;table-layout:fixed;border-spacing:0;direction:{reversed}").into()));
+            let changed = layout(&mut doc);
+            let changed_left = if reversed == "rtl" { 80.0 } else { 0.0 };
+            assert_eq!(
+                doc.get_node(block).unwrap().unrounded_layout.location.x,
+                changed_left
+            );
+            reference.set_element_inline_style(reference.get_node(body).unwrap().children[0], Some(format!("position:absolute;left:{changed_left}px;top:0;width:20px;height:10px;background:green").into()));
+            let expected = layout(&mut reference);
+            assert_exact_pixels(
+                raster(scene(&doc, &changed)),
+                raster(scene(&reference, &expected)),
+            );
+        }
+    }
+}
+
+#[test]
+fn explicit_cell_block_direction_control() {
+    let (mut doc, body) = document();
+    let table = element(
+        &mut doc,
+        body,
+        "display:table;width:100px;table-layout:fixed;border-spacing:0;direction:rtl",
+    );
+    let row = element(&mut doc, table, "display:table-row");
+    let cell = element(&mut doc, row, "display:table-cell");
+    let block = element(
+        &mut doc,
+        cell,
+        "display:block;width:20px;height:10px;background:green",
+    );
+    let computed = layout(&mut doc);
+    assert_eq!(
+        doc.get_node(block).unwrap().unrounded_layout.location.x,
+        80.0
+    );
+    let (mut reference, body) = document();
+    element(
+        &mut reference,
+        body,
+        "position:absolute;left:80px;top:0;width:20px;height:10px;background:green",
+    );
+    let expected = layout(&mut reference);
+    assert_exact_pixels(
+        raster(scene(&doc, &computed)),
+        raster(scene(&reference, &expected)),
+    );
+}
+
+#[test]
+fn ifc_block_direction_matches_used_margin_constraints() {
+    for direction in ["ltr", "rtl"] {
+        for (margins, ltr_x, rtl_x) in [
+            ("margin-left:3px;margin-right:7px", 3.0, 73.0),
+            ("margin-left:auto;margin-right:7px", 73.0, 73.0),
+            ("margin-left:3px;margin-right:auto", 3.0, 3.0),
+            ("margin-left:auto;margin-right:auto", 40.0, 40.0),
+        ] {
+            let (mut doc, body) = document();
+            let root = element(
+                &mut doc,
+                body,
+                &format!("display:block;width:100px;direction:{direction}"),
+            );
+            doc.append_text(root, "A");
+            let block = element(
+                &mut doc,
+                root,
+                &format!("display:block;width:20px;height:10px;background:green;{margins}"),
+            );
+            let computed = layout(&mut doc);
+            assert!(doc.get_node(root).unwrap().is_ifc_root());
+            let left = if direction == "rtl" { rtl_x } else { ltr_x };
+            assert_eq!(
+                doc.get_node(block).unwrap().unrounded_layout.location,
+                taffy::Point { x: left, y: 10.0 }
+            );
+            let (mut reference, body) = document();
+            let text_left = if direction == "rtl" { 90 } else { 0 };
+            element(
+                &mut reference,
+                body,
+                &format!(
+                    "position:absolute;left:{text_left}px;top:0;width:10px;height:10px;background:black"
+                ),
+            );
+            element(
+                &mut reference,
+                body,
+                &format!(
+                    "position:absolute;left:{left}px;top:10px;width:20px;height:10px;background:green"
+                ),
+            );
+            let expected = layout(&mut reference);
+            assert_exact_pixels(
+                raster(scene(&doc, &computed)),
+                raster(scene(&reference, &expected)),
+            );
+        }
+    }
+}
+
+#[test]
+fn anonymous_paragraph_trace_uses_real_source_owners() {
+    use raikiri_paint::{PaintTraceEvent, trace_paint_order};
+    for owner_kind in ["table", "group", "row"] {
+        let (mut doc, body) = document();
+        let table = element(&mut doc, body, "display:table;border-spacing:0");
+        let owner = match owner_kind {
+            "group" => element(&mut doc, table, "display:table-row-group"),
+            "row" => element(&mut doc, table, "display:table-row"),
+            _ => table,
+        };
+        doc.append_text(owner, "A");
+        let computed = layout(&mut doc);
+        let mut budget = raikiri_dom::CounterSnapshotBudget::default();
+        let trace = trace_paint_order(&doc, &computed, page(), 0.0, None, &mut budget).unwrap();
+        let texts: Vec<_> = trace
+            .into_iter()
+            .filter_map(|event| match event {
+                PaintTraceEvent::Text(owner) => Some(owner),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec![owner]);
+        let actual = raster(scene(&doc, &computed));
+        assert_eq!(
+            actual
+                .chunks_exact(4)
+                .filter(|pixel| pixel[..3] == [0, 0, 0] && pixel[3] > 0)
+                .count(),
+            100
+        );
+    }
+}
+
+#[test]
+fn anonymous_text_trace_interleaves_generated_and_real_text_with_cells() {
+    use raikiri_paint::{PaintTraceEvent, trace_paint_order};
+    for generated in [false, true] {
+        let (mut doc, body) = document();
+        let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+        doc.append_text(sheet, "span::before{content:'A';color:black}");
+        let table = element(&mut doc, body, "display:table;border-spacing:0");
+        let row = element(&mut doc, table, "display:table-row");
+        if generated {
+            doc.append_element(
+                Some(row),
+                "span",
+                Style::default(),
+                Some("display:contents"),
+            );
+        } else {
+            doc.append_text(row, "A");
+        }
+        let cell = element(
+            &mut doc,
+            row,
+            "display:table-cell;width:10px;height:10px;background:blue;vertical-align:top",
+        );
+        if generated {
+            doc.append_element(
+                Some(row),
+                "span",
+                Style::default(),
+                Some("display:contents"),
+            );
+        } else {
+            doc.append_text(row, "B");
+        }
+        let computed = layout(&mut doc);
+        let mut budget = raikiri_dom::CounterSnapshotBudget::default();
+        let traced: Vec<_> = trace_paint_order(&doc, &computed, page(), 0.0, None, &mut budget)
+            .unwrap()
+            .into_iter()
+            .filter(|event| match event {
+                PaintTraceEvent::Text(_) => true,
+                PaintTraceEvent::Box(id) => *id == cell,
+                _ => false,
+            })
+            .collect();
+        let expected = vec![
+            PaintTraceEvent::Text(row),
+            PaintTraceEvent::Box(cell),
+            PaintTraceEvent::Text(row),
+        ];
+        assert_eq!(traced, expected);
+        let slices = raikiri_dom::layout_pages(&mut doc, &computed, page()).unwrap();
+        doc.project_pages(&computed, page(), &slices, &[]);
+        let runs = doc.page_text_runs(&computed, 0);
+        let mut projected = Vec::new();
+        let mut previous_line_root = None;
+        for event in doc.page_paint_order_for_text_runs(&computed, 0, &runs) {
+            match event {
+                raikiri_dom::PaintEvent::TextLine(line) => {
+                    if previous_line_root != Some(line.root) {
+                        projected.push(PaintTraceEvent::Text(
+                            doc.ifc_source_owner(line.root.0 as usize),
+                        ));
+                    }
+                    previous_line_root = Some(line.root);
+                }
+                raikiri_dom::PaintEvent::Box(fragment) if fragment.node().0 as usize == cell => {
+                    projected.push(PaintTraceEvent::Box(cell));
+                    previous_line_root = None;
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(projected, expected);
+        let (mut reference, body) = document();
+        for (left, color) in [(0, "black"), (10, "blue"), (20, "black")] {
+            element(
+                &mut reference,
+                body,
+                &format!(
+                    "position:absolute;left:{left}px;top:0;width:10px;height:10px;background:{color}"
+                ),
+            );
+        }
+        let expected = layout(&mut reference);
+        assert_exact_pixels(
+            raster(scene(&doc, &computed)),
+            raster(scene(&reference, &expected)),
+        );
+    }
+}
+
+#[test]
+fn anonymous_trace_excludes_whitespace_atomic_and_hidden_text() {
+    use raikiri_paint::{PaintTraceEvent, trace_paint_order};
+    for content in ["whitespace", "atomic", "hidden"] {
+        let (mut doc, body) = document();
+        let table = element(&mut doc, body, "display:table;border-spacing:0");
+        let row = element(&mut doc, table, "display:table-row");
+        match content {
+            "atomic" => {
+                element(
+                    &mut doc,
+                    row,
+                    "display:inline-block;width:10px;height:10px;background:blue",
+                );
+            }
+            "hidden" => {
+                let hidden = element(&mut doc, row, "display:inline;visibility:hidden");
+                doc.append_text(hidden, "A");
+            }
+            _ => {
+                doc.append_text(row, " \t\n");
+            }
+        }
+        let computed = layout(&mut doc);
+        let mut budget = raikiri_dom::CounterSnapshotBudget::default();
+        let trace = trace_paint_order(&doc, &computed, page(), 0.0, None, &mut budget).unwrap();
+        assert!(
+            !trace
+                .iter()
+                .any(|event| matches!(event, PaintTraceEvent::Text(_)))
+        );
+    }
+}
+
+#[test]
 fn anonymous_vertical_cells_match_explicit_cells_through_contents_ancestors() {
     for mode in ["vertical-lr", "vertical-rl"] {
         let build = |anonymous: bool| {
