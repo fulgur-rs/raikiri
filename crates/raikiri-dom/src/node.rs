@@ -378,6 +378,9 @@ pub struct Node {
     pub(crate) break_inside: BreakInside,
     /// Whether column layout must restore an authored automatic inline size.
     pub(crate) multicol_auto_width: bool,
+    /// Whether enabled before/after content must remain in one measured subtree.
+    /// Recomputed by the style bridge before every layout pass.
+    pub(crate) has_before_or_after_content: bool,
     /// Computed multicolumn settings consumed by the custom Taffy dispatch.
     pub(crate) multicol: Option<MulticolStyle>,
     /// Authored writing mode retained for layout features that need the logical axes.
@@ -492,6 +495,7 @@ impl Node {
             break_after: BreakBetween::Auto,
             break_inside: BreakInside::Auto,
             multicol_auto_width: true,
+            has_before_or_after_content: false,
             multicol: None,
             authored_writing_mode: None,
             has_logical_min_block_size: false,
@@ -538,6 +542,7 @@ impl Node {
             break_after: BreakBetween::Auto,
             break_inside: BreakInside::Auto,
             multicol_auto_width: true,
+            has_before_or_after_content: false,
             multicol: None,
             authored_writing_mode: None,
             has_logical_min_block_size: false,
@@ -588,6 +593,7 @@ impl Node {
             break_after: BreakBetween::Auto,
             break_inside: BreakInside::Auto,
             multicol_auto_width: true,
+            has_before_or_after_content: false,
             multicol: None,
             authored_writing_mode: None,
             has_logical_min_block_size: false,
@@ -633,6 +639,7 @@ impl Node {
             break_after: BreakBetween::Auto,
             break_inside: BreakInside::Auto,
             multicol_auto_width: true,
+            has_before_or_after_content: false,
             multicol: None,
             authored_writing_mode: None,
             has_logical_min_block_size: false,
@@ -675,6 +682,7 @@ impl Node {
             break_after: BreakBetween::Auto,
             break_inside: BreakInside::Auto,
             multicol_auto_width: true,
+            has_before_or_after_content: false,
             multicol: None,
             authored_writing_mode: None,
             has_logical_min_block_size: false,
@@ -719,6 +727,7 @@ impl Node {
             break_after: BreakBetween::Auto,
             break_inside: BreakInside::Auto,
             multicol_auto_width: true,
+            has_before_or_after_content: false,
             multicol: None,
             authored_writing_mode: None,
             has_logical_min_block_size: false,

@@ -416,7 +416,12 @@ geometry and remain monolithic when this projection has no child continuation.
 Oversized unbreakable boxes advance once from an occupied column before
 overflowing; empty columns and parallel floats still make progress. Column
 widths use the content box, while the container fragment retains the measured
-border-box size. Nested columns, directly projected text, minimum block-size contexts
+border-box size. Root child fragments start at the used padding/border content
+origin, including percentage insets and RTL columns; nested fragments retain
+parent-relative coordinates. Enabled before/after content on resumable plain
+wrappers keeps the previous strategy, while generated-only atomic boxes remain
+monolithic. A normal-flow IFC already narrowed beside a float retains its joint
+measurement instead of losing exclusion during isolated remeasurement. Nested columns, directly projected text, minimum block-size contexts
 and unsupported box structures retain their existing paths. These fifteen
 references and native controls do not establish complete table/flex/grid,
 vertical-writing or general box-decoration fragmentation support.

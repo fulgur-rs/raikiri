@@ -288,6 +288,7 @@ fn an_inline_block_that_fits_a_column_stays_atomic() {
             width: 100.0,
             height: 100.0,
         },
+        Point::zero(),
     );
     assert_eq!(boxes(&doc, "atomic"), vec![(1, 50.0, 0.0, 50.0, 80.0)]);
     assert_eq!(
@@ -477,6 +478,7 @@ fn security_fanout_budget_stops_before_remeasuring_descendants() {
                 width: 100.0,
                 height: 100.0,
             },
+            Point::zero(),
         );
         observed.push((
             atomic,
@@ -542,11 +544,11 @@ fn security_atomic_measurement_work_is_shared_and_resets_on_clear() {
         width: 100.0,
         height: 100.0,
     };
-    layout(&mut doc, first, context, size);
+    layout(&mut doc, first, context, size, Point::zero());
     assert!(!doc.fragment_tree.limit_exceeded);
     assert_eq!(doc.fragment_tree.break_flow_work_used, 23);
     assert_eq!(doc.fragment_tree.fragments.len(), 2);
-    layout(&mut doc, second, context, size);
+    layout(&mut doc, second, context, size, Point::zero());
     assert!(doc.fragment_tree.limit_exceeded);
     assert_eq!(doc.fragment_tree.break_flow_work_used, 23);
     assert_eq!(
@@ -555,7 +557,7 @@ fn security_atomic_measurement_work_is_shared_and_resets_on_clear() {
     );
     doc.fragment_tree.clear();
     assert_eq!(doc.fragment_tree.break_flow_work_used, 0);
-    layout(&mut doc, second, context, size);
+    layout(&mut doc, second, context, size, Point::zero());
     assert!(!doc.fragment_tree.limit_exceeded);
     assert_eq!(doc.fragment_tree.break_flow_work_used, 23);
 }
@@ -576,10 +578,10 @@ fn security_remaining_fragment_capacity_bounds_measurement_work() {
         width: 100.0,
         height: 100.0,
     };
-    layout(&mut doc, first, context, size);
+    layout(&mut doc, first, context, size, Point::zero());
     assert_eq!(doc.fragment_tree.fragments.len(), 10);
     assert_eq!(doc.fragment_tree.break_flow_work_used, 1);
-    layout(&mut doc, second, context, size);
+    layout(&mut doc, second, context, size, Point::zero());
     assert!(doc.fragment_tree.limit_exceeded);
     assert_eq!(
         doc.nodes[id(&doc, "last")].unrounded_layout.size.height,
@@ -608,6 +610,7 @@ fn security_measurement_budget_charges_repeated_wrapper_visits_at_the_boundary()
                 width: 100.0,
                 height: 100.0,
             },
+            Point::zero(),
         );
         if limit == 8 {
             assert!(doc.fragment_tree.limit_exceeded);
@@ -712,7 +715,8 @@ fn security_nested_out_of_flow_fragment_exhaustion_stops_collection() {
             Size {
                 width: 100.0,
                 height: 100.0
-            }
+            },
+            Point::zero()
         ),
         100.0,
     );
@@ -766,7 +770,8 @@ fn fragment_budget_exhaustion_stops_each_projection_stage() {
                 Size {
                     width: 100.0,
                     height: 100.0
-                }
+                },
+                Point::zero()
             ),
             100.0
         );
@@ -791,6 +796,7 @@ fn fragment_budget_exhaustion_stops_each_projection_stage() {
                 width: 100.0,
                 height: 100.0,
             },
+            Point::zero(),
         );
         assert!(doc.fragment_tree.limit_exceeded);
         assert_eq!(doc.fragment_tree.fragments.len(), limit);
@@ -811,6 +817,7 @@ fn fragment_budget_exhaustion_stops_each_projection_stage() {
             width: 100.0,
             height: 100.0,
         },
+        Point::zero(),
     );
     assert!(empty.fragment_tree.limit_exceeded);
     let (mut doc, root, mut context) = prepared_flow();
@@ -823,7 +830,8 @@ fn fragment_budget_exhaustion_stops_each_projection_stage() {
             Size {
                 width: 100.0,
                 height: 100.0
-            }
+            },
+            Point::zero()
         ),
         100.0
     );
@@ -863,7 +871,8 @@ fn collection_stops_and_unwinds_ancestors_when_the_budget_was_exhausted() {
             Size {
                 width: 100.0,
                 height: 100.0
-            }
+            },
+            Point::zero()
         ),
         100.0
     );
@@ -935,6 +944,7 @@ fn review_auto_width_atomic_inline_box_preserves_its_measured_width() {
             width: 100.0,
             height: 100.0,
         },
+        Point::zero(),
     );
     assert_eq!(boxes(&doc, "atomic")[0].3, 20.0);
 }
@@ -1265,4 +1275,116 @@ fn review_inline_formatting_contexts_keep_the_existing_strategy() {
                 .unwrap()
         ));
     }
+}
+
+#[test]
+fn review_root_column_fragments_start_at_the_resolved_content_origin() {
+    let doc = laid_out(
+        "<div id='columns' style='columns:2;column-fill:auto;gap:0;box-sizing:border-box;width:130px;height:130px;padding:10px;border:5px solid blue'><div id='first' style='height:20px'></div><div id='next' style='height:20px;break-before:column'></div></div>",
+    );
+    assert_eq!(boxes(&doc, "columns"), vec![(0, 0.0, 0.0, 130.0, 130.0)]);
+    assert_eq!(boxes(&doc, "first"), vec![(0, 15.0, 15.0, 50.0, 20.0)]);
+    assert_eq!(boxes(&doc, "next"), vec![(1, 65.0, 15.0, 50.0, 20.0)]);
+}
+
+#[test]
+fn review_resumed_wrappers_keep_the_content_origin_only_at_the_root_edge() {
+    let doc = laid_out(
+        "<div style='columns:2;column-fill:auto;gap:0;box-sizing:border-box;width:130px;height:130px;padding:10px;border:5px solid blue'><div id='wrapper'><div id='first' style='height:20px'></div><div id='next' style='height:20px;break-before:column'></div></div></div>",
+    );
+    assert_eq!(
+        boxes(&doc, "wrapper"),
+        vec![(0, 15.0, 15.0, 50.0, 20.0), (1, 65.0, 15.0, 50.0, 20.0)]
+    );
+    assert_eq!(boxes(&doc, "first"), vec![(0, 0.0, 0.0, 50.0, 20.0)]);
+    assert_eq!(boxes(&doc, "next"), vec![(1, 0.0, 0.0, 50.0, 20.0)]);
+}
+
+#[test]
+fn review_between_box_constraints_preserve_joint_float_text_exclusion() {
+    for edge in ["", "break-before:avoid"] {
+        let doc = laid_out(&format!(
+            "<div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='float:left;width:20px;height:40px'></div><div id='text' style='height:40px;font-size:20px;line-height:20px'>MMMM</div><div style='height:1px;{edge}'></div></div>",
+        ));
+        let lines = doc.nodes[id(&doc, "text")]
+            .ifc
+            .as_ref()
+            .unwrap()
+            .lines
+            .as_ref()
+            .unwrap();
+        assert!(lines.beside_floats, "{edge}");
+    }
+}
+
+#[test]
+fn review_percentage_content_origin_uses_the_parent_basis_in_both_directions() {
+    for (direction, first, next) in [("ltr", 25.0, 65.0), ("rtl", 65.0, 25.0)] {
+        let doc = laid_out(&format!(
+            "<div style='width:200px'><div id='columns' style='direction:{direction};columns:2;column-fill:auto;gap:0;box-sizing:border-box;width:130px;height:130px;padding:10%;border:5px solid blue'><div id='first' style='height:20px'></div><div id='next' style='height:20px;break-before:column'></div></div></div>"
+        ));
+        assert_eq!(boxes(&doc, "columns"), vec![(0, 0.0, 0.0, 130.0, 130.0)]);
+        assert_eq!(boxes(&doc, "first"), vec![(0, first, 25.0, 40.0, 20.0)]);
+        assert_eq!(boxes(&doc, "next"), vec![(1, next, 25.0, 40.0, 20.0)]);
+    }
+}
+
+#[test]
+fn review_generated_content_provenance_is_refreshed_by_the_canonical_bridge() {
+    let (mut doc, _) = fixture(
+        "<style style='display:none!important'>#wrapper.enabled::before{content:'X'}#wrapper.disabled::before{content:none}#wrapper.hidden::after{content:'Y';display:none}#wrapper.empty::before{content:''}#wrapper.positioned::after{content:'Y';position:absolute}#wrapper.floated::before{content:'X';float:left}</style><div id='columns' style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div id='wrapper'><div style='height:60px'></div><div style='height:60px;break-before:avoid'></div></div></div>",
+    );
+    let wrapper = id(&doc, "wrapper");
+    for (class, expected) in [
+        ("enabled", true),
+        ("disabled", false),
+        ("hidden", false),
+        ("empty", true),
+        ("positioned", true),
+        ("floated", true),
+        ("", false),
+        ("enabled", true),
+    ] {
+        doc.set_element_attribute(wrapper, "class", class).unwrap();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+        apply_computed_to_style(&mut doc, &cascade).unwrap();
+        assert_eq!(doc.nodes[wrapper].has_before_or_after_content, expected);
+        let root = id(&doc, "columns");
+        let context =
+            FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[root].multicol.unwrap())
+                .unwrap();
+        assert_eq!(supports(&doc, root, context), !expected);
+    }
+}
+
+#[test]
+fn review_generated_only_atomic_box_has_one_measured_fragment() {
+    let doc = laid_out(
+        "<style style='display:none!important'>#wrapper::before{content:'X'}#wrapper::after{content:'Y'}</style><div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div id='wrapper' style='height:150px'></div><div style='height:1px;break-before:avoid'></div></div>",
+    );
+    assert_eq!(boxes(&doc, "wrapper"), vec![(0, 0.0, 0.0, 50.0, 150.0)]);
+}
+
+#[test]
+fn review_atomic_internal_float_text_keeps_its_measured_subtree() {
+    let doc = laid_out(
+        "<div id='columns' style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div id='atomic' style='display:flow-root;height:40px;break-before:avoid'><div style='float:left;width:20px;height:40px'></div><div id='text' style='height:40px;font-size:20px;line-height:20px'>MMMM</div></div></div>",
+    );
+    assert_eq!(boxes(&doc, "atomic"), vec![(0, 0.0, 0.0, 50.0, 40.0)]);
+    assert!(
+        doc.nodes[id(&doc, "text")]
+            .ifc
+            .as_ref()
+            .unwrap()
+            .lines
+            .is_some()
+    );
+    let root = id(&doc, "columns");
+    assert!(supports(
+        &doc,
+        root,
+        FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[root].multicol.unwrap())
+            .unwrap()
+    ));
 }

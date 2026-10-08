@@ -143,7 +143,18 @@ pub(crate) fn compute_multicol_layout(
             *active = resolved;
         }
         let used_height = if break_flow_scope {
-            break_flow::layout(tree, index, resolved, output.size)
+            // The parent writes the container's Taffy layout only after this
+            // callback returns. Resolve the content origin from the same used
+            // percentage basis instead of reading its stale layout insets.
+            let css = &tree.nodes[index].style;
+            let basis = parent_width.unwrap_or(output.size.width).max(0.0);
+            let content_origin = Point {
+                x: multicol_resolve_inset(tree, css.padding.left, basis)
+                    + multicol_resolve_inset(tree, css.border.left, basis),
+                y: multicol_resolve_inset(tree, css.padding.top, basis)
+                    + multicol_resolve_inset(tree, css.border.top, basis),
+            };
+            break_flow::layout(tree, index, resolved, output.size, content_origin)
         } else {
             relayout_nested_multicol_children(
                 tree,

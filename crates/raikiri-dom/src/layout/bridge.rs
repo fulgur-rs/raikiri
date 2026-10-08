@@ -1,4 +1,6 @@
 use super::*;
+use raikiri_style::property::ContentComponent;
+use raikiri_style::{PseudoElem, StyleNodeId};
 
 // cov:ignore: computed multicol bridge is exercised by ignored WPT reftests.
 fn multicol_style_from_computed(cv: &ComputedValues) -> Option<MulticolStyle> {
@@ -170,6 +172,23 @@ pub(crate) fn apply_computed_to_style(
         doc.nodes[idx].break_inside = cv.break_inside;
         doc.nodes[idx].multicol_auto_width =
             matches!(cv.width, ComputedLengthPercentageOrAuto::Auto);
+        // Generated content is not an arena child. Keep its provenance so
+        // column continuations cannot replay an unfragmented pseudo subtree.
+        doc.nodes[idx].has_before_or_after_content = [PseudoElem::Before, PseudoElem::After]
+            .iter()
+            .any(|&pseudo| {
+                cascade
+                    .pseudo
+                    .get(&(StyleNodeId::new(idx as u64), pseudo))
+                    .is_some_and(|pseudo| {
+                        pseudo.display != DisplayValue::None
+                            && !pseudo.content.is_empty()
+                            && !pseudo
+                                .content
+                                .iter()
+                                .any(|part| matches!(part, ContentComponent::None))
+                    })
+            });
         doc.nodes[idx].authored_writing_mode = cascade
             .authored_writing_modes
             .get(idx)

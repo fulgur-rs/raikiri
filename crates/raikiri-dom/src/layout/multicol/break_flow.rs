@@ -67,6 +67,21 @@ pub(super) fn supports(tree: &Document, root: usize, context: FragmentationConte
                 return false;
             }
         }
+        // Generated content on a resumed wrapper has no line continuation
+        // here. Joint normal-flow IFC measurement also owns float exclusion;
+        // measuring that text in isolation would discard its narrowed lines.
+        if projected
+            && ((!atomic(tree, id) && node.has_before_or_after_content)
+                || (!node.style.float.is_floated()
+                    && matches!(node.display, DisplayValue::Block | DisplayValue::ListItem)
+                    && node
+                        .ifc
+                        .as_ref()
+                        .and_then(|root| root.lines.as_ref())
+                        .is_some_and(|lines| lines.beside_floats)))
+        {
+            return false;
+        }
         // This projection preserves already measured atomic subtrees, but
         // does not reconstruct block margins, clearance or constrained wrapper sizes.
         // Leave those boxes to the existing geometry-preserving strategies.
@@ -307,6 +322,7 @@ fn collect(
                 // Descendants keep their measured subtree; this seam has no
                 // translated child continuations to replay in later columns.
                 && !has_rendered_element_child(tree, id)
+                && !tree.nodes[id].has_before_or_after_content
                 && !tree.nodes[id].children.iter().any(|&child| {
                     let child = &tree.nodes[child];
                     child.is_in_document()
@@ -428,6 +444,7 @@ pub(super) fn layout(
     root: usize,
     context: FragmentationContext,
     fallback: Size<f32>,
+    content_origin: Point<f32>,
 ) -> f32 {
     let Some(height) = context.available_height else {
         return fallback.height;
@@ -514,12 +531,13 @@ pub(super) fn layout(
                 remaining
             };
             let offset = context.column_offset_x(column);
-            let x = if tree.nodes[root].style.direction == taffy::Direction::Rtl {
-                context.available_width - context.column_width - offset
-            } else {
-                offset
-            };
-            let y = cursor;
+            let x = content_origin.x
+                + if tree.nodes[root].style.direction == taffy::Direction::Rtl {
+                    context.available_width - context.column_width - offset
+                } else {
+                    offset
+                };
+            let y = content_origin.y + cursor;
             let mut parent_fragment = container;
             let mut parent_y = 0.0;
             for &ancestor in &item.ancestors {

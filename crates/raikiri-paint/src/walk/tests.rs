@@ -5113,6 +5113,63 @@ fn review_grid_root_background_follows_its_forced_column_edge() {
 }
 
 #[test]
+fn review_column_content_keeps_the_container_border_and_padding_clear() {
+    let scene = transform_markup_scene(
+        "<!DOCTYPE html><body style='margin:0;background:white'><div style='columns:2;column-fill:auto;gap:0;box-sizing:border-box;width:130px;height:130px;padding:10px;border:5px solid blue'><div style='height:20px;background:green;break-before:avoid'></div></div></body>",
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+        800,
+        600,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 800 + x) * 4..(y * 800 + x) * 4 + 4];
+    assert_eq!(pixel(2, 2), &[0, 0, 255, 255]);
+    assert_eq!(pixel(10, 10), &[255, 255, 255, 255]);
+    assert_eq!(pixel(20, 20), &[0, 128, 0, 255]);
+}
+
+fn review_generated_content_is_not_repeated_across_columns(atomic: bool) {
+    let wrapper_style = if atomic { "height:150px" } else { "" };
+    let children = if atomic {
+        ""
+    } else {
+        "<div style='height:60px'></div><div style='height:60px;break-before:avoid'></div>"
+    };
+    let scene = transform_markup_scene(&format!(
+        "<!DOCTYPE html><style>#wrapper::before{{content:'X';color:red}}#wrapper::after{{content:'Y';color:blue}}</style><body style='margin:0;background:white'><div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div id='wrapper' style='{wrapper_style}'>{children}</div><div style='height:1px;break-before:avoid'></div></div></body>",
+    ));
+    let glyph_runs = scene
+        .commands
+        .iter()
+        .filter(|command| matches!(command, RenderCommand::GlyphRun(_)))
+        .count();
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+        800,
+        600,
+    );
+    let red_ink = |start: usize, end: usize| {
+        (0..30)
+            .flat_map(|y| (start..end).map(move |x| (y * 800 + x) * 4))
+            .filter(|&i| rgba[i] > rgba[i + 1] && rgba[i] > rgba[i + 2])
+            .count()
+    };
+    assert!(red_ink(0, 50) > 0);
+    assert_eq!(red_ink(50, 100), 0);
+    assert_eq!(glyph_runs, 2);
+}
+
+#[test]
+fn review_resumed_wrapper_generated_content_paints_once() {
+    review_generated_content_is_not_repeated_across_columns(false);
+}
+
+#[test]
+fn review_generated_only_atomic_box_keeps_one_pseudo_subtree() {
+    review_generated_content_is_not_repeated_across_columns(true);
+}
+
+#[test]
 fn review_list_marker_preserves_unrelated_ancestor_fragment_state() {
     let scene = transform_markup_scene(
         "<!DOCTYPE html><body style='margin:0;background:white'><div style='margin-left:40px;columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:20px'></div><div style='height:60px;break-before:column'><div style='display:list-item;list-style:disc outside;height:20px'></div></div></div></body>",
@@ -5136,4 +5193,34 @@ fn review_list_marker_preserves_unrelated_ancestor_fragment_state() {
     };
     assert_eq!(ink(15, 40), 0);
     assert!(ink(65, 90) > 0);
+}
+
+#[test]
+fn review_float_text_ink_keeps_joint_exclusion_when_a_break_constraint_is_added() {
+    let mut baseline_ink = None;
+    for edge in ["", "break-before:avoid"] {
+        let scene = transform_markup_scene(&format!(
+            "<!DOCTYPE html><body style='margin:0;background:white'><div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='float:left;width:20px;height:40px;background:green'></div><div style='height:40px;font-size:20px;line-height:20px;color:red'>MMMM</div><div style='height:1px;{edge}'></div></div></body>"
+        ));
+        let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+            |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+            800,
+            600,
+        );
+        let red_over_float = (2..18)
+            .flat_map(|y| (2..18).map(move |x| (y * 800 + x) * 4))
+            .filter(|&i| rgba[i] > rgba[i + 1] && rgba[i] > rgba[i + 2])
+            .count();
+        let all_red = (0..40)
+            .flat_map(|y| (0..100).map(move |x| (y * 800 + x) * 4))
+            .filter(|&i| rgba[i] > rgba[i + 1] && rgba[i] > rgba[i + 2])
+            .count();
+        assert!(all_red > 0);
+        if let Some(expected) = baseline_ink {
+            assert_eq!(all_red, expected);
+        } else {
+            baseline_ink = Some(all_red);
+        }
+        assert_eq!(red_over_float, 0, "{edge}");
+    }
 }
