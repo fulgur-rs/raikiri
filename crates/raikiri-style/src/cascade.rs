@@ -44,6 +44,19 @@ use crate::style_dom::{StyleDom, StyleNode, StyleNodeId, StyleNodeKind};
 
 static NEXT_CASCADE_GENERATION: AtomicU64 = AtomicU64::new(1);
 
+/// An explicitly cascaded SVG property prepared for a vector consumer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SvgStyleProperty {
+    /// Property whose winning declaration participates in SVG painting.
+    pub property: PropertyKey,
+    /// Keep literal inheritance instead of freezing a definition's value.
+    /// This preserves inheritance when a definition is instantiated by `use`.
+    pub inherited: bool,
+    /// A relative font expression that must resolve in the SVG instance.
+    /// Other values use the node's computed value.
+    pub expression: Option<String>,
+}
+
 /// Cascade result.
 ///
 /// The future static-side GCPM (paged media generated content) implementation
@@ -56,6 +69,7 @@ static NEXT_CASCADE_GENERATION: AtomicU64 = AtomicU64::new(1);
 #[non_exhaustive]
 pub struct CascadeResult {
     generation: u64,
+    svg_style_properties: HashMap<StyleNodeId, Vec<SvgStyleProperty>>,
     /// Index into [`Self::computed`] of the `@page` inheritance parent: the
     /// root element, or the Document node when the tree has no element child.
     root_element_index: usize,
@@ -190,6 +204,17 @@ pub struct CascadeResult {
 }
 
 impl CascadeResult {
+    /// Explicit SVG paint properties after winner selection and defaulting.
+    ///
+    /// Read concrete values from [`Self::computed`]. Properties marked
+    /// inherited must remain literal `inherit` in exported vector source;
+    /// relative expressions must resolve in the SVG instance.
+    /// Nodes without SVG declarations return an empty slice.
+    pub fn svg_style_properties(&self, node: StyleNodeId) -> &[SvgStyleProperty] {
+        self.svg_style_properties
+            .get(&node)
+            .map_or(&[], Vec::as_slice)
+    }
     /// Resolve a named highlight background against its originating foreground.
     /// Literal backgrounds use the same winning declaration as
     /// [`Self::custom_highlight_styles`]; contextual expressions remain deferred
@@ -368,6 +393,7 @@ fn cascade_from_candidates<D: StyleDom>(
     let mut authored_writing_modes = vec![None; dom.node_count()];
     let mut page_values = vec![crate::property::PageValue::Auto; dom.node_count()];
     let mut pseudo: HashMap<(StyleNodeId, PseudoElem), ComputedValues> = HashMap::new();
+    let mut svg_style_properties = HashMap::new();
     resolve_inheritance(
         dom,
         dom.root_id(),
@@ -378,6 +404,7 @@ fn cascade_from_candidates<D: StyleDom>(
         &mut authored_writing_modes,
         &mut page_values,
         &mut pseudo,
+        &mut svg_style_properties,
     );
     if computed.len() < dom.node_count() {
         computed.resize(dom.node_count(), ComputedValues::initial());
@@ -393,6 +420,7 @@ fn cascade_from_candidates<D: StyleDom>(
 
     Ok(CascadeResult {
         generation: NEXT_CASCADE_GENERATION.fetch_add(1, Ordering::Relaxed),
+        svg_style_properties,
         root_element_index,
         custom_highlight_styles: rule_tree.custom_highlight_styles().clone(),
         custom_highlight_sources: rule_tree.custom_highlight_sources().clone(),

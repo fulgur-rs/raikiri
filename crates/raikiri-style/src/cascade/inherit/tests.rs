@@ -6878,6 +6878,7 @@ fn resolve_inheritance_grows_undersized_output_vectors() {
         &mut authored_writing_modes,
         &mut page_values,
         &mut pseudo_out,
+        &mut HashMap::new(),
     );
     assert!(out.len() > deepest);
     assert!(non_ua_margin_sides.len() > deepest);
@@ -6918,6 +6919,7 @@ fn resolve_inheritance_panics_when_root_parent_font_size_is_not_initial() {
         &mut authored_writing_modes,
         &mut page_values,
         &mut pseudo_out,
+        &mut HashMap::new(),
     );
 }
 
@@ -6956,6 +6958,7 @@ fn apply_winners_direct_margin_shorthand_marks_all_sides_non_ua() {
         None,
         Some(&mut non_ua_margin_sides),
         None,
+        None,
     );
     assert!(non_ua_margin_sides.top);
     assert!(non_ua_margin_sides.right);
@@ -6989,6 +6992,7 @@ fn apply_winners_direct_border_radius_inherit() {
         &mut specified,
         &inherited,
         &custom_properties,
+        None,
         None,
         None,
         None,
@@ -7028,6 +7032,7 @@ fn apply_winners_direct_page_value() {
         &inherited,
         &custom_properties,
         Some(&mut page_value),
+        None,
         None,
         None,
     );
@@ -9454,6 +9459,7 @@ fn walk_outputs(doc: &TestDoc, tree: &RuleTree, sibling_sharing: bool) -> (WalkO
         &mut authored_writing_modes,
         &mut page_values,
         &mut pseudo_out,
+        &mut HashMap::new(),
         sibling_sharing,
     );
     let mut pseudo = pseudo_out
@@ -9869,6 +9875,51 @@ fn radius_shorthand_css_wide_defaults_follow_corner_cascade() {
             cv.border_radius.used(200.0, 100.0),
             [[20.0, 30.0]; 4],
             "{value}"
+        );
+    }
+}
+
+#[test]
+fn svg_export_css_wide_values_resolve_inherit_initial_and_unset() {
+    let inherited_css = "opacity:.25;display:block;visibility:hidden;font-family:custom;font-weight:700;font-style:italic";
+    for keyword in ["inherit", "initial", "unset"] {
+        let mut doc = TestDoc::new();
+        let parent = doc.push_element(0, "div", Some(inherited_css));
+        let declarations = format!(
+            "opacity:{keyword};display:{keyword};visibility:{keyword};font-family:{keyword};font-weight:{keyword};font-style:{keyword}"
+        );
+        let child = doc.push_element(parent, "div", Some(&declarations));
+        let result = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        let actual = &result.computed[child];
+        let initial = ComputedValues::initial();
+        let parent = &result.computed[parent];
+        let inherited_properties = if keyword == "initial" {
+            &initial
+        } else {
+            parent
+        };
+        let other_properties = if keyword == "inherit" {
+            parent
+        } else {
+            &initial
+        };
+        assert_eq!(actual.opacity, other_properties.opacity, "{keyword}");
+        assert_eq!(actual.display, other_properties.display, "{keyword}");
+        assert_eq!(
+            actual.visibility, inherited_properties.visibility,
+            "{keyword}"
+        );
+        assert_eq!(
+            actual.font_family, inherited_properties.font_family,
+            "{keyword}"
+        );
+        assert_eq!(
+            actual.font_weight, inherited_properties.font_weight,
+            "{keyword}"
+        );
+        assert_eq!(
+            actual.font_style, inherited_properties.font_style,
+            "{keyword}"
         );
     }
 }

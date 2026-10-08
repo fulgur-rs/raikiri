@@ -48,11 +48,12 @@ fn visibility_rejects_unknown_keyword() {
 }
 
 #[test]
-fn visibility_rejects_css_wide_keyword() {
-    // (b) not supported — CSS-wide keyword is unimplemented (future work),
-    // silent drop (`PropertyValue` doc's "CSS-wide keyword" section is canonical).
+fn visibility_preserves_css_wide_defaulting_markers() {
     for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(kw, "visibility"), None);
+        assert!(matches!(
+            parse(kw, "visibility"),
+            Some(PropertyValue::Deferred(_))
+        ));
     }
 }
 
@@ -2285,9 +2286,12 @@ fn opacity_rejects_non_number_percentage_tokens() {
 }
 
 #[test]
-fn opacity_rejects_css_wide_keyword() {
+fn opacity_preserves_css_wide_defaulting_markers() {
     for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(keyword, "opacity"), None, "{keyword}");
+        assert!(
+            matches!(parse(keyword, "opacity"), Some(PropertyValue::Deferred(_))),
+            "{keyword}"
+        );
     }
 }
 

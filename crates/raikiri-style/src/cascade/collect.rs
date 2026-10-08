@@ -676,7 +676,13 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                     });
                 if is_svg_root {
                     super::svg_hints::push_dimension_hints(&elem, &mut out.decls);
+                }
+                if elem.namespace_uri() == Some(SVG_NAMESPACE) {
+                    if !is_svg_root {
+                        super::svg_hints::push_font_size_hint(&elem, &mut out.decls);
+                    }
                     for (attribute, property, expected_key) in [
+                        ("display", "display", crate::property::PropertyKey::Display),
                         ("color", "color", crate::property::PropertyKey::Color),
                         (
                             "font-family",

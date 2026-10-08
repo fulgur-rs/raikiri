@@ -2038,3 +2038,141 @@ fn at_rule_retention_charges_the_shared_rewrite_budget() {
         ));
     }
 }
+
+fn source_with_descendant_styles(
+    source: &[u8],
+    styles: &[super::SvgElementStyle<'_>],
+) -> Result<String, SvgError> {
+    SvgDocument::parse(source)?.styled_source_with_resolved_styles(
+        SvgViewport {
+            width: 20.0,
+            height: 10.0,
+        },
+        SvgRootStyle::default(),
+        [0, 0, 0, 255],
+        super::SvgRootFont {
+            size: 12.0,
+            family: "sans-serif",
+            weight: 400.0,
+            style: "normal",
+        },
+        styles,
+    )
+}
+
+#[test]
+fn descendant_overrides_preserve_original_selector_matches_and_other_properties() {
+    let source = br#"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"><style>rect[opacity='0.75']{opacity:0.75!important;fill:red}rect{color:blue!important}</style><rect opacity="0.75" width="10" height="10"/><rect x="10" width="10" height="10" fill="currentColor"/></svg>"#;
+    let prepared = source_with_descendant_styles(
+        source,
+        &[
+            super::SvgElementStyle {
+                element_index: 2,
+                declarations: "opacity:.25!important",
+            },
+            super::SvgElementStyle {
+                element_index: 3,
+                declarations: "color:green!important",
+            },
+        ],
+    )
+    .unwrap();
+    let rgba = SvgDocument::parse(prepared.as_bytes())
+        .unwrap()
+        .rasterize(
+            SvgViewport {
+                width: 20.0,
+                height: 10.0,
+            },
+            SvgRootStyle::default(),
+            None,
+        )
+        .unwrap()
+        .rgba;
+    assert_eq!(
+        &rgba[(5 * 20 + 5) * 4..(5 * 20 + 5) * 4 + 4],
+        &[255, 0, 0, 64]
+    );
+    assert_eq!(
+        &rgba[(5 * 20 + 15) * 4..(5 * 20 + 15) * 4 + 4],
+        &[0, 128, 0, 255]
+    );
+}
+
+#[test]
+fn descendant_overrides_replace_inline_and_presentation_properties_only() {
+    let prepared = source_with_descendant_styles(
+        br#"<svg xmlns="http://www.w3.org/2000/svg"><rect opacity=".9" style="opacity:.8!important;fill:red" width="20" height="10"/></svg>"#,
+        &[super::SvgElementStyle { element_index: 1, declarations: "opacity:.25" }],
+    ).unwrap();
+    let xml = roxmltree::Document::parse(&prepared).unwrap();
+    let rect = xml
+        .descendants()
+        .find(|node| node.has_tag_name("rect"))
+        .unwrap();
+    assert_eq!(rect.attribute("opacity"), None);
+    let style = rect.attribute("style").unwrap();
+    assert!(style.contains("fill:red"));
+    assert!(style.contains("opacity:.25"));
+    assert!(!style.contains("opacity:.8"));
+}
+
+#[test]
+fn descendant_overrides_reject_invalid_indices_properties_and_resources() {
+    let source = br#"<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>"#;
+    for styles in [
+        vec![super::SvgElementStyle {
+            element_index: 0,
+            declarations: "opacity:0",
+        }],
+        vec![super::SvgElementStyle {
+            element_index: 2,
+            declarations: "opacity:0",
+        }],
+        vec![
+            super::SvgElementStyle {
+                element_index: 1,
+                declarations: "opacity:0"
+            };
+            2
+        ],
+        vec![super::SvgElementStyle {
+            element_index: 1,
+            declarations: "fill:red",
+        }],
+        vec![super::SvgElementStyle {
+            element_index: 1,
+            declarations: "opacity",
+        }],
+    ] {
+        assert!(matches!(
+            source_with_descendant_styles(source, &styles),
+            Err(SvgError::InvalidDocument(_))
+        ));
+    }
+    assert!(matches!(
+        source_with_descendant_styles(
+            source,
+            &[super::SvgElementStyle {
+                element_index: 1,
+                declarations: "font-family:url(https://example.com/font)"
+            },]
+        ),
+        Err(SvgError::ExternalReference)
+    ));
+}
+
+#[test]
+fn descendant_overrides_share_the_selector_rewrite_budget() {
+    let source = "<svg xmlns='http://www.w3.org/2000/svg'><rect/></svg>";
+    let styles = [super::SvgElementStyle {
+        element_index: 1,
+        declarations: "opacity:0",
+    }];
+    let mut budget = SelectorFreezeBudget::new();
+    budget.bytes = 1;
+    assert!(super::with_element_style_overrides(source, &styles, &mut budget).is_err());
+    let mut budget = SelectorFreezeBudget::new();
+    budget.checks = 1;
+    assert!(super::with_element_style_overrides(source, &styles, &mut budget).is_err());
+}

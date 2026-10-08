@@ -2985,11 +2985,12 @@ fn font_style_rejects_unknown_keyword() {
 }
 
 #[test]
-fn font_style_rejects_css_wide_keyword() {
-    // (b) not supported — CSS-wide keyword is unimplemented (future work),
-    // silent drop (`PropertyValue` doc's "CSS-wide keyword" section is canonical).
+fn font_style_preserves_css_wide_defaulting_markers() {
     for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(kw, "font-style"), None);
+        assert!(matches!(
+            parse(kw, "font-style"),
+            Some(PropertyValue::Deferred(_))
+        ));
     }
 }
 

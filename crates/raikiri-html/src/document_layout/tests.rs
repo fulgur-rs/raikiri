@@ -1086,3 +1086,125 @@ fn inline_svg_font_family_escapes_round_trip_through_source_export() {
     assert!(svg.source.contains("font-family:"));
     raikiri_svg::SvgDocument::parse(svg.source.as_bytes()).unwrap();
 }
+
+#[test]
+fn inline_svg_document_css_hides_descendants() {
+    for css in [
+        "body > svg rect:first-child{display:none}",
+        ".muted{opacity:0}",
+        ".muted{visibility:hidden}",
+    ] {
+        let result = laid_out(&format!(
+            "<style>body{{margin:0}}svg{{display:block}}{css}</style><svg width='20' height='10'><rect class='muted' width='20' height='10' fill='red'/></svg>"
+        ));
+        let page = result.page(0).unwrap();
+        let fragment = page
+            .fragments()
+            .find(|fragment| page.dom().local_name(fragment.node()) == Some("svg"))
+            .unwrap();
+        let svg = page.inline_svg(&fragment).unwrap().unwrap();
+        let image = raikiri_svg::SvgDocument::parse(svg.source.as_bytes())
+            .unwrap()
+            .rasterize(
+                raikiri_svg::SvgViewport {
+                    width: 20.0,
+                    height: 10.0,
+                },
+                raikiri_svg::SvgRootStyle::default(),
+                None,
+            )
+            .unwrap();
+        assert_eq!(image.rgba[(5 * 20 + 5) * 4 + 3], 0, "document CSS: {css}");
+    }
+}
+
+#[test]
+fn inline_svg_definitions_keep_instance_relative_fonts() {
+    let result = laid_out(
+        "<style>body{font-size:12px}svg{display:block}</style><svg width='100' height='40'><defs><g id='label' style='font-size:2em;font-weight:bolder'><text y='20'>TEST</text></g></defs><use href='#label' style='font-size:10px;font-weight:200'/></svg>",
+    );
+    let page = result.page(0).unwrap();
+    let fragment = page
+        .fragments()
+        .find(|fragment| page.dom().local_name(fragment.node()) == Some("svg"))
+        .unwrap();
+    let svg = page.inline_svg(&fragment).unwrap().unwrap();
+    assert!(
+        svg.source.contains("font-size:2em"),
+        "relative size was frozen before use instantiation: {}",
+        svg.source
+    );
+    assert!(
+        svg.source.contains("font-weight:bolder"),
+        "relative weight was frozen before use instantiation: {}",
+        svg.source
+    );
+}
+
+fn svg_document_ink(html: &str) -> Vec<u8> {
+    let result = laid_out(html);
+    let page = result.page(0).unwrap();
+    let fragment = page
+        .fragments()
+        .find(|fragment| page.dom().local_name(fragment.node()) == Some("svg"))
+        .unwrap();
+    let svg = page.inline_svg(&fragment).unwrap().unwrap();
+    raikiri_svg::SvgDocument::parse(svg.source.as_bytes())
+        .unwrap()
+        .rasterize(
+            raikiri_svg::SvgViewport {
+                width: 20.0,
+                height: 10.0,
+            },
+            raikiri_svg::SvgRootStyle::default(),
+            None,
+        )
+        .unwrap()
+        .rgba
+}
+
+#[test]
+fn inline_svg_document_css_resolves_vars_rollback_and_original_selectors() {
+    for css in [
+        "body{--alpha:.25}body > svg rect{opacity:var(--alpha)}",
+        "@layer low,high;@layer low{rect{opacity:.25}}@layer high{rect{opacity:var(--missing,revert-layer)}}",
+        "rect[opacity]{opacity:.25!important}",
+        "rect[opacity='.75']{opacity:.25!important}",
+        "body > svg rect[opacity='.75']{opacity:.25!important}",
+    ] {
+        let rgba = svg_document_ink(&format!(
+            "<style>svg{{display:block}}{css}</style><svg width='20' height='10'><rect opacity='.75' width='20' height='10' fill='red'/></svg>"
+        ));
+        assert!(
+            (63..=65).contains(&rgba[(5 * 20 + 5) * 4 + 3]),
+            "CSS: {css}; actual alpha {}",
+            rgba[(5 * 20 + 5) * 4 + 3]
+        );
+    }
+}
+
+#[test]
+fn inline_svg_document_css_keeps_inheritance_inside_use_instances() {
+    let rgba = svg_document_ink(
+        "<style>svg{display:block}.instance{opacity:.5}.template{opacity:inherit}</style><svg width='20' height='10'><defs><g id='r' class='template'><rect width='20' height='10' fill='red'/></g></defs><use class='instance' href='#r'/></svg>",
+    );
+    assert!(
+        (63..=65).contains(&rgba[(5 * 20 + 5) * 4 + 3]),
+        "actual alpha {}",
+        rgba[(5 * 20 + 5) * 4 + 3]
+    );
+}
+
+#[test]
+fn inline_svg_document_current_color_inherits_from_the_use_instance() {
+    for value in ["inherit", "currentColor"] {
+        let rgba = svg_document_ink(&format!(
+            "<style>svg{{display:block}}.instance{{color:blue}}.template{{color:{value}}}</style><svg width='20' height='10'><defs><g id='r' class='template'><rect width='20' height='10' fill='currentColor'/></g></defs><use class='instance' href='#r'/></svg>"
+        ));
+        assert_eq!(
+            &rgba[(5 * 20 + 5) * 4..(5 * 20 + 5) * 4 + 4],
+            &[0, 0, 255, 255],
+            "color: {value}"
+        );
+    }
+}

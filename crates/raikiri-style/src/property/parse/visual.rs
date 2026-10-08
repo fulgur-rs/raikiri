@@ -86,9 +86,12 @@ pub(super) fn parse_opacity_value(input: &mut Parser<'_, '_>) -> Option<f32> {
         }
         n
     };
-    if input.try_parse(|i| i.expect_exhausted()).is_err() {
-        return None;
-    }
+    input
+        .parse_until_before(cssparser::Delimiter::Bang, |parser| {
+            parser.expect_exhausted()?;
+            Ok::<(), cssparser::ParseError<'_, ()>>(())
+        })
+        .ok()?;
     Some(val)
 }
 

@@ -39,6 +39,20 @@ pub(super) fn push_dimension_hints(elem: &impl StyleElement, decls: &mut Vec<Cas
     }
 }
 
+/// Add a SVG descendant's font-size presentation hint without geometry hints.
+pub(super) fn push_font_size_hint(elem: &impl StyleElement, decls: &mut Vec<CascadedDecl>) {
+    if let Some(value) = elem.attr("font-size").and_then(parse_font_size) {
+        decls.push((
+            value,
+            false,
+            Origin::AuthorPresentationalHint,
+            PRESENTATIONAL_HINT_SPECIFICITY,
+            PRESENTATIONAL_HINT_SOURCE_ORDER,
+            LayerPosition::default(),
+        ));
+    }
+}
+
 fn parse_font_size(raw: &str) -> Option<PropertyValue> {
     let mut input = ParserInput::new(raw);
     let mut parser = Parser::new(&mut input);
