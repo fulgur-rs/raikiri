@@ -265,6 +265,7 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         | PropertyValue::Grid(_)
         | PropertyValue::GridArea(_)
         | PropertyValue::Color(_)
+        | PropertyValue::ContextualColor(_)
         | PropertyValue::BackgroundColor(_)
         | PropertyValue::FontFamily(_)
         | PropertyValue::FontSize(_)
@@ -1156,7 +1157,16 @@ pub(crate) fn expand_background(
     shorthand: &BackgroundShorthand,
     mut push: impl FnMut(PropertyValue),
 ) {
-    push(PropertyValue::BackgroundColor(shorthand.color));
+    if let Some(source) = &shorthand.color_expression {
+        push(PropertyValue::ContextualColor(
+            crate::property::ContextualColor {
+                source: source.clone(),
+                key: PropertyKey::BackgroundColor,
+            },
+        ));
+    } else {
+        push(PropertyValue::BackgroundColor(shorthand.color));
+    }
     push(PropertyValue::BackgroundImage(shorthand.image.clone()));
     push(PropertyValue::BackgroundRepeat(shorthand.repeat));
     push(PropertyValue::BackgroundAttachment(shorthand.attachment));
