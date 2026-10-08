@@ -33,7 +33,8 @@ impl TypographicPaint {
             let mut by_box = HashMap::new();
             let mut parents = HashMap::new();
             for piece in pieces {
-                parents.entry(piece.node)
+                parents
+                    .entry(piece.node)
                     .or_insert_with(|| root.ifc_typographic_parent(piece.node));
                 if by_box.contains_key(&piece.node) {
                     continue;
