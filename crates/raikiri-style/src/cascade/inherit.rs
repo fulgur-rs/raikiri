@@ -1540,6 +1540,7 @@ fn resolve_defaulting_value(value: PropertyValue, inherited: &ComputedValues) ->
         value,
         inherited.color,
         inherited.background_color,
+        inherited.background_color_expression.as_ref(),
         inherited.font_size,
     )
 }
@@ -1549,6 +1550,7 @@ pub(crate) fn resolve_css_wide_color_font(
     value: PropertyValue,
     inherited_color: crate::property::CssColor,
     inherited_background: crate::property::CssColor,
+    inherited_background_expression: Option<&smol_str::SmolStr>,
     inherited_font_size: ComputedLength,
 ) -> PropertyValue {
     let PropertyValue::Deferred(marker) = &value else {
@@ -1557,6 +1559,15 @@ pub(crate) fn resolve_css_wide_color_font(
     let Some(keyword) = marker.css_wide_keyword() else {
         return value;
     };
+    if marker.key == crate::property::PropertyKey::BackgroundColor
+        && keyword == CssWideKeyword::Inherit
+        && let Some(source) = inherited_background_expression
+    {
+        return PropertyValue::ContextualColor(crate::property::ContextualColor {
+            source: source.clone(),
+            key: marker.key,
+        });
+    }
     let inherit = keyword == CssWideKeyword::Inherit
         || (keyword != CssWideKeyword::Initial
             && marker.key != crate::property::PropertyKey::BackgroundColor);
@@ -2162,6 +2173,7 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::AllRevertLayer
         | PropertyValue::CustomProperty(_)
         | PropertyValue::Deferred(_)
+        | PropertyValue::ContextualColor(_)
         | PropertyValue::Grid(_)
         | PropertyValue::GridArea(_)
         | PropertyValue::LineBreak(_)
@@ -2248,7 +2260,22 @@ impl ResolvedAgainstInherited {
 pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
     match value {
         PropertyValue::Color(c) => target.color = c,
-        PropertyValue::BackgroundColor(c) => target.background_color = c,
+        PropertyValue::BackgroundColor(c) => {
+            target.background_color = c;
+            target.background_color_expression = None;
+        }
+        PropertyValue::ContextualColor(value) => {
+            if value.key == crate::property::PropertyKey::Color {
+                // Color is applied while the staging value still holds its inherited basis.
+                if let Some(color) =
+                    crate::property::resolve_contextual_color(&value.source, target.color)
+                {
+                    target.color = color;
+                }
+            } else {
+                target.background_color_expression = Some(value.source);
+            }
+        }
         PropertyValue::FontFamily(f) => target.font_family = f,
         PropertyValue::FontSize(s) => target.font_size = s,
         PropertyValue::FontSizeRelative(rel) => {

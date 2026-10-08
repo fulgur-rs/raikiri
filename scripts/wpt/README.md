@@ -352,3 +352,30 @@ viewport basis. Page-context viewport units, including size and margin-box
 declarations, are resolved once against the existing nominal 480 × 288 basis used by
 the page probe, before ordinary declaration units expand. This adapter policy
 does not claim complete support for every paged-media viewport-unit behavior.
+
+## Contextual background colors
+
+`color` and `background-color` retain `currentcolor` operands until the cascade
+knows their color basis, including operands in `color-mix()` and backgrounds
+expanded from a shorthand or a custom property. A `color` expression uses the
+inherited foreground; a background expression uses the receiving element's own
+foreground. Explicit `background-color: inherit` retains the expression for the
+receiver, including root-to-page and page-to-margin-box inheritance. See
+[CSS Color 4 §15.5](https://www.w3.org/TR/css-color-4/#resolving-other-colors),
+[CSS Color 5 §10.1](https://www.w3.org/TR/css-color-5/#resolving-color-values), and
+[CSS Paged Media 3 §6](https://www.w3.org/TR/css-page-3/#page-properties).
+
+The exact 800 × 600 bundled-font pass set includes the legacy currentcolor
+background reference and four color-mix currentcolor references. Universal
+`::highlight(name)` backgrounds also preserve winning contextual expressions
+through importance and layer rollback, resolving them against the originating
+text node's computed foreground when painted. Highlight-specific foreground
+styling, per-element highlight selectors, and multiple-overlay foreground/dual
+inheritance remain existing gaps tracked by 0vv.133. The wider
+`currentcolor-001` and `currentcolor-002` references still have an existing
+163-pixel text residual: replacing the authored contextual colors with literal
+colors produces the same residual on the original source. Those references are
+kept out of the PASS baseline. General `background: inherit` shorthand expansion
+is a separate existing parser gap (0vv.127); the supported longhand inheritance
+above does not establish all eight shorthand longhands. Color conversion still
+uses the existing bounded 8-bit sRGB model.
