@@ -3429,6 +3429,34 @@ fn vertical_align_top_and_bottom_cascade_as_computed_values() {
 }
 
 #[test]
+fn vertical_align_css_wide_keywords_use_explicit_inheritance_and_rollback() {
+    use crate::property::VerticalAlign;
+    for (value, expected) in [
+        ("inherit", VerticalAlign::Bottom),
+        ("initial", VerticalAlign::Baseline),
+        ("unset", VerticalAlign::Baseline),
+        ("var(--alignment)", VerticalAlign::Bottom),
+    ] {
+        let mut doc = TestDoc::new();
+        let parent = doc.push_element(0, "div", Some("vertical-align:bottom;--alignment:inherit"));
+        let child = doc.push_element(parent, "span", Some(&format!("vertical-align:{value}")));
+        let unstyled = doc.push_element(parent, "span", None);
+        let result = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        assert_eq!(result.computed[child].vertical_align, expected, "{value}");
+        assert_eq!(
+            result.computed[unstyled].vertical_align,
+            VerticalAlign::Baseline
+        );
+    }
+    let cv = cascade_doc(
+        "span{vertical-align:top}",
+        "span",
+        Some("vertical-align:revert-layer"),
+    );
+    assert_eq!(cv.vertical_align, VerticalAlign::Top);
+}
+
+#[test]
 fn text_transform_width_keywords_cascade_as_computed_values() {
     use crate::property::TextTransform;
     let cv = cascade_doc(

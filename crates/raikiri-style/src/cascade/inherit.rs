@@ -1457,6 +1457,13 @@ fn resolve_defaulting_value(value: PropertyValue, inherited: &ComputedValues) ->
         };
         let initial = keyword == CssWideKeyword::Initial;
         match marker.key {
+            crate::property::PropertyKey::VerticalAlign => {
+                return PropertyValue::VerticalAlign(if keyword == CssWideKeyword::Inherit {
+                    inherited.vertical_align
+                } else {
+                    crate::property::VerticalAlign::Baseline
+                });
+            }
             crate::property::PropertyKey::BorderRadiusTopLeft => {
                 return PropertyValue::BorderRadiusTopLeft(radius.top_left);
             }
@@ -1513,6 +1520,14 @@ pub(crate) fn resolve_css_wide_color_font(
     let PropertyValue::Deferred(marker) = &value else {
         return value;
     };
+    if !matches!(
+        marker.key,
+        crate::property::PropertyKey::Color
+            | crate::property::PropertyKey::BackgroundColor
+            | crate::property::PropertyKey::FontSize
+    ) {
+        return value;
+    }
     let Some(keyword) = marker.css_wide_keyword() else {
         return value;
     };
