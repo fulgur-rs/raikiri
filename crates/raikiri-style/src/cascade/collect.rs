@@ -678,6 +678,11 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                     super::svg_hints::push_dimension_hints(&elem, &mut out.decls);
                     for (attribute, property, expected_key) in [
                         ("color", "color", crate::property::PropertyKey::Color),
+                        (
+                            "font-family",
+                            "font-family",
+                            crate::property::PropertyKey::FontFamily,
+                        ),
                         ("opacity", "opacity", crate::property::PropertyKey::Opacity),
                         (
                             "background-color",

@@ -29,7 +29,7 @@ pub struct PageGeometry {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct InlineSvg {
-    /// Standalone XML with the viewport and inherited host color resolved.
+    /// Standalone XML with the viewport, root color, and root font resolved.
     pub source: String,
     /// Whole content box in CSS page coordinates, before pagination cuts.
     pub viewport: PaintRect,
@@ -135,7 +135,7 @@ impl<'a> Page<'a> {
             .unwrap_or(false)
             .then_some(computed.opacity);
         let color = computed.color;
-        let source = document.styled_source_with_root_color(
+        let source = document.styled_source_with_root_color_and_font(
             raikiri_svg::SvgViewport {
                 width: viewport.width,
                 height: viewport.height,
@@ -153,6 +153,26 @@ impl<'a> Page<'a> {
                 visible: true,
             },
             [color.r, color.g, color.b, color.a],
+            computed.font_size.0,
+            &computed
+                .font_family
+                .iter()
+                .map(|family| {
+                    if family.1 == raikiri_style::property::FontFamilyKind::Generic {
+                        family.as_str().to_owned()
+                    } else {
+                        let name = family
+                            .as_str()
+                            .replace('\\', "\\\\")
+                            .replace('"', "\\\"")
+                            .replace('\n', "\\a ")
+                            .replace('\r', "\\d ")
+                            .replace('\u{c}', "\\c ");
+                        format!("\"{name}\"")
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(","),
         )?;
         Ok(Some(InlineSvg {
             source,

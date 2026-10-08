@@ -77,6 +77,56 @@ fn completed(status: LayoutStatus) -> DocumentLayout {
 }
 
 #[test]
+fn inline_svg_root_font_attributes_join_the_host_cascade() {
+    for (attributes, css, size, family) in [
+        (
+            "font-size='24' font-family='Missing, Noto Sans Mono'",
+            "",
+            24.0,
+            "Missing",
+        ),
+        (
+            "font-size='2em' font-family='Noto Sans Mono'",
+            "",
+            24.0,
+            "Noto Sans Mono",
+        ),
+        ("font-size='200%'", "", 24.0, "serif"),
+        (
+            "font-size='24px' font-family='Missing'",
+            "@layer x{svg{font-size:18px;font-family:serif}}",
+            18.0,
+            "serif",
+        ),
+        ("font-size='-1'", "", 12.0, "serif"),
+        ("font-size='1e999'", "", 12.0, "serif"),
+        ("font-size='invalid'", "", 12.0, "serif"),
+        ("font-size='24px trailing'", "", 12.0, "serif"),
+    ] {
+        let document = dom(&format!(
+            "<style>@page{{size:200px 150px;margin:0}}body{{margin:0;font-size:12px}}svg{{display:block}}{css}</style><svg width='100' height='40' {attributes}><text y='30'>TEST</text></svg>"
+        ));
+        let layout = completed(
+            layout(
+                &document,
+                PageDefaults::default(),
+                LayoutConfig::default(),
+                LayoutOptions::new(),
+            )
+            .unwrap(),
+        );
+        let page = layout.page(0).unwrap();
+        let fragment = page
+            .fragments()
+            .find(|f| page.dom().local_name(f.node()) == Some("svg"))
+            .unwrap();
+        let computed = page.computed(fragment.node()).unwrap();
+        assert_eq!(computed.font_size.0, size, "{attributes} / {css}");
+        assert_eq!(computed.font_family[0].as_str(), family);
+    }
+}
+
+#[test]
 fn inline_svg_presentation_dimensions_yield_to_layered_author_css() {
     let document = dom(
         "<style>@page{size:200px 100px;margin:0}body{margin:0}svg{display:block}@layer x{svg{width:30px;height:15px}}</style><svg width='10' height='10'><rect width='10' height='10'/></svg>",

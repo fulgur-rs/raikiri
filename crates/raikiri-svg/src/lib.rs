@@ -210,7 +210,7 @@ impl SvgDocument {
         viewport: SvgViewport,
         root_style: SvgRootStyle,
     ) -> Result<String, SvgError> {
-        self.styled_source_impl(viewport, root_style, None)
+        self.styled_source_impl(viewport, root_style, None, None)
     }
 
     /// Prepares source with the host cascade's effective SVG root color.
@@ -225,7 +225,33 @@ impl SvgDocument {
         root_style: SvgRootStyle,
         root_color: [u8; 4],
     ) -> Result<String, SvgError> {
-        self.styled_source_impl(viewport, root_style, Some(root_color))
+        self.styled_source_impl(viewport, root_style, Some(root_color), None)
+    }
+
+    /// Prepares source with resolved root color and font inheritance.
+    ///
+    /// `font_size` is a finite non-negative CSS pixel size; `font_family` is a
+    /// CSS family list. Resolve presentation attributes and author CSS first.
+    /// Original selector matches and descendant font declarations are preserved.
+    pub fn styled_source_with_root_color_and_font(
+        &self,
+        viewport: SvgViewport,
+        root_style: SvgRootStyle,
+        root_color: [u8; 4],
+        font_size: f32,
+        font_family: &str,
+    ) -> Result<String, SvgError> {
+        if !font_size.is_finite() || font_size < 0.0 || font_family.trim().is_empty() {
+            return Err(SvgError::InvalidDocument(
+                "invalid SVG root font style".into(),
+            ));
+        }
+        self.styled_source_impl(
+            viewport,
+            root_style,
+            Some(root_color),
+            Some((font_size, font_family)),
+        )
     }
 
     fn styled_source_impl(
@@ -233,6 +259,7 @@ impl SvgDocument {
         viewport: SvgViewport,
         root_style: SvgRootStyle,
         root_color: Option<[u8; 4]>,
+        root_font: Option<(f32, &str)>,
     ) -> Result<String, SvgError> {
         if !viewport.width.is_finite()
             || !viewport.height.is_finite()
@@ -244,7 +271,7 @@ impl SvgDocument {
         if !root_style.opacity.is_finite() || !(0.0..=1.0).contains(&root_style.opacity) {
             return Err(SvgError::InvalidOpacity);
         }
-        self.prepare_source(viewport, root_style, root_color)
+        self.prepare_source(viewport, root_style, root_color, root_font)
     }
 
     fn prepare_source(
@@ -252,6 +279,7 @@ impl SvgDocument {
         viewport: SvgViewport,
         root_style: SvgRootStyle,
         root_color: Option<[u8; 4]>,
+        root_font: Option<(f32, &str)>,
     ) -> Result<String, SvgError> {
         let viewport_matches = viewport_matches_tree(
             &self.tree,
@@ -261,6 +289,7 @@ impl SvgDocument {
         );
         let modifies_source = !viewport_matches
             || root_color.is_some()
+            || root_font.is_some()
             || root_style.neutralize_root_opacity
             || root_style.host_controls_root_background
             || !self.root_has_color;
@@ -270,6 +299,11 @@ impl SvgDocument {
             freeze_svg_stylesheet_selectors(&self.source, &mut rewrite_budget)?
         } else {
             self.source.clone()
+        };
+        let source = if root_font.is_some() {
+            normalize_svg_font_shorthands(&source, &mut rewrite_budget)?
+        } else {
+            source
         };
         let source = if viewport_matches {
             source
@@ -284,6 +318,7 @@ impl SvgDocument {
         let source = if root_style.neutralize_root_opacity
             || root_style.host_controls_root_background
             || root_color.is_some()
+            || root_font.is_some()
         {
             with_root_style_overrides(
                 &source,
@@ -291,6 +326,7 @@ impl SvgDocument {
                 root_style.neutralize_root_opacity,
                 root_style.host_controls_root_background || root_style.neutralize_root_opacity,
                 root_color,
+                root_font,
                 &mut rewrite_budget,
             )?
         } else {
@@ -352,7 +388,7 @@ impl SvgDocument {
         };
 
         if root_style.visible && root_style.opacity > 0.0 {
-            let source = self.prepare_source(viewport, root_style, None)?;
+            let source = self.prepare_source(viewport, root_style, None, None)?;
             let raster_opacity = if root_style.neutralize_root_opacity {
                 1.0
             } else {
@@ -1883,12 +1919,129 @@ fn with_root_viewport_size(source: &str, width: f32, height: f32) -> Result<Stri
     Ok(result)
 }
 
+fn normalize_svg_font_shorthands(
+    source: &str,
+    budget: &mut SelectorFreezeBudget,
+) -> Result<String, SvgError> {
+    budget.bytes(source.len())?;
+    let xml = roxmltree::Document::parse(source)
+        .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
+    let mut edits = Vec::new();
+    for node in xml
+        .root_element()
+        .descendants()
+        .filter(|node| node.is_element())
+    {
+        if let Some(attribute) = node.attribute_node("style")
+            && let Some(style) = expand_font_shorthands(attribute.value(), false, budget)?
+        {
+            let escaped = escape_xml_attribute(&style);
+            edits.push((attribute.range(), format!("style=\"{escaped}\"")));
+        }
+        if node.tag_name().name() == "style" {
+            for child in node.children().filter(|child| child.is_text()) {
+                if let Some(style) =
+                    expand_font_shorthands(child.text().unwrap_or(""), true, budget)?
+                {
+                    edits.push((child.range(), escape_xml_text(&style)));
+                }
+            }
+        }
+    }
+    apply_selector_edits(source, edits, budget)
+}
+
+fn expand_font_shorthands(
+    source: &str,
+    stylesheet: bool,
+    budget: &mut SelectorFreezeBudget,
+) -> Result<Option<String>, SvgError> {
+    budget.bytes(
+        source
+            .len()
+            .checked_mul(8)
+            .ok_or_else(selector_freeze_limit_error)?,
+    )?;
+    let sheet;
+    let declarations = if stylesheet {
+        sheet = simplecss::StyleSheet::parse(source);
+        sheet
+            .rules
+            .iter()
+            .flat_map(|rule| rule.declarations.iter().copied())
+            .collect::<Vec<_>>()
+    } else {
+        simplecss::DeclarationTokenizer::from(source).collect::<Vec<_>>()
+    };
+    let mut edits = Vec::new();
+    for declaration in declarations
+        .into_iter()
+        .filter(|declaration| declaration.name.eq_ignore_ascii_case("font"))
+    {
+        let Ok(font) = svgtypes::FontShorthand::from_str(declaration.value) else {
+            continue;
+        };
+        let offset = source_slice_offset(source, declaration.name);
+        let exceeded = Cell::new(false);
+        let mut input = cssparser::ParserInput::new(&source[offset..]);
+        let mut parser = cssparser::Parser::new(&mut input);
+        let mut declaration_parser = CssDeclarationSourceParser {
+            source,
+            budget,
+            budget_exceeded: &exceeded,
+        };
+        let parsed = cssparser::RuleBodyParser::new(&mut parser, &mut declaration_parser)
+            .next()
+            .and_then(Result::ok)
+            .ok_or_else(selector_freeze_limit_error)?;
+        let important = if declaration.important {
+            " !important"
+        } else {
+            ""
+        };
+        let properties = [
+            ("font-style", font.font_style.unwrap_or("normal")),
+            ("font-variant", font.font_variant.unwrap_or("normal")),
+            ("font-weight", font.font_weight.unwrap_or("normal")),
+            ("font-stretch", font.font_stretch.unwrap_or("normal")),
+            ("line-height", "normal"),
+            ("font-size-adjust", "none"),
+            ("font-kerning", "auto"),
+            ("font-variant-caps", "normal"),
+            ("font-variant-ligatures", "normal"),
+            ("font-variant-numeric", "normal"),
+            ("font-variant-east-asian", "normal"),
+            ("font-variant-position", "normal"),
+            ("font-size", font.font_size),
+            ("font-family", font.font_family),
+        ];
+        budget.bytes(
+            declaration
+                .value
+                .len()
+                .checked_add(1024)
+                .ok_or_else(selector_freeze_limit_error)?,
+        )?;
+        let replacement = properties
+            .iter()
+            .map(|(name, value)| format!("{name}:{value}{important}"))
+            .collect::<Vec<_>>()
+            .join(";");
+        edits.push((parsed.range, replacement));
+    }
+    if edits.is_empty() {
+        return Ok(None);
+    }
+    apply_selector_edits(source, edits, budget).map(Some)
+}
+
 fn with_root_style_overrides(
     source: &str,
     inherited_root_opacity: f32,
     neutralize_root_opacity: bool,
     host_controls_root_background: bool,
     root_color: Option<[u8; 4]>,
+    root_font: Option<(f32, &str)>,
     budget: &mut SelectorFreezeBudget,
 ) -> Result<String, SvgError> {
     budget.bytes(source.len())?;
@@ -1907,6 +2060,17 @@ fn with_root_style_overrides(
         root_style_properties.push("color");
         stylesheet_properties.push("color");
         if let Some(attribute) = root.attribute_node("color") {
+            budget.bytes(2 * std::mem::size_of::<(Range<usize>, String)>())?;
+            edits.push((attribute.range(), String::new()));
+        }
+    }
+    if root_font.is_some() {
+        root_style_properties.extend(["font-size", "font-family"]);
+        stylesheet_properties.extend(["font-size", "font-family"]);
+        for attribute in root
+            .attributes()
+            .filter(|attribute| matches!(attribute.name(), "font-size" | "font-family"))
+        {
             budget.bytes(2 * std::mem::size_of::<(Range<usize>, String)>())?;
             edits.push((attribute.range(), String::new()));
         }
@@ -1949,6 +2113,18 @@ fn with_root_style_overrides(
                 ),
             );
         }
+        if let Some((size, family)) = root_font {
+            budget.bytes(
+                family
+                    .len()
+                    .checked_add(128)
+                    .ok_or_else(selector_freeze_limit_error)?,
+            )?;
+            style_value = append_inline_declarations(
+                &style_value,
+                &format!("font-size:{size}px;font-family:{family}"),
+            );
+        }
         let escaped_bytes = xml_attribute_escape_allocation_bytes(&style_value)?;
         budget.bytes(escaped_bytes)?;
         let escaped_style_value = escape_xml_attribute(&style_value);
@@ -1969,7 +2145,7 @@ fn with_root_style_overrides(
                 attribute.range(),
                 format!("style=\"{escaped_style_value}\""),
             ));
-        } else if neutralize_root_opacity || root_color.is_some() {
+        } else if neutralize_root_opacity || root_color.is_some() || root_font.is_some() {
             let attribute_len = escaped_style_value
                 .len()
                 .checked_add(8)
