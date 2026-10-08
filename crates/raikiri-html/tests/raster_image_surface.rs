@@ -199,3 +199,52 @@ fn malformed_and_zero_sized_raster_pixels_are_omitted() {
         assert!(page.raster_image(&fragment, &malformed).is_none());
     }
 }
+
+struct SizedPixels {
+    natural: raikiri_traits::ImageIntrinsicSize,
+    pixels: Option<Arc<DecodedImage>>,
+}
+
+impl ImagePixelSource for SizedPixels {
+    fn get_decoded(&self, _url: &Url) -> Option<Arc<DecodedImage>> {
+        self.pixels.clone()
+    }
+    fn intrinsic_size(&self, _url: &Url) -> Option<raikiri_traits::ImageIntrinsicSize> {
+        Some(self.natural)
+    }
+}
+
+#[test]
+fn empty_objects_overflowing_placements_and_denied_pixels_are_omitted() {
+    let pixels = Pixels::new();
+    let ordinary = raikiri_traits::ImageIntrinsicSize {
+        width: Some(4.0),
+        height: Some(2.0),
+        aspect_ratio: Some(2.0),
+    };
+    for (css, natural, decoded) in [
+        ("width:0px", ordinary, Some(Arc::clone(&pixels.image))),
+        (
+            "object-fit:cover",
+            raikiri_traits::ImageIntrinsicSize {
+                width: Some(f32::MAX),
+                height: Some(f32::MIN_POSITIVE),
+                aspect_ratio: None,
+            },
+            Some(Arc::clone(&pixels.image)),
+        ),
+        ("", ordinary, None),
+    ] {
+        let document = lay_out("<img src='image.png'>", &format!("img{{{css}}}"), &pixels);
+        let page = document.page(0).unwrap();
+        let fragment = page
+            .fragments()
+            .find(|fragment| page.dom().local_name(fragment.node()) == Some("img"))
+            .unwrap();
+        let source = SizedPixels {
+            natural,
+            pixels: decoded,
+        };
+        assert!(page.raster_image(&fragment, &source).is_none(), "{css}");
+    }
+}
