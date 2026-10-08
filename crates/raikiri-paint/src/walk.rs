@@ -3933,7 +3933,9 @@ pub(crate) fn paint_document_impl(
                     let own_paint_height = grid.map_or(paint_height, |rect| rect.height);
                     let own_background_height =
                         grid.map_or(paint_background_height, |rect| rect.height);
-                    if node_id != body_id {
+                    let paints_table_part =
+                        !raikiri_dom::paint_rules::is_visibility_hidden_table_part(cv);
+                    if node_id != body_id && paints_table_part {
                         // The body canvas background was already propagated by
                         // `paint_canvas_background`; do not paint it a second
                         // time on the synthetic body root.
@@ -4035,7 +4037,9 @@ pub(crate) fn paint_document_impl(
                                 && matches!(side.color, BorderColor::Resolved(c) if c == cv.background_color)
                         });
                     // Paint border on top of background (CSS Backgrounds 3 §5).
-                    if !border_covered_by_background && paints_as_absolute_continuation {
+                    let paints_continuation_border =
+                        paints_table_part && paints_as_absolute_continuation;
+                    if !border_covered_by_background && paints_continuation_border {
                         paint_element_border_with_top(
                             scene,
                             own_paint_width, // cov:ignore: absolute continuation fragments are exercised by the ignored fragmentation WPT reftests.
@@ -4046,7 +4050,7 @@ pub(crate) fn paint_document_impl(
                             cv.color,
                             false,
                         );
-                    } else if !border_covered_by_background {
+                    } else if paints_table_part && !border_covered_by_background {
                         paint_element_border_rounded(
                             scene,
                             own_paint_width,
@@ -4060,16 +4064,18 @@ pub(crate) fn paint_document_impl(
                     }
                     // Outlines do not consume box-model space and are painted
                     // outside the border edge (CSS Basic UI §4).
-                    paint_element_outline(
-                        scene,
-                        own_paint_width,
-                        own_paint_height,
-                        own_paint_x,
-                        own_paint_y,
-                        &cv.outline,
-                        cv.outline_offset,
-                        cv.color,
-                    );
+                    if paints_table_part {
+                        paint_element_outline(
+                            scene,
+                            own_paint_width,
+                            own_paint_height,
+                            own_paint_x,
+                            own_paint_y,
+                            &cv.outline,
+                            cv.outline_offset,
+                            cv.color,
+                        );
+                    }
                     // Resolve the source's natural dimensions first. SVG
                     // sources use the resulting concrete object dimensions
                     // for a bounded, size-specific raster request.

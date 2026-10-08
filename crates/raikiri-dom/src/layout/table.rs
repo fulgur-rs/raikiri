@@ -968,7 +968,7 @@ fn compute_table_layout_checked(
             border_spacing.1,
         );
     }
-    position_anonymous_table_parts(
+    position_source_table_parts(
         doc,
         table_idx,
         &grid,
@@ -982,7 +982,7 @@ fn compute_table_layout_checked(
 
 /// Give source rows and groups used boxes, while cell placement remains
 /// measured in table coordinates until the final parent-relative projection.
-fn position_anonymous_table_parts(
+fn position_source_table_parts(
     doc: &mut Document,
     table: usize,
     grid: &TableGrid,
@@ -991,10 +991,13 @@ fn position_anonymous_table_parts(
     origins: (&[f32], &[f32]),
     vertical: bool,
 ) {
-    if !grid
-        .cells
-        .iter()
-        .any(|cell| cell.node_id >= doc.nodes.len())
+    // Pagination needs parent-relative source boxes even when all cells are
+    // explicit. Single-page callers retain their table-coordinate grid.
+    if !doc.table_objects.project_explicit_parts
+        && !grid
+            .cells
+            .iter()
+            .any(|cell| cell.node_id >= doc.nodes.len())
     {
         return;
     }

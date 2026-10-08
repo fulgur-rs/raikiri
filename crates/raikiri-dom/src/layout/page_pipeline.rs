@@ -221,6 +221,15 @@ pub fn layout_single_page(
     cascade: &CascadeResult,
     page_box: PageBox,
 ) -> Result<(), LayoutError> {
+    layout_single_page_with_table_projection(document, cascade, page_box, false)
+}
+
+fn layout_single_page_with_table_projection(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    project_explicit_table_parts: bool,
+) -> Result<(), LayoutError> {
     super::validate_layout_depth(document)?;
     document.page_projection.clear();
     // At this observation-side entry point, synchronize membership.
@@ -261,6 +270,7 @@ pub fn layout_single_page(
 
     // Step 1: ComputedValues → taffy::Style bridge (currently a no-op site).
     apply_computed_to_style(document, cascade)?;
+    document.table_objects.project_explicit_parts = project_explicit_table_parts;
 
     // Step 2: resolve the paper/content split before shaping.  Text wrapping
     // uses the content width, not the outer paper width.
@@ -1934,7 +1944,7 @@ pub fn layout_pages_with_page_geometry_and_control(
 ) -> Result<Vec<PageSlice>, LayoutError> {
     control.page_limit_reached.set(false);
     control.check_page_index(0)?;
-    layout_single_page(document, cascade, page_box)?;
+    layout_single_page_with_table_projection(document, cascade, page_box, true)?;
     control.check_page_index(0)?;
 
     let body_id = find_body(document).ok_or_else(|| LayoutError::Internal {

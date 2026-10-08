@@ -208,7 +208,9 @@ impl Document {
                             node.is_inline_svg_root() || self.is_canvas_element(node_id);
                         for &item in &own {
                             let fragment = items.fragment(item);
-                            if let Some(cells) = self.anonymous_table_part_background_cells(node_id)
+                            if let Some(cells) = self
+                                .anonymous_table_part_background_cells(node_id)
+                                .filter(|_| !paint_rules::is_visibility_hidden_table_part(cv))
                             {
                                 let rect = fragment.paint_rect();
                                 let top = rect.y - item.rect.y + item.box_y;
