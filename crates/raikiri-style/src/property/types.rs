@@ -6761,6 +6761,12 @@ impl DeferredValue {
         if !matches!(
             self.key,
             PropertyKey::Color
+                | PropertyKey::Display
+                | PropertyKey::Opacity
+                | PropertyKey::Visibility
+                | PropertyKey::FontFamily
+                | PropertyKey::FontWeight
+                | PropertyKey::FontStyle
                 | PropertyKey::BackgroundColor
                 | PropertyKey::FontSize
                 | PropertyKey::VerticalAlign
@@ -8286,6 +8292,7 @@ pub enum FilterFunction {
 /// — CSS Cascade 5 §7.3.5 "Rolling Back Cascade Layers: the revert-layer
 /// keyword" <https://www.w3.org/TR/css-cascade-5/#revert-layer>) is not yet
 /// implemented in this crate, except for `color`, `background-color`, `font-size`,
+/// `font-family`, `font-weight`, `font-style`, `display`, `opacity`, `visibility`,
 /// `vertical-align`,
 /// the border longhands and the `border` /
 /// `border-right` shorthands, which accept all five keywords through

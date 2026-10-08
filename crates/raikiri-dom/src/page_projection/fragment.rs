@@ -98,6 +98,19 @@ impl<'a> Fragment<'a> {
         self.rect()
     }
 
+    /// Whole element content box in CSS page layout coordinates, before page cuts.
+    ///
+    /// Border and padding use the layout engine's resolved values, including
+    /// percentage padding. A continuation may start above the page. Text
+    /// fragments and inline elements with multiple pieces return `None`.
+    /// Paint-time transforms, relative offsets and fixed-position adjustments
+    /// are not applied, as with [`Self::rect`].
+    pub fn content_rect(&self) -> Option<PaintRect> {
+        self.item
+            .content_rect
+            .map(|r| PaintRect::new(r.x + self.origin.0, r.y + self.origin.1, r.width, r.height))
+    }
+
     /// Ordinal of this fragment among the node's fragments.
     pub fn fragment_index(&self) -> u32 {
         self.item.fragment_index

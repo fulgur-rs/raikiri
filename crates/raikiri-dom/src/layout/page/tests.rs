@@ -1071,8 +1071,12 @@ fn an_inline_svg_with_content_takes_its_attribute_size_in_a_paragraph() {
     for (svg_style, with_content, expected) in [
         ("display:inline", true, (10.0, 10.0)),
         ("display:inline", false, (10.0, 10.0)),
-        // An authored width scales the height by the 1:1 ratio (CSS 2.1 10.6.2).
-        ("display:inline;width:30px", true, (30.0, 30.0)),
+        // Attribute dimensions are independent SVG presentation hints.
+        ("display:inline;width:30px", true, (30.0, 10.0)),
+        // An explicitly automatic axis still uses the intrinsic ratio.
+        ("display:inline;width:30px;height:auto", true, (30.0, 30.0)),
+        ("display:inline;width:auto;height:30px", true, (30.0, 30.0)),
+        ("display:inline;width:30px;height:20px", true, (30.0, 20.0)),
     ] {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));

@@ -12,3 +12,33 @@ fn css_wide_values_are_supported_for_color_background_and_font_size() {
         }
     }
 }
+
+#[test]
+fn svg_export_properties_accept_css_wide_defaulting() {
+    for name in [
+        "display",
+        "opacity",
+        "visibility",
+        "font-family",
+        "font-weight",
+        "font-style",
+    ] {
+        for keyword in [
+            "inherit",
+            "initial",
+            "unset",
+            "revert",
+            "revert-layer",
+            r"\69 nherit",
+        ] {
+            assert!(
+                matches!(
+                    parse_entire(keyword, name),
+                    Some(PropertyValue::Deferred(_))
+                ),
+                "{name}: {keyword}"
+            );
+            assert!(parse_entire(&format!("{keyword} extra"), name).is_none());
+        }
+    }
+}

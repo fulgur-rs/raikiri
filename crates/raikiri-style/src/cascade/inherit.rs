@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use super::SvgStyleProperty;
 use crate::PseudoElem;
 use crate::computed::{
     ComputedValues, CustomPropertyEnvironment, RunningTemplate, empty_custom_properties,
@@ -28,7 +29,7 @@ use crate::rule::{
     expand_text_decoration,
 };
 use crate::specified::{INITIAL_BORDER, SpecifiedValues};
-use crate::style_dom::{StyleDom, StyleNode, StyleNodeId, StyleNodeKind};
+use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
 
 use super::collect::{
     CASCADED_PSEUDO_ELEMENTS, CascadedArena, CascadedDecl, RankedDecl, cascade_rank, pick_winners,
@@ -140,6 +141,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
     authored_writing_modes: &mut Vec<Option<WritingMode>>,
     page_values: &mut [crate::property::PageValue],
     pseudo_out: &mut HashMap<(StyleNodeId, PseudoElem), ComputedValues>,
+    svg_properties: &mut HashMap<StyleNodeId, Vec<SvgStyleProperty>>,
     first_letter_inputs: &mut HashMap<StyleNodeId, super::first_letter::FirstLetterInputs>,
 ) {
     resolve_inheritance_with(
@@ -151,6 +153,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         authored_writing_modes,
         page_values,
         pseudo_out,
+        svg_properties,
         first_letter_inputs,
         true,
     );
@@ -169,6 +172,7 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
     authored_writing_modes: &mut Vec<Option<WritingMode>>,
     page_values: &mut [crate::property::PageValue],
     pseudo_out: &mut HashMap<(StyleNodeId, PseudoElem), ComputedValues>,
+    svg_properties: &mut HashMap<StyleNodeId, Vec<SvgStyleProperty>>,
     first_letter_inputs: &mut HashMap<StyleNodeId, super::first_letter::FirstLetterInputs>,
     sibling_sharing: bool,
 ) -> usize {
@@ -206,6 +210,10 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
             continue;
         };
         let is_element = node.kind() == StyleNodeKind::Element;
+        let is_svg = node
+            .as_element()
+            .is_some_and(|element| element.namespace_uri() == Some("http://www.w3.org/2000/svg"));
+        let mut node_svg_properties = Vec::new();
         let parent_computed = parent_id.map_or(parent_computed, |parent| &out[parent.0 as usize]);
 
         if authored_writing_modes.len() <= id.0 as usize {
@@ -219,9 +227,12 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
                 let cache = &mut share_caches[depth];
                 cache.reset_for(parent);
                 cache.sources.iter().flatten().copied().find(|&source| {
-                    dom.node(source)
-                        .is_some_and(|source_node| source_node.kind() == node.kind())
-                        && cascaded.same_cascade_input(source, id)
+                    dom.node(source).is_some_and(|source_node| {
+                        source_node.kind() == node.kind()
+                            && source_node.as_element().is_some_and(|element| {
+                                element.namespace_uri() == Some("http://www.w3.org/2000/svg")
+                            }) == is_svg
+                    }) && cascaded.same_cascade_input(source, id)
                 })
             }
             _ => None,
@@ -234,6 +245,9 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
                 let idx = id.0 as usize;
                 page_values[idx] = page_values[src].clone();
                 authored_writing_modes[idx] = authored_writing_modes[src];
+                if let Some(properties) = svg_properties.get(&source) {
+                    node_svg_properties = properties.clone();
+                }
                 for pseudo in CASCADED_PSEUDO_ELEMENTS {
                     if let Some(values) = pseudo_out.get(&(source, pseudo)).cloned() {
                         pseudo_out.insert((id, pseudo), values);
@@ -273,6 +287,7 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
                         &custom_properties,
                         Some(&mut page_values[id.0 as usize]),
                         Some(&mut authored_writing_modes[id.0 as usize]),
+                        is_svg.then_some(&mut node_svg_properties),
                     );
                 }
 
@@ -413,6 +428,7 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
                                 &pseudo_custom_properties,
                                 None,
                                 None,
+                                None,
                             );
                         }
 
@@ -447,6 +463,10 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
                 }
                 (computed, custom_properties, child_ctx, id)
             };
+
+        if !node_svg_properties.is_empty() {
+            svg_properties.insert(id, node_svg_properties);
+        }
 
         // `out` may be shorter than node_count(): `cascade()` only reserves
         // capacity, so a slot is created the first time the walk reaches it.
@@ -734,6 +754,7 @@ fn resolve_border_css_wide(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // winner application writes independent cascade metadata outputs
 pub(crate) fn apply_winners(
     candidates: &[CascadedDecl],
     winners: &mut Vec<Option<RankedDecl>>,
@@ -742,6 +763,7 @@ pub(crate) fn apply_winners(
     custom_properties: &CustomPropertyEnvironment,
     mut page_value: Option<&mut crate::property::PageValue>,
     mut authored_writing_mode: Option<&mut Option<WritingMode>>,
+    mut svg_properties: Option<&mut Vec<SvgStyleProperty>>,
 ) {
     pick_winners(candidates, winners);
     // The drain below takes every slot, so the white-space winners are read
@@ -755,6 +777,15 @@ pub(crate) fn apply_winners(
         if let Some(winner) = slot.take() {
             let value = &candidates[winner.idx].0;
             let winner_key = value.key();
+            let mut literal_inherit = false;
+            let mut default_value = |value: PropertyValue| {
+                if let PropertyValue::Deferred(marker) = &value {
+                    literal_inherit = marker.css_wide_keyword() == Some(CssWideKeyword::Inherit)
+                        || (marker.css_wide_keyword() == Some(CssWideKeyword::Unset)
+                            && svg_property_is_inherited(winner_key));
+                }
+                resolve_defaulting_value(value, inherited)
+            };
             let value = match value {
                 PropertyValue::BorderRadiusInherit => Some(PropertyValue::BorderRadius(
                     inherited_border_radius_value(inherited),
@@ -780,16 +811,13 @@ pub(crate) fn apply_winners(
                                 ) {
                                     Some(PropertyValue::Deferred(fallback)) => {
                                         resolve_deferred_value(&fallback, custom_properties)
-                                            .map(|value| resolve_defaulting_value(value, inherited))
+                                            .map(&mut default_value)
                                     }
-                                    Some(value) => Some(resolve_defaulting_value(value, inherited)),
+                                    Some(value) => Some(default_value(value)),
                                     None => None,
                                 }
                             }
-                            _ => Some(resolve_defaulting_value(
-                                PropertyValue::Deferred(marker),
-                                inherited,
-                            )),
+                            _ => Some(default_value(PropertyValue::Deferred(marker))),
                         },
                         value => value,
                     };
@@ -865,6 +893,19 @@ pub(crate) fn apply_winners(
                 crate::property::PropertyKey::BlockSize => sizes.block_size = rank,
                 _ => {}
             }
+            if let Some(properties) = svg_properties.as_deref_mut()
+                && svg_property_is_exported(winner_key)
+            {
+                properties.push(SvgStyleProperty {
+                    property: winner_key,
+                    inherited: literal_inherit
+                        || matches!(&value, Some(PropertyValue::ContextualColor(color))
+                            if color.key == crate::property::PropertyKey::Color
+                                && svg_color_is_current_color(&color.source))
+                        || (value.is_none() && svg_property_is_inherited(winner_key)),
+                    expression: value.as_ref().and_then(svg_property_expression),
+                });
+            }
             if let Some(value) = value {
                 if let PropertyValue::WritingMode(mode) = &value
                     && let Some(slot) = authored_writing_mode.as_deref_mut()
@@ -891,6 +932,51 @@ pub(crate) fn apply_winners(
     }
     if let Some(wrap) = wrap {
         specified.effective_text_wrap_mode = wrap;
+    }
+}
+
+fn svg_color_is_current_color(source: &str) -> bool {
+    let mut input = cssparser::ParserInput::new(source);
+    let mut parser = cssparser::Parser::new(&mut input);
+    parser.expect_ident_matching("currentcolor").is_ok() && parser.expect_exhausted().is_ok()
+}
+
+fn svg_property_is_exported(key: crate::property::PropertyKey) -> bool {
+    use crate::property::PropertyKey::*;
+    matches!(
+        key,
+        Color | FontFamily | FontSize | FontWeight | FontStyle | Visibility | Display | Opacity
+    )
+}
+
+fn svg_property_is_inherited(key: crate::property::PropertyKey) -> bool {
+    use crate::property::PropertyKey::*;
+    matches!(
+        key,
+        Color | FontFamily | FontSize | FontWeight | FontStyle | Visibility
+    )
+}
+
+fn svg_property_expression(value: &PropertyValue) -> Option<String> {
+    match value {
+        PropertyValue::FontSize(Length::Em(_) | Length::Percent(_) | Length::Ex(_)) => {
+            crate::property::serialize_value(value)
+        }
+        // SVG 1.1 lengths, as SVG renderers such as usvg parse them, have no
+        // `ch` or `ic` unit. Export the em multiple of the fallback these units
+        // resolve with (see `Length::Ch` and `Length::Ic`), which stays
+        // relative to the font size of each instance.
+        PropertyValue::FontSize(Length::Ch(value)) => {
+            crate::property::serialize_value(&PropertyValue::FontSize(Length::Em(value * 0.5)))
+        }
+        PropertyValue::FontSize(Length::Ic(value)) => {
+            crate::property::serialize_value(&PropertyValue::FontSize(Length::Em(*value)))
+        }
+        PropertyValue::FontSizeRelative(RelativeFontSize::Larger) => Some("larger".into()),
+        PropertyValue::FontSizeRelative(RelativeFontSize::Smaller) => Some("smaller".into()),
+        PropertyValue::FontWeight(FontWeightValue::Bolder) => Some("bolder".into()),
+        PropertyValue::FontWeight(FontWeightValue::Lighter) => Some("lighter".into()),
+        _ => None,
     }
 }
 
@@ -1472,7 +1558,47 @@ fn resolve_defaulting_value(value: PropertyValue, inherited: &ComputedValues) ->
             BorderRadius::elliptical([Length::Px(0.0); 4], [Length::Px(0.0); 4])
         };
         let initial = keyword == CssWideKeyword::Initial;
+        let inherit_svg = keyword == CssWideKeyword::Inherit
+            || (keyword != CssWideKeyword::Initial && svg_property_is_inherited(marker.key));
         match marker.key {
+            crate::property::PropertyKey::Opacity => {
+                return PropertyValue::Opacity(if inherit_svg { inherited.opacity } else { 1.0 });
+            }
+            crate::property::PropertyKey::Display => {
+                return PropertyValue::Display(if inherit_svg {
+                    inherited.display
+                } else {
+                    crate::property::DisplayValue::Inline
+                });
+            }
+            crate::property::PropertyKey::Visibility => {
+                return PropertyValue::Visibility(if inherit_svg {
+                    inherited.visibility
+                } else {
+                    crate::property::Visibility::Visible
+                });
+            }
+            crate::property::PropertyKey::FontFamily => {
+                return PropertyValue::FontFamily(if inherit_svg {
+                    inherited.font_family.clone()
+                } else {
+                    crate::property::initial_font_family()
+                });
+            }
+            crate::property::PropertyKey::FontWeight => {
+                return PropertyValue::FontWeight(FontWeightValue::Absolute(if inherit_svg {
+                    inherited.font_weight
+                } else {
+                    400.0
+                }));
+            }
+            crate::property::PropertyKey::FontStyle => {
+                return PropertyValue::FontStyle(if inherit_svg {
+                    inherited.font_style
+                } else {
+                    crate::property::FontStyle::Normal
+                });
+            }
             crate::property::PropertyKey::VerticalAlign => {
                 return PropertyValue::VerticalAlign(if keyword == CssWideKeyword::Inherit {
                     inherited.vertical_align

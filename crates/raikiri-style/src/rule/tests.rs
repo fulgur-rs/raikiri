@@ -1250,3 +1250,27 @@ fn list_style_none_resolves_only_unspecified_components() {
         );
     }
 }
+
+#[test]
+fn opacity_leaves_importance_for_the_declaration_parser() {
+    for source in [
+        "opacity:.25!important",
+        "opacity:25% !important",
+        "opacity:inherit!important",
+    ] {
+        let declarations = parse_block(source);
+        assert_eq!(declarations.len(), 1, "{source}");
+        assert!(declarations[0].important, "{source}");
+        assert_eq!(
+            declarations[0].value.key(),
+            crate::property::PropertyKey::Opacity
+        );
+    }
+    for source in [
+        "opacity:.25 extra!important",
+        "opacity:.25!other",
+        "opacity:.25!important extra",
+    ] {
+        assert!(parse_block(source).is_empty(), "{source}");
+    }
+}

@@ -25,6 +25,22 @@ pub struct PageGeometry {
     pub mode: PageMode,
 }
 
+/// Prepared vector source and resolved placement of an inline SVG root.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct InlineSvg {
+    /// Standalone XML with the viewport, root color, and root font resolved.
+    pub source: String,
+    /// Whole content box in CSS page coordinates, before pagination cuts.
+    pub viewport: PaintRect,
+    /// Host root opacity represented by the page's paint events.
+    ///
+    /// When present, resolve SVG inheritance first, then remove only the
+    /// parsed root group's opacity. Descendant opacity remains in the SVG;
+    /// ancestor opacity remains in the surrounding page paint events.
+    pub host_opacity: Option<f32>,
+}
+
 /// One laid-out page, borrowed from a [`super::DocumentLayout`].
 #[derive(Clone, Copy)]
 pub struct Page<'a> {
@@ -70,6 +86,138 @@ impl<'a> Page<'a> {
     /// All fragments on this page. The order is not the paint order.
     pub fn fragments(&self) -> impl Iterator<Item = Fragment<'a>> + 'a + use<'a> {
         self.document.page_fragments(self.slice.page_index)
+    }
+
+    /// Prepares the vector source of an SVG root placed by this page.
+    ///
+    /// Pass a fragment from [`Self::fragments`]. Ordinary elements, text and
+    /// empty SVG viewports return `None`. Hidden roots retain source so their
+    /// explicitly visible descendants can still be drawn. The host box is drawn
+    /// separately; source admission and preparation errors are returned.
+    /// Fixed boxes placed through other insets than `top` and `left` lengths
+    /// are rejected, including when the fixed box is an ancestor. Their paint
+    /// placement is not represented by the fragment projection yet.
+    pub fn inline_svg(
+        &self,
+        fragment: &Fragment<'a>,
+    ) -> Result<Option<InlineSvg>, raikiri_svg::SvgError> {
+        let Some(id) = usize::try_from(fragment.node().0).ok() else {
+            return Ok(None); // cov:ignore: Fragment node IDs originate from usize arena indices.
+        };
+        if !self
+            .document
+            .get_node(id)
+            .is_some_and(|node| node.is_inline_svg_root())
+        {
+            return Ok(None);
+        }
+        let Some(viewport) = fragment.content_rect() else {
+            return Ok(None); // cov:ignore: Page fragments of an SVG element always cache its content box.
+        };
+        let Some(computed) = self.computed(fragment.node()) else {
+            return Ok(None); // cov:ignore: Completed layout cascades cover the entire source node arena.
+        };
+        if viewport.width <= 0.0 || viewport.height <= 0.0 {
+            return Ok(None);
+        }
+        let dom = self.dom();
+        let mut current = Some(fragment.node());
+        while let Some(node) = current {
+            if let Some(style) = self.computed(node)
+                && style.position == raikiri_style::property::PositionValue::Fixed
+                && !(matches!(
+                    style.left,
+                    raikiri_style::resolve::ComputedLengthPercentageOrAuto::Px(_)
+                ) && matches!(
+                    style.top,
+                    raikiri_style::resolve::ComputedLengthPercentageOrAuto::Px(_)
+                ))
+            {
+                return Err(raikiri_svg::SvgError::InvalidDocument(
+                    "SVG fixed placement is not represented by the fragment projection".into(),
+                ));
+            }
+            current = dom.parent(node);
+        }
+        let Some(source) = self
+            .document
+            .serialize_svg_subtree(id)
+            .map_err(raikiri_svg::SvgError::InvalidDocument)?
+        else {
+            return Ok(None); // cov:ignore: The checked SVG namespace/root predicate guarantees a serializable root.
+        };
+        let document = raikiri_svg::SvgDocument::parse(source.as_bytes())?;
+        let host_opacity = self
+            .cascade
+            .opacity_specified
+            .get(id)
+            .copied()
+            .unwrap_or(false)
+            .then_some(computed.opacity);
+        let color = computed.color;
+        let mut node_styles = Vec::new();
+        let mut remaining_style_bytes = 32 * 1024 * 1024usize;
+        let mut stack = vec![fragment.node()];
+        let mut element_index = 0;
+        while let Some(node) = stack.pop() {
+            if dom.kind(node) == Some(raikiri_traits::NodeKind::Element) {
+                if element_index != 0 {
+                    let properties = self
+                        .cascade
+                        .svg_style_properties(raikiri_style::StyleNodeId(node.0));
+                    if !properties.is_empty()
+                        && let Some(style) = self.computed(node)
+                    {
+                        let declarations =
+                            svg_node_declarations(style, properties, &mut remaining_style_bytes)?;
+                        node_styles.push((element_index, declarations));
+                    }
+                }
+                element_index += 1;
+            }
+            let children: Vec<_> = dom.children(node).collect();
+            stack.extend(children.into_iter().rev());
+        }
+        let element_styles: Vec<_> = node_styles
+            .iter()
+            .map(
+                |(element_index, declarations)| raikiri_svg::SvgElementStyle {
+                    element_index: *element_index,
+                    declarations,
+                },
+            )
+            .collect();
+        let source = document.styled_source_with_resolved_styles(
+            raikiri_svg::SvgViewport {
+                width: viewport.width,
+                height: viewport.height,
+            },
+            raikiri_svg::SvgRootStyle {
+                inherited_color: [color.r, color.g, color.b, color.a],
+                opacity: host_opacity.unwrap_or(1.0),
+                neutralize_root_opacity: host_opacity.is_some(),
+                host_controls_root_background: self
+                    .cascade
+                    .background_color_specified
+                    .get(id)
+                    .copied()
+                    .unwrap_or(false),
+                visible: computed.visibility == raikiri_style::property::Visibility::Visible,
+            },
+            [color.r, color.g, color.b, color.a],
+            raikiri_svg::SvgRootFont {
+                size: computed.font_size.0,
+                weight: computed.font_weight,
+                style: computed.font_style.as_css_str(),
+                family: &svg_font_family(computed),
+            },
+            &element_styles,
+        )?;
+        Ok(Some(InlineSvg {
+            source,
+            viewport,
+            host_opacity,
+        }))
     }
 
     /// Local overflow clips of this page's placements and their ancestors,
@@ -198,3 +346,113 @@ impl<'a> Page<'a> {
             })
     }
 }
+
+fn svg_font_family(style: &ComputedValues) -> String {
+    style
+        .font_family
+        .iter()
+        .map(|family| {
+            if family.1 == raikiri_style::property::FontFamilyKind::Generic {
+                family.as_str().to_owned()
+            } else {
+                let name = family
+                    .as_str()
+                    .replace('\\', "\\\\")
+                    .replace('"', "\\\"")
+                    .replace('\n', "\\a ")
+                    .replace('\r', "\\d ")
+                    .replace('\u{c}', "\\c ");
+                format!("\"{name}\"")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn svg_node_declarations(
+    style: &ComputedValues,
+    properties: &[raikiri_style::cascade::SvgStyleProperty],
+    remaining_bytes: &mut usize,
+) -> Result<String, raikiri_svg::SvgError> {
+    use raikiri_style::property::PropertyKey;
+    let mut css = String::new();
+    // Bound metadata before allocating repeated declarations from the host CSS.
+    let mut consume = |bytes: usize| {
+        *remaining_bytes = remaining_bytes.checked_sub(bytes).ok_or_else(|| {
+            raikiri_svg::SvgError::InvalidDocument(
+                "SVG descendant style source limit exceeded".into(),
+            )
+        })?;
+        Ok::<(), raikiri_svg::SvgError>(())
+    };
+    consume(128)?;
+    for property in properties {
+        let size = if property.property == PropertyKey::FontFamily && !property.inherited {
+            style.font_family.iter().fold(128usize, |size, name| {
+                size.saturating_add(name.as_str().len().saturating_mul(8))
+            })
+        } else {
+            128
+        };
+        consume(size)?;
+        let (name, value) = if property.inherited {
+            let name = match property.property {
+                PropertyKey::Color => "color",
+                PropertyKey::Display => "display",
+                PropertyKey::Opacity => "opacity",
+                PropertyKey::Visibility => "visibility",
+                PropertyKey::FontSize => "font-size",
+                PropertyKey::FontFamily => "font-family",
+                PropertyKey::FontStyle => "font-style",
+                PropertyKey::FontWeight => "font-weight",
+                _ => continue,
+            };
+            // SVG renderers such as usvg copy an ancestor's raw `font-size`
+            // for `inherit` and apply it again, compounding a relative size.
+            // `100%` has the same computed value without that copy.
+            let value = if property.property == PropertyKey::FontSize {
+                "100%"
+            } else {
+                "inherit"
+            };
+            (name, value.to_owned())
+        } else {
+            match property.property {
+                PropertyKey::Color => {
+                    let color = style.color;
+                    (
+                        "color",
+                        format!(
+                            "rgba({},{},{},{:.6})",
+                            color.r,
+                            color.g,
+                            color.b,
+                            f32::from(color.a) / 255.0
+                        ),
+                    )
+                }
+                PropertyKey::Display => ("display", style.display.as_css_str().to_owned()),
+                PropertyKey::Opacity => ("opacity", style.opacity.to_string()),
+                PropertyKey::Visibility => ("visibility", style.visibility.as_css_str().to_owned()),
+                PropertyKey::FontSize => ("font-size", format!("{}px", style.font_size.0)),
+                PropertyKey::FontFamily => ("font-family", svg_font_family(style)),
+                PropertyKey::FontStyle => ("font-style", style.font_style.as_css_str().to_owned()),
+                PropertyKey::FontWeight => ("font-weight", style.font_weight.to_string()),
+                _ => continue,
+            }
+        };
+        let value = property
+            .expression
+            .as_ref()
+            .filter(|_| !property.inherited)
+            .unwrap_or(&value);
+        css.push_str(name);
+        css.push(':');
+        css.push_str(value);
+        css.push_str("!important;");
+    }
+    Ok(css)
+}
+
+#[cfg(test)]
+mod tests;

@@ -165,6 +165,7 @@ impl CascadeResult {
             declaration_custom,
             None,
             None,
+            None,
         );
         let mut computed = specified.finalize(inherited, context);
         computed.custom_properties = ordinary.custom_properties.clone();
@@ -205,6 +206,7 @@ impl CascadeResult {
             &mut specified,
             parent,
             &custom,
+            None,
             None,
             None,
         );

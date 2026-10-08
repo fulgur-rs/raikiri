@@ -128,6 +128,24 @@ fn lay_out_with_font(body: &str, style: &str) -> DocumentLayout {
 }
 
 #[test]
+fn multiline_inline_boxes_do_not_advertise_one_content_rectangle() {
+    let result = lay_out_with_font(
+        "<p><span id=wrapped>ABCDEFGHIJKL</span></p>",
+        "p{width:30px;word-break:break-all}span{padding:2px;border:1px solid black}",
+    );
+    let page = result.page(0).unwrap();
+    let fragment = page
+        .fragments()
+        .find(|fragment| page.dom().attr(fragment.node(), "id") == Some("wrapped"))
+        .unwrap();
+    assert!(
+        fragment.paint_rect().height > 20.0,
+        "fixture must wrap into several pieces"
+    );
+    assert_eq!(fragment.content_rect(), None);
+}
+
+#[test]
 fn supplied_text_lines_include_generated_and_ellipsis_inside_opacity_groups() {
     use raikiri_html::RunSource;
     use std::collections::{HashMap, HashSet};

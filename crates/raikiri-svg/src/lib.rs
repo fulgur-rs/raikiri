@@ -5,7 +5,7 @@
 
 use raikiri_traits::DecodedImage;
 use std::cell::Cell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::Range;
 
 const DEFAULT_MAX_OUTPUT_BYTES: u64 = 32 * 1024 * 1024;
@@ -24,7 +24,7 @@ pub struct SvgIntrinsicSize {
     pub aspect_ratio: Option<f32>,
 }
 
-/// The concrete viewport used to rasterize an SVG.
+/// The concrete CSS viewport used to prepare or rasterize an SVG.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SvgViewport {
     /// CSS pixel width.
@@ -47,6 +47,8 @@ pub struct SvgRootStyle {
     pub opacity: f32,
     /// Remove the SVG root group's opacity from the raster when the caller
     /// composites the computed opacity around the SVG and its box decorations.
+    /// Source-only preparation retains this opacity for inheritance; see
+    /// [`SvgDocument::styled_source`].
     pub neutralize_root_opacity: bool,
     /// The host controls the SVG root's `background-color`, including when it
     /// computes to transparent, so omit the source background from the raster.
@@ -67,6 +69,40 @@ impl Default for SvgRootStyle {
     }
 }
 
+/// Resolved font properties inherited by a standalone SVG root.
+#[derive(Debug, Clone, Copy)]
+pub struct SvgRootFont<'a> {
+    /// Finite non-negative font size in CSS pixels.
+    pub size: f32,
+    /// CSS family candidate list, preserving all fallback names.
+    pub family: &'a str,
+    /// Finite absolute weight in the inclusive range 1 to 1000.
+    pub weight: f32,
+    /// CSS `font-style` keyword: `normal`, `italic` or `oblique`.
+    pub style: &'a str,
+}
+
+/// Resolved declarations for one descendant of the original SVG source.
+#[derive(Debug, Clone, Copy)]
+pub struct SvgElementStyle<'a> {
+    /// Zero-based element preorder index, counting the root as index zero.
+    /// The root is styled separately and must not be included here.
+    pub element_index: usize,
+    /// Resolved CSS declarations for color, display, opacity, visibility and
+    /// font size, family, weight or style. Preserve literal `inherit` when
+    /// a declaration must inherit through an instantiated `use` subtree.
+    pub declarations: &'a str,
+}
+
+#[derive(Clone, Copy, Default)]
+struct SourceRootStyle<'a> {
+    color: Option<[u8; 4]>,
+    font: Option<(f32, &'a str)>,
+    font_face: Option<(f32, &'a str)>,
+    visible: Option<bool>,
+    elements: &'a [SvgElementStyle<'a>],
+}
+
 /// SVG parsing, viewport, or allocation failure.
 #[derive(Debug)]
 #[non_exhaustive]
@@ -75,7 +111,7 @@ pub enum SvgError {
     InvalidDocument(String),
     /// The document contains a DTD other than the inert SVG 1.1 public declaration.
     UnsupportedDoctype,
-    /// An SVG `<image>` reference would access a resource outside this file.
+    /// An SVG resource reference would access a resource outside this file.
     ExternalReference,
     /// Filter effects are outside the supported static SVG subset.
     UnsupportedFilterEffects,
@@ -100,7 +136,7 @@ impl std::fmt::Display for SvgError {
             Self::InvalidDocument(message) => write!(f, "invalid SVG document: {message}"),
             Self::UnsupportedDoctype => f.write_str("SVG documents with a DOCTYPE are unsupported"),
             Self::ExternalReference => {
-                f.write_str("SVG image references outside the document are disabled")
+                f.write_str("SVG resource references outside the document are disabled")
             }
             Self::UnsupportedFilterEffects => {
                 f.write_str("SVG filter effects are outside the supported subset")
@@ -194,6 +230,248 @@ impl SvgDocument {
         self.intrinsic
     }
 
+    /// Prepares SVG source for the resolved CSS viewport and host style.
+    ///
+    /// No pixels are allocated. When `neutralize_root_opacity` is set, the
+    /// source retains the host's root opacity so an SVG parser can resolve
+    /// explicit `inherit` values. A vector consumer must remove only the
+    /// resolved root group's opacity after parsing, then composite the host
+    /// box and SVG together with that opacity.
+    /// `root_style.visible` controls rasterization only; a vector consumer
+    /// handles the host's visibility before drawing this source.
+    /// External resource references, CSS imports and XML stylesheet processing
+    /// instructions are rejected before source is exported. SVG navigation
+    /// links and same-document fragment references remain available.
+    /// Style rules with selectors in the subset this crate matches are frozen
+    /// to the elements they match in the original source and emitted with
+    /// equal specificity in their original cascade order. CSS at-rules, and
+    /// style rules with any other selector, follow the frozen rules in source
+    /// order without interpretation. Those style rules are wrapped in
+    /// `@media all`, and retained CSS that a SimpleCSS-based renderer would
+    /// not skip as one unit, such as a rule with a brace inside a string, is
+    /// removed. Retained CSS therefore does not keep its original order or
+    /// specificity relative to frozen rules. A stylesheet without frozen rules
+    /// is kept as written. The vector consumer determines which retained CSS
+    /// it supports.
+    pub fn styled_source(
+        &self,
+        viewport: SvgViewport,
+        root_style: SvgRootStyle,
+    ) -> Result<String, SvgError> {
+        self.styled_source_impl(viewport, root_style, SourceRootStyle::default())
+    }
+
+    /// Prepares source with the host cascade's effective SVG root color.
+    ///
+    /// Resolve root presentation attributes and author CSS before passing
+    /// `root_color`. Selector matches are frozen before replacing root color
+    /// declarations; descendant colors and explicit inheritance are preserved.
+    /// Other preparation rules match [`Self::styled_source`].
+    pub fn styled_source_with_root_color(
+        &self,
+        viewport: SvgViewport,
+        root_style: SvgRootStyle,
+        root_color: [u8; 4],
+    ) -> Result<String, SvgError> {
+        self.styled_source_impl(
+            viewport,
+            root_style,
+            SourceRootStyle {
+                color: Some(root_color),
+                ..SourceRootStyle::default()
+            },
+        )
+    }
+
+    /// Prepares source with resolved root color and font inheritance.
+    ///
+    /// `font_size` is a finite non-negative CSS pixel size; `font_family` is a
+    /// CSS family list. Resolve presentation attributes and author CSS first.
+    /// Original selector matches and descendant font declarations are preserved.
+    pub fn styled_source_with_root_color_and_font(
+        &self,
+        viewport: SvgViewport,
+        root_style: SvgRootStyle,
+        root_color: [u8; 4],
+        font_size: f32,
+        font_family: &str,
+    ) -> Result<String, SvgError> {
+        if !valid_root_font(font_size, font_family) {
+            return Err(SvgError::InvalidDocument(
+                "invalid SVG root font style".into(),
+            ));
+        }
+        self.styled_source_impl(
+            viewport,
+            root_style,
+            SourceRootStyle {
+                color: Some(root_color),
+                font: Some((font_size, font_family)),
+                ..SourceRootStyle::default()
+            },
+        )
+    }
+
+    /// Prepares source with the host's resolved root color, font and visibility.
+    ///
+    /// Resolve presentation attributes and author CSS before calling this
+    /// method. Original selector matches are frozen before root overrides.
+    /// Descendant declarations, including explicit visibility and font
+    /// overrides, are preserved. Unlike [`Self::styled_source`], this method
+    /// applies `root_style.visible` to the source root, so a hidden root can
+    /// still contain visible descendants.
+    pub fn styled_source_with_resolved_root_style(
+        &self,
+        viewport: SvgViewport,
+        root_style: SvgRootStyle,
+        root_color: [u8; 4],
+        font: SvgRootFont<'_>,
+    ) -> Result<String, SvgError> {
+        self.styled_source_with_resolved_styles(viewport, root_style, root_color, font, &[])
+    }
+
+    /// Prepares source with host-cascaded root and descendant declarations.
+    ///
+    /// Element indices refer to the original source before selector freezing.
+    /// Existing declarations for an overridden property are scoped away from
+    /// that element; other declarations and original selector matches survive.
+    /// Declaration parsing, generated source and selector work share the
+    /// ordinary source preparation budget. External references are rejected.
+    pub fn styled_source_with_resolved_styles(
+        &self,
+        viewport: SvgViewport,
+        root_style: SvgRootStyle,
+        root_color: [u8; 4],
+        font: SvgRootFont<'_>,
+        elements: &[SvgElementStyle<'_>],
+    ) -> Result<String, SvgError> {
+        if !valid_root_font(font.size, font.family)
+            || !font.weight.is_finite()
+            || !(1.0..=1000.0).contains(&font.weight)
+            || !["normal", "italic", "oblique"]
+                .iter()
+                .any(|keyword| font.style.eq_ignore_ascii_case(keyword))
+        {
+            return Err(SvgError::InvalidDocument(
+                "invalid SVG root font style".into(),
+            ));
+        }
+        self.styled_source_impl(
+            viewport,
+            root_style,
+            SourceRootStyle {
+                color: Some(root_color),
+                font: Some((font.size, font.family)),
+                font_face: Some((font.weight, font.style)),
+                visible: Some(root_style.visible),
+                elements,
+            },
+        )
+    }
+
+    fn styled_source_impl(
+        &self,
+        viewport: SvgViewport,
+        root_style: SvgRootStyle,
+        source_style: SourceRootStyle<'_>,
+    ) -> Result<String, SvgError> {
+        if !viewport.width.is_finite()
+            || !viewport.height.is_finite()
+            || viewport.width <= 0.0
+            || viewport.height <= 0.0
+        {
+            return Err(SvgError::InvalidViewport);
+        }
+        if !root_style.opacity.is_finite() || !(0.0..=1.0).contains(&root_style.opacity) {
+            return Err(SvgError::InvalidOpacity);
+        }
+        reject_exported_external_references(&self.source)?;
+        let source = self.prepare_source(viewport, root_style, source_style, true)?;
+        if !source_style.elements.is_empty() {
+            reject_exported_external_references(&source)?;
+        }
+        Ok(source)
+    }
+
+    fn prepare_source(
+        &self,
+        viewport: SvgViewport,
+        root_style: SvgRootStyle,
+        source_style: SourceRootStyle<'_>,
+        exact_viewport: bool,
+    ) -> Result<String, SvgError> {
+        let viewport_matches = viewport_matches_tree(
+            &self.tree,
+            viewport.width,
+            viewport.height,
+            self.has_view_box && !exact_viewport,
+        );
+        let modifies_source = exact_viewport
+            || !viewport_matches
+            || source_style.color.is_some()
+            || source_style.font.is_some()
+            || source_style.visible.is_some()
+            || root_style.neutralize_root_opacity
+            || root_style.host_controls_root_background
+            || !self.root_has_color;
+        // Freeze matches before rewriting attributes inspected by selectors.
+        let mut rewrite_budget = SelectorFreezeBudget::new();
+        let (source, rewrite_stylesheets) = if modifies_source {
+            freeze_svg_stylesheet_selectors(&self.source, &mut rewrite_budget)?
+        } else {
+            (self.source.clone(), false)
+        };
+        let source = if exact_viewport {
+            normalize_svg_css_types(&source, &mut rewrite_budget)?.unwrap_or(source)
+        } else {
+            source
+        };
+        let source = if source_style.font.is_some() {
+            normalize_svg_font_shorthands(&source, rewrite_stylesheets, &mut rewrite_budget)?
+        } else {
+            source
+        };
+        let source = if source_style.elements.is_empty() {
+            source
+        } else {
+            with_element_style_overrides(
+                &source,
+                source_style.elements,
+                rewrite_stylesheets,
+                &mut rewrite_budget,
+            )?
+        };
+        let source = if viewport_matches {
+            source
+        } else {
+            with_root_viewport_size(&source, viewport.width, viewport.height)?
+        };
+        let source = if root_style.neutralize_root_opacity {
+            normalize_svg_opacity_cascade(&source, rewrite_stylesheets, &mut rewrite_budget)?
+        } else {
+            source
+        };
+        let source = if root_style.neutralize_root_opacity
+            || root_style.host_controls_root_background
+            || source_style.color.is_some()
+            || source_style.font.is_some()
+            || source_style.visible.is_some()
+        {
+            with_root_style_overrides(
+                &source,
+                root_style.opacity,
+                root_style.neutralize_root_opacity,
+                root_style.host_controls_root_background || root_style.neutralize_root_opacity,
+                source_style,
+                rewrite_stylesheets,
+                &mut rewrite_budget,
+            )?
+        } else {
+            source
+        };
+        with_inherited_color(&source, root_style.inherited_color)
+    }
+
     /// Rasterizes the SVG to straight-alpha RGBA8 at `viewport`.
     ///
     /// The effective output limit is the smaller of 32 MiB and
@@ -247,48 +525,8 @@ impl SvgDocument {
         };
 
         if root_style.visible && root_style.opacity > 0.0 {
-            let viewport_matches = viewport_matches_tree(
-                &self.tree,
-                viewport.width,
-                viewport.height,
-                self.has_view_box,
-            );
-            let modifies_source = !viewport_matches
-                || root_style.neutralize_root_opacity
-                || root_style.host_controls_root_background
-                || !self.root_has_color;
-            // Freeze selector matches before viewport, host-style, and opacity
-            // rewrites change attributes that selectors can inspect.
-            let mut rewrite_budget = SelectorFreezeBudget::new();
-            let source = if modifies_source {
-                freeze_svg_stylesheet_selectors(&self.source, &mut rewrite_budget)?
-            } else {
-                self.source.clone()
-            };
-            let source = if viewport_matches {
-                source
-            } else {
-                with_root_viewport_size(&source, viewport.width, viewport.height)?
-            };
-            let source = if root_style.neutralize_root_opacity {
-                normalize_svg_opacity_cascade(&source, &mut rewrite_budget)?
-            } else {
-                source
-            };
-            let source = if root_style.neutralize_root_opacity
-                || root_style.host_controls_root_background
-            {
-                with_root_style_overrides(
-                    &source,
-                    root_style.opacity,
-                    root_style.neutralize_root_opacity,
-                    root_style.host_controls_root_background || root_style.neutralize_root_opacity,
-                    &mut rewrite_budget,
-                )?
-            } else {
-                source
-            };
-            let source = with_inherited_color(&source, root_style.inherited_color)?;
+            let source =
+                self.prepare_source(viewport, root_style, SourceRootStyle::default(), false)?;
             let raster_opacity = if root_style.neutralize_root_opacity {
                 1.0
             } else {
@@ -1138,15 +1376,46 @@ fn skip_simplecss_at_rule(bytes: &[u8], cursor: usize) -> usize {
     }
 }
 
+fn svg_style_has_css_type(node: roxmltree::Node<'_, '_>) -> bool {
+    node.attribute("type").is_none_or(|mime| {
+        mime.trim().is_empty()
+            || mime
+                .split(';')
+                .next()
+                .is_some_and(|essence| essence.trim().eq_ignore_ascii_case("text/css"))
+    })
+}
+
+fn normalize_svg_css_types(
+    source: &str,
+    budget: &mut SelectorFreezeBudget,
+) -> Result<Option<String>, SvgError> {
+    // Freeze selectors first so matching the original type attribute still works.
+    budget.bytes(source.len())?;
+    let xml = roxmltree::Document::parse(source)
+        .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
+    let mut edits = Vec::new();
+    for node in xml.descendants().filter(|node| node.has_tag_name("style")) {
+        if svg_style_has_css_type(node)
+            && let Some(attribute) = node.attribute_node("type")
+            && attribute.value() != "text/css"
+        {
+            budget.bytes(8 + std::mem::size_of::<(Range<usize>, String)>())?;
+            edits.push((attribute.range_value(), "text/css".to_owned()));
+        }
+    }
+    if edits.is_empty() {
+        return Ok(None);
+    }
+    apply_selector_edits(source, edits, budget).map(Some)
+}
+
 fn preflight_initial_svg_selectors(xml: &roxmltree::Document<'_>) -> Result<(), SvgError> {
     let mut budget = InitialParseSelectorBudget::new();
     let mut selectors = Vec::new();
     let mut total_rules = 0usize;
     for node in xml.descendants().filter(|node| node.has_tag_name("style")) {
-        if node
-            .attribute("type")
-            .is_some_and(|style_type| style_type != "text/css")
-        {
+        if !svg_style_has_css_type(node) {
             continue;
         }
         let Some(stylesheet_text) = node.text() else {
@@ -1516,16 +1785,118 @@ fn reject_external_image_references(root: roxmltree::Node<'_, '_>) -> Result<(),
     Ok(())
 }
 
+fn reject_exported_external_references(source: &str) -> Result<(), SvgError> {
+    let mut budget = SelectorFreezeBudget::new();
+    budget.bytes(source.len())?;
+    let xml = roxmltree::Document::parse(source)
+        .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
+    for node in xml.descendants() {
+        if node.pi().is_some_and(|pi| pi.target == "xml-stylesheet") {
+            return Err(SvgError::ExternalReference);
+        }
+        if !node.is_element() {
+            continue;
+        }
+        let navigation_link = node.tag_name().name() == "a"
+            && node
+                .tag_name()
+                .namespace()
+                .is_none_or(|ns| ns == SVG_NAMESPACE);
+        for attribute in node.attributes() {
+            if matches!(attribute.name(), "href" | "src")
+                && !(navigation_link && attribute.name() == "href")
+                && !attribute.value().trim().starts_with('#')
+            {
+                return Err(SvgError::ExternalReference);
+            }
+            if attribute.namespace() == Some(XML_NAMESPACE)
+                && attribute.name() == "base"
+                && !attribute.value().trim().is_empty()
+            {
+                return Err(SvgError::ExternalReference);
+            }
+            if matches!(
+                attribute.name(),
+                "style"
+                    | "fill"
+                    | "stroke"
+                    | "filter"
+                    | "clip-path"
+                    | "mask"
+                    | "cursor"
+                    | "marker"
+                    | "marker-start"
+                    | "marker-mid"
+                    | "marker-end"
+            ) {
+                reject_external_css_references(attribute.value())?;
+            }
+        }
+        if node.tag_name().name() == "style"
+            && let Some(text) = node.text()
+        {
+            reject_external_css_references(text)?;
+        }
+    }
+    Ok(())
+}
+
+fn reject_external_css_references(source: &str) -> Result<(), SvgError> {
+    let mut input = cssparser::ParserInput::new(source);
+    let mut parser = cssparser::Parser::new(&mut input);
+    reject_external_css_tokens(&mut parser, 0).map_err(|error| match error.kind {
+        cssparser::ParseErrorKind::Custom(error) => error,
+        cssparser::ParseErrorKind::Basic(error) => {
+            SvgError::InvalidDocument(format!("invalid SVG CSS resource reference: {error:?}"))
+        }
+    })
+}
+
+fn reject_external_css_tokens<'i>(
+    input: &mut cssparser::Parser<'i, '_>,
+    depth: usize,
+) -> Result<(), cssparser::ParseError<'i, SvgError>> {
+    if depth >= MAX_FILTER_CSS_NESTING {
+        return Err(input.new_custom_error(SvgError::InvalidDocument(
+            "SVG CSS resource reference nesting limit exceeded".into(),
+        )));
+    }
+    while let Ok(token) = input.next().cloned() {
+        match token {
+            cssparser::Token::AtKeyword(name) if name.eq_ignore_ascii_case("import") => {
+                return Err(input.new_custom_error(SvgError::ExternalReference));
+            }
+            cssparser::Token::UnquotedUrl(url) if !url.trim().starts_with('#') => {
+                return Err(input.new_custom_error(SvgError::ExternalReference));
+            }
+            cssparser::Token::Function(name) if name.eq_ignore_ascii_case("url") => {
+                input.parse_nested_block(|nested| {
+                    let url = nested.expect_string_cloned()?;
+                    if !url.trim().starts_with('#') {
+                        return Err(nested.new_custom_error(SvgError::ExternalReference));
+                    }
+                    Ok(())
+                })?;
+            }
+            cssparser::Token::Function(_)
+            | cssparser::Token::ParenthesisBlock
+            | cssparser::Token::SquareBracketBlock
+            | cssparser::Token::CurlyBracketBlock => {
+                input.parse_nested_block(|nested| reject_external_css_tokens(nested, depth + 1))?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 fn reject_filter_effects(root: roxmltree::Node<'_, '_>) -> Result<(), SvgError> {
     for node in root.descendants().filter(|node| node.is_element()) {
         let is_svg = node
             .tag_name()
             .namespace()
             .is_none_or(|namespace| namespace == SVG_NAMESPACE);
-        let is_style = node.tag_name().name() == "style"
-            && node
-                .attribute("type")
-                .is_none_or(|style_type| style_type == "text/css");
+        let is_style = node.tag_name().name() == "style" && svg_style_has_css_type(node);
         if !is_svg && !is_style {
             continue;
         }
@@ -1819,13 +2190,164 @@ fn with_root_viewport_size(source: &str, width: f32, height: f32) -> Result<Stri
     Ok(result)
 }
 
+fn normalize_svg_font_shorthands(
+    source: &str,
+    rewrite_stylesheets: bool,
+    budget: &mut SelectorFreezeBudget,
+) -> Result<String, SvgError> {
+    budget.bytes(source.len())?;
+    let xml = roxmltree::Document::parse(source)
+        .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
+    let mut edits = Vec::new();
+    for node in xml
+        .root_element()
+        .descendants()
+        .filter(|node| node.is_element())
+    {
+        if let Some(attribute) = node.attribute_node("style")
+            && let Some(style) = expand_font_shorthands(attribute.value(), false, budget)?
+        {
+            let escaped = escape_xml_attribute(&style);
+            edits.push((attribute.range(), format!("style=\"{escaped}\"")));
+        }
+        if rewrite_stylesheets && node.tag_name().name() == "style" {
+            for child in node.children().filter(|child| child.is_text()) {
+                if let Some(style) =
+                    expand_font_shorthands(child.text().unwrap_or(""), true, budget)?
+                {
+                    edits.push((child.range(), escape_xml_text(&style)));
+                }
+            }
+        }
+    }
+    apply_selector_edits(source, edits, budget)
+}
+
+fn expand_font_shorthands(
+    source: &str,
+    stylesheet: bool,
+    budget: &mut SelectorFreezeBudget,
+) -> Result<Option<String>, SvgError> {
+    budget.bytes(
+        source
+            .len()
+            .checked_mul(8)
+            .ok_or_else(selector_freeze_limit_error)?, // cov:ignore: The shared rewrite budget bounds source to 32 MiB, far below usize multiplication overflow.
+    )?;
+    let sheet;
+    let declarations = if stylesheet {
+        sheet = simplecss::StyleSheet::parse(source);
+        sheet
+            .rules
+            .iter()
+            .flat_map(|rule| rule.declarations.iter().copied())
+            .collect::<Vec<_>>()
+    } else {
+        simplecss::DeclarationTokenizer::from(source).collect::<Vec<_>>()
+    };
+    let mut edits = Vec::new();
+    for declaration in declarations
+        .into_iter()
+        .filter(|declaration| declaration.name.eq_ignore_ascii_case("font"))
+    {
+        let Ok(font) = svgtypes::FontShorthand::from_str(declaration.value) else {
+            continue;
+        };
+        let offset = source_slice_offset(source, declaration.name);
+        let exceeded = Cell::new(false);
+        let mut input = cssparser::ParserInput::new(&source[offset..]);
+        let mut parser = cssparser::Parser::new(&mut input);
+        let mut declaration_parser = CssDeclarationSourceParser {
+            source,
+            budget,
+            budget_exceeded: &exceeded,
+        };
+        let parsed = cssparser::RuleBodyParser::new(&mut parser, &mut declaration_parser)
+            .next()
+            .and_then(Result::ok)
+            .ok_or_else(selector_freeze_limit_error)?;
+        let important = if declaration.important {
+            " !important"
+        } else {
+            ""
+        };
+        let properties = [
+            ("font-style", font.font_style.unwrap_or("normal")),
+            ("font-variant", font.font_variant.unwrap_or("normal")),
+            ("font-weight", font.font_weight.unwrap_or("normal")),
+            ("font-stretch", font.font_stretch.unwrap_or("normal")),
+            ("line-height", "normal"),
+            ("font-size-adjust", "none"),
+            ("font-kerning", "auto"),
+            ("font-variant-caps", "normal"),
+            ("font-variant-ligatures", "normal"),
+            ("font-variant-numeric", "normal"),
+            ("font-variant-east-asian", "normal"),
+            ("font-variant-position", "normal"),
+            ("font-size", font.font_size),
+            ("font-family", font.font_family),
+        ];
+        budget.bytes(
+            declaration
+                .value
+                .len()
+                .checked_add(1024)
+                .ok_or_else(selector_freeze_limit_error)?, // cov:ignore: A declaration is a slice of budget-bounded source, so adding 1024 cannot overflow usize.
+        )?;
+        let replacement = properties
+            .iter()
+            .map(|(name, value)| format!("{name}:{value}{important}"))
+            .collect::<Vec<_>>()
+            .join(";");
+        edits.push((parsed.range, replacement));
+    }
+    if edits.is_empty() {
+        return Ok(None);
+    }
+    apply_selector_edits(source, edits, budget).map(Some)
+}
+
+fn valid_root_font(size: f32, family: &str) -> bool {
+    if !size.is_finite() || size < 0.0 {
+        return false;
+    }
+    let mut input = cssparser::ParserInput::new(family);
+    let mut parser = cssparser::Parser::new(&mut input);
+    let mut has_name = false;
+    let mut quoted = false;
+    while let Ok(token) = parser.next() {
+        match token {
+            cssparser::Token::Ident(_) if !quoted => has_name = true,
+            cssparser::Token::QuotedString(_) if !has_name => {
+                has_name = true;
+                quoted = true;
+            }
+            cssparser::Token::Comma if has_name => {
+                has_name = false;
+                quoted = false;
+            }
+            _ => return false,
+        }
+    }
+    has_name
+}
+
 fn with_root_style_overrides(
     source: &str,
     inherited_root_opacity: f32,
     neutralize_root_opacity: bool,
     host_controls_root_background: bool,
+    source_style: SourceRootStyle<'_>,
+    rewrite_stylesheets: bool,
     budget: &mut SelectorFreezeBudget,
 ) -> Result<String, SvgError> {
+    let SourceRootStyle {
+        color: root_color,
+        font: root_font,
+        font_face,
+        visible,
+        ..
+    } = source_style;
     budget.bytes(source.len())?;
     let xml = roxmltree::Document::parse(source)
         .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
@@ -1837,6 +2359,40 @@ fn with_root_style_overrides(
     let mut stylesheet_properties = Vec::new();
     if neutralize_root_opacity {
         root_style_properties.push("opacity");
+    }
+    if root_color.is_some() {
+        root_style_properties.push("color");
+        stylesheet_properties.push("color");
+        if let Some(attribute) = root.attribute_node("color") {
+            budget.bytes(2 * std::mem::size_of::<(Range<usize>, String)>())?;
+            edits.push((attribute.range(), String::new()));
+        }
+    }
+    if root_font.is_some() {
+        root_style_properties.extend(["font-size", "font-family"]);
+        stylesheet_properties.extend(["font-size", "font-family"]);
+        for attribute in root
+            .attributes()
+            .filter(|attribute| matches!(attribute.name(), "font-size" | "font-family"))
+        {
+            budget.bytes(2 * std::mem::size_of::<(Range<usize>, String)>())?;
+            edits.push((attribute.range(), String::new()));
+        }
+    }
+    if font_face.is_some() {
+        root_style_properties.extend(["font-weight", "font-style"]);
+        stylesheet_properties.extend(["font-weight", "font-style"]);
+    }
+    if visible.is_some() {
+        root_style_properties.push("visibility");
+        stylesheet_properties.push("visibility");
+    }
+    for attribute in root.attributes().filter(|attribute| {
+        (font_face.is_some() && matches!(attribute.name(), "font-weight" | "font-style"))
+            || (visible.is_some() && attribute.name() == "visibility")
+    }) {
+        budget.bytes(2 * std::mem::size_of::<(Range<usize>, String)>())?;
+        edits.push((attribute.range(), String::new()));
     }
     if host_controls_root_background {
         root_style_properties.extend(["background-color", "background"]);
@@ -1862,11 +2418,51 @@ fn with_root_style_overrides(
         let retained = existing_style.map_or_else(String::new, |style| {
             strip_inline_style_properties(style, &root_style_properties)
         });
-        let style_value = if neutralize_root_opacity {
+        let mut style_value = if neutralize_root_opacity {
             append_inline_declarations(&retained, &format!("opacity:{inherited_root_opacity}"))
         } else {
             retained
         };
+        if let Some([red, green, blue, alpha]) = root_color {
+            style_value = append_inline_declarations(
+                &style_value,
+                &format!(
+                    "color:rgba({red},{green},{blue},{:.6})",
+                    f32::from(alpha) / 255.0
+                ),
+            );
+        }
+        if let Some((size, family)) = root_font {
+            budget.bytes(
+                family
+                    .len()
+                    .checked_add(128)
+                    .ok_or_else(selector_freeze_limit_error)?,
+            )?;
+            style_value = append_inline_declarations(
+                &style_value,
+                &format!("font-size:{size}px;font-family:{family}"),
+            );
+        }
+        if let Some((weight, style)) = font_face {
+            style_value = append_inline_declarations(
+                &style_value,
+                &format!(
+                    "font-weight:{weight};font-style:{}",
+                    style.to_ascii_lowercase()
+                ),
+            );
+        }
+        if let Some(visible) = visible {
+            style_value = append_inline_declarations(
+                &style_value,
+                if visible {
+                    "visibility:visible"
+                } else {
+                    "visibility:hidden"
+                },
+            );
+        }
         let escaped_bytes = xml_attribute_escape_allocation_bytes(&style_value)?;
         budget.bytes(escaped_bytes)?;
         let escaped_style_value = escape_xml_attribute(&style_value);
@@ -1887,7 +2483,11 @@ fn with_root_style_overrides(
                 attribute.range(),
                 format!("style=\"{escaped_style_value}\""),
             ));
-        } else if neutralize_root_opacity {
+        } else if neutralize_root_opacity
+            || root_color.is_some()
+            || root_font.is_some()
+            || visible.is_some()
+        {
             let attribute_len = escaped_style_value
                 .len()
                 .checked_add(8)
@@ -1901,10 +2501,9 @@ fn with_root_style_overrides(
 
     let scope_attribute = unique_scope_attribute(source, budget)?;
     let mut has_scoped_stylesheet_properties = false;
-    for node in root
-        .descendants()
-        .filter(|node| node.is_element() && node.tag_name().name() == "style")
-    {
+    for node in root.descendants().filter(|node| {
+        rewrite_stylesheets && node.is_element() && node.tag_name().name() == "style"
+    }) {
         if node
             .attribute("type")
             .is_some_and(|value| value != "text/css")
@@ -1996,6 +2595,183 @@ fn with_root_style_overrides(
         edits.push((insertion..insertion, inserted_root_attributes));
     }
 
+    apply_selector_edits(source, edits, budget)
+}
+
+fn with_element_style_overrides(
+    source: &str,
+    elements: &[SvgElementStyle<'_>],
+    rewrite_stylesheets: bool,
+    budget: &mut SelectorFreezeBudget,
+) -> Result<String, SvgError> {
+    const PROPERTIES: &[&str] = &[
+        "color",
+        "display",
+        "opacity",
+        "visibility",
+        "font-size",
+        "font-family",
+        "font-weight",
+        "font-style",
+    ];
+    budget.bytes(source.len())?;
+    let xml = roxmltree::Document::parse(source)
+        .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
+    let element_count = xml.descendants().filter(|node| node.is_element()).count();
+    SelectorFreezeBudget::consume(&mut budget.checks, element_count)?;
+    let mut overrides = BTreeMap::new();
+    let mut scopes = BTreeMap::<String, (String, BTreeSet<usize>, bool)>::new();
+    for element in elements {
+        budget.bytes(
+            element
+                .declarations
+                .len()
+                .saturating_mul(8)
+                .saturating_add(256),
+        )?;
+        if element.element_index == 0 || element.element_index >= element_count {
+            return Err(SvgError::InvalidDocument(
+                "invalid SVG descendant style index".into(),
+            ));
+        }
+        let exceeded = Cell::new(false);
+        let mut input = cssparser::ParserInput::new(element.declarations);
+        let mut parser = cssparser::Parser::new(&mut input);
+        let mut declaration_parser = CssDeclarationSourceParser {
+            source: element.declarations,
+            budget,
+            budget_exceeded: &exceeded,
+        };
+        let mut keys = BTreeSet::new();
+        for declaration in cssparser::RuleBodyParser::new(&mut parser, &mut declaration_parser) {
+            let declaration = declaration.map_err(|_| {
+                if exceeded.get() {
+                    selector_freeze_limit_error()
+                } else {
+                    SvgError::InvalidDocument("invalid SVG descendant declaration".into())
+                }
+            })?;
+            let Some(property) = PROPERTIES
+                .iter()
+                .find(|property| declaration.name.eq_ignore_ascii_case(property))
+            else {
+                return Err(SvgError::InvalidDocument(
+                    "unsupported SVG descendant property".into(),
+                ));
+            };
+            keys.insert((*property).to_owned());
+        }
+        if overrides
+            .insert(element.element_index, (element, keys.clone()))
+            .is_some()
+        {
+            return Err(SvgError::InvalidDocument(
+                "duplicate SVG descendant style index".into(),
+            ));
+        }
+        for key in keys {
+            budget.bytes(key.len().saturating_add(256))?;
+            let (_, overridden, _) = match scopes.entry(key) {
+                std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
+                std::collections::btree_map::Entry::Vacant(entry) => {
+                    let name = unique_attribute_name(
+                        source,
+                        &format!("data-raikiri-svg-{}-scope", entry.key()),
+                        budget,
+                    )?;
+                    entry.insert((name, BTreeSet::new(), false))
+                }
+            };
+            overridden.insert(element.element_index);
+        }
+    }
+    let mut edits = Vec::new();
+    for node in xml.descendants().filter(|node| {
+        rewrite_stylesheets && node.has_tag_name("style") && svg_style_has_css_type(*node)
+    }) {
+        let Some(text) = node.text() else { continue };
+        budget.bytes(text.len())?;
+        let mut rewritten = text.to_owned();
+        let mut changed = false;
+        for (property, (scope, _, active)) in &mut scopes {
+            if let Some(value) =
+                scope_stylesheet_properties(&rewritten, scope, &[property.as_str()], budget)?
+            {
+                rewritten = value;
+                *active = true;
+                changed = true;
+            }
+        }
+        if changed {
+            // cov:ignore: roxmltree has validated this paired style element and its nonempty text, so its content range cannot be missing.
+            let range = xml_element_content_range(source, node).ok_or_else(|| {
+                SvgError::InvalidDocument("unterminated SVG style element".into())
+            })?;
+            budget.bytes(xml_text_escape_allocation_bytes(&rewritten)?)?;
+            budget.bytes(2 * std::mem::size_of::<(Range<usize>, String)>())?;
+            edits.push((range, escape_xml_text(&rewritten)));
+        } // cov:ignore: LLVM assigns the unreachable content-range error above to this closing brace; successful rewrites and budget failures are exercised.
+    }
+    for (index, node) in xml
+        .descendants()
+        .filter(|node| node.is_element())
+        .enumerate()
+    {
+        SelectorFreezeBudget::consume(&mut budget.checks, scopes.len().saturating_add(1))?;
+        let mut inserted = String::new();
+        if let Some((element, keys)) = overrides.get(&index) {
+            let properties: Vec<_> = keys.iter().map(String::as_str).collect();
+            budget.bytes(properties.len() * std::mem::size_of::<&str>())?;
+            let existing = node.attribute("style").unwrap_or_default();
+            budget.bytes(
+                existing
+                    .len()
+                    .saturating_mul(8)
+                    .saturating_add(element.declarations.len()),
+            )?;
+            let retained = strip_inline_style_properties(existing, &properties);
+            let style = append_inline_declarations(&retained, element.declarations);
+            budget.bytes(xml_attribute_escape_allocation_bytes(&style)?)?;
+            let escaped = escape_xml_attribute(&style);
+            for attribute in node.attributes().filter(|attribute| {
+                attribute.namespace().is_none()
+                    && keys
+                        .iter()
+                        .any(|key| attribute.name().eq_ignore_ascii_case(key))
+            }) {
+                budget.bytes(2 * std::mem::size_of::<(Range<usize>, String)>())?;
+                edits.push((attribute.range(), String::new()));
+            }
+            if let Some(attribute) = node
+                .attributes()
+                .find(|attribute| attribute.namespace().is_none() && attribute.name() == "style")
+            {
+                budget.bytes(escaped.len().saturating_add(128))?;
+                edits.push((attribute.range(), format!("style=\"{escaped}\"")));
+            } else {
+                budget.bytes(escaped.len().saturating_add(8))?;
+                inserted.push_str(&format!(" style=\"{escaped}\""));
+            }
+        }
+        for (scope, overridden, active) in scopes.values() {
+            if *active && !overridden.contains(&index) {
+                SelectorFreezeBudget::consume(&mut budget.matches, 1)?;
+                budget.bytes(scope.len().saturating_add(8))?;
+                inserted.push_str(&format!(" {scope}=\"\""));
+            }
+        }
+        if !inserted.is_empty() {
+            let end = root_start_tag_end(source, node.range().start)
+                .ok_or_else(|| SvgError::InvalidDocument("unterminated SVG element tag".into()))?;
+            let at = if end > node.range().start && source.as_bytes()[end - 1] == b'/' {
+                end - 1
+            } else {
+                end
+            };
+            budget.bytes(2 * std::mem::size_of::<(Range<usize>, String)>())?;
+            edits.push((at..at, inserted));
+        }
+    }
     apply_selector_edits(source, edits, budget)
 }
 
@@ -2150,19 +2926,14 @@ impl InitialParseSelectorBudget {
 fn freeze_svg_stylesheet_selectors(
     source: &str,
     budget: &mut SelectorFreezeBudget,
-) -> Result<String, SvgError> {
+) -> Result<(String, bool), SvgError> {
     budget.bytes(source.len())?;
     let xml = roxmltree::Document::parse(source)
         .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
     let root = xml.root_element();
     let style_nodes = xml
         .descendants()
-        .filter(|node| {
-            node.has_tag_name("style")
-                && node
-                    .attribute("type")
-                    .is_none_or(|style_type| style_type == "text/css")
-        })
+        .filter(|node| node.has_tag_name("style") && svg_style_has_css_type(*node))
         .collect::<Vec<_>>();
 
     let mut stylesheet_ranges = style_nodes
@@ -2185,8 +2956,11 @@ fn freeze_svg_stylesheet_selectors(
             stylesheet.parse_more(text);
         }
     }
+    // Without a rule SimpleCSS applies there is nothing to freeze. Report it
+    // so later passes keep these stylesheets as written: a cssparser rewrite
+    // could make SimpleCSS apply a rule it ignored.
     if stylesheet.rules.is_empty() {
-        return Ok(source.to_owned());
+        return Ok((source.to_owned(), false));
     }
 
     let marker_prefix = unique_attribute_name(source, "data-raikiri-svg-selector", budget)?;
@@ -2269,9 +3043,12 @@ fn freeze_svg_stylesheet_selectors(
     }
 
     let mut stylesheet_inserted = false;
-    for (_, range) in stylesheet_ranges {
+    for (node, range) in stylesheet_ranges {
+        let retained = retain_unfrozen_svg_css(node.text().unwrap_or_default(), budget)?;
         let replacement = if !stylesheet_inserted {
             stylesheet_inserted = true;
+            budget.bytes(retained.len())?;
+            frozen_stylesheet.push_str(&retained);
             let escaped_len = frozen_stylesheet.bytes().try_fold(0usize, |len, byte| {
                 len.checked_add(match byte {
                     b'&' => 5,
@@ -2289,7 +3066,8 @@ fn freeze_svg_stylesheet_selectors(
             )?;
             escape_xml_text(&frozen_stylesheet)
         } else {
-            String::new()
+            budget.bytes(xml_attribute_escape_allocation_bytes(&retained)?)?;
+            escape_xml_text(&retained)
         };
         edits.push((range, replacement));
     }
@@ -2299,7 +3077,200 @@ fn freeze_svg_stylesheet_selectors(
         ));
     }
 
-    apply_selector_edits(source, edits, budget)
+    apply_selector_edits(source, edits, budget).map(|source| (source, true))
+}
+
+// SimpleCSS ignores at-rules and the selector-list entries it cannot parse, and
+// stops reading a list at some of those entries. Keep that CSS for other vector
+// consumers while freezing only the qualified rules SimpleCSS matched: at-rules
+// verbatim, and each style rule with such an entry whole, wrapped in
+// `@media all`, so neither SimpleCSS nor the later stylesheet rewrites match its
+// selectors against the rewritten source. Each retained item must end at the
+// same byte for SimpleCSS and for those rewrites; anything else could expose
+// or swallow nearby rules.
+fn retain_unfrozen_svg_css(
+    source: &str,
+    budget: &mut SelectorFreezeBudget,
+) -> Result<String, SvgError> {
+    let mut input = cssparser::ParserInput::new(source);
+    let mut parser = cssparser::Parser::new(&mut input);
+    let mut retained = String::new();
+    loop {
+        let start = parser.position();
+        let Ok(token) = parser.next_including_whitespace_and_comments() else {
+            break;
+        };
+        SelectorFreezeBudget::consume(&mut budget.checks, 1)?;
+        if matches!(
+            token,
+            cssparser::Token::WhiteSpace(_)
+                | cssparser::Token::Comment(_)
+                | cssparser::Token::CDO
+                | cssparser::Token::CDC
+        ) {
+            continue;
+        }
+        if matches!(token, cssparser::Token::AtKeyword(_)) {
+            loop {
+                SelectorFreezeBudget::consume(&mut budget.checks, 1)?;
+                match parser.next_including_whitespace_and_comments() {
+                    Ok(cssparser::Token::Semicolon) | Err(_) => break,
+                    Ok(cssparser::Token::CurlyBracketBlock) => {
+                        skip_css_block(&mut parser);
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            let raw = parser.slice_from(start);
+            if retained_css_is_delimited(raw, budget)? {
+                budget.bytes(raw.len().saturating_add(1))?;
+                retained.push_str(raw);
+                retained.push('\n');
+            }
+            continue;
+        }
+
+        // A block parses differently inside `@media`: `}` closes it and `;`
+        // separates rules. Rules whose prelude is empty or contains either
+        // token at top level are invalid everywhere and are not retained.
+        let mut wrappable = !matches!(
+            token,
+            cssparser::Token::CurlyBracketBlock
+                | cssparser::Token::CloseCurlyBracket
+                | cssparser::Token::Semicolon
+        );
+        let mut prelude_end =
+            matches!(token, cssparser::Token::CurlyBracketBlock).then_some(start.byte_index());
+        while prelude_end.is_none() {
+            SelectorFreezeBudget::consume(&mut budget.checks, 1)?;
+            match parser.next_including_whitespace_and_comments() {
+                // A pending block before this token has now been skipped, so
+                // the prelude ends at the `{` just before the current position.
+                Ok(cssparser::Token::CurlyBracketBlock) => {
+                    prelude_end = Some(parser.position().byte_index() - 1);
+                }
+                Ok(cssparser::Token::CloseCurlyBracket | cssparser::Token::Semicolon) => {
+                    wrappable = false;
+                }
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+        let Some(prelude_end) = prelude_end else {
+            break;
+        };
+        skip_css_block(&mut parser);
+        if !wrappable {
+            continue;
+        }
+        let prelude = &source[start.byte_index()..prelude_end];
+        let selector_count = prelude
+            .bytes()
+            .filter(|byte| *byte == b',')
+            .count()
+            .saturating_add(1);
+        budget.bytes(selector_count.saturating_mul(2 * std::mem::size_of::<&str>()))?;
+        SelectorFreezeBudget::consume(&mut budget.checks, selector_count)?;
+        if split_css_selector_list(prelude)
+            .into_iter()
+            .all(|selector| simplecss::Selector::parse(selector).is_some())
+        {
+            continue;
+        }
+        let raw = parser.slice_from(start);
+        budget.bytes(raw.len().saturating_add(16))?;
+        let wrapped = format!("@media all {{ {raw} }}");
+        // The wrapper adds a nesting level that the exported-source reference
+        // check must still accept.
+        if retained_css_is_delimited(&wrapped, budget)?
+            && reject_external_css_references(&wrapped).is_ok()
+        {
+            retained.push_str(&wrapped);
+            retained.push('\n');
+        }
+    }
+    Ok(retained)
+}
+
+// cssparser, which the stylesheet rewrites use, keeps an unterminated string,
+// comment or block open until the end of the text, so an at-rule that follows
+// the item must stay outside it.
+fn retained_css_is_delimited(
+    item: &str,
+    budget: &mut SelectorFreezeBudget,
+) -> Result<bool, SvgError> {
+    if !simplecss_skips_at_rule_exactly(item) {
+        return Ok(false);
+    }
+    budget.bytes(item.len().saturating_add(4))?;
+    let text = format!("{item}\n@a;");
+    let mut input = cssparser::ParserInput::new(&text);
+    let mut parser = cssparser::Parser::new(&mut input);
+    loop {
+        match parser.next_including_whitespace_and_comments() {
+            Ok(cssparser::Token::Semicolon) => break,
+            Ok(cssparser::Token::CurlyBracketBlock) => {
+                skip_css_block(&mut parser);
+                break;
+            }
+            Ok(_) => {}
+            Err(_) => return Ok(false),
+        }
+    }
+    Ok(parser.position().byte_index() == item.len()
+        && matches!(
+            parser.next_including_whitespace_and_comments(),
+            Ok(cssparser::Token::WhiteSpace(_))
+        )
+        && matches!(
+            parser.next_including_whitespace_and_comments(),
+            Ok(cssparser::Token::AtKeyword(name)) if &**name == "a"
+        )
+        && matches!(
+            parser.next_including_whitespace_and_comments(),
+            Ok(cssparser::Token::Semicolon)
+        )
+        && parser.next_including_whitespace_and_comments().is_err())
+}
+
+// SimpleCSS reads `@`, an optional `-` and a name start, skips to the first `;`
+// or `{` byte, and ends a block at the brace that balances a count of every
+// brace byte, including those in strings and comments.
+fn simplecss_skips_at_rule_exactly(at_rule: &str) -> bool {
+    let Some(name) = at_rule.strip_prefix('@') else {
+        return false;
+    };
+    let name = name.strip_prefix('-').unwrap_or(name);
+    if !name.chars().next().is_some_and(|character| {
+        character == '_' || character.is_ascii_alphabetic() || u32::from(character) > 237
+    }) {
+        return false;
+    }
+    let bytes = at_rule.as_bytes();
+    let Some(start) = bytes.iter().position(|byte| matches!(byte, b';' | b'{')) else {
+        return false;
+    };
+    if bytes[start] == b';' {
+        return start + 1 == bytes.len();
+    }
+    let mut depth = 0usize;
+    for (index, byte) in bytes.iter().enumerate().skip(start + 1) {
+        match byte {
+            b'{' => depth += 1,
+            b'}' if depth == 0 => return index + 1 == bytes.len(),
+            b'}' => depth -= 1,
+            _ => {}
+        }
+    }
+    false
+}
+
+fn skip_css_block(parser: &mut cssparser::Parser<'_, '_>) {
+    let _ = parser.parse_nested_block(|body| {
+        while body.next().is_ok() {}
+        Ok::<(), cssparser::ParseError<'_, ()>>(())
+    });
 }
 
 fn apply_selector_edits(
@@ -2332,6 +3303,7 @@ fn apply_selector_edits(
 
 fn normalize_svg_opacity_cascade(
     source: &str,
+    rewrite_stylesheets: bool,
     budget: &mut SelectorFreezeBudget,
 ) -> Result<String, SvgError> {
     // Freeze winning opacity declarations before removing them from
@@ -2346,10 +3318,7 @@ fn normalize_svg_opacity_cascade(
     let root = xml.root_element();
     let mut stylesheets = Vec::new();
     for node in xml.descendants().filter(|node| node.has_tag_name("style")) {
-        if node
-            .attribute("type")
-            .is_some_and(|style_type| style_type != "text/css")
-        {
+        if !svg_style_has_css_type(node) {
             continue;
         }
         // Match usvg's stylesheet loader, which reads only `node.text()`.
@@ -2456,7 +3425,7 @@ fn normalize_svg_opacity_cascade(
         }
     }
 
-    for (node, text) in &stylesheets {
+    for (node, text) in stylesheets.iter().filter(|_| rewrite_stylesheets) {
         let Some(rewritten) = strip_stylesheet_properties(text, &["opacity"], budget)? else {
             continue;
         };

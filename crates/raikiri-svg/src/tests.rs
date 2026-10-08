@@ -1,7 +1,7 @@
 use super::{
     INITIAL_PARSE_DECLARATION_CAPACITY_FACTOR, InitialParseSelectorBudget,
     MAX_INITIAL_PARSE_DECLARATION_STORAGE_BYTES, MAX_INITIAL_PARSE_XML_DEPTH, ParsedCssDeclaration,
-    SelectorFreezeBudget, SvgDocument, SvgError, SvgRootStyle, SvgViewport,
+    SelectorFreezeBudget, SourceRootStyle, SvgDocument, SvgError, SvgRootStyle, SvgViewport,
     append_inline_declarations, apply_css_rewrite, apply_selector_edits,
     charge_initial_parse_node_count, estimate_initial_stylesheet_resources,
     freeze_svg_stylesheet_selectors, is_simplecss_name_start, normalize_svg_opacity_cascade,
@@ -18,6 +18,31 @@ use super::{
 
 const HALF_RED_RECT: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1" viewBox="0 0 2 1"><rect width="1" height="1" fill="#ff0000" fill-opacity="0.5"/></svg>"##;
 const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
+
+#[test]
+fn styled_svg_source_preserves_inherited_opacity_without_rasterizing() {
+    let svg = SvgDocument::parse(br#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"><rect width="2" height="1" fill="currentColor" opacity="inherit"/></svg>"#).unwrap();
+    let viewport = SvgViewport {
+        width: 2.0,
+        height: 1.0,
+    };
+    let source = svg
+        .styled_source(
+            viewport,
+            SvgRootStyle {
+                inherited_color: [0, 0, 255, 255],
+                opacity: 0.5,
+                neutralize_root_opacity: true,
+                ..SvgRootStyle::default()
+            },
+        )
+        .unwrap();
+    let prepared = SvgDocument::parse(source.as_bytes()).unwrap();
+    let image = prepared
+        .rasterize(viewport, SvgRootStyle::default(), None)
+        .unwrap();
+    assert_eq!(&image.rgba[..4], &[0, 0, 255, 64]);
+}
 
 fn preflight_initial_svg(source: &str) -> Result<(), SvgError> {
     let xml = roxmltree::Document::parse(source).expect("test SVG is valid XML");
@@ -459,7 +484,15 @@ fn root_style_rewrite_obeys_the_shared_selector_match_budget() {
         checks: usize::MAX,
     };
 
-    let result = with_root_style_overrides(source, 1.0, false, true, &mut budget);
+    let result = with_root_style_overrides(
+        source,
+        1.0,
+        false,
+        true,
+        SourceRootStyle::default(),
+        true,
+        &mut budget,
+    );
 
     assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
         if message.contains("selector freezing resource limit")));
@@ -475,7 +508,15 @@ fn root_style_rewrite_charges_scoped_css_expansion_before_allocation() {
         checks: usize::MAX,
     };
 
-    let result = with_root_style_overrides(&source, 1.0, false, true, &mut budget);
+    let result = with_root_style_overrides(
+        &source,
+        1.0,
+        false,
+        true,
+        SourceRootStyle::default(),
+        true,
+        &mut budget,
+    );
 
     assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
         if message.contains("selector freezing resource limit")));
@@ -490,7 +531,15 @@ fn root_style_rewrite_rejects_budget_exhaustion_before_removing_root_attributes(
         checks: usize::MAX,
     };
 
-    let result = with_root_style_overrides(source, 1.0, false, true, &mut budget);
+    let result = with_root_style_overrides(
+        source,
+        1.0,
+        false,
+        true,
+        SourceRootStyle::default(),
+        true,
+        &mut budget,
+    );
 
     assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
         if message.contains("selector freezing resource limit")));
@@ -505,7 +554,15 @@ fn root_style_rewrite_rejects_budget_exhaustion_before_copying_existing_style() 
         checks: usize::MAX,
     };
 
-    let result = with_root_style_overrides(source, 1.0, true, false, &mut budget);
+    let result = with_root_style_overrides(
+        source,
+        1.0,
+        true,
+        false,
+        SourceRootStyle::default(),
+        true,
+        &mut budget,
+    );
 
     assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
         if message.contains("selector freezing resource limit")));
@@ -526,7 +583,15 @@ fn root_style_rewrite_rejects_budget_exhaustion_before_replacing_existing_style(
         checks: usize::MAX,
     };
 
-    let result = with_root_style_overrides(source, 1.0, true, false, &mut budget);
+    let result = with_root_style_overrides(
+        source,
+        1.0,
+        true,
+        false,
+        SourceRootStyle::default(),
+        true,
+        &mut budget,
+    );
 
     assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
         if message.contains("selector freezing resource limit")));
@@ -542,7 +607,15 @@ fn root_style_rewrite_rejects_budget_exhaustion_before_copying_stylesheet_text()
         checks: usize::MAX,
     };
 
-    let result = with_root_style_overrides(source, 1.0, false, true, &mut budget);
+    let result = with_root_style_overrides(
+        source,
+        1.0,
+        false,
+        true,
+        SourceRootStyle::default(),
+        true,
+        &mut budget,
+    );
 
     assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
         if message.contains("selector freezing resource limit")));
@@ -556,7 +629,16 @@ fn root_style_rewrite_rejects_budget_exhaustion_before_copying_scope_attributes(
         matches: usize::MAX,
         checks: usize::MAX,
     };
-    let rewritten = with_root_style_overrides(source, 1.0, false, true, &mut full_budget).unwrap();
+    let rewritten = with_root_style_overrides(
+        source,
+        1.0,
+        false,
+        true,
+        SourceRootStyle::default(),
+        true,
+        &mut full_budget,
+    )
+    .unwrap();
     let bytes_through_scope_rewrite = usize::MAX - full_budget.bytes - rewritten.len() - 1;
     let mut limited_budget = SelectorFreezeBudget {
         bytes: bytes_through_scope_rewrite,
@@ -564,7 +646,15 @@ fn root_style_rewrite_rejects_budget_exhaustion_before_copying_scope_attributes(
         checks: usize::MAX,
     };
 
-    let result = with_root_style_overrides(source, 1.0, false, true, &mut limited_budget);
+    let result = with_root_style_overrides(
+        source,
+        1.0,
+        false,
+        true,
+        SourceRootStyle::default(),
+        true,
+        &mut limited_budget,
+    );
 
     assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
         if message.contains("selector freezing resource limit")));
@@ -574,7 +664,7 @@ fn root_style_rewrite_rejects_budget_exhaustion_before_copying_scope_attributes(
 fn opacity_normalizer_skips_non_css_and_empty_style_elements() {
     let source = "<svg><style type=\"text/plain\">opacity:.5</style><style><!-- empty --></style><style><![CDATA[]]></style></svg>";
     let rewritten =
-        normalize_svg_opacity_cascade(source, &mut SelectorFreezeBudget::new()).unwrap();
+        normalize_svg_opacity_cascade(source, true, &mut SelectorFreezeBudget::new()).unwrap();
 
     assert_eq!(rewritten, source);
 }
@@ -1457,4 +1547,993 @@ fn fractional_image_rasterization_keeps_the_full_buffer_mapping() {
         )
         .unwrap();
     assert_ne!(css.rgba, fractional.rgba);
+}
+
+#[test]
+fn styled_source_validates_inputs_without_allocating_a_raster() {
+    let svg = SvgDocument::parse(HALF_RED_RECT).unwrap();
+    for width in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+        assert!(matches!(
+            svg.styled_source(SvgViewport { width, height: 1.0 }, SvgRootStyle::default()),
+            Err(SvgError::InvalidViewport)
+        ));
+        assert!(matches!(
+            svg.styled_source(
+                SvgViewport {
+                    width: 1.0,
+                    height: width
+                },
+                SvgRootStyle::default()
+            ),
+            Err(SvgError::InvalidViewport)
+        ));
+    }
+    let viewport = SvgViewport {
+        width: 100_000.0,
+        height: 50_000.0,
+    };
+    for opacity in [-0.1, 1.1, f32::NAN, f32::INFINITY] {
+        assert!(matches!(
+            svg.styled_source(
+                viewport,
+                SvgRootStyle {
+                    opacity,
+                    ..SvgRootStyle::default()
+                }
+            ),
+            Err(SvgError::InvalidOpacity)
+        ));
+    }
+    assert!(svg.styled_source(viewport, SvgRootStyle::default()).is_ok());
+    assert!(matches!(
+        svg.rasterize(viewport, SvgRootStyle::default(), None),
+        Err(SvgError::OutputLimitExceeded { .. })
+    ));
+}
+
+#[test]
+fn styled_source_resolves_absolute_viewport_even_with_matching_view_box_ratio() {
+    let svg = SvgDocument::parse(
+        br#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50" viewBox="0 0 100 50"><rect width="100%" height="100%"/></svg>"#,
+    )
+    .unwrap();
+    let source = svg
+        .styled_source(
+            SvgViewport {
+                width: 200.0,
+                height: 100.0,
+            },
+            SvgRootStyle::default(),
+        )
+        .unwrap();
+    let reparsed = SvgDocument::parse(source.as_bytes()).unwrap();
+    assert_eq!(reparsed.tree.size().width(), 200.0);
+    assert_eq!(reparsed.tree.size().height(), 100.0);
+}
+
+#[test]
+fn styled_source_rejects_external_resources_before_exporting_xml() {
+    for content in [
+        "<use href='file:///outside.svg#shape'/>",
+        "<use xmlns:xlink='http://www.w3.org/1999/xlink' xlink:href='https://example.com/a.svg#shape'/>",
+        "<style>@import 'https://example.com/style.css'; rect{fill:red}</style>",
+        "<style>rect{fill:url(https://example.com/paint.svg#p)}</style>",
+        "<style>rect{fill:u\\72l('file:///paint.svg#p')}</style>",
+        "<rect fill='url(https://example.com/paint.svg#p)'/>",
+        "<rect style='fill:url(&quot;file:///paint.svg#p&quot;)'/>",
+        "<g xml:base='https://example.com/'><use href='#shape'/></g>",
+        "<foreignObject><img xmlns='http://www.w3.org/1999/xhtml' src='https://example.com/image.png'/></foreignObject>",
+        "<?xml-stylesheet type='text/css' href='https://example.com/style.css'?>",
+    ] {
+        let source = format!("<svg xmlns='{SVG_NAMESPACE}' width='10' height='10'>{content}</svg>");
+        let svg = SvgDocument::parse(source.as_bytes()).unwrap();
+        assert!(
+            matches!(
+                svg.styled_source(
+                    SvgViewport {
+                        width: 10.0,
+                        height: 10.0
+                    },
+                    SvgRootStyle::default()
+                ),
+                Err(SvgError::ExternalReference)
+            ),
+            "external resource retained: {content}"
+        );
+    }
+}
+
+#[test]
+fn exported_css_reference_validation_is_bounded_and_preserves_literal_strings() {
+    use super::{MAX_FILTER_CSS_NESTING, reject_external_css_references};
+    reject_external_css_references(
+        "rect{fill:url(#paint);font-family:'url(https://example.com/)'}",
+    )
+    .unwrap();
+    assert!(matches!(
+        reject_external_css_references("rect{fill:url(\"#paint\" trailing)}"),
+        Err(SvgError::InvalidDocument(_))
+    ));
+    let nested = format!(
+        "{}url(#paint){}",
+        "fn(".repeat(MAX_FILTER_CSS_NESTING),
+        ")".repeat(MAX_FILTER_CSS_NESTING)
+    );
+    assert!(matches!(
+        reject_external_css_references(&nested),
+        Err(SvgError::InvalidDocument(_))
+    ));
+}
+
+#[test]
+fn styled_source_css_mime_variants_keep_original_attribute_selector_matches() {
+    for mime in ["TEXT/CSS", " text/css ", "text/css; charset=utf-8"] {
+        let original = format!(
+            "<svg xmlns='{SVG_NAMESPACE}' width='10' height='10'><style type='{mime}'>style[type=\"{mime}\"] + rect{{fill:red}}</style><rect width='10' height='10' fill='blue'/></svg>"
+        );
+        let svg = SvgDocument::parse(original.as_bytes()).unwrap();
+        let source = svg
+            .styled_source(
+                SvgViewport {
+                    width: 10.0,
+                    height: 10.0,
+                },
+                SvgRootStyle::default(),
+            )
+            .unwrap();
+        let prepared = SvgDocument::parse(source.as_bytes()).unwrap();
+        let image = prepared
+            .rasterize(
+                SvgViewport {
+                    width: 10.0,
+                    height: 10.0,
+                },
+                SvgRootStyle::default(),
+                None,
+            )
+            .unwrap();
+        assert_eq!(&image.rgba[..4], &[255, 0, 0, 255], "CSS MIME: {mime}");
+    }
+}
+
+#[test]
+fn styled_source_keeps_local_resources_and_navigation_links() {
+    let source = format!(
+        "<svg xmlns='{SVG_NAMESPACE}' width='10' height='10'><defs><linearGradient id='paint'><stop stop-color='red'/></linearGradient><rect id='shape' width='10' height='10'/></defs><style>use{{fill:url('#paint')}}</style><use href='#shape'/><a href='https://example.com/'><rect width='1' height='1'/></a></svg>"
+    );
+    let svg = SvgDocument::parse(source.as_bytes()).unwrap();
+    let prepared = svg
+        .styled_source(
+            SvgViewport {
+                width: 10.0,
+                height: 10.0,
+            },
+            SvgRootStyle::default(),
+        )
+        .unwrap();
+    assert!(prepared.contains("#paint"));
+    assert!(prepared.contains("#shape"));
+    assert!(prepared.contains("https://example.com/"));
+}
+
+#[test]
+fn styled_source_freezes_attribute_selectors_before_viewport_rewrites() {
+    let svg = SvgDocument::parse(br#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"><style>svg[width="2"] rect { fill:red }</style><rect width="2" height="1"/></svg>"#).unwrap();
+    let viewport = SvgViewport {
+        width: 4.0,
+        height: 2.0,
+    };
+    let source = svg
+        .styled_source(viewport, SvgRootStyle::default())
+        .unwrap();
+    let prepared = SvgDocument::parse(source.as_bytes()).unwrap();
+    assert_eq!(prepared.intrinsic_size().width, Some(4.0));
+    let image = prepared
+        .rasterize(viewport, SvgRootStyle::default(), None)
+        .unwrap();
+    assert_eq!(&image.rgba[..4], &[255, 0, 0, 255]);
+}
+
+#[test]
+fn styled_source_keeps_text_for_a_consumers_font_database() {
+    let svg = SvgDocument::parse(br#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="30"><text x="0" y="20" font-family="Consumer Bundled Font">PDF text</text></svg>"#).unwrap();
+    let source = svg
+        .styled_source(
+            SvgViewport {
+                width: 100.0,
+                height: 30.0,
+            },
+            SvgRootStyle::default(),
+        )
+        .unwrap();
+    assert!(source.contains("<text"));
+    assert!(source.contains("Consumer Bundled Font"));
+    assert!(source.contains("PDF text"));
+}
+
+#[test]
+fn styled_source_root_family_is_a_css_list_without_extra_declarations() {
+    let svg = SvgDocument::parse(HALF_RED_RECT).unwrap();
+    for family in [
+        "serif;fill:url(https://example.com/paint.svg)",
+        "serif;opacity:0",
+        "serif,",
+        "serif,,sans-serif",
+    ] {
+        assert!(
+            matches!(
+                svg.styled_source_with_root_color_and_font(
+                    SvgViewport {
+                        width: 2.0,
+                        height: 1.0
+                    },
+                    SvgRootStyle::default(),
+                    [0, 0, 0, 255],
+                    12.0,
+                    family
+                ),
+                Err(SvgError::InvalidDocument(_))
+            ),
+            "invalid family list: {family}"
+        );
+    }
+}
+
+#[test]
+fn resolved_root_style_keeps_font_faces_and_original_visibility_selectors() {
+    use super::SvgRootFont;
+    let svg = SvgDocument::parse(br#"<svg width="50" height="30" visibility="visible" font-weight="400" style="font:normal 12px Ahem"><style>svg[visibility=visible][font-weight="400"] text{fill:red}</style><text y="20">Font</text></svg>"#).unwrap();
+    let source = svg
+        .styled_source_with_resolved_root_style(
+            SvgViewport {
+                width: 50.0,
+                height: 30.0,
+            },
+            SvgRootStyle {
+                visible: false,
+                ..SvgRootStyle::default()
+            },
+            [0, 0, 0, 255],
+            SvgRootFont {
+                size: 12.0,
+                family: "Ahem",
+                weight: 700.0,
+                style: "italic",
+            },
+        )
+        .unwrap();
+    let xml = roxmltree::Document::parse(&source).unwrap();
+    let root = xml.root_element();
+    assert!(root.attribute("font-weight").is_none());
+    assert!(root.attribute("visibility").is_none());
+    assert!(
+        root.attribute("style")
+            .unwrap()
+            .contains("visibility:hidden")
+    );
+    let style = root.attribute("style").unwrap();
+    assert!(style.contains("font-weight:700"));
+    assert!(style.contains("font-style:italic"));
+    assert!(source.contains("fill:red"));
+}
+
+#[test]
+fn resolved_root_style_rejects_invalid_font_faces() {
+    use super::SvgRootFont;
+    let svg = SvgDocument::parse(HALF_RED_RECT).unwrap();
+    for (weight, style) in [
+        (0.0, "normal"),
+        (1001.0, "normal"),
+        (f32::NAN, "normal"),
+        (f32::INFINITY, "normal"),
+        (400.0, "unknown"),
+        (400.0, "italic;fill:red"),
+    ] {
+        assert!(matches!(
+            svg.styled_source_with_resolved_root_style(
+                SvgViewport {
+                    width: 2.0,
+                    height: 1.0
+                },
+                SvgRootStyle::default(),
+                [0, 0, 0, 255],
+                SvgRootFont {
+                    size: 12.0,
+                    family: "serif",
+                    weight,
+                    style
+                }
+            ),
+            Err(SvgError::InvalidDocument(_))
+        ));
+    }
+}
+
+#[test]
+fn styled_source_root_fonts_validate_host_sizes_and_family_lists() {
+    let svg =
+        SvgDocument::parse(b"<svg width='10' height='10'><rect width='10' height='10'/></svg>")
+            .unwrap();
+    let viewport = SvgViewport {
+        width: 10.0,
+        height: 10.0,
+    };
+    for size in [-1.0, f32::INFINITY, f32::NAN] {
+        assert!(
+            svg.styled_source_with_root_color_and_font(
+                viewport,
+                SvgRootStyle::default(),
+                [0, 0, 0, 255],
+                size,
+                "serif"
+            )
+            .is_err()
+        );
+    }
+    assert!(
+        svg.styled_source_with_root_color_and_font(
+            viewport,
+            SvgRootStyle::default(),
+            [0, 0, 0, 255],
+            12.0,
+            " "
+        )
+        .is_err()
+    );
+    let family = "X".repeat(crate::MAX_SELECTOR_FREEZE_BYTES);
+    assert!(
+        svg.styled_source_with_root_color_and_font(
+            viewport,
+            SvgRootStyle::default(),
+            [0, 0, 0, 255],
+            12.0,
+            &family
+        )
+        .is_err()
+    );
+    assert!(
+        svg.styled_source_with_root_color_and_font(
+            viewport,
+            SvgRootStyle::default(),
+            [0, 0, 0, 255],
+            0.0,
+            "serif"
+        )
+        .is_ok()
+    );
+}
+
+#[test]
+fn styled_source_root_fonts_preserve_font_shorthand_components_and_selectors() {
+    let source = br#"<svg width="100" height="60" font-size="2em" font-family="Old" style="font:italic bold 2em serif !important"><style>svg[font-size="2em"],text {font:italic bold 2em serif !important;fill:red}</style><text y="40" style="font:invalid">text</text></svg>"#;
+    let svg = SvgDocument::parse(source).unwrap();
+    let source = svg
+        .styled_source_with_root_color_and_font(
+            SvgViewport {
+                width: 100.0,
+                height: 60.0,
+            },
+            SvgRootStyle::default(),
+            [0, 0, 0, 255],
+            24.0,
+            "\"A & B\",serif",
+        )
+        .unwrap();
+    let xml = roxmltree::Document::parse(&source).unwrap();
+    let root = xml.root_element();
+    assert!(root.attribute("font-size").is_none());
+    assert!(root.attribute("font-family").is_none());
+    let style = root.attribute("style").unwrap();
+    assert!(style.contains("font-size:24px"));
+    assert!(style.contains("font-family:\"A & B\",serif"));
+    assert!(style.contains("font-weight:bold !important"));
+    assert!(style.contains("font-style:italic !important"));
+    assert!(source.contains("fill:red"));
+    assert!(source.contains("font:invalid"));
+    SvgDocument::parse(source.as_bytes()).unwrap();
+}
+
+#[test]
+fn source_export_retains_skipped_at_rules_alongside_frozen_rules() {
+    let source = br#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><style>@media all { rect { fill:red } } rect { opacity:.5 }</style><style>@font-face { font-family:local; font-weight:700 } circle { fill:blue }</style><rect width="10" height="10"/></svg>"#;
+    let svg = SvgDocument::parse(source).unwrap();
+    let exported = svg
+        .styled_source_with_root_color(
+            SvgViewport {
+                width: 10.0,
+                height: 10.0,
+            },
+            SvgRootStyle::default(),
+            [0, 0, 0, 255],
+        )
+        .unwrap();
+    assert!(exported.contains("@media all { rect { fill:red } }"));
+    assert!(exported.contains("@font-face { font-family:local; font-weight:700 }"));
+    let reparsed = SvgDocument::parse(exported.as_bytes()).unwrap();
+    let image = reparsed
+        .rasterize(
+            SvgViewport {
+                width: 10.0,
+                height: 10.0,
+            },
+            SvgRootStyle::default(),
+            None,
+        )
+        .unwrap();
+    assert!(
+        image
+            .rgba
+            .chunks_exact(4)
+            .any(|pixel| pixel[3] > 100 && pixel[3] < 150)
+    );
+}
+
+#[test]
+fn color_only_source_export_preserves_author_font_faces() {
+    let svg = SvgDocument::parse(br#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" font-weight="700" font-style="italic"><rect width="10" height="10" fill="currentColor"/></svg>"#).unwrap();
+    let exported = svg
+        .styled_source_with_root_color(
+            SvgViewport {
+                width: 10.0,
+                height: 10.0,
+            },
+            SvgRootStyle::default(),
+            [255, 0, 0, 255],
+        )
+        .unwrap();
+    assert!(exported.contains("font-weight=\"700\""));
+    assert!(exported.contains("font-style=\"italic\""));
+    let image = SvgDocument::parse(exported.as_bytes())
+        .unwrap()
+        .rasterize(
+            SvgViewport {
+                width: 10.0,
+                height: 10.0,
+            },
+            SvgRootStyle::default(),
+            None,
+        )
+        .unwrap();
+    assert_eq!(&image.rgba[..4], &[255, 0, 0, 255]);
+}
+
+#[test]
+fn at_rule_retention_respects_tokens_and_original_style_elements() {
+    let first = "@charset \"UTF-8\"; @media all { rect { content:\"};@fake{\" } @supports (display:block) { rect { opacity:.5 } } }";
+    let second = "/* @discard { opacity:1 } */ rect { fill:red } @unknown \"a;b{c\"; @unfinished";
+    let source = format!(
+        "<svg xmlns='{SVG_NAMESPACE}' width='10' height='10'><style>{first} rect {{ opacity:.5 }}</style><style>{second}</style><rect width='10' height='10'/></svg>"
+    );
+    let svg = SvgDocument::parse(source.as_bytes()).unwrap();
+    let exported = svg
+        .styled_source_with_root_color(
+            SvgViewport {
+                width: 10.0,
+                height: 10.0,
+            },
+            SvgRootStyle::default(),
+            [0, 0, 0, 255],
+        )
+        .unwrap();
+    let xml = roxmltree::Document::parse(&exported).unwrap();
+    let styles: Vec<_> = xml
+        .descendants()
+        .filter(|node| node.has_tag_name("style"))
+        .map(|node| node.text().unwrap_or_default())
+        .collect();
+    assert_eq!(styles.len(), 2);
+    assert!(styles[0].contains("@charset \"UTF-8\";"));
+    assert!(styles[0].contains(&first[first.find("@media").unwrap()..]));
+    // SimpleCSS ends `@unknown` at the `;` inside its string and never ends
+    // `@unfinished`, so retaining either would change what it parses next.
+    assert!(!styles[1].contains("@unknown"), "{}", styles[1]);
+    assert!(!styles[1].contains("@unfinished"), "{}", styles[1]);
+    assert!(!styles[1].contains("@discard"));
+}
+
+#[test]
+fn at_rule_retention_charges_the_shared_rewrite_budget() {
+    let mut budget = SelectorFreezeBudget::new();
+    budget.bytes = 1;
+    assert!(matches!(
+        super::retain_unfrozen_svg_css("@media all { rect { fill:red } }", &mut budget),
+        Err(SvgError::InvalidDocument(_))
+    ));
+    let mut budget = SelectorFreezeBudget::new();
+    for checks in [0, 1] {
+        budget.checks = checks;
+        assert!(matches!(
+            super::retain_unfrozen_svg_css("@custom;", &mut budget),
+            Err(SvgError::InvalidDocument(_))
+        ));
+    }
+}
+
+#[test]
+fn source_export_without_frozen_rules_keeps_unmatched_selectors_inert() {
+    // SimpleCSS applies none of these rules. Scoping or stripping them with
+    // cssparser could make it apply one, so they stay as written.
+    for stylesheet in [
+        "rect:is(.hot), rect { color:red }",
+        "rect { color: ; fill: blue }",
+        "rect { opacity: ; fill: blue }",
+        "@media print { .x { content:\"}\" } } rect, circle { color:red }",
+        "<!-- note -->rect { color:red }",
+        "g >, rect:is(.a) { color:red }",
+        "rect\u{a0}, circle { color:red }",
+        "text::selection, rect { color:red }",
+    ] {
+        let source = format!(
+            "<svg xmlns='{SVG_NAMESPACE}' width='10' height='10'><style>{stylesheet}</style><g><rect class='hot' width='10' height='10' fill='currentColor'/></g></svg>"
+        );
+        let exported = SvgDocument::parse(source.as_bytes())
+            .unwrap()
+            .styled_source_with_root_color(
+                SvgViewport {
+                    width: 10.0,
+                    height: 10.0,
+                },
+                SvgRootStyle {
+                    opacity: 0.5,
+                    neutralize_root_opacity: true,
+                    ..SvgRootStyle::default()
+                },
+                [0, 0, 0, 255],
+            )
+            .unwrap();
+        assert!(
+            exported.contains(&format!("<style>{stylesheet}</style>")),
+            "{exported}"
+        );
+        let image = SvgDocument::parse(exported.as_bytes())
+            .unwrap()
+            .rasterize(
+                SvgViewport {
+                    width: 10.0,
+                    height: 10.0,
+                },
+                SvgRootStyle::default(),
+                None,
+            )
+            .unwrap();
+        assert_eq!(&image.rgba[..3], &[0, 0, 0], "{stylesheet}: {exported}");
+    }
+}
+
+#[test]
+fn style_rule_retention_charges_the_shared_rewrite_budget() {
+    let rule = "a:is(.b), c { fill:red }";
+    let mut unlimited = SelectorFreezeBudget::new();
+    assert_eq!(
+        super::retain_unfrozen_svg_css(rule, &mut unlimited).unwrap(),
+        format!("@media all {{ {rule} }}\n")
+    );
+    let initial = SelectorFreezeBudget::new();
+    for checks in 0..initial.checks - unlimited.checks {
+        let mut budget = SelectorFreezeBudget::new();
+        budget.checks = checks;
+        assert!(matches!(
+            super::retain_unfrozen_svg_css(rule, &mut budget),
+            Err(SvgError::InvalidDocument(_))
+        ));
+    }
+    let used_bytes = initial.bytes - unlimited.bytes;
+    for bytes in [0, used_bytes - 1] {
+        let mut budget = SelectorFreezeBudget::new();
+        budget.bytes = bytes;
+        assert!(matches!(
+            super::retain_unfrozen_svg_css(rule, &mut budget),
+            Err(SvgError::InvalidDocument(_))
+        ));
+    }
+}
+
+#[test]
+fn style_rule_retention_reads_the_whole_prelude_before_a_block() {
+    // A block token directly before `{` must not cut the prelude short, or a
+    // rule SimpleCSS applies would also be retained.
+    let mut budget = SelectorFreezeBudget::new();
+    assert_eq!(
+        super::retain_unfrozen_svg_css(
+            "rect[width]{fill:red} rect:lang(en){fill:blue}",
+            &mut budget
+        )
+        .unwrap(),
+        ""
+    );
+}
+
+#[test]
+fn css_retention_skips_text_simplecss_would_not_skip_exactly() {
+    let mut budget = SelectorFreezeBudget::new();
+    for stylesheet in [
+        "rect:is(.a) { /* } */ fill:red }",
+        "rect:is(.a) { font-family:\"{\" }",
+        "rect:is(.a) { fill:blue",
+        "@media all { rect { content:\"}\" } }",
+        "@unknown \"a;b{c\";",
+        "@unfinished",
+        "@--custom { }",
+        // Closed for a brace count, but open for cssparser.
+        "rect:is(.a) { content:\"}\"",
+        "@media print { rect { content:\"}\" }",
+        "@x /* ;",
+    ] {
+        assert_eq!(
+            super::retain_unfrozen_svg_css(stylesheet, &mut budget).unwrap(),
+            "",
+            "{stylesheet}"
+        );
+    }
+    assert_eq!(
+        super::retain_unfrozen_svg_css(
+            "@-custom { a { } } rect:is(.a) { content:\"{}\" }",
+            &mut budget
+        )
+        .unwrap(),
+        "@-custom { a { } }\n@media all { rect:is(.a) { content:\"{}\" } }\n"
+    );
+}
+
+#[test]
+fn source_export_keeps_simplecss_rules_beside_retained_css_with_braces() {
+    // Unsafe retained text would expose `* { fill:red }` or swallow the scoped
+    // `color:blue` rule appended after it.
+    for unsafe_rule in ["g:not(.x) /* } */ { fill:red }", "g:not(.x) { fill:red"] {
+        let source = format!(
+            "<svg xmlns='{SVG_NAMESPACE}' width='10' height='10'><style>rect {{ color:blue }} {unsafe_rule}</style><rect width='10' height='10' fill='currentColor'/></svg>"
+        );
+        let exported = SvgDocument::parse(source.as_bytes())
+            .unwrap()
+            .styled_source_with_root_color(
+                SvgViewport {
+                    width: 10.0,
+                    height: 10.0,
+                },
+                SvgRootStyle::default(),
+                [0, 0, 0, 255],
+            )
+            .unwrap();
+        let image = SvgDocument::parse(exported.as_bytes())
+            .unwrap()
+            .rasterize(
+                SvgViewport {
+                    width: 10.0,
+                    height: 10.0,
+                },
+                SvgRootStyle::default(),
+                None,
+            )
+            .unwrap();
+        assert_eq!(&image.rgba[..4], &[0, 0, 255, 255], "{exported}");
+    }
+}
+
+#[test]
+fn style_rule_retention_skips_rules_that_cannot_be_wrapped() {
+    let mut budget = SelectorFreezeBudget::new();
+    for stylesheet in [
+        "{ fill:red }",
+        "} a:is(.b) { fill:red }",
+        "a:is(.b) } c { fill:red }",
+        "; a:is(.b) { fill:red }",
+        "a:is(.b); c { fill:red }",
+        "a:is(.b)",
+        "<!-- a, c { fill:red } -->",
+    ] {
+        assert_eq!(
+            super::retain_unfrozen_svg_css(stylesheet, &mut budget).unwrap(),
+            "",
+            "{stylesheet}"
+        );
+    }
+}
+
+#[test]
+fn source_export_retains_style_rules_with_unmatched_selectors() {
+    let stylesheet = "rect { opacity:.5 } rect:is(.hot) { fill:red } rect:is(.hot), rect { color:red } } rect:is(.hot) { fill:blue }";
+    let source = format!(
+        "<svg xmlns='{SVG_NAMESPACE}' width='10' height='10'><style>{stylesheet}</style><rect class='hot' width='10' height='10' fill='currentColor'/></svg>"
+    );
+    let exported = SvgDocument::parse(source.as_bytes())
+        .unwrap()
+        .styled_source_with_root_color(
+            SvgViewport {
+                width: 10.0,
+                height: 10.0,
+            },
+            SvgRootStyle::default(),
+            [0, 0, 0, 255],
+        )
+        .unwrap();
+    let xml = roxmltree::Document::parse(&exported).unwrap();
+    let style = xml
+        .descendants()
+        .find(|node| node.has_tag_name("style"))
+        .and_then(|node| node.text())
+        .unwrap();
+    assert!(
+        style.contains("@media all { rect:is(.hot) { fill:red } }\n@media all { rect:is(.hot), rect { color:red } }"),
+        "{style}"
+    );
+    assert!(!style.contains("rect { opacity:.5 }"), "{style}");
+    assert!(!style.contains("fill:blue"), "{style}");
+    // Retained rules stay invisible to the rasterizer, including the rule
+    // whose selector list contains a supported entry.
+    let image = SvgDocument::parse(exported.as_bytes())
+        .unwrap()
+        .rasterize(
+            SvgViewport {
+                width: 10.0,
+                height: 10.0,
+            },
+            SvgRootStyle::default(),
+            None,
+        )
+        .unwrap();
+    assert_eq!(&image.rgba[..3], &[0, 0, 0]);
+    assert!((100..150).contains(&image.rgba[3]));
+}
+
+fn source_with_descendant_styles(
+    source: &[u8],
+    styles: &[super::SvgElementStyle<'_>],
+) -> Result<String, SvgError> {
+    SvgDocument::parse(source)?.styled_source_with_resolved_styles(
+        SvgViewport {
+            width: 20.0,
+            height: 10.0,
+        },
+        SvgRootStyle::default(),
+        [0, 0, 0, 255],
+        super::SvgRootFont {
+            size: 12.0,
+            family: "sans-serif",
+            weight: 400.0,
+            style: "normal",
+        },
+        styles,
+    )
+}
+
+#[test]
+fn retained_css_that_cssparser_leaves_open_does_not_hide_later_scoped_rules() {
+    // A `}` in a string or comment closes these unterminated items for a brace
+    // count only. Retained, they would hide the scoped rule appended by the
+    // descendant pass from the root pass, so `color:blue !important` reached
+    // the root.
+    for tail in [
+        "rect:is(.a) { content:\"}\"",
+        "rect:is(.a) { /* } */",
+        "@media print { rect { content:\"}\" }",
+    ] {
+        let source = format!(
+            "<svg xmlns='{SVG_NAMESPACE}' width='20' height='10'><style>svg {{ color: blue !important }} {tail}</style><g/><rect width='10' height='10' fill='currentColor'/></svg>"
+        );
+        let prepared = source_with_descendant_styles(
+            source.as_bytes(),
+            &[super::SvgElementStyle {
+                element_index: 2,
+                declarations: "color:rgba(0,128,0,1)!important",
+            }],
+        )
+        .unwrap();
+        let image = SvgDocument::parse(prepared.as_bytes())
+            .unwrap()
+            .rasterize(
+                SvgViewport {
+                    width: 20.0,
+                    height: 10.0,
+                },
+                SvgRootStyle::default(),
+                None,
+            )
+            .unwrap();
+        assert_eq!(&image.rgba[..4], &[0, 0, 0, 255], "{tail}: {prepared}");
+    }
+}
+
+#[test]
+fn descendant_overrides_preserve_original_selector_matches_and_other_properties() {
+    let source = br#"<svg xmlns="http://www.w3.org/2000/svg" width="20" height="10"><style>rect[opacity='0.75']{opacity:0.75!important;fill:red}rect{color:blue!important}</style><rect opacity="0.75" width="10" height="10"/><rect x="10" width="10" height="10" fill="currentColor"/></svg>"#;
+    let prepared = source_with_descendant_styles(
+        source,
+        &[
+            super::SvgElementStyle {
+                element_index: 2,
+                declarations: "opacity:.25!important",
+            },
+            super::SvgElementStyle {
+                element_index: 3,
+                declarations: "color:green!important",
+            },
+        ],
+    )
+    .unwrap();
+    let rgba = SvgDocument::parse(prepared.as_bytes())
+        .unwrap()
+        .rasterize(
+            SvgViewport {
+                width: 20.0,
+                height: 10.0,
+            },
+            SvgRootStyle::default(),
+            None,
+        )
+        .unwrap()
+        .rgba;
+    assert_eq!(
+        &rgba[(5 * 20 + 5) * 4..(5 * 20 + 5) * 4 + 4],
+        &[255, 0, 0, 64]
+    );
+    assert_eq!(
+        &rgba[(5 * 20 + 15) * 4..(5 * 20 + 15) * 4 + 4],
+        &[0, 128, 0, 255]
+    );
+}
+
+#[test]
+fn descendant_overrides_replace_inline_and_presentation_properties_only() {
+    let prepared = source_with_descendant_styles(
+        br#"<svg xmlns="http://www.w3.org/2000/svg"><rect opacity=".9" style="opacity:.8!important;fill:red" width="20" height="10"/></svg>"#,
+        &[super::SvgElementStyle { element_index: 1, declarations: "opacity:.25" }],
+    ).unwrap();
+    let xml = roxmltree::Document::parse(&prepared).unwrap();
+    let rect = xml
+        .descendants()
+        .find(|node| node.has_tag_name("rect"))
+        .unwrap();
+    assert_eq!(rect.attribute("opacity"), None);
+    let style = rect.attribute("style").unwrap();
+    assert!(style.contains("fill:red"));
+    assert!(style.contains("opacity:.25"));
+    assert!(!style.contains("opacity:.8"));
+}
+
+#[test]
+fn descendant_overrides_reject_invalid_indices_properties_and_resources() {
+    let source = br#"<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>"#;
+    for styles in [
+        vec![super::SvgElementStyle {
+            element_index: 0,
+            declarations: "opacity:0",
+        }],
+        vec![super::SvgElementStyle {
+            element_index: 2,
+            declarations: "opacity:0",
+        }],
+        vec![
+            super::SvgElementStyle {
+                element_index: 1,
+                declarations: "opacity:0"
+            };
+            2
+        ],
+        vec![super::SvgElementStyle {
+            element_index: 1,
+            declarations: "fill:red",
+        }],
+        vec![super::SvgElementStyle {
+            element_index: 1,
+            declarations: "opacity",
+        }],
+    ] {
+        assert!(matches!(
+            source_with_descendant_styles(source, &styles),
+            Err(SvgError::InvalidDocument(_))
+        ));
+    }
+    assert!(matches!(
+        source_with_descendant_styles(
+            source,
+            &[super::SvgElementStyle {
+                element_index: 1,
+                declarations: "font-family:url(https://example.com/font)"
+            },]
+        ),
+        Err(SvgError::ExternalReference)
+    ));
+}
+
+#[test]
+fn descendant_overrides_share_the_selector_rewrite_budget() {
+    let source = "<svg xmlns='http://www.w3.org/2000/svg'><rect/></svg>";
+    let styles = [super::SvgElementStyle {
+        element_index: 1,
+        declarations: "opacity:0",
+    }];
+    let mut budget = SelectorFreezeBudget::new();
+    budget.bytes = 1;
+    assert!(super::with_element_style_overrides(source, &styles, true, &mut budget).is_err());
+    let mut budget = SelectorFreezeBudget::new();
+    budget.checks = 1;
+    assert!(super::with_element_style_overrides(source, &styles, true, &mut budget).is_err());
+}
+
+#[test]
+fn descendant_rewrites_fail_cleanly_at_intermediate_resource_limits() {
+    let source = "<svg xmlns='http://www.w3.org/2000/svg'><style>rect{color:red;opacity:.8}</style><rect style='opacity:.5;fill:currentColor'/></svg>";
+    let styles = [super::SvgElementStyle {
+        element_index: 2,
+        declarations: "color:blue;opacity:.25",
+    }];
+    let expected = super::with_element_style_overrides(
+        source,
+        &styles,
+        true,
+        &mut SelectorFreezeBudget::new(),
+    )
+    .unwrap();
+    for bytes in (0..10_000).step_by(17) {
+        let mut budget = SelectorFreezeBudget::new();
+        budget.bytes = bytes;
+        match super::with_element_style_overrides(source, &styles, true, &mut budget) {
+            Ok(prepared) => assert_eq!(prepared, expected),
+            Err(SvgError::InvalidDocument(message)) => {
+                assert!(
+                    message.contains("selector freezing resource limit"),
+                    "{message}"
+                );
+            }
+            other => panic!("unexpected result: {other:?}"),
+        }
+    }
+    for checks in 0..30 {
+        let mut budget = SelectorFreezeBudget::new();
+        budget.checks = checks;
+        match super::with_element_style_overrides(source, &styles, true, &mut budget) {
+            Ok(prepared) => assert_eq!(prepared, expected),
+            Err(SvgError::InvalidDocument(message)) => {
+                assert!(
+                    message.contains("selector freezing resource limit"),
+                    "{message}"
+                );
+            }
+            other => panic!("unexpected result: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn descendant_scope_names_reject_exhausted_collision_suffixes() {
+    let source = format!(
+        "<svg data-raikiri-svg-color-scope-{}=''><rect/></svg>",
+        usize::MAX,
+    );
+    let styles = [super::SvgElementStyle {
+        element_index: 1,
+        declarations: "color:blue",
+    }];
+    assert!(matches!(
+        super::with_element_style_overrides(&source, &styles, true, &mut SelectorFreezeBudget::new()),
+        Err(SvgError::InvalidDocument(message))
+            if message.contains("selector freezing resource limit")
+    ));
+}
+
+#[test]
+fn font_shorthand_expansion_fails_cleanly_at_intermediate_byte_limits() {
+    for (source, stylesheet) in [
+        ("font:italic bold 12px serif!important", false),
+        ("text{font:italic bold 12px serif!important}", true),
+    ] {
+        let expected =
+            super::expand_font_shorthands(source, stylesheet, &mut SelectorFreezeBudget::new())
+                .unwrap();
+        assert!(expected.as_ref().unwrap().contains("font-size:12px"));
+        for bytes in (0..5_000).step_by(17) {
+            let mut budget = SelectorFreezeBudget::new();
+            budget.bytes = bytes;
+            match super::expand_font_shorthands(source, stylesheet, &mut budget) {
+                Ok(prepared) => assert_eq!(prepared, expected),
+                Err(SvgError::InvalidDocument(message)) => {
+                    assert!(
+                        message.contains("selector freezing resource limit"),
+                        "{message}"
+                    );
+                }
+                other => panic!("unexpected result: {other:?}"),
+            }
+        }
+    }
 }

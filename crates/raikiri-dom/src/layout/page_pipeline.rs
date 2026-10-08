@@ -1077,6 +1077,7 @@ pub(crate) fn project_slices(
         abs_y: f32,
         width: f32,
         height: f32,
+        content_insets: Option<PageFragmentInsets>,
         line_metrics: Option<Vec<(f32, f32)>>,
         is_repeat: bool,
     }
@@ -1086,6 +1087,7 @@ pub(crate) fn project_slices(
     // Each inline element's rectangle is the union of its pieces after
     // pagination moves their lines.
     let mut ifc_piece_bounds: HashMap<usize, HashMap<usize, BoxRect>> = HashMap::new();
+    let mut fragmented_inline_nodes = HashSet::new();
     let mut ifc_text_lines = HashMap::new();
     let mut stack = vec![(body_id, 0.0_f32, 0.0_f32, false)];
     while let Some((node_id, parent_abs_x, parent_abs_y, inherited_repeat)) = stack.pop() {
@@ -1153,6 +1155,7 @@ pub(crate) fn project_slices(
                 bounds_by_node
                     .entry(piece.node)
                     .and_modify(|bounds| {
+                        fragmented_inline_nodes.insert(piece.node);
                         let rect = piece.border_box;
                         let x = bounds.x.min(rect.x);
                         let y = bounds.y.min(rect.y);
@@ -1232,6 +1235,16 @@ pub(crate) fn project_slices(
                 abs_y: abs_y + node.table_grid_box.map_or(0.0, |rect| rect.y),
                 width: node.table_grid_box.map_or(width, |rect| rect.width),
                 height: node.table_grid_box.map_or(height, |rect| rect.height),
+                content_insets: (node.kind() == NodeKind::Element
+                    && !fragmented_inline_nodes.contains(&node_id))
+                .then(|| {
+                    PageFragmentInsets::new(
+                        layout.border.top + layout.padding.top,
+                        layout.border.right + layout.padding.right,
+                        layout.border.bottom + layout.padding.bottom,
+                        layout.border.left + layout.padding.left,
+                    )
+                }),
                 line_metrics,
                 is_repeat,
             });
@@ -1273,10 +1286,10 @@ pub(crate) fn project_slices(
             if source.is_repeat {
                 placements.push((
                     page_slot,
-                    source.abs_y.max(0.0),
+                    source.abs_y,
                     source.height,
                     repeat_line_range,
-                    source.abs_y.max(0.0),
+                    source.abs_y,
                 ));
                 continue;
             }
@@ -1326,7 +1339,15 @@ pub(crate) fn project_slices(
                 source.is_repeat,
             )
             .with_page_index(page.page_index)
-            .with_box_extent(box_y, source.height);
+            .with_box_extent(box_y, source.height)
+            .with_content_rect(source.content_insets.map(|insets| {
+                PageFragmentRect::new(
+                    source.abs_x + insets.left,
+                    box_y + insets.top,
+                    (source.width - insets.left - insets.right).max(0.0),
+                    (source.height - insets.top - insets.bottom).max(0.0),
+                )
+            }));
             page.items.push(match line_range {
                 Some(range) => item.with_line_range(range),
                 None => item,

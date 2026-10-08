@@ -6905,6 +6905,7 @@ fn resolve_inheritance_grows_undersized_output_vectors() {
         &mut page_values,
         &mut pseudo_out,
         &mut HashMap::new(),
+        &mut HashMap::new(),
     );
     assert!(out.len() > deepest);
     assert!(authored_writing_modes.len() > deepest);
@@ -6943,6 +6944,7 @@ fn resolve_inheritance_panics_when_root_parent_font_size_is_not_initial() {
         &mut page_values,
         &mut pseudo_out,
         &mut HashMap::new(),
+        &mut HashMap::new(),
     );
 }
 
@@ -6972,6 +6974,7 @@ fn apply_winners_direct_border_radius_inherit() {
         &mut specified,
         &inherited,
         &custom_properties,
+        None,
         None,
         None,
     );
@@ -7010,6 +7013,7 @@ fn apply_winners_direct_page_value() {
         &inherited,
         &custom_properties,
         Some(&mut page_value),
+        None,
         None,
     );
     assert_eq!(page_value, PageValue::Named(Atom::from("chapter")));
@@ -9412,6 +9416,7 @@ struct WalkOutputs {
     authored_writing_modes: Vec<Option<WritingMode>>,
     page_values: Vec<PageValue>,
     pseudo: Vec<((u64, PseudoElem), ComputedValues)>,
+    svg_properties: HashMap<StyleNodeId, Vec<SvgStyleProperty>>,
 }
 
 fn walk_outputs(doc: &TestDoc, tree: &RuleTree, sibling_sharing: bool) -> (WalkOutputs, usize) {
@@ -9423,6 +9428,7 @@ fn walk_outputs(doc: &TestDoc, tree: &RuleTree, sibling_sharing: bool) -> (WalkO
     let mut authored_writing_modes = vec![None; n];
     let mut page_values = vec![PageValue::Auto; n];
     let mut pseudo_out = HashMap::new();
+    let mut svg_properties = HashMap::new();
     let shared = resolve_inheritance_with(
         doc,
         root,
@@ -9432,6 +9438,7 @@ fn walk_outputs(doc: &TestDoc, tree: &RuleTree, sibling_sharing: bool) -> (WalkO
         &mut authored_writing_modes,
         &mut page_values,
         &mut pseudo_out,
+        &mut svg_properties,
         &mut HashMap::new(),
         sibling_sharing,
     );
@@ -9446,6 +9453,7 @@ fn walk_outputs(doc: &TestDoc, tree: &RuleTree, sibling_sharing: bool) -> (WalkO
             authored_writing_modes,
             page_values,
             pseudo,
+            svg_properties,
         },
         shared,
     )
@@ -9599,6 +9607,31 @@ fn identical_text_siblings_share() {
     let shared = assert_sharing_is_transparent(&doc, &tree);
     // Everything after the first text node and the first comment shares.
     assert_eq!(shared, 18);
+}
+
+#[test]
+fn identical_svg_siblings_share_their_exported_style_properties() {
+    let mut doc = TestDoc::new();
+    let style = doc.push_element(0, "style", None);
+    doc.push_text(style, "rect { color:blue; opacity:.25 }");
+    let svg = doc.push_element_with_namespace(0, "svg", "http://www.w3.org/2000/svg", &[]);
+    let mut rects = Vec::new();
+    for _ in 0..3 {
+        rects.push(doc.push_element_with_namespace(svg, "rect", "http://www.w3.org/2000/svg", &[]));
+    }
+    let tree = build_rule_tree(&doc);
+    assert!(assert_sharing_is_transparent(&doc, &tree) > 0);
+    let result = cascade(&doc, &tree).unwrap();
+    let first = result.svg_style_properties(StyleNodeId(rects[0] as u64));
+    assert!(
+        first
+            .iter()
+            .any(|value| value.property == PropertyKey::Opacity)
+    );
+    for rect in rects {
+        assert_eq!(result.svg_style_properties(StyleNodeId(rect as u64)), first);
+        assert_eq!(result.computed[rect].opacity, 0.25);
+    }
 }
 
 #[test]
@@ -9847,6 +9880,51 @@ fn radius_shorthand_css_wide_defaults_follow_corner_cascade() {
             cv.border_radius.used(200.0, 100.0),
             [[20.0, 30.0]; 4],
             "{value}"
+        );
+    }
+}
+
+#[test]
+fn svg_export_css_wide_values_resolve_inherit_initial_and_unset() {
+    let inherited_css = "opacity:.25;display:block;visibility:hidden;font-family:custom;font-weight:700;font-style:italic";
+    for keyword in ["inherit", "initial", "unset"] {
+        let mut doc = TestDoc::new();
+        let parent = doc.push_element(0, "div", Some(inherited_css));
+        let declarations = format!(
+            "opacity:{keyword};display:{keyword};visibility:{keyword};font-family:{keyword};font-weight:{keyword};font-style:{keyword}"
+        );
+        let child = doc.push_element(parent, "div", Some(&declarations));
+        let result = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        let actual = &result.computed[child];
+        let initial = ComputedValues::initial();
+        let parent = &result.computed[parent];
+        let inherited_properties = if keyword == "initial" {
+            &initial
+        } else {
+            parent
+        };
+        let other_properties = if keyword == "inherit" {
+            parent
+        } else {
+            &initial
+        };
+        assert_eq!(actual.opacity, other_properties.opacity, "{keyword}");
+        assert_eq!(actual.display, other_properties.display, "{keyword}");
+        assert_eq!(
+            actual.visibility, inherited_properties.visibility,
+            "{keyword}"
+        );
+        assert_eq!(
+            actual.font_family, inherited_properties.font_family,
+            "{keyword}"
+        );
+        assert_eq!(
+            actual.font_weight, inherited_properties.font_weight,
+            "{keyword}"
+        );
+        assert_eq!(
+            actual.font_style, inherited_properties.font_style,
+            "{keyword}"
         );
     }
 }
