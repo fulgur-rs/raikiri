@@ -2,6 +2,27 @@ use super::*;
 use crate::test_dom::TestDoc;
 
 #[test]
+fn all_revert_layer_keeps_first_letter_rollback_markers() {
+    let mut doc = TestDoc::new();
+    let style = doc.push_element(0, "style", None);
+    doc.push_text(style, "@layer low, high; @layer low {div::first-letter {color:red}} @layer high {div::first-letter {color:blue;all:revert-layer}}");
+    let root = doc.push_element(0, "div", Some("color:black"));
+    let computed = crate::cascade(&doc, &crate::build_rule_tree(&doc)).unwrap();
+    let letter = computed
+        .resolve_first_letter_style(StyleNodeId::new(root as u64), &computed.computed[root])
+        .unwrap();
+    assert_eq!(
+        letter.color,
+        crate::property::CssColor {
+            r: 255,
+            g: 0,
+            b: 0,
+            a: 255
+        }
+    );
+}
+
+#[test]
 fn actual_parent_metrics_custom_values_and_inapplicable_geometry_are_preserved() {
     let mut doc = TestDoc::new();
     let style = doc.push_element(0, "style", None);

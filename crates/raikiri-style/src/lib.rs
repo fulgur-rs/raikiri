@@ -225,6 +225,8 @@ pub enum PseudoClass {
     Link,
     /// Any hyperlink, independently of browsing history.
     AnyLink,
+    /// A valid history-dependent selector; always nonmatching in static rendering.
+    Visited,
     /// `:lang(range1, range2, ...)` — CSS Selectors L4 §7.2
     /// <https://www.w3.org/TR/selectors-4/#the-lang-pseudo>. Each `String` is
     /// one comma-separated language range **as written in the selector**
@@ -301,6 +303,7 @@ impl ToCss for PseudoClass {
             PseudoClass::Active => dest.write_str(":active"),
             PseudoClass::Link => dest.write_str(":link"),
             PseudoClass::AnyLink => dest.write_str(":any-link"),
+            PseudoClass::Visited => dest.write_str(":visited"),
             PseudoClass::Lang(ranges) => {
                 dest.write_str(":lang(")?;
                 for (i, range) in ranges.iter().enumerate() {
@@ -462,6 +465,8 @@ impl<'i> SelectorsParser<'i> for RaikiriSelectorParser {
             Ok(PseudoClass::Link)
         } else if name.eq_ignore_ascii_case("any-link") {
             Ok(PseudoClass::AnyLink)
+        } else if name.eq_ignore_ascii_case("visited") {
+            Ok(PseudoClass::Visited)
         } else {
             Err(
                 location.new_custom_error(SelectorParseErrorKind::UnsupportedPseudoClassOrElement(

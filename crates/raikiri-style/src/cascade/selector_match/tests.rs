@@ -9,6 +9,39 @@ use crate::test_dom::TestDoc;
 mod namespace_tests;
 
 #[test]
+fn visited_is_valid_and_never_matches_without_discarding_link_siblings() {
+    for (selector, expected) in [
+        ("a:link, a:visited", true),
+        ("a:visited", false),
+        ("a:not(:visited)", true),
+    ] {
+        let mut doc = TestDoc::new();
+        let style = doc.push_element(0, "style", None);
+        doc.push_text(style, &format!("{selector} {{ color:red }}"));
+        let item = doc.push_element(0, "a", None);
+        doc.set_attr(item, "href", "/target");
+        let result = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        assert_eq!(result.computed[item].color == RED, expected, "{selector}");
+        assert_eq!(
+            crate::SelectorQuery::parse(selector).unwrap().matches(
+                &doc,
+                StyleNodeId::new(item as u64),
+                &[]
+            ),
+            expected,
+            "{selector}"
+        );
+    }
+    use cssparser::ToCss;
+    assert_eq!(
+        crate::parse_selector_list("a:ViSiTeD")
+            .unwrap()
+            .to_css_string(),
+        "a:visited"
+    );
+}
+
+#[test]
 fn preflight_keeps_universal_and_generated_members_without_inventing_native_boxes() {
     let mut doc = TestDoc::new();
     let style = doc.push_element(0, "style", None);

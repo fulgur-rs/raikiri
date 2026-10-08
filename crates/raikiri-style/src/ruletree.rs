@@ -2784,7 +2784,8 @@ fn is_supported_selector_with_relative_anchor(
                 PseudoClass::Lang(_)
                 | PseudoClass::Dir(_)
                 | PseudoClass::Link
-                | PseudoClass::AnyLink,
+                | PseudoClass::AnyLink
+                | PseudoClass::Visited,
             ) => true,
             Component::Combinator(Combinator::PseudoElement) => allow_nth,
             Component::PseudoElement(

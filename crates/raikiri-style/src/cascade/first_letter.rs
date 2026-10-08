@@ -167,7 +167,10 @@ impl CascadeResult {
         let declarations: Vec<_> = inputs
             .declarations
             .iter()
-            .filter(|(value, ..)| property_applies(value.key()))
+            .filter(|(value, ..)| {
+                matches!(value, crate::property::PropertyValue::AllRevertLayer)
+                    || property_applies(value.key())
+            })
             .cloned()
             .collect();
         apply_winners(
