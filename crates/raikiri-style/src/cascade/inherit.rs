@@ -142,6 +142,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
     page_values: &mut [crate::property::PageValue],
     pseudo_out: &mut HashMap<(StyleNodeId, PseudoElem), ComputedValues>,
     svg_properties: &mut HashMap<StyleNodeId, Vec<SvgStyleProperty>>,
+    first_letter_inputs: &mut HashMap<StyleNodeId, super::first_letter::FirstLetterInputs>,
 ) {
     resolve_inheritance_with(
         dom,
@@ -153,6 +154,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         page_values,
         pseudo_out,
         svg_properties,
+        first_letter_inputs,
         true,
     );
 }
@@ -171,6 +173,7 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
     page_values: &mut [crate::property::PageValue],
     pseudo_out: &mut HashMap<(StyleNodeId, PseudoElem), ComputedValues>,
     svg_properties: &mut HashMap<StyleNodeId, Vec<SvgStyleProperty>>,
+    first_letter_inputs: &mut HashMap<StyleNodeId, super::first_letter::FirstLetterInputs>,
     sibling_sharing: bool,
 ) -> usize {
     let mut shared_nodes = 0;
@@ -249,6 +252,9 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
                     if let Some(values) = pseudo_out.get(&(source, pseudo)).cloned() {
                         pseudo_out.insert((id, pseudo), values);
                     }
+                }
+                if let Some(inputs) = first_letter_inputs.get(&source).cloned() {
+                    first_letter_inputs.insert(id, inputs);
                 }
                 let computed = out[src].clone();
                 let custom_properties = computed.custom_properties.clone();
@@ -436,6 +442,16 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
                          for every element by this point in the match above",
                         );
                         let mut pseudo_computed = pseudo_specified.finalize(&computed, &ctx);
+                        if pseudo == PseudoElem::FirstLetter {
+                            first_letter_inputs.insert(
+                                id,
+                                super::first_letter::FirstLetterInputs {
+                                    declarations: candidates.unwrap_or_default().to_vec(),
+                                    custom: custom_candidates.unwrap_or_default().to_vec(),
+                                    context: ctx,
+                                },
+                            );
+                        }
                         pseudo_computed.custom_properties = pseudo_custom_properties;
                         pseudo_computed.local_custom_properties = pseudo_local_custom_properties;
                         pseudo_out.insert((id, pseudo), pseudo_computed);

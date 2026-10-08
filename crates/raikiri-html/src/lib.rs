@@ -37,8 +37,9 @@ pub use document::HtmlDocument;
 pub use document_layout::{
     Anchor, AnchorIndex, ClipKind, DecorationKind, DecorationLine, DecorationStyle, DocumentLayout,
     DomView, FontBlob, FontId, FontRef, FontVariation, Fragment, FragmentKind, GeneratedKind,
-    Glyph, InlineSvg, LayoutOptions, LayoutStatus, Link, Page, PageGeometry, PageMode, PaintEvent,
-    PositionedGlyphRun, RepeatKind, RunSource, Synthesis, Tag, TextLineId, layout,
+    Glyph, InlineSvg, LayoutOptions, LayoutStatus, Link, OverflowClip, Page, PageGeometry,
+    PageMode, PaintEvent, PositionedGlyphRun, RepeatKind, RunSource, Synthesis, Tag, TextLineId,
+    layout,
 };
 pub use document_parse::{parse_html, parse_html_with_limits};
 pub use font_collection::{
@@ -75,6 +76,7 @@ pub mod computed {
 }
 pub use shodo::font::FontCollection;
 
+pub use raikiri_traits::PaintClip; // cov:ignore: type-only re-export has no executable code or lcov record.
 pub use raikiri_traits::{
     ConsumerPropertyEvent, ConsumerPropertyObserver, LayoutConfig, LayoutConfigBuilder, NodeId,
     NodeKind, PageDefaults, PaintInsets, PaintRect, RenderError, RenderWarning, WarningKind,

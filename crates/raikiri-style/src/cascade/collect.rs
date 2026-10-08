@@ -86,11 +86,12 @@ pub(crate) const MARGIN_COLLAPSING_QUIRK_SPECIFICITY: Specificity = INLINE_SPECI
 pub(crate) const MARGIN_COLLAPSING_QUIRK_SOURCE_ORDER: u32 = 0;
 
 /// Every pseudo-element the cascade collects candidates for.
-pub(crate) const CASCADED_PSEUDO_ELEMENTS: [PseudoElem; 4] = [
+pub(crate) const CASCADED_PSEUDO_ELEMENTS: [PseudoElem; 5] = [
     PseudoElem::Before,
     PseudoElem::After,
     PseudoElem::Marker,
     PseudoElem::FirstLine,
+    PseudoElem::FirstLetter,
 ];
 
 /// One candidate declaration: `(value, important, origin, specificity, source_order, layer)`.
@@ -619,10 +620,12 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
     let mut pseudo_after_decls: Vec<CascadedDecl> = Vec::new();
     let mut pseudo_marker_decls: Vec<CascadedDecl> = Vec::new();
     let mut pseudo_first_line_decls: Vec<CascadedDecl> = Vec::new();
+    let mut pseudo_first_letter_decls: Vec<CascadedDecl> = Vec::new();
     let mut pseudo_before_custom: Vec<CustomCascadedDecl> = Vec::new();
     let mut pseudo_after_custom: Vec<CustomCascadedDecl> = Vec::new();
     let mut pseudo_marker_custom: Vec<CustomCascadedDecl> = Vec::new();
     let mut pseudo_first_line_custom: Vec<CustomCascadedDecl> = Vec::new();
+    let mut pseudo_first_letter_custom: Vec<CustomCascadedDecl> = Vec::new();
     while let Some((id, depth)) = stack.pop() {
         ancestor_path.truncate(depth);
         ancestor_filter.truncate(depth);
@@ -820,6 +823,12 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                             PseudoElem::FirstLine => {
                                 (&mut pseudo_first_line_decls, &mut pseudo_first_line_custom)
                             }
+                            PseudoElem::FirstLetter => (
+                                &mut pseudo_first_letter_decls,
+                                &mut pseudo_first_letter_custom,
+                            ),
+                            // cov:ignore: selector_matches_pseudo_element excludes boxless native pseudos
+                            PseudoElem::Backdrop | PseudoElem::FileSelectorButton => continue,
                         };
                         for d in &indexed.declarations {
                             push_cascaded_decl(
@@ -910,6 +919,11 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                         PseudoElem::FirstLine,
                         &mut pseudo_first_line_decls,
                         &mut pseudo_first_line_custom,
+                    ),
+                    (
+                        PseudoElem::FirstLetter,
+                        &mut pseudo_first_letter_decls,
+                        &mut pseudo_first_letter_custom,
                     ),
                 ] {
                     let pseudo_start = out.pseudo_decls.len();

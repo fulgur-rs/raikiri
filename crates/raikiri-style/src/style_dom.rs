@@ -256,6 +256,23 @@ pub trait StyleElement {
         None
     }
 
+    /// Whether this element is the source anchor of a hyperlink.
+    ///
+    /// The default covers HTML `a`/`area` and SVG `a` with a present `href`,
+    /// including an empty value. Implementations with namespaced attributes
+    /// should additionally recognize SVG's legacy `xlink:href`.
+    fn is_link(&self) -> bool {
+        let tag_is_link = match self.namespace_uri() {
+            None | Some("http://www.w3.org/1999/xhtml") => {
+                self.tag_name().eq_ignore_ascii_case("a")
+                    || self.tag_name().eq_ignore_ascii_case("area")
+            }
+            Some("http://www.w3.org/2000/svg") => self.tag_name() == "a",
+            _ => false,
+        };
+        tag_is_link && self.attr("href").is_some()
+    }
+
     /// `id` attribute value (empty `id=""` returns `None`).
     ///
     /// This empty-is-absent normalization is `id()`'s own contract — CSS

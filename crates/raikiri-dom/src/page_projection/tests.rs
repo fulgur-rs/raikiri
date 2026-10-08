@@ -8,6 +8,116 @@ use raikiri_traits::{
 };
 use taffy::Style;
 
+#[test]
+fn many_pages_keep_only_one_overflow_record_per_source() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let mut parent = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    for _ in 0..250 {
+        parent = doc.append_element(
+            Some(parent),
+            "div",
+            Style::default(),
+            Some("display:block;height:1px;overflow-x:clip;overflow-y:visible"),
+        );
+    }
+    doc.append_element(
+        Some(parent),
+        "div",
+        Style::default(),
+        Some("display:block;width:10px;height:100000px"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_single_page(&mut doc, &cascade, page).expect("layout");
+    let slices: Vec<_> = (0..1000)
+        .map(|index| PageSlice {
+            page_index: index,
+            content_origin_y: index as f32 * 100.0,
+            page_name: None,
+        })
+        .collect();
+    project(&mut doc, &cascade, page, &slices);
+    assert_eq!(doc.page_overflow_clips(999).count(), 250);
+    let retained = doc.page_projection.overflow_clips.len();
+    assert!(
+        retained <= 250,
+        "250 source clips must not become {retained} persistent page copies"
+    );
+    doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
+    assert!(doc.page_projection.overflow_clips.is_empty());
+}
+
+#[test]
+fn shared_source_clips_snap_after_fractional_page_translation() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let node = doc.append_element(
+        Some(body), "div", Style::default(),
+        Some("display:block;position:absolute;left:.6px;top:.6px;box-sizing:border-box;width:10px;height:150px;border:.1px solid;overflow:clip;border-radius:50%"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_single_page(&mut doc, &cascade, page).expect("layout");
+    let slices = [
+        PageSlice {
+            page_index: 0,
+            content_origin_y: 0.0,
+            page_name: None,
+        },
+        PageSlice {
+            page_index: 1,
+            content_origin_y: 100.4,
+            page_name: None,
+        },
+    ];
+    let geometry = (
+        page,
+        PageMargins {
+            top: 0.6,
+            right: 0.0,
+            bottom: 0.0,
+            left: 0.6,
+        },
+        PageContentInsets::default(),
+    );
+    doc.project_pages(&cascade, page, &slices, &[geometry, geometry]);
+    for (index, y) in [(0, 1.0), (1, -100.0)] {
+        let clip = doc
+            .page_overflow_clips(index)
+            .find(|entry| entry.node == NodeId(node as u64))
+            .expect("clip")
+            .clip;
+        assert_eq!(
+            clip.rect,
+            raikiri_traits::PaintRect::new(1.0, y, 10.0, 150.0)
+        );
+        assert_eq!(clip.corner_radii, Some([[4.9, 74.9]; 4]));
+        let fragment = doc
+            .page_fragments(index)
+            .find(|fragment| fragment.node() == NodeId(node as u64))
+            .expect("fragment");
+        assert_eq!(fragment.overflow_clip(), Some(clip));
+    }
+}
+
 fn fixture() -> (
     Document,
     CascadeResult,

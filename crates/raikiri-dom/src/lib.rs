@@ -99,7 +99,7 @@ pub use layout::{
 #[doc(hidden)]
 pub use layout::{StandaloneAlign, StandaloneStyle, StandaloneText};
 pub use node::{CanvasBitmap, CanvasBitmapError, ElementData, Node, NodeData, NodeFlags, TextData};
-pub use page_projection::fragment::{Fragment, FragmentKind, RepeatKind};
+pub use page_projection::fragment::{Fragment, FragmentKind, OverflowClip, RepeatKind};
 pub use page_projection::paint_order::{ClipKind, PaintEvent};
 // cov:ignore: public type re-exports have no executable mapping; API integration tests verify them.
 pub use page_projection::text_runs::{

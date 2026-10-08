@@ -34,8 +34,8 @@ use raikiri_style::{
     resolve_border, resolve_css_position,
 };
 use raikiri_traits::{
-    ImageIntrinsicSize, ImagePixelSource, ImageRasterSize, NodeId, NodeKind, PageBox,
-    RenderWarning, WarningKind,
+    ImageIntrinsicSize, ImagePixelSource, ImageRasterSize, NodeId, NodeKind, PageBox, PaintInsets,
+    PaintRect, RenderWarning, WarningKind,
 };
 use std::f64::consts::{FRAC_PI_2, PI};
 
@@ -4177,44 +4177,56 @@ pub(crate) fn paint_document_impl(
                 // clip origin flooring. The clip is pushed only after painting the
                 // element itself, then popped after its complete subtree via the
                 // explicit stack frame.
-                let clips_overflow = raikiri_dom::paint_rules::clips_overflow(cv);
-                if clips_overflow {
-                    let clip_right = paint_x + layout.size.width - layout.border.right;
-                    let clip_bottom = paint_y + paint_height - layout.border.bottom;
-                    let clip = Rect::new(
-                        (paint_x + layout.border.left).floor() as f64,
-                        (paint_y + layout.border.top).floor() as f64,
-                        if matches!(cv.overflow.x, OverflowValue::Clip) {
-                            clip_right.floor() as f64
-                        } else {
-                            clip_right as f64
-                        },
-                        if matches!(cv.overflow.y, OverflowValue::Clip) {
-                            clip_bottom.floor() as f64
-                        } else {
-                            clip_bottom as f64
-                        },
+                if let Some(resolved) = raikiri_dom::paint_rules::overflow_clip(
+                    document,
+                    cascade,
+                    node_id,
+                    PaintRect::new(paint_x, paint_y, layout.size.width, paint_height),
+                    PaintInsets::new(
+                        layout.border.top,
+                        layout.border.right,
+                        layout.border.bottom,
+                        layout.border.left,
+                    ),
+                ) {
+                    let mut clip = Rect::new(
+                        resolved.rect.x as f64,
+                        resolved.rect.y as f64,
+                        (resolved.rect.x + resolved.rect.width) as f64,
+                        (resolved.rect.y + resolved.rect.height) as f64,
                     );
-                    let rounded = if !matches!(cv.overflow.x, OverflowValue::Visible)
-                        && !matches!(cv.overflow.y, OverflowValue::Visible)
-                    {
-                        rounded_background_path(
+                    if !resolved.clip_x || !resolved.clip_y {
+                        // Bound an open axis by the page in the clip's local
+                        // coordinate system, including transformed ancestors.
+                        let determinant = scene.transform.determinant();
+                        let bounds = if determinant.is_finite() && determinant != 0.0 {
+                            scene.transform.inverse().transform_rect_bbox(Rect::new(
+                                0.0,
+                                0.0,
+                                page_box.width as f64,
+                                page_box.height as f64,
+                            ))
+                        } else {
+                            Rect::ZERO
+                        };
+                        if !resolved.clip_x {
+                            clip.x0 = bounds.x0;
+                            clip.x1 = bounds.x1;
+                        }
+                        if !resolved.clip_y {
+                            clip.y0 = bounds.y0;
+                            clip.y1 = bounds.y1;
+                        }
+                    }
+                    let rounded = resolved.corner_radii.map(|radii| {
+                        rounded_rect_path(
                             clip.x0,
                             clip.y0,
                             clip.x1,
                             clip.y1,
-                            &cv.border_radius,
-                            (
-                                layout.border.left as f64,
-                                layout.border.top as f64,
-                                layout.border.right as f64,
-                                layout.border.bottom as f64,
-                            ),
-                            (layout.size.width as f64, paint_height as f64),
+                            radii.map(|corner| corner.map(f64::from)),
                         )
-                    } else {
-                        None
-                    };
+                    });
                     if let Some(rounded) = rounded {
                         scene.push_clip_layer(Affine::IDENTITY, &rounded);
                     } else {
@@ -4455,7 +4467,8 @@ pub(crate) fn paint_document_impl(
                     {
                         t.push(crate::PaintTraceEvent::Text(node_id));
                     }
-                    crate::ifc_text::draw_ifc_lines(
+                    let paint_transform = scene.transform;
+                    crate::ifc_text::draw_ifc_lines_with_resources(
                         scene,
                         document,
                         cascade,
@@ -4468,6 +4481,10 @@ pub(crate) fn paint_document_impl(
                         &child_decorations,
                         fragmentainer,
                         custom_highlights,
+                        pixel_source,
+                        warnings,
+                        page_box,
+                        paint_transform,
                     );
                     if text_clip.is_some() {
                         scene.pop_layer();
@@ -4570,7 +4587,8 @@ pub(crate) fn paint_document_impl(
                         if let Some(t) = trace.as_deref_mut() {
                             t.push(crate::PaintTraceEvent::Text(node_id));
                         }
-                        crate::ifc_text::draw_ifc_lines(
+                        let paint_transform = scene.transform;
+                        crate::ifc_text::draw_ifc_lines_with_resources(
                             scene,
                             document,
                             cascade,
@@ -4583,6 +4601,10 @@ pub(crate) fn paint_document_impl(
                             &decorations,
                             fragmentainer,
                             custom_highlights,
+                            pixel_source,
+                            warnings,
+                            page_box,
+                            paint_transform,
                         );
                     }
                     // Any other text node lies outside every paragraph and
@@ -5216,6 +5238,51 @@ pub(crate) fn paint_element_background(
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
 ) {
+    paint_element_background_slice(
+        scene,
+        width,
+        height,
+        abs_x,
+        abs_y,
+        bg,
+        bg_image,
+        current_color,
+        clip,
+        origin,
+        border_radius,
+        border,
+        padding,
+        background_size,
+        background_position,
+        background_repeat,
+        pixel_source,
+        warnings,
+        None,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_element_background_slice(
+    scene: &mut impl PaintScene,
+    width: f32,
+    height: f32,
+    abs_x: f32,
+    abs_y: f32,
+    bg: CssColor,
+    bg_image: &BackgroundImage,
+    current_color: CssColor,
+    clip: VisualBox,
+    origin: VisualBox,
+    border_radius: &ComputedBorderRadius,
+    border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
+    padding: &taffy::Rect<f32>,
+    background_size: &ComputedBackgroundSize,
+    background_position: &ComputedCssPosition,
+    background_repeat: &raikiri_style::property::BackgroundRepeat,
+    pixel_source: Option<&dyn ImagePixelSource>,
+    warnings: &mut Vec<RenderWarning>,
+    image_slice: Option<Rect>,
+) {
     if width <= 0.0 || height <= 0.0 {
         return;
     }
@@ -5472,7 +5539,7 @@ pub(crate) fn paint_element_background(
                 scene,
                 url,
                 positioning,
-                painting,
+                image_slice.map_or(painting, |slice| painting.intersect(slice)),
                 background_size,
                 background_position,
                 background_repeat,
@@ -5485,7 +5552,7 @@ pub(crate) fn paint_element_background(
                 scene,
                 url,
                 positioning,
-                painting,
+                image_slice.map_or(painting, |slice| painting.intersect(slice)),
                 background_size,
                 background_position,
                 background_repeat,
@@ -6118,12 +6185,16 @@ pub(crate) fn paintable_border_radius(
 /// another line there) has no border, padding or corner radius: the box is
 /// sliced (CSS Fragmentation 3 `box-decoration-break: slice`). The padding is
 /// what the piece leaves around its content box once the border is taken off.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_inline_box(
     scene: &mut impl PaintScene,
     cv: &ComputedValues,
     piece: &raikiri_dom::InlineBoxPiece,
+    background_slice: Option<&crate::ifc_text::BackgroundSlice>,
     x: f32,
     y: f32,
+    pixel_source: Option<&dyn ImagePixelSource>,
+    warnings: &mut Vec<RenderWarning>,
 ) {
     let outer = piece.border_box;
     let content = piece.content_box;
@@ -6156,9 +6227,19 @@ pub(crate) fn paint_inline_box(
     let has_border = [&border.top, &border.right, &border.bottom, &border.left]
         .iter()
         .any(|side| side.width().px() > 0.0 && side.style() != BorderStyle::None);
+    // Other inline image fragmentation remains a separate follow-up.
+    let background_image = if raikiri_dom::generated_content::generated_origin(piece.node)
+        .is_some_and(|(_, pseudo)| pseudo == raikiri_style::PseudoElem::FirstLetter)
+    {
+        &cv.background_image
+    } else {
+        &BackgroundImage::None
+    };
     let mut radius = paintable_border_radius(
         &cv.border_radius,
-        (has_border || cv.background_color.a > 0)
+        (has_border
+            || cv.background_color.a > 0
+            || !matches!(background_image, BackgroundImage::None))
             && cv.transform.is_empty()
             && cv.filter.is_empty(),
     );
@@ -6173,36 +6254,136 @@ pub(crate) fn paint_inline_box(
     }
     let abs_x = x + outer.x;
     let abs_y = y + outer.y;
-    paint_element_box_shadows(
+    let shadow_slice = background_slice.filter(|slice| {
+        !cv.box_shadow.is_empty() && (slice.outer.x != outer.x || slice.outer.width != outer.width)
+    });
+    if let Some(slice) = shadow_slice {
+        // Only artificial inline edges clip a sliced shadow. Its real outer
+        // edges and its block-axis overflow remain visible.
+        let (mut overflow_x, mut overflow_y) = (1.0_f32, 1.0_f32);
+        for shadow in cv.box_shadow.iter() {
+            let spread = shadow.spread_radius.px().abs();
+            let blur = shadow.blur_radius.px().max(0.0) * 4.0;
+            overflow_x = overflow_x.max(shadow.offset_x.px().abs() + spread + blur + 1.0);
+            overflow_y = overflow_y.max(shadow.offset_y.px().abs() + spread + blur + 1.0);
+        }
+        let left = if slice.outer.x < outer.x {
+            abs_x
+        } else {
+            x + slice.outer.x - overflow_x
+        };
+        let right = if slice.outer.x + slice.outer.width > outer.x + outer.width {
+            abs_x + outer.width
+        } else {
+            x + slice.outer.x + slice.outer.width + overflow_x
+        };
+        scene.push_clip_layer(
+            Affine::IDENTITY,
+            &Rect::new(
+                f64::from(left),
+                f64::from(abs_y - overflow_y),
+                f64::from(right),
+                f64::from(abs_y + outer.height + overflow_y),
+            ),
+        );
+        let joined_radius = paintable_border_radius(
+            &cv.border_radius,
+            (has_border
+                || cv.background_color.a > 0
+                || !matches!(background_image, BackgroundImage::None))
+                && cv.transform.is_empty()
+                && cv.filter.is_empty(),
+        );
+        paint_element_box_shadows(
+            scene,
+            slice.outer.width,
+            outer.height,
+            x + slice.outer.x,
+            abs_y,
+            &joined_radius,
+            &cv.box_shadow,
+            cv.color,
+        );
+        scene.pop_layer();
+    } else {
+        paint_element_box_shadows(
+            scene,
+            outer.width,
+            outer.height,
+            abs_x,
+            abs_y,
+            &radius,
+            &cv.box_shadow,
+            cv.color,
+        );
+    }
+    // A typographic pseudo split across source owners has one background
+    // positioning area. Slice that image before applying each owner's offset;
+    // fragment heights remain local when their inherited fonts differ.
+    let slice = background_slice.filter(|slice| {
+        !matches!(background_image, BackgroundImage::None)
+            && (slice.outer.x != outer.x || slice.outer.width != outer.width)
+    });
+    let mut background_outer = outer;
+    let mut background_padding = padding;
+    if let Some(slice) = slice {
+        background_outer.x = slice.outer.x;
+        background_outer.width = slice.outer.width;
+        background_padding.left =
+            (slice.content.x - slice.outer.x - cv.border.left.width().px()).max(0.0);
+        background_padding.right = ((slice.outer.x + slice.outer.width)
+            - (slice.content.x + slice.content.width)
+            - cv.border.right.width().px())
+        .max(0.0);
+        scene.push_clip_layer(
+            Affine::IDENTITY,
+            &Rect::new(
+                f64::from(abs_x),
+                f64::from(abs_y),
+                f64::from(abs_x + outer.width),
+                f64::from(abs_y + outer.height),
+            ),
+        );
+    }
+    let background_radius = if slice.is_some() {
+        paintable_border_radius(
+            &cv.border_radius,
+            cv.transform.is_empty() && cv.filter.is_empty(),
+        )
+    } else {
+        radius
+    };
+    paint_element_background_slice(
         scene,
-        outer.width,
-        outer.height,
-        abs_x,
-        abs_y,
-        &radius,
-        &cv.box_shadow,
-        cv.color,
-    );
-    paint_element_background(
-        scene,
-        outer.width,
-        outer.height,
-        abs_x,
+        background_outer.width,
+        background_outer.height,
+        x + background_outer.x,
         abs_y,
         cv.background_color,
-        &BackgroundImage::None,
+        background_image,
         cv.color,
         cv.background_clip,
         cv.background_origin,
-        &radius,
-        &border,
-        &padding,
+        &background_radius,
+        if slice.is_some() { &cv.border } else { &border },
+        &background_padding,
         &cv.background_size,
         &cv.background_position,
         &cv.background_repeat,
-        None,
-        &mut Vec::new(),
+        pixel_source,
+        warnings,
+        slice.map(|_| {
+            Rect::new(
+                f64::from(abs_x),
+                f64::from(abs_y),
+                f64::from(abs_x + outer.width),
+                f64::from(abs_y + outer.height),
+            )
+        }),
     );
+    if slice.is_some() {
+        scene.pop_layer();
+    }
     paint_element_border_rounded(
         scene,
         outer.width,

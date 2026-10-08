@@ -70,6 +70,8 @@ pub struct SvgStyleProperty {
 pub struct CascadeResult {
     generation: u64,
     svg_style_properties: HashMap<StyleNodeId, Vec<SvgStyleProperty>>,
+    first_letter_inputs: HashMap<StyleNodeId, first_letter::FirstLetterInputs>,
+    typographic_inheritance: HashMap<(StyleNodeId, Option<PseudoElem>), Vec<CascadedDecl>>,
     /// Index into [`Self::computed`] of the `@page` inheritance parent: the
     /// root element, or the Document node when the tree has no element child.
     root_element_index: usize,
@@ -386,6 +388,7 @@ fn cascade_from_candidates<D: StyleDom>(
     let mut page_values = vec![crate::property::PageValue::Auto; dom.node_count()];
     let mut pseudo: HashMap<(StyleNodeId, PseudoElem), ComputedValues> = HashMap::new();
     let mut svg_style_properties = HashMap::new();
+    let mut first_letter_inputs = HashMap::new();
     resolve_inheritance(
         dom,
         dom.root_id(),
@@ -396,6 +399,7 @@ fn cascade_from_candidates<D: StyleDom>(
         &mut page_values,
         &mut pseudo,
         &mut svg_style_properties,
+        &mut first_letter_inputs,
     );
     if computed.len() < dom.node_count() {
         computed.resize(dom.node_count(), ComputedValues::initial());
@@ -409,9 +413,32 @@ fn cascade_from_candidates<D: StyleDom>(
         media_context,
     );
 
+    let mut typographic_inheritance = HashMap::new();
+    if !first_letter_inputs.is_empty()
+        && pseudo
+            .keys()
+            .any(|(_, pseudo)| *pseudo == PseudoElem::FirstLine)
+    {
+        typographic_inheritance.extend(
+            cascaded
+                .all_candidates()
+                .map(|(id, values)| ((id, None), values.to_vec())),
+        );
+        for &(id, pseudo) in pseudo.keys() {
+            if matches!(
+                pseudo,
+                PseudoElem::Before | PseudoElem::After | PseudoElem::FirstLine
+            ) && let Some(values) = cascaded.pseudo_candidates(id, pseudo)
+            {
+                typographic_inheritance.insert((id, Some(pseudo)), values.to_vec());
+            }
+        }
+    }
     Ok(CascadeResult {
         generation: NEXT_CASCADE_GENERATION.fetch_add(1, Ordering::Relaxed),
         svg_style_properties,
+        first_letter_inputs,
+        typographic_inheritance,
         root_element_index,
         custom_highlight_styles: rule_tree.custom_highlight_styles().clone(),
         custom_highlight_sources: rule_tree.custom_highlight_sources().clone(),
@@ -441,6 +468,7 @@ mod html_quirks;
 mod svg_hints;
 mod table_hints;
 pub(crate) use custom_property::*;
+mod first_letter;
 mod first_line;
 pub use first_line::{FirstLineCascade, FirstLineStyles, cascade_with_first_line};
 mod inherit;

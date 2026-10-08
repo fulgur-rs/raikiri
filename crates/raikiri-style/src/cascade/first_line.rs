@@ -238,7 +238,7 @@ pub fn cascade_with_first_line<D: StyleDom>(
 
 // Mirrors the standard inherited fields consumed by SpecifiedValues::inherit_from.
 // All other parent fields and custom-property environments remain ordinary.
-fn first_line_parent(normal: &ComputedValues, first: &ComputedValues) -> ComputedValues {
+pub(super) fn first_line_parent(normal: &ComputedValues, first: &ComputedValues) -> ComputedValues {
     let mut parent = normal.clone();
     parent.border_collapse = first.border_collapse;
     parent.border_spacing = first.border_spacing;

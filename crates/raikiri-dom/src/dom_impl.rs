@@ -395,6 +395,24 @@ impl<'a> StyleElement for ElementRef<'a> {
         self.namespace_uri()
     }
 
+    fn is_link(&self) -> bool {
+        match self.namespace_uri() {
+            None | Some("http://www.w3.org/1999/xhtml") => {
+                (self.tag_name().eq_ignore_ascii_case("a")
+                    || self.tag_name().eq_ignore_ascii_case("area"))
+                    && self.attr("href").is_some()
+            }
+            Some("http://www.w3.org/2000/svg") => {
+                self.tag_name() == "a"
+                    && (self.attr("href").is_some()
+                        || self
+                            .attr_ns("http://www.w3.org/1999/xlink", "href")
+                            .is_some())
+            }
+            _ => false,
+        }
+    }
+
     // NB: has_class() uses the default implementation of raikiri_style::StyleElement.
     // The default looks up the class through self.attr(...), so overriding attr()
     // also updates has_class (DRY and contract compliance). Unlike attr(), id()

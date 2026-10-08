@@ -1,4 +1,4 @@
-use super::{DomView, Fragment, PaintEvent, PositionedGlyphRun};
+use super::{DomView, Fragment, OverflowClip, PaintEvent, PositionedGlyphRun};
 use raikiri_style::{ComputedValues, PageCascadeResult};
 use raikiri_traits::{NodeId, PaintInsets, PaintRect};
 
@@ -218,6 +218,17 @@ impl<'a> Page<'a> {
             viewport,
             host_opacity,
         }))
+    }
+
+    /// Local overflow clips of this page's placements and their ancestors,
+    /// ordered by source node. A clipping ancestor can have no fragment on
+    /// this page when its content reaches the page along an open axis.
+    ///
+    /// This supplies resolved shapes, not the order in which to push clips.
+    /// Apply the clipping ancestors of each painted item in DOM order, or use
+    /// the nested clip events in [`Self::paint_order`].
+    pub fn overflow_clips(&self) -> impl Iterator<Item = OverflowClip> + 'a + use<'a> {
+        self.document.page_overflow_clips(self.slice.page_index)
     }
 
     /// Positioned glyph runs of the body text on this page, in document
