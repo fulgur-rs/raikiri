@@ -222,7 +222,6 @@ pub fn cascade_with_first_line<D: StyleDom>(
                 None,
                 None,
                 None,
-                None,
             );
         }
         let mut cv = specified.finalize(&inherited, &context);

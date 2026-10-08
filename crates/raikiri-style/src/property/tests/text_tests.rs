@@ -2843,11 +2843,13 @@ fn vertical_align_rejects_unknown_keyword() {
 }
 
 #[test]
-fn vertical_align_rejects_css_wide_keyword() {
-    // (b) not supported — CSS-wide keyword is unimplemented (future work),
-    // silent drop (`PropertyValue` doc's "CSS-wide keyword" section is canonical).
+fn vertical_align_retains_css_wide_keywords_for_defaulting() {
     for kw in ["inherit", "initial", "unset", "revert", "revert-layer"] {
-        assert_eq!(parse(kw, "vertical-align"), None);
+        let Some(PropertyValue::Deferred(value)) = parse(kw, "vertical-align") else {
+            panic!("expected a CSS-wide defaulting marker for {kw}");
+        };
+        assert_eq!(value.key, PropertyKey::VerticalAlign);
+        assert_eq!(value.value.as_str(), kw);
     }
 }
 

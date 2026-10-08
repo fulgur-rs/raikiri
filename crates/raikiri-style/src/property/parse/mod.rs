@@ -59,6 +59,7 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
                 | PropertyKey::FontStyle
                 | PropertyKey::BackgroundColor
                 | PropertyKey::FontSize
+                | PropertyKey::VerticalAlign
                 | PropertyKey::BorderRadiusTopLeft
                 | PropertyKey::BorderRadiusTopRight
                 | PropertyKey::BorderRadiusBottomRight

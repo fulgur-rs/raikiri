@@ -24,7 +24,7 @@ use crate::resolve::{
     ComputedTextDecorationThickness, ComputedTextIndent, ComputedTextShadow,
     ComputedTextUnderlineOffset,
 };
-use crate::ruletree::{RuleTree, build_rule_tree};
+use crate::ruletree::{Origin, RuleTree, build_rule_tree};
 use crate::style_dom::StyleQuirksMode;
 use crate::test_dom::TestDoc;
 use smol_str::SmolStr;
@@ -3426,6 +3426,34 @@ fn vertical_align_top_and_bottom_cascade_as_computed_values() {
     assert_eq!(cv.vertical_align, VerticalAlign::Top);
     let cv = cascade_doc("", "span", Some("vertical-align: bottom"));
     assert_eq!(cv.vertical_align, VerticalAlign::Bottom);
+}
+
+#[test]
+fn vertical_align_css_wide_keywords_use_explicit_inheritance_and_rollback() {
+    use crate::property::VerticalAlign;
+    for (value, expected) in [
+        ("inherit", VerticalAlign::Bottom),
+        ("initial", VerticalAlign::Baseline),
+        ("unset", VerticalAlign::Baseline),
+        ("var(--alignment)", VerticalAlign::Bottom),
+    ] {
+        let mut doc = TestDoc::new();
+        let parent = doc.push_element(0, "div", Some("vertical-align:bottom;--alignment:inherit"));
+        let child = doc.push_element(parent, "span", Some(&format!("vertical-align:{value}")));
+        let unstyled = doc.push_element(parent, "span", None);
+        let result = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        assert_eq!(result.computed[child].vertical_align, expected, "{value}");
+        assert_eq!(
+            result.computed[unstyled].vertical_align,
+            VerticalAlign::Baseline
+        );
+    }
+    let cv = cascade_doc(
+        "span{vertical-align:top}",
+        "span",
+        Some("vertical-align:revert-layer"),
+    );
+    assert_eq!(cv.vertical_align, VerticalAlign::Top);
 }
 
 #[test]
@@ -6845,7 +6873,7 @@ fn apply_value_direct_page_named() {
 #[test]
 fn resolve_inheritance_grows_undersized_output_vectors() {
     // Defensive safety net: `cascade()`'s normal pre-allocation always
-    // sizes `out`/`non_ua_margin_sides`/`authored_writing_modes` to
+    // sizes `out`/`authored_writing_modes` to
     // `dom.node_count()` before calling `resolve_inheritance`, so this
     // resize path is never exercised end-to-end. A direct call with
     // deliberately undersized (empty) vectors verifies the safety net
@@ -6864,7 +6892,6 @@ fn resolve_inheritance_grows_undersized_output_vectors() {
     let mut cascaded = CascadedArena::new();
     crate::cascade::collect::collect_cascaded(&doc, id, &RuleTree::empty(), &mut cascaded);
     let mut out: Vec<ComputedValues> = Vec::new();
-    let mut non_ua_margin_sides: Vec<Sides<bool>> = Vec::new();
     let mut authored_writing_modes: Vec<Option<WritingMode>> = Vec::new();
     let mut page_values = vec![PageValue::Auto; doc.node_count()];
     let mut pseudo_out = HashMap::new();
@@ -6874,14 +6901,12 @@ fn resolve_inheritance_grows_undersized_output_vectors() {
         &ComputedValues::initial(),
         &cascaded,
         &mut out,
-        &mut non_ua_margin_sides,
         &mut authored_writing_modes,
         &mut page_values,
         &mut pseudo_out,
         &mut HashMap::new(),
     );
     assert!(out.len() > deepest);
-    assert!(non_ua_margin_sides.len() > deepest);
     assert!(authored_writing_modes.len() > deepest);
     assert_eq!(out[e].color, RED);
     assert_eq!(out[first_child].color, BLUE);
@@ -6903,7 +6928,6 @@ fn resolve_inheritance_panics_when_root_parent_font_size_is_not_initial() {
     let id = StyleNodeId(e as u64);
     let cascaded = CascadedArena::new();
     let mut out = vec![ComputedValues::initial(); doc.node_count()];
-    let mut non_ua_margin_sides = vec![Sides::all(false); doc.node_count()];
     let mut authored_writing_modes = vec![None; doc.node_count()];
     let mut page_values = vec![PageValue::Auto; doc.node_count()];
     let mut pseudo_out = HashMap::new();
@@ -6915,55 +6939,11 @@ fn resolve_inheritance_panics_when_root_parent_font_size_is_not_initial() {
         &non_initial_parent,
         &cascaded,
         &mut out,
-        &mut non_ua_margin_sides,
         &mut authored_writing_modes,
         &mut page_values,
         &mut pseudo_out,
         &mut HashMap::new(),
     );
-}
-
-#[test]
-fn apply_winners_direct_margin_shorthand_marks_all_sides_non_ua() {
-    // `apply_winners`'s `non_ua_margin_sides` tracking arm for the
-    // `Margin`/`MarginInline`/`MarginBlock` shorthand keys is
-    // unreachable via the cascade path (shorthand is expanded to the 4
-    // side longhands before candidates are collected) — not a safety
-    // net, a canary for the shorthand-payload shape.
-    let sides = Sides {
-        top: LengthOrAuto::Length(Length::Px(1.0)),
-        right: LengthOrAuto::Length(Length::Px(2.0)),
-        bottom: LengthOrAuto::Length(Length::Px(3.0)),
-        left: LengthOrAuto::Length(Length::Px(4.0)),
-    };
-    let candidates: Vec<CascadedDecl> = vec![(
-        PropertyValue::Margin(sides),
-        false,
-        Origin::Author,
-        0,
-        0,
-        crate::layer::LayerPosition::default(),
-    )];
-    let mut winners: Vec<Option<RankedDecl>> = Vec::new();
-    let mut specified = SpecifiedValues::initial();
-    let inherited = ComputedValues::initial();
-    let custom_properties = CustomPropertyEnvironment::from_map(HashMap::new());
-    let mut non_ua_margin_sides = Sides::all(false);
-    apply_winners(
-        &candidates,
-        &mut winners,
-        &mut specified,
-        &inherited,
-        &custom_properties,
-        None,
-        Some(&mut non_ua_margin_sides),
-        None,
-        None,
-    );
-    assert!(non_ua_margin_sides.top);
-    assert!(non_ua_margin_sides.right);
-    assert!(non_ua_margin_sides.bottom);
-    assert!(non_ua_margin_sides.left);
 }
 
 #[test]
@@ -6992,7 +6972,6 @@ fn apply_winners_direct_border_radius_inherit() {
         &mut specified,
         &inherited,
         &custom_properties,
-        None,
         None,
         None,
         None,
@@ -7032,7 +7011,6 @@ fn apply_winners_direct_page_value() {
         &inherited,
         &custom_properties,
         Some(&mut page_value),
-        None,
         None,
         None,
     );
@@ -9433,7 +9411,6 @@ fn ch_inside_calc_stays_rejected_for_properties_without_ch_provenance() {
 #[derive(Debug, PartialEq)]
 struct WalkOutputs {
     computed: Vec<ComputedValues>,
-    non_ua_margin_sides: Vec<Sides<bool>>,
     authored_writing_modes: Vec<Option<WritingMode>>,
     page_values: Vec<PageValue>,
     pseudo: Vec<((u64, PseudoElem), ComputedValues)>,
@@ -9445,7 +9422,6 @@ fn walk_outputs(doc: &TestDoc, tree: &RuleTree, sibling_sharing: bool) -> (WalkO
     crate::cascade::collect::collect_cascaded(doc, root, tree, &mut cascaded);
     let n = doc.node_count();
     let mut computed = vec![ComputedValues::initial(); n];
-    let mut non_ua_margin_sides = vec![Sides::all(false); n];
     let mut authored_writing_modes = vec![None; n];
     let mut page_values = vec![PageValue::Auto; n];
     let mut pseudo_out = HashMap::new();
@@ -9455,7 +9431,6 @@ fn walk_outputs(doc: &TestDoc, tree: &RuleTree, sibling_sharing: bool) -> (WalkO
         &ComputedValues::initial(),
         &cascaded,
         &mut computed,
-        &mut non_ua_margin_sides,
         &mut authored_writing_modes,
         &mut page_values,
         &mut pseudo_out,
@@ -9470,7 +9445,6 @@ fn walk_outputs(doc: &TestDoc, tree: &RuleTree, sibling_sharing: bool) -> (WalkO
     (
         WalkOutputs {
             computed,
-            non_ua_margin_sides,
             authored_writing_modes,
             page_values,
             pseudo,

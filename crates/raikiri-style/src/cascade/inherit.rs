@@ -28,7 +28,6 @@ use crate::rule::{
     expand_padding_inline, expand_place_content, expand_place_items, expand_place_self,
     expand_text_decoration,
 };
-use crate::ruletree::Origin;
 use crate::specified::{INITIAL_BORDER, SpecifiedValues};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
 
@@ -139,7 +138,6 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
     parent_computed: &ComputedValues,
     cascaded: &CascadedArena,
     out: &mut Vec<ComputedValues>,
-    non_ua_margin_sides: &mut Vec<Sides<bool>>,
     authored_writing_modes: &mut Vec<Option<WritingMode>>,
     page_values: &mut [crate::property::PageValue],
     pseudo_out: &mut HashMap<(StyleNodeId, PseudoElem), ComputedValues>,
@@ -151,7 +149,6 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         parent_computed,
         cascaded,
         out,
-        non_ua_margin_sides,
         authored_writing_modes,
         page_values,
         pseudo_out,
@@ -170,7 +167,6 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
     parent_computed: &ComputedValues,
     cascaded: &CascadedArena,
     out: &mut Vec<ComputedValues>,
-    non_ua_margin_sides: &mut Vec<Sides<bool>>,
     authored_writing_modes: &mut Vec<Option<WritingMode>>,
     page_values: &mut [crate::property::PageValue],
     pseudo_out: &mut HashMap<(StyleNodeId, PseudoElem), ComputedValues>,
@@ -239,7 +235,7 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
             _ => None,
         };
 
-        let (computed, node_non_ua_margin, custom_properties, child_ctx, children_share_parent) =
+        let (computed, custom_properties, child_ctx, children_share_parent) =
             if let Some(source) = share_source {
                 shared_nodes += 1;
                 let src = source.0 as usize;
@@ -260,13 +256,7 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
                 // nodes are remembered), and this node now has exactly its
                 // results, so this node's children see the same parent
                 // context as `source`'s children and may share with them.
-                (
-                    computed,
-                    non_ua_margin_sides[src],
-                    custom_properties,
-                    root_ctx,
-                    source,
-                )
+                (computed, custom_properties, root_ctx, source)
             } else {
                 let local_custom_properties = cascaded.custom_candidates(id).map(|candidates| {
                     resolve_custom_properties(&parent_custom_properties, candidates)
@@ -282,7 +272,6 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
                 // computed values; non-inherited fields initialized). The target is a
                 // staging representation, so winner application order does not matter.
                 let mut specified = SpecifiedValues::inherit_from(parent_computed);
-                let mut node_non_ua_margin = Sides::all(false);
                 if let Some(candidates) = cascaded.candidates(id) {
                     apply_winners(
                         candidates,
@@ -291,7 +280,6 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
                         parent_computed,
                         &custom_properties,
                         Some(&mut page_values[id.0 as usize]),
-                        Some(&mut node_non_ua_margin),
                         Some(&mut authored_writing_modes[id.0 as usize]),
                         is_svg.then_some(&mut node_svg_properties),
                     );
@@ -435,7 +423,6 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
                                 None,
                                 None,
                                 None,
-                                None,
                             );
                         }
 
@@ -458,13 +445,7 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
                 if sibling_sharing && root_ctx.is_some() {
                     share_caches[depth].remember(id);
                 }
-                (
-                    computed,
-                    node_non_ua_margin,
-                    custom_properties,
-                    child_ctx,
-                    id,
-                )
+                (computed, custom_properties, child_ctx, id)
             };
 
         if !node_svg_properties.is_empty() {
@@ -484,10 +465,6 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
         } else {
             out[idx] = computed;
         }
-        if non_ua_margin_sides.len() <= idx {
-            non_ua_margin_sides.resize(idx + 1, Sides::all(false));
-        }
-        non_ua_margin_sides[idx] = node_non_ua_margin;
 
         // Push children onto the stack, looking up their already-written
         // parent's computed value by ID. The stack is LIFO, so reverse the
@@ -761,7 +738,7 @@ fn resolve_border_css_wide(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // winner application writes independent cascade metadata outputs
 pub(crate) fn apply_winners(
     candidates: &[CascadedDecl],
     winners: &mut Vec<Option<RankedDecl>>,
@@ -769,7 +746,6 @@ pub(crate) fn apply_winners(
     inherited: &ComputedValues,
     custom_properties: &CustomPropertyEnvironment,
     mut page_value: Option<&mut crate::property::PageValue>,
-    mut non_ua_margin_sides: Option<&mut Sides<bool>>,
     mut authored_writing_mode: Option<&mut Option<WritingMode>>,
     mut svg_properties: Option<&mut Vec<SvgStyleProperty>>,
 ) {
@@ -784,24 +760,6 @@ pub(crate) fn apply_winners(
     for slot in winners.iter_mut() {
         if let Some(winner) = slot.take() {
             let value = &candidates[winner.idx].0;
-            if let Some(sides) = non_ua_margin_sides.as_deref_mut() {
-                let non_ua = candidates[winner.idx].2 != Origin::UserAgent;
-                match value.key() {
-                    crate::property::PropertyKey::MarginTop => sides.top = non_ua,
-                    crate::property::PropertyKey::MarginRight => sides.right = non_ua,
-                    crate::property::PropertyKey::MarginBottom => sides.bottom = non_ua,
-                    crate::property::PropertyKey::MarginLeft => sides.left = non_ua,
-                    crate::property::PropertyKey::Margin
-                    | crate::property::PropertyKey::MarginInline
-                    | crate::property::PropertyKey::MarginBlock => {
-                        sides.top = non_ua;
-                        sides.right = non_ua;
-                        sides.bottom = non_ua;
-                        sides.left = non_ua;
-                    }
-                    _ => {}
-                }
-            }
             let winner_key = value.key();
             let mut literal_inherit = false;
             let mut default_value = |value: PropertyValue| {
@@ -1615,6 +1573,13 @@ fn resolve_defaulting_value(value: PropertyValue, inherited: &ComputedValues) ->
                     crate::property::FontStyle::Normal
                 });
             }
+            crate::property::PropertyKey::VerticalAlign => {
+                return PropertyValue::VerticalAlign(if keyword == CssWideKeyword::Inherit {
+                    inherited.vertical_align
+                } else {
+                    crate::property::VerticalAlign::Baseline
+                });
+            }
             crate::property::PropertyKey::BorderRadiusTopLeft => {
                 return PropertyValue::BorderRadiusTopLeft(radius.top_left);
             }
@@ -1671,6 +1636,14 @@ pub(crate) fn resolve_css_wide_color_font(
     let PropertyValue::Deferred(marker) = &value else {
         return value;
     };
+    if !matches!(
+        marker.key,
+        crate::property::PropertyKey::Color
+            | crate::property::PropertyKey::BackgroundColor
+            | crate::property::PropertyKey::FontSize
+    ) {
+        return value;
+    }
     let Some(keyword) = marker.css_wide_keyword() else {
         return value;
     };
