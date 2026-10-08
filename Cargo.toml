@@ -216,3 +216,11 @@ missing_docs = "warn"
 
 [workspace.lints.clippy]
 # Extend as needed after M1. Keep this empty in M0 to focus on resolver="3" behavior.
+
+[profile.dev]
+# Keep backtrace locations while reducing build time and disk usage.
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+# Omit debug information for non-workspace dependencies.
+debug = false
