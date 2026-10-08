@@ -4011,12 +4011,11 @@ pub(crate) fn paint_document_impl(
                             scene.pop_layer();
                         }
                     }
-                    if paints_table_part {
-                        // An opaque background that uses the same solid color as
-                        // every border side already paints the complete visible
-                        // union in `paint_element_background`; avoid compositing
-                        // the same anti-aliased rounded edge a second time.
-                        let border_covered_by_background = matches!(
+                    // An opaque background that uses the same solid color as
+                    // every border side already paints the complete visible
+                    // union in `paint_element_background`; avoid compositing
+                    // the same anti-aliased rounded edge a second time.
+                    let border_covered_by_background = matches!(
                         cv.background_image,
                         BackgroundImage::None
                     ) && cv.background_color.a == 255
@@ -4037,32 +4036,36 @@ pub(crate) fn paint_document_impl(
                                 && side.width().px() > 0.0
                                 && matches!(side.color, BorderColor::Resolved(c) if c == cv.background_color)
                         });
-                        // Paint border on top of background (CSS Backgrounds 3 §5).
-                        if !border_covered_by_background && paints_as_absolute_continuation {
-                            paint_element_border_with_top(
-                                scene,
-                                own_paint_width, // cov:ignore: absolute continuation fragments are exercised by the ignored fragmentation WPT reftests.
-                                own_paint_height, // cov:ignore: absolute continuation fragments are exercised by the ignored fragmentation WPT reftests.
-                                own_paint_x, // cov:ignore: absolute continuation fragments are exercised by the ignored fragmentation WPT reftests.
-                                own_paint_y, // cov:ignore: absolute continuation fragments are exercised by the ignored fragmentation WPT reftests.
-                                painted_border, // cov:ignore: absolute continuation fragments are exercised by the ignored fragmentation WPT reftests.
-                                cv.color,
-                                false,
-                            );
-                        } else if !border_covered_by_background {
-                            paint_element_border_rounded(
-                                scene,
-                                own_paint_width,
-                                own_paint_height,
-                                own_paint_x,
-                                own_paint_y,
-                                painted_border,
-                                cv.color,
-                                &paint_border_radius,
-                            );
-                        }
-                        // Outlines do not consume box-model space and are painted
-                        // outside the border edge (CSS Basic UI §4).
+                    // Paint border on top of background (CSS Backgrounds 3 §5).
+                    if paints_table_part
+                        && !border_covered_by_background
+                        && paints_as_absolute_continuation
+                    {
+                        paint_element_border_with_top(
+                            scene,
+                            own_paint_width, // cov:ignore: absolute continuation fragments are exercised by the ignored fragmentation WPT reftests.
+                            own_paint_height, // cov:ignore: absolute continuation fragments are exercised by the ignored fragmentation WPT reftests.
+                            own_paint_x, // cov:ignore: absolute continuation fragments are exercised by the ignored fragmentation WPT reftests.
+                            own_paint_y, // cov:ignore: absolute continuation fragments are exercised by the ignored fragmentation WPT reftests.
+                            painted_border, // cov:ignore: absolute continuation fragments are exercised by the ignored fragmentation WPT reftests.
+                            cv.color,
+                            false,
+                        );
+                    } else if paints_table_part && !border_covered_by_background {
+                        paint_element_border_rounded(
+                            scene,
+                            own_paint_width,
+                            own_paint_height,
+                            own_paint_x,
+                            own_paint_y,
+                            painted_border,
+                            cv.color,
+                            &paint_border_radius,
+                        );
+                    }
+                    // Outlines do not consume box-model space and are painted
+                    // outside the border edge (CSS Basic UI §4).
+                    if paints_table_part {
                         paint_element_outline(
                             scene,
                             own_paint_width,
