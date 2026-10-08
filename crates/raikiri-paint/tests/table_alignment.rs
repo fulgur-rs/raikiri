@@ -84,6 +84,62 @@ fn assert_exact_pixels(actual: Vec<u8>, expected: Vec<u8>) {
 }
 
 #[test]
+fn vertical_baseline_block_children_keep_asymmetric_content_boxes() {
+    for mode in ["vertical-lr", "vertical-rl"] {
+        let parse = |source: &str| {
+            let options = raikiri_html::ParseOptions {
+                extra_stylesheets: &[],
+                network: None,
+                base_url: None,
+            };
+            let mut parsed = raikiri_html::parse(source.as_bytes(), &options).unwrap();
+            let computed = raikiri_html::build_cascaded(&parsed);
+            layout_single_page(&mut parsed.dom, &computed, page()).unwrap();
+            (parsed.dom, computed)
+        };
+        let css = "html,body{margin:0}table,tr,td,.box{border:solid black;border-width:1px 2px 3px 4px;padding:5px 6px 7px 8px;border-spacing:0}td{vertical-align:baseline;background:red;background-clip:content-box}.ink{width:10px;height:20px;background:green}.box{width:fit-content}";
+        let source = format!(
+            "<!doctype html><style>{css}</style><table style='writing-mode:{mode}'><tr><td><div class=ink></div></td><td><div class=ink></div></td></tr></table>"
+        );
+        let (doc, computed) = parse(&source);
+        let cells: Vec<_> = (0..doc.node_count())
+            .filter_map(|id| {
+                let node = doc.get_node(id).unwrap();
+                (node.tag_name() == Some("td")).then_some(node.unrounded_layout)
+            })
+            .collect();
+        assert_eq!(cells.len(), 2);
+        for (index, cell) in cells.iter().enumerate() {
+            assert_eq!(
+                (cell.location.x, cell.location.y),
+                (12.0, 6.0 + 36.0 * index as f32)
+            );
+            assert_eq!((cell.size.width, cell.size.height), (100.0, 36.0));
+            assert_eq!((cell.padding.left, cell.padding.right), (8.0, 76.0));
+        }
+        let children: Vec<_> = (0..doc.node_count())
+            .filter_map(|id| {
+                let node = doc.get_node(id).unwrap();
+                (node.tag_name() == Some("div")).then_some(node.unrounded_layout)
+            })
+            .collect();
+        assert_eq!(children.len(), 2);
+        for child in children {
+            assert_eq!((child.location.x, child.location.y), (12.0, 6.0));
+            assert_eq!((child.size.width, child.size.height), (10.0, 20.0));
+        }
+        let source = format!(
+            "<!doctype html><style>{css}</style><div class=box><div class=box><div class=ink></div></div><div class=box><div class=ink></div></div></div>"
+        );
+        let (reference, reference_computed) = parse(&source);
+        assert_exact_pixels(
+            raster(scene(&doc, &computed)),
+            raster(scene(&reference, &reference_computed)),
+        );
+    }
+}
+
+#[test]
 fn cell_keywords_align_content_without_moving_cell_backgrounds() {
     for (align, baseline, ink_top) in [("top", 11.0, 3), ("middle", 26.0, 18), ("bottom", 41.0, 33)]
     {

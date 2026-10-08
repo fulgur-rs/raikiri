@@ -2147,10 +2147,13 @@ fn reposition_cells_for_vertical_writing(
             VerticalAlign::Bottom => extra,
             _ => 0.0,
         };
+        // Baseline-aligned block content retains its normal-flow placement;
+        // without an inline baseline, treating it as block-start alignment
+        // would move it across the entire physical cell in vertical-rl.
         let rtl = matches!(
             writing_mode,
             WritingMode::VerticalRl | WritingMode::SidewaysRl
-        );
+        ) && (has_lines || !cell_baseline_aligned(node.table_vertical_align));
         let child_shift = if rtl {
             if has_lines { -shift } else { extra - shift }
         } else {
