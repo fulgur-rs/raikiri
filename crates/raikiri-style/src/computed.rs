@@ -768,18 +768,28 @@ pub struct ComputedValues {
     pub height_ch: Option<ChLengthProvenance>,
     /// `max-width` — **non-inherited**, initial `none` (mapped to Auto as placeholder).
     pub max_width: ComputedLengthPercentageOrAuto,
+    /// Authored `ch` provenance of [`Self::max_width`].
+    pub max_width_ch: Option<ChLengthProvenance>,
     /// `max-height` — **non-inherited**, initial `none` (mapped to Auto as placeholder).
     pub max_height: ComputedLengthPercentageOrAuto,
+    /// Authored `ch` provenance of [`Self::max_height`].
+    pub max_height_ch: Option<ChLengthProvenance>,
     /// `min-width` — **non-inherited**, initial `auto` (CSS Sizing 3 §4
     /// <https://www.w3.org/TR/css-sizing-3/#min-size-properties>).
     pub min_width: ComputedLengthPercentageOrAuto,
+    /// Authored `ch` provenance of [`Self::min_width`], after logical mapping.
+    pub min_width_ch: Option<ChLengthProvenance>,
     /// `min-height` — **non-inherited**, initial `auto` (CSS Sizing 3 §4
     /// <https://www.w3.org/TR/css-sizing-3/#min-size-properties>).
     pub min_height: ComputedLengthPercentageOrAuto,
+    /// Authored `ch` provenance of [`Self::min_height`], after logical mapping.
+    pub min_height_ch: Option<ChLengthProvenance>,
     /// Authored logical `min-block-size`, retained so layout can distinguish
     /// its fragmentation behavior from a physical `min-height` declaration.
     /// The used value is already mapped into `min_width`/`min_height`.
     pub min_block_size: Option<ComputedLengthPercentageOrAuto>,
+    /// Authored `ch` provenance of [`Self::min_block_size`].
+    pub min_block_size_ch: Option<ChLengthProvenance>,
     /// Physical `(width, height)` of the authored `inline-size` /
     /// `block-size` mapped through a `vertical-rl` or `vertical-lr`
     /// writing mode (CSS Logical Properties 1 §4.1). `None` without a logical
@@ -1904,10 +1914,15 @@ impl ComputedValues {
             height: ComputedLengthPercentageOrAuto::Auto,
             height_ch: None,
             max_width: ComputedLengthPercentageOrAuto::Auto,
+            max_width_ch: None,
             max_height: ComputedLengthPercentageOrAuto::Auto,
+            max_height_ch: None,
             min_width: ComputedLengthPercentageOrAuto::Auto,
+            min_width_ch: None,
             min_height: ComputedLengthPercentageOrAuto::Auto,
+            min_height_ch: None,
             min_block_size: None,
+            min_block_size_ch: None,
             vertical_logical_size: None,
             top: ComputedLengthPercentageOrAuto::Auto,
             right: ComputedLengthPercentageOrAuto::Auto,
@@ -2190,6 +2205,18 @@ impl ComputedValues {
         child.local_custom_properties = empty_custom_properties();
         child.quotes_auto = parent.quotes_auto;
         child
+    }
+
+    /// Inherit marker text styles, including the CSS Lists 3 §3.1.1 UA defaults.
+    /// The cascade applies author declarations after these defaults.
+    pub fn inherit_marker_from(parent: &Self) -> Self {
+        let mut marker = crate::specified::SpecifiedValues::inherit_marker_from(parent).finalize(
+            parent,
+            &crate::resolve::ResolveContext::new(parent.font_size),
+        );
+        marker.custom_properties = parent.custom_properties.clone();
+        marker.quotes_auto = parent.quotes_auto;
+        marker
     }
 }
 

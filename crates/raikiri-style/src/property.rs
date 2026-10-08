@@ -18,6 +18,9 @@ pub use names::*;
 
 mod calc_serialize;
 
+mod media_math;
+pub(crate) use media_math::{MediaNumericType, math_value_has_type};
+
 mod serialize;
 pub use serialize::*;
 

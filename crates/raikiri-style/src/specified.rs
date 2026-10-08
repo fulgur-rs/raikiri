@@ -711,6 +711,21 @@ pub(crate) struct PreferredSizePrecedence {
 }
 
 impl SpecifiedValues {
+    /// Inherit marker text with the UA defaults required by CSS Lists 3 §3.1.1.
+    pub(crate) fn inherit_marker_from(parent: &ComputedValues) -> Self {
+        let mut marker = Self::inherit_from(parent);
+        marker.unicode_bidi = crate::property::UnicodeBidi::Isolate;
+        marker.font_variant_numeric = FontVariantNumeric::initial();
+        marker.font_variant_numeric.tabular_nums = true;
+        marker.white_space = WhiteSpace::Pre;
+        marker.white_space_collapse = WhiteSpaceCollapse::Preserve;
+        marker.text_wrap = TextWrapMode::Nowrap;
+        marker.effective_white_space_collapse = WhiteSpaceCollapse::Preserve;
+        marker.effective_text_wrap_mode = TextWrapMode::Nowrap;
+        marker.text_transform = TextTransform::None;
+        marker
+    }
+
     /// Staging values with the CSS-specified initial value for every property.
     ///
     /// The field-by-field comments of [`ComputedValues::initial`] and field
@@ -1841,6 +1856,32 @@ impl SpecifiedValues {
             | WritingMode::SidewaysRl
             | WritingMode::SidewaysLr => (physical_min_block.unwrap_or(min_width), min_height),
         };
+        let max_width_ch = size_ch(self.max_width);
+        let max_height_ch = size_ch(self.max_height);
+        let min_block_size_ch = self.min_block_size.and_then(size_ch);
+        let min_width_ch = size_ch(self.min_width);
+        let min_height_ch = size_ch(self.min_height);
+        let (min_width_ch, min_height_ch) = match self.writing_mode {
+            WritingMode::HorizontalTb => (
+                min_width_ch,
+                if self.min_block_size.is_some() {
+                    min_block_size_ch.clone()
+                } else {
+                    min_height_ch
+                },
+            ),
+            WritingMode::VerticalRl
+            | WritingMode::VerticalLr
+            | WritingMode::SidewaysRl
+            | WritingMode::SidewaysLr => (
+                if self.min_block_size.is_some() {
+                    min_block_size_ch.clone()
+                } else {
+                    min_width_ch
+                },
+                min_height_ch,
+            ),
+        };
         ComputedValues {
             color: self.color,
             background_color: self
@@ -1948,15 +1989,20 @@ impl SpecifiedValues {
                 own_line_height,
                 ctx,
             ),
+            max_width_ch,
             max_height: resolve_length_percentage_or_auto(
                 self.max_height,
                 font_size,
                 own_line_height,
                 ctx,
             ),
+            max_height_ch,
             min_width,
+            min_width_ch,
             min_height,
+            min_height_ch,
             min_block_size: physical_min_block,
+            min_block_size_ch,
             vertical_logical_size,
             top: resolve_length_percentage_or_auto(self.top, font_size, own_line_height, ctx),
             right: resolve_length_percentage_or_auto(self.right, font_size, own_line_height, ctx),

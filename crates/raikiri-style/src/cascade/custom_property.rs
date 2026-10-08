@@ -149,6 +149,26 @@ pub(crate) fn project_deferred_value(
     value: PropertyValue,
     key: crate::property::PropertyKey,
 ) -> Option<PropertyValue> {
+    if let PropertyValue::Deferred(marker) = &value
+        && marker.property.as_str() == "list-style"
+        && crate::property::CssWideKeyword::from_css_ident(marker.value.as_str()).is_some()
+        && matches!(
+            key,
+            PropertyKey::ListStyleType
+                | PropertyKey::ListStylePosition
+                | PropertyKey::ListStyleImage
+        )
+    {
+        let mut marker = marker.clone();
+        marker.key = key;
+        marker.property = match key {
+            PropertyKey::ListStyleType => "list-style-type",
+            PropertyKey::ListStylePosition => "list-style-position",
+            _ => "list-style-image",
+        }
+        .into();
+        return Some(PropertyValue::Deferred(marker));
+    }
     if value.key() == key {
         return Some(value);
     }
@@ -465,6 +485,12 @@ pub(crate) fn project_deferred_value(
             _ => return None,
         },
         // cov:ignore: shorthand projection is defensive; normal rule expansion covers this path.
+        PropertyValue::ListStyle(value) => match key {
+            PropertyKey::ListStyleType => PropertyValue::ListStyleType(value.kind),
+            PropertyKey::ListStylePosition => PropertyValue::ListStylePosition(value.position),
+            PropertyKey::ListStyleImage => PropertyValue::ListStyleImage(value.image),
+            _ => return None,
+        },
         PropertyValue::TextEmphasis(shorthand) => match key {
             crate::property::PropertyKey::TextEmphasisStyle => {
                 PropertyValue::TextEmphasisStyle(shorthand.style)

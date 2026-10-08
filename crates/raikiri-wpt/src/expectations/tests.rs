@@ -790,17 +790,32 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS Text Decoration horizontal text-emphasis exact slice (+8).
     // + CSS UI text-overflow into padding exact slice (+1).
     // + CSS mediaqueries upstream exact pixel references (+22).
+    // + CSS Lists shorthand and inside marker text exact slice (+8).
     // + CSS2 relative block positioning exact slice (+14).
     // + CSS Inline image-loaded vertical-align length exact slice (+1).
-    // + Remeasured baseline pins (+8 PASS, -7 inaccurate pins).
+    // + Remeasured exact regression pins (+8) and unsupported pins removed (-7).
+    // + CSS Overflow inherited Ahem font-metric max-width:4ch exact slice (+1).
     // + CSS Color contextual background and color-mix exact references (+5).
-    assert_eq!(set.baseline.entries.len(), 1440);
+    assert_eq!(set.baseline.entries.len(), 1449);
+    assert!(
+        set.baseline
+            .entries
+            .contains("css/css-overflow/text-overflow-ellipsis-002.html")
+    );
     for id in [
         "css/css-color/t44-currentcolor-background-b.xht",
         "css/css-color/color-mix-currentcolor-001.html",
         "css/css-color/color-mix-currentcolor-002.html",
         "css/css-color/color-mix-currentcolor-003.html",
         "css/css-color/color-mix-currentcolor-nested-for-color-property.html",
+        "css/css-lists/list-style-type-string-001a.html",
+        "css/css-lists/list-style-type-string-001b.html",
+        "css/css-lists/content-property/marker-text-matches-decimal.html",
+        "css/css-lists/content-property/marker-text-matches-decimal-leading-zero.html",
+        "css/css-lists/content-property/marker-text-matches-lower-latin.html",
+        "css/css-lists/content-property/marker-text-matches-upper-latin.html",
+        "css/css-lists/content-property/marker-text-matches-lower-roman.html",
+        "css/css-lists/content-property/marker-text-matches-upper-roman.html",
     ] {
         assert!(set.baseline.entries.contains(id));
     }

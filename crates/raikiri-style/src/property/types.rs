@@ -2131,6 +2131,17 @@ pub enum ListStyleType {
     String(SmolStr),
 }
 
+/// The three longhands set by the `list-style` shorthand.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ListStyleShorthand {
+    /// Marker text or counter style.
+    pub kind: ListStyleType,
+    /// Marker position relative to the principal box.
+    pub position: ListStylePosition,
+    /// Image used instead of marker text when available.
+    pub image: BackgroundImage,
+}
+
 /// The computed value of `list-style-position`.
 ///
 /// CSS Lists 3 §3.2 <https://www.w3.org/TR/css-lists-3/#list-style-position>.
@@ -6760,7 +6771,12 @@ impl DeferredValue {
     pub(crate) fn css_wide_keyword(&self) -> Option<CssWideKeyword> {
         if !matches!(
             self.key,
-            PropertyKey::Color | PropertyKey::BackgroundColor | PropertyKey::FontSize
+            PropertyKey::Color
+                | PropertyKey::BackgroundColor
+                | PropertyKey::FontSize
+                | PropertyKey::ListStyleType
+                | PropertyKey::ListStylePosition
+                | PropertyKey::ListStyleImage
         ) {
             return None;
         }
@@ -8427,6 +8443,8 @@ pub enum PropertyValue {
     ListStylePosition(ListStylePosition),
     /// `list-style-image: none | <url>` — inherited, initial: `none`.
     ListStyleImage(BackgroundImage),
+    /// `list-style` sets type, position and image, including omitted defaults.
+    ListStyle(ListStyleShorthand),
     /// `counter-reset: [ <counter-name> <integer>? ]+ | none` —
     /// non-inherited. The spec's initial value is `none` (CSS Lists 3 §4.1), which
     /// this implementation represents as an empty list.
@@ -10468,6 +10486,7 @@ pub enum PropertyKey {
     BlockSize,
     // CSS Overflow 3 text-overflow; appended to preserve existing key slots.
     TextOverflow,
+    ListStyle,
 }
 
 impl PropertyValue {
@@ -10498,6 +10517,7 @@ impl PropertyValue {
             PropertyValue::ListStyleType(_) => PropertyKey::ListStyleType,
             PropertyValue::ListStylePosition(_) => PropertyKey::ListStylePosition,
             PropertyValue::ListStyleImage(_) => PropertyKey::ListStyleImage,
+            PropertyValue::ListStyle(_) => PropertyKey::ListStyle,
             PropertyValue::CounterReset(_) | PropertyValue::CounterResetInherit => {
                 PropertyKey::CounterReset
             }
@@ -10804,7 +10824,9 @@ pub(crate) fn color_math_dimension_type(unit: &str) -> ColorMathType {
         "px" | "em"
             | "rem"
             | "ex"
+            | "rex"
             | "ch"
+            | "rch"
             | "cm"
             | "mm"
             | "q"
@@ -10838,7 +10860,9 @@ pub(crate) fn color_math_dimension_type(unit: &str) -> ColorMathType {
             | "lh"
             | "rlh"
             | "cap"
+            | "rcap"
             | "ic"
+            | "ric"
             | "cqw"
             | "cqh"
             | "cqi"
@@ -11720,6 +11744,7 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "list-style-type" => PropertyKey::ListStyleType,
         "list-style-position" => PropertyKey::ListStylePosition,
         "list-style-image" => PropertyKey::ListStyleImage,
+        "list-style" => PropertyKey::ListStyle,
         "counter-reset" => PropertyKey::CounterReset,
         "counter-increment" => PropertyKey::CounterIncrement,
         "counter-set" => PropertyKey::CounterSet,

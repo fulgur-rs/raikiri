@@ -388,7 +388,11 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
                         let pseudo_local_custom_properties =
                             pseudo_local_custom_properties.unwrap_or_else(empty_custom_properties);
 
-                        let mut pseudo_specified = SpecifiedValues::inherit_from(&computed);
+                        let mut pseudo_specified = if pseudo == PseudoElem::Marker {
+                            SpecifiedValues::inherit_marker_from(&computed)
+                        } else {
+                            SpecifiedValues::inherit_from(&computed)
+                        };
                         // Filter by longhand key before choosing winners, including
                         // deferred var() values and expanded shorthand candidates.
                         let first_line_candidates;
@@ -1404,6 +1408,35 @@ fn inherited_margin_length(value: ComputedLengthPercentageOrAuto) -> LengthOrAut
 
 /// Resolve defaulting markers shared by the element and page inheritance paths.
 fn resolve_defaulting_value(value: PropertyValue, inherited: &ComputedValues) -> PropertyValue {
+    if let PropertyValue::Deferred(marker) = &value
+        && let Some(keyword) = marker.css_wide_keyword()
+    {
+        let initial = keyword == CssWideKeyword::Initial;
+        match marker.key {
+            crate::property::PropertyKey::ListStyleType => {
+                return PropertyValue::ListStyleType(if initial {
+                    Default::default()
+                } else {
+                    inherited.list_style_type.clone()
+                });
+            }
+            crate::property::PropertyKey::ListStylePosition => {
+                return PropertyValue::ListStylePosition(if initial {
+                    Default::default()
+                } else {
+                    inherited.list_style_position
+                });
+            }
+            crate::property::PropertyKey::ListStyleImage => {
+                return PropertyValue::ListStyleImage(if initial {
+                    crate::property::BackgroundImage::None
+                } else {
+                    inherited.list_style_image.clone()
+                });
+            }
+            _ => {}
+        }
+    }
     resolve_css_wide_color_font(
         value,
         inherited.color,
@@ -1451,13 +1484,14 @@ pub(crate) fn resolve_css_wide_color_font(
         } else {
             crate::property::CssColor::TRANSPARENT
         })
-    } else {
-        // css_wide_keyword only accepts these three keys, so the remaining key is FontSize.
+    } else if marker.key == crate::property::PropertyKey::FontSize {
         PropertyValue::FontSize(Length::Px(if inherit {
             inherited_font_size.0
         } else {
             crate::computed::INITIAL_FONT_SIZE_PX
         }))
+    } else {
+        value
     }
 }
 
@@ -1634,6 +1668,7 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::LineHeight(_)
         | PropertyValue::Display(_)
         | PropertyValue::ListStyleType(_)
+        | PropertyValue::ListStyle(_)
         | PropertyValue::ListStyleImage(_)
         | PropertyValue::ListStylePosition(_)
         | PropertyValue::CounterReset(_)
@@ -2156,6 +2191,11 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         }
         PropertyValue::LineHeight(lh) => target.line_height = lh,
         PropertyValue::Display(d) => target.display = d,
+        PropertyValue::ListStyle(v) => {
+            target.list_style_type = v.kind;
+            target.list_style_position = v.position;
+            target.list_style_image = v.image;
+        }
         PropertyValue::ListStyleType(v) => target.list_style_type = v,
         PropertyValue::ListStyleImage(v) => target.list_style_image = v,
         PropertyValue::ListStylePosition(v) => target.list_style_position = v,

@@ -865,7 +865,8 @@ pub fn cascade_page(
 /// This is the media-aware sibling of [`cascade_page`]. Rules with no media
 /// condition always apply. Rules nested in `@media` apply only when their
 /// intersected condition matches [`crate::media::MediaContext`], mirroring the
-/// element cascade media prefilter.
+/// element cascade media prefilter. Paper-dimension conditions suppress `size`
+/// descriptors only, as required by CSS Paged Media 3 §7.1.
 pub fn cascade_page_with_media_context(
     rule_tree: &RuleTree,
     query: &PageContextQuery,
@@ -908,7 +909,16 @@ pub fn cascade_page_with_media_context(
             }
         }
         if let Some(spec) = best_spec {
-            for (index, decl) in rule.size_declarations.iter().enumerate() {
+            let ignore_size = rule
+                .media_condition
+                .as_ref()
+                .is_some_and(|condition| condition.depends_on_paper_size());
+            for (index, decl) in rule
+                .size_declarations
+                .iter()
+                .enumerate()
+                .filter(|_| !ignore_size)
+            {
                 let candidate = (
                     cascade_rank(rule.origin, decl.important),
                     page_layer_rank(rule, decl.important, &layers),

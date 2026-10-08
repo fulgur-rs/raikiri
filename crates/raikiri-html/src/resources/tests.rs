@@ -206,6 +206,213 @@ impl NetworkProvider for SvgNetworkProvider {
 }
 
 #[test]
+fn inside_marker_fetch_is_independent_of_background_preloading() {
+    let provider = SvgNetworkProvider::default();
+    let base = Url::parse("https://images.test/assets/document.html").unwrap();
+    let resources = RenderResources::new()
+        .network_provider(&provider)
+        .base_url(base.clone());
+    let doc = crate::parse_html_with_resources(
+        br#"<!doctype html><li style="list-style:inside url(marker.svg);background-image:url(unwanted.svg)">one</li>"#.as_slice(),
+        &resources,
+    ).unwrap();
+    let crate::render::PipelineRun::Completed(output) = crate::render::run_pipeline(
+        &doc,
+        raikiri_traits::PageDefaults::default(),
+        &raikiri_traits::LayoutConfig::default(),
+        crate::render::PipelineInputs {
+            resources: Some(&resources),
+            consumer_properties: &[],
+            property_observer: None,
+            preload_background_images: false,
+        },
+    )
+    .unwrap() else {
+        panic!("complete pipeline");
+    };
+    assert_eq!(
+        *provider.requests.lock().unwrap(),
+        [(base.join("marker.svg").unwrap(), ResourceKind::Image)]
+    );
+    let item = output
+        .cascade
+        .computed
+        .iter()
+        .position(|cv| cv.display == DisplayValue::ListItem)
+        .unwrap();
+    assert!(output.document.list_marker_image(item).is_some());
+}
+
+#[test]
+fn suppressed_marker_images_preserve_the_shared_background_request_budget() {
+    let provider = SvgNetworkProvider::default();
+    let resources = RenderResources::new().network_provider(&provider);
+    let mut html = String::from(
+        r#"<!doctype html><style>
+        li { list-style-position:inside }
+        .hidden::marker { display:none }
+        .none::marker { content:none }
+        .text::marker { content:'custom' }
+        .empty::marker { content:'' }
+        div { background-image:url(https://images.test/element.svg) }
+        @page { background-image:url(https://images.test/page.svg) }
+        </style>"#,
+    );
+    let classes = ["hidden", "none", "text", "empty"];
+    for index in 0..MAX_BACKGROUND_IMAGE_ATTEMPTS {
+        html.push_str(&format!(
+            r#"<li class="{}" style="list-style-image:url(https://images.test/suppressed-{index}.svg)"></li>"#,
+            classes[index % classes.len()]
+        ));
+    }
+    html.push_str(
+        r#"<li style="list-style-image:url(https://images.test/marker.svg)"></li><div></div>"#,
+    );
+    let options = ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let uncascaded = crate::parse(html.as_bytes(), &options).unwrap();
+    let cascade = crate::build_cascaded(&uncascaded);
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    let mut seen = Default::default();
+    let mut attempts = 0;
+    resources.preload_list_marker_images(&cascade, None, &warnings, &mut seen, &mut attempts, None);
+    resources.preload_background_images(&cascade, &warnings, &mut seen, &mut attempts, None);
+    assert_eq!(attempts, 3);
+    assert_eq!(
+        *provider.requests.lock().unwrap(),
+        ["marker.svg", "element.svg", "page.svg"].map(|name| (
+            Url::parse(&format!("https://images.test/{name}")).unwrap(),
+            ResourceKind::Image
+        ))
+    );
+    assert!(warnings.lock().unwrap().is_empty());
+}
+
+#[test]
+fn render_preloads_only_effective_marker_images() {
+    let provider = SvgNetworkProvider::default();
+    let resources = RenderResources::new().network_provider(&provider);
+    let html = br#"<!doctype html><style>
+        li { list-style:inside url(https://images.test/unused.svg) }
+        .hidden::marker { display:none }
+        .none::marker { content:none }
+        .text::marker { content:'custom' }
+        .empty::marker { content:'' }
+        .visible { list-style-image:url(https://images.test/marker.svg) }
+        div { background-image:url(https://images.test/element.svg) }
+        @page { background-image:url(https://images.test/page.svg) }
+        </style><li class="hidden"></li><li class="none"></li>
+        <li class="text"></li><li class="empty"></li><li class="visible"></li><div></div>"#;
+    let doc = crate::parse_html_with_resources(html.as_slice(), &resources).unwrap();
+    let crate::render::PipelineRun::Completed(_) = crate::render::run_pipeline(
+        &doc,
+        raikiri_traits::PageDefaults::default(),
+        &raikiri_traits::LayoutConfig::default(),
+        crate::render::PipelineInputs {
+            resources: Some(&resources),
+            consumer_properties: &[],
+            property_observer: None,
+            preload_background_images: true,
+        },
+    )
+    .unwrap() else {
+        panic!("complete pipeline");
+    };
+    assert_eq!(
+        *provider.requests.lock().unwrap(),
+        ["marker.svg", "element.svg", "page.svg"].map(|name| (
+            Url::parse(&format!("https://images.test/{name}")).unwrap(),
+            ResourceKind::Image
+        ))
+    );
+}
+
+#[test]
+fn relative_inside_marker_image_is_fetched_once_before_layout() {
+    let provider = SvgNetworkProvider::default();
+    let resources = RenderResources::new().network_provider(&provider);
+    let base = Url::parse("https://images.test/assets/document.html").unwrap();
+    let options = crate::types::ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: Some(base.clone()),
+    };
+    let html = br#"<!doctype html><style>li {list-style:inside url(marker.svg)}</style><li>one</li><li>two</li><li style="list-style-image:none">text</li><li style="list-style-position:outside;list-style-image:url(ignored.svg)">outside</li>"#;
+    let mut uncascaded = crate::parse(&html[..], &options).expect("HTML parses");
+    let cascade = crate::build_cascaded(&uncascaded);
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    resources.preload_list_marker_images(
+        &cascade,
+        Some(&base),
+        &warnings,
+        &mut Default::default(),
+        &mut 0,
+        None,
+    );
+    uncascaded
+        .dom
+        .prepare_list_marker_images(&cascade, &resources, Some(&base));
+    assert_eq!(
+        *provider.requests.lock().unwrap(),
+        [(base.join("marker.svg").unwrap(), ResourceKind::Image)]
+    );
+    let item = cascade
+        .computed
+        .iter()
+        .position(|cv| cv.display == DisplayValue::ListItem)
+        .unwrap();
+    let image = uncascaded
+        .dom
+        .list_marker_image(item)
+        .expect("prepared image");
+    assert_eq!((image.width, image.height), (2, 1));
+}
+
+#[test]
+fn viewbox_only_svg_inside_marker_uses_one_em_default_size() {
+    let resources = RenderResources::new();
+    let options = crate::types::ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let html = br#"<!doctype html><li style="font-size:16px;list-style:inside url('data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 10 10%22%3E%3Crect width=%2210%22 height=%2210%22 fill=%22green%22/%3E%3C/svg%3E')">one</li>"#;
+    let mut uncascaded = crate::parse(&html[..], &options).unwrap();
+    let cascade = crate::build_cascaded(&uncascaded);
+    resources.preload_list_marker_images(
+        &cascade,
+        None,
+        &Arc::new(Mutex::new(Vec::new())),
+        &mut Default::default(),
+        &mut 0,
+        None,
+    );
+    uncascaded
+        .dom
+        .prepare_list_marker_images(&cascade, &resources, None);
+    let item = cascade
+        .computed
+        .iter()
+        .position(|cv| cv.display == DisplayValue::ListItem)
+        .unwrap();
+    let image = uncascaded
+        .dom
+        .list_marker_image(item)
+        .expect("rasterized SVG marker");
+    assert_eq!((image.width, image.height), (16, 16));
+    assert_eq!(
+        uncascaded.dom.list_marker_image_size(item),
+        Some(ImageRasterSize {
+            width: 16.0,
+            height: 16.0
+        })
+    );
+}
+
+#[test]
 fn preloads_an_absolute_svg_background_once_and_rasterizes_on_demand() {
     let provider = SvgNetworkProvider::default();
     let resources = RenderResources::new().network_provider(&provider);
