@@ -77,6 +77,120 @@ fn completed(status: LayoutStatus) -> DocumentLayout {
 }
 
 #[test]
+fn inline_svg_presentation_dimensions_yield_to_layered_author_css() {
+    let document = dom(
+        "<style>@page{size:200px 100px;margin:0}body{margin:0}svg{display:block}@layer x{svg{width:30px;height:15px}}</style><svg width='10' height='10'><rect width='10' height='10'/></svg>",
+    );
+    let layout = completed(
+        layout(
+            &document,
+            PageDefaults::default(),
+            LayoutConfig::default(),
+            LayoutOptions::new(),
+        )
+        .unwrap(),
+    );
+    let page = layout.page(0).unwrap();
+    let fragment = page
+        .fragments()
+        .find(|f| page.dom().local_name(f.node()) == Some("svg"))
+        .unwrap();
+    let viewport = page.inline_svg(&fragment).unwrap().unwrap().viewport;
+    assert_eq!((viewport.width, viewport.height), (30.0, 15.0));
+}
+
+#[test]
+fn inline_svg_root_color_is_resolved_before_standalone_rendering() {
+    for (css, attrs, expected) in [
+        ("body{color:blue}", "color='inherit'", [0, 0, 255, 255]),
+        ("svg{color:blue}", "color='red'", [0, 0, 255, 255]),
+        ("", "color='red'", [255, 0, 0, 255]),
+        (
+            "body{color:blue}svg{color:revert}",
+            "color='red'",
+            [0, 0, 255, 255],
+        ),
+        (
+            "@layer x{svg{color:blue;all:revert-layer}}",
+            "color='red'",
+            [255, 0, 0, 255],
+        ),
+        (
+            "body{color:blue}",
+            "style='color:inherit'",
+            [0, 0, 255, 255],
+        ),
+    ] {
+        let document = dom(&format!(
+            "<style>@page{{size:200px 100px;margin:0}}body{{margin:0}}svg{{display:block}}{css}</style><svg width='10' height='10' {attrs}><rect width='10' height='10' fill='currentColor'/></svg>"
+        ));
+        let layout = completed(
+            layout(
+                &document,
+                PageDefaults::default(),
+                LayoutConfig::default(),
+                LayoutOptions::new(),
+            )
+            .unwrap(),
+        );
+        let page = layout.page(0).unwrap();
+        let fragment = page
+            .fragments()
+            .find(|f| page.dom().local_name(f.node()) == Some("svg"))
+            .unwrap();
+        let svg = page.inline_svg(&fragment).unwrap().unwrap();
+        let prepared = raikiri_svg::SvgDocument::parse(svg.source.as_bytes()).unwrap();
+        let image = prepared
+            .rasterize(
+                raikiri_svg::SvgViewport {
+                    width: svg.viewport.width,
+                    height: svg.viewport.height,
+                },
+                raikiri_svg::SvgRootStyle::default(),
+                None,
+            )
+            .unwrap();
+        assert_eq!(&image.rgba[..4], &expected, "{css} / {attrs}");
+        let computed = page.computed(fragment.node()).unwrap().color;
+        assert_eq!([computed.r, computed.g, computed.b, computed.a], expected);
+    }
+}
+
+#[test]
+fn inline_svg_resolved_root_color_keeps_original_selector_matches() {
+    let document = dom(
+        "<style>@page{size:200px 100px;margin:0}body{margin:0}svg{display:block;color:blue}</style><svg width='10' height='10' color='red'><style>svg[color=red] rect {fill:green}</style><rect width='10' height='10' fill='currentColor'/></svg>",
+    );
+    let layout = completed(
+        layout(
+            &document,
+            PageDefaults::default(),
+            LayoutConfig::default(),
+            LayoutOptions::new(),
+        )
+        .unwrap(),
+    );
+    let page = layout.page(0).unwrap();
+    let fragment = page
+        .fragments()
+        .find(|f| page.dom().local_name(f.node()) == Some("svg"))
+        .unwrap();
+    let svg = page.inline_svg(&fragment).unwrap().unwrap();
+    let prepared = raikiri_svg::SvgDocument::parse(svg.source.as_bytes()).unwrap();
+    let image = prepared
+        .rasterize(
+            raikiri_svg::SvgViewport {
+                width: 10.0,
+                height: 10.0,
+            },
+            raikiri_svg::SvgRootStyle::default(),
+            None,
+        )
+        .unwrap();
+    assert_eq!(&image.rgba[..4], &[0, 128, 0, 255]);
+}
+
+#[test]
 fn inline_svg_attribute_dimensions_define_the_viewport_before_css_overrides() {
     for (css, width, height) in [
         ("", 60.0, 40.0),

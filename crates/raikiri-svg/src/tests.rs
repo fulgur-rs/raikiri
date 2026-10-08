@@ -484,7 +484,7 @@ fn root_style_rewrite_obeys_the_shared_selector_match_budget() {
         checks: usize::MAX,
     };
 
-    let result = with_root_style_overrides(source, 1.0, false, true, &mut budget);
+    let result = with_root_style_overrides(source, 1.0, false, true, None, &mut budget);
 
     assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
         if message.contains("selector freezing resource limit")));
@@ -500,7 +500,7 @@ fn root_style_rewrite_charges_scoped_css_expansion_before_allocation() {
         checks: usize::MAX,
     };
 
-    let result = with_root_style_overrides(&source, 1.0, false, true, &mut budget);
+    let result = with_root_style_overrides(&source, 1.0, false, true, None, &mut budget);
 
     assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
         if message.contains("selector freezing resource limit")));
@@ -515,7 +515,7 @@ fn root_style_rewrite_rejects_budget_exhaustion_before_removing_root_attributes(
         checks: usize::MAX,
     };
 
-    let result = with_root_style_overrides(source, 1.0, false, true, &mut budget);
+    let result = with_root_style_overrides(source, 1.0, false, true, None, &mut budget);
 
     assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
         if message.contains("selector freezing resource limit")));
@@ -530,7 +530,7 @@ fn root_style_rewrite_rejects_budget_exhaustion_before_copying_existing_style() 
         checks: usize::MAX,
     };
 
-    let result = with_root_style_overrides(source, 1.0, true, false, &mut budget);
+    let result = with_root_style_overrides(source, 1.0, true, false, None, &mut budget);
 
     assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
         if message.contains("selector freezing resource limit")));
@@ -551,7 +551,7 @@ fn root_style_rewrite_rejects_budget_exhaustion_before_replacing_existing_style(
         checks: usize::MAX,
     };
 
-    let result = with_root_style_overrides(source, 1.0, true, false, &mut budget);
+    let result = with_root_style_overrides(source, 1.0, true, false, None, &mut budget);
 
     assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
         if message.contains("selector freezing resource limit")));
@@ -567,7 +567,7 @@ fn root_style_rewrite_rejects_budget_exhaustion_before_copying_stylesheet_text()
         checks: usize::MAX,
     };
 
-    let result = with_root_style_overrides(source, 1.0, false, true, &mut budget);
+    let result = with_root_style_overrides(source, 1.0, false, true, None, &mut budget);
 
     assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
         if message.contains("selector freezing resource limit")));
@@ -581,7 +581,8 @@ fn root_style_rewrite_rejects_budget_exhaustion_before_copying_scope_attributes(
         matches: usize::MAX,
         checks: usize::MAX,
     };
-    let rewritten = with_root_style_overrides(source, 1.0, false, true, &mut full_budget).unwrap();
+    let rewritten =
+        with_root_style_overrides(source, 1.0, false, true, None, &mut full_budget).unwrap();
     let bytes_through_scope_rewrite = usize::MAX - full_budget.bytes - rewritten.len() - 1;
     let mut limited_budget = SelectorFreezeBudget {
         bytes: bytes_through_scope_rewrite,
@@ -589,7 +590,7 @@ fn root_style_rewrite_rejects_budget_exhaustion_before_copying_scope_attributes(
         checks: usize::MAX,
     };
 
-    let result = with_root_style_overrides(source, 1.0, false, true, &mut limited_budget);
+    let result = with_root_style_overrides(source, 1.0, false, true, None, &mut limited_budget);
 
     assert!(matches!(result, Err(SvgError::InvalidDocument(ref message))
         if message.contains("selector freezing resource limit")));

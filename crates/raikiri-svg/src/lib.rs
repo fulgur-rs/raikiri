@@ -210,6 +210,30 @@ impl SvgDocument {
         viewport: SvgViewport,
         root_style: SvgRootStyle,
     ) -> Result<String, SvgError> {
+        self.styled_source_impl(viewport, root_style, None)
+    }
+
+    /// Prepares source with the host cascade's effective SVG root color.
+    ///
+    /// Resolve root presentation attributes and author CSS before passing
+    /// `root_color`. Selector matches are frozen before replacing root color
+    /// declarations; descendant colors and explicit inheritance are preserved.
+    /// Other preparation rules match [`Self::styled_source`].
+    pub fn styled_source_with_root_color(
+        &self,
+        viewport: SvgViewport,
+        root_style: SvgRootStyle,
+        root_color: [u8; 4],
+    ) -> Result<String, SvgError> {
+        self.styled_source_impl(viewport, root_style, Some(root_color))
+    }
+
+    fn styled_source_impl(
+        &self,
+        viewport: SvgViewport,
+        root_style: SvgRootStyle,
+        root_color: Option<[u8; 4]>,
+    ) -> Result<String, SvgError> {
         if !viewport.width.is_finite()
             || !viewport.height.is_finite()
             || viewport.width <= 0.0
@@ -220,13 +244,14 @@ impl SvgDocument {
         if !root_style.opacity.is_finite() || !(0.0..=1.0).contains(&root_style.opacity) {
             return Err(SvgError::InvalidOpacity);
         }
-        self.prepare_source(viewport, root_style)
+        self.prepare_source(viewport, root_style, root_color)
     }
 
     fn prepare_source(
         &self,
         viewport: SvgViewport,
         root_style: SvgRootStyle,
+        root_color: Option<[u8; 4]>,
     ) -> Result<String, SvgError> {
         let viewport_matches = viewport_matches_tree(
             &self.tree,
@@ -235,6 +260,7 @@ impl SvgDocument {
             self.has_view_box,
         );
         let modifies_source = !viewport_matches
+            || root_color.is_some()
             || root_style.neutralize_root_opacity
             || root_style.host_controls_root_background
             || !self.root_has_color;
@@ -255,18 +281,21 @@ impl SvgDocument {
         } else {
             source
         };
-        let source =
-            if root_style.neutralize_root_opacity || root_style.host_controls_root_background {
-                with_root_style_overrides(
-                    &source,
-                    root_style.opacity,
-                    root_style.neutralize_root_opacity,
-                    root_style.host_controls_root_background || root_style.neutralize_root_opacity,
-                    &mut rewrite_budget,
-                )?
-            } else {
-                source
-            };
+        let source = if root_style.neutralize_root_opacity
+            || root_style.host_controls_root_background
+            || root_color.is_some()
+        {
+            with_root_style_overrides(
+                &source,
+                root_style.opacity,
+                root_style.neutralize_root_opacity,
+                root_style.host_controls_root_background || root_style.neutralize_root_opacity,
+                root_color,
+                &mut rewrite_budget,
+            )?
+        } else {
+            source
+        };
         with_inherited_color(&source, root_style.inherited_color)
     }
 
@@ -323,7 +352,7 @@ impl SvgDocument {
         };
 
         if root_style.visible && root_style.opacity > 0.0 {
-            let source = self.prepare_source(viewport, root_style)?;
+            let source = self.prepare_source(viewport, root_style, None)?;
             let raster_opacity = if root_style.neutralize_root_opacity {
                 1.0
             } else {
@@ -1859,6 +1888,7 @@ fn with_root_style_overrides(
     inherited_root_opacity: f32,
     neutralize_root_opacity: bool,
     host_controls_root_background: bool,
+    root_color: Option<[u8; 4]>,
     budget: &mut SelectorFreezeBudget,
 ) -> Result<String, SvgError> {
     budget.bytes(source.len())?;
@@ -1872,6 +1902,14 @@ fn with_root_style_overrides(
     let mut stylesheet_properties = Vec::new();
     if neutralize_root_opacity {
         root_style_properties.push("opacity");
+    }
+    if root_color.is_some() {
+        root_style_properties.push("color");
+        stylesheet_properties.push("color");
+        if let Some(attribute) = root.attribute_node("color") {
+            budget.bytes(2 * std::mem::size_of::<(Range<usize>, String)>())?;
+            edits.push((attribute.range(), String::new()));
+        }
     }
     if host_controls_root_background {
         root_style_properties.extend(["background-color", "background"]);
@@ -1897,11 +1935,20 @@ fn with_root_style_overrides(
         let retained = existing_style.map_or_else(String::new, |style| {
             strip_inline_style_properties(style, &root_style_properties)
         });
-        let style_value = if neutralize_root_opacity {
+        let mut style_value = if neutralize_root_opacity {
             append_inline_declarations(&retained, &format!("opacity:{inherited_root_opacity}"))
         } else {
             retained
         };
+        if let Some([red, green, blue, alpha]) = root_color {
+            style_value = append_inline_declarations(
+                &style_value,
+                &format!(
+                    "color:rgba({red},{green},{blue},{:.6})",
+                    f32::from(alpha) / 255.0
+                ),
+            );
+        }
         let escaped_bytes = xml_attribute_escape_allocation_bytes(&style_value)?;
         budget.bytes(escaped_bytes)?;
         let escaped_style_value = escape_xml_attribute(&style_value);
@@ -1922,7 +1969,7 @@ fn with_root_style_overrides(
                 attribute.range(),
                 format!("style=\"{escaped_style_value}\""),
             ));
-        } else if neutralize_root_opacity {
+        } else if neutralize_root_opacity || root_color.is_some() {
             let attribute_len = escaped_style_value
                 .len()
                 .checked_add(8)

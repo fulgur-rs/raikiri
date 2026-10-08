@@ -106,6 +106,27 @@ fn outer_svg_dimension_attributes_are_overridable_geometry_hints() {
     let result = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     assert_eq!(result.computed[svg].width, Dimension::Px(25.0));
     assert_eq!(result.computed[svg].height, result.computed[css].height);
+    for (css, expected) in [
+        (
+            "@layer x {svg{width:30px;height:15px}}",
+            (Dimension::Px(30.0), Dimension::Px(15.0)),
+        ),
+        (
+            "@layer x {svg{width:30px;height:15px;all:revert-layer}}",
+            (Dimension::Px(10.0), Dimension::Px(10.0)),
+        ),
+    ] {
+        let mut doc = TestDoc::new();
+        let style = doc.push_element(0, "style", None);
+        doc.push_text(style, css);
+        let svg =
+            doc.push_element_with_namespace(0, "svg", NS, &[("width", "10"), ("height", "10")]);
+        let result = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        assert_eq!(
+            (result.computed[svg].width, result.computed[svg].height),
+            expected
+        );
+    }
 }
 
 #[test]

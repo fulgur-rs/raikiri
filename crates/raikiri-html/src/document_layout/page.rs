@@ -135,7 +135,7 @@ impl<'a> Page<'a> {
             .unwrap_or(false)
             .then_some(computed.opacity);
         let color = computed.color;
-        let source = document.styled_source(
+        let source = document.styled_source_with_root_color(
             raikiri_svg::SvgViewport {
                 width: viewport.width,
                 height: viewport.height,
@@ -152,6 +152,7 @@ impl<'a> Page<'a> {
                     .unwrap_or(false),
                 visible: true,
             },
+            [color.r, color.g, color.b, color.a],
         )?;
         Ok(Some(InlineSvg {
             source,

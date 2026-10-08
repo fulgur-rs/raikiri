@@ -25,7 +25,7 @@ pub(super) fn push_dimension_hints(elem: &impl StyleElement, decls: &mut Vec<Cas
         decls.push((
             value,
             false,
-            Origin::Author,
+            Origin::AuthorPresentationalHint,
             PRESENTATIONAL_HINT_SPECIFICITY,
             PRESENTATIONAL_HINT_SOURCE_ORDER,
             LayerPosition::default(),
