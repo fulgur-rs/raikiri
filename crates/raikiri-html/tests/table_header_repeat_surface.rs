@@ -317,3 +317,69 @@ fn contents_wrapped_cells_keep_the_existing_table_projection() {
         assert_eq!(header.repeat(), None);
     }
 }
+
+#[test]
+fn multicolumn_tables_keep_the_existing_header_projection() {
+    let document = lay_out_with_css(&table(5), "body{column-count:2}");
+    for page in document.pages() {
+        let dom = page.dom();
+        let header = find_by_id(dom.root(), &dom, "h").unwrap();
+        assert!(
+            page.fragments()
+                .filter(|fragment| fragment.node() == header)
+                .all(|fragment| fragment.repeat().is_none())
+        );
+    }
+}
+
+#[test]
+fn explicit_css_rows_and_hidden_cells_keep_their_header_spacing() {
+    let rows: String = (0..9).map(|row| format!("<div class='row'><div class='cell' id='r{row}'>X</div><div class='cell' style='display:none'>hidden</div></div>")).collect();
+    let document = lay_out_with_css(
+        &format!(
+            "<div class='table'><div class='head'><div class='row'><div class='cell' id='h'>H</div></div></div>{rows}</div>"
+        ),
+        ".table{display:table;border-spacing:0}.head{display:table-header-group}.row{display:table-row}.cell{display:table-cell;width:20px;height:20px;padding:0}.head .cell{height:10px}",
+    );
+    assert_eq!(document.page_count(), 3);
+    for (row, page) in [(0, 0), (4, 1), (8, 2)] {
+        assert_eq!(rect(&document, "h", page).y, 0.0);
+        assert_eq!(rect(&document, &format!("r{row}"), page).y, 10.0);
+        assert!(
+            document
+                .page(page)
+                .unwrap()
+                .text_runs()
+                .iter()
+                .all(|run| !run.text.contains("hidden"))
+        );
+    }
+}
+
+#[test]
+fn collapsed_table_headers_with_a_top_caption_repeat_after_the_caption() {
+    let body = table(5).replace(
+        "<table>",
+        "<table><caption id='cap' style='height:10px'>C</caption>",
+    );
+    let document = lay_out_with_css(&body, "table{border-collapse:collapse}");
+    assert_eq!(document.page_count(), 2);
+    assert_eq!(rect(&document, "cap", 0).y, 0.0);
+    assert_eq!(rect(&document, "h", 0).y, 10.0);
+    assert_eq!(rect(&document, "r0", 0).y, 20.0);
+    assert_eq!(rect(&document, "h", 1).y, 0.0);
+    assert_eq!(rect(&document, "r4", 1).y, 10.0);
+}
+
+#[test]
+fn header_text_is_absent_from_content_after_its_table() {
+    let document = lay_out(&format!(
+        "{}<p style='break-before:page;margin:0'>END</p>",
+        table(5)
+    ));
+    assert_eq!(document.page_count(), 3);
+    assert_eq!(header_count(&document, 2), 0);
+    let page = document.page(2).unwrap();
+    let text: String = page.text_runs().iter().map(|run| run.text).collect();
+    assert_eq!(text, "END");
+}

@@ -5,7 +5,7 @@ use raikiri_style::{
     CascadeResult,
     property::{BreakBetween, DisplayValue, FloatValue, PositionValue, WritingMode},
 };
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 
 #[derive(Debug, Clone)]
 pub(crate) struct HeaderRepeat {
@@ -221,7 +221,6 @@ pub(crate) fn finish_boxes(document: &mut Document, headers: &HeaderRepeats) {
             }
         }
         let mut cells_by_part: HashMap<usize, Vec<raikiri_traits::PaintRect>> = HashMap::new();
-        let part_ids: HashSet<_> = parts.iter().copied().collect();
         let mut table_bottom = table_origin.1;
         for &part in &parts {
             if document.nodes[part].display != DisplayValue::TableRow {
@@ -239,21 +238,23 @@ pub(crate) fn finish_boxes(document: &mut Document, headers: &HeaderRepeats) {
                 let hidden = node.hides_empty_table_cell;
                 let mut current = Some(part);
                 while let Some(id) = current.filter(|&id| id != table) {
-                    if part_ids.contains(&id) {
-                        let origin = absolute_position(document, id);
-                        let bottom = y + size.height - origin.1;
-                        document.nodes[id].unrounded_layout.size.height =
-                            document.nodes[id].unrounded_layout.size.height.max(bottom);
-                        if !hidden {
-                            cells_by_part.entry(id).or_default().push(
-                                raikiri_traits::PaintRect::new(
-                                    x - origin.0,
-                                    y - origin.1,
-                                    size.width,
-                                    size.height,
-                                ),
-                            );
-                        }
+                    // The traversal above reaches rows only through explicit
+                    // table-part parents, so every ancestor before the table
+                    // owns the row's cell-background intersections.
+                    let origin = absolute_position(document, id);
+                    let bottom = y + size.height - origin.1;
+                    document.nodes[id].unrounded_layout.size.height =
+                        document.nodes[id].unrounded_layout.size.height.max(bottom);
+                    if !hidden {
+                        cells_by_part
+                            .entry(id)
+                            .or_default()
+                            .push(raikiri_traits::PaintRect::new(
+                                x - origin.0,
+                                y - origin.1,
+                                size.width,
+                                size.height,
+                            ));
                     }
                     current = document.parent_of(id);
                 }
