@@ -1004,12 +1004,13 @@ fn position_anonymous_table_parts(
     let mut vertical_rows: std::collections::HashMap<usize, TaffyLayout> = Default::default();
     if vertical {
         for cell in &grid.cells {
-            if let Some(layout) = cell.resolved {
-                vertical_rows
-                    .entry(usize::from(cell.row))
-                    .and_modify(|row| extend_part_bounds(row, &layout))
-                    .or_insert(layout);
-            }
+            let layout = cell
+                .resolved
+                .expect("cells were positioned before source parts");
+            vertical_rows
+                .entry(usize::from(cell.row))
+                .and_modify(|row| extend_part_bounds(row, &layout))
+                .or_insert(layout);
         }
     }
     for (index, &marker) in grid.rows.iter().enumerate() {
@@ -1054,9 +1055,9 @@ fn position_anonymous_table_parts(
         // Visit only the rows occupied by each cell and their group ancestors.
         // Scanning the whole cell grid for every row would be quadratic.
         for cell in &grid.cells {
-            let Some(layout) = cell.resolved else {
-                continue;
-            };
+            let layout = cell
+                .resolved
+                .expect("cells were positioned before source parts");
             let mut listed = std::collections::HashSet::new();
             let end_row = (usize::from(cell.row) + usize::from(cell.row_span)).min(grid.rows.len());
             for &marker in &grid.rows[usize::from(cell.row)..end_row] {

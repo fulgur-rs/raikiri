@@ -84,6 +84,182 @@ fn assert_exact_pixels(actual: Vec<u8>, expected: Vec<u8>) {
 }
 
 #[test]
+fn anonymous_vertical_cells_match_explicit_cells_through_contents_ancestors() {
+    for mode in ["vertical-lr", "vertical-rl"] {
+        let build = |anonymous: bool| {
+            let (mut doc, body) = document();
+            let table = element(
+                &mut doc,
+                body,
+                &format!("display:table;writing-mode:{mode};border-spacing:0"),
+            );
+            let wrapper = element(&mut doc, table, "display:contents");
+            let group = element(&mut doc, wrapper, "display:table-row-group");
+            let wrapper = element(&mut doc, group, "display:contents");
+            for _ in 0..2 {
+                let row = element(&mut doc, wrapper, "display:table-row");
+                let owner = if anonymous {
+                    row
+                } else {
+                    element(&mut doc, row, "display:table-cell")
+                };
+                doc.append_text(owner, "A");
+                element(
+                    &mut doc,
+                    row,
+                    "display:table-cell;width:10px;height:10px;vertical-align:top",
+                );
+            }
+            (doc, table, group)
+        };
+        let (mut actual, table, group) = build(true);
+        let computed = layout(&mut actual);
+        let (mut reference, _, _) = build(false);
+        let expected = layout(&mut reference);
+        assert_eq!(
+            actual.get_node(table).unwrap().unrounded_layout.size,
+            reference.get_node(table).unwrap().unrounded_layout.size
+        );
+        assert_eq!(
+            actual.get_node(group).unwrap().unrounded_layout.size.width,
+            actual.get_node(table).unwrap().unrounded_layout.size.width
+        );
+        assert_exact_pixels(
+            raster(scene(&actual, &computed)),
+            raster(scene(&reference, &expected)),
+        );
+        let again = layout(&mut actual);
+        assert_exact_pixels(
+            raster(scene(&actual, &again)),
+            raster(scene(&reference, &expected)),
+        );
+    }
+}
+
+#[test]
+fn anonymous_inline_atomic_child_retains_its_measured_box_and_ink() {
+    let (mut doc, body) = document();
+    let table = element(&mut doc, body, "display:table;border-spacing:0");
+    let row = element(&mut doc, table, "display:table-row");
+    doc.append_text(row, "A");
+    let atomic = element(
+        &mut doc,
+        row,
+        "display:inline-block;width:10px;height:10px;background:blue;vertical-align:top",
+    );
+    let computed = layout(&mut doc);
+    let rect = doc.get_node(atomic).unwrap().unrounded_layout;
+    assert_eq!(
+        (
+            rect.location.x,
+            rect.location.y,
+            rect.size.width,
+            rect.size.height
+        ),
+        (10.0, 0.0, 10.0, 10.0)
+    );
+    let (mut reference, body) = document();
+    element(
+        &mut reference,
+        body,
+        "position:absolute;left:0;top:0;width:10px;height:10px;background:black",
+    );
+    element(
+        &mut reference,
+        body,
+        "position:absolute;left:10px;top:0;width:10px;height:10px;background:blue",
+    );
+    let expected = layout(&mut reference);
+    assert_exact_pixels(
+        raster(scene(&doc, &computed)),
+        raster(scene(&reference, &expected)),
+    );
+}
+
+#[test]
+fn anonymous_rows_share_a_rowspan_background_through_contents_groups() {
+    let (mut doc, body) = document();
+    let table = element(&mut doc, body, "display:table;border-spacing:0");
+    let wrapper = element(&mut doc, table, "display:contents");
+    let group = element(
+        &mut doc,
+        wrapper,
+        "display:table-row-group;background:green",
+    );
+    let wrapper = element(&mut doc, group, "display:contents");
+    let first = element(&mut doc, wrapper, "display:table-row");
+    doc.append_text(first, "A");
+    let spanning = element(
+        &mut doc,
+        first,
+        "display:table-cell;width:10px;height:10px;background:blue;vertical-align:top",
+    );
+    doc.set_element_attributes(spanning, vec![("rowspan".into(), "2".into())]);
+    let second = element(&mut doc, wrapper, "display:table-row");
+    doc.append_text(second, "B");
+    let computed = layout(&mut doc);
+    assert_eq!(
+        doc.get_node(table).unwrap().unrounded_layout.size,
+        taffy::Size {
+            width: 20.0,
+            height: 20.0
+        }
+    );
+    let (mut reference, body) = document();
+    element(
+        &mut reference,
+        body,
+        "position:absolute;left:0;top:0;width:10px;height:20px;background:black",
+    );
+    element(
+        &mut reference,
+        body,
+        "position:absolute;left:10px;top:0;width:10px;height:20px;background:blue",
+    );
+    let expected = layout(&mut reference);
+    assert_exact_pixels(
+        raster(scene(&doc, &computed)),
+        raster(scene(&reference, &expected)),
+    );
+}
+
+#[test]
+fn anonymous_text_uses_page_content_clip_and_skips_other_page_ink() {
+    let (mut doc, body) = document();
+    let sheet = doc.append_element(Some(0), "style", Style::default(), Some("display:none"));
+    doc.append_text(sheet, "@page { margin-left:40px; margin-right:40px }");
+    let table = element(&mut doc, body, "display:table;border-spacing:0");
+    let row = element(&mut doc, table, "display:table-row;white-space:nowrap");
+    doc.append_text(row, "AAAAAAAAAA");
+    let computed = layout(&mut doc);
+    let actual = raster(scene(&doc, &computed));
+    assert_eq!(
+        actual
+            .chunks_exact(4)
+            .filter(|pixel| *pixel == [0, 0, 0, 255])
+            .count(),
+        400
+    );
+    let mut later = Scene::new();
+    raikiri_paint::paint_single_page_with_origin(
+        &mut later,
+        &doc,
+        &computed,
+        page(),
+        100.0,
+        &mut Default::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        raster(later)
+            .chunks_exact(4)
+            .filter(|pixel| *pixel == [0, 0, 0, 255])
+            .count(),
+        0
+    );
+}
+
+#[test]
 fn html_col_width_reaches_fixed_and_auto_layout_and_exact_paint() {
     for (table_style, attribute, author_width, expected) in [
         (
