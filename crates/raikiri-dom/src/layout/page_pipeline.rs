@@ -1533,6 +1533,100 @@ fn page_break_is_forced(document: &Document, node_id: usize, value: BreakBetween
     true
 }
 
+// Find the first/last generated child box, eliding Contents without cloning
+// wide child lists. Nonempty text and generated content remain edge barriers.
+fn page_edge_child(
+    document: &Document,
+    cascade: &CascadeResult,
+    id: usize,
+    before: bool,
+    depth: usize,
+) -> Result<Option<usize>, ()> {
+    if depth >= 128 {
+        return Err(());
+    }
+    let children = &document.nodes[id].children;
+    for offset in 0..children.len() {
+        let child = children[if before {
+            offset
+        } else {
+            children.len() - 1 - offset
+        }];
+        let node = &document.nodes[child];
+        let computed = &cascade.computed[child];
+        if !node.is_in_document()
+            || node.is_non_rendered_html_element()
+            || computed.display == DisplayValue::None
+            || matches!(
+                computed.position,
+                PositionValue::Absolute | PositionValue::Fixed
+            )
+            || is_floating_box_for_pagination(document, cascade, child)
+        {
+            continue;
+        }
+        if let crate::node::NodeData::Text(text) = &node.data {
+            if text.text_content.trim().is_empty() {
+                continue;
+            }
+            return Ok(Some(child));
+        }
+        if computed.display == DisplayValue::Contents && !node.has_before_or_after_content {
+            if let Some(descendant) = page_edge_child(document, cascade, child, before, depth + 1)?
+            {
+                return Ok(Some(descendant));
+            }
+            continue;
+        }
+        return Ok(Some(child));
+    }
+    Ok(None)
+}
+
+// Preserve source-node context when resolving Always: a column-local forced
+// edge must not become a page break merely because its wrapper is outside it.
+fn page_edge_constraint(
+    document: &Document,
+    cascade: &CascadeResult,
+    mut id: usize,
+    before: bool,
+) -> (bool, bool) {
+    let mut forced = false;
+    let mut avoided = false;
+    for _ in 0..128 {
+        let node = &document.nodes[id];
+        let computed = &cascade.computed[id];
+        if computed.display != DisplayValue::Contents {
+            let edge = if before {
+                computed.break_before
+            } else {
+                computed.break_after
+            };
+            forced |= page_break_is_forced(document, id, edge);
+            avoided |= matches!(edge, BreakBetween::Avoid | BreakBetween::AvoidPage);
+        }
+        if node.has_before_or_after_content
+            || !matches!(
+                computed.display,
+                DisplayValue::Block
+                    | DisplayValue::FlowRoot
+                    | DisplayValue::ListItem
+                    | DisplayValue::Contents
+            )
+        {
+            break;
+        }
+        let Ok(Some(child)) = page_edge_child(document, cascade, id, before, 0) else {
+            break;
+        };
+        if document.nodes[child].kind() == NodeKind::Text {
+            break;
+        }
+        id = child;
+    }
+    (forced, avoided)
+}
+
 pub(crate) fn selected_page_name(cascade: &CascadeResult, node_id: usize) -> Option<String> {
     match cascade.page_values.get(node_id) {
         Some(raikiri_style::property::PageValue::Named(name)) => Some(name.to_string()),
@@ -2460,7 +2554,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                         cascade,
                         child_id,
                         child_parent_y,
-                        document.parent_of(child_id) == Some(body_id),
+                        pagination_box_parent(document, cascade, child_id) == Some(body_id),
                         body_id,
                         node.unrounded_layout.size.height.max(0.0),
                         page_step,
@@ -2539,14 +2633,14 @@ pub fn layout_pages_with_page_geometry_and_control(
     for candidate in &candidates {
         if !(candidate.is_direct_body_element
             || document.nodes[candidate.node_id].kind() == NodeKind::Text
-                && parent_of[candidate.node_id] == Some(body_id))
+                && pagination_box_parent(document, cascade, candidate.node_id) == Some(body_id))
         {
             continue;
         }
         let computed = &cascade.computed[candidate.node_id];
         // Floats and positioned boxes form parallel flows. Their placement
         // does not interrupt a connected run of normal-flow siblings.
-        if !matches!(computed.float, FloatValue::None)
+        if is_floating_box_for_pagination(document, cascade, candidate.node_id)
             || matches!(
                 computed.position,
                 PositionValue::Absolute | PositionValue::Fixed
@@ -2570,17 +2664,14 @@ pub fn layout_pages_with_page_geometry_and_control(
             continue;
         }
         let connected = previous.is_some_and(|prior| {
-            let prior_computed = &cascade.computed[prior.node_id];
-            !page_break_is_forced(document, prior.node_id, prior_computed.break_after)
-                && !page_break_is_forced(document, candidate.node_id, computed.break_before)
+            let (after_forced, after_avoided) =
+                page_edge_constraint(document, cascade, prior.node_id, false);
+            let (before_forced, before_avoided) =
+                page_edge_constraint(document, cascade, candidate.node_id, true);
+            !after_forced
+                && !before_forced
                 && prior.page_name == candidate.page_name
-                && (matches!(
-                    prior_computed.break_after,
-                    BreakBetween::Avoid | BreakBetween::AvoidPage
-                ) || matches!(
-                    computed.break_before,
-                    BreakBetween::Avoid | BreakBetween::AvoidPage
-                ))
+                && (after_avoided || before_avoided)
         });
         if let Some(prior) = previous.filter(|_| connected) {
             let start = *run_start.get_or_insert(prior.node_id);

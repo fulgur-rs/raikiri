@@ -5245,3 +5245,138 @@ fn review_float_text_ink_keeps_joint_exclusion_when_a_break_constraint_is_added(
         assert_eq!(red_over_float, 0, "{edge}");
     }
 }
+
+#[test]
+fn review_full_width_float_keeps_displaced_text_ink_when_avoidance_is_added() {
+    let mut baseline_ink = None;
+    for edge in ["", "break-before:avoid"] {
+        let markup = format!(
+            "<!DOCTYPE html><body style='margin:0;background:white'><div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='float:left;width:100px;height:40px;background:green'></div><div style='height:60px;font-family:Ahem;font-size:20px;line-height:20px;color:red'>M M</div><div style='height:1px;{edge}'></div></div></body>"
+        );
+        let mut parsed = raikiri_html::parse(
+            markup.as_bytes(),
+            &raikiri_html::ParseOptions {
+                extra_stylesheets: &[],
+                network: None,
+                base_url: None,
+            },
+        )
+        .unwrap();
+        let fonts = raikiri_dom::build_wpt_font_collection(std::path::Path::new(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../raikiri-dom/tests/data/text-autospace"
+        )))
+        .unwrap();
+        parsed
+            .dom
+            .set_font_collection_with_limits(fonts, shodo::limits::Limits::default());
+        let cascade = raikiri_html::build_cascaded(&parsed);
+        raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
+        let mut scene = Scene::new();
+        crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4).unwrap();
+        let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+            |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+            800,
+            600,
+        );
+        let red_over_float = (2..18)
+            .flat_map(|y| (2..18).map(move |x| (y * 800 + x) * 4))
+            .filter(|&i| rgba[i] > rgba[i + 1] && rgba[i] > rgba[i + 2])
+            .count();
+        let all_red = (0..100)
+            .flat_map(|y| (0..100).map(move |x| (y * 800 + x) * 4))
+            .filter(|&i| rgba[i] > rgba[i + 1] && rgba[i] > rgba[i + 2])
+            .count();
+        assert!(all_red > 0);
+        if let Some(expected) = baseline_ink {
+            assert_eq!(all_red, expected);
+        } else {
+            baseline_ink = Some(all_red);
+        }
+        assert_eq!(red_over_float, 0, "{edge}");
+    }
+}
+
+fn review_body_page_buffers(body_style: &str, content: &str) -> Vec<Vec<u8>> {
+    let markup = format!(
+        "<!DOCTYPE html><body style='margin:0;background:white;{body_style}'>{content}</body>"
+    );
+    let mut parsed = raikiri_html::parse(
+        markup.as_bytes(),
+        &raikiri_html::ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        },
+    )
+    .unwrap();
+    let cascade = raikiri_html::build_cascaded(&parsed);
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let pages = raikiri_dom::layout_pages(&mut parsed.dom, &cascade, page).unwrap();
+    assert_eq!(pages.len(), 2);
+    let mut budget = crate::CounterSnapshotBudget::default();
+    (0..2)
+        .map(|index| {
+            let mut scene = Scene::new();
+            crate::paint_single_page_with_origin_and_page(
+                &mut scene,
+                &parsed.dom,
+                &cascade,
+                page,
+                index as f32 * 100.0,
+                index,
+                2,
+                index == 1,
+                &mut budget,
+            )
+            .unwrap();
+            anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+                |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+                100,
+                100,
+            )
+        })
+        .collect()
+}
+
+fn review_fitting_page_pair_colors(body_style: &str, content: &str) {
+    let rgba = review_body_page_buffers(body_style, content);
+    let pixel =
+        |page: usize, x: usize, y: usize| &rgba[page][(y * 100 + x) * 4..(y * 100 + x) * 4 + 4];
+    assert_eq!(pixel(0, 10, 70), &[255, 255, 255, 255]);
+    assert_eq!(pixel(1, 10, 10), &[0, 128, 0, 255]);
+    assert_eq!(pixel(1, 10, 40), &[255, 0, 0, 255]);
+}
+
+#[test]
+fn review_ignored_flex_float_page_pair_keeps_both_colors_together() {
+    review_fitting_page_pair_colors(
+        "display:flex;flex-direction:column",
+        "<div style='flex-shrink:0;height:60px'></div><div style='flex-shrink:0;float:left;height:30px;background:green;break-after:avoid-page'></div><div style='flex-shrink:0;height:30px;background:red;break-inside:avoid'></div>",
+    );
+}
+
+#[test]
+fn review_contents_page_pair_keeps_both_colors_together() {
+    review_fitting_page_pair_colors(
+        "",
+        "<div style='height:60px'></div><div style='display:contents'><div style='height:30px;background:green;break-inside:avoid'></div><div style='height:30px;background:red;break-before:avoid;break-inside:avoid'></div></div>",
+    );
+}
+
+#[test]
+fn review_plain_child_page_edge_keeps_both_parent_colors_together() {
+    for (after, before) in [
+        ("break-after:avoid-page", ""),
+        ("", "break-before:avoid-page"),
+    ] {
+        review_fitting_page_pair_colors(
+            "",
+            &format!(
+                "<div style='height:60px'></div><div style='background:green;break-inside:avoid'><div style='height:30px;{after}'></div></div><div style='background:red;break-inside:avoid'><div style='height:30px;{before}'></div></div>"
+            ),
+        );
+    }
+}

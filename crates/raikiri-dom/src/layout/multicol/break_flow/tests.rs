@@ -1395,3 +1395,28 @@ fn review_atomic_internal_float_text_keeps_its_measured_subtree() {
             .unwrap()
     ));
 }
+
+#[test]
+fn review_full_width_float_preserves_vertically_displaced_text_lines() {
+    for edge in ["", "break-before:avoid"] {
+        let (mut doc, cascade) = fixture(&format!(
+            "<div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='float:left;width:100px;height:40px'></div><div id='text' style='height:60px;font-family:Ahem;font-size:20px;line-height:20px'>M M</div><div style='height:1px;{edge}'></div></div>"
+        ));
+        doc.set_font_collection(crate::layout::test_support::ifc_ahem_fonts());
+        layout_single_page(
+            &mut doc,
+            &cascade,
+            crate::layout::test_support::page_box_800x600(),
+        )
+        .unwrap();
+        let lines = doc.nodes[id(&doc, "text")]
+            .ifc
+            .as_ref()
+            .unwrap()
+            .lines
+            .as_ref()
+            .unwrap();
+        assert!(!lines.beside_floats);
+        assert_eq!(lines.line_top(0), 40.0, "edge={edge:?}");
+    }
+}

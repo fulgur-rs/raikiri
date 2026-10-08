@@ -403,7 +403,12 @@ Float-own outer forced edges remain an interoperability/policy followup in
 `raikiri-spike-0vv.136` (CSS Break 3 specifies SHOULD; the measured Chromium
 152 fixtures ignore them). Internal float breaks remain independent of normal
 flow. Explicit sibling page names that are identical retain avoided runs;
-a changed page name or a forced page edge still breaks the run.
+a changed page name or a forced page edge still breaks the run. Page sibling
+adjacency uses generated box parents through `display: contents` and the
+effective float status of flex/grid items. Nonempty text through Contents
+interrupts the run. First/last in-flow child edges propagate through plain
+block wrappers, stopping at text, generated content, flex/grid/inline contexts
+and the bounded traversal limit; forced edges keep priority over avoidance.
 Fragmented list items paint their marker on the first principal fragment only. Positioned descendants of resumed
 plain wrappers and multiple projected floats retain the previous strategy,
 which avoids subtree replay and isolated float packing. Root positioned
@@ -423,8 +428,10 @@ border-box size. Root child fragments start at the used padding/border content
 origin, including percentage insets and RTL columns; nested fragments retain
 parent-relative coordinates. Enabled before/after content on resumable plain
 wrappers keeps the previous strategy, while generated-only atomic boxes remain
-monolithic. A normal-flow IFC already narrowed beside a float retains its joint
-measurement instead of losing exclusion during isolated remeasurement. Nested columns, directly projected text, minimum block-size contexts
+monolithic. A normal-flow IFC beside a projected float retains its joint measurement,
+including lines displaced below a full-width float without a narrowed line
+space, rather than losing exclusion or vertical placement during isolated
+remeasurement. Nested columns, directly projected text, minimum block-size contexts
 and unsupported box structures retain their existing paths. These fifteen
 references and native controls do not establish complete table/flex/grid,
 vertical-writing or general box-decoration fragmentation support.

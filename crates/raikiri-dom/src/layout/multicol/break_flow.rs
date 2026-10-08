@@ -23,6 +23,7 @@ pub(super) fn supports(tree: &Document, root: usize, context: FragmentationConte
     let mut visible = false;
     let mut needs_break_flow = false;
     let mut projected_floats = 0usize;
+    let mut projected_text_lines = false;
     while let Some((id, depth, projected, inside_formatting_context)) = pending.pop() {
         if depth >= 128 {
             return false;
@@ -67,6 +68,14 @@ pub(super) fn supports(tree: &Document, root: usize, context: FragmentationConte
                 return false;
             }
         }
+        projected_text_lines |= projected
+            && !node.style.float.is_floated()
+            && matches!(node.display, DisplayValue::Block | DisplayValue::ListItem)
+            && node
+                .ifc
+                .as_ref()
+                .and_then(|root| root.lines.as_ref())
+                .is_some_and(|lines| !lines.lines.is_empty());
         // Generated content on a resumed wrapper has no line continuation
         // here. Joint normal-flow IFC measurement also owns float exclusion;
         // measuring that text in isolation would discard its narrowed lines.
@@ -138,7 +147,9 @@ pub(super) fn supports(tree: &Document, root: usize, context: FragmentationConte
             )
         }));
     }
-    visible && needs_break_flow
+    // A full-width float can push lines below itself without narrowing any
+    // final line. Preserve that shared vertical placement as well.
+    visible && needs_break_flow && !(projected_floats > 0 && projected_text_lines)
 }
 
 #[derive(Clone)]
