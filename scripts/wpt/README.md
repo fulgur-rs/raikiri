@@ -297,3 +297,58 @@ machine-dependent). `--wpt-fonts` names that default and changes nothing; the fo
 Outside `run-baseline-report` (unit tests, `run_pair`), the engine falls back to the
 installed fonts when no WPT font directory exists, so a checkout
 without the fetched WPT fonts still runs the tests.
+
+## Media-query dimensions
+
+Screen rendering and live testharness documents evaluate width and height
+against the requested viewport. Print rendering evaluates them against the
+requested fallback page box, including margins, before authored `@page` sizes.
+The context is fixed for the document's element, page, and font-face cascades.
+Changing authored page size, margins, or named pages does not change the
+media-query environment. The print adapter resolves viewport units in collected
+inline and external `@media` / `@import` query operands against that fixed page
+box; declaration lengths retain their authored page-area basis. The page cascade
+selects the declaration basis after fetching stylesheets, so inactive stylesheet
+and import media conditions do not contribute page dimensions. Inline style and
+animation declarations use the same basis through reparsing. Only CSS dimension
+tokens are expanded; identifiers, strings, URLs, and HTML text remain intact.
+The first print page uses the root direction to select its left or right page
+rules. Live documents resolve fetched and dynamically replaced CSS again on
+each style flush. Physical viewport units and their small, large, and dynamic
+variants share the fixed requested viewport; logical `vi` and `vb` families
+follow the root writing mode in declarations and the initial horizontal writing
+mode in media queries.
+See [Media Queries 4 §4](https://www.w3.org/TR/mediaqueries-4/#width)
+and [CSS Paged Media 3 §7.1](https://www.w3.org/TR/css-page-3/#page-size),
+with logical axes defined by
+[CSS Values 4 §6.1.2.2](https://www.w3.org/TR/css-values-4/#viewport-relative-lengths).
+
+The standalone style API defaults to a nominal 480 × 288 print page box;
+consumers with another paper size set `LayoutConfig::media_context` explicitly
+using `MediaContext::with_viewport`. `PageDefaults` remains the independent
+fallback for layout geometry.
+
+The media-query pass set is measured at exactly 800 × 600 with the pinned WPT
+fonts. To rerun all 22 selected upstream references:
+
+```sh
+cargo test --locked -p raikiri-wpt --test css_mediaqueries_reftests -- --ignored
+```
+
+The pass set covers range syntax, media-type error recovery, invalid or unknown
+features, and initial font-relative units. It does not imply support for every
+media feature or CSS function: orientation/aspect-ratio, device/display features,
+calc/sign functions, custom media, scripting, and one dynamic script error
+still have separate failures in the wider 57-case survey.
+
+Following CSS Paged Media 3 §7.1, the page cascade ignores `size` descriptors
+qualified by paper-dimension media queries, including width, height, aspect
+ratio, and orientation. Other qualified page declarations still apply when
+the condition matches. This qualification includes inherited stylesheet and
+import media conditions; a media list keeps the union of paper dependencies
+from its valid arms even when another arm matches independently. Invalid arms
+do not contribute dependencies. Ignored sizes do not set the declaration
+viewport basis. Page-context viewport units, including size and margin-box
+declarations, are resolved once against the existing nominal 480 × 288 basis used by
+the page probe, before ordinary declaration units expand. This adapter policy
+does not claim complete support for every paged-media viewport-unit behavior.

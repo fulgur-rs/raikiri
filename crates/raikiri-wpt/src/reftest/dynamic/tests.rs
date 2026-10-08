@@ -2,6 +2,119 @@ use super::*;
 use raikiri_style::{StyleDom, StyleElement, StyleNode, StyleNodeId};
 
 #[test]
+fn missing_script_does_not_prevent_later_scripts_and_load() {
+    let dir = tempfile::tempdir().unwrap();
+    let html = r#"<!DOCTYPE html><body id=probe><script>
+      window.addEventListener('load', () => document.body.setAttribute('data-load', 'yes'));
+    </script><script src=missing.js></script><script>
+      document.body.setAttribute('data-after', 'yes');
+    </script>"#;
+    let prepared = prepare(
+        html,
+        &dir.path().join("test.html"),
+        "",
+        ReftestConfig::default(),
+    )
+    .expect("an ordinary script fetch failure must allow later scripts and load");
+    assert!(prepared.html.contains("data-after=\"yes\""));
+    assert!(prepared.html.contains("data-load=\"yes\""));
+}
+
+#[test]
+fn missing_script_error_event_can_release_wait_and_paint_exact_pixels() {
+    let dir = tempfile::tempdir().unwrap();
+    let test = dir.path().join("test.html");
+    let reference = dir.path().join("ref.html");
+    let html = r#"<!DOCTYPE html><html class=reftest-wait><body style="margin:0;background:red">
+      <script>document.addEventListener('error', event => {
+        if (event.target.tagName === 'SCRIPT' && event.isTrusted) {
+          document.body.style.background = 'green';
+          document.documentElement.removeAttribute('class');
+        }
+      }, true);</script><script src=missing.js></script>
+    "#;
+    std::fs::write(&test, html).unwrap();
+    std::fs::write(
+        &reference,
+        "<!DOCTYPE html><body style='margin:0;background:green'>",
+    )
+    .unwrap();
+    let config = ReftestConfig {
+        width: 40,
+        height: 40,
+        tolerance: Tolerance::EXACT,
+        require_inline_fonts: false,
+    };
+    let prepared = prepare(html, &test, "", config).unwrap();
+    assert!(!prepared.html.contains("reftest-wait"));
+    let pair = ReftestPair {
+        test,
+        reference,
+        kind: ReftestKind::Match,
+        reference_suffix: String::new(),
+    };
+    let result = run_pair(&pair, config).unwrap();
+    assert_eq!(result.mismatched_pixels, 0);
+    assert!(matches!(result.outcome, TestOutcome::Pass));
+}
+
+#[test]
+fn missing_script_does_not_release_wait_or_hide_runtime_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    for (html, expected) in [
+        (
+            "<!DOCTYPE html><html class=reftest-wait><script src=missing.js></script>",
+            "still has reftest-wait",
+        ),
+        (
+            "<!DOCTYPE html><script src=missing.js></script><script>throw new Error('after-fetch');</script>",
+            "after-fetch",
+        ),
+    ] {
+        let error = prepare(
+            html,
+            &dir.path().join("test.html"),
+            "",
+            ReftestConfig::default(),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains(expected), "{error:?}");
+    }
+}
+
+#[test]
+fn script_fetch_failure_does_not_hide_abort_host_or_uncaught_failures() {
+    use raikiri_js::runtime::{Abort, RunReport};
+    for (mut report, expected) in [
+        (
+            RunReport {
+                aborted: Some(Abort::Tasks),
+                ..Default::default()
+            },
+            "Tasks",
+        ),
+        (
+            RunReport {
+                host_failures: vec!["layout failure".into()],
+                ..Default::default()
+            },
+            "layout failure",
+        ),
+        (
+            RunReport {
+                uncaught_errors: vec!["uncaught boom".into()],
+                ..Default::default()
+            },
+            "uncaught boom",
+        ),
+    ] {
+        report.fetch_errors.push("missing script".into());
+        let error = serialize(&raikiri_dom::Document::new(), &report).unwrap_err();
+        assert!(error.to_string().contains(expected), "{error:?}");
+    }
+}
+
+#[test]
 fn waiting_returns_false_without_html_element() {
     let document = raikiri_dom::Document::new();
     assert!(

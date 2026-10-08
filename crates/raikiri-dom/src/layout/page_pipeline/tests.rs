@@ -7042,6 +7042,92 @@ fn ch_box_values_resolve_through_the_engine() {
 }
 
 #[test]
+fn ch_min_max_constraints_use_the_selected_ahem_zero_advance() {
+    let widths = [
+        "font-size:16px;width:100px;max-width:4ch",
+        "font-size:16px;width:16px;min-width:4ch",
+    ]
+    .map(|css| ch_box_size(css).0);
+    let heights = [
+        "font-size:16px;height:100px;max-height:4ch",
+        "font-size:16px;height:16px;min-height:4ch",
+    ]
+    .map(|css| ch_box_size(css).1);
+    assert_eq!([widths[0], widths[1], heights[0], heights[1]], [64.0; 4]);
+}
+
+#[test]
+fn ch_constraints_preserve_logical_minimums_and_ordinary_values() {
+    assert_eq!(
+        ch_box_size("font-size:16px;height:16px;min-block-size:4ch").1,
+        64.0
+    );
+    assert_eq!(
+        ch_box_size("font-size:8px;width:100px;max-width:4ch").0,
+        32.0
+    );
+    assert_eq!(ch_box_size("width:100px;max-width:50px").0, 50.0);
+    assert_eq!(ch_box_size("width:100px;max-width:50%").0, 100.0);
+    assert_eq!(ch_box_size("height:10px;min-height:30px").1, 30.0);
+}
+
+#[test]
+fn ch_constraints_keep_the_empty_font_collection_fallback() {
+    let (mut doc, cascade, root) =
+        ahem_paragraph_with("font-size:16px;width:100px;max-width:4ch", |_, _| {});
+    let fonts = shodo::font::FontCollection::with_options(
+        &shodo::limits::Limits::default(),
+        shodo::font::FontOptions {
+            system_fonts: false,
+            ..Default::default()
+        },
+    );
+    doc.set_font_collection(fonts);
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).unwrap();
+    assert_eq!(doc.nodes[root].unrounded_layout.size.width, 32.0);
+}
+
+#[test]
+fn logical_ch_minimums_follow_the_existing_normalized_bridge_axis() {
+    for (css, expected_height) in [
+        ("writing-mode:vertical-rl;min-block-size:4ch", 64.0),
+        (
+            "writing-mode:vertical-rl;min-block-size:4ch;min-height:20px",
+            20.0,
+        ),
+    ] {
+        let css = format!("font-size:16px;width:16px;height:16px;{css}");
+        let (mut doc, cascade, root) = ahem_paragraph("aa", &css);
+        lay_out(&mut doc, &cascade);
+        assert_eq!(
+            doc.nodes[root].style.min_size.width.into_raw().value(),
+            64.0
+        );
+        assert_eq!(
+            doc.nodes[root].style.min_size.height.into_raw().value(),
+            expected_height
+        );
+    }
+}
+
+#[test]
+fn max_width_ch_uses_the_inherited_font_before_laying_out_children() {
+    let mut child = 0;
+    let (mut doc, cascade, _) = ahem_paragraph_with("font-size:16px", |doc, parent| {
+        child = doc.append_element(
+            Some(parent),
+            "div",
+            Style::default(),
+            Some("display:block;max-width:4ch;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"),
+        );
+        doc.append_text(child, "ABCABCABCABC");
+    });
+    lay_out(&mut doc, &cascade);
+    assert_eq!(cascade.computed[child].font_size.0, 16.0);
+    assert_eq!(doc.nodes[child].unrounded_layout.size.width, 64.0);
+}
+
+#[test]
 fn measure_ch_advance_uses_the_engine_fonts() {
     let key = raikiri_style::ChFontKey {
         family: std::sync::Arc::new(vec![raikiri_style::FontFamilyName::named("Ahem")]),

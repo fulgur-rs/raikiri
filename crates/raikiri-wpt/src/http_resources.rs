@@ -5,7 +5,7 @@ use raikiri::{
 };
 use raikiri_net::{ImageResolver, SystemHttpProvider};
 use raikiri_style::property::BackgroundImage;
-use raikiri_traits::{ReplacedResolver, ResolverRequest};
+use raikiri_traits::ResolverRequest;
 
 use crate::reftest::CascadeImagePreparer;
 
@@ -87,10 +87,10 @@ pub(crate) fn absolutize_img_sources(document: &mut raikiri_dom::Document, base_
     }
 }
 
-fn prepare_background_image(
+pub(crate) fn prepare_background_image(
     image: &mut BackgroundImage,
     base_url: &Url,
-    resolver: &ImageResolver<SystemHttpProvider>,
+    resolver: &dyn raikiri_traits::ReplacedResolver,
 ) {
     let BackgroundImage::Url(source) = image else {
         return;
@@ -108,7 +108,7 @@ fn prepare_background_image(
 pub(crate) fn prepare_cascade_images(
     cascade: &mut raikiri_style::CascadeResult,
     base_url: &Url,
-    resolver: &ImageResolver<SystemHttpProvider>,
+    resolver: &dyn raikiri_traits::ReplacedResolver,
 ) {
     for computed in &mut cascade.computed {
         prepare_background_image(&mut computed.background_image, base_url, resolver);
@@ -122,7 +122,7 @@ pub(crate) fn prepare_cascade_images(
 pub(crate) fn prepare_page_images(
     page: &mut raikiri_style::PageCascadeResult,
     base_url: &Url,
-    resolver: &ImageResolver<SystemHttpProvider>,
+    resolver: &dyn raikiri_traits::ReplacedResolver,
 ) {
     page.for_each_background_image_mut(|image| prepare_background_image(image, base_url, resolver));
 }

@@ -472,6 +472,7 @@ pub(super) fn absolutize_in_page_context(
         | PropertyValue::FontWeight(_)
         | PropertyValue::Display(_)
         | PropertyValue::ListStyleType(_)
+        | PropertyValue::ListStyle(_)
         | PropertyValue::ListStyleImage(_)
         | PropertyValue::ListStylePosition(_)
         | PropertyValue::CounterReset(_)

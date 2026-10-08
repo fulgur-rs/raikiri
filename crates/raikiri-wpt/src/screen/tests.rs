@@ -5,6 +5,25 @@ use std::collections::HashMap;
 use crate::test_http_server::TestServer;
 
 #[test]
+fn viewport_units_keep_class_and_variable_names_and_resolve_inline_styles() {
+    let server = TestServer::start(HashMap::from([
+        ("/names.html", ("text/html", b"<style>html,body{margin:0}.foo100vw{--size100vw:100vw;width:var(--size100vw);height:100vh;background:green}</style><div class=foo100vw></div>".to_vec())),
+        ("/inline.html", ("text/html", b"<style>html,body{margin:0}</style><div style='width:100vw;height:100vh;background:green'></div>".to_vec())),
+    ]));
+    let pixels: Vec<_> = ["names.html", "inline.html"]
+        .into_iter()
+        .map(|page| {
+            let image =
+                render_screen_url(&SystemHttpProvider::new(), server.url(page), 32, 24).unwrap();
+            let offset = (23 * 32 + 31) * 4;
+            image.rgba[offset..offset + 4].to_vec()
+        })
+        .collect();
+    assert_eq!(pixels, [vec![0, 128, 0, 255], vec![0, 128, 0, 255]]);
+    assert_eq!(server.finish(), ["/names.html", "/inline.html"]);
+}
+
+#[test]
 fn rejects_an_oversized_viewport_before_fetching_the_document() {
     let error = match render_screen_url(
         &SystemHttpProvider::new(),
@@ -164,5 +183,100 @@ fn resolves_external_stylesheet_resources_from_the_stylesheet_url() {
 
     assert!(requests.iter().any(|path| path == "/styles/red.png"));
     assert!(requests.iter().any(|path| path == "/styles/probe.ttf"));
+    assert!(contains_red_pixel(&image));
+}
+
+#[test]
+fn media_queries_use_the_requested_screen_viewport() {
+    let server = TestServer::start(HashMap::from([(
+        "/index.html",
+        ("text/html", b"<style>html,body{margin:0}div{width:8px;height:8px;background:red}@media screen and (width:32px) and (height:24px){div{background:green}}</style><div></div>".to_vec()),
+    )]));
+    let image =
+        render_screen_url(&SystemHttpProvider::new(), server.url("index.html"), 32, 24).unwrap();
+    assert!(!contains_red_pixel(&image));
+    assert_eq!(&image.rgba[..4], &[0, 128, 0, 255]);
+    assert_eq!(server.finish(), ["/index.html"]);
+}
+
+#[test]
+fn media_viewport_units_use_requested_screen_size_in_inline_and_external_css() {
+    let server = TestServer::start(HashMap::from([
+        ("/inline.html", ("text/html", b"<style>html,body{margin:0}div{width:8px;height:8px;background:red}@media screen and (width:100vw) and (height:100vh){div{background:green}}</style><div></div>".to_vec())),
+        ("/external.html", ("text/html", b"<link rel=stylesheet href=sheet.css><div></div>".to_vec())),
+        ("/sheet.css", ("text/css", b"html,body{margin:0}div{width:8px;height:8px;background:red}@media screen and (width:100vw) and (height:100vh){div{background:green}}".to_vec())),
+        ("/attribute.html", ("text/html", b"<style>html,body{margin:0}div{width:8px;height:8px;background:red}</style><style media='screen and (width:100vw) and (height:100vh)'>div{background:green}</style><div></div>".to_vec())),
+        ("/import.html", ("text/html", b"<style>@import url(imported.css) screen and (width:100vw) and (height:100vh);</style><div></div>".to_vec())),
+        ("/imported.css", ("text/css", b"html,body{margin:0}div{width:8px;height:8px;background:green}".to_vec())),
+    ]));
+    for page in [
+        "inline.html",
+        "external.html",
+        "attribute.html",
+        "import.html",
+    ] {
+        let image =
+            render_screen_url(&SystemHttpProvider::new(), server.url(page), 32, 24).unwrap();
+        assert_eq!(&image.rgba[..4], &[0, 128, 0, 255], "{page}");
+    }
+    assert_eq!(
+        server.finish(),
+        [
+            "/inline.html",
+            "/external.html",
+            "/sheet.css",
+            "/attribute.html",
+            "/import.html",
+            "/imported.css"
+        ]
+    );
+}
+
+#[test]
+fn viewport_review_logical_units_follow_root_axes_and_initial_media_axes() {
+    for mode in [
+        "horizontal-tb",
+        "vertical-rl",
+        "vertical-lr",
+        "sideways-rl",
+        "sideways-lr",
+    ] {
+        for prefix in ["", "s", "l", "d"] {
+            let (inline, block) = if mode == "horizontal-tb" {
+                ("vi", "vb")
+            } else {
+                ("vb", "vi")
+            };
+            let html = format!(
+                "<style>@media screen and (width:100{prefix}vi) and (height:100{prefix}vb){{html{{writing-mode:{mode}}}html,body{{margin:0}}.box{{width:100{prefix}{inline};height:100{prefix}{block};background:green}}}}</style><div class=box></div>"
+            );
+            let server = TestServer::start(HashMap::from([(
+                "/index.html",
+                ("text/html", html.into_bytes()),
+            )]));
+            let image =
+                render_screen_url(&SystemHttpProvider::new(), server.url("index.html"), 32, 24)
+                    .unwrap();
+            server.finish();
+            let offset = (23 * 32 + 31) * 4;
+            assert_eq!(
+                &image.rgba[offset..offset + 4],
+                &[0, 128, 0, 255],
+                "{mode}/{prefix}"
+            );
+        }
+    }
+}
+
+#[test]
+fn screen_render_prepares_inside_marker_pixels_before_layout() {
+    let server = TestServer::start(HashMap::from([
+        ("/index.html", ("text/html", br#"<!doctype html><style>body{margin:0}li{list-style:inside url(red.png)}</style><li>body</li>"#.to_vec())),
+        ("/red.png", ("image/png", red_png())),
+    ]));
+    let image =
+        render_screen_url(&SystemHttpProvider::new(), server.url("index.html"), 64, 32).unwrap();
+    let requests = server.finish();
+    assert!(requests.iter().any(|path| path == "/red.png"));
     assert!(contains_red_pixel(&image));
 }

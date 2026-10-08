@@ -856,3 +856,129 @@ fn reftest_wait_helper_removes_wait_and_reports_no_fetch_error() {
         .as_boolean();
     assert_eq!(waiting, Some(false));
 }
+
+#[test]
+fn viewport_review_live_fetched_and_mutated_styles_use_requested_viewport() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("sheet.css"),
+        "@media screen and (width:100vw){html,body{margin:0}#t{width:50vw;height:25vh}}",
+    )
+    .unwrap();
+    let setup = prepare_wpt_live_document(
+        "<link rel=stylesheet href=sheet.css><div id=t></div>",
+        800,
+        600,
+        dir.path(),
+        dir.path(),
+    )
+    .unwrap();
+    let mut rt = DomRuntime::new(WptDocumentHost::new(setup, dir.path())).unwrap();
+    assert_eq!(
+        num(&mut rt, "document.getElementById('t').offsetWidth"),
+        400.0
+    );
+    assert_eq!(
+        num(&mut rt, "document.getElementById('t').offsetHeight"),
+        150.0
+    );
+    rt.evaluate(
+        "document.head.innerHTML='<style>@import url(sheet.css) screen; #t{width:25vw}</style>'",
+    )
+    .unwrap();
+    assert_eq!(
+        num(&mut rt, "document.getElementById('t').offsetWidth"),
+        200.0
+    );
+    rt.evaluate("document.head.innerHTML='<style>#t{width:100px;height:10vh}</style>'")
+        .unwrap();
+    assert_eq!(
+        num(&mut rt, "document.getElementById('t').offsetWidth"),
+        100.0
+    );
+    assert_eq!(
+        num(&mut rt, "document.getElementById('t').offsetHeight"),
+        60.0
+    );
+}
+
+#[test]
+fn viewport_review_live_logical_units_recompute_after_root_mode_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("sheet.css"),
+        "@media screen and (width:100vi){#external{width:50vi;height:50vb}}",
+    )
+    .unwrap();
+    let setup=prepare_wpt_live_document("<link rel=stylesheet href=sheet.css><div id=external></div><div id=inline style='width:25vi;height:10vb'></div>",800,600,dir.path(),dir.path()).unwrap();
+    let mut rt = DomRuntime::new(WptDocumentHost::new(setup, dir.path())).unwrap();
+    assert_eq!(
+        num(&mut rt, "document.getElementById('external').offsetWidth"),
+        400.0
+    );
+    assert_eq!(
+        num(&mut rt, "document.getElementById('inline').offsetWidth"),
+        200.0
+    );
+    rt.evaluate("document.documentElement.style.writingMode='vertical-rl'")
+        .unwrap();
+    assert_eq!(
+        num(&mut rt, "document.getElementById('external').offsetWidth"),
+        300.0
+    );
+    assert_eq!(
+        num(&mut rt, "document.getElementById('external').offsetHeight"),
+        400.0
+    );
+    assert_eq!(
+        num(&mut rt, "document.getElementById('inline').offsetWidth"),
+        150.0
+    );
+    assert_eq!(
+        num(&mut rt, "document.getElementById('inline').offsetHeight"),
+        80.0
+    );
+}
+
+#[test]
+fn live_flush_prepares_marker_images_and_discards_stale_pixels() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = std::fs::File::create(dir.path().join("marker.png")).unwrap();
+    let mut encoder = png::Encoder::new(file, 8, 8);
+    encoder.set_color(png::ColorType::Rgba);
+    let mut writer = encoder.write_header().unwrap();
+    writer
+        .write_image_data(&[255, 0, 0, 255].repeat(64))
+        .unwrap();
+    writer.finish().unwrap();
+    let setup = prepare_wpt_live_document(
+        r#"<style>.authored::marker{content:'custom'}</style>
+        <li id=t style='list-style:inside url(marker.png)'>body</li>
+        <li id=authored class=authored style='list-style:inside url(missing.png)'>body</li>
+        <li id=invalid style="list-style:inside url('http://[')">body</li>"#,
+        100,
+        100,
+        dir.path(),
+        dir.path(),
+    )
+    .unwrap();
+    let mut host = WptDocumentHost::new(setup, dir.path());
+    let item = find_by_id(host.document(), "t");
+    assert!(host.document().list_marker_image(item).is_none());
+    host.flush().unwrap();
+    let image = host.document().list_marker_image(item).unwrap();
+    assert_eq!((image.width, image.height), (8, 8));
+    assert_eq!(image.rgba, [255, 0, 0, 255].repeat(64));
+    for id in ["authored", "invalid"] {
+        assert!(
+            host.document()
+                .list_marker_image(find_by_id(host.document(), id))
+                .is_none()
+        );
+    }
+    host.document_mut()
+        .set_element_attribute(item, "style", "list-style:inside none")
+        .unwrap();
+    host.flush().unwrap();
+    assert!(host.document().list_marker_image(item).is_none());
+}
