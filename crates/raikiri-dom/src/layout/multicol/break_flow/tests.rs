@@ -681,6 +681,48 @@ fn security_atomic_child_index_and_whitespace_scans_consume_work_budget() {
 }
 
 #[test]
+fn security_filtered_metadata_still_consumes_its_parent_scan_work() {
+    let (mut doc, root, _) = prepared_flow();
+    let wrapper = id(&doc, "wrapper");
+    let comment = doc.append_comment(Some(wrapper), "opaque");
+    doc.mark_in_document_flags();
+    assert!(!doc.nodes[comment].is_in_document());
+    doc.fragment_tree.limit = 9;
+    assert!(reserve_measurement_work(&mut doc, root));
+    assert_eq!(doc.fragment_tree.break_flow_work_used, 9);
+}
+
+#[test]
+fn security_nested_out_of_flow_fragment_exhaustion_stops_collection() {
+    let (mut doc, cascade) = fixture(
+        "<div id='columns' style='columns:2;gap:0;width:100px;height:100px'><div><div style='height:150px;break-before:avoid'><div style='position:absolute;columns:2;gap:0;width:100px;height:100px'><div style='height:3500px;break-before:avoid'></div></div></div></div></div>",
+    );
+    apply_computed_to_style(&mut doc, &cascade).unwrap();
+    doc.fragment_tree.limit = 32;
+    let root = id(&doc, "columns");
+    let context =
+        FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[root].multicol.unwrap())
+            .unwrap();
+    assert!(supports(&doc, root, context));
+    assert_eq!(
+        layout(
+            &mut doc,
+            root,
+            context,
+            Size {
+                width: 100.0,
+                height: 100.0
+            }
+        ),
+        100.0,
+    );
+    assert!(doc.fragment_tree.limit_exceeded);
+    assert_eq!(doc.fragment_tree.fragments.len(), 32);
+    assert!(doc.fragment_tree.break_flow_work_used < 32);
+    assert!(boxes(&doc, "columns").is_empty());
+}
+
+#[test]
 fn unsupported_text_and_parallel_or_hidden_nodes_keep_the_scope_bounded() {
     let (mut doc, root, context) = prepared_flow();
     doc.append_comment(Some(root), "opaque");
