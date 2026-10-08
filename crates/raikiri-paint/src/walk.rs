@@ -6038,7 +6038,7 @@ fn rounded_rect_path(x0: f64, y0: f64, x1: f64, y1: f64, radii: [[f64; 2]; 4]) -
     path
 }
 
-/// Flatten an axis-aligned ellipse to a 0.05px chord-error target, bounded
+/// Flatten an axis-aligned ellipse to a 0.05 layout-pixel chord-error target, bounded
 /// to 1024 chords per corner for extreme coordinates.
 fn flatten_corner_arc(arc: Arc, end_angle: f64, depth: u8, points: &mut Vec<Point>) {
     // The norm of the ellipse's second derivative is bounded by its larger
