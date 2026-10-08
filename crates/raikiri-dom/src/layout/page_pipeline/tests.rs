@@ -7548,3 +7548,67 @@ fn review_avoided_sibling_runs_use_the_destination_page_height() {
         assert_eq!(actual, expected, "{steps:?}");
     }
 }
+
+#[test]
+fn review_same_explicit_page_name_keeps_avoided_sibling_runs_connected() {
+    for edge in ["break-before:avoid", "break-before:avoid-page"] {
+        assert_eq!(
+            page_sibling_positions(&[60, 30, 30], edge, "", "break-inside:avoid;page:chapter"),
+            (vec![0.0, 100.0, 130.0], 2)
+        );
+    }
+}
+
+#[test]
+fn review_forced_page_edge_still_overrides_same_named_avoidance() {
+    assert_eq!(
+        page_sibling_positions(
+            &[60, 30, 30],
+            "break-before:page",
+            "break-after:avoid",
+            "break-inside:avoid;page:chapter"
+        ),
+        (vec![0.0, 60.0, 100.0], 2)
+    );
+}
+
+#[test]
+fn review_a_changed_explicit_page_name_still_breaks_the_avoided_run() {
+    let mut doc = Document::new();
+    let body = doc.append_element(
+        Some(0),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let ids: Vec<_> = [
+        "height:60px;page:first",
+        "height:30px;page:first",
+        "height:30px;page:second;break-before:avoid",
+    ]
+    .into_iter()
+    .map(|css| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(&format!(
+                "display:block;width:100px;break-inside:avoid;{css}"
+            )),
+        )
+    })
+    .collect();
+    doc.mark_in_document_flags();
+    let tree = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &tree).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let pages = layout_pages(&mut doc, &cascade, page).unwrap();
+    let actual: Vec<_> = ids
+        .into_iter()
+        .map(|id| doc.nodes[id].unrounded_layout.location.y)
+        .collect();
+    assert_eq!(actual, vec![0.0, 60.0, 100.0]);
+    assert_eq!(pages.len(), 2);
+}

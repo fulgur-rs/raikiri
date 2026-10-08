@@ -34,7 +34,9 @@ pub(super) fn supports(tree: &Document, root: usize, context: FragmentationConte
         // Rendered children are elements or text; flat-tree membership
         // already excludes comments, processing instructions and fragments.
         if let NodeData::Text(text) = &node.data {
-            if !text.text_content.trim().is_empty() {
+            // Text inside an atomic box keeps that box's measured subtree.
+            // Direct projected text would need translated line continuations.
+            if projected && !text.text_content.trim().is_empty() {
                 return false;
             }
             continue;
@@ -275,6 +277,12 @@ fn collect(
                 // Descendants keep their measured subtree; this seam has no
                 // translated child continuations to replay in later columns.
                 && !has_rendered_element_child(tree, id)
+                && !tree.nodes[id].children.iter().any(|&child| {
+                    let child = &tree.nodes[child];
+                    child.is_in_document()
+                        && child.style.display != Display::None
+                        && matches!(&child.data, NodeData::Text(text) if !text.text_content.trim().is_empty())
+                })
                 && !matches!(
                     tree.nodes[id].break_inside,
                     BreakInside::Avoid | BreakInside::AvoidColumn
@@ -449,15 +457,19 @@ pub(super) fn layout(
     let mut wrappers = HashMap::<(usize, usize), (usize, f32)>::new();
     for (index, item) in boxes.iter().enumerate() {
         let run = runs.get(&index).copied().unwrap_or(item.height);
-        if !item.floated
-            && ((saw_flow_box && (forced(previous_after) || forced(item.before)))
-                || (cursor > 0.0
-                    && ((run <= height && cursor + run > height)
-                        || (cursor + item.height > height
-                            && (item.height <= height || !item.splittable)))))
+        // A forced edge on prior normal flow also determines an adjacent
+        // float's column. Consume it once without charging float height to flow.
+        if (saw_flow_box && forced(previous_after))
+            || (!item.floated
+                && ((saw_flow_box && forced(item.before))
+                    || (cursor > 0.0
+                        && ((run <= height && cursor + run > height)
+                            || (cursor + item.height > height
+                                && (item.height <= height || !item.splittable))))))
         {
             column = column.saturating_add(1);
             cursor = 0.0;
+            previous_after = BreakBetween::Auto;
         }
         let mut remaining = item.height;
         let mut first = true;

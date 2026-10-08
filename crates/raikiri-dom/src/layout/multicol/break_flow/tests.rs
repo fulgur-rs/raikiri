@@ -1128,3 +1128,55 @@ fn review_nested_rtl_column_wrapper_keeps_local_inline_alignment() {
     assert_eq!(boxes(&doc, "first"), vec![(0, 30.0, 0.0, 20.0, 60.0)]);
     assert_eq!(boxes(&doc, "second"), vec![(1, 30.0, 0.0, 20.0, 60.0)]);
 }
+
+#[test]
+fn review_atomic_text_box_honors_its_forced_outer_column_edge() {
+    for edge in ["column", "always"] {
+        let doc = laid_out(&format!(
+            "<div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:20px'></div><div id='text' style='height:40px;break-before:{edge}'>Text</div></div>",
+        ));
+        assert_eq!(boxes(&doc, "text"), vec![(1, 50.0, 0.0, 50.0, 40.0)]);
+    }
+}
+
+#[test]
+fn review_oversized_text_box_keeps_one_measured_text_subtree() {
+    let doc = laid_out(
+        "<div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:20px;break-before:avoid'></div><div id='text' style='height:150px'>Text</div></div>",
+    );
+    assert_eq!(boxes(&doc, "text"), vec![(1, 50.0, 0.0, 50.0, 150.0)]);
+}
+
+#[test]
+fn review_normal_flow_forced_after_moves_the_following_float_boundary_once() {
+    for edge in ["column", "always"] {
+        let doc = laid_out(&format!(
+            "<div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:30px;break-after:{edge}'></div><div id='float' style='float:left;width:10px;height:20px'></div><div id='next' style='height:20px'></div></div>",
+        ));
+        assert_eq!(boxes(&doc, "float"), vec![(1, 50.0, 0.0, 10.0, 20.0)]);
+        assert_eq!(boxes(&doc, "next"), vec![(1, 50.0, 0.0, 50.0, 20.0)]);
+    }
+}
+
+#[test]
+fn review_atomic_text_box_propagates_its_forced_after_edge() {
+    let doc = laid_out(
+        "<div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:40px;break-after:column'>Text</div><div id='next' style='height:20px'></div></div>",
+    );
+    assert_eq!(boxes(&doc, "next"), vec![(1, 50.0, 0.0, 50.0, 20.0)]);
+}
+
+#[test]
+fn review_directly_projected_text_keeps_the_existing_strategy() {
+    let (mut doc, cascade) = fixture(
+        "<div id='columns' style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'>Text<div style='height:20px;break-before:column'></div></div>",
+    );
+    apply_computed_to_style(&mut doc, &cascade).unwrap();
+    let root = id(&doc, "columns");
+    assert!(!supports(
+        &doc,
+        root,
+        FragmentationContext::resolve(100.0, Some(100.0), doc.nodes[root].multicol.unwrap())
+            .unwrap()
+    ));
+}

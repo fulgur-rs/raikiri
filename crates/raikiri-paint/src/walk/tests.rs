@@ -5031,3 +5031,85 @@ fn review_zero_height_forced_boundary_paints_only_in_the_next_column() {
     assert_eq!(pixel(10, 10), &[255, 255, 255, 255]);
     assert_eq!(pixel(60, 10), &[0, 128, 0, 255]);
 }
+
+#[test]
+fn review_fragmented_list_item_paints_its_marker_on_the_first_fragment_only() {
+    let scene = transform_markup_scene(
+        "<!DOCTYPE html><body style='margin:0;background:white'><div style='margin-left:40px;columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='display:list-item;list-style:disc outside'><div style='height:60px'></div><div style='height:60px;break-before:avoid'></div></div></div></body>",
+    );
+    let marker_runs = scene
+        .commands
+        .iter()
+        .filter(|c| matches!(c, RenderCommand::GlyphRun(_)))
+        .count();
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+        800,
+        600,
+    );
+    let ink = |start: usize, end: usize| {
+        (0..30)
+            .flat_map(|y| (start..end).map(move |x| (y * 800 + x) * 4))
+            .filter(|&i| rgba[i..i + 4] != [255, 255, 255, 255])
+            .count()
+    };
+    assert!(ink(15, 40) > 0);
+    assert_eq!(ink(65, 90), 0);
+    assert_eq!(marker_runs, 1);
+}
+
+#[test]
+fn review_text_bearing_box_background_follows_its_forced_column_edge() {
+    let scene = transform_markup_scene(
+        "<!DOCTYPE html><body style='margin:0;background:white'><div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:20px'></div><div style='height:40px;break-before:column;background:green;color:white'>X</div></div></body>",
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+        800,
+        600,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 800 + x) * 4..(y * 800 + x) * 4 + 4];
+    assert_eq!(pixel(40, 30), &[255, 255, 255, 255]);
+    assert_eq!(pixel(90, 30), &[0, 128, 0, 255]);
+}
+
+#[test]
+fn review_normal_forced_after_moves_float_ink_to_the_new_column() {
+    let scene = transform_markup_scene(
+        "<!DOCTYPE html><body style='margin:0;background:white'><div style='columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:30px;break-after:column'></div><div style='float:left;width:10px;height:20px;background:green'></div><div style='height:20px'></div></div></body>",
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+        800,
+        600,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 800 + x) * 4..(y * 800 + x) * 4 + 4];
+    assert_eq!(pixel(5, 35), &[255, 255, 255, 255]);
+    assert_eq!(pixel(55, 5), &[0, 128, 0, 255]);
+}
+
+#[test]
+fn review_list_marker_preserves_unrelated_ancestor_fragment_state() {
+    let scene = transform_markup_scene(
+        "<!DOCTYPE html><body style='margin:0;background:white'><div style='margin-left:40px;columns:2;column-fill:auto;gap:0;width:100px;height:100px'><div style='height:20px'></div><div style='height:60px;break-before:column'><div style='display:list-item;list-style:disc outside;height:20px'></div></div></div></body>",
+    );
+    let marker_runs = scene
+        .commands
+        .iter()
+        .filter(|c| matches!(c, RenderCommand::GlyphRun(_)))
+        .count();
+    assert_eq!(marker_runs, 1);
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+        800,
+        600,
+    );
+    let ink = |start: usize, end: usize| {
+        (0..30)
+            .flat_map(|y| (start..end).map(move |x| (y * 800 + x) * 4))
+            .filter(|&i| rgba[i..i + 4] != [255, 255, 255, 255])
+            .count()
+    };
+    assert_eq!(ink(15, 40), 0);
+    assert!(ink(65, 90) > 0);
+}

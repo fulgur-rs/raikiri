@@ -381,7 +381,7 @@ ordinary block sibling runs at a legal boundary, using the destination page heig
 when page sizes differ; oversized runs relax avoidance
 so they still advance. The bounded horizontal-column projection propagates
 first/last descendant constraints, resumes plain block wrappers, preserves
-atomic inline-blocks, flow-roots and inside-avoided boxes, admits block-level
+atomic inline-blocks, flow-roots, text-bearing atomic boxes and inside-avoided boxes, admits block-level
 list items, gives forced column breaks
 priority, and treats floats as parallel flows. Floats do not enlarge a plain
 wrapper's normal-flow background area. Auto-sized atomic and replaced boxes
@@ -391,7 +391,15 @@ continuations. Horizontal RTL containers order their columns from right to
 left, including overflow columns; block alignment uses the immediate
 containing block's inline direction, while float sides remain physical.
 Forced boundaries after zero-height normal-flow boxes still advance, without
-introducing a blank column for a leading forced edge or a parallel float. Positioned descendants of resumed
+introducing a blank column for a leading forced edge or a parallel float.
+A forced boundary on prior normal flow determines an adjacent float's column
+and is consumed once; the float still contributes no normal-flow height.
+Float-own outer forced edges remain an interoperability/policy followup in
+`raikiri-spike-0vv.136` (CSS Break 3 specifies SHOULD; the measured Chromium
+152 fixtures ignore them). Internal float breaks remain independent of normal
+flow. Explicit sibling page names that are identical retain avoided runs;
+a changed page name or a forced page edge still breaks the run.
+Fragmented list items paint their marker on the first principal fragment only. Positioned descendants of resumed
 plain wrappers and multiple projected floats retain the previous strategy,
 which avoids subtree replay and isolated float packing. Root positioned
 siblings and positioned descendants of monolithic atomic boxes remain eligible.
@@ -403,7 +411,7 @@ geometry and remain monolithic when this projection has no child continuation.
 Oversized unbreakable boxes advance once from an occupied column before
 overflowing; empty columns and parallel floats still make progress. Column
 widths use the content box, while the container fragment retains the measured
-border-box size. Nested columns, visible text, minimum block-size contexts
+border-box size. Nested columns, directly projected text, minimum block-size contexts
 and unsupported box structures retain their existing paths. These fifteen
 references and native controls do not establish complete table/flex/grid,
 vertical-writing or general box-decoration fragmentation support.
