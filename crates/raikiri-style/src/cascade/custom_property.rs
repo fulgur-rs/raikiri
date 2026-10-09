@@ -720,6 +720,11 @@ pub(crate) fn find_function_tokens_in_parser<'i, 't>(
     }
     let mut found = Vec::new();
     loop {
+        // `next` skips whitespace and comments before the token it returns.
+        // Skip them first, so `token_start` is where the token itself starts:
+        // callers keep `input[..token_start]` verbatim when they replace the
+        // function, and that text must keep the separator in front of it.
+        parser.skip_whitespace();
         let token_start = parser.position().byte_index();
         let token = match parser.next() {
             Ok(token) => token.clone(),
@@ -730,14 +735,25 @@ pub(crate) fn find_function_tokens_in_parser<'i, 't>(
                 let open = parser.position().byte_index().checked_sub(1)?;
                 let is_target = names.iter().any(|wanted| name.eq_ignore_ascii_case(wanted));
                 let decoded_name: SmolStr = name.as_ref().into();
+                let mut body_end = open;
                 let mut nested_found = parser
                     .parse_nested_block(|nested| {
-                        find_function_tokens_in_parser(nested, names, depth.saturating_add(1))
-                            .ok_or_else(|| nested.new_custom_error::<(), ()>(()))
+                        let found =
+                            find_function_tokens_in_parser(nested, names, depth.saturating_add(1));
+                        body_end = nested.position().byte_index();
+                        found.ok_or_else(|| nested.new_custom_error::<(), ()>(()))
                     })
                     .ok()?;
                 if is_target {
-                    let close = parser.position().byte_index().checked_sub(1)?;
+                    // CSS Syntax 3 "consume a function"
+                    // (https://www.w3.org/TR/css-syntax-3/#consume-function):
+                    // reaching the end of input inside a function is a parse
+                    // error that still returns the function. When no `)` was
+                    // consumed after the body, the function is closed by the
+                    // end of input and `close` is the position just past the
+                    // last byte, where its `)` would be.
+                    let end = parser.position().byte_index();
+                    let close = if end > body_end { end - 1 } else { end };
                     found.push((decoded_name, token_start, open, close));
                 }
                 found.append(&mut nested_found);
@@ -755,6 +771,16 @@ pub(crate) fn find_function_tokens_in_parser<'i, 't>(
         }
     }
     Some(found)
+}
+
+/// Whether replacement text ending `output` needs a separator before `rest`,
+/// the source text that follows the replaced function. Whitespace or a comment
+/// at the start of `rest` is copied verbatim, so it already keeps the tokens
+/// apart; otherwise this is [`needs_css_token_separator`].
+fn needs_separator_after_replacement(output: &str, rest: &str) -> bool {
+    !rest.starts_with(|c: char| c.is_ascii_whitespace())
+        && !rest.starts_with("/*")
+        && needs_css_token_separator(output, rest)
 }
 
 pub(crate) fn needs_css_token_separator(left: &str, right: &str) -> bool {
@@ -812,16 +838,18 @@ pub(crate) fn simplify_math_functions_at_depth(input: &str, depth: usize) -> Opt
             continue;
         }
         push_bounded(&mut output, &input[position..name_start])?;
-        let inner_source = &input[open + 1..close];
+        // A function closed by the end of input has `close == input.len()`,
+        // so the text after it is empty rather than out of range.
+        let inner_source = input.get(open + 1..close)?;
         let inner = simplify_math_functions_at_depth(inner_source, depth.saturating_add(1))?;
         let evaluated = evaluate_math_function(name.as_str(), &inner)?;
         push_bounded(&mut output, &evaluated)?;
-        if needs_css_token_separator(&output, &input[close + 1..]) {
+        if needs_separator_after_replacement(&output, input.get(close + 1..).unwrap_or("")) {
             push_bounded(&mut output, " ")?;
         }
         position = close.checked_add(1)?;
     }
-    push_bounded(&mut output, &input[position..])?;
+    push_bounded(&mut output, input.get(position..).unwrap_or(""))?;
     Some(output.into())
 }
 
@@ -1534,7 +1562,7 @@ pub(crate) fn collect_var_references(input: &str, references: &mut Vec<SmolStr>)
     }
     let functions = find_function_tokens(input, &["var"]).ok_or(())?;
     for (_, _, open, close) in functions {
-        let (name, _) = split_var_arguments(&input[open + 1..close]).ok_or(())?;
+        let (name, _) = split_var_arguments(input.get(open + 1..close).ok_or(())?).ok_or(())?;
         references.push(name);
     }
     Ok(())
@@ -1572,7 +1600,8 @@ pub(crate) fn substitute_vars_with_budget(
             return None;
         }
         push_bounded(&mut output, &input[position..name_start])?;
-        let inner = &input[open + 1..close];
+        // `close == input.len()` for a function closed by the end of input.
+        let inner = input.get(open + 1..close)?;
         let (name, fallback) = split_var_arguments(inner)?;
         let replacement = match resolve(name.as_str()) {
             Some(value) => value,
@@ -1584,7 +1613,7 @@ pub(crate) fn substitute_vars_with_budget(
             },
         };
         push_bounded(&mut output, &replacement)?;
-        if needs_css_token_separator(&output, &input[close + 1..]) {
+        if needs_separator_after_replacement(&output, input.get(close + 1..).unwrap_or("")) {
             // Substitution preserves the original component-value token
             // boundaries. Add a separator only where reparsing the bounded
             // serialization would otherwise merge adjacent tokens.
@@ -1592,7 +1621,7 @@ pub(crate) fn substitute_vars_with_budget(
         }
         position = close.checked_add(1)?;
     }
-    push_bounded(&mut output, &input[position..])?;
+    push_bounded(&mut output, input.get(position..).unwrap_or(""))?;
     Some(output.into())
 }
 

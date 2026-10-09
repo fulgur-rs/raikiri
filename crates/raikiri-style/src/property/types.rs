@@ -11735,9 +11735,15 @@ pub(crate) fn consume_deferred_value(input: &mut Parser<'_, '_>) -> Option<SmolS
             return None;
         }
         let before_token = input.state();
-        let token_start = input.position();
         match input.next() {
             Ok(Token::Delim('!')) => {
+                // `next` first skips the unread body of a preceding function or
+                // block (the `--x)` of `var(--x) !important`), so the position
+                // recorded before the call can still be inside that body. The
+                // value is everything consumed up to and excluding this
+                // one-byte `!`.
+                let through_bang = input.slice_from(start);
+                let value_source = through_bang.strip_suffix('!').unwrap_or(through_bang);
                 input.reset(&before_token);
                 input.skip_whitespace();
                 let bang_state = input.state();
@@ -11749,11 +11755,11 @@ pub(crate) fn consume_deferred_value(input: &mut Parser<'_, '_>) -> Option<SmolS
                     .is_ok();
                 if is_important {
                     input.reset(&bang_state);
-                    if input.slice(start..input.position()).len() > MAX_SUBSTITUTED_VALUE_BYTES {
+                    if value_source.len() > MAX_SUBSTITUTED_VALUE_BYTES {
                         input.reset(&start_state);
                         return None;
                     }
-                    let value = input.slice(start..token_start).trim();
+                    let value = value_source.trim();
                     if !css_component_values_are_bounded(value) {
                         input.reset(&start_state);
                         return None;

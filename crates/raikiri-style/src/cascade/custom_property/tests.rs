@@ -1103,6 +1103,112 @@ fn custom_property_important_wins_and_is_stripped_before_substitution() {
 }
 
 #[test]
+fn important_var_value_keeps_its_whole_text() {
+    // `Parser::next` skips the unread body of a `var(` token before returning
+    // the `!` that follows it, so the value must end at that `!` rather than
+    // where the parser stood before reading it.
+    let cv = cascade_doc(
+        "p { --accent: red; color: var(--accent) !important } p { color: blue }",
+        "p",
+        None,
+    );
+    assert_eq!(cv.color, RED);
+}
+
+#[test]
+fn inline_important_var_value_resolves() {
+    let cv = cascade_doc(
+        "",
+        "p",
+        Some("--accent: red; color: var(--accent) !important"),
+    );
+    assert_eq!(cv.color, RED);
+}
+
+#[test]
+fn important_var_in_shorthand_resolves_every_longhand() {
+    let cv = cascade_doc(
+        "p { --gap: 3px; margin: auto var(--gap) !important }",
+        "p",
+        None,
+    );
+    assert_eq!(cv.margin.top, ComputedLengthPercentageOrAuto::Auto);
+    assert_eq!(cv.margin.right, ComputedLengthPercentageOrAuto::Px(3.0));
+    assert_eq!(cv.margin.bottom, ComputedLengthPercentageOrAuto::Auto);
+    assert_eq!(cv.margin.left, ComputedLengthPercentageOrAuto::Px(3.0));
+}
+
+#[test]
+fn important_var_in_logical_shorthand_resolves() {
+    let cv = cascade_doc(
+        "p { --gap: 3px; padding-block: var(--gap) !important }",
+        "p",
+        None,
+    );
+    assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(3.0));
+    assert_eq!(cv.padding.bottom, ComputedLengthPercentage::Px(3.0));
+}
+
+#[test]
+fn important_math_with_var_resolves() {
+    let cv = cascade_doc(
+        "p { --w: 10px; width: calc(var(--w) + 5px) !important }",
+        "p",
+        None,
+    );
+    assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Px(15.0));
+}
+
+#[test]
+fn empty_unterminated_var_is_invalid_not_a_panic() {
+    for style in ["width: var(", "width: calc(1px + var("] {
+        let cv = cascade_doc("", "p", Some(style));
+        assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Auto, "{style}");
+    }
+}
+
+#[test]
+fn var_left_open_at_the_end_of_input_is_closed_there() {
+    // CSS Syntax 3 returns a function the input ends inside of, so a style
+    // attribute ending in `var(--x` reads as `var(--x)`.
+    let cv = cascade_doc("", "p", Some("--x: 7px; width: var(--x"));
+    assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Px(7.0));
+    let cv = cascade_doc("", "p", Some("--x: 7px; width: calc(var(--x) + 1px"));
+    assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Px(8.0));
+}
+
+#[test]
+fn var_after_another_component_keeps_the_separator() {
+    let cv = cascade_doc("", "p", Some("--x: 2px; margin: 1px var(--x)"));
+    assert_eq!(cv.margin.top, ComputedLengthPercentageOrAuto::Px(1.0));
+    assert_eq!(cv.margin.right, ComputedLengthPercentageOrAuto::Px(2.0));
+    assert_eq!(cv.margin.bottom, ComputedLengthPercentageOrAuto::Px(1.0));
+    assert_eq!(cv.margin.left, ComputedLengthPercentageOrAuto::Px(2.0));
+
+    let cv = cascade_doc("", "p", Some("--gap: 5px; padding: 0 var(--gap) 3px"));
+    assert_eq!(cv.padding.right, ComputedLengthPercentage::Px(5.0));
+    assert_eq!(cv.padding.bottom, ComputedLengthPercentage::Px(3.0));
+}
+
+#[test]
+fn border_shorthand_with_a_trailing_var_color_resolves() {
+    let cv = cascade_doc("", "p", Some("--c: red; border: 1px solid var(--c)"));
+    assert_eq!(cv.border.top.width, ComputedLength(1.0));
+    assert_eq!(cv.border.left.style, crate::property::BorderStyle::Solid);
+    assert_eq!(
+        cv.border.bottom.color,
+        crate::property::BorderColor::Resolved(RED)
+    );
+}
+
+#[test]
+fn math_after_another_component_keeps_the_separator() {
+    let cv = cascade_doc("", "p", Some("--x: 2px; margin: 1px calc(var(--x) + 1px)"));
+    assert_eq!(cv.margin.top, ComputedLengthPercentageOrAuto::Px(1.0));
+    assert_eq!(cv.margin.right, ComputedLengthPercentageOrAuto::Px(3.0));
+}
+
+#[test]
 fn custom_property_names_are_case_sensitive() {
     let cv = cascade_doc(
         "",
