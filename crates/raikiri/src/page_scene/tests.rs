@@ -49,7 +49,7 @@ fn table_scene_geometry_excludes_caption_wrapper_space() {
             base_url: None,
         };
         let uncascaded = parse(html.as_bytes(), &opts).unwrap();
-        let cascade = build_cascaded(&uncascaded);
+        let cascade = build_cascaded(&uncascaded).expect("the cascade succeeds");
         let mut dom = uncascaded.dom;
         let mut page = PageBox::new();
         page.width = 100.0;
@@ -100,7 +100,7 @@ fn table_scene_grid_does_not_intersect_a_caption_only_page() {
             base_url: None,
         };
         let uncascaded = parse(html.as_bytes(), &opts).unwrap();
-        let cascade = build_cascaded(&uncascaded);
+        let cascade = build_cascaded(&uncascaded).expect("the cascade succeeds");
         let mut dom = uncascaded.dom;
         let mut page = PageBox::new();
         page.width = 100.0;
@@ -153,7 +153,7 @@ fn hello_world_post_layout() -> (Document, CascadeResult) {
         base_url: None,
     };
     let uncascaded = parse(&b"<p>Hi</p>"[..], &opts).expect("parse Ok");
-    let cascade = build_cascaded(&uncascaded);
+    let cascade = build_cascaded(&uncascaded).expect("the cascade succeeds");
     let mut dom = uncascaded.dom;
     raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
     (dom, cascade)
@@ -232,7 +232,7 @@ fn build_page_scene_consumes_cascaded_margin_box_rules() {
         &opts,
     )
     .expect("parse Ok");
-    let cascade = build_cascaded(&uncascaded);
+    let cascade = build_cascaded(&uncascaded).expect("the cascade succeeds");
     let mut dom = uncascaded.dom;
     raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
     let scene = build_page_scene(&dom, &cascade, PageBox::A4);
@@ -335,7 +335,7 @@ fn body_margin_horizontal_sum_and_vertical_collapse() {
             base_url: None,
         };
         let uncascaded = parse(html.as_bytes(), &opts).expect("parse Ok");
-        let cascade = build_cascaded(&uncascaded);
+        let cascade = build_cascaded(&uncascaded).expect("the cascade succeeds");
         let mut dom = uncascaded.dom;
         raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
         let scene = build_page_scene(&dom, &cascade, PageBox::A4);
@@ -377,7 +377,7 @@ fn body_margin_lone_5px_collapses_to_8px() {
     };
     let html = "<div id=a style='margin:5px; width:10px; height:10px'></div>";
     let uncascaded = parse(html.as_bytes(), &opts).expect("parse Ok");
-    let cascade = build_cascaded(&uncascaded);
+    let cascade = build_cascaded(&uncascaded).expect("the cascade succeeds");
     let mut dom = uncascaded.dom;
     raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
     let scene = build_page_scene(&dom, &cascade, PageBox::A4);
@@ -494,7 +494,7 @@ fn html_margins_add_to_the_body_offset() {
     let html = "<!DOCTYPE html><style>html{margin:10px 0 0 4%}</style>\
         <div id=a style='margin-top:30px; height:10px'></div>";
     let uncascaded = parse(html.as_bytes(), &opts).expect("parse Ok");
-    let cascade = build_cascaded(&uncascaded);
+    let cascade = build_cascaded(&uncascaded).expect("the cascade succeeds");
     let mut dom = uncascaded.dom;
     raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
     let scene = build_page_scene(&dom, &cascade, PageBox::A4);
@@ -541,7 +541,7 @@ fn body_offset_is_finite_when_margins_do_not_collapse() {
             base_url: None,
         };
         let uncascaded = parse(html.as_bytes(), &opts).expect("parse Ok");
-        let cascade = build_cascaded(&uncascaded);
+        let cascade = build_cascaded(&uncascaded).expect("the cascade succeeds");
         let mut dom = uncascaded.dom;
         raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
         let scene = build_page_scene(&dom, &cascade, PageBox::A4);
@@ -570,7 +570,7 @@ fn scene_with_engine(html: &str) -> (Document, CascadeResult, PageScene) {
         base_url: None,
     };
     let uncascaded = parse(html.as_bytes(), &opts).expect("parse Ok");
-    let cascade = build_cascaded(&uncascaded);
+    let cascade = build_cascaded(&uncascaded).expect("the cascade succeeds");
     let mut dom = uncascaded.dom;
     let dir = std::path::Path::new(FONT_DIR);
     dom.set_font_collection(raikiri_dom::build_wpt_font_collection(dir).expect("collection"));
@@ -679,7 +679,7 @@ fn many_sibling_inline_boxes_build_a_page_scene_within_two_seconds() {
         base_url: None,
     };
     let uncascaded = parse(html.as_bytes(), &opts).expect("parse Ok");
-    let cascade = build_cascaded(&uncascaded);
+    let cascade = build_cascaded(&uncascaded).expect("the cascade succeeds");
     let mut dom = uncascaded.dom;
     let dir = std::path::Path::new(FONT_DIR);
     dom.set_font_collection(raikiri_dom::build_wpt_font_collection(dir).expect("collection"));
@@ -717,7 +717,7 @@ fn many_sibling_text_nodes_build_a_page_scene_within_two_seconds() {
         base_url: None,
     };
     let uncascaded = parse(html.as_bytes(), &opts).expect("parse Ok");
-    let cascade = build_cascaded(&uncascaded);
+    let cascade = build_cascaded(&uncascaded).expect("the cascade succeeds");
     let mut dom = uncascaded.dom;
     let dir = std::path::Path::new(FONT_DIR);
     dom.set_font_collection(raikiri_dom::build_wpt_font_collection(dir).expect("collection"));
@@ -777,7 +777,7 @@ fn build_page_scene_for_page_splits_tall_content_across_pages() {
         "<div id=low style='height:10px'></div>",
     );
     let uncascaded = parse(html.as_bytes(), &opts).expect("parse Ok");
-    let cascade = build_cascaded(&uncascaded);
+    let cascade = build_cascaded(&uncascaded).expect("the cascade succeeds");
     let mut dom = uncascaded.dom;
     raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
 
@@ -862,7 +862,7 @@ fn build_page_scene_for_page_named_attaches_name_and_landscape() {
         &opts,
     )
     .expect("parse Ok");
-    let cascade = build_cascaded(&uncascaded);
+    let cascade = build_cascaded(&uncascaded).expect("the cascade succeeds");
     let mut dom = uncascaded.dom;
     let page_box = PageBox::from_page_size(cascade.page.size());
     raikiri_dom::layout_single_page(&mut dom, &cascade, page_box).expect("layout Ok");

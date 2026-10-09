@@ -74,7 +74,8 @@ pub fn render_screen_url(
     uncascaded.dom.set_font_collection(fonts);
     uncascaded.dom.set_ifc_parallel_build(bundled_only);
     let mut cascade =
-        build_cascaded_with_media_context_for_page(&uncascaded, &media_context, &page_query);
+        build_cascaded_with_media_context_for_page(&uncascaded, &media_context, &page_query)
+            .map_err(|error| ScreenRenderError::new(error.to_string()))?;
     let mut page_box = PageBox::new();
     page_box.width = size.width() as f32;
     page_box.height = size.height() as f32;

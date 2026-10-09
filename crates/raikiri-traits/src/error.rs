@@ -19,6 +19,7 @@ use crate::resolver::ResolverError;
 // consumers observing `raikiri_traits::CascadeError` (raikiri umbrella's
 // re-export in `crates/raikiri/src/lib.rs`) are unchanged.
 pub use raikiri_style::CascadeError;
+use raikiri_style::CascadeLimitKind;
 
 /// Terminal render error. Every variant means rendering stopped at that point.
 ///
@@ -154,10 +155,41 @@ impl From<ParseError> for RenderError {
     }
 }
 
+/// A passed cascade limit becomes a passed [`RenderLimits`](crate::RenderLimits)
+/// limit, the one it is configured from, as the layout limits below do. Any
+/// other cascade error stays one.
 impl From<CascadeError> for RenderError {
     fn from(e: CascadeError) -> Self {
+        if let CascadeError::LimitExceeded {
+            kind,
+            limit,
+            actual,
+        } = e
+            && let Some(kind) = render_limit_kind(kind)
+        {
+            return Self::LimitExceeded {
+                kind,
+                limit,
+                actual,
+            };
+        }
         Self::Cascade(e)
     }
+}
+
+/// The [`LimitKind`] of the [`RenderLimits`](crate::RenderLimits) field a
+/// cascade limit is configured from.
+fn render_limit_kind(kind: CascadeLimitKind) -> Option<LimitKind> {
+    Some(match kind {
+        CascadeLimitKind::CandidatesPerElement => LimitKind::CascadeCandidatesPerElement,
+        CascadeLimitKind::DeclarationsVisited => LimitKind::CascadeDeclarations,
+        CascadeLimitKind::SelectorTests => LimitKind::CascadeSelectorTests,
+        CascadeLimitKind::RetainedBytes => LimitKind::CascadeRetainedBytes,
+        CascadeLimitKind::OutputBytes => LimitKind::CascadeOutputBytes,
+        // cov:ignore: every current kind is mapped above; a kind added later
+        // stays a cascade error until it is mapped here
+        _ => return None,
+    })
 }
 
 impl From<LayoutError> for RenderError {
@@ -211,6 +243,16 @@ pub enum LimitKind {
     InputBytes,
     /// Exceeded the hard cumulative estimated-memory budget for counter snapshots.
     CounterSnapshots,
+    /// Exceeded `max_cascade_candidates_per_element`.
+    CascadeCandidatesPerElement,
+    /// Exceeded `max_cascade_declarations`.
+    CascadeDeclarations,
+    /// Exceeded `max_cascade_selector_tests`.
+    CascadeSelectorTests,
+    /// Exceeded `max_cascade_retained_bytes`.
+    CascadeRetainedBytes,
+    /// Exceeded `max_cascade_output_bytes`.
+    CascadeOutputBytes,
 }
 
 /// Render completion summary (Finding #4 completion protocol).

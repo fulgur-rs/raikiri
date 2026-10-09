@@ -23,11 +23,12 @@ use raikiri_style::{
 /// Declarations emitted per generated rule in the benchmark workload.
 const DECLS_PER_RULE: usize = 10;
 
-/// Shared message for the benchmark's infallible cascade calls.
+/// Shared message for the benchmark's cascade calls, which fail only when
+/// a workload passes the default cascade limits.
 // cov:ignore: bench harness constant — `cargo test`/`cargo llvm-cov
 // --workspace` never build this bench target, so nothing in this file has
 // coverage instrumentation to attribute to.
-const CASCADE_NEVER_ERRS: &str = "cascade never returns Err in the current implementation";
+const CASCADE_WITHIN_LIMITS: &str = "the workload is within the default cascade limits";
 
 /// Compound count of the selector used by the combinator-chain workload.
 // cov:ignore: bench harness constant — `cargo test`/`cargo llvm-cov
@@ -40,15 +41,15 @@ const COMBINATOR_CHAIN_SELECTOR_DEPTH: usize = 5;
 const COMBINATOR_CHAIN_DOC_DEPTH: usize = 5000;
 
 /// Depth of the `div` chain in the descendant-miss workload.
-// cov:ignore: bench harness constant — same reason as `CASCADE_NEVER_ERRS`.
+// cov:ignore: bench harness constant — same reason as `CASCADE_WITHIN_LIMITS`.
 const DESCENDANT_MISS_DOC_DEPTH: usize = 1000;
 
 /// Rule count of the descendant-miss workload.
-// cov:ignore: bench harness constant — same reason as `CASCADE_NEVER_ERRS`.
+// cov:ignore: bench harness constant — same reason as `CASCADE_WITHIN_LIMITS`.
 const DESCENDANT_MISS_RULES: usize = 50;
 
 /// Depth of the `div` chain in the `:first-child` chain workload.
-// cov:ignore: bench harness constant — same reason as `CASCADE_NEVER_ERRS`.
+// cov:ignore: bench harness constant — same reason as `CASCADE_WITHIN_LIMITS`.
 const FIRST_CHILD_CHAIN_DEPTH: usize = 5000;
 
 /// Number of `article` levels in the mixed-combinator workload.
@@ -638,7 +639,7 @@ fn descendant_miss_workload(n_rules: usize, doc_depth: usize) -> (BenchDoc, Rule
 
     let doc = BenchDoc::chain(doc_depth);
     let initial = ComputedValues::initial();
-    let probe = cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS);
+    let probe = cascade(&doc, &tree).expect(CASCADE_WITHIN_LIMITS);
     for i in 1..=doc_depth {
         assert_eq!(
             probe.computed[i].color, initial.color,
@@ -667,7 +668,7 @@ fn inline_style_workload(n_elems: usize, repeated: bool) -> (BenchDoc, RuleTree,
             if repeated { 3 } else { k % 256 }
         ));
     }
-    let probe = cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS);
+    let probe = cascade(&doc, &tree).expect(CASCADE_WITHIN_LIMITS);
     for (k, div) in divs.iter().enumerate() {
         let px = if repeated { 7.0 } else { (k % 997 + 1) as f32 };
         assert_eq!(
@@ -697,7 +698,7 @@ fn has_child_chain_workload(doc_depth: usize) -> (BenchDoc, RuleTree, u64) {
     let doc = BenchDoc::chain(doc_depth);
     let want = shared_winners();
     let initial = ComputedValues::initial();
-    let probe = cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS);
+    let probe = cascade(&doc, &tree).expect(CASCADE_WITHIN_LIMITS);
     // `margin-top` is not inherited, so it tells a matching `div` apart from
     // the deepest one, which only inherits the matched ancestors' color.
     for i in 1..=doc_depth {
@@ -917,7 +918,7 @@ fn workload(n_rules: usize, n_elems: usize, wrapped: bool) -> (BenchDoc, RuleTre
     // --workspace` (bench targets are not built by `cargo test`/`cargo
     // llvm-cov --workspace`). The assertions in this function are the actual
     // correctness check, run once at setup outside any timed region.
-    let probe = cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS);
+    let probe = cascade(&doc, &tree).expect(CASCADE_WITHIN_LIMITS);
     assert_eq!(
         probe.computed.len(),
         doc.node_count(),
@@ -1061,7 +1062,7 @@ fn combinator_chain_workload(selector_depth: usize, doc_depth: usize) -> (BenchD
          or the probe below would be vacuous"
     );
 
-    let probe = cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS);
+    let probe = cascade(&doc, &tree).expect(CASCADE_WITHIN_LIMITS);
     assert_eq!(
         probe.computed.len(),
         doc.node_count(),
@@ -1162,7 +1163,7 @@ fn mixed_combinator_workload(n_articles: usize) -> (BenchDoc, RuleTree, u64) {
          or the probe below would be vacuous"
     );
 
-    let probe = cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS);
+    let probe = cascade(&doc, &tree).expect(CASCADE_WITHIN_LIMITS);
     assert_eq!(
         probe.computed.len(),
         doc.node_count(),
@@ -1347,7 +1348,7 @@ fn sparse_class_workload(n_rules: usize, n_elems: usize) -> (BenchDoc, RuleTree,
         "shared winner values must differ from the initial ones, or the probe below would be vacuous"
     );
 
-    let probe = cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS);
+    let probe = cascade(&doc, &tree).expect(CASCADE_WITHIN_LIMITS);
     assert_eq!(
         probe.computed.len(),
         doc.node_count(),
@@ -1413,7 +1414,7 @@ fn sparse_id_workload(n_rules: usize, n_elems: usize) -> (BenchDoc, RuleTree, u6
         "shared winner values must differ from the initial ones, or the probe below would be vacuous"
     );
 
-    let probe = cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS);
+    let probe = cascade(&doc, &tree).expect(CASCADE_WITHIN_LIMITS);
     assert_eq!(
         probe.computed.len(),
         doc.node_count(),
@@ -1464,7 +1465,7 @@ fn wide_nth_workload(n_elems: usize) -> (BenchDoc, RuleTree, u64) {
         "shared winner values must differ from the initial ones, or the probe below would be vacuous"
     );
 
-    let probe = cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS);
+    let probe = cascade(&doc, &tree).expect(CASCADE_WITHIN_LIMITS);
     assert_eq!(
         probe.computed.len(),
         doc.node_count(),
@@ -1514,7 +1515,7 @@ fn wide_adjacent_workload(n_elems: usize) -> (BenchDoc, RuleTree, u64) {
         "shared winner values must differ from the initial ones, or the probe below would be vacuous"
     );
 
-    let probe = cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS);
+    let probe = cascade(&doc, &tree).expect(CASCADE_WITHIN_LIMITS);
     assert_eq!(
         probe.computed.len(),
         doc.node_count(),
@@ -1565,7 +1566,7 @@ fn first_child_chain_workload(depth: usize) -> (BenchDoc, RuleTree, u64) {
         "shared winner values must differ from the initial ones, or the probe below would be vacuous"
     );
 
-    let probe = cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS);
+    let probe = cascade(&doc, &tree).expect(CASCADE_WITHIN_LIMITS);
     assert_eq!(
         probe.computed.len(),
         doc.node_count(),
@@ -1645,7 +1646,7 @@ fn media_workload(
     let mut tree = RuleTree::empty();
     tree.add_stylesheet(&format!("@media {query} {{ {css} }}"), Origin::Author);
     let initial = ComputedValues::initial();
-    let probe = cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS);
+    let probe = cascade(&doc, &tree).expect(CASCADE_WITHIN_LIMITS);
     assert_eq!(probe.computed.len(), doc.node_count());
     for (idx, node) in doc.nodes.iter().enumerate() {
         if node.kind != StyleNodeKind::Element {
@@ -1669,7 +1670,7 @@ fn media_workload(
         &tree,
         &raikiri_style::MediaContext::screen(),
     )
-    .expect(CASCADE_NEVER_ERRS);
+    .expect(CASCADE_WITHIN_LIMITS);
     assert_eq!(
         screen.computed[1].color,
         if active { initial.color } else { want.color }
@@ -1741,7 +1742,7 @@ fn bench_cascade(c: &mut Criterion) {
             let (doc, tree) = prepared(&slot, declarations, || {
                 cached(workload(n_rules, n_elems, wrapped))
             });
-            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_NEVER_ERRS));
+            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_WITHIN_LIMITS));
         });
     }
 
@@ -1759,7 +1760,7 @@ fn bench_cascade(c: &mut Criterion) {
             let (doc, tree) = prepared(&slot, n_elems as u64, || {
                 cached(media_workload(n_rules, n_elems, query, active))
             });
-            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_NEVER_ERRS));
+            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_WITHIN_LIMITS));
         });
     }
 
@@ -1785,7 +1786,7 @@ fn bench_cascade(c: &mut Criterion) {
                     COMBINATOR_CHAIN_DOC_DEPTH,
                 ))
             });
-            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_NEVER_ERRS));
+            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_WITHIN_LIMITS));
         });
     }
 
@@ -1803,7 +1804,7 @@ fn bench_cascade(c: &mut Criterion) {
             let (doc, tree) = prepared(&slot, 2000, || {
                 cached(inline_style_workload(2000, repeated))
             });
-            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_NEVER_ERRS));
+            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_WITHIN_LIMITS));
         });
     }
 
@@ -1815,7 +1816,7 @@ fn bench_cascade(c: &mut Criterion) {
         group.throughput(Throughput::Elements(2000));
         group.bench_function("has_child_chain_2000", |b| {
             let (doc, tree) = prepared(&slot, 2000, || cached(has_child_chain_workload(2000)));
-            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_NEVER_ERRS));
+            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_WITHIN_LIMITS));
         });
     }
 
@@ -1864,7 +1865,7 @@ fn bench_cascade(c: &mut Criterion) {
                     DESCENDANT_MISS_DOC_DEPTH,
                 ))
             });
-            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_NEVER_ERRS));
+            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_WITHIN_LIMITS));
         });
     }
 
@@ -1886,7 +1887,7 @@ fn bench_cascade(c: &mut Criterion) {
             let (doc, tree) = prepared(&slot, match_attempts, || {
                 cached(mixed_combinator_workload(MIXED_CHAIN_ARTICLES))
             });
-            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_NEVER_ERRS));
+            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_WITHIN_LIMITS));
         });
     }
 
@@ -1913,7 +1914,7 @@ fn bench_cascade(c: &mut Criterion) {
                     sparse_class_workload(n_rules, n_elems)
                 })
             });
-            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_NEVER_ERRS));
+            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_WITHIN_LIMITS));
         });
     }
 
@@ -1930,7 +1931,7 @@ fn bench_cascade(c: &mut Criterion) {
         group.throughput(Throughput::Elements(elems));
         group.bench_function(format!("nth_child_wide_{n_elems}"), |b| {
             let (doc, tree) = prepared(&slot, elems, || cached(wide_nth_workload(n_elems)));
-            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_NEVER_ERRS));
+            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_WITHIN_LIMITS));
         });
     }
 
@@ -1941,7 +1942,7 @@ fn bench_cascade(c: &mut Criterion) {
         group.throughput(Throughput::Elements(elems));
         group.bench_function(format!("adjacent_wide_{n_elems}"), |b| {
             let (doc, tree) = prepared(&slot, elems, || cached(wide_adjacent_workload(n_elems)));
-            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_NEVER_ERRS));
+            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_WITHIN_LIMITS));
         });
     }
 
@@ -1957,7 +1958,7 @@ fn bench_cascade(c: &mut Criterion) {
             let (doc, tree) = prepared(&slot, elems, || {
                 cached(first_child_chain_workload(FIRST_CHILD_CHAIN_DEPTH))
             });
-            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_NEVER_ERRS));
+            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_WITHIN_LIMITS));
         });
     }
 

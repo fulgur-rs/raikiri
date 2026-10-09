@@ -4,8 +4,8 @@
 //! document into a [`RuleTree`] and runs the element and `@page` cascades.
 
 use raikiri_style::{
-    CascadeResult, ConsumerPropertyRegistration, MediaContext, Origin, PageContextQuery, RuleTree,
-    cascade_with_media_context_for_page,
+    CascadeError, CascadeOptions, CascadeResult, ConsumerPropertyRegistration, MediaContext,
+    Origin, PageContextQuery, RuleTree, cascade_with_options,
 };
 use raikiri_traits::StylesheetKind;
 
@@ -14,13 +14,18 @@ use crate::UncascadedDocument;
 /// Take the UA and consumer-supplied stylesheets from the Document, assign
 /// origins, build a RuleTree, add inline `<style>` elements collected by
 /// raikiri-html during parsing and fetched `<link rel="stylesheet">` sources as
-/// Author stylesheets, then run the cascade.
-///
-/// Currently `raikiri_style::cascade` always returns `Ok`, so we call `expect`
-/// internally. Consider exposing its Result if that changes.
+/// Author stylesheets, then run the cascade within the default
+/// [`raikiri_style::CascadeLimits`].
 ///
 /// Consumers obtain per-node ComputedValues in two steps:
 /// [`crate::parse`](fn@crate::parse) followed by [`build_cascaded`].
+///
+/// # Errors
+///
+/// Fails when the document and its stylesheets pass a cascade limit, the
+/// allocator refuses the cascade's result, or the stylesheets have more
+/// rules, selectors or declarations than the cascade can number; see
+/// [`raikiri_style::cascade_with_options`].
 ///
 /// # Collection scope for DOM `<style>` elements
 ///
@@ -62,15 +67,19 @@ use crate::UncascadedDocument;
 /// Translate `StylesheetKind → Origin` here in raikiri-html, which sits above
 /// both raikiri-style and raikiri-dom, rather than in either lower crate.
 /// This avoids a reverse dependency between the lower crates.
-pub fn build_cascaded(doc: &UncascadedDocument) -> CascadeResult {
+pub fn build_cascaded(doc: &UncascadedDocument) -> Result<CascadeResult, CascadeError> {
     build_cascaded_with_media_context(doc, &MediaContext::default())
 }
 
 /// Build a cascade that retains the supplied consumer-owned properties.
+///
+/// # Errors
+///
+/// See [`build_cascaded`].
 pub fn build_cascaded_with_consumer_properties(
     doc: &UncascadedDocument,
     consumer_properties: &[ConsumerPropertyRegistration],
-) -> CascadeResult {
+) -> Result<CascadeResult, CascadeError> {
     build_cascaded_with_media_context_for_page_and_consumer_properties(
         doc,
         &MediaContext::default(),
@@ -80,10 +89,14 @@ pub fn build_cascaded_with_consumer_properties(
 }
 
 /// Build the cascade for one page-context query using the default media context.
+///
+/// # Errors
+///
+/// See [`build_cascaded`].
 pub fn build_cascaded_for_page(
     doc: &UncascadedDocument,
     page_query: &PageContextQuery,
-) -> CascadeResult {
+) -> Result<CascadeResult, CascadeError> {
     build_cascaded_with_media_context_for_page(doc, &MediaContext::default(), page_query)
 }
 
@@ -91,10 +104,14 @@ pub fn build_cascaded_for_page(
 ///
 /// [`build_cascaded`] remains the compatibility entry point and uses the
 /// default paged (`print`) context.
+///
+/// # Errors
+///
+/// See [`build_cascaded`].
 pub fn build_cascaded_with_media_context(
     doc: &UncascadedDocument,
     media_context: &MediaContext,
-) -> CascadeResult {
+) -> Result<CascadeResult, CascadeError> {
     build_cascaded_with_media_context_for_page(doc, media_context, &PageContextQuery::default())
 }
 
@@ -103,11 +120,15 @@ pub fn build_cascaded_with_media_context(
 /// The first-page render path uses this entry point with `is_first` and
 /// `is_right` set. A future page-stream driver can call it once per page with
 /// the page name and pseudo-page state selected by its break algorithm.
+///
+/// # Errors
+///
+/// See [`build_cascaded`].
 pub fn build_cascaded_with_media_context_for_page(
     doc: &UncascadedDocument,
     media_context: &MediaContext,
     page_query: &PageContextQuery,
-) -> CascadeResult {
+) -> Result<CascadeResult, CascadeError> {
     build_cascaded_with_media_context_for_page_and_consumer_properties(
         doc,
         media_context,
@@ -121,15 +142,43 @@ pub fn build_cascaded_with_media_context_for_page(
 /// Registration is optional and has no effect on the compatibility cascade.
 /// Registered properties are parsed into the existing inherited custom-property
 /// environment, then exposed through the neutral observer at render time.
+///
+/// # Errors
+///
+/// See [`build_cascaded`].
 pub fn build_cascaded_with_media_context_for_page_and_consumer_properties(
     doc: &UncascadedDocument,
     media_context: &MediaContext,
     page_query: &PageContextQuery,
     consumer_properties: &[ConsumerPropertyRegistration],
-) -> CascadeResult {
+) -> Result<CascadeResult, CascadeError> {
+    build_cascaded_with_options(
+        doc,
+        media_context,
+        page_query,
+        consumer_properties,
+        &CascadeOptions::default(),
+    )
+}
+
+/// Build a page-aware cascade that retains registered consumer properties,
+/// within `options.limits`.
+///
+/// # Errors
+///
+/// Fails when the document and its stylesheets pass one of `options.limits`,
+/// the allocator refuses the cascade's result, or the stylesheets have more
+/// rules, selectors or declarations than the cascade can number; see
+/// [`raikiri_style::cascade_with_options`].
+pub fn build_cascaded_with_options(
+    doc: &UncascadedDocument,
+    media_context: &MediaContext,
+    page_query: &PageContextQuery,
+    consumer_properties: &[ConsumerPropertyRegistration],
+    options: &CascadeOptions,
+) -> Result<CascadeResult, CascadeError> {
     let tree = build_rule_tree_with_consumer_properties(doc, consumer_properties);
-    cascade_with_media_context_for_page(&doc.dom, &tree, media_context, page_query)
-        .expect("cascade は常に Ok のはず")
+    cascade_with_options(&doc.dom, &tree, media_context, page_query, options)
 }
 
 /// Build the stylesheet rule tree used by the document cascade.

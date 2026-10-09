@@ -20,13 +20,19 @@ fn preloaded_user_sheets_precede_extras_and_later_appended_user_sheets_follow() 
         .find(|&index| doc.dom.get_node(index).and_then(|node| node.tag_name()) == Some("p"))
         .unwrap();
     assert_eq!(
-        crate::build_cascaded(&doc).computed[index].display,
+        crate::build_cascaded(&doc)
+            .expect("the cascade succeeds")
+            .computed[index]
+            .display,
         raikiri_style::DisplayValue::Inline
     );
     doc.dom
         .add_stylesheet("p {display:block}", raikiri_traits::StylesheetKind::User);
     assert_eq!(
-        crate::build_cascaded(&doc).computed[index].display,
+        crate::build_cascaded(&doc)
+            .expect("the cascade succeeds")
+            .computed[index]
+            .display,
         raikiri_style::DisplayValue::Block
     );
 }

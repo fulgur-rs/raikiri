@@ -22,20 +22,21 @@
 //!
 //! let opts = ParseOptions { extra_stylesheets: &[], network: None, base_url: None };
 //! let doc = parse(&b"<p>Hi</p>"[..], &opts).expect("parse");
-//! let result = build_cascaded(&doc);
+//! let result = build_cascaded(&doc).expect("the cascade succeeds");
 //! assert!(!result.computed.is_empty(), "cascade populates per-node ComputedValues");
 //! ```
 
 #![allow(rustdoc::private_intra_doc_links)]
+// cov:ignore: public re-export declarations have no executable body
 pub use raikiri_html::{
     Anchor, AnchorIndex, DEFAULT_MAX_AGGREGATE_RESOURCE_BYTES, DEFAULT_MAX_RESOURCE_BYTES,
     DocumentLayout, DomView, Fragment, FragmentKind, HtmlDocument, LayoutOptions, LayoutStatus,
     Link, Page, PageGeometry, PageMode, RenderResources, RepeatKind, ResourceLimits,
     build_cascaded, build_cascaded_for_page, build_cascaded_with_consumer_properties,
     build_cascaded_with_media_context, build_cascaded_with_media_context_for_page,
-    build_cascaded_with_media_context_for_page_and_consumer_properties, build_rule_tree,
-    build_rule_tree_with_consumer_properties, layout, parse_html, parse_html_with_limits,
-    parse_html_with_resources,
+    build_cascaded_with_media_context_for_page_and_consumer_properties,
+    build_cascaded_with_options, build_rule_tree, build_rule_tree_with_consumer_properties, layout,
+    parse_html, parse_html_with_limits, parse_html_with_resources,
 };
 
 pub use raikiri_html::{
@@ -250,13 +251,14 @@ pub use raikiri_dom::Document;
 // not change shorthand expansion.
 // cov:ignore: public re-export declarations have no executable body
 pub use raikiri_style::{
-    AtRuleBody, AtRuleRecord, Atom, CascadeResult, ComputedBorder, ComputedLength,
-    ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLineHeight, ComputedValues,
-    CssColor, CssRule, CssRuleKind, DisplayValue, FontFamilyKind, FontFamilyName, Length,
-    LengthOrAuto, MediaContext, MediaType, Origin, PageBleed, PageCascadeResult, PageContextQuery,
-    PageInheritance, PageMarginBoxCascadeResult, PageMarginBoxSlot, PageMarks, PageOrientation,
-    PageSize, PageSizeKeyword, PropertyValue, QualifiedRuleRecord, RuleNode, RuleTree, Sides,
-    cascade_with_media_context, cascade_with_media_context_for_page,
+    AtRuleBody, AtRuleRecord, Atom, CascadeLimitKind, CascadeLimits, CascadeOptions, CascadeResult,
+    ComputedBorder, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
+    ComputedLineHeight, ComputedValues, CssColor, CssRule, CssRuleKind, DisplayValue,
+    FontFamilyKind, FontFamilyName, Length, LengthOrAuto, MediaContext, MediaType, Origin,
+    PageBleed, PageCascadeResult, PageContextQuery, PageInheritance, PageMarginBoxCascadeResult,
+    PageMarginBoxSlot, PageMarks, PageOrientation, PageSize, PageSizeKeyword, PropertyValue,
+    QualifiedRuleRecord, RuleNode, RuleTree, Sides, cascade_with_media_context,
+    cascade_with_media_context_for_page, cascade_with_options,
 };
 // `Border`, `BorderColor`, `BorderStyle`, and `LineHeight` are not exported
 // from the raikiri-style crate root. They are public only through

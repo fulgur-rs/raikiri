@@ -47,7 +47,7 @@ fn find_by_tag<D: Dom>(dom: &D, tag: &str) -> Option<NodeId> {
 #[test]
 fn p_without_author_style_is_display_block_via_ua_css() {
     let doc = parse_html("<html><body><p>Hi</p></body></html>");
-    let result = build_cascaded(&doc);
+    let result = build_cascaded(&doc).expect("the cascade succeeds");
 
     let p_id = find_by_tag(&doc.dom, "p").expect("<p> exists");
     let display = result.computed[p_id.0 as usize].display;
@@ -65,13 +65,14 @@ fn explicit_media_context_reaches_umbrella_cascade() {
     let doc = parse_html(html);
     let p_id = find_by_tag(&doc.dom, "p").expect("<p> exists");
 
-    let print_result = build_cascaded(&doc);
+    let print_result = build_cascaded(&doc).expect("the cascade succeeds");
     assert_eq!(
         print_result.computed[p_id.0 as usize].display,
         DisplayValue::Block
     );
 
-    let screen_result = build_cascaded_with_media_context(&doc, &MediaContext::screen());
+    let screen_result = build_cascaded_with_media_context(&doc, &MediaContext::screen())
+        .expect("the cascade succeeds");
     assert_eq!(
         screen_result.computed[p_id.0 as usize].display,
         DisplayValue::Inline
@@ -86,7 +87,7 @@ fn page_size_cascade_reaches_umbrella_page_box_consumer() {
     let mut query = PageContextQuery::default();
     query.is_first = true;
     query.is_right = true;
-    let cascade = build_cascaded_for_page(&doc, &query);
+    let cascade = build_cascaded_for_page(&doc, &query).expect("the cascade succeeds");
     let page_box = PageBox::from_page_size(cascade.page.size());
     assert_eq!(page_box.width, 300.0);
     assert_eq!(page_box.height, 50.0);
@@ -100,7 +101,7 @@ fn page_first_selector_reaches_umbrella_page_cascade() {
     let mut query = PageContextQuery::default();
     query.is_first = true;
     query.is_right = true;
-    let cascade = build_cascaded_for_page(&doc, &query);
+    let cascade = build_cascaded_for_page(&doc, &query).expect("the cascade succeeds");
     let page_box = PageBox::from_page_size(cascade.page.size());
     assert_eq!(page_box.width, 400.0);
     assert_eq!(page_box.height, 60.0);
@@ -133,7 +134,7 @@ fn sectioning_and_grouping_elements_are_display_block_via_ua_css() {
     ] {
         let html = format!("<html><body><{tag}>Hi</{tag}></body></html>");
         let doc = parse_html(&html);
-        let result = build_cascaded(&doc);
+        let result = build_cascaded(&doc).expect("the cascade succeeds");
 
         let el_id = find_by_tag(&doc.dom, tag).unwrap_or_else(|| panic!("<{tag}> exists"));
         let display = result.computed[el_id.0 as usize].display;
@@ -153,7 +154,7 @@ fn list_elements_use_list_item_display_via_ua_css() {
     for tag in ["ol", "ul", "li"] {
         let html = format!("<html><body><{tag}>Hi</{tag}></body></html>");
         let doc = parse_html(&html);
-        let result = build_cascaded(&doc);
+        let result = build_cascaded(&doc).expect("the cascade succeeds");
 
         let el_id = find_by_tag(&doc.dom, tag).unwrap_or_else(|| panic!("<{tag}> exists"));
         let display = result.computed[el_id.0 as usize].display;
@@ -175,7 +176,7 @@ fn li_list_item_display_stacks_siblings_as_boxes() {
     // Check both li children through ul.child_ids, not a tag scan: find_by_tag
     // would inspect only the first li and miss a regression in the second.
     let doc = parse_html("<html><body><ul><li>A</li><li>B</li></ul></body></html>");
-    let result = build_cascaded(&doc);
+    let result = build_cascaded(&doc).expect("the cascade succeeds");
 
     let ul_id = find_by_tag(&doc.dom, "ul").expect("<ul> exists");
     let li_ids: Vec<NodeId> = doc.dom.child_ids(ul_id).collect();
@@ -210,7 +211,7 @@ fn li_list_item_display_stacks_siblings_as_boxes() {
 fn author_inline_style_overrides_ua_display_block() {
     // NB: cascade drops class/id selectors, so use inline style.
     let doc = parse_html("<html><body><p style=\"display:inline\">Hi</p></body></html>");
-    let result = build_cascaded(&doc);
+    let result = build_cascaded(&doc).expect("the cascade succeeds");
 
     let p_id = find_by_tag(&doc.dom, "p").expect("<p> exists");
     let display = result.computed[p_id.0 as usize].display;
@@ -228,7 +229,7 @@ fn dom_style_element_author_rule_overrides_ua() {
     let html = "<html><head><style>p { display: inline }</style></head>\
                 <body><p>Hi</p></body></html>";
     let doc = parse_html(html);
-    let result = build_cascaded(&doc);
+    let result = build_cascaded(&doc).expect("the cascade succeeds");
 
     let p_id = find_by_tag(&doc.dom, "p").expect("<p> exists");
     let display = result.computed[p_id.0 as usize].display;
@@ -255,7 +256,7 @@ fn lang_pseudo_class_inherits_from_html_lang_attribute_through_real_parse_pipeli
                 <style>:lang(ja) { font-family: serif-ja }</style></head>\
                 <body><p>Hi</p></body></html>";
     let doc = parse_html(html);
-    let result = build_cascaded(&doc);
+    let result = build_cascaded(&doc).expect("the cascade succeeds");
 
     let p_id = find_by_tag(&doc.dom, "p").expect("<p> exists");
     let font_family = &result.computed[p_id.0 as usize].font_family;
@@ -281,7 +282,7 @@ fn extra_stylesheets_user_rule_overrides_ua_via_umbrella() {
     };
     let doc = raikiri::parse(&b"<p>Hi</p>"[..], &opts).expect("parse");
 
-    let result = build_cascaded(&doc);
+    let result = build_cascaded(&doc).expect("the cascade succeeds");
     let p_id = find_by_tag(&doc.dom, "p").expect("<p> exists");
     let display = result.computed[p_id.0 as usize].display;
     assert_eq!(display, DisplayValue::Inline);
@@ -295,7 +296,7 @@ fn style_inside_template_element_does_not_affect_cascade() {
     let html = "<html><head><template><style>p { display: inline }</style></template></head>\
                 <body><p>Hi</p></body></html>";
     let doc = parse_html(html);
-    let result = build_cascaded(&doc);
+    let result = build_cascaded(&doc).expect("the cascade succeeds");
 
     let p_id = find_by_tag(&doc.dom, "p").expect("<p> exists");
     let display = result.computed[p_id.0 as usize].display;
@@ -328,7 +329,7 @@ fn user_important_beats_normal_ua_via_umbrella() {
     };
     let doc = raikiri::parse(&b"<p>Hi</p>"[..], &opts).expect("parse");
 
-    let result = build_cascaded(&doc);
+    let result = build_cascaded(&doc).expect("the cascade succeeds");
     let p_id = find_by_tag(&doc.dom, "p").expect("<p> exists");
     let display = result.computed[p_id.0 as usize].display;
 
@@ -369,7 +370,7 @@ fn umbrella_re_exports_cover_computed_value_types_and_parse_options_fields() {
     // Annotate UncascadedDocument.dom as Document to verify its re-export.
     let _dom: &Document = &doc.dom;
 
-    let result = build_cascaded(&doc);
+    let result = build_cascaded(&doc).expect("the cascade succeeds");
     let p_id = find_by_tag(&doc.dom, "p").expect("<p> exists");
     let computed = &result.computed[p_id.0 as usize];
 
@@ -461,7 +462,7 @@ fn umbrella_re_exports_cover_computed_sides_container_fields() {
         base_url: None,
     };
     let doc = parse(&b"<p>Hi</p>"[..], &opts).expect("parse");
-    let result = build_cascaded(&doc);
+    let result = build_cascaded(&doc).expect("the cascade succeeds");
     let p_id = find_by_tag(&doc.dom, "p").expect("<p> exists");
     let computed = &result.computed[p_id.0 as usize];
 
@@ -557,7 +558,7 @@ fn link_rel_stylesheet_fetched_css_reaches_computed_style_through_real_cascade()
         "fetched external stylesheet CSS text must land in stylesheet_sources"
     );
 
-    let result = build_cascaded(&doc);
+    let result = build_cascaded(&doc).expect("the cascade succeeds");
     let div_id = find_by_tag(&doc.dom, "div").expect("<div> exists");
     let display = result.computed[div_id.0 as usize].display;
     assert_eq!(
@@ -618,7 +619,7 @@ fn imported_stylesheet_rules_reach_cascade_in_source_order() {
     let html = br#"<html><head><link rel="stylesheet" href="css/main.css"></head>
         <body><p>Hi</p></body></html>"#;
     let doc = parse(&html[..], &opts).expect("parse");
-    let result = build_cascaded(&doc);
+    let result = build_cascaded(&doc).expect("the cascade succeeds");
     let p_id = find_by_tag(&doc.dom, "p").expect("<p> exists");
     assert_eq!(
         result.computed[p_id.0 as usize].display,
@@ -681,13 +682,14 @@ fn imported_media_condition_is_evaluated_by_the_selected_cascade_context() {
     let doc = parse(&html[..], &opts).expect("parse");
     let p_id = find_by_tag(&doc.dom, "p").expect("<p> exists");
 
-    let print_result = build_cascaded(&doc);
+    let print_result = build_cascaded(&doc).expect("the cascade succeeds");
     assert_eq!(
         print_result.computed[p_id.0 as usize].display,
         DisplayValue::Block,
         "screen-only imported rules must not apply to the default print context"
     );
-    let screen_result = build_cascaded_with_media_context(&doc, &MediaContext::screen());
+    let screen_result = build_cascaded_with_media_context(&doc, &MediaContext::screen())
+        .expect("the cascade succeeds");
     assert_eq!(
         screen_result.computed[p_id.0 as usize].display,
         DisplayValue::Inline,
@@ -703,7 +705,7 @@ fn body_style_element_reaches_umbrella_cascade() {
     let html = "<html><head></head>\
                 <body><p>Hi</p><style>p { display: inline }</style></body></html>";
     let doc = parse_html(html);
-    let result = build_cascaded(&doc);
+    let result = build_cascaded(&doc).expect("the cascade succeeds");
 
     let p_id = find_by_tag(&doc.dom, "p").expect("<p> exists");
     let display = result.computed[p_id.0 as usize].display;
@@ -727,7 +729,7 @@ fn img_width_height_html_attributes_reach_computed_style_through_real_parse_path
     // `ElementRef::attr()` → `StyleElement::attr()` path, using only public
     // raikiri APIs as an external consumer would.
     let doc = parse_html(r#"<html><body><img src="x.png" width="100" height="50"></body></html>"#);
-    let result = build_cascaded(&doc);
+    let result = build_cascaded(&doc).expect("the cascade succeeds");
 
     let img_id = find_by_tag(&doc.dom, "img").expect("<img> exists");
     let computed = &result.computed[img_id.0 as usize];
@@ -752,7 +754,7 @@ fn img_width_html_attribute_overridable_by_real_author_stylesheet_through_real_p
     let html = r#"<html><head><style>img { width: 30px }</style></head>
                   <body><img src="x.png" width="100"></body></html>"#;
     let doc = parse_html(html);
-    let result = build_cascaded(&doc);
+    let result = build_cascaded(&doc).expect("the cascade succeeds");
 
     let img_id = find_by_tag(&doc.dom, "img").expect("<img> exists");
     let computed = &result.computed[img_id.0 as usize];
@@ -794,7 +796,7 @@ fn img_width_presentational_hint_beats_extra_stylesheets_user_origin_via_umbrell
     };
     let doc = raikiri::parse(&br#"<img src="x.png" width="100">"#[..], &opts).expect("parse");
 
-    let result = build_cascaded(&doc);
+    let result = build_cascaded(&doc).expect("the cascade succeeds");
     let img_id = find_by_tag(&doc.dom, "img").expect("<img> exists");
     let computed = &result.computed[img_id.0 as usize];
     assert_eq!(
@@ -843,7 +845,7 @@ fn hr_is_display_block_border_inset_and_margin_via_ua_css() {
     // real parse → build_cascaded, not a textual scan in raikiri-html::lib:
     // a scan cannot prove that cssparser accepts the rule.
     let doc = parse_html("<html><body><hr></body></html>");
-    let result = build_cascaded(&doc);
+    let result = build_cascaded(&doc).expect("the cascade succeeds");
 
     let hr_id = find_by_tag(&doc.dom, "hr").expect("<hr> exists");
     let computed = &result.computed[hr_id.0 as usize];
@@ -961,7 +963,7 @@ fn flow_content_3_residue_elements_are_display_block_via_ua_css() {
     ] {
         let html = format!("<html><body><{tag}>Hi</{tag}></body></html>");
         let doc = parse_html(&html);
-        let result = build_cascaded(&doc);
+        let result = build_cascaded(&doc).expect("the cascade succeeds");
 
         let el_id = find_by_tag(&doc.dom, tag).unwrap_or_else(|| panic!("<{tag}> exists"));
         let display = result.computed[el_id.0 as usize].display;
@@ -997,7 +999,7 @@ fn dialog_display_reflects_open_attribute_via_ua_css() {
     for (fragment, expected) in cases {
         let html = format!("<html><body>{fragment}</body></html>");
         let doc = parse_html(&html);
-        let result = build_cascaded(&doc);
+        let result = build_cascaded(&doc).expect("the cascade succeeds");
 
         let dialog_id = find_by_tag(&doc.dom, "dialog").expect("<dialog> exists");
         let display = result.computed[dialog_id.0 as usize].display;
@@ -1029,7 +1031,7 @@ fn div_direction_reflects_dir_attribute_via_ua_css() {
     for (fragment, expected) in cases {
         let html = format!("<html><body>{fragment}</body></html>");
         let doc = parse_html(&html);
-        let result = build_cascaded(&doc);
+        let result = build_cascaded(&doc).expect("the cascade succeeds");
         let div_id = find_by_tag(&doc.dom, "div").expect("<div> exists");
         let direction = result.computed[div_id.0 as usize].direction;
         assert_eq!(
@@ -1063,12 +1065,13 @@ fn style_media_attribute_guards_the_stylesheet() {
     let span = find_by_tag(&doc.dom, "span").expect("<span> exists").0 as usize;
     let div = find_by_tag(&doc.dom, "div").expect("<div> exists").0 as usize;
 
-    let print = build_cascaded(&doc);
+    let print = build_cascaded(&doc).expect("the cascade succeeds");
     assert_eq!(print.computed[p].display, DisplayValue::Block);
     assert_eq!(print.computed[span].display, DisplayValue::Block);
     assert_eq!(print.computed[div].display, DisplayValue::Inline);
 
-    let screen = build_cascaded_with_media_context(&doc, &MediaContext::screen());
+    let screen = build_cascaded_with_media_context(&doc, &MediaContext::screen())
+        .expect("the cascade succeeds");
     assert_eq!(screen.computed[p].display, DisplayValue::Inline);
     assert_eq!(screen.computed[span].display, DisplayValue::Block);
     assert_eq!(screen.computed[div].display, DisplayValue::Block);

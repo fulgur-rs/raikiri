@@ -5,6 +5,8 @@
 //! promoted these limits to `RenderLimits` (formerly limited to BatchConfig, now
 //! shared by plan and Streaming).
 
+use raikiri_style::CascadeLimits;
+
 use crate::page::TargetRegistry;
 
 /// Resource and cost limits accepted by all entry points (plan /
@@ -36,7 +38,9 @@ pub struct RenderLimits {
     pub max_target_slots: Option<u32>,
     /// Maximum entries stored in LayoutBuffer.
     pub max_layout_buffer_entries: Option<u32>,
-    /// Maximum approximate memory footprint.
+    /// Maximum approximate memory footprint. No stage consults it yet; the
+    /// cascade's result has its own bound,
+    /// [`Self::max_cascade_output_bytes`].
     pub max_aggregate_bytes: Option<u64>,
     /// Maximum raw input bytes read before parsing. Exceeding it yields
     /// `LimitExceeded { kind: InputBytes }`.
@@ -80,10 +84,47 @@ pub struct RenderLimits {
     /// can create many warnings; the input-byte cap alone cannot prevent
     /// this amplification.
     pub max_parse_warnings: Option<usize>,
+    /// The most candidate declarations one element may collect in the
+    /// cascade; see
+    /// [`CascadeLimits::max_candidates_per_element`](raikiri_style::CascadeLimits::max_candidates_per_element),
+    /// whose default this takes. Exceeding it yields
+    /// `LimitExceeded { kind: CascadeCandidatesPerElement }`.
+    pub max_cascade_candidates_per_element: Option<u32>,
+    /// The most candidate declarations the cascade may collect over all
+    /// elements; see
+    /// [`CascadeLimits::max_declarations_visited`](raikiri_style::CascadeLimits::max_declarations_visited),
+    /// whose default this takes. Exceeding it yields
+    /// `LimitExceeded { kind: CascadeDeclarations }`.
+    pub max_cascade_declarations: Option<u64>,
+    /// The most selector tests the cascade may run; see
+    /// [`CascadeLimits::max_selector_tests`](raikiri_style::CascadeLimits::max_selector_tests),
+    /// whose default this takes. Exceeding it yields
+    /// `LimitExceeded { kind: CascadeSelectorTests }`.
+    pub max_cascade_selector_tests: Option<u64>,
+    /// The most bytes of candidate declarations the cascade's result may keep;
+    /// see
+    /// [`CascadeLimits::max_retained_bytes`](raikiri_style::CascadeLimits::max_retained_bytes),
+    /// whose default this takes. Exceeding it yields
+    /// `LimitExceeded { kind: CascadeRetainedBytes }`.
+    pub max_cascade_retained_bytes: Option<u64>,
+    /// The most bytes the cascade's result may hold: the computed values of
+    /// every node and pseudo-element, and the candidates it keeps, counted
+    /// before they are allocated; see
+    /// [`CascadeLimits::max_output_bytes`](raikiri_style::CascadeLimits::max_output_bytes),
+    /// whose default this takes and which admits [`Self::max_dom_nodes`]
+    /// nodes with two pseudo-element styles per element. Exceeding it yields
+    /// `LimitExceeded { kind: CascadeOutputBytes }`.
+    ///
+    /// Each cascade run is bounded on its own, and the inline size of the
+    /// values is what counts: the heap they own, such as the strings
+    /// `var()` substitution builds or the lists inherited values copy, is
+    /// not counted.
+    pub max_cascade_output_bytes: Option<u64>,
 }
 
 impl Default for RenderLimits {
     fn default() -> Self {
+        let cascade = CascadeLimits::default();
         Self {
             max_document_pages: Some(10_000),
             max_dom_nodes: Some(1_000_000),
@@ -99,6 +140,11 @@ impl Default for RenderLimits {
             // memory consumption could grow roughly in proportion to input size
             // (see the Security note in the field docs).
             max_parse_warnings: Some(1024),
+            max_cascade_candidates_per_element: cascade.max_candidates_per_element,
+            max_cascade_declarations: cascade.max_declarations_visited,
+            max_cascade_selector_tests: cascade.max_selector_tests,
+            max_cascade_retained_bytes: cascade.max_retained_bytes,
+            max_cascade_output_bytes: cascade.max_output_bytes,
         }
     }
 }
@@ -113,6 +159,18 @@ impl RenderLimits {
     pub fn builder() -> RenderLimitsBuilder {
         RenderLimitsBuilder::default()
     }
+
+    /// The limits of a cascade run within these limits: the `max_cascade_*`
+    /// fields.
+    pub fn cascade_limits(&self) -> CascadeLimits {
+        let mut limits = CascadeLimits::default();
+        limits.max_candidates_per_element = self.max_cascade_candidates_per_element;
+        limits.max_declarations_visited = self.max_cascade_declarations;
+        limits.max_selector_tests = self.max_cascade_selector_tests;
+        limits.max_retained_bytes = self.max_cascade_retained_bytes;
+        limits.max_output_bytes = self.max_cascade_output_bytes;
+        limits
+    }
 }
 
 /// Fluent builder for `RenderLimits`. Unset fields use their default values.
@@ -125,6 +183,11 @@ pub struct RenderLimitsBuilder {
     max_aggregate_bytes: Option<Option<u64>>,
     max_input_bytes: Option<Option<u64>>,
     max_parse_warnings: Option<Option<usize>>,
+    max_cascade_candidates_per_element: Option<Option<u32>>,
+    max_cascade_declarations: Option<Option<u64>>,
+    max_cascade_selector_tests: Option<Option<u64>>,
+    max_cascade_retained_bytes: Option<Option<u64>>,
+    max_cascade_output_bytes: Option<Option<u64>>,
 }
 
 impl RenderLimitsBuilder {
@@ -170,6 +233,36 @@ impl RenderLimitsBuilder {
         self
     }
 
+    /// Set `max_cascade_candidates_per_element` (`None` disables the limit).
+    pub fn max_cascade_candidates_per_element(mut self, v: Option<u32>) -> Self {
+        self.max_cascade_candidates_per_element = Some(v);
+        self
+    }
+
+    /// Set `max_cascade_declarations` (`None` disables the limit).
+    pub fn max_cascade_declarations(mut self, v: Option<u64>) -> Self {
+        self.max_cascade_declarations = Some(v);
+        self
+    }
+
+    /// Set `max_cascade_selector_tests` (`None` disables the limit).
+    pub fn max_cascade_selector_tests(mut self, v: Option<u64>) -> Self {
+        self.max_cascade_selector_tests = Some(v);
+        self
+    }
+
+    /// Set `max_cascade_retained_bytes` (`None` disables the limit).
+    pub fn max_cascade_retained_bytes(mut self, v: Option<u64>) -> Self {
+        self.max_cascade_retained_bytes = Some(v);
+        self
+    }
+
+    /// Set `max_cascade_output_bytes` (`None` disables the limit).
+    pub fn max_cascade_output_bytes(mut self, v: Option<u64>) -> Self {
+        self.max_cascade_output_bytes = Some(v);
+        self
+    }
+
     /// Build; unset fields use their default values.
     pub fn build(self) -> RenderLimits {
         let d = RenderLimits::default();
@@ -183,6 +276,21 @@ impl RenderLimitsBuilder {
             max_aggregate_bytes: self.max_aggregate_bytes.unwrap_or(d.max_aggregate_bytes),
             max_input_bytes: self.max_input_bytes.unwrap_or(d.max_input_bytes),
             max_parse_warnings: self.max_parse_warnings.unwrap_or(d.max_parse_warnings),
+            max_cascade_candidates_per_element: self
+                .max_cascade_candidates_per_element
+                .unwrap_or(d.max_cascade_candidates_per_element),
+            max_cascade_declarations: self
+                .max_cascade_declarations
+                .unwrap_or(d.max_cascade_declarations),
+            max_cascade_selector_tests: self
+                .max_cascade_selector_tests
+                .unwrap_or(d.max_cascade_selector_tests),
+            max_cascade_retained_bytes: self
+                .max_cascade_retained_bytes
+                .unwrap_or(d.max_cascade_retained_bytes),
+            max_cascade_output_bytes: self
+                .max_cascade_output_bytes
+                .unwrap_or(d.max_cascade_output_bytes),
         }
     }
 }

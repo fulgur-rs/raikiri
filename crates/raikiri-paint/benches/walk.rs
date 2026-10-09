@@ -99,9 +99,9 @@ use taffy::Style;
 /// `layout_single_page()` setup calls.
 ///
 /// The two guarantees behind it are not the same strength. `cascade()`
-/// mirrors `cascade.rs`'s `CASCADE_NEVER_ERRS`: it is unconditionally
-/// infallible in the current implementation (`CascadeError` is never
-/// constructed anywhere). `layout_single_page()` is not — it returns
+/// mirrors `cascade.rs`'s `CASCADE_WITHIN_LIMITS`: it fails only when a
+/// document passes the default cascade limits, which the small documents
+/// built here never approach. `layout_single_page()` is not — it returns
 /// `Err(LayoutError::Internal)` when the document has no `<body>` — so this
 /// message's use at that call site relies on [`build_doc`] always including
 /// one, not on any general guarantee `layout_single_page` itself makes.

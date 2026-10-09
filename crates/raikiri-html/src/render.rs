@@ -18,9 +18,9 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use raikiri_style::{
-    Atom, CascadeResult, ConsumerPropertyGrammar, ConsumerPropertyRegistration, MediaContext,
-    PageCascadeResult, PageContextQuery, PageInheritance, RuleTree,
-    cascade_page_with_media_context, cascade_with_media_context_for_page,
+    Atom, CascadeOptions, CascadeResult, ConsumerPropertyGrammar, ConsumerPropertyRegistration,
+    MediaContext, PageCascadeResult, PageContextQuery, PageInheritance, RuleTree,
+    cascade_page_with_media_context, cascade_with_options,
 };
 
 use crate::HtmlDocument;
@@ -711,13 +711,15 @@ pub(crate) fn run_pipeline(
     let mut first_query = PageContextQuery::default();
     first_query.is_first = true;
     first_query.is_right = true;
-    let mut first_cascade = cascade_with_media_context_for_page(
+    let mut cascade_options = CascadeOptions::default();
+    cascade_options.limits = config.limits.cascade_limits();
+    let mut first_cascade = cascade_with_options(
         &doc.uncascaded.dom,
         &tree,
         media_context,
         &first_query,
-    )
-    .expect("cascade は常に Ok のはず");
+        &cascade_options,
+    )?;
     // The first class-A box can select a named page. Resolve that name before
     // the initial layout so a named `:first` page is not flattened to the
     // anonymous page geometry. Only the page context depends on the name.

@@ -93,3 +93,67 @@ fn counter_snapshot_layout_limit_converts_to_a_render_limit() {
         }
     ));
 }
+
+#[test]
+fn a_cascade_limit_converts_to_the_render_limit_it_comes_from() {
+    for (cascade, render) in [
+        (
+            CascadeLimitKind::CandidatesPerElement,
+            LimitKind::CascadeCandidatesPerElement,
+        ),
+        (
+            CascadeLimitKind::DeclarationsVisited,
+            LimitKind::CascadeDeclarations,
+        ),
+        (
+            CascadeLimitKind::SelectorTests,
+            LimitKind::CascadeSelectorTests,
+        ),
+        (
+            CascadeLimitKind::RetainedBytes,
+            LimitKind::CascadeRetainedBytes,
+        ),
+        (CascadeLimitKind::OutputBytes, LimitKind::CascadeOutputBytes),
+    ] {
+        let error: RenderError = CascadeError::LimitExceeded {
+            kind: cascade,
+            limit: 7,
+            actual: 8,
+        }
+        .into();
+        assert!(
+            matches!(
+                error,
+                RenderError::LimitExceeded {
+                    kind,
+                    limit: 7,
+                    actual: 8,
+                } if kind == render
+            ),
+            "{cascade:?}: {error:?}"
+        );
+    }
+}
+
+#[test]
+fn other_cascade_errors_stay_cascade_errors() {
+    use std::error::Error;
+
+    let error: RenderError = CascadeError::ResourceExhausted { bytes: 64 }.into();
+    assert!(matches!(
+        error,
+        RenderError::Cascade(CascadeError::ResourceExhausted { bytes: 64 })
+    ));
+    assert_eq!(
+        error.source().map(ToString::to_string).as_deref(),
+        Some("CSS cascade could not allocate 64 bytes")
+    );
+    let error: RenderError = CascadeError::Internal {
+        message: "broken".into(),
+    }
+    .into();
+    assert!(matches!(
+        error,
+        RenderError::Cascade(CascadeError::Internal { .. })
+    ));
+}
