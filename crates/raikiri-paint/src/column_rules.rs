@@ -6,6 +6,8 @@ use peniko::{Color, Fill};
 use raikiri_dom::ColumnRule;
 use raikiri_style::property::{BorderStyle, CssColor};
 
+const MAX_RULE_SEGMENTS: usize = 4096;
+
 pub(crate) fn paint(scene: &mut impl PaintScene, rule: ColumnRule) {
     let rect = rule.rect;
     if rule.color.a == 0 || rect.width <= 0.0 || rect.height <= 0.0 {
@@ -67,7 +69,11 @@ pub(crate) fn paint(scene: &mut impl PaintScene, rule: ColumnRule) {
             let origin = f64::from(rule.pattern_origin).round();
             let end = f64::from(rule.pattern_origin + rule.pattern_height).round();
             let length = end - origin;
-            let count = (length / (2.0 * width)).round().max(1.0);
+            // Keep the complete pattern anchored across page slices while
+            // bounding scene commands for hostile but finite page heights.
+            let count = (length / (2.0 * width))
+                .round()
+                .clamp(1.0, (MAX_RULE_SEGMENTS - 1) as f64);
             let spacing = length / count;
             let first = ((y0 - width / 2.0 - origin) / spacing).ceil().max(0.0) as usize;
             let last = ((y1 + width / 2.0 - origin) / spacing).floor().min(count) as usize;
@@ -91,8 +97,12 @@ pub(crate) fn paint(scene: &mut impl PaintScene, rule: ColumnRule) {
             let origin = f64::from(rule.pattern_origin).round();
             let end = f64::from(rule.pattern_origin + rule.pattern_height).round();
             let length = end - origin;
-            let dash = 3.0 * width;
-            let count = ((length + dash) / (2.0 * dash)).round().max(1.0);
+            let natural_dash = 3.0 * width;
+            let natural_count = ((length + natural_dash) / (2.0 * natural_dash))
+                .round()
+                .max(1.0);
+            let count = natural_count.min(MAX_RULE_SEGMENTS as f64);
+            let dash = natural_dash * (natural_count / count);
             let (dash, gap) = if count < 2.0 {
                 (length, 0.0)
             } else {

@@ -1,7 +1,8 @@
 //! Native multicolumn placements match independently positioned literal controls.
 
+use anyrender::recording::RenderCommand;
 use anyrender::{PaintScene, Scene};
-use kurbo::Affine;
+use kurbo::{Affine, Shape};
 use raikiri_html::{
     FontCollectionBuilder, LayoutOptions, LayoutStatus, RenderResources, layout,
     parse_html_with_resources,
@@ -103,6 +104,100 @@ fn wide_rule_is_below_the_owners_standalone_before_content() {
         .flat_map(|y| (20..40).map(move |x| (x, y)))
         .collect::<Vec<_>>();
     assert_eq!(blue, expected);
+}
+
+#[test]
+fn wide_rule_is_below_the_owners_outside_text_marker() {
+    for overflow in ["", "overflow:hidden"] {
+        let actual = raster(
+            "<div class=mc><p>A<br>B<br>C<br>D</p></div>",
+            &format!(
+                ".mc{{display:list-item;list-style-position:outside;margin-left:40px;height:40px;column-rule:200px solid red;{overflow}}}.mc::marker{{content:'X';color:blue}}"
+            ),
+        );
+        let blue = actual
+            .chunks_exact(4)
+            .enumerate()
+            .filter(|(_, pixel)| *pixel == [0, 0, 255, 255])
+            .map(|(pixel, _)| (pixel % 180, pixel / 180))
+            .collect::<Vec<_>>();
+        let expected = (0..20)
+            .flat_map(|y| (16..36).map(move |x| (x, y)))
+            .collect::<Vec<_>>();
+        assert_eq!(blue, expected);
+    }
+}
+
+#[test]
+fn huge_dotted_rules_bound_scene_commands_without_truncating_the_pattern() {
+    let document = lay_out(
+        "<div class=mc><div style='height:20px;break-after:column'></div><div style='height:20px'></div></div>",
+        "@page{size:180px 40000px}.mc{height:40000px;column-rule:1px dotted red}",
+    );
+    assert_eq!(document.page_count(), 1);
+    let page = document.page(0).unwrap();
+    let (source, cascade, page_box, _) = page.paint_inputs();
+    let mut scene = Scene::new();
+    raikiri_paint::paint_single_page_with_images(
+        &mut scene,
+        source,
+        cascade,
+        page_box,
+        &NoPixels,
+        &mut raikiri_dom::CounterSnapshotBudget::default(),
+    )
+    .unwrap();
+    let fills = scene
+        .commands
+        .iter()
+        .filter(|command| matches!(command, RenderCommand::Fill(_)))
+        .count();
+    assert!(fills > 0);
+    assert!(fills <= 4100, "unbounded rule primitive count: {fills}");
+    let dots = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::Fill(fill) if fill.shape.bounding_box().width() == 1.0 => {
+                Some(fill.shape.bounding_box())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(dots.first().unwrap().y0, -0.5);
+    assert_eq!(dots.last().unwrap().y1, 40000.5);
+}
+
+#[test]
+fn huge_dashed_rules_bound_backend_segments_and_keep_the_full_span() {
+    let document = lay_out(
+        "<div class=mc><div style='height:20px;break-after:column'></div><div style='height:20px'></div></div>",
+        "@page{size:180px 40000px}.mc{height:40000px;column-rule:1px dashed red}",
+    );
+    let page = document.page(0).unwrap();
+    let (source, cascade, page_box, _) = page.paint_inputs();
+    let mut scene = Scene::new();
+    raikiri_paint::paint_single_page_with_images(
+        &mut scene,
+        source,
+        cascade,
+        page_box,
+        &NoPixels,
+        &mut raikiri_dom::CounterSnapshotBudget::default(),
+    )
+    .unwrap();
+    let strokes = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::Stroke(stroke) => Some(stroke),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(strokes.len(), 1);
+    assert_eq!(strokes[0].shape.bounding_box().y0, 0.0);
+    assert_eq!(strokes[0].shape.bounding_box().y1, 40000.0);
+    assert!(strokes[0].style.dash_pattern.iter().sum::<f64>() >= 40000.0 / 4096.0);
 }
 
 #[test]

@@ -264,6 +264,21 @@ impl Document {
                             }
                         }
                     }
+                    if let Some(rules) = self
+                        .page_projection
+                        .column_rules
+                        .get(&page_index)
+                        .and_then(|rules| rules.get(&NodeId::new(node_id as u64)))
+                    {
+                        let clip = items.overflow_clips.get(&NodeId::new(node_id as u64));
+                        if let Some(entry) = clip {
+                            events.push(PaintEvent::PushClip(entry.clip, ClipKind::Overflow));
+                        }
+                        events.extend(rules.iter().copied().map(PaintEvent::ColumnRule));
+                        if clip.is_some() {
+                            events.push(PaintEvent::PopClip);
+                        }
+                    }
                     let image_marker = self
                         .page_marker_image(page_index, NodeId::new(node_id as u64))
                         .is_some();
@@ -300,16 +315,6 @@ impl Document {
                         events.push(PaintEvent::PushClip(entry.clip, ClipKind::Overflow));
                         stack.push(Frame::PopClip);
                     }
-                    events.extend(
-                        self.page_projection
-                            .column_rules
-                            .get(&page_index)
-                            .and_then(|rules| rules.get(&NodeId::new(node_id as u64)))
-                            .into_iter()
-                            .flatten()
-                            .copied()
-                            .map(PaintEvent::ColumnRule),
-                    );
                     if node.is_ifc_root() {
                         if image_marker && inline_marker {
                             events.push(PaintEvent::MarkerImage(NodeId::new(node_id as u64)));

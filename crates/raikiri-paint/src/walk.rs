@@ -4212,6 +4212,40 @@ pub(crate) fn paint_document_impl(
                             scene.pop_layer();
                         }
                     }
+                    if has_column_rules && cv.visibility == Visibility::Visible {
+                        // Rules obey the owner's overflow, while an outside marker
+                        // remains outside that clip and paints above the rule.
+                        let rule_clip = raikiri_dom::paint_rules::overflow_clip(
+                            document,
+                            cascade,
+                            node_id,
+                            PaintRect::new(paint_x, paint_y, layout.size.width, paint_height),
+                            PaintInsets::new(
+                                layout.border.top,
+                                layout.border.right,
+                                layout.border.bottom,
+                                layout.border.left,
+                            ),
+                        );
+                        if let Some(resolved) = rule_clip {
+                            push_overflow_clip(scene, resolved, &page_box);
+                        }
+                        for mut rule in document.column_rules(cascade, node_id) {
+                            rule.rect.x += paint_x;
+                            rule.rect.y += paint_y;
+                            rule.pattern_origin += paint_y;
+                            let content_top = margins.top + insets.top;
+                            let start = rule.rect.y.max(content_top);
+                            let end =
+                                (rule.rect.y + rule.rect.height).min(content_top + content_height);
+                            rule.rect.y = start;
+                            rule.rect.height = (end - start).max(0.0);
+                            crate::column_rules::paint(scene, rule);
+                        }
+                        if rule_clip.is_some() {
+                            scene.pop_layer();
+                        }
+                    }
                     // A generated list marker belongs to the first principal
                     // fragment; inherited ancestor fragment state is unrelated.
                     if !paints_as_absolute_continuation
@@ -4303,69 +4337,13 @@ pub(crate) fn paint_document_impl(
                         layout.border.left,
                     ),
                 ) {
-                    let mut clip = Rect::new(
-                        resolved.rect.x as f64,
-                        resolved.rect.y as f64,
-                        (resolved.rect.x + resolved.rect.width) as f64,
-                        (resolved.rect.y + resolved.rect.height) as f64,
-                    );
-                    if !resolved.clip_x || !resolved.clip_y {
-                        // Bound an open axis by the page in the clip's local
-                        // coordinate system, including transformed ancestors.
-                        let determinant = scene.transform.determinant();
-                        let bounds = if determinant.is_finite() && determinant != 0.0 {
-                            scene.transform.inverse().transform_rect_bbox(Rect::new(
-                                0.0,
-                                0.0,
-                                page_box.width as f64,
-                                page_box.height as f64,
-                            ))
-                        } else {
-                            Rect::ZERO
-                        };
-                        if !resolved.clip_x {
-                            clip.x0 = bounds.x0;
-                            clip.x1 = bounds.x1;
-                        }
-                        if !resolved.clip_y {
-                            clip.y0 = bounds.y0;
-                            clip.y1 = bounds.y1;
-                        }
-                    }
-                    let rounded = resolved.corner_radii.map(|radii| {
-                        rounded_rect_path(
-                            clip.x0,
-                            clip.y0,
-                            clip.x1,
-                            clip.y1,
-                            radii.map(|corner| corner.map(f64::from)),
-                        )
-                    });
-                    if let Some(rounded) = rounded {
-                        scene.push_clip_layer(Affine::IDENTITY, &rounded);
-                    } else {
-                        scene.push_clip_layer(Affine::IDENTITY, &clip);
-                    }
+                    let clip = push_overflow_clip(scene, resolved, &page_box);
                     stack.push(PaintFrame::PopClip);
                     if let Some(t) = trace.as_deref_mut() {
                         t.push(crate::PaintTraceEvent::PushOverflowClip(
                             node_id,
                             [clip.x0, clip.y0, clip.x1, clip.y1],
                         ));
-                    }
-                }
-                if paints_on_page && cv.visibility == raikiri_style::property::Visibility::Visible {
-                    for mut rule in document.column_rules(cascade, node_id) {
-                        rule.rect.x += paint_x;
-                        rule.rect.y += paint_y;
-                        rule.pattern_origin += paint_y;
-                        let content_top = margins.top + insets.top;
-                        let start = rule.rect.y.max(content_top);
-                        let end =
-                            (rule.rect.y + rule.rect.height).min(content_top + content_height);
-                        rule.rect.y = start;
-                        rule.rect.height = (end - start).max(0.0);
-                        crate::column_rules::paint(scene, rule);
                     }
                 }
                 // A column rule is below all content, including a standalone
@@ -7500,3 +7478,54 @@ mod tests;
 
 #[cfg(test)]
 use raikiri_style::CounterStyleRegistry;
+
+fn push_overflow_clip(
+    scene: &mut crate::transform::TransformScene<'_, impl PaintScene>,
+    resolved: raikiri_traits::PaintClip,
+    page_box: &PageBox,
+) -> Rect {
+    let mut clip = Rect::new(
+        resolved.rect.x as f64,
+        resolved.rect.y as f64,
+        (resolved.rect.x + resolved.rect.width) as f64,
+        (resolved.rect.y + resolved.rect.height) as f64,
+    );
+    if !resolved.clip_x || !resolved.clip_y {
+        // Bound an open axis by the page in the clip's local
+        // coordinate system, including transformed ancestors.
+        let determinant = scene.transform.determinant();
+        let bounds = if determinant.is_finite() && determinant != 0.0 {
+            scene.transform.inverse().transform_rect_bbox(Rect::new(
+                0.0,
+                0.0,
+                page_box.width as f64,
+                page_box.height as f64,
+            ))
+        } else {
+            Rect::ZERO
+        };
+        if !resolved.clip_x {
+            clip.x0 = bounds.x0;
+            clip.x1 = bounds.x1;
+        }
+        if !resolved.clip_y {
+            clip.y0 = bounds.y0;
+            clip.y1 = bounds.y1;
+        }
+    }
+    let rounded = resolved.corner_radii.map(|radii| {
+        rounded_rect_path(
+            clip.x0,
+            clip.y0,
+            clip.x1,
+            clip.y1,
+            radii.map(|corner| corner.map(f64::from)),
+        )
+    });
+    if let Some(rounded) = rounded {
+        scene.push_clip_layer(Affine::IDENTITY, &rounded);
+    } else {
+        scene.push_clip_layer(Affine::IDENTITY, &clip);
+    }
+    clip
+}
