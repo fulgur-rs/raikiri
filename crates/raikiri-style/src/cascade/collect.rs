@@ -14,6 +14,7 @@ use crate::media::MediaContext;
 use crate::property::{CustomProperty, PropertyKey, PropertyValue};
 use crate::rule::{Declaration, parse_declaration_block_with_consumer_properties};
 
+use super::candidate::Precedence;
 use super::rollback::Rollback;
 use crate::ruletree::{Origin, RuleTree};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
@@ -101,20 +102,17 @@ pub(crate) const CASCADED_PSEUDO_ELEMENTS: [PseudoElem; 5] = [
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct CascadedDecl {
     pub(crate) value: PropertyValue,
-    pub(crate) important: bool,
-    pub(crate) origin: Origin,
     /// The cascade slot of `value`, carried over from its [`Declaration`].
     pub(crate) key: PropertyKey,
     /// How `value` rolls the cascade back, carried over from its
     /// [`Declaration`].
     pub(crate) rollback: Rollback,
-    pub(crate) specificity: Specificity,
-    pub(crate) source_order: u32,
-    pub(crate) layer: LayerPosition,
+    pub(crate) precedence: Precedence,
 }
 
 impl CascadedDecl {
-    /// The candidate an expanded declaration contributes from one source.
+    /// The candidate an expanded declaration contributes from one source,
+    /// with the declaration's own importance.
     pub(crate) fn new(
         decl: Declaration,
         origin: Origin,
@@ -124,14 +122,10 @@ impl CascadedDecl {
     ) -> Self {
         debug_assert_derived_fields(decl.key, decl.rollback, &decl.value);
         Self {
+            precedence: Precedence::new(origin, decl.important, specificity, source_order, layer),
             value: decl.value,
-            important: decl.important,
-            origin,
             key: decl.key,
             rollback: decl.rollback,
-            specificity,
-            source_order,
-            layer,
         }
     }
 
@@ -161,7 +155,7 @@ fn debug_assert_derived_fields(key: PropertyKey, rollback: Rollback, value: &Pro
 }
 
 // One `CascadedDecl` is materialized per matched declaration of every element,
-// so its size bounds the candidate arena's footprint. Its fields take 164
+// so its size bounds the candidate arena's footprint. Its fields take 162
 // bytes padded to 168, so a new field fits only in that slack; past it, raise
 // the bound together with a cascade memory measurement.
 const _: () = assert!(
@@ -172,14 +166,11 @@ const _: () = assert!(
 /// A custom-property candidate. Unlike ordinary declarations, custom
 /// properties are keyed by their case-sensitive name rather than by a fixed
 /// `PropertyKey` slot.
-pub(crate) type CustomCascadedDecl = (
-    CustomProperty,
-    bool,
-    Origin,
-    Specificity,
-    u32,
-    LayerPosition,
-);
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct CustomCascadedDecl {
+    pub(crate) value: CustomProperty,
+    pub(crate) precedence: Precedence,
+}
 
 /// Output of [`collect_cascaded`]: all nodes' candidates in one flat `Vec`,
 /// indexed by per-node [`Range`] values, together with the rule index they
@@ -451,19 +442,16 @@ fn push_cascaded_decl(
         Cow::Borrowed(decl) => decl.value.clone(),
     };
     debug_assert_derived_fields(key, rollback, &value);
+    let precedence = Precedence::new(origin, important, specificity, source_order, layer);
     match value {
-        PropertyValue::CustomProperty(custom) => {
-            custom_decls.push((custom, important, origin, specificity, source_order, layer))
+        PropertyValue::CustomProperty(value) => {
+            custom_decls.push(CustomCascadedDecl { value, precedence })
         }
         value => decls.push(CascadedDecl {
             value,
-            important,
-            origin,
             key,
             rollback,
-            specificity,
-            source_order,
-            layer,
+            precedence,
         }),
     }
 }
@@ -1143,7 +1131,7 @@ pub(crate) fn pick_winners(candidates: &[CascadedDecl], winners: &mut Vec<Option
         if winners.len() <= slot {
             winners.resize(slot + 1, None);
         }
-        let ranked = ranked(candidate, idx);
+        let ranked = candidate.precedence.ranked(idx);
         if winners[slot].is_none_or(|existing| beats(ranked, existing)) {
             winners[slot] = Some(ranked);
         }
@@ -1162,34 +1150,10 @@ pub(crate) fn pick_winners(candidates: &[CascadedDecl], winners: &mut Vec<Option
                 if candidate.key != key && !rollback {
                     return None;
                 }
-                let ranked = ranked(candidate, idx);
-                Some((
-                    (
-                        ranked.rank,
-                        ranked.layer_priority,
-                        ranked.specificity,
-                        ranked.source_order,
-                        idx,
-                    ),
-                    candidate.origin,
-                    candidate.layer,
-                    candidate.important,
-                    candidate.rollback,
-                ))
+                Some(candidate.precedence.layered(idx, candidate.rollback))
             });
-            *winner = selected.map(|idx| ranked(&candidates[idx], idx));
+            *winner = selected.map(|idx| candidates[idx].precedence.ranked(idx));
         }
-    }
-}
-
-/// The precedence of `candidate`, found at `idx` of the candidates being ranked.
-fn ranked(candidate: &CascadedDecl, idx: usize) -> RankedDecl {
-    RankedDecl {
-        rank: cascade_rank(candidate.origin, candidate.important),
-        layer_priority: candidate.layer.priority(candidate.important),
-        specificity: candidate.specificity,
-        source_order: candidate.source_order,
-        idx,
     }
 }
 

@@ -6956,13 +6956,15 @@ fn apply_winners_direct_border_radius_inherit() {
     // directly to reach `apply_winners`' arm for it.
     let candidates: Vec<CascadedDecl> = vec![CascadedDecl {
         value: PropertyValue::BorderRadiusInherit,
-        important: false,
-        origin: Origin::Author,
         key: crate::property::PropertyKey::BorderRadius,
         rollback: crate::cascade::rollback::Rollback::None,
-        specificity: 0,
-        source_order: 0,
-        layer: crate::layer::LayerPosition::default(),
+        precedence: crate::cascade::candidate::Precedence::new(
+            Origin::Author,
+            false,
+            0,
+            0,
+            crate::layer::LayerPosition::default(),
+        ),
     }];
     let mut winners: Vec<Option<RankedDecl>> = Vec::new();
     let mut specified = SpecifiedValues::initial();

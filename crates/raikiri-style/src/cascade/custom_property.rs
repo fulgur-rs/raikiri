@@ -12,7 +12,7 @@ use crate::property::{
     is_custom_property_name, parse_value,
 };
 
-use super::collect::{CustomCascadedDecl, RankedDecl, beats, cascade_rank};
+use super::collect::{CustomCascadedDecl, RankedDecl, beats};
 
 /// Resolve a deferred declaration for either the element or page cascade.
 ///
@@ -1368,16 +1368,8 @@ pub(crate) fn resolve_custom_properties(
     candidates: &[CustomCascadedDecl],
 ) -> Arc<CustomPropertyEnvironment> {
     let mut winners: HashMap<SmolStr, (CustomProperty, RankedDecl)> = HashMap::new();
-    for (idx, (value, important, origin, specificity, source_order, layer)) in
-        candidates.iter().enumerate()
-    {
-        let candidate = RankedDecl {
-            rank: cascade_rank(*origin, *important),
-            layer_priority: layer.priority(*important),
-            specificity: *specificity,
-            source_order: *source_order,
-            idx,
-        };
+    for (idx, CustomCascadedDecl { value, precedence }) in candidates.iter().enumerate() {
+        let candidate = precedence.ranked(idx);
         let replace = winners
             .get(&value.name)
             .is_none_or(|(_, existing)| beats(candidate, *existing));
@@ -1391,20 +1383,10 @@ pub(crate) fn resolve_custom_properties(
         .any(|(value, _)| custom_property_rollback(&value.value) != super::rollback::Rollback::None)
     {
         select_custom_rollback_values(candidates.iter().enumerate().map(
-            |(index, (value, important, origin, specificity, source_order, layer))| {
-                (
-                    value,
-                    (
-                        cascade_rank(*origin, *important),
-                        layer.priority(*important),
-                        *specificity,
-                        *source_order,
-                        index,
-                    ),
-                    *origin,
-                    *layer,
-                    *important,
-                )
+            |(index, CustomCascadedDecl { value, precedence })| {
+                let (priority, origin, layer, important, _) =
+                    precedence.layered(index, super::rollback::Rollback::None);
+                (value, priority, origin, layer, important)
             },
         ))
     } else {

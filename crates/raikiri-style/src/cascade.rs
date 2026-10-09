@@ -441,6 +441,7 @@ fn cascade_from_candidates<D: StyleDom>(
     })
 }
 
+mod candidate;
 mod collect;
 pub(crate) mod rollback;
 pub(crate) use collect::*;

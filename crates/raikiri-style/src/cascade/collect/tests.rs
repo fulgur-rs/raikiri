@@ -457,8 +457,16 @@ fn collect_cascaded_groups_are_unchanged_by_flat_arena_refactor() {
     assert_eq!(p2c.len(), 2);
     assert_eq!(p2c[0].value, PropertyValue::Color(RED));
     assert_eq!(p2c[1].value, PropertyValue::BackgroundColor(BLUE));
-    assert_eq!(p2c[0].source_order, 0, "first rule keeps its source_order");
-    assert_eq!(p2c[1].source_order, 1, "second rule keeps its source_order");
+    assert_eq!(
+        p2c[0].precedence.source_order(),
+        0,
+        "first rule keeps its source_order"
+    );
+    assert_eq!(
+        p2c[1].precedence.source_order(),
+        1,
+        "second rule keeps its source_order"
+    );
     // Every candidate carries the key of its value.
     assert_eq!(p2c[0].key, PropertyKey::Color);
     assert_eq!(p2c[1].key, PropertyKey::BackgroundColor);
@@ -471,8 +479,8 @@ fn collect_cascaded_groups_are_unchanged_by_flat_arena_refactor() {
     assert_eq!(p1c[1].value, PropertyValue::BackgroundColor(BLUE));
     assert_eq!(p1c[2].value, PropertyValue::Display(DisplayValue::Block));
     assert_eq!(p1c[2].key, PropertyKey::Display);
-    assert_eq!(p1c[2].specificity, INLINE_SPECIFICITY);
-    assert_eq!(p1c[2].source_order, INLINE_SOURCE_ORDER);
+    assert_eq!(p1c[2].precedence.specificity(), INLINE_SPECIFICITY);
+    assert_eq!(p1c[2].precedence.source_order(), INLINE_SOURCE_ORDER);
 
     let p3c = arena.candidates(id(p3)).expect("p3 has decls");
     assert_eq!(p3c.len(), 3);
@@ -481,8 +489,14 @@ fn collect_cascaded_groups_are_unchanged_by_flat_arena_refactor() {
     // Stylesheet-only decls (p1/p2/p3 all matched the same 2 `p` rules)
     // carry identical specificity to each other — cross-node consistency
     // the old shared-selector-per-rule code guaranteed too.
-    assert_eq!(p1c[0].specificity, p2c[0].specificity);
-    assert_eq!(p2c[0].specificity, p3c[0].specificity);
+    assert_eq!(
+        p1c[0].precedence.specificity(),
+        p2c[0].precedence.specificity()
+    );
+    assert_eq!(
+        p2c[0].precedence.specificity(),
+        p3c[0].precedence.specificity()
+    );
 
     // Ranges must not overlap — a flat arena has to hold this invariant
     // that per-node `Vec`s never needed to: if two nodes' ranges ever

@@ -32,7 +32,7 @@ use crate::specified::{INITIAL_BORDER, SpecifiedValues};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
 
 use super::collect::{
-    CASCADED_PSEUDO_ELEMENTS, CascadedArena, CascadedDecl, RankedDecl, cascade_rank, pick_winners,
+    CASCADED_PSEUDO_ELEMENTS, CascadedArena, CascadedDecl, RankedDecl, pick_winners,
 };
 use super::custom_property::{resolve_custom_properties, resolve_deferred_value};
 
@@ -571,34 +571,23 @@ fn find_rollback(
         if candidate.key != key && !matches!(candidate.value, PropertyValue::AllRevertLayer) {
             return None;
         }
-        Some((
-            (
-                cascade_rank(candidate.origin, candidate.important),
-                candidate.layer.priority(candidate.important),
-                candidate.specificity,
-                candidate.source_order,
-                idx,
-            ),
-            candidate.origin,
-            candidate.layer,
-            candidate.important,
-            if idx == winner_index {
-                if keyword == CssWideKeyword::Revert {
-                    super::rollback::Rollback::Origin
-                } else {
-                    super::rollback::Rollback::Layer
-                }
-            } else if let PropertyValue::Deferred(deferred) = &candidate.value {
-                resolve_deferred_value(deferred, custom_properties)
-                    .as_ref()
-                    .map_or(
-                        super::rollback::Rollback::None,
-                        super::rollback::rollback_kind,
-                    )
+        let rollback = if idx == winner_index {
+            if keyword == CssWideKeyword::Revert {
+                super::rollback::Rollback::Origin
             } else {
-                candidate.rollback
-            },
-        ))
+                super::rollback::Rollback::Layer
+            }
+        } else if let PropertyValue::Deferred(deferred) = &candidate.value {
+            resolve_deferred_value(deferred, custom_properties)
+                .as_ref()
+                .map_or(
+                    super::rollback::Rollback::None,
+                    super::rollback::rollback_kind,
+                )
+        } else {
+            candidate.rollback
+        };
+        Some(candidate.precedence.layered(idx, rollback))
     })?;
     Some(candidates[index].value.clone())
 }
