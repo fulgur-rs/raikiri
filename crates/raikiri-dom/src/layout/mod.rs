@@ -90,7 +90,7 @@ pub use ifc::inline_boxes::{BoxRect, InlineBoxPiece};
 /// Glyph positions of the lines of a paragraph laid out by the inline engine.
 #[doc(hidden)]
 pub use ifc::positioned_runs::{
-    LineGlyph, PositionedLine, PositionedLines, PositionedRun, cumulative_offset,
+    LineGlyph, PositionedLine, PositionedLines, PositionedMarker, PositionedRun, cumulative_offset,
 };
 #[doc(hidden)]
 pub use ifc::root::IfcBuildMode;

@@ -51,6 +51,8 @@ pub enum PaintEvent<'a> {
     /// The content of a replaced element (an image, an inline SVG or a
     /// canvas). Follows the element's [`PaintEvent::Box`].
     Replaced(Fragment<'a>),
+    /// Prepared raster marker of a list item. Its placement is owned by this page.
+    MarkerImage(NodeId),
 }
 
 /// The reason reported for a multi-column container by
@@ -235,6 +237,15 @@ impl Document {
                             }
                         }
                     }
+                    let image_marker = self
+                        .page_marker_image(page_index, NodeId::new(node_id as u64))
+                        .is_some();
+                    let inline_marker =
+                        crate::generated_content::inside_marker_in_flow(cascade, node_id)
+                            && node.is_ifc_root();
+                    if image_marker && !inline_marker {
+                        events.push(PaintEvent::MarkerImage(NodeId::new(node_id as u64)));
+                    }
                     if let Some(lines) = lines {
                         let marker = crate::generated_content::generated_node_id(
                             node_id,
@@ -263,6 +274,9 @@ impl Document {
                         stack.push(Frame::PopClip);
                     }
                     if node.is_ifc_root() {
+                        if image_marker && inline_marker {
+                            events.push(PaintEvent::MarkerImage(NodeId::new(node_id as u64)));
+                        }
                         push_paragraph(self, &items, node_id, lines, &mut events);
                     }
                     let mut children = if node.is_inline_svg_root()

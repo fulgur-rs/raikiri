@@ -61,10 +61,14 @@ pub struct RasterImage {
     pub url: url::Url,
     /// Shared straight RGBA8 pixels from the configured source.
     pub pixels: std::sync::Arc<raikiri_traits::DecodedImage>,
-    /// Object rectangle after object-fit and object-position.
+    /// Object rectangle after object-fit and object-position, or marker placement.
     pub rect: PaintRect,
-    /// Whole content-edge clip, before pagination cuts.
+    /// Whole content-edge clip or marker rectangle, before pagination cuts.
     pub clip: raikiri_traits::PaintClip,
+    /// Innermost node whose overflow clip applies. Standalone markers start
+    /// at their parent's clip; inline image markers and replaced content
+    /// include their own element's clip.
+    pub clip_owner: Option<NodeId>,
 }
 
 impl<'a> Page<'a> {
@@ -162,6 +166,62 @@ impl<'a> Page<'a> {
             pixels,
             rect,
             clip: raikiri_traits::PaintClip::new(content),
+            clip_owner: Some(fragment.node()),
+        })
+    }
+
+    /// Cached raster pixels of a prepared image marker from [`PaintEvent::MarkerImage`].
+    ///
+    /// Use [`crate::RenderResources::image_pixel_source_ref`] to preserve source
+    /// policy and byte limits. This method uses the absolute URL and dimensions
+    /// retained by layout; it does not fetch or place content in the consumer.
+    pub fn raster_marker(
+        &self,
+        owner: NodeId,
+        source: &dyn raikiri_traits::ImagePixelSource,
+    ) -> Option<RasterImage> {
+        let (url, rect) = self.document.page_marker_image(self.index(), owner)?;
+        if ![rect.x, rect.y, rect.width, rect.height]
+            .into_iter()
+            .all(f32::is_finite)
+            || rect.width <= 0.0
+            || rect.height <= 0.0
+        {
+            return None;
+        }
+        let pixels = source.get_decoded_at_size(
+            url,
+            raikiri_traits::ImageRasterSize {
+                width: rect.width,
+                height: rect.height,
+            },
+            None,
+        )?;
+        let bytes = (pixels.width as usize)
+            .checked_mul(pixels.height as usize)?
+            .checked_mul(4)?;
+        if pixels.width == 0 || pixels.height == 0 || pixels.rgba.len() != bytes {
+            return None;
+        }
+        let element = usize::try_from(owner.0).ok()?;
+        let clip_owner =
+            if raikiri_dom::generated_content::inside_marker_in_flow(self.cascade, element)
+                && self
+                    .document
+                    .get_node(element)
+                    .is_some_and(|node| node.is_ifc_root())
+            {
+                Some(owner)
+            } else {
+                self.dom().parent(owner)
+            };
+        Some(RasterImage {
+            node: owner,
+            url: url.clone(),
+            pixels,
+            rect,
+            clip: raikiri_traits::PaintClip::new(rect),
+            clip_owner,
         })
     }
 
@@ -318,8 +378,9 @@ impl<'a> Page<'a> {
     /// shadows are not included yet.
     /// Text list markers are included, including standalone markers of
     /// empty items. A standalone marker belongs to its item's first
-    /// principal fragment and is not repeated on continuation pages. Standalone
-    /// image markers and their resource-dependent text fallbacks are not included.
+    /// principal fragment and is not repeated on continuation pages. Missing
+    /// image markers retain their text fallback; usable images have their own
+    /// [`PaintEvent::MarkerImage`] event.
     /// A paragraph whose text is placed by geometry the runs do not model
     /// has no runs here: a vertical writing mode, a multicol container's
     /// columns, relatively positioned inline elements, a transform or
@@ -345,7 +406,8 @@ impl<'a> Page<'a> {
     /// Clip rectangles are in the same space as [`Fragment::paint_rect`]; an
     /// overflow clip is built from the element's whole box, so it runs past
     /// the page where a page break cuts the box.
-    /// Generated content and markers are not listed yet, and multi-column
+    /// Image markers are included. Generated text uses
+    /// [`Self::paint_order_for_text_runs`]. Multi-column
     /// containers are listed without column clips (reported once in
     /// [`super::DocumentLayout::warnings`] with
     /// [`raikiri_traits::WarningKind::PaintOrderApproximated`]).

@@ -222,16 +222,16 @@ fn a_zero_sized_empty_item_still_exposes_its_marker() {
 }
 
 #[test]
-fn resource_dependent_image_markers_are_excluded_but_authored_text_wins() {
+fn missing_image_markers_keep_text_fallback_and_authored_text_wins() {
     let document = lay_out(
-        "<ul><li>A</li></ul>",
+        "<ol><li>A</li></ol>",
         "li{list-style-image:url(https://example.invalid/marker.png)}",
     );
     assert!(
-        !document
+        document
             .pages()
             .flat_map(|page| page.text_runs())
-            .any(|run| run.is_standalone_marker())
+            .any(|run| run.is_standalone_marker() && run.text.trim() == "1.")
     );
     let document = lay_out(
         "<ul><li>A</li></ul>",

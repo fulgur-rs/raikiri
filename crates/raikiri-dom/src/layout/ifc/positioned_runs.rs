@@ -7,7 +7,8 @@
 use crate::Document;
 use crate::generated_content::{computed_for_id, generated_origin};
 use raikiri_style::CascadeResult;
-use raikiri_style::property::Visibility;
+use raikiri_style::{PseudoElem, property::Visibility};
+use raikiri_traits::PaintRect;
 use shodo::Fragment;
 use shodo::geometry::{PhysicalConverter, PhysicalSize, WritingMode};
 
@@ -47,6 +48,15 @@ pub struct PositionedRun<'a> {
     pub offset: (f32, f32),
 }
 
+/// One image marker at its physical rectangle relative to the line origin.
+#[derive(Clone, Copy, Debug)]
+pub struct PositionedMarker {
+    /// List item owning the marker.
+    pub owner: usize,
+    /// Marker rectangle, including the line's block offset.
+    pub rect: PaintRect,
+}
+
 /// One line of an ifc root and the runs drawn on it.
 #[derive(Clone, Debug)]
 pub struct PositionedLine<'a> {
@@ -61,6 +71,8 @@ pub struct PositionedLine<'a> {
     pub converter: PhysicalConverter,
     /// The runs with a computed style, a font and at least one glyph.
     pub runs: Vec<PositionedRun<'a>>,
+    /// Prepared image markers drawn before the line's inline boxes and text.
+    pub markers: Vec<PositionedMarker>,
 }
 
 /// The lines of an ifc root, with what positions their glyphs.
@@ -181,7 +193,24 @@ impl<'a> PositionedLines<'a> {
             self.converter_size,
         );
         let mut runs = Vec::new();
+        let mut markers = Vec::new();
         for fragment in line.fragments() {
+            if let Fragment::Atomic(atomic) = fragment {
+                if let Some((owner, PseudoElem::Marker)) = generated_origin(atomic.node.0 as usize)
+                    && self.document.list_marker_image(owner).is_some()
+                    && computed_for_id(self.cascade, atomic.node.0 as usize)
+                        .is_some_and(|style| style.visibility == Visibility::Visible)
+                {
+                    let mut logical = atomic.border_rect;
+                    logical.block_start += line.block_offset();
+                    let rect = converter.rect(logical);
+                    markers.push(PositionedMarker {
+                        owner,
+                        rect: PaintRect::new(rect.x, rect.y, rect.width, rect.height),
+                    });
+                }
+                continue;
+            }
             let Fragment::GlyphRun(run) = fragment else {
                 continue;
             };
@@ -246,6 +275,7 @@ impl<'a> PositionedLines<'a> {
             offset,
             converter,
             runs,
+            markers,
         }
     }
 }
