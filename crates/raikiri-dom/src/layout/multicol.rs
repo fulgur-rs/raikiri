@@ -413,11 +413,19 @@ fn multicol_has_plain_paragraph_chain(tree: &Document, parent: usize) -> bool {
             return false;
         }
         let node = &tree.nodes[child];
+        let zero_margin = LengthPercentageAuto::length(0.0);
         if node.display != DisplayValue::Block
             || node.style.direction != TaffyDirection::Ltr
             || node.style.float.is_floated()
+            || node.style.margin.top != zero_margin
+            || node.style.margin.right != zero_margin
+            || node.style.margin.bottom != zero_margin
+            || node.style.margin.left != zero_margin
             || node.style.padding != Rect::zero()
             || node.style.border != Rect::zero()
+            || !node.multicol_auto_width
+            || !node.style.min_size.width.is_auto()
+            || !node.style.max_size.width.is_auto()
             || !node.style.size.height.is_auto()
             || !node.style.min_size.height.is_auto()
             || !node.style.max_size.height.is_auto()
@@ -1103,7 +1111,7 @@ fn line_ranges_in_columns(
         return Vec::new();
     }
     let available_columns = context.column_count.saturating_sub(context.column_index);
-    let mut ranges = Vec::with_capacity(available_columns.max(1));
+    let mut ranges = Vec::with_capacity(available_columns.max(1).min(line_count));
     let mut start = 0usize;
     if preserve_block_offsets
         && let Some(height) = context.available_height.filter(|height| *height > 0.0)

@@ -582,3 +582,16 @@ fn fixed_height_border_box_wrapper_preserves_following_flow() {
         ]
     );
 }
+
+#[test]
+fn a_short_plain_wrapper_with_a_huge_column_count_projects_once() {
+    let document = lay_out(
+        "<div class=mc><div><p>A</p></div></div><p>E</p>",
+        ".mc{height:40px;column-count:1000000000;column-gap:0}",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [("A".into(), (0.0, 16.0)), ("E".into(), (0.0, 56.0))]
+    );
+    assert!(document.page(0).unwrap().fragments().count() < 16);
+}

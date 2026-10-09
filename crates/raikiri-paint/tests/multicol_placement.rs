@@ -232,3 +232,39 @@ fn a_deep_plain_wrapper_keeps_column_clips_below_a_prefix() {
         "<div style='position:absolute;left:0;top:0'>X</div><div style='position:absolute;left:0;top:20px;box-sizing:border-box;width:172px;height:50px;border:1px solid black;background:lime'></div><div style='position:absolute;left:6px;top:25px'>A<br>B</div><div style='position:absolute;left:66px;top:25px'>C<br>D</div><div style='position:absolute;left:126px;top:25px'>E<br>F</div><div style='position:absolute;left:0;top:70px'>G</div>",
     );
 }
+
+#[test]
+fn a_fixed_height_wrapper_retains_its_authored_width() {
+    compare(
+        "<div class=mc><div style='width:80px'><p>A A</p></div></div><p>E</p>",
+        ".mc{height:40px}",
+        "<div style='position:absolute;left:0;top:0;width:80px'>A A</div><div style='position:absolute;left:0;top:40px'>E</div>",
+    );
+}
+
+#[test]
+fn a_fixed_height_wrapper_retains_margin_flow_without_new_clipping() {
+    compare(
+        "<div class=mc><div style='overflow:hidden'><p style='margin-top:20px'>A<br>B<br>C<br>D</p></div></div><p>E</p>",
+        ".mc{height:40px}",
+        "<div style='position:absolute;left:0;top:20px'>A<br>B<br>C<br>D</div><div style='position:absolute;left:0;top:40px'>E</div>",
+    );
+}
+
+#[test]
+fn a_fixed_height_direct_text_root_preserves_its_columns() {
+    compare(
+        "<div class=mc>A<br>B<br>C<br>D</div><p>E</p>",
+        ".mc{height:40px}",
+        "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:60px;top:0'>C<br>D</div><div style='position:absolute;left:0;top:40px'>E</div>",
+    );
+}
+
+#[test]
+fn an_empty_fixed_height_column_container_reserves_its_box() {
+    compare(
+        "<div class=mc></div><p>E</p>",
+        ".mc{height:40px;background:lime}",
+        "<div style='position:absolute;left:0;top:0;width:100px;height:40px;background:lime'></div><div style='position:absolute;left:0;top:40px'>E</div>",
+    );
+}
