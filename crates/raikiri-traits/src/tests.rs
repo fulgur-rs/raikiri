@@ -140,6 +140,36 @@ fn render_limits_defaults() {
     // Inherit the former hard-coded value (1024) from raikiri-html's
     // RaikiriTreeSink.
     assert_eq!(d.max_parse_warnings, Some(1024));
+    // The cascade limits take the cascade's own defaults.
+    let cascade = raikiri_style::CascadeLimits::default();
+    assert_eq!(
+        d.max_cascade_candidates_per_element,
+        cascade.max_candidates_per_element
+    );
+    assert_eq!(d.max_cascade_declarations, cascade.max_declarations_visited);
+    assert_eq!(d.max_cascade_selector_tests, cascade.max_selector_tests);
+    assert_eq!(d.max_cascade_retained_bytes, cascade.max_retained_bytes);
+    assert_eq!(d.max_cascade_output_bytes, cascade.max_output_bytes);
+    assert_eq!(d.cascade_limits(), cascade);
+}
+
+#[test]
+fn render_limits_configure_the_cascade() {
+    let limits = RenderLimits::builder()
+        .max_aggregate_bytes(Some(4096))
+        .max_cascade_candidates_per_element(Some(1))
+        .max_cascade_declarations(Some(2))
+        .max_cascade_selector_tests(None)
+        .max_cascade_retained_bytes(Some(3))
+        .max_cascade_output_bytes(Some(5))
+        .build();
+    let cascade = limits.cascade_limits();
+    assert_eq!(cascade.max_candidates_per_element, Some(1));
+    assert_eq!(cascade.max_declarations_visited, Some(2));
+    assert_eq!(cascade.max_selector_tests, None);
+    assert_eq!(cascade.max_retained_bytes, Some(3));
+    // The aggregate footprint does not bound the cascade.
+    assert_eq!(cascade.max_output_bytes, Some(5));
 }
 
 // ── Config builders ─────────────────────────────────────────
