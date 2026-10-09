@@ -783,6 +783,8 @@ fn one_nonempty_paragraph_balances_beside_empty_blocks() {
     for body in [
         "<div class=mc><p>A<br>B<br>C<br>D</p><p></p></div><p>E</p>",
         "<div class=mc><p></p><p>A<br>B<br>C<br>D</p></div><p>E</p>",
+        "<div class=mc><p>A<br>B<br>C<br>D</p><p> </p></div><p>E</p>",
+        "<div class=mc><p> </p><p>A<br>B<br>C<br>D</p></div><p>E</p>",
     ] {
         let document = lay_out(body, "");
         assert_eq!(
