@@ -56,6 +56,39 @@ fn ordinary_paragraph_is_the_unfragmented_control() {
 }
 
 #[test]
+fn a_replaced_image_uses_its_own_rounded_clip_after_its_box() {
+    let document = lay_out(
+        "<img src='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg=='>",
+        "img{display:block;width:80px;height:80px;border-radius:50%;overflow:hidden}",
+    );
+    let page = document.page(0).unwrap();
+    let dom = page.dom();
+    let runs = page.text_runs();
+    let mut clips = Vec::new();
+    let mut replaced_clip = None;
+    for event in page.paint_order_for_text_runs(&runs) {
+        match event {
+            PaintEvent::PushClip(clip, _) => clips.push(clip),
+            PaintEvent::PopClip => {
+                clips.pop().unwrap();
+            }
+            PaintEvent::Box(fragment) if dom.local_name(fragment.node()) == Some("img") => {
+                assert!(clips.is_empty())
+            }
+            PaintEvent::Replaced(_) => replaced_clip = clips.last().copied(),
+            _ => {}
+        }
+    }
+    let clip = replaced_clip.expect("the image's own clip");
+    assert_eq!(
+        clip.rect,
+        raikiri_traits::PaintRect::new(0.0, 0.0, 80.0, 80.0)
+    );
+    assert_eq!(clip.corner_radii, Some([[40.0, 40.0]; 4]));
+    assert!(clips.is_empty());
+}
+
+#[test]
 fn one_paragraph_places_each_line_in_its_balanced_column() {
     let document = lay_out("<div class=mc>A<br>B<br>C<br>D</div>", "");
     assert_eq!(

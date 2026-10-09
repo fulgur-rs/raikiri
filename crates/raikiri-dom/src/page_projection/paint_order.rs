@@ -252,7 +252,13 @@ impl Document {
                                 events.push(PaintEvent::Box(fragment));
                             }
                             if item.kind == PageFragmentKind::Replaced || replaced_content {
+                                if let Some(clip) = fragment.overflow_clip() {
+                                    events.push(PaintEvent::PushClip(clip, ClipKind::Overflow));
+                                }
                                 events.push(PaintEvent::Replaced(fragment));
+                                if fragment.overflow_clip().is_some() {
+                                    events.push(PaintEvent::PopClip);
+                                }
                             }
                         }
                     }

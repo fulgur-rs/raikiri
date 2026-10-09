@@ -351,6 +351,7 @@ impl RunContext {
                 continue;
             }
             let Some(node) = document.ifc_layout_node(root) else {
+                overlapping.insert(generated_origin(root).map_or(root, |(owner, _)| owner));
                 continue;
             };
             let Some(ranges) = node.ifc_multicol_fragments() else {

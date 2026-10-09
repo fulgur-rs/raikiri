@@ -3,14 +3,30 @@ use crate::layout::test_support::{ahem_paragraph_with, with_ahem};
 use taffy::Style;
 
 fn committed_column_projection(style: &str) -> (Document, CascadeResult) {
-    use crate::fragment::{FragmentRect, LayoutFragment};
-    use crate::node::MulticolTextFragment;
-
     let (mut doc, cascade, root) = crate::layout::test_support::ahem_paragraph(
         "A\nB\nC\nD",
         &format!("width:40px;opacity:0.5;{style}"),
     );
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+    set_committed_column_fragments(&mut doc, root);
+    doc.project_pages(
+        &cascade,
+        page_box_800x600(),
+        &[PageSlice {
+            page_index: 0,
+            content_origin_y: 0.0,
+            page_name: None,
+        }],
+        &[],
+    )
+    .unwrap();
+    (doc, cascade)
+}
+
+fn set_committed_column_fragments(doc: &mut Document, root: usize) {
+    use crate::fragment::{FragmentRect, LayoutFragment};
+    use crate::node::MulticolTextFragment;
+    doc.fragment_tree.fragments.clear();
     // Supply an independently specified producer stream. The second source
     // box starts above its column so its original lines 2 and 3 start at y=0.
     doc.nodes[root].ifc.as_mut().unwrap().multicol_fragments = Some(vec![
@@ -54,18 +70,6 @@ fn committed_column_projection(style: &str) -> (Document, CascadeResult) {
             })
             .unwrap();
     }
-    doc.project_pages(
-        &cascade,
-        page_box_800x600(),
-        &[PageSlice {
-            page_index: 0,
-            content_origin_y: 0.0,
-            page_name: None,
-        }],
-        &[],
-    )
-    .unwrap();
-    (doc, cascade)
 }
 
 #[test]
@@ -114,6 +118,254 @@ fn projected_column_clips_follow_committed_fragment_coordinates() {
             .count(),
         1
     );
+}
+
+#[test]
+fn column_break_clips_intersect_the_explicit_ancestor_clip() {
+    use crate::PaintEvent;
+    use crate::fragment::{FragmentRect, LayoutFragment};
+    use raikiri_traits::PaintRect;
+    let (mut doc, cascade) = committed_column_projection("");
+    let root = doc.page_text_runs(&cascade, 0)[0].line.root.0 as usize;
+    let body = doc.parent_of(root).unwrap();
+    let parent = doc
+        .fragment_tree
+        .try_push(LayoutFragment {
+            node_id: body,
+            parent: None,
+            fragmentainer: 0,
+            rect: FragmentRect {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 40.0,
+            },
+            fragmentainer_clip: Some(FragmentRect {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 15.0,
+            }),
+            fragment_index: 0,
+            fragment_count: 1,
+            line_start: None,
+            line_end: None,
+        })
+        .unwrap();
+    for fragment in &mut doc.fragment_tree.fragments[..2] {
+        fragment.parent = Some(parent);
+    }
+    doc.project_pages(
+        &cascade,
+        page_box_800x600(),
+        &[PageSlice {
+            page_index: 0,
+            content_origin_y: 0.0,
+            page_name: None,
+        }],
+        &[],
+    )
+    .unwrap();
+    let runs = doc.page_text_runs(&cascade, 0);
+    let mut clips = Vec::new();
+    let mut line_clips = Vec::new();
+    for event in doc.page_paint_order_for_text_runs(&cascade, 0, &runs) {
+        match event {
+            PaintEvent::PushClip(clip, _) => clips.push(clip),
+            PaintEvent::PopClip => {
+                clips.pop().unwrap();
+            }
+            PaintEvent::TextLine(line) => {
+                line_clips.push((line.index, clips.last().map(|clip| clip.rect)))
+            }
+            _ => {}
+        }
+    }
+    let left = Some(PaintRect::new(0.0, 0.0, 40.0, 15.0));
+    let right = Some(PaintRect::new(60.0, 0.0, 40.0, 15.0));
+    assert_eq!(line_clips, [(0, left), (1, left), (2, right), (3, right)]);
+}
+
+#[test]
+fn an_empty_paragraph_keeps_box_clips_without_inventing_line_events() {
+    use crate::PaintEvent;
+    let (mut doc, cascade) = committed_column_projection("");
+    let root = doc.page_text_runs(&cascade, 0)[0].line.root.0 as usize;
+    doc.nodes[root].ifc.as_mut().unwrap().lines = None;
+    doc.project_pages(
+        &cascade,
+        page_box_800x600(),
+        &[PageSlice {
+            page_index: 0,
+            content_origin_y: 0.0,
+            page_name: None,
+        }],
+        &[],
+    )
+    .unwrap();
+    let runs = doc.page_text_runs(&cascade, 0);
+    assert!(runs.is_empty());
+    let events = doc.page_paint_order_for_text_runs(&cascade, 0, &runs);
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, PaintEvent::TextLine(_)))
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(
+                event,
+                PaintEvent::PushClip(_, crate::ClipKind::Fragmentainer)
+            ))
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn duplicated_outside_marker_placements_preserve_an_explicit_omission() {
+    let (mut doc, cascade) = committed_column_projection(
+        "display:list-item;list-style-position:outside;list-style-type:decimal",
+    );
+    let root = doc.fragment_tree.fragments[0].node_id;
+    // A repeated ancestor can carry a second copy of the same first marker.
+    doc.fragment_tree.fragments[1].fragment_index = 0;
+    doc.project_pages(
+        &cascade,
+        page_box_800x600(),
+        &[PageSlice {
+            page_index: 0,
+            content_origin_y: 0.0,
+            page_name: None,
+        }],
+        &[],
+    )
+    .unwrap();
+    assert!(doc.page_text_runs(&cascade, 0).is_empty());
+    assert_eq!(
+        doc.omitted_text_run_roots(&cascade),
+        [(
+            raikiri_traits::NodeId::new(root as u64),
+            "the same paragraph line has overlapping column placements"
+        )]
+    );
+}
+
+#[test]
+fn repeated_header_columns_shift_shared_overflow_and_break_clips_together() {
+    use crate::PaintEvent;
+    use raikiri_traits::PaintRect;
+    let (mut doc, _, root) =
+        crate::layout::test_support::ahem_paragraph("A\nB\nC\nD", "width:40px;overflow:hidden");
+    let body = doc.parent_of(root).unwrap();
+    let table = doc.append_element(
+        Some(body),
+        "table",
+        Style::default(),
+        Some("display:table;width:100px;border-collapse:collapse"),
+    );
+    let header = doc.append_element(
+        Some(table),
+        "thead",
+        Style::default(),
+        Some("display:table-header-group"),
+    );
+    let row = doc.append_element(
+        Some(header),
+        "tr",
+        Style::default(),
+        Some("display:table-row"),
+    );
+    let cell = doc.append_element(
+        Some(row),
+        "td",
+        Style::default(),
+        Some("display:table-cell;padding:0"),
+    );
+    doc.append_child(cell, root).unwrap();
+    let body_row = doc.append_element(
+        Some(table),
+        "tr",
+        Style::default(),
+        Some("display:table-row"),
+    );
+    doc.append_element(
+        Some(body_row),
+        "td",
+        Style::default(),
+        Some("display:table-cell;height:200px;padding:0"),
+    );
+    doc.mark_in_document_flags();
+    let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+    layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+    // Prepare real table ownership, then supply independently scheduled
+    // repeated-header and column placements to the projection boundary.
+    doc.table_objects.headers =
+        crate::layout::table::headers::HeaderRepeats::prepare(&doc, &cascade, body, 600.0, |_| 0.0);
+    let repeated = doc.table_objects.headers.headers.get_mut(&header).unwrap();
+    repeated.placements.insert(0, (0.0, 0.0));
+    repeated.placements.insert(1, (100.0, 107.5));
+    set_committed_column_fragments(&mut doc, root);
+    doc.project_pages(
+        &cascade,
+        page_box_800x600(),
+        &[
+            PageSlice {
+                page_index: 0,
+                content_origin_y: 0.0,
+                page_name: None,
+            },
+            PageSlice {
+                page_index: 1,
+                content_origin_y: 100.0,
+                page_name: None,
+            },
+        ],
+        &[],
+    )
+    .unwrap();
+    let overflow: Vec<_> = doc.page_overflow_clips(1).collect();
+    assert_eq!(overflow.len(), 2);
+    assert_eq!(
+        overflow
+            .iter()
+            .map(|entry| entry.border_box)
+            .collect::<Vec<_>>(),
+        [
+            PaintRect::new(0.0, 7.5, 40.0, 40.0),
+            PaintRect::new(60.0, -12.5, 40.0, 40.0),
+        ]
+    );
+    let runs = doc.page_text_runs(&cascade, 1);
+    assert_eq!(
+        runs.iter()
+            .map(|run| (run.text, run.origin))
+            .collect::<Vec<_>>(),
+        [
+            ("A", (0.0, 15.5)),
+            ("B", (0.0, 25.5)),
+            ("C", (60.0, 15.5)),
+            ("D", (60.0, 25.5)),
+        ]
+    );
+    let mut clips = Vec::new();
+    let mut line_clips = Vec::new();
+    for event in doc.page_paint_order_for_text_runs(&cascade, 1, &runs) {
+        match event {
+            PaintEvent::PushClip(clip, _) => clips.push(clip),
+            PaintEvent::PopClip => {
+                clips.pop().unwrap();
+            }
+            PaintEvent::TextLine(line) => {
+                line_clips.push((line.index, clips.last().map(|clip| clip.rect)))
+            }
+            _ => {}
+        }
+    }
+    let left = Some(PaintRect::new(0.0, 7.5, 40.0, 20.0));
+    let right = Some(PaintRect::new(60.0, 7.5, 40.0, 20.0));
+    assert_eq!(line_clips, [(0, left), (1, left), (2, right), (3, right)]);
 }
 
 #[test]
