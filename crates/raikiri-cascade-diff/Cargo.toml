@@ -1,0 +1,19 @@
+[package]
+name = "raikiri-cascade-diff"
+version = "0.1.0"
+description = "Differential cascade checker: dumps canonicalized cascade results so two builds of raikiri-style can be compared"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+# `scripts/cascade-diff.sh` also builds this crate's sources outside the
+# workspace, against the merge-base checkout of the two crates below, with a
+# generated manifest. Keep the dependency list to these two path crates so that
+# generated manifest stays a faithful copy.
+[dependencies]
+raikiri-style = { workspace = true }
+raikiri-html = { workspace = true }
+
+[lints]
+workspace = true
