@@ -1103,6 +1103,246 @@ fn custom_property_important_wins_and_is_stripped_before_substitution() {
 }
 
 #[test]
+fn important_var_value_keeps_its_whole_text() {
+    // `Parser::next` skips the unread body of a `var(` token before returning
+    // the `!` that follows it, so the value must end at that `!` rather than
+    // where the parser stood before reading it.
+    let cv = cascade_doc(
+        "p { --accent: red; color: var(--accent) !important } p { color: blue }",
+        "p",
+        None,
+    );
+    assert_eq!(cv.color, RED);
+}
+
+#[test]
+fn inline_important_var_value_resolves() {
+    let cv = cascade_doc(
+        "",
+        "p",
+        Some("--accent: red; color: var(--accent) !important"),
+    );
+    assert_eq!(cv.color, RED);
+}
+
+#[test]
+fn important_var_in_shorthand_resolves_every_longhand() {
+    let cv = cascade_doc(
+        "p { --gap: 3px; margin: auto var(--gap) !important }",
+        "p",
+        None,
+    );
+    assert_eq!(cv.margin.top, ComputedLengthPercentageOrAuto::Auto);
+    assert_eq!(cv.margin.right, ComputedLengthPercentageOrAuto::Px(3.0));
+    assert_eq!(cv.margin.bottom, ComputedLengthPercentageOrAuto::Auto);
+    assert_eq!(cv.margin.left, ComputedLengthPercentageOrAuto::Px(3.0));
+}
+
+#[test]
+fn important_var_in_logical_shorthand_resolves() {
+    let cv = cascade_doc(
+        "p { --gap: 3px; padding-block: var(--gap) !important }",
+        "p",
+        None,
+    );
+    assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(3.0));
+    assert_eq!(cv.padding.bottom, ComputedLengthPercentage::Px(3.0));
+}
+
+#[test]
+fn important_math_with_var_resolves() {
+    let cv = cascade_doc(
+        "p { --w: 10px; width: calc(var(--w) + 5px) !important }",
+        "p",
+        None,
+    );
+    assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Px(15.0));
+}
+
+#[test]
+fn empty_unterminated_var_is_invalid_not_a_panic() {
+    for style in ["width: var(", "width: calc(1px + var("] {
+        let cv = cascade_doc("", "p", Some(style));
+        assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Auto, "{style}");
+    }
+}
+
+#[test]
+fn var_left_open_at_the_end_of_input_is_closed_there() {
+    // CSS Syntax 3 returns a function the input ends inside of, so a style
+    // attribute ending in `var(--x` reads as `var(--x)`.
+    let cv = cascade_doc("", "p", Some("--x: 7px; width: var(--x"));
+    assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Px(7.0));
+    let cv = cascade_doc("", "p", Some("--x: 7px; width: calc(var(--x) + 1px"));
+    assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Px(8.0));
+}
+
+#[test]
+fn var_after_another_component_keeps_the_separator() {
+    let cv = cascade_doc("", "p", Some("--x: 2px; margin: 1px var(--x)"));
+    assert_eq!(cv.margin.top, ComputedLengthPercentageOrAuto::Px(1.0));
+    assert_eq!(cv.margin.right, ComputedLengthPercentageOrAuto::Px(2.0));
+    assert_eq!(cv.margin.bottom, ComputedLengthPercentageOrAuto::Px(1.0));
+    assert_eq!(cv.margin.left, ComputedLengthPercentageOrAuto::Px(2.0));
+
+    let cv = cascade_doc("", "p", Some("--gap: 5px; padding: 0 var(--gap) 3px"));
+    assert_eq!(cv.padding.right, ComputedLengthPercentage::Px(5.0));
+    assert_eq!(cv.padding.bottom, ComputedLengthPercentage::Px(3.0));
+}
+
+#[test]
+fn border_shorthand_with_a_trailing_var_color_resolves() {
+    let cv = cascade_doc("", "p", Some("--c: red; border: 1px solid var(--c)"));
+    assert_eq!(cv.border.top.width, ComputedLength(1.0));
+    assert_eq!(cv.border.left.style, crate::property::BorderStyle::Solid);
+    assert_eq!(
+        cv.border.bottom.color,
+        crate::property::BorderColor::Resolved(RED)
+    );
+}
+
+#[test]
+fn math_after_another_component_keeps_the_separator() {
+    let cv = cascade_doc("", "p", Some("--x: 2px; margin: 1px calc(var(--x) + 1px)"));
+    assert_eq!(cv.margin.top, ComputedLengthPercentageOrAuto::Px(1.0));
+    assert_eq!(cv.margin.right, ComputedLengthPercentageOrAuto::Px(3.0));
+}
+
+const CALC_100_PERCENT_MINUS_20PX: ComputedLengthPercentageOrAuto =
+    ComputedLengthPercentageOrAuto::Calc(crate::property::CalcLengthPercentage {
+        percent: 100.0,
+        px: -20.0,
+    });
+
+#[test]
+fn comment_before_a_mixed_calc_substitution_keeps_it_valid() {
+    for width in ["/**/var(--w)", "/* note */ var(--w)", "var(--w) /* note */"] {
+        let style = format!("--w: calc(100% - 20px); width: {width}");
+        let cv = cascade_doc("", "div", Some(&style));
+        assert_eq!(cv.width, CALC_100_PERCENT_MINUS_20PX, "{style}");
+    }
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("--w: /**/ calc(100% - 20px) /**/ !important; width: var(--w)"),
+    );
+    assert_eq!(cv.width, CALC_100_PERCENT_MINUS_20PX);
+}
+
+#[test]
+fn mixed_calc_left_open_at_the_end_of_input_is_closed_there() {
+    for style in [
+        "width: calc(100% - 20px",
+        "--x: 20px; width: calc(100% - var(--x)",
+    ] {
+        let cv = cascade_doc("", "div", Some(style));
+        assert_eq!(cv.width, CALC_100_PERCENT_MINUS_20PX, "{style}");
+    }
+}
+
+#[test]
+fn important_custom_property_keeps_its_function_value() {
+    let cv = cascade_doc(
+        "p { --c: rgb(255, 0, 0) !important; color: var(--c) }",
+        "p",
+        None,
+    );
+    assert_eq!(cv.color, RED);
+    assert_eq!(
+        cv.resolved_custom_property("--c").as_deref(),
+        Some("rgb(255, 0, 0)")
+    );
+}
+
+#[test]
+fn comment_next_to_a_substitution_keeps_the_tokens_apart() {
+    for style in [
+        "--c: 2px; margin: 1px/**/var(--c)",
+        "--a: 1px; --b: 2px; margin: var(--a)/**/var(--b)",
+    ] {
+        let cv = cascade_doc("", "p", Some(style));
+        assert_eq!(
+            cv.margin.top,
+            ComputedLengthPercentageOrAuto::Px(1.0),
+            "{style}"
+        );
+        assert_eq!(
+            cv.margin.right,
+            ComputedLengthPercentageOrAuto::Px(2.0),
+            "{style}"
+        );
+    }
+}
+
+#[test]
+fn var_after_a_calc_operator_resolves() {
+    let cv = cascade_doc("", "p", Some("--x: 5px; margin-top: calc(10px + var(--x))"));
+    assert_eq!(cv.margin.top, ComputedLengthPercentageOrAuto::Px(15.0));
+}
+
+#[test]
+fn custom_property_value_excludes_surrounding_comments() {
+    // CSS Syntax 3 keeps a custom property's original text from its first to
+    // its last token; comments produce no tokens.
+    for style in [
+        "--c: /* lead */ a /* trail */",
+        "--c: /* lead */ a /* trail */ !important",
+        "--c: a /* left open",
+    ] {
+        let cv = cascade_doc("", "p", Some(style));
+        assert_eq!(
+            cv.resolved_custom_property("--c").as_deref(),
+            Some("a"),
+            "{style}"
+        );
+    }
+    let cv = cascade_doc("", "p", Some("--c: a /* kept */ b"));
+    assert_eq!(
+        cv.resolved_custom_property("--c").as_deref(),
+        Some("a /* kept */ b")
+    );
+}
+
+#[test]
+fn trimming_keeps_strings_and_escapes_whole() {
+    for (input, trimmed) in [
+        ("  /* a */ x /* b */ ", "x"),
+        ("\"/* kept */\" /* c */", "\"/* kept */\""),
+        ("'left open /* x */", "'left open /* x */"),
+        ("a\\  ", "a\\ "),
+        ("a\\", "a\\"),
+        ("x /* left open", "x"),
+        ("\u{3000}é\u{a0} ", "\u{3000}é\u{a0}"),
+        (" /**/ ", ""),
+        ("", ""),
+    ] {
+        assert_eq!(
+            trim_css_whitespace_and_comments(input),
+            trimmed,
+            "{input:?}"
+        );
+    }
+}
+
+#[test]
+fn custom_property_value_keeps_non_css_whitespace() {
+    // Only space, tab and the newlines are CSS whitespace; U+3000 and U+00A0
+    // are ident code points.
+    for (style, value) in [
+        ("--c: x\u{3000}", "x\u{3000}"),
+        ("--c: x\u{a0} !important", "x\u{a0}"),
+        ("--c: \u{3000}x", "\u{3000}x"),
+    ] {
+        let cv = cascade_doc("", "p", Some(style));
+        assert_eq!(
+            cv.resolved_custom_property("--c").as_deref(),
+            Some(value),
+            "{style:?}"
+        );
+    }
+}
+
+#[test]
 fn custom_property_names_are_case_sensitive() {
     let cv = cascade_doc(
         "",
@@ -1233,8 +1473,18 @@ fn parse_simple_calc_length_percentage_rejects_non_calc_prefix() {
 }
 
 #[test]
-fn parse_simple_calc_length_percentage_rejects_missing_closing_paren() {
-    assert_eq!(parse_simple_calc_length_percentage("calc(50%"), None);
+fn parse_simple_calc_length_percentage_closes_a_calc_left_open_at_the_end() {
+    assert_eq!(
+        parse_simple_calc_length_percentage("calc(50%"),
+        Some(CalcLengthPercentage {
+            percent: 50.0,
+            px: 0.0
+        })
+    );
+    assert_eq!(
+        parse_simple_calc_length_percentage("calc(50%) + (10px"),
+        None
+    );
 }
 
 #[test]
