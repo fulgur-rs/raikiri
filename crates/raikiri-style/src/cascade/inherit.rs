@@ -31,10 +31,11 @@ use crate::rule::{
 use crate::specified::{INITIAL_BORDER, SpecifiedValues};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
 
-use super::collect::{
-    CASCADED_PSEUDO_ELEMENTS, CascadedArena, CascadedDecl, RankedDecl, cascade_rank, pick_winners,
-};
+use super::candidate::{Candidate, CustomCandidates, ElementCandidates, OwnedCandidates};
+use super::collect::{CASCADED_PSEUDO_ELEMENTS, CascadedArena, RankedDecl, pick_winners};
 use super::custom_property::{resolve_custom_properties, resolve_deferred_value};
+use super::first_line::first_line_property_applies;
+use crate::error::CascadeError;
 
 type InheritanceStackEntry = (
     StyleNodeId,
@@ -136,14 +137,14 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
     dom: &D,
     id: StyleNodeId,
     parent_computed: &ComputedValues,
-    cascaded: &CascadedArena,
+    cascaded: &CascadedArena<'_>,
     out: &mut Vec<ComputedValues>,
     authored_writing_modes: &mut Vec<Option<WritingMode>>,
     page_values: &mut [crate::property::PageValue],
     pseudo_out: &mut HashMap<(StyleNodeId, PseudoElem), ComputedValues>,
     svg_properties: &mut HashMap<StyleNodeId, Vec<SvgStyleProperty>>,
     first_letter_inputs: &mut HashMap<StyleNodeId, super::first_letter::FirstLetterInputs>,
-) {
+) -> Result<(), CascadeError> {
     resolve_inheritance_with(
         dom,
         id,
@@ -156,18 +157,24 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         svg_properties,
         first_letter_inputs,
         true,
-    );
+    )?; // cov:ignore: the error branch needs a u32 handle overflow
+    Ok(())
 }
 
 /// [`resolve_inheritance`] with sibling sharing switchable, returning how many
 /// nodes copied their results from a sibling. Tests use `sibling_sharing =
 /// false` as the reference the shared walk must reproduce exactly.
+///
+/// # Errors
+///
+/// Fails when the first-letter candidates kept in the result cannot be
+/// numbered (see [`OwnedCandidates::copy`]).
 #[allow(clippy::too_many_arguments)] // same outputs as resolve_inheritance plus the sharing switch
 pub(crate) fn resolve_inheritance_with<D: StyleDom>(
     dom: &D,
     id: StyleNodeId,
     parent_computed: &ComputedValues,
-    cascaded: &CascadedArena,
+    cascaded: &CascadedArena<'_>,
     out: &mut Vec<ComputedValues>,
     authored_writing_modes: &mut Vec<Option<WritingMode>>,
     page_values: &mut [crate::property::PageValue],
@@ -175,7 +182,7 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
     svg_properties: &mut HashMap<StyleNodeId, Vec<SvgStyleProperty>>,
     first_letter_inputs: &mut HashMap<StyleNodeId, super::first_letter::FirstLetterInputs>,
     sibling_sharing: bool,
-) -> usize {
+) -> Result<usize, CascadeError> {
     let mut shared_nodes = 0;
     let mut stack: Vec<InheritanceStackEntry> =
         vec![(id, None, None, empty_custom_properties(), 0, None)];
@@ -190,6 +197,9 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
     // the first few nodes, then incurs no allocations. `apply_winners` owns its
     // fill and drain; the walk loop only lends it a reusable container.
     let mut winners: Vec<Option<RankedDecl>> = Vec::new();
+    // Scratch buffer for the candidates that apply to `::first-line`, reused
+    // the same way.
+    let mut first_line_scratch: Vec<Candidate> = Vec::new();
     while let Some((id, parent_id, root_ctx, parent_custom_properties, depth, share_parent)) =
         stack.pop()
     {
@@ -265,8 +275,8 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
             // context as `source`'s children and may share with them.
             (computed, custom_properties, root_ctx, source)
         } else {
-            let local_custom_properties = cascaded
-                .custom_candidates(id)
+            let (element_candidates, element_custom) = cascaded.element(id);
+            let local_custom_properties = element_custom
                 .map(|candidates| resolve_custom_properties(&parent_custom_properties, candidates));
             let custom_properties = local_custom_properties
                 .clone()
@@ -279,7 +289,7 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
             // computed values; non-inherited fields initialized). The target is a
             // staging representation, so winner application order does not matter.
             let mut specified = SpecifiedValues::inherit_from(parent_computed);
-            if let Some(candidates) = cascaded.candidates(id) {
+            if let Some(candidates) = element_candidates {
                 apply_winners(
                     candidates,
                     &mut winners,
@@ -384,8 +394,7 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
             // does not make; see `CascadeResult::pseudo`'s doc.
             if is_element {
                 for pseudo in CASCADED_PSEUDO_ELEMENTS {
-                    let candidates = cascaded.pseudo_candidates(id, pseudo);
-                    let custom_candidates = cascaded.pseudo_custom_candidates(id, pseudo);
+                    let (candidates, custom_candidates) = cascaded.pseudo(id, pseudo);
                     if candidates.is_none() && custom_candidates.is_none() {
                         continue;
                     }
@@ -405,18 +414,12 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
                     };
                     // Filter by longhand key before choosing winners, including
                     // deferred var() values and expanded shorthand candidates.
-                    let first_line_candidates;
                     let candidates = if pseudo == PseudoElem::FirstLine {
-                        first_line_candidates = candidates.map(|values| {
-                            values
-                                .iter()
-                                .filter(|candidate| {
-                                    super::first_line::first_line_property_applies(candidate.key)
-                                })
-                                .cloned()
-                                .collect::<Vec<_>>()
-                        });
-                        first_line_candidates.as_deref()
+                        candidates.map(|values| {
+                            values.filtered(&mut first_line_scratch, |candidate| {
+                                first_line_property_applies(candidate.key())
+                            })
+                        })
                     } else {
                         candidates
                     };
@@ -447,8 +450,10 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
                         first_letter_inputs.insert(
                             id,
                             super::first_letter::FirstLetterInputs {
-                                declarations: candidates.unwrap_or_default().to_vec(),
-                                custom: custom_candidates.unwrap_or_default().to_vec(),
+                                candidates: OwnedCandidates::copy(
+                                    candidates.unwrap_or(ElementCandidates::EMPTY),
+                                    custom_candidates.unwrap_or(CustomCandidates::EMPTY),
+                                )?, // cov:ignore: the error branch needs a u32 handle overflow
                                 context: ctx,
                             },
                         );
@@ -512,95 +517,40 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
         }));
         stack[start..].reverse();
     }
-    shared_nodes
+    Ok(shared_nodes)
 }
 
-/// Choose the cascade winners for one node and apply them to the staging
-/// representation (**phase 1**).
-///
-/// The caller allocates `winners` outside the walk loop as a scratch buffer.
-/// This function pairs filling it ([`pick_winners`]) with draining it, leaving
-/// every slot at `None` on return.
-///
-/// # Application order
-///
-/// Iterate slots by ascending index, i.e. [`PropertyKey`] **declaration order**.
-/// [`Option::take`] restores each slot to `None` during this walk, also resetting
-/// the buffer for the next node.
-///
-/// Shorthand keys must not reach this phase. CSS Cascading Level 4 §3
-/// requires shorthand declarations to behave as if expanded in place, and
-/// §6.1 determines the winner by order of appearance. Parsed entry points
-/// expand shorthands before collecting candidates; the exhaustive expansion
-/// match requires an explicit decision for new property variants.
-///
-/// # The unchecked `candidates[winner.idx]` index
-///
-/// `winner.idx` is in bounds because the immediately preceding [`pick_winners`]
-/// produced it from **the same `candidates`**. Filling and draining occur next
-/// to each other in this function body; no path swaps out `candidates` between
-/// them.
-///
-/// The index is valid only because [`pick_winners`] produced it from the
-/// same candidate slice immediately before this drain. A stale slot could
-/// otherwise select another declaration, so the winner buffer is reset for
-/// every node.
-///
-/// # Origin of `candidates` (after conversion to a flat arena)
-///
-/// The sole caller, [`resolve_inheritance`], obtains `candidates` only through
-/// [`CascadedArena::candidates`]. That method always returns a slice containing
-/// **exactly this node's range** (private fields prevent alternate slicing).
-/// Thus `winner.idx` cannot point to **another node's declaration** through an
-/// accidental slice in global index space. The only remaining risk described
-/// above is a leaked slot that was not drained.
-///
-/// [`PropertyKey`]: crate::property::PropertyKey
-// The winner application already groups several optional cascade side channels;
-// the inherited computed values add one more required input for `inherit`
-// resolution without changing that staging boundary.
 /// Find a longhand's surviving value after origin or layer rollback.
 fn find_rollback(
-    candidates: &[CascadedDecl],
+    candidates: ElementCandidates<'_>,
     key: crate::property::PropertyKey,
     winner_index: usize,
     keyword: CssWideKeyword,
     custom_properties: &CustomPropertyEnvironment,
 ) -> Option<PropertyValue> {
-    let index = super::rollback::select_layered_winner(candidates, |idx, candidate| {
-        if candidate.key != key && !matches!(candidate.value, PropertyValue::AllRevertLayer) {
+    let index = super::rollback::select_layered_winner(candidates.decls(), |idx, candidate| {
+        if candidate.key() != key && !candidate.is_all_revert_layer() {
             return None;
         }
-        Some((
-            (
-                cascade_rank(candidate.origin, candidate.important),
-                candidate.layer.priority(candidate.important),
-                candidate.specificity,
-                candidate.source_order,
-                idx,
-            ),
-            candidate.origin,
-            candidate.layer,
-            candidate.important,
-            if idx == winner_index {
-                if keyword == CssWideKeyword::Revert {
-                    super::rollback::Rollback::Origin
-                } else {
-                    super::rollback::Rollback::Layer
-                }
-            } else if let PropertyValue::Deferred(deferred) = &candidate.value {
-                resolve_deferred_value(deferred, custom_properties)
-                    .as_ref()
-                    .map_or(
-                        super::rollback::Rollback::None,
-                        super::rollback::rollback_kind,
-                    )
+        let rollback = if idx == winner_index {
+            if keyword == CssWideKeyword::Revert {
+                super::rollback::Rollback::Origin
             } else {
-                candidate.rollback
-            },
-        ))
+                super::rollback::Rollback::Layer
+            }
+        } else if let PropertyValue::Deferred(deferred) = candidates.value(idx) {
+            resolve_deferred_value(deferred, custom_properties)
+                .as_ref()
+                .map_or(
+                    super::rollback::Rollback::None,
+                    super::rollback::rollback_kind,
+                )
+        } else {
+            candidate.rollback()
+        };
+        Some(candidate.precedence().layered(idx, rollback))
     })?;
-    Some(candidates[index].value.clone())
+    Some(candidates.value(index).clone())
 }
 
 /// Resolve one border longhand CSS-wide marker to its concrete specified value.
@@ -617,7 +567,7 @@ fn resolve_border_css_wide(
     keyword: CssWideKeyword,
     key: crate::property::PropertyKey,
     inherited: &ComputedValues,
-    candidates: &[CascadedDecl],
+    candidates: ElementCandidates<'_>,
     winner: RankedDecl,
     custom_properties: &CustomPropertyEnvironment,
 ) -> Option<PropertyValue> {
@@ -752,9 +702,56 @@ fn resolve_border_css_wide(
     }
 }
 
+/// Choose the cascade winners for one node and apply them to the staging
+/// representation (**phase 1**).
+///
+/// The caller allocates `winners` outside the walk loop as a scratch buffer.
+/// This function pairs filling it ([`pick_winners`]) with draining it, leaving
+/// every slot at `None` on return.
+///
+/// # Application order
+///
+/// Iterate slots by ascending index, i.e. [`PropertyKey`] **declaration order**.
+/// [`Option::take`] restores each slot to `None` during this walk, also resetting
+/// the buffer for the next node.
+///
+/// Shorthand keys must not reach this phase. CSS Cascading Level 4 §3
+/// requires shorthand declarations to behave as if expanded in place, and
+/// §6.1 determines the winner by order of appearance. Parsed entry points
+/// expand shorthands before collecting candidates; the exhaustive expansion
+/// match requires an explicit decision for new property variants.
+///
+/// # The unchecked `winner.idx` position
+///
+/// `winner.idx` is in bounds because the immediately preceding [`pick_winners`]
+/// produced it from **the same `candidates`**. Filling and draining occur next
+/// to each other in this function body; no path swaps out `candidates` between
+/// them.
+///
+/// The index is valid only because [`pick_winners`] produced it from the
+/// same candidate slice immediately before this drain. A stale slot could
+/// otherwise select another declaration, so the winner buffer is reset for
+/// every node.
+///
+/// # Origin of `candidates`
+///
+/// [`resolve_inheritance`] obtains `candidates` through
+/// [`CascadedArena::element`] and [`CascadedArena::pseudo`], whose views pair
+/// **exactly this node's range** with **exactly this node's own declarations**
+/// (private fields prevent alternate slicing). Its `::first-line` filter,
+/// [`super::first_line::cascade_with_first_line`] and the first-letter
+/// methods pass filtered copies of such views or views of [`OwnedCandidates`],
+/// which resolve to the same declarations. Thus neither `winner.idx` nor a
+/// local handle can resolve to **another node's declaration**. The only
+/// remaining risk described above is a leaked slot that was not drained.
+///
+/// [`PropertyKey`]: crate::property::PropertyKey
+// The winner application already groups several optional cascade side channels;
+// the inherited computed values add one more required input for `inherit`
+// resolution without changing that staging boundary.
 #[allow(clippy::too_many_arguments)] // winner application writes independent cascade metadata outputs
 pub(crate) fn apply_winners(
-    candidates: &[CascadedDecl],
+    candidates: ElementCandidates<'_>,
     winners: &mut Vec<Option<RankedDecl>>,
     specified: &mut SpecifiedValues,
     inherited: &ComputedValues,
@@ -773,8 +770,8 @@ pub(crate) fn apply_winners(
     let mut radius_applied = BorderRadiusApplied::default();
     for slot in winners.iter_mut() {
         if let Some(winner) = slot.take() {
-            let value = &candidates[winner.idx].value;
-            let winner_key = candidates[winner.idx].key;
+            let value = candidates.value(winner.idx);
+            let winner_key = candidates.decls()[winner.idx].key();
             let mut literal_inherit = false;
             let mut default_value = |value: PropertyValue| {
                 if let PropertyValue::Deferred(marker) = &value {

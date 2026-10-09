@@ -133,7 +133,8 @@ fn differential_doc(quirks_mode: StyleQuirksMode) -> TestDoc {
 fn candidates_are_a_superset_of_real_matches_in_every_quirks_mode() {
     let tree = rule_tree(DIFFERENTIAL_CSS);
     let rules = sorted_rules(&tree);
-    let index = RuleIndex::new(rules.iter().copied(), &layer_order(&tree));
+    let index =
+        RuleIndex::new(rules.iter().copied(), &layer_order(&tree)).expect("the index builds");
     assert_eq!(index.rule_count(), rules.len());
     for quirks in [
         StyleQuirksMode::NoQuirks,
@@ -176,7 +177,8 @@ fn candidates_are_a_superset_of_real_matches_in_every_quirks_mode() {
 fn unrelated_buckets_are_not_tried() {
     let tree = rule_tree("#a { color: red } .b { color: red } em { color: red } * { color: red }");
     let rules = sorted_rules(&tree);
-    let index = RuleIndex::new(rules.iter().copied(), &layer_order(&tree));
+    let index =
+        RuleIndex::new(rules.iter().copied(), &layer_order(&tree)).expect("the index builds");
     let mut doc = TestDoc::new();
     doc.push_element(0, "p", None);
     let mut candidates = Vec::new();
@@ -193,7 +195,8 @@ fn unrelated_buckets_are_not_tried() {
 fn ancestor_filter_rejects_absent_descendant_requirements() {
     let tree = rule_tree(".outer p { color: red } h1 + p { color: red }");
     let rules = sorted_rules(&tree);
-    let index = RuleIndex::new(rules.iter().copied(), &layer_order(&tree));
+    let index =
+        RuleIndex::new(rules.iter().copied(), &layer_order(&tree)).expect("the index builds");
 
     let mut doc = TestDoc::new();
     let plain = doc.push_element(0, "div", None);
@@ -295,7 +298,8 @@ fn deep_descendant_chain_still_matches() {
 fn compound_with_several_simple_selectors_uses_the_strongest_key() {
     let tree = rule_tree("p.x#y { color: red } p.x { color: red } .x { color: red }");
     let rules = sorted_rules(&tree);
-    let index = RuleIndex::new(rules.iter().copied(), &layer_order(&tree));
+    let index =
+        RuleIndex::new(rules.iter().copied(), &layer_order(&tree)).expect("the index builds");
     assert_eq!(index.by_id.len(), 1);
     assert_eq!(index.by_class.len(), 1);
     assert_eq!(index.by_class.values().next().map(Vec::len), Some(2));
@@ -308,7 +312,7 @@ fn indexed_rules_borrow_their_expanded_declarations() {
     let tree = rule_tree("@layer base, top; @layer top { p { margin: 1px } }");
     let rules = sorted_rules(&tree);
     let layers = layer_order(&tree);
-    let index = RuleIndex::new(rules.iter().copied(), &layers);
+    let index = RuleIndex::new(rules.iter().copied(), &layers).expect("the index builds");
     let rule = index.rule(0);
     assert_eq!(rule.declarations.len(), 4, "margin expanded at parse time");
     assert!(std::ptr::eq(rule.declarations, rule.rule.declarations()));

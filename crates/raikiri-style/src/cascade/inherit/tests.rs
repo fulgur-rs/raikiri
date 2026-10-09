@@ -1,4 +1,5 @@
 use super::*;
+use crate::cascade::candidate::{OwnedCandidates, Precedence};
 use crate::cascade::test_support::*;
 use crate::cascade::{cascade, cascade_with_media_context_for_page};
 use crate::computed::{ComputedValues, INITIAL_FONT_SIZE_PX};
@@ -6889,8 +6890,9 @@ fn resolve_inheritance_grows_undersized_output_vectors() {
         deepest = doc.push_element(deepest, "span", None);
     }
     let id = StyleNodeId(e as u64);
-    let mut cascaded = CascadedArena::new();
-    crate::cascade::collect::collect_cascaded(&doc, id, &RuleTree::empty(), &mut cascaded);
+    let tree = RuleTree::empty();
+    let cascaded =
+        crate::cascade::collect::collect_cascaded(&doc, id, &tree).expect("the cascade collects");
     let mut out: Vec<ComputedValues> = Vec::new();
     let mut authored_writing_modes: Vec<Option<WritingMode>> = Vec::new();
     let mut page_values = vec![PageValue::Auto; doc.node_count()];
@@ -6906,7 +6908,8 @@ fn resolve_inheritance_grows_undersized_output_vectors() {
         &mut pseudo_out,
         &mut HashMap::new(),
         &mut HashMap::new(),
-    );
+    )
+    .expect("the walk succeeds");
     assert!(out.len() > deepest);
     assert!(authored_writing_modes.len() > deepest);
     assert_eq!(out[e].color, RED);
@@ -6927,7 +6930,10 @@ fn resolve_inheritance_panics_when_root_parent_font_size_is_not_initial() {
     let mut doc = TestDoc::new();
     let e = doc.push_element(0, "div", None);
     let id = StyleNodeId(e as u64);
-    let cascaded = CascadedArena::new();
+    // No rules and no inline style: the element has no candidates.
+    let tree = RuleTree::empty();
+    let cascaded =
+        crate::cascade::collect::collect_cascaded(&doc, id, &tree).expect("the cascade collects");
     let mut out = vec![ComputedValues::initial(); doc.node_count()];
     let mut authored_writing_modes = vec![None; doc.node_count()];
     let mut page_values = vec![PageValue::Auto; doc.node_count()];
@@ -6945,23 +6951,29 @@ fn resolve_inheritance_panics_when_root_parent_font_size_is_not_initial() {
         &mut pseudo_out,
         &mut HashMap::new(),
         &mut HashMap::new(),
-    );
+    )
+    .expect("the walk panics before it could fail");
 }
 
 #[test]
 fn apply_winners_direct_border_radius_inherit() {
     // Expansion never yields this shorthand marker, so the candidate is built
     // directly to reach `apply_winners`' arm for it.
-    let candidates: Vec<CascadedDecl> = vec![CascadedDecl {
-        value: PropertyValue::BorderRadiusInherit,
-        important: false,
-        origin: Origin::Author,
-        key: crate::property::PropertyKey::BorderRadius,
-        rollback: crate::cascade::rollback::Rollback::None,
-        specificity: 0,
-        source_order: 0,
-        layer: crate::layer::LayerPosition::default(),
-    }];
+    let candidates = OwnedCandidates::from_declarations([(
+        crate::rule::Declaration {
+            value: PropertyValue::BorderRadiusInherit,
+            important: false,
+            key: crate::property::PropertyKey::BorderRadius,
+            rollback: crate::cascade::rollback::Rollback::None,
+        },
+        Precedence::new(
+            Origin::Author,
+            false,
+            0,
+            0,
+            crate::layer::LayerPosition::default(),
+        ),
+    )]);
     let mut winners: Vec<Option<RankedDecl>> = Vec::new();
     let mut specified = SpecifiedValues::initial();
     let mut inherited = ComputedValues::initial();
@@ -6973,7 +6985,7 @@ fn apply_winners_direct_border_radius_inherit() {
     };
     let custom_properties = CustomPropertyEnvironment::from_map(HashMap::new());
     apply_winners(
-        &candidates,
+        candidates.candidates(),
         &mut winners,
         &mut specified,
         &inherited,
@@ -6997,23 +7009,26 @@ fn apply_winners_direct_border_radius_inherit() {
 #[test]
 fn apply_winners_direct_page_value() {
     use crate::Atom;
-    let candidates: Vec<CascadedDecl> = vec![CascadedDecl::new(
+    let candidates = OwnedCandidates::from_declarations([(
         crate::rule::Declaration::new(
             PropertyValue::Page(PageValue::Named(Atom::from("chapter"))),
             false,
         ),
-        Origin::Author,
-        0,
-        0,
-        crate::layer::LayerPosition::default(),
-    )];
+        Precedence::new(
+            Origin::Author,
+            false,
+            0,
+            0,
+            crate::layer::LayerPosition::default(),
+        ),
+    )]);
     let mut winners: Vec<Option<RankedDecl>> = Vec::new();
     let mut specified = SpecifiedValues::initial();
     let inherited = ComputedValues::initial();
     let custom_properties = CustomPropertyEnvironment::from_map(HashMap::new());
     let mut page_value = PageValue::Auto;
     apply_winners(
-        &candidates,
+        candidates.candidates(),
         &mut winners,
         &mut specified,
         &inherited,
@@ -9257,8 +9272,8 @@ struct WalkOutputs {
 
 fn walk_outputs(doc: &TestDoc, tree: &RuleTree, sibling_sharing: bool) -> (WalkOutputs, usize) {
     let root = doc.root_id();
-    let mut cascaded = CascadedArena::new();
-    crate::cascade::collect::collect_cascaded(doc, root, tree, &mut cascaded);
+    let cascaded =
+        crate::cascade::collect::collect_cascaded(doc, root, tree).expect("the cascade collects");
     let n = doc.node_count();
     let mut computed = vec![ComputedValues::initial(); n];
     let mut authored_writing_modes = vec![None; n];
@@ -9277,7 +9292,8 @@ fn walk_outputs(doc: &TestDoc, tree: &RuleTree, sibling_sharing: bool) -> (WalkO
         &mut svg_properties,
         &mut HashMap::new(),
         sibling_sharing,
-    );
+    )
+    .expect("the walk succeeds");
     let mut pseudo = pseudo_out
         .into_iter()
         .map(|((id, pseudo), values)| ((id.0, pseudo), values))
@@ -9486,6 +9502,25 @@ fn children_of_shared_siblings_share_with_their_cousins() {
     // The first `li` subtree is resolved; the other four `li`s, their `b`
     // children, and the text inside those share: 4 * 3.
     assert_eq!(shared, 12);
+}
+
+#[test]
+fn siblings_share_inline_styles_only_with_equal_values() {
+    // An element's own declarations are numbered from its first one, so the
+    // inline declarations of these siblings all have the same handle; only
+    // their values tell them apart.
+    let mut doc = TestDoc::new();
+    let div = doc.push_element(0, "div", None);
+    let red = doc.push_element(div, "p", Some("color: red"));
+    let blue = doc.push_element(div, "p", Some("color: blue"));
+    let red_again = doc.push_element(div, "p", Some("color: red"));
+    let tree = RuleTree::empty();
+    // Only the third paragraph shares, with the first.
+    assert_eq!(assert_sharing_is_transparent(&doc, &tree), 1);
+    let (outputs, _) = walk_outputs(&doc, &tree, true);
+    assert_eq!(outputs.computed[red].color, RED);
+    assert_eq!(outputs.computed[blue].color, BLUE);
+    assert_eq!(outputs.computed[red_again].color, RED);
 }
 
 #[test]

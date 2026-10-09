@@ -1,7 +1,7 @@
 //! Resolve typographic pseudo styles after the text's actual parent is known.
 
 use super::CascadeResult;
-use super::collect::{CascadedDecl, CustomCascadedDecl};
+use super::candidate::{ElementCandidates, OwnedCandidates};
 use super::custom_property::resolve_custom_properties;
 use super::inherit::apply_winners;
 use crate::resolve::ResolveContext;
@@ -10,8 +10,9 @@ use crate::{ComputedValues, SpecifiedValues, StyleNodeId};
 #[derive(Clone, Debug)]
 /// Crate visibility matches the inheritance walk's crate-visible output type.
 pub(crate) struct FirstLetterInputs {
-    pub(super) declarations: Vec<CascadedDecl>,
-    pub(super) custom: Vec<CustomCascadedDecl>,
+    /// The originating element's `::first-letter` candidates, ordinary and
+    /// custom-property ones, copied out of the cascade.
+    pub(super) candidates: OwnedCandidates,
     pub(super) context: ResolveContext,
 }
 
@@ -135,20 +136,13 @@ impl CascadeResult {
         let values = self
             .typographic_inheritance
             .get(&(id, pseudo))
-            .map_or(&[][..], Vec::as_slice);
-        let filtered;
+            .map_or(ElementCandidates::EMPTY, OwnedCandidates::candidates);
+        let mut filtered = Vec::new();
         let values = if pseudo == Some(crate::PseudoElem::FirstLine) {
-            filtered = values
-                .iter()
-                .filter(|candidate| {
-                    matches!(
-                        candidate.value,
-                        crate::property::PropertyValue::AllRevertLayer
-                    ) || super::first_line::first_line_property_applies(candidate.key)
-                })
-                .cloned()
-                .collect::<Vec<_>>();
-            filtered.as_slice()
+            values.filtered(&mut filtered, |candidate| {
+                candidate.is_all_revert_layer()
+                    || super::first_line::first_line_property_applies(candidate.key())
+            })
         } else {
             values
         };
@@ -191,21 +185,18 @@ impl CascadeResult {
         parent: &ComputedValues,
     ) -> Option<ComputedValues> {
         let inputs = self.first_letter_inputs.get(&origin)?;
-        let custom = resolve_custom_properties(&parent.custom_properties, &inputs.custom);
+        let custom_candidates = inputs.candidates.custom_candidates();
+        let custom = resolve_custom_properties(&parent.custom_properties, custom_candidates);
         let mut specified = SpecifiedValues::inherit_from(parent);
-        let declarations: Vec<_> = inputs
-            .declarations
-            .iter()
-            .filter(|candidate| {
-                matches!(
-                    candidate.value,
-                    crate::property::PropertyValue::AllRevertLayer
-                ) || property_applies(candidate.key)
-            })
-            .cloned()
-            .collect();
+        let mut filtered = Vec::new();
+        let declarations = inputs
+            .candidates
+            .candidates()
+            .filtered(&mut filtered, |candidate| {
+                candidate.is_all_revert_layer() || property_applies(candidate.key())
+            });
         apply_winners(
-            &declarations,
+            declarations,
             &mut Vec::new(),
             &mut specified,
             parent,
@@ -215,7 +206,7 @@ impl CascadeResult {
             None,
         );
         let mut computed = specified.finalize(parent, &inputs.context);
-        computed.local_custom_properties = if inputs.custom.is_empty() {
+        computed.local_custom_properties = if custom_candidates.is_empty() {
             crate::computed::empty_custom_properties()
         } else {
             std::sync::Arc::clone(&custom)

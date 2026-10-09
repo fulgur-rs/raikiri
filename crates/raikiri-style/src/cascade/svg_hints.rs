@@ -2,10 +2,11 @@
 
 use cssparser::{Parser, ParserInput};
 
+use crate::error::CascadeError;
 use crate::property::{Length, LengthOrAuto, PropertyValue};
 use crate::style_dom::StyleElement;
 
-use super::collect::CascadedDecl;
+use super::candidate::CandidateSink;
 
 /// Add geometry and font sizing of a namespace-checked outermost SVG root.
 ///
@@ -13,7 +14,10 @@ use super::collect::CascadedDecl;
 /// outermost SVG roots. Presentation attributes precede author stylesheets
 /// with zero specificity: <https://www.w3.org/TR/SVG2/geometry.html#Sizing>
 /// and <https://www.w3.org/TR/SVG2/styling.html#PresentationAttributes>.
-pub(super) fn push_dimension_hints(elem: &impl StyleElement, decls: &mut Vec<CascadedDecl>) {
+pub(super) fn push_dimension_hints(
+    elem: &impl StyleElement,
+    sink: &mut CandidateSink<'_>,
+) -> Result<(), CascadeError> {
     for name in ["width", "height", "font-size"] {
         let Some(value) = elem.attr(name).and_then(|raw| {
             if name == "font-size" {
@@ -24,15 +28,20 @@ pub(super) fn push_dimension_hints(elem: &impl StyleElement, decls: &mut Vec<Cas
         }) else {
             continue;
         };
-        decls.push(CascadedDecl::hint(value));
+        sink.push_hint(value)?;
     }
+    Ok(())
 }
 
 /// Add a SVG descendant's font-size presentation hint without geometry hints.
-pub(super) fn push_font_size_hint(elem: &impl StyleElement, decls: &mut Vec<CascadedDecl>) {
+pub(super) fn push_font_size_hint(
+    elem: &impl StyleElement,
+    sink: &mut CandidateSink<'_>,
+) -> Result<(), CascadeError> {
     if let Some(value) = elem.attr("font-size").and_then(parse_font_size) {
-        decls.push(CascadedDecl::hint(value));
+        sink.push_hint(value)?;
     }
+    Ok(())
 }
 
 fn parse_font_size(raw: &str) -> Option<PropertyValue> {

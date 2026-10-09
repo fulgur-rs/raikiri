@@ -20,13 +20,14 @@
 //! The UA stylesheet gives every table `border-spacing: 2px`, so honoring
 //! `cellspacing="0"` is what lets legacy markup remove that gap.
 
+use crate::error::CascadeError;
 use crate::property::{
     BorderCollapseValue, BorderSpacingValue, BorderStyle, Length, LengthOrAuto, PropertyValue,
 };
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId};
 use std::collections::HashMap;
 
-use super::collect::CascadedDecl;
+use super::candidate::CandidateSink;
 
 /// Pushes HTML table and column hints, including the containing table's cell padding.
 pub(crate) fn push_table_attribute_hints<D: StyleDom>(
@@ -34,14 +35,14 @@ pub(crate) fn push_table_attribute_hints<D: StyleDom>(
     elem: &impl StyleElement,
     ancestors: &[StyleNodeId],
     cell_padding_cache: &mut HashMap<StyleNodeId, Option<u32>>,
-    decls: &mut Vec<CascadedDecl>,
-) {
+    sink: &mut CandidateSink<'_>,
+) -> Result<(), CascadeError> {
     // The mapping belongs to the HTML namespace; `namespace_uri()` is `None`
     // for it.
     if elem.namespace_uri().is_some() {
-        return;
+        return Ok(());
     }
-    let mut push = |value: PropertyValue| decls.push(CascadedDecl::hint(value));
+    let mut push = |value: PropertyValue| sink.push_hint(value);
     if elem.tag_name().eq_ignore_ascii_case("td") || elem.tag_name().eq_ignore_ascii_case("th") {
         for ancestor in ancestors.iter().rev() {
             if let Some(node) = dom.node(*ancestor)
@@ -56,28 +57,28 @@ pub(crate) fn push_table_attribute_hints<D: StyleDom>(
                         .and_then(parse_non_negative_integer)
                 }) {
                     let px = Length::Px(padding as f32);
-                    push(PropertyValue::PaddingTop(px));
-                    push(PropertyValue::PaddingRight(px));
-                    push(PropertyValue::PaddingBottom(px));
-                    push(PropertyValue::PaddingLeft(px));
+                    push(PropertyValue::PaddingTop(px))?;
+                    push(PropertyValue::PaddingRight(px))?;
+                    push(PropertyValue::PaddingBottom(px))?;
+                    push(PropertyValue::PaddingLeft(px))?;
                 }
                 // A nested table without a valid hint does not borrow the outer table's hint.
                 break;
             }
         }
-        return;
+        return Ok(());
     }
     if elem.tag_name().eq_ignore_ascii_case("col") {
         if let Some(width) = elem
             .attr("width")
             .and_then(super::html_quirks::parse_html_dimension_value)
         {
-            push(PropertyValue::Width(LengthOrAuto::Length(width)));
+            push(PropertyValue::Width(LengthOrAuto::Length(width)))?;
         }
-        return;
+        return Ok(());
     }
     if !elem.tag_name().eq_ignore_ascii_case("table") {
-        return;
+        return Ok(());
     }
     if let Some(spacing) = elem
         .attr("cellspacing")
@@ -87,19 +88,20 @@ pub(crate) fn push_table_attribute_hints<D: StyleDom>(
         push(PropertyValue::BorderSpacing(BorderSpacingValue {
             horizontal: px,
             vertical: px,
-        }));
+        }))?;
     }
     if elem.attr("rules").is_some_and(|rules| {
         ["none", "groups", "rows", "cols", "all"]
             .iter()
             .any(|keyword| rules.eq_ignore_ascii_case(keyword))
     }) {
-        push(PropertyValue::BorderCollapse(BorderCollapseValue::Collapse));
-        push(PropertyValue::BorderTopStyle(BorderStyle::Hidden));
-        push(PropertyValue::BorderRightStyle(BorderStyle::Hidden));
-        push(PropertyValue::BorderBottomStyle(BorderStyle::Hidden));
-        push(PropertyValue::BorderLeftStyle(BorderStyle::Hidden));
+        push(PropertyValue::BorderCollapse(BorderCollapseValue::Collapse))?;
+        push(PropertyValue::BorderTopStyle(BorderStyle::Hidden))?;
+        push(PropertyValue::BorderRightStyle(BorderStyle::Hidden))?;
+        push(PropertyValue::BorderBottomStyle(BorderStyle::Hidden))?;
+        push(PropertyValue::BorderLeftStyle(BorderStyle::Hidden))?;
     }
+    Ok(())
 }
 
 /// HTML LS §2.3.4.1 "rules for parsing non-negative integers": the rules

@@ -208,3 +208,40 @@ fn nested_first_line_resolves_its_own_variables_without_leaking_to_the_letter() 
         }
     }
 }
+
+#[test]
+fn nested_first_line_recomputation_keeps_all_revert_layer() {
+    // The first line of `div`, nested in the first line of `body`, is
+    // recomputed from its own candidates; `all: revert-layer` rolls the
+    // color of its layer back to the lower layer's there.
+    let mut doc = TestDoc::new();
+    let sheet = doc.push_element(0, "style", None);
+    doc.push_text(
+        sheet,
+        "@layer low, high; body::first-line{font-size:30px} \
+         @layer low {div::first-line{color:red}} \
+         @layer high {div::first-line{color:blue;all:revert-layer}} \
+         div::first-letter{font-size:2em}",
+    );
+    let outer = doc.push_element(0, "body", Some("font-size:10px"));
+    let inner = doc.push_element(outer, "div", None);
+    let span = doc.push_element(inner, "span", None);
+    doc.push_text(span, "AB");
+    let result = crate::cascade(&doc, &crate::build_rule_tree(&doc)).unwrap();
+    let parent = result
+        .first_letter_parent_with_first_lines(
+            &doc,
+            StyleNodeId::new(inner as u64),
+            &[
+                StyleNodeId::new(outer as u64),
+                StyleNodeId::new(inner as u64),
+            ],
+            StyleNodeId::new(span as u64),
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        (parent.color.r, parent.color.g, parent.color.b),
+        (255, 0, 0)
+    );
+}
