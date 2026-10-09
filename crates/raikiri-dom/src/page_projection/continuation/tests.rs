@@ -142,3 +142,47 @@ fn continuation_cascade_drops_breaks_before_the_token() {
     // A box after the token keeps its breaks.
     assert_eq!(cascade.computed[blocks[2]].break_before, BreakBetween::Page);
 }
+
+#[test]
+fn page_start_skips_a_float_that_comes_first() {
+    let mut blocks = Vec::new();
+    let (mut doc, cascade, _) = ahem_paragraph_with("", |doc, root| {
+        for style in [
+            "display:block;height:15px",
+            "display:block;height:15px",
+            "display:block;float:left;width:10px;height:10px",
+            "display:block;height:15px",
+        ] {
+            blocks.push(doc.append_element(
+                Some(root),
+                "div",
+                taffy::Style::default(),
+                Some(style),
+            ));
+        }
+    });
+    let slices = paginate(&mut doc, &cascade, page_box(100.0, 30.0));
+    assert_eq!(slices.len(), 2);
+    let start = doc.page_start(&cascade, 1).expect("a page start");
+    assert_eq!(start.token, PageStartToken::Node(blocks[3]));
+}
+
+#[test]
+fn continuation_break_at_the_start_of_a_text_node_breaks_before_it() {
+    let mut texts = Vec::new();
+    let (mut doc, cascade, _) = ahem_paragraph_with("", |doc, root| {
+        texts.push(doc.append_text(root, "aaaa "));
+        texts.push(doc.append_text(root, "bbbb"));
+    });
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    assert_eq!(doc.ifc_text_lines(texts[1]).expect("lines").lines.len(), 1);
+
+    doc.set_continuation_break(Some((texts[1], 0)));
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    project_one_page(&mut doc, &cascade, page_box_800x600());
+    let token = PageStartToken::Line {
+        text: texts[1],
+        offset: 0,
+    };
+    assert_eq!(doc.page_token_offset(0, token), Some(10.0));
+}

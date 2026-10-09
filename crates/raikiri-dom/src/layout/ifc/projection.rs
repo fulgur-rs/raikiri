@@ -830,7 +830,7 @@ fn project_children_builder(
                                 &text[..offset],
                                 fonts,
                                 counters,
-                            )?;
+                            )?; // cov:ignore: an earlier layout pushed this text unsplit, so it would have failed there
                         }
                         first_letter.stop();
                         builder.push_forced_break(NodeId(id as u64));

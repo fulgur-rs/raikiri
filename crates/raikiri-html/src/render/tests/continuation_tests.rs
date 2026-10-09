@@ -185,3 +185,45 @@ fn a_page_that_starts_inside_columns_keeps_the_first_layout() {
     assert!(out.slices.len() >= 2);
     assert!(out.continuations.is_empty());
 }
+
+#[test]
+fn narrower_later_pages_count_toward_the_page_limit() {
+    // Page 0 is 360px wide and later pages 160px: the first layout needs
+    // two pages, the narrower continuation a third.
+    let html = format!(
+        "<style>\
+        @page {{ size: 400px 200px; margin: 20px 20px 20px 220px }}\
+        @page :first {{ margin-left: 20px }}\
+        body {{ margin: 0 }}\
+        p {{ margin: 0; font: 10px/10px Ahem }}\
+        </style><p>{}</p>",
+        words(200).join(" ")
+    );
+    let resources = RenderResources::new().fonts(super::ahem_fonts());
+    let config = LayoutConfig::builder()
+        .limits(
+            raikiri_traits::RenderLimits::builder()
+                .max_document_pages(Some(2))
+                .build(),
+        )
+        .build();
+    let result = run_pipeline(
+        &parse(&html),
+        PageDefaults::default(),
+        &config,
+        PipelineInputs {
+            resources: Some(&resources),
+            consumer_properties: &[],
+            property_observer: None,
+            preload_background_images: false,
+        },
+    );
+    assert!(matches!(
+        result,
+        Err(RenderError::LimitExceeded {
+            kind: raikiri_traits::LimitKind::Pages,
+            limit: 2,
+            actual: 3,
+        })
+    ));
+}

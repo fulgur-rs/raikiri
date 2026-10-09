@@ -72,13 +72,7 @@ pub(super) fn continue_at_page_widths(
     let mut continuations: Vec<Continuation> = Vec::new();
     let mut run_start = 0_usize;
     loop {
-        let Some(run_width) = geometries
-            .get(run_start)
-            .copied()
-            .map(content_width_for_geometry)
-        else {
-            break;
-        };
+        let run_width = content_width_for_geometry(geometries[run_start]);
         let Some(page) = (run_start + 1..slices.len()).find(|&page| {
             (content_width_for_geometry(geometries[page]) - run_width).abs() > WIDTH_TOLERANCE
         }) else {
@@ -144,7 +138,7 @@ fn relayout_from(
         inputs.resolver,
         inputs.base_url,
         &measure_control,
-    )?;
+    )?; // cov:ignore: only a cancellation landing in this pass fails it; the first layout already met the same work limits
     let mut measure_box = geometry.page_box;
     measure_box.height = MEASURE_HEIGHT + geometry.page_box.height;
     let measure_geometries: Vec<_> = measured
@@ -157,7 +151,7 @@ fn relayout_from(
         &measured,
         &measure_geometries,
         &measure_control,
-    )?;
+    )?; // cov:ignore: only a cancellation landing in this pass fails it; the first projection already met the same work limits
     // The token was found on the earlier layout's page, and the copy breaks
     // no line or box before it, so the measuring page holds it too.
     let Some(token_y) = document.page_token_offset(0, start.token) else {
@@ -183,6 +177,17 @@ fn relayout_from(
             .saturating_add(skipped as u32)
     }))
     .with_abort_check(inputs.abort_check);
+    // The copy counts its pages from its own first page; a page limit is
+    // reported against the pages of the whole document.
+    let document_pages = |error| match (error, inputs.max_pages) {
+        (LayoutError::PageLimitExceeded { actual, .. }, Some(limit)) => {
+            LayoutError::PageLimitExceeded {
+                limit,
+                actual: actual - skipped as u64 + page as u64,
+            }
+        }
+        (error, _) => error, // cov:ignore: other layout errors already name no page count
+    };
     for _ in 0..MAX_SCHEDULE_PASSES {
         let widths = vec![width; steps.len()];
         let laid_out = layout_pages_with_page_geometry_and_resolver_and_base_url_and_control(
@@ -194,7 +199,8 @@ fn relayout_from(
             inputs.resolver,
             inputs.base_url,
             &control,
-        )?;
+        )
+        .map_err(document_pages)?;
         let resumed_origin = laid_out.get(skipped).map(|slice| slice.content_origin_y);
         if resumed_origin
             .is_none_or(|origin| (origin - lead.unwrap_or(0.0)).abs() > POSITION_TOLERANCE)
@@ -237,7 +243,7 @@ fn relayout_from(
             &pages,
             &projection,
             &control,
-        )?;
+        )?; // cov:ignore: only a cancellation landing in this pass fails it; the first projection already met the same work limits
         let resumed_offset = document.page_token_offset(page as u32, start.token);
         if resumed_offset.is_none_or(|offset| (offset - start.offset).abs() > POSITION_TOLERANCE) {
             return Ok(None); // cov:ignore: defensive; the resumed page starts at the token's measured position

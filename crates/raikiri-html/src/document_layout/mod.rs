@@ -160,21 +160,20 @@ pub fn layout(
     };
     // A paragraph or subtree is reported once, however many of the page
     // layouts it appears in.
-    let mut omitted = out.document.omitted_text_run_roots(&out.cascade);
-    let mut approximated = out.document.paint_order_approximations(&out.cascade);
-    for continuation in &out.continuations {
-        for entry in continuation
-            .document
-            .omitted_text_run_roots(&continuation.cascade)
-        {
+    let layouts = std::iter::once((&out.document, &out.cascade)).chain(
+        out.continuations
+            .iter()
+            .map(|continuation| (&continuation.document, &continuation.cascade)),
+    );
+    let mut omitted = Vec::new();
+    let mut approximated = Vec::new();
+    for (document, cascade) in layouts {
+        for entry in document.omitted_text_run_roots(cascade) {
             if !omitted.iter().any(|(node, _)| *node == entry.0) {
                 omitted.push(entry);
             }
         }
-        for entry in continuation
-            .document
-            .paint_order_approximations(&continuation.cascade)
-        {
+        for entry in document.paint_order_approximations(cascade) {
             if !approximated.iter().any(|(node, _)| *node == entry.0) {
                 approximated.push(entry);
             }

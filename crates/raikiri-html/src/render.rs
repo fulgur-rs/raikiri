@@ -969,7 +969,7 @@ pub(crate) fn run_pipeline(
         &mut page_geometries,
     ) {
         Ok(continuations) => continuations,
-        Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted),
+        Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted), // cov:ignore: needs a cancellation landing during a relayout
         Err(error) => return Err(RenderError::from(error)),
     };
     drop(pristine);
@@ -984,8 +984,9 @@ pub(crate) fn run_pipeline(
             &page_control,
         ) {
             Ok(()) => {}
-            Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted),
-            Err(error) => return Err(RenderError::from(error)),
+            // These pages were projected once already with the same limits.
+            Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted), // cov:ignore: needs a cancellation landing during this projection
+            Err(error) => return Err(RenderError::from(error)), // cov:ignore: the same projection succeeded above
         }
         resolve_page_geometries(&page_cascader, &defaults, &slices).1
     } else {
