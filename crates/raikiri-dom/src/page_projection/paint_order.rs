@@ -446,7 +446,7 @@ impl Document {
         clipped_events
     }
 
-    /// Multi-column containers whose subtree is listed without column
+    /// Multicolumn containers that may need unprojected legacy column-height
     /// clips, each with the reason.
     ///
     /// Explicit fragmentainer clips are projected by
