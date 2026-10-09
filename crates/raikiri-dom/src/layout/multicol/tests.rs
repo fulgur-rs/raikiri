@@ -2,6 +2,53 @@ use super::*;
 use taffy::Style;
 
 #[test]
+fn single_paragraph_balance_keeps_decorated_and_constrained_boxes_on_the_existing_path() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let parent = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;column-count:2;column-gap:20px"),
+    );
+    let child = doc.append_element(
+        Some(parent),
+        "p",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_text(child, "text");
+    layout_nested_flex_float_fixture(&mut doc);
+    assert!(can_balance_single_paragraph(&doc, parent, child));
+
+    let original = doc.nodes[child].style.clone();
+    doc.nodes[child].style.size.height = Dimension::length(80.0);
+    assert!(!can_balance_single_paragraph(&doc, parent, child));
+    doc.nodes[child].style = original.clone();
+    doc.nodes[child].style.min_size.height = LengthPercentageAuto::length(80.0);
+    assert!(!can_balance_single_paragraph(&doc, parent, child));
+    doc.nodes[child].style = original.clone();
+    doc.nodes[child].style.max_size.height = LengthPercentageAuto::length(80.0);
+    assert!(!can_balance_single_paragraph(&doc, parent, child));
+    doc.nodes[child].style = original;
+    doc.nodes[child].break_inside = raikiri_style::property::BreakInside::Avoid;
+    assert!(!can_balance_single_paragraph(&doc, parent, child));
+    doc.nodes[child].break_inside = raikiri_style::property::BreakInside::Auto;
+    doc.nodes[child].unrounded_layout.padding.top = 4.0;
+    assert!(!can_balance_single_paragraph(&doc, parent, child));
+    doc.nodes[child].unrounded_layout.padding.top = 0.0;
+    doc.nodes[child].unrounded_layout.border.bottom = 4.0;
+    assert!(!can_balance_single_paragraph(&doc, parent, child));
+    doc.nodes[child].unrounded_layout.border.bottom = 0.0;
+    doc.nodes[parent].style.padding.left = LengthPercentage::length(4.0);
+    assert!(!can_balance_single_paragraph(&doc, parent, child));
+    doc.nodes[parent].style.padding.left = LengthPercentage::length(0.0);
+    doc.nodes[parent].style.direction = TaffyDirection::Rtl;
+    assert!(!can_balance_single_paragraph(&doc, parent, child));
+}
+
+#[test]
 fn balanced_column_height_rejects_empty_unavailable_or_invalid_inputs() {
     let context = FragmentationContext {
         available_width: 200.0,

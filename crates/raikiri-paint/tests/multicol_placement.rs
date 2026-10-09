@@ -117,11 +117,11 @@ fn a_child_paragraph_bottom_margin_advances_following_flow_once() {
 }
 
 #[test]
-fn a_padded_child_paragraph_keeps_its_insets_in_both_columns() {
+fn a_parent_minimum_preserves_space_after_the_balanced_child_paragraph() {
     compare(
-        "<div class=mc><p style='padding:4px'>A<br>B<br>C<br>D</p></div><p>E</p>",
-        "",
-        "<div style='position:absolute;left:4px;top:4px'>A<br>B</div><div style='position:absolute;left:64px;top:4px'>C<br>D</div><div style='position:absolute;left:0;top:48px'>E</div>",
+        "<div class=mc><p>A<br>B<br>C<br>D</p></div><p>E</p>",
+        ".mc{min-height:60px;background:yellow}",
+        "<div style='position:absolute;left:0;top:0;width:100px;height:60px;background:yellow'></div><div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:60px;top:0'>C<br>D</div><div style='position:absolute;left:0;top:60px'>E</div>",
     );
 }
 

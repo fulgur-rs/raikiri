@@ -165,7 +165,30 @@ pub(crate) fn compute_multicol_layout(
             )
         };
         if fragmentainer_height.is_none() {
-            output.size.height = used_height.max(0.0);
+            let minimum = multicol_definite_dimension(
+                tree,
+                tree.nodes[index].style.min_size.height.into(),
+                inputs.parent_size.height,
+            )
+            .map_or(0.0, |height| {
+                let css = &tree.nodes[index].style;
+                if css.box_sizing == TaffyBoxSizing::BorderBox {
+                    height
+                } else {
+                    let basis = parent_width.unwrap_or(output.size.width).max(0.0);
+                    height
+                        + multicol_resolve_inset(tree, css.padding.top, basis)
+                        + multicol_resolve_inset(tree, css.padding.bottom, basis)
+                        + multicol_resolve_inset(tree, css.border.top, basis)
+                        + multicol_resolve_inset(tree, css.border.bottom, basis)
+                }
+            });
+            output.size.height = used_height.max(minimum);
+            for fragment in &mut tree.fragment_tree.fragments {
+                if fragment.node_id == index && fragment.parent.is_none() {
+                    fragment.rect.height = output.size.height;
+                }
+            }
         }
     }
     // Truncating to the depth captured on entry keeps the stack balanced if a
@@ -308,6 +331,28 @@ fn multicol_has_min_constrained_child(tree: &Document, node_id: usize) -> bool {
     })
 }
 
+fn can_balance_single_paragraph(tree: &Document, parent: usize, child: usize) -> bool {
+    let parent = &tree.nodes[parent];
+    let child = &tree.nodes[child];
+    let layout = child.unrounded_layout;
+    // Block-edge decoration needs slice/clone geometry; keep the existing
+    // strategy until that geometry is carried by each fragment.
+    parent.style.direction == TaffyDirection::Ltr
+        && parent.style.padding == Rect::zero()
+        && parent.style.border == Rect::zero()
+        && layout.padding.top == 0.0
+        && layout.padding.bottom == 0.0
+        && layout.border.top == 0.0
+        && layout.border.bottom == 0.0
+        && matches!(child.display, DisplayValue::Block | DisplayValue::ListItem)
+        && child.break_inside == raikiri_style::property::BreakInside::Auto
+        && child.style.size.height.is_auto()
+        && child.style.min_size.height.is_auto()
+        && child.style.max_size.height.is_auto()
+        && child.ifc_writing_mode() == Some(shodo::geometry::WritingMode::HorizontalTb)
+        && child.ifc_boxes().is_empty()
+}
+
 fn relayout_nested_multicol_children(
     tree: &mut Document,
     node_id: TaffyNodeId,
@@ -413,30 +458,16 @@ fn relayout_nested_multicol_children(
     // block as an atomic item would keep the container at the unbroken height
     // while the inline post-pass already assigns lines to several columns.
     let paragraph_balance = auto_measurements.as_ref().and_then(|(entries, _)| {
-        let [(child, _, layout, _, _, _)] = entries.as_slice() else {
+        let [(child, _, _, _, _, _)] = entries.as_slice() else {
             return None;
         };
         let node = &tree.nodes[*child];
-        if node.break_inside != raikiri_style::property::BreakInside::Auto
-            || !node.style.size.height.is_auto()
-            || !node.style.min_size.height.is_auto()
-            || !node.style.max_size.height.is_auto()
-            || !node.ifc_boxes().is_empty()
-        {
+        if !can_balance_single_paragraph(tree, index, *child) {
             return None;
         }
         let lines = node.ifc.as_ref()?.lines.as_ref()?;
         let (fragments, height) = root_column_fragments(lines, context);
-        (fragments.len() > 1).then_some((
-            *child,
-            fragments,
-            height,
-            height
-                + layout.border.top
-                + layout.padding.top
-                + layout.padding.bottom
-                + layout.border.bottom,
-        ))
+        (fragments.len() > 1).then_some((*child, fragments, height))
     });
     let mut avoid_column_break_after_previous = false;
     for (order, child) in children.into_iter().enumerate() {
@@ -492,7 +523,7 @@ fn relayout_nested_multicol_children(
                 let needed = margin_top + output.size.height + margin_bottom;
                 (output, layout, margin_top, margin_bottom, needed)
             };
-        if let Some((balanced_child, _, _, height)) = &paragraph_balance
+        if let Some((balanced_child, _, height)) = &paragraph_balance
             && *balanced_child == child
         {
             child_output.size.height = *height;
@@ -530,7 +561,7 @@ fn relayout_nested_multicol_children(
         child_layout.location = Point { x, y };
         tree.set_unrounded_layout(TaffyNodeId::from(child), &child_layout);
         refresh_nested_text_fragments(tree, child, column_context);
-        if let Some((balanced_child, fragments, _, _)) = &paragraph_balance
+        if let Some((balanced_child, fragments, _)) = &paragraph_balance
             && *balanced_child == child
             && let Some(root) = tree.nodes[child].ifc.as_mut()
         {
@@ -560,8 +591,8 @@ fn relayout_nested_multicol_children(
         tree.fragment_tree.reparent_roots(child, child_fragment);
         let record_context = paragraph_balance
             .as_ref()
-            .filter(|(balanced_child, _, _, _)| *balanced_child == child)
-            .map_or(context, |(_, _, height, _)| FragmentationContext {
+            .filter(|(balanced_child, _, _)| *balanced_child == child)
+            .map_or(context, |(_, _, height)| FragmentationContext {
                 available_height: Some(*height),
                 ..context
             });
