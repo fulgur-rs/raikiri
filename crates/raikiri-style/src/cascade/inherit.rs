@@ -50,11 +50,13 @@ use crate::ruletree::RuleTree;
 /// them without making a miss expensive.
 const SIBLING_SHARE_SLOTS: usize = 4;
 
-/// The most heap the sharing sources may hold at once, over every depth. A
-/// node that would pass it is not remembered as a source: fewer nodes share,
-/// and every result stays the same. The bound counts buffer capacities, which
-/// depend only on the document, so the walk stays deterministic.
-const SHARE_RETENTION_BUDGET: usize = 8 << 20;
+/// The default bound on the heap the sharing sources of every depth hold at
+/// once: each source's boxed input and its buffers' capacities, though not
+/// what its declarations own beyond their inline size. A node that would pass
+/// it is not remembered as a source: fewer nodes share, and every result
+/// stays the same. The sizes depend only on the document, so the walk stays
+/// deterministic.
+pub(crate) const SHARE_RETENTION_BUDGET: usize = 8 << 20;
 
 /// Cleared inputs kept for reuse by the next nodes, at most this many.
 const SPARE_INPUTS: usize = 2 * SIBLING_SHARE_SLOTS;
@@ -79,14 +81,16 @@ struct SiblingShareCache {
 }
 
 /// The inputs the walk holds besides the one it is resolving: the sharing
-/// sources of every depth, within [`SHARE_RETENTION_BUDGET`], and spares.
-#[derive(Default)]
+/// sources of every depth, within a budget, and spares.
 struct InputStore {
     /// Indexed by tree depth. The walk is depth-first, so while a parent's
     /// children are being visited, deeper slots belong to their subtrees and
     /// this depth's slot stays bound to that parent.
     caches: Vec<SiblingShareCache>,
-    retained: usize,
+    /// The bytes the sources hold, counted by [`Self::cost`].
+    held_bytes: usize,
+    /// The most the sources may hold; see [`SHARE_RETENTION_BUDGET`].
+    budget: usize,
     /// Boxed like the sources' inputs, so that moving one between the two
     /// allocates nothing.
     #[expect(
@@ -97,14 +101,30 @@ struct InputStore {
 }
 
 impl InputStore {
+    fn new(budget: usize) -> Self {
+        Self {
+            caches: Vec::new(),
+            held_bytes: 0,
+            budget,
+            spares: Vec::new(),
+        }
+    }
+
+    /// What holding `input` as a source costs: its box and its buffers.
+    fn cost(input: &ElementInput) -> usize {
+        std::mem::size_of::<ElementInput>() + input.buffer_bytes()
+    }
+
     /// An empty input, reusing a spare's buffers when there is one.
     fn take(&mut self) -> Box<ElementInput> {
         self.spares.pop().unwrap_or_default()
     }
 
-    /// Keeps `input` for reuse, unless enough spares are kept already.
+    /// Keeps `input` for reuse, unless enough spares are kept already or its
+    /// buffers alone would pass the budget, which would keep the next nodes
+    /// from being remembered.
     fn give_back(&mut self, mut input: Box<ElementInput>) {
-        if self.spares.len() < SPARE_INPUTS {
+        if self.spares.len() < SPARE_INPUTS && Self::cost(&input) <= self.budget {
             input.clear();
             self.spares.push(input);
         }
@@ -122,7 +142,7 @@ impl InputStore {
             self.caches[depth].next = 0;
             for slot in 0..SIBLING_SHARE_SLOTS {
                 if let Some(source) = self.caches[depth].sources[slot].take() {
-                    self.retained -= source.bytes;
+                    self.held_bytes -= source.bytes;
                     self.give_back(source.input);
                 }
             }
@@ -131,20 +151,27 @@ impl InputStore {
     }
 
     /// Remembers `input`, which `id` was resolved from, in the share cache of
-    /// `depth`, which [`Self::cache_for`] bound to `id`'s parent. The oldest
+    /// `depth`, which [`Self::cache_for`] bound to `share_parent`. The oldest
     /// of the cache's sources makes room; a source that would pass the budget
     /// is given back instead.
-    fn remember(&mut self, depth: usize, id: StyleNodeId, input: Box<ElementInput>) {
-        let bytes = input.retained_bytes();
+    fn remember(
+        &mut self,
+        depth: usize,
+        share_parent: StyleNodeId,
+        id: StyleNodeId,
+        input: Box<ElementInput>,
+    ) {
+        debug_assert_eq!(self.caches[depth].parent, Some(share_parent));
+        let bytes = Self::cost(&input);
         let cache = &self.caches[depth];
         let evicted_bytes = cache.sources[cache.next]
             .as_ref()
             .map_or(0, |source| source.bytes);
-        if self.retained - evicted_bytes + bytes > SHARE_RETENTION_BUDGET {
+        if self.held_bytes - evicted_bytes + bytes > self.budget {
             self.give_back(input);
             return;
         }
-        self.retained = self.retained - evicted_bytes + bytes;
+        self.held_bytes = self.held_bytes - evicted_bytes + bytes;
         let cache = &mut self.caches[depth];
         let slot = cache.next;
         cache.next = (slot + 1) % SIBLING_SHARE_SLOTS;
@@ -172,7 +199,7 @@ struct WalkEntry {
     /// The parent whose children the node is matched against for sharing.
     share_parent: Option<StyleNodeId>,
     /// Whether the node is in [`WalkOptions::retain_subtree`].
-    retained: bool,
+    in_retained_subtree: bool,
     /// Whether the node descends from an element with a `::first-line` style.
     in_first_line: bool,
 }
@@ -185,8 +212,10 @@ pub(crate) struct WalkOptions {
     /// reproduce exactly.
     pub(crate) sibling_sharing: bool,
     /// The root of a subtree whose elements' candidates the walk keeps, in
-    /// [`WalkOutputs::retained`].
+    /// [`WalkOutputs::retained_subtree`].
     pub(crate) retain_subtree: Option<StyleNodeId>,
+    /// The most the sharing sources may hold; see [`SHARE_RETENTION_BUDGET`].
+    pub(crate) share_retention_budget: usize,
 }
 
 impl Default for WalkOptions {
@@ -194,6 +223,7 @@ impl Default for WalkOptions {
         Self {
             sibling_sharing: true,
             retain_subtree: None,
+            share_retention_budget: SHARE_RETENTION_BUDGET,
         }
     }
 }
@@ -215,7 +245,7 @@ pub(crate) struct WalkOutputs {
     pub(crate) opacity_specified: Vec<bool>,
     pub(crate) background_color_specified: Vec<bool>,
     /// The candidates of the elements of [`WalkOptions::retain_subtree`].
-    pub(crate) retained: HashMap<StyleNodeId, OwnedCandidates>,
+    pub(crate) retained_subtree: HashMap<StyleNodeId, OwnedCandidates>,
     /// How many nodes copied their results from a sibling.
     pub(crate) shared_nodes: usize,
 }
@@ -308,7 +338,7 @@ pub(crate) fn walk<D: StyleDom>(
 /// limited to nodes with an element ancestor (`root_ctx` is `Some`), because a
 /// root element derives its own `rem` context from its computed values. The
 /// walk holds no candidates beyond the node it resolves, those sharing
-/// sources (within [`SHARE_RETENTION_BUDGET`]), and what the options and the
+/// sources (within [`WalkOptions::share_retention_budget`]), and what the options and the
 /// first-letter methods ask it to keep.
 ///
 /// # Errors
@@ -342,7 +372,7 @@ pub(crate) fn walk_from<D: StyleDom>(
         typographic_inheritance: HashMap::new(),
         opacity_specified: vec![false; node_count],
         background_color_specified: vec![false; node_count],
-        retained: HashMap::new(),
+        retained_subtree: HashMap::new(),
         shared_nodes: 0,
     };
     let mut stack = vec![WalkEntry {
@@ -353,14 +383,14 @@ pub(crate) fn walk_from<D: StyleDom>(
         depth: 0,
         ancestors: 0,
         share_parent: None,
-        retained: options.retain_subtree == Some(id),
+        in_retained_subtree: options.retain_subtree == Some(id),
         in_first_line: false,
     }];
     // Ancestor **element** ids, root-most first / immediate-parent last, and
     // a Bloom filter over them, truncated and pushed in lockstep.
     let mut ancestor_path: Vec<StyleNodeId> = Vec::new();
     let mut ancestor_filter = AncestorFilter::new();
-    let mut store = InputStore::default();
+    let mut store = InputStore::new(options.share_retention_budget);
     // Scratch buffer for `apply_winners`, allocated **outside** the walk loop
     // and reused for every node. Two per-node `HashMap`s previously accounted
     // for 3,667 allocations / 3.0 MB at n=1000 nodes, or 56.7% of all cascade
@@ -380,7 +410,7 @@ pub(crate) fn walk_from<D: StyleDom>(
             depth,
             ancestors,
             share_parent,
-            retained,
+            in_retained_subtree,
             in_first_line,
         } = entry;
         ancestor_path.truncate(ancestors);
@@ -665,16 +695,17 @@ pub(crate) fn walk_from<D: StyleDom>(
         if keep_typographic && (in_first_line || has_first_line) {
             keep_typographic_inputs(&input, id, shared, &mut out.typographic_inheritance)?;
         }
-        if retained && let (Some(candidates), _) = input.element(shared) {
-            out.retained.insert(
+        if in_retained_subtree && let (Some(candidates), _) = input.element(shared) {
+            out.retained_subtree.insert(
                 id,
                 OwnedCandidates::copy(candidates, CustomCandidates::EMPTY)?, // cov:ignore: the error branch needs a u32 handle overflow
             );
         }
-        if share_source.is_none() && options.sibling_sharing && root_ctx.is_some() {
-            store.remember(depth, id, input);
-        } else {
-            store.give_back(input);
+        match (share_parent, root_ctx) {
+            (Some(parent), Some(_)) if options.sibling_sharing && share_source.is_none() => {
+                store.remember(depth, parent, id, input);
+            }
+            _ => store.give_back(input),
         }
 
         if !node_svg_properties.is_empty() {
@@ -716,7 +747,7 @@ pub(crate) fn walk_from<D: StyleDom>(
             depth: depth + 1,
             ancestors,
             share_parent: Some(children_share_parent),
-            retained: retained || options.retain_subtree == Some(child),
+            in_retained_subtree: in_retained_subtree || options.retain_subtree == Some(child),
             in_first_line,
         }));
         stack[start..].reverse();
@@ -755,6 +786,7 @@ fn keep_typographic_inputs(
     }
     Ok(())
 }
+
 /// Find a longhand's surviving value after origin or layer rollback.
 fn find_rollback(
     candidates: ElementCandidates<'_>,

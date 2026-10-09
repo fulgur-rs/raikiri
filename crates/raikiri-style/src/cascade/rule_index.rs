@@ -217,7 +217,8 @@ pub(crate) struct RuleIndex<'a> {
     by_class: HashMap<u32, Vec<u32>>,
     by_tag: HashMap<u32, Vec<u32>>,
     universal: Vec<u32>,
-    /// The pseudo-elements some selector targets, one bit per variant.
+    /// The pseudo-elements some selector targets, one bit each (see
+    /// [`pseudo_bit`]).
     pseudo_targets: u32,
 }
 
@@ -252,7 +253,7 @@ impl<'a> RuleIndex<'a> {
             for selector in rule.selectors.slice() {
                 if let Some(&pseudo) = selector.pseudo_element() {
                     has_pseudo_selector = true;
-                    index.pseudo_targets |= 1 << pseudo as u32;
+                    index.pseudo_targets |= pseudo_bit(pseudo);
                 } else {
                     has_element_selector = true;
                 }
@@ -294,7 +295,7 @@ impl<'a> RuleIndex<'a> {
 
     /// Whether some selector of an active rule targets `pseudo`.
     pub(crate) fn targets(&self, pseudo: PseudoElem) -> bool {
-        self.pseudo_targets & (1 << pseudo as u32) != 0
+        self.pseudo_targets & pseudo_bit(pseudo) != 0
     }
 
     /// The active rules, at the positions [`Self::candidate_rules`] returns.
@@ -335,6 +336,20 @@ impl<'a> RuleIndex<'a> {
     #[cfg(test)]
     pub(crate) fn rule_count(&self) -> usize {
         self.rules.len()
+    }
+}
+
+/// The bit of `pseudo` in [`RuleIndex::pseudo_targets`]. The match names
+/// every variant, so a new pseudo-element needs a bit of its own here.
+fn pseudo_bit(pseudo: PseudoElem) -> u32 {
+    match pseudo {
+        PseudoElem::Before => 1 << 0,
+        PseudoElem::After => 1 << 1,
+        PseudoElem::Marker => 1 << 2,
+        PseudoElem::FirstLine => 1 << 3,
+        PseudoElem::FirstLetter => 1 << 4,
+        PseudoElem::Backdrop => 1 << 5,
+        PseudoElem::FileSelectorButton => 1 << 6,
     }
 }
 

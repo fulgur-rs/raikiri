@@ -1,7 +1,6 @@
 use super::*;
 use crate::cascade::candidate::{OwnedCandidates, ValueRef};
 use crate::cascade::cascade;
-use crate::cascade::test_support::collect_top_level;
 use crate::cascade::test_support::*;
 use crate::computed::ComputedValues;
 use crate::property::DisplayValue;
@@ -656,8 +655,8 @@ fn cascade_rank_orders_ua_user_hint_author_normal_then_reverses_for_important() 
 
 #[test]
 fn pseudo_element_selector_specificity_participates_in_cascade_ranking() {
-    // The pseudo arena runs through the same `pick_winners`/`beats`
-    // ranking as the real-element arena — this pins that
+    // Pseudo-element candidates run through the same `pick_winners`/`beats`
+    // ranking as the element's own — this pins that
     // `specificity_of(selector)` (not some constant) is actually what
     // gets passed through for the `::before` path specifically.
     // `.foo::before` (0,1,0 + pseudo-element count) must beat plain

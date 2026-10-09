@@ -9241,16 +9241,22 @@ fn walk_outputs(
     tree: &RuleTree,
     sibling_sharing: bool,
 ) -> (ComparedWalkOutputs, usize) {
-    let outputs = walk(
+    walk_outputs_with(
         doc,
         tree,
-        &MediaContext::default(),
         WalkOptions {
             sibling_sharing,
             ..WalkOptions::default()
         },
     )
-    .expect("the walk succeeds");
+}
+
+fn walk_outputs_with(
+    doc: &TestDoc,
+    tree: &RuleTree,
+    options: WalkOptions,
+) -> (ComparedWalkOutputs, usize) {
+    let outputs = walk(doc, tree, &MediaContext::default(), options).expect("the walk succeeds");
     let mut pseudo = outputs
         .pseudo
         .into_iter()
@@ -9269,6 +9275,8 @@ fn walk_outputs(
     )
 }
 
+/// Asserts that sibling sharing reproduces the unshared walk exactly and
+/// returns how many nodes it shared.
 fn assert_sharing_is_transparent(doc: &TestDoc, tree: &RuleTree) -> usize {
     let (reference, none_shared) = walk_outputs(doc, tree, false);
     assert_eq!(none_shared, 0);
@@ -9381,6 +9389,37 @@ fn sibling_sharing_matches_the_unshared_walk() {
             "{quirks:?}: the repeated structure shared nothing"
         );
     }
+}
+
+#[test]
+fn sources_past_the_retention_budget_are_not_remembered() {
+    // A budget too small for any source stops sharing entirely; a budget
+    // for a few sources turns some away while the caches are full. Either
+    // way fewer nodes share, and the results stay those of the unshared
+    // walk.
+    let doc = sharing_doc(StyleQuirksMode::NoQuirks);
+    let tree = build_rule_tree(&doc);
+    let (reference, _) = walk_outputs(&doc, &tree, false);
+    let (_, shared_by_default) = walk_outputs(&doc, &tree, true);
+    let tight = |share_retention_budget| {
+        walk_outputs_with(
+            &doc,
+            &tree,
+            WalkOptions {
+                share_retention_budget,
+                ..WalkOptions::default()
+            },
+        )
+    };
+    let (outputs, shared) = tight(0);
+    assert_eq!(outputs, reference);
+    assert_eq!(shared, 0);
+    let (outputs, shared) = tight(4 * std::mem::size_of::<ElementInput>());
+    assert_eq!(outputs, reference);
+    assert!(
+        0 < shared && shared < shared_by_default,
+        "{shared} of {shared_by_default}"
+    );
 }
 
 #[test]

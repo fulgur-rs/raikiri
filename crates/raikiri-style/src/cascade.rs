@@ -1,15 +1,16 @@
 //! CSS cascade and inheritance walk.
 //!
-//! Two phases:
-//! 1. Determine per-node "cascaded values": select winners from matching rules
-//!    and inline styles by specificity, !important, and source order.
-//! 2. Inheritance walk: use top-down DFS to inherit the parent's computed values,
-//!    then override them with the node's own cascaded values.
+//! One top-down, pre-order walk of the document ([`walk_from`]). For each node
+//! it collects the candidate declarations of the element and its
+//! pseudo-elements (matching rules, inline style, presentational hints),
+//! selects the winners by origin, `!important`, layer, specificity and source
+//! order, then inherits the parent's computed values and overrides them with
+//! the node's own winners.
 //!
-//! # Four stages inside the inheritance walk
+//! # Four stages of resolving one node
 //!
-//! Each node's processing in phase 2 above has four further stages (named
-//! phases 1 / 2 / 2.5 / 3, in order):
+//! Resolving a node's winners has four stages (named phases 1 / 2 / 2.5 / 3,
+//! in order):
 //!
 //! - **phase 1: stage winners** — seed [`crate::specified::SpecifiedValues`] from
 //!   the parent's [`ComputedValues`] and apply all the node's winners with

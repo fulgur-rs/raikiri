@@ -135,10 +135,10 @@ pub fn cascade_with_first_line<D: StyleDom>(
             retain_subtree: Some(root),
             ..WalkOptions::default()
         },
-    )?;
+    )?; // cov:ignore: the error branch needs a u32 handle overflow
     // The candidates of the root's subtree, for re-applying its winners over
     // the first-line parent below.
-    let candidates = std::mem::take(&mut outputs.retained);
+    let candidates = std::mem::take(&mut outputs.retained_subtree);
     let query = PageContextQuery::default();
     let normal = finish(dom, rule_tree, &query, media, outputs);
     let error = |id: StyleNodeId| CascadeError::Internal {

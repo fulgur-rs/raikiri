@@ -380,10 +380,11 @@ pub(crate) fn cascade_rank(origin: Origin, important: bool) -> u8 {
 /// Collects the cascade input of one element at a time, for one cascade.
 ///
 /// The cascade walks the document once, in pre-order, and asks the collector
-/// for each element's input just before resolving it. Collection only reads
-/// the DOM and the rule tree, so collecting in the walk produces exactly what
-/// a separate pass in the same order would: selector matching, hints, quirks
-/// and the inline style cache all see the elements in document order.
+/// for each element's input just before resolving it. Collection reads only
+/// the DOM and the rule tree, and fills its caches (inline style blocks, table
+/// cell padding, selector matching facts) in document order, as a separate
+/// pass in the same order would, so collecting in the walk produces exactly
+/// what such a pass does.
 pub(crate) struct Collector<'a, 'r, D: StyleDom> {
     dom: &'a D,
     rule_tree: &'r RuleTree,
@@ -413,8 +414,8 @@ impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
         media_context: &MediaContext,
         match_caches: &'a MatchCaches,
     ) -> Result<Self, CascadeError> {
-        // Document-wide constant — read once rather than
-        // per (node, rule) pair inside the loop below.
+        // Document-wide constant — read once per cascade rather than
+        // per (node, rule) pair.
         let layers = rule_tree.layer_order(media_context);
         let quirks_mode = dom.quirks_mode();
         // Sibling positions, languages and directionality are pure functions of
@@ -499,12 +500,10 @@ impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
         // source_order, or push order — no tie can occur (that was
         // only possible earlier, when hint and real Author
         // declarations shared the same `Origin::Author` rank).
-        // Re-verified after the 4th `Origin::User` tier was inserted:
-        // the hint's `cascade_rank` value moved (see `cascade_rank`'s
-        // rank table) but stayed strictly between `Origin::User` and
-        // `Origin::Author` — never equal to the real `Author` rank in
-        // either the Normal or the Important half of the table — so
-        // this reasoning still holds unchanged; no test pins the push
+        // The hint's `cascade_rank` value lies strictly between
+        // `Origin::User` and `Origin::Author` in both the Normal and the
+        // Important half of the rank table (see `cascade_rank`), never
+        // equal to the real `Author` rank; no test pins the push
         // order itself (nothing here is order-*dependent* left to
         // pin), but
         // `img_width_attribute_overridable_by_author_stylesheet_regardless_of_specificity`

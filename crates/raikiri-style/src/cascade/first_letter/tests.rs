@@ -245,3 +245,64 @@ fn nested_first_line_recomputation_keeps_all_revert_layer() {
         (255, 0, 0)
     );
 }
+
+#[test]
+fn first_line_recomputation_reaches_through_an_element_without_a_first_line() {
+    // `body` has the first line and `div`, between it and the text, has
+    // none of its own; `div`'s candidates are still kept for the
+    // recomputation, as a descendant of `body`.
+    let mut doc = TestDoc::new();
+    let sheet = doc.push_element(0, "style", None);
+    doc.push_text(
+        sheet,
+        "body::first-line{color:red} div::first-letter{font-size:2em}",
+    );
+    let outer = doc.push_element(0, "body", None);
+    let middle = doc.push_element(outer, "div", Some("color:blue"));
+    let span = doc.push_element(middle, "span", None);
+    doc.push_text(span, "AB");
+    let result = crate::cascade(&doc, &crate::build_rule_tree(&doc)).unwrap();
+    let parent = result
+        .first_letter_parent_with_first_lines(
+            &doc,
+            StyleNodeId::new(middle as u64),
+            &[StyleNodeId::new(outer as u64)],
+            StyleNodeId::new(span as u64),
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        (parent.color.r, parent.color.g, parent.color.b),
+        (0, 0, 255)
+    );
+}
+
+#[test]
+fn first_line_recomputation_reaches_the_generated_content_of_the_line_origin() {
+    // The text's parent is the first line's own `::before`, whose
+    // candidates are kept with the origin's.
+    let mut doc = TestDoc::new();
+    let sheet = doc.push_element(0, "style", None);
+    doc.push_text(
+        sheet,
+        "div::first-line{color:red} div::before{content:'x';color:blue} \
+         div::first-letter{font-size:2em}",
+    );
+    let root = doc.push_element(0, "div", None);
+    doc.push_text(root, "AB");
+    let result = crate::cascade(&doc, &crate::build_rule_tree(&doc)).unwrap();
+    let origin = StyleNodeId::new(root as u64);
+    let parent = result
+        .first_letter_parent_with_first_lines(
+            &doc,
+            origin,
+            &[origin],
+            origin,
+            Some(crate::PseudoElem::Before),
+        )
+        .unwrap();
+    assert_eq!(
+        (parent.color.r, parent.color.g, parent.color.b),
+        (0, 0, 255)
+    );
+}

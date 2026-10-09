@@ -6,7 +6,7 @@
 //! second time its source is seen, and that element and every later one with
 //! the same source refer to the block; the first keeps its own parse. The
 //! other declarations an element brings itself (presentational hints,
-//! quirks, inline style, animation) stay in the candidate arena next to the
+//! quirks, inline style, animation) stay in its [`ElementInput`] next to its
 //! candidates. [`ValueSource`] resolves the handles and [`ElementCandidates`]
 //! pairs one element's candidates with the source of their declarations, so a
 //! value is only cloned when a winner is applied.
@@ -62,8 +62,9 @@ pub(crate) struct Candidate {
     precedence: Precedence,
 }
 
-// One candidate is kept per matched declaration of every element, so its size
-// bounds the candidate arena. Its fields take 30 bytes padded to 32.
+// One candidate is kept per matched declaration of the element being resolved
+// and of every input kept for sharing, so its size bounds what the cascade
+// holds. Its fields take 30 bytes padded to 32.
 const _: () = assert!(
     std::mem::size_of::<Candidate>() <= 32,
     "Candidate grew past 32 bytes: raise the bound together with a cascade memory measurement"
@@ -626,8 +627,9 @@ impl ElementInput {
                 .all(|&pseudo| same(self.pseudo(pseudo, shared), other.pseudo(pseudo, shared)))
     }
 
-    /// The heap bytes the input's buffers hold, which retaining it costs.
-    pub(crate) fn retained_bytes(&self) -> usize {
+    /// The heap bytes the input's buffers hold: their capacities, though not
+    /// what the declarations own beyond their inline size.
+    pub(crate) fn buffer_bytes(&self) -> usize {
         use std::mem::size_of;
         self.local.capacity() * size_of::<Declaration>()
             + self.decls.capacity() * size_of::<Candidate>()

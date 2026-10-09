@@ -113,6 +113,16 @@ fn custom_properties_and_all_revert_layer_are_told_apart_by_their_slot() {
 }
 
 #[test]
+fn an_input_has_no_candidates_for_a_pseudo_element_the_cascade_does_not_collect() {
+    let input = ElementInput::default();
+    let shared = SharedDeclarations::new(&[], &[]);
+    assert!(matches!(
+        input.pseudo(PseudoElem::Backdrop, shared),
+        (None, None)
+    ));
+}
+
+#[test]
 fn filtered_views_keep_the_order_and_the_declarations() {
     let owned = owned(&[
         PropertyValue::Color(RED),
