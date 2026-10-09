@@ -1,5 +1,5 @@
-mod column_projection;
-use column_projection::{ParagraphProjection, ProjectionWork};
+pub(crate) mod column_projection;
+use column_projection::{ParagraphCache, ParagraphProjection, ProjectionWork};
 
 use super::*;
 use crate::page_projection::records::OverflowClipSource;
@@ -12,6 +12,8 @@ type ProjectedSlices = (
     Vec<ProjectedTextRoot>,
     BTreeMap<NodeId, OverflowClipSource>,
     Vec<PlacementOverflowClipSource>,
+    ParagraphCache,
+    usize,
 );
 
 // Flex traversal skips Contents boxes when globally ordering effective
@@ -1046,7 +1048,7 @@ pub(crate) fn project_slices(
     BTreeMap<NodeId, OverflowClipSource>,
     Vec<PlacementOverflowClipSource>,
 ) {
-    project_slices_with_control(
+    let (pages, roots, clips, placements, _, _) = project_slices_with_control(
         document,
         cascade,
         page_box,
@@ -1054,7 +1056,8 @@ pub(crate) fn project_slices(
         page_geometries,
         &PageLayoutControl::default(),
     )
-    .expect("test projection stays within its work cap")
+    .expect("test projection stays within its work cap");
+    (pages, roots, clips, placements)
 }
 
 pub(crate) fn project_slices_with_control(
@@ -1106,7 +1109,14 @@ pub(crate) fn project_slices_with_control(
     work.check()?;
     let mut text_roots = Vec::new();
     let Some(body_id) = find_body(document) else {
-        return Ok((pages, text_roots, BTreeMap::new(), Vec::new()));
+        return Ok((
+            pages,
+            text_roots,
+            BTreeMap::new(),
+            Vec::new(),
+            ParagraphCache::new(),
+            work.remaining(),
+        ));
     };
 
     // Collect absolute post-pagination coordinates.  The arena index is the
@@ -1375,22 +1385,19 @@ pub(crate) fn project_slices_with_control(
                 )?);
             }
             let prepared = &paragraph_cache[&root_id];
-            if repeated_placement_nodes.contains(&root_id) && !prepared.multicol {
-                work.charge(
-                    prepared
-                        .combined
-                        .owners
-                        .values()
-                        .flat_map(|groups| groups.iter())
-                        .map(|(_, _, _, owned)| owned.lines.len())
-                        .sum(),
-                )?;
-            }
             let selected = if prepared.multicol
                 && let Some(column) = column
             {
-                prepared.columns.get(&column).cloned().unwrap_or_default()
+                if let Some(data) = prepared.columns.get(&column) {
+                    work.charge(data.record_count)?;
+                    data.clone()
+                } else {
+                    Default::default()
+                }
             } else {
+                if repeated_placement_nodes.contains(&root_id) {
+                    work.charge(prepared.combined.record_count)?;
+                }
                 let mut data = prepared.combined.clone();
                 if !prepared.multicol {
                     for pieces in data.bounds.values_mut() {
@@ -1729,7 +1736,14 @@ pub(crate) fn project_slices_with_control(
         })
         .collect();
 
-    Ok((pages, text_roots, clip_sources, placement_overflow_clips))
+    Ok((
+        pages,
+        text_roots,
+        clip_sources,
+        placement_overflow_clips,
+        paragraph_cache,
+        work.remaining(),
+    ))
 }
 
 /// Collect deterministic page-local link events from page snapshots.

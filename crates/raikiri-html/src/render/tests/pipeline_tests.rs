@@ -1007,3 +1007,42 @@ fn pipeline_reports_a_column_projection_work_limit() {
         }))
     ));
 }
+
+#[test]
+fn many_columns_with_generated_decoration_prepare_one_source_piece() {
+    let count = 1000;
+    let html = format!(
+        "<style>body{{margin:0}}.mc{{width:20000px;column-count:{count};column-gap:0;orphans:1;widows:1}}p{{margin:0;font:10px/10px Ahem}}p::before{{content:'X';background:red}}</style><div class=mc><p>{}</p></div>",
+        vec!["A"; count].join("<br>")
+    );
+    let doc = parse(&html);
+    let fonts = crate::FontCollectionBuilder::new()
+        .font_bytes("Ahem", super::AHEM.to_vec())
+        .build()
+        .unwrap();
+    let resources = RenderResources::new().fonts(fonts);
+    let out = match run_pipeline(
+        &doc,
+        PageDefaults::default(),
+        &LayoutConfig::default(),
+        PipelineInputs {
+            resources: Some(&resources),
+            consumer_properties: &[],
+            property_observer: None,
+            preload_background_images: false,
+        },
+    )
+    .unwrap()
+    {
+        PipelineRun::Completed(out) => out,
+        PipelineRun::Aborted => panic!("completed layout"),
+    };
+    assert_eq!(
+        out.document
+            .page_paint_order(&out.cascade, 0, None)
+            .iter()
+            .filter(|event| matches!(event, raikiri_dom::PaintEvent::GeneratedBox(_)))
+            .count(),
+        1
+    );
+}

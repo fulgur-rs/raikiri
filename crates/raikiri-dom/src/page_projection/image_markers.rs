@@ -2,7 +2,7 @@
 
 use super::records::{PageFragment, ProjectedTextRoot};
 use crate::generated_content::{computed_for_id, generated_origin};
-use crate::{Document, PositionedLines, PositionedMarker};
+use crate::{Document, PositionedMarker};
 use raikiri_style::{CascadeResult, PseudoElem, property::Visibility};
 use raikiri_traits::{NodeId, PaintRect};
 use std::collections::BTreeMap;
@@ -20,55 +20,37 @@ pub(super) fn prepare(
     cascade: &CascadeResult,
     roots: &[ProjectedTextRoot],
     pages: &[PageFragment],
-) -> BTreeMap<u32, BTreeMap<NodeId, PaintRect>> {
+    paragraphs: &crate::layout::ParagraphCache,
+    work: &mut crate::layout::ProjectionWork<'_, '_>,
+) -> Result<BTreeMap<u32, BTreeMap<NodeId, PaintRect>>, raikiri_traits::LayoutError> {
     let mut placements = BTreeMap::new();
     // Only IFC roots themselves can own an atomic image marker. Extract their
     // source placements once; ordinary paragraphs need no additional glyph walk.
-    let roots: Vec<_> = roots
-        .iter()
-        .filter_map(|root| match generated_origin(root.node) {
+    let mut prepared = Vec::new();
+    for root in roots {
+        work.check()?;
+        match generated_origin(root.node) {
             Some((owner, PseudoElem::Marker)) if document.list_marker_image(owner).is_some() => {
-                Some((
-                    *root,
-                    MarkerRoot::Standalone {
-                        owner,
-                        size: document.list_marker_image_size(owner)?,
-                    },
-                ))
+                if let Some(size) = document.list_marker_image_size(owner) {
+                    work.charge(1)?;
+                    prepared.push((*root, MarkerRoot::Standalone { owner, size }));
+                }
             }
             None if crate::generated_content::inside_marker_in_flow(cascade, root.node)
                 && document.list_marker_image(root.node).is_some() =>
             {
-                let lines = PositionedLines::new(document, cascade, root.node, root.fragmentainer)?;
-                let markers: Vec<_> = lines
-                    .lines()
-                    .flat_map(|line| {
-                        let top = line.offset.1 + line.line.block_offset();
-                        let height = line.line.block_size();
-                        line.markers.into_iter().map(move |marker| {
-                            (
-                                top,
-                                height,
-                                PositionedMarker {
-                                    owner: marker.owner,
-                                    rect: PaintRect::new(
-                                        line.offset.0 + marker.rect.x,
-                                        line.offset.1 + marker.rect.y,
-                                        marker.rect.width,
-                                        marker.rect.height,
-                                    ),
-                                },
-                            )
-                        })
-                    })
-                    .collect();
-                Some((*root, MarkerRoot::Inline(markers)))
+                if let Some(paragraph) = paragraphs.get(&root.node) {
+                    let markers = paragraph.markers(root.fragmentainer);
+                    work.charge(markers.len().saturating_add(1))?;
+                    prepared.push((*root, MarkerRoot::Inline(markers.to_vec())));
+                }
             }
-            _ => None,
-        })
-        .collect();
+            _ => {}
+        }
+    }
+    let roots = prepared;
     if roots.is_empty() {
-        return placements;
+        return Ok(placements);
     }
     let mut first_pages = BTreeMap::new();
     for page in pages {
@@ -79,8 +61,10 @@ pub(super) fn prepare(
         }
     }
     for page in pages {
+        work.check()?;
         let mut markers = BTreeMap::new();
         for (root, kind) in &roots {
+            work.charge(1)?;
             let mut root = *root;
             let source = generated_origin(root.node)
                 .map_or_else(|| document.ifc_source_owner(root.node), |(owner, _)| owner);
@@ -132,6 +116,7 @@ pub(super) fn prepare(
                 }
                 MarkerRoot::Inline(inline_markers) => {
                     for &(top, height, marker) in inline_markers {
+                        work.charge(1)?;
                         if !root.is_repeat {
                             // A page without flow geometry cannot own a normal-flow line.
                             let (start, end) = page.flow_range.unwrap_or((0.0, 0.0));
@@ -159,5 +144,5 @@ pub(super) fn prepare(
         }
         placements.insert(page.page_index, markers);
     }
-    placements
+    Ok(placements)
 }

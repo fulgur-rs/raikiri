@@ -8676,3 +8676,203 @@ fn column_projection_work_limit_keeps_the_previous_snapshot() {
         before
     );
 }
+
+#[test]
+fn duplicate_column_placements_charge_their_selected_records_before_copying() {
+    use crate::fragment::{FragmentRect, LayoutFragment};
+    use crate::node::MulticolTextFragment;
+    let count = 128;
+    let (mut doc, cascade, root) =
+        ahem_paragraph_with("width:20px;white-space:pre", |doc, root| {
+            doc.append_text(root, vec!["A"; 128].join("\n"));
+        });
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+    doc.fragment_tree.fragments.clear();
+    doc.nodes[root].ifc.as_mut().unwrap().multicol_fragments = Some(vec![MulticolTextFragment {
+        line_start: 0,
+        line_end: count,
+        fragmentainer: 0,
+        x: 0.0,
+        y: 0.0,
+    }]);
+    for index in 0..count {
+        doc.fragment_tree
+            .try_push(LayoutFragment {
+                node_id: root,
+                parent: None,
+                fragmentainer: 0,
+                rect: FragmentRect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 20.0,
+                    height: 1280.0,
+                },
+                fragmentainer_clip: None,
+                fragment_index: index,
+                fragment_count: count,
+                line_start: Some(0),
+                line_end: Some(count),
+            })
+            .unwrap();
+    }
+    doc.fragment_tree.limit = 1024;
+    assert!(matches!(
+        doc.project_pages(
+            &cascade,
+            page_box_800x600(),
+            &[PageSlice {
+                page_index: 0,
+                content_origin_y: 0.0,
+                page_name: None
+            }],
+            &[]
+        ),
+        Err(LayoutError::FragmentLimitExceeded { limit: 1024 })
+    ));
+    assert_eq!(doc.page_fragments(0).count(), 0);
+}
+
+fn projected_decoration_fixture(image_marker: bool) -> (Document, CascadeResult) {
+    use raikiri_traits::{DecodedImage, ImagePixelSource};
+    use std::sync::Arc;
+    struct MarkerPixels;
+    impl ImagePixelSource for MarkerPixels {
+        fn get_decoded(&self, _: &url::Url) -> Option<Arc<DecodedImage>> {
+            Some(Arc::new(DecodedImage {
+                width: 4,
+                height: 4,
+                rgba: [255, 0, 0, 255].repeat(16),
+            }))
+        }
+    }
+    let crate::layout::ifc::test_support::Fixture {
+        mut doc,
+        cascade,
+        root,
+    } = crate::layout::ifc::test_support::sheet_fixture(
+        if image_marker {
+            ""
+        } else {
+            "div::before{content:'X';background:red}"
+        },
+        if image_marker {
+            "display:list-item;list-style:inside url(https://images.test/marker.png);width:40px;line-height:10px"
+        } else {
+            "width:40px;line-height:10px"
+        },
+        |doc, root| {
+            for (index, text) in ["A", "B", "C", "D"].into_iter().enumerate() {
+                if index > 0 {
+                    doc.append_element(Some(root), "br", Style::default(), Some("display:inline"));
+                }
+                doc.append_text(root, text);
+            }
+        },
+    );
+    if image_marker {
+        doc.prepare_list_marker_images(&cascade, &MarkerPixels, None);
+    }
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+    set_committed_column_fragments(&mut doc, root);
+    doc.project_pages(
+        &cascade,
+        page_box_800x600(),
+        &[PageSlice {
+            page_index: 0,
+            content_origin_y: 0.0,
+            page_name: None,
+        }],
+        &[],
+    )
+    .unwrap();
+    (doc, cascade)
+}
+
+#[test]
+fn decoration_projection_uses_the_remaining_budget_and_preserves_the_snapshot() {
+    for image_marker in [false, true] {
+        let (mut doc, cascade) = projected_decoration_fixture(image_marker);
+        let before: Vec<_> = doc
+            .page_fragments(0)
+            .map(|f| (f.node(), f.rect()))
+            .collect();
+        let slices = [PageSlice {
+            page_index: 0,
+            content_origin_y: 0.0,
+            page_name: None,
+        }];
+        let (_, _, _, _, _, remaining) = project_slices_with_control(
+            &doc,
+            &cascade,
+            page_box_800x600(),
+            &slices,
+            &[],
+            &PageLayoutControl::default(),
+        )
+        .unwrap();
+        let limit = doc.fragment_tree.limit - remaining;
+        doc.fragment_tree.limit = limit;
+        assert!(matches!(
+            doc.project_pages(&cascade, page_box_800x600(), &slices, &[]),
+            Err(LayoutError::FragmentLimitExceeded { limit: actual }) if actual == limit
+        ));
+        assert_eq!(
+            doc.page_fragments(0)
+                .map(|f| (f.node(), f.rect()))
+                .collect::<Vec<_>>(),
+            before
+        );
+    }
+}
+
+#[test]
+fn decoration_projection_polls_cancellation_after_geometry_preparation() {
+    for image_marker in [false, true] {
+        let (mut doc, cascade) = projected_decoration_fixture(image_marker);
+        let before: Vec<_> = doc
+            .page_fragments(0)
+            .map(|f| (f.node(), f.rect()))
+            .collect();
+        let slices = [PageSlice {
+            page_index: 0,
+            content_origin_y: 0.0,
+            page_name: None,
+        }];
+        let checks = Cell::new(0);
+        let probe = || {
+            checks.set(checks.get() + 1);
+            false
+        };
+        project_slices_with_control(
+            &doc,
+            &cascade,
+            page_box_800x600(),
+            &slices,
+            &[],
+            &PageLayoutControl::default().with_abort_check(&probe),
+        )
+        .unwrap();
+        let geometry_checks = checks.replace(0);
+        let abort = || {
+            checks.set(checks.get() + 1);
+            checks.get() > geometry_checks
+        };
+        assert!(matches!(
+            doc.project_pages_with_control(
+                &cascade,
+                page_box_800x600(),
+                &slices,
+                &[],
+                &PageLayoutControl::default().with_abort_check(&abort)
+            ),
+            Err(LayoutError::Aborted)
+        ));
+        assert_eq!(checks.get(), geometry_checks + 1);
+        assert_eq!(
+            doc.page_fragments(0)
+                .map(|f| (f.node(), f.rect()))
+                .collect::<Vec<_>>(),
+            before
+        );
+    }
+}

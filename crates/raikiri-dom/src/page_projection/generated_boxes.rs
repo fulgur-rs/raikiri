@@ -2,9 +2,8 @@
 
 use super::records::{PageFragment, ProjectedTextRoot};
 use super::text_runs::{RunContext, omission};
-use crate::generated_content::{computed_for_id, generated_origin};
-use crate::{Document, GeneratedKind, PositionedLines};
-use raikiri_style::{CascadeResult, ComputedValues, PseudoElem, property::Visibility};
+use crate::{Document, GeneratedKind};
+use raikiri_style::{CascadeResult, ComputedValues, PseudoElem};
 use raikiri_traits::{NodeId, PaintRect};
 use std::collections::{BTreeMap, HashSet};
 
@@ -51,7 +50,9 @@ pub(super) fn prepare(
     cascade: &CascadeResult,
     roots: &[ProjectedTextRoot],
     pages: &[PageFragment],
-) -> GeneratedBoxes {
+    paragraphs: &crate::layout::ParagraphCache,
+    work: &mut crate::layout::ProjectionWork<'_, '_>,
+) -> Result<GeneratedBoxes, raikiri_traits::LayoutError> {
     let candidates: HashSet<_> = cascade
         .pseudo
         .keys()
@@ -79,53 +80,17 @@ pub(super) fn prepare(
         if omission(document, cascade, &context, root.node).is_some() {
             continue;
         }
-        let node = document
-            .ifc_layout_node(root.node)
-            .expect("projected paragraph roots have retained layout nodes");
-        let pieces: Vec<_> = node
-            .ifc_inline_boxes()
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|piece| {
-                let (owner, pseudo) = generated_origin(piece.node)?;
-                if piece.border_box.width <= 0.0 || piece.border_box.height <= 0.0 {
-                    return None;
-                }
-                if !matches!(pseudo, PseudoElem::Before | PseudoElem::After)
-                    || computed_for_id(cascade, piece.node)?.visibility != Visibility::Visible
-                {
-                    return None;
-                }
-                Some((owner, pseudo == PseudoElem::After, piece))
-            })
-            .collect();
-        if pieces.is_empty() {
-            continue;
-        }
-        let positioned = PositionedLines::new(document, cascade, root.node, root.fragmentainer)
-            .expect("inline box pieces belong to a laid-out paragraph");
-        let pieces: Vec<_> = pieces
-            .into_iter()
-            .filter_map(|(owner, after, piece)| {
-                let offset = positioned.line_offset(piece.line)?;
-                let line = &positioned.all_lines()[piece.line];
-                let shift = positioned.shifts.get(piece.line).copied().unwrap_or(0.0);
-                Some((
-                    owner,
-                    after,
-                    piece,
-                    offset,
-                    shift,
-                    line.block_offset(),
-                    line.block_size(),
-                ))
-            })
-            .collect();
+        work.check()?;
+        let pieces = paragraphs
+            .get(&root.node)
+            .map_or(&[][..], |paragraph| paragraph.generated(root.fragmentainer));
+        work.charge(pieces.len().saturating_add(1))?;
         prepared.push((*root, pieces));
     }
     let mut result = GeneratedBoxes::new();
     for page in pages {
         for (root, pieces) in &prepared {
+            work.charge(1)?;
             let mut root = *root;
             let source = document.ifc_source_owner(root.node);
             if let Some(shift) = document
@@ -138,7 +103,8 @@ pub(super) fn prepare(
                 root.is_repeat = true;
             }
             let (start, end) = page.flow_range.unwrap_or((0.0, 0.0));
-            for &(owner, after, piece, offset, shift, top, height) in pieces {
+            for &(owner, after, piece, offset, shift, top, height) in *pieces {
+                work.charge(1)?;
                 if !root.is_repeat
                     && !crate::layout::line_center_on_page(
                         root.y + offset.1 + top,
@@ -171,5 +137,5 @@ pub(super) fn prepare(
             }
         }
     }
-    result
+    Ok(result)
 }

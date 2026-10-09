@@ -122,7 +122,7 @@ impl Document {
                 )
             })
             .collect();
-        let (pages, text_roots, overflow_clips, placement_overflow_clips) =
+        let (pages, text_roots, overflow_clips, placement_overflow_clips, paragraphs, remaining) =
             crate::layout::project_slices_with_control(
                 self,
                 cascade,
@@ -132,8 +132,15 @@ impl Document {
                 control,
             )?;
         let markers = text_runs::prepare_markers(self, cascade, &text_roots, &pages)?;
-        let image_markers = image_markers::prepare(self, cascade, &text_roots, &pages);
-        let generated_boxes = generated_boxes::prepare(self, cascade, &text_roots, &pages);
+        let mut work = crate::layout::ProjectionWork::with_remaining(
+            control,
+            self.fragment_tree.limit,
+            remaining,
+        );
+        let image_markers =
+            image_markers::prepare(self, cascade, &text_roots, &pages, &paragraphs, &mut work)?;
+        let generated_boxes =
+            generated_boxes::prepare(self, cascade, &text_roots, &pages, &paragraphs, &mut work)?;
         let events = crate::layout::page_fragment_events_from_pages(self, &pages);
         let mut links: Vec<Vec<(NodeId, String, Vec<PaintRect>)>> =
             pages.iter().map(|_| Vec::new()).collect();
