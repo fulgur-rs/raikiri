@@ -22,9 +22,17 @@ raikiri = { workspace = true }
 # version pin + Pure Rust / WASM rationale (promoted there because
 # raikiri-bench is the second crate to grow a bench target).
 criterion = { workspace = true }
+# The cascade_document bench and the cascade_memory test parse a report
+# document and cascade it directly, without layout or painting.
+raikiri-html = { workspace = true }
+raikiri-style = { workspace = true }
 
 [[bench]]
 name = "fulgur_baseline"
+harness = false
+
+[[bench]]
+name = "cascade_document"
 harness = false
 
 [lints]
