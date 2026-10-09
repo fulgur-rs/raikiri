@@ -14,7 +14,11 @@ pub(crate) struct HeaderRepeat {
     pub(crate) height: f32,
     pub(crate) gap: f32,
     pub(crate) body_started: bool,
+    /// Page origin and header y per page index. Call
+    /// [`HeaderRepeats::index`] after changing it.
     pub(crate) placements: BTreeMap<u32, (f32, f32)>,
+    /// `placements` ordered by page origin, rebuilt by [`HeaderRepeats::index`].
+    by_origin: Vec<(f32, f32)>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -37,6 +41,12 @@ impl HeaderRepeats {
         if document.nodes[body].multicol.is_some() {
             return result;
         }
+        // Projection copies every header box onto every continuation page and
+        // charges each copy to the shared fragment budget. Tables whose copies
+        // would claim more than half of it keep ordinary fragmentation, so a
+        // wide header on a long table cannot turn a layout that succeeds
+        // without repetition into a limit failure.
+        let mut copy_budget = document.fragment_tree.limit / 2;
         for &table in &document.nodes[body].children {
             let node = &document.nodes[table];
             let cv = &cascade.computed[table];
@@ -134,6 +144,40 @@ impl HeaderRepeats {
             if spans_rows || bottom_caption || has_fixed || has_page_boundary {
                 continue;
             }
+            // A copy is placed only on a page where a body row starts. Bound
+            // those pages by the rows, and by the table's unfragmented height
+            // over the body area left beside the header (at least three
+            // quarters of a page). Pushing an unfitting row to the next page
+            // can waste up to one row per page, hence the doubling; forced
+            // row breaks each open at most one further page.
+            let forced_breaks = body_rows
+                .iter()
+                .filter(|&&row| {
+                    let computed = &cascade.computed[row];
+                    matches!(
+                        computed.break_before,
+                        BreakBetween::Page | BreakBetween::Always
+                    ) || matches!(
+                        computed.break_after,
+                        BreakBetween::Page | BreakBetween::Always
+                    )
+                })
+                .count();
+            let table_height = node.unrounded_layout.size.height;
+            let flow_pages = Some((table_height / (page_height * 0.75)).ceil())
+                .filter(|pages| pages.is_finite())
+                .map_or(usize::MAX, |pages| pages.max(0.0) as usize);
+            let pages = (body_rows.len() + 1).min(
+                flow_pages
+                    .saturating_mul(2)
+                    .saturating_add(forced_breaks)
+                    .saturating_add(1),
+            );
+            let copies = header_sources.len().saturating_mul(pages);
+            if copies > copy_budget {
+                continue;
+            }
+            copy_budget -= copies;
             let gap =
                 if node.border_collapse == raikiri_style::property::BorderCollapseValue::Collapse {
                     0.0
@@ -155,6 +199,7 @@ impl HeaderRepeats {
                     gap,
                     body_started: false,
                     placements: BTreeMap::new(),
+                    by_origin: Vec::new(),
                 },
             );
         }
@@ -165,11 +210,46 @@ impl HeaderRepeats {
         self.owners.get(source).copied().flatten()
     }
 
+    /// Order each header's placements by page origin for [`Self::shift`].
+    ///
+    /// Call after the placements are final; page origins increase with the
+    /// page index, so the order matches the page order.
+    pub(crate) fn index(&mut self) {
+        for header in self.headers.values_mut() {
+            header.by_origin = header.placements.values().copied().collect();
+            header
+                .by_origin
+                .sort_by(|left, right| left.0.total_cmp(&right.0));
+        }
+    }
+
     pub(crate) fn shift(&self, source: usize, page_origin: f32) -> Option<Option<f32>> {
         let header = self.headers.get(&self.owner(source)?)?;
-        Some(header.placements.values().find_map(|&(origin, y)| {
-            ((origin - page_origin).abs() <= 0.001).then_some(y - header.source_y)
-        }))
+        let start = header
+            .by_origin
+            .partition_point(|&(origin, _)| origin < page_origin - 0.001);
+        Some(
+            header
+                .by_origin
+                .get(start)
+                .filter(|&&(origin, _)| (origin - page_origin).abs() <= 0.001)
+                .map(|&(_, y)| y - header.source_y),
+        )
+    }
+
+    /// The pages of `source` as a repeated header box: page index, page
+    /// origin, and the box's translation on that page.
+    pub(crate) fn placements_of(
+        &self,
+        source: usize,
+    ) -> Option<impl Iterator<Item = (u32, f32, f32)>> {
+        let header = self.headers.get(&self.owner(source)?)?;
+        Some(
+            header
+                .placements
+                .iter()
+                .map(move |(&page, &(origin, y))| (page, origin, y - header.source_y)),
+        )
     }
 }
 

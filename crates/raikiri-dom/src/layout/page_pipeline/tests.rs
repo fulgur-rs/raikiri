@@ -306,6 +306,7 @@ fn repeated_header_columns_shift_shared_overflow_and_break_clips_together() {
     let repeated = doc.table_objects.headers.headers.get_mut(&header).unwrap();
     repeated.placements.insert(0, (0.0, 0.0));
     repeated.placements.insert(1, (100.0, 107.5));
+    doc.table_objects.headers.index();
     set_committed_column_fragments(&mut doc, root);
     doc.project_pages(
         &cascade,
@@ -8986,4 +8987,87 @@ fn marker_cache_preparation_obeys_each_work_budget_boundary() {
             Err(error) => panic!("unexpected marker cache error: {error:?}"),
         }
     }
+}
+
+#[test]
+fn repeated_header_copies_are_charged_to_the_projection_budget() {
+    let (mut doc, _, root) = crate::layout::test_support::ahem_paragraph("A", "");
+    let body = doc.parent_of(root).unwrap();
+    let table = doc.append_element(
+        Some(body),
+        "table",
+        Style::default(),
+        Some("display:table;width:100px;border-collapse:collapse"),
+    );
+    let header = doc.append_element(
+        Some(table),
+        "thead",
+        Style::default(),
+        Some("display:table-header-group"),
+    );
+    let row = doc.append_element(
+        Some(header),
+        "tr",
+        Style::default(),
+        Some("display:table-row"),
+    );
+    let cell = doc.append_element(
+        Some(row),
+        "td",
+        Style::default(),
+        Some("display:table-cell;padding:0"),
+    );
+    doc.append_child(cell, root).unwrap();
+    let body_row = doc.append_element(
+        Some(table),
+        "tr",
+        Style::default(),
+        Some("display:table-row"),
+    );
+    doc.append_element(
+        Some(body_row),
+        "td",
+        Style::default(),
+        Some("display:table-cell;height:200px;padding:0"),
+    );
+    doc.mark_in_document_flags();
+    let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+    layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+    doc.table_objects.headers =
+        crate::layout::table::headers::HeaderRepeats::prepare(&doc, &cascade, body, 600.0, |_| 0.0);
+    let repeated = doc.table_objects.headers.headers.get_mut(&header).unwrap();
+    let pages = 64;
+    let slices: Vec<_> = (0..pages)
+        .map(|page| {
+            repeated
+                .placements
+                .insert(page, (page as f32 * 100.0, page as f32 * 100.0));
+            PageSlice {
+                page_index: page,
+                content_origin_y: page as f32 * 100.0,
+                page_name: None,
+            }
+        })
+        .collect();
+    doc.table_objects.headers.index();
+    doc.project_pages(&cascade, page_box_800x600(), &slices, &[])
+        .unwrap();
+    let before: Vec<_> = doc
+        .page_fragments(pages - 1)
+        .map(|f| (f.node(), f.rect()))
+        .collect();
+    assert!(before.iter().any(|&(node, _)| node.0 as usize == header));
+    // Four header boxes on each of 64 pages exceed this limit; no ordinary
+    // box needs a charge in this document.
+    doc.fragment_tree.limit = 128;
+    assert!(matches!(
+        doc.project_pages(&cascade, page_box_800x600(), &slices, &[]),
+        Err(LayoutError::FragmentLimitExceeded { limit: 128 })
+    ));
+    assert_eq!(
+        doc.page_fragments(pages - 1)
+            .map(|f| (f.node(), f.rect()))
+            .collect::<Vec<_>>(),
+        before
+    );
 }

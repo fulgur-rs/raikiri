@@ -383,3 +383,27 @@ fn header_text_is_absent_from_content_after_its_table() {
     let text: String = page.text_runs().iter().map(|run| run.text).collect();
     assert_eq!(text, "END");
 }
+
+fn wide_header_table(header_boxes: usize, rows: usize) -> String {
+    let boxes = "<i></i>".repeat(header_boxes);
+    let rows: String = (0..rows)
+        .map(|row| format!("<tr><td id='r{row}' style='height:90px'>X</td></tr>"))
+        .collect();
+    format!("<table><thead><tr><th id='h'>H{boxes}</th></tr></thead><tbody>{rows}</tbody></table>")
+}
+
+#[test]
+fn headers_whose_copies_exceed_the_projection_budget_are_not_repeated() {
+    // Every header box is copied onto every continuation page, so the copies
+    // grow with header size times page count. A small header still repeats.
+    let small = lay_out(&wide_header_table(8, 100));
+    assert_eq!(small.page_count(), 100);
+    assert_eq!(header_count(&small, 50), 1);
+    assert_eq!(rect(&small, "r50", 50).y, 10.0);
+
+    // A header whose copies would exhaust the shared fragment budget keeps
+    // ordinary table fragmentation instead of failing the layout.
+    let large = lay_out(&wide_header_table(600, 100));
+    assert_eq!(header_count(&large, 0), 1);
+    assert_eq!(header_count(&large, 50), 0);
+}
