@@ -216,6 +216,18 @@ pub(crate) struct CascadedArena {
     pseudo_custom_decls: Vec<CustomCascadedDecl>,
     /// Per-`(id, pseudo)` ranges in `pseudo_custom_decls`.
     pseudo_custom_ranges: HashMap<(StyleNodeId, PseudoElem), Range<usize>>,
+    /// Elements with an `opacity` or a `background-color` candidate of their
+    /// own (pseudo-elements excluded), with which of the two, in visit order.
+    specified: Vec<SpecifiedProperties>,
+}
+
+/// Whether an element's own candidates include `opacity` and
+/// `background-color`, whichever declaration wins.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SpecifiedProperties {
+    pub(crate) id: StyleNodeId,
+    pub(crate) opacity: bool,
+    pub(crate) background_color: bool,
 }
 
 impl CascadedArena {
@@ -229,6 +241,33 @@ impl CascadedArena {
             pseudo_ranges: HashMap::new(),
             pseudo_custom_decls: Vec::new(),
             pseudo_custom_ranges: HashMap::new(),
+            specified: Vec::new(),
+        }
+    }
+
+    /// The elements whose own candidates include `opacity` or
+    /// `background-color`.
+    pub(crate) fn specified_properties(&self) -> &[SpecifiedProperties] {
+        &self.specified
+    }
+
+    /// Records which of the flagged properties `id`'s own candidates, just
+    /// collected into `decls[range]`, include.
+    fn record_specified_properties(&mut self, id: StyleNodeId, range: Range<usize>) {
+        let (mut opacity, mut background_color) = (false, false);
+        for candidate in &self.decls[range] {
+            match candidate.key {
+                PropertyKey::Opacity => opacity = true,
+                PropertyKey::BackgroundColor => background_color = true,
+                _ => {}
+            }
+        }
+        if opacity || background_color {
+            self.specified.push(SpecifiedProperties {
+                id,
+                opacity,
+                background_color,
+            });
         }
     }
 
@@ -938,6 +977,7 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                 let end = out.decls.len();
                 if end > start {
                     out.ranges.insert(id, start..end);
+                    out.record_specified_properties(id, start..end);
                 }
                 let custom_end = out.custom_decls.len();
                 if custom_end > custom_start {
