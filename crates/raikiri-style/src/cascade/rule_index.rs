@@ -52,7 +52,8 @@ use selectors::bloom::BloomFilter;
 use selectors::parser::{Combinator, Component, Selector, SelectorIter};
 
 use crate::RaikiriSelectorImpl;
-use crate::rule::{Declaration, ParsedDeclaration, StyleRule, expand_shorthand_into};
+use crate::layer::{LayerOrder, LayerPosition};
+use crate::rule::{Declaration, StyleRule};
 use crate::style_dom::StyleElement;
 
 /// Upper bound on the ancestor requirements stored per selector. Longer
@@ -180,9 +181,12 @@ fn analyze_selector(selector: &Selector<RaikiriSelectorImpl>) -> (BucketKey, Vec
 /// the element being matched.
 pub(crate) struct IndexedRule<'a> {
     pub(crate) rule: &'a StyleRule,
-    /// `rule.declarations` with shorthands expanded to longhands once, rather
-    /// than once per matching element.
-    pub(crate) declarations: Vec<Declaration>,
+    /// `rule.declarations`, already expanded to longhands when the rule was
+    /// parsed: a [`Declaration`] can only come from expansion.
+    pub(crate) declarations: &'a [Declaration],
+    /// The cascade layer position of the rule's declarations under this
+    /// cascade's layer order.
+    pub(crate) layer: LayerPosition,
     /// Some selector in the list targets the element itself.
     pub(crate) has_element_selector: bool,
     /// Some selector in the list targets a pseudo-element.
@@ -214,8 +218,12 @@ pub(crate) struct RuleIndex<'a> {
 impl<'a> RuleIndex<'a> {
     /// Builds the index. `rules` must already be in the order candidates are
     /// to be pushed (ascending source order); [`Self::candidate_rules`]
-    /// returns rule indices in that same order.
-    pub(crate) fn new(rules: impl IntoIterator<Item = &'a StyleRule>) -> Self {
+    /// returns rule indices in that same order. `layers` is the cascade's
+    /// layer order, which gives each rule its layer position.
+    pub(crate) fn new(
+        rules: impl IntoIterator<Item = &'a StyleRule>,
+        layers: &LayerOrder<'_>,
+    ) -> Self {
         let mut index = Self {
             rules: Vec::new(),
             entries: Vec::new(),
@@ -251,17 +259,13 @@ impl<'a> RuleIndex<'a> {
                 };
                 bucket.push(entry_idx);
             }
-            let mut declarations = Vec::with_capacity(rule.declarations.len());
-            for decl in &rule.declarations {
-                let parsed = ParsedDeclaration {
-                    value: decl.value.clone(),
-                    important: decl.important,
-                };
-                expand_shorthand_into(&parsed, |longhand| declarations.push(longhand));
-            }
             index.rules.push(IndexedRule {
                 rule,
-                declarations,
+                declarations: &rule.declarations,
+                layer: LayerPosition {
+                    attached: false,
+                    rank: layers.rank(rule.layer, rule.origin),
+                },
                 has_element_selector,
                 has_pseudo_selector,
             });

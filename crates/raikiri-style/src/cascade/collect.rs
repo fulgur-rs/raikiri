@@ -122,6 +122,9 @@ impl CascadedDecl {
         source_order: u32,
         layer: LayerPosition,
     ) -> Self {
+        // A declaration's value only changes through `update_value`, which
+        // recomputes the key.
+        debug_assert_eq!(decl.key, decl.value.key(), "stale declaration key");
         Self {
             value: decl.value,
             important: decl.important,
@@ -641,7 +644,7 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
     // Bucket the active rules once per cascade so each element only runs the
     // full matcher against rules that can possibly match it. See the
     // `rule_index` module docs for why the filtering never drops a match.
-    let rule_index = RuleIndex::new(style_rules);
+    let rule_index = RuleIndex::new(style_rules, &layers);
     let mut candidate_rules: Vec<u32> = Vec::new();
     let mut block_cache = DeclarationBlockCache::default();
     let mut cell_padding_cache = HashMap::new();
@@ -827,21 +830,18 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                             &ancestor_path,
                         )
                     {
-                        // Longhands were expanded when the index was built
-                        // for this cascade. Expanding only during parsing
-                        // would not cover post-parse mutation of `RuleTree`;
-                        // see the `crate::rule::expand_shorthand_into` docs.
-                        for d in &indexed.declarations {
+                        // The declarations were expanded to longhands when the
+                        // rule was parsed: a `Declaration` can only come from
+                        // `crate::rule::expand_shorthand_into`, and the rule
+                        // tree has no path that changes a rule after parsing.
+                        for d in indexed.declarations {
                             push_cascaded_decl(
                                 (&mut out.decls, &mut out.custom_decls),
                                 d.clone(),
                                 rule.origin,
                                 spec,
                                 rule.source_order,
-                                LayerPosition {
-                                    attached: false,
-                                    rank: layers.rank(rule.layer, rule.origin),
-                                },
+                                indexed.layer,
                             );
                         }
                     }
@@ -890,17 +890,14 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                             // cov:ignore: selector_matches_pseudo_element excludes boxless native pseudos
                             PseudoElem::Backdrop | PseudoElem::FileSelectorButton => continue,
                         };
-                        for d in &indexed.declarations {
+                        for d in indexed.declarations {
                             push_cascaded_decl(
                                 (buf, custom_buf),
                                 d.clone(),
                                 rule.origin,
                                 spec,
                                 rule.source_order,
-                                LayerPosition {
-                                    attached: false,
-                                    rank: layers.rank(rule.layer, rule.origin),
-                                },
+                                indexed.layer,
                             );
                         }
                     }

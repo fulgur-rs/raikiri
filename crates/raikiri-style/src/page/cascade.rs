@@ -330,11 +330,12 @@ impl PageMarginBoxCascadeResult {
                 } else {
                     CssColor::TRANSPARENT
                 });
-                declaration.value = if is_color {
+                let resolved = if is_color {
                     PropertyValue::Color(color)
                 } else {
                     PropertyValue::BackgroundColor(color)
                 };
+                declaration.update_value(|value| *value = resolved);
             }
         }
         Some(merged)
@@ -644,8 +645,12 @@ impl PageCascadeResult {
         }
         for margin_box in &mut self.margin_boxes {
             for declaration in &mut margin_box.declarations {
-                if let PropertyValue::BackgroundImage(image) = &mut declaration.value {
-                    visitor(image);
+                if matches!(declaration.value, PropertyValue::BackgroundImage(_)) {
+                    declaration.update_value(|value| {
+                        if let PropertyValue::BackgroundImage(image) = value {
+                            visitor(image);
+                        }
+                    });
                 }
             }
         }

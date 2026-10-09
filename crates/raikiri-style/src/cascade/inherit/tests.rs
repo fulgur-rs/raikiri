@@ -8279,207 +8279,36 @@ fn max_width_none_maps_to_auto() {
     );
 }
 
-fn cascade_with_post_parse_injection(
-    css: &str,
-    idx: usize,
-    injected: PropertyValue,
-) -> ComputedValues {
-    let mut doc = TestDoc::new();
-    let e = doc.push_element(0, "div", None);
-    let mut tree = RuleTree::empty();
-    tree.add_stylesheet(css, Origin::Author);
-    tree.style_rules[0].declarations[idx].value = injected;
-    let result = cascade(&doc, &tree).expect("cascade Ok");
-    result.computed[e].clone()
-}
-
-fn distinct_margin_sides() -> Sides<LengthOrAuto> {
-    Sides {
-        top: LengthOrAuto::Length(Length::Px(1.0)),
-        right: LengthOrAuto::Length(Length::Px(2.0)),
-        bottom: LengthOrAuto::Length(Length::Px(3.0)),
-        left: LengthOrAuto::Length(Length::Px(4.0)),
-    }
-}
-
 #[test]
-fn post_parse_margin_shorthand_before_longhand_lets_longhand_win() {
-    // Declaration sequence after injection
-    // (= `margin: 1px 2px 3px 4px; margin-top: 10px`):
-    //   `[0]` Margin(1,2,3,4)   ← injected
-    //   `[1]` MarginTop(10px)
-    // Spec §3 + §6.1 → top=10 (later longhand), right/bottom/left=2/3/4.
-    //
-    // This is the spec-violating direction reported by nqkj: without
-    // expansion, `PropertyKey::Margin` is applied after `MarginTop`, replacing
-    // top=10 along with all sides with 1/2/3/4.
-    let cv = cascade_with_post_parse_injection(
-        "div { margin-left: 99px; margin-top: 10px }",
-        0,
-        PropertyValue::Margin(distinct_margin_sides()),
+fn important_longhand_survives_a_later_normal_shorthand() {
+    // CSS Cascading L4 §6.1 <https://www.w3.org/TR/css-cascade-4/#cascade-sort>
+    // sorts Origin and Importance above Order of Appearance, so the later
+    // normal shorthand only sets the sides the important longhand does not.
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("margin-top: 10px !important; margin: 1px 2px 3px 4px"),
     );
-    assert_eq!(
-        cv.margin.top,
-        ComputedLengthPercentageOrAuto::Px(10.0),
-        "後方 longhand が order of appearance で勝つこと (§6.1)"
-    );
-    // The other three sides come from the shorthand's per-side values.
-    // Assert all of them to reject implementations that simply drop the
-    // shorthand (top=10, others initial 0) or expand only the top arm.
+    assert_eq!(cv.margin.top, ComputedLengthPercentageOrAuto::Px(10.0));
     assert_eq!(cv.margin.right, ComputedLengthPercentageOrAuto::Px(2.0));
     assert_eq!(cv.margin.bottom, ComputedLengthPercentageOrAuto::Px(3.0));
     assert_eq!(cv.margin.left, ComputedLengthPercentageOrAuto::Px(4.0));
 }
 
 #[test]
-fn post_parse_margin_shorthand_after_longhand_lets_shorthand_win() {
-    // Mirror case (`margin-top: 10px; margin: 1px 2px 3px 4px`):
-    //   `[0]` MarginTop(10px)
-    //   `[1]` Margin(1,2,3,4)   ← injected
-    // Spec §6.1 → all sides come from the shorthand = 1/2/3/4.
-    //
-    // This direction would also pass without expansion. Check that the fix
-    // does not introduce the wrong asymmetry of always losing shorthands.
-    let cv = cascade_with_post_parse_injection(
-        "div { margin-top: 10px; margin-left: 99px }",
-        1,
-        PropertyValue::Margin(distinct_margin_sides()),
+fn important_shorthand_longhands_survive_a_later_normal_longhand() {
+    // Expansion gives each longhand the shorthand's `!important`.
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("margin: 1px 2px 3px 4px !important; margin-top: 10px"),
     );
     assert_eq!(cv.margin.top, ComputedLengthPercentageOrAuto::Px(1.0));
-    assert_eq!(cv.margin.right, ComputedLengthPercentageOrAuto::Px(2.0));
-    assert_eq!(cv.margin.bottom, ComputedLengthPercentageOrAuto::Px(3.0));
     assert_eq!(cv.margin.left, ComputedLengthPercentageOrAuto::Px(4.0));
 }
 
 #[test]
-fn post_parse_padding_shorthand_before_longhand_lets_longhand_win() {
-    // Check padding just as margin (their expansion arms are independent).
-    // The distinct 1/2/3/4px values have the same purpose as in the
-    // `distinct_margin_sides` docs.
-    let cv = cascade_with_post_parse_injection(
-        "div { padding-left: 99px; padding-top: 10px }",
-        0,
-        PropertyValue::Padding(Sides {
-            top: Length::Px(1.0),
-            right: Length::Px(2.0),
-            bottom: Length::Px(3.0),
-            left: Length::Px(4.0),
-        }),
-    );
-    assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(10.0));
-    assert_eq!(cv.padding.right, ComputedLengthPercentage::Px(2.0));
-    assert_eq!(cv.padding.bottom, ComputedLengthPercentage::Px(3.0));
-    assert_eq!(cv.padding.left, ComputedLengthPercentage::Px(4.0));
-}
 
-#[test]
-fn post_parse_border_shorthand_before_longhand_lets_longhand_win() {
-    // Border expands to four sides × three subproperties = 12 longhands.
-    // Distinct width / style values per side check that all 12 arms survive
-    // through the sink. Style also gates computed width, so avoid `None`
-    // (CSS Backgrounds 3 §3.3). The distinct 1/2/3/4px widths serve the
-    // same purpose as in the `distinct_margin_sides` docs.
-    let cv = cascade_with_post_parse_injection(
-        "div { border-left-width: 99px; border-top-width: 10px }",
-        0,
-        PropertyValue::Border(Sides {
-            top: Border {
-                width: Length::Px(1.0),
-                style: BorderStyle::Solid,
-                color: BorderColor::Resolved(RED),
-            },
-            right: Border {
-                width: Length::Px(2.0),
-                style: BorderStyle::Dashed,
-                color: BorderColor::Resolved(BLUE),
-            },
-            bottom: Border {
-                width: Length::Px(3.0),
-                style: BorderStyle::Dotted,
-                color: BorderColor::CurrentColor,
-            },
-            left: Border {
-                width: Length::Px(4.0),
-                style: BorderStyle::Double,
-                color: BorderColor::Resolved(RED),
-            },
-        }),
-    );
-    // Only top.width is won by the later longhand.
-    assert_eq!(cv.border.top.width, ComputedLength(10.0));
-    assert_eq!(cv.border.right.width, ComputedLength(2.0));
-    assert_eq!(cv.border.bottom.width, ComputedLength(3.0));
-    assert_eq!(cv.border.left.width, ComputedLength(4.0));
-    // Per-side style / color still come from the shorthand.
-    assert_eq!(cv.border.top.style, BorderStyle::Solid);
-    assert_eq!(cv.border.right.style, BorderStyle::Dashed);
-    assert_eq!(cv.border.bottom.style, BorderStyle::Dotted);
-    assert_eq!(cv.border.left.style, BorderStyle::Double);
-    assert_eq!(cv.border.top.color, BorderColor::Resolved(RED));
-    assert_eq!(cv.border.right.color, BorderColor::Resolved(BLUE));
-    assert_eq!(cv.border.bottom.color, BorderColor::CurrentColor);
-    assert_eq!(cv.border.left.color, BorderColor::Resolved(RED));
-}
-
-#[test]
-fn post_parse_shorthand_injection_propagates_important() {
-    // CSS Cascading Level 4 §3 makes a shorthand's `!important`
-    // flag apply to all expanded longhands.
-    let cv = cascade_with_post_parse_injection(
-        "div { margin-left: 99px !important; margin-top: 10px }",
-        0,
-        PropertyValue::Margin(distinct_margin_sides()),
-    );
-    assert_eq!(
-        cv.margin.top,
-        ComputedLengthPercentageOrAuto::Px(1.0),
-        "important shorthand 由来の MarginTop が normal longhand に勝つこと"
-    );
-    assert_eq!(cv.margin.right, ComputedLengthPercentageOrAuto::Px(2.0));
-    assert_eq!(cv.margin.bottom, ComputedLengthPercentageOrAuto::Px(3.0));
-    assert_eq!(cv.margin.left, ComputedLengthPercentageOrAuto::Px(4.0));
-}
-
-#[test]
-fn post_parse_important_longhand_survives_later_normal_shorthand() {
-    // Declaration sequence after injection
-    // (= `margin-top: 10px !important; margin: 1px 2px 3px 4px`):
-    //   `[0]` MarginTop(10px) !important
-    //   `[1]` Margin(1,2,3,4)  normal   ← injected (`important` stays false)
-    //
-    // CSS Cascading L4 §6.1 <https://www.w3.org/TR/css-cascade-4/#cascade-sort>
-    // sorts Origin and Importance **above** Order of Appearance. Thus the
-    // later normal shorthand cannot beat the earlier important longhand:
-    // top=10, while the remaining three sides come from the shorthand
-    // (= 2/3/4).
-    //
-    // **This is the only test here whose `!important` direction distinguishes
-    // an implementation without expansion.** Without expansion, the separate
-    // `PropertyKey::Margin` slot wins and atomically overwrites top=1 by
-    // discriminant order (`Margin` > `MarginTop`). With equal importance,
-    // `post_parse_shorthand_injection_propagates_important` would happen to
-    // pass either implementation.
-    //
-    // (A mirror input `margin: 1,2,3,4; margin-top: 10px !important`, or
-    // analogous padding / border tests, would also distinguish them; this
-    // is not the only possible test. More coverage is welcome.)
-    let cv = cascade_with_post_parse_injection(
-        "div { margin-top: 10px !important; margin-left: 99px }",
-        1,
-        PropertyValue::Margin(distinct_margin_sides()),
-    );
-    assert_eq!(
-        cv.margin.top,
-        ComputedLengthPercentageOrAuto::Px(10.0),
-        "important longhand が後方の normal shorthand 由来 longhand に勝つこと \
-             (§6.1 Origin and Importance)"
-    );
-    assert_eq!(cv.margin.right, ComputedLengthPercentageOrAuto::Px(2.0));
-    assert_eq!(cv.margin.bottom, ComputedLengthPercentageOrAuto::Px(3.0));
-    assert_eq!(cv.margin.left, ComputedLengthPercentageOrAuto::Px(4.0));
-}
-
-#[test]
 fn float_wired_through_cascade_from_inline_style() {
     // <p style="float: left"> delivers FloatValue::Left to
     // ComputedValues.float. End-to-end parser → PropertyValue::Float →

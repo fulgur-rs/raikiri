@@ -136,6 +136,16 @@ impl Declaration {
         }
     }
 
+    /// Changes the value in place, keeping `key` and `rollback` in step with
+    /// it.
+    pub(crate) fn update_value(&mut self, update: impl FnOnce(&mut PropertyValue)) {
+        update(&mut self.value);
+        *self = Self::new(
+            std::mem::replace(&mut self.value, PropertyValue::AllRevertLayer),
+            self.important,
+        );
+    }
+
     /// Read-only accessor for the resolved property value.
     pub fn value(&self) -> &PropertyValue {
         &self.value
