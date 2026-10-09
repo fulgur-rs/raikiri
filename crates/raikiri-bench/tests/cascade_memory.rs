@@ -169,17 +169,16 @@ fn cascade_allocations_stay_under_their_ceilings() {
     }
 }
 
-// Set from what the cascade used when the ceilings were introduced, for
-// 6,397 nodes: 201,944 allocations, 69.4 MB allocated, a 21 MiB largest block
-// (the array of every candidate declaration in the document), a 37.1 MB peak
-// and 14.9 MB retained by the result. That array grows by
-// doubling, so allocated bytes, the peak and the largest block move in steps:
-// they stay flat while the candidate count grows by up to about 1.7 times,
-// then all three pass their ceilings at once. Raise a ceiling together with a
-// measurement that explains the growth, and lower them when the candidate
-// storage shrinks.
+// Set from what the cascade used for 6,397 nodes once each candidate became a
+// 32-byte record: 201,855 allocations, 34.2 MB allocated, a 13.6 MiB largest
+// block (the computed values of every node, reserved once), a 19.6 MB peak
+// and 14.9 MB retained by the result. The array of every candidate
+// declaration in the document (4 MiB at the end) grows by doubling, so
+// allocated bytes and the peak move in steps as the candidate count passes a
+// power of two. Raise a ceiling together with a measurement that explains
+// the growth, and lower them when the candidate storage shrinks.
 const ALLOCATIONS_CEILING: usize = 300_000;
-const BYTES_CEILING: usize = 100_000_000;
-const LARGEST_BLOCK_CEILING: usize = 32 << 20;
-const PEAK_CEILING: usize = 56_000_000;
+const BYTES_CEILING: usize = 52_000_000;
+const LARGEST_BLOCK_CEILING: usize = 22_000_000;
+const PEAK_CEILING: usize = 30_000_000;
 const RETAINED_CEILING: usize = 22_000_000;
