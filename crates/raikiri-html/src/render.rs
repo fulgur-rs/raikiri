@@ -32,6 +32,9 @@ use crate::resources::{
     redacted_url, sanitize_policy_violation,
 };
 
+mod continuation;
+pub(crate) use continuation::Continuation;
+
 struct RenderExecutionResources<'a> {
     font_faces: &'a FontFaceRegistry,
     font_face_loader: &'a dyn FontFaceLoader,
@@ -616,6 +619,8 @@ fn enable_inline_engine(
 pub(crate) struct PipelineOutput {
     pub(crate) document: raikiri_dom::Document,
     pub(crate) cascade: raikiri_style::CascadeResult,
+    /// Later pages laid out again at their own content width, in page order.
+    pub(crate) continuations: Vec<Continuation>,
     pub(crate) slices: Vec<PageSlice>,
     pub(crate) geometries: Vec<ResolvedPageGeometry>,
     pub(crate) page_styles: Vec<raikiri_style::PageCascadeResult>,
@@ -792,6 +797,9 @@ pub(crate) fn run_pipeline(
             },
         );
     }
+    // Pages whose content width differs from the first page's are laid out
+    // again from a copy of the document as it is before any layout.
+    let pristine = dom.clone();
     let mut document = dom;
     let mut slices = match layout_pages_with_resolver_and_base_url_and_control(
         &mut document,
@@ -928,20 +936,6 @@ pub(crate) fn run_pipeline(
         resolve_page_geometries(&page_cascader, &defaults, &slices);
     page_geometries = final_geometries;
 
-    // Fetch CSS background sources only after the final page schedule is known.
-    // Paint remains read-only and consumes the cache through ImagePixelSource.
-    if inputs.preload_background_images {
-        preload_page_background_images(
-            &page_cascader,
-            &slices,
-            resources,
-            &runtime.warnings,
-            signal.as_ref(),
-            &mut marker_image_seen,
-            &mut marker_image_attempts,
-        );
-    }
-
     let geometries: Vec<_> = page_geometries
         .iter()
         .map(|geometry| (geometry.page_box, geometry.margins, geometry.content_insets))
@@ -956,6 +950,68 @@ pub(crate) fn run_pipeline(
         Ok(()) => {}
         Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted),
         Err(error) => return Err(RenderError::from(error)),
+    }
+
+    let continuations = match continuation::continue_at_page_widths(
+        &continuation::ContinuationInputs {
+            pristine: &pristine,
+            source: &doc.uncascaded.dom,
+            tree: &tree,
+            media_context,
+            cascader: &page_cascader,
+            defaults: &defaults,
+            resolver: &resolver,
+            base_url: runtime.effective_base_url,
+            max_pages: config.limits.max_document_pages,
+            abort_check: &is_aborted,
+        },
+        &document,
+        &first_cascade,
+        &mut slices,
+        &mut page_geometries,
+    ) {
+        Ok(continuations) => continuations,
+        Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted), // cov:ignore: needs a cancellation landing during a relayout
+        Err(error) => return Err(RenderError::from(error)),
+    };
+    drop(pristine);
+    let page_styles = if let Some(first) = continuations.first() {
+        // The first layout keeps only the pages before the first continuation.
+        let own = first.first_page as usize;
+        match document.project_pages_with_control(
+            &first_cascade,
+            page_box,
+            &slices[..own],
+            &geometries[..own],
+            &page_control,
+        ) {
+            Ok(()) => {}
+            // These pages were projected once already with the same limits.
+            Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted), // cov:ignore: needs a cancellation landing during this projection
+            Err(error) => return Err(RenderError::from(error)), // cov:ignore: the same projection succeeded above
+        }
+        resolve_page_geometries(&page_cascader, &defaults, &slices).1
+    } else {
+        page_styles
+    };
+
+    // Fetch CSS background sources only after the final page schedule is known.
+    // Paint remains read-only and consumes the cache through ImagePixelSource.
+    if inputs.preload_background_images {
+        preload_page_background_images(
+            &page_cascader,
+            &slices,
+            resources,
+            &runtime.warnings,
+            signal.as_ref(),
+            &mut marker_image_seen,
+            &mut marker_image_attempts,
+        );
+        // A fetch above may have observed cancellation; do not hand out
+        // pages whose backgrounds were left unloaded.
+        if is_aborted() {
+            return Ok(PipelineRun::Aborted);
+        }
     }
 
     if let Some(property_observer) = property_observer {
@@ -985,12 +1041,29 @@ pub(crate) fn run_pipeline(
     Ok(PipelineRun::Completed(Box::new(PipelineOutput {
         document,
         cascade: first_cascade,
+        continuations,
         slices,
         geometries: page_geometries,
         page_styles,
         warnings,
         base_url: effective_base_url,
     })))
+}
+
+impl PipelineOutput {
+    /// The laid-out document and cascade that page `page_index` is taken from.
+    pub(crate) fn layout_for_page(
+        &self,
+        page_index: u32,
+    ) -> (&raikiri_dom::Document, &raikiri_style::CascadeResult) {
+        self.continuations
+            .iter()
+            .rev()
+            .find(|continuation| continuation.first_page <= page_index)
+            .map_or((&self.document, &self.cascade), |continuation| {
+                (&continuation.document, &continuation.cascade)
+            })
+    }
 }
 
 #[cfg(test)]

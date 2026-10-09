@@ -325,6 +325,10 @@ pub struct Document {
     /// Used block-start margin of `<body>` that the most recent layout placed
     /// inside the synthetic body root.
     pub(crate) body_block_start_margin: f32,
+    /// A forced line break the inline engine inserts before byte `offset`
+    /// of text node `text`, so a relayout at another width starts a line
+    /// exactly where a page began in an earlier layout.
+    pub(crate) continuation_break: Option<(usize, u32)>,
     /// Dirty flag for the IS_IN_DOCUMENT bit. Any tree mutation primitive
     /// (append_* / attach_child / insert_child_before / detach_from_parent /
     /// reparent_children / retain_children) sets it. Observation APIs
@@ -513,6 +517,7 @@ impl Document {
             layout_cascade_generation: None,
             body_inline_margins: (0.0, 0.0),
             body_block_start_margin: 0.0,
+            continuation_break: None,
             // Node::new_document() sets IS_IN_DOCUMENT=true on the initial root,
             // consistent with an attached root. There are no templates or
             // detached nodes yet, so the flag is not dirty.

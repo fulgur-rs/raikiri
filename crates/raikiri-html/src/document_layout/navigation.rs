@@ -1,4 +1,5 @@
 use super::DomView;
+use crate::render::PipelineOutput;
 use raikiri_traits::{NodeId, NodeKind, PaintRect};
 use std::collections::{HashMap, HashSet};
 
@@ -49,27 +50,22 @@ pub struct Link<'a> {
     pub quads: &'a [PaintRect],
 }
 
-pub(crate) fn build_rendered(
-    document: &raikiri_dom::Document,
-    slices: &[raikiri_dom::PageSlice],
-) -> HashSet<NodeId> {
-    slices
+pub(crate) fn build_rendered(out: &PipelineOutput) -> HashSet<NodeId> {
+    out.slices
         .iter()
         .flat_map(|slice| {
-            document
+            out.layout_for_page(slice.page_index)
+                .0
                 .page_fragments(slice.page_index)
                 .map(|fragment| fragment.node())
         })
         .collect()
 }
 
-pub(crate) fn build_anchors(
-    dom: DomView<'_>,
-    document: &raikiri_dom::Document,
-    slices: &[raikiri_dom::PageSlice],
-) -> AnchorIndex {
+pub(crate) fn build_anchors(dom: DomView<'_>, out: &PipelineOutput) -> AnchorIndex {
     let mut first_fragment: HashMap<NodeId, Anchor> = HashMap::new();
-    for slice in slices {
+    for slice in &out.slices {
+        let document = out.layout_for_page(slice.page_index).0;
         for fragment in document.page_fragments(slice.page_index) {
             first_fragment.entry(fragment.node()).or_insert_with(|| {
                 let rect = fragment.rect();

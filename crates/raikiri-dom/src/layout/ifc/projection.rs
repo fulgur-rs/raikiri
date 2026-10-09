@@ -807,19 +807,59 @@ fn project_children_builder(
         match node.kind() {
             NodeKind::Text => {
                 let text = node.text_content().ok_or(IfcError::InvalidNode(id))?;
-                first_letter.push_with_counters(
-                    &mut builder,
-                    doc,
-                    cascade,
-                    TextSource::Dom {
-                        node: NodeId(id as u64),
-                        offset: 0,
-                    },
-                    &cascade.computed[doc.parent_of(id).unwrap_or(id)],
-                    text,
-                    fonts,
-                    counters,
-                )?;
+                let parent_style = &cascade.computed[doc.parent_of(id).unwrap_or(id)];
+                // A continuation break splits the text so the line after it
+                // starts at the requested byte, as it did on an earlier page.
+                let split = doc
+                    .continuation_break
+                    .filter(|&(node, _)| node == id)
+                    .map(|(_, offset)| offset as usize)
+                    .filter(|&offset| offset <= text.len() && text.is_char_boundary(offset));
+                match split {
+                    Some(offset) => {
+                        if offset > 0 {
+                            first_letter.push_with_counters(
+                                &mut builder,
+                                doc,
+                                cascade,
+                                TextSource::Dom {
+                                    node: NodeId(id as u64),
+                                    offset: 0,
+                                },
+                                parent_style,
+                                &text[..offset],
+                                fonts,
+                                counters,
+                            )?; // cov:ignore: an earlier layout pushed this text unsplit, so it would have failed there
+                        }
+                        first_letter.stop();
+                        builder.push_forced_break(NodeId(id as u64));
+                        if offset < text.len() {
+                            builder.push_text(
+                                TextSource::Dom {
+                                    node: NodeId(id as u64),
+                                    offset: offset as u32,
+                                },
+                                &text[offset..],
+                            );
+                        }
+                    }
+                    None => {
+                        first_letter.push_with_counters(
+                            &mut builder,
+                            doc,
+                            cascade,
+                            TextSource::Dom {
+                                node: NodeId(id as u64),
+                                offset: 0,
+                            },
+                            parent_style,
+                            text,
+                            fonts,
+                            counters,
+                        )?;
+                    }
+                }
             }
             NodeKind::Comment | NodeKind::ProcessingInstruction => {}
             NodeKind::Element => {

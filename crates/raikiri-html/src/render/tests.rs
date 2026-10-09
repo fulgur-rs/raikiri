@@ -59,4 +59,5 @@ fn a_bundled_font_set_enables_parallel_builds_and_the_system_layer_does_not() {
     assert!(dom.ifc_parallel_build());
 }
 
+mod continuation_tests;
 mod pipeline_tests;
