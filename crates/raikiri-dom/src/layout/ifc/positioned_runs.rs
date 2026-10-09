@@ -128,7 +128,14 @@ impl<'a> PositionedLines<'a> {
                     let Some(first) = lines.get(fragment.line_start) else {
                         continue;
                     };
-                    let dy = fragment.y - first.block_offset();
+                    // A selected root fragment supplies its own physical origin.
+                    // The unfiltered view still uses offsets from the normal box.
+                    let origin_recorded = fragmentainer.is_some()
+                        && root_node
+                            .ifc
+                            .as_ref()
+                            .is_some_and(|root| root.multicol_fragment_origins_recorded);
+                    let dy = if origin_recorded { 0.0 } else { fragment.y } - first.block_offset();
                     let end = fragment.line_end.min(lines.len());
                     for offset in &mut line_offsets[fragment.line_start.min(end)..end] {
                         *offset = Some((

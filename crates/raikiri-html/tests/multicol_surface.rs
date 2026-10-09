@@ -56,6 +56,22 @@ fn ordinary_paragraph_is_the_unfragmented_control() {
 }
 
 #[test]
+fn an_anonymous_table_cell_preserves_its_text_paint_order() {
+    let document = lay_out("<div style='display:table'>A</div>", "");
+    let page = document.page(0).unwrap();
+    let runs = page.text_runs();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].text, "A");
+    assert_eq!(
+        page.paint_order_for_text_runs(&runs)
+            .iter()
+            .filter(|event| matches!(event, PaintEvent::TextLine(_)))
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn a_replaced_image_uses_its_own_rounded_clip_after_its_box() {
     let document = lay_out(
         "<img src='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg=='>",
@@ -610,6 +626,282 @@ fn single_column_rtl_wrapper_preserves_ordinary_block_flow() {
             ("C".into(), (0.0, 56.0)),
             ("D".into(), (0.0, 76.0)),
             ("E".into(), (0.0, 56.0)),
+        ]
+    );
+}
+
+#[test]
+fn multiple_paragraphs_continue_in_the_last_used_column() {
+    let document = lay_out(
+        "<div class=mc><p>A<br>B<br>C<br>D</p><p>E<br>F</p></div><p>G</p>",
+        "",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (0.0, 16.0)),
+            ("B".into(), (0.0, 36.0)),
+            ("C".into(), (0.0, 56.0)),
+            ("D".into(), (60.0, 16.0)),
+            ("E".into(), (60.0, 36.0)),
+            ("F".into(), (60.0, 56.0)),
+            ("G".into(), (0.0, 76.0)),
+        ]
+    );
+}
+
+#[test]
+fn multiple_paragraphs_preserve_two_line_break_minima() {
+    let document = lay_out(
+        "<div class=mc><p>A<br>B<br>C<br>D<br>E<br>F</p><p>G<br>H</p></div><p>I</p>",
+        ".mc{orphans:2;widows:2}",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (0.0, 16.0)),
+            ("B".into(), (0.0, 36.0)),
+            ("C".into(), (0.0, 56.0)),
+            ("D".into(), (0.0, 76.0)),
+            ("E".into(), (60.0, 16.0)),
+            ("F".into(), (60.0, 36.0)),
+            ("G".into(), (60.0, 56.0)),
+            ("H".into(), (60.0, 76.0)),
+            ("I".into(), (0.0, 96.0)),
+        ]
+    );
+}
+
+#[test]
+fn a_paragraph_split_below_earlier_content_has_column_local_origins() {
+    let document = lay_out(
+        "<div class=mc><p>A<br>B</p><p>C<br>D</p><p>E<br>F</p></div><p>G</p>",
+        ".mc p{margin-bottom:8px}.mc p+p{margin-top:12px}",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (0.0, 16.0)),
+            ("B".into(), (0.0, 36.0)),
+            ("C".into(), (0.0, 68.0)),
+            ("D".into(), (60.0, 16.0)),
+            ("E".into(), (60.0, 48.0)),
+            ("F".into(), (60.0, 68.0)),
+            ("G".into(), (0.0, 96.0)),
+        ]
+    );
+    let page = document.page(0).unwrap();
+    let runs = page.text_runs();
+    assert!(
+        !page
+            .paint_order_for_text_runs(&runs)
+            .iter()
+            .any(|event| { matches!(event, PaintEvent::PushClip(_, ClipKind::Fragmentainer)) })
+    );
+}
+
+#[test]
+fn paragraph_specific_minima_preserve_all_lines_and_following_flow() {
+    let document = lay_out(
+        "<div class=mc><p style='orphans:3;widows:3'>A<br>B<br>C<br>D<br>E<br>F</p><p>G<br>H</p></div><p>I</p>",
+        "",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (0.0, 16.0)),
+            ("B".into(), (0.0, 36.0)),
+            ("C".into(), (0.0, 56.0)),
+            ("D".into(), (60.0, 16.0)),
+            ("E".into(), (60.0, 36.0)),
+            ("F".into(), (60.0, 56.0)),
+            ("G".into(), (60.0, 76.0)),
+            ("H".into(), (60.0, 96.0)),
+            ("I".into(), (0.0, 116.0)),
+        ]
+    );
+}
+
+#[test]
+fn an_overflow_clip_follows_each_group_paragraph_piece() {
+    let document = lay_out(
+        "<div class=mc><p>A<br>B</p><p>C<br>D</p><p>E<br>F</p></div><p>G</p>",
+        ".mc p{margin-bottom:8px;overflow:hidden}.mc p+p{margin-top:12px}",
+    );
+    let page = document.page(0).unwrap();
+    let mut clips = Vec::new();
+    let mut line_clips = Vec::new();
+    let runs = page.text_runs();
+    for event in page.paint_order_for_text_runs(&runs) {
+        match event {
+            PaintEvent::PushClip(clip, _) => clips.push(clip),
+            PaintEvent::PopClip => {
+                clips.pop().unwrap();
+            }
+            PaintEvent::TextLine(_) => line_clips.push(clips.last().map(|clip| clip.rect)),
+            _ => {}
+        }
+    }
+    use raikiri_traits::PaintRect;
+    assert_eq!(
+        line_clips,
+        [
+            Some(PaintRect::new(0.0, 0.0, 40.0, 40.0)),
+            Some(PaintRect::new(0.0, 0.0, 40.0, 40.0)),
+            Some(PaintRect::new(0.0, 52.0, 40.0, 28.0)),
+            Some(PaintRect::new(60.0, 0.0, 40.0, 20.0)),
+            Some(PaintRect::new(60.0, 32.0, 40.0, 40.0)),
+            Some(PaintRect::new(60.0, 32.0, 40.0, 40.0)),
+            None,
+        ]
+    );
+    assert!(clips.is_empty());
+}
+
+#[test]
+fn an_empty_paragraph_keeps_group_continuations() {
+    let document = lay_out(
+        "<div class=mc><p>A<br>B<br>C<br>D</p><p></p><p>E<br>F</p></div><p>G</p>",
+        "",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (0.0, 16.0)),
+            ("B".into(), (0.0, 36.0)),
+            ("C".into(), (0.0, 56.0)),
+            ("D".into(), (60.0, 16.0)),
+            ("E".into(), (60.0, 36.0)),
+            ("F".into(), (60.0, 56.0)),
+            ("G".into(), (0.0, 76.0)),
+        ]
+    );
+}
+
+#[test]
+fn one_nonempty_paragraph_balances_beside_empty_blocks() {
+    for body in [
+        "<div class=mc><p>A<br>B<br>C<br>D</p><p></p></div><p>E</p>",
+        "<div class=mc><p></p><p>A<br>B<br>C<br>D</p></div><p>E</p>",
+        "<div class=mc><p>A<br>B<br>C<br>D</p><p> </p></div><p>E</p>",
+        "<div class=mc><p> </p><p>A<br>B<br>C<br>D</p></div><p>E</p>",
+    ] {
+        let document = lay_out(body, "");
+        assert_eq!(
+            text_origins(&document),
+            [
+                ("A".into(), (0.0, 16.0)),
+                ("B".into(), (0.0, 36.0)),
+                ("C".into(), (60.0, 16.0)),
+                ("D".into(), (60.0, 36.0)),
+                ("E".into(), (0.0, 56.0)),
+            ]
+        );
+    }
+}
+
+#[test]
+fn a_leading_margin_keeps_content_in_the_first_column() {
+    let document = lay_out(
+        "<div class=mc><p style='margin-top:100px'>A</p><p>B</p></div><p>C</p>",
+        "",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (0.0, 116.0)),
+            ("B".into(), (60.0, 16.0)),
+            ("C".into(), (0.0, 136.0)),
+        ]
+    );
+}
+
+#[test]
+fn zero_line_height_keeps_each_source_and_following_flow() {
+    let document = lay_out(
+        "<div class=mc><p class=zero>A</p><p>B</p></div><p>C</p>",
+        ".mc .zero{line-height:0}",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (0.0, 6.0)),
+            ("B".into(), (0.0, 16.0)),
+            ("C".into(), (0.0, 36.0)),
+        ]
+    );
+}
+
+#[test]
+fn empty_paragraph_margin_chains_keep_both_signed_extrema() {
+    let document = lay_out(
+        "<div class=mc><p>A<br>B</p><p class=empty></p><p class=later>C<br>D</p><p class=last>E<br>F</p></div><p>G</p>",
+        ".mc p{margin-bottom:8px}.mc .empty{margin-top:12px;margin-bottom:-4px}.mc .later{margin-top:20px}.mc .last{margin-top:12px}",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (0.0, 16.0)),
+            ("B".into(), (0.0, 36.0)),
+            ("C".into(), (0.0, 72.0)),
+            ("D".into(), (60.0, 16.0)),
+            ("E".into(), (60.0, 48.0)),
+            ("F".into(), (60.0, 68.0)),
+            ("G".into(), (0.0, 96.0)),
+        ]
+    );
+}
+
+#[test]
+fn inline_boxes_and_text_bounds_follow_mid_column_continuations() {
+    let document = lay_out(
+        "<div class=mc><p>A<br>B</p><p><span style='background:lime'>C<br>D</span></p><p>E<br>F</p></div><p>G</p>",
+        ".mc p{margin-bottom:8px}.mc p+p{margin-top:12px}",
+    );
+    let page = document.page(0).unwrap();
+    let dom = page.dom();
+    let rects: Vec<_> = page
+        .fragments()
+        .filter(|fragment| dom.local_name(fragment.node()) == Some("span"))
+        .map(|fragment| (fragment.rect(), fragment.fragmentainer()))
+        .collect();
+    assert_eq!(
+        rects,
+        [
+            (raikiri_traits::PaintRect::new(0.0, 52.0, 20.0, 20.0), 0),
+            (raikiri_traits::PaintRect::new(60.0, 0.0, 20.0, 20.0), 1),
+        ]
+    );
+    let runs = page.text_runs();
+    for (letter, x, y) in [("C", 0.0, 52.0), ("D", 60.0, 0.0)] {
+        let run = runs.iter().find(|run| run.text == letter).unwrap();
+        let raikiri_html::RunSource::Text(owner) = run.source else {
+            panic!("text source")
+        };
+        assert!(page.fragments().any(|fragment| fragment.node() == owner
+            && fragment.rect() == raikiri_traits::PaintRect::new(x, y, 40.0, 20.0)));
+    }
+}
+
+#[test]
+fn nonfinal_paragraph_boxes_fill_the_remaining_column_extent() {
+    let document = lay_out(
+        "<div class=mc><p style='background:lime;orphans:3;widows:3'>A<br>B<br>C<br>D<br>E<br>F</p><p>G<br>H</p></div><p>I</p>",
+        "",
+    );
+    let page = document.page(0).unwrap();
+    let runs = page.text_runs();
+    let root = runs[0].line.root;
+    let rects: Vec<_> = page
+        .fragments()
+        .filter(|fragment| fragment.node() == root)
+        .map(|fragment| fragment.rect())
+        .collect();
+    assert_eq!(
+        rects,
+        [
+            raikiri_traits::PaintRect::new(0.0, 0.0, 40.0, 100.0),
+            raikiri_traits::PaintRect::new(60.0, 0.0, 40.0, 60.0)
         ]
     );
 }
