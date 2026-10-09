@@ -28,7 +28,7 @@
 #![allow(missing_docs)] // seed phase; docs come later
 
 pub mod error;
-pub use error::CascadeError;
+pub use error::{CascadeError, CascadeLimitKind};
 
 pub mod consumer;
 pub use consumer::{ConsumerPropertyGrammar, ConsumerPropertyRegistration};
@@ -128,8 +128,9 @@ pub use specified::SpecifiedValues;
 
 pub mod cascade;
 pub use cascade::{
-    CascadeResult, FirstLineCascade, FirstLineStyles, SelectorMatcher, SelectorQuery, cascade,
-    cascade_with_first_line, cascade_with_media_context, cascade_with_media_context_for_page,
+    CascadeLimits, CascadeOptions, CascadeResult, FirstLineCascade, FirstLineStyles,
+    SelectorMatcher, SelectorQuery, cascade, cascade_with_first_line, cascade_with_media_context,
+    cascade_with_media_context_for_page, cascade_with_options,
 };
 
 #[cfg(test)]

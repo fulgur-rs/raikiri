@@ -5,6 +5,7 @@ use crate::cascade::test_support::*;
 use crate::computed::ComputedValues;
 use crate::property::DisplayValue;
 use crate::property::PropertyValue;
+use crate::rule::parse_declaration_block_with_consumer_properties;
 use crate::ruletree::build_rule_tree;
 use crate::test_dom::TestDoc;
 
@@ -725,7 +726,9 @@ fn declaration_block_cache_stores_a_source_on_its_second_sight() {
     // `margin` is expanded to its four longhands.
     assert_eq!(expected.len(), 5);
     assert_eq!(
-        cache.declarations(source, &tree).expect("the block parses"),
+        cache
+            .declarations(source, &tree, usize::MAX)
+            .expect("the block parses"),
         DeclarationBlock::Fresh(expected.clone())
     );
     assert!(matches!(
@@ -734,7 +737,9 @@ fn declaration_block_cache_stores_a_source_on_its_second_sight() {
     ));
     for _ in 0..2 {
         assert_eq!(
-            cache.declarations(source, &tree).expect("the block parses"),
+            cache
+                .declarations(source, &tree, usize::MAX)
+                .expect("the block parses"),
             DeclarationBlock::Cached(0)
         );
     }
@@ -751,11 +756,76 @@ fn declaration_block_cache_never_reuses_a_colliding_source() {
         DeclarationBlockEntry::Parsed("color: blue".into(), 0),
     );
     let parsed = cache
-        .declarations("color: red", &tree)
+        .declarations("color: red", &tree, usize::MAX)
         .expect("the block parses");
     assert!(matches!(
         parsed,
         DeclarationBlock::Fresh(ref declarations) if declarations.len() == 1
+    ));
+}
+
+#[test]
+fn declaration_block_cache_stops_storing_past_its_budget() {
+    let tree = RuleTree::empty();
+    let first = "color: red";
+    let second = "color: blue";
+    let bytes = |source: &str| source.len() + std::mem::size_of::<Declaration>();
+    // Room for the first source's block, not for the second's as well.
+    let mut cache = DeclarationBlockCache::new(bytes(first));
+    for source in [first, second] {
+        let parsed = cache
+            .declarations(source, &tree, usize::MAX)
+            .expect("the block parses");
+        assert!(matches!(parsed, DeclarationBlock::Fresh(_)));
+    }
+    assert_eq!(
+        cache
+            .declarations(first, &tree, usize::MAX)
+            .expect("the block parses"),
+        DeclarationBlock::Cached(0)
+    );
+    for _ in 0..2 {
+        let parsed = cache
+            .declarations(second, &tree, usize::MAX)
+            .expect("the block parses");
+        assert!(matches!(
+            parsed,
+            DeclarationBlock::Fresh(ref declarations) if declarations.len() == 1
+        ));
+    }
+    assert_eq!((cache.blocks.len(), cache.stored_bytes), (1, bytes(first)));
+}
+
+#[test]
+fn a_style_attribute_is_parsed_only_as_far_as_the_element_has_room() {
+    let tree = RuleTree::empty();
+    let source = "color: red; margin: 1px; color: blue";
+    for (room, parsed) in [
+        (0, DeclarationBlock::PastRoom(1)),
+        // `margin` expands to four longhands at once.
+        (4, DeclarationBlock::PastRoom(5)),
+        (5, DeclarationBlock::PastRoom(6)),
+    ] {
+        let mut cache = DeclarationBlockCache::default();
+        assert_eq!(
+            cache
+                .declarations(source, &tree, room)
+                .expect("the block parses"),
+            parsed
+        );
+        // A repeated source past the room is not stored either.
+        assert_eq!(
+            cache
+                .declarations(source, &tree, room)
+                .expect("the block parses"),
+            parsed
+        );
+        assert!(cache.blocks.is_empty());
+    }
+    let mut cache = DeclarationBlockCache::default();
+    assert!(matches!(
+        cache.declarations(source, &tree, 6).expect("the block parses"),
+        DeclarationBlock::Fresh(ref declarations) if declarations.len() == 6
     ));
 }
 

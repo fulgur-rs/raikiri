@@ -195,6 +195,10 @@ pub(crate) struct IndexedRule<'a> {
     pub(crate) has_element_selector: bool,
     /// Some selector in the list targets a pseudo-element.
     pub(crate) has_pseudo_selector: bool,
+    /// The selector tests matching the rule against one element takes: one
+    /// per selector of its list in each of the element and pseudo-element
+    /// passes it needs.
+    pub(crate) selector_tests: u64,
 }
 
 struct SelectorEntry {
@@ -275,6 +279,7 @@ impl<'a> RuleIndex<'a> {
                 };
                 bucket.push(entry_idx);
             }
+            let passes = u64::from(has_element_selector) + u64::from(has_pseudo_selector);
             index.rules.push(IndexedRule {
                 rule,
                 declarations: &rule.declarations,
@@ -284,6 +289,7 @@ impl<'a> RuleIndex<'a> {
                 },
                 has_element_selector,
                 has_pseudo_selector,
+                selector_tests: passes * rule.selectors.slice().len() as u64,
             });
         }
         Ok(index)

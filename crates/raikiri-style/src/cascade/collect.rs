@@ -12,16 +12,18 @@ use crate::RaikiriSelectorImpl;
 use crate::error::CascadeError;
 use crate::media::MediaContext;
 use crate::property::PropertyKey;
-use crate::rule::{Declaration, parse_declaration_block_with_consumer_properties};
+use crate::rule::{Declaration, parse_declaration_block_within};
 
 use super::candidate::{
     CandidateSink, ElementCandidates, ElementInput, Precedence, SharedDeclarations, pseudo_slot,
-    push_rule_candidates, too_many,
+    too_many,
 };
+use crate::error::CascadeLimitKind;
 use crate::ruletree::{Origin, RuleTree};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleQuirksMode};
 
 use super::html_quirks::{push_img_dimension_hints, push_margin_collapsing_quirk_declarations};
+use super::limits::{CandidateBudget, CascadeLimits, Counter, WalkCounts};
 use super::rule_index::{AncestorFilter, RuleIndex};
 use super::selector_match::{
     MatchCaches, MatchContext, match_complex_selector_list, selector_matches_pseudo_element,
@@ -99,6 +101,10 @@ pub(crate) const CASCADED_PSEUDO_ELEMENTS: [PseudoElem; 5] = [
     PseudoElem::FirstLetter,
 ];
 
+/// The default bound on the bytes the stored `style`-attribute blocks of one
+/// cascade hold; see [`DeclarationBlockCache`].
+pub(crate) const STORED_BLOCK_BUDGET: usize = 8 << 20;
+
 /// Parsed `style`-attribute blocks for one cascade, keyed by source text.
 ///
 /// Generated documents often repeat the same inline style on many elements;
@@ -113,11 +119,19 @@ pub(crate) const CASCADED_PSEUDO_ELEMENTS: [PseudoElem; 5] = [
 /// collision falls back to a fresh parse. Consumer property registrations
 /// are fixed for the rule tree the cascade runs against, so the parse result
 /// is a function of the source text alone.
-#[derive(Default)]
+///
+/// The stored blocks stay for the whole cascade, so they may hold at most a
+/// budget of bytes, counted by their sources' lengths and their declarations'
+/// inline size; past it, a repeated source is parsed for each element like a
+/// first sight. Elements then share less, and every result stays the same.
 struct DeclarationBlockCache {
     entries: HashMap<u64, DeclarationBlockEntry>,
     /// The stored blocks, at the positions cached handles name.
     blocks: Vec<Box<[Declaration]>>,
+    /// The bytes the stored blocks hold.
+    stored_bytes: usize,
+    /// The most the stored blocks may hold.
+    budget: usize,
 }
 
 enum DeclarationBlockEntry {
@@ -129,46 +143,78 @@ enum DeclarationBlockEntry {
 /// The declarations of one `style` attribute.
 #[derive(Debug, PartialEq)]
 enum DeclarationBlock {
-    /// Parsed for this element alone: the first sight of its source, or a
-    /// source whose hash collides with a stored one.
+    /// Parsed for this element alone: the first sight of its source, a
+    /// source past the cache's budget, or a source whose hash collides with a
+    /// stored one.
     Fresh(Vec<Declaration>),
     /// The stored block at this position.
     Cached(u32),
+    /// Parsing stopped as soon as the declarations numbered this many, more
+    /// than the element had room for.
+    PastRoom(usize),
+}
+
+impl Default for DeclarationBlockCache {
+    fn default() -> Self {
+        Self::new(STORED_BLOCK_BUDGET)
+    }
 }
 
 impl DeclarationBlockCache {
-    /// The declarations of `source`. Stores the block the second time a
-    /// source is seen, failing when its position or a declaration's position
-    /// in it does not fit in a `u32` handle.
+    fn new(budget: usize) -> Self {
+        Self {
+            entries: HashMap::new(),
+            blocks: Vec::new(),
+            stored_bytes: 0,
+            budget,
+        }
+    }
+
+    /// The declarations of `source`, for an element with room for `room`
+    /// more candidates. Stores the block the second time a source is seen,
+    /// within the budget, failing when its position or a declaration's
+    /// position in it does not fit in a `u32` handle.
     fn declarations(
         &mut self,
         source: &str,
         rule_tree: &RuleTree,
+        room: usize,
     ) -> Result<DeclarationBlock, CascadeError> {
         let parse = || {
             let mut input = ParserInput::new(source);
             let mut parser = Parser::new(&mut input);
-            parse_declaration_block_with_consumer_properties(
+            parse_declaration_block_within(
                 &mut parser,
                 rule_tree.consumer_property_registrations(),
+                room,
             )
         };
+        let fresh = || parse().map_or_else(DeclarationBlock::PastRoom, DeclarationBlock::Fresh);
         let mut hasher = DefaultHasher::new();
         source.hash(&mut hasher);
         match self.entries.entry(hasher.finish()) {
             Entry::Vacant(vacant) => {
                 vacant.insert(DeclarationBlockEntry::SeenOnce);
-                Ok(DeclarationBlock::Fresh(parse()))
+                Ok(fresh())
             }
             Entry::Occupied(occupied) => {
                 let entry = occupied.into_mut();
                 if matches!(entry, DeclarationBlockEntry::SeenOnce) {
-                    let declarations = parse();
+                    let declarations = match parse() {
+                        Ok(declarations) => declarations,
+                        Err(count) => return Ok(DeclarationBlock::PastRoom(count)),
+                    };
+                    let bytes =
+                        source.len() + declarations.len() * std::mem::size_of::<Declaration>();
+                    if self.stored_bytes.saturating_add(bytes) > self.budget {
+                        return Ok(DeclarationBlock::Fresh(declarations));
+                    }
                     let block = u32::try_from(self.blocks.len())
                         .map_err(|_| too_many("stored style attributes"))?;
                     u32::try_from(declarations.len())
                         .map_err(|_| too_many("declarations in one style attribute"))?;
                     self.blocks.push(declarations.into_boxed_slice());
+                    self.stored_bytes += bytes;
                     *entry = DeclarationBlockEntry::Parsed(source.into(), block);
                 }
                 Ok(match entry {
@@ -176,7 +222,7 @@ impl DeclarationBlockCache {
                         DeclarationBlock::Cached(*block)
                     }
                     // A different source with the same hash: never reuse it.
-                    _ => DeclarationBlock::Fresh(parse()),
+                    _ => fresh(),
                 })
             }
         }
@@ -198,7 +244,8 @@ impl DeclarationBlockCache {
                     sink.push_local(Cow::Owned(decl), precedence)?;
                 }
             }
-            DeclarationBlock::Cached(block) => sink.push_cached(&self.blocks, block, precedence),
+            DeclarationBlock::Cached(block) => sink.push_cached(&self.blocks, block, precedence)?,
+            DeclarationBlock::PastRoom(count) => return Err(sink.past_room(count)),
         }
         Ok(())
     }
@@ -397,10 +444,15 @@ pub(crate) struct Collector<'a, 'r, D: StyleDom> {
     cell_padding_cache: HashMap<StyleNodeId, Option<u32>>,
     /// Scratch list of the rules the index could not rule out for an element.
     candidate_rules: Vec<u32>,
+    candidates: CandidateBudget,
+    /// The selector tests of every element collected so far.
+    selector_tests: Counter,
 }
 
 impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
-    /// A collector for the rules of `rule_tree` active under `media_context`.
+    /// A collector for the rules of `rule_tree` active under `media_context`,
+    /// within `limits`, whose stored `style`-attribute blocks hold at most
+    /// `stored_block_budget` bytes (see [`DeclarationBlockCache`]).
     /// `match_caches` memoizes DOM-derived facts for every element of the
     /// cascade.
     ///
@@ -413,6 +465,8 @@ impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
         rule_tree: &'r RuleTree,
         media_context: &MediaContext,
         match_caches: &'a MatchCaches,
+        limits: &CascadeLimits,
+        stored_block_budget: usize,
     ) -> Result<Self, CascadeError> {
         // Document-wide constant — read once per cascade rather than
         // per (node, rule) pair.
@@ -447,9 +501,14 @@ impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
             quirks_mode,
             match_ctx,
             index,
-            block_cache: DeclarationBlockCache::default(),
+            block_cache: DeclarationBlockCache::new(stored_block_budget),
             cell_padding_cache: HashMap::new(),
             candidate_rules: Vec::new(),
+            candidates: CandidateBudget::new(limits),
+            selector_tests: Counter::new(
+                limits.max_selector_tests,
+                CascadeLimitKind::SelectorTests,
+            ),
         })
     }
 
@@ -464,6 +523,13 @@ impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
         self.index.targets(pseudo)
     }
 
+    /// Writes what collection has counted so far into `counts`.
+    pub(crate) fn count_into(&self, counts: &mut WalkCounts) {
+        counts.max_element_candidates = self.candidates.max_element();
+        counts.declarations_visited = self.candidates.visited();
+        counts.selector_tests = self.selector_tests.count();
+    }
+
     /// Collects the input of element `id` into the empty `input`.
     ///
     /// `ancestor_path` holds `id`'s element ancestors, root-most first and its
@@ -474,9 +540,10 @@ impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
     ///
     /// # Errors
     ///
-    /// Fails when the element has more own declarations than a local handle
-    /// can number, or when the declaration block cache cannot number a stored
-    /// `style` attribute or its declarations.
+    /// Fails when collecting the element would pass a candidate or selector
+    /// test limit, when the element has more own declarations than a local
+    /// handle can number, or when the declaration block cache cannot number a
+    /// stored `style` attribute or its declarations.
     pub(crate) fn collect<E: StyleElement>(
         &mut self,
         id: StyleNodeId,
@@ -486,7 +553,7 @@ impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
         input: &mut ElementInput,
     ) -> Result<(), CascadeError> {
         let dom = self.dom;
-        let (mut sink, pseudo_inputs) = input.parts();
+        let (mut sink, pseudo_inputs) = input.parts(&mut self.candidates);
         // HTML presentational hints (later retagged to
         // `Origin::AuthorPresentationalHint`, distinct from plain
         // `Origin::Author`). This push is kept ahead of
@@ -599,6 +666,7 @@ impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
         for &rule_idx in &self.candidate_rules {
             let indexed = self.index.rule(rule_idx);
             let rule = indexed.rule;
+            self.selector_tests.add(indexed.selector_tests)?;
             if indexed.has_element_selector
                 && let Some(spec) = match_complex_selector_list(
                     &rule.selectors,
@@ -620,7 +688,7 @@ impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
                         rule.source_order,
                         indexed.layer,
                     )
-                });
+                })?;
             }
             if !indexed.has_pseudo_selector {
                 continue;
@@ -649,8 +717,8 @@ impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
                 let Some(slot) = pseudo_slot(pseudo) else {
                     continue;
                 };
-                push_rule_candidates(
-                    pseudo_inputs[slot].lists(),
+                sink.push_pseudo_rule(
+                    &mut pseudo_inputs[slot],
                     self.index.rules(),
                     rule_idx,
                     |d| {
@@ -662,12 +730,14 @@ impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
                             indexed.layer,
                         )
                     },
-                );
+                )?;
             }
         }
-        // inline style
+        // inline style, parsed only as far as the element has room
         if let Some(source) = elem.inline_style_source() {
-            let block = self.block_cache.declarations(source, self.rule_tree)?;
+            let block = self
+                .block_cache
+                .declarations(source, self.rule_tree, sink.room())?;
             self.block_cache.push(&mut sink, block, |decl| {
                 Precedence::new(
                     Origin::Author,
@@ -682,7 +752,9 @@ impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
             })?;
         }
         if let Some(source) = elem.animation_style_source() {
-            let block = self.block_cache.declarations(source, self.rule_tree)?;
+            let block = self
+                .block_cache
+                .declarations(source, self.rule_tree, sink.room())?;
             self.block_cache.push(&mut sink, block, |_| {
                 Precedence::new(
                     Origin::Animation,
@@ -694,7 +766,7 @@ impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
                 )
             })?;
         }
-        Ok(())
+        self.candidates.finish_element()
     }
 }
 

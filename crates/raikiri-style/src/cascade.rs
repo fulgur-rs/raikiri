@@ -288,9 +288,13 @@ fn page_inheritance_root_index<D: StyleDom>(dom: &D, computed_len: usize) -> usi
 
 /// Produce per-node ComputedValues from the DOM and RuleTree.
 ///
-/// Currently always returns `Ok` (invalid CSS is silently dropped during
-/// build_rule_tree, so cascade errors cannot arise). Keep the `Result`
-/// signature for a future fail-hard mode.
+/// Invalid CSS is silently dropped while the rule tree is built, so it never
+/// makes the cascade fail. The cascade runs within the default
+/// [`CascadeLimits`]; [`cascade_with_options`] takes others.
+///
+/// # Errors
+///
+/// See [`cascade_with_options`].
 ///
 /// # Example
 ///
@@ -299,7 +303,7 @@ fn page_inheritance_root_index<D: StyleDom>(dom: &D, computed_len: usize) -> usi
 ///
 /// # fn demo<D: raikiri_style::StyleDom>(dom: &D) {
 /// let rule_tree = build_rule_tree(dom);
-/// let result = cascade(dom, &rule_tree).expect("現時点では常に Ok");
+/// let result = cascade(dom, &rule_tree).expect("the document is within the default limits");
 /// let root_style: &ComputedValues = &result.computed[0];
 /// # }
 /// ```
@@ -311,6 +315,10 @@ pub fn cascade<D: StyleDom>(dom: &D, rule_tree: &RuleTree) -> Result<CascadeResu
 ///
 /// [`cascade`] remains the compatibility entry point and uses the default
 /// paged (`print`) context.
+///
+/// # Errors
+///
+/// See [`cascade_with_options`].
 pub fn cascade_with_media_context<D: StyleDom>(
     dom: &D,
     rule_tree: &RuleTree,
@@ -325,13 +333,55 @@ pub fn cascade_with_media_context<D: StyleDom>(
 /// the ordinary element cascade and the page-context cascade in one result so
 /// a paged consumer cannot accidentally render with a page box selected from a
 /// different stylesheet or root inheritance context.
+///
+/// # Errors
+///
+/// See [`cascade_with_options`].
 pub fn cascade_with_media_context_for_page<D: StyleDom>(
     dom: &D,
     rule_tree: &RuleTree,
     media_context: &MediaContext,
     page_query: &PageContextQuery,
 ) -> Result<CascadeResult, CascadeError> {
-    let outputs = walk(dom, rule_tree, media_context, WalkOptions::default())?;
+    cascade_with_options(
+        dom,
+        rule_tree,
+        media_context,
+        page_query,
+        &CascadeOptions::default(),
+    )
+}
+
+/// Run the element and `@page` cascades for one page-context query, as
+/// [`cascade_with_media_context_for_page`] does, within `options.limits`.
+///
+/// # Errors
+///
+/// - [`CascadeError::LimitExceeded`] when the document and its stylesheets
+///   need more of the cascade's work or of its result's memory than
+///   `options.limits` allows. The counts depend only on the input, so the same
+///   input fails the same way every time, before the cascade allocates what
+///   the count stands for.
+/// - [`CascadeError::ResourceExhausted`] when the allocator refuses one of the
+///   result's buffers.
+/// - [`CascadeError::Internal`] when the stylesheets have more rules,
+///   selectors or declarations than the cascade can number.
+pub fn cascade_with_options<D: StyleDom>(
+    dom: &D,
+    rule_tree: &RuleTree,
+    media_context: &MediaContext,
+    page_query: &PageContextQuery,
+    options: &CascadeOptions,
+) -> Result<CascadeResult, CascadeError> {
+    let outputs = walk(
+        dom,
+        rule_tree,
+        media_context,
+        WalkOptions {
+            limits: options.limits,
+            ..WalkOptions::default()
+        },
+    )?;
     Ok(finish(dom, rule_tree, page_query, media_context, outputs))
 }
 
@@ -398,6 +448,8 @@ mod first_line;
 pub use first_line::{FirstLineCascade, FirstLineStyles, cascade_with_first_line};
 mod inherit;
 pub(crate) use inherit::*;
+mod limits;
+pub use limits::{CascadeLimits, CascadeOptions};
 
 #[cfg(test)]
 mod test_support;

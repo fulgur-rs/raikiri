@@ -80,12 +80,14 @@ pub(crate) fn first_line_property_applies(key: PropertyKey) -> bool {
 }
 
 use super::inherit::{WalkOptions, apply_winners, walk};
-use super::{CascadeResult, finish};
+use super::limits::{Counter, bytes_of, try_filled};
+use super::{CascadeLimits, CascadeResult, finish};
 use crate::property::DisplayValue;
 use crate::resolve::{ResolveContext, used_line_height_length};
 use crate::style_dom::{StyleDom, StyleNode, StyleNodeId, StyleNodeKind};
 use crate::{
-    CascadeError, ComputedValues, MediaContext, PageContextQuery, RuleTree, SpecifiedValues,
+    CascadeError, CascadeLimitKind, ComputedValues, MediaContext, PageContextQuery, RuleTree,
+    SpecifiedValues,
 };
 
 /// Normal cascade and resolved first-line inputs on the same immutable DOM.
@@ -118,14 +120,30 @@ pub struct FirstLineStyles {
 /// Custom properties, non-inherited properties explicitly set to inherit, and
 /// excluded writing properties retain their non-pseudo inheritance channels.
 ///
+/// The cascade runs within the default [`CascadeLimits`]; the root's
+/// subtree's candidates, kept for the first-line styles, count as retained
+/// candidates.
+///
 /// # Errors
 /// Returns an error for an absent, detached, unreachable or non-block root,
-/// an unsupported visible descendant, or a cascade failure.
+/// an unsupported visible descendant, or a cascade failure (see
+/// [`super::cascade_with_options`]).
 pub fn cascade_with_first_line<D: StyleDom>(
     dom: &D,
     rule_tree: &RuleTree,
     media: &MediaContext,
     root: StyleNodeId,
+) -> Result<FirstLineCascade, CascadeError> {
+    cascade_with_first_line_within(dom, rule_tree, media, root, CascadeLimits::default())
+}
+
+/// [`cascade_with_first_line`] within `limits`.
+pub(crate) fn cascade_with_first_line_within<D: StyleDom>(
+    dom: &D,
+    rule_tree: &RuleTree,
+    media: &MediaContext,
+    root: StyleNodeId,
+    limits: CascadeLimits,
 ) -> Result<FirstLineCascade, CascadeError> {
     let mut outputs = walk(
         dom,
@@ -133,12 +151,17 @@ pub fn cascade_with_first_line<D: StyleDom>(
         media,
         WalkOptions {
             retain_subtree: Some(root),
+            limits,
             ..WalkOptions::default()
         },
-    )?; // cov:ignore: the error branch needs a u32 handle overflow
+    )?;
     // The candidates of the root's subtree, for re-applying its winners over
     // the first-line parent below.
     let candidates = std::mem::take(&mut outputs.retained_subtree);
+    // The first-line styles join what the walk counted against the output
+    // limit.
+    let mut output = Counter::new(limits.max_output_bytes, CascadeLimitKind::OutputBytes);
+    output.add(outputs.counts.output_bytes)?;
     let query = PageContextQuery::default();
     let normal = finish(dom, rule_tree, &query, media, outputs);
     let error = |id: StyleNodeId| CascadeError::Internal {
@@ -190,7 +213,8 @@ pub fn cascade_with_first_line<D: StyleDom>(
             first_line: None,
         });
     };
-    let mut computed = vec![None; dom.node_count()];
+    output.add(bytes_of::<Option<ComputedValues>>(dom.node_count()))?;
+    let mut computed = try_filled(dom.node_count(), None)?;
     computed[root.0 as usize] = Some(pseudo.clone());
     let mut stack: Vec<_> = dom.child_ids(root).map(|child| (child, root)).collect();
     let mut winners = Vec::new();
