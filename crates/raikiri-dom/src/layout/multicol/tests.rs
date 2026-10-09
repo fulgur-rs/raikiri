@@ -1255,6 +1255,63 @@ fn zero_fragment_budget_rejects_the_first_multicol_fragment() {
 }
 
 #[test]
+fn constrained_chain_budget_rejects_before_installing_partial_origins() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::{LayoutError, PageBox};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0;font:20px/20px sans-serif"),
+    );
+    let mc = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px;column-count:2;column-gap:20px;orphans:1;widows:1"),
+    );
+    let wrapper = doc.append_element(
+        Some(mc),
+        "div",
+        Style::default(),
+        Some("display:block;width:80px"),
+    );
+    let paragraph = doc.append_element(
+        Some(wrapper),
+        "p",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    for (index, letter) in ["A", "B", "C", "D"].into_iter().enumerate() {
+        if index > 0 {
+            doc.append_element(Some(paragraph), "br", Style::default(), None::<&str>);
+        }
+        doc.append_text(paragraph, letter);
+    }
+    doc.fragment_tree.limit = 6;
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 180.0;
+    page.height = 160.0;
+    assert!(matches!(
+        layout_single_page(&mut doc, &cascade, page),
+        Err(LayoutError::FragmentLimitExceeded { limit: 6 })
+    ));
+    assert!(doc.fragment_tree.fragments.is_empty());
+    assert!(
+        !doc.nodes[paragraph]
+            .ifc
+            .as_ref()
+            .unwrap()
+            .multicol_fragment_origins_recorded
+    );
+}
+
+#[test]
 fn nested_multicol_child_stops_when_the_shared_fragment_budget_is_exhausted() {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::{LayoutError, PageBox};

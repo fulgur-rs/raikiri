@@ -507,6 +507,122 @@ fn fixed_height_plain_wrapper_keeps_public_column_lines_once() {
 }
 
 #[test]
+fn a_constrained_wrapper_width_keeps_its_public_continuation() {
+    for sizing in [
+        "width:80px",
+        "min-width:80px",
+        "width:200%",
+        "width:calc(200%)",
+    ] {
+        let document = lay_out(
+            &format!(
+                "<div class=mc><div style='{sizing}'><p>A<br>B<br>C<br>D</p></div></div><p>E</p>"
+            ),
+            ".mc{height:40px}",
+        );
+        assert_eq!(
+            text_origins(&document),
+            [
+                ("A".into(), (0.0, 16.0)),
+                ("B".into(), (0.0, 36.0)),
+                ("C".into(), (60.0, 16.0)),
+                ("D".into(), (60.0, 36.0)),
+                ("E".into(), (0.0, 56.0)),
+            ]
+        );
+        let page = document.page(0).unwrap();
+        let dom = page.dom();
+        let rects: Vec<_> = page
+            .fragments()
+            .filter(|fragment| dom.local_name(fragment.node()) == Some("p"))
+            .map(|fragment| fragment.rect())
+            .collect();
+        assert_eq!(
+            rects,
+            [
+                raikiri_traits::PaintRect::new(0.0, 0.0, 80.0, 40.0),
+                raikiri_traits::PaintRect::new(60.0, 0.0, 80.0, 40.0),
+                raikiri_traits::PaintRect::new(0.0, 40.0, 180.0, 20.0),
+            ]
+        );
+    }
+}
+
+#[test]
+fn a_constrained_wrapper_margin_uses_only_the_first_column_budget() {
+    let document = lay_out(
+        "<div class=mc><div style='overflow:hidden'><p style='margin-top:20px'>A<br>B<br>C<br>D</p></div></div><p>E</p>",
+        ".mc{height:60px}",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (0.0, 36.0)),
+            ("B".into(), (0.0, 56.0)),
+            ("C".into(), (60.0, 16.0)),
+            ("D".into(), (60.0, 36.0)),
+            ("E".into(), (0.0, 76.0)),
+        ]
+    );
+}
+
+#[test]
+fn a_constrained_wrapper_resolves_auto_margins_at_the_column_width() {
+    let document = lay_out(
+        "<div class=mc><div style='width:20px;margin-left:auto;margin-right:auto'><p>A<br>B<br>C<br>D</p></div></div><p>E</p>",
+        ".mc{height:40px}",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (10.0, 16.0)),
+            ("B".into(), (10.0, 36.0)),
+            ("C".into(), (70.0, 16.0)),
+            ("D".into(), (70.0, 36.0)),
+            ("E".into(), (0.0, 56.0)),
+        ]
+    );
+}
+
+#[test]
+fn variable_height_wrapper_lines_keep_public_origins_and_feasible_break_minima() {
+    let document = lay_out(
+        "<div class=mc><div style='width:80px'><p style='orphans:1;widows:3'><span style='line-height:20px'>A</span><br><span style='line-height:5px'>B</span><br><span style='line-height:10px'>C</span><br><span style='line-height:15px'>D</span><br><span style='line-height:20px'>E</span><br><span style='line-height:10px'>F</span><br><span style='line-height:5px'>G</span><br><span style='line-height:5px'>H</span></p></div></div><p>I</p>",
+        "body{font:5px/5px Ahem}.mc{height:40px;width:160px;column-count:3}",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (0.0, 11.5)),
+            ("B".into(), (60.0, 4.0)),
+            ("C".into(), (60.0, 11.5)),
+            ("D".into(), (60.0, 24.0)),
+            ("E".into(), (120.0, 11.5)),
+            ("F".into(), (120.0, 26.5)),
+            ("G".into(), (120.0, 34.0)),
+            ("H".into(), (120.0, 39.0)),
+            ("I".into(), (0.0, 44.0)),
+        ]
+    );
+    let page = document.page(0).unwrap();
+    let dom = page.dom();
+    let paragraphs: Vec<_> = page
+        .fragments()
+        .filter(|fragment| dom.local_name(fragment.node()) == Some("p"))
+        .map(|fragment| (fragment.fragmentainer(), fragment.rect()))
+        .collect();
+    assert_eq!(
+        paragraphs,
+        [
+            (0, raikiri_traits::PaintRect::new(0.0, 0.0, 80.0, 40.0)),
+            (1, raikiri_traits::PaintRect::new(60.0, 0.0, 80.0, 40.0)),
+            (2, raikiri_traits::PaintRect::new(120.0, 0.0, 80.0, 40.0)),
+            (0, raikiri_traits::PaintRect::new(0.0, 40.0, 180.0, 5.0)),
+        ]
+    );
+}
+
+#[test]
 fn fixed_height_deep_plain_wrapper_preserves_three_columns_and_origin() {
     let document = lay_out(
         "<p>X</p><div class=mc><div><div><p>A<br>B<br>C<br>D<br>E<br>F</p></div></div></div><p>G</p>",

@@ -1,4 +1,5 @@
 mod break_flow;
+mod constrained_chain;
 mod paragraph_group;
 
 use super::*;
@@ -136,6 +137,14 @@ pub(crate) fn compute_multicol_layout(
         output.size.height = output.size.height.min(min_child_height);
     }
     let break_flow_scope = break_flow::supports(tree, index, context);
+    let constrained_chain = (inputs.run_mode == RunMode::PerformLayout
+        && !custom_scope
+        && !break_flow_scope
+        && available_height.is_some_and(|height| height > 0.0)
+        && style.horizontal
+        && !multicol_has_out_of_flow_descendant(tree, index))
+    .then(|| constrained_chain::supported(tree, index))
+    .flatten();
     // Inspect fresh child layouts before opting a definite-height plain block
     // chain into fragmentation. Atomic and constrained children keep their
     // foundational placement path.
@@ -146,7 +155,7 @@ pub(crate) fn compute_multicol_layout(
         && style.horizontal
         && !multicol_has_out_of_flow_descendant(tree, index)
         && multicol_has_plain_paragraph_chain(tree, index);
-    if (custom_scope || break_flow_scope || plain_block_scope)
+    if (custom_scope || break_flow_scope || plain_block_scope || constrained_chain.is_some())
         && inputs.run_mode == RunMode::PerformLayout
     {
         // Taffy's input width is normally already the content width for this
@@ -170,7 +179,10 @@ pub(crate) fn compute_multicol_layout(
         };
         let block_end_inset = multicol_resolve_inset(tree, css.padding.bottom, basis)
             + multicol_resolve_inset(tree, css.border.bottom, basis);
-        let used_height = if break_flow_scope {
+        let used_height = if let Some(chain) = constrained_chain {
+            constrained_chain::layout(tree, index, &chain, resolved, output.size, content_origin)
+                .unwrap_or(output.size.height)
+        } else if break_flow_scope {
             break_flow::layout(tree, index, resolved, output.size, content_origin)
         } else {
             relayout_nested_multicol_children(
