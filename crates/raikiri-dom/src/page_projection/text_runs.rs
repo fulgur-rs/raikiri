@@ -320,13 +320,13 @@ impl TextRunOmission {
 }
 
 /// What every paragraph of one document shares when its runs are placed.
-struct RunContext {
+pub(super) struct RunContext {
     /// Nodes placed through the fragment tree of a multicol container.
     fragmented: HashSet<usize>,
 }
 
 impl RunContext {
-    fn new(document: &Document) -> Self {
+    pub(super) fn new(document: &Document) -> Self {
         Self {
             fragmented: document
                 .layout_fragments()
@@ -365,7 +365,7 @@ fn box_omission(cv: &ComputedValues) -> Option<TextRunOmission> {
 
 /// Whether the runs of `root` can be positioned from its layout alone, or
 /// what moves them at paint time that the runs do not model yet.
-fn omission(
+pub(super) fn omission(
     document: &Document,
     cascade: &CascadeResult,
     context: &RunContext,

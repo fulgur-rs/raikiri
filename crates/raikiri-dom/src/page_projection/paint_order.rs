@@ -1,10 +1,11 @@
 //! A page's body content as a sequence of paint steps, in the order the
 //! built-in painter draws it.
 
+use super::generated_boxes::{GeneratedBox, PageGeneratedBoxes};
 use super::records::{PageFragmentItem, PageFragmentKind};
 use crate::{Document, Fragment, OverflowClip, PositionedGlyphRun, TextLineId, paint_rules};
-use raikiri_style::CascadeResult;
 use raikiri_style::property::ColumnCountValue;
+use raikiri_style::{CascadeResult, PseudoElem, StyleNodeId};
 use raikiri_traits::{NodeId, NodeKind, PaintClip, PaintRect};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -53,6 +54,8 @@ pub enum PaintEvent<'a> {
     Replaced(Fragment<'a>),
     /// Prepared raster marker of a list item. Its placement is owned by this page.
     MarkerImage(NodeId),
+    /// One generated inline box decoration; its text follows in paragraph lines.
+    GeneratedBox(GeneratedBox<'a>),
 }
 
 /// The reason reported for a multi-column container by
@@ -71,6 +74,8 @@ struct PageItems<'a> {
     by_node: HashMap<usize, Vec<&'a PageFragmentItem>>,
     content_box: super::records::PageFragmentRect,
     overflow_clips: BTreeMap<NodeId, OverflowClip>,
+    generated_boxes: Option<&'a PageGeneratedBoxes>,
+    cascade: &'a CascadeResult,
 }
 
 impl<'a> PageItems<'a> {
@@ -150,6 +155,8 @@ impl Document {
             by_node: HashMap::new(),
             content_box: page.content_box,
             overflow_clips: self.overflow_clips_on_page(page),
+            generated_boxes: self.page_projection.generated_boxes.get(&page_index),
+            cascade,
         };
         for item in &page.items {
             if let Ok(node_id) = usize::try_from(item.node_id.0) {
@@ -415,10 +422,19 @@ fn push_paragraph<'a>(
         return;
     }
     let beside_lines: HashSet<usize> = root_node.ifc_boxes().into_iter().collect();
-    let mut elements = Vec::new();
+    let mut elements = vec![(root, Some(false))];
     let mut texts = Vec::new();
-    let mut stack: Vec<usize> = root_node.children.iter().rev().copied().collect();
-    while let Some(node_id) = stack.pop() {
+    let mut stack: Vec<_> = root_node
+        .children
+        .iter()
+        .rev()
+        .map(|&id| (id, false))
+        .collect();
+    while let Some((node_id, after)) = stack.pop() {
+        if after {
+            elements.push((node_id, Some(true)));
+            continue;
+        }
         if beside_lines.contains(&node_id) {
             continue;
         }
@@ -430,15 +446,52 @@ fn push_paragraph<'a>(
         }
         match node.kind() {
             NodeKind::Element if !node.is_display_none() && !node.is_hidden_by_text_overflow() => {
-                elements.push(node_id);
-                stack.extend(node.children.iter().rev().copied());
+                elements.push((node_id, None));
+                elements.push((node_id, Some(false)));
+                stack.push((node_id, true));
+                stack.extend(node.children.iter().rev().map(|&id| (id, false)));
             }
             NodeKind::Text => texts.push(node_id),
             _ => {}
         }
     }
-    for node_id in elements {
-        push_kind(events, node_id, PageFragmentKind::Box);
+    elements.push((root, Some(true)));
+    for (node_id, after) in elements {
+        match after {
+            None => push_kind(events, node_id, PageFragmentKind::Box),
+            Some(after) => {
+                let pseudo = if after {
+                    PseudoElem::After
+                } else {
+                    PseudoElem::Before
+                };
+                for piece in items
+                    .generated_boxes
+                    .and_then(|boxes| boxes.get(&(root, node_id, after)))
+                    .into_iter()
+                    .flatten()
+                {
+                    let owner = NodeId::new(node_id as u64);
+                    events.push(PaintEvent::GeneratedBox(GeneratedBox {
+                        owner,
+                        line: crate::TextLineId {
+                            root: NodeId::new(root as u64),
+                            index: piece.line,
+                        },
+                        kind: if after {
+                            crate::GeneratedKind::After
+                        } else {
+                            crate::GeneratedKind::Before
+                        },
+                        rect: piece.rect,
+                        style: &items.cascade.pseudo[&(StyleNodeId::new(node_id as u64), pseudo)],
+                        clip_owner: owner,
+                        has_start_edge: piece.has_start_edge,
+                        has_end_edge: piece.has_end_edge,
+                    }));
+                }
+            }
+        }
     }
     if lines.is_some() {
         push_lines(events);

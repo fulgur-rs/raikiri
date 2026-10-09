@@ -1,6 +1,7 @@
 //! Stored page placements and the final views borrowed from them.
 
 pub(crate) mod fragment;
+pub(crate) mod generated_boxes;
 mod image_markers;
 pub(crate) mod paint_order;
 pub(crate) mod records;
@@ -24,6 +25,7 @@ pub(crate) struct PageProjection {
     /// Standalone marker text shaped once, shared by every page placement.
     markers: BTreeMap<usize, text_runs::MarkerText>,
     image_markers: BTreeMap<u32, BTreeMap<NodeId, PaintRect>>,
+    generated_boxes: generated_boxes::GeneratedBoxes,
     /// Source clip geometry shared across pages rather than copied per page.
     overflow_clips: BTreeMap<NodeId, OverflowClipSource>,
 }
@@ -35,6 +37,7 @@ impl PageProjection {
         self.text_roots.clear();
         self.markers.clear();
         self.image_markers.clear();
+        self.generated_boxes.clear();
         self.overflow_clips.clear();
     }
 }
@@ -99,6 +102,7 @@ impl Document {
             crate::layout::project_slices(self, cascade, fallback_page_box, slices, &geometries);
         let markers = text_runs::prepare_markers(self, cascade, &text_roots, &pages)?;
         let image_markers = image_markers::prepare(self, cascade, &text_roots, &pages);
+        let generated_boxes = generated_boxes::prepare(self, cascade, &text_roots, &pages);
         let events = crate::layout::page_fragment_events_from_pages(self, &pages);
         let mut links: Vec<Vec<(NodeId, String, Vec<PaintRect>)>> =
             pages.iter().map(|_| Vec::new()).collect();
@@ -133,6 +137,7 @@ impl Document {
             text_roots,
             markers,
             image_markers,
+            generated_boxes,
             overflow_clips,
         };
         Ok(())

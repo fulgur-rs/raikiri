@@ -10,8 +10,8 @@ pub use page::{InlineSvg, Page, PageGeometry, PageMode, RasterImage};
 // cov:ignore: public type re-exports have no executable mapping; API integration tests verify them.
 pub use raikiri_dom::{
     ClipKind, DecorationKind, DecorationLine, DecorationStyle, FontBlob, FontId, FontRef,
-    FontVariation, Fragment, FragmentKind, GeneratedKind, Glyph, OverflowClip, PaintEvent,
-    PositionedGlyphRun, RepeatKind, RunSource, Synthesis, Tag, TextLineId,
+    FontVariation, Fragment, FragmentKind, GeneratedBox, GeneratedKind, Glyph, OverflowClip,
+    PaintEvent, PositionedGlyphRun, RepeatKind, RunSource, Synthesis, Tag, TextLineId,
 };
 
 use crate::render::{PipelineInputs, PipelineOutput, PipelineRun, run_pipeline};
