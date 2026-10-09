@@ -305,6 +305,7 @@ pub struct Synthesis {
 pub(crate) enum TextRunOmission {
     VerticalWritingMode,
     OverlappingColumnLines,
+    UnrootedColumnFragments,
     RelativeInlineOffset,
     AncestorOffset,
     FixedPlacement,
@@ -317,6 +318,7 @@ impl TextRunOmission {
             Self::OverlappingColumnLines => {
                 "the same paragraph line has overlapping column placements"
             }
+            Self::UnrootedColumnFragments => "its column fragments have no rooted placement chain",
             Self::RelativeInlineOffset => "it has relatively positioned inline elements",
             Self::AncestorOffset => {
                 "it or an ancestor is moved by a transform or relative positioning"
@@ -824,6 +826,30 @@ impl Document {
     pub fn omitted_text_run_roots(&self, cascade: &CascadeResult) -> Vec<(NodeId, &'static str)> {
         let context = RunContext::new(self, &self.page_projection.text_roots);
         let mut seen = HashSet::new();
+        let placed: HashSet<_> = self
+            .page_projection
+            .text_roots
+            .iter()
+            .map(|root| root.node)
+            .collect();
+        // A malformed nested fragment chain can make an entire paragraph
+        // unreachable. Preserve its omission diagnostic without fabricating
+        // a paint placement or publishing guessed glyph coordinates.
+        let unrooted = self
+            .layout_fragments()
+            .iter()
+            .filter(|fragment| {
+                !placed.contains(&fragment.node_id)
+                    && self
+                        .get_node(fragment.node_id)
+                        .is_some_and(|node| node.is_ifc_root())
+            })
+            .map(|fragment| {
+                (
+                    NodeId::new(self.ifc_source_owner(fragment.node_id) as u64),
+                    TextRunOmission::UnrootedColumnFragments.describe(),
+                )
+            });
         self.page_projection
             .text_roots
             .iter()
@@ -843,6 +869,7 @@ impl Document {
                     reason.describe(),
                 ))
             })
+            .chain(unrooted)
             .filter(|entry| seen.insert(*entry))
             .collect()
     }
