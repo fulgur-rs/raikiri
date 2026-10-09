@@ -63,6 +63,23 @@ impl<'a> Fragment<'a> {
         self
     }
 
+    /// Explicit column clip at this placement's physical page origin.
+    pub(crate) fn fragmentainer_clip(&self) -> Option<PaintClip> {
+        self.item.fragment_clip.map(|rect| {
+            PaintClip::new(PaintRect::new(
+                rect.x + self.origin.0,
+                rect.y + self.origin.1,
+                rect.width,
+                rect.height,
+            ))
+        })
+    }
+
+    /// Placement-specific overflow ancestors, excluding the element's own clip.
+    pub(crate) fn overflow_chain(&self) -> Option<usize> {
+        self.item.overflow_chain
+    }
+
     /// The element's resolved padding-edge overflow clip, if it clips locally.
     ///
     /// This is the shape of the whole box before page cuts, in page-local
@@ -118,10 +135,10 @@ impl<'a> Fragment<'a> {
         self.item.fragment_index
     }
 
-    /// Fragmentainer (column) number on the page. Always 0 until multi-column
-    /// fragments are exposed.
+    /// Fragmentainer (column) number local to the owning multicolumn context.
+    /// Zero for a placement outside columns.
     pub fn fragmentainer(&self) -> u32 {
-        0
+        self.item.fragmentainer
     }
 
     /// Text lines covered by this fragment, if it is a text fragment.

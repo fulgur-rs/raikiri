@@ -220,7 +220,7 @@ fn multicol_containers_are_reported_as_approximations() {
         .collect();
     assert_eq!(
         found,
-        [(Some("m"), "columns are listed without column clips")]
+        [(Some("m"), "legacy column clipping may be incomplete")]
     );
 }
 

@@ -9,6 +9,111 @@ use raikiri_traits::{
 use taffy::Style;
 
 #[test]
+fn decoration_preparation_checks_budget_and_cancellation_before_publication() {
+    use crate::layout::{ProjectionWork, project_slices_with_control};
+    use raikiri_traits::{DecodedImage, ImagePixelSource, LayoutError};
+    use std::cell::Cell;
+    use std::sync::Arc;
+    struct Pixels;
+    impl ImagePixelSource for Pixels {
+        fn get_decoded(&self, _: &url::Url) -> Option<Arc<DecodedImage>> {
+            Some(Arc::new(DecodedImage {
+                width: 4,
+                height: 4,
+                rgba: [255, 0, 0, 255].repeat(16),
+            }))
+        }
+    }
+    for kind in ["before", "inside", "outside"] {
+        let crate::layout::ifc::test_support::Fixture {
+            mut doc, cascade, ..
+        } = crate::layout::ifc::test_support::sheet_fixture(
+            if kind == "before" {
+                "div::before{content:'X';background:red}"
+            } else {
+                ""
+            },
+            &if kind == "before" {
+                "width:40px;line-height:10px".to_owned()
+            } else {
+                format!(
+                    "display:list-item;list-style:{kind} url(https://images.test/marker.png);width:40px;line-height:10px"
+                )
+            },
+            |doc, root| {
+                doc.append_text(root, "A");
+            },
+        );
+        if kind != "before" {
+            doc.prepare_list_marker_images(&cascade, &Pixels, None);
+        }
+        let page = crate::layout::test_support::page_box_800x600();
+        layout_single_page(
+            crate::layout::test_support::with_ahem(&mut doc),
+            &cascade,
+            page,
+        )
+        .unwrap();
+        let slices = [PageSlice {
+            page_index: 0,
+            content_origin_y: 0.0,
+            page_name: None,
+        }];
+        let control = crate::PageLayoutControl::default();
+        let (pages, roots, _, _, cache, _) =
+            project_slices_with_control(&doc, &cascade, page, &slices, &[], &control).unwrap();
+        for abort_at in 0..=12 {
+            let checks = Cell::new(0);
+            let abort = || {
+                checks.set(checks.get() + 1);
+                abort_at > 0 && checks.get() >= abort_at
+            };
+            let control = crate::PageLayoutControl::default().with_abort_check(&abort);
+            for budget in 0..=32 {
+                checks.set(0);
+                let mut work = ProjectionWork::new(&control, budget);
+                let result = if kind == "before" {
+                    super::generated_boxes::prepare(
+                        &doc, &cascade, &roots, &pages, &cache, &mut work,
+                    )
+                    .map(|boxes| {
+                        boxes
+                            .values()
+                            .flat_map(|page| page.values())
+                            .map(Vec::len)
+                            .sum::<usize>()
+                    })
+                } else {
+                    super::image_markers::prepare(&doc, &cascade, &roots, &pages, &cache, &mut work)
+                        .map(|markers| {
+                            markers
+                                .values()
+                                .map(std::collections::BTreeMap::len)
+                                .sum::<usize>()
+                        })
+                };
+                if abort_at == 1 {
+                    assert!(matches!(result, Err(LayoutError::Aborted)));
+                } else if abort_at == 0 && budget == 0 {
+                    assert!(matches!(
+                        result,
+                        Err(LayoutError::FragmentLimitExceeded { limit: 0 })
+                    ));
+                } else if abort_at == 0 && budget == 32 {
+                    assert!(result.is_ok());
+                }
+                match result {
+                    Ok(count) => assert_eq!(count, 1, "{kind}"),
+                    Err(LayoutError::Aborted) => assert_eq!(checks.get(), abort_at),
+                    Err(LayoutError::FragmentLimitExceeded { limit }) => assert_eq!(limit, budget),
+                    Err(error) => panic!("unexpected preparation error: {error:?}"),
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn many_pages_keep_only_one_overflow_record_per_source() {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));

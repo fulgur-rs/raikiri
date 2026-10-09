@@ -523,10 +523,10 @@ pub enum LayoutError {
         /// Estimated cumulative bytes after the rejected snapshot.
         actual: u64,
     },
-    /// One layout pass would exceed its fragment or break-flow work cap.
+    /// One layout pass would exceed its fragment, break-flow, or column-projection work cap.
     FragmentLimitExceeded {
         /// Separate maximum for retained fragments and estimated additional
-        /// break-flow measurement and child-scan work units in one layout pass.
+        /// break-flow measurement and column-projection work units in one pass.
         limit: usize,
     },
     /// Pagination would produce more pages than the configured limit.

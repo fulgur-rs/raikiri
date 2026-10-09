@@ -96,6 +96,36 @@ fn outside_png_marker_has_one_cached_payload_in_its_owner_opacity_group() {
 }
 
 #[test]
+fn many_column_inside_marker_keeps_one_image_at_the_first_line() {
+    let pixels = Pixels::new();
+    let count = 1000;
+    let body = format!(
+        "<ul class=mc><li>{}</li></ul>",
+        vec!["A"; count].join("<br>")
+    );
+    let document = lay_out(
+        &body,
+        "@page{size:41000px 100px}.mc{width:40000px;column-count:1000;column-gap:0;orphans:1;widows:1}li{margin:0;list-style-position:inside;font:10px/10px Ahem}",
+        &pixels,
+    );
+    assert_eq!(document.page_count(), 1);
+    let page = document.page(0).unwrap();
+    let runs = page.text_runs();
+    assert_eq!(runs.iter().filter(|run| run.text == "A").count(), count);
+    let events = page.paint_order_for_text_runs(&runs);
+    let images: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            PaintEvent::MarkerImage(owner) => page.raster_marker(*owner, &pixels),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(images.len(), 1);
+    assert_eq!(images[0].rect, PaintRect::new(0.0, 4.0, 8.0, 4.0));
+    assert!(Arc::ptr_eq(&images[0].pixels, &pixels.0));
+}
+
+#[test]
 fn image_marker_is_only_on_the_first_principal_fragment_and_content_wins() {
     let pixels = Pixels::new();
     let document = lay_out("<ul><li>AA<br>BB<br>CC<br>DD<br>EE</li></ul>", "", &pixels);

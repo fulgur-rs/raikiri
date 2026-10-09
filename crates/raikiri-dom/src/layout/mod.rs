@@ -118,5 +118,7 @@ pub use page_pipeline::{
 };
 
 pub(crate) use page_pipeline::{
-    line_center_on_page, page_fragment_events_from_pages, project_slices,
+    line_center_on_page, page_fragment_events_from_pages, project_slices_with_control,
 };
+
+pub(crate) use page_pipeline::column_projection::{ParagraphCache, ProjectionWork};

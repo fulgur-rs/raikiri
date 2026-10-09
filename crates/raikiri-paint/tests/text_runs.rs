@@ -589,15 +589,21 @@ fn vertical_paragraphs_have_no_runs_and_a_warning() {
 }
 
 #[test]
-fn multicol_paragraphs_have_no_runs_and_a_warning() {
-    assert_omitted(
+fn multicol_paragraphs_match_native_glyph_placements() {
+    let result = lay_out(
         &format!(
             "<p>kept</p><div id=\"m\" style=\"columns: 2; height: 40px\">{}</div>",
             vec!["word"; 40].join(" ")
         ),
         "",
-        "m",
     );
+    assert!(
+        !result
+            .warnings()
+            .iter()
+            .any(|warning| matches!(warning.kind, WarningKind::TextRunsOmitted))
+    );
+    assert!(assert_runs_match_paint(&result) > 0);
 }
 
 #[test]
@@ -628,7 +634,7 @@ fn fixed_boxes_placed_by_other_insets_have_no_runs_and_a_warning() {
 }
 
 #[test]
-fn paragraphs_in_nested_columns_have_no_runs_and_a_warning() {
+fn unrooted_nested_column_fragments_keep_an_omission_warning() {
     assert_omitted(
         &format!(
             "<p>kept</p><div style=\"columns: 2\"><div style=\"columns: 2\">\

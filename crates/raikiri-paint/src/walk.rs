@@ -3460,16 +3460,14 @@ pub(crate) fn paint_document_impl(
         if let Some(fragment_ids) = fragments_by_parent_and_node.get(&(fragment_id, node_id)) {
             for &current_fragment_id in fragment_ids.iter().rev() {
                 let fragment = layout_fragments[current_fragment_id];
-                let node_abs_x = if fragment.parent.is_some() {
-                    fragment_origin_x + fragment.rect.x
-                } else {
-                    parent_abs_x + node.unrounded_layout.location.x + fragment.rect.x
-                };
-                let node_abs_y = if fragment.parent.is_some() {
-                    fragment_origin_y + fragment.rect.y
-                } else {
-                    parent_abs_y + node.unrounded_layout.location.y + fragment.rect.y
-                };
+                let (node_abs_x, node_abs_y) = fragment.paint_origin(
+                    (parent_abs_x, parent_abs_y),
+                    (
+                        node.unrounded_layout.location.x,
+                        node.unrounded_layout.location.y,
+                    ),
+                    (fragment_origin_x, fragment_origin_y),
+                );
                 let fragment_clip = fragment.fragmentainer_clip.map(|clip| FragmentRect {
                     x: clip.x - fragment.rect.x,
                     y: clip.y - fragment.rect.y,

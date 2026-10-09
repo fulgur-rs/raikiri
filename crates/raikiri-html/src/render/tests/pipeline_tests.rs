@@ -936,3 +936,113 @@ fn pipeline_keeps_the_media_page_box_independent_of_authored_page_geometry() {
         }
     );
 }
+
+#[test]
+fn pipeline_honors_cancellation_before_final_page_projection() {
+    struct AbortOnPageBackground(raikiri_traits::AbortController);
+    impl raikiri_traits::NetworkProvider for AbortOnPageBackground {
+        fn fetch_one_hop(
+            &self,
+            request: raikiri_traits::Request,
+        ) -> Result<raikiri_traits::FetchOutcome, raikiri_traits::NetworkError> {
+            assert_eq!(request.url.path(), "/page.png");
+            self.0.abort();
+            Err(raikiri_traits::NetworkError::Aborted)
+        }
+    }
+    let controller = raikiri_traits::AbortController::new();
+    let provider = AbortOnPageBackground(raikiri_traits::AbortController {
+        signal: controller.signal.clone(),
+    });
+    let resources = RenderResources::new().network_provider(&provider);
+    let doc = parse(
+        "<style>@page{size:100px 100px;background-image:url(https://images.test/page.png)}</style><p>text</p>",
+    );
+    let config = LayoutConfig::builder()
+        .signal(Some(controller.signal.clone()))
+        .build();
+    let result = run_pipeline(
+        &doc,
+        PageDefaults::default(),
+        &config,
+        PipelineInputs {
+            resources: Some(&resources),
+            consumer_properties: &[],
+            property_observer: None,
+            preload_background_images: true,
+        },
+    );
+    assert!(controller.signal.is_aborted());
+    assert!(matches!(result, Ok(PipelineRun::Aborted)));
+}
+
+#[test]
+fn pipeline_reports_a_column_projection_work_limit() {
+    let count = 8000;
+    let html = format!(
+        "<style>body{{margin:0}}.mc{{width:160000px;column-count:{count};column-gap:0;orphans:1;widows:1}}p{{margin:0;font:10px/10px Ahem}}</style><div class=mc><p>{}</p></div>",
+        vec!["A"; count].join("<br>")
+    );
+    let doc = parse(&html);
+    let fonts = crate::FontCollectionBuilder::new()
+        .font_bytes("Ahem", super::AHEM.to_vec())
+        .build()
+        .unwrap();
+    let resources = RenderResources::new().fonts(fonts);
+    let result = run_pipeline(
+        &doc,
+        PageDefaults::default(),
+        &LayoutConfig::default(),
+        PipelineInputs {
+            resources: Some(&resources),
+            consumer_properties: &[],
+            property_observer: None,
+            preload_background_images: false,
+        },
+    );
+    assert!(matches!(
+        result,
+        Err(RenderError::Layout(LayoutError::FragmentLimitExceeded {
+            limit: 65536
+        }))
+    ));
+}
+
+#[test]
+fn many_columns_with_generated_decoration_prepare_one_source_piece() {
+    let count = 1000;
+    let html = format!(
+        "<style>body{{margin:0}}.mc{{width:20000px;column-count:{count};column-gap:0;orphans:1;widows:1}}p{{margin:0;font:10px/10px Ahem}}p::before{{content:'X';background:red}}</style><div class=mc><p>{}</p></div>",
+        vec!["A"; count].join("<br>")
+    );
+    let doc = parse(&html);
+    let fonts = crate::FontCollectionBuilder::new()
+        .font_bytes("Ahem", super::AHEM.to_vec())
+        .build()
+        .unwrap();
+    let resources = RenderResources::new().fonts(fonts);
+    let out = match run_pipeline(
+        &doc,
+        PageDefaults::default(),
+        &LayoutConfig::default(),
+        PipelineInputs {
+            resources: Some(&resources),
+            consumer_properties: &[],
+            property_observer: None,
+            preload_background_images: false,
+        },
+    )
+    .unwrap()
+    {
+        PipelineRun::Completed(out) => out,
+        PipelineRun::Aborted => panic!("completed layout"),
+    };
+    assert_eq!(
+        out.document
+            .page_paint_order(&out.cascade, 0, None)
+            .iter()
+            .filter(|event| matches!(event, raikiri_dom::PaintEvent::GeneratedBox(_)))
+            .count(),
+        1
+    );
+}
