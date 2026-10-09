@@ -683,10 +683,18 @@ fn production_config_sets_global_and_connect_timeouts() {
     assert!(CONNECT_TIMEOUT < FETCH_TIMEOUT);
 }
 
+/// Shorter stand-ins for `CONNECT_TIMEOUT` and `FETCH_TIMEOUT` in the
+/// handshake timeout tests below; `production_config_sets_global_and_connect_timeouts`
+/// covers the production values themselves. The connect timeout stays well
+/// above socket-timeout granularity, and the global one leaves room to tell
+/// the two apart.
+const TEST_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
+const TEST_FETCH_TIMEOUT: Duration = Duration::from_secs(6);
+
 #[test]
 fn a_stalled_tls_handshake_fails_at_the_connect_timeout_as_a_typed_timeout() {
     // The server accepts the TCP connection but never answers the
-    // ClientHello. With the production config this must fail once the
+    // ClientHello. With the production settings this must fail once the
     // connect timeout elapses, well before the global timeout, and surface
     // as a typed `TimedOut` I/O error rather than an opaque string.
     use std::time::Instant;
@@ -700,10 +708,10 @@ fn a_stalled_tls_handshake_fails_at_the_connect_timeout_as_a_typed_timeout() {
         let _ = done_rx.recv();
     });
 
-    // Production timeouts, but an unfiltered resolver so the loopback
-    // listener is reachable at all.
+    // Production settings on a shorter clock, with an unfiltered resolver so
+    // the loopback listener is reachable at all.
     let agent = ureq::Agent::with_parts(
-        agent_config(),
+        agent_config_with_timeouts(TEST_FETCH_TIMEOUT, TEST_CONNECT_TIMEOUT),
         DefaultConnector::default(),
         DefaultResolver::default(),
     );
@@ -730,9 +738,9 @@ fn a_stalled_tls_handshake_fails_at_the_connect_timeout_as_a_typed_timeout() {
         "expected NetworkError::Io(TimedOut), got {err:?}"
     );
     assert!(
-        elapsed >= CONNECT_TIMEOUT && elapsed < FETCH_TIMEOUT,
-        "expected the connect timeout ({CONNECT_TIMEOUT:?}) to fire before the \
-         global one ({FETCH_TIMEOUT:?}), took {elapsed:?}"
+        elapsed >= TEST_CONNECT_TIMEOUT && elapsed < TEST_FETCH_TIMEOUT,
+        "expected the connect timeout ({TEST_CONNECT_TIMEOUT:?}) to fire before the \
+         global one ({TEST_FETCH_TIMEOUT:?}), took {elapsed:?}"
     );
 }
 
@@ -772,9 +780,9 @@ fn a_trickling_tls_handshake_still_times_out_at_the_connect_timeout() {
             return;
         }
         // Keep trickling beyond the entire fetch budget. Closing after 200
-        // 50ms intervals races the client's 10s connect deadline and can
+        // 50ms intervals races the client's connect deadline and can
         // produce ConnectionReset instead of exercising the timeout.
-        let deadline = Instant::now() + FETCH_TIMEOUT + CONNECT_TIMEOUT;
+        let deadline = Instant::now() + TEST_FETCH_TIMEOUT + TEST_CONNECT_TIMEOUT;
         while Instant::now() < deadline {
             if stream.write_all(&[0u8]).is_err() {
                 return;
@@ -794,7 +802,7 @@ fn a_trickling_tls_handshake_still_times_out_at_the_connect_timeout() {
     //
     // Verified this test isn't vacuous by temporarily swapping this
     // connector back to plain `DefaultConnector::default()`: the trickle
-    // then outlasted the true 10s connect-timeout budget entirely, only
+    // then outlasted the connect-timeout budget entirely, only
     // ending (as `ConnectionReset`, not `TimedOut`) once this test's own
     // scripted server ran out of bytes to send — proof the *old* transport
     // does not enforce the deadline against a byte trickle, and that this
@@ -802,7 +810,11 @@ fn a_trickling_tls_handshake_still_times_out_at_the_connect_timeout() {
     let connector = ()
         .chain(crate::deadline_transport::DeadlineTcpConnector::default())
         .chain(ureq::unversioned::transport::RustlsConnector::default());
-    let agent = ureq::Agent::with_parts(agent_config(), connector, DefaultResolver::default());
+    let agent = ureq::Agent::with_parts(
+        agent_config_with_timeouts(TEST_FETCH_TIMEOUT, TEST_CONNECT_TIMEOUT),
+        connector,
+        DefaultResolver::default(),
+    );
     let provider = UreqHttpProvider::with_agent(agent);
     let request = Request {
         url: Url::parse(&format!("https://127.0.0.1:{port}/")).unwrap(),
@@ -835,7 +847,7 @@ fn a_trickling_tls_handshake_still_times_out_at_the_connect_timeout() {
     // that outlasted it, which the old transport produced) still fails.
     // One second of early slack absorbs socket-timeout granularity; the
     // lower bound stays an order of magnitude above any fast failure.
-    let earliest_reset = CONNECT_TIMEOUT - std::time::Duration::from_secs(1);
+    let earliest_reset = TEST_CONNECT_TIMEOUT - std::time::Duration::from_secs(1);
     let reset_after_deadline = matches!(
         &err,
         NetworkError::Io(e) if e.kind() == std::io::ErrorKind::ConnectionReset
@@ -850,9 +862,9 @@ fn a_trickling_tls_handshake_still_times_out_at_the_connect_timeout() {
          got {err:?} after {elapsed:?}"
     );
     assert!(
-        elapsed < FETCH_TIMEOUT,
+        elapsed < TEST_FETCH_TIMEOUT,
         "a trickling handshake must not be able to outlast the connect timeout \
-         (let alone the global one, {FETCH_TIMEOUT:?}) just by keeping individual \
+         (let alone the global one, {TEST_FETCH_TIMEOUT:?}) just by keeping individual \
          reads satisfied; took {elapsed:?}"
     );
 }

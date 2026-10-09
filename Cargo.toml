@@ -225,3 +225,15 @@ debug = "line-tables-only"
 [profile.dev.package."*"]
 # Omit debug information for non-workspace dependencies.
 debug = false
+
+# Tokenizing a maximum-size HTML input spends nearly all of its time in these
+# crates' unoptimized buffer handling; optimize them so input-cap tests stay
+# fast. Dependencies rebuild only when their versions change.
+[profile.dev.package.html5ever]
+opt-level = 2
+
+[profile.dev.package.markup5ever]
+opt-level = 2
+
+[profile.dev.package.tendril]
+opt-level = 2

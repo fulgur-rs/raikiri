@@ -3,7 +3,10 @@ use cssparser::ToCss;
 
 #[test]
 fn retained_contextual_repairs_share_a_budget_across_rules_and_stylesheets() {
-    let large = "a".repeat(32 * 1024);
+    // The attribute and the tree budget shrink by the same factor, keeping
+    // the ratio between one repair and the budget of the built-in sizes.
+    const SCALE: usize = 64;
+    let large = "a".repeat(32 * 1024 / SCALE);
     let child = format!(
         "{}:has(> :is(&,.leaf)){{color:blue}}",
         ":is(&,.outer)".repeat(512)
@@ -16,6 +19,7 @@ fn retained_contextual_repairs_share_a_budget_across_rules_and_stylesheets() {
     };
     for separate_sheets in [false, true] {
         let mut tree = RuleTree::empty();
+        tree.selector_revalidation_budget = nesting::MAX_SELECTOR_REVALIDATION_BYTES / SCALE;
         let grouped = format!(
             "@supports (display:block){{@layer nested{{{}}}}}",
             parent(3)
@@ -37,8 +41,9 @@ fn retained_contextual_repairs_share_a_budget_across_rules_and_stylesheets() {
             })
             .collect();
         // Parent references outside :has() retain the large attribute after
-        // contextual pruning, so each accepted repair holds over 16 MiB.
-        assert!(repaired[0].selectors.to_css_string().len() > 16 * 1024 * 1024);
+        // contextual pruning, so each accepted repair holds over a quarter of
+        // the budget.
+        assert!(repaired[0].selectors.to_css_string().len() > 16 * 1024 * 1024 / SCALE);
         assert_eq!(repaired.len(), 3);
         assert_eq!(tree.style_rules().len(), 6);
     }

@@ -230,6 +230,12 @@ fn read_body_capped(body: &mut ureq::Body, cap: u64) -> Result<Vec<u8>, ureq::Er
 /// The `Config` every production `UreqHttpProvider` agent is built with
 /// (see [`UreqHttpProvider::new`]).
 fn agent_config() -> ureq::config::Config {
+    agent_config_with_timeouts(FETCH_TIMEOUT, CONNECT_TIMEOUT)
+}
+
+/// [`agent_config`] with explicit global and connect timeouts, so tests can
+/// exercise the production settings and connector chain on a shorter clock.
+fn agent_config_with_timeouts(global: Duration, connect: Duration) -> ureq::config::Config {
     // `ureq::config::Config::default()` picks up `HTTP_PROXY` /
     // `HTTPS_PROXY` / `NO_PROXY` (etc.) from the process environment. If
     // a proxy were left configured, `ureq` would resolve and connect to
@@ -260,8 +266,8 @@ fn agent_config() -> ureq::config::Config {
     // doc for why `ureq`'s own accounting needs this.
     ureq::config::Config::builder()
         .proxy(None)
-        .timeout_global(Some(FETCH_TIMEOUT))
-        .timeout_connect(Some(CONNECT_TIMEOUT))
+        .timeout_global(Some(global))
+        .timeout_connect(Some(connect))
         .build()
 }
 
