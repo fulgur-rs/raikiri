@@ -56,6 +56,8 @@ pub enum PaintEvent<'a> {
     MarkerImage(NodeId),
     /// One generated inline box decoration; its text follows in paragraph lines.
     GeneratedBox(GeneratedBox<'a>),
+    /// A producer-computed column rule, above the owner's border and below content.
+    ColumnRule(crate::ColumnRule),
 }
 
 /// The reason reported for a multi-column container by
@@ -262,6 +264,21 @@ impl Document {
                             }
                         }
                     }
+                    if let Some(rules) = self
+                        .page_projection
+                        .column_rules
+                        .get(&page_index)
+                        .and_then(|rules| rules.get(&NodeId::new(node_id as u64)))
+                    {
+                        let clip = items.overflow_clips.get(&NodeId::new(node_id as u64));
+                        if let Some(entry) = clip {
+                            events.push(PaintEvent::PushClip(entry.clip, ClipKind::Overflow));
+                        }
+                        events.extend(rules.iter().copied().map(PaintEvent::ColumnRule));
+                        if clip.is_some() {
+                            events.push(PaintEvent::PopClip);
+                        }
+                    }
                     let image_marker = self
                         .page_marker_image(page_index, NodeId::new(node_id as u64))
                         .is_some();
@@ -406,6 +423,7 @@ impl Document {
                 PaintEvent::GeneratedBox(fragment) => {
                     line_overflow_chains.get(&fragment.line).copied()
                 }
+                PaintEvent::ColumnRule(rule) => rule.overflow_chain,
                 PaintEvent::MarkerImage(owner) => {
                     items.of(owner.0 as usize).first().and_then(|item| {
                         if crate::generated_content::inside_marker_in_flow(
@@ -434,6 +452,7 @@ impl Document {
                 | PaintEvent::Replaced(fragment) => fragment.fragmentainer_clip(),
                 PaintEvent::TextLine(line) => line_clips.get(&line).copied(),
                 PaintEvent::GeneratedBox(fragment) => line_clips.get(&fragment.line).copied(),
+                PaintEvent::ColumnRule(rule) => rule.fragmentainer_clip,
                 PaintEvent::MarkerImage(owner) => items
                     .of(owner.0 as usize)
                     .first()

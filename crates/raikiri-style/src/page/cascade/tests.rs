@@ -3284,7 +3284,7 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
 // Includes page-only inherit markers, which are resolved before this
 // phase and therefore remain unchanged here. ContextualColor is also a
 // computed expression; it requires no page-context length conversion.
-const PHASE_3_PASS_THROUGH_VARIANTS: usize = 168;
+const PHASE_3_PASS_THROUGH_VARIANTS: usize = 170;
 /// Number of corpus variants transformed by page-context resolution.
 /// This is derived from the corpus size and the pass-through count.
 fn phase_3_transformed_variants() -> usize {
@@ -3973,6 +3973,12 @@ property_key_samples! {
     ListStyleImage => PropertyValue::ListStyleImage(BackgroundImage::Url("marker.png".into())),
     ListStyle => PropertyValue::ListStyle(crate::property::ListStyleShorthand { kind: ListStyleType::Disc, position: ListStylePosition::Inside, image: BackgroundImage::None }),
     ColumnCount => PropertyValue::ColumnCount(ColumnCountValue::Count(3)),
+    ColumnRule => PropertyValue::ColumnRule(Border {
+        width: Length::Em(2.0), style: BorderStyle::Solid, color: BorderColor::Resolved(RED),
+    }),
+    ColumnRuleWidth => PropertyValue::ColumnRuleWidth(Length::Em(2.0)),
+    ColumnRuleStyle => PropertyValue::ColumnRuleStyle(BorderStyle::Solid),
+    ColumnRuleColor => PropertyValue::ColumnRuleColor(BorderColor::Resolved(RED)),
     ColumnFill => PropertyValue::ColumnFill(ColumnFillValue::BalanceAll),
     ColumnWidth => PropertyValue::ColumnWidth(ColumnWidthValue::Length(Length::Em(2.0))),
     Columns => PropertyValue::Columns(ColumnsShorthand {
@@ -4400,6 +4406,10 @@ property_value_variant_registry! {
     TextUnderlinePosition,
     Page,
     ColumnCount,
+    ColumnRule,
+    ColumnRuleWidth,
+    ColumnRuleStyle,
+    ColumnRuleColor,
     ColumnFill,
     ColumnWidth,
     Columns,
@@ -4736,7 +4746,11 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             // relative units remain visible to this detector only before
             // that phase.
             | PropertyValue::ColumnCount(_)
-            | PropertyValue::ColumnFill(_) => None,
+            | PropertyValue::ColumnFill(_)
+            | PropertyValue::ColumnRuleStyle(_)
+            | PropertyValue::ColumnRuleColor(_) => None,
+            PropertyValue::ColumnRule(rule) => length(rule.width),
+            PropertyValue::ColumnRuleWidth(width) => length(*width),
             // cov:ignore: auto width has no length residue to report.
             PropertyValue::ColumnWidth(ColumnWidthValue::Auto) => None,
             PropertyValue::ColumnWidth(ColumnWidthValue::Length(l)) => {

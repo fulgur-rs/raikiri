@@ -584,6 +584,16 @@ fn parent_fixture() -> ComputedValues {
         caption_side: CaptionSideValue::Bottom,
         // CSS Tables 3 §8: empty-cells is inherited; set a value other than the initial `show`.
         empty_cells: EmptyCellsValue::Hide,
+        column_rule: crate::resolve::ComputedBorder {
+            width: crate::resolve::ComputedLength(7.0),
+            style: BorderStyle::Solid,
+            color: BorderColor::Resolved(CssColor {
+                r: 30,
+                g: 40,
+                b: 50,
+                a: 255,
+            }),
+        },
         column_count: ColumnCountValue::Count(3),
         column_fill: crate::property::ColumnFillValue::Auto,
         column_width: crate::resolve::ComputedColumnWidth::Px(24.0),

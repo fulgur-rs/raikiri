@@ -6777,6 +6777,10 @@ impl DeferredValue {
                 | PropertyKey::ListStyleType
                 | PropertyKey::ListStylePosition
                 | PropertyKey::ListStyleImage
+                | PropertyKey::ColumnRule
+                | PropertyKey::ColumnRuleWidth
+                | PropertyKey::ColumnRuleStyle
+                | PropertyKey::ColumnRuleColor
         ) {
             return None;
         }
@@ -9975,6 +9979,14 @@ pub enum PropertyValue {
     /// [`TextOverflowValue`]). Computed value: the specified keyword.
     /// Appended to preserve existing variant discriminants.
     TextOverflow(TextOverflowValue),
+    /// Non-inherited `column-rule` shorthand; omitted components use their initial values.
+    ColumnRule(Border),
+    /// Non-inherited `column-rule-width`; resolves like a border width.
+    ColumnRuleWidth(Length),
+    /// Non-inherited `column-rule-style`; retains the specified border style.
+    ColumnRuleStyle(BorderStyle),
+    /// Non-inherited `column-rule-color`; initially `currentcolor`.
+    ColumnRuleColor(BorderColor),
 }
 
 // The cascade keeps one `PropertyValue` per candidate declaration and copies
@@ -10560,6 +10572,11 @@ pub enum PropertyKey {
     // CSS Overflow 3 text-overflow; appended to preserve existing key slots.
     TextOverflow,
     ListStyle,
+    // Column rule keys are appended to preserve existing key slots.
+    ColumnRule,
+    ColumnRuleWidth,
+    ColumnRuleStyle,
+    ColumnRuleColor,
 }
 
 impl PropertyValue {
@@ -10835,6 +10852,10 @@ impl PropertyValue {
             PropertyValue::InlineSize(_) => PropertyKey::InlineSize,
             PropertyValue::BlockSize(_) => PropertyKey::BlockSize,
             PropertyValue::TextOverflow(_) => PropertyKey::TextOverflow,
+            PropertyValue::ColumnRule(_) => PropertyKey::ColumnRule,
+            PropertyValue::ColumnRuleWidth(_) => PropertyKey::ColumnRuleWidth,
+            PropertyValue::ColumnRuleStyle(_) => PropertyKey::ColumnRuleStyle,
+            PropertyValue::ColumnRuleColor(_) => PropertyKey::ColumnRuleColor,
         }
     }
 }
@@ -11966,6 +11987,10 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "column-fill" => PropertyKey::ColumnFill,
         "column-width" => PropertyKey::ColumnWidth,
         "columns" => PropertyKey::Columns,
+        "column-rule" => PropertyKey::ColumnRule,
+        "column-rule-width" => PropertyKey::ColumnRuleWidth,
+        "column-rule-style" => PropertyKey::ColumnRuleStyle,
+        "column-rule-color" => PropertyKey::ColumnRuleColor,
         "place-content" => PropertyKey::PlaceContent,
         "hyphens" => PropertyKey::Hyphens,
         "hyphenate-character" => PropertyKey::HyphenateCharacter,

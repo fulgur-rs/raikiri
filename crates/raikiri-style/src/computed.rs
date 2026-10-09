@@ -1770,6 +1770,9 @@ pub struct ComputedValues {
     pub column_fill: ColumnFillValue,
     /// Computed `column-width` — non-inherited multicol container setting.
     pub column_width: ComputedColumnWidth,
+    /// Non-inherited column rule with an absolutized, style-gated width.
+    /// The rule occupies no layout space; paint resolves `currentcolor`.
+    pub column_rule: ComputedBorder,
     /// Resolved custom properties for the page-context inheritance bridge.
     ///
     /// This is deliberately crate-private: `ComputedValues`' public property
@@ -2172,6 +2175,11 @@ impl ComputedValues {
             // column-fill is `balance`.
             column_count: ColumnCountValue::Auto,
             column_fill: ColumnFillValue::Balance,
+            column_rule: ComputedBorder {
+                width: ComputedLength::ZERO,
+                style: BorderStyle::None,
+                color: BorderColor::CurrentColor,
+            },
             column_width: ComputedColumnWidth::Auto,
             custom_properties: empty_custom_properties(),
             local_custom_properties: empty_custom_properties(),

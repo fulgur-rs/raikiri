@@ -68,6 +68,10 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
                 | PropertyKey::ListStyleType
                 | PropertyKey::ListStylePosition
                 | PropertyKey::ListStyleImage
+                | PropertyKey::ColumnRule
+                | PropertyKey::ColumnRuleWidth
+                | PropertyKey::ColumnRuleStyle
+                | PropertyKey::ColumnRuleColor
         )
     ) && let Ok(keyword) = input.try_parse(|parser| {
         let keyword = parse_css_wide_keyword_res(parser)?;
@@ -934,6 +938,10 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         "column-fill" => parse_column_fill(input).map(PropertyValue::ColumnFill),
         "column-width" => parse_column_width(input).map(PropertyValue::ColumnWidth),
         "columns" => parse_columns_shorthand(input).map(PropertyValue::Columns),
+        "column-rule" => parse_border_top_shorthand(input).map(PropertyValue::ColumnRule),
+        "column-rule-width" => parse_border_width_side(input).map(PropertyValue::ColumnRuleWidth),
+        "column-rule-style" => parse_border_style_side(input).map(PropertyValue::ColumnRuleStyle),
+        "column-rule-color" => parse_border_color(input).map(PropertyValue::ColumnRuleColor),
         // CSS Box Alignment Module Level 3 §5.2
         // <https://www.w3.org/TR/css-align-3/#propdef-place-content>.
         "place-content" => parse_place_content_shorthand(input).map(PropertyValue::PlaceContent),

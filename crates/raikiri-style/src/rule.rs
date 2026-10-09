@@ -279,6 +279,7 @@ pub(crate) const fn classify(key: PropertyKey) -> KeyClass {
         Flex => &[FlexGrow, FlexShrink, FlexBasis],
         FlexFlow => &[FlexDirection, FlexWrap],
         Columns => &[ColumnWidth, ColumnCount],
+        ColumnRule => &[ColumnRuleWidth, ColumnRuleStyle, ColumnRuleColor],
         Gap => &[RowGap, ColumnGap],
         PlaceContent => &[AlignContent, JustifyContent],
         GridRow => &[GridRowStart, GridRowEnd],
@@ -472,6 +473,9 @@ pub(crate) const fn classify(key: PropertyKey) -> KeyClass {
         | FontVariantEastAsian
         | FontVariationSettings
         | ColumnFill
+        | ColumnRuleWidth
+        | ColumnRuleStyle
+        | ColumnRuleColor
         | FontFeatureSettings
         | InlineSize
         | BlockSize
@@ -886,7 +890,15 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
         | PropertyValue::ColumnCount(_)
         | PropertyValue::ColumnWidth(_)
         | PropertyValue::ColumnFill(_)
+        | PropertyValue::ColumnRuleWidth(_)
+        | PropertyValue::ColumnRuleStyle(_)
+        | PropertyValue::ColumnRuleColor(_)
         | PropertyValue::FontFeatureSettings(_) => expand_none(d, push),
+        PropertyValue::ColumnRule(rule) => {
+            push_longhand(PropertyValue::ColumnRuleWidth(rule.width));
+            push_longhand(PropertyValue::ColumnRuleStyle(rule.style));
+            push_longhand(PropertyValue::ColumnRuleColor(rule.color));
+        }
         PropertyValue::Columns(shorthand) => {
             push_longhand(PropertyValue::ColumnWidth(shorthand.width));
             push_longhand(PropertyValue::ColumnCount(shorthand.count));

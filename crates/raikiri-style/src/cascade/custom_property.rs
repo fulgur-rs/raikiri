@@ -190,6 +190,26 @@ pub(crate) fn project_deferred_value(
         .into();
         return Some(PropertyValue::Deferred(marker));
     }
+    if let PropertyValue::Deferred(marker) = &value
+        && marker.property.as_str() == "column-rule"
+        && marker.css_wide_keyword().is_some()
+        && matches!(
+            key,
+            PropertyKey::ColumnRuleWidth
+                | PropertyKey::ColumnRuleStyle
+                | PropertyKey::ColumnRuleColor
+        )
+    {
+        let mut marker = marker.clone();
+        marker.key = key;
+        marker.property = match key {
+            PropertyKey::ColumnRuleWidth => "column-rule-width",
+            PropertyKey::ColumnRuleStyle => "column-rule-style",
+            _ => "column-rule-color",
+        }
+        .into();
+        return Some(PropertyValue::Deferred(marker));
+    }
     if value.key() == key {
         return Some(value);
     }
@@ -557,6 +577,12 @@ pub(crate) fn project_deferred_value(
             crate::property::PropertyKey::ColumnCount => {
                 PropertyValue::ColumnCount(shorthand.count)
             }
+            _ => return None,
+        },
+        PropertyValue::ColumnRule(rule) => match key {
+            PropertyKey::ColumnRuleWidth => PropertyValue::ColumnRuleWidth(rule.width),
+            PropertyKey::ColumnRuleStyle => PropertyValue::ColumnRuleStyle(rule.style),
+            PropertyKey::ColumnRuleColor => PropertyValue::ColumnRuleColor(rule.color),
             _ => return None,
         },
         PropertyValue::Gap(shorthand) => match key {
