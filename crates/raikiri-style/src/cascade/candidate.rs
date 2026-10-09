@@ -2,12 +2,13 @@
 //!
 //! A candidate does not own its declaration's value; a [`ValueRef`] refers to
 //! it. The declarations of the active style rules stay in the rule tree, which
-//! the cascade borrows throughout, and the declarations an element brings
-//! itself (presentational hints, quirks, inline style, animation) stay in the
-//! candidate arena next to the candidates. [`ValueSource`] resolves the
-//! handles and [`ElementCandidates`] pairs one element's candidates with the
-//! source of their declarations, so a value is only cloned when a winner is
-//! applied.
+//! the cascade borrows throughout. A `style` attribute seen more than once is
+//! parsed once into a block that every element with that source refers to.
+//! The other declarations an element brings itself (presentational hints,
+//! quirks, inline style, animation) stay in the candidate arena next to the
+//! candidates. [`ValueSource`] resolves the handles and [`ElementCandidates`]
+//! pairs one element's candidates with the source of their declarations, so a
+//! value is only cloned when a winner is applied.
 
 use std::borrow::Cow;
 
@@ -31,6 +32,9 @@ pub(crate) enum ValueRef {
     /// Declaration `decl` of the active style rule at position `rule` of the
     /// cascade's rule index.
     Rule { rule: u32, decl: u32 },
+    /// Declaration `decl` of the stored `style`-attribute block at position
+    /// `block`, which every element with that source text shares.
+    Cached { block: u32, decl: u32 },
     /// The element's own declaration at this position, counted from the
     /// element's first one. Equal positions of two elements refer to two
     /// different declarations.
@@ -103,16 +107,26 @@ pub(crate) struct CustomCandidate {
 }
 
 /// Resolves candidate handles: rule handles through the cascade's active
-/// rules, local handles through one element's own declarations.
+/// rules, cached handles through its stored `style`-attribute blocks, and
+/// local handles through one element's own declarations.
 #[derive(Clone, Copy)]
 pub(crate) struct ValueSource<'a> {
     rules: &'a [IndexedRule<'a>],
+    blocks: &'a [Box<[Declaration]>],
     local: &'a [Declaration],
 }
 
 impl<'a> ValueSource<'a> {
-    pub(crate) fn new(rules: &'a [IndexedRule<'a>], local: &'a [Declaration]) -> Self {
-        Self { rules, local }
+    pub(crate) fn new(
+        rules: &'a [IndexedRule<'a>],
+        blocks: &'a [Box<[Declaration]>],
+        local: &'a [Declaration],
+    ) -> Self {
+        Self {
+            rules,
+            blocks,
+            local,
+        }
     }
 
     /// The declaration `value` refers to.
@@ -120,6 +134,7 @@ impl<'a> ValueSource<'a> {
     pub(crate) fn declaration(self, value: ValueRef) -> &'a Declaration {
         match value {
             ValueRef::Rule { rule, decl } => &self.rules[rule as usize].declarations[decl as usize],
+            ValueRef::Cached { block, decl } => &self.blocks[block as usize][decl as usize],
             ValueRef::Local(index) => &self.local[index as usize],
         }
     }
@@ -149,6 +164,7 @@ impl ElementCandidates<'static> {
         decls: &[],
         source: ValueSource {
             rules: &[],
+            blocks: &[],
             local: &[],
         },
     };
@@ -213,6 +229,7 @@ impl CustomCandidates<'static> {
         decls: &[],
         source: ValueSource {
             rules: &[],
+            blocks: &[],
             local: &[],
         },
     };
@@ -280,14 +297,14 @@ pub(crate) fn same_custom_candidates(
     }
 }
 
-/// Whether two handles refer to equal values. A rule handle names one
-/// declaration of the cascade, so equal rule handles need no comparison.
-/// Local handles are numbered per element, so they always compare values.
+/// Whether two handles refer to equal values. A rule or cached handle names
+/// one declaration of the cascade, so equal ones need no comparison. Local
+/// handles are numbered per element, so they always compare values.
 fn same_value(
     (a_source, a): (ValueSource<'_>, ValueRef),
     (b_source, b): (ValueSource<'_>, ValueRef),
 ) -> bool {
-    (matches!(a, ValueRef::Rule { .. }) && a == b)
+    (matches!(a, ValueRef::Rule { .. } | ValueRef::Cached { .. }) && a == b)
         || a_source.declaration(a).value == b_source.declaration(b).value
 }
 
@@ -334,6 +351,22 @@ impl<'a> CandidateSink<'a> {
         );
     }
 
+    /// Adds declaration `index` of the stored `style`-attribute block at
+    /// position `block`.
+    pub(crate) fn push_cached(
+        &mut self,
+        (block, index): (u32, u32),
+        decl: &Declaration,
+        precedence: Precedence,
+    ) {
+        push_candidate(
+            (&mut *self.decls, &mut *self.custom),
+            ValueRef::Cached { block, decl: index },
+            decl,
+            precedence,
+        );
+    }
+
     /// Adds a declaration of the element's own, moved when owned and cloned
     /// when borrowed.
     pub(crate) fn push_local(
@@ -342,7 +375,7 @@ impl<'a> CandidateSink<'a> {
         precedence: Precedence,
     ) -> Result<(), CascadeError> {
         let index = u32::try_from(self.locals.len() - self.local_start)
-            .map_err(|_| too_many_own_declarations())?;
+            .map_err(|_| too_many("own declarations of one element"))?;
         push_candidate(
             (&mut *self.decls, &mut *self.custom),
             ValueRef::Local(index),
@@ -369,10 +402,11 @@ impl<'a> CandidateSink<'a> {
     }
 }
 
-// cov:ignore: an element's own declarations come from its attributes, which would need billions of declarations to reach this
-fn too_many_own_declarations() -> CascadeError {
+// cov:ignore: a handle overflows only past billions of rules, selectors, style blocks or declarations
+/// The error for a cascade with more of `what` than a `u32` handle can number.
+pub(crate) fn too_many(what: &str) -> CascadeError {
     CascadeError::Internal {
-        message: "an element has more than u32::MAX declarations of its own".to_owned(),
+        message: format!("more than u32::MAX {what} in one cascade"),
     }
 }
 
@@ -471,11 +505,11 @@ impl OwnedCandidates {
     }
 
     pub(crate) fn candidates(&self) -> ElementCandidates<'_> {
-        ElementCandidates::new(&self.decls, ValueSource::new(&[], &self.local))
+        ElementCandidates::new(&self.decls, ValueSource::new(&[], &[], &self.local))
     }
 
     pub(crate) fn custom_candidates(&self) -> CustomCandidates<'_> {
-        CustomCandidates::new(&self.custom, ValueSource::new(&[], &self.local))
+        CustomCandidates::new(&self.custom, ValueSource::new(&[], &[], &self.local))
     }
 }
 

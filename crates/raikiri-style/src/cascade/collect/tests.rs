@@ -755,35 +755,82 @@ fn source_hash(source: &str) -> u64 {
 fn declaration_block_cache_stores_a_source_on_its_second_sight() {
     let tree = RuleTree::empty();
     let mut cache = DeclarationBlockCache::default();
-    let first = cache
-        .declarations("color: red; margin: 1px", &tree)
-        .into_owned();
+    let source = "color: red; margin: 1px";
+    let expected = {
+        let mut input = ParserInput::new(source);
+        let mut parser = Parser::new(&mut input);
+        parse_declaration_block_with_consumer_properties(
+            &mut parser,
+            tree.consumer_property_registrations(),
+        )
+    };
+    // `margin` is expanded to its four longhands.
+    assert_eq!(expected.len(), 5);
+    assert_eq!(
+        cache.declarations(source, &tree).expect("the block parses"),
+        DeclarationBlock::Fresh(expected.clone())
+    );
     assert!(matches!(
-        cache.entries.get(&source_hash("color: red; margin: 1px")),
+        cache.entries.get(&source_hash(source)),
         Some(DeclarationBlockEntry::SeenOnce)
     ));
-    assert!(matches!(
-        cache.declarations("color: red; margin: 1px", &tree),
-        Cow::Borrowed(_)
-    ));
-    let third = cache.declarations("color: red; margin: 1px", &tree);
-    assert!(matches!(third, Cow::Borrowed(_)));
-    // `margin` is expanded to its four longhands either way.
-    assert_eq!(first.len(), 5);
-    assert_eq!(third.as_ref(), first.as_slice());
+    for _ in 0..2 {
+        assert_eq!(
+            cache.declarations(source, &tree).expect("the block parses"),
+            DeclarationBlock::Cached(0)
+        );
+    }
+    assert_eq!(&*cache.blocks[0], expected.as_slice());
 }
 
 #[test]
 fn declaration_block_cache_never_reuses_a_colliding_source() {
     let tree = RuleTree::empty();
     let mut cache = DeclarationBlockCache::default();
+    cache.blocks.push(Box::default());
     cache.entries.insert(
         source_hash("color: red"),
-        DeclarationBlockEntry::Parsed("color: blue".into(), Vec::new()),
+        DeclarationBlockEntry::Parsed("color: blue".into(), 0),
     );
-    let parsed = cache.declarations("color: red", &tree);
-    assert!(matches!(parsed, Cow::Owned(_)));
-    assert_eq!(parsed.len(), 1);
+    let parsed = cache
+        .declarations("color: red", &tree)
+        .expect("the block parses");
+    assert!(matches!(
+        parsed,
+        DeclarationBlock::Fresh(ref declarations) if declarations.len() == 1
+    ));
+}
+
+#[test]
+fn repeated_inline_styles_refer_to_one_stored_block() {
+    let mut doc = TestDoc::new();
+    let ids: Vec<_> = (0..3)
+        .map(|_| doc.push_element(0, "p", Some("color: blue; opacity: 0.25")))
+        .collect();
+    let tree = build_rule_tree(&doc);
+    let arena = collect_cascaded(&doc, doc.root_id(), &tree).expect("the cascade collects");
+    let id = |n: usize| StyleNodeId::new(ids[n] as u64);
+    let handles = |n: usize| -> Vec<ValueRef> {
+        arena
+            .candidates(id(n))
+            .expect("p has candidates")
+            .decls()
+            .iter()
+            .map(|candidate| candidate.value())
+            .collect()
+    };
+    // The first sight is parsed for its element alone; the later ones refer
+    // to the block stored on the second sight.
+    assert_eq!(handles(0), [ValueRef::Local(0), ValueRef::Local(1)]);
+    let cached = [
+        ValueRef::Cached { block: 0, decl: 0 },
+        ValueRef::Cached { block: 0, decl: 1 },
+    ];
+    assert_eq!(handles(1), cached);
+    assert_eq!(handles(2), cached);
+    assert_eq!(arena.locals.len(), 2);
+    assert!(arena.same_cascade_input(id(1), id(2)));
+    assert!(arena.same_cascade_input(id(0), id(1)));
 }
 
 #[test]

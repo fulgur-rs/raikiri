@@ -17,7 +17,7 @@ use crate::rule::{Declaration, parse_declaration_block_with_consumer_properties}
 
 use super::candidate::{
     Candidate, CandidateSink, CustomCandidate, CustomCandidates, ElementCandidates, Precedence,
-    ValueRef, ValueSource, push_candidate, same_candidates, same_custom_candidates,
+    ValueRef, ValueSource, push_candidate, same_candidates, same_custom_candidates, too_many,
 };
 use crate::ruletree::{Origin, RuleTree};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
@@ -106,12 +106,13 @@ pub(crate) const CASCADED_PSEUDO_ELEMENTS: [PseudoElem; 5] = [
 ///
 /// The flat arena keeps candidate storage contiguous and records one range per
 /// node. This avoids per-node candidate containers while preserving document
-/// order. A candidate is a [`Candidate`] record whose handle refers either to
-/// a declaration of an active rule or to one of the element's own
-/// declarations, which the arena keeps in `locals`. The arena borrows the rule
-/// tree for `'r` and owns the cascade's [`RuleIndex`], so every declaration a
-/// handle refers to stays alive and unchanged for as long as the candidates
-/// are read.
+/// order. A candidate is a [`Candidate`] record whose handle refers to a
+/// declaration of an active rule, to one of a `style` attribute block stored
+/// for every element with that source (`blocks`), or to one of the element's
+/// own declarations (`locals`). The arena borrows the rule tree for `'r` and
+/// owns the cascade's [`RuleIndex`] and those declarations, so every
+/// declaration a handle refers to stays alive and unchanged for as long as the
+/// candidates are read.
 ///
 /// # Why wrap this in a struct instead of `(Vec<_>, HashMap<_, Range<usize>>)`?
 ///
@@ -137,6 +138,9 @@ pub(crate) struct CascadedArena<'r> {
     decls: Vec<Candidate>,
     /// All custom-property candidates in document visit order.
     custom_decls: Vec<CustomCandidate>,
+    /// The `style` attribute blocks stored by the declaration block cache,
+    /// at the positions cached handles name.
+    blocks: Vec<Box<[Declaration]>>,
     /// The elements' own declarations (presentational hints, quirks, inline
     /// style, animation) in document visit order. A local handle counts from
     /// the start of its element's range.
@@ -188,6 +192,7 @@ impl<'r> CascadedArena<'r> {
             index,
             decls: Vec::new(),
             custom_decls: Vec::new(),
+            blocks: Vec::new(),
             locals: Vec::new(),
             elements: HashMap::new(),
             pseudo_decls: Vec::new(),
@@ -223,10 +228,10 @@ impl<'r> CascadedArena<'r> {
         }
     }
 
-    /// Resolves rule handles against this cascade's rules and local handles
-    /// against `locals`.
+    /// Resolves rule and cached handles against this cascade's rules and
+    /// stored blocks, and local handles against `locals`.
     fn source<'a>(&'a self, locals: &'a [Declaration]) -> ValueSource<'a> {
-        ValueSource::new(self.index.rules(), locals)
+        ValueSource::new(self.index.rules(), &self.blocks, locals)
     }
 
     /// Candidates of `id`: **only this node's**, resolving local handles
@@ -238,13 +243,34 @@ impl<'r> CascadedArena<'r> {
     /// `id`. This struct exposes no path for callers to assemble the full
     /// slice or shift a range.
     pub(crate) fn candidates(&self, id: StyleNodeId) -> Option<ElementCandidates<'_>> {
-        self.element_candidates(self.elements.get(&id)?)
+        self.element(id).0
+    }
+
+    /// The ordinary and custom-property candidates of `id`, found with one
+    /// lookup.
+    pub(crate) fn element(
+        &self,
+        id: StyleNodeId,
+    ) -> (Option<ElementCandidates<'_>>, Option<CustomCandidates<'_>>) {
+        match self.elements.get(&id) {
+            Some(ranges) => (self.element_candidates(ranges), self.element_custom(ranges)),
+            None => (None, None),
+        }
     }
 
     fn element_candidates(&self, ranges: &ElementRanges) -> Option<ElementCandidates<'_>> {
         (!ranges.decls.is_empty()).then(|| {
             ElementCandidates::new(
                 &self.decls[ranges.decls.clone()],
+                self.source(&self.locals[ranges.locals.clone()]),
+            )
+        })
+    }
+
+    fn element_custom(&self, ranges: &ElementRanges) -> Option<CustomCandidates<'_>> {
+        (!ranges.custom.is_empty()).then(|| {
+            CustomCandidates::new(
+                &self.custom_decls[ranges.custom.clone()],
                 self.source(&self.locals[ranges.locals.clone()]),
             )
         })
@@ -259,16 +285,6 @@ impl<'r> CascadedArena<'r> {
             .filter_map(|(&id, ranges)| Some((id, self.element_candidates(ranges)?)))
     }
 
-    pub(crate) fn custom_candidates(&self, id: StyleNodeId) -> Option<CustomCandidates<'_>> {
-        let ranges = self.elements.get(&id)?;
-        (!ranges.custom.is_empty()).then(|| {
-            CustomCandidates::new(
-                &self.custom_decls[ranges.custom.clone()],
-                self.source(&self.locals[ranges.locals.clone()]),
-            )
-        })
-    }
-
     /// Candidates for `(id, pseudo)`: the pseudo-element counterpart of
     /// [`candidates`](Self::candidates).
     pub(crate) fn pseudo_candidates(
@@ -276,24 +292,30 @@ impl<'r> CascadedArena<'r> {
         id: StyleNodeId,
         pseudo: PseudoElem,
     ) -> Option<ElementCandidates<'_>> {
-        let ranges = self.pseudo.get(&(id, pseudo))?;
-        (!ranges.decls.is_empty()).then(|| {
-            ElementCandidates::new(&self.pseudo_decls[ranges.decls.clone()], self.source(&[]))
-        })
+        self.pseudo(id, pseudo).0
     }
 
-    pub(crate) fn pseudo_custom_candidates(
+    /// The ordinary and custom-property candidates of `(id, pseudo)`, found
+    /// with one lookup. They all come from style rules, so they resolve no
+    /// local handles.
+    pub(crate) fn pseudo(
         &self,
         id: StyleNodeId,
         pseudo: PseudoElem,
-    ) -> Option<CustomCandidates<'_>> {
-        let ranges = self.pseudo.get(&(id, pseudo))?;
-        (!ranges.custom.is_empty()).then(|| {
+    ) -> (Option<ElementCandidates<'_>>, Option<CustomCandidates<'_>>) {
+        let Some(ranges) = self.pseudo.get(&(id, pseudo)) else {
+            return (None, None);
+        };
+        let decls = (!ranges.decls.is_empty()).then(|| {
+            ElementCandidates::new(&self.pseudo_decls[ranges.decls.clone()], self.source(&[]))
+        });
+        let custom = (!ranges.custom.is_empty()).then(|| {
             CustomCandidates::new(
                 &self.pseudo_custom_decls[ranges.custom.clone()],
                 self.source(&[]),
             )
-        })
+        });
+        (decls, custom)
     }
 
     /// Whether `a` and `b` carry exactly the same cascade input: equal
@@ -307,28 +329,26 @@ impl<'r> CascadedArena<'r> {
     /// Two nodes that agree here and share a parent therefore resolve to the
     /// same computed values; see [`super::inherit::resolve_inheritance`].
     pub(crate) fn same_cascade_input(&self, a: StyleNodeId, b: StyleNodeId) -> bool {
-        same_candidates(self.candidates(a), self.candidates(b))
-            && same_custom_candidates(self.custom_candidates(a), self.custom_candidates(b))
-            && CASCADED_PSEUDO_ELEMENTS.iter().all(|&pseudo| {
-                same_candidates(
-                    self.pseudo_candidates(a, pseudo),
-                    self.pseudo_candidates(b, pseudo),
-                ) && same_custom_candidates(
-                    self.pseudo_custom_candidates(a, pseudo),
-                    self.pseudo_custom_candidates(b, pseudo),
-                )
-            })
+        let same = |(a_decls, a_custom), (b_decls, b_custom)| {
+            same_candidates(a_decls, b_decls) && same_custom_candidates(a_custom, b_custom)
+        };
+        same(self.element(a), self.element(b))
+            && CASCADED_PSEUDO_ELEMENTS
+                .iter()
+                .all(|&pseudo| same(self.pseudo(a, pseudo), self.pseudo(b, pseudo)))
     }
 }
 
 /// Parsed `style`-attribute blocks for one cascade, keyed by source text.
 ///
 /// Generated documents often repeat the same inline style on many elements;
-/// parsing each distinct string once avoids re-tokenizing it per element.
+/// parsing each distinct string once avoids re-tokenizing it per element,
+/// and every element with that source refers to the stored block's
+/// declarations instead of copying them.
 /// A source is only stored the **second** time it is seen: the first sight
 /// records just its hash, so a document whose inline styles are all
 /// different pays one hash and one small map entry per element instead of
-/// an extra copy of every string and declaration list. Entries are keyed by
+/// an extra copy of every string. Entries are keyed by
 /// hash but always confirm the full source text before reuse, so a hash
 /// collision falls back to a fresh parse. Consumer property registrations
 /// are fixed for the rule tree the cascade runs against, so the parse result
@@ -336,15 +356,35 @@ impl<'r> CascadedArena<'r> {
 #[derive(Default)]
 struct DeclarationBlockCache {
     entries: HashMap<u64, DeclarationBlockEntry>,
+    /// The stored blocks, at the positions cached handles name.
+    blocks: Vec<Box<[Declaration]>>,
 }
 
 enum DeclarationBlockEntry {
     SeenOnce,
-    Parsed(Box<str>, Vec<Declaration>),
+    /// The stored source text and the position of its block in `blocks`.
+    Parsed(Box<str>, u32),
+}
+
+/// The declarations of one `style` attribute.
+#[derive(Debug, PartialEq)]
+enum DeclarationBlock {
+    /// Parsed for this element alone: the first sight of its source, or a
+    /// source whose hash collides with a stored one.
+    Fresh(Vec<Declaration>),
+    /// The stored block at this position.
+    Cached(u32),
 }
 
 impl DeclarationBlockCache {
-    fn declarations(&mut self, source: &str, rule_tree: &RuleTree) -> Cow<'_, [Declaration]> {
+    /// The declarations of `source`. Stores the block the second time a
+    /// source is seen, failing when its position or a declaration's position
+    /// in it does not fit in a `u32` handle.
+    fn declarations(
+        &mut self,
+        source: &str,
+        rule_tree: &RuleTree,
+    ) -> Result<DeclarationBlock, CascadeError> {
         let parse = || {
             let mut input = ParserInput::new(source);
             let mut parser = Parser::new(&mut input);
@@ -358,35 +398,54 @@ impl DeclarationBlockCache {
         match self.entries.entry(hasher.finish()) {
             Entry::Vacant(vacant) => {
                 vacant.insert(DeclarationBlockEntry::SeenOnce);
-                Cow::Owned(parse())
+                Ok(DeclarationBlock::Fresh(parse()))
             }
             Entry::Occupied(occupied) => {
                 let entry = occupied.into_mut();
                 if matches!(entry, DeclarationBlockEntry::SeenOnce) {
-                    *entry = DeclarationBlockEntry::Parsed(source.into(), parse());
+                    let declarations = parse();
+                    let block = u32::try_from(self.blocks.len())
+                        .map_err(|_| too_many("stored style attributes"))?;
+                    u32::try_from(declarations.len())
+                        .map_err(|_| too_many("declarations in one style attribute"))?;
+                    self.blocks.push(declarations.into_boxed_slice());
+                    *entry = DeclarationBlockEntry::Parsed(source.into(), block);
                 }
-                match entry {
-                    DeclarationBlockEntry::Parsed(cached, declarations) if **cached == *source => {
-                        Cow::Borrowed(declarations.as_slice())
+                Ok(match entry {
+                    DeclarationBlockEntry::Parsed(cached, block) if **cached == *source => {
+                        DeclarationBlock::Cached(*block)
                     }
                     // A different source with the same hash: never reuse it.
-                    _ => Cow::Owned(parse()),
-                }
+                    _ => DeclarationBlock::Fresh(parse()),
+                })
             }
         }
     }
-}
 
-/// Calls `push` with each declaration, owned when the block was freshly
-/// parsed and borrowed when it came from the cache, stopping at the first
-/// error.
-fn for_each_declaration(
-    declarations: Cow<'_, [Declaration]>,
-    mut push: impl FnMut(Cow<'_, Declaration>) -> Result<(), CascadeError>,
-) -> Result<(), CascadeError> {
-    match declarations {
-        Cow::Owned(owned) => owned.into_iter().try_for_each(|d| push(Cow::Owned(d))),
-        Cow::Borrowed(borrowed) => borrowed.iter().try_for_each(|d| push(Cow::Borrowed(d))),
+    /// Adds a candidate for every declaration of `block`, with the precedence
+    /// `precedence` gives its importance: a stored block's declarations are
+    /// referred to, a fresh one's become the element's own.
+    fn push(
+        &self,
+        sink: &mut CandidateSink<'_>,
+        block: DeclarationBlock,
+        precedence: impl Fn(bool) -> Precedence,
+    ) -> Result<(), CascadeError> {
+        match block {
+            DeclarationBlock::Fresh(declarations) => {
+                for decl in declarations {
+                    let precedence = precedence(decl.important);
+                    sink.push_local(Cow::Owned(decl), precedence)?;
+                }
+            }
+            // `declarations` checked that every position fits in `u32`.
+            DeclarationBlock::Cached(block) => {
+                for (decl, index) in self.blocks[block as usize].iter().zip(0u32..) {
+                    sink.push_cached((block, index), decl, precedence(decl.important));
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -916,32 +975,30 @@ pub(crate) fn collect_cascaded_with_media_context<'r, D: StyleDom>(
                 }
                 // inline style
                 if let Some(source) = elem.inline_style_source() {
-                    for_each_declaration(block_cache.declarations(source, rule_tree), |decl| {
-                        let precedence = Precedence::new(
+                    let block = block_cache.declarations(source, rule_tree)?;
+                    block_cache.push(&mut sink, block, |important| {
+                        Precedence::new(
                             Origin::Author,
-                            decl.important,
+                            important,
                             INLINE_SPECIFICITY,
                             INLINE_SOURCE_ORDER,
                             LayerPosition {
                                 attached: true,
                                 ..LayerPosition::default()
                             },
-                        );
-                        sink.push_local(decl, precedence)
+                        )
                     })?;
                 }
                 if let Some(source) = elem.animation_style_source() {
-                    for_each_declaration(block_cache.declarations(source, rule_tree), |decl| {
-                        sink.push_local(
-                            decl,
-                            Precedence::new(
-                                Origin::Animation,
-                                // Animated values are never important.
-                                false,
-                                INLINE_SPECIFICITY,
-                                INLINE_SOURCE_ORDER,
-                                LayerPosition::default(),
-                            ),
+                    let block = block_cache.declarations(source, rule_tree)?;
+                    block_cache.push(&mut sink, block, |_| {
+                        Precedence::new(
+                            Origin::Animation,
+                            // Animated values are never important.
+                            false,
+                            INLINE_SPECIFICITY,
+                            INLINE_SOURCE_ORDER,
+                            LayerPosition::default(),
                         )
                     })?;
                 }
@@ -1028,6 +1085,7 @@ pub(crate) fn collect_cascaded_with_media_context<'r, D: StyleDom>(
             stack[start..].reverse();
         } // cov:ignore: fallthrough-vs-continue region split inside a loop body; every test with an in-document element already exercises this closing brace, but cargo-llvm-cov does not attribute the hit to this line.
     }
+    out.blocks = block_cache.blocks;
     Ok(out)
 }
 pub(crate) fn specificity_of(selector: &Selector<RaikiriSelectorImpl>) -> Specificity {

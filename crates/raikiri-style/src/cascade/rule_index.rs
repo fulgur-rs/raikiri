@@ -57,6 +57,8 @@ use crate::layer::{LayerOrder, LayerPosition};
 use crate::rule::{Declaration, StyleRule};
 use crate::style_dom::StyleElement;
 
+use super::candidate::too_many;
+
 /// Upper bound on the ancestor requirements stored per selector. Longer
 /// chains only lose filtering power, not correctness.
 const MAX_ANCESTOR_HASHES: usize = 4;
@@ -324,13 +326,6 @@ impl<'a> RuleIndex<'a> {
     #[cfg(test)]
     pub(crate) fn rule_count(&self) -> usize {
         self.rules.len()
-    }
-}
-
-// cov:ignore: a stylesheet would need billions of rules, selectors or declarations in one rule to reach this
-fn too_many(what: &str) -> CascadeError {
-    CascadeError::Internal {
-        message: format!("more than u32::MAX {what} in one cascade"),
     }
 }
 

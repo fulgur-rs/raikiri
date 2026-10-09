@@ -138,9 +138,7 @@ fn owned_copies_keep_the_candidates_and_make_every_handle_local() {
     let arena = collect_cascaded(&doc, doc.root_id(), &tree).expect("the cascade collects");
     let id = StyleNodeId(p as u64);
     let decls = arena.candidates(id).expect("p has candidates");
-    let custom = arena
-        .custom_candidates(id)
-        .expect("p has custom properties");
+    let custom = arena.element(id).1.expect("p has custom properties");
     assert!(matches!(decls.decls()[0].value(), ValueRef::Rule { .. }));
 
     let owned = OwnedCandidates::copy(decls, custom).expect("the copy numbers its declarations");
