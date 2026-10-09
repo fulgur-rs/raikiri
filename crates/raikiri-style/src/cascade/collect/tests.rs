@@ -456,30 +456,34 @@ fn collect_cascaded_groups_are_unchanged_by_flat_arena_refactor() {
     // p2: 2 stylesheet decls, no inline — order = rule/source order.
     let p2c = arena.candidates(id(p2)).expect("p2 has 2 stylesheet decls");
     assert_eq!(p2c.len(), 2);
-    assert_eq!(p2c[0].0, PropertyValue::Color(RED));
-    assert_eq!(p2c[1].0, PropertyValue::BackgroundColor(BLUE));
-    assert_eq!(p2c[0].4, 0, "first rule keeps its source_order");
-    assert_eq!(p2c[1].4, 1, "second rule keeps its source_order");
+    assert_eq!(p2c[0].value, PropertyValue::Color(RED));
+    assert_eq!(p2c[1].value, PropertyValue::BackgroundColor(BLUE));
+    assert_eq!(p2c[0].source_order, 0, "first rule keeps its source_order");
+    assert_eq!(p2c[1].source_order, 1, "second rule keeps its source_order");
+    // Every candidate carries the key of its value.
+    assert_eq!(p2c[0].key, PropertyKey::Color);
+    assert_eq!(p2c[1].key, PropertyKey::BackgroundColor);
 
     // p1 / p3: same 2 stylesheet decls, PLUS inline style appended last
     // (collect_cascaded pushes stylesheet rules before inline style).
     let p1c = arena.candidates(id(p1)).expect("p1 has decls");
     assert_eq!(p1c.len(), 3, "2 stylesheet decls + 1 inline, inline last");
-    assert_eq!(p1c[0].0, PropertyValue::Color(RED));
-    assert_eq!(p1c[1].0, PropertyValue::BackgroundColor(BLUE));
-    assert_eq!(p1c[2].0, PropertyValue::Display(DisplayValue::Block));
-    assert_eq!(p1c[2].3, INLINE_SPECIFICITY);
-    assert_eq!(p1c[2].4, INLINE_SOURCE_ORDER);
+    assert_eq!(p1c[0].value, PropertyValue::Color(RED));
+    assert_eq!(p1c[1].value, PropertyValue::BackgroundColor(BLUE));
+    assert_eq!(p1c[2].value, PropertyValue::Display(DisplayValue::Block));
+    assert_eq!(p1c[2].key, PropertyKey::Display);
+    assert_eq!(p1c[2].specificity, INLINE_SPECIFICITY);
+    assert_eq!(p1c[2].source_order, INLINE_SOURCE_ORDER);
 
     let p3c = arena.candidates(id(p3)).expect("p3 has decls");
     assert_eq!(p3c.len(), 3);
-    assert_eq!(p3c[2].0, PropertyValue::Display(DisplayValue::Inline));
+    assert_eq!(p3c[2].value, PropertyValue::Display(DisplayValue::Inline));
 
     // Stylesheet-only decls (p1/p2/p3 all matched the same 2 `p` rules)
     // carry identical specificity to each other — cross-node consistency
     // the old shared-selector-per-rule code guaranteed too.
-    assert_eq!(p1c[0].3, p2c[0].3);
-    assert_eq!(p2c[0].3, p3c[0].3);
+    assert_eq!(p1c[0].specificity, p2c[0].specificity);
+    assert_eq!(p2c[0].specificity, p3c[0].specificity);
 
     // Ranges must not overlap — a flat arena has to hold this invariant
     // that per-node `Vec`s never needed to: if two nodes' ranges ever
@@ -770,4 +774,26 @@ fn repeated_inline_styles_cascade_like_unique_ones() {
         assert!(result.opacity_specified[id]);
         assert!(!result.background_color_specified[id]);
     }
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "stale declaration key")]
+fn a_value_written_past_update_value_is_caught() {
+    let mut decl = Declaration::new(PropertyValue::Opacity(1.0), false);
+    decl.value = PropertyValue::Color(crate::property::CssColor::BLACK);
+    let _ = CascadedDecl::new(decl, Origin::Author, 0, 0, LayerPosition::default());
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "stale declaration rollback")]
+fn a_rollback_kind_left_behind_by_a_value_write_is_caught() {
+    use crate::property::{BorderColor, CssWideKeyword};
+    let mut decl = Declaration::new(
+        PropertyValue::BorderTopColor(BorderColor::CurrentColor),
+        false,
+    );
+    decl.value = PropertyValue::BorderTopColorCssWide(CssWideKeyword::Revert);
+    let _ = CascadedDecl::new(decl, Origin::Author, 0, 0, LayerPosition::default());
 }

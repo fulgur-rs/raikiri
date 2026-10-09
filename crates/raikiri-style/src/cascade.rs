@@ -350,22 +350,17 @@ fn cascade_from_candidates<D: StyleDom>(
     cascaded: &collect::CascadedArena,
     media_context: &MediaContext,
 ) -> Result<CascadeResult, CascadeError> {
-    // One pass over the nodes that have candidates, rather than one probe
-    // per node and per flag.
+    // Collection recorded which elements have these candidates, so no second
+    // pass over every candidate is needed.
     let mut opacity_specified = vec![false; dom.node_count()];
     let mut background_color_specified = vec![false; dom.node_count()];
-    for (id, candidates) in cascaded.all_candidates() {
-        let idx = id.0 as usize;
+    for specified in cascaded.specified_properties() {
+        let idx = specified.id.0 as usize;
         if idx >= opacity_specified.len() {
             continue; // cov:ignore: candidates only exist for walked nodes, all below node_count()
         }
-        for (value, ..) in candidates {
-            match value.key() {
-                PropertyKey::Opacity => opacity_specified[idx] = true,
-                PropertyKey::BackgroundColor => background_color_specified[idx] = true,
-                _ => {}
-            }
-        }
+        opacity_specified[idx] = specified.opacity;
+        background_color_specified[idx] = specified.background_color;
     }
 
     // Phase 2: inheritance walk.

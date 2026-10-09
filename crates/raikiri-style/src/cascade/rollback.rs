@@ -7,7 +7,7 @@ use crate::ruletree::Origin;
 
 use super::collect::cascade_rank;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Rollback {
     None,
     Layer,

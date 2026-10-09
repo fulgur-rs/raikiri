@@ -225,8 +225,8 @@ pub(crate) fn project_deferred_value(
         // `margin-inline`/`padding-inline`/`margin-block`/`padding-block`
         // logical 2-value shorthand — same projection shape as
         // `Margin`/`Padding` above, fanning out to the 2 physical longhands
-        // `crate::rule::expand_deferred`'s key table pairs each shorthand
-        // key with (`crate::property::PropertyValue::MarginInline` doc's
+        // `crate::rule::classify` pairs each shorthand key with
+        // (`crate::property::PropertyValue::MarginInline` doc's
         // physical-mapping rationale covers *why* these specific longhands).
         PropertyValue::MarginInline(pair) => match key {
             crate::property::PropertyKey::MarginLeft => PropertyValue::MarginLeft(pair.start),

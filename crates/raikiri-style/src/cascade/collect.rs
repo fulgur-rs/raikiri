@@ -11,8 +11,10 @@ use selectors::parser::Selector;
 use crate::PseudoElem;
 use crate::RaikiriSelectorImpl;
 use crate::media::MediaContext;
-use crate::property::{CustomProperty, PropertyValue};
+use crate::property::{CustomProperty, PropertyKey, PropertyValue};
 use crate::rule::{Declaration, parse_declaration_block_with_consumer_properties};
+
+use super::rollback::Rollback;
 use crate::ruletree::{Origin, RuleTree};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
 
@@ -94,13 +96,72 @@ pub(crate) const CASCADED_PSEUDO_ELEMENTS: [PseudoElem; 5] = [
     PseudoElem::FirstLetter,
 ];
 
-/// One candidate declaration: `(value, important, origin, specificity, source_order, layer)`.
+/// One candidate declaration of an element or of one of its pseudo-elements.
 /// `collect_cascaded` populates it; `pick_winners` ranks and selects winners.
-/// Alias the tuple (including `Origin`) to avoid clippy::type_complexity.
-pub(crate) type CascadedDecl = (PropertyValue, bool, Origin, Specificity, u32, LayerPosition);
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct CascadedDecl {
+    pub(crate) value: PropertyValue,
+    pub(crate) important: bool,
+    pub(crate) origin: Origin,
+    /// The cascade slot of `value`, carried over from its [`Declaration`].
+    pub(crate) key: PropertyKey,
+    /// How `value` rolls the cascade back, carried over from its
+    /// [`Declaration`].
+    pub(crate) rollback: Rollback,
+    pub(crate) specificity: Specificity,
+    pub(crate) source_order: u32,
+    pub(crate) layer: LayerPosition,
+}
+
+impl CascadedDecl {
+    /// The candidate an expanded declaration contributes from one source.
+    pub(crate) fn new(
+        decl: Declaration,
+        origin: Origin,
+        specificity: Specificity,
+        source_order: u32,
+        layer: LayerPosition,
+    ) -> Self {
+        debug_assert_derived_fields(decl.key, decl.rollback, &decl.value);
+        Self {
+            value: decl.value,
+            important: decl.important,
+            origin,
+            key: decl.key,
+            rollback: decl.rollback,
+            specificity,
+            source_order,
+            layer,
+        }
+    }
+
+    /// A presentational-hint candidate: never important, unlayered, in the
+    /// author presentational hint origin at its specificity and source order.
+    pub(crate) fn hint(value: PropertyValue) -> Self {
+        Self::new(
+            Declaration::new(value, false),
+            Origin::AuthorPresentationalHint,
+            PRESENTATIONAL_HINT_SPECIFICITY,
+            PRESENTATIONAL_HINT_SOURCE_ORDER,
+            LayerPosition::default(),
+        )
+    }
+}
+
+/// Checks, in debug builds, that a declaration's derived fields still describe
+/// its value. The value only changes through `Declaration::update_value`, which
+/// recomputes them; a direct write to `value` would leave them stale.
+fn debug_assert_derived_fields(key: PropertyKey, rollback: Rollback, value: &PropertyValue) {
+    debug_assert_eq!(key, value.key(), "stale declaration key");
+    debug_assert_eq!(
+        rollback,
+        super::rollback::rollback_kind(value),
+        "stale declaration rollback"
+    );
+}
 
 // One `CascadedDecl` is materialized per matched declaration of every element,
-// so its size bounds the candidate arena's footprint. Its fields take 162
+// so its size bounds the candidate arena's footprint. Its fields take 164
 // bytes padded to 168, so a new field fits only in that slack; past it, raise
 // the bound together with a cascade memory measurement.
 const _: () = assert!(
@@ -165,6 +226,18 @@ pub(crate) struct CascadedArena {
     pseudo_custom_decls: Vec<CustomCascadedDecl>,
     /// Per-`(id, pseudo)` ranges in `pseudo_custom_decls`.
     pseudo_custom_ranges: HashMap<(StyleNodeId, PseudoElem), Range<usize>>,
+    /// Elements with an `opacity` or a `background-color` candidate of their
+    /// own (pseudo-elements excluded), with which of the two, in visit order.
+    specified: Vec<SpecifiedProperties>,
+}
+
+/// Whether an element's own candidates include `opacity` and
+/// `background-color`, whichever declaration wins.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SpecifiedProperties {
+    pub(crate) id: StyleNodeId,
+    pub(crate) opacity: bool,
+    pub(crate) background_color: bool,
 }
 
 impl CascadedArena {
@@ -178,6 +251,33 @@ impl CascadedArena {
             pseudo_ranges: HashMap::new(),
             pseudo_custom_decls: Vec::new(),
             pseudo_custom_ranges: HashMap::new(),
+            specified: Vec::new(),
+        }
+    }
+
+    /// The elements whose own candidates include `opacity` or
+    /// `background-color`.
+    pub(crate) fn specified_properties(&self) -> &[SpecifiedProperties] {
+        &self.specified
+    }
+
+    /// Records which of the flagged properties `id`'s own candidates, just
+    /// collected into `decls[range]`, include.
+    fn record_specified_properties(&mut self, id: StyleNodeId, range: Range<usize>) {
+        let (mut opacity, mut background_color) = (false, false);
+        for candidate in &self.decls[range] {
+            match candidate.key {
+                PropertyKey::Opacity => opacity = true,
+                PropertyKey::BackgroundColor => background_color = true,
+                _ => {}
+            }
+        }
+        if opacity || background_color {
+            self.specified.push(SpecifiedProperties {
+                id,
+                opacity,
+                background_color,
+            });
         }
     }
 
@@ -304,17 +404,15 @@ impl DeclarationBlockCache {
     }
 }
 
-/// Calls `push` with each `(value, important)` pair, moving out of a freshly
-/// parsed block and cloning out of a cached one.
+/// Calls `push` with each declaration, owned when the block was freshly
+/// parsed and borrowed when it came from the cache.
 fn for_each_declaration(
     declarations: Cow<'_, [Declaration]>,
-    mut push: impl FnMut(PropertyValue, bool),
+    mut push: impl FnMut(Cow<'_, Declaration>),
 ) {
     match declarations {
-        Cow::Owned(owned) => owned.into_iter().for_each(|d| push(d.value, d.important)),
-        Cow::Borrowed(borrowed) => borrowed
-            .iter()
-            .for_each(|d| push(d.value.clone(), d.important)),
+        Cow::Owned(owned) => owned.into_iter().for_each(|d| push(Cow::Owned(d))),
+        Cow::Borrowed(borrowed) => borrowed.iter().for_each(|d| push(Cow::Borrowed(d))),
     }
 }
 
@@ -326,20 +424,40 @@ fn for_each_declaration(
 /// `::before`/`::after` path (a per-element scratch buffer pair,
 /// [`collect_cascaded`]'s pseudo-element section) without duplicating this
 /// match.
+///
+/// An owned value moves and a borrowed one is cloned straight into its
+/// candidate. `important` is the importance the candidate takes, which
+/// animations force to `false`.
+#[allow(clippy::too_many_arguments)] // the destination plus one candidate's precedence fields
 fn push_cascaded_decl(
     (decls, custom_decls): (&mut Vec<CascadedDecl>, &mut Vec<CustomCascadedDecl>),
-    value: PropertyValue,
+    decl: Cow<'_, Declaration>,
     important: bool,
     origin: Origin,
     specificity: Specificity,
     source_order: u32,
     layer: LayerPosition,
 ) {
+    let (key, rollback) = (decl.key, decl.rollback);
+    let value = match decl {
+        Cow::Owned(decl) => decl.value,
+        Cow::Borrowed(decl) => decl.value.clone(),
+    };
+    debug_assert_derived_fields(key, rollback, &value);
     match value {
         PropertyValue::CustomProperty(custom) => {
             custom_decls.push((custom, important, origin, specificity, source_order, layer))
         }
-        value => decls.push((value, important, origin, specificity, source_order, layer)),
+        value => decls.push(CascadedDecl {
+            value,
+            important,
+            origin,
+            key,
+            rollback,
+            specificity,
+            source_order,
+            layer,
+        }),
     }
 }
 
@@ -352,9 +470,8 @@ fn push_cascaded_decl(
 ///   `value.clone()` was discarded if it lost; now only the winner is cloned
 ///   once for [`super::inherit::apply_value`].
 ///
-/// The sibling [`CascadedDecl`] remains a tuple alias because it is always
-/// destructured into named bindings, never accessed positionally. This type
-/// uses named fields because [`beats`] compares precedence fields **in order**:
+/// Like [`CascadedDecl`], this type uses named fields: [`beats`] compares
+/// precedence fields **in order**, and
 /// [`specificity`](Self::specificity) and [`source_order`](Self::source_order)
 /// are both `u32`; swapping tuple positions `.1` and `.2` would compile and
 /// silently change cascade winners.
@@ -588,7 +705,7 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
     // Bucket the active rules once per cascade so each element only runs the
     // full matcher against rules that can possibly match it. See the
     // `rule_index` module docs for why the filtering never drops a match.
-    let rule_index = RuleIndex::new(style_rules);
+    let rule_index = RuleIndex::new(style_rules, &layers);
     let mut candidate_rules: Vec<u32> = Vec::new();
     let mut block_cache = DeclarationBlockCache::default();
     let mut cell_padding_cache = HashMap::new();
@@ -739,15 +856,7 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                             && value.key() == expected_key
                             && parser.expect_exhausted().is_ok()
                         {
-                            push_cascaded_decl(
-                                (&mut out.decls, &mut out.custom_decls),
-                                value,
-                                false,
-                                Origin::AuthorPresentationalHint,
-                                PRESENTATIONAL_HINT_SPECIFICITY,
-                                PRESENTATIONAL_HINT_SOURCE_ORDER,
-                                LayerPosition::default(),
-                            );
+                            out.decls.push(CascadedDecl::hint(value));
                         }
                     }
                 }
@@ -782,22 +891,19 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                             &ancestor_path,
                         )
                     {
-                        // Longhands were expanded when the index was built
-                        // for this cascade. Expanding only during parsing
-                        // would not cover post-parse mutation of `RuleTree`;
-                        // see the `crate::rule::expand_shorthand_into` docs.
-                        for d in &indexed.declarations {
+                        // The declarations were expanded when the rule was
+                        // parsed (`crate::rule::expand_shorthand_into`), and the
+                        // rule tree has no path that changes a rule after
+                        // parsing.
+                        for d in indexed.declarations {
                             push_cascaded_decl(
                                 (&mut out.decls, &mut out.custom_decls),
-                                d.value.clone(),
+                                Cow::Borrowed(d),
                                 d.important,
                                 rule.origin,
                                 spec,
                                 rule.source_order,
-                                LayerPosition {
-                                    attached: false,
-                                    rank: layers.rank(rule.layer, rule.origin),
-                                },
+                                indexed.layer,
                             );
                         }
                     }
@@ -846,61 +952,55 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                             // cov:ignore: selector_matches_pseudo_element excludes boxless native pseudos
                             PseudoElem::Backdrop | PseudoElem::FileSelectorButton => continue,
                         };
-                        for d in &indexed.declarations {
+                        for d in indexed.declarations {
                             push_cascaded_decl(
                                 (buf, custom_buf),
-                                d.value.clone(),
+                                Cow::Borrowed(d),
                                 d.important,
                                 rule.origin,
                                 spec,
                                 rule.source_order,
-                                LayerPosition {
-                                    attached: false,
-                                    rank: layers.rank(rule.layer, rule.origin),
-                                },
+                                indexed.layer,
                             );
                         }
                     }
                 }
                 // inline style
                 if let Some(source) = elem.inline_style_source() {
-                    for_each_declaration(
-                        block_cache.declarations(source, rule_tree),
-                        |value, important| {
-                            push_cascaded_decl(
-                                (&mut out.decls, &mut out.custom_decls),
-                                value,
-                                important,
-                                Origin::Author,
-                                INLINE_SPECIFICITY,
-                                INLINE_SOURCE_ORDER,
-                                LayerPosition {
-                                    attached: true,
-                                    ..LayerPosition::default()
-                                },
-                            );
-                        },
-                    );
+                    for_each_declaration(block_cache.declarations(source, rule_tree), |decl| {
+                        let important = decl.important;
+                        push_cascaded_decl(
+                            (&mut out.decls, &mut out.custom_decls),
+                            decl,
+                            important,
+                            Origin::Author,
+                            INLINE_SPECIFICITY,
+                            INLINE_SOURCE_ORDER,
+                            LayerPosition {
+                                attached: true,
+                                ..LayerPosition::default()
+                            },
+                        );
+                    });
                 }
                 if let Some(source) = elem.animation_style_source() {
-                    for_each_declaration(
-                        block_cache.declarations(source, rule_tree),
-                        |value, _| {
-                            push_cascaded_decl(
-                                (&mut out.decls, &mut out.custom_decls),
-                                value,
-                                false,
-                                Origin::Animation,
-                                INLINE_SPECIFICITY,
-                                INLINE_SOURCE_ORDER,
-                                LayerPosition::default(),
-                            );
-                        },
-                    );
+                    for_each_declaration(block_cache.declarations(source, rule_tree), |decl| {
+                        push_cascaded_decl(
+                            (&mut out.decls, &mut out.custom_decls),
+                            decl,
+                            // Animated values are never important.
+                            false,
+                            Origin::Animation,
+                            INLINE_SPECIFICITY,
+                            INLINE_SOURCE_ORDER,
+                            LayerPosition::default(),
+                        );
+                    });
                 }
                 let end = out.decls.len();
                 if end > start {
                     out.ranges.insert(id, start..end);
+                    out.record_specified_properties(id, start..end);
                 }
                 let custom_end = out.custom_decls.len();
                 if custom_end > custom_start {
@@ -1025,26 +1125,20 @@ pub(crate) fn pick_winners(candidates: &[CascadedDecl], winners: &mut Vec<Option
     );
 
     let mut has_rollback = false;
-    for (idx, (value, important, origin, spec, order, layer)) in candidates.iter().enumerate() {
-        if matches!(value, PropertyValue::AllRevertLayer) {
+    for (idx, candidate) in candidates.iter().enumerate() {
+        if matches!(candidate.value, PropertyValue::AllRevertLayer) {
             has_rollback = true;
             continue;
         }
         // Use the fieldless enum discriminant directly as the slot index.
         // `resize` handles new variants; no fixed upper bound is needed.
-        let slot = value.key() as usize;
+        let slot = candidate.key as usize;
         if winners.len() <= slot {
             winners.resize(slot + 1, None);
         }
-        let candidate = RankedDecl {
-            rank: cascade_rank(*origin, *important),
-            layer_priority: layer.priority(*important),
-            specificity: *spec,
-            source_order: *order,
-            idx,
-        };
-        if winners[slot].is_none_or(|existing| beats(candidate, existing)) {
-            winners[slot] = Some(candidate);
+        let ranked = ranked(candidate, idx);
+        if winners[slot].is_none_or(|existing| beats(ranked, existing)) {
+            winners[slot] = Some(ranked);
         }
     }
     if has_rollback {
@@ -1052,46 +1146,43 @@ pub(crate) fn pick_winners(candidates: &[CascadedDecl], winners: &mut Vec<Option
             let Some(existing) = *winner else {
                 continue;
             };
-            let key = candidates[existing.idx].0.key();
-            if matches!(
-                key,
-                crate::property::PropertyKey::Direction | crate::property::PropertyKey::UnicodeBidi
-            ) {
+            let key = candidates[existing.idx].key;
+            if matches!(key, PropertyKey::Direction | PropertyKey::UnicodeBidi) {
                 continue;
             }
-            let selected = super::rollback::select_layered_winner(
-                candidates,
-                |idx, (value, important, origin, spec, order, layer)| {
-                    let rollback = matches!(value, PropertyValue::AllRevertLayer);
-                    if value.key() != key && !rollback {
-                        return None;
-                    }
-                    Some((
-                        (
-                            cascade_rank(*origin, *important),
-                            layer.priority(*important),
-                            *spec,
-                            *order,
-                            idx,
-                        ),
-                        *origin,
-                        *layer,
-                        *important,
-                        super::rollback::rollback_kind(value),
-                    ))
-                },
-            );
-            *winner = selected.map(|idx| {
-                let (_, important, origin, spec, order, layer) = &candidates[idx];
-                RankedDecl {
-                    rank: cascade_rank(*origin, *important),
-                    layer_priority: layer.priority(*important),
-                    specificity: *spec,
-                    source_order: *order,
-                    idx,
+            let selected = super::rollback::select_layered_winner(candidates, |idx, candidate| {
+                let rollback = matches!(candidate.value, PropertyValue::AllRevertLayer);
+                if candidate.key != key && !rollback {
+                    return None;
                 }
+                let ranked = ranked(candidate, idx);
+                Some((
+                    (
+                        ranked.rank,
+                        ranked.layer_priority,
+                        ranked.specificity,
+                        ranked.source_order,
+                        idx,
+                    ),
+                    candidate.origin,
+                    candidate.layer,
+                    candidate.important,
+                    candidate.rollback,
+                ))
             });
+            *winner = selected.map(|idx| ranked(&candidates[idx], idx));
         }
+    }
+}
+
+/// The precedence of `candidate`, found at `idx` of the candidates being ranked.
+fn ranked(candidate: &CascadedDecl, idx: usize) -> RankedDecl {
+    RankedDecl {
+        rank: cascade_rank(candidate.origin, candidate.important),
+        layer_priority: candidate.layer.priority(candidate.important),
+        specificity: candidate.specificity,
+        source_order: candidate.source_order,
+        idx,
     }
 }
 

@@ -8670,8 +8670,8 @@ pub enum PropertyValue {
     /// [`crate::rule::expand_shorthand_into`] expands it into four longhand variants
     /// ([`PaddingTop`](Self::PaddingTop) / [`PaddingRight`](Self::PaddingRight) /
     /// [`PaddingBottom`](Self::PaddingBottom) / [`PaddingLeft`](Self::PaddingLeft))
-    /// both at the parser exit (`parse_declaration_block`) and at the element-cascade
-    /// entry (the `collect_cascaded` function in [`mod@crate::cascade`]). This gives
+    /// when the declaration is parsed (`parse_declaration_block`), and the
+    /// element cascade only ever reads those expanded declarations. This gives
     /// the 1/2/3/4 expansion and follows CSS Cascading L4 §3 "Shorthand Properties"
     /// <https://www.w3.org/TR/css-cascade-4/#shorthand> verbatim: "A shorthand
     /// property sets all of its longhand sub-properties, exactly as if expanded in
@@ -8765,8 +8765,9 @@ pub enum PropertyValue {
     ///
     /// As with [`Self::Padding`] / [`Self::Margin`],
     /// [`crate::rule::expand_shorthand_into`] expands it into the two
-    /// [`Self::PaddingLeft`]/[`Self::PaddingRight`] longhands both when parsing
-    /// exits and when element cascade begins. If it does reach
+    /// [`Self::PaddingLeft`]/[`Self::PaddingRight`] longhands when the
+    /// declaration is parsed, and the element cascade only reads those. If it
+    /// does reach
     /// [`crate::cascade::apply_value`], that behavior is **not a safety net**
     /// (the same framing as the `Padding`/`Margin` arms).
     PaddingInline(StartEnd<Length>),
@@ -8808,8 +8809,8 @@ pub enum PropertyValue {
     /// [`crate::rule::expand_shorthand_into`] expands it into the four longhand
     /// variants ([`MarginTop`](Self::MarginTop) / [`MarginRight`](Self::MarginRight) /
     /// [`MarginBottom`](Self::MarginBottom) / [`MarginLeft`](Self::MarginLeft))
-    /// both when parsing exits (`parse_declaration_block`) and when element
-    /// cascade begins ([`mod@crate::cascade`]'s `collect_cascaded`). This follows
+    /// when the declaration is parsed (`parse_declaration_block`), and the
+    /// element cascade only reads those expanded declarations. This follows
     /// the 1/2/3/4-value expansion in spec §3.2 and CSS Cascading L4 §3,
     /// "Shorthand Properties" <https://www.w3.org/TR/css-cascade-4/#shorthand>:
     /// "A shorthand property sets all of its longhand sub-properties,
@@ -8898,9 +8899,9 @@ pub enum PropertyValue {
     ///
     /// **This variant is not observed during element cascade**:
     /// [`crate::rule::expand_shorthand_into`] expands it into twelve longhand
-    /// variants (four sides × three sub-properties) both when parsing exits
-    /// (`parse_declaration_block`) and when element cascade begins
-    /// ([`mod@crate::cascade`]'s `collect_cascaded`). This follows CSS Cascading
+    /// variants (four sides × three sub-properties) when the declaration is
+    /// parsed (`parse_declaration_block`), and the element cascade only reads
+    /// those expanded declarations. This follows CSS Cascading
     /// L4 §3 "Shorthand Properties"
     /// <https://www.w3.org/TR/css-cascade-4/#shorthand>: "A shorthand
     /// property sets all of its longhand sub-properties, exactly as if expanded
@@ -9112,8 +9113,8 @@ pub enum PropertyValue {
     /// **This variant is not observed during element cascade**: as with
     /// [`Self::Padding`], [`crate::rule::expand_shorthand_into`] expands it into
     /// the two longhands [`OverflowX`](Self::OverflowX) /
-    /// [`OverflowY`](Self::OverflowY) both when parsing exits and when element
-    /// cascade begins (CSS Cascading L4 §3 "Shorthand Properties"
+    /// [`OverflowY`](Self::OverflowY) when the declaration is parsed, and the
+    /// element cascade only reads those (CSS Cascading L4 §3 "Shorthand Properties"
     /// <https://www.w3.org/TR/css-cascade-4/#shorthand>). If it does reach
     /// [`crate::cascade::apply_value`], the behavior is **not a safety net**;
     /// see the same framing in [`Self::Padding`] docs.
@@ -9149,11 +9150,12 @@ pub enum PropertyValue {
     ///
     /// **This variant is not observed during the element cascade**: as with
     /// [`Self::Padding`], [`crate::rule::expand_shorthand_into`] expands it into the
-    /// three longhands [`TextDecorationLine`](Self::TextDecorationLine),
+    /// four longhands [`TextDecorationLine`](Self::TextDecorationLine),
+    /// [`TextDecorationThickness`](Self::TextDecorationThickness),
     /// [`TextDecorationStyle`](Self::TextDecorationStyle), and
-    /// [`TextDecorationColor`](Self::TextDecorationColor) both at the parser exit
-    /// and at the element-cascade entry (per CSS Cascading L4 §3, "Shorthand
-    /// Properties", <https://www.w3.org/TR/css-cascade-4/#shorthand>).
+    /// [`TextDecorationColor`](Self::TextDecorationColor) when the declaration
+    /// is parsed, and the element cascade only reads those (per CSS Cascading
+    /// L4 §3, "Shorthand Properties", <https://www.w3.org/TR/css-cascade-4/#shorthand>).
     /// If it reaches [`crate::cascade::apply_value`], that path is **not a safety
     /// net**; see the same framing and details in the [`Self::Padding`] docs.
     /// (The shorthand key follows the longhands, as for [`Self::Padding`],

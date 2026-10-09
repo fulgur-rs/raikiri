@@ -246,20 +246,77 @@ fn deferred_shorthand_expands_to_each_longhand_key() {
             PropertyKey::PlaceSelf,
             &[PropertyKey::AlignSelf, PropertyKey::JustifySelf],
         ),
+        (
+            PropertyKey::BorderRadius,
+            &[
+                PropertyKey::BorderRadiusTopLeft,
+                PropertyKey::BorderRadiusTopRight,
+                PropertyKey::BorderRadiusBottomRight,
+                PropertyKey::BorderRadiusBottomLeft,
+            ],
+        ),
+        (
+            PropertyKey::MarginInline,
+            &[PropertyKey::MarginLeft, PropertyKey::MarginRight],
+        ),
+        (
+            PropertyKey::MarginBlock,
+            &[PropertyKey::MarginTop, PropertyKey::MarginBottom],
+        ),
+        (
+            PropertyKey::PaddingInline,
+            &[PropertyKey::PaddingLeft, PropertyKey::PaddingRight],
+        ),
+        (
+            PropertyKey::PaddingBlock,
+            &[PropertyKey::PaddingTop, PropertyKey::PaddingBottom],
+        ),
+        (
+            PropertyKey::ListStyle,
+            &[
+                PropertyKey::ListStyleType,
+                PropertyKey::ListStylePosition,
+                PropertyKey::ListStyleImage,
+            ],
+        ),
+        (
+            PropertyKey::FlexFlow,
+            &[PropertyKey::FlexDirection, PropertyKey::FlexWrap],
+        ),
+        (
+            PropertyKey::Background,
+            &[
+                PropertyKey::BackgroundColor,
+                PropertyKey::BackgroundImage,
+                PropertyKey::BackgroundRepeat,
+                PropertyKey::BackgroundAttachment,
+                PropertyKey::BackgroundPosition,
+                PropertyKey::BackgroundSize,
+                PropertyKey::BackgroundClip,
+                PropertyKey::BackgroundOrigin,
+            ],
+        ),
     ];
 
+    let deferred = |key, important| ParsedDeclaration {
+        value: PropertyValue::Deferred(DeferredValue {
+            property: "test".into(),
+            value: "raw".into(),
+            key,
+        }),
+        important,
+    };
     for (shorthand, expected) in cases {
-        let declaration = Declaration {
-            value: PropertyValue::Deferred(DeferredValue {
-                property: "test".into(),
-                value: "raw".into(),
-                key: *shorthand,
-            }),
-            important: true,
-        };
+        assert_eq!(
+            classify(*shorthand),
+            KeyClass::Shorthand {
+                longhands: expected
+            }
+        );
         let mut expanded = Vec::new();
-        expand_shorthand_into(&declaration, |declaration| {
-            expanded.push((declaration.value.key(), declaration.important));
+        expand_shorthand_into(&deferred(*shorthand, true), |declaration| {
+            assert_eq!(declaration.key, declaration.value.key());
+            expanded.push((declaration.key, declaration.important));
         });
         assert_eq!(
             expanded,
@@ -271,19 +328,74 @@ fn deferred_shorthand_expands_to_each_longhand_key() {
         );
     }
 
-    let declaration = Declaration {
-        value: PropertyValue::Deferred(DeferredValue {
+    // A deferred longhand, and a shorthand the cascade keeps in shorthand
+    // form, stay one declaration.
+    for (key, class) in [
+        (PropertyKey::Width, KeyClass::Longhand),
+        (PropertyKey::All, KeyClass::Retained),
+        (PropertyKey::Grid, KeyClass::Retained),
+        (PropertyKey::GridArea, KeyClass::Retained),
+        (PropertyKey::WhiteSpace, KeyClass::Retained),
+        (PropertyKey::TextWrap, KeyClass::Retained),
+        (PropertyKey::TextSpacing, KeyClass::Retained),
+    ] {
+        assert_eq!(classify(key), class, "{key:?}");
+        let mut expanded = Vec::new();
+        expand_shorthand_into(&deferred(key, false), |declaration| {
+            expanded.push((declaration.key, declaration.important));
+        });
+        assert_eq!(expanded, vec![(key, false)], "{key:?}");
+    }
+}
+
+#[test]
+fn declarations_carry_the_key_and_rollback_of_their_value() {
+    use crate::property::{CssWideKeyword, DeferredValue, PropertyKey};
+
+    let color = Declaration::new(PropertyValue::Color(CssColor::BLACK), true);
+    assert_eq!(color.key, PropertyKey::Color);
+    assert_eq!(color.rollback, Rollback::None);
+    assert!(color.important);
+    assert_eq!(
+        Declaration::new(PropertyValue::AllRevertLayer, false).rollback,
+        Rollback::Layer
+    );
+    let reverted = Declaration::new(
+        PropertyValue::BorderTopColorCssWide(CssWideKeyword::Revert),
+        false,
+    );
+    assert_eq!(reverted.key, PropertyKey::BorderTopColor);
+    assert_eq!(reverted.rollback, Rollback::Origin);
+    let deferred = Declaration::new(
+        PropertyValue::Deferred(DeferredValue {
             property: "width".into(),
-            value: "raw".into(),
+            value: "var(--w)".into(),
             key: PropertyKey::Width,
         }),
-        important: false,
-    };
-    let mut expanded = Vec::new();
-    expand_shorthand_into(&declaration, |declaration| {
-        expanded.push((declaration.value.key(), declaration.important));
-    });
-    assert_eq!(expanded, vec![(PropertyKey::Width, false)]);
+        false,
+    );
+    assert_eq!(deferred.key, PropertyKey::Width);
+    // Whether a substituted value rolls back is decided after substitution.
+    assert_eq!(deferred.rollback, Rollback::None);
+}
+
+#[test]
+fn declaration_debug_output_shows_only_the_declared_fields() {
+    let decl = Declaration::new(PropertyValue::Color(CssColor::BLACK), false);
+    assert_eq!(
+        format!("{decl:?}"),
+        "Declaration { value: Color(CssColor { r: 0, g: 0, b: 0, a: 255 }), important: false }"
+    );
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "is expanded into longhands")]
+fn a_shorthand_cannot_become_one_declaration() {
+    let mut input = ParserInput::new("1px");
+    let mut parser = Parser::new(&mut input);
+    let margin = parse_value("margin", &mut parser).expect("a margin shorthand value");
+    let _ = Declaration::new(margin, false);
 }
 
 #[test]
@@ -1273,4 +1385,44 @@ fn opacity_leaves_importance_for_the_declaration_parser() {
     ] {
         assert!(parse_block(source).is_empty(), "{source}");
     }
+}
+
+#[test]
+fn border_expansion_keeps_each_side_apart() {
+    let side = |px: f32, style, color| Border {
+        width: Length::Px(px),
+        style,
+        color,
+    };
+    let red = BorderColor::Resolved(CssColor {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    });
+    let sides = Sides {
+        top: side(1.0, BorderStyle::Solid, red),
+        right: side(2.0, BorderStyle::Dashed, red),
+        bottom: side(3.0, BorderStyle::Dotted, BorderColor::CurrentColor),
+        left: side(4.0, BorderStyle::Double, BorderColor::CurrentColor),
+    };
+    let mut values = Vec::new();
+    expand_border(sides, |value| values.push(value));
+    assert_eq!(
+        values,
+        vec![
+            PropertyValue::BorderTopWidth(Length::Px(1.0)),
+            PropertyValue::BorderTopStyle(BorderStyle::Solid),
+            PropertyValue::BorderTopColor(red),
+            PropertyValue::BorderRightWidth(Length::Px(2.0)),
+            PropertyValue::BorderRightStyle(BorderStyle::Dashed),
+            PropertyValue::BorderRightColor(red),
+            PropertyValue::BorderBottomWidth(Length::Px(3.0)),
+            PropertyValue::BorderBottomStyle(BorderStyle::Dotted),
+            PropertyValue::BorderBottomColor(BorderColor::CurrentColor),
+            PropertyValue::BorderLeftWidth(Length::Px(4.0)),
+            PropertyValue::BorderLeftStyle(BorderStyle::Double),
+            PropertyValue::BorderLeftColor(BorderColor::CurrentColor),
+        ]
+    );
 }

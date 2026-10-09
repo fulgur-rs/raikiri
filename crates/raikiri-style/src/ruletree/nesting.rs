@@ -1,7 +1,7 @@
 //! Style-rule bodies, including nested style rules and supported groups.
 
 use super::*;
-use crate::rule::{expand_shorthand_into, parse_declaration_value};
+use crate::rule::{ParsedDeclaration, expand_shorthand_into, parse_declaration_value};
 use crate::selector_depth::check_selector_token_depth;
 use cssparser::{DeclarationParser, RuleBodyItemParser, RuleBodyParser, ToCss};
 
@@ -114,7 +114,7 @@ fn body_item(parent: &BodyParent, declarations: Vec<Declaration>) -> GroupItem {
 }
 
 enum BodyItem {
-    Declaration(Declaration),
+    Declaration(ParsedDeclaration),
     Rule(GroupItem),
 }
 

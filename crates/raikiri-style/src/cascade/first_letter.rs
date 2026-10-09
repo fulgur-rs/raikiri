@@ -140,9 +140,11 @@ impl CascadeResult {
         let values = if pseudo == Some(crate::PseudoElem::FirstLine) {
             filtered = values
                 .iter()
-                .filter(|(value, ..)| {
-                    matches!(value, crate::property::PropertyValue::AllRevertLayer)
-                        || super::first_line::first_line_property_applies(value.key())
+                .filter(|candidate| {
+                    matches!(
+                        candidate.value,
+                        crate::property::PropertyValue::AllRevertLayer
+                    ) || super::first_line::first_line_property_applies(candidate.key)
                 })
                 .cloned()
                 .collect::<Vec<_>>();
@@ -194,9 +196,11 @@ impl CascadeResult {
         let declarations: Vec<_> = inputs
             .declarations
             .iter()
-            .filter(|(value, ..)| {
-                matches!(value, crate::property::PropertyValue::AllRevertLayer)
-                    || property_applies(value.key())
+            .filter(|candidate| {
+                matches!(
+                    candidate.value,
+                    crate::property::PropertyValue::AllRevertLayer
+                ) || property_applies(candidate.key)
             })
             .cloned()
             .collect();

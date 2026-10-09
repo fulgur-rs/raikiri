@@ -7,7 +7,7 @@ use crate::Atom;
 use crate::property::{
     Length, PropertyValue, parse_length_allow_negative, parse_non_negative_length, parse_value,
 };
-use crate::rule::{Declaration, expand_shorthand_into, parse_declaration_block};
+use crate::rule::{Declaration, ParsedDeclaration, expand_shorthand_into, parse_declaration_block};
 
 use super::types::*;
 
@@ -157,15 +157,15 @@ pub(crate) fn parse_and_push_pseudo<'i>(
 // ---------------------------------------------------------------------------
 
 /// Per-declaration parse result for an `@page` block body — either an
-/// ordinary property [`Declaration`] (routed through the same
-/// [`crate::property::parse_value`] dispatch qualified rules use), one of
+/// ordinary property declaration before shorthand expansion (routed through
+/// the same [`crate::property::parse_value`] dispatch qualified rules use), one of
 /// the three descriptors' dedicated values ([`PageSize`] / [`PageMarks`] /
 /// [`PageBleed`]), none of which are [`PropertyValue`] variants and so
 /// cannot come out of that dispatch, or a nested margin-box at-rule
 /// ([`PageMarginBoxRule`]), which is not a declaration at all.
 pub(crate) enum PageBodyItem {
     /// An ordinary property declaration.
-    Property(Declaration),
+    Property(ParsedDeclaration),
     /// A `size:` declaration.
     Size(PageSizeDeclaration),
     /// A `marks:` declaration.
@@ -261,7 +261,10 @@ impl<'i> DeclarationParser<'i> for PageDeclParser {
             .or_else(|| parse_value(name.as_ref(), input))
             .ok_or_else(|| input.new_custom_error(()))?;
         let important = parse_important_and_exhaust(input)?;
-        Ok(PageBodyItem::Property(Declaration { value, important }))
+        Ok(PageBodyItem::Property(ParsedDeclaration {
+            value,
+            important,
+        }))
     }
 }
 
