@@ -152,7 +152,7 @@ pub struct CascadeResult {
     /// (and any other property) overridden by its own `::before`/`::after`
     /// rule; whether a box is actually generated from the result (§4.1,
     /// conditioned on `content`) is left to the consumer, per this doc's own
-    /// content representation note below. See [`resolve_inheritance`]'s
+    /// content representation note below. See [`walk_from`]'s
     /// pseudo-element section for the derivation.
     ///
     /// This crate represents `content: normal` as an empty `content` list and
@@ -330,123 +330,53 @@ pub fn cascade_with_media_context_for_page<D: StyleDom>(
     media_context: &MediaContext,
     page_query: &PageContextQuery,
 ) -> Result<CascadeResult, CascadeError> {
-    // Phase 1: collect per-node cascaded values.
-    let cascaded =
-        collect_cascaded_with_media_context(dom, dom.root_id(), rule_tree, media_context)?;
-    cascade_from_candidates(dom, rule_tree, page_query, &cascaded, media_context)
+    let outputs = walk(dom, rule_tree, media_context, WalkOptions::default())?;
+    Ok(finish(dom, rule_tree, page_query, media_context, outputs))
 }
 
-fn cascade_from_candidates<D: StyleDom>(
+/// The cascade result of one walk, with the `@page` cascade for `page_query`.
+///
+/// The walk visits only nodes reachable from the root, so detached or
+/// unreachable nodes (foster-parenting transients, orphans after stripping,
+/// etc.) keep their initial values. The contract `computed.len() ==
+/// document.node_count()` still covers every node, since raikiri-dom's layout
+/// and raikiri-paint's walker index `computed[idx]` directly by node id; the
+/// walk gives every node a slot.
+fn finish<D: StyleDom>(
     dom: &D,
     rule_tree: &RuleTree,
     page_query: &PageContextQuery,
-    cascaded: &collect::CascadedArena<'_>,
     media_context: &MediaContext,
-) -> Result<CascadeResult, CascadeError> {
-    // Collection recorded which elements have these candidates, so no second
-    // pass over every candidate is needed.
-    let mut opacity_specified = vec![false; dom.node_count()];
-    let mut background_color_specified = vec![false; dom.node_count()];
-    for specified in cascaded.specified_properties() {
-        let idx = specified.id.0 as usize;
-        if idx >= opacity_specified.len() {
-            continue; // cov:ignore: candidates only exist for walked nodes, all below node_count()
-        }
-        opacity_specified[idx] = specified.opacity;
-        background_color_specified[idx] = specified.background_color;
-    }
-
-    // Phase 2: inheritance walk.
-    //
-    // resolve_inheritance's DFS visits only nodes reachable from the root, so
-    // detached / unreachable nodes (foster-parenting transients, orphans after
-    // stripping, etc.) do not get entries from the walk. But the contract
-    // `computed.len() == document.node_count()` covers the entire arena:
-    // raikiri-dom's layout and raikiri-paint's walker index `computed[idx]`
-    // directly by node_id.
-    //
-    // Reserve capacity only, rather than filling every slot with initial() up
-    // front: `ComputedValues` is large and cloning it is not cheap, and the
-    // walk overwrites almost every slot. The walk appends in place when node
-    // ids arrive in document order (the common case for a parsed tree) and
-    // fills any skipped slot with initial(); the trailing resize below covers
-    // unvisited nodes past the last visited id.
-    let mut computed: Vec<ComputedValues> = Vec::with_capacity(dom.node_count());
-    let mut authored_writing_modes = vec![None; dom.node_count()];
-    let mut page_values = vec![crate::property::PageValue::Auto; dom.node_count()];
-    let mut pseudo: HashMap<(StyleNodeId, PseudoElem), ComputedValues> = HashMap::new();
-    let mut svg_style_properties = HashMap::new();
-    let mut first_letter_inputs = HashMap::new();
-    resolve_inheritance(
-        dom,
-        dom.root_id(),
-        &ComputedValues::initial(),
-        cascaded,
-        &mut computed,
-        &mut authored_writing_modes,
-        &mut page_values,
-        &mut pseudo,
-        &mut svg_style_properties,
-        &mut first_letter_inputs,
-    )?; // cov:ignore: the error branch needs a u32 handle overflow
-    if computed.len() < dom.node_count() {
-        computed.resize(dom.node_count(), ComputedValues::initial());
-    }
-
-    let root_element_index = page_inheritance_root_index(dom, computed.len());
+    outputs: WalkOutputs,
+) -> CascadeResult {
+    let root_element_index = page_inheritance_root_index(dom, outputs.computed.len());
     let page = cascade_page_with_media_context(
         rule_tree,
         page_query,
-        PageInheritance::FromRoot(&computed[root_element_index]),
+        PageInheritance::FromRoot(&outputs.computed[root_element_index]),
         media_context,
     );
-
-    let mut typographic_inheritance = HashMap::new();
-    if !first_letter_inputs.is_empty()
-        && pseudo
-            .keys()
-            .any(|(_, pseudo)| *pseudo == PseudoElem::FirstLine)
-    {
-        for (id, values) in cascaded.all_candidates() {
-            typographic_inheritance.insert(
-                (id, None),
-                OwnedCandidates::copy(values, CustomCandidates::EMPTY)?,
-            );
-        }
-        for &(id, pseudo) in pseudo.keys() {
-            if matches!(
-                pseudo,
-                PseudoElem::Before | PseudoElem::After | PseudoElem::FirstLine
-            ) && let Some(values) = cascaded.pseudo_candidates(id, pseudo)
-            {
-                typographic_inheritance.insert(
-                    (id, Some(pseudo)),
-                    OwnedCandidates::copy(values, CustomCandidates::EMPTY)?,
-                );
-            }
-        }
-    }
-    Ok(CascadeResult {
+    CascadeResult {
         generation: NEXT_CASCADE_GENERATION.fetch_add(1, Ordering::Relaxed),
-        svg_style_properties,
-        first_letter_inputs,
-        typographic_inheritance,
+        svg_style_properties: outputs.svg_properties,
+        first_letter_inputs: outputs.first_letter_inputs,
+        typographic_inheritance: outputs.typographic_inheritance,
         root_element_index,
         custom_highlight_styles: rule_tree.custom_highlight_styles().clone(),
         custom_highlight_sources: rule_tree.custom_highlight_sources().clone(),
-        computed,
-        opacity_specified,
-        background_color_specified,
-        authored_writing_modes,
+        computed: outputs.computed,
+        opacity_specified: outputs.opacity_specified,
+        background_color_specified: outputs.background_color_specified,
+        authored_writing_modes: outputs.authored_writing_modes,
         page,
         counter_styles: rule_tree.counter_styles_for(media_context),
-        page_values,
-        pseudo,
-    })
+        page_values: outputs.page_values,
+        pseudo: outputs.pseudo,
+    }
 }
 
 mod candidate;
-use candidate::{CustomCandidates, OwnedCandidates};
+use candidate::OwnedCandidates;
 mod collect;
 pub(crate) mod rollback;
 pub(crate) use collect::*;

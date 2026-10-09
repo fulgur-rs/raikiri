@@ -1,4 +1,4 @@
-//! Per-cascade rule index used by [`super::collect_cascaded_with_media_context`].
+//! Per-cascade rule index used by [`super::collect::Collector`].
 //!
 //! Matching every element against every active style rule is quadratic in
 //! practice. This module narrows the set of rules tried for one element with
@@ -51,11 +51,11 @@ use std::collections::HashMap;
 use selectors::bloom::BloomFilter;
 use selectors::parser::{Combinator, Component, Selector, SelectorIter};
 
-use crate::RaikiriSelectorImpl;
 use crate::error::CascadeError;
 use crate::layer::{LayerOrder, LayerPosition};
 use crate::rule::{Declaration, StyleRule};
 use crate::style_dom::StyleElement;
+use crate::{PseudoElem, RaikiriSelectorImpl};
 
 use super::candidate::too_many;
 
@@ -217,6 +217,8 @@ pub(crate) struct RuleIndex<'a> {
     by_class: HashMap<u32, Vec<u32>>,
     by_tag: HashMap<u32, Vec<u32>>,
     universal: Vec<u32>,
+    /// The pseudo-elements some selector targets, one bit per variant.
+    pseudo_targets: u32,
 }
 
 impl<'a> RuleIndex<'a> {
@@ -239,6 +241,7 @@ impl<'a> RuleIndex<'a> {
             by_class: HashMap::new(),
             by_tag: HashMap::new(),
             universal: Vec::new(),
+            pseudo_targets: 0,
         };
         for rule in rules {
             let rule_idx = u32::try_from(index.rules.len()).map_err(|_| too_many("style rules"))?;
@@ -247,8 +250,9 @@ impl<'a> RuleIndex<'a> {
             let mut has_element_selector = false;
             let mut has_pseudo_selector = false;
             for selector in rule.selectors.slice() {
-                if selector.pseudo_element().is_some() {
+                if let Some(&pseudo) = selector.pseudo_element() {
                     has_pseudo_selector = true;
+                    index.pseudo_targets |= 1 << pseudo as u32;
                 } else {
                     has_element_selector = true;
                 }
@@ -286,6 +290,11 @@ impl<'a> RuleIndex<'a> {
 
     pub(crate) fn rule(&self, idx: u32) -> &IndexedRule<'a> {
         &self.rules[idx as usize]
+    }
+
+    /// Whether some selector of an active rule targets `pseudo`.
+    pub(crate) fn targets(&self, pseudo: PseudoElem) -> bool {
+        self.pseudo_targets & (1 << pseudo as u32) != 0
     }
 
     /// The active rules, at the positions [`Self::candidate_rules`] returns.

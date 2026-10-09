@@ -324,7 +324,7 @@ impl SiblingInfo {
 ///   §13.1 <https://www.w3.org/TR/selectors-4/#the-root-pseudo>) — matches
 ///   iff [`is_document_root_element`] (no element ancestor, in-document, and
 ///   immediate parent is the `Document` node). The matcher passes `ancestors`
-///   root-first/immediate-parent-last — [`super::collect::collect_cascaded`]'s
+///   root-first/immediate-parent-last — [`super::inherit::walk_from`]'s
 ///   doc establishes that only `StyleNodeKind::Element` nodes are ever
 ///   pushed onto `ancestor_path`, so an empty `ancestors` slice alone would
 ///   also hold for any disconnected root or fragment top-level child; the
@@ -847,7 +847,7 @@ fn matches_nth_position(
 ) -> bool {
     if from_start == 0 {
         // Defensive: `elem_id` was not found among `parent_id`'s (filtered)
-        // element children at all — unreachable given `collect_cascaded`'s
+        // element children at all — unreachable given the cascade walk's
         // ancestor-path invariant (every `elem_id`/`parent_id` pair this is
         // ever called with really is a child/parent pair in the walked
         // tree), same posture as `match_from_element`'s own defensive
@@ -905,7 +905,7 @@ fn matches_nth_position(
 ///
 /// `ancestors` runs from the root to the immediate parent (`ancestors.last()`
 /// is `elem`'s parent), following the DFS order of
-/// [`super::collect::collect_cascaded`] (see its documentation). `elem_id` is
+/// [`super::inherit::walk_from`] (see its documentation). `elem_id` is
 /// the id of `elem`. Sibling combinators use it as the stopping point when
 /// searching [`StyleDom::child_ids`] for children before `elem` (see the
 /// `NextSibling`/`LaterSibling` arms of [`match_combinator_chain`]). It is
@@ -1285,7 +1285,7 @@ pub(crate) fn selector_matches_pseudo_element<D: StyleDom, E: StyleElement>(
 /// # Resolving the parent when `ancestors.last()` is empty
 ///
 /// `ancestor_path` contains only nodes of `Element` kind (see
-/// [`super::collect::collect_cascaded`]). If `current_id`'s parent is the
+/// [`super::inherit::walk_from`]). If `current_id`'s parent is the
 /// [`StyleNodeKind::Document`] root itself, as with an element directly under
 /// the document (`<html>`, for example), `ancestors` is empty. `Child` and
 /// `Descendant` correctly treat this as no parent capable of matching a
@@ -1310,7 +1310,7 @@ pub(crate) fn selector_matches_pseudo_element<D: StyleDom, E: StyleElement>(
 /// `SelectorList` produced by this crate cannot reach them.
 /// [`Combinator::PseudoElement`] (`::before`/`::after`) differs: it now parses,
 /// enters a `SelectorList`, and survives the `is_supported_selector` rule-tree
-/// gate. But [`super::collect::collect_cascaded`] dispatches to a separate
+/// gate. But [`super::collect::Collector::collect`] dispatches to a separate
 /// matcher, [`selector_matches_pseudo_element`], *before* this function. Neither
 /// caller of [`match_combinator_chain`] ([`selector_matches`] or the explicit
 /// continuation of [`match_from_element`]) passes it this combinator. As with
@@ -1323,8 +1323,8 @@ pub(crate) fn selector_matches_pseudo_element<D: StyleDom, E: StyleElement>(
 /// consume the native call stack.
 ///
 /// The fix below uses an explicit `Vec`-based stack, the same *technique*
-/// `collect_cascaded` uses for its own job-199 fix — but not the same
-/// *shape*: `collect_cascaded` is a plain DFS with no backtracking (visit
+/// the cascade walk uses for its own traversal — but not the same
+/// *shape*: the walk is a plain DFS with no backtracking (visit
 /// every node once), whereas [`Combinator::Descendant`] /
 /// [`Combinator::LaterSibling`] must try multiple candidates in order and
 /// fall back to the next one when a deeper match fails entirely (see this
@@ -1788,7 +1788,7 @@ fn pending_candidates_for<'a, D: StyleDom + 'a>(
 /// `set_in_document(false)` mock, or any detached node) are ignored — this is
 /// what keeps `li:nth-child(2 of .featured)` ignoring inert siblings and what
 /// keeps template-contents inertness in the cascade alongside
-/// [`super::collect::collect_cascaded`]'s top-level `!is_in_document` skip
+/// [`super::inherit::walk_from`]'s top-level `!is_in_document` skip
 /// (inert subtrees are never visited as subjects) and the structural fact that
 /// a `<template>` element's contents live in a separate detached fragment
 /// (never in the template element's own `child_ids`).
@@ -1907,10 +1907,10 @@ fn match_from_element<'s, D: StyleDom>(
     relative_anchor: Option<StyleNodeId>,
 ) -> Option<SelectorIter<'s, RaikiriSelectorImpl>> {
     // Both guards below are defensive and not reachable via the real
-    // `collect_cascaded` → `match_complex_selector_list` call path: every
+    // `Collector::collect` → `match_complex_selector_list` call path: every
     // `elem_id` this function is ever invoked with comes from one of two
     // sources, both already filtered to Element-kind + in-document ids —
-    // `ancestors` (built by `collect_cascaded`'s `ancestor_path`, which only
+    // `ancestors` (built from the cascade walk's `ancestor_path`, which only
     // ever pushes an id inside its `node.kind() == StyleNodeKind::Element`
     // branch after the `!node.is_in_document() => continue` gate — see that
     // function's doc), or a sibling candidate already passed through

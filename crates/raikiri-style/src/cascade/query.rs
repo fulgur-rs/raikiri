@@ -49,7 +49,7 @@ impl SelectorQuery {
     /// (e.g. <https://www.w3.org/TR/selectors-4/#descendant-combinators>),
     /// so a non-element node is never itself a combinator ancestor — which
     /// means `ancestors` is empty when `elem_id` is the document element.
-    /// This is the same shape [`super::collect::collect_cascaded`]'s DFS
+    /// This is the same shape [`super::inherit::walk_from`]'s DFS
     /// builds internally, and what `:root` (`ancestors.is_empty()`) relies
     /// on. Non-element `elem_id`s never match.
     pub fn matches<D: StyleDom>(

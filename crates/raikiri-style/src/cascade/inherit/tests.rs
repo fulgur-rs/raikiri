@@ -1669,16 +1669,13 @@ fn pseudo_element_own_declaration_overrides_inherited_value() {
 
 #[test]
 fn pseudo_element_custom_property_wired_through_cascade() {
-    // Exercises `CascadedArena`'s custom-property counterpart of the
-    // pseudo arena (`pseudo_custom_decls`/`pseudo_custom_ranges`,
-    // `collect_cascaded`'s `pseudo_before_custom`/`pseudo_after_custom`
-    // scratch buffers) — every other pseudo-element test above only
-    // ever pushes through the plain-property side
-    // (`pseudo_decls`/`pseudo_ranges`). A `::before` rule can declare a
+    // Exercises the custom-property candidates of a pseudo-element's
+    // input — every other pseudo-element test above only ever pushes
+    // through the plain-property side. A `::before` rule can declare a
     // custom property exactly like a real element can; this pins that
     // it actually reaches the pseudo's own `custom_properties`
     // environment (via `resolve_custom_properties` in
-    // `resolve_inheritance`'s pseudo-element section), not just the
+    // `walk_from`'s pseudo-element section), not just the
     // parent's inherited one.
     let mut doc = TestDoc::new();
     let s = doc.push_element(0, "style", None);
@@ -6095,7 +6092,7 @@ fn cascade_shares_counter_set_arc_across_universal_selector_matches() {
 }
 
 #[test]
-fn resolve_inheritance_uses_initial_arc_for_non_inherited_counter_on_child() {
+fn inheritance_walk_uses_initial_arc_for_non_inherited_counter_on_child() {
     let mut doc = TestDoc::new();
     // Give <parent> counter-reset; <child> has no counter rule.
     let parent = doc.push_element(0, "parent", Some("counter-reset: c 1"));
@@ -6184,7 +6181,7 @@ fn cascade_shares_font_family_arc_across_universal_selector_matches() {
 }
 
 #[test]
-fn resolve_inheritance_shares_font_family_arc_from_parent_when_child_has_no_declaration() {
+fn inheritance_walk_shares_font_family_arc_from_parent_when_child_has_no_declaration() {
     let mut doc = TestDoc::new();
     let parent = doc.push_element(0, "parent", Some("font-family: Georgia, serif"));
     let child = doc.push_element(parent, "child", None);
@@ -6872,15 +6869,11 @@ fn apply_value_direct_page_named() {
 }
 
 #[test]
-fn resolve_inheritance_grows_undersized_output_vectors() {
-    // Defensive safety net: `cascade()`'s normal pre-allocation always
-    // sizes `out`/`authored_writing_modes` to
-    // `dom.node_count()` before calling `resolve_inheritance`, so this
-    // resize path is never exercised end-to-end. A direct call with
-    // deliberately undersized (empty) vectors verifies the safety net
-    // actually grows them instead of panicking on out-of-bounds writes.
-    // A later sibling must still inherit from its own parent after the
-    // earlier sibling's subtree has grown the output arena several times.
+fn a_later_sibling_inherits_from_its_own_parent_after_a_deep_subtree() {
+    // The walk writes each node's computed values before pushing its
+    // children, which look their parent up by id, so a later sibling still
+    // inherits from its own parent after the earlier sibling's subtree has
+    // grown the output several times. The walk starts at an element here.
     let mut doc = TestDoc::new();
     let e = doc.push_element(0, "div", Some("color: red"));
     let first_child = doc.push_element(e, "span", Some("color: blue"));
@@ -6889,70 +6882,43 @@ fn resolve_inheritance_grows_undersized_output_vectors() {
     for _ in 0..32 {
         deepest = doc.push_element(deepest, "span", None);
     }
-    let id = StyleNodeId(e as u64);
-    let tree = RuleTree::empty();
-    let cascaded =
-        crate::cascade::collect::collect_cascaded(&doc, id, &tree).expect("the cascade collects");
-    let mut out: Vec<ComputedValues> = Vec::new();
-    let mut authored_writing_modes: Vec<Option<WritingMode>> = Vec::new();
-    let mut page_values = vec![PageValue::Auto; doc.node_count()];
-    let mut pseudo_out = HashMap::new();
-    resolve_inheritance(
+    let outputs = walk_from(
         &doc,
-        id,
+        &RuleTree::empty(),
+        &MediaContext::default(),
+        StyleNodeId(e as u64),
         &ComputedValues::initial(),
-        &cascaded,
-        &mut out,
-        &mut authored_writing_modes,
-        &mut page_values,
-        &mut pseudo_out,
-        &mut HashMap::new(),
-        &mut HashMap::new(),
+        WalkOptions::default(),
     )
     .expect("the walk succeeds");
-    assert!(out.len() > deepest);
-    assert!(authored_writing_modes.len() > deepest);
-    assert_eq!(out[e].color, RED);
-    assert_eq!(out[first_child].color, BLUE);
-    assert_eq!(out[deepest].color, BLUE);
-    assert_eq!(out[later_sibling].color, RED);
+    assert_eq!(outputs.computed.len(), doc.node_count());
+    assert_eq!(outputs.computed[e].color, RED);
+    assert_eq!(outputs.computed[first_child].color, BLUE);
+    assert_eq!(outputs.computed[deepest].color, BLUE);
+    assert_eq!(outputs.computed[later_sibling].color, RED);
 }
 
 #[test]
 #[should_panic(expected = "root_ctx == None は element 親が居ないことを意味するので")]
-fn resolve_inheritance_panics_when_root_parent_font_size_is_not_initial() {
-    // The first stack entry `resolve_inheritance` pushes always has
-    // `root_ctx == None` (only `cascade()`'s own `dom.root_id()` entry
-    // point does this, and it always pairs `None` with
+fn walk_panics_when_root_parent_font_size_is_not_initial() {
+    // The first stack entry of the walk always has `root_ctx == None`
+    // (`walk` starts at `dom.root_id()` and pairs it with
     // `ComputedValues::initial()`). A direct call that violates that
     // caller-side invariant — a non-initial `parent_computed` on the
     // very first node — must trip the debug_assert_eq guarding it.
     let mut doc = TestDoc::new();
     let e = doc.push_element(0, "div", None);
-    let id = StyleNodeId(e as u64);
-    // No rules and no inline style: the element has no candidates.
-    let tree = RuleTree::empty();
-    let cascaded =
-        crate::cascade::collect::collect_cascaded(&doc, id, &tree).expect("the cascade collects");
-    let mut out = vec![ComputedValues::initial(); doc.node_count()];
-    let mut authored_writing_modes = vec![None; doc.node_count()];
-    let mut page_values = vec![PageValue::Auto; doc.node_count()];
-    let mut pseudo_out = HashMap::new();
     let mut non_initial_parent = ComputedValues::initial();
     non_initial_parent.font_size = ComputedLength(999.0);
-    resolve_inheritance(
+    // No rules and no inline style: the element has no candidates.
+    let _ = walk_from(
         &doc,
-        id,
+        &RuleTree::empty(),
+        &MediaContext::default(),
+        StyleNodeId(e as u64),
         &non_initial_parent,
-        &cascaded,
-        &mut out,
-        &mut authored_writing_modes,
-        &mut page_values,
-        &mut pseudo_out,
-        &mut HashMap::new(),
-        &mut HashMap::new(),
-    )
-    .expect("the walk panics before it could fail");
+        WalkOptions::default(),
+    );
 }
 
 #[test]
@@ -7043,7 +7009,7 @@ fn apply_winners_direct_page_value() {
 #[test]
 fn apply_value_direct_margin_shorthand_fall_through() {
     // The `PropertyValue::Margin(sides)` arm of `apply_value` is unreachable
-    // on the cascade path (`collect_cascaded` expands it to four longhands).
+    // on the cascade path (parsing expands it to four longhands).
     // **This is not a safety net**: reaching it through a regression or bypass
     // would atomically assign `target.margin = sides`, overwriting all four
     // longhand winners. Reaching it is already a bug; this direct-arm test
@@ -7260,7 +7226,7 @@ fn border_non_inherited_child_starts_from_initial() {
 #[test]
 fn apply_value_direct_border_shorthand_fall_through() {
     // The `PropertyValue::Border(sides)` arm of `apply_value` is unreachable
-    // on the cascade path (`collect_cascaded` expands it into 12 longhands).
+    // on the cascade path (parsing expands it into 12 longhands).
     // **It is not a safety net** (as with margin): reaching it through a
     // regression or bypass would atomically overwrite `target.border = sides`
     // and destroy all 12 longhand winners. Reaching it is already a bug; this
@@ -8919,7 +8885,7 @@ fn border_rollback_via_user_var_and_user_inherit() {
 
 #[test]
 fn apply_value_direct_border_right_and_css_wide_fall_through() {
-    // Defensive arms in `apply_value` for shorthands that `collect_cascaded` already
+    // Defensive arms in `apply_value` for shorthands that parsing already
     // expands (see `apply_value_direct_border_shorthand_fall_through` sibling):
     // direct calls must not panic and must preserve ordering (width, style, color).
     use crate::property::CssWideKeyword;
@@ -9262,7 +9228,7 @@ fn ch_inside_calc_stays_rejected_for_properties_without_ch_provenance() {
 /// Every output of the inheritance walk, for comparing the shared and
 /// unshared walks.
 #[derive(Debug, PartialEq)]
-struct WalkOutputs {
+struct ComparedWalkOutputs {
     computed: Vec<ComputedValues>,
     authored_writing_modes: Vec<Option<WritingMode>>,
     page_values: Vec<PageValue>,
@@ -9270,49 +9236,39 @@ struct WalkOutputs {
     svg_properties: HashMap<StyleNodeId, Vec<SvgStyleProperty>>,
 }
 
-fn walk_outputs(doc: &TestDoc, tree: &RuleTree, sibling_sharing: bool) -> (WalkOutputs, usize) {
-    let root = doc.root_id();
-    let cascaded =
-        crate::cascade::collect::collect_cascaded(doc, root, tree).expect("the cascade collects");
-    let n = doc.node_count();
-    let mut computed = vec![ComputedValues::initial(); n];
-    let mut authored_writing_modes = vec![None; n];
-    let mut page_values = vec![PageValue::Auto; n];
-    let mut pseudo_out = HashMap::new();
-    let mut svg_properties = HashMap::new();
-    let shared = resolve_inheritance_with(
+fn walk_outputs(
+    doc: &TestDoc,
+    tree: &RuleTree,
+    sibling_sharing: bool,
+) -> (ComparedWalkOutputs, usize) {
+    let outputs = walk(
         doc,
-        root,
-        &ComputedValues::initial(),
-        &cascaded,
-        &mut computed,
-        &mut authored_writing_modes,
-        &mut page_values,
-        &mut pseudo_out,
-        &mut svg_properties,
-        &mut HashMap::new(),
-        sibling_sharing,
+        tree,
+        &MediaContext::default(),
+        WalkOptions {
+            sibling_sharing,
+            ..WalkOptions::default()
+        },
     )
     .expect("the walk succeeds");
-    let mut pseudo = pseudo_out
+    let mut pseudo = outputs
+        .pseudo
         .into_iter()
         .map(|((id, pseudo), values)| ((id.0, pseudo), values))
         .collect::<Vec<_>>();
     pseudo.sort_by_key(|((id, pseudo), _)| (*id, *pseudo as u8));
     (
-        WalkOutputs {
-            computed,
-            authored_writing_modes,
-            page_values,
+        ComparedWalkOutputs {
+            computed: outputs.computed,
+            authored_writing_modes: outputs.authored_writing_modes,
+            page_values: outputs.page_values,
             pseudo,
-            svg_properties,
+            svg_properties: outputs.svg_properties,
         },
-        shared,
+        outputs.shared_nodes,
     )
 }
 
-/// Asserts that sibling sharing reproduces the unshared walk exactly and
-/// returns how many nodes it shared.
 fn assert_sharing_is_transparent(doc: &TestDoc, tree: &RuleTree) -> usize {
     let (reference, none_shared) = walk_outputs(doc, tree, false);
     assert_eq!(none_shared, 0);

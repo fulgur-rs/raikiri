@@ -1,6 +1,7 @@
 use super::*;
 use crate::cascade::candidate::{OwnedCandidates, ValueRef};
 use crate::cascade::cascade;
+use crate::cascade::test_support::collect_top_level;
 use crate::cascade::test_support::*;
 use crate::computed::ComputedValues;
 use crate::property::DisplayValue;
@@ -306,7 +307,7 @@ fn descendant_combinator_selector_specificity_includes_ancestor_compound() {
 #[test]
 fn descendant_combinator_after_backtracking_past_a_sibling_subtree() {
     // Regression for the `ancestor_path` depth-truncation technique in
-    // `collect_cascaded`: after the DFS finishes a `.wrap` subtree and
+    // the cascade walk: after the DFS finishes a `.wrap` subtree and
     // returns to process a *sibling* `.target`, `.target`'s own
     // ancestor_path must not still contain anything pushed while
     // visiting the sibling's subtree. `.wrap p` must not leak onto
@@ -431,7 +432,7 @@ fn winner_does_not_leak_into_next_sibling() {
 }
 
 #[test]
-fn collect_cascaded_groups_are_unchanged_by_flat_arena_refactor() {
+fn collected_inputs_keep_the_push_order_and_the_handles() {
     let mut doc = TestDoc::new();
     let s = doc.push_element(0, "style", None);
     doc.push_text(s, "p { color: red } p { background-color: blue }");
@@ -442,20 +443,19 @@ fn collect_cascaded_groups_are_unchanged_by_flat_arena_refactor() {
     let p3 = doc.push_element(0, "p", Some("display: inline"));
 
     let tree = build_rule_tree(&doc);
-    let arena = collect_cascaded(&doc, doc.root_id(), &tree).expect("the cascade collects");
+    let caches = MatchCaches::default();
+    let (collector, inputs) = collect_top_level(&doc, &tree, &caches);
+    let shared = collector.shared();
+    let candidates = |n: usize| inputs[&StyleNodeId::new(n as u64)].element(shared).0;
 
-    let id = |i: usize| StyleNodeId::new(i as u64);
-
-    // `hr` matches no rule and has no inline style — old code's
-    // `if !per_node.is_empty()` guard meant no map entry at all; the
-    // arena must not create a zero-length range for it either.
+    // `hr` matches no rule and has no inline style, so it has no candidates.
     assert!(
-        arena.candidates(id(empty)).is_none(),
-        "element with zero candidate declarations must get no arena entry"
+        candidates(empty).is_none(),
+        "element with zero candidate declarations must have no candidates"
     );
 
     // p2: 2 stylesheet decls, no inline — order = rule/source order.
-    let p2c = arena.candidates(id(p2)).expect("p2 has 2 stylesheet decls");
+    let p2c = candidates(p2).expect("p2 has 2 stylesheet decls");
     assert_eq!(p2c.decls().len(), 2);
     assert_eq!(*p2c.value(0), PropertyValue::Color(RED));
     assert_eq!(*p2c.value(1), PropertyValue::BackgroundColor(BLUE));
@@ -477,8 +477,8 @@ fn collect_cascaded_groups_are_unchanged_by_flat_arena_refactor() {
     assert_eq!(p2c.decls()[1].value(), ValueRef::Rule { rule: 1, decl: 0 });
 
     // p1 / p3: same 2 stylesheet decls, PLUS inline style appended last
-    // (collect_cascaded pushes stylesheet rules before inline style).
-    let p1c = arena.candidates(id(p1)).expect("p1 has decls");
+    // (collection pushes stylesheet rules before inline style).
+    let p1c = candidates(p1).expect("p1 has decls");
     assert_eq!(
         p1c.decls().len(),
         3,
@@ -497,7 +497,7 @@ fn collect_cascaded_groups_are_unchanged_by_flat_arena_refactor() {
         INLINE_SOURCE_ORDER
     );
 
-    let p3c = arena.candidates(id(p3)).expect("p3 has decls");
+    let p3c = candidates(p3).expect("p3 has decls");
     assert_eq!(p3c.decls().len(), 3);
     assert_eq!(*p3c.value(2), PropertyValue::Display(DisplayValue::Inline));
     // Both inline declarations are their element's first own declaration,
@@ -506,8 +506,7 @@ fn collect_cascaded_groups_are_unchanged_by_flat_arena_refactor() {
     assert_eq!(p3c.decls()[2].value(), ValueRef::Local(0));
 
     // Stylesheet-only decls (p1/p2/p3 all matched the same 2 `p` rules)
-    // carry identical specificity to each other — cross-node consistency
-    // the old shared-selector-per-rule code guaranteed too.
+    // carry identical specificity to each other.
     assert_eq!(
         p1c.decls()[0].precedence().specificity(),
         p2c.decls()[0].precedence().specificity()
@@ -516,46 +515,6 @@ fn collect_cascaded_groups_are_unchanged_by_flat_arena_refactor() {
         p2c.decls()[0].precedence().specificity(),
         p3c.decls()[0].precedence().specificity()
     );
-
-    // Ranges must not overlap — a flat arena has to hold this invariant
-    // that per-node `Vec`s never needed to: if two nodes' ranges ever
-    // overlapped, `candidates(id)` would silently hand `pick_winners` a
-    // slice containing another node's declarations too
-    // (a known "global index space" hazard, arena-shaped).
-    //
-    // The `windows(2)` loop below only checks pairwise overlap among the
-    // three explicitly-named nodes (p1/p2/p3) — it would miss a stray
-    // arena slot that belongs to no range, or one double-counted across
-    // two ranges. The load-bearing check for "no slot unaccounted for"
-    // is the trailing `assert_eq!`s after the loop: they compare the
-    // arena's total lengths against the sum of every named range's
-    // length, so any leaked/duplicated/orphaned slot shows up as a
-    // length mismatch even if no two of the three named ranges overlap
-    // each other directly. The same holds for the elements' own
-    // declarations, which only p1 and p3 have.
-    let covered = |pick: fn(&ElementRanges) -> &Range<usize>| {
-        let mut ranges: Vec<_> = [p1, p2, p3]
-            .iter()
-            .map(|&n| pick(&arena.elements[&id(n)]).clone())
-            .collect();
-        ranges.sort_by_key(|r| r.start);
-        for w in ranges.windows(2) {
-            assert!(
-                w[0].end <= w[1].start,
-                "per-node ranges must not overlap: {:?} vs {:?}",
-                w[0],
-                w[1]
-            );
-        }
-        ranges.iter().map(|r| r.len()).sum::<usize>()
-    };
-    assert_eq!(
-        arena.decls.len(),
-        covered(|r| &r.decls),
-        "every arena slot belongs to exactly one node's range"
-    );
-    assert_eq!(arena.locals.len(), covered(|r| &r.locals));
-    assert_eq!(arena.locals.len(), 2);
 }
 
 #[test]
@@ -808,11 +767,14 @@ fn repeated_inline_styles_refer_to_one_stored_block() {
         .map(|_| doc.push_element(0, "p", Some("color: blue; opacity: 0.25")))
         .collect();
     let tree = build_rule_tree(&doc);
-    let arena = collect_cascaded(&doc, doc.root_id(), &tree).expect("the cascade collects");
-    let id = |n: usize| StyleNodeId::new(ids[n] as u64);
+    let caches = MatchCaches::default();
+    let (collector, inputs) = collect_top_level(&doc, &tree, &caches);
+    let shared = collector.shared();
+    let input = |n: usize| &inputs[&StyleNodeId::new(ids[n] as u64)];
     let handles = |n: usize| -> Vec<ValueRef> {
-        arena
-            .candidates(id(n))
+        input(n)
+            .element(shared)
+            .0
             .expect("p has candidates")
             .decls()
             .iter()
@@ -828,9 +790,8 @@ fn repeated_inline_styles_refer_to_one_stored_block() {
     ];
     assert_eq!(handles(1), cached);
     assert_eq!(handles(2), cached);
-    assert_eq!(arena.locals.len(), 2);
-    assert!(arena.same_cascade_input(id(1), id(2)));
-    assert!(arena.same_cascade_input(id(0), id(1)));
+    assert!(input(1).same_input(input(2), shared));
+    assert!(input(0).same_input(input(1), shared));
 }
 
 #[test]
@@ -842,10 +803,11 @@ fn first_sights_of_different_sources_with_equal_values_are_the_same_input() {
     let spaced = doc.push_element(0, "p", Some("color: red"));
     let other = doc.push_element(0, "p", Some("color: blue"));
     let tree = build_rule_tree(&doc);
-    let arena = collect_cascaded(&doc, doc.root_id(), &tree).expect("the cascade collects");
-    let id = |n: usize| StyleNodeId::new(n as u64);
-    assert!(arena.same_cascade_input(id(tight), id(spaced)));
-    assert!(!arena.same_cascade_input(id(spaced), id(other)));
+    let caches = MatchCaches::default();
+    let (collector, inputs) = collect_top_level(&doc, &tree, &caches);
+    let input = |n: usize| &inputs[&StyleNodeId::new(n as u64)];
+    assert!(input(tight).same_input(input(spaced), collector.shared()));
+    assert!(!input(spaced).same_input(input(other), collector.shared()));
 }
 
 #[test]

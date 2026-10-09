@@ -2755,7 +2755,7 @@ pub enum DisplayValue {
     /// <https://www.w3.org/TR/css-display-3/#root>, verbatim: "a `display`
     /// of `contents` computes to `block` on the root element." This crate
     /// **does** track which element is the root during the inheritance walk
-    /// ([`crate::cascade::resolve_inheritance`]'s root-element detection,
+    /// ([`crate::cascade::walk_from`]'s root-element detection,
     /// used today to pick the `rem`/`rlh` resolution basis — see that
     /// function's doc) — but that tracking is not wired into `display`
     /// computation for any variant, so this root-element blockification
@@ -4340,7 +4340,7 @@ pub(crate) fn resolve_writing_mode(specified: WritingMode) -> WritingMode {
 /// [`crate::specified::SpecifiedValues`] in [`PropertyKey`] declaration order.
 /// Resolution needs the **parent's** direction and must not depend on the
 /// order in which the current node's `direction` winner is applied; order
-/// independence is an invariant of [`crate::cascade::resolve_inheritance`].
+/// independence is an invariant of [`crate::cascade::walk_from`].
 /// After all winners are applied, `finalize` / `finalize_as_root` receive the
 /// parent's [`crate::computed::ComputedValues`] explicitly, avoiding that trap.
 ///
@@ -8517,7 +8517,7 @@ pub enum PropertyValue {
     /// The [`Arc<Vec<..>>`] wrapper makes cloning a cascade winner (the
     /// `value.clone()` in `apply_winners`'s drain) and cloning during an inheritance
     /// walk (`stack.push((child, computed.clone()))` and
-    /// `out[idx] = computed.clone()` in `resolve_inheritance`) **shallow (only an
+    /// `out[idx] = computed.clone()` in `walk_from`) **shallow (only an
     /// Arc reference-count increment)**. Because counter-* is non-inherited,
     /// `inherit_from` puts children in the shared empty slot, but the path to the
     /// winner (parent stack entry and accumulated cascade candidates) previously

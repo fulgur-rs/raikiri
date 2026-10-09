@@ -79,9 +79,8 @@ pub(crate) fn first_line_property_applies(key: PropertyKey) -> bool {
     )
 }
 
-use super::collect::collect_cascaded_with_media_context;
-use super::inherit::apply_winners;
-use super::{CascadeResult, cascade_from_candidates};
+use super::inherit::{WalkOptions, apply_winners, walk};
+use super::{CascadeResult, finish};
 use crate::property::DisplayValue;
 use crate::resolve::{ResolveContext, used_line_height_length};
 use crate::style_dom::{StyleDom, StyleNode, StyleNodeId, StyleNodeKind};
@@ -128,9 +127,20 @@ pub fn cascade_with_first_line<D: StyleDom>(
     media: &MediaContext,
     root: StyleNodeId,
 ) -> Result<FirstLineCascade, CascadeError> {
-    let candidates = collect_cascaded_with_media_context(dom, dom.root_id(), rule_tree, media)?;
+    let mut outputs = walk(
+        dom,
+        rule_tree,
+        media,
+        WalkOptions {
+            retain_subtree: Some(root),
+            ..WalkOptions::default()
+        },
+    )?;
+    // The candidates of the root's subtree, for re-applying its winners over
+    // the first-line parent below.
+    let candidates = std::mem::take(&mut outputs.retained);
     let query = PageContextQuery::default();
-    let normal = cascade_from_candidates(dom, rule_tree, &query, &candidates, media)?;
+    let normal = finish(dom, rule_tree, &query, media, outputs);
     let error = |id: StyleNodeId| CascadeError::Internal {
         message: format!(
             "unsupported first-line node {} (one block with inline descendants required)",
@@ -211,9 +221,9 @@ pub fn cascade_with_first_line<D: StyleDom>(
                 .expect("parent visited first"),
         );
         let mut specified = SpecifiedValues::inherit_from(&inherited);
-        if let Some(values) = candidates.candidates(id) {
+        if let Some(values) = candidates.get(&id) {
             apply_winners(
-                values,
+                values.candidates(),
                 &mut winners,
                 &mut specified,
                 &inherited,

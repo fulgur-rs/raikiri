@@ -146,7 +146,7 @@ use crate::resolve::{
 /// trick would introduce a race: if this node has a `direction` winner, its
 /// application order could cause the code to read the node's **own** direction
 /// rather than its parent's. That would violate the application-order
-/// independence invariant of [`crate::cascade::resolve_inheritance`]. Thus
+/// independence invariant of [`crate::cascade::walk_from`]. Thus
 /// `text_align`, like the D5 fields, is simply copied from the parent here
 /// (see [`Self::inherit_from`]). After **all** winners have been applied,
 /// [`Self::finalize`] / [`Self::finalize_as_root`] resolve `match-parent` using
@@ -1557,12 +1557,12 @@ impl SpecifiedValues {
     /// it only for nodes that truly have no parent.** Discarding a parent's
     /// computed font size and using the initial value is valid only under
     /// §6.1.1's "if the element has no parent" rule.
-    /// [`crate::cascade::resolve_inheritance`] checks this invariant with a
+    /// [`crate::cascade::walk_from`] checks this invariant with a
     /// `debug_assert` (see its `None` arm). The same no-parent precondition
     /// applies when `text-align: match-parent` becomes `start`: Raikiri uses
     /// `root_ctx == None` to detect the absence of an element ancestor.
     /// In a synthetic DOM, several elements can each be "roots" in this
-    /// sense (see the `resolve_inheritance` docs); that same criterion decides
+    /// sense (see the `walk_from` docs); that same criterion decides
     /// whether `match-parent` has a parent.
     pub fn finalize_as_root(self) -> ComputedValues {
         // Phase 2: with no parent, use the initial values. The `em` / `rem` reference follows the
@@ -1606,7 +1606,7 @@ impl SpecifiedValues {
         // Phase 3 context: `rem` uses the root element's computed font size (its own); `rlh`
         // similarly uses its resolved line height. Box properties are outside the self-reference
         // rule above. `used_line_height_length` derives the same value as the `child_ctx` that
-        // `crate::cascade::resolve_inheritance` supplies to children.
+        // `crate::cascade::walk_from` supplies to children.
         // `rlh_on_root_element_matches_child_root_line_height_basis` under `mod@crate::cascade`
         // checks that the two agree.
         let own_line_height = used_line_height_length(line_height, font_size);

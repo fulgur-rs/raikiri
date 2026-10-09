@@ -13,6 +13,7 @@
 
 use std::borrow::Cow;
 
+use crate::PseudoElem;
 use crate::error::CascadeError;
 use crate::layer::LayerPosition;
 use crate::property::{CustomProperty, PropertyKey, PropertyValue};
@@ -21,8 +22,8 @@ use crate::ruletree::Origin;
 use crate::specified::CascadePrecedence;
 
 use super::collect::{
-    PRESENTATIONAL_HINT_SOURCE_ORDER, PRESENTATIONAL_HINT_SPECIFICITY, RankedDecl, Specificity,
-    cascade_rank,
+    CASCADED_PSEUDO_ELEMENTS, PRESENTATIONAL_HINT_SOURCE_ORDER, PRESENTATIONAL_HINT_SPECIFICITY,
+    RankedDecl, Specificity, cascade_rank,
 };
 use super::rollback::{Rollback, rollback_kind};
 use super::rule_index::IndexedRule;
@@ -489,6 +490,165 @@ fn debug_assert_derived_fields(decl: &Declaration) {
         matches!(decl.value, PropertyValue::AllRevertLayer),
         "the All slot belongs to all: revert-layer alone"
     );
+}
+
+/// The declarations every element of one cascade can refer to: those of the
+/// active style rules and of the stored `style`-attribute blocks.
+#[derive(Clone, Copy)]
+pub(crate) struct SharedDeclarations<'a> {
+    rules: &'a [IndexedRule<'a>],
+    blocks: &'a [Box<[Declaration]>],
+}
+
+impl<'a> SharedDeclarations<'a> {
+    pub(crate) fn new(rules: &'a [IndexedRule<'a>], blocks: &'a [Box<[Declaration]>]) -> Self {
+        Self { rules, blocks }
+    }
+
+    fn source(self, local: &'a [Declaration]) -> ValueSource<'a> {
+        ValueSource::new(self.rules, self.blocks, local)
+    }
+}
+
+/// One node's cascade input: the candidates of the element and of each of its
+/// pseudo-elements, and the element's own declarations, which its local
+/// handles number from the first. A node that is not an element has an empty
+/// input.
+///
+/// Everything node-specific the cascade knows about an element — matched
+/// rules, inline style, presentational hints, quirks declarations — reaches
+/// winner selection only through this input, so two siblings with the same
+/// input ([`Self::same_input`]) resolve to the same results.
+#[derive(Default)]
+pub(crate) struct ElementInput {
+    local: Vec<Declaration>,
+    decls: Vec<Candidate>,
+    custom: Vec<CustomCandidate>,
+    /// The candidates of each pseudo-element in [`CASCADED_PSEUDO_ELEMENTS`],
+    /// at the same position. They all come from style rules.
+    pseudo: [PseudoInput; CASCADED_PSEUDO_ELEMENTS.len()],
+}
+
+/// The candidates of one pseudo-element of an element.
+#[derive(Default)]
+pub(crate) struct PseudoInput {
+    decls: Vec<Candidate>,
+    custom: Vec<CustomCandidate>,
+}
+
+impl PseudoInput {
+    /// The candidate lists rule declarations for this pseudo-element go to;
+    /// see [`push_rule_candidates`].
+    pub(crate) fn lists(&mut self) -> (&mut Vec<Candidate>, &mut Vec<CustomCandidate>) {
+        (&mut self.decls, &mut self.custom)
+    }
+}
+
+impl ElementInput {
+    /// Empties the input, keeping its buffers for the next node.
+    pub(crate) fn clear(&mut self) {
+        self.local.clear();
+        self.decls.clear();
+        self.custom.clear();
+        for pseudo in &mut self.pseudo {
+            pseudo.decls.clear();
+            pseudo.custom.clear();
+        }
+    }
+
+    /// A sink for the element's own candidates, and the pseudo-elements'
+    /// inputs, for collecting into this empty input.
+    pub(crate) fn parts(
+        &mut self,
+    ) -> (
+        CandidateSink<'_>,
+        &mut [PseudoInput; CASCADED_PSEUDO_ELEMENTS.len()],
+    ) {
+        debug_assert!(self.is_empty(), "collection starts from an empty input");
+        (
+            CandidateSink::new(&mut self.decls, &mut self.custom, &mut self.local),
+            &mut self.pseudo,
+        )
+    }
+
+    fn is_empty(&self) -> bool {
+        self.local.is_empty()
+            && self.decls.is_empty()
+            && self.custom.is_empty()
+            && self
+                .pseudo
+                .iter()
+                .all(|pseudo| pseudo.decls.is_empty() && pseudo.custom.is_empty())
+    }
+
+    /// The element's ordinary and custom-property candidates, each `None` when
+    /// there are none.
+    pub(crate) fn element<'a>(
+        &'a self,
+        shared: SharedDeclarations<'a>,
+    ) -> (Option<ElementCandidates<'a>>, Option<CustomCandidates<'a>>) {
+        let source = shared.source(&self.local);
+        (
+            (!self.decls.is_empty()).then(|| ElementCandidates::new(&self.decls, source)),
+            (!self.custom.is_empty()).then(|| CustomCandidates::new(&self.custom, source)),
+        )
+    }
+
+    /// The ordinary and custom-property candidates of `pseudo`, each `None`
+    /// when there are none.
+    pub(crate) fn pseudo<'a>(
+        &'a self,
+        pseudo: PseudoElem,
+        shared: SharedDeclarations<'a>,
+    ) -> (Option<ElementCandidates<'a>>, Option<CustomCandidates<'a>>) {
+        let Some(input) = pseudo_slot(pseudo).map(|slot| &self.pseudo[slot]) else {
+            return (None, None);
+        };
+        let source = shared.source(&[]);
+        (
+            (!input.decls.is_empty()).then(|| ElementCandidates::new(&input.decls, source)),
+            (!input.custom.is_empty()).then(|| CustomCandidates::new(&input.custom, source)),
+        )
+    }
+
+    /// Whether this input and `other` carry exactly the same cascade input:
+    /// equal ordinary, custom-property and per-pseudo-element candidate lists,
+    /// compared value by value including origin, importance, specificity and
+    /// source order (see [`same_candidates`]). Both inputs must come from the
+    /// cascade `shared` belongs to.
+    pub(crate) fn same_input(&self, other: &Self, shared: SharedDeclarations<'_>) -> bool {
+        let same = |(a_decls, a_custom), (b_decls, b_custom)| {
+            same_candidates(a_decls, b_decls) && same_custom_candidates(a_custom, b_custom)
+        };
+        same(self.element(shared), other.element(shared))
+            && CASCADED_PSEUDO_ELEMENTS
+                .iter()
+                .all(|&pseudo| same(self.pseudo(pseudo, shared), other.pseudo(pseudo, shared)))
+    }
+
+    /// The heap bytes the input's buffers hold, which retaining it costs.
+    pub(crate) fn retained_bytes(&self) -> usize {
+        use std::mem::size_of;
+        self.local.capacity() * size_of::<Declaration>()
+            + self.decls.capacity() * size_of::<Candidate>()
+            + self.custom.capacity() * size_of::<CustomCandidate>()
+            + self
+                .pseudo
+                .iter()
+                .map(|pseudo| {
+                    pseudo.decls.capacity() * size_of::<Candidate>()
+                        + pseudo.custom.capacity() * size_of::<CustomCandidate>()
+                })
+                .sum::<usize>()
+    }
+}
+
+/// The position of `pseudo` in [`CASCADED_PSEUDO_ELEMENTS`], if the cascade
+/// collects candidates for it.
+pub(crate) fn pseudo_slot(pseudo: PseudoElem) -> Option<usize> {
+    CASCADED_PSEUDO_ELEMENTS
+        .iter()
+        .position(|&slot| slot == pseudo)
 }
 
 /// Candidates copied out of a cascade with every declaration they refer to,
