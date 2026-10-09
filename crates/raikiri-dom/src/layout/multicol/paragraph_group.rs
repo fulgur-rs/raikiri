@@ -32,6 +32,7 @@ pub(super) fn balance(
 ) -> Option<Group> {
     let mut paragraphs = Vec::with_capacity(entries.len());
     let mut paragraph_count = 0;
+    let mut has_empty = false;
     let mut high = 0.0;
     for &(child, output, _, margin_top, margin_bottom, _) in entries {
         let node = &tree.nodes[child];
@@ -69,6 +70,7 @@ pub(super) fn balance(
             return None;
         }
         if empty {
+            has_empty = true;
             high += margin_top.abs() + margin_bottom.abs();
             paragraphs.push(Some(Paragraph {
                 extents: Vec::new(),
@@ -101,7 +103,11 @@ pub(super) fn balance(
         }));
         paragraph_count += 1;
     }
-    if paragraph_count < 2 || !high.is_finite() || context.column_count == 0 {
+    if paragraph_count == 0
+        || (paragraph_count == 1 && !has_empty)
+        || !high.is_finite()
+        || context.column_count == 0
+    {
         return None;
     }
     // Trial work and storage depend on shaped lines, never the declared count.

@@ -56,6 +56,22 @@ fn ordinary_paragraph_is_the_unfragmented_control() {
 }
 
 #[test]
+fn an_anonymous_table_cell_preserves_its_text_paint_order() {
+    let document = lay_out("<div style='display:table'>A</div>", "");
+    let page = document.page(0).unwrap();
+    let runs = page.text_runs();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].text, "A");
+    assert_eq!(
+        page.paint_order_for_text_runs(&runs)
+            .iter()
+            .filter(|event| matches!(event, PaintEvent::TextLine(_)))
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn a_replaced_image_uses_its_own_rounded_clip_after_its_box() {
     let document = lay_out(
         "<img src='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg=='>",
@@ -760,6 +776,26 @@ fn an_empty_paragraph_keeps_group_continuations() {
             ("G".into(), (0.0, 76.0)),
         ]
     );
+}
+
+#[test]
+fn one_nonempty_paragraph_balances_beside_empty_blocks() {
+    for body in [
+        "<div class=mc><p>A<br>B<br>C<br>D</p><p></p></div><p>E</p>",
+        "<div class=mc><p></p><p>A<br>B<br>C<br>D</p></div><p>E</p>",
+    ] {
+        let document = lay_out(body, "");
+        assert_eq!(
+            text_origins(&document),
+            [
+                ("A".into(), (0.0, 16.0)),
+                ("B".into(), (0.0, 36.0)),
+                ("C".into(), (60.0, 16.0)),
+                ("D".into(), (60.0, 36.0)),
+                ("E".into(), (0.0, 56.0)),
+            ]
+        );
+    }
 }
 
 #[test]

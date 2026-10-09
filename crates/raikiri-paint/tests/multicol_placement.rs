@@ -360,6 +360,20 @@ fn an_empty_paragraph_does_not_disable_group_balancing() {
 }
 
 #[test]
+fn one_nonempty_paragraph_balances_beside_empty_blocks() {
+    for body in [
+        "<div class=mc><p>A<br>B<br>C<br>D</p><p></p></div><p>E</p>",
+        "<div class=mc><p></p><p>A<br>B<br>C<br>D</p></div><p>E</p>",
+    ] {
+        compare(
+            body,
+            "",
+            "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:60px;top:0'>C<br>D</div><div style='position:absolute;left:0;top:40px'>E</div>",
+        );
+    }
+}
+
+#[test]
 fn empty_paragraphs_preserve_positive_and_negative_collapsed_margins() {
     compare(
         "<div class=mc><p>A<br>B</p><p class=empty></p><p class=later>C<br>D</p><p class=last>E<br>F</p></div><p>G</p>",

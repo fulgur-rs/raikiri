@@ -180,7 +180,7 @@ impl ParagraphProjection {
         let positioned = PositionedLines::new(document, cascade, root, None);
         let mut line_columns = vec![fallback_column; count];
         let mut column_origins = vec![0.0; count];
-        let origins_recorded = document.nodes[root]
+        let origins_recorded = node
             .ifc
             .as_ref()
             .is_some_and(|root| root.multicol_fragment_origins_recorded);
