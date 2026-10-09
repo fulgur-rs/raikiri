@@ -1386,3 +1386,43 @@ fn opacity_leaves_importance_for_the_declaration_parser() {
         assert!(parse_block(source).is_empty(), "{source}");
     }
 }
+
+#[test]
+fn border_expansion_keeps_each_side_apart() {
+    let side = |px: f32, style, color| Border {
+        width: Length::Px(px),
+        style,
+        color,
+    };
+    let red = BorderColor::Resolved(CssColor {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    });
+    let sides = Sides {
+        top: side(1.0, BorderStyle::Solid, red),
+        right: side(2.0, BorderStyle::Dashed, red),
+        bottom: side(3.0, BorderStyle::Dotted, BorderColor::CurrentColor),
+        left: side(4.0, BorderStyle::Double, BorderColor::CurrentColor),
+    };
+    let mut values = Vec::new();
+    expand_border(sides, |value| values.push(value));
+    assert_eq!(
+        values,
+        vec![
+            PropertyValue::BorderTopWidth(Length::Px(1.0)),
+            PropertyValue::BorderTopStyle(BorderStyle::Solid),
+            PropertyValue::BorderTopColor(red),
+            PropertyValue::BorderRightWidth(Length::Px(2.0)),
+            PropertyValue::BorderRightStyle(BorderStyle::Dashed),
+            PropertyValue::BorderRightColor(red),
+            PropertyValue::BorderBottomWidth(Length::Px(3.0)),
+            PropertyValue::BorderBottomStyle(BorderStyle::Dotted),
+            PropertyValue::BorderBottomColor(BorderColor::CurrentColor),
+            PropertyValue::BorderLeftWidth(Length::Px(4.0)),
+            PropertyValue::BorderLeftStyle(BorderStyle::Double),
+            PropertyValue::BorderLeftColor(BorderColor::CurrentColor),
+        ]
+    );
+}

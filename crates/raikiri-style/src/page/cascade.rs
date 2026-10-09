@@ -1002,10 +1002,11 @@ pub fn cascade_page_with_media_context(
                     ));
                     continue;
                 }
-                // Expand again before pushing candidates. `PageRule::declarations`
-                // is a `pub` field, and although a `Declaration` can only come
-                // from expansion, re-running it keeps the page cascade
-                // independent of how the list was assembled.
+                // Expand again before pushing candidates. The page parser
+                // already expanded every declaration, so this is the identity
+                // for them; `PageRule::declarations` is a `pub` field, and
+                // re-running the expansion keeps the page cascade independent
+                // of how a consumer reassembled the list.
                 // Rationale is consolidated in `crate::rule::expand_shorthand_into`.
                 let parsed = ParsedDeclaration {
                     value: decl.value.clone(),

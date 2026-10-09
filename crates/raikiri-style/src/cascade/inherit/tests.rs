@@ -8304,11 +8304,12 @@ fn important_shorthand_longhands_survive_a_later_normal_longhand() {
         Some("margin: 1px 2px 3px 4px !important; margin-top: 10px"),
     );
     assert_eq!(cv.margin.top, ComputedLengthPercentageOrAuto::Px(1.0));
+    assert_eq!(cv.margin.right, ComputedLengthPercentageOrAuto::Px(2.0));
+    assert_eq!(cv.margin.bottom, ComputedLengthPercentageOrAuto::Px(3.0));
     assert_eq!(cv.margin.left, ComputedLengthPercentageOrAuto::Px(4.0));
 }
 
 #[test]
-
 fn float_wired_through_cascade_from_inline_style() {
     // <p style="float: left"> delivers FloatValue::Left to
     // ComputedValues.float. End-to-end parser → PropertyValue::Float →

@@ -181,8 +181,9 @@ fn analyze_selector(selector: &Selector<RaikiriSelectorImpl>) -> (BucketKey, Vec
 /// the element being matched.
 pub(crate) struct IndexedRule<'a> {
     pub(crate) rule: &'a StyleRule,
-    /// `rule.declarations`, already expanded to longhands when the rule was
-    /// parsed: a [`Declaration`] can only come from expansion.
+    /// `rule.declarations`, already expanded when the rule was parsed
+    /// ([`crate::rule::expand_shorthand_into`]); the rule tree has no path that
+    /// changes a rule after parsing.
     pub(crate) declarations: &'a [Declaration],
     /// The cascade layer position of the rule's declarations under this
     /// cascade's layer order.

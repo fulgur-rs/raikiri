@@ -58,7 +58,7 @@ fn var_in_margin_inline_shorthand_preserves_later_longhand_cascade() {
 fn var_in_margin_block_shorthand_preserves_later_longhand_cascade() {
     // Sibling of `var_in_margin_inline_shorthand_preserves_later_longhand_cascade`
     // for the block-axis 2-value shorthand — exercises
-    // `crate::rule::expand_deferred`'s `MarginBlock` arm (only the
+    // `crate::rule::classify`'s `MarginBlock` arm (only the
     // inline-axis sibling was previously covered by an end-to-end
     // var() test).
     let cv = cascade_doc(
@@ -75,7 +75,7 @@ fn var_in_margin_block_shorthand_preserves_later_longhand_cascade() {
 #[test]
 fn var_in_padding_inline_shorthand_preserves_later_longhand_cascade() {
     // Sibling of `var_in_margin_inline_shorthand_preserves_later_longhand_cascade`
-    // for `padding-inline` — exercises `crate::rule::expand_deferred`'s
+    // for `padding-inline` — exercises `crate::rule::classify`'s
     // `PaddingInline` arm.
     let cv = cascade_doc(
         "",
@@ -91,7 +91,7 @@ fn var_in_padding_inline_shorthand_preserves_later_longhand_cascade() {
 #[test]
 fn var_in_padding_block_shorthand_preserves_later_longhand_cascade() {
     // Sibling of `var_in_margin_inline_shorthand_preserves_later_longhand_cascade`
-    // for `padding-block` — exercises `crate::rule::expand_deferred`'s
+    // for `padding-block` — exercises `crate::rule::classify`'s
     // `PaddingBlock` arm, the last of the 4 logical 2-value shorthands.
     let cv = cascade_doc(
         "",

@@ -94,9 +94,11 @@ use crate::property::{
 /// let _ = PropertyValue::Color(CssColor::BLACK);
 /// ```
 ///
-/// Every declaration is a longhand or a value the cascade keeps in shorthand
-/// form (see [`classify`]): the parsers produce a [`ParsedDeclaration`], and
-/// [`expand_shorthand_into`] turns it into the declarations it stands for.
+/// No declaration's key is one expansion replaces (see [`classify`]): the
+/// parsers produce a [`ParsedDeclaration`], [`expand_shorthand_into`] turns it
+/// into the declarations it stands for, and the cascade's own sources
+/// (presentational hints, quirks, the page cascade) build theirs through the
+/// same checked constructor.
 #[derive(Clone, PartialEq)]
 pub struct Declaration {
     /// Resolved property value.
@@ -178,9 +180,12 @@ pub(crate) enum KeyClass {
     /// A shorthand that expansion replaces with these longhands, in this
     /// order, so it never becomes a cascade slot itself.
     Shorthand { longhands: &'static [PropertyKey] },
-    /// A shorthand whose value the cascade keeps in shorthand form as one
-    /// candidate when it cannot be expanded at parse time (a `var()` value),
-    /// resolving it into longhands only after substitution.
+    /// A key that is its own cascade slot although it names a shorthand. A
+    /// `grid`, `grid-area` or `white-space` value always stays whole; a
+    /// `text-wrap` or `text-spacing` value stays whole only as a `var()` value,
+    /// expanded after substitution (a literal one expands into its longhands,
+    /// and `text-wrap`'s slot is also the `text-wrap-mode` longhand's); `all`
+    /// carries the `all: revert-layer` marker.
     Retained,
 }
 
@@ -893,7 +898,7 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
         // `GridLineShorthand` contains `SmolStr` and is not `Copy`. Unlike other
         // shorthand payload (`Sides<..>` / `FlexShorthand` / `GapShorthand`
         // payloads (all `Copy`), its value cannot be moved out of `d.value` (accessed
-        // through `&Declaration`), so pass it by reference with a `ref` binding
+        // through `&ParsedDeclaration`), so pass it by reference with a `ref` binding
         // to `expand_grid_row` / `expand_grid_column`
         // (see the `expand_grid_row` docs).
         PropertyValue::GridRow(ref shorthand) => expand_grid_row(shorthand, push_longhand),

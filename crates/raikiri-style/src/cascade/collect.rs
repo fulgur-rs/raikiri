@@ -122,9 +122,7 @@ impl CascadedDecl {
         source_order: u32,
         layer: LayerPosition,
     ) -> Self {
-        // A declaration's value only changes through `update_value`, which
-        // recomputes the key.
-        debug_assert_eq!(decl.key, decl.value.key(), "stale declaration key");
+        debug_assert_derived_fields(decl.key, decl.rollback, &decl.value);
         Self {
             value: decl.value,
             important: decl.important,
@@ -150,8 +148,20 @@ impl CascadedDecl {
     }
 }
 
+/// Checks, in debug builds, that a declaration's derived fields still describe
+/// its value. The value only changes through `Declaration::update_value`, which
+/// recomputes them; a direct write to `value` would leave them stale.
+fn debug_assert_derived_fields(key: PropertyKey, rollback: Rollback, value: &PropertyValue) {
+    debug_assert_eq!(key, value.key(), "stale declaration key");
+    debug_assert_eq!(
+        rollback,
+        super::rollback::rollback_kind(value),
+        "stale declaration rollback"
+    );
+}
+
 // One `CascadedDecl` is materialized per matched declaration of every element,
-// so its size bounds the candidate arena's footprint. Its fields take 165
+// so its size bounds the candidate arena's footprint. Its fields take 164
 // bytes padded to 168, so a new field fits only in that slack; past it, raise
 // the bound together with a cascade memory measurement.
 const _: () = assert!(
@@ -394,12 +404,15 @@ impl DeclarationBlockCache {
     }
 }
 
-/// Calls `push` with each declaration, moving out of a freshly parsed block
-/// and cloning out of a cached one.
-fn for_each_declaration(declarations: Cow<'_, [Declaration]>, push: impl FnMut(Declaration)) {
+/// Calls `push` with each declaration, owned when the block was freshly
+/// parsed and borrowed when it came from the cache.
+fn for_each_declaration(
+    declarations: Cow<'_, [Declaration]>,
+    mut push: impl FnMut(Cow<'_, Declaration>),
+) {
     match declarations {
-        Cow::Owned(owned) => owned.into_iter().for_each(push),
-        Cow::Borrowed(borrowed) => borrowed.iter().cloned().for_each(push),
+        Cow::Owned(owned) => owned.into_iter().for_each(|d| push(Cow::Owned(d))),
+        Cow::Borrowed(borrowed) => borrowed.iter().for_each(|d| push(Cow::Borrowed(d))),
     }
 }
 
@@ -411,30 +424,40 @@ fn for_each_declaration(declarations: Cow<'_, [Declaration]>, push: impl FnMut(D
 /// `::before`/`::after` path (a per-element scratch buffer pair,
 /// [`collect_cascaded`]'s pseudo-element section) without duplicating this
 /// match.
+///
+/// An owned value moves and a borrowed one is cloned straight into its
+/// candidate. `important` is the importance the candidate takes, which
+/// animations force to `false`.
+#[allow(clippy::too_many_arguments)] // the destination plus one candidate's precedence fields
 fn push_cascaded_decl(
     (decls, custom_decls): (&mut Vec<CascadedDecl>, &mut Vec<CustomCascadedDecl>),
-    decl: Declaration,
+    decl: Cow<'_, Declaration>,
+    important: bool,
     origin: Origin,
     specificity: Specificity,
     source_order: u32,
     layer: LayerPosition,
 ) {
-    match decl.value {
-        PropertyValue::CustomProperty(custom) => custom_decls.push((
-            custom,
-            decl.important,
+    let (key, rollback) = (decl.key, decl.rollback);
+    let value = match decl {
+        Cow::Owned(decl) => decl.value,
+        Cow::Borrowed(decl) => decl.value.clone(),
+    };
+    debug_assert_derived_fields(key, rollback, &value);
+    match value {
+        PropertyValue::CustomProperty(custom) => {
+            custom_decls.push((custom, important, origin, specificity, source_order, layer))
+        }
+        value => decls.push(CascadedDecl {
+            value,
+            important,
             origin,
+            key,
+            rollback,
             specificity,
             source_order,
             layer,
-        )),
-        _ => decls.push(CascadedDecl::new(
-            decl,
-            origin,
-            specificity,
-            source_order,
-            layer,
-        )),
+        }),
     }
 }
 
@@ -447,9 +470,8 @@ fn push_cascaded_decl(
 ///   `value.clone()` was discarded if it lost; now only the winner is cloned
 ///   once for [`super::inherit::apply_value`].
 ///
-/// The sibling [`CascadedDecl`] remains a tuple alias because it is always
-/// destructured into named bindings, never accessed positionally. This type
-/// uses named fields because [`beats`] compares precedence fields **in order**:
+/// Like [`CascadedDecl`], this type uses named fields: [`beats`] compares
+/// precedence fields **in order**, and
 /// [`specificity`](Self::specificity) and [`source_order`](Self::source_order)
 /// are both `u32`; swapping tuple positions `.1` and `.2` would compile and
 /// silently change cascade winners.
@@ -869,14 +891,15 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                             &ancestor_path,
                         )
                     {
-                        // The declarations were expanded to longhands when the
-                        // rule was parsed: a `Declaration` can only come from
-                        // `crate::rule::expand_shorthand_into`, and the rule
-                        // tree has no path that changes a rule after parsing.
+                        // The declarations were expanded when the rule was
+                        // parsed (`crate::rule::expand_shorthand_into`), and the
+                        // rule tree has no path that changes a rule after
+                        // parsing.
                         for d in indexed.declarations {
                             push_cascaded_decl(
                                 (&mut out.decls, &mut out.custom_decls),
-                                d.clone(),
+                                Cow::Borrowed(d),
+                                d.important,
                                 rule.origin,
                                 spec,
                                 rule.source_order,
@@ -932,7 +955,8 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                         for d in indexed.declarations {
                             push_cascaded_decl(
                                 (buf, custom_buf),
-                                d.clone(),
+                                Cow::Borrowed(d),
+                                d.important,
                                 rule.origin,
                                 spec,
                                 rule.source_order,
@@ -944,9 +968,11 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                 // inline style
                 if let Some(source) = elem.inline_style_source() {
                     for_each_declaration(block_cache.declarations(source, rule_tree), |decl| {
+                        let important = decl.important;
                         push_cascaded_decl(
                             (&mut out.decls, &mut out.custom_decls),
                             decl,
+                            important,
                             Origin::Author,
                             INLINE_SPECIFICITY,
                             INLINE_SOURCE_ORDER,
@@ -958,21 +984,18 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                     });
                 }
                 if let Some(source) = elem.animation_style_source() {
-                    for_each_declaration(
-                        block_cache.declarations(source, rule_tree),
-                        |mut decl| {
+                    for_each_declaration(block_cache.declarations(source, rule_tree), |decl| {
+                        push_cascaded_decl(
+                            (&mut out.decls, &mut out.custom_decls),
+                            decl,
                             // Animated values are never important.
-                            decl.important = false;
-                            push_cascaded_decl(
-                                (&mut out.decls, &mut out.custom_decls),
-                                decl,
-                                Origin::Animation,
-                                INLINE_SPECIFICITY,
-                                INLINE_SOURCE_ORDER,
-                                LayerPosition::default(),
-                            );
-                        },
-                    );
+                            false,
+                            Origin::Animation,
+                            INLINE_SPECIFICITY,
+                            INLINE_SOURCE_ORDER,
+                            LayerPosition::default(),
+                        );
+                    });
                 }
                 let end = out.decls.len();
                 if end > start {

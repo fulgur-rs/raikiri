@@ -2365,12 +2365,13 @@ impl ResolvedAgainstInherited {
 ///
 /// Arms for the shorthands that [`crate::rule::expand_shorthand_into`]
 /// expands before the cascade ([`crate::rule::KeyClass::Shorthand`]) are
-/// only reached when this is called directly. The shorthands the cascade
-/// keeps whole ([`crate::rule::KeyClass::Retained`]: white-space, text-wrap,
-/// text-spacing, grid, grid-area) do arrive here: a `var()` value of one is
-/// a single candidate, substituted after winner selection into the shorthand
-/// form. Both delegate to the same per-family expanders in `crate::rule`
-/// (e.g. [`crate::rule::expand_border`]).
+/// only reached when this is called directly; they delegate to the same
+/// per-family expanders in `crate::rule` (e.g. [`crate::rule::expand_border`]).
+/// The shorthand forms the cascade keeps whole
+/// ([`crate::rule::KeyClass::Retained`]) do arrive here and set their fields
+/// directly: `grid`, `grid-area` and `white-space` values, and the
+/// `text-wrap` / `text-spacing` shorthand a `var()` value of one substitutes
+/// into after winner selection.
 ///
 /// `pub(crate)` permits intra-doc links from other modules.
 pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {

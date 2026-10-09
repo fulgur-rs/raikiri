@@ -775,3 +775,25 @@ fn repeated_inline_styles_cascade_like_unique_ones() {
         assert!(!result.background_color_specified[id]);
     }
 }
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "stale declaration key")]
+fn a_value_written_past_update_value_is_caught() {
+    let mut decl = Declaration::new(PropertyValue::Opacity(1.0), false);
+    decl.value = PropertyValue::Color(crate::property::CssColor::BLACK);
+    let _ = CascadedDecl::new(decl, Origin::Author, 0, 0, LayerPosition::default());
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "stale declaration rollback")]
+fn a_rollback_kind_left_behind_by_a_value_write_is_caught() {
+    use crate::property::{BorderColor, CssWideKeyword};
+    let mut decl = Declaration::new(
+        PropertyValue::BorderTopColor(BorderColor::CurrentColor),
+        false,
+    );
+    decl.value = PropertyValue::BorderTopColorCssWide(CssWideKeyword::Revert);
+    let _ = CascadedDecl::new(decl, Origin::Author, 0, 0, LayerPosition::default());
+}
