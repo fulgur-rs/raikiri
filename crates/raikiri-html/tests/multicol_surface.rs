@@ -595,3 +595,21 @@ fn a_short_plain_wrapper_with_a_huge_column_count_projects_once() {
     );
     assert!(document.page(0).unwrap().fragments().count() < 16);
 }
+
+#[test]
+fn single_column_rtl_wrapper_preserves_ordinary_block_flow() {
+    let document = lay_out(
+        "<div class=mc><div><p>A<br>B<br>C<br>D</p></div></div><p>E</p>",
+        ".mc{height:40px;column-count:1;direction:rtl}.mc p{direction:ltr}",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (0.0, 16.0)),
+            ("B".into(), (0.0, 36.0)),
+            ("C".into(), (0.0, 56.0)),
+            ("D".into(), (0.0, 76.0)),
+            ("E".into(), (0.0, 56.0)),
+        ]
+    );
+}

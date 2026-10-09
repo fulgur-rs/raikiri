@@ -268,3 +268,12 @@ fn an_empty_fixed_height_column_container_reserves_its_box() {
         "<div style='position:absolute;left:0;top:0;width:100px;height:40px;background:lime'></div><div style='position:absolute;left:0;top:40px'>E</div>",
     );
 }
+
+#[test]
+fn a_single_column_rtl_container_preserves_ordinary_block_flow() {
+    compare(
+        "<div class=mc><div><p>A<br>B<br>C<br>D</p></div></div><p>E</p>",
+        ".mc{height:40px;column-count:1;direction:rtl}.mc p{direction:ltr}",
+        "<div style='position:absolute;left:0;top:0'>A<br>B<br>C<br>D</div><div style='position:absolute;left:0;top:40px'>E</div>",
+    );
+}
