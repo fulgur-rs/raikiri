@@ -182,11 +182,14 @@ pub(crate) type CustomCascadedDecl = (
 );
 
 /// Output of [`collect_cascaded`]: all nodes' candidates in one flat `Vec`,
-/// indexed by per-node [`Range`] values.
+/// indexed by per-node [`Range`] values, together with the rule index they
+/// were collected against.
 ///
 /// The flat arena keeps candidate storage contiguous and records one range per
 /// node. This avoids per-node candidate containers while preserving document
-/// order.
+/// order. The arena borrows the rule tree for `'r` and owns the cascade's
+/// [`RuleIndex`], so everything the candidates were collected from stays
+/// alive and unchanged for as long as the candidates are read.
 ///
 /// # Why wrap this in a struct instead of `(Vec<_>, HashMap<_, Range<usize>>)`?
 ///
@@ -203,9 +206,12 @@ pub(crate) type CustomCascadedDecl = (
 ///
 /// `pub(crate)` follows [`super::inherit::resolve_inheritance`], which is
 /// also `pub(crate)` for an intra-doc link from another module. Other modules
-/// are not meant to construct or manipulate this arena: [`super::cascade`]
-/// constructs it, and [`collect_cascaded`] populates it in this module.
-pub(crate) struct CascadedArena {
+/// are not meant to construct or manipulate this arena: only
+/// [`collect_cascaded_with_media_context`] builds and populates it.
+pub(crate) struct CascadedArena<'r> {
+    /// The active style rules of this cascade, which the candidates were
+    /// matched against.
+    index: RuleIndex<'r>,
     /// Flat storage for all nodes' candidates in document visit order.
     pub(crate) decls: Vec<CascadedDecl>,
     /// Per-node ranges in `decls`. A node with no candidates has no entry,
@@ -240,9 +246,10 @@ pub(crate) struct SpecifiedProperties {
     pub(crate) background_color: bool,
 }
 
-impl CascadedArena {
-    pub(crate) fn new() -> Self {
+impl<'r> CascadedArena<'r> {
+    fn new(index: RuleIndex<'r>) -> Self {
         Self {
+            index,
             decls: Vec::new(),
             ranges: HashMap::new(),
             custom_decls: Vec::new(),
@@ -662,22 +669,20 @@ pub(crate) fn cascade_rank(origin: Origin, important: bool) -> u8 {
                   collect_cascaded_with_media_context"
     )
 )]
-pub(crate) fn collect_cascaded<D: StyleDom>(
+pub(crate) fn collect_cascaded<'r, D: StyleDom>(
     dom: &D,
     id: StyleNodeId,
-    rule_tree: &RuleTree,
-    out: &mut CascadedArena,
-) {
-    collect_cascaded_with_media_context(dom, id, rule_tree, out, &MediaContext::default());
+    rule_tree: &'r RuleTree,
+) -> CascadedArena<'r> {
+    collect_cascaded_with_media_context(dom, id, rule_tree, &MediaContext::default())
 }
 
-pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
+pub(crate) fn collect_cascaded_with_media_context<'r, D: StyleDom>(
     dom: &D,
     id: StyleNodeId,
-    rule_tree: &RuleTree,
-    out: &mut CascadedArena,
+    rule_tree: &'r RuleTree,
     media_context: &MediaContext,
-) {
+) -> CascadedArena<'r> {
     // Document-wide constant — read once rather than
     // per (node, rule) pair inside the loop below.
     let layers = rule_tree.layer_order(media_context);
@@ -705,7 +710,7 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
     // Bucket the active rules once per cascade so each element only runs the
     // full matcher against rules that can possibly match it. See the
     // `rule_index` module docs for why the filtering never drops a match.
-    let rule_index = RuleIndex::new(style_rules, &layers);
+    let mut out = CascadedArena::new(RuleIndex::new(style_rules, &layers));
     let mut candidate_rules: Vec<u32> = Vec::new();
     let mut block_cache = DeclarationBlockCache::default();
     let mut cell_padding_cache = HashMap::new();
@@ -878,9 +883,10 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
                 );
                 // stylesheet rule matching, restricted to the rules the
                 // index could not rule out (still in source order)
-                rule_index.candidate_rules(&elem, &ancestor_filter, &mut candidate_rules);
+                out.index
+                    .candidate_rules(&elem, &ancestor_filter, &mut candidate_rules);
                 for &rule_idx in &candidate_rules {
-                    let indexed = rule_index.rule(rule_idx);
+                    let indexed = out.index.rule(rule_idx);
                     let rule = indexed.rule;
                     if indexed.has_element_selector
                         && let Some(spec) = match_complex_selector_list(
@@ -1081,6 +1087,7 @@ pub(crate) fn collect_cascaded_with_media_context<D: StyleDom>(
             stack[start..].reverse();
         } // cov:ignore: fallthrough-vs-continue region split inside a loop body; every test with an in-document element already exercises this closing brace, but cargo-llvm-cov does not attribute the hit to this line.
     }
+    out
 }
 pub(crate) fn specificity_of(selector: &Selector<RaikiriSelectorImpl>) -> Specificity {
     // Selector::specificity in selectors returns a packed 32-bit integer.

@@ -440,8 +440,7 @@ fn collect_cascaded_groups_are_unchanged_by_flat_arena_refactor() {
     let p3 = doc.push_element(0, "p", Some("display: inline"));
 
     let tree = build_rule_tree(&doc);
-    let mut arena = CascadedArena::new();
-    collect_cascaded(&doc, doc.root_id(), &tree, &mut arena);
+    let arena = collect_cascaded(&doc, doc.root_id(), &tree);
 
     let id = |i: usize| StyleNodeId::new(i as u64);
 

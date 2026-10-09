@@ -330,16 +330,9 @@ pub fn cascade_with_media_context_for_page<D: StyleDom>(
     media_context: &MediaContext,
     page_query: &PageContextQuery,
 ) -> Result<CascadeResult, CascadeError> {
-    let mut cascaded = CascadedArena::new();
-
     // Phase 1: collect per-node cascaded values.
-    collect_cascaded_with_media_context(
-        dom,
-        dom.root_id(),
-        rule_tree,
-        &mut cascaded,
-        media_context,
-    );
+    let cascaded =
+        collect_cascaded_with_media_context(dom, dom.root_id(), rule_tree, media_context);
     cascade_from_candidates(dom, rule_tree, page_query, &cascaded, media_context)
 }
 
@@ -347,7 +340,7 @@ fn cascade_from_candidates<D: StyleDom>(
     dom: &D,
     rule_tree: &RuleTree,
     page_query: &PageContextQuery,
-    cascaded: &collect::CascadedArena,
+    cascaded: &collect::CascadedArena<'_>,
     media_context: &MediaContext,
 ) -> Result<CascadeResult, CascadeError> {
     // Collection recorded which elements have these candidates, so no second

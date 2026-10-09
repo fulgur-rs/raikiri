@@ -6889,8 +6889,8 @@ fn resolve_inheritance_grows_undersized_output_vectors() {
         deepest = doc.push_element(deepest, "span", None);
     }
     let id = StyleNodeId(e as u64);
-    let mut cascaded = CascadedArena::new();
-    crate::cascade::collect::collect_cascaded(&doc, id, &RuleTree::empty(), &mut cascaded);
+    let tree = RuleTree::empty();
+    let cascaded = crate::cascade::collect::collect_cascaded(&doc, id, &tree);
     let mut out: Vec<ComputedValues> = Vec::new();
     let mut authored_writing_modes: Vec<Option<WritingMode>> = Vec::new();
     let mut page_values = vec![PageValue::Auto; doc.node_count()];
@@ -6927,7 +6927,9 @@ fn resolve_inheritance_panics_when_root_parent_font_size_is_not_initial() {
     let mut doc = TestDoc::new();
     let e = doc.push_element(0, "div", None);
     let id = StyleNodeId(e as u64);
-    let cascaded = CascadedArena::new();
+    // No rules and no inline style: the element has no candidates.
+    let tree = RuleTree::empty();
+    let cascaded = crate::cascade::collect::collect_cascaded(&doc, id, &tree);
     let mut out = vec![ComputedValues::initial(); doc.node_count()];
     let mut authored_writing_modes = vec![None; doc.node_count()];
     let mut page_values = vec![PageValue::Auto; doc.node_count()];
@@ -9257,8 +9259,7 @@ struct WalkOutputs {
 
 fn walk_outputs(doc: &TestDoc, tree: &RuleTree, sibling_sharing: bool) -> (WalkOutputs, usize) {
     let root = doc.root_id();
-    let mut cascaded = CascadedArena::new();
-    crate::cascade::collect::collect_cascaded(doc, root, tree, &mut cascaded);
+    let cascaded = crate::cascade::collect::collect_cascaded(doc, root, tree);
     let n = doc.node_count();
     let mut computed = vec![ComputedValues::initial(); n];
     let mut authored_writing_modes = vec![None; n];
