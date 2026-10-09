@@ -59,10 +59,12 @@ const SHARE_RETENTION_BUDGET: usize = 8 << 20;
 /// Cleared inputs kept for reuse by the next nodes, at most this many.
 const SPARE_INPUTS: usize = 2 * SIBLING_SHARE_SLOTS;
 
-/// A node this walk resolved, with the input it was resolved from.
+/// A node this walk resolved, with the input it was resolved from. The input
+/// is boxed so that a share cache, of which a deep document has one per
+/// level, stays small and inputs move as pointers.
 struct ShareSource {
     id: StyleNodeId,
-    input: ElementInput,
+    input: Box<ElementInput>,
     bytes: usize,
 }
 
@@ -85,17 +87,23 @@ struct InputStore {
     /// this depth's slot stays bound to that parent.
     caches: Vec<SiblingShareCache>,
     retained: usize,
-    spares: Vec<ElementInput>,
+    /// Boxed like the sources' inputs, so that moving one between the two
+    /// allocates nothing.
+    #[expect(
+        clippy::vec_box,
+        reason = "spares move into share sources, which box their inputs"
+    )]
+    spares: Vec<Box<ElementInput>>,
 }
 
 impl InputStore {
     /// An empty input, reusing a spare's buffers when there is one.
-    fn take(&mut self) -> ElementInput {
+    fn take(&mut self) -> Box<ElementInput> {
         self.spares.pop().unwrap_or_default()
     }
 
     /// Keeps `input` for reuse, unless enough spares are kept already.
-    fn give_back(&mut self, mut input: ElementInput) {
+    fn give_back(&mut self, mut input: Box<ElementInput>) {
         if self.spares.len() < SPARE_INPUTS {
             input.clear();
             self.spares.push(input);
@@ -110,16 +118,13 @@ impl InputStore {
                 .resize_with(depth + 1, SiblingShareCache::default);
         }
         if self.caches[depth].parent != Some(parent) {
-            let stale = std::mem::replace(
-                &mut self.caches[depth],
-                SiblingShareCache {
-                    parent: Some(parent),
-                    ..SiblingShareCache::default()
-                },
-            );
-            for source in stale.sources.into_iter().flatten() {
-                self.retained -= source.bytes;
-                self.give_back(source.input);
+            self.caches[depth].parent = Some(parent);
+            self.caches[depth].next = 0;
+            for slot in 0..SIBLING_SHARE_SLOTS {
+                if let Some(source) = self.caches[depth].sources[slot].take() {
+                    self.retained -= source.bytes;
+                    self.give_back(source.input);
+                }
             }
         }
         &self.caches[depth]
@@ -129,7 +134,7 @@ impl InputStore {
     /// `depth`, which [`Self::cache_for`] bound to `id`'s parent. The oldest
     /// of the cache's sources makes room; a source that would pass the budget
     /// is given back instead.
-    fn remember(&mut self, depth: usize, id: StyleNodeId, input: ElementInput) {
+    fn remember(&mut self, depth: usize, id: StyleNodeId, input: Box<ElementInput>) {
         let bytes = input.retained_bytes();
         let cache = &self.caches[depth];
         let evicted_bytes = cache.sources[cache.next]
