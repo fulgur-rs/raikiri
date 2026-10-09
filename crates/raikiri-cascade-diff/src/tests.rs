@@ -1,6 +1,6 @@
 use super::*;
 use crate::doc::{GenDoc, GenNode};
-use raikiri_style::StyleQuirksMode;
+use raikiri_style::{Origin, StyleQuirksMode};
 
 fn run_to_string(args: &[&str]) -> (ExitCode, String) {
     let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
@@ -18,6 +18,26 @@ impl Write for FailingWriter {
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// A writer that records what it holds at each flush.
+#[derive(Default)]
+struct FlushLog {
+    bytes: Vec<u8>,
+    flushed: Vec<String>,
+}
+
+impl Write for FlushLog {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.bytes.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.flushed
+            .push(String::from_utf8_lossy(&self.bytes).into_owned());
         Ok(())
     }
 }
@@ -56,11 +76,47 @@ fn dump_prints_one_line_per_case() {
         assert!(columns[0].starts_with("gen:"), "{line}");
         assert_eq!(columns[1].len(), 16, "{line}");
         match columns[2] {
-            "ok" => assert_eq!(columns.len(), 3, "{line}"),
+            "ok" | "error" => assert_eq!(columns.len(), 3, "{line}"),
             "panic" => assert_eq!(columns.len(), 4, "{line}"),
             other => panic!("unexpected status {other}"),
         }
     }
+}
+
+#[test]
+fn dump_names_a_case_before_running_it() {
+    let mut log = FlushLog::default();
+    let args = vec!["dump".to_owned(), "--seeds".to_owned(), "0..1".to_owned()];
+    assert_eq!(run(&args, &mut log), ExitCode::SUCCESS);
+    assert_eq!(log.flushed[0], "gen:0:print\t");
+    assert!(log.flushed[1].starts_with("gen:0:print\t"));
+    assert!(log.flushed[1].ends_with('\n'));
+    assert_eq!(log.flushed[2], format!("{}gen:0:screen\t", log.flushed[1]));
+}
+
+#[test]
+fn case_columns_name_the_status() {
+    let text = "PANIC: a\tb\nsecond line\n";
+    assert_eq!(
+        case_columns(text),
+        format!("{:016x}\tpanic\ta b", dump::fnv1a(text))
+    );
+    for text in [
+        "ERR: x\n",
+        "IO-ERROR: x\n",
+        "PARSE-ERROR: x\n",
+        "BAD CASE: x\n",
+    ] {
+        assert_eq!(
+            case_columns(text),
+            format!("{:016x}\terror", dump::fnv1a(text))
+        );
+    }
+    let text = "root_element_index: Some(1)\n";
+    assert_eq!(
+        case_columns(text),
+        format!("{:016x}\tok", dump::fnv1a(text))
+    );
 }
 
 #[test]
@@ -140,23 +196,66 @@ fn panics_become_case_output() {
     );
 }
 
+/// The `::first-line` entry point's dump for `root` of `doc` under one author
+/// stylesheet.
+fn first_line_text(doc: &GenDoc, css: &str, root: usize) -> String {
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(css, Origin::Author);
+    let media = MediaContext::print();
+    let inputs = dump::Inputs {
+        dom: doc,
+        tree: &tree,
+        media: &media,
+        custom_names: &[],
+    };
+    let mut out = String::new();
+    first_line_into(&mut out, &inputs, StyleNodeId::new(root as u64));
+    out
+}
+
 #[test]
-fn first_line_cases_cover_every_outcome() {
-    let (mut errors, mut without, mut with) = (0, 0, 0);
-    for seed in 0..400 {
-        let text = render(&format!("gen:{seed}:first-line"));
-        if text.starts_with("ERR:") {
-            errors += 1;
-        } else if text.contains("first_line: None") {
-            without += 1;
-        } else if text.contains("first_line.root:") {
-            with += 1;
-        }
-    }
+fn the_first_line_entry_point_reports_every_outcome() {
+    let mut doc = GenDoc::new(StyleQuirksMode::NoQuirks);
+    let p = doc.append(0, GenNode::element("p"));
+    let b = doc.append(p, GenNode::element("b"));
+    doc.append(b, GenNode::text("bold"));
+    let with = first_line_text(&doc, "p { display: block } p::first-line { color: red }", p);
+    assert!(with.contains(&format!("first_line.root: {p}\n")), "{with}");
     assert!(
-        errors > 0 && without > 0 && with > 0,
-        "{errors} {without} {with}"
+        with.contains(&format!("first_line[{b}]: ComputedValues")),
+        "{with}"
     );
+    let without = first_line_text(&doc, "p { display: block }", p);
+    assert!(without.contains("first_line: None"), "{without}");
+    let inline_root = first_line_text(&doc, "p::first-line { color: red }", p);
+    assert!(inline_root.starts_with("ERR: "), "{inline_root}");
+}
+
+#[test]
+fn generated_first_line_cases_usually_reach_first_line_styles() {
+    let with = (0..60)
+        .filter(|seed| render(&format!("gen:{seed}:first-line")).contains("first_line.root:"))
+        .count();
+    assert!(with >= 30, "{with} of 60");
+}
+
+#[test]
+fn html_cases_run_the_first_line_entry_point_for_their_first_first_line_block() {
+    let inline = TempFile::new(
+        "first-line.html",
+        "<!doctype html><style>p::first-line { color: red }</style><p>x <b>y</b></p>",
+    );
+    let text = render(&format!("html:{}", inline.path()));
+    assert!(text.contains("first_line.root: "), "{text}");
+    let nested = TempFile::new(
+        "first-line-nested.html",
+        "<!doctype html><style>div::first-line { color: red }</style><div><p>x</p></div>",
+    );
+    let text = render(&format!("html:{}", nested.path()));
+    assert!(text.contains("first_line: ERR: "), "{text}");
+    let plain = TempFile::new("plain.html", "<!doctype html><p>x</p>");
+    let text = render(&format!("html:{}", plain.path()));
+    assert!(!text.contains("first_line"), "{text}");
 }
 
 #[test]

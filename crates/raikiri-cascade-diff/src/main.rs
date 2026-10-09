@@ -13,10 +13,13 @@
 //! ```
 //!
 //! `dump` prints one `CASE<TAB>HASH<TAB>STATUS` line per case, where `STATUS`
-//! is `ok`, or `panic` followed by a fourth column with the first line of the
-//! panic message. `show` prints the full canonical text of one case so the two
-//! builds can be diffed field by field. `describe` prints the document and
-//! stylesheets a seed generates, to turn a reported case into a unit test.
+//! is `ok`, `error` when the case produced only an error message, or `panic`
+//! followed by a fourth column with the first line of the panic message. The
+//! case id is written and flushed before the case runs, so a crash or a hang
+//! leaves it on an unfinished last line. `show` prints the full canonical text
+//! of one case so the two builds can be diffed field by field. `describe`
+//! prints the document and stylesheets a seed generates, to turn a reported
+//! case into a unit test.
 //!
 //! Case ids are `gen:SEED:print`, `gen:SEED:screen`, `gen:SEED:first-line`
 //! and `html:PATH`. A case that panics is recorded with its panic message
@@ -31,10 +34,17 @@ use std::io::{BufWriter, Write};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::process::ExitCode;
 
-use raikiri_style::{MediaContext, RuleTree, StyleDom, StyleNode, StyleNodeId, StyleNodeKind};
+use raikiri_style::{
+    CascadeResult, MediaContext, PseudoElem, RuleTree, StyleDom, StyleNode, StyleNodeId,
+    StyleNodeKind,
+};
 
 /// Media variants every generated case is cascaded under.
 const MEDIA: [&str; 3] = ["print", "screen", "first-line"];
+
+/// Prefixes of a case text that holds an error message instead of a cascade
+/// result.
+const ERROR_PREFIXES: [&str; 4] = ["BAD CASE: ", "IO-ERROR: ", "PARSE-ERROR: ", "ERR: "];
 
 const USAGE: &str = "usage: raikiri-cascade-diff dump [--seeds START..END] [--html-list FILE]
        raikiri-cascade-diff show CASE
@@ -109,14 +119,25 @@ fn dump(args: &[String], out: &mut dyn Write) -> ExitCode {
 }
 
 fn write_case_line(out: &mut dyn Write, case: &str) -> std::io::Result<()> {
-    let text = render(case);
-    let hash = dump::fnv1a(&text);
-    match text.strip_prefix("PANIC: ") {
-        Some(message) => {
-            let message = message.lines().next().unwrap_or("").replace('\t', " ");
-            writeln!(out, "{case}\t{hash:016x}\tpanic\t{message}")
-        }
-        None => writeln!(out, "{case}\t{hash:016x}\tok"),
+    // The id goes out before the case runs, so a crash or a hang leaves it on
+    // an unfinished last line that names the case.
+    write!(out, "{case}\t")?;
+    out.flush()?;
+    let columns = case_columns(&render(case));
+    writeln!(out, "{columns}")?;
+    out.flush()
+}
+
+/// The `HASH<TAB>STATUS[<TAB>MESSAGE]` columns for a case's rendered text.
+fn case_columns(text: &str) -> String {
+    let hash = dump::fnv1a(text);
+    if let Some(message) = text.strip_prefix("PANIC: ") {
+        let message = message.lines().next().unwrap_or("").replace('\t', " ");
+        format!("{hash:016x}\tpanic\t{message}")
+    } else if ERROR_PREFIXES.iter().any(|prefix| text.starts_with(prefix)) {
+        format!("{hash:016x}\terror")
+    } else {
+        format!("{hash:016x}\tok")
     }
 }
 
@@ -159,13 +180,26 @@ fn render_unguarded(case: &str) -> String {
         for (source, origin) in &generated.sheets {
             tree.add_stylesheet(source, *origin);
         }
-        let doc = &generated.doc;
-        let mut out = String::new();
-        match media {
-            "print" => cascade_into(&mut out, doc, &tree, &MediaContext::print()),
-            "screen" => cascade_into(&mut out, doc, &tree, &MediaContext::screen()),
-            "first-line" => first_line_into(&mut out, doc, &tree),
+        let context = match media {
+            "print" | "first-line" => MediaContext::print(),
+            "screen" => MediaContext::screen(),
             _ => return bad_case(),
+        };
+        let inputs = dump::Inputs {
+            dom: &generated.doc,
+            tree: &tree,
+            media: &context,
+            custom_names: &generate::CUSTOM_NAMES,
+        };
+        let mut out = String::new();
+        if media == "first-line" {
+            let root = generated.first_line_root.map_or_else(
+                || first_line_root(&generated.doc),
+                |id| StyleNodeId::new(id as u64),
+            );
+            first_line_into(&mut out, &inputs, root);
+        } else {
+            cascade_into(&mut out, &inputs);
         }
         out
     } else if let Some(path) = case.strip_prefix("html:") {
@@ -188,7 +222,25 @@ fn html_into(bytes: &[u8]) -> String {
     match raikiri_html::parse(bytes, &options) {
         Ok(document) => {
             let tree = raikiri_html::build_rule_tree(&document);
-            cascade_into(&mut out, &document.dom, &tree, &MediaContext::print());
+            let media = MediaContext::print();
+            let source = String::from_utf8_lossy(bytes);
+            let names = dump::custom_property_names(&source);
+            let inputs = dump::Inputs {
+                dom: &document.dom,
+                tree: &tree,
+                media: &media,
+                custom_names: &names,
+            };
+            if let Some(result) = cascade_into(&mut out, &inputs)
+                && let Some(root) = first_line_origin(&result)
+            {
+                // Layout styles that block's first line through the
+                // dedicated entry point.
+                match raikiri_style::cascade_with_first_line(&document.dom, &tree, &media, root) {
+                    Ok(cascade) => dump::first_line_styles(&mut out, cascade.first_line.as_ref()),
+                    Err(error) => out.push_str(&format!("first_line: ERR: {error:?}\n")),
+                }
+            }
         }
         // cov:ignore: parsing only fails on input-size limits or reader I/O errors, and the tool passes an in-memory byte slice
         Err(error) => out.push_str(&format!("PARSE-ERROR: {error:?}\n")),
@@ -196,24 +248,46 @@ fn html_into(bytes: &[u8]) -> String {
     out
 }
 
-fn cascade_into<D: StyleDom>(out: &mut String, dom: &D, tree: &RuleTree, media: &MediaContext) {
-    match raikiri_style::cascade_with_media_context(dom, tree, media) {
-        Ok(result) => dump::cascade_result(out, &result),
+fn cascade_into<D: StyleDom>(
+    out: &mut String,
+    inputs: &dump::Inputs<'_, D>,
+) -> Option<CascadeResult> {
+    match raikiri_style::cascade_with_media_context(inputs.dom, inputs.tree, inputs.media) {
+        Ok(result) => {
+            dump::cascade_result(out, inputs, &result);
+            Some(result)
+        }
         // cov:ignore: the cascade documents that it currently always returns Ok; the arm keeps a future error visible as case output
+        Err(error) => {
+            out.push_str(&format!("ERR: {error:?}\n"));
+            None
+        }
+    }
+}
+
+fn first_line_into<D: StyleDom>(out: &mut String, inputs: &dump::Inputs<'_, D>, root: StyleNodeId) {
+    match raikiri_style::cascade_with_first_line(inputs.dom, inputs.tree, inputs.media, root) {
+        Ok(cascade) => {
+            dump::cascade_result(out, inputs, &cascade.normal);
+            dump::first_line_styles(out, cascade.first_line.as_ref());
+        }
         Err(error) => out.push_str(&format!("ERR: {error:?}\n")),
     }
 }
 
-fn first_line_into<D: StyleDom>(out: &mut String, dom: &D, tree: &RuleTree) {
-    let root = first_line_root(dom);
-    match raikiri_style::cascade_with_first_line(dom, tree, &MediaContext::print(), root) {
-        Ok(cascade) => dump::first_line(out, &cascade),
-        Err(error) => out.push_str(&format!("ERR: {error:?}\n")),
-    }
+/// The first element, in node order, that has a `::first-line` style.
+fn first_line_origin(result: &CascadeResult) -> Option<StyleNodeId> {
+    result
+        .pseudo
+        .keys()
+        .filter(|(_, kind)| *kind == PseudoElem::FirstLine)
+        .map(|(id, _)| *id)
+        .min_by_key(|id| id.0)
 }
 
-/// The node a generated case's `::first-line` cascade starts from: the first
-/// in-document element below the root element, or the root element itself.
+/// The node a generated case without a designated block runs the
+/// `::first-line` entry point for: the first in-document element below the
+/// root element, or the root element itself.
 fn first_line_root<D: StyleDom>(dom: &D) -> StyleNodeId {
     let mut stack: Vec<StyleNodeId> = dom.child_ids(dom.root_id()).collect();
     stack.reverse();

@@ -1,15 +1,19 @@
 //! Seeded generator of documents and stylesheets.
 //!
-//! A case is a pure function of its seed: the same seed always produces the
-//! same document and the same stylesheets, so a case that differs between two
-//! builds can be reproduced from its id alone. The generator aims for breadth
-//! rather than validity — declarations the parser rejects are simply dropped —
-//! and it deliberately repeats sibling structures and inline styles so the
-//! cascade's sharing and caching paths run alongside the ordinary ones.
+//! A case is a pure function of its seed and of this module's source: the same
+//! seed always produces the same document and the same stylesheets, whichever
+//! engine build it is cascaded with, so a case that differs between two builds
+//! can be reproduced from its id alone. The generator aims for breadth rather
+//! than validity — declarations the parser rejects are simply dropped — and it
+//! deliberately repeats sibling structures and inline styles so the cascade's
+//! sharing and caching paths run alongside the ordinary ones.
 
-use raikiri_style::{Origin, StyleQuirksMode};
+mod properties;
+
+use raikiri_style::{Origin, StyleNodeKind, StyleQuirksMode};
 
 use crate::doc::{GenDoc, GenNode, SVG_NAMESPACE};
+use properties::PROPERTY_NAMES;
 
 /// xorshift64* pseudo-random generator.
 pub(crate) struct Rng(u64);
@@ -49,6 +53,9 @@ impl Rng {
 pub(crate) struct Case {
     pub(crate) doc: GenDoc,
     pub(crate) sheets: Vec<(String, Origin)>,
+    /// The block the `::first-line` entry point is run for, when the case has
+    /// one: a block whose descendants are all inline.
+    pub(crate) first_line_root: Option<usize>,
 }
 
 /// Generates the case for `seed`.
@@ -74,15 +81,26 @@ pub(crate) fn generate(seed: u64) -> Case {
             grow(&mut rng, &mut doc, top, 1, &mut budget);
         }
     }
-    let mut sheets = vec![(stylesheet(&mut rng), Origin::Author)];
+    let first_line_root = if rng.chance(85) {
+        first_line_block(&mut rng, &mut doc)
+    } else {
+        None
+    };
+    let mut author = stylesheet(&mut rng);
+    if first_line_root.is_some() {
+        author.push_str(&typographic_rules(&mut rng));
+    }
+    let mut sheets = vec![(author, Origin::Author)];
     if rng.chance(30) {
         sheets.insert(0, (stylesheet(&mut rng), Origin::UserAgent));
     }
     if rng.chance(60) {
         // Block-level display for the structural elements, as a user agent
-        // stylesheet gives them, so most cases have block formatting contexts
-        // (and the `::first-line` entry point has a block to start from).
+        // stylesheet gives them, so most cases have block formatting contexts.
         sheets.insert(0, (BASIC_DISPLAY.to_owned(), Origin::UserAgent));
+    }
+    if first_line_root.is_some() {
+        sheets.insert(0, (FIRST_LINE_DISPLAY.to_owned(), Origin::UserAgent));
     }
     if rng.chance(20) {
         sheets.push((stylesheet(&mut rng), Origin::User));
@@ -90,7 +108,79 @@ pub(crate) fn generate(seed: u64) -> Case {
     if rng.chance(30) {
         sheets.push((stylesheet(&mut rng), Origin::Author));
     }
-    Case { doc, sheets }
+    Case {
+        doc,
+        sheets,
+        first_line_root,
+    }
+}
+
+/// Keeps the designated `::first-line` block a block whose descendants are
+/// all inline, as that entry point requires, whatever the random rules say:
+/// important user-agent declarations win over author and user ones.
+const FIRST_LINE_DISPLAY: &str = "#fl { display: block !important }
+#fl * { display: inline !important; float: none !important; position: static !important }
+";
+
+/// Appends a block of inline content under a random in-document HTML element
+/// and returns it.
+fn first_line_block(rng: &mut Rng, doc: &mut GenDoc) -> Option<usize> {
+    let parents: Vec<usize> = (0..doc.nodes.len())
+        .filter(|&id| {
+            let node = &doc.nodes[id];
+            node.kind == StyleNodeKind::Element
+                && node.in_document
+                && node.namespace.is_none()
+                && !matches!(
+                    node.tag.as_str(),
+                    "img" | "template" | "table" | "tbody" | "tr"
+                )
+        })
+        .collect();
+    let parent = *parents.get(rng.below(parents.len().max(1)))?;
+    let mut block = GenNode::element("p");
+    block.attrs.push(("id".into(), "fl".into()));
+    if rng.chance(40) {
+        block.attrs.push(("class".into(), rng.pick(CLASSES).into()));
+    }
+    if rng.chance(25) {
+        block.style = Some(inline_style(rng));
+    }
+    let root = doc.append(parent, block);
+    for _ in 0..1 + rng.below(4) {
+        if rng.chance(40) {
+            let text = rng.pick(&["First line", " of text ", "x"]);
+            doc.append(root, GenNode::text(text));
+        } else {
+            let tag = rng.pick(&["span", "em", "b", "a", "strong"]);
+            let inline = doc.append(root, element(rng, tag));
+            if rng.chance(30) {
+                let nested_tag = rng.pick(&["span", "em"]);
+                let nested = doc.append(inline, element(rng, nested_tag));
+                doc.append(nested, GenNode::text("deep"));
+            }
+            doc.append(inline, GenNode::text("word"));
+        }
+    }
+    Some(root)
+}
+
+/// `::first-line`, and usually `::first-letter`, rules for the designated
+/// block, so first-letter styles inherit through a first line.
+fn typographic_rules(rng: &mut Rng) -> String {
+    let count = 1 + rng.below(6);
+    let mut css = format!("#fl::first-line {{ {} }}\n", declarations(rng, count, true));
+    if rng.chance(60) {
+        let count = 1 + rng.below(6);
+        css.push_str(&format!(
+            "#fl::first-letter {{ {} }}\n",
+            declarations(rng, count, true)
+        ));
+    }
+    if rng.chance(30) {
+        css.push_str("#fl::before { content: \"B\" }\n");
+    }
+    css
 }
 
 /// A readable listing of a generated case: its stylesheets, then its tree in
@@ -101,6 +191,9 @@ pub(crate) fn describe(case: &Case) -> String {
         out.push_str(&format!("/* {origin:?} */\n{source}\n"));
     }
     out.push_str(&format!("<!-- {:?} -->\n", case.doc.quirks));
+    if let Some(root) = case.first_line_root {
+        out.push_str(&format!("<!-- first-line root [{root}] -->\n"));
+    }
     let mut stack = vec![(0usize, 0usize)];
     while let Some((id, depth)) = stack.pop() {
         let node = &case.doc.nodes[id];
@@ -364,15 +457,30 @@ fn stylesheet(rng: &mut Rng) -> String {
             ),
             8 => format!(
                 "@page {} {{ {} }}",
-                rng.pick(&["", ":first", ":left", "named"]),
+                rng.pick(&[
+                    "",
+                    ":first",
+                    ":left",
+                    ":right",
+                    ":blank",
+                    "named",
+                    "named:first"
+                ]),
                 page_declarations(rng)
             ),
             9 if rng.chance(30) => {
                 "@counter-style cs1 { system: cyclic; symbols: \"*\" \"+\"; }".to_owned()
             }
-            10 if rng.chance(30) => {
-                "::highlight(hl) { background-color: yellow; color: red }".to_owned()
-            }
+            10 if rng.chance(30) => format!(
+                "::highlight({}) {{ background-color: {}; color: red }}",
+                rng.pick(&["hl", "hl2"]),
+                rng.pick(&[
+                    "yellow",
+                    "currentcolor",
+                    "color-mix(in srgb, currentcolor 40%, blue)",
+                    "rgb(1 2 3 / 50%)"
+                ])
+            ),
             _ => style_rule(rng),
         };
         css.push_str(&rule);
@@ -399,7 +507,13 @@ fn selector(rng: &mut Rng) -> String {
         out = format!("{out}{combinator}{}", compound(rng));
     }
     if rng.chance(12) {
-        out.push_str(rng.pick(&["::before", "::after", "::marker", "::first-line"]));
+        out.push_str(rng.pick(&[
+            "::before",
+            "::after",
+            "::marker",
+            "::first-line",
+            "::first-letter",
+        ]));
     }
     out
 }
@@ -510,8 +624,11 @@ fn color(rng: &mut Rng) -> String {
     }
 }
 
+/// The custom properties generated declarations define and reference.
+pub(crate) const CUSTOM_NAMES: [&str; 4] = ["--v0", "--v1", "--v2", "--v3"];
+
 fn var_ref(rng: &mut Rng) -> String {
-    let name = rng.pick(&["--v0", "--v1", "--v2", "--v3"]);
+    let name = rng.pick(&CUSTOM_NAMES);
     if rng.chance(40) {
         format!("var({name}, {})", rng.pick(&["3px", "blue", "1em 2em"]))
     } else {
@@ -568,12 +685,11 @@ fn declaration(rng: &mut Rng) -> String {
         return format!("all: {}", rng.pick(&["revert-layer", "inherit", "initial"]));
     }
     if rng.chance(15) {
-        let names = raikiri_style::property::supported_property_names();
-        let property = names[rng.below(names.len())];
+        let property = rng.pick(PROPERTY_NAMES);
         return format!("{property}: {}", rng.pick(GENERIC_VALUES));
     }
     if rng.chance(10) {
-        let name = rng.pick(&["--v0", "--v1", "--v2", "--v3"]);
+        let name = rng.pick(&CUSTOM_NAMES);
         let value = match rng.below(5) {
             0 => length(rng),
             1 => color(rng),
