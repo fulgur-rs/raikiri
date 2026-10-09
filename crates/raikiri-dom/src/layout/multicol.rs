@@ -1,4 +1,5 @@
 mod break_flow;
+mod paragraph_group;
 
 use super::*;
 
@@ -551,6 +552,9 @@ fn relayout_nested_multicol_children(
     // One ordinary paragraph can break inside its lines. Measuring its whole
     // block as an atomic item would keep the container at the unbroken height
     // while the inline post-pass already assigns lines to several columns.
+    let group_balance = auto_measurements
+        .as_ref()
+        .and_then(|(entries, _)| paragraph_group::balance(tree, index, entries, context));
     let paragraph_balance = auto_measurements.as_ref().and_then(|(entries, _)| {
         let [(child, _, _, _, _, _)] = entries.as_slice() else {
             return None;
@@ -567,7 +571,7 @@ fn relayout_nested_multicol_children(
     for (order, child) in children.into_iter().enumerate() {
         let measured = auto_measurements
             .as_ref()
-            .and_then(|(entries, _)| entries.iter().find(|entry| entry.0 == child));
+            .and_then(|(entries, _)| entries.get(order));
         let (mut child_output, mut child_layout, margin_top, margin_bottom, needed) =
             if let Some((_, output, layout, margin_top, margin_bottom, needed)) = measured {
                 (*output, *layout, *margin_top, *margin_bottom, *needed)
@@ -617,7 +621,14 @@ fn relayout_nested_multicol_children(
                 let needed = margin_top + output.size.height + margin_bottom;
                 (output, layout, margin_top, margin_bottom, needed)
             };
-        if let Some((balanced_child, _, height)) = &paragraph_balance
+        let planned = group_balance
+            .as_ref()
+            .and_then(|group| group.placements[order].as_ref());
+        if let Some(placement) = planned {
+            column = placement.first_column;
+            cursor = placement.first_y - margin_top;
+            child_output.size.height = placement.first_height;
+        } else if let Some((balanced_child, _, height)) = &paragraph_balance
             && *balanced_child == child
         {
             child_output.size.height = *height;
@@ -627,6 +638,7 @@ fn relayout_nested_multicol_children(
         let avoid_column_break = avoid_column_break_after_previous
             || matches!(tree.nodes[child].break_before, BreakBetween::Avoid);
         if let Some(height) = break_height
+            && group_balance.is_none()
             && column + 1 < context.column_count
             && cursor > 0.0
             && cursor + needed > height
@@ -654,7 +666,14 @@ fn relayout_nested_multicol_children(
         child_layout.size = child_output.size;
         child_layout.location = Point { x, y };
         tree.set_unrounded_layout(TaffyNodeId::from(child), &child_layout);
-        refresh_nested_text_fragments(tree, child, column_context);
+        if let Some(placement) = planned {
+            if let Some(root) = tree.nodes[child].ifc.as_mut() {
+                root.multicol_fragments = Some(placement.fragments.clone());
+                root.multicol_fragment_origins_recorded = true;
+            }
+        } else {
+            refresh_nested_text_fragments(tree, child, column_context);
+        }
         if let Some((balanced_child, fragments, _)) = &paragraph_balance
             && *balanced_child == child
             && let Some(root) = tree.nodes[child].ifc.as_mut()
@@ -683,13 +702,22 @@ fn relayout_nested_multicol_children(
             return fallback_height;
         };
         tree.fragment_tree.reparent_roots(child, child_fragment);
-        let record_context = paragraph_balance
-            .as_ref()
-            .filter(|(balanced_child, _, _)| *balanced_child == child)
-            .map_or(context, |(_, _, height)| FragmentationContext {
-                available_height: Some(*height),
+        let record_context = group_balance.as_ref().map_or_else(
+            || {
+                paragraph_balance
+                    .as_ref()
+                    .filter(|(balanced_child, _, _)| *balanced_child == child)
+                    .map_or(context, |(_, _, height)| FragmentationContext {
+                        available_height: Some(*height),
+                        ..context
+                    })
+            },
+            |group| FragmentationContext {
+                available_height: Some(group.height),
+                column_index: column,
                 ..context
-            });
+            },
+        );
         let record_context = FragmentationContext {
             origin_y: content_origin.y,
             ..record_context
@@ -697,7 +725,13 @@ fn relayout_nested_multicol_children(
         if record_nested_ifc_box_fragments(tree, child, child_fragment, record_context).is_none() {
             return fallback_height;
         }
-        cursor = y - content_origin.y + child_output.size.height + margin_bottom;
+        if let Some(placement) = planned {
+            column = placement.last_column;
+            cursor = placement.last_y;
+            maximum = maximum.max(group_balance.as_ref().map_or(0.0, |group| group.height));
+        } else {
+            cursor = y - content_origin.y + child_output.size.height + margin_bottom;
+        }
         if tree.nodes[child].kind() == NodeKind::Element {
             avoid_column_break_after_previous =
                 matches!(tree.nodes[child].break_after, BreakBetween::Avoid);
@@ -1252,6 +1286,7 @@ fn refresh_nested_text_fragments(
     // A paragraph laid out by the inline engine keeps its lines on its root:
     // its fragments go there, and only its boxes hold text of their own.
     if let Some(root) = tree.nodes[node_id].ifc.as_mut() {
+        root.multicol_fragment_origins_recorded = false;
         let committed_ranges = root
             .lines
             .as_ref()

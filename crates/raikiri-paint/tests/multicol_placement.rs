@@ -277,3 +277,75 @@ fn a_single_column_rtl_container_preserves_ordinary_block_flow() {
         "<div style='position:absolute;left:0;top:0'>A<br>B<br>C<br>D</div><div style='position:absolute;left:0;top:40px'>E</div>",
     );
 }
+
+#[test]
+fn multiple_paragraphs_balance_through_a_paragraph_break() {
+    compare(
+        "<div class=mc><p>A<br>B<br>C<br>D</p><p>E<br>F</p></div><p>G</p>",
+        "",
+        "<div style='position:absolute;left:0;top:0'>A<br>B<br>C</div><div style='position:absolute;left:60px;top:0'>D<br>E<br>F</div><div style='position:absolute;left:0;top:60px'>G</div>",
+    );
+}
+
+#[test]
+fn multiple_paragraphs_fill_three_columns_in_one_group() {
+    compare(
+        "<div class=mc><p>A<br>B<br>C<br>D</p><p>E<br>F</p></div><p>G</p>",
+        ".mc{width:160px;column-count:3}",
+        "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:60px;top:0'>C<br>D</div><div style='position:absolute;left:120px;top:0'>E<br>F</div><div style='position:absolute;left:0;top:40px'>G</div>",
+    );
+}
+
+#[test]
+fn multiple_paragraphs_balance_with_two_orphans_and_widows() {
+    compare(
+        "<div class=mc><p>A<br>B<br>C<br>D<br>E<br>F</p><p>G<br>H</p></div><p>I</p>",
+        ".mc{orphans:2;widows:2}",
+        "<div style='position:absolute;left:0;top:0'>A<br>B<br>C<br>D</div><div style='position:absolute;left:60px;top:0'>E<br>F<br>G<br>H</div><div style='position:absolute;left:0;top:80px'>I</div>",
+    );
+}
+
+#[test]
+fn paragraph_break_minima_override_the_column_container() {
+    compare(
+        "<div class=mc><p style='orphans:3;widows:3'>A<br>B<br>C<br>D<br>E<br>F</p><p>G<br>H</p></div><p>I</p>",
+        "",
+        "<div style='position:absolute;left:0;top:0'>A<br>B<br>C</div><div style='position:absolute;left:60px;top:0'>D<br>E<br>F<br>G<br>H</div><div style='position:absolute;left:0;top:100px'>I</div>",
+    );
+}
+
+#[test]
+fn paragraph_bottom_margins_participate_in_balancing() {
+    compare(
+        "<div class=mc><p>A<br>B<br>C<br>D</p><p>E<br>F</p></div><p>G</p>",
+        ".mc p{margin-bottom:8px}",
+        "<div style='position:absolute;left:0;top:0'>A<br>B<br>C</div><div style='position:absolute;left:60px;top:0'>D</div><div style='position:absolute;left:60px;top:28px'>E<br>F</div><div style='position:absolute;left:0;top:76px'>G</div>",
+    );
+}
+
+#[test]
+fn adjoining_paragraph_margins_collapse_within_a_column() {
+    compare(
+        "<div class=mc><p>A<br>B</p><p>C<br>D</p><p>E<br>F</p></div><p>G</p>",
+        ".mc p{margin-bottom:8px}.mc p+p{margin-top:12px}",
+        "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:0;top:52px'>C</div><div style='position:absolute;left:60px;top:0'>D</div><div style='position:absolute;left:60px;top:32px'>E<br>F</div><div style='position:absolute;left:0;top:80px'>G</div>",
+    );
+}
+
+#[test]
+fn source_whitespace_and_parent_insets_preserve_group_continuations() {
+    compare(
+        "<p>@</p><div class=mc>\n <p>A<br>B<br>C<br>D</p>\n <p>E<br>F</p>\n</div><p>G</p>",
+        ".mc{padding:4px 5px;border:1px solid black}",
+        "<div style='position:absolute;left:0;top:0'>@</div><div style='position:absolute;left:0;top:20px;box-sizing:border-box;width:112px;height:70px;border:1px solid black'></div><div style='position:absolute;left:6px;top:25px'>A<br>B<br>C</div><div style='position:absolute;left:66px;top:25px'>D<br>E<br>F</div><div style='position:absolute;left:0;top:90px'>G</div>",
+    );
+}
+
+#[test]
+fn short_paragraphs_move_whole_and_truncate_adjoining_break_margins() {
+    compare(
+        "<div class=mc><p>A<br>B</p><p>C<br>D</p><p>E<br>F</p></div><p>G</p>",
+        ".mc{orphans:3;widows:3}.mc p{margin-bottom:8px}.mc p+p{margin-top:12px}",
+        "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:0;top:52px'>C<br>D</div><div style='position:absolute;left:60px;top:0'>E<br>F</div><div style='position:absolute;left:0;top:92px'>G</div>",
+    );
+}

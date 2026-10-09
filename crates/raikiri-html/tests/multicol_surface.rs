@@ -613,3 +613,131 @@ fn single_column_rtl_wrapper_preserves_ordinary_block_flow() {
         ]
     );
 }
+
+#[test]
+fn multiple_paragraphs_continue_in_the_last_used_column() {
+    let document = lay_out(
+        "<div class=mc><p>A<br>B<br>C<br>D</p><p>E<br>F</p></div><p>G</p>",
+        "",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (0.0, 16.0)),
+            ("B".into(), (0.0, 36.0)),
+            ("C".into(), (0.0, 56.0)),
+            ("D".into(), (60.0, 16.0)),
+            ("E".into(), (60.0, 36.0)),
+            ("F".into(), (60.0, 56.0)),
+            ("G".into(), (0.0, 76.0)),
+        ]
+    );
+}
+
+#[test]
+fn multiple_paragraphs_preserve_two_line_break_minima() {
+    let document = lay_out(
+        "<div class=mc><p>A<br>B<br>C<br>D<br>E<br>F</p><p>G<br>H</p></div><p>I</p>",
+        ".mc{orphans:2;widows:2}",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (0.0, 16.0)),
+            ("B".into(), (0.0, 36.0)),
+            ("C".into(), (0.0, 56.0)),
+            ("D".into(), (0.0, 76.0)),
+            ("E".into(), (60.0, 16.0)),
+            ("F".into(), (60.0, 36.0)),
+            ("G".into(), (60.0, 56.0)),
+            ("H".into(), (60.0, 76.0)),
+            ("I".into(), (0.0, 96.0)),
+        ]
+    );
+}
+
+#[test]
+fn a_paragraph_split_below_earlier_content_has_column_local_origins() {
+    let document = lay_out(
+        "<div class=mc><p>A<br>B</p><p>C<br>D</p><p>E<br>F</p></div><p>G</p>",
+        ".mc p{margin-bottom:8px}.mc p+p{margin-top:12px}",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (0.0, 16.0)),
+            ("B".into(), (0.0, 36.0)),
+            ("C".into(), (0.0, 68.0)),
+            ("D".into(), (60.0, 16.0)),
+            ("E".into(), (60.0, 48.0)),
+            ("F".into(), (60.0, 68.0)),
+            ("G".into(), (0.0, 96.0)),
+        ]
+    );
+    let page = document.page(0).unwrap();
+    let runs = page.text_runs();
+    assert!(
+        !page
+            .paint_order_for_text_runs(&runs)
+            .iter()
+            .any(|event| { matches!(event, PaintEvent::PushClip(_, ClipKind::Fragmentainer)) })
+    );
+}
+
+#[test]
+fn paragraph_specific_minima_preserve_all_lines_and_following_flow() {
+    let document = lay_out(
+        "<div class=mc><p style='orphans:3;widows:3'>A<br>B<br>C<br>D<br>E<br>F</p><p>G<br>H</p></div><p>I</p>",
+        "",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (0.0, 16.0)),
+            ("B".into(), (0.0, 36.0)),
+            ("C".into(), (0.0, 56.0)),
+            ("D".into(), (60.0, 16.0)),
+            ("E".into(), (60.0, 36.0)),
+            ("F".into(), (60.0, 56.0)),
+            ("G".into(), (60.0, 76.0)),
+            ("H".into(), (60.0, 96.0)),
+            ("I".into(), (0.0, 116.0)),
+        ]
+    );
+}
+
+#[test]
+fn an_overflow_clip_follows_each_group_paragraph_piece() {
+    let document = lay_out(
+        "<div class=mc><p>A<br>B</p><p>C<br>D</p><p>E<br>F</p></div><p>G</p>",
+        ".mc p{margin-bottom:8px;overflow:hidden}.mc p+p{margin-top:12px}",
+    );
+    let page = document.page(0).unwrap();
+    let mut clips = Vec::new();
+    let mut line_clips = Vec::new();
+    let runs = page.text_runs();
+    for event in page.paint_order_for_text_runs(&runs) {
+        match event {
+            PaintEvent::PushClip(clip, _) => clips.push(clip),
+            PaintEvent::PopClip => {
+                clips.pop().unwrap();
+            }
+            PaintEvent::TextLine(_) => line_clips.push(clips.last().map(|clip| clip.rect)),
+            _ => {}
+        }
+    }
+    use raikiri_traits::PaintRect;
+    assert_eq!(
+        line_clips,
+        [
+            Some(PaintRect::new(0.0, 0.0, 40.0, 40.0)),
+            Some(PaintRect::new(0.0, 0.0, 40.0, 40.0)),
+            Some(PaintRect::new(0.0, 52.0, 40.0, 20.0)),
+            Some(PaintRect::new(60.0, 0.0, 40.0, 20.0)),
+            Some(PaintRect::new(60.0, 32.0, 40.0, 40.0)),
+            Some(PaintRect::new(60.0, 32.0, 40.0, 40.0)),
+            None,
+        ]
+    );
+    assert!(clips.is_empty());
+}
