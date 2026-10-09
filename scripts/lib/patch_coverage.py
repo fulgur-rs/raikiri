@@ -545,9 +545,10 @@ def structurally_unreported_paths(metadata: dict, repo_root: str) -> set[str]:
     included from it (e.g. a hypothetical `tests/common/mod.rs` pulled in
     via `mod common;`) is not itself a target and so is not in this set —
     if cargo-llvm-cov also omits an SF: record for such a file, it would
-    be classified `uncovered` (gating) rather than `unreported`. No file
-    of that shape exists in this repo to measure against as of this
-    writing; revisit empirically if one is added and trips this gate.
+    be classified `uncovered` (gating) rather than `unreported`. It does
+    omit one: `crates/raikiri-bench/benches/common/report.rs`, shared by a
+    bench target and (through `#[path]`) an integration-test target, gets
+    no SF: record, so its code lines carry `cov:ignore:` markers instead.
 
     `repo_root` (git's toplevel, uncanonicalized) and `src_path` (from
     `cargo metadata`, canonicalized) are expected to share a literal

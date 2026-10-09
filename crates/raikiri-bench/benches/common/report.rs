@@ -5,6 +5,36 @@
 
 use std::fmt::Write as _;
 
+use raikiri_style::property::BorderColor;
+use raikiri_style::{CascadeResult, ComputedLengthPercentage, ComputedValues, CssColor};
+
+/// Color of the warning cells.
+// cov:ignore: bench harness — same reason as `REPORT_RULES` below.
+const WARN: CssColor = CssColor {
+    r: 0xb0,
+    g: 0x00,
+    b: 0x20,
+    a: 0xff,
+};
+
+/// Background of the even item rows.
+// cov:ignore: bench harness — same reason as `REPORT_RULES` below.
+const ZEBRA: CssColor = CssColor {
+    r: 0xf7,
+    g: 0xf7,
+    b: 0xf7,
+    a: 0xff,
+};
+
+/// Color of the cell borders, from `--rule`.
+// cov:ignore: bench harness — same reason as `REPORT_RULES` below.
+const RULE: CssColor = CssColor {
+    r: 0x99,
+    g: 0x99,
+    b: 0x99,
+    a: 0xff,
+};
+
 /// Author stylesheet of the report, one rule per entry.
 // cov:ignore: bench harness — this module is shared by a bench target, which
 // the coverage run never builds, and an integration test target, whose files
@@ -26,6 +56,9 @@ const REPORT_RULES: &[&str] = &[
     "table.items td.num { text-align: right; font-variant-numeric: tabular-nums; }",
     "table.items td.code { font-family: monospace; white-space: nowrap; }",
     "table.items tr.subtotal td { font-weight: bold; border-top: 2px solid #333; }",
+    "table.items tbody tr:nth-child(odd) td { color: #444; }",
+    // Less specific than the odd-row rule above, so only `!important` keeps
+    // the warning color on odd rows.
     "table.items td.warn { color: #b00020 !important; }",
     ".note { font-size: 8pt; color: #555; margin-top: 2mm; }",
     ".note::before { content: \"※ \"; }",
@@ -75,4 +108,37 @@ pub fn report_html(pages: usize, rows: usize) -> String {
     }
     html.push_str("</body></html>");
     html
+}
+
+/// Checks that a cascade of [`report_html`]`(pages, rows)` applied the report
+/// stylesheet: the important warning color on every warning cell and its text
+/// (odd rows only keep it through `!important`), the zebra rows, and the
+/// borders and padding every cell gets through `var()`. A cascade that drops
+/// declarations would otherwise just look faster.
+// cov:ignore: bench harness — same reason as `REPORT_RULES` above.
+pub fn check_report(result: &CascadeResult, pages: usize, rows: usize) {
+    let count = |matches: &dyn Fn(&ComputedValues) -> bool| {
+        result.computed.iter().filter(|cv| matches(cv)).count()
+    };
+    assert_eq!(
+        count(&|cv| cv.color == WARN),
+        2 * pages * (rows / 7),
+        "warning cells and their text"
+    );
+    assert_eq!(
+        count(&|cv| cv.background_color == ZEBRA),
+        // The even rows among the item rows and the subtotal row after them.
+        pages * rows.div_ceil(2),
+        "zebra rows"
+    );
+    // Six header cells, six cells per item row and three in the subtotal row.
+    assert_eq!(
+        count(&|cv| {
+            cv.border.left.width().px() == 1.0
+                && cv.border.left.color == BorderColor::Resolved(RULE)
+                && cv.padding.left == ComputedLengthPercentage::Px(4.0)
+        }),
+        pages * (6 + 6 * rows + 3),
+        "cells with the var() border and padding"
+    );
 }

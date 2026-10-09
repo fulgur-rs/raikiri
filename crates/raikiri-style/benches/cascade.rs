@@ -1605,9 +1605,12 @@ fn first_child_chain_workload(depth: usize) -> (BenchDoc, RuleTree, u64) {
 /// closure only for the benchmarks a name filter selects. Building each
 /// workload inside its closure therefore keeps the setup of unselected
 /// configurations (construction, probe cascade, assertions) out of a filtered
-/// run, and out of any profile taken of it. Throughput has to be set before
-/// `bench_function`, so it is computed from the configuration up front and the
-/// workload's own count is checked against it once built.
+/// run, and out of any profile taken of it. The selected configuration's own
+/// setup now runs at the start of its warm-up (inside a criterion profiler's
+/// window and `--quick`'s time budget), never inside a timed iteration.
+/// Throughput has to be set before `bench_function`, so it is computed from
+/// the configuration up front and the workload's own count is checked against
+/// it once built.
 // cov:ignore: bench harness — same reason as `BenchDoc::chain` above.
 fn prepared<T>(slot: &OnceCell<T>, expected: u64, build: impl FnOnce() -> (T, u64)) -> &T {
     slot.get_or_init(|| {
@@ -1682,8 +1685,9 @@ fn media_workload(
     (doc, tree, n_elems as u64)
 }
 
-/// A wide `section` of `n_elems` `div`s, its children, and the
-/// `div:nth-child(odd)` query both DOM-query benchmarks run over them.
+/// The inputs of both DOM-query benchmarks: a document whose `section` holds
+/// `n_elems` `div`s, the ids of those `div`s, and the `div:nth-child(odd)`
+/// query run over them.
 // cov:ignore: bench harness — same reason as `BenchDoc::chain` above.
 type NthChildQuery = (BenchDoc, Vec<StyleNodeId>, SelectorQuery);
 
@@ -1707,7 +1711,7 @@ fn nth_child_query_workload(n_elems: usize) -> (NthChildQuery, u64) {
         .iter()
         .filter(|&&id| matcher.matches(id, &ancestors))
         .count();
-    assert_eq!(per_call, n_elems / 2, "every odd div matches");
+    assert_eq!(per_call, n_elems.div_ceil(2), "every odd div matches");
     assert_eq!(
         shared, per_call,
         "shared matcher disagrees with per-call matching"

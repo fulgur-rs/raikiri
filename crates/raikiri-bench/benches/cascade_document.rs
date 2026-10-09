@@ -23,20 +23,10 @@ use std::cell::OnceCell;
 
 use criterion::{Criterion, Throughput};
 use raikiri_html::{ParseOptions, UncascadedDocument};
-use raikiri_style::{CssColor, MediaContext, RuleTree};
-
-/// Color of the `td.warn` cells, which only an important author declaration
-/// gives them.
-// cov:ignore: bench harness — same reason as `common` above.
-const WARN: CssColor = CssColor {
-    r: 0xb0,
-    g: 0x00,
-    b: 0x20,
-    a: 0xff,
-};
+use raikiri_style::{MediaContext, RuleTree};
 
 /// The parsed report and its rule tree, checked once so the benchmark cannot
-/// silently time a cascade that drops the author stylesheet.
+/// silently time a cascade that drops part of the report stylesheet.
 // cov:ignore: bench harness — same reason as `common` above.
 fn parsed(pages: usize, rows: usize) -> (UncascadedDocument, RuleTree) {
     let html = common::report::report_html(pages, rows);
@@ -50,12 +40,7 @@ fn parsed(pages: usize, rows: usize) -> (UncascadedDocument, RuleTree) {
     let probe =
         raikiri_style::cascade_with_media_context(&document.dom, &tree, &MediaContext::print())
             .expect("the cascade succeeds");
-    assert_eq!(probe.computed.len(), document.dom.node_count());
-    let warned = probe.computed.iter().filter(|cv| cv.color == WARN).count();
-    assert!(
-        warned >= pages * (rows / 7),
-        "only {warned} nodes have the warning color"
-    );
+    common::report::check_report(&probe, pages, rows);
     (document, tree)
 }
 

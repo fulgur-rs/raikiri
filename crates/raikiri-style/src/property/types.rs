@@ -9978,7 +9978,10 @@ pub enum PropertyValue {
 // The cascade keeps one `PropertyValue` per candidate declaration and copies
 // winners by value, so its size is paid on every element. A larger variant
 // payload should be boxed, or this bound raised together with a measurement.
-const _: () = assert!(std::mem::size_of::<PropertyValue>() <= 144);
+const _: () = assert!(
+    std::mem::size_of::<PropertyValue>() <= 144,
+    "PropertyValue grew past 144 bytes: box the new variant's payload, or raise the bound with a cascade measurement"
+);
 
 /// Property key: the discriminant used to select a winner for each property in
 /// the cascade.
