@@ -158,14 +158,34 @@ pub fn layout(
         PipelineRun::Completed(out) => out,
         PipelineRun::Aborted => return Ok(LayoutStatus::Aborted),
     };
-    let omitted = out.document.omitted_text_run_roots(&out.cascade);
+    // A paragraph or subtree is reported once, however many of the page
+    // layouts it appears in.
+    let mut omitted = out.document.omitted_text_run_roots(&out.cascade);
+    let mut approximated = out.document.paint_order_approximations(&out.cascade);
+    for continuation in &out.continuations {
+        for entry in continuation
+            .document
+            .omitted_text_run_roots(&continuation.cascade)
+        {
+            if !omitted.iter().any(|(node, _)| *node == entry.0) {
+                omitted.push(entry);
+            }
+        }
+        for entry in continuation
+            .document
+            .paint_order_approximations(&continuation.cascade)
+        {
+            if !approximated.iter().any(|(node, _)| *node == entry.0) {
+                approximated.push(entry);
+            }
+        }
+    }
     out.warnings
         .extend(omitted.into_iter().map(|(node, reason)| RenderWarning {
             kind: WarningKind::TextRunsOmitted,
             node_id: Some(node),
             details: format!("text runs are not reported for this paragraph: {reason}"),
         }));
-    let approximated = out.document.paint_order_approximations(&out.cascade);
     out.warnings.extend(
         approximated
             .into_iter()
@@ -178,9 +198,8 @@ pub fn layout(
     if signal.as_ref().is_some_and(|signal| signal.is_aborted()) {
         return Ok(LayoutStatus::Aborted);
     }
-    let rendered = navigation::build_rendered(&out.document, &out.slices);
-    let anchors =
-        navigation::build_anchors(DomView::new(&out.document), &out.document, &out.slices);
+    let rendered = navigation::build_rendered(&out);
+    let anchors = navigation::build_anchors(DomView::new(&out.document), &out);
     if signal.as_ref().is_some_and(|signal| signal.is_aborted()) {
         return Ok(LayoutStatus::Aborted);
     }
@@ -216,12 +235,13 @@ impl DocumentLayout {
     }
 
     fn page_at(&self, i: usize) -> Page<'_> {
+        let (document, cascade) = self.out.layout_for_page(self.out.slices[i].page_index);
         Page {
             slice: &self.out.slices[i],
             geometry: &self.out.geometries[i],
             style: &self.out.page_styles[i],
-            document: &self.out.document,
-            cascade: &self.out.cascade,
+            document,
+            cascade,
         }
     }
 

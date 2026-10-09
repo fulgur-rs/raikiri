@@ -78,6 +78,7 @@ pub(crate) use multicol::{
 };
 #[doc(hidden)]
 pub(crate) use page::find_body;
+pub(crate) use page::is_floating_box_for_pagination;
 pub(crate) use sanitize::LayoutWarn;
 // only reached via an intra-doc link from outside layout/, not real code
 pub use ifc::ch::measure_ch_advance;

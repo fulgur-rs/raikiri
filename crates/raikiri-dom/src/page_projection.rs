@@ -1,5 +1,6 @@
 //! Stored page placements and the final views borrowed from them.
 
+pub(crate) mod continuation;
 pub(crate) mod fragment;
 pub(crate) mod generated_boxes;
 mod image_markers;
