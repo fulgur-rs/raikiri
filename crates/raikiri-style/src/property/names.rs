@@ -75,6 +75,7 @@ pub fn supported_property_names() -> &'static [&'static str] {
         "column-rule-color",
         "column-rule-style",
         "column-rule-width",
+        "column-span",
         "column-width",
         "columns",
         "content",

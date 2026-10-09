@@ -202,6 +202,35 @@ pub(crate) fn prepare(
     }
     let mut result = BTreeMap::new();
     for (owner, group) in groups {
+        if !document.nodes[owner].multicol_groups.is_empty() {
+            let width = cascade.computed[owner].column_rule.width().px();
+            let mut rules = Vec::new();
+            for retained in &document.nodes[owner].multicol_groups {
+                charge(retained.occupied.len().saturating_add(1))?;
+                if retained.height <= 0.0 {
+                    continue;
+                }
+                for &column in &retained.occupied {
+                    if retained.occupied.contains(&column.saturating_add(1)) {
+                        charge(1)?;
+                        let center = retained.context.origin_x
+                            + retained.context.column_offset_x(column)
+                            + retained.context.column_width
+                            + retained.context.column_gap / 2.0;
+                        rules.push(PaintRect::new(
+                            center - width / 2.0,
+                            retained.context.origin_y,
+                            width,
+                            retained.height,
+                        ));
+                    }
+                }
+            }
+            if !rules.is_empty() {
+                result.insert(owner, rules);
+            }
+            continue;
+        }
         let width = cascade.computed[owner].column_rule.width().px();
         let mut rules = Vec::new();
         for &column in &group.occupied {

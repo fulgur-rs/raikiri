@@ -8,7 +8,7 @@
 use smol_str::SmolStr;
 use taffy::{Cache, Layout, Style};
 
-use crate::fragment::MulticolStyle;
+use crate::fragment::{MulticolGroup, MulticolStyle};
 
 use raikiri_style::property::{
     BorderCollapseValue, BreakBetween, BreakInside, CaptionSideValue, DisplayValue, Sides,
@@ -387,6 +387,10 @@ pub struct Node {
     pub(crate) has_before_or_after_content: bool,
     /// Computed multicolumn settings consumed by the custom Taffy dispatch.
     pub(crate) multicol: Option<MulticolStyle>,
+    /// Whether this normal-flow block spans its owning column group.
+    pub(crate) column_span_all: bool,
+    /// Column groups retained by layout, including their occupied slots.
+    pub(crate) multicol_groups: Vec<MulticolGroup>,
     /// Authored writing mode retained for layout features that need the logical axes.
     pub(crate) authored_writing_mode: Option<WritingMode>,
     /// Whether this node has an authored logical `min-block-size` constraint
@@ -503,6 +507,8 @@ impl Node {
             multicol_auto_width: true,
             has_before_or_after_content: false,
             multicol: None,
+            column_span_all: false,
+            multicol_groups: Vec::new(),
             authored_writing_mode: None,
             has_logical_min_block_size: false,
             needs_relative_block_paint_offset: false,
@@ -552,6 +558,8 @@ impl Node {
             multicol_auto_width: true,
             has_before_or_after_content: false,
             multicol: None,
+            column_span_all: false,
+            multicol_groups: Vec::new(),
             authored_writing_mode: None,
             has_logical_min_block_size: false,
             needs_relative_block_paint_offset: false,
@@ -605,6 +613,8 @@ impl Node {
             multicol_auto_width: true,
             has_before_or_after_content: false,
             multicol: None,
+            column_span_all: false,
+            multicol_groups: Vec::new(),
             authored_writing_mode: None,
             has_logical_min_block_size: false,
             needs_relative_block_paint_offset: false,
@@ -653,6 +663,8 @@ impl Node {
             multicol_auto_width: true,
             has_before_or_after_content: false,
             multicol: None,
+            column_span_all: false,
+            multicol_groups: Vec::new(),
             authored_writing_mode: None,
             has_logical_min_block_size: false,
             needs_relative_block_paint_offset: false,
@@ -698,6 +710,8 @@ impl Node {
             multicol_auto_width: true,
             has_before_or_after_content: false,
             multicol: None,
+            column_span_all: false,
+            multicol_groups: Vec::new(),
             authored_writing_mode: None,
             has_logical_min_block_size: false,
             needs_relative_block_paint_offset: false,
@@ -745,6 +759,8 @@ impl Node {
             multicol_auto_width: true,
             has_before_or_after_content: false,
             multicol: None,
+            column_span_all: false,
+            multicol_groups: Vec::new(),
             authored_writing_mode: None,
             has_logical_min_block_size: false,
             needs_relative_block_paint_offset: false,

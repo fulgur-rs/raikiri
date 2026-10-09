@@ -152,6 +152,8 @@ pub(crate) fn apply_computed_to_style(
         // native multicol style fields, so the custom strategy reads this
         // side-channel while the ordinary Style remains Taffy-compatible.
         doc.nodes[idx].multicol = multicol_style_from_computed(cv);
+        doc.nodes[idx].column_span_all =
+            cv.column_span == raikiri_style::property::ColumnSpanValue::All;
         // Table engine inputs — no taffy::Style counterpart (taffy 0.12
         // has no table layout), carried Node-side like `display` above.
         doc.nodes[idx].table_layout = cv.table_layout;

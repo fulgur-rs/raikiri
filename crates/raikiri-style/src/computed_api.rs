@@ -124,3 +124,6 @@ pub type ComputedListStyleType = property::ListStyleType;
 
 /// Computed `list-style-position` ([`ComputedValues::list_style_position`]).
 pub type ComputedListStylePosition = property::ListStylePosition;
+
+/// Computed `column-span`: a non-inherited keyword, initially `none`.
+pub type ComputedColumnSpan = crate::property::ColumnSpanValue;

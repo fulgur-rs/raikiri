@@ -113,6 +113,14 @@ impl FragmentationContext {
     }
 }
 
+/// A column group retained in its owner's border-box coordinate space.
+#[derive(Clone, Debug)]
+pub(crate) struct MulticolGroup {
+    pub(crate) context: FragmentationContext,
+    pub(crate) height: f32,
+    pub(crate) occupied: std::collections::BTreeSet<usize>,
+}
+
 /// A resumable point in a fragmented child flow.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct BreakToken {

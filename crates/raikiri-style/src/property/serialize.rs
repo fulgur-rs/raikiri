@@ -56,6 +56,7 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
     match value {
         PropertyValue::ContextualColor(color) => serialize_one_color(color.source.as_ref()),
         PropertyValue::AllRevertLayer => Some("revert-layer".to_owned()),
+        PropertyValue::ColumnSpan(value) => Some(value.as_css_str().to_owned()),
         PropertyValue::FontSize(l)
         | PropertyValue::PaddingTop(l)
         | PropertyValue::PaddingRight(l)

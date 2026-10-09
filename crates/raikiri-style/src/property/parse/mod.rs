@@ -72,6 +72,7 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
                 | PropertyKey::ColumnRuleWidth
                 | PropertyKey::ColumnRuleStyle
                 | PropertyKey::ColumnRuleColor
+                | PropertyKey::ColumnSpan
         )
     ) && let Ok(keyword) = input.try_parse(|parser| {
         let keyword = parse_css_wide_keyword_res(parser)?;
@@ -936,6 +937,8 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // CSS Multi-column Layout Module Level 1.
         "column-count" => parse_column_count(input).map(PropertyValue::ColumnCount),
         "column-fill" => parse_column_fill(input).map(PropertyValue::ColumnFill),
+        "column-span" => ColumnSpanValue::from_css_ident(input.expect_ident().ok()?)
+            .map(PropertyValue::ColumnSpan),
         "column-width" => parse_column_width(input).map(PropertyValue::ColumnWidth),
         "columns" => parse_columns_shorthand(input).map(PropertyValue::Columns),
         "column-rule" => parse_border_top_shorthand(input).map(PropertyValue::ColumnRule),

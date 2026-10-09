@@ -34,9 +34,9 @@ use crate::property::{
     BackgroundRepeat, BackgroundRepeatKeyword, BackgroundSize, Border, BorderCollapseValue,
     BorderColor, BorderRadius, BorderSpacingValue, BorderStyle, BoxShadowItem, BoxSizing,
     BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
-    ColumnFillValue, ColumnWidthValue, ContentAlignmentValue, ContentComponent, CssColor,
-    CssPosition, CssPositionOffset, Direction, DisplayValue, EmptyCellsValue, FilterFunction,
-    FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyName,
+    ColumnFillValue, ColumnSpanValue, ColumnWidthValue, ContentAlignmentValue, ContentComponent,
+    CssColor, CssPosition, CssPositionOffset, Direction, DisplayValue, EmptyCellsValue,
+    FilterFunction, FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyName,
     FontFeatureSettings, FontKerning, FontLanguageOverride, FontOpticalSizing, FontPaletteValue,
     FontStyle, FontSynthesisValue, FontVariantCaps, FontVariantEastAsian, FontVariantEmoji,
     FontVariantLigatures, FontVariantNumeric, FontVariantPosition, FontVariationSettings,
@@ -691,6 +691,8 @@ pub struct SpecifiedValues {
     pub column_count: ColumnCountValue,
     /// `column-fill` specified value; non-inherited, initial `balance`.
     pub column_fill: ColumnFillValue,
+    /// Non-inherited `column-span`, initially `none`.
+    pub column_span: ColumnSpanValue,
     /// `column-width` specified value; non-inherited.
     pub column_width: ColumnWidthValue,
     /// Non-inherited column rule; resolves without contributing to box geometry.
@@ -1051,6 +1053,7 @@ impl SpecifiedValues {
             empty_cells: EmptyCellsValue::Show,
             column_count: ColumnCountValue::Auto,
             column_fill: ColumnFillValue::Balance,
+            column_span: ColumnSpanValue::None,
             column_rule: INITIAL_BORDER,
             column_width: ColumnWidthValue::Auto,
         }
@@ -1217,6 +1220,7 @@ impl SpecifiedValues {
             // CSS Multi-column Layout 1: all three multicol properties are non-inherited.
             column_count: ColumnCountValue::Auto,
             column_fill: ColumnFillValue::Balance,
+            column_span: ColumnSpanValue::None,
             column_rule: INITIAL_BORDER,
             column_width: ColumnWidthValue::Auto,
             // CSS Text 3 §5.3: hyphens is inherited.
@@ -2421,6 +2425,7 @@ impl SpecifiedValues {
             // width is absolutized against the element's own font metrics.
             column_count: self.column_count,
             column_fill: self.column_fill,
+            column_span: self.column_span,
             column_rule: {
                 let mut rule = resolve_border(self.column_rule, font_size, own_line_height, ctx);
                 // CSS Values 4: snap positive subpixel widths up and larger

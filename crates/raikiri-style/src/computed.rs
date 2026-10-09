@@ -16,23 +16,23 @@ use crate::property::{
     AlignSelfValue, BackgroundAttachment, BackgroundImage, BackgroundRepeat,
     BackgroundRepeatKeyword, BorderCollapseValue, BorderColor, BorderStyle, BoxSizing,
     BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
-    ColumnFillValue, ContentAlignmentValue, ContentComponent, CssColor, Direction, DisplayValue,
-    EmptyCellsValue, FilterFunction, FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyName,
-    FontFeatureSettings, FontKerning, FontLanguageOverride, FontOpticalSizing, FontPaletteValue,
-    FontStyle, FontSynthesisValue, FontVariantCaps, FontVariantEastAsian, FontVariantEmoji,
-    FontVariantLigatures, FontVariantNumeric, FontVariantPosition, FontVariationSettings,
-    GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, HangingPunctuation,
-    HyphenateCharacter, HyphenateLimitChars, Hyphens, Isolation, LineBreak, ListStylePosition,
-    ListStyleType, MaskImage, MixBlendMode, ObjectFit, OutlineColor, OutlineStyle, OverflowValue,
-    OverflowWrap, OverflowXY, PositionValue, RubyPosition, SelfAlignmentValue, Sides,
-    TableLayoutValue, TextAlign, TextAlignLast, TextAutospace, TextCombineUpright,
-    TextDecorationColor, TextDecorationLine, TextDecorationSkipInk, TextDecorationSkipSpaces,
-    TextDecorationStyle, TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisStyle,
-    TextEmphasisVEdge, TextJustify, TextOrientation, TextOverflowValue, TextSpacingTrim,
-    TextTransform, TextUnderlinePosition, TextWrapMode, TextWrapStyle, UnicodeBidi, VerticalAlign,
-    Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse, WordBreak, WordSpaceTransform,
-    WritingMode, ZIndexValue, empty_content_list, empty_counter_entries, empty_filter_list,
-    empty_quotes_entries, empty_string_set_entries, initial_font_family,
+    ColumnFillValue, ColumnSpanValue, ContentAlignmentValue, ContentComponent, CssColor, Direction,
+    DisplayValue, EmptyCellsValue, FilterFunction, FlexDirectionValue, FlexWrapValue, FloatValue,
+    FontFamilyName, FontFeatureSettings, FontKerning, FontLanguageOverride, FontOpticalSizing,
+    FontPaletteValue, FontStyle, FontSynthesisValue, FontVariantCaps, FontVariantEastAsian,
+    FontVariantEmoji, FontVariantLigatures, FontVariantNumeric, FontVariantPosition,
+    FontVariationSettings, GridAutoFlowValue, GridLineValue, GridTemplateAreasValue,
+    HangingPunctuation, HyphenateCharacter, HyphenateLimitChars, Hyphens, Isolation, LineBreak,
+    ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit, OutlineColor,
+    OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PositionValue, RubyPosition,
+    SelfAlignmentValue, Sides, TableLayoutValue, TextAlign, TextAlignLast, TextAutospace,
+    TextCombineUpright, TextDecorationColor, TextDecorationLine, TextDecorationSkipInk,
+    TextDecorationSkipSpaces, TextDecorationStyle, TextEmphasisHEdge, TextEmphasisPosition,
+    TextEmphasisStyle, TextEmphasisVEdge, TextJustify, TextOrientation, TextOverflowValue,
+    TextSpacingTrim, TextTransform, TextUnderlinePosition, TextWrapMode, TextWrapStyle,
+    UnicodeBidi, VerticalAlign, Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse, WordBreak,
+    WordSpaceTransform, WritingMode, ZIndexValue, empty_content_list, empty_counter_entries,
+    empty_filter_list, empty_quotes_entries, empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
     ComputedBackgroundSize, ComputedBorder, ComputedBorderRadius, ComputedBorderSpacing,
@@ -1768,6 +1768,8 @@ pub struct ComputedValues {
     /// Layout Module Level 1 §7.1
     /// <https://www.w3.org/TR/css-multicol-1/#propdef-column-fill>).
     pub column_fill: ColumnFillValue,
+    /// Non-inherited `column-span`, initially `none`.
+    pub column_span: ColumnSpanValue,
     /// Computed `column-width` — non-inherited multicol container setting.
     pub column_width: ComputedColumnWidth,
     /// Non-inherited column rule with an absolutized, style-gated width.
@@ -2175,6 +2177,7 @@ impl ComputedValues {
             // column-fill is `balance`.
             column_count: ColumnCountValue::Auto,
             column_fill: ColumnFillValue::Balance,
+            column_span: ColumnSpanValue::None,
             column_rule: ComputedBorder {
                 width: ComputedLength::ZERO,
                 style: BorderStyle::None,
@@ -2195,7 +2198,7 @@ impl ComputedValues {
     /// The field documentation on [`Self`] is the canonical source for each
     /// property's inheritance behavior (currently inherited: color / font-family / font-size / font-weight / text_align / hanging_punctuation / direction / writing_mode / cssom_writing_mode / line_height / font_style / font_kerning / font_optical_sizing / font_variant_emoji / font_language_override / font_variant_ligatures / font_synthesis / font_variant_position / font_palette / font_variant_numeric / font_variant_east_asian / font_variation_settings / font_feature_settings / font_variant_caps / text_transform / text_combine_upright / text_orientation / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / white_space_collapse / text_wrap_style / hyphens / hyphenate_character / hyphenate_limit_chars / tab_size / quotes / text_shadow / text_underline_offset / orphans / widows / border_collapse / border_spacing / caption_side / empty_cells;
     /// non-inherited: background-color / display / counter-* / content /
-    /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / text_decoration_inset / unicode_bidi / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position / background_image / object_fit / object_position / opacity / isolation / mix_blend_mode / mask_image / clip_path / transform / filter / table_layout / column_count / column_fill / column_width).
+    /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / text_decoration_inset / unicode_bidi / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position / background_image / object_fit / object_position / opacity / isolation / mix_blend_mode / mask_image / clip_path / transform / filter / table_layout / column_count / column_fill / column_span / column_width).
     ///
     /// The inherited/non-inherited classification is defined by each field's
     /// documentation. Inherited fields are copied from the parent's computed
