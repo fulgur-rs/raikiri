@@ -471,3 +471,114 @@ fn one_text_source_has_distinct_column_rectangles_and_line_ranges() {
         ]
     );
 }
+
+#[test]
+fn fixed_height_plain_wrapper_keeps_public_column_lines_once() {
+    let document = lay_out(
+        "<div class=mc><div><p>A<br>B<br>C<br>D</p></div></div><p>E</p>",
+        ".mc{height:40px}",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (0.0, 16.0)),
+            ("B".into(), (0.0, 36.0)),
+            ("C".into(), (60.0, 16.0)),
+            ("D".into(), (60.0, 36.0)),
+            ("E".into(), (0.0, 56.0)),
+        ]
+    );
+}
+
+#[test]
+fn fixed_height_deep_plain_wrapper_preserves_three_columns_and_origin() {
+    let document = lay_out(
+        "<p>X</p><div class=mc><div><div><p>A<br>B<br>C<br>D<br>E<br>F</p></div></div></div><p>G</p>",
+        ".mc{width:160px;height:40px;column-count:3}",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("X".into(), (0.0, 16.0)),
+            ("A".into(), (0.0, 36.0)),
+            ("B".into(), (0.0, 56.0)),
+            ("C".into(), (60.0, 36.0)),
+            ("D".into(), (60.0, 56.0)),
+            ("E".into(), (120.0, 36.0)),
+            ("F".into(), (120.0, 56.0)),
+            ("G".into(), (0.0, 76.0)),
+        ]
+    );
+}
+
+#[test]
+fn deep_plain_wrapper_clips_use_the_padded_parent_and_column_origins() {
+    let document = lay_out(
+        "<p>X</p><div class=mc><div><div><p>A<br>B<br>C<br>D<br>E<br>F</p></div></div></div><p>G</p>",
+        ".mc{width:160px;height:40px;column-count:3;padding:4px 5px;border:1px solid black}.mc p{overflow:hidden}",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("X".into(), (0.0, 16.0)),
+            ("A".into(), (6.0, 41.0)),
+            ("B".into(), (6.0, 61.0)),
+            ("C".into(), (66.0, 41.0)),
+            ("D".into(), (66.0, 61.0)),
+            ("E".into(), (126.0, 41.0)),
+            ("F".into(), (126.0, 61.0)),
+            ("G".into(), (0.0, 86.0)),
+        ]
+    );
+    let page = document.page(0).unwrap();
+    let runs = page.text_runs();
+    let mut clips = Vec::new();
+    let mut line_clips = Vec::new();
+    for event in page.paint_order_for_text_runs(&runs) {
+        match event {
+            PaintEvent::PushClip(clip, _) => clips.push(clip),
+            PaintEvent::PopClip => {
+                clips.pop().unwrap();
+            }
+            PaintEvent::TextLine(line) => {
+                line_clips.push((line.index, clips.last().map(|clip| clip.rect)));
+            }
+            _ => {}
+        }
+    }
+    let left = Some(raikiri_traits::PaintRect::new(6.0, 25.0, 40.0, 40.0));
+    let middle = Some(raikiri_traits::PaintRect::new(66.0, 25.0, 40.0, 40.0));
+    let right = Some(raikiri_traits::PaintRect::new(126.0, 25.0, 40.0, 40.0));
+    assert_eq!(
+        line_clips,
+        [
+            (0, None),
+            (0, left),
+            (1, left),
+            (2, middle),
+            (3, middle),
+            (4, right),
+            (5, right),
+            (0, None),
+        ]
+    );
+    assert!(clips.is_empty());
+}
+
+#[test]
+fn fixed_height_border_box_wrapper_preserves_following_flow() {
+    let document = lay_out(
+        "<div class=mc><div><p>A<br>B<br>C<br>D</p></div></div><p>E</p>",
+        ".mc{box-sizing:border-box;height:50px;padding:4px 5px;border:1px solid black}",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (6.0, 21.0)),
+            ("B".into(), (6.0, 41.0)),
+            ("C".into(), (60.0, 21.0)),
+            ("D".into(), (60.0, 41.0)),
+            ("E".into(), (0.0, 66.0)),
+        ]
+    );
+}
