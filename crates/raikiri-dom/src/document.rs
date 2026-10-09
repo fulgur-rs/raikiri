@@ -298,6 +298,7 @@ pub struct Document {
     pub(crate) table_objects: crate::layout::table::anonymous::TableObjects,
     pub(crate) page_projection: crate::page_projection::PageProjection,
     pub(crate) nodes: Vec<Node>,
+    pub(crate) resolved_image_urls: std::collections::HashMap<usize, (String, url::Url)>,
     canvas_bitmap_bytes: CanvasBitmapByteCount,
     /// Decoded inside-marker images retained for both sizing and painting.
     list_marker_images: std::collections::HashMap<usize, ListMarkerImage>,
@@ -491,6 +492,7 @@ impl Document {
             table_objects: crate::layout::table::anonymous::TableObjects::default(),
             page_projection: crate::page_projection::PageProjection::default(),
             nodes,
+            resolved_image_urls: Default::default(),
             canvas_bitmap_bytes: CanvasBitmapByteCount(Some(0)),
             list_marker_images: Default::default(),
             legacy_inside_marker_advances: Default::default(),
@@ -2742,4 +2744,23 @@ fn marker_image_size(
         (None, None, None) => (em, em),
     };
     raikiri_traits::ImageRasterSize { width, height }
+}
+
+impl Document {
+    /// Absolute image URL resolved during the current layout pass.
+    ///
+    /// Source attributes remain unchanged. Absolute source URLs also work for
+    /// native callers that supplied pixels without an intrinsic-size resolver.
+    pub fn resolved_image_url(&self, element: usize) -> Option<url::Url> {
+        let node = self.get_node(element)?;
+        if node.tag_name() != Some("img") {
+            return None;
+        }
+        let raw = node.attribute("src")?;
+        self.resolved_image_urls
+            .get(&element)
+            .filter(|(source, _)| source == raw)
+            .map(|(_, url)| url.clone())
+            .or_else(|| url::Url::parse(raw).ok())
+    }
 }

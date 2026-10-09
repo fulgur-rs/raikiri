@@ -48,6 +48,7 @@
 mod diag;
 mod fragment;
 pub mod generated_content;
+pub mod image_geometry;
 mod image_resolve;
 mod node;
 mod page_projection;
