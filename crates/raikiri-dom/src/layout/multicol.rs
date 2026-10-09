@@ -45,6 +45,9 @@ pub(crate) fn compute_multicol_layout(
             inputs.parent_size.height,
         )
         .or(inputs.known_dimensions.height)
+        .map(|height| {
+            multicol_authored_content_height(tree, index, height, parent_width, available_width)
+        })
     } else {
         None
     };
@@ -132,7 +135,19 @@ pub(crate) fn compute_multicol_layout(
         output.size.height = output.size.height.min(min_child_height);
     }
     let break_flow_scope = break_flow::supports(tree, index, context);
-    if (custom_scope || break_flow_scope) && inputs.run_mode == RunMode::PerformLayout {
+    // Inspect fresh child layouts before opting a definite-height plain block
+    // chain into fragmentation. Atomic and constrained children keep their
+    // foundational placement path.
+    let plain_block_scope = inputs.run_mode == RunMode::PerformLayout
+        && !custom_scope
+        && !break_flow_scope
+        && available_height.is_some_and(|height| height > 0.0)
+        && style.horizontal
+        && !multicol_has_out_of_flow_descendant(tree, index)
+        && multicol_has_plain_paragraph_chain(tree, index);
+    if (custom_scope || break_flow_scope || plain_block_scope)
+        && inputs.run_mode == RunMode::PerformLayout
+    {
         // Taffy's input width is normally already the content width for this
         // bridge. Correct it for authored padding/border before deriving the
         // child column width, so percentage gaps use the used content box.
@@ -276,6 +291,27 @@ fn multicol_content_width(
     (border_box_width - horizontal).max(0.0)
 }
 
+fn multicol_authored_content_height(
+    tree: &Document,
+    node_id: usize,
+    height: f32,
+    parent_width: Option<f32>,
+    fallback_width: f32,
+) -> f32 {
+    let style = &tree.nodes[node_id].style;
+    if style.box_sizing != TaffyBoxSizing::BorderBox {
+        return height;
+    }
+    // A fragmentainer's height measures content, while a border-box authored
+    // height includes block-axis padding and borders.
+    let basis = parent_width.unwrap_or(fallback_width).max(0.0);
+    let insets = multicol_resolve_inset(tree, style.padding.top, basis)
+        + multicol_resolve_inset(tree, style.padding.bottom, basis)
+        + multicol_resolve_inset(tree, style.border.top, basis)
+        + multicol_resolve_inset(tree, style.border.bottom, basis);
+    (height - insets).max(0.0)
+}
+
 // cov:ignore: nested recursive layout is exercised by the ignored nested WPT reftests.
 fn multicol_has_nested_descendant(tree: &Document, node_id: usize) -> bool {
     let mut pending = tree.nodes[node_id].children.clone();
@@ -352,6 +388,60 @@ fn can_balance_single_paragraph(tree: &Document, parent: usize, child: usize) ->
         && child.style.max_size.height.is_auto()
         && child.ifc_writing_mode() == Some(shodo::geometry::WritingMode::HorizontalTb)
         && child.ifc_boxes().is_empty()
+}
+
+fn multicol_has_plain_paragraph_chain(tree: &Document, parent: usize) -> bool {
+    if tree.nodes[parent].ifc.is_some() || tree.nodes[parent].style.direction != TaffyDirection::Ltr
+    {
+        return false;
+    }
+    let mut current = parent;
+    loop {
+        let mut children = tree.nodes[current]
+            .children
+            .iter()
+            .copied()
+            .filter(|&child| {
+                tree.nodes[child].is_in_document()
+                    && tree.nodes[child].kind() == NodeKind::Element
+                    && tree.nodes[child].style.display != Display::None
+            });
+        let Some(child) = children.next() else {
+            return false;
+        };
+        if children.next().is_some() {
+            return false;
+        }
+        let node = &tree.nodes[child];
+        let zero_margin = LengthPercentageAuto::length(0.0);
+        if node.display != DisplayValue::Block
+            || node.style.direction != TaffyDirection::Ltr
+            || node.style.float.is_floated()
+            || node.style.margin.top != zero_margin
+            || node.style.margin.right != zero_margin
+            || node.style.margin.bottom != zero_margin
+            || node.style.margin.left != zero_margin
+            || node.style.padding != Rect::zero()
+            || node.style.border != Rect::zero()
+            || !node.multicol_auto_width
+            || !node.style.min_size.width.is_auto()
+            || !node.style.max_size.width.is_auto()
+            || !node.style.size.height.is_auto()
+            || !node.style.min_size.height.is_auto()
+            || !node.style.max_size.height.is_auto()
+            || node.break_inside != raikiri_style::property::BreakInside::Auto
+            || node.break_before != BreakBetween::Auto
+            || node.break_after != BreakBetween::Auto
+        {
+            return false;
+        }
+        if node.ifc.is_some() {
+            return node.ifc_writing_mode() == Some(shodo::geometry::WritingMode::HorizontalTb)
+                && node.ifc_boxes().is_empty()
+                && !multicol_subtree_has_float(tree, child);
+        }
+        current = child;
+    }
 }
 
 fn relayout_nested_multicol_children(
@@ -751,6 +841,14 @@ fn record_nested_ifc_box_fragments(
                 current = parent;
             }
             path.reverse();
+            let plain_block_path = !subtree_has_float
+                && !nested_logical_minimum_scope
+                && tree.nodes[subtree_root].style.display == Display::Block
+                && tree.nodes[node_id].ifc_writing_mode()
+                    == Some(shodo::geometry::WritingMode::HorizontalTb)
+                && path
+                    .iter()
+                    .all(|&ancestor| tree.nodes[ancestor].style.display == Display::Block);
             let node_offset_y = path
                 .iter()
                 .map(|&ancestor| tree.nodes[ancestor].unrounded_layout.location.y)
@@ -870,7 +968,12 @@ fn record_nested_ifc_box_fragments(
                                                 } else {
                                                     0.0
                                                 },
-                                            y: if ancestor == subtree_root || is_flex_item {
+                                            // Move a plain block path into its column once;
+                                            // descendants retain their local coordinates.
+                                            y: if ancestor == subtree_root
+                                                || is_flex_item
+                                                || (plain_block_path && parent != parent_fragment)
+                                            {
                                                 layout.location.y
                                             } else {
                                                 layout.location.y - column_delta
@@ -904,7 +1007,11 @@ fn record_nested_ifc_box_fragments(
                         };
                     parent = fragment_id;
                     parent_offset.x += layout.location.x;
-                    parent_offset.y += layout.location.y;
+                    parent_offset.y += if plain_block_path {
+                        tree.fragment_tree.fragments[fragment_id].rect.y
+                    } else {
+                        layout.location.y
+                    };
                 }
 
                 for placement in placements
@@ -1004,7 +1111,7 @@ fn line_ranges_in_columns(
         return Vec::new();
     }
     let available_columns = context.column_count.saturating_sub(context.column_index);
-    let mut ranges = Vec::with_capacity(available_columns.max(1));
+    let mut ranges = Vec::with_capacity(available_columns.max(1).min(line_count));
     let mut start = 0usize;
     if preserve_block_offsets
         && let Some(height) = context.available_height.filter(|height| *height > 0.0)
@@ -1303,6 +1410,15 @@ pub(crate) fn refresh_projected_multicol_text_fragments(tree: &mut Document) {
                 tree.nodes[container_id].style.size.height,
                 parent_height,
             )
+            .map(|height| {
+                multicol_authored_content_height(
+                    tree,
+                    container_id,
+                    height,
+                    parent_width,
+                    container_layout.size.width,
+                )
+            })
         } else {
             None
         }
