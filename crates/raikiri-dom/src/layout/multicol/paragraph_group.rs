@@ -40,7 +40,23 @@ pub(super) fn balance(
             paragraphs.push(None);
             continue;
         }
-        if !can_balance_single_paragraph(tree, parent, child)
+        let empty = output.size.height == 0.0
+            && node.ifc.as_ref().is_none_or(|root| {
+                root.lines
+                    .as_ref()
+                    .is_none_or(|lines| lines.lines.is_empty())
+            })
+            && node.children.iter().all(|&child| {
+                tree.nodes[child].kind() == NodeKind::Text
+                    && tree.nodes[child].unrounded_layout.size.height == 0.0
+            })
+            && node
+                .authored_writing_mode
+                .is_none_or(|mode| mode == raikiri_style::property::WritingMode::HorizontalTb)
+            && node.style.overflow.x == taffy::Overflow::Visible
+            && node.style.overflow.y == taffy::Overflow::Visible;
+        if !can_balance_paragraph_box(tree, parent, child)
+            || (!empty && !can_balance_single_paragraph(tree, parent, child))
             || node.display != DisplayValue::Block
             || node.style.direction != TaffyDirection::Ltr
             || node.break_before != BreakBetween::Auto
@@ -51,6 +67,17 @@ pub(super) fn balance(
             || !margin_bottom.is_finite()
         {
             return None;
+        }
+        if empty {
+            high += margin_top.abs() + margin_bottom.abs();
+            paragraphs.push(Some(Paragraph {
+                extents: Vec::new(),
+                margin_top,
+                margin_bottom,
+                orphans: node.paragraph_orphans,
+                widows: node.paragraph_widows,
+            }));
+            continue;
         }
         let lines = node.ifc.as_ref()?.lines.as_ref()?;
         let extents: Vec<_> = lines
@@ -93,8 +120,23 @@ pub(super) fn balance(
     fill(&paragraphs, context, high)
 }
 
-fn collapsed_margin(before: f32, after: f32) -> f32 {
-    before.max(after).max(0.0) + before.min(after).min(0.0)
+#[derive(Clone, Copy, Default)]
+struct Margins {
+    positive: f32,
+    negative: f32,
+}
+
+impl Margins {
+    fn with(self, value: f32) -> Self {
+        Self {
+            positive: self.positive.max(value),
+            negative: self.negative.min(value),
+        }
+    }
+
+    fn value(self) -> f32 {
+        self.positive + self.negative
+    }
 }
 
 fn fill(
@@ -105,14 +147,30 @@ fn fill(
     let mut placements = Vec::with_capacity(paragraphs.len());
     let mut column = 0usize;
     let mut cursor = 0.0f32;
-    let mut pending_margin = 0.0f32;
+    let mut pending_margin = Margins::default();
     let mut maximum = 0.0f32;
+    let mut column_has_content = false;
     for paragraph in paragraphs {
         let Some(paragraph) = paragraph else {
             placements.push(None);
             continue;
         };
-        let mut top = cursor + collapsed_margin(pending_margin, paragraph.margin_top);
+        let adjoining = pending_margin.with(paragraph.margin_top);
+        let mut top = cursor + adjoining.value();
+        if paragraph.extents.is_empty() {
+            // Retain both extrema across empty boxes: collapsing their summed
+            // margins again would lose the negative member of the chain.
+            pending_margin = adjoining.with(paragraph.margin_bottom);
+            placements.push(Some(Placement {
+                first_column: column,
+                first_y: top,
+                first_height: 0.0,
+                last_column: column,
+                last_y: cursor + pending_margin.value(),
+                fragments: Vec::new(),
+            }));
+            continue;
+        }
         let mut start = 0;
         let mut fragments = Vec::new();
         let mut first_column = column;
@@ -139,7 +197,7 @@ fn fill(
             if end <= start {
                 // An unforced break at a block boundary discards both adjoining
                 // margins. A too-tall paragraph at an empty column fails this trial.
-                if start != 0 || top <= 0.0 {
+                if start != 0 || !column_has_content {
                     return None;
                 }
                 maximum = maximum.max(cursor);
@@ -148,6 +206,7 @@ fn fill(
                     return None;
                 }
                 top = 0.0;
+                column_has_content = false;
                 first_column = column;
                 first_y = top;
                 continue;
@@ -164,6 +223,7 @@ fn fill(
                 y: top - first_y,
             });
             cursor = top + used;
+            column_has_content = true;
             maximum = maximum.max(cursor);
             start = end;
             if start < paragraph.extents.len() {
@@ -172,19 +232,25 @@ fn fill(
                     return None;
                 }
                 top = 0.0;
+                column_has_content = false;
             }
         }
-        pending_margin = paragraph.margin_bottom;
+        pending_margin = Margins::default().with(paragraph.margin_bottom);
         placements.push(Some(Placement {
             first_column,
             first_y,
             first_height,
             last_column: column,
-            last_y: cursor + pending_margin,
+            last_y: cursor + pending_margin.value(),
             fragments,
         }));
     }
-    let used = maximum.max(cursor + pending_margin);
+    let used = maximum.max(cursor + pending_margin.value());
+    for placement in placements.iter_mut().flatten() {
+        if placement.fragments.len() > 1 {
+            placement.first_height = (used - placement.first_y).max(0.0);
+        }
+    }
     (used <= height + f32::EPSILON).then_some(Group {
         placements,
         height: used,

@@ -179,12 +179,20 @@ impl ParagraphProjection {
         work.check()?;
         let positioned = PositionedLines::new(document, cascade, root, None);
         let mut line_columns = vec![fallback_column; count];
+        let mut column_origins = vec![0.0; count];
+        let origins_recorded = document.nodes[root]
+            .ifc
+            .as_ref()
+            .is_some_and(|root| root.multicol_fragment_origins_recorded);
         if let Some(ranges) = ranges {
             let mut assigned = vec![false; count];
             for range in ranges {
                 for index in range.line_start.min(count)..range.line_end.min(count) {
                     if !assigned[index] {
                         line_columns[index] = range.fragmentainer;
+                        if origins_recorded {
+                            column_origins[index] = range.y;
+                        }
                         assigned[index] = true;
                     }
                 }
@@ -243,7 +251,7 @@ impl ParagraphProjection {
                     owner,
                     data.1,
                     piece,
-                    (0.0, offset.1),
+                    (0.0, offset.1 - column_origins[piece.line]),
                     shift,
                     data.5,
                     data.6,
@@ -264,6 +272,7 @@ impl ParagraphProjection {
             if multicol {
                 let rect = BoxRect {
                     x: piece.border_box.x,
+                    y: rect.y - column_origins[piece.line],
                     ..rect
                 };
                 add_bounds(
@@ -319,7 +328,11 @@ impl ParagraphProjection {
                         owner,
                         &owned,
                         index,
-                        line,
+                        crate::IfcTextLine {
+                            top: line.top - column_origins[raw.line],
+                            bottom: line.bottom - column_origins[raw.line],
+                            ..line
+                        },
                         0.0,
                         column as u32,
                     );
@@ -352,7 +365,7 @@ impl ParagraphProjection {
                     let local = crate::PositionedMarker {
                         rect: raikiri_traits::PaintRect::new(
                             marker.rect.x,
-                            global.rect.y,
+                            global.rect.y - column_origins[line.index],
                             global.rect.width,
                             global.rect.height,
                         ),
@@ -363,7 +376,7 @@ impl ParagraphProjection {
                         .marker_columns
                         .entry(line_columns[line.index])
                         .or_default()
-                        .push((top, height, local));
+                        .push((top - column_origins[line.index], height, local));
                 }
             }
         }

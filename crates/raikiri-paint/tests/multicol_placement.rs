@@ -349,3 +349,57 @@ fn short_paragraphs_move_whole_and_truncate_adjoining_break_margins() {
         "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:0;top:52px'>C<br>D</div><div style='position:absolute;left:60px;top:0'>E<br>F</div><div style='position:absolute;left:0;top:92px'>G</div>",
     );
 }
+
+#[test]
+fn an_empty_paragraph_does_not_disable_group_balancing() {
+    compare(
+        "<div class=mc><p>A<br>B<br>C<br>D</p><p></p><p>E<br>F</p></div><p>G</p>",
+        "",
+        "<div style='position:absolute;left:0;top:0'>A<br>B<br>C</div><div style='position:absolute;left:60px;top:0'>D<br>E<br>F</div><div style='position:absolute;left:0;top:60px'>G</div>",
+    );
+}
+
+#[test]
+fn empty_paragraphs_preserve_positive_and_negative_collapsed_margins() {
+    compare(
+        "<div class=mc><p>A<br>B</p><p class=empty></p><p class=later>C<br>D</p><p class=last>E<br>F</p></div><p>G</p>",
+        ".mc p{margin-bottom:8px}.mc .empty{margin-top:12px;margin-bottom:-4px}.mc .later{margin-top:20px}.mc .last{margin-top:12px}",
+        "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:0;top:56px'>C</div><div style='position:absolute;left:60px;top:0'>D</div><div style='position:absolute;left:60px;top:32px'>E<br>F</div><div style='position:absolute;left:0;top:80px'>G</div>",
+    );
+}
+
+#[test]
+fn a_zero_line_height_paragraph_preserves_ordinary_following_flow() {
+    compare(
+        "<div class=mc><p class=zero>A</p><p>B</p></div><p>C</p>",
+        ".mc .zero{line-height:0}",
+        "<div style='position:absolute;left:0;top:0;line-height:0'>A</div><div style='position:absolute;left:0;top:0'>B</div><div style='position:absolute;left:0;top:20px'>C</div>",
+    );
+}
+
+#[test]
+fn a_leading_margin_cannot_skip_an_empty_column() {
+    compare(
+        "<div class=mc><p style='margin-top:100px'>A</p><p>B</p></div><p>C</p>",
+        "",
+        "<div style='position:absolute;left:0;top:100px'>A</div><div style='position:absolute;left:60px;top:0'>B</div><div style='position:absolute;left:0;top:120px'>C</div>",
+    );
+}
+
+#[test]
+fn an_inline_background_moves_with_its_continuation_glyphs() {
+    compare(
+        "<div class=mc><p>A<br>B</p><p><span style='background:lime'>C<br>D</span></p><p>E<br>F</p></div><p>G</p>",
+        ".mc p{margin-bottom:8px}.mc p+p{margin-top:12px}",
+        "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:0;top:52px'><span style='background:lime'>C</span></div><div style='position:absolute;left:60px;top:0'><span style='background:lime'>D</span></div><div style='position:absolute;left:60px;top:32px'>E<br>F</div><div style='position:absolute;left:0;top:80px'>G</div>",
+    );
+}
+
+#[test]
+fn an_unfinished_paragraph_background_fills_its_column_extent() {
+    compare(
+        "<div class=mc><p style='background:lime;orphans:3;widows:3'>A<br>B<br>C<br>D<br>E<br>F</p><p>G<br>H</p></div><p>I</p>",
+        "body{color:transparent}",
+        "<div style='position:absolute;left:0;top:0;width:40px;height:100px;background:lime'></div><div style='position:absolute;left:60px;top:0;width:40px;height:60px;background:lime'></div>",
+    );
+}

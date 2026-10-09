@@ -372,6 +372,12 @@ fn multicol_has_min_constrained_child(tree: &Document, node_id: usize) -> bool {
 }
 
 fn can_balance_single_paragraph(tree: &Document, parent: usize, child: usize) -> bool {
+    can_balance_paragraph_box(tree, parent, child)
+        && tree.nodes[child].ifc_writing_mode() == Some(shodo::geometry::WritingMode::HorizontalTb)
+        && tree.nodes[child].ifc_boxes().is_empty()
+}
+
+fn can_balance_paragraph_box(tree: &Document, parent: usize, child: usize) -> bool {
     let parent = &tree.nodes[parent];
     let child = &tree.nodes[child];
     let layout = child.unrounded_layout;
@@ -387,8 +393,6 @@ fn can_balance_single_paragraph(tree: &Document, parent: usize, child: usize) ->
         && child.style.size.height.is_auto()
         && child.style.min_size.height.is_auto()
         && child.style.max_size.height.is_auto()
-        && child.ifc_writing_mode() == Some(shodo::geometry::WritingMode::HorizontalTb)
-        && child.ifc_boxes().is_empty()
 }
 
 fn multicol_has_plain_paragraph_chain(tree: &Document, parent: usize) -> bool {
@@ -932,7 +936,7 @@ fn record_nested_ifc_box_fragments(
                         })
                         .unwrap_or(0);
                     let fragment_count = line_ranges.as_ref().map_or(1, Vec::len);
-                    let fragment_height = lines
+                    let used_line_height = lines
                         .as_ref()
                         .and_then(|lines| {
                             let first = lines.lines.get(range.line_start)?;
@@ -941,6 +945,23 @@ fn record_nested_ifc_box_fragments(
                         })
                         .unwrap_or(base.rect.height)
                         .max(0.0);
+                    let origins_recorded = tree.nodes[node_id]
+                        .ifc
+                        .as_ref()
+                        .is_some_and(|root| root.multicol_fragment_origins_recorded);
+                    let fragment_height = if origins_recorded && fragment_index + 1 < fragment_count
+                    {
+                        // A non-final slice extends to the fragmentainer edge,
+                        // including unused space left by paragraph break minima.
+                        let top = if fragment_index == 0 {
+                            base.rect.y - context.origin_y
+                        } else {
+                            0.0
+                        };
+                        (height - top).max(0.0)
+                    } else {
+                        used_line_height
+                    };
                     let fragment_id = if base.fragmentainer == column {
                         let fragment = &mut tree.fragment_tree.fragments[parent_fragment];
                         fragment.rect.height = fragment_height;
