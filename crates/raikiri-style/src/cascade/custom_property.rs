@@ -104,12 +104,15 @@ fn calc_length_percentage_value(
 
 /// Parse mixed-unit calc forms that need a used containing-block basis.
 pub(crate) fn parse_simple_calc_length_percentage(input: &str) -> Option<CalcLengthPercentage> {
-    let trimmed = input.trim();
+    let trimmed = trim_css_whitespace_and_comments(input);
     let open = trimmed.find('(')?;
-    if !trimmed[..open].eq_ignore_ascii_case("calc") || !trimmed.ends_with(')') {
+    if !trimmed[..open].eq_ignore_ascii_case("calc") {
         return None;
     }
-    let inner = &trimmed[open + 1..trimmed.len() - 1];
+    // A `calc(` left open at the end of input is closed there (CSS Syntax 3
+    // §5.4.9); a stray `)` inside the body still fails the depth check below.
+    let body = &trimmed[open + 1..];
+    let inner = body.strip_suffix(')').unwrap_or(body);
     let mut depth = 0usize;
     let mut operator = None;
     for (index, byte) in inner.as_bytes().iter().copied().enumerate() {
@@ -838,12 +841,12 @@ pub(crate) fn simplify_math_functions_at_depth(input: &str, depth: usize) -> Opt
             continue;
         }
         push_bounded(&mut output, &input[position..name_start])?;
-        // A function closed by the end of input has `close == input.len()`,
-        // so the text after it is empty rather than out of range.
         let inner_source = input.get(open + 1..close)?;
         let inner = simplify_math_functions_at_depth(inner_source, depth.saturating_add(1))?;
         let evaluated = evaluate_math_function(name.as_str(), &inner)?;
         push_bounded(&mut output, &evaluated)?;
+        // A function closed by the end of input has `close == input.len()`,
+        // so the text after it is empty rather than out of range.
         if needs_separator_after_replacement(&output, input.get(close + 1..).unwrap_or("")) {
             push_bounded(&mut output, " ")?;
         }
@@ -1669,6 +1672,37 @@ pub(crate) fn skip_css_comment(input: &str, start: usize) -> Option<usize> {
     input[start + 2..]
         .find("*/")
         .map(|offset| start + 2 + offset + 2)
+}
+
+/// `input` without its leading and trailing CSS whitespace and comments.
+///
+/// Comments produce no tokens (CSS Syntax 3 §4.3.2), so a declaration's
+/// original text runs from its first token to its last one (§5.4.6). Only
+/// the CSS whitespace code points are trimmed: other Unicode spaces such as
+/// U+00A0 and U+3000 are ident code points. A comment left open at the end of
+/// input runs to the end, and strings and escapes are kept whole.
+pub(crate) fn trim_css_whitespace_and_comments(input: &str) -> &str {
+    let bytes = input.as_bytes();
+    let mut text = None::<(usize, usize)>;
+    let mut position = 0;
+    while position < bytes.len() {
+        let next = match bytes[position] {
+            byte if is_css_whitespace_byte(byte) => {
+                position += 1;
+                continue;
+            }
+            b'/' if bytes.get(position + 1) == Some(&b'*') => {
+                position = skip_css_comment(input, position).unwrap_or(bytes.len());
+                continue;
+            }
+            b'\'' | b'"' => skip_css_string(input, position).unwrap_or(bytes.len()),
+            b'\\' => skip_css_escape(input, position).unwrap_or(position + 1),
+            _ => position + 1,
+        };
+        text = Some((text.map_or(position, |(start, _)| start), next));
+        position = next;
+    }
+    text.map_or("", |(start, end)| &input[start..end])
 }
 
 pub(crate) fn split_var_arguments(input: &str) -> Option<(SmolStr, Option<&str>)> {

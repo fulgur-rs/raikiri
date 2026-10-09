@@ -11759,7 +11759,7 @@ pub(crate) fn consume_deferred_value(input: &mut Parser<'_, '_>) -> Option<SmolS
                         input.reset(&start_state);
                         return None;
                     }
-                    let value = value_source.trim();
+                    let value = crate::cascade::trim_css_whitespace_and_comments(value_source);
                     if !css_component_values_are_bounded(value) {
                         input.reset(&start_state);
                         return None;
@@ -11778,7 +11778,9 @@ pub(crate) fn consume_deferred_value(input: &mut Parser<'_, '_>) -> Option<SmolS
                     input.reset(&start_state);
                     return None;
                 }
-                let value = input.slice(start..input.position()).trim();
+                let value = crate::cascade::trim_css_whitespace_and_comments(
+                    input.slice(start..input.position()),
+                );
                 if !css_component_values_are_bounded(value) {
                     input.reset(&start_state);
                     return None;
