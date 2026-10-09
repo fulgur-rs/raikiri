@@ -351,6 +351,15 @@ fn a_constrained_wrapper_redistributes_variable_height_lines_to_keep_widows() {
 }
 
 #[test]
+fn a_constrained_wrapper_keeps_lines_when_all_break_minima_cannot_fit() {
+    compare(
+        "<div class=mc><div style='width:80px'><p style='orphans:4;widows:5'>A<br>B<br>C<br>D<br>E<br>F<br>G<br>H<br>I<br>J<br>K<br>L</p></div></div><p>M</p>",
+        ".mc{height:100px;width:160px;column-count:3}",
+        "<div style='position:absolute;left:0;top:0'>A<br>B<br>C<br>D</div><div style='position:absolute;left:60px;top:0'>E<br>F<br>G</div><div style='position:absolute;left:120px;top:0'>H<br>I<br>J<br>K<br>L</div><div style='position:absolute;left:0;top:100px'>M</div>",
+    );
+}
+
+#[test]
 fn a_constrained_wrapper_preserves_visible_unbreakable_inline_overflow() {
     compare(
         "<div class=mc><div style='width:20px'><p style='white-space:nowrap'>ABCDEF</p></div></div><p>G</p>",

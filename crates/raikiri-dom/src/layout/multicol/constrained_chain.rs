@@ -223,7 +223,7 @@ pub(super) fn layout(
         position.x += layout.location.x;
         position.y += layout.location.y;
         if !position.x.is_finite() || !position.y.is_finite() || !layout.size.width.is_finite() {
-            return None;
+            return None; // cov:ignore: saved Taffy layouts are sanitized; at most 128 bounded coordinates are summed
         }
         clip_left = clip_left.min(position.x - origin.x);
         clip_right = clip_right.max(position.x - origin.x + layout.size.width);
@@ -238,7 +238,7 @@ pub(super) fn layout(
             let (left, width) = match fragment {
                 shodo::Fragment::GlyphRun(run) => (run.inline_start(), run.inline_size()),
                 shodo::Fragment::InlineBox(box_) => (box_.rect.inline_start, box_.rect.inline_size),
-                _ => continue,
+                _ => continue, // cov:ignore: guards exclude atomic/out-of-flow boxes; the IFC builder does not emit ruby annotations
             };
             clip_left = clip_left.min(inline_origin + left);
             clip_right = clip_right.max(inline_origin + left + width);
@@ -253,7 +253,7 @@ pub(super) fn layout(
         .iter()
         .any(|(top, bottom)| !top.is_finite() || !bottom.is_finite())
     {
-        return None;
+        return None; // cov:ignore: shodo sanitizes line constraints and stores bounded line sizes; finite offsets cannot overflow f32 here
     }
     let mut pieces = Vec::new();
     let mut start = 0;
@@ -415,3 +415,6 @@ pub(super) fn layout(
     }
     Some(border_box.height)
 }
+
+#[cfg(test)]
+mod tests;
