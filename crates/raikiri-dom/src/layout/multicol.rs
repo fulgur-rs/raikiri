@@ -409,12 +409,41 @@ fn relayout_nested_multicol_children(
     } else {
         None
     };
+    // One ordinary paragraph can break inside its lines. Measuring its whole
+    // block as an atomic item would keep the container at the unbroken height
+    // while the inline post-pass already assigns lines to several columns.
+    let paragraph_balance = auto_measurements.as_ref().and_then(|(entries, _)| {
+        let [(child, _, layout, _, _, _)] = entries.as_slice() else {
+            return None;
+        };
+        let node = &tree.nodes[*child];
+        if node.break_inside != raikiri_style::property::BreakInside::Auto
+            || !node.style.size.height.is_auto()
+            || !node.style.min_size.height.is_auto()
+            || !node.style.max_size.height.is_auto()
+            || !node.ifc_boxes().is_empty()
+        {
+            return None;
+        }
+        let lines = node.ifc.as_ref()?.lines.as_ref()?;
+        let (fragments, height) = root_column_fragments(lines, context);
+        (fragments.len() > 1).then_some((
+            *child,
+            fragments,
+            height,
+            height
+                + layout.border.top
+                + layout.padding.top
+                + layout.padding.bottom
+                + layout.border.bottom,
+        ))
+    });
     let mut avoid_column_break_after_previous = false;
     for (order, child) in children.into_iter().enumerate() {
         let measured = auto_measurements
             .as_ref()
             .and_then(|(entries, _)| entries.iter().find(|entry| entry.0 == child));
-        let (child_output, mut child_layout, margin_top, margin_bottom, needed) =
+        let (mut child_output, mut child_layout, margin_top, margin_bottom, needed) =
             if let Some((_, output, layout, margin_top, margin_bottom, needed)) = measured {
                 (*output, *layout, *margin_top, *margin_bottom, *needed)
             } else {
@@ -463,6 +492,11 @@ fn relayout_nested_multicol_children(
                 let needed = margin_top + output.size.height + margin_bottom;
                 (output, layout, margin_top, margin_bottom, needed)
             };
+        if let Some((balanced_child, _, _, height)) = &paragraph_balance
+            && *balanced_child == child
+        {
+            child_output.size.height = *height;
+        }
         let break_height =
             fragment_height.or_else(|| auto_measurements.as_ref().map(|(_, height)| *height));
         let avoid_column_break = avoid_column_break_after_previous
@@ -496,6 +530,12 @@ fn relayout_nested_multicol_children(
         child_layout.location = Point { x, y };
         tree.set_unrounded_layout(TaffyNodeId::from(child), &child_layout);
         refresh_nested_text_fragments(tree, child, column_context);
+        if let Some((balanced_child, fragments, _, _)) = &paragraph_balance
+            && *balanced_child == child
+            && let Some(root) = tree.nodes[child].ifc.as_mut()
+        {
+            root.multicol_fragments = Some(fragments.clone());
+        }
         let Some(child_fragment) = tree
             .fragment_tree
             .try_push(crate::fragment::LayoutFragment {
@@ -518,7 +558,14 @@ fn relayout_nested_multicol_children(
             return fallback_height;
         };
         tree.fragment_tree.reparent_roots(child, child_fragment);
-        if record_nested_ifc_box_fragments(tree, child, child_fragment, context).is_none() {
+        let record_context = paragraph_balance
+            .as_ref()
+            .filter(|(balanced_child, _, _, _)| *balanced_child == child)
+            .map_or(context, |(_, _, height, _)| FragmentationContext {
+                available_height: Some(*height),
+                ..context
+            });
+        if record_nested_ifc_box_fragments(tree, child, child_fragment, record_context).is_none() {
             return fallback_height;
         }
         cursor = y + child_output.size.height + margin_bottom;
