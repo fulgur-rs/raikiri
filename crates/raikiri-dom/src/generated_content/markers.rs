@@ -11,6 +11,24 @@ use raikiri_style::property::{
 use raikiri_style::{CascadeResult, CounterStyleRegistry, resolve_custom_counter};
 
 impl Document {
+    /// Place a standalone image marker using the built-in painter's origin.
+    pub fn standalone_marker_image_rect(
+        &self,
+        computed: &raikiri_style::ComputedValues,
+        node_id: usize,
+        origin: (f32, f32),
+        padding_left: f32,
+        size: raikiri_traits::ImageRasterSize,
+    ) -> raikiri_traits::PaintRect {
+        let offset = match computed.list_style_position {
+            raikiri_style::ListStylePosition::Inside => {
+                padding_left - self.legacy_inside_marker_advance(node_id)
+            }
+            _ => padding_left - size.width - 4.0,
+        };
+        raikiri_traits::PaintRect::new(origin.0 + offset, origin.1, size.width, size.height)
+    }
+
     /// Shape a standalone marker and resolve its horizontal offset from the
     /// principal box, sharing the built-in painter's trailing-space handling.
     #[doc(hidden)]

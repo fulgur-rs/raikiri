@@ -1590,15 +1590,16 @@ fn paint_list_marker_with_snapshots(
         let size = document.list_marker_image_size(node_id);
         let marker_width = size.map_or(decoded.width as f32, |size| size.width);
         let marker_height = size.map_or(decoded.height as f32, |size| size.height);
-        let marker_x = match computed.list_style_position {
-            raikiri_style::ListStylePosition::Outside => {
-                paint_x + padding_left - marker_width - 4.0
-            }
-            raikiri_style::ListStylePosition::Inside => {
-                paint_x + padding_left - document.legacy_inside_marker_advance(node_id)
-            }
-            _ => paint_x + padding_left - marker_width - 4.0,
-        };
+        let marker_rect = document.standalone_marker_image_rect(
+            computed,
+            node_id,
+            (paint_x, paint_y),
+            padding_left,
+            raikiri_traits::ImageRasterSize {
+                width: marker_width,
+                height: marker_height,
+            },
+        );
         let image_data = peniko::ImageData {
             data: peniko::Blob::from(decoded.rgba.clone()),
             format: peniko::ImageFormat::Rgba8,
@@ -1609,7 +1610,7 @@ fn paint_list_marker_with_snapshots(
         let brush = peniko::ImageBrush::new(image_data);
         scene.fill(
             peniko::Fill::NonZero,
-            Affine::translate((marker_x as f64, paint_y as f64))
+            Affine::translate((marker_rect.x as f64, marker_rect.y as f64))
                 * Affine::scale_non_uniform(
                     f64::from(marker_width) / f64::from(decoded.width),
                     f64::from(marker_height) / f64::from(decoded.height),

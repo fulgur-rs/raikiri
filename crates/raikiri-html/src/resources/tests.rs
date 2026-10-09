@@ -331,7 +331,7 @@ fn render_preloads_only_effective_marker_images() {
 }
 
 #[test]
-fn relative_inside_marker_image_is_fetched_once_before_layout() {
+fn relative_inside_and_outside_marker_images_are_fetched_once_before_layout() {
     let provider = SvgNetworkProvider::default();
     let resources = RenderResources::new().network_provider(&provider);
     let base = Url::parse("https://images.test/assets/document.html").unwrap();
@@ -340,7 +340,7 @@ fn relative_inside_marker_image_is_fetched_once_before_layout() {
         network: None,
         base_url: Some(base.clone()),
     };
-    let html = br#"<!doctype html><style>li {list-style:inside url(marker.svg)}</style><li>one</li><li>two</li><li style="list-style-image:none">text</li><li style="list-style-position:outside;list-style-image:url(ignored.svg)">outside</li>"#;
+    let html = br#"<!doctype html><style>li {list-style:inside url(marker.svg)}</style><li>one</li><li>two</li><li style="list-style-image:none">text</li><li style="list-style-position:outside;list-style-image:url(outside.svg)">outside</li>"#;
     let mut uncascaded = crate::parse(&html[..], &options).expect("HTML parses");
     let cascade = crate::build_cascaded(&uncascaded);
     let warnings = Arc::new(Mutex::new(Vec::new()));
@@ -357,7 +357,7 @@ fn relative_inside_marker_image_is_fetched_once_before_layout() {
         .prepare_list_marker_images(&cascade, &resources, Some(&base));
     assert_eq!(
         *provider.requests.lock().unwrap(),
-        [(base.join("marker.svg").unwrap(), ResourceKind::Image)]
+        ["marker.svg", "outside.svg"].map(|name| (base.join(name).unwrap(), ResourceKind::Image))
     );
     let item = cascade
         .computed
@@ -369,6 +369,21 @@ fn relative_inside_marker_image_is_fetched_once_before_layout() {
         .list_marker_image(item)
         .expect("prepared image");
     assert_eq!((image.width, image.height), (2, 1));
+    let outside = cascade
+        .computed
+        .iter()
+        .enumerate()
+        .find(|(_, cv)| {
+            cv.display == DisplayValue::ListItem
+                && cv.list_style_position == raikiri_style::ListStylePosition::Outside
+        })
+        .unwrap()
+        .0;
+    assert_eq!(
+        uncascaded.dom.list_marker_image_url(outside),
+        Some(&base.join("outside.svg").unwrap())
+    );
+    assert!(uncascaded.dom.list_marker_image(outside).is_some());
 }
 
 #[test]

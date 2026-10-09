@@ -504,9 +504,14 @@ mod tests;
 
 /// Whether this list item's marker belongs to its inline formatting context.
 pub fn inside_marker_in_flow(cascade: &CascadeResult, element: usize) -> bool {
+    marker_is_enabled(cascade, element)
+        && cascade.computed[element].list_style_position == raikiri_style::ListStylePosition::Inside
+}
+
+/// Whether a list item generates a marker, independently of its position.
+pub fn marker_is_enabled(cascade: &CascadeResult, element: usize) -> bool {
     cascade.computed.get(element).is_some_and(|cv| {
         cv.display == DisplayValue::ListItem
-            && cv.list_style_position == raikiri_style::ListStylePosition::Inside
             && cascade
                 .pseudo
                 .get(&(StyleNodeId::new(element as u64), PseudoElem::Marker))

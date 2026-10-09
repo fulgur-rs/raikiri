@@ -872,7 +872,7 @@ impl<'a> RenderResources<'a> {
             .iter()
             .enumerate()
             .filter(|(element, _)| {
-                raikiri_dom::generated_content::inside_marker_in_flow(cascade, *element)
+                raikiri_dom::generated_content::marker_is_enabled(cascade, *element)
                     && cascade
                         .pseudo
                         .get(&(

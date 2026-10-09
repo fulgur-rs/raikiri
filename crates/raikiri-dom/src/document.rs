@@ -284,6 +284,7 @@ impl Clone for CanvasBitmapByteCount {
 
 #[derive(Debug, Clone)]
 struct ListMarkerImage {
+    url: url::Url,
     pixels: std::sync::Arc<raikiri_traits::DecodedImage>,
     size: raikiri_traits::ImageRasterSize,
 }
@@ -300,7 +301,7 @@ pub struct Document {
     pub(crate) nodes: Vec<Node>,
     pub(crate) resolved_image_urls: std::collections::HashMap<usize, (String, url::Url)>,
     canvas_bitmap_bytes: CanvasBitmapByteCount,
-    /// Decoded inside-marker images retained for both sizing and painting.
+    /// Decoded marker images retained for both sizing and painting.
     list_marker_images: std::collections::HashMap<usize, ListMarkerImage>,
     /// Measured marker advances reserved by the current legacy layout pass.
     pub(crate) legacy_inside_marker_advances: std::collections::HashMap<usize, f32>,
@@ -2599,7 +2600,7 @@ impl Default for Document {
 mod tests;
 
 impl Document {
-    /// Prepare inside image markers before layout from already resolved pixels.
+    /// Prepare image markers before layout from already resolved pixels.
     /// A failed image keeps the text fallback; explicit `::marker` content wins.
     /// Retained pixel allocations share a 128 MiB document budget.
     pub fn prepare_list_marker_images(
@@ -2628,7 +2629,7 @@ impl Document {
             HashMap::<(url::Url, u32, u32), Arc<raikiri_traits::DecodedImage>>::new();
         let mut allocations = std::collections::HashSet::new();
         for (element, cv) in cascade.computed.iter().enumerate() {
-            if !crate::generated_content::inside_marker_in_flow(cascade, element)
+            if !crate::generated_content::marker_is_enabled(cascade, element)
                 || cascade
                     .pseudo
                     .get(&(
@@ -2687,6 +2688,7 @@ impl Document {
             self.list_marker_images.insert(
                 element,
                 ListMarkerImage {
+                    url,
                     pixels: image,
                     size,
                 },
@@ -2695,11 +2697,18 @@ impl Document {
         self.layout_dirty = true;
     }
 
-    /// Pixels of an inside marker prepared by [`Self::prepare_list_marker_images`].
+    /// Pixels of a marker prepared by [`Self::prepare_list_marker_images`].
     pub fn list_marker_image(&self, element: usize) -> Option<&raikiri_traits::DecodedImage> {
         self.list_marker_images
             .get(&element)
             .map(|marker| marker.pixels.as_ref())
+    }
+
+    /// Absolute source URL retained with a prepared marker's pixels.
+    pub fn list_marker_image_url(&self, element: usize) -> Option<&url::Url> {
+        self.list_marker_images
+            .get(&element)
+            .map(|marker| &marker.url)
     }
 
     /// Inline space reserved before legacy ruby/multicol list-item content.

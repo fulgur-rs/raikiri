@@ -71,18 +71,8 @@ pub(super) fn prepare_markers(
     for owner in owners {
         let node = &document.nodes[owner];
         let layout = node.unrounded_layout;
-        // Image markers need decoded-resource placement, outside this text API.
-        if matches!(
-            cascade.computed[owner].list_style_image,
-            raikiri_style::property::BackgroundImage::Url(_)
-        ) && cascade
-            .pseudo
-            .get(&(
-                raikiri_style::StyleNodeId::new(owner as u64),
-                PseudoElem::Marker,
-            ))
-            .is_none_or(|style| style.content.is_empty())
-        {
+        // Only a usable image replaces the list-style-type text fallback.
+        if document.list_marker_image(owner).is_some() {
             continue;
         }
         if !node.children.is_empty() && (layout.size.width <= 0.0 || layout.size.height <= 0.0) {

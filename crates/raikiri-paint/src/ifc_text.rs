@@ -19,7 +19,6 @@ use raikiri_dom::generated_content::{computed_for_id, generated_origin};
 use raikiri_dom::{Document, PositionedLines, cumulative_offset};
 use raikiri_style::CascadeResult;
 use raikiri_style::property::TextShadowColor;
-use shodo::Fragment;
 use shodo::geometry::{PhysicalConverter, WritingMode};
 use shodo::hit::{LineLayout, TextPosition};
 use shodo::node::NodeId;
@@ -108,26 +107,11 @@ pub(crate) fn draw_ifc_lines_with_resources(
             .expect("positioned lines require an existing IFC root");
         let mut paint = typographic::TypographicPaint::new(root_node, &pieces_by_line[line_index]);
         let background_slices = typographic::background_slices(&pieces_by_line[line_index]);
-        for fragment in line.fragments() {
-            let Fragment::Atomic(atomic) = fragment else {
+        for marker in &positioned_line.markers {
+            let Some(image) = document.list_marker_image(marker.owner) else {
                 continue;
             };
-            let Some((element, raikiri_style::PseudoElem::Marker)) =
-                generated_origin(atomic.node.0 as usize)
-            else {
-                continue;
-            };
-            let Some(image) = document.list_marker_image(element) else {
-                continue;
-            };
-            if computed_for_id(cascade, atomic.node.0 as usize)
-                .is_some_and(|cv| cv.visibility != raikiri_style::property::Visibility::Visible)
-            {
-                continue;
-            }
-            let mut logical = atomic.border_rect;
-            logical.block_start += line.block_offset();
-            let rect = positioned_line.converter.rect(logical);
+            let rect = marker.rect;
             let brush = peniko::ImageBrush::new(peniko::ImageData {
                 data: peniko::Blob::from(image.rgba.clone()),
                 format: peniko::ImageFormat::Rgba8,
