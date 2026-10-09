@@ -24,7 +24,11 @@ impl ImagePixelSource for Pixels {
     }
 }
 
-fn lay_out(body: &str, css: &str, pixels: &Pixels) -> raikiri_html::DocumentLayout {
+fn lay_out<I: ImagePixelSource + Send + Sync>(
+    body: &str,
+    css: &str,
+    pixels: &I,
+) -> raikiri_html::DocumentLayout {
     let fonts = FontCollectionBuilder::new()
         .font_bytes(
             "Ahem",
@@ -208,6 +212,7 @@ fn suppressed_and_hidden_markers_have_no_image_event() {
         "li::marker{visibility:hidden}",
         "li::marker{content:none}",
         "li{display:none}",
+        "li{width:0;height:0}",
     ] {
         let document = lay_out("<ul><li>A</li></ul>", css, &pixels);
         let page = document.page(0).unwrap();
@@ -299,4 +304,78 @@ fn marker_payload_respects_pixel_admission_and_rejects_malformed_sources() {
         page.raster_marker(raikiri_html::NodeId::new(u64::MAX), &pixels)
             .is_none()
     );
+}
+
+#[test]
+fn repeated_header_markers_keep_the_header_origin_and_stop_after_the_table() {
+    let pixels = Pixels::new();
+    for (position, x, y) in [("outside", 8.0, 0.0), ("inside", 20.0, 4.0)] {
+        // The 10px header fits the existing quarter-page repeat limit.
+        let document = lay_out(
+            "<table><thead><tr><th><ul><li>A</li></ul></th></tr></thead><tbody><tr><td>B</td></tr><tr><td>C</td></tr></tbody></table><div style='height:70px'></div>",
+            &format!(
+                "table{{border-spacing:0}}th,td{{padding:0;font-weight:normal}}th{{text-align:left}}td{{height:50px}}li{{width:40px;font:10px/10px Ahem;list-style-position:{position}}}"
+            ),
+            &pixels,
+        );
+        assert!(document.page_count() > 2);
+        for page in document.pages() {
+            let images: Vec<_> = page
+                .paint_order_for_text_runs(&page.text_runs())
+                .iter()
+                .filter_map(|event| match event {
+                    PaintEvent::MarkerImage(owner) => page.raster_marker(*owner, &pixels),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                images.len(),
+                usize::from(page.index() < 2),
+                "page={} position={position}",
+                page.index()
+            );
+            if let Some(image) = images.first() {
+                assert_eq!(image.rect, PaintRect::new(x, y, 8.0, 4.0));
+            }
+        }
+    }
+}
+
+#[test]
+fn marker_payload_rejects_zero_em_and_overflowing_natural_rectangles() {
+    struct Natural(raikiri_traits::ImageIntrinsicSize);
+    impl ImagePixelSource for Natural {
+        fn get_decoded(&self, _: &Url) -> Option<Arc<DecodedImage>> {
+            Some(Pixels::new().0)
+        }
+        fn intrinsic_size(&self, _: &Url) -> Option<raikiri_traits::ImageIntrinsicSize> {
+            Some(self.0)
+        }
+    }
+    for natural in [
+        raikiri_traits::ImageIntrinsicSize {
+            width: None,
+            height: None,
+            aspect_ratio: None,
+        },
+        raikiri_traits::ImageIntrinsicSize {
+            width: Some(f32::MAX),
+            height: None,
+            aspect_ratio: Some(1e-20),
+        },
+    ] {
+        let source = Natural(natural);
+        let document = lay_out("<ul><li></li></ul>", "li{font-size:0}", &source);
+        let page = document.page(0).unwrap();
+        let owners: Vec<_> = page
+            .paint_order()
+            .iter()
+            .filter_map(|event| match event {
+                PaintEvent::MarkerImage(owner) => Some(*owner),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(owners.len(), 1);
+        assert!(page.raster_marker(owners[0], &source).is_none());
+    }
 }

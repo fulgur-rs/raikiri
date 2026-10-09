@@ -7,6 +7,14 @@ use raikiri_style::{CascadeResult, PseudoElem, property::Visibility};
 use raikiri_traits::{NodeId, PaintRect};
 use std::collections::BTreeMap;
 
+enum MarkerRoot {
+    Standalone {
+        owner: usize,
+        size: raikiri_traits::ImageRasterSize,
+    },
+    Inline(Vec<(f32, f32, PositionedMarker)>),
+}
+
 pub(super) fn prepare(
     document: &Document,
     cascade: &CascadeResult,
@@ -20,7 +28,13 @@ pub(super) fn prepare(
         .iter()
         .filter_map(|root| match generated_origin(root.node) {
             Some((owner, PseudoElem::Marker)) if document.list_marker_image(owner).is_some() => {
-                Some((*root, None))
+                Some((
+                    *root,
+                    MarkerRoot::Standalone {
+                        owner,
+                        size: document.list_marker_image_size(owner)?,
+                    },
+                ))
             }
             None if crate::generated_content::inside_marker_in_flow(cascade, root.node)
                 && document.list_marker_image(root.node).is_some() =>
@@ -48,7 +62,7 @@ pub(super) fn prepare(
                         })
                     })
                     .collect();
-                Some((*root, Some(markers)))
+                Some((*root, MarkerRoot::Inline(markers)))
             }
             _ => None,
         })
@@ -66,7 +80,7 @@ pub(super) fn prepare(
     }
     for page in pages {
         let mut markers = BTreeMap::new();
-        for (root, inline_markers) in &roots {
+        for (root, kind) in &roots {
             let mut root = *root;
             let source = generated_origin(root.node)
                 .map_or_else(|| document.ifc_source_owner(root.node), |(owner, _)| owner);
@@ -86,60 +100,60 @@ pub(super) fn prepare(
                 } else {
                     page.content_origin_y
                 };
-            if let Some((owner, PseudoElem::Marker)) = generated_origin(root.node) {
-                let id = NodeId::new(owner as u64);
-                if !root.is_repeat && first_pages.get(&id) != Some(&page.page_index) {
-                    continue;
-                }
-                let Some(size) = document.list_marker_image_size(owner) else {
-                    continue;
-                };
-                let Some(style) = computed_for_id(cascade, root.node)
-                    .filter(|style| style.visibility == Visibility::Visible)
-                else {
-                    continue;
-                };
-                let node = &document.nodes[owner];
-                let layout = node.unrounded_layout;
-                if !node.children.is_empty()
-                    && (layout.size.width <= 0.0 || layout.size.height <= 0.0)
-                {
-                    continue;
-                }
-                markers.insert(
-                    id,
-                    document.standalone_marker_image_rect(
-                        style,
-                        owner,
-                        (x, y),
-                        layout.padding.left,
-                        size,
-                    ),
-                );
-            } else if let Some(inline_markers) = inline_markers {
-                for &(top, height, marker) in inline_markers {
-                    if !root.is_repeat {
-                        let Some((start, end)) = page.flow_range else {
-                            continue;
-                        };
-                        if !crate::layout::line_center_on_page(
-                            root.y + top,
-                            root.y + top + height,
-                            start,
-                            end,
-                        ) {
-                            continue;
-                        }
+            match kind {
+                MarkerRoot::Standalone { owner, size } => {
+                    let owner = *owner;
+                    let id = NodeId::new(owner as u64);
+                    if !root.is_repeat && first_pages.get(&id) != Some(&page.page_index) {
+                        continue;
+                    }
+                    let Some(style) = computed_for_id(cascade, root.node)
+                        .filter(|style| style.visibility == Visibility::Visible)
+                    else {
+                        continue;
+                    };
+                    let node = &document.nodes[owner];
+                    let layout = node.unrounded_layout;
+                    if !node.children.is_empty()
+                        && (layout.size.width <= 0.0 || layout.size.height <= 0.0)
+                    {
+                        continue;
                     }
                     markers.insert(
-                        NodeId::new(marker.owner as u64),
-                        PaintRect::new(
-                            x + marker.rect.x,
-                            y + marker.rect.y,
-                            marker.rect.width,
-                            marker.rect.height,
+                        id,
+                        document.standalone_marker_image_rect(
+                            style,
+                            owner,
+                            (x, y),
+                            layout.padding.left,
+                            *size,
                         ),
                     );
+                }
+                MarkerRoot::Inline(inline_markers) => {
+                    for &(top, height, marker) in inline_markers {
+                        if !root.is_repeat {
+                            // A page without flow geometry cannot own a normal-flow line.
+                            let (start, end) = page.flow_range.unwrap_or((0.0, 0.0));
+                            if !crate::layout::line_center_on_page(
+                                root.y + top,
+                                root.y + top + height,
+                                start,
+                                end,
+                            ) {
+                                continue;
+                            }
+                        }
+                        markers.insert(
+                            NodeId::new(marker.owner as u64),
+                            PaintRect::new(
+                                x + marker.rect.x,
+                                y + marker.rect.y,
+                                marker.rect.width,
+                                marker.rect.height,
+                            ),
+                        );
+                    }
                 }
             }
         }
