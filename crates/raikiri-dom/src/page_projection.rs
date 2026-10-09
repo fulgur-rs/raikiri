@@ -12,7 +12,8 @@ use raikiri_style::CascadeResult;
 use raikiri_traits::{NodeId, PageBox, PaintRect};
 use records::{
     OverflowClipSource, PageFragment, PageFragmentEvent, PageFragmentInsets,
-    PageFragmentOrientation, PageFragmentPageGeometry, PageFragmentRect, ProjectedTextRoot,
+    PageFragmentOrientation, PageFragmentPageGeometry, PageFragmentRect,
+    PlacementOverflowClipSource, ProjectedTextRoot,
 };
 use std::collections::{BTreeMap, HashSet};
 
@@ -28,6 +29,8 @@ pub(crate) struct PageProjection {
     generated_boxes: generated_boxes::GeneratedBoxes,
     /// Source clip geometry shared across pages rather than copied per page.
     overflow_clips: BTreeMap<NodeId, OverflowClipSource>,
+    /// Geometry shared by column placements, independently of the page count.
+    placement_overflow_clips: Vec<PlacementOverflowClipSource>,
 }
 
 impl PageProjection {
@@ -39,6 +42,7 @@ impl PageProjection {
         self.image_markers.clear();
         self.generated_boxes.clear();
         self.overflow_clips.clear();
+        self.placement_overflow_clips.clear();
     }
 }
 
@@ -98,7 +102,7 @@ impl Document {
                 )
             })
             .collect();
-        let (pages, text_roots, overflow_clips) =
+        let (pages, text_roots, overflow_clips, placement_overflow_clips) =
             crate::layout::project_slices(self, cascade, fallback_page_box, slices, &geometries);
         let markers = text_runs::prepare_markers(self, cascade, &text_roots, &pages)?;
         let image_markers = image_markers::prepare(self, cascade, &text_roots, &pages);
@@ -139,6 +143,7 @@ impl Document {
             image_markers,
             generated_boxes,
             overflow_clips,
+            placement_overflow_clips,
         };
         Ok(())
     }
@@ -154,11 +159,15 @@ impl Document {
             .flat_map(move |page| {
                 page.items.iter().map(move |item| {
                     Fragment::new(item, page.content_box).with_overflow_clip(
-                        self.page_projection
-                            .overflow_clips
-                            .get(&item.node_id)
-                            .filter(|_| item.kind != records::PageFragmentKind::Text)
-                            .map(|source| source.on_page(item.node_id, page).clip),
+                        item.own_overflow_source
+                            .map(|index| self.placement_overflow_clip_on_page(index, page).clip)
+                            .or_else(|| {
+                                self.page_projection
+                                    .overflow_clips
+                                    .get(&item.node_id)
+                                    .filter(|_| item.kind != records::PageFragmentKind::Text)
+                                    .map(|source| source.on_page(item.node_id, page).clip)
+                            }),
                     )
                 })
             })
@@ -172,7 +181,36 @@ impl Document {
             .iter()
             .find(|page| page.page_index == page_index)
             .into_iter()
-            .flat_map(move |page| self.overflow_clips_on_page(page).into_values())
+            .flat_map(move |page| {
+                let mut entries: Vec<_> = self.overflow_clips_on_page(page).into_values().collect();
+                let mut used = HashSet::new();
+                for item in &page.items {
+                    let mut chain = item.own_overflow_source.or(item.overflow_chain);
+                    while let Some(index) = chain {
+                        if !used.insert(index) {
+                            break;
+                        }
+                        entries.push(self.placement_overflow_clip_on_page(index, page));
+                        chain = self.page_projection.placement_overflow_clips[index].parent;
+                    }
+                }
+                entries.sort_by_key(|entry| entry.node);
+                entries
+            })
+    }
+
+    /// Resolve one shared column overflow source on the requested page.
+    fn placement_overflow_clip_on_page(&self, index: usize, page: &PageFragment) -> OverflowClip {
+        let entry = self.page_projection.placement_overflow_clips[index];
+        let mut source = entry.source;
+        if let Some(Some(shift)) = self
+            .table_objects
+            .headers
+            .shift(entry.node.0 as usize, page.content_origin_y)
+        {
+            source.border_box.y += shift;
+        }
+        source.on_page(entry.node, page)
     }
 
     /// Materialize only the requested page's ancestors, then release the map.

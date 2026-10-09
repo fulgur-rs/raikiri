@@ -60,7 +60,7 @@ pub enum PaintEvent<'a> {
 
 /// The reason reported for a multi-column container by
 /// [`Document::paint_order_approximations`].
-const COLUMNS_WITHOUT_CLIPS: &str = "columns are listed without column clips";
+const LEGACY_COLUMN_CLIPS: &str = "legacy column clipping may be incomplete";
 
 enum Frame {
     Visit(usize),
@@ -76,6 +76,8 @@ struct PageItems<'a> {
     overflow_clips: BTreeMap<NodeId, OverflowClip>,
     generated_boxes: Option<&'a PageGeneratedBoxes>,
     cascade: &'a CascadeResult,
+    document: &'a Document,
+    page: &'a super::records::PageFragment,
 }
 
 impl<'a> PageItems<'a> {
@@ -85,10 +87,18 @@ impl<'a> PageItems<'a> {
 
     fn fragment(&self, item: &'a PageFragmentItem) -> Fragment<'a> {
         Fragment::new(item, self.content_box).with_overflow_clip(
-            self.overflow_clips
-                .get(&item.node_id)
-                .filter(|_| item.kind != PageFragmentKind::Text)
-                .map(|entry| entry.clip),
+            item.own_overflow_source
+                .map(|index| {
+                    self.document
+                        .placement_overflow_clip_on_page(index, self.page)
+                        .clip
+                })
+                .or_else(|| {
+                    self.overflow_clips
+                        .get(&item.node_id)
+                        .filter(|_| item.kind != PageFragmentKind::Text)
+                        .map(|entry| entry.clip)
+                }),
         )
     }
 }
@@ -157,6 +167,8 @@ impl Document {
             overflow_clips: self.overflow_clips_on_page(page),
             generated_boxes: self.page_projection.generated_boxes.get(&page_index),
             cascade,
+            document: self,
+            page,
         };
         for item in &page.items {
             if let Ok(node_id) = usize::try_from(item.node_id.0) {
@@ -318,15 +330,129 @@ impl Document {
                 _ => {} // cov:ignore: comments and other node kinds are out of the document
             }
         }
-        events
+        let mut line_clips = HashMap::new();
+        let mut line_overflow_chains = HashMap::new();
+        for root in &self.page_projection.text_roots {
+            if root.fragment_clip.is_none() && root.overflow_chain.is_none() {
+                continue;
+            }
+            let indices: Vec<usize> = if let Some((owner, PseudoElem::Marker)) =
+                crate::generated_content::generated_origin(root.node)
+            {
+                self.page_projection
+                    .markers
+                    .get(&owner)
+                    .map_or_else(Vec::new, |marker| (0..marker.line_count()).collect())
+            } else if let Some(positioned) =
+                crate::PositionedLines::new(self, cascade, root.node, root.fragmentainer)
+            {
+                (0..positioned.all_lines().len())
+                    .filter(|&index| positioned.line_offset(index).is_some())
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            if let Some(chain) = root.overflow_chain {
+                for &index in &indices {
+                    line_overflow_chains.insert(
+                        TextLineId {
+                            root: NodeId::new(root.node as u64),
+                            index,
+                        },
+                        chain,
+                    );
+                }
+            }
+            let Some(mut clip) = root.fragment_clip else {
+                continue;
+            };
+            let source = crate::generated_content::generated_origin(root.node)
+                .map_or_else(|| self.ifc_source_owner(root.node), |(owner, _)| owner);
+            let mut repeat = root.is_repeat;
+            if let Some(shift) = self
+                .table_objects
+                .headers
+                .shift(source, page.content_origin_y)
+            {
+                let Some(shift) = shift else { continue };
+                clip.y += shift - page.content_origin_y;
+                repeat = true;
+            }
+            clip.x += page.content_box.x;
+            clip.y += page.content_box.y - if repeat { 0.0 } else { page.content_origin_y };
+            for &index in &indices {
+                line_clips.insert(
+                    TextLineId {
+                        root: NodeId::new(root.node as u64),
+                        index,
+                    },
+                    PaintClip::new(clip),
+                );
+            }
+        }
+        let mut clipped_events = Vec::with_capacity(events.len());
+        for event in events {
+            let mut chain = match event {
+                PaintEvent::Box(fragment)
+                | PaintEvent::Text(fragment)
+                | PaintEvent::Replaced(fragment) => fragment.overflow_chain(),
+                PaintEvent::TextLine(line) => line_overflow_chains.get(&line).copied(),
+                PaintEvent::GeneratedBox(fragment) => {
+                    line_overflow_chains.get(&fragment.line).copied()
+                }
+                PaintEvent::MarkerImage(owner) => {
+                    items.of(owner.0 as usize).first().and_then(|item| {
+                        if crate::generated_content::inside_marker_in_flow(
+                            cascade,
+                            owner.0 as usize,
+                        ) {
+                            item.own_overflow_source.or(item.overflow_chain)
+                        } else {
+                            item.overflow_chain
+                        }
+                    })
+                }
+                _ => None,
+            };
+            let mut overflow = Vec::new();
+            while let Some(index) = chain {
+                overflow.push(self.placement_overflow_clip_on_page(index, page).clip);
+                chain = self.page_projection.placement_overflow_clips[index].parent;
+            }
+            for &clip in overflow.iter().rev() {
+                clipped_events.push(PaintEvent::PushClip(clip, ClipKind::Overflow));
+            }
+            let clip = match event {
+                PaintEvent::Box(fragment)
+                | PaintEvent::Text(fragment)
+                | PaintEvent::Replaced(fragment) => fragment.fragmentainer_clip(),
+                PaintEvent::TextLine(line) => line_clips.get(&line).copied(),
+                PaintEvent::GeneratedBox(fragment) => line_clips.get(&fragment.line).copied(),
+                PaintEvent::MarkerImage(owner) => items
+                    .of(owner.0 as usize)
+                    .first()
+                    .and_then(|item| items.fragment(item).fragmentainer_clip()),
+                _ => None,
+            };
+            if let Some(clip) = clip {
+                clipped_events.push(PaintEvent::PushClip(clip, ClipKind::Fragmentainer));
+                clipped_events.push(event);
+                clipped_events.push(PaintEvent::PopClip);
+            } else {
+                clipped_events.push(event);
+            }
+            clipped_events.extend(std::iter::repeat_n(PaintEvent::PopClip, overflow.len()));
+        }
+        clipped_events
     }
 
     /// Multi-column containers whose subtree is listed without column
     /// clips, each with the reason.
     ///
-    /// [`Document::page_paint_order`] lists the content of every column
-    /// without a [`ClipKind::Fragmentainer`] clip around it, so content that
-    /// overflows a column is not cut at the column's edge.
+    /// Explicit fragmentainer clips are projected by
+    /// [`Document::page_paint_order`]. Legacy column-height clips synthesized
+    /// by the built-in painter are not all represented by layout fragments,
+    /// so multicolumn containers retain a conservative approximation warning.
     #[doc(hidden)]
     pub fn paint_order_approximations(
         &self,
@@ -369,7 +495,7 @@ impl Document {
         found.sort_unstable();
         found
             .into_iter()
-            .map(|node_id| (NodeId::new(node_id as u64), COLUMNS_WITHOUT_CLIPS))
+            .map(|node_id| (NodeId::new(node_id as u64), LEGACY_COLUMN_CLIPS))
             .collect()
     }
 }

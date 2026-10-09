@@ -77,8 +77,8 @@ fn trace(page: &Page<'_>) -> Vec<PaintTraceEvent> {
     .expect("trace")
 }
 
-/// The walker's steps, without column clips (the public list does not have
-/// them yet) and without the pops that close them.
+/// The walker's steps, normalized without column clips and their closing
+/// pops so this trace compares the remaining paint traversal.
 ///
 /// An overflow clip that lies wholly outside the page hides everything
 /// inside it, so such a clip and the steps it encloses are left out: the

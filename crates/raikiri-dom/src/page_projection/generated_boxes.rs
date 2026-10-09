@@ -70,8 +70,8 @@ pub(super) fn prepare(
             }
         })
         .collect();
-    let context = RunContext::new(document);
     let mut prepared = Vec::new();
+    let context = RunContext::new(document, roots);
     for root in roots {
         if !candidates.contains(&root.node) {
             continue;
@@ -102,17 +102,15 @@ pub(super) fn prepare(
         if pieces.is_empty() {
             continue;
         }
-        let positioned = PositionedLines::new(document, cascade, root.node, None)
+        let positioned = PositionedLines::new(document, cascade, root.node, root.fragmentainer)
             .expect("inline box pieces belong to a laid-out paragraph");
         let pieces: Vec<_> = pieces
             .into_iter()
-            .map(|(owner, after, piece)| {
-                let offset = positioned
-                    .line_offset(piece.line)
-                    .expect("non-omitted paragraph pieces have positioned lines");
+            .filter_map(|(owner, after, piece)| {
+                let offset = positioned.line_offset(piece.line)?;
                 let line = &positioned.all_lines()[piece.line];
                 let shift = positioned.shifts.get(piece.line).copied().unwrap_or(0.0);
-                (
+                Some((
                     owner,
                     after,
                     piece,
@@ -120,7 +118,7 @@ pub(super) fn prepare(
                     shift,
                     line.block_offset(),
                     line.block_size(),
-                )
+                ))
             })
             .collect();
         prepared.push((*root, pieces));

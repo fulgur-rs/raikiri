@@ -174,6 +174,12 @@ pub(crate) struct ProjectedTextRoot {
     pub(crate) y: f32,
     /// The paragraph is inside a subtree repeated on every page.
     pub(crate) is_repeat: bool,
+    /// Restrict this placement to its committed column, when reached through a fragment.
+    pub(crate) fragmentainer: Option<usize>,
+    /// Intersection of explicit fragment clips in shared flow coordinates.
+    pub(crate) fragment_clip: Option<raikiri_traits::PaintRect>,
+    /// Placement-specific overflow ancestors, including this paragraph's local clip.
+    pub(crate) overflow_chain: Option<usize>,
 }
 
 /// A CSS-px rectangle used by page-fragment metadata and placements.
@@ -273,6 +279,14 @@ pub(crate) struct PageFragmentItem {
     pub(crate) rect: PageFragmentRect,
     /// Neutral placement classification.
     pub(crate) kind: PageFragmentKind,
+    /// Column index local to the owning multicolumn context; zero outside columns.
+    pub(crate) fragmentainer: u32,
+    /// Explicit fragment clip relative to this page's content origin.
+    pub(crate) fragment_clip: Option<PageFragmentRect>,
+    /// Placement-specific overflow ancestors of this box or text placement.
+    pub(crate) overflow_chain: Option<usize>,
+    /// This element placement's own overflow source, separate from its ancestors.
+    pub(crate) own_overflow_source: Option<usize>,
     /// Zero-based fragment ordinal for this source node.
     pub(crate) fragment_index: u32,
     /// Total number of placements for this source node in the snapshot.
@@ -398,6 +412,10 @@ impl PageFragmentItem {
             node_id,
             rect,
             kind,
+            fragmentainer: 0,
+            fragment_clip: None,
+            overflow_chain: None,
+            own_overflow_source: None,
             fragment_index,
             fragment_count,
             is_repeat,
@@ -520,6 +538,14 @@ pub(crate) struct OverflowClipSource {
     pub(crate) border_box: raikiri_traits::PaintRect,
     pub(crate) geometry: crate::paint_rules::OverflowClipGeometry,
     pub(crate) is_repeat: bool,
+}
+
+/// One shared overflow source reached through a repeated column placement.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PlacementOverflowClipSource {
+    pub(crate) node: NodeId,
+    pub(crate) parent: Option<usize>,
+    pub(crate) source: OverflowClipSource,
 }
 
 impl OverflowClipSource {

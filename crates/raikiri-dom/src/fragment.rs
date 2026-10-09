@@ -158,6 +158,30 @@ pub struct LayoutFragment {
     pub line_end: Option<usize>,
 }
 
+impl LayoutFragment {
+    /// Resolve this fragment's origin from the current source and fragment parents.
+    ///
+    /// A root fragment is relative to the source node's layout origin; a
+    /// nested fragment is relative to its parent fragment. Both native paint
+    /// and page projection use this coordinate seam.
+    pub fn paint_origin(
+        &self,
+        source_parent: (f32, f32),
+        source_location: (f32, f32),
+        fragment_parent: (f32, f32),
+    ) -> (f32, f32) {
+        let base = if self.parent.is_some() {
+            fragment_parent
+        } else {
+            (
+                source_parent.0 + source_location.0,
+                source_parent.1 + source_location.1,
+            )
+        };
+        (base.0 + self.rect.x, base.1 + self.rect.y)
+    }
+}
+
 // The fixed cap separately bounds retained fragments and additional
 // break-flow measurement work before paint construction.
 const MAX_LAYOUT_FRAGMENTS: usize = 65_536;

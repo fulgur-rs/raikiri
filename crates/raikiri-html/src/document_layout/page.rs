@@ -407,8 +407,9 @@ impl<'a> Page<'a> {
     /// overflow clip is built from the element's whole box, so it runs past
     /// the page where a page break cuts the box.
     /// Image markers are included. Generated text uses
-    /// [`Self::paint_order_for_text_runs`]. Multi-column
-    /// containers are listed without column clips (reported once in
+    /// [`Self::paint_order_for_text_runs`]. Explicit column fragment clips are
+    /// included. Legacy column-height clipping retains an approximation
+    /// warning for each outermost multicolumn container (reported once in
     /// [`super::DocumentLayout::warnings`] with
     /// [`raikiri_traits::WarningKind::PaintOrderApproximated`]).
     ///

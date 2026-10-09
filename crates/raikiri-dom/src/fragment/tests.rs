@@ -1,6 +1,35 @@
 use super::*;
 
 #[test]
+fn fragment_origins_use_the_fragment_parent_or_the_source_node() {
+    let mut fragment = LayoutFragment {
+        node_id: 7,
+        parent: None,
+        fragmentainer: 1,
+        rect: FragmentRect {
+            x: 60.0,
+            y: -20.0,
+            width: 40.0,
+            height: 40.0,
+        },
+        fragmentainer_clip: None,
+        fragment_index: 1,
+        fragment_count: 2,
+        line_start: Some(2),
+        line_end: Some(4),
+    };
+    assert_eq!(
+        fragment.paint_origin((5.0, 10.0), (2.0, 3.0), (100.0, 200.0)),
+        (67.0, -7.0)
+    );
+    fragment.parent = Some(4);
+    assert_eq!(
+        fragment.paint_origin((5.0, 10.0), (2.0, 3.0), (100.0, 200.0)),
+        (160.0, 180.0)
+    );
+}
+
+#[test]
 fn resolves_count_and_percentage_gap_against_used_width() {
     let context = FragmentationContext::resolve(
         100.0,

@@ -1033,6 +1033,7 @@ pub(crate) fn project_slices(
     Vec<PageFragment>,
     Vec<ProjectedTextRoot>,
     BTreeMap<NodeId, OverflowClipSource>,
+    Vec<PlacementOverflowClipSource>,
 ) {
     let fallback_geometry = resolve_page_fragment_geometry(cascade, page_box, 0);
     let mut ordered_slices: Vec<&PageSlice> = slices.iter().collect();
@@ -1073,13 +1074,14 @@ pub(crate) fn project_slices(
 
     let mut text_roots = Vec::new();
     let Some(body_id) = find_body(document) else {
-        return (pages, text_roots, BTreeMap::new());
+        return (pages, text_roots, BTreeMap::new(), Vec::new());
     };
 
     // Collect absolute post-pagination coordinates.  The arena index is the
     // stable NodeId projection used by `raikiri_traits::Dom`; sorting by it
     // reproduces fulgur's deterministic BTreeMap iteration order regardless of
     // traversal implementation details.
+    #[derive(Clone)]
     struct PageFragmentSource {
         node_id: NodeId,
         node_kind: NodeKind,
@@ -1090,18 +1092,68 @@ pub(crate) fn project_slices(
         height: f32,
         content_insets: Option<PageFragmentInsets>,
         line_metrics: Option<Vec<(f32, f32)>>,
+        line_start_offset: u32,
         is_repeat: bool,
+        fragmentainer: u32,
+        fragment_clip: Option<PaintRect>,
+        overflow_chain: Option<usize>,
+        own_overflow_source: Option<usize>,
     }
 
     let mut nodes = Vec::new();
     let mut ifc_origin: HashMap<usize, (f32, f32)> = HashMap::new();
     // Each inline element's rectangle is the union of its pieces after
     // pagination moves their lines.
-    let mut ifc_piece_bounds: HashMap<usize, HashMap<usize, BoxRect>> = HashMap::new();
+    let mut ifc_piece_bounds: HashMap<usize, HashMap<usize, Vec<(BoxRect, u32)>>> = HashMap::new();
     let mut fragmented_inline_nodes = HashSet::new();
     let mut ifc_text_lines = HashMap::new();
-    let mut stack = vec![(body_id, 0.0_f32, 0.0_f32, false)];
-    while let Some((node_id, parent_abs_x, parent_abs_y, inherited_repeat)) = stack.pop() {
+    let fragments = document.layout_fragments();
+    let mut fragments_by_parent_and_node = HashMap::<(Option<usize>, usize), Vec<usize>>::new();
+    let mut fragmented_nodes = HashSet::new();
+    let mut fragment_counts_by_node = HashMap::<usize, usize>::new();
+    for (index, fragment) in fragments.iter().enumerate() {
+        fragments_by_parent_and_node
+            .entry((fragment.parent, fragment.node_id))
+            .or_default()
+            .push(index);
+        fragmented_nodes.insert(fragment.node_id);
+        *fragment_counts_by_node.entry(fragment.node_id).or_default() += 1;
+    }
+    let mut repeated_placement_nodes = HashSet::new();
+    let mut pending: Vec<usize> = fragment_counts_by_node
+        .into_iter()
+        .filter_map(|(node, count)| (count > 1).then_some(node))
+        .collect();
+    while let Some(node) = pending.pop() {
+        if repeated_placement_nodes.insert(node) {
+            pending.extend(document.nodes[node].children.iter().copied());
+        }
+    }
+    let mut placement_overflow_clips = Vec::new();
+    struct ProjectionVisit {
+        node: usize,
+        parent_origin: (f32, f32),
+        repeat: bool,
+        fragment: Option<usize>,
+        fragment_origin: (f32, f32),
+        is_fragment_visit: bool,
+        fragment_clip: Option<PaintRect>,
+        overflow_chain: Option<usize>,
+    }
+    let mut stack = vec![ProjectionVisit {
+        node: body_id,
+        parent_origin: (0.0, 0.0),
+        repeat: false,
+        fragment: None,
+        fragment_origin: (0.0, 0.0),
+        is_fragment_visit: false,
+        fragment_clip: None,
+        overflow_chain: None,
+    }];
+    while let Some(visit) = stack.pop() {
+        let node_id = visit.node;
+        let (parent_abs_x, parent_abs_y) = visit.parent_origin;
+        let inherited_repeat = visit.repeat;
         let Some(node) = document.get_node(node_id) else {
             continue; // cov:ignore: document-owned child links are valid by construction.
         };
@@ -1109,10 +1161,67 @@ pub(crate) fn project_slices(
             continue;
         }
         let layout = node.unrounded_layout;
+        if !visit.is_fragment_visit {
+            if let Some(indices) = fragments_by_parent_and_node.get(&(visit.fragment, node_id)) {
+                for &index in indices.iter().rev() {
+                    let origin = fragments[index].paint_origin(
+                        visit.parent_origin,
+                        (layout.location.x, layout.location.y),
+                        visit.fragment_origin,
+                    );
+                    let fragment_clip = fragments[index]
+                        .fragmentainer_clip
+                        .map(|clip| {
+                            let clip = PaintRect::new(
+                                origin.0 + clip.x - fragments[index].rect.x,
+                                origin.1 + clip.y - fragments[index].rect.y,
+                                clip.width,
+                                clip.height,
+                            );
+                            if let Some(parent) = visit.fragment_clip {
+                                let x = clip.x.max(parent.x);
+                                let y = clip.y.max(parent.y);
+                                PaintRect::new(
+                                    x,
+                                    y,
+                                    ((clip.x + clip.width).min(parent.x + parent.width) - x)
+                                        .max(0.0),
+                                    ((clip.y + clip.height).min(parent.y + parent.height) - y)
+                                        .max(0.0),
+                                )
+                            } else {
+                                clip
+                            }
+                        })
+                        .or(visit.fragment_clip);
+                    stack.push(ProjectionVisit {
+                        node: node_id,
+                        parent_origin: (origin.0 - layout.location.x, origin.1 - layout.location.y),
+                        repeat: inherited_repeat,
+                        fragment: Some(index),
+                        fragment_origin: origin,
+                        is_fragment_visit: true,
+                        fragment_clip,
+                        overflow_chain: visit.overflow_chain,
+                    });
+                }
+                continue;
+            }
+            if fragmented_nodes.contains(&node_id) {
+                continue;
+            }
+        }
         let abs_x = parent_abs_x + layout.location.x;
         let abs_y = parent_abs_y + layout.location.y;
-        let width = finite_nonnegative(layout.size.width);
-        let height = finite_nonnegative(layout.size.height);
+        let own_fragment = visit
+            .is_fragment_visit
+            .then(|| fragments[visit.fragment.unwrap()]);
+        let width = finite_nonnegative(
+            own_fragment.map_or(layout.size.width, |fragment| fragment.rect.width),
+        );
+        let height = finite_nonnegative(
+            own_fragment.map_or(layout.size.height, |fragment| fragment.rect.height),
+        );
         // A fixed-position subtree is painted in every committed page. The
         // existing layout pass already computes one viewport-relative box;
         // preserve that geometry and mark the records as complete repeats
@@ -1132,12 +1241,42 @@ pub(crate) fn project_slices(
             NodeKind::Element => true,
             _ => false, // cov:ignore: non-rendered node kinds are filtered by the document invariant.
         };
+        let own_overflow_source = if repeated_placement_nodes.contains(&node_id)
+            && crate::paint_rules::clips_element_overflow(document, cascade, node_id)
+        {
+            let border_box = PaintRect::new(
+                abs_x + node.table_grid_box.map_or(0.0, |rect| rect.x),
+                abs_y + node.table_grid_box.map_or(0.0, |rect| rect.y),
+                node.table_grid_box.map_or(width, |rect| rect.width),
+                node.table_grid_box.map_or(height, |rect| rect.height),
+            );
+            let border = layout.border;
+            let index = placement_overflow_clips.len();
+            placement_overflow_clips.push(PlacementOverflowClipSource {
+                node: NodeId::new(node_id as u64),
+                parent: visit.overflow_chain,
+                source: OverflowClipSource {
+                    border_box,
+                    geometry: crate::paint_rules::OverflowClipGeometry::new(
+                        &cascade.computed[node_id],
+                        border_box,
+                        PaintInsets::new(border.top, border.right, border.bottom, border.left),
+                    ),
+                    is_repeat,
+                },
+            });
+            Some(index)
+        } else {
+            None
+        };
+        let content_overflow_chain = own_overflow_source.or(visit.overflow_chain);
         if cascade
             .computed
             .get(node_id)
             .is_some_and(|cv| cv.display == DisplayValue::ListItem)
             && !(crate::generated_content::inside_marker_in_flow(cascade, node_id)
                 && node.is_ifc_root())
+            && own_fragment.is_none_or(|fragment| fragment.fragment_index == 0)
         {
             text_roots.push(ProjectedTextRoot {
                 node: crate::generated_content::generated_node_id(
@@ -1147,6 +1286,9 @@ pub(crate) fn project_slices(
                 x: abs_x,
                 y: abs_y,
                 is_repeat,
+                fragmentainer: None,
+                fragment_clip: visit.fragment_clip,
+                overflow_chain: visit.overflow_chain,
             });
         }
         for (root_id, root_node) in std::iter::once((node_id, node))
@@ -1176,15 +1318,61 @@ pub(crate) fn project_slices(
                     x: origin.0,
                     y: origin.1,
                     is_repeat,
+                    fragmentainer: visit.fragment.map(|index| fragments[index].fragmentainer),
+                    fragment_clip: visit.fragment_clip,
+                    overflow_chain: content_overflow_chain,
                 });
             }
-            let mut bounds_by_node: HashMap<usize, BoxRect> = HashMap::new();
+            let positioned = PositionedLines::new(
+                document,
+                cascade,
+                root_id,
+                visit.fragment.map(|index| fragments[index].fragmentainer),
+            );
+            let multicol = root_node.ifc_multicol_fragments().is_some();
+            let column_of_line = |line| {
+                root_node
+                    .ifc_multicol_fragments()
+                    .and_then(|ranges| {
+                        ranges
+                            .iter()
+                            .find(|range| line >= range.line_start && line < range.line_end)
+                    })
+                    .map_or(
+                        visit
+                            .fragment
+                            .map_or(0, |index| fragments[index].fragmentainer as u32),
+                        |range| range.fragmentainer as u32,
+                    )
+            };
+            let mut bounds_by_node: HashMap<usize, Vec<(BoxRect, u32)>> = HashMap::new();
             for piece in root_node.ifc_inline_boxes().unwrap_or_default() {
+                let Some(offset) = positioned
+                    .as_ref()
+                    .and_then(|lines| lines.line_offset(piece.line))
+                else {
+                    continue;
+                };
+                let shift = positioned
+                    .as_ref()
+                    .and_then(|lines| lines.shifts.get(piece.line))
+                    .copied()
+                    .unwrap_or(0.0);
+                let rect = BoxRect {
+                    x: piece.border_box.x + offset.0,
+                    y: piece.border_box.y + offset.1 - shift,
+                    ..piece.border_box
+                };
+                let column = column_of_line(piece.line);
                 bounds_by_node
                     .entry(piece.node)
-                    .and_modify(|bounds| {
+                    .and_modify(|pieces| {
                         fragmented_inline_nodes.insert(piece.node);
-                        let rect = piece.border_box;
+                        if multicol {
+                            pieces.push((rect, column));
+                            return;
+                        }
+                        let bounds = &mut pieces[0].0;
                         let x = bounds.x.min(rect.x);
                         let y = bounds.y.min(rect.y);
                         *bounds = BoxRect {
@@ -1194,10 +1382,45 @@ pub(crate) fn project_slices(
                             height: (bounds.y + bounds.height).max(rect.y + rect.height) - y,
                         };
                     })
-                    .or_insert(piece.border_box);
+                    .or_insert_with(|| vec![(rect, column)]);
             }
             ifc_piece_bounds.insert(root_id, bounds_by_node);
-            ifc_text_lines.extend(document.ifc_text_lines_by_node(root_id));
+            for (owner, owned) in document.ifc_text_lines_by_node(root_id) {
+                let mut groups: Vec<(f32, usize, u32, crate::IfcTextLines)> = Vec::new();
+                for (source_index, raw_line) in owned.lines.iter().enumerate() {
+                    let Some(offset) = positioned
+                        .as_ref()
+                        .and_then(|lines| lines.line_offset(raw_line.line))
+                    else {
+                        continue;
+                    };
+                    let shift = positioned
+                        .as_ref()
+                        .and_then(|lines| lines.shifts.get(raw_line.line))
+                        .copied()
+                        .unwrap_or(0.0);
+                    let column = column_of_line(raw_line.line);
+                    let line = crate::IfcTextLine {
+                        top: raw_line.top + offset.1 - shift,
+                        bottom: raw_line.bottom + offset.1 - shift,
+                        ..*raw_line
+                    };
+                    if let Some((x, _, previous_column, previous)) = groups.last_mut()
+                        && *x == offset.0
+                        && *previous_column == column
+                    {
+                        previous.lines.push(line);
+                    } else {
+                        let piece = crate::IfcTextLines {
+                            root: owned.root,
+                            width: owned.width,
+                            lines: vec![line],
+                        };
+                        groups.push((offset.0, source_index, column, piece));
+                    }
+                }
+                ifc_text_lines.insert(owner, groups);
+            }
         }
         // An inline element of an inline engine paragraph is where its pieces
         // are on the lines; its recorded location is relative to its nearest
@@ -1207,7 +1430,9 @@ pub(crate) fn project_slices(
             && let Some(root) = document.ifc_root_of(node_id)
             && let (Some(&(root_x, root_y)), Some(bounds_by_node)) =
                 (ifc_origin.get(&root), ifc_piece_bounds.get(&root))
-            && let Some(rect) = bounds_by_node.get(&node_id)
+            && let Some((rect, _)) = bounds_by_node
+                .get(&node_id)
+                .and_then(|pieces| pieces.first())
         {
             (
                 root_x + rect.x,
@@ -1222,40 +1447,7 @@ pub(crate) fn project_slices(
             let ifc_lines = (node.kind() == NodeKind::Text)
                 .then(|| ifc_text_lines.remove(&node_id))
                 .flatten();
-            let (abs_x, abs_y, width, height, line_metrics) = match ifc_lines {
-                // A text node of an ifc paragraph starts at the first line it
-                // owns, in the root's content box; its line metrics are
-                // measured from that line.
-                Some(owned) => {
-                    let (root_x, root_y) = ifc_origin
-                        .get(&owned.root)
-                        .copied()
-                        .unwrap_or((abs_x, abs_y));
-                    let first_top = owned.lines.first().map_or(0.0, |l| l.top);
-                    let last_bottom = owned.lines.last().map_or(0.0, |l| l.bottom);
-                    let metrics: Vec<(f32, f32)> = owned
-                        .lines
-                        .iter()
-                        .map(|l| (l.top - first_top, l.bottom - first_top))
-                        .collect();
-                    (
-                        root_x,
-                        root_y + first_top,
-                        finite_nonnegative(owned.width),
-                        finite_nonnegative(last_bottom - first_top),
-                        Some(metrics),
-                    )
-                }
-                None => (
-                    abs_x,
-                    abs_y,
-                    width,
-                    height,
-                    // A text node outside every paragraph has no lines.
-                    (node.kind() == NodeKind::Text).then(Vec::new),
-                ),
-            };
-            nodes.push(PageFragmentSource {
+            let source = PageFragmentSource {
                 node_id: NodeId::new(node_id as u64),
                 node_kind: node.kind(),
                 tag_name: node.tag_name().map(str::to_owned),
@@ -1273,9 +1465,64 @@ pub(crate) fn project_slices(
                         layout.border.left + layout.padding.left,
                     )
                 }),
-                line_metrics,
+                line_metrics: (node.kind() == NodeKind::Text).then(Vec::new),
+                line_start_offset: 0,
                 is_repeat,
-            });
+                fragmentainer: visit
+                    .fragment
+                    .map_or(0, |index| fragments[index].fragmentainer as u32),
+                fragment_clip: visit.fragment_clip,
+                overflow_chain: visit.overflow_chain,
+                own_overflow_source,
+            };
+            let inline_pieces = (node.kind() == NodeKind::Element && node.in_ifc_subtree())
+                .then(|| document.ifc_root_of(node_id))
+                .flatten()
+                .and_then(|root| {
+                    Some((
+                        ifc_origin.get(&root)?,
+                        ifc_piece_bounds.get(&root)?.get(&node_id),
+                    ))
+                });
+            if let Some(groups) = ifc_lines {
+                for (offset_x, start, column, owned) in groups {
+                    let (root_x, root_y) = ifc_origin
+                        .get(&owned.root)
+                        .copied()
+                        .unwrap_or((abs_x, abs_y));
+                    let first_top = owned.lines.first().map_or(0.0, |line| line.top);
+                    let last_bottom = owned.lines.last().map_or(0.0, |line| line.bottom);
+                    nodes.push(PageFragmentSource {
+                        abs_x: root_x + offset_x,
+                        abs_y: root_y + first_top,
+                        width: finite_nonnegative(owned.width),
+                        height: finite_nonnegative(last_bottom - first_top),
+                        line_metrics: Some(
+                            owned
+                                .lines
+                                .iter()
+                                .map(|line| (line.top - first_top, line.bottom - first_top))
+                                .collect(),
+                        ),
+                        line_start_offset: start as u32,
+                        fragmentainer: column,
+                        ..source.clone()
+                    });
+                }
+            } else if let Some((&(root_x, root_y), pieces)) = inline_pieces {
+                for (rect, column) in pieces.into_iter().flatten() {
+                    nodes.push(PageFragmentSource {
+                        abs_x: root_x + rect.x,
+                        abs_y: root_y + rect.y,
+                        width: finite_nonnegative(rect.width),
+                        height: finite_nonnegative(rect.height),
+                        fragmentainer: *column,
+                        ..source.clone()
+                    });
+                }
+            } else {
+                nodes.push(source);
+            }
         } // cov:ignore: layout sanitization normally keeps source coordinates finite.
 
         if node.kind() == NodeKind::Element {
@@ -1287,7 +1534,16 @@ pub(crate) fn project_slices(
                 (parent_abs_x, parent_abs_y)
             };
             for &child_id in node.children.iter().rev() {
-                stack.push((child_id, base_x, base_y, is_repeat));
+                stack.push(ProjectionVisit {
+                    node: child_id,
+                    parent_origin: (base_x, base_y),
+                    repeat: is_repeat,
+                    fragment: visit.fragment,
+                    fragment_origin: visit.fragment_origin,
+                    is_fragment_visit: false,
+                    fragment_clip: visit.fragment_clip,
+                    overflow_chain: content_overflow_chain,
+                });
             }
         }
     }
@@ -1393,11 +1649,39 @@ pub(crate) fn project_slices(
                 )
             }));
             item.is_table_header_repeat = is_table_header;
+            item.fragmentainer = source.fragmentainer;
+            item.overflow_chain = source.overflow_chain;
+            item.own_overflow_source = source.own_overflow_source;
+            item.fragment_clip = source.fragment_clip.map(|clip| {
+                PageFragmentRect::new(
+                    clip.x,
+                    clip.y + box_y - source.abs_y,
+                    clip.width,
+                    clip.height,
+                )
+            });
             page.items.push(match line_range {
-                Some(range) => item.with_line_range(range),
+                Some(range) => item.with_line_range(PageFragmentLineRange::new(
+                    range.start.saturating_add(source.line_start_offset),
+                    range.end.saturating_add(source.line_start_offset),
+                )),
                 None => item,
             });
         }
+    }
+
+    // A source can have several column pieces on the same physical page.
+    // Count all committed pieces together so edge ownership remains stable.
+    let mut fragment_counts = HashMap::<NodeId, u32>::new();
+    for item in pages.iter().flat_map(|page| &page.items) {
+        *fragment_counts.entry(item.node_id).or_default() += 1;
+    }
+    let mut fragment_indices = HashMap::<NodeId, u32>::new();
+    for item in pages.iter_mut().flat_map(|page| &mut page.items) {
+        let index = fragment_indices.entry(item.node_id).or_default();
+        item.fragment_index = *index;
+        item.fragment_count = fragment_counts[&item.node_id];
+        *index += 1;
     }
 
     // Retain each clipping source once. Page-local clips are resolved on access,
@@ -1406,6 +1690,9 @@ pub(crate) fn project_slices(
         .iter()
         .filter_map(|source| {
             let id = source.node_id.0 as usize;
+            if repeated_placement_nodes.contains(&id) {
+                return None;
+            }
             if !crate::paint_rules::clips_element_overflow(document, cascade, id) {
                 return None;
             }
@@ -1427,7 +1714,7 @@ pub(crate) fn project_slices(
         })
         .collect();
 
-    (pages, text_roots, clip_sources)
+    (pages, text_roots, clip_sources, placement_overflow_clips)
 }
 
 /// Collect deterministic page-local link events from page snapshots.

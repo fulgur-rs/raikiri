@@ -10,7 +10,7 @@ use raikiri_style::resolve::ComputedLengthPercentageOrAuto;
 use raikiri_style::{CascadeResult, ComputedValues, PseudoElem};
 use raikiri_traits::{NodeId, NodeKind};
 use shodo::geometry::WritingMode;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
 use std::ops::Range;
 use std::sync::Arc;
@@ -21,6 +21,13 @@ pub(super) struct MarkerText {
     offset_x: f32,
     color: CssColor,
     first_page: Option<u32>,
+}
+
+impl MarkerText {
+    /// Number of stable line identities in the prepared standalone marker.
+    pub(super) fn line_count(&self) -> usize {
+        self.shaped.lines().len()
+    }
 }
 
 impl fmt::Debug for MarkerText {
@@ -297,7 +304,7 @@ pub struct Synthesis {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TextRunOmission {
     VerticalWritingMode,
-    MulticolLines,
+    OverlappingColumnLines,
     RelativeInlineOffset,
     AncestorOffset,
     FixedPlacement,
@@ -307,7 +314,9 @@ impl TextRunOmission {
     fn describe(self) -> &'static str {
         match self {
             Self::VerticalWritingMode => "its writing mode is vertical",
-            Self::MulticolLines => "it is laid out in the columns of a multicol container",
+            Self::OverlappingColumnLines => {
+                "the same paragraph line has overlapping column placements"
+            }
             Self::RelativeInlineOffset => "it has relatively positioned inline elements",
             Self::AncestorOffset => {
                 "it or an ancestor is moved by a transform or relative positioning"
@@ -319,21 +328,48 @@ impl TextRunOmission {
     }
 }
 
-/// What every paragraph of one document shares when its runs are placed.
+/// Paragraphs whose original line identities do not uniquely select a column placement.
 pub(super) struct RunContext {
-    /// Nodes placed through the fragment tree of a multicol container.
-    fragmented: HashSet<usize>,
+    overlapping: HashSet<usize>,
 }
 
 impl RunContext {
-    pub(super) fn new(document: &Document) -> Self {
-        Self {
-            fragmented: document
-                .layout_fragments()
-                .iter()
-                .map(|fragment| fragment.node_id)
-                .collect(),
+    pub(super) fn new(document: &Document, roots: &[ProjectedTextRoot]) -> Self {
+        let mut placements = HashMap::<usize, HashMap<Option<usize>, usize>>::new();
+        for root in roots {
+            *placements
+                .entry(root.node)
+                .or_default()
+                .entry(root.fragmentainer)
+                .or_default() += 1;
         }
+        let mut overlapping = HashSet::new();
+        for (root, columns) in placements {
+            if columns.values().sum::<usize>() < 2 {
+                continue;
+            }
+            let Some(node) = document.ifc_layout_node(root) else {
+                continue;
+            };
+            let Some(ranges) = node.ifc_multicol_fragments() else {
+                overlapping.insert(root);
+                continue;
+            };
+            if columns.contains_key(&None) || columns.values().any(|&count| count > 1) {
+                overlapping.insert(root);
+                continue;
+            }
+            let mut intervals: Vec<_> = ranges
+                .iter()
+                .filter(|range| columns.contains_key(&Some(range.fragmentainer)))
+                .map(|range| (range.line_start, range.line_end))
+                .collect();
+            intervals.sort_unstable();
+            if intervals.windows(2).any(|pair| pair[0].1 > pair[1].0) {
+                overlapping.insert(root);
+            }
+        }
+        Self { overlapping }
     }
 }
 
@@ -373,6 +409,9 @@ pub(super) fn omission(
 ) -> Option<TextRunOmission> {
     let root = generated_origin(root).map_or(root, |(owner, _)| owner);
     let node = document.ifc_layout_node(root)?;
+    if context.overlapping.contains(&root) {
+        return Some(TextRunOmission::OverlappingColumnLines);
+    }
     if node
         .ifc_writing_mode()
         .is_some_and(|mode| mode != WritingMode::HorizontalTb)
@@ -388,18 +427,12 @@ pub(super) fn omission(
     }
     let mut current = Some(document.ifc_source_owner(root));
     while let Some(id) = current {
-        // The painter places a fragmented box, and everything inside it, from
-        // its column's fragment rather than from its layout.
-        if context.fragmented.contains(&id) {
-            return Some(TextRunOmission::MulticolLines);
-        }
         if let Some(reason) = cascade.computed.get(id).and_then(box_omission) {
             return Some(reason);
         }
         current = document.parent_of(id);
     }
-    node.ifc_multicol_fragments()
-        .map(|_| TextRunOmission::MulticolLines)
+    None
 }
 
 fn marker_runs<'a>(
@@ -701,7 +734,7 @@ fn root_runs<'a>(
     if omission(document, cascade, context, root.node).is_some() {
         return None;
     }
-    let positioned = PositionedLines::new(document, cascade, root.node, None)?;
+    let positioned = PositionedLines::new(document, cascade, root.node, root.fragmentainer)?;
     // A repeated paragraph sits at the same place on every page; any other
     // is placed in its page's slice of the flow.
     let x = page.content_box.x + root.x;
@@ -755,7 +788,7 @@ impl Document {
     ) -> Vec<PositionedGlyphRun<'a>> {
         let mut runs = Vec::new();
         let projection = &self.page_projection;
-        let context = RunContext::new(self);
+        let context = RunContext::new(self, &projection.text_roots);
         let pages = projection.pages.iter();
         for page in pages.filter(|page| page.page_index == page_index) {
             for root in &projection.text_roots {
@@ -789,7 +822,7 @@ impl Document {
     /// with the reason.
     #[doc(hidden)]
     pub fn omitted_text_run_roots(&self, cascade: &CascadeResult) -> Vec<(NodeId, &'static str)> {
-        let context = RunContext::new(self);
+        let context = RunContext::new(self, &self.page_projection.text_roots);
         let mut seen = HashSet::new();
         self.page_projection
             .text_roots

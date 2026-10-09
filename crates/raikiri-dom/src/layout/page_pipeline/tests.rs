@@ -2,6 +2,257 @@ use super::*;
 use crate::layout::test_support::{ahem_paragraph_with, with_ahem};
 use taffy::Style;
 
+fn committed_column_projection(style: &str) -> (Document, CascadeResult) {
+    use crate::fragment::{FragmentRect, LayoutFragment};
+    use crate::node::MulticolTextFragment;
+
+    let (mut doc, cascade, root) = crate::layout::test_support::ahem_paragraph(
+        "A\nB\nC\nD",
+        &format!("width:40px;opacity:0.5;{style}"),
+    );
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+    // Supply an independently specified producer stream. The second source
+    // box starts above its column so its original lines 2 and 3 start at y=0.
+    doc.nodes[root].ifc.as_mut().unwrap().multicol_fragments = Some(vec![
+        MulticolTextFragment {
+            line_start: 0,
+            line_end: 2,
+            fragmentainer: 0,
+            x: 0.0,
+            y: 0.0,
+        },
+        MulticolTextFragment {
+            line_start: 2,
+            line_end: 4,
+            fragmentainer: 1,
+            x: 60.0,
+            y: 20.0,
+        },
+    ]);
+    for column in 0..2 {
+        doc.fragment_tree
+            .try_push(LayoutFragment {
+                node_id: root,
+                parent: None,
+                fragmentainer: column,
+                rect: FragmentRect {
+                    x: column as f32 * 60.0,
+                    y: -(column as f32) * 20.0,
+                    width: 40.0,
+                    height: 40.0,
+                },
+                fragmentainer_clip: Some(FragmentRect {
+                    x: column as f32 * 60.0,
+                    y: 0.0,
+                    width: 40.0,
+                    height: 20.0,
+                }),
+                fragment_index: column,
+                fragment_count: 2,
+                line_start: Some(column * 2),
+                line_end: Some(column * 2 + 2),
+            })
+            .unwrap();
+    }
+    doc.project_pages(
+        &cascade,
+        page_box_800x600(),
+        &[PageSlice {
+            page_index: 0,
+            content_origin_y: 0.0,
+            page_name: None,
+        }],
+        &[],
+    )
+    .unwrap();
+    (doc, cascade)
+}
+
+#[test]
+fn projected_column_clips_follow_committed_fragment_coordinates() {
+    use crate::{ClipKind, PaintEvent};
+    use raikiri_traits::PaintRect;
+    let (doc, cascade) = committed_column_projection("");
+    let runs = doc.page_text_runs(&cascade, 0);
+    assert_eq!(
+        runs.iter()
+            .map(|run| (run.text, run.origin))
+            .collect::<Vec<_>>(),
+        [
+            ("A", (0.0, 8.0)),
+            ("B", (0.0, 18.0)),
+            ("C", (60.0, 8.0)),
+            ("D", (60.0, 18.0))
+        ]
+    );
+    let events = doc.page_paint_order_for_text_runs(&cascade, 0, &runs);
+    let mut clips = Vec::new();
+    let mut line_clips = Vec::new();
+    for event in &events {
+        match event {
+            PaintEvent::PushClip(clip, kind) => {
+                assert_eq!(*kind, ClipKind::Fragmentainer);
+                clips.push(*clip);
+            }
+            PaintEvent::PopClip => {
+                clips.pop().unwrap();
+            }
+            PaintEvent::TextLine(line) => {
+                line_clips.push((line.index, clips.last().map(|clip| clip.rect)))
+            }
+            _ => {}
+        }
+    }
+    assert!(clips.is_empty());
+    let left = Some(PaintRect::new(0.0, 0.0, 40.0, 20.0));
+    let right = Some(PaintRect::new(60.0, 0.0, 40.0, 20.0));
+    assert_eq!(line_clips, [(0, left), (1, left), (2, right), (3, right)]);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, PaintEvent::PushOpacity(_)))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn an_outside_text_marker_keeps_its_explicit_column_clip() {
+    use crate::PaintEvent;
+    use raikiri_traits::PaintRect;
+    let (doc, cascade) = committed_column_projection(
+        "display:list-item;list-style-position:outside;list-style-type:decimal",
+    );
+    let runs = doc.page_text_runs(&cascade, 0);
+    let marker = runs
+        .iter()
+        .find(|run| run.is_standalone_marker())
+        .expect("outside marker");
+    let events = doc.page_paint_order_for_text_runs(&cascade, 0, &runs);
+    let mut clips = Vec::new();
+    let mut marker_clips = Vec::new();
+    for event in events {
+        match event {
+            PaintEvent::PushClip(clip, _) => clips.push(clip),
+            PaintEvent::PopClip => {
+                clips.pop().unwrap();
+            }
+            PaintEvent::TextLine(line) if line == marker.line => {
+                marker_clips.push(clips.last().map(|clip| clip.rect))
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(marker_clips, [Some(PaintRect::new(0.0, 0.0, 40.0, 20.0))]);
+}
+
+#[test]
+fn column_clips_and_lines_share_fractional_page_margins_and_slice_origin() {
+    use crate::PaintEvent;
+    use raikiri_traits::PaintRect;
+    let (mut doc, cascade) = committed_column_projection("");
+    let page = page_box_800x600();
+    let margins = PageMargins {
+        top: 7.25,
+        left: 3.25,
+        ..Default::default()
+    };
+    let insets = PageContentInsets {
+        top: 2.5,
+        left: 1.5,
+        ..Default::default()
+    };
+    doc.project_pages(
+        &cascade,
+        page,
+        &[
+            PageSlice {
+                page_index: 0,
+                content_origin_y: 0.0,
+                page_name: None,
+            },
+            PageSlice {
+                page_index: 1,
+                content_origin_y: 10.5,
+                page_name: None,
+            },
+        ],
+        &[(page, margins, insets); 2],
+    )
+    .unwrap();
+    let runs = doc.page_text_runs(&cascade, 1);
+    assert_eq!(
+        runs.iter()
+            .map(|run| (run.text, run.origin))
+            .collect::<Vec<_>>(),
+        [("B", (4.75, 17.25)), ("D", (64.75, 17.25)),]
+    );
+    let events = doc.page_paint_order_for_text_runs(&cascade, 1, &runs);
+    let mut clips = Vec::new();
+    let mut line_clips = Vec::new();
+    for event in events {
+        match event {
+            PaintEvent::PushClip(clip, _) => clips.push(clip),
+            PaintEvent::PopClip => {
+                clips.pop().unwrap();
+            }
+            PaintEvent::TextLine(line) => {
+                line_clips.push((line.index, clips.last().map(|clip| clip.rect)))
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(
+        line_clips,
+        [
+            (1, Some(PaintRect::new(4.75, -0.75, 40.0, 20.0))),
+            (3, Some(PaintRect::new(64.75, -0.75, 40.0, 20.0))),
+        ]
+    );
+    assert!(clips.is_empty());
+}
+
+#[test]
+fn overlapping_column_line_placements_keep_an_explicit_omission() {
+    for scenario in 0..3 {
+        let (mut doc, cascade) = committed_column_projection("");
+        let root = doc.page_text_runs(&cascade, 0)[0].line.root.0 as usize;
+        if scenario == 0 {
+            doc.nodes[root]
+                .ifc
+                .as_mut()
+                .unwrap()
+                .multicol_fragments
+                .as_mut()
+                .unwrap()[0]
+                .line_end = 3;
+        } else if scenario == 1 {
+            doc.nodes[root].ifc.as_mut().unwrap().multicol_fragments = None;
+        } else {
+            doc.fragment_tree.fragments[1].fragmentainer = 0;
+            doc.project_pages(
+                &cascade,
+                page_box_800x600(),
+                &[PageSlice {
+                    page_index: 0,
+                    content_origin_y: 0.0,
+                    page_name: None,
+                }],
+                &[],
+            )
+            .unwrap();
+        }
+        assert!(doc.page_text_runs(&cascade, 0).is_empty());
+        assert_eq!(
+            doc.omitted_text_run_roots(&cascade),
+            [(
+                raikiri_traits::NodeId::new(root as u64),
+                "the same paragraph line has overlapping column placements"
+            )]
+        );
+    }
+}
+
 #[test]
 fn page_layout_control_cancels_candidate_collection() {
     use std::cell::Cell;

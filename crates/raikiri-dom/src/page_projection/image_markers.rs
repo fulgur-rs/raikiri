@@ -39,7 +39,7 @@ pub(super) fn prepare(
             None if crate::generated_content::inside_marker_in_flow(cascade, root.node)
                 && document.list_marker_image(root.node).is_some() =>
             {
-                let lines = PositionedLines::new(document, cascade, root.node, None)?;
+                let lines = PositionedLines::new(document, cascade, root.node, root.fragmentainer)?;
                 let markers: Vec<_> = lines
                     .lines()
                     .flat_map(|line| {
