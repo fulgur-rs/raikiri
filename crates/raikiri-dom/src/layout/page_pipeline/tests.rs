@@ -8876,3 +8876,52 @@ fn decoration_projection_polls_cancellation_after_geometry_preparation() {
         );
     }
 }
+
+#[test]
+fn column_generated_eligibility_charges_its_ancestor_walk_once() {
+    let (mut doc, mut cascade) = projected_decoration_fixture(false);
+    let root = doc.page_text_runs(&cascade, 0)[0].line.root.0 as usize;
+    let parent = doc.parent_of(root).unwrap();
+    let inherited = cascade.computed[parent].clone();
+    doc.nodes[parent].children.retain(|&child| child != root);
+    let depth = 128;
+    let mut last = parent;
+    for _ in 0..depth {
+        last = doc.append_element(
+            Some(last),
+            "section",
+            Style::default(),
+            Some("display:block"),
+        );
+        cascade.computed.resize(doc.nodes.len(), inherited.clone());
+    }
+    doc.nodes[last].children.push(root);
+    doc.nodes[root].parent = Some(last);
+    doc.mark_in_document_flags();
+    let slices = [PageSlice {
+        page_index: 0,
+        content_origin_y: 0.0,
+        page_name: None,
+    }];
+    let (_, _, _, _, _, remaining) = project_slices_with_control(
+        &doc,
+        &cascade,
+        page_box_800x600(),
+        &slices,
+        &[],
+        &PageLayoutControl::default(),
+    )
+    .unwrap();
+    let geometry_cost = doc.fragment_tree.limit - remaining;
+    doc.fragment_tree.limit = geometry_cost + depth + 32;
+    doc.project_pages(&cascade, page_box_800x600(), &slices, &[])
+        .unwrap();
+    let events = doc.page_paint_order(&cascade, 0, None);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(event, crate::PaintEvent::GeneratedBox(_)))
+            .count(),
+        1
+    );
+}

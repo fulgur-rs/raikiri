@@ -5,7 +5,7 @@ use super::text_runs::{RunContext, omission};
 use crate::{Document, GeneratedKind};
 use raikiri_style::{CascadeResult, ComputedValues, PseudoElem};
 use raikiri_traits::{NodeId, PaintRect};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// The decoration of one generated inline box on one line.
 ///
@@ -73,14 +73,26 @@ pub(super) fn prepare(
         .collect();
     let mut prepared = Vec::new();
     let context = RunContext::new(document, roots);
+    let mut eligible = HashMap::new();
     for root in roots {
+        work.check()?;
         if !candidates.contains(&root.node) {
             continue;
         }
-        if omission(document, cascade, &context, root.node).is_some() {
+        if let std::collections::hash_map::Entry::Vacant(entry) = eligible.entry(root.node) {
+            if let Some(node) = document.ifc_layout_node(root.node) {
+                work.charge(node.ifc_relative_offsets().len())?;
+            }
+            let mut ancestor = Some(document.ifc_source_owner(root.node));
+            while let Some(node) = ancestor {
+                work.charge(1)?;
+                ancestor = document.parent_of(node);
+            }
+            entry.insert(omission(document, cascade, &context, root.node).is_none());
+        }
+        if !eligible[&root.node] {
             continue;
         }
-        work.check()?;
         let pieces = paragraphs
             .get(&root.node)
             .map_or(&[][..], |paragraph| paragraph.generated(root.fragmentainer));
