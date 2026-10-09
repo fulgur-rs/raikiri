@@ -157,7 +157,7 @@ pub(crate) fn resolve_inheritance<D: StyleDom>(
         svg_properties,
         first_letter_inputs,
         true,
-    )?;
+    )?; // cov:ignore: the error branch needs a u32 handle overflow
     Ok(())
 }
 
@@ -453,7 +453,7 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
                                 candidates: OwnedCandidates::copy(
                                     candidates.unwrap_or(ElementCandidates::EMPTY),
                                     custom_candidates.unwrap_or(CustomCandidates::EMPTY),
-                                )?,
+                                )?, // cov:ignore: the error branch needs a u32 handle overflow
                                 context: ctx,
                             },
                         );
@@ -520,50 +520,6 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
     Ok(shared_nodes)
 }
 
-/// Choose the cascade winners for one node and apply them to the staging
-/// representation (**phase 1**).
-///
-/// The caller allocates `winners` outside the walk loop as a scratch buffer.
-/// This function pairs filling it ([`pick_winners`]) with draining it, leaving
-/// every slot at `None` on return.
-///
-/// # Application order
-///
-/// Iterate slots by ascending index, i.e. [`PropertyKey`] **declaration order**.
-/// [`Option::take`] restores each slot to `None` during this walk, also resetting
-/// the buffer for the next node.
-///
-/// Shorthand keys must not reach this phase. CSS Cascading Level 4 §3
-/// requires shorthand declarations to behave as if expanded in place, and
-/// §6.1 determines the winner by order of appearance. Parsed entry points
-/// expand shorthands before collecting candidates; the exhaustive expansion
-/// match requires an explicit decision for new property variants.
-///
-/// # The unchecked `candidates[winner.idx]` index
-///
-/// `winner.idx` is in bounds because the immediately preceding [`pick_winners`]
-/// produced it from **the same `candidates`**. Filling and draining occur next
-/// to each other in this function body; no path swaps out `candidates` between
-/// them.
-///
-/// The index is valid only because [`pick_winners`] produced it from the
-/// same candidate slice immediately before this drain. A stale slot could
-/// otherwise select another declaration, so the winner buffer is reset for
-/// every node.
-///
-/// # Origin of `candidates` (after conversion to a flat arena)
-///
-/// The sole caller, [`resolve_inheritance`], obtains `candidates` only through
-/// [`CascadedArena::candidates`]. That method always returns a slice containing
-/// **exactly this node's range** (private fields prevent alternate slicing).
-/// Thus `winner.idx` cannot point to **another node's declaration** through an
-/// accidental slice in global index space. The only remaining risk described
-/// above is a leaked slot that was not drained.
-///
-/// [`PropertyKey`]: crate::property::PropertyKey
-// The winner application already groups several optional cascade side channels;
-// the inherited computed values add one more required input for `inherit`
-// resolution without changing that staging boundary.
 /// Find a longhand's surviving value after origin or layer rollback.
 fn find_rollback(
     candidates: ElementCandidates<'_>,
@@ -746,6 +702,53 @@ fn resolve_border_css_wide(
     }
 }
 
+/// Choose the cascade winners for one node and apply them to the staging
+/// representation (**phase 1**).
+///
+/// The caller allocates `winners` outside the walk loop as a scratch buffer.
+/// This function pairs filling it ([`pick_winners`]) with draining it, leaving
+/// every slot at `None` on return.
+///
+/// # Application order
+///
+/// Iterate slots by ascending index, i.e. [`PropertyKey`] **declaration order**.
+/// [`Option::take`] restores each slot to `None` during this walk, also resetting
+/// the buffer for the next node.
+///
+/// Shorthand keys must not reach this phase. CSS Cascading Level 4 §3
+/// requires shorthand declarations to behave as if expanded in place, and
+/// §6.1 determines the winner by order of appearance. Parsed entry points
+/// expand shorthands before collecting candidates; the exhaustive expansion
+/// match requires an explicit decision for new property variants.
+///
+/// # The unchecked `winner.idx` position
+///
+/// `winner.idx` is in bounds because the immediately preceding [`pick_winners`]
+/// produced it from **the same `candidates`**. Filling and draining occur next
+/// to each other in this function body; no path swaps out `candidates` between
+/// them.
+///
+/// The index is valid only because [`pick_winners`] produced it from the
+/// same candidate slice immediately before this drain. A stale slot could
+/// otherwise select another declaration, so the winner buffer is reset for
+/// every node.
+///
+/// # Origin of `candidates`
+///
+/// [`resolve_inheritance`] obtains `candidates` through
+/// [`CascadedArena::element`] and [`CascadedArena::pseudo`], whose views pair
+/// **exactly this node's range** with **exactly this node's own declarations**
+/// (private fields prevent alternate slicing). Its `::first-line` filter,
+/// [`super::first_line::cascade_with_first_line`] and the first-letter
+/// methods pass filtered copies of such views or views of [`OwnedCandidates`],
+/// which resolve to the same declarations. Thus neither `winner.idx` nor a
+/// local handle can resolve to **another node's declaration**. The only
+/// remaining risk described above is a leaked slot that was not drained.
+///
+/// [`PropertyKey`]: crate::property::PropertyKey
+// The winner application already groups several optional cascade side channels;
+// the inherited computed values add one more required input for `inherit`
+// resolution without changing that staging boundary.
 #[allow(clippy::too_many_arguments)] // winner application writes independent cascade metadata outputs
 pub(crate) fn apply_winners(
     candidates: ElementCandidates<'_>,

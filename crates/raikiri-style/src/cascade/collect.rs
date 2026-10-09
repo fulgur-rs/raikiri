@@ -17,7 +17,7 @@ use crate::rule::{Declaration, parse_declaration_block_with_consumer_properties}
 
 use super::candidate::{
     Candidate, CandidateSink, CustomCandidate, CustomCandidates, ElementCandidates, Precedence,
-    ValueRef, ValueSource, push_candidate, same_candidates, same_custom_candidates, too_many,
+    ValueSource, push_rule_candidates, same_candidates, same_custom_candidates, too_many,
 };
 use crate::ruletree::{Origin, RuleTree};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
@@ -139,7 +139,8 @@ pub(crate) struct CascadedArena<'r> {
     /// All custom-property candidates in document visit order.
     custom_decls: Vec<CustomCandidate>,
     /// The `style` attribute blocks stored by the declaration block cache,
-    /// at the positions cached handles name.
+    /// at the positions cached handles name. They move here when collection
+    /// ends, so a cached handle can only be resolved after it.
     blocks: Vec<Box<[Declaration]>>,
     /// The elements' own declarations (presentational hints, quirks, inline
     /// style, animation) in document visit order. A local handle counts from
@@ -342,9 +343,9 @@ impl<'r> CascadedArena<'r> {
 /// Parsed `style`-attribute blocks for one cascade, keyed by source text.
 ///
 /// Generated documents often repeat the same inline style on many elements;
-/// parsing each distinct string once avoids re-tokenizing it per element,
-/// and every element with that source refers to the stored block's
-/// declarations instead of copying them.
+/// storing each repeated string's declarations avoids re-tokenizing it per
+/// element, and every element after the first with that source refers to
+/// the stored block's declarations instead of copying them.
 /// A source is only stored the **second** time it is seen: the first sight
 /// records just its hash, so a document whose inline styles are all
 /// different pays one hash and one small map entry per element instead of
@@ -423,27 +424,22 @@ impl DeclarationBlockCache {
     }
 
     /// Adds a candidate for every declaration of `block`, with the precedence
-    /// `precedence` gives its importance: a stored block's declarations are
-    /// referred to, a fresh one's become the element's own.
+    /// `precedence` gives it: a stored block's declarations are referred to,
+    /// a fresh one's become the element's own.
     fn push(
         &self,
         sink: &mut CandidateSink<'_>,
         block: DeclarationBlock,
-        precedence: impl Fn(bool) -> Precedence,
+        precedence: impl Fn(&Declaration) -> Precedence,
     ) -> Result<(), CascadeError> {
         match block {
             DeclarationBlock::Fresh(declarations) => {
                 for decl in declarations {
-                    let precedence = precedence(decl.important);
+                    let precedence = precedence(&decl);
                     sink.push_local(Cow::Owned(decl), precedence)?;
                 }
             }
-            // `declarations` checked that every position fits in `u32`.
-            DeclarationBlock::Cached(block) => {
-                for (decl, index) in self.blocks[block as usize].iter().zip(0u32..) {
-                    sink.push_cached((block, index), decl, precedence(decl.important));
-                }
-            }
+            DeclarationBlock::Cached(block) => sink.push_cached(&self.blocks, block, precedence),
         }
         Ok(())
     }
@@ -648,8 +644,9 @@ pub(crate) fn cascade_rank(origin: Origin, important: bool) -> u8 {
 /// # Errors
 ///
 /// Fails when the rule index cannot number the active rules (see
-/// [`RuleIndex::new`]) or an element has more own declarations than a local
-/// handle can number.
+/// [`RuleIndex::new`]), when an element has more own declarations than a local
+/// handle can number, or when the declaration block cache cannot number a
+/// stored `style` attribute or its declarations.
 #[cfg_attr(
     not(test),
     expect(
@@ -796,7 +793,7 @@ pub(crate) fn collect_cascaded_with_media_context<'r, D: StyleDom>(
                     &ancestor_path,
                     &mut cell_padding_cache,
                     &mut sink,
-                )?;
+                )?; // cov:ignore: the error branch needs a u32 handle overflow
                 const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
                 let is_svg_root = elem.tag_name() == "svg"
                     && elem.namespace_uri() == Some(SVG_NAMESPACE)
@@ -873,7 +870,7 @@ pub(crate) fn collect_cascaded_with_media_context<'r, D: StyleDom>(
                     &ancestor_path,
                     quirks_mode,
                     &mut sink,
-                )?;
+                )?; // cov:ignore: the error branch needs a u32 handle overflow
                 // stylesheet rule matching, restricted to the rules the
                 // index could not rule out (still in source order)
                 out.index
@@ -893,21 +890,16 @@ pub(crate) fn collect_cascaded_with_media_context<'r, D: StyleDom>(
                         // The declarations were expanded when the rule was
                         // parsed (`crate::rule::expand_shorthand_into`), and the
                         // rule tree has no path that changes a rule after
-                        // parsing. `RuleIndex::new` checked that their
-                        // positions fit in `u32`.
-                        for (d, decl) in indexed.declarations.iter().zip(0u32..) {
-                            sink.push_rule(
-                                (rule_idx, decl),
-                                d,
-                                Precedence::new(
-                                    rule.origin,
-                                    d.important,
-                                    spec,
-                                    rule.source_order,
-                                    indexed.layer,
-                                ),
-                            );
-                        }
+                        // parsing.
+                        sink.push_rule(out.index.rules(), rule_idx, |d| {
+                            Precedence::new(
+                                rule.origin,
+                                d.important,
+                                spec,
+                                rule.source_order,
+                                indexed.layer,
+                            )
+                        });
                     }
                     if !indexed.has_pseudo_selector {
                         continue;
@@ -954,32 +946,24 @@ pub(crate) fn collect_cascaded_with_media_context<'r, D: StyleDom>(
                             // cov:ignore: selector_matches_pseudo_element excludes boxless native pseudos
                             PseudoElem::Backdrop | PseudoElem::FileSelectorButton => continue,
                         };
-                        for (d, decl) in indexed.declarations.iter().zip(0u32..) {
-                            push_candidate(
-                                (buf, custom_buf),
-                                ValueRef::Rule {
-                                    rule: rule_idx,
-                                    decl,
-                                },
-                                d,
-                                Precedence::new(
-                                    rule.origin,
-                                    d.important,
-                                    spec,
-                                    rule.source_order,
-                                    indexed.layer,
-                                ),
-                            );
-                        }
+                        push_rule_candidates((buf, custom_buf), out.index.rules(), rule_idx, |d| {
+                            Precedence::new(
+                                rule.origin,
+                                d.important,
+                                spec,
+                                rule.source_order,
+                                indexed.layer,
+                            )
+                        });
                     }
                 }
                 // inline style
                 if let Some(source) = elem.inline_style_source() {
                     let block = block_cache.declarations(source, rule_tree)?;
-                    block_cache.push(&mut sink, block, |important| {
+                    block_cache.push(&mut sink, block, |decl| {
                         Precedence::new(
                             Origin::Author,
-                            important,
+                            decl.important,
                             INLINE_SPECIFICITY,
                             INLINE_SOURCE_ORDER,
                             LayerPosition {

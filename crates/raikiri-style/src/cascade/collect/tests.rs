@@ -1,5 +1,5 @@
 use super::*;
-use crate::cascade::candidate::OwnedCandidates;
+use crate::cascade::candidate::{OwnedCandidates, ValueRef};
 use crate::cascade::cascade;
 use crate::cascade::test_support::*;
 use crate::computed::ComputedValues;
@@ -831,6 +831,21 @@ fn repeated_inline_styles_refer_to_one_stored_block() {
     assert_eq!(arena.locals.len(), 2);
     assert!(arena.same_cascade_input(id(1), id(2)));
     assert!(arena.same_cascade_input(id(0), id(1)));
+}
+
+#[test]
+fn first_sights_of_different_sources_with_equal_values_are_the_same_input() {
+    // Both are first sights, so both keep their own parse with equal local
+    // handles; their values decide.
+    let mut doc = TestDoc::new();
+    let tight = doc.push_element(0, "p", Some("color:red"));
+    let spaced = doc.push_element(0, "p", Some("color: red"));
+    let other = doc.push_element(0, "p", Some("color: blue"));
+    let tree = build_rule_tree(&doc);
+    let arena = collect_cascaded(&doc, doc.root_id(), &tree).expect("the cascade collects");
+    let id = |n: usize| StyleNodeId::new(n as u64);
+    assert!(arena.same_cascade_input(id(tight), id(spaced)));
+    assert!(!arena.same_cascade_input(id(spaced), id(other)));
 }
 
 #[test]

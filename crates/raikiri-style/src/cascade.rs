@@ -388,7 +388,7 @@ fn cascade_from_candidates<D: StyleDom>(
         &mut pseudo,
         &mut svg_style_properties,
         &mut first_letter_inputs,
-    )?;
+    )?; // cov:ignore: the error branch needs a u32 handle overflow
     if computed.len() < dom.node_count() {
         computed.resize(dom.node_count(), ComputedValues::initial());
     }

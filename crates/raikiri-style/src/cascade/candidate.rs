@@ -2,9 +2,10 @@
 //!
 //! A candidate does not own its declaration's value; a [`ValueRef`] refers to
 //! it. The declarations of the active style rules stay in the rule tree, which
-//! the cascade borrows throughout. A `style` attribute seen more than once is
-//! parsed once into a block that every element with that source refers to.
-//! The other declarations an element brings itself (presentational hints,
+//! the cascade borrows throughout. A `style` attribute is stored as a block the
+//! second time its source is seen, and that element and every later one with
+//! the same source refer to the block; the first keeps its own parse. The
+//! other declarations an element brings itself (presentational hints,
 //! quirks, inline style, animation) stay in the candidate arena next to the
 //! candidates. [`ValueSource`] resolves the handles and [`ElementCandidates`]
 //! pairs one element's candidates with the source of their declarations, so a
@@ -33,7 +34,8 @@ pub(crate) enum ValueRef {
     /// cascade's rule index.
     Rule { rule: u32, decl: u32 },
     /// Declaration `decl` of the stored `style`-attribute block at position
-    /// `block`, which every element with that source text shares.
+    /// `block`, which every element with that source text after the first
+    /// shares.
     Cached { block: u32, decl: u32 },
     /// The element's own declaration at this position, counted from the
     /// element's first one. Equal positions of two elements refer to two
@@ -46,8 +48,9 @@ pub(crate) enum ValueRef {
 /// it, and the precedence the candidate takes from its source.
 ///
 /// The fields are private so that the key and rollback kind always describe
-/// the declaration the handle refers to: only [`CandidateSink`] makes
-/// candidates. There is no `PartialEq`, because whether two candidates carry
+/// the declaration the handle refers to: only [`CandidateSink`] and
+/// [`push_rule_candidates`] make candidates, reading each declaration where its
+/// handle points. There is no `PartialEq`, because whether two candidates carry
 /// the same input depends on the declarations their handles refer to, which
 /// [`same_candidates`] compares.
 #[derive(Clone, Copy, Debug)]
@@ -336,35 +339,41 @@ impl<'a> CandidateSink<'a> {
         }
     }
 
-    /// Adds declaration `index` of the active rule at position `rule`.
+    /// Adds a candidate for every declaration of the active rule at position
+    /// `rule` of `rules`; see [`push_rule_candidates`].
     pub(crate) fn push_rule(
         &mut self,
-        (rule, index): (u32, u32),
-        decl: &Declaration,
-        precedence: Precedence,
+        rules: &[IndexedRule<'_>],
+        rule: u32,
+        precedence: impl Fn(&Declaration) -> Precedence,
     ) {
-        push_candidate(
+        push_rule_candidates(
             (&mut *self.decls, &mut *self.custom),
-            ValueRef::Rule { rule, decl: index },
-            decl,
+            rules,
+            rule,
             precedence,
         );
     }
 
-    /// Adds declaration `index` of the stored `style`-attribute block at
-    /// position `block`.
+    /// Adds a candidate for every declaration of the stored `style`-attribute
+    /// block at position `block` of `blocks`, with the precedence `precedence`
+    /// gives it.
     pub(crate) fn push_cached(
         &mut self,
-        (block, index): (u32, u32),
-        decl: &Declaration,
-        precedence: Precedence,
+        blocks: &[Box<[Declaration]>],
+        block: u32,
+        precedence: impl Fn(&Declaration) -> Precedence,
     ) {
-        push_candidate(
-            (&mut *self.decls, &mut *self.custom),
-            ValueRef::Cached { block, decl: index },
-            decl,
-            precedence,
-        );
+        // The cache checked that every position in a stored block fits in
+        // `u32` when it stored the block.
+        for (decl, index) in blocks[block as usize].iter().zip(0u32..) {
+            push_candidate(
+                (&mut *self.decls, &mut *self.custom),
+                ValueRef::Cached { block, decl: index },
+                decl,
+                precedence(decl),
+            );
+        }
     }
 
     /// Adds a declaration of the element's own, moved when owned and cloned
@@ -410,9 +419,31 @@ pub(crate) fn too_many(what: &str) -> CascadeError {
     }
 }
 
+/// Adds a candidate for every declaration of the active rule at position
+/// `rule` of `rules`, with the precedence `precedence` gives it, to `custom`
+/// when it declares a custom property and to `decls` otherwise. The
+/// pseudo-element pass, whose candidates have no declarations of their own,
+/// collects with this directly.
+pub(crate) fn push_rule_candidates(
+    (decls, custom): (&mut Vec<Candidate>, &mut Vec<CustomCandidate>),
+    rules: &[IndexedRule<'_>],
+    rule: u32,
+    precedence: impl Fn(&Declaration) -> Precedence,
+) {
+    // `RuleIndex::new` checked that every position fits in `u32`.
+    for (decl, index) in rules[rule as usize].declarations.iter().zip(0u32..) {
+        push_candidate(
+            (&mut *decls, &mut *custom),
+            ValueRef::Rule { rule, decl: index },
+            decl,
+            precedence(decl),
+        );
+    }
+}
+
 /// Adds the candidate of `decl`, found at `value`, to `custom` when it
 /// declares a custom property and to `decls` otherwise.
-pub(crate) fn push_candidate(
+fn push_candidate(
     (decls, custom): (&mut Vec<Candidate>, &mut Vec<CustomCandidate>),
     value: ValueRef,
     decl: &Declaration,
@@ -444,11 +475,15 @@ fn debug_assert_derived_fields(decl: &Declaration) {
         rollback_kind(&decl.value),
         "stale declaration rollback"
     );
+    // cov:ignore: the message is built only when the assertion fails, and no
+    // other value has this slot
     debug_assert_eq!(
         decl.key == PropertyKey::Custom,
         matches!(decl.value, PropertyValue::CustomProperty(_)),
         "the Custom slot belongs to custom properties alone"
     );
+    // cov:ignore: the message is built only when the assertion fails, and no
+    // other value has this slot
     debug_assert_eq!(
         decl.key == PropertyKey::All,
         matches!(decl.value, PropertyValue::AllRevertLayer),
@@ -478,13 +513,13 @@ impl OwnedCandidates {
             sink.push_local(
                 Cow::Borrowed(decls.source.declaration(candidate.value)),
                 candidate.precedence,
-            )?;
+            )?; // cov:ignore: the error branch needs a u32 handle overflow
         }
         for candidate in custom.decls {
             sink.push_local(
                 Cow::Borrowed(custom.source.declaration(candidate.value)),
                 candidate.precedence,
-            )?;
+            )?; // cov:ignore: the error branch needs a u32 handle overflow
         }
         Ok(owned)
     }
