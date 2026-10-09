@@ -80,9 +80,10 @@ pub(super) fn prepare(
             continue;
         }
         if let std::collections::hash_map::Entry::Vacant(entry) = eligible.entry(root.node) {
-            if let Some(node) = document.ifc_layout_node(root.node) {
-                work.charge(node.ifc_relative_offsets().len())?;
-            }
+            let node = document
+                .ifc_layout_node(root.node)
+                .expect("generated candidates retain their paragraph");
+            work.charge(node.ifc_relative_offsets().len())?;
             let mut ancestor = Some(document.ifc_source_owner(root.node));
             while let Some(node) = ancestor {
                 work.charge(1)?;

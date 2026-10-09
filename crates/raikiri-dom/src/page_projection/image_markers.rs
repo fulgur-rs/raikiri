@@ -31,19 +31,21 @@ pub(super) fn prepare(
         work.check()?;
         match generated_origin(root.node) {
             Some((owner, PseudoElem::Marker)) if document.list_marker_image(owner).is_some() => {
-                if let Some(size) = document.list_marker_image_size(owner) {
-                    work.charge(1)?;
-                    prepared.push((*root, MarkerRoot::Standalone { owner, size }));
-                }
+                let size = document
+                    .list_marker_image_size(owner)
+                    .expect("prepared marker pixels retain their raster size");
+                work.charge(1)?;
+                prepared.push((*root, MarkerRoot::Standalone { owner, size }));
             }
             None if crate::generated_content::inside_marker_in_flow(cascade, root.node)
                 && document.list_marker_image(root.node).is_some() =>
             {
-                if let Some(paragraph) = paragraphs.get(&root.node) {
-                    let markers = paragraph.markers(root.fragmentainer);
-                    work.charge(markers.len().saturating_add(1))?;
-                    prepared.push((*root, MarkerRoot::Inline(markers.to_vec())));
-                }
+                let paragraph = paragraphs
+                    .get(&root.node)
+                    .expect("projected inline image markers retain their paragraph");
+                let markers = paragraph.markers(root.fragmentainer);
+                work.charge(markers.len().saturating_add(1))?;
+                prepared.push((*root, MarkerRoot::Inline(markers.to_vec())));
             }
             _ => {}
         }
