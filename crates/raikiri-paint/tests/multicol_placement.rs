@@ -90,6 +90,24 @@ fn a_fragmented_child_paragraph_matches_absolute_literal_text() {
 }
 
 #[test]
+fn wrapped_child_words_match_literal_lines_at_the_column_start() {
+    compare(
+        "<div class=mc><p>aaaa bbbb cccc dddd</p></div><p>E</p>",
+        "body{font-size:10px;line-height:10px}.mc{column-gap:10px}",
+        "<div style='position:absolute;left:0;top:0;font:10px/10px Ahem'>aaaa<br>bbbb</div><div style='position:absolute;left:55px;top:0;font:10px/10px Ahem'>cccc<br>dddd</div><div style='position:absolute;left:0;top:20px;font:10px/10px Ahem'>E</div>",
+    );
+}
+
+#[test]
+fn a_child_paragraph_in_three_columns_matches_literal_positions() {
+    compare(
+        "<div class=mc><p>A<br>B<br>C<br>D<br>E<br>F</p></div><p>G</p>",
+        ".mc{width:160px;column-count:3}",
+        "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:60px;top:0'>C<br>D</div><div style='position:absolute;left:120px;top:0'>E<br>F</div><div style='position:absolute;left:0;top:40px'>G</div>",
+    );
+}
+
+#[test]
 fn an_uneven_child_paragraph_keeps_its_final_lines_and_following_flow() {
     compare(
         "<div class=mc><p>A<br>B<br>C<br>D<br>E</p></div><p>F</p>",

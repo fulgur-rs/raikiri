@@ -6230,23 +6230,23 @@ fn a_paragraph_in_a_multicol_container_becomes_a_root() {
 fn a_multicol_paragraph_is_split() {
     let mut expected_5265 = [
         MulticolTextGeometry {
-            container_height: 40.0,
-            lines: vec![(0.0, 0.0), (0.0, 10.0), (55.0, 20.0), (55.0, 30.0)],
+            container_height: 20.0,
+            lines: vec![(0.0, 0.0), (0.0, 10.0), (55.0, 0.0), (55.0, 10.0)],
         },
         MulticolTextGeometry {
-            container_height: 60.0,
+            container_height: 20.0,
             lines: vec![
                 (0.0, 0.0),
                 (0.0, 10.0),
-                (50.0, 20.0),
-                (50.0, 30.0),
-                (100.0, 40.0),
-                (100.0, 50.0),
+                (50.0, 0.0),
+                (50.0, 10.0),
+                (100.0, 0.0),
+                (100.0, 10.0),
             ],
         },
         MulticolTextGeometry {
-            container_height: 40.0,
-            lines: vec![(0.0, 0.0), (0.0, 10.0), (55.0, 20.0), (55.0, 30.0)],
+            container_height: 20.0,
+            lines: vec![(0.0, 0.0), (0.0, 10.0), (55.0, 0.0), (55.0, 10.0)],
         },
     ]
     .into_iter();
@@ -6272,7 +6272,7 @@ fn a_multicol_paragraph_is_split() {
     }
     // Hand-computed, not an oracle: two 45px columns with a 10px gap; each
     // 40px word takes a line of its own, two lines per column, and the
-    // second column's lines start at x = 55.
+    // second column's lines start at (55, 0). The container is two lines tall.
     let geometry = multicol_text_geometry(
         "column-count:2;width:100px;column-gap:10px",
         "aaaa bbbb cccc dddd",
@@ -6386,8 +6386,8 @@ fn multicol_with_a_forced_break_is_laid_out() {
     assert_eq!(
         multicol_text_geometry(css, "aa\nbb\ncc"),
         MulticolTextGeometry {
-            container_height: 30.0,
-            lines: vec![(0.0, 0.0), (0.0, 10.0), (55.0, 20.0)]
+            container_height: 20.0,
+            lines: vec![(0.0, 0.0), (0.0, 10.0), (55.0, 0.0)]
         },
     );
     // A container whose direct content is lines with `<br>` between them is
