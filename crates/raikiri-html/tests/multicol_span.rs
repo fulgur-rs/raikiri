@@ -630,3 +630,258 @@ fn bare_ifc_text_follows_the_paginated_owner_height_before_outer_following_flow(
         assert_eq!(matching[0].origin, origin, "{text}");
     }
 }
+
+#[test]
+fn atomic_column_boxes_keep_their_group_before_a_fullwidth_spanner() {
+    let document = lay_out(
+        "<div class=mc><div class=box></div><div class=box></div><div class=span>A</div></div><p>B</p>",
+        ".box{height:20px;background:blue}",
+    );
+    assert_eq!(document.page_count(), 1);
+    assert_runs(&document, &[("A", (0.0, 36.0)), ("B", (0.0, 56.0))]);
+    assert_eq!(rule_rects(&document), [(49.0, 0.0, 2.0, 20.0)]);
+    let page = document.page(0).unwrap();
+    let boxes: Vec<_> = page
+        .fragments()
+        .filter(|fragment| {
+            page.dom().local_name(fragment.node()) == Some("div") && fragment.rect().width == 40.0
+        })
+        .map(|fragment| (fragment.rect().x, fragment.rect().y, fragment.rect().height))
+        .collect();
+    assert_eq!(boxes, [(0.0, 0.0, 20.0), (60.0, 0.0, 20.0)]);
+}
+
+#[test]
+fn an_empty_column_group_does_not_add_height_or_rules_before_a_spanner() {
+    let document = lay_out(
+        "<div class=mc><p></p><p></p><div class=span>A</div></div><p>B</p>",
+        "",
+    );
+    assert_eq!(document.page_count(), 1);
+    assert_runs(&document, &[("A", (0.0, 16.0)), ("B", (0.0, 36.0))]);
+    assert!(rule_rects(&document).is_empty());
+}
+
+#[test]
+fn empty_paragraphs_do_not_consume_a_balanced_column_line() {
+    let document = lay_out(
+        "<div class=mc><p></p><p>A<br>B</p><div class=span>C</div></div><p>D</p>",
+        "",
+    );
+    assert_eq!(document.page_count(), 1);
+    assert_runs(
+        &document,
+        &[
+            ("A", (0.0, 16.0)),
+            ("B", (60.0, 16.0)),
+            ("C", (0.0, 36.0)),
+            ("D", (0.0, 56.0)),
+        ],
+    );
+    assert_eq!(rule_rects(&document), [(49.0, 0.0, 2.0, 20.0)]);
+}
+
+#[test]
+fn a_short_page_remainder_respects_paragraph_break_minima_before_the_spanner() {
+    let document = lay_out(
+        "<p>X</p><p>Y</p><div class=mc><p>A<br>B<br>C<br>D</p><div class=span>E</div></div><p>F</p>",
+        "@page{size:180px 60px}.mc{orphans:2;widows:2}",
+    );
+    assert_eq!(document.page_count(), 3);
+    assert_page_runs(&document, 0, &[("X", (0.0, 16.0)), ("Y", (0.0, 36.0))]);
+    assert_page_runs(
+        &document,
+        1,
+        &[
+            ("A", (0.0, 16.0)),
+            ("B", (0.0, 36.0)),
+            ("C", (60.0, 16.0)),
+            ("D", (60.0, 36.0)),
+            ("E", (0.0, 56.0)),
+        ],
+    );
+    assert_page_runs(&document, 2, &[("F", (0.0, 16.0))]);
+}
+
+#[test]
+fn nested_columns_inside_a_spanner_retain_their_own_column_placements() {
+    let document = lay_out(
+        "<div class=mc><p>A<br>B</p><div class=span><div class=mc><p>C<br>D</p></div></div><p>E<br>F</p></div><p>G</p>",
+        "",
+    );
+    assert_eq!(document.page_count(), 1);
+    assert_runs(
+        &document,
+        &[
+            ("A", (0.0, 16.0)),
+            ("B", (60.0, 16.0)),
+            ("C", (0.0, 36.0)),
+            ("D", (60.0, 36.0)),
+            ("E", (0.0, 56.0)),
+            ("F", (60.0, 56.0)),
+            ("G", (0.0, 76.0)),
+        ],
+    );
+    let mut rules = rule_rects(&document);
+    rules.sort_by(|a, b| a.1.total_cmp(&b.1));
+    assert_eq!(
+        rules,
+        [
+            (49.0, 0.0, 2.0, 20.0),
+            (49.0, 20.0, 2.0, 20.0),
+            (49.0, 40.0, 2.0, 20.0)
+        ]
+    );
+}
+
+#[test]
+fn successive_spanning_owners_use_the_previous_owners_paginated_height() {
+    let document = lay_out(
+        "<div class=mc><p>A<br>B<br>C<br>D</p><div class=span>E</div><p>F<br>G<br>H<br>I</p></div><div class=mc><p>J<br>K<br>L<br>M</p><div class=span>N</div><p>O<br>P<br>Q<br>R</p></div><p>S</p>",
+        "@page{size:180px 50px}",
+    );
+    assert_eq!(document.page_count(), 6);
+    assert_page_runs(
+        &document,
+        0,
+        &[
+            ("A", (0.0, 16.0)),
+            ("B", (0.0, 36.0)),
+            ("C", (60.0, 16.0)),
+            ("D", (60.0, 36.0)),
+        ],
+    );
+    assert_page_runs(
+        &document,
+        1,
+        &[("E", (0.0, 16.0)), ("F", (0.0, 36.0)), ("G", (60.0, 36.0))],
+    );
+    assert_page_runs(
+        &document,
+        2,
+        &[
+            ("H", (0.0, 16.0)),
+            ("I", (60.0, 16.0)),
+            ("J", (0.0, 36.0)),
+            ("K", (60.0, 36.0)),
+        ],
+    );
+    assert_page_runs(
+        &document,
+        3,
+        &[("L", (0.0, 16.0)), ("M", (60.0, 16.0)), ("N", (0.0, 36.0))],
+    );
+    assert_page_runs(
+        &document,
+        4,
+        &[
+            ("O", (0.0, 16.0)),
+            ("P", (0.0, 36.0)),
+            ("Q", (60.0, 16.0)),
+            ("R", (60.0, 36.0)),
+        ],
+    );
+    assert_page_runs(&document, 5, &[("S", (0.0, 16.0))]);
+}
+
+#[test]
+fn nested_columns_keep_a_padded_wrapper_offset_inside_a_spanner() {
+    let document = lay_out(
+        "<div class=mc><p>A<br>B</p><div class=span><section><div class=inner><p>C<br>D</p></div></section></div><p>E<br>F</p></div><p>G</p>",
+        "section{padding:10px 5px}.inner{column-count:2;column-gap:20px;column-rule:2px solid red}",
+    );
+    assert_eq!(document.page_count(), 1);
+    assert_runs(
+        &document,
+        &[
+            ("A", (0.0, 16.0)),
+            ("B", (60.0, 16.0)),
+            ("C", (5.0, 46.0)),
+            ("D", (60.0, 46.0)),
+            ("E", (0.0, 76.0)),
+            ("F", (60.0, 76.0)),
+            ("G", (0.0, 96.0)),
+        ],
+    );
+}
+
+#[test]
+fn an_outer_column_fragment_keeps_its_following_child_after_span_pagination() {
+    let document = lay_out(
+        "<div class=outer><div class=mc><p>A<br>B<br>C<br>D</p><div class=span>E</div><p>F<br>G<br>H<br>I</p></div><p>J</p></div><p>K</p>",
+        "@page{size:180px 50px}.outer{width:100px;column-count:1;column-gap:0}",
+    );
+    assert_eq!(document.page_count(), 4);
+    assert_page_runs(
+        &document,
+        0,
+        &[
+            ("A", (0.0, 16.0)),
+            ("B", (0.0, 36.0)),
+            ("C", (60.0, 16.0)),
+            ("D", (60.0, 36.0)),
+        ],
+    );
+    assert_page_runs(
+        &document,
+        1,
+        &[("E", (0.0, 16.0)), ("F", (0.0, 36.0)), ("G", (60.0, 36.0))],
+    );
+    assert_page_runs(
+        &document,
+        2,
+        &[("H", (0.0, 16.0)), ("I", (60.0, 16.0)), ("J", (0.0, 36.0))],
+    );
+    assert_page_runs(&document, 3, &[("K", (0.0, 16.0))]);
+}
+
+#[test]
+fn a_line_taller_than_a_page_keeps_the_measured_group_without_a_page_loop() {
+    let document = lay_out(
+        "<div class=mc><p>A</p><p>B</p><div class=span>C</div></div><p>D</p>",
+        "@page{size:180px 60px}.mc p{line-height:70px}",
+    );
+    assert_eq!(document.page_count(), 2);
+    assert_page_runs(&document, 0, &[("A", (0.0, 41.0)), ("B", (60.0, 41.0))]);
+    assert_page_runs(&document, 1, &[("C", (0.0, 26.0)), ("D", (0.0, 46.0))]);
+}
+
+#[test]
+fn a_fixed_height_spanning_owner_keeps_its_following_flow_at_the_authored_height() {
+    let document = lay_out(
+        "<div class=mc><div class=span>A</div><p>B</p></div><p>C</p>",
+        ".mc{height:100px;column-fill:auto}",
+    );
+    assert_eq!(document.page_count(), 1);
+    assert_runs(
+        &document,
+        &[("A", (0.0, 16.0)), ("B", (0.0, 36.0)), ("C", (0.0, 116.0))],
+    );
+    assert!(
+        document
+            .page(0)
+            .unwrap()
+            .fragments()
+            .any(|fragment| fragment.rect().width == 100.0 && fragment.rect().height == 100.0)
+    );
+}
+
+#[test]
+fn a_max_height_spanning_owner_keeps_its_short_intrinsic_box() {
+    let document = lay_out(
+        "<div class=mc><div class=span>A</div><p>B</p></div><p>C</p>",
+        ".mc{max-height:100px}",
+    );
+    assert_eq!(document.page_count(), 1);
+    assert_runs(
+        &document,
+        &[("A", (0.0, 16.0)), ("B", (0.0, 36.0)), ("C", (0.0, 56.0))],
+    );
+    assert!(
+        document
+            .page(0)
+            .unwrap()
+            .fragments()
+            .any(|fragment| fragment.rect().width == 100.0 && fragment.rect().height == 40.0)
+    );
+}

@@ -93,3 +93,18 @@ fn spanning_geometry_discovery_retains_a_page_prefix_without_planning_the_tail()
     assert_eq!(runs.len(), 6);
     assert!(runs.iter().all(|run| run.text == "A"));
 }
+
+#[test]
+fn spanning_source_fragment_limit_returns_a_layout_error() {
+    let (mut document, cascade) = long_spanning_document();
+    document.fragment_tree.limit = 2;
+    let mut page = PageBox::new();
+    page.width = 180.0;
+    page.height = 60.0;
+    assert!(matches!(
+        layout_single_page(&mut document, &cascade, page),
+        Err(LayoutError::FragmentLimitExceeded { limit: 2 })
+    ));
+    assert!(document.fragment_tree.limit_exceeded);
+    assert_eq!(document.fragment_tree.fragments.len(), 2);
+}

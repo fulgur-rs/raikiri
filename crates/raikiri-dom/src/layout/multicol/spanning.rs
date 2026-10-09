@@ -13,6 +13,23 @@ pub(super) fn is_spanner(tree: &Document, child: usize) -> bool {
         && !node.style.float.is_floated()
 }
 
+pub(super) fn retire_preliminary_fragments(tree: &mut Document, children: &[usize]) {
+    // The preliminary block measurement lays out nested column containers.
+    // Spanners are subsequently laid out outside the owner's column stack;
+    // retire obsolete records without invalidating a caller's container index.
+    let mut pending: Vec<_> = children
+        .iter()
+        .copied()
+        .filter(|&child| is_spanner(tree, child))
+        .collect();
+    let mut removed = std::collections::HashSet::new();
+    while let Some(id) = pending.pop() {
+        removed.insert(id);
+        pending.extend(tree.nodes[id].children.iter().copied());
+    }
+    tree.fragment_tree.retire_nodes(&removed);
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn layout(
     tree: &mut Document,
@@ -80,6 +97,7 @@ pub(super) fn layout(
             // owner's column stack must not fragment its text or descendants.
             let stack = std::mem::take(&mut tree.fragmentation_stack);
             clear_column_state(tree, child);
+            let fragment_start = tree.fragment_tree.fragments.len();
             let margin = &tree.nodes[child].style.margin;
             let inline_margin = [margin.left, margin.right]
                 .into_iter()
@@ -152,7 +170,28 @@ pub(super) fn layout(
             else {
                 return border_box_size.height;
             };
-            tree.fragment_tree.reparent_roots(child, fragment);
+            for index in fragment_start..fragment {
+                if tree.fragment_tree.fragments[index].parent.is_some() {
+                    continue;
+                }
+                // Root records were relative to their source node. Once
+                // attached, retain intervening wrapper offsets relative to
+                // the spanner fragment instead.
+                let mut id = tree.fragment_tree.fragments[index].node_id;
+                let mut offset = Point::ZERO;
+                while id != child {
+                    let location = tree.nodes[id].unrounded_layout.location;
+                    offset.x += location.x;
+                    offset.y += location.y;
+                    id = tree
+                        .layout_parent_of(id)
+                        .expect("spanner roots remain in their source subtree");
+                }
+                let nested = &mut tree.fragment_tree.fragments[index];
+                nested.rect.x += offset.x;
+                nested.rect.y += offset.y;
+                nested.parent = Some(fragment);
+            }
             block_offset =
                 child_layout.location.y + output.size.height + child_layout.margin.bottom;
             previous_margin = Some(child_layout.margin.bottom);

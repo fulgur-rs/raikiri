@@ -21,7 +21,7 @@ pub(in crate::layout) fn paginate_spanning_columns(
         .iter()
         .position(|f| f.node_id == owner)
     else {
-        return Ok(0.0);
+        return Ok(0.0); // cov:ignore: retained groups are created only after the owner source fragment exists.
     };
     let children = tree.nodes[owner].children.clone();
     work.charge(children.len())?;
@@ -103,7 +103,7 @@ pub(in crate::layout) fn paginate_spanning_columns(
                                 .collect(),
                         );
                         root.multicol_fragment_origins_recorded = true;
-                    }
+                    } // cov:ignore: planned text ranges only originate from a paragraph with an IFC.
                     replacements.insert(
                         id,
                         fragments
@@ -200,6 +200,7 @@ fn replace_fragments(
             updated.push(*fragment);
         }
         if updated.len() > tree.fragment_tree.limit {
+            // cov:ignore: the preceding scan reservation bounds old plus all replacement records by the same fragment limit.
             return Err(LayoutError::FragmentLimitExceeded {
                 limit: tree.fragment_tree.limit,
             });
@@ -211,3 +212,6 @@ fn replace_fragments(
     tree.fragment_tree.fragments = updated;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

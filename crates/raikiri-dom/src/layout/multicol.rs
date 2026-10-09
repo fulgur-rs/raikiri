@@ -489,6 +489,12 @@ fn relayout_nested_multicol_children(
             tree.nodes[child].is_in_document() && tree.nodes[child].style.display != Display::None
         })
         .collect();
+    let has_spanners = children
+        .iter()
+        .any(|&child| spanning::is_spanner(tree, child));
+    if has_spanners {
+        spanning::retire_preliminary_fragments(tree, &children);
+    }
     let Some(container_fragment) = tree
         .fragment_tree
         .try_push(crate::fragment::LayoutFragment {
@@ -511,10 +517,7 @@ fn relayout_nested_multicol_children(
         return fallback_height;
     };
     tree.nodes[index].multicol_groups.clear();
-    let used = if children
-        .iter()
-        .any(|&child| spanning::is_spanner(tree, child))
-    {
+    let used = if has_spanners {
         spanning::layout(
             tree,
             index,
@@ -540,12 +543,17 @@ fn relayout_nested_multicol_children(
         )
     };
     if let Some(fragment) = tree.fragment_tree.fragments.get_mut(container_fragment) {
-        fragment.rect.height = if has_fragmentainer_height_constraint {
+        fragment.rect.height = if tree.nodes[index]
+            .multicol
+            .is_some_and(|style| style.height_definite)
+        {
+            fallback_height
+        } else if has_fragmentainer_height_constraint {
             used.min(fallback_height)
         } else {
             used
         };
-    }
+    } // cov:ignore: the successful try_push index remains stable throughout recursive group layout.
     used
 }
 

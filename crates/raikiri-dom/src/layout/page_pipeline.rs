@@ -1215,7 +1215,12 @@ pub(crate) fn project_slices_with_control(
             continue;
         }
         let layout = node.unrounded_layout;
-        if !visit.is_fragment_visit {
+        // A nested column container has a placement record and a retained
+        // container root for the same source node. Enter that root before
+        // visiting the node's DOM children, whose records belong to it.
+        if !visit.is_fragment_visit
+            || fragments_by_parent_and_node.contains_key(&(visit.fragment, node_id))
+        {
             if let Some(indices) = fragments_by_parent_and_node.get(&(visit.fragment, node_id)) {
                 for &index in indices.iter().rev() {
                     let origin = fragments[index].paint_origin(
@@ -2505,7 +2510,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                 }
             }
             if parent == body_id {
-                break;
+                break; // cov:ignore: the body has a pinned viewport height and exits at the preceding fixed-height boundary.
             }
             child = parent;
         }

@@ -428,7 +428,7 @@ pub(super) fn paginate(
                 continue;
             };
             let Some(paragraph) = &paragraphs[index] else {
-                continue;
+                continue; // cov:ignore: fill_chunk only creates placements for present paragraphs.
             };
             for range in placement.fragments {
                 work.charge(1)?;
@@ -483,7 +483,7 @@ pub(super) fn paginate(
             break;
         };
         if next == resume {
-            return Ok(None);
+            return Ok(None); // cov:ignore: fill_chunk returns a continuation only after advancing a line or a paragraph.
         }
         resume = next;
         absolute_y = page_origin + page_height;

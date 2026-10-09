@@ -126,4 +126,4 @@ pub type ComputedListStyleType = property::ListStyleType;
 pub type ComputedListStylePosition = property::ListStylePosition;
 
 /// Computed `column-span`: a non-inherited keyword, initially `none`.
-pub type ComputedColumnSpan = crate::property::ColumnSpanValue;
+pub type ComputedColumnSpan = crate::property::ColumnSpanValue; // cov:ignore: a computed type alias emits no executable instructions.
