@@ -52,7 +52,7 @@ use selectors::bloom::BloomFilter;
 use selectors::parser::{Combinator, Component, Selector, SelectorIter};
 
 use crate::RaikiriSelectorImpl;
-use crate::rule::{Declaration, StyleRule, expand_shorthand_into};
+use crate::rule::{Declaration, ParsedDeclaration, StyleRule, expand_shorthand_into};
 use crate::style_dom::StyleElement;
 
 /// Upper bound on the ancestor requirements stored per selector. Longer
@@ -253,7 +253,11 @@ impl<'a> RuleIndex<'a> {
             }
             let mut declarations = Vec::with_capacity(rule.declarations.len());
             for decl in &rule.declarations {
-                expand_shorthand_into(decl, |longhand| declarations.push(longhand));
+                let parsed = ParsedDeclaration {
+                    value: decl.value.clone(),
+                    important: decl.important,
+                };
+                expand_shorthand_into(&parsed, |longhand| declarations.push(longhand));
             }
             index.rules.push(IndexedRule {
                 rule,

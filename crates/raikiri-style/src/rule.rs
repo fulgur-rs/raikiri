@@ -1,6 +1,8 @@
 //! Style rules and declaration parsing shared by stylesheet and inline styles.
 //! Nested rules and at-rules are handled by the rule-tree parsers.
 
+use std::fmt;
+
 use cssparser::{
     AtRuleParser, CowRcStr, DeclarationParser, ParseError, Parser, ParserState,
     QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser,
@@ -8,6 +10,7 @@ use cssparser::{
 use selectors::parser::SelectorList;
 
 use crate::RaikiriSelectorImpl;
+use crate::cascade::rollback::{Rollback, rollback_kind};
 use crate::consumer::{ConsumerPropertyGrammar, ConsumerPropertyRegistration};
 use crate::property::{
     BackgroundShorthand, Border, BorderColor, BorderStyle, CustomProperty, DeferredValue, FlexFlow,
@@ -90,19 +93,378 @@ use crate::property::{
 /// assert!(!decl.important, "`color: red` に `!important` は付かない");
 /// let _ = PropertyValue::Color(CssColor::BLACK);
 /// ```
-#[derive(Clone, Debug, PartialEq)]
+///
+/// Every declaration is a longhand or a value the cascade keeps in shorthand
+/// form (see [`classify`]): the parsers produce a [`ParsedDeclaration`], and
+/// [`expand_shorthand_into`] turns it into the declarations it stands for.
+#[derive(Clone, PartialEq)]
 pub struct Declaration {
     /// Resolved property value.
     pub(crate) value: PropertyValue,
     /// `!important` flag (true increases importance).
     pub important: bool,
+    /// The cascade slot of `value`, computed once from it.
+    pub(crate) key: PropertyKey,
+    /// How `value` rolls the cascade back (`revert`, `revert-layer`), computed
+    /// once from it.
+    pub(crate) rollback: Rollback,
 }
 
+// The cascade clones one declaration per matched candidate.
+const _: () = assert!(
+    std::mem::size_of::<Declaration>() <= 152,
+    "Declaration grew past 152 bytes: raise the bound together with a cascade memory measurement"
+);
+
 impl Declaration {
+    /// An expanded declaration of `value`.
+    ///
+    /// Shorthand expansion and the cascade's own declaration sources call this;
+    /// a value whose key [`classify`] calls a shorthand never reaches the
+    /// cascade, because it would occupy a slot no longhand reads.
+    pub(crate) fn new(value: PropertyValue, important: bool) -> Self {
+        let key = value.key();
+        debug_assert!(
+            !matches!(classify(key), KeyClass::Shorthand { .. }),
+            "{key:?} is expanded into longhands and must not be declared as one"
+        );
+        Self {
+            rollback: rollback_kind(&value),
+            key,
+            value,
+            important,
+        }
+    }
+
     /// Read-only accessor for the resolved property value.
     pub fn value(&self) -> &PropertyValue {
         &self.value
     }
+}
+
+// `key` and `rollback` are functions of `value`, so the declared fields say
+// everything.
+impl fmt::Debug for Declaration {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Declaration")
+            .field("value", &self.value)
+            .field("important", &self.important)
+            .finish()
+    }
+}
+
+/// A declaration as the parsers produce it, before shorthand expansion.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ParsedDeclaration {
+    pub(crate) value: PropertyValue,
+    pub(crate) important: bool,
+}
+
+/// How the cascade treats a property key.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum KeyClass {
+    /// A longhand: one cascade slot.
+    Longhand,
+    /// A shorthand that expansion replaces with these longhands, in this
+    /// order, so it never becomes a cascade slot itself.
+    Shorthand { longhands: &'static [PropertyKey] },
+    /// A shorthand whose value the cascade keeps in shorthand form as one
+    /// candidate when it cannot be expanded at parse time (a `var()` value),
+    /// resolving it into longhands only after substitution.
+    Retained,
+}
+
+/// The [`KeyClass`] of `key`.
+///
+/// The match has no wildcard arm, so a new [`PropertyKey`] needs an explicit
+/// decision here. The longhand lists are also the order in which a deferred
+/// (`var()`) shorthand value is expanded.
+pub(crate) const fn classify(key: PropertyKey) -> KeyClass {
+    use PropertyKey::*;
+    let longhands: &'static [PropertyKey] = match key {
+        BorderRadius => &[
+            BorderRadiusTopLeft,
+            BorderRadiusTopRight,
+            BorderRadiusBottomRight,
+            BorderRadiusBottomLeft,
+        ],
+        Padding => &[PaddingTop, PaddingRight, PaddingBottom, PaddingLeft],
+        Margin => &[MarginTop, MarginRight, MarginBottom, MarginLeft],
+        MarginInline => &[MarginLeft, MarginRight],
+        MarginBlock => &[MarginTop, MarginBottom],
+        PaddingInline => &[PaddingLeft, PaddingRight],
+        PaddingBlock => &[PaddingTop, PaddingBottom],
+        Border => &[
+            BorderTopWidth,
+            BorderTopStyle,
+            BorderTopColor,
+            BorderRightWidth,
+            BorderRightStyle,
+            BorderRightColor,
+            BorderBottomWidth,
+            BorderBottomStyle,
+            BorderBottomColor,
+            BorderLeftWidth,
+            BorderLeftStyle,
+            BorderLeftColor,
+        ],
+        BorderTop => &[BorderTopWidth, BorderTopStyle, BorderTopColor],
+        BorderRight => &[BorderRightWidth, BorderRightStyle, BorderRightColor],
+        BorderBottom => &[BorderBottomWidth, BorderBottomStyle, BorderBottomColor],
+        BorderLeft => &[BorderLeftWidth, BorderLeftStyle, BorderLeftColor],
+        BorderStyle => &[
+            BorderTopStyle,
+            BorderRightStyle,
+            BorderBottomStyle,
+            BorderLeftStyle,
+        ],
+        BorderWidth => &[
+            BorderTopWidth,
+            BorderRightWidth,
+            BorderBottomWidth,
+            BorderLeftWidth,
+        ],
+        BorderColor => &[
+            BorderTopColor,
+            BorderRightColor,
+            BorderBottomColor,
+            BorderLeftColor,
+        ],
+        ListStyle => &[ListStyleType, ListStylePosition, ListStyleImage],
+        Overflow => &[OverflowX, OverflowY],
+        TextDecoration => &[
+            TextDecorationLine,
+            TextDecorationThickness,
+            TextDecorationStyle,
+            TextDecorationColor,
+        ],
+        TextEmphasis => &[TextEmphasisStyle, TextEmphasisColor],
+        Outline => &[OutlineWidth, OutlineStyle, OutlineColor],
+        // `font` sets 6 grammar longhands plus 10 reset-only subproperties.
+        // `font-variant-caps` is already a grammar longhand; `size` is one
+        // key whether absolute or relative.
+        Font => &[
+            FontStyle,
+            FontVariantCaps,
+            FontWeight,
+            FontSize,
+            LineHeight,
+            FontFamily,
+            FontKerning,
+            FontLanguageOverride,
+            FontOpticalSizing,
+            FontVariantEastAsian,
+            FontVariantEmoji,
+            FontVariantLigatures,
+            FontVariantNumeric,
+            FontVariantPosition,
+            FontVariationSettings,
+            FontFeatureSettings,
+        ],
+        Flex => &[FlexGrow, FlexShrink, FlexBasis],
+        FlexFlow => &[FlexDirection, FlexWrap],
+        Columns => &[ColumnWidth, ColumnCount],
+        Gap => &[RowGap, ColumnGap],
+        PlaceContent => &[AlignContent, JustifyContent],
+        GridRow => &[GridRowStart, GridRowEnd],
+        GridColumn => &[GridColumnStart, GridColumnEnd],
+        PlaceItems => &[AlignItems, JustifyItems],
+        PlaceSelf => &[AlignSelf, JustifySelf],
+        // `BackgroundShorthand`'s own field order. Each key lands in its own
+        // `SpecifiedValues` field, so the order does not affect the result.
+        Background => &[
+            BackgroundColor,
+            BackgroundImage,
+            BackgroundRepeat,
+            BackgroundAttachment,
+            BackgroundPosition,
+            BackgroundSize,
+            BackgroundClip,
+            BackgroundOrigin,
+        ],
+        All | Grid | GridArea | WhiteSpace | TextWrap | TextSpacing => return KeyClass::Retained,
+        Color
+        | BackgroundColor
+        | FontFamily
+        | FontSize
+        | FontWeight
+        | LineHeight
+        | Display
+        | CounterReset
+        | CounterIncrement
+        | CounterSet
+        | Content
+        | StringSet
+        | Position
+        | Top
+        | Right
+        | Bottom
+        | Left
+        | TextAlign
+        | TextIndent
+        | PaddingTop
+        | PaddingRight
+        | PaddingBottom
+        | PaddingLeft
+        | MarginTop
+        | MarginRight
+        | MarginBottom
+        | MarginLeft
+        | BorderTopWidth
+        | BorderRightWidth
+        | BorderBottomWidth
+        | BorderLeftWidth
+        | BorderTopStyle
+        | BorderRightStyle
+        | BorderBottomStyle
+        | BorderLeftStyle
+        | BorderTopColor
+        | BorderRightColor
+        | BorderBottomColor
+        | BorderLeftColor
+        | Width
+        | Height
+        | MaxWidth
+        | MaxHeight
+        | MinWidth
+        | MinHeight
+        | BoxSizing
+        | Direction
+        | OverflowX
+        | OverflowY
+        | TextDecorationLine
+        | TextDecorationStyle
+        | TextDecorationColor
+        | VerticalAlign
+        | FontStyle
+        | TextTransform
+        | Visibility
+        | ZIndex
+        | WordBreak
+        | OverflowWrap
+        | LetterSpacing
+        | WordSpacing
+        | BreakBefore
+        | BreakAfter
+        | BreakInside
+        | Float
+        | Clear
+        | FlexDirection
+        | FlexWrap
+        | FlexGrow
+        | FlexShrink
+        | FlexBasis
+        | Order
+        | JustifyContent
+        | AlignContent
+        | AlignItems
+        | AlignSelf
+        | RowGap
+        | ColumnGap
+        | Hyphens
+        | TabSize
+        | FontVariantCaps
+        | Quotes
+        | TextShadow
+        | GridTemplateColumns
+        | GridTemplateRows
+        | GridTemplateAreas
+        | GridAutoColumns
+        | GridAutoRows
+        | GridAutoFlow
+        | GridRowStart
+        | GridRowEnd
+        | GridColumnStart
+        | GridColumnEnd
+        | JustifyItems
+        | JustifySelf
+        | Orphans
+        | Widows
+        | Custom
+        | BorderRadiusTopLeft
+        | BorderRadiusTopRight
+        | BorderRadiusBottomRight
+        | BorderRadiusBottomLeft
+        | BoxShadow
+        | OutlineWidth
+        | OutlineStyle
+        | OutlineColor
+        | OutlineOffset
+        | WritingMode
+        | RubyPosition
+        | BackgroundRepeat
+        | BackgroundAttachment
+        | BackgroundClip
+        | BackgroundOrigin
+        | BackgroundSize
+        | BackgroundPosition
+        | BackgroundImage
+        | ObjectFit
+        | ObjectPosition
+        | Opacity
+        | Isolation
+        | MixBlendMode
+        | MaskImage
+        | ClipPath
+        | Transform
+        | TransformOrigin
+        | Filter
+        | LineBreak
+        | TextJustify
+        | TextAlignAll
+        | TextAlignLast
+        | TextCombineUpright
+        | TextOrientation
+        | UnicodeBidi
+        | TableLayout
+        | BorderCollapse
+        | BorderSpacing
+        | CaptionSide
+        | EmptyCells
+        | TextDecorationSkipInk
+        | TextDecorationSkipSpaces
+        | TextDecorationThickness
+        | TextDecorationInset
+        | TextEmphasisPosition
+        | TextUnderlinePosition
+        | Page
+        | ListStyleType
+        | ListStylePosition
+        | ListStyleImage
+        | ColumnCount
+        | ColumnWidth
+        | MinBlockSize
+        | TextUnderlineOffset
+        | HangingPunctuation
+        | TextAutospace
+        | WhiteSpaceCollapse
+        | TextWrapStyle
+        | HyphenateCharacter
+        | HyphenateLimitChars
+        | TextSpacingTrim
+        | WordSpaceTransform
+        | TextEmphasisStyle
+        | TextEmphasisColor
+        | FontKerning
+        | FontOpticalSizing
+        | FontVariantEmoji
+        | FontLanguageOverride
+        | FontVariantLigatures
+        | FontSynthesis
+        | FontVariantPosition
+        | FontPalette
+        | FontVariantNumeric
+        | FontVariantEastAsian
+        | FontVariationSettings
+        | ColumnFill
+        | FontFeatureSettings
+        | InlineSize
+        | BlockSize
+        | TextOverflow => {
+            return KeyClass::Longhand;
+        }
+    };
+    KeyClass::Shorthand { longhands }
 }
 
 /// Qualified style rule (`selectors { declarations }`).
@@ -201,13 +563,8 @@ pub(crate) fn parse_declaration_block_with_consumer_properties(
 /// listed explicitly instead of using a wildcard, so adding a new variant
 /// requires an explicit decision about its expansion here.
 #[inline]
-pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declaration)) {
-    let mut push_longhand = |value| {
-        push(Declaration {
-            value,
-            important: d.important,
-        })
-    };
+pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(Declaration)) {
+    let mut push_longhand = |value| push(Declaration::new(value, d.important));
     match d.value {
         PropertyValue::ListStyle(ref value) => {
             push_longhand(PropertyValue::ListStyleType(value.kind.clone()));
@@ -516,14 +873,8 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
         | PropertyValue::ColumnFill(_)
         | PropertyValue::FontFeatureSettings(_) => expand_none(d, push),
         PropertyValue::Columns(shorthand) => {
-            push(Declaration {
-                value: PropertyValue::ColumnWidth(shorthand.width),
-                important: d.important,
-            });
-            push(Declaration {
-                value: PropertyValue::ColumnCount(shorthand.count),
-                important: d.important,
-            });
+            push_longhand(PropertyValue::ColumnWidth(shorthand.width));
+            push_longhand(PropertyValue::ColumnCount(shorthand.count));
         }
         PropertyValue::Flex(f) => expand_flex(f, push_longhand),
         PropertyValue::FlexFlow(f) => expand_flex_flow(f, push_longhand),
@@ -551,177 +902,29 @@ pub(crate) fn expand_shorthand_into(d: &Declaration, mut push: impl FnMut(Declar
 /// Shared path for non-shorthands. Split from `expand_shorthand_into` to minimize
 /// code size on the hot path (versus the per-family helpers below).
 #[inline(always)]
-fn expand_none(d: &Declaration, mut push: impl FnMut(Declaration)) {
-    push(d.clone());
+fn expand_none(d: &ParsedDeclaration, mut push: impl FnMut(Declaration)) {
+    push(Declaration::new(d.value.clone(), d.important));
 }
 
 /// A deferred shorthand still expands before per-key cascade winner selection.
 /// The raw value is cloned once per longhand and re-parsed only after the
 /// winning longhand has been selected, preserving shorthand/longhand order.
+/// A deferred longhand, and a shorthand the cascade keeps in shorthand form
+/// ([`KeyClass::Retained`]), stays one declaration.
 #[inline(never)]
 fn expand_deferred(
-    d: &Declaration,
+    d: &ParsedDeclaration,
     deferred: &DeferredValue,
     important: bool,
     mut push: impl FnMut(Declaration),
 ) {
-    let keys: &[PropertyKey] = match deferred.key {
-        PropertyKey::BorderRadius => &[
-            PropertyKey::BorderRadiusTopLeft,
-            PropertyKey::BorderRadiusTopRight,
-            PropertyKey::BorderRadiusBottomRight,
-            PropertyKey::BorderRadiusBottomLeft,
-        ],
-        PropertyKey::Padding => &[
-            PropertyKey::PaddingTop,
-            PropertyKey::PaddingRight,
-            PropertyKey::PaddingBottom,
-            PropertyKey::PaddingLeft,
-        ],
-        PropertyKey::Margin => &[
-            PropertyKey::MarginTop,
-            PropertyKey::MarginRight,
-            PropertyKey::MarginBottom,
-            PropertyKey::MarginLeft,
-        ],
-        PropertyKey::MarginInline => &[PropertyKey::MarginLeft, PropertyKey::MarginRight],
-        PropertyKey::MarginBlock => &[PropertyKey::MarginTop, PropertyKey::MarginBottom],
-        PropertyKey::PaddingInline => &[PropertyKey::PaddingLeft, PropertyKey::PaddingRight],
-        PropertyKey::PaddingBlock => &[PropertyKey::PaddingTop, PropertyKey::PaddingBottom],
-        PropertyKey::Border => &[
-            PropertyKey::BorderTopWidth,
-            PropertyKey::BorderTopStyle,
-            PropertyKey::BorderTopColor,
-            PropertyKey::BorderRightWidth,
-            PropertyKey::BorderRightStyle,
-            PropertyKey::BorderRightColor,
-            PropertyKey::BorderBottomWidth,
-            PropertyKey::BorderBottomStyle,
-            PropertyKey::BorderBottomColor,
-            PropertyKey::BorderLeftWidth,
-            PropertyKey::BorderLeftStyle,
-            PropertyKey::BorderLeftColor,
-        ],
-        PropertyKey::BorderTop => &[
-            PropertyKey::BorderTopWidth,
-            PropertyKey::BorderTopStyle,
-            PropertyKey::BorderTopColor,
-        ],
-        PropertyKey::BorderRight => &[
-            PropertyKey::BorderRightWidth,
-            PropertyKey::BorderRightStyle,
-            PropertyKey::BorderRightColor,
-        ],
-        PropertyKey::BorderBottom => &[
-            PropertyKey::BorderBottomWidth,
-            PropertyKey::BorderBottomStyle,
-            PropertyKey::BorderBottomColor,
-        ],
-        PropertyKey::BorderLeft => &[
-            PropertyKey::BorderLeftWidth,
-            PropertyKey::BorderLeftStyle,
-            PropertyKey::BorderLeftColor,
-        ],
-        PropertyKey::BorderStyle => &[
-            PropertyKey::BorderTopStyle,
-            PropertyKey::BorderRightStyle,
-            PropertyKey::BorderBottomStyle,
-            PropertyKey::BorderLeftStyle,
-        ],
-        PropertyKey::BorderWidth => &[
-            PropertyKey::BorderTopWidth,
-            PropertyKey::BorderRightWidth,
-            PropertyKey::BorderBottomWidth,
-            PropertyKey::BorderLeftWidth,
-        ],
-        PropertyKey::BorderColor => &[
-            PropertyKey::BorderTopColor,
-            PropertyKey::BorderRightColor,
-            PropertyKey::BorderBottomColor,
-            PropertyKey::BorderLeftColor,
-        ],
-        PropertyKey::ListStyle => &[
-            PropertyKey::ListStyleType,
-            PropertyKey::ListStylePosition,
-            PropertyKey::ListStyleImage,
-        ],
-        PropertyKey::Overflow => &[PropertyKey::OverflowX, PropertyKey::OverflowY],
-        PropertyKey::TextDecoration => &[
-            PropertyKey::TextDecorationLine,
-            PropertyKey::TextDecorationThickness,
-            PropertyKey::TextDecorationStyle,
-            PropertyKey::TextDecorationColor,
-        ],
-        PropertyKey::TextEmphasis => &[
-            PropertyKey::TextEmphasisStyle,
-            PropertyKey::TextEmphasisColor,
-        ],
-        PropertyKey::Outline => &[
-            PropertyKey::OutlineWidth,
-            PropertyKey::OutlineStyle,
-            PropertyKey::OutlineColor,
-        ],
-        // `font` shorthand deferred expansion — 6 grammar longhands plus 10
-        // reset-only subproperties. `font-variant-caps` is already a grammar
-        // longhand; `size` is one key whether absolute or relative.
-        PropertyKey::Font => &[
-            PropertyKey::FontStyle,
-            PropertyKey::FontVariantCaps,
-            PropertyKey::FontWeight,
-            PropertyKey::FontSize,
-            PropertyKey::LineHeight,
-            PropertyKey::FontFamily,
-            PropertyKey::FontKerning,
-            PropertyKey::FontLanguageOverride,
-            PropertyKey::FontOpticalSizing,
-            PropertyKey::FontVariantEastAsian,
-            PropertyKey::FontVariantEmoji,
-            PropertyKey::FontVariantLigatures,
-            PropertyKey::FontVariantNumeric,
-            PropertyKey::FontVariantPosition,
-            PropertyKey::FontVariationSettings,
-            PropertyKey::FontFeatureSettings,
-        ],
-        PropertyKey::Flex => &[
-            PropertyKey::FlexGrow,
-            PropertyKey::FlexShrink,
-            PropertyKey::FlexBasis,
-        ],
-        PropertyKey::FlexFlow => &[PropertyKey::FlexDirection, PropertyKey::FlexWrap],
-        PropertyKey::Columns => &[PropertyKey::ColumnWidth, PropertyKey::ColumnCount],
-        PropertyKey::Gap => &[PropertyKey::RowGap, PropertyKey::ColumnGap],
-        PropertyKey::PlaceContent => &[PropertyKey::AlignContent, PropertyKey::JustifyContent],
-        PropertyKey::GridRow => &[PropertyKey::GridRowStart, PropertyKey::GridRowEnd],
-        PropertyKey::GridColumn => &[PropertyKey::GridColumnStart, PropertyKey::GridColumnEnd],
-        PropertyKey::PlaceItems => &[PropertyKey::AlignItems, PropertyKey::JustifyItems],
-        PropertyKey::PlaceSelf => &[PropertyKey::AlignSelf, PropertyKey::JustifySelf],
-        // Order here is `BackgroundShorthand`'s own field order
-        // (color/image/repeat/attachment/position/size/clip/origin) — same
-        // "grouped by the shorthand's own natural order" shape as `Border`
-        // (grouped per-side, not per-`PropertyKey`-declaration-order) and
-        // `MarginInline`/`PaddingInline`/`PlaceContent` above. Safe because
-        // each key still lands in its own disjoint `SpecifiedValues` field,
-        // so the order this slice is walked in does not affect the result.
-        PropertyKey::Background => &[
-            PropertyKey::BackgroundColor,
-            PropertyKey::BackgroundImage,
-            PropertyKey::BackgroundRepeat,
-            PropertyKey::BackgroundAttachment,
-            PropertyKey::BackgroundPosition,
-            PropertyKey::BackgroundSize,
-            PropertyKey::BackgroundClip,
-            PropertyKey::BackgroundOrigin,
-        ],
-        _ => return expand_none(d, push),
+    let KeyClass::Shorthand { longhands } = classify(deferred.key) else {
+        return expand_none(d, push);
     };
-
-    for key in keys {
+    for key in longhands {
         let mut value = deferred.clone();
         value.key = *key;
-        push(Declaration {
-            value: PropertyValue::Deferred(value),
-            important,
-        });
+        push(Declaration::new(PropertyValue::Deferred(value), important));
     }
 }
 
@@ -1263,7 +1466,7 @@ pub(crate) fn parse_declaration_value<'i>(
     name: CowRcStr<'i>,
     input: &mut Parser<'i, '_>,
     consumer_properties: &[ConsumerPropertyRegistration],
-) -> Result<Declaration, ParseError<'i, ()>> {
+) -> Result<ParsedDeclaration, ParseError<'i, ()>> {
     let value = parse_registered_consumer_value(name.as_ref(), input, consumer_properties)
         .or_else(|| parse_value(name.as_ref(), input))
         .ok_or_else(|| input.new_custom_error(()))?;
@@ -1274,7 +1477,7 @@ pub(crate) fn parse_declaration_value<'i>(
     input
         .expect_exhausted()
         .map_err(|e: cssparser::BasicParseError<'i>| -> ParseError<'i, ()> { e.into() })?;
-    Ok(Declaration { value, important })
+    Ok(ParsedDeclaration { value, important })
 }
 
 /// Per-declaration parser for cssparser::RuleBodyParser.
@@ -1283,7 +1486,7 @@ struct DeclParser<'a> {
 }
 
 impl<'i, 'a> DeclarationParser<'i> for DeclParser<'a> {
-    type Declaration = Declaration;
+    type Declaration = ParsedDeclaration;
     type Error = ();
 
     fn parse_value<'t>(
@@ -1291,7 +1494,7 @@ impl<'i, 'a> DeclarationParser<'i> for DeclParser<'a> {
         name: CowRcStr<'i>,
         input: &mut Parser<'i, 't>,
         _declaration_start: &ParserState,
-    ) -> Result<Declaration, ParseError<'i, Self::Error>> {
+    ) -> Result<ParsedDeclaration, ParseError<'i, Self::Error>> {
         parse_declaration_value(name, input, self.consumer_properties)
     }
 }
@@ -1299,18 +1502,18 @@ impl<'i, 'a> DeclarationParser<'i> for DeclParser<'a> {
 // The at-rule parser does nothing (drops any @rule inside a block).
 impl<'i, 'a> AtRuleParser<'i> for DeclParser<'a> {
     type Prelude = ();
-    type AtRule = Declaration;
+    type AtRule = ParsedDeclaration;
     type Error = ();
 }
 
 // The qualified-rule parser (nested rules) also does nothing: nested rules in a block are dropped.
 impl<'i, 'a> QualifiedRuleParser<'i> for DeclParser<'a> {
     type Prelude = ();
-    type QualifiedRule = Declaration;
+    type QualifiedRule = ParsedDeclaration;
     type Error = ();
 }
 
-impl<'i, 'a> RuleBodyItemParser<'i, Declaration, ()> for DeclParser<'a> {
+impl<'i, 'a> RuleBodyItemParser<'i, ParsedDeclaration, ()> for DeclParser<'a> {
     fn parse_qualified(&self) -> bool {
         false
     }

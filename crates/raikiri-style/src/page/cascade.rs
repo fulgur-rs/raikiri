@@ -17,7 +17,7 @@ use crate::property::{
 use crate::resolve::{
     ComputedLength, ResolveContext, resolve_length, resolve_line_height, used_line_height_length,
 };
-use crate::rule::{Declaration, expand_shorthand_into};
+use crate::rule::{Declaration, ParsedDeclaration, expand_shorthand_into};
 use crate::ruletree::{Origin, RuleTree};
 use crate::specified::INITIAL_BORDER;
 
@@ -295,16 +295,16 @@ impl PageMarginBoxCascadeResult {
             .into_iter()
             .filter_map(|(_, _, _, decl)| {
                 let value = resolved_value(&decl.value)?;
-                Some(Declaration {
-                    value: resolve_css_wide_color_font(
+                Some(Declaration::new(
+                    resolve_css_wide_color_font(
                         value,
                         inherited.color,
                         inherited.background_color,
                         inherited.background_color_expression.as_ref(),
                         inherited.font_size,
                     ),
-                    important: decl.important,
-                })
+                    decl.important,
+                ))
             })
             .collect();
         let own_color = merged
@@ -972,9 +972,11 @@ pub fn cascade_page_with_media_context(
                     declarations: margin_box
                         .declarations
                         .iter()
-                        .map(|decl| Declaration {
-                            value: horizontal_preferred_size(decl.value.clone()),
-                            important: decl.important,
+                        .map(|decl| {
+                            Declaration::new(
+                                horizontal_preferred_size(decl.value.clone()),
+                                decl.important,
+                            )
                         })
                         .collect(),
                     source_order: rule.source_order,
@@ -995,13 +997,16 @@ pub fn cascade_page_with_media_context(
                     ));
                     continue;
                 }
-                // Expand shorthands into longhands before pushing candidates —
-                // the parse-time expansion alone does not cover the post-parse
-                // mutation path through the `pub` field `PageRule::declarations`
-                // (the element-path sibling is
-                // `crate::cascade`'s `collect_cascaded`).
+                // Expand again before pushing candidates. `PageRule::declarations`
+                // is a `pub` field, and although a `Declaration` can only come
+                // from expansion, re-running it keeps the page cascade
+                // independent of how the list was assembled.
                 // Rationale is consolidated in `crate::rule::expand_shorthand_into`.
-                expand_shorthand_into(decl, |d| {
+                let parsed = ParsedDeclaration {
+                    value: decl.value.clone(),
+                    important: decl.important,
+                };
+                expand_shorthand_into(&parsed, |d| {
                     candidates.push((
                         horizontal_preferred_size(d.value),
                         d.important,
