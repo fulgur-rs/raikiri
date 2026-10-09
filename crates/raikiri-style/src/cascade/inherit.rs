@@ -2363,10 +2363,14 @@ impl ResolvedAgainstInherited {
 /// seeded `target` with the parent's computed values. These arms read the
 /// inherited values from `target` before replacing them with absolute ones.
 ///
-/// Shorthand arms are normally unreachable because
-/// [`crate::rule::expand_shorthand_into`] expands them to longhands before the
-/// cascade. If invoked directly, they delegate to the same per-family
-/// expanders in `crate::rule` (e.g. [`crate::rule::expand_border`]).
+/// Arms for the shorthands that [`crate::rule::expand_shorthand_into`]
+/// expands before the cascade ([`crate::rule::KeyClass::Shorthand`]) are
+/// only reached when this is called directly. The shorthands the cascade
+/// keeps whole ([`crate::rule::KeyClass::Retained`]: white-space, text-wrap,
+/// text-spacing, grid, grid-area) do arrive here: a `var()` value of one is
+/// a single candidate, substituted after winner selection into the shorthand
+/// form. Both delegate to the same per-family expanders in `crate::rule`
+/// (e.g. [`crate::rule::expand_border`]).
 ///
 /// `pub(crate)` permits intra-doc links from other modules.
 pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
