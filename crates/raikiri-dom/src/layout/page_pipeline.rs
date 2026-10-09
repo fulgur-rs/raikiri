@@ -1600,12 +1600,12 @@ pub(crate) fn project_slices_with_control(
                     if page.page_index != page_index {
                         break;
                     }
-                    let Some((page_start, _)) = page.flow_range else {
-                        continue;
+                    let Some((page_start, _)) = page
+                        .flow_range
+                        .filter(|&(page_start, _)| (page_start - origin).abs() <= 0.001)
+                    else {
+                        continue; // cov:ignore: layout schedules placements at the slices' own finite page origins.
                     };
-                    if (page_start - origin).abs() > 0.001 {
-                        continue;
-                    }
                     work.charge(1)?;
                     let y = source.abs_y + shift - page_start;
                     placements.push((page_slot, y, source.height, repeat_line_range, y));

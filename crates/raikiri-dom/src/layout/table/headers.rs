@@ -14,6 +14,8 @@ pub(crate) struct HeaderRepeat {
     pub(crate) height: f32,
     pub(crate) gap: f32,
     pub(crate) body_started: bool,
+    /// Page origin and header y per page index. Call
+    /// [`HeaderRepeats::index`] after changing it.
     pub(crate) placements: BTreeMap<u32, (f32, f32)>,
     /// `placements` ordered by page origin, rebuilt by [`HeaderRepeats::index`].
     by_origin: Vec<(f32, f32)>,
@@ -162,11 +164,9 @@ impl HeaderRepeats {
                 })
                 .count();
             let table_height = node.unrounded_layout.size.height;
-            let flow_pages = if table_height.is_finite() && page_height > 0.0 {
-                (table_height / (page_height * 0.75)).ceil().max(0.0) as usize
-            } else {
-                usize::MAX
-            };
+            let flow_pages = Some((table_height / (page_height * 0.75)).ceil())
+                .filter(|pages| pages.is_finite())
+                .map_or(usize::MAX, |pages| pages.max(0.0) as usize);
             let pages = (body_rows.len() + 1).min(
                 flow_pages
                     .saturating_mul(2)
