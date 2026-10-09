@@ -13,6 +13,7 @@ members = [
     "crates/raikiri-wpt",
     "crates/raikiri-vrt",
     "crates/raikiri-bench",
+    "crates/raikiri-cascade-diff",
     "crates/raikiri-js",
 ]
 
