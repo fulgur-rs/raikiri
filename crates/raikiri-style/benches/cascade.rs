@@ -1966,7 +1966,7 @@ fn bench_cascade(c: &mut Criterion) {
 
 // criterion's `criterion_main!`/`criterion_group!` pair is inlined here: the
 // macro generates a `pub fn`, which trips the workspace's
-// `missing_docs = "warn"` (an error under gate §8.1's `-D warnings`), and the
+// `missing_docs = "warn"` (an error under the gate's `-D warnings`), and the
 // `allow` cannot be attached to a macro invocation. This is the macro body,
 // minus its second redundant `configure_from_args()`.
 fn main() {

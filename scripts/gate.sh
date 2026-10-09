@@ -5,7 +5,9 @@
 #
 #   --base <ref>       Base ref for source-change applicability and patch
 #                       coverage (default: main).
-#   --skip-coverage    Skip patch coverage for a fast test and lint iteration.
+#   --skip-coverage    Skip patch coverage and run the tests uninstrumented
+#                       with plain cargo test. Without it, the tests run once
+#                       under cargo-llvm-cov and need a clean *.rs tree.
 #   --with-bench       Also run the optional cascade benchmark comparison.
 #
 # Exit status is 0 when every applicable check passes. The output records the
@@ -147,23 +149,98 @@ if [[ "$APPLICABLE" -eq 0 ]]; then
 fi
 
 # ── Test execution ──────────────────────────────────────────────────────────
-echo "-- cargo test --workspace --locked --"
-if ! cargo test --workspace --locked; then
-  echo "FAIL: cargo test --workspace --locked"
-  FAIL=1
-fi
-echo
+# With patch coverage enabled, the test suite runs once, under cargo-llvm-cov
+# instrumentation, and the same profile data feeds patch coverage below.
+# Running a plain `cargo test` first would compile and run the whole suite a
+# second time for no extra signal. cargo-llvm-cov wraps `cargo test`, so the
+# libtest output (and the "N passed" sum below) keeps the same format.
+#
+# The instrumented run enables raikiri-net's default-off `http-ureq` feature
+# so its provider modules are both tested and measured; that replaces the
+# separate `cargo test -p raikiri-net --features http-ureq` run. The
+# feature-off raikiri-net tests still run in CI's plain test job.
+#
+# `--skip-coverage` keeps the plain cargo test runs.
+LCOV_DIR="target/llvm-cov"
+LCOV_OUT="$LCOV_DIR/patch-coverage.lcov"
+COVERAGE_TESTS_OK=0
+if [[ "$SKIP_COVERAGE" -eq 0 ]]; then
+  # Refuse before building anything: patch coverage classifies HEAD's lines,
+  # so an instrumented run over uncommitted *.rs changes cannot be classified
+  # (see scripts/patch-coverage.sh). Falling back to an uninstrumented run
+  # would silently change what this gate run measured.
+  if ! git diff --quiet HEAD -- '*.rs' || ! git diff --cached --quiet HEAD -- '*.rs'; then
+    echo "FAIL: uncommitted *.rs changes; commit them or pass --skip-coverage."
+    echo
+    echo "== gate.sh summary =="
+    echo "FAIL"
+    exit 1
+  fi
+  if ! cargo llvm-cov --version >/dev/null 2>&1; then
+    echo "FAIL: cargo-llvm-cov is not installed (cargo install cargo-llvm-cov;"
+    echo "      rustup component add llvm-tools), or pass --skip-coverage."
+    echo
+    echo "== gate.sh summary =="
+    echo "FAIL"
+    exit 1
+  fi
+  TEST_CMD=(cargo llvm-cov --workspace --features raikiri-net/http-ureq --locked --no-report)
 
-# Non-default crate features that no workspace member enables are never
-# compiled by the --workspace runs above/below, so each one is exercised
-# explicitly here (and in the clippy/doc sections). Keep this list in sync
-# with .github/workflows/ci.yml.
-echo "-- cargo test -p raikiri-net --features http-ureq --locked --"
-if ! cargo test -p raikiri-net --features http-ureq --locked; then
-  echo "FAIL: cargo test -p raikiri-net --features http-ureq --locked"
-  FAIL=1
+  # A clean is required before measuring: an incremental run reuses stale
+  # profile data and, after comment-only edits, reports false uncovered lines.
+  echo "-- cargo llvm-cov clean --workspace --"
+  cargo llvm-cov clean --workspace
+  echo
+
+  echo "-- ${TEST_CMD[*]} --"
+  if "${TEST_CMD[@]}"; then
+    COVERAGE_TESTS_OK=1
+  else
+    echo "FAIL: ${TEST_CMD[*]}"
+    FAIL=1
+  fi
+  echo
+
+  # cargo-llvm-cov only runs doctests with the nightly-only --doctests flag,
+  # so the instrumented run above skips them. Run them uninstrumented here;
+  # this builds only the library targets, not the test binaries.
+  DOC_TEST_CMD=(cargo test --doc --workspace --features raikiri-net/http-ureq --locked)
+  echo "-- ${DOC_TEST_CMD[*]} --"
+  if ! "${DOC_TEST_CMD[@]}"; then
+    echo "FAIL: ${DOC_TEST_CMD[*]}"
+    FAIL=1
+  fi
+  echo
+
+  # Export before the --ignored run so the report covers the normal suite
+  # only, unless RAIKIRI_COVERAGE_INCLUDE_IGNORED=1 asks for both (in which
+  # case the export happens after the --ignored run below).
+  if [[ "$COVERAGE_TESTS_OK" -eq 1 && "${RAIKIRI_COVERAGE_INCLUDE_IGNORED:-0}" != "1" ]]; then
+    mkdir -p "$LCOV_DIR"
+    cargo llvm-cov report --lcov --output-path "$LCOV_OUT"
+  fi
+else
+  TEST_CMD=(cargo test --workspace --locked)
+  # Plain cargo test already runs the doctests.
+  DOC_TEST_CMD=()
+  echo "-- ${TEST_CMD[*]} --"
+  if ! "${TEST_CMD[@]}"; then
+    echo "FAIL: ${TEST_CMD[*]}"
+    FAIL=1
+  fi
+  echo
+
+  # Non-default crate features that no workspace member enables are never
+  # compiled by the --workspace runs above/below, so each one is exercised
+  # explicitly here (and in the clippy/doc sections). Keep this list in sync
+  # with .github/workflows/ci.yml.
+  echo "-- cargo test -p raikiri-net --features http-ureq --locked --"
+  if ! cargo test -p raikiri-net --features http-ureq --locked; then
+    echo "FAIL: cargo test -p raikiri-net --features http-ureq --locked"
+    FAIL=1
+  fi
+  echo
 fi
-echo
 
 echo "-- #[ignore] scan --"
 CENSUS_CMD="git grep -nE '#\[ignore(\]| *=)' -- '*.rs'"
@@ -204,16 +281,35 @@ else
     fi
   fi
 
-  echo "-- cargo test --workspace --locked -- --ignored --"
-  echo "cargo test --workspace --locked -- --ignored"
+  # Same command(s) as the normal run above, so the ignored tests reuse its
+  # build. `--ignored` also selects ```ignore doc fences, so under coverage
+  # the doctest command runs with it too and both outputs count toward N.
+  # Record these commands verbatim with N.
+  echo "-- ${TEST_CMD[*]} -- --ignored --"
+  echo "${TEST_CMD[*]} -- --ignored"
   set +e
-  IGNORED_OUTPUT="$(cargo test --workspace --locked -- --ignored 2>&1)"
+  IGNORED_OUTPUT="$("${TEST_CMD[@]}" -- --ignored 2>&1)"
   IGNORED_STATUS=$?
   set -e
   echo "$IGNORED_OUTPUT"
   if [[ "$IGNORED_STATUS" -ne 0 ]]; then
-    echo "FAIL: cargo test --workspace --locked -- --ignored"
+    echo "FAIL: ${TEST_CMD[*]} -- --ignored"
     FAIL=1
+    COVERAGE_TESTS_OK=0
+  fi
+  if [[ ${#DOC_TEST_CMD[@]} -gt 0 ]]; then
+    echo "-- ${DOC_TEST_CMD[*]} -- --ignored --"
+    echo "${DOC_TEST_CMD[*]} -- --ignored"
+    set +e
+    DOC_IGNORED_OUTPUT="$("${DOC_TEST_CMD[@]}" -- --ignored 2>&1)"
+    DOC_IGNORED_STATUS=$?
+    set -e
+    echo "$DOC_IGNORED_OUTPUT"
+    if [[ "$DOC_IGNORED_STATUS" -ne 0 ]]; then
+      echo "FAIL: ${DOC_TEST_CMD[*]} -- --ignored"
+      FAIL=1
+    fi
+    IGNORED_OUTPUT="$IGNORED_OUTPUT"$'\n'"$DOC_IGNORED_OUTPUT"
   fi
   # Sum "N passed" across every test runner's "test result:" summary line —
   # validation run record: this is the sum the record must cite, not any single
@@ -226,6 +322,11 @@ else
   fi
 fi
 echo
+
+if [[ "$SKIP_COVERAGE" -eq 0 && "$COVERAGE_TESTS_OK" -eq 1 && "${RAIKIRI_COVERAGE_INCLUDE_IGNORED:-0}" == "1" ]]; then
+  mkdir -p "$LCOV_DIR"
+  cargo llvm-cov report --lcov --output-path "$LCOV_OUT"
+fi
 
 # ── Static checks ───────────────────────────────────────────────────────────
 echo "-- cargo fmt --all --check --"
@@ -289,10 +390,13 @@ echo
 # ── Patch coverage ──────────────────────────────────────────────────────────
 if [[ "$SKIP_COVERAGE" -eq 1 ]]; then
   echo "-- patch coverage: --skip-coverage passed, skipping --"
+elif [[ "$COVERAGE_TESTS_OK" -ne 1 ]]; then
+  echo "-- patch coverage: not measured because the instrumented test run failed --"
+  echo "   Fix the failing tests above and re-run."
 elif [[ -x "$SCRIPT_DIR/patch-coverage.sh" ]]; then
-  echo "-- patch coverage (scripts/patch-coverage.sh --base $BASE_REF) --"
+  echo "-- patch coverage (scripts/patch-coverage.sh --lcov $LCOV_OUT $BASE_REF) --"
   set +e
-  "$SCRIPT_DIR/patch-coverage.sh" "$BASE_REF"
+  "$SCRIPT_DIR/patch-coverage.sh" --lcov "$LCOV_OUT" "$BASE_REF"
   PATCH_COVERAGE_STATUS=$?
   set -e
   if [[ "$PATCH_COVERAGE_STATUS" -eq 1 ]]; then

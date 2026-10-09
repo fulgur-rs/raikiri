@@ -109,7 +109,7 @@ jobs:
         run: python3 -m unittest discover -s scripts/lib -p 'test_*.py'
 
       - name: Orphan tests.rs lint
-        # Same command as scripts/gate.sh §8.1(b). This Python static check
+        # Same command as scripts/gate.sh. This Python static check
         # needs no Rust toolchain, but runs in the same job as other cheap lints.
         run: scripts/orphan-tests-lint.sh
 
@@ -126,7 +126,7 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Rustdoc (private items, deny warnings)
-        # Same command as scripts/gate.sh §8.1(b). Without this in CI, an
+        # Same command as scripts/gate.sh. Without this in CI, an
         # ambiguous intra-doc link (`crate::parse` resolves to both a function
         # and a module) reached main despite green CI and broke every branch's
         # gate. Keep the job name because it may be a required status check;

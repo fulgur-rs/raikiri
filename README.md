@@ -158,13 +158,21 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 ```
 
-Run the project gate as one command:
+While iterating, check only the crates your change can affect (the changed crates plus the crates that depend on them):
 
 ```bash
-scripts/gate.sh --skip-coverage
+scripts/affected.sh            # clippy + tests for the affected crates
+scripts/affected.sh --direct   # only the crates containing changes
+scripts/affected.sh --list     # show the selection without building
 ```
 
-`--skip-coverage` is intended for the fast development loop. Before submitting changes, run the required gate and patch coverage with `cargo-llvm-cov` available.
+Run the project gate as one command before submitting changes:
+
+```bash
+scripts/gate.sh
+```
+
+The gate runs the test suite once under `cargo-llvm-cov` and reuses that run for patch coverage, so it needs `cargo-llvm-cov` and a committed `*.rs` tree. `scripts/gate.sh --skip-coverage` runs the tests with plain `cargo test` instead and skips patch coverage.
 
 ### VRT and WPT
 

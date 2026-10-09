@@ -43,7 +43,7 @@ retiring):
      is never flagged). `_BARE_BRACKET_RE` matches ANY bracket content
      (not just identifier/path-shaped text — see its own comment for why:
      an earlier, narrower version of this pattern silently missed
-     `[two words]` / `[foo-bar]`-shaped brackets, a §8.3 final
+     `[two words]` / `[foo-bar]`-shaped brackets, a final
      review finding), with two narrow exclusions: `#[attr]` / `&[T]`
      (Rust attribute/slice syntax, not a markdown-link look-alike) and
      `[text](url)` (a genuine Markdown inline link to an explicit URL —
@@ -242,7 +242,7 @@ to the role-2 maximum-count candidate set:
      way a statement does, so there is nothing for a preceding-line marker
      to unambiguously bound.
 
-Not in scope for this script (see the 3 issues' text for why): gate §8.1 /
+Not in scope for this script (see the 3 issues' text for why):
 scripts/gate.sh integration, lowering the baseline, and any check on
 non-`crate::` pointers.
 """
@@ -488,7 +488,7 @@ _BACKTICK_RE = re.compile(r"`([^`\n]+)`")
 # here): a bare bracket-link. AGENTS.md's rule for plain `//` comments is
 # blanket — "never write bracket-link syntax (`[...]` / `` [`...`] ``)" —
 # not conditioned on the bracket content looking like a Rust path/ident.
-# §8.3 final review (the earlier review iteration): an earlier version
+# Final review (the earlier review iteration): an earlier version
 # of this pattern only matched identifier/path-shaped content
 # (`[A-Za-z_][A-Za-z0-9_:<>]*`), which silently let `[two words]` and
 # `[foo-bar]` — anything with a space, hyphen, or other punctuation —
@@ -563,7 +563,7 @@ def analyze_line(raw: str, *, in_backtick: bool = False) -> tuple[LineFindings, 
     "inside a code span"; `[0,∞]` would then wrongly reach the bare-bracket
     step and get flagged as a role-1 violation, even though it is (once
     the two lines are read as the single quoted phrase they are) already
-    safely inside backticks. the earlier review §8.3 final review
+    safely inside backticks. the earlier final review
     surfaced this the moment role 1's bracket matching was broadened to
     catch non-identifier-shaped content (this exact `[0,∞]` shape was one
     of the false negatives that broadening fixed) — a version of this

@@ -44,7 +44,7 @@ import sys
 from pathlib import Path
 
 # Bounds enforced independently of scripts/cascade-bench-compare.sh's own
-# validation, since this module can be invoked directly (review §8.3 review
+# validation, since this module can be invoked directly (review
 # finding: env-var overrides had no validation at all — argparse's plain
 # `type=int`/`type=float` accept e.g. "nan"/"inf" for the threshold, under
 # which `delta_pct > threshold` is always False and a real regression would

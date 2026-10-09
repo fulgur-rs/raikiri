@@ -46,7 +46,7 @@
 # procedure, exempts it.
 #
 # Scope note: this script is standalone and NOT connected to
-# scripts/gate.sh / gate.md §8.1 — that integration decision is explicitly
+# scripts/gate.sh — that integration decision is explicitly
 # out of scope for the task that added this script (the earlier change)
 # and is left to a separate decision (e.g. a review).
 #

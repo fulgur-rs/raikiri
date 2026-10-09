@@ -104,7 +104,7 @@ class Role1PlainBracketTests(unittest.TestCase):
         self.assertEqual(len(result.plain_bracket_violations), 2)
 
     def test_bracket_with_spaces_is_flagged(self) -> None:
-        # §8.3 final review (GATE FAIL, non-trivial): an earlier
+        # Final review (non-trivial finding): an earlier
         # version of _BARE_BRACKET_RE only matched identifier/path-shaped
         # content and silently let this through with 0 violations —
         # contradicting AGENTS.md's unconditional "never write them" for plain
@@ -189,7 +189,7 @@ class MultiLineBacktickSpanTests(unittest.TestCase):
     """A backtick code span word-wrapped across consecutive `//`/`///`
     lines must protect a bracket inside it from role 1/2, the same way a
     single-line backtick span does. This whole class exists because an
-    earlier version of the §8.3 review broadening fix got this wrong: it
+    earlier version of the final-review broadening fix got this wrong: it
     correctly widened _BARE_BRACKET_RE's content match (see
     Role1PlainBracketTests), but analyze_line()/census_file() were still
     line-scoped, so a bracket that's actually safely inside a still-open
@@ -347,7 +347,7 @@ class Role2DocBarePointerTests(unittest.TestCase):
         self.assertEqual(len(result.doc_bare_crate_ratchet), 1)
 
     def test_ignore_marker_requires_a_nested_double_slash(self) -> None:
-        # §8.2 quality review (optional item): the
+        # Quality review (optional item): the
         # marker must be anchored to an actual `//`-introduced fragment,
         # the same way scripts/lib/patch_coverage.py's cov:ignore: is
         # anchored via comment_part() rather than matched as a bare
@@ -795,7 +795,7 @@ class ExternalTestModCrossFileCensusTests(unittest.TestCase):
 
 
 class LoadBaselineTests(unittest.TestCase):
-    """§8.2 quality review Fix 1: load_baseline() had no
+    """Quality review Fix 1: load_baseline() had no
     direct test — the real baseline file has 32 comment lines before its
     integer, so a regression there would silently change what the gate
     compares against."""
@@ -845,7 +845,7 @@ def _occ(n: int = 1) -> list[Occurrence]:
 
 
 class EvaluateGateTests(unittest.TestCase):
-    """§8.2 quality review Fix 1: the gate's PASS/FAIL
+    """Quality review Fix 1: the gate's PASS/FAIL
     decision, extracted from main() into evaluate_gate() specifically so
     it's testable without argparse/print/sys.exit."""
 
@@ -876,7 +876,7 @@ class EvaluateGateTests(unittest.TestCase):
 
 
 class MainExitCodeTests(unittest.TestCase):
-    """§8.2 quality review Fix 1: drive main()'s actual
+    """Quality review Fix 1: drive main()'s actual
     PASS/FAIL/exit-code contract (0/1/2) end-to-end against a temporary
     repo tree, not just the CensusResult-level evaluate_gate() logic —
     catches an integration bug (e.g. main() ignoring evaluate_gate()'s verdict)
