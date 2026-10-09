@@ -131,7 +131,12 @@ fn write_case_line(out: &mut dyn Write, case: &str) -> std::io::Result<()> {
 /// The `HASH<TAB>STATUS[<TAB>MESSAGE]` columns for a case's rendered text.
 fn case_columns(text: &str) -> String {
     let hash = dump::fnv1a(text);
-    if let Some(message) = text.strip_prefix("PANIC: ") {
+    // A panic either replaced the whole case or ended one of its sections.
+    let panic = text.strip_prefix("PANIC: ").or_else(|| {
+        let line = text.find("\nPANIC in ")?;
+        Some(&text[line + "\nPANIC in ".len()..])
+    });
+    if let Some(message) = panic {
         let message = message.lines().next().unwrap_or("").replace('\t', " ");
         format!("{hash:016x}\tpanic\t{message}")
     } else if ERROR_PREFIXES.iter().any(|prefix| text.starts_with(prefix)) {
@@ -155,15 +160,17 @@ fn render(case: &str) -> String {
 fn guarded(f: impl FnOnce() -> String) -> String {
     match catch_unwind(AssertUnwindSafe(f)) {
         Ok(text) => text,
-        Err(payload) => {
-            let message = payload
-                .downcast_ref::<String>()
-                .map(String::as_str)
-                .or_else(|| payload.downcast_ref::<&str>().copied())
-                .unwrap_or("<non-string panic payload>");
-            format!("PANIC: {message}\n")
-        }
+        Err(payload) => format!("PANIC: {}\n", panic_message(&*payload)),
     }
+}
+
+/// The message a panic was raised with.
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
+    payload
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| payload.downcast_ref::<&str>().copied())
+        .unwrap_or("<non-string panic payload>")
 }
 
 fn render_unguarded(case: &str) -> String {
@@ -231,11 +238,14 @@ fn html_into(bytes: &[u8]) -> String {
                 media: &media,
                 custom_names: &names,
             };
-            if let Some(result) = cascade_into(&mut out, &inputs)
-                && let Some(root) = first_line_origin(&result)
-            {
-                // Layout styles that block's first line through the
-                // dedicated entry point.
+            // Layout styles a block's first line through the dedicated entry
+            // point, which only takes a block of inline content; the first
+            // few blocks with a `::first-line` style give it a chance to find
+            // one.
+            let origins = cascade_into(&mut out, &inputs)
+                .map(|result| first_line_origins(&result))
+                .unwrap_or_default();
+            for root in origins.into_iter().take(3) {
                 match raikiri_style::cascade_with_first_line(&document.dom, &tree, &media, root) {
                     Ok(cascade) => dump::first_line_styles(&mut out, cascade.first_line.as_ref()),
                     Err(error) => out.push_str(&format!("first_line: ERR: {error:?}\n")),
@@ -275,14 +285,16 @@ fn first_line_into<D: StyleDom>(out: &mut String, inputs: &dump::Inputs<'_, D>, 
     }
 }
 
-/// The first element, in node order, that has a `::first-line` style.
-fn first_line_origin(result: &CascadeResult) -> Option<StyleNodeId> {
-    result
+/// The elements that have a `::first-line` style, in node order.
+fn first_line_origins(result: &CascadeResult) -> Vec<StyleNodeId> {
+    let mut origins: Vec<StyleNodeId> = result
         .pseudo
         .keys()
         .filter(|(_, kind)| *kind == PseudoElem::FirstLine)
         .map(|(id, _)| *id)
-        .min_by_key(|id| id.0)
+        .collect();
+    origins.sort_by_key(|id| id.0);
+    origins
 }
 
 /// The node a generated case without a designated block runs the

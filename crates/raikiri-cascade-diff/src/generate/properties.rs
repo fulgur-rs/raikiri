@@ -4,6 +4,8 @@
 //! generates the same document for two builds whose property lists differ. A
 //! name a build does not support only becomes an invalid declaration there.
 
+// cov:ignore: a data table with no executable code, for which cargo-llvm-cov
+// writes no coverage record at all.
 pub(super) const PROPERTY_NAMES: &[&str] = &[
     "align-content",
     "align-items",

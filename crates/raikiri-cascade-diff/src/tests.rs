@@ -101,6 +101,11 @@ fn case_columns_name_the_status() {
         case_columns(text),
         format!("{:016x}\tpanic\ta b", dump::fnv1a(text))
     );
+    let text = "root_element_index: Some(1)\nPANIC in first letters: a\tb\nmore\n";
+    assert_eq!(
+        case_columns(text),
+        format!("{:016x}\tpanic\tfirst letters: a b", dump::fnv1a(text))
+    );
     for text in [
         "ERR: x\n",
         "IO-ERROR: x\n",
@@ -232,11 +237,36 @@ fn the_first_line_entry_point_reports_every_outcome() {
 }
 
 #[test]
-fn generated_first_line_cases_usually_reach_first_line_styles() {
-    let with = (0..60)
-        .filter(|seed| render(&format!("gen:{seed}:first-line")).contains("first_line.root:"))
-        .count();
-    assert!(with >= 30, "{with} of 60");
+fn a_seed_without_a_designated_block_runs_the_entry_point_for_its_first_element() {
+    let seed = (0..100)
+        .find(|&seed| generate::generate(seed).first_line_root.is_none())
+        .expect("a seed in range has no designated block");
+    let case = generate::generate(seed);
+    let root = first_line_root(&case.doc);
+    let text = render(&format!("gen:{seed}:first-line"));
+    let unsupported = format!("unsupported first-line node {}", root.0);
+    assert!(
+        text.contains(&unsupported) || text.contains("first_line"),
+        "seed {seed}: {}",
+        text.lines().next().unwrap_or("")
+    );
+}
+
+#[test]
+fn every_designated_block_reaches_the_first_line_entry_point() {
+    // The listed seeds hold important user-agent rules in layers, which beat
+    // the designated block's guard while it was unlayered.
+    for seed in (0..60).chain([794, 1133, 1569, 1588, 1705]) {
+        let Some(root) = generate::generate(seed).first_line_root else {
+            continue;
+        };
+        let text = render(&format!("gen:{seed}:first-line"));
+        assert!(
+            text.contains(&format!("first_line.root: {root}\n")),
+            "seed {seed}: {}",
+            text.lines().next().unwrap_or("")
+        );
+    }
 }
 
 #[test]
@@ -256,6 +286,15 @@ fn html_cases_run_the_first_line_entry_point_for_their_first_first_line_block() 
     let plain = TempFile::new("plain.html", "<!doctype html><p>x</p>");
     let text = render(&format!("html:{}", plain.path()));
     assert!(!text.contains("first_line"), "{text}");
+    // The outer block has a block child, so the inner one is tried next.
+    let both = TempFile::new(
+        "first-line-both.html",
+        "<!doctype html><style>div::first-line, p::first-line { color: red }</style>\
+         <div><p>x</p></div>",
+    );
+    let text = render(&format!("html:{}", both.path()));
+    assert!(text.contains("first_line: ERR: "), "{text}");
+    assert!(text.contains("first_line.root: "), "{text}");
 }
 
 #[test]

@@ -77,8 +77,10 @@ SCRATCH="$(mktemp -d "$TMPDIR/raikiri-cascade-diff.XXXXXX")"
 BASE_TREE="$SCRATCH/base-tree"
 
 cleanup() {
+  # A failure while cleaning up must not replace the run's exit status.
+  trap - ERR
   git -C "$REPO_ROOT" worktree remove --force "$BASE_TREE" >/dev/null 2>&1 || true
-  rm -rf "$SCRATCH"
+  rm -rf "$SCRATCH" || true
 }
 trap cleanup EXIT
 
@@ -141,11 +143,21 @@ for seed in 0 1 2 3 4 5 6 7; do
   fi
 done
 
+# The revision of the shared WPT checkout itself, never of a repository that
+# happens to enclose it; empty when it cannot be read.
+wpt_revision() {
+  git --git-dir="$WPT_ROOT/.git" rev-parse HEAD 2>/dev/null || true
+}
+
 DUMP_ARGS=(dump --seeds "0..$SEEDS")
 WPT_REVISION=""
 if [[ ${#WPT_DIRS[@]} -gt 0 ]]; then
   WPT_ROOT="$(wpt_cache_dir)"
-  WPT_REVISION="$(git -C "$WPT_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
+  WPT_REVISION="$(wpt_revision)"
+  if [[ -z "$WPT_REVISION" ]]; then
+    echo "error: cannot read the revision of the WPT checkout at $WPT_ROOT (run scripts/wpt/fetch.sh first)" >&2
+    exit 2
+  fi
   HTML_LIST="$SCRATCH/html-cases.txt"
   : > "$HTML_LIST"
   for dir in "${WPT_DIRS[@]}"; do
@@ -164,7 +176,9 @@ fi
 # line names the case it stopped in.
 run_dump() {
   local label="$1" binary="$2" output="$3" status=0
-  timeout "$TIMEOUT" "$binary" "${DUMP_ARGS[@]}" > "$output" || status=$?
+  # `--foreground` keeps the tool in the terminal's process group, so Ctrl-C
+  # still stops the run.
+  timeout --foreground "$TIMEOUT" "$binary" "${DUMP_ARGS[@]}" > "$output" || status=$?
   if [[ $status -eq 0 ]]; then
     return 0
   fi
@@ -188,7 +202,7 @@ echo
 # The checkout is shared between sessions: an update during the run would let
 # the two builds read different files under the same case ids.
 if [[ -n "$WPT_REVISION" ]]; then
-  revision_now="$(git -C "$WPT_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
+  revision_now="$(wpt_revision)"
   if [[ "$revision_now" != "$WPT_REVISION" ]]; then
     echo "error: the WPT checkout moved from $WPT_REVISION to $revision_now during the run" >&2
     exit 2

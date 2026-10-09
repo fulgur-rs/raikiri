@@ -27,8 +27,9 @@ fn first_letter_styles_are_resolved_through_enclosing_first_lines() {
     doc.append(span, GenNode::text("text"));
     let out = dump_of(
         &doc,
-        "div { display: block } div::first-line { color: red } \
+        "div { display: list-item } div::first-line { color: red } \
          div::first-letter { font-size: 2em } div::before { content: \"B\" } \
+         div::after { content: \"A\" } div::marker { color: green } \
          span { color: blue }",
         &[],
     );
@@ -39,6 +40,8 @@ fn first_letter_styles_are_resolved_through_enclosing_first_lines() {
         format!("first_letter[{div}] at [{div}, None]: ComputedValues"),
         format!("first_letter[{div}] at [{span}, None]: ComputedValues"),
         format!("first_letter[{div}] at [{div}, Some(Before)]: ComputedValues"),
+        format!("first_letter[{div}] at [{div}, Some(After)]: ComputedValues"),
+        format!("first_letter[{div}] at [{div}, Some(Marker)]: ComputedValues"),
     ] {
         assert!(out.contains(&line), "missing {line}:\n{out}");
     }
@@ -77,7 +80,8 @@ fn outputs_reached_only_through_methods_are_printed() {
         &doc,
         "html { --v0: 3px } svg { color: inherit; opacity: 0.5 } \
          ::highlight(hl) { background-color: currentcolor } \
-         @page :first { margin: 1px } @page named { margin: 2px }",
+         @page :first { margin: 1px } @page named { margin: 2px } \
+         @page named:first { margin: 3px }",
         &["--v0", "--v9"],
     );
     assert!(out.contains(&format!("svg[{svg}]: ")), "{out}");
@@ -93,9 +97,20 @@ fn outputs_reached_only_through_methods_are_printed() {
         )),
         "{out}"
     );
-    for query in ["first", "left", "named", "blank"] {
+    for query in ["first", "left", "named", "named first", "blank"] {
         assert!(out.contains(&format!("page[{query}]: ")), "{out}");
     }
+}
+
+#[test]
+fn a_panicking_section_keeps_its_output_and_the_rest_of_the_dump() {
+    let mut out = String::from("before\n");
+    section(&mut out, "probe", |out| {
+        out.push_str("partial\n");
+        panic!("boom");
+    });
+    section(&mut out, "next", |out| out.push_str("after\n"));
+    assert_eq!(out, "before\npartial\nPANIC in probe: boom\nafter\n");
 }
 
 #[test]

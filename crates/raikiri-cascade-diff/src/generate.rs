@@ -116,10 +116,15 @@ pub(crate) fn generate(seed: u64) -> Case {
 }
 
 /// Keeps the designated `::first-line` block a block whose descendants are
-/// all inline, as that entry point requires, whatever the random rules say:
-/// important user-agent declarations win over author and user ones.
-const FIRST_LINE_DISPLAY: &str = "#fl { display: block !important }
+/// all inline, as that entry point requires, whatever the random rules say.
+/// Important user-agent declarations win over user and author ones, and for
+/// important declarations the earliest layer wins, over later layers and
+/// over unlayered declarations (CSS Cascade 5 §6.4), so this sheet goes first
+/// and declares the first user-agent layer.
+const FIRST_LINE_DISPLAY: &str = "@layer first-line-guard {
+#fl { display: block !important }
 #fl * { display: inline !important; float: none !important; position: static !important }
+}
 ";
 
 /// Appends a block of inline content under a random in-document HTML element
@@ -168,12 +173,19 @@ fn first_line_block(rng: &mut Rng, doc: &mut GenDoc) -> Option<usize> {
 /// `::first-line`, and usually `::first-letter`, rules for the designated
 /// block, so first-letter styles inherit through a first line.
 fn typographic_rules(rng: &mut Rng) -> String {
+    // Each rule starts with a declaration that applies to its pseudo-element,
+    // so the rule still matches when every random declaration is dropped.
+    let valid = rng.pick(&["color: red", "font-weight: bold", "letter-spacing: 1px"]);
     let count = 1 + rng.below(6);
-    let mut css = format!("#fl::first-line {{ {} }}\n", declarations(rng, count, true));
+    let mut css = format!(
+        "#fl::first-line {{ {valid}; {} }}\n",
+        declarations(rng, count, true)
+    );
     if rng.chance(60) {
+        let valid = rng.pick(&["font-size: 2em", "color: blue", "margin-right: 2px"]);
         let count = 1 + rng.below(6);
         css.push_str(&format!(
-            "#fl::first-letter {{ {} }}\n",
+            "#fl::first-letter {{ {valid}; {} }}\n",
             declarations(rng, count, true)
         ));
     }

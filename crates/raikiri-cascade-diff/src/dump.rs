@@ -6,11 +6,14 @@
 //! through methods — SVG paint properties, first-letter styles, contextual
 //! highlight backgrounds, inherited custom properties, and the `@page` cascade
 //! for other page queries — are queried with fixed arguments, the way layout
-//! and paint query them. The only output left out is run-specific identity
-//! (the cascade generation counter), which differs between any two runs.
+//! and paint query them. Each group of queries runs as its own section, so a
+//! panic in one is recorded on a line of its own and the rest of the case is
+//! still compared. The only output left out is run-specific identity (the
+//! cascade generation counter), which differs between any two runs.
 
 use std::collections::BTreeSet;
 use std::fmt::{Debug, Write as _};
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use raikiri_style::{
     Atom, CascadeResult, ComputedValues, CssColor, FirstLineStyles, MediaContext, PageContextQuery,
@@ -90,27 +93,41 @@ pub(crate) fn cascade_result<D: StyleDom>(
         "custom_highlight_styles",
         &result.custom_highlight_styles,
     );
-    for (index, computed) in result.computed.iter().enumerate() {
-        push_custom_properties(
-            out,
-            &format!("custom[{index}]"),
-            computed,
-            inputs.custom_names,
-        );
-    }
-    for ((id, kind), computed) in &pseudo {
-        let label = format!("custom[{}, {kind:?}]", id.0);
-        push_custom_properties(out, &label, computed, inputs.custom_names);
-    }
-    for index in 0..result.computed.len() {
-        let properties = result.svg_style_properties(node_id(index));
-        if !properties.is_empty() {
-            push_value(out, &format!("svg[{index}]"), &properties);
+    section(out, "custom properties", |out| {
+        for (index, computed) in result.computed.iter().enumerate() {
+            let label = format!("custom[{index}]");
+            push_custom_properties(out, &label, computed, inputs.custom_names);
         }
+        for ((id, kind), computed) in &pseudo {
+            let label = format!("custom[{}, {kind:?}]", id.0);
+            push_custom_properties(out, &label, computed, inputs.custom_names);
+        }
+    });
+    section(out, "svg properties", |out| {
+        for index in 0..result.computed.len() {
+            let properties = result.svg_style_properties(node_id(index));
+            if !properties.is_empty() {
+                push_value(out, &format!("svg[{index}]"), &properties);
+            }
+        }
+    });
+    section(out, "first letters", |out| {
+        first_letters(out, inputs.dom, result)
+    });
+    section(out, "highlights", |out| highlight_backgrounds(out, result));
+    section(out, "page queries", |out| page_queries(out, inputs, result));
+}
+
+/// Runs one section of a dump. A panic in it is recorded as a `PANIC in`
+/// line after whatever the section printed, so a panic both builds share in
+/// one query does not hide the comparison of the rest of the case.
+pub(crate) fn section(out: &mut String, name: &str, write: impl FnOnce(&mut String)) {
+    let mut text = String::new();
+    let outcome = catch_unwind(AssertUnwindSafe(|| write(&mut text)));
+    out.push_str(&text);
+    if let Err(payload) = outcome {
+        let _ = writeln!(out, "PANIC in {name}: {}", crate::panic_message(&*payload));
     }
-    first_letters(out, inputs.dom, result);
-    highlight_backgrounds(out, result);
-    page_queries(out, inputs, result);
 }
 
 /// Appends the effective value of every name in `names` that `computed`
@@ -155,14 +172,21 @@ fn first_letters<D: StyleDom>(out: &mut String, dom: &D, result: &CascadeResult)
             if lines.is_empty() {
                 continue;
             }
-            for generated in [None, Some(PseudoElem::Before)] {
+            // Layout passes the generated pseudo-element whose text holds the
+            // letter, when it is one.
+            for generated in [
+                None,
+                Some(PseudoElem::Before),
+                Some(PseudoElem::After),
+                Some(PseudoElem::Marker),
+            ] {
                 if generated.is_some_and(|kind| !result.pseudo.contains_key(&(parent, kind))) {
                     continue;
                 }
                 let Some(inherited) = result
                     .first_letter_parent_with_first_lines(dom, origin, &lines, parent, generated)
                 else {
-                    continue;
+                    continue; // cov:ignore: unreachable — `origin` has first-letter inputs, `lines` is non-empty with a `::first-line` style first, and `parent` descends from it
                 };
                 let label = format!("first_letter[{index}] at [{}, {generated:?}]", parent.0);
                 push_value(out, &format!("{label} parent"), &inherited);
@@ -254,6 +278,14 @@ fn page_queries<D>(out: &mut String, inputs: &Inputs<'_, D>, result: &CascadeRes
             "named",
             page_query(|query| {
                 query.page_name = Some(Atom::from("named"));
+                query.is_right = true;
+            }),
+        ),
+        (
+            "named first",
+            page_query(|query| {
+                query.page_name = Some(Atom::from("named"));
+                query.is_first = true;
                 query.is_right = true;
             }),
         ),
