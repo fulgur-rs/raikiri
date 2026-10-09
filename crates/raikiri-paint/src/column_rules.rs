@@ -24,7 +24,7 @@ pub(crate) fn paint(scene: &mut impl PaintScene, rule: ColumnRule) {
     }
     let color = |color: CssColor| Color::from_rgba8(color.r, color.g, color.b, color.a);
     match rule.style {
-        BorderStyle::None | BorderStyle::Hidden => {}
+        BorderStyle::None | BorderStyle::Hidden => {} // cov:ignore: retained source rules require positive width; these styles compute to zero.
         BorderStyle::Double if width >= 3.0 => {
             for rect in [
                 Rect::new(x0, y0, x0 + width / 3.0, y1),

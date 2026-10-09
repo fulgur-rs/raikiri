@@ -1679,3 +1679,16 @@ fn radius_inheritance_substitution_retains_shorthand_type_before_expansion() {
         None
     );
 }
+
+#[test]
+fn column_rule_projection_rejects_unrelated_components() {
+    let mut input = ParserInput::new("2px solid blue");
+    let value = parse_value("column-rule", &mut Parser::new(&mut input)).unwrap();
+    assert!(project_deferred_value(value, PropertyKey::Color).is_none());
+    let mut input = ParserInput::new("inherit");
+    let value = parse_value("column-rule", &mut Parser::new(&mut input)).unwrap();
+    assert!(project_deferred_value(value, PropertyKey::ColumnRuleWidth).is_some());
+    let mut input = ParserInput::new("inherit");
+    let value = parse_value("column-rule", &mut Parser::new(&mut input)).unwrap();
+    assert!(project_deferred_value(value, PropertyKey::Color).is_none());
+}

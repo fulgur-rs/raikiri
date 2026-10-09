@@ -419,3 +419,24 @@ fn rule_occupancy_includes_non_text_block_boxes() {
         "<div style='position:absolute;left:49px;top:0;width:2px;height:20px;background:red'></div><div style='position:absolute;left:0;top:0;width:40px;height:20px;background:lime'></div><div style='position:absolute;left:60px;top:0;width:40px;height:20px;background:blue'></div>",
     );
 }
+
+#[test]
+fn transparent_rules_and_short_dashes_preserve_literal_native_pixels() {
+    compare(
+        "<div class=mc>A<br>B<br>C<br>D</div>",
+        ".mc{column-rule:2px solid transparent}",
+        "<div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:60px;top:0'>C<br>D</div>",
+    );
+    compare(
+        "<div class=mc><div style='height:2px;break-after:column'></div><div style='height:2px'></div></div>",
+        ".mc{height:2px;column-rule:2px dashed red}",
+        "<div style='position:absolute;left:49px;top:0;width:2px;height:2px;background:red'></div>",
+    );
+    assert_eq!(
+        raster(
+            "<div class=mc><div style='height:.4px;break-after:column'></div><div style='height:.4px'></div></div>",
+            ".mc{height:.4px;column-rule:2px solid red}",
+        ),
+        raster("", ""),
+    );
+}

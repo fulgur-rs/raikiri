@@ -18,6 +18,7 @@ fn column_rule_shorthand_and_longhands_keep_independent_winners() {
         "column-rule:2px solid red;column-rule-color:blue",
         "--rule:2px solid red;column-rule:var(--rule);column-rule-color:blue",
         "column-rule:2px solid red;--shade:blue;column-rule-color:var(--shade)",
+        "--rule:2px solid blue;column-rule:var(--rule)",
         "column-rule-width:9px;column-rule:2px solid blue",
     ] {
         let values = cascade_doc("", "div", Some(source));
@@ -110,4 +111,16 @@ fn variable_css_wide_shorthands_use_the_parent_computed_rule() {
         result.computed[child].column_rule,
         result.computed[parent].column_rule
     );
+}
+
+#[test]
+fn direct_column_rule_values_retain_every_component() {
+    let mut values = crate::specified::SpecifiedValues::initial();
+    let rule = crate::property::Border {
+        width: Length::Px(7.0),
+        style: BorderStyle::Double,
+        color: BorderColor::Resolved(BLUE),
+    };
+    apply_value(PropertyValue::ColumnRule(rule), &mut values);
+    assert_eq!(values.column_rule, rule);
 }

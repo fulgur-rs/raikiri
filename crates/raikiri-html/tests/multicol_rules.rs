@@ -276,3 +276,14 @@ fn rule_slices_keep_the_original_pattern_across_pages() {
         assert_eq!(rules[0].pattern_height, 260.0);
     }
 }
+
+#[test]
+fn hidden_or_off_page_rules_do_not_emit_public_commands() {
+    for style in ["visibility:hidden", "position:relative;top:160px"] {
+        let document = lay_out(
+            "<div class=mc>A<br>B<br>C<br>D</div>",
+            &format!(".mc{{height:40px;column-rule:2px solid red;{style}}}"),
+        );
+        assert!(rules(&document).is_empty());
+    }
+}

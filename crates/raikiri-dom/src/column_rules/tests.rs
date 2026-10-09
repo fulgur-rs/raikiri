@@ -45,3 +45,32 @@ fn retained_rule_work_is_bounded_before_publication() {
         Err(LayoutError::FragmentLimitExceeded { limit: 1 })
     ));
 }
+
+#[test]
+fn hidden_descendants_and_zero_height_containers_do_not_create_rules() {
+    for style in [
+        "height:0;width:100px;column-count:2;column-gap:20px;column-rule:2px solid red",
+        "width:100px;column-count:2;column-rule:none",
+    ] {
+        let (mut document, cascade, owner) = ahem_paragraph("A", style);
+        layout_single_page(&mut document, &cascade, PageBox::default()).unwrap();
+        assert!(!document.column_rules.contains_key(&owner));
+    }
+    let (mut document, _, owner) = ahem_paragraph(
+        "A\nB\nC\nD",
+        "width:100px;column-count:2;column-gap:20px;column-rule:2px solid red;orphans:1;widows:1",
+    );
+    document.append_element(
+        Some(owner),
+        "div",
+        taffy::Style::default(),
+        Some("display:none"),
+    );
+    let cascade =
+        raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
+    layout_single_page(&mut document, &cascade, PageBox::default()).unwrap();
+    assert_eq!(
+        document.column_rules[&owner],
+        [PaintRect::new(49.0, 0.0, 2.0, 20.0)]
+    );
+}
