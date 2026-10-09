@@ -359,8 +359,8 @@ fn cascade_from_candidates<D: StyleDom>(
         if idx >= opacity_specified.len() {
             continue; // cov:ignore: candidates only exist for walked nodes, all below node_count()
         }
-        for (value, ..) in candidates {
-            match value.key() {
+        for candidate in candidates {
+            match candidate.key {
                 PropertyKey::Opacity => opacity_specified[idx] = true,
                 PropertyKey::BackgroundColor => background_color_specified[idx] = true,
                 _ => {}

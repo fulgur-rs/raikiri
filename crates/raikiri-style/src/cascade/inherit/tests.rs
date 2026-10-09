@@ -6950,14 +6950,18 @@ fn resolve_inheritance_panics_when_root_parent_font_size_is_not_initial() {
 
 #[test]
 fn apply_winners_direct_border_radius_inherit() {
-    let candidates: Vec<CascadedDecl> = vec![(
-        PropertyValue::BorderRadiusInherit,
-        false,
-        Origin::Author,
-        0,
-        0,
-        crate::layer::LayerPosition::default(),
-    )];
+    // Expansion never yields this shorthand marker, so the candidate is built
+    // directly to reach `apply_winners`' arm for it.
+    let candidates: Vec<CascadedDecl> = vec![CascadedDecl {
+        value: PropertyValue::BorderRadiusInherit,
+        important: false,
+        origin: Origin::Author,
+        key: crate::property::PropertyKey::BorderRadius,
+        rollback: crate::cascade::rollback::Rollback::None,
+        specificity: 0,
+        source_order: 0,
+        layer: crate::layer::LayerPosition::default(),
+    }];
     let mut winners: Vec<Option<RankedDecl>> = Vec::new();
     let mut specified = SpecifiedValues::initial();
     let mut inherited = ComputedValues::initial();
@@ -6993,9 +6997,11 @@ fn apply_winners_direct_border_radius_inherit() {
 #[test]
 fn apply_winners_direct_page_value() {
     use crate::Atom;
-    let candidates: Vec<CascadedDecl> = vec![(
-        PropertyValue::Page(PageValue::Named(Atom::from("chapter"))),
-        false,
+    let candidates: Vec<CascadedDecl> = vec![CascadedDecl::new(
+        crate::rule::Declaration::new(
+            PropertyValue::Page(PageValue::Named(Atom::from("chapter"))),
+            false,
+        ),
         Origin::Author,
         0,
         0,

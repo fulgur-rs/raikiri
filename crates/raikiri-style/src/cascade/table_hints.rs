@@ -23,13 +23,10 @@
 use crate::property::{
     BorderCollapseValue, BorderSpacingValue, BorderStyle, Length, LengthOrAuto, PropertyValue,
 };
-use crate::ruletree::Origin;
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId};
 use std::collections::HashMap;
 
-use super::collect::{
-    CascadedDecl, PRESENTATIONAL_HINT_SOURCE_ORDER, PRESENTATIONAL_HINT_SPECIFICITY,
-};
+use super::collect::CascadedDecl;
 
 /// Pushes HTML table and column hints, including the containing table's cell padding.
 pub(crate) fn push_table_attribute_hints<D: StyleDom>(
@@ -44,16 +41,7 @@ pub(crate) fn push_table_attribute_hints<D: StyleDom>(
     if elem.namespace_uri().is_some() {
         return;
     }
-    let mut push = |value: PropertyValue| {
-        decls.push((
-            value,
-            false,
-            Origin::AuthorPresentationalHint,
-            PRESENTATIONAL_HINT_SPECIFICITY,
-            PRESENTATIONAL_HINT_SOURCE_ORDER,
-            crate::layer::LayerPosition::default(),
-        ));
-    };
+    let mut push = |value: PropertyValue| decls.push(CascadedDecl::hint(value));
     if elem.tag_name().eq_ignore_ascii_case("td") || elem.tag_name().eq_ignore_ascii_case("th") {
         for ancestor in ancestors.iter().rev() {
             if let Some(node) = dom.node(*ancestor)

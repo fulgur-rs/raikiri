@@ -1,4 +1,5 @@
 use crate::property::{Length, LengthOrAuto, PropertyValue};
+use crate::rule::Declaration;
 use crate::ruletree::Origin;
 use crate::style_dom::{
     StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind, StyleQuirksMode,
@@ -6,7 +7,6 @@ use crate::style_dom::{
 
 use super::collect::{
     CascadedDecl, MARGIN_COLLAPSING_QUIRK_SOURCE_ORDER, MARGIN_COLLAPSING_QUIRK_SPECIFICITY,
-    PRESENTATIONAL_HINT_SOURCE_ORDER, PRESENTATIONAL_HINT_SPECIFICITY,
 };
 
 /// Promote HTML `<img width>` / `<img height>` to presentational hints.
@@ -40,24 +40,14 @@ pub(crate) fn push_img_dimension_hints(elem: &impl StyleElement, decls: &mut Vec
         return;
     }
     if let Some(width) = elem.attr("width").and_then(parse_html_dimension_value) {
-        decls.push((
-            PropertyValue::Width(LengthOrAuto::Length(width)),
-            false,
-            Origin::AuthorPresentationalHint,
-            PRESENTATIONAL_HINT_SPECIFICITY,
-            PRESENTATIONAL_HINT_SOURCE_ORDER,
-            crate::layer::LayerPosition::default(),
-        ));
+        decls.push(CascadedDecl::hint(PropertyValue::Width(
+            LengthOrAuto::Length(width),
+        )));
     }
     if let Some(height) = elem.attr("height").and_then(parse_html_dimension_value) {
-        decls.push((
-            PropertyValue::Height(LengthOrAuto::Length(height)),
-            false,
-            Origin::AuthorPresentationalHint,
-            PRESENTATIONAL_HINT_SPECIFICITY,
-            PRESENTATIONAL_HINT_SOURCE_ORDER,
-            crate::layer::LayerPosition::default(),
-        ));
+        decls.push(CascadedDecl::hint(PropertyValue::Height(
+            LengthOrAuto::Length(height),
+        )));
     }
 }
 
@@ -354,25 +344,24 @@ pub(crate) fn push_margin_collapsing_quirk_declarations<D: StyleDom>(
         zero_end = true;
     }
 
-    if zero_start {
-        decls.push((
-            PropertyValue::MarginTop(LengthOrAuto::Length(Length::Px(0.0))),
-            false,
+    let quirk = |value| {
+        CascadedDecl::new(
+            Declaration::new(value, false),
             Origin::UserAgent,
             MARGIN_COLLAPSING_QUIRK_SPECIFICITY,
             MARGIN_COLLAPSING_QUIRK_SOURCE_ORDER,
             crate::layer::LayerPosition::default(),
-        ));
+        )
+    };
+    if zero_start {
+        decls.push(quirk(PropertyValue::MarginTop(LengthOrAuto::Length(
+            Length::Px(0.0),
+        ))));
     }
     if zero_end {
-        decls.push((
-            PropertyValue::MarginBottom(LengthOrAuto::Length(Length::Px(0.0))),
-            false,
-            Origin::UserAgent,
-            MARGIN_COLLAPSING_QUIRK_SPECIFICITY,
-            MARGIN_COLLAPSING_QUIRK_SOURCE_ORDER,
-            crate::layer::LayerPosition::default(),
-        ));
+        decls.push(quirk(PropertyValue::MarginBottom(LengthOrAuto::Length(
+            Length::Px(0.0),
+        ))));
     }
 }
 

@@ -2,14 +2,10 @@
 
 use cssparser::{Parser, ParserInput};
 
-use crate::layer::LayerPosition;
 use crate::property::{Length, LengthOrAuto, PropertyValue};
-use crate::ruletree::Origin;
 use crate::style_dom::StyleElement;
 
-use super::collect::{
-    CascadedDecl, PRESENTATIONAL_HINT_SOURCE_ORDER, PRESENTATIONAL_HINT_SPECIFICITY,
-};
+use super::collect::CascadedDecl;
 
 /// Add geometry and font sizing of a namespace-checked outermost SVG root.
 ///
@@ -28,28 +24,14 @@ pub(super) fn push_dimension_hints(elem: &impl StyleElement, decls: &mut Vec<Cas
         }) else {
             continue;
         };
-        decls.push((
-            value,
-            false,
-            Origin::AuthorPresentationalHint,
-            PRESENTATIONAL_HINT_SPECIFICITY,
-            PRESENTATIONAL_HINT_SOURCE_ORDER,
-            LayerPosition::default(),
-        ));
+        decls.push(CascadedDecl::hint(value));
     }
 }
 
 /// Add a SVG descendant's font-size presentation hint without geometry hints.
 pub(super) fn push_font_size_hint(elem: &impl StyleElement, decls: &mut Vec<CascadedDecl>) {
     if let Some(value) = elem.attr("font-size").and_then(parse_font_size) {
-        decls.push((
-            value,
-            false,
-            Origin::AuthorPresentationalHint,
-            PRESENTATIONAL_HINT_SPECIFICITY,
-            PRESENTATIONAL_HINT_SOURCE_ORDER,
-            LayerPosition::default(),
-        ));
+        decls.push(CascadedDecl::hint(value));
     }
 }
 
