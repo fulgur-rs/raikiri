@@ -482,18 +482,18 @@ fn overlapping_column_line_placements_keep_an_explicit_omission() {
             doc.nodes[root].ifc.as_mut().unwrap().multicol_fragments = None;
         } else {
             doc.fragment_tree.fragments[1].fragmentainer = 0;
-            doc.project_pages(
-                &cascade,
-                page_box_800x600(),
-                &[PageSlice {
-                    page_index: 0,
-                    content_origin_y: 0.0,
-                    page_name: None,
-                }],
-                &[],
-            )
-            .unwrap();
         }
+        doc.project_pages(
+            &cascade,
+            page_box_800x600(),
+            &[PageSlice {
+                page_index: 0,
+                content_origin_y: 0.0,
+                page_name: None,
+            }],
+            &[],
+        )
+        .unwrap();
         assert!(doc.page_text_runs(&cascade, 0).is_empty());
         assert_eq!(
             doc.omitted_text_run_roots(&cascade),
@@ -8924,4 +8924,66 @@ fn column_generated_eligibility_charges_its_ancestor_walk_once() {
             .count(),
         1
     );
+}
+
+#[test]
+fn unassigned_column_lines_have_no_glyphs_or_generated_decorations() {
+    let (mut doc, cascade) = projected_decoration_fixture(false);
+    let root = doc.page_text_runs(&cascade, 0)[0].line.root.0 as usize;
+    doc.nodes[root]
+        .ifc
+        .as_mut()
+        .unwrap()
+        .multicol_fragments
+        .as_mut()
+        .unwrap()
+        .retain(|range| range.fragmentainer == 1);
+    doc.project_pages(
+        &cascade,
+        page_box_800x600(),
+        &[PageSlice {
+            page_index: 0,
+            content_origin_y: 0.0,
+            page_name: None,
+        }],
+        &[],
+    )
+    .unwrap();
+    assert_eq!(
+        doc.page_text_runs(&cascade, 0)
+            .iter()
+            .map(|run| (run.text, run.origin))
+            .collect::<Vec<_>>(),
+        [("C", (60.0, 8.0)), ("D", (60.0, 18.0))]
+    );
+    assert!(
+        !doc.page_paint_order(&cascade, 0, None)
+            .iter()
+            .any(|event| matches!(event, crate::PaintEvent::GeneratedBox(_)))
+    );
+}
+
+#[test]
+fn marker_cache_preparation_obeys_each_work_budget_boundary() {
+    for limit in 0..=64 {
+        let (doc, cascade) = projected_decoration_fixture(true);
+        let root = doc.page_text_runs(&cascade, 0)[0].line.root.0 as usize;
+        let control = PageLayoutControl::default();
+        let mut work = column_projection::ProjectionWork::new(&control, limit);
+        let result =
+            column_projection::ParagraphProjection::prepare(&doc, &cascade, root, 0, &mut work);
+        if limit == 0 {
+            assert!(matches!(
+                result,
+                Err(LayoutError::FragmentLimitExceeded { limit: 0 })
+            ));
+        } else if limit == 64 {
+            assert!(result.is_ok());
+        }
+        match result {
+            Err(LayoutError::FragmentLimitExceeded { limit: actual }) => assert_eq!(actual, limit),
+            Ok(cache) => assert_eq!(cache.markers(Some(0)).len(), 1),
+            Err(error) => panic!("unexpected marker cache error: {error:?}"),
+        }
+    }
 }
