@@ -2578,7 +2578,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
     first_query.is_right = true;
     first_query.is_left = false;
     let mut default_cascade =
-        build_cascaded_with_media_context_for_page(&uncascaded, &media_context, &first_query);
+        build_cascaded_with_media_context_for_page(&uncascaded, &media_context, &first_query)?;
     if let Some(prepare) = prepare_cascade_images {
         prepare.prepare_cascade(&mut default_cascade);
     }
@@ -2746,8 +2746,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
             &fresh_tree,
             &media_context,
             &first_query,
-        )
-        .expect("cascade is always Ok");
+        )?; // cov:ignore: the first cascade of the same document, above, already returns a limit error
         if let Some(prepare) = prepare_cascade_images {
             prepare.prepare_cascade(&mut fresh_cascade);
         }

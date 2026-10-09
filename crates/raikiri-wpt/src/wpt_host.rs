@@ -269,7 +269,8 @@ impl DocumentHost for WptDocumentHost {
             &resolved,
             &self.setup.media_context,
             &self.setup.page_query,
-        );
+        )
+        .map_err(|error| HostError(error.to_string()))?;
         self.setup
             .uncascaded
             .dom

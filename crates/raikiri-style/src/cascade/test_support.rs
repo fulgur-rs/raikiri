@@ -13,10 +13,10 @@ use crate::style_dom::{StyleDom, StyleNode, StyleNodeId, StyleNodeKind};
 use crate::test_dom::TestDoc;
 
 use super::candidate::ElementInput;
-use super::cascade;
 use super::collect::Collector;
 use super::rule_index::AncestorFilter;
 use super::selector_match::MatchCaches;
+use super::{CascadeLimits, cascade};
 
 /// Collects the cascade input of every element directly under the document
 /// node of `doc`, in document order, as the cascade walk does for a document
@@ -29,8 +29,15 @@ pub(crate) fn collect_top_level<'a>(
     Collector<'a, 'a, TestDoc>,
     HashMap<StyleNodeId, ElementInput>,
 ) {
-    let mut collector =
-        Collector::new(doc, tree, &MediaContext::default(), caches).expect("the rule index builds");
+    let mut collector = Collector::new(
+        doc,
+        tree,
+        &MediaContext::default(),
+        caches,
+        &CascadeLimits::default(),
+        super::collect::STORED_BLOCK_BUDGET,
+    )
+    .expect("the rule index builds");
     let mut inputs = HashMap::new();
     let elements = doc.child_ids(doc.root_id()).filter(|&id| {
         doc.node(id)

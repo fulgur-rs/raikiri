@@ -274,7 +274,7 @@ fn suppressed_marker_images_preserve_the_shared_background_request_budget() {
         base_url: None,
     };
     let uncascaded = crate::parse(html.as_bytes(), &options).unwrap();
-    let cascade = crate::build_cascaded(&uncascaded);
+    let cascade = crate::build_cascaded(&uncascaded).expect("the cascade succeeds");
     let warnings = Arc::new(Mutex::new(Vec::new()));
     let mut seen = Default::default();
     let mut attempts = 0;
@@ -342,7 +342,7 @@ fn relative_inside_and_outside_marker_images_are_fetched_once_before_layout() {
     };
     let html = br#"<!doctype html><style>li {list-style:inside url(marker.svg)}</style><li>one</li><li>two</li><li style="list-style-image:none">text</li><li style="list-style-position:outside;list-style-image:url(outside.svg)">outside</li>"#;
     let mut uncascaded = crate::parse(&html[..], &options).expect("HTML parses");
-    let cascade = crate::build_cascaded(&uncascaded);
+    let cascade = crate::build_cascaded(&uncascaded).expect("the cascade succeeds");
     let warnings = Arc::new(Mutex::new(Vec::new()));
     resources.preload_list_marker_images(
         &cascade,
@@ -396,7 +396,7 @@ fn viewbox_only_svg_inside_marker_uses_one_em_default_size() {
     };
     let html = br#"<!doctype html><li style="font-size:16px;list-style:inside url('data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 10 10%22%3E%3Crect width=%2210%22 height=%2210%22 fill=%22green%22/%3E%3C/svg%3E')">one</li>"#;
     let mut uncascaded = crate::parse(&html[..], &options).unwrap();
-    let cascade = crate::build_cascaded(&uncascaded);
+    let cascade = crate::build_cascaded(&uncascaded).expect("the cascade succeeds");
     resources.preload_list_marker_images(
         &cascade,
         None,
@@ -438,7 +438,7 @@ fn preloads_an_absolute_svg_background_once_and_rasterizes_on_demand() {
     };
     let html = br#"<!doctype html><style>div { background-image: url("https://images.test/two-color.svg"); }</style><body><div></div><div></div></body>"#;
     let uncascaded = crate::parse(&html[..], &options).expect("HTML parses");
-    let cascade = crate::build_cascaded(&uncascaded);
+    let cascade = crate::build_cascaded(&uncascaded).expect("the cascade succeeds");
     let warnings = Arc::new(Mutex::new(Vec::new()));
     let mut seen = std::collections::HashSet::new();
     let mut attempts = 0;
@@ -497,7 +497,7 @@ fn data_svg_background_is_available_from_the_combined_source_without_network() {
         base_url: None,
     };
     let uncascaded = crate::parse(html.as_bytes(), &options).expect("HTML parses");
-    let cascade = crate::build_cascaded(&uncascaded);
+    let cascade = crate::build_cascaded(&uncascaded).expect("the cascade succeeds");
     let warnings = Arc::new(Mutex::new(Vec::new()));
     let mut seen = std::collections::HashSet::new();
     let mut attempts = 0;
@@ -1426,7 +1426,7 @@ fn svg_raster_timeout_returns_none_without_caching_raster() {
     };
     let html = br#"<!doctype html><style>div { background-image: url("https://images.test/raster-timeout.svg"); }</style><body><div></div></body>"#;
     let uncascaded = crate::parse(&html[..], &options).expect("HTML parses");
-    let cascade = crate::build_cascaded(&uncascaded);
+    let cascade = crate::build_cascaded(&uncascaded).expect("the cascade succeeds");
     let mut seen = std::collections::HashSet::new();
     let mut attempts = 0;
     resources.preload_background_images(&cascade, &warnings, &mut seen, &mut attempts, None);
@@ -1478,7 +1478,7 @@ fn preload_abort_breaks_without_provider_calls() {
     };
     let html = br#"<!doctype html><style>div { background-image: url("https://images.test/preload-abort.png"); }</style><body><div></div></body>"#;
     let uncascaded = crate::parse(&html[..], &options).expect("HTML parses");
-    let cascade = crate::build_cascaded(&uncascaded);
+    let cascade = crate::build_cascaded(&uncascaded).expect("the cascade succeeds");
     let controller = AbortController::new();
     controller.abort();
     let warnings = Arc::new(Mutex::new(Vec::new()));

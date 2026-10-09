@@ -267,7 +267,7 @@ fn cascade_into<D: StyleDom>(
             dump::cascade_result(out, inputs, &result);
             Some(result)
         }
-        // cov:ignore: the cascade documents that it currently always returns Ok; the arm keeps a future error visible as case output
+        // cov:ignore: no generated or corpus case passes the default cascade limits; the arm keeps an error visible as case output
         Err(error) => {
             out.push_str(&format!("ERR: {error:?}\n"));
             None

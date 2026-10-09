@@ -30,7 +30,7 @@ fn namespace_selectors_match_real_html_svg_and_mathml_elements() {
             },
         )
         .unwrap();
-        let result = build_cascaded(&doc);
+        let result = build_cascaded(&doc).expect("the cascade succeeds");
         for (name, matches) in ["html", "svg", "math"].into_iter().zip(expected) {
             let index = (0..doc.dom.node_count())
                 .find(|&index| {
@@ -85,7 +85,7 @@ fn paragraph_display(doc: &UncascadedDocument) -> raikiri_style::DisplayValue {
     let index = (0..doc.dom.node_count())
         .find(|&index| doc.dom.get_node(index).and_then(|node| node.tag_name()) == Some("p"))
         .unwrap();
-    build_cascaded(doc).computed[index].display
+    build_cascaded(doc).expect("the cascade succeeds").computed[index].display
 }
 
 #[test]
@@ -104,4 +104,40 @@ fn parsed_extra_layer_order_precedes_later_dom_user_stylesheets() {
         StylesheetKind::User,
     );
     assert_eq!(paragraph_display(&doc), raikiri_style::DisplayValue::Inline);
+}
+
+#[test]
+fn build_cascaded_with_options_reports_a_passed_limit() {
+    let doc = parsed_extra_stylesheet("p {display:block}");
+    let mut options = raikiri_style::CascadeOptions::default();
+    options.limits.max_selector_tests = Some(0);
+    let error = build_cascaded_with_options(
+        &doc,
+        &MediaContext::default(),
+        &PageContextQuery::default(),
+        &[],
+        &options,
+    )
+    .expect_err("every element is tested against the user agent's selectors");
+    assert!(
+        matches!(
+            error,
+            raikiri_style::CascadeError::LimitExceeded {
+                kind: raikiri_style::CascadeLimitKind::SelectorTests,
+                limit: 0,
+                ..
+            }
+        ),
+        "{error:?}"
+    );
+    options.limits.max_selector_tests = None;
+    let result = build_cascaded_with_options(
+        &doc,
+        &MediaContext::default(),
+        &PageContextQuery::default(),
+        &[],
+        &options,
+    )
+    .expect("no selector test limit");
+    assert_eq!(result.computed.len(), doc.dom.node_count());
 }

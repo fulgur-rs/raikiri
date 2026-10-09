@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::hash::Hash;
 use std::sync::Arc;
 
 use super::SvgStyleProperty;
@@ -35,9 +36,12 @@ use super::candidate::{
     Candidate, CustomCandidates, ElementCandidates, ElementInput, OwnedCandidates,
     SharedDeclarations,
 };
-use super::collect::{CASCADED_PSEUDO_ELEMENTS, Collector, RankedDecl, pick_winners};
+use super::collect::{
+    CASCADED_PSEUDO_ELEMENTS, Collector, RankedDecl, STORED_BLOCK_BUDGET, pick_winners,
+};
 use super::custom_property::{resolve_custom_properties, resolve_deferred_value};
 use super::first_line::first_line_property_applies;
+use super::limits::{CascadeLimits, ResultBudget, WalkCounts, bytes_of, exhausted, try_filled};
 use super::rule_index::AncestorFilter;
 use super::selector_match::MatchCaches;
 use crate::error::CascadeError;
@@ -60,6 +64,12 @@ pub(crate) const SHARE_RETENTION_BUDGET: usize = 8 << 20;
 
 /// Cleared inputs kept for reuse by the next nodes, at most this many.
 const SPARE_INPUTS: usize = 2 * SIBLING_SHARE_SLOTS;
+
+/// The inline bytes of one node's slots in the result's per-node vectors.
+const NODE_OUTPUT_BYTES: usize = std::mem::size_of::<ComputedValues>()
+    + std::mem::size_of::<Option<WritingMode>>()
+    + std::mem::size_of::<crate::property::PageValue>()
+    + 2 * std::mem::size_of::<bool>();
 
 /// A node this walk resolved, with the input it was resolved from. The input
 /// is boxed so that a share cache, of which a deep document has one per
@@ -215,7 +225,14 @@ pub(crate) struct WalkOptions {
     /// [`WalkOutputs::retained_subtree`].
     pub(crate) retain_subtree: Option<StyleNodeId>,
     /// The most the sharing sources may hold; see [`SHARE_RETENTION_BUDGET`].
+    /// Passing it only shares less, so it is not one of the `limits`.
     pub(crate) share_retention_budget: usize,
+    /// The most the stored `style`-attribute blocks may hold; see
+    /// [`STORED_BLOCK_BUDGET`]. Passing it only parses more, so it is not
+    /// one of the `limits` either.
+    pub(crate) stored_block_budget: usize,
+    /// Limits on the walk's work and on what its outputs hold.
+    pub(crate) limits: CascadeLimits,
 }
 
 impl Default for WalkOptions {
@@ -224,6 +241,8 @@ impl Default for WalkOptions {
             sibling_sharing: true,
             retain_subtree: None,
             share_retention_budget: SHARE_RETENTION_BUDGET,
+            stored_block_budget: STORED_BLOCK_BUDGET,
+            limits: CascadeLimits::default(),
         }
     }
 }
@@ -248,6 +267,39 @@ pub(crate) struct WalkOutputs {
     pub(crate) retained_subtree: HashMap<StyleNodeId, OwnedCandidates>,
     /// How many nodes copied their results from a sibling.
     pub(crate) shared_nodes: usize,
+    /// What the walk counted against [`WalkOptions::limits`].
+    pub(crate) counts: WalkCounts,
+}
+
+impl WalkOutputs {
+    /// Empty outputs with room for `node_count` nodes, counted against
+    /// `budget` before they are allocated. Kept out of [`walk_from`], whose
+    /// loop is the cascade's hot path.
+    #[inline(never)]
+    fn allocate(node_count: usize, budget: &mut ResultBudget) -> Result<Self, CascadeError> {
+        budget.output((node_count as u64).saturating_mul(NODE_OUTPUT_BYTES as u64))?;
+        // Reserve capacity only, rather than filling every slot with
+        // initial() up front: `ComputedValues` is large and cloning it is not
+        // cheap, and the walk overwrites almost every slot.
+        let mut computed = Vec::new();
+        computed
+            .try_reserve_exact(node_count)
+            .map_err(|_| exhausted::<ComputedValues>(node_count))?;
+        Ok(Self {
+            computed,
+            authored_writing_modes: try_filled(node_count, None)?,
+            page_values: try_filled(node_count, crate::property::PageValue::Auto)?,
+            pseudo: HashMap::new(),
+            svg_properties: HashMap::new(),
+            first_letter_inputs: HashMap::new(),
+            typographic_inheritance: HashMap::new(),
+            opacity_specified: try_filled(node_count, false)?,
+            background_color_specified: try_filled(node_count, false)?,
+            retained_subtree: HashMap::new(),
+            shared_nodes: 0,
+            counts: WalkCounts::default(),
+        })
+    }
 }
 
 /// Cascades the whole document: [`walk_from`] its root, which inherits the
@@ -341,11 +393,23 @@ pub(crate) fn walk<D: StyleDom>(
 /// sources (within [`WalkOptions::share_retention_budget`]), and what the options and the
 /// first-letter methods ask it to keep.
 ///
+/// # Limits
+///
+/// The walk counts its work and its outputs against [`WalkOptions::limits`]
+/// (see [`CascadeLimits`]): the collector counts each element's candidates
+/// and selector tests, and the walk counts the per-node outputs before
+/// allocating them, then every pseudo-element value, SVG property list and
+/// kept candidate copy as it adds it. A node that copies a sibling's results
+/// adds the same entries as resolving them would, so the counts do not depend
+/// on sharing.
+///
 /// # Errors
 ///
-/// Fails when the rule index cannot number the active rules, or a node's
-/// candidates or the candidates kept in the result cannot be numbered (see
-/// [`Collector::collect`] and [`OwnedCandidates::copy`]).
+/// Fails when the input passes one of [`WalkOptions::limits`], when the
+/// allocator refuses an output's buffer, or when the rule index cannot number
+/// the active rules or a node's candidates or the candidates kept in the
+/// result cannot be numbered (see [`Collector::collect`] and
+/// [`OwnedCandidates::copy`]).
 pub(crate) fn walk_from<D: StyleDom>(
     dom: &D,
     rule_tree: &RuleTree,
@@ -355,26 +419,19 @@ pub(crate) fn walk_from<D: StyleDom>(
     options: WalkOptions,
 ) -> Result<WalkOutputs, CascadeError> {
     let match_caches = MatchCaches::default();
-    let mut collector = Collector::new(dom, rule_tree, media_context, &match_caches)?;
+    let mut collector = Collector::new(
+        dom,
+        rule_tree,
+        media_context,
+        &match_caches,
+        &options.limits,
+        options.stored_block_budget,
+    )?; // cov:ignore: the error branch needs a u32 handle overflow
     // Recomputing first-line text only matters to the first-letter methods.
     let keep_typographic = collector.targets(PseudoElem::FirstLetter);
     let node_count = dom.node_count();
-    let mut out = WalkOutputs {
-        // Reserve capacity only, rather than filling every slot with
-        // initial() up front: `ComputedValues` is large and cloning it is not
-        // cheap, and the walk overwrites almost every slot.
-        computed: Vec::with_capacity(node_count),
-        authored_writing_modes: vec![None; node_count],
-        page_values: vec![crate::property::PageValue::Auto; node_count],
-        pseudo: HashMap::new(),
-        svg_properties: HashMap::new(),
-        first_letter_inputs: HashMap::new(),
-        typographic_inheritance: HashMap::new(),
-        opacity_specified: vec![false; node_count],
-        background_color_specified: vec![false; node_count],
-        retained_subtree: HashMap::new(),
-        shared_nodes: 0,
-    };
+    let mut budget = ResultBudget::new(&options.limits);
+    let mut out = WalkOutputs::allocate(node_count, &mut budget)?;
     let mut stack = vec![WalkEntry {
         id,
         parent: None,
@@ -483,13 +540,25 @@ pub(crate) fn walk_from<D: StyleDom>(
             if let Some(properties) = out.svg_properties.get(&source) {
                 node_svg_properties = properties.clone();
             }
+            // The pseudo-element and first-letter copies are counted as
+            // resolving the node would count its own entries, before they are
+            // made. The SVG property list, one entry per SVG paint property at
+            // most, is counted when it is added below, after it exists, as on
+            // the resolving path.
             for pseudo in CASCADED_PSEUDO_ELEMENTS {
-                if let Some(values) = out.pseudo.get(&(source, pseudo)).cloned() {
-                    out.pseudo.insert((id, pseudo), values);
+                if let Some(values) = out.pseudo.get(&(source, pseudo)) {
+                    budget.output(entry_bytes(&out.pseudo, 0))?;
+                    let values = values.clone();
+                    try_insert(&mut out.pseudo, (id, pseudo), values)?;
                 }
             }
-            if let Some(inputs) = out.first_letter_inputs.get(&source).cloned() {
-                out.first_letter_inputs.insert(id, inputs);
+            if let Some(inputs) = out.first_letter_inputs.get(&source) {
+                budget.retained(entry_bytes(
+                    &out.first_letter_inputs,
+                    inputs.candidates.bytes(),
+                ))?;
+                let inputs = inputs.clone();
+                try_insert(&mut out.first_letter_inputs, id, inputs)?;
             }
             let computed = out.computed[src].clone();
             let custom_properties = computed.custom_properties.clone();
@@ -671,20 +740,23 @@ pub(crate) fn walk_from<D: StyleDom>(
                     );
                     let mut pseudo_computed = pseudo_specified.finalize(&computed, &ctx);
                     if pseudo == PseudoElem::FirstLetter {
-                        out.first_letter_inputs.insert(
-                            id,
-                            super::first_letter::FirstLetterInputs {
-                                candidates: OwnedCandidates::copy(
-                                    candidates.unwrap_or(ElementCandidates::EMPTY),
-                                    custom_candidates.unwrap_or(CustomCandidates::EMPTY),
-                                )?, // cov:ignore: the error branch needs a u32 handle overflow
-                                context: ctx,
-                            },
-                        );
+                        let decls = candidates.unwrap_or(ElementCandidates::EMPTY);
+                        let custom = custom_candidates.unwrap_or(CustomCandidates::EMPTY);
+                        budget.retained(entry_bytes(
+                            &out.first_letter_inputs,
+                            OwnedCandidates::copy_bytes(decls, custom),
+                        ))?;
+                        let candidates = OwnedCandidates::copy(decls, custom)?; // cov:ignore: the error branch needs a u32 handle overflow
+                        let inputs = super::first_letter::FirstLetterInputs {
+                            candidates,
+                            context: ctx,
+                        };
+                        try_insert(&mut out.first_letter_inputs, id, inputs)?;
                     }
                     pseudo_computed.custom_properties = pseudo_custom_properties;
                     pseudo_computed.local_custom_properties = pseudo_local_custom_properties;
-                    out.pseudo.insert((id, pseudo), pseudo_computed);
+                    budget.output(entry_bytes(&out.pseudo, 0))?;
+                    try_insert(&mut out.pseudo, (id, pseudo), pseudo_computed)?;
                 }
             }
             (computed, custom_properties, child_ctx, id)
@@ -693,13 +765,16 @@ pub(crate) fn walk_from<D: StyleDom>(
         // Keep the candidates the options and the first-letter methods ask for.
         let has_first_line = out.pseudo.contains_key(&(id, PseudoElem::FirstLine));
         if keep_typographic && (in_first_line || has_first_line) {
-            keep_typographic_inputs(&input, id, shared, &mut out.typographic_inheritance)?;
+            keep_typographic_inputs(
+                &input,
+                id,
+                shared,
+                &mut out.typographic_inheritance,
+                &mut budget,
+            )?;
         }
         if in_retained_subtree && let (Some(candidates), _) = input.element(shared) {
-            out.retained_subtree.insert(
-                id,
-                OwnedCandidates::copy(candidates, CustomCandidates::EMPTY)?, // cov:ignore: the error branch needs a u32 handle overflow
-            );
+            keep_copy(&mut out.retained_subtree, id, candidates, &mut budget)?;
         }
         match (share_parent, root_ctx) {
             (Some(parent), Some(_)) if options.sibling_sharing && share_source.is_none() => {
@@ -709,7 +784,11 @@ pub(crate) fn walk_from<D: StyleDom>(
         }
 
         if !node_svg_properties.is_empty() {
-            out.svg_properties.insert(id, node_svg_properties);
+            budget.output(entry_bytes(
+                &out.svg_properties,
+                bytes_of::<SvgStyleProperty>(node_svg_properties.len()),
+            ))?;
+            try_insert(&mut out.svg_properties, id, node_svg_properties)?;
         }
 
         // `computed` may be shorter than node_count(): only capacity was
@@ -759,31 +838,64 @@ pub(crate) fn walk_from<D: StyleDom>(
     if out.first_letter_inputs.is_empty() {
         out.typographic_inheritance.clear();
     }
+    collector.count_into(&mut out.counts);
+    budget.count_into(&mut out.counts);
     Ok(out)
 }
 
 /// Keeps copies of `id`'s candidates, and of those of its `::before`,
-/// `::after` and `::first-line`, for recomputing first-line text later.
+/// `::after` and `::first-line`, for recomputing first-line text later,
+/// counting them against `budget`.
 fn keep_typographic_inputs(
     input: &ElementInput,
     id: StyleNodeId,
     shared: SharedDeclarations<'_>,
     kept: &mut HashMap<(StyleNodeId, Option<PseudoElem>), OwnedCandidates>,
+    budget: &mut ResultBudget,
 ) -> Result<(), CascadeError> {
     if let (Some(candidates), _) = input.element(shared) {
-        kept.insert(
-            (id, None),
-            OwnedCandidates::copy(candidates, CustomCandidates::EMPTY)?, // cov:ignore: the error branch needs a u32 handle overflow
-        );
+        keep_copy(kept, (id, None), candidates, budget)?;
     }
     for pseudo in [PseudoElem::Before, PseudoElem::After, PseudoElem::FirstLine] {
         if let (Some(candidates), _) = input.pseudo(pseudo, shared) {
-            kept.insert(
-                (id, Some(pseudo)),
-                OwnedCandidates::copy(candidates, CustomCandidates::EMPTY)?, // cov:ignore: the error branch needs a u32 handle overflow
-            );
+            keep_copy(kept, (id, Some(pseudo)), candidates, budget)?;
         }
     }
+    Ok(())
+}
+
+/// Keeps a copy of `candidates` in `kept`, counting it against `budget`
+/// before making it.
+fn keep_copy<K: Eq + Hash>(
+    kept: &mut HashMap<K, OwnedCandidates>,
+    key: K,
+    candidates: ElementCandidates<'_>,
+    budget: &mut ResultBudget,
+) -> Result<(), CascadeError> {
+    budget.retained(entry_bytes(
+        kept,
+        OwnedCandidates::copy_bytes(candidates, CustomCandidates::EMPTY),
+    ))?;
+    let candidates = OwnedCandidates::copy(candidates, CustomCandidates::EMPTY)?; // cov:ignore: the error branch needs a u32 handle overflow
+    try_insert(kept, key, candidates)
+}
+
+/// The bytes one more entry of `map` adds to the result: its inline size and
+/// the `heap` bytes its value brings. The walk adds each key of an output map
+/// once, so no entry is counted twice.
+fn entry_bytes<K, V>(_map: &HashMap<K, V>, heap: u64) -> u64 {
+    bytes_of::<(K, V)>(1).saturating_add(heap)
+}
+
+/// Inserts into `map`, failing instead when the allocator refuses to grow it.
+fn try_insert<K: Eq + Hash, V>(
+    map: &mut HashMap<K, V>,
+    key: K,
+    value: V,
+) -> Result<(), CascadeError> {
+    map.try_reserve(1)
+        .map_err(|_| exhausted::<(K, V)>(map.len().saturating_add(1)))?;
+    map.insert(key, value);
     Ok(())
 }
 

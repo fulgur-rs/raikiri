@@ -7,7 +7,7 @@ fn hello_world_doc() -> HtmlDocument {
         base_url: None,
     };
     let uncascaded = crate::parse(&b"<p>Hi</p>"[..], &opts).expect("parse");
-    let cascade = build_cascaded(&uncascaded);
+    let cascade = build_cascaded(&uncascaded).expect("the cascade succeeds");
     // Construct internal fields directly (pub(crate) fields are accessible in crate-internal tests).
     HtmlDocument {
         uncascaded,
@@ -27,7 +27,8 @@ fn consumer_property_cascade_wrapper_accepts_registration() {
     let uncascaded =
         crate::parse(&b"<p style=\"bookmark-level: 4\">Hi</p>"[..], &opts).expect("parse");
     let registrations = [ConsumerPropertyRegistration::integer("bookmark-level")];
-    let cascade = build_cascaded_with_consumer_properties(&uncascaded, &registrations);
+    let cascade = build_cascaded_with_consumer_properties(&uncascaded, &registrations)
+        .expect("the cascade succeeds");
     assert!(!cascade.computed.is_empty());
 }
 

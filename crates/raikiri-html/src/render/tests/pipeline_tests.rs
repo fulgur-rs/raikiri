@@ -180,6 +180,39 @@ fn pipeline_rejects_excess_pages_from_break_after() {
 }
 
 #[test]
+fn pipeline_reports_a_passed_cascade_limit() {
+    let doc = parse("<div>styled by the user agent</div>");
+    let config = LayoutConfig::builder()
+        .limits(
+            raikiri_traits::RenderLimits::builder()
+                .max_cascade_declarations(Some(0))
+                .build(),
+        )
+        .build();
+
+    let result = run_pipeline(
+        &doc,
+        PageDefaults::default(),
+        &config,
+        PipelineInputs {
+            resources: None,
+            consumer_properties: &[],
+            property_observer: None,
+            preload_background_images: true,
+        },
+    );
+
+    assert!(matches!(
+        result,
+        Err(RenderError::LimitExceeded {
+            kind: raikiri_traits::LimitKind::CascadeDeclarations,
+            limit: 0,
+            actual: 1..,
+        })
+    ));
+}
+
+#[test]
 fn pipeline_rejects_a_zero_page_limit_before_layout() {
     let doc = parse("<div>one page is still an excess</div>");
     let config = LayoutConfig::builder()
@@ -758,7 +791,7 @@ fn pipeline_resolves_a_named_first_page_from_the_first_page_cascade() {
     query.is_first = true;
     query.is_right = true;
     query.page_name = Some(Atom::from("cover"));
-    let full = cascade_with_media_context_for_page(
+    let full = raikiri_style::cascade_with_media_context_for_page(
         &doc.uncascaded.dom,
         &tree,
         &LayoutConfig::default().media_context,

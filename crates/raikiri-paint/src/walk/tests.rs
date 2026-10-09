@@ -1132,7 +1132,7 @@ fn transform_markup_scene(markup: &str) -> Scene {
         },
     )
     .unwrap();
-    let cascade = raikiri_html::build_cascaded(&parsed);
+    let cascade = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
     raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4)
@@ -1417,7 +1417,7 @@ fn replaced_inline_image_composes_own_and_ancestor_transform() {
         }
     }
     let mut parsed = raikiri_html::parse("<body style='margin:0'><div style='transform:scale(2);transform-origin:0 0'><img src='https://example.test/green.png' style='width:10px;height:10px;transform:scale(3);transform-origin:0 0'></div>".as_bytes(), &raikiri_html::ParseOptions { extra_stylesheets: &[], network: None, base_url: None }).unwrap();
-    let cascade = raikiri_html::build_cascaded(&parsed);
+    let cascade = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
     raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
     let warnings = crate::paint_single_page_with_images_and_warnings(
@@ -3317,7 +3317,7 @@ fn canvas_bitmap_paints_with_object_fit_fill() {
     parsed
         .dom
         .canvas_fill_rect(canvas, 0, 0, 2, 2, [255, 0, 0, 255]);
-    let cascade = raikiri_html::build_cascaded(&parsed);
+    let cascade = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
     raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4)
@@ -3363,7 +3363,7 @@ fn paint_unmaterialized_large_canvas_without_image_pixels() {
     };
     assert!(parsed.dom.canvas_bitmap(canvas).is_none());
 
-    let cascade = raikiri_html::build_cascaded(&parsed);
+    let cascade = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
     raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4)
@@ -3413,7 +3413,7 @@ fn canvas_overflow_visible_shows_bitmap_beyond_content_box() {
     parsed
         .dom
         .canvas_fill_rect(canvas, 25, 50, 25, 50, [255, 255, 0, 255]);
-    let cascade = raikiri_html::build_cascaded(&parsed);
+    let cascade = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
     raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4)
@@ -3454,7 +3454,7 @@ fn canvas_blank_hidden_and_zero_sizes_paint_nothing() {
         },
     )
     .unwrap();
-    let cascade = raikiri_html::build_cascaded(&parsed);
+    let cascade = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
     raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4)
@@ -3497,7 +3497,7 @@ fn canvas_blank_hidden_and_zero_sizes_paint_nothing() {
     parsed
         .dom
         .canvas_fill_rect(canvas, 0, 0, 2, 2, [255, 0, 0, 255]);
-    let cascade = raikiri_html::build_cascaded(&parsed);
+    let cascade = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
     raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4)
@@ -3539,7 +3539,7 @@ fn canvas_object_fit_variants_all_paint() {
         parsed
             .dom
             .canvas_fill_rect(canvas, 0, 0, 4, 2, [255, 0, 0, 255]);
-        let cascade = raikiri_html::build_cascaded(&parsed);
+        let cascade = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
         raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
         let mut scene = Scene::new();
         crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4)
@@ -3582,7 +3582,7 @@ fn canvas_hidden_overflow_clips_to_content_box() {
     parsed
         .dom
         .canvas_fill_rect(canvas, 0, 0, 4, 4, [255, 0, 0, 255]);
-    let cascade = raikiri_html::build_cascaded(&parsed);
+    let cascade = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
     raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4)
@@ -3608,7 +3608,7 @@ fn canvas_zero_bitmap_size_paints_nothing() {
         },
     )
     .unwrap();
-    let cascade = raikiri_html::build_cascaded(&parsed);
+    let cascade = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
     raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4)
@@ -5087,7 +5087,7 @@ fn review_replaced_canvas_paints_its_monolithic_content_once() {
     parsed
         .dom
         .canvas_fill_rect(canvas, 0, 75, 20, 75, [0, 128, 0, 255]);
-    let cascade = raikiri_html::build_cascaded(&parsed);
+    let cascade = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
     raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
     let mut scene = Scene::new();
     crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4).unwrap();
@@ -5320,7 +5320,7 @@ fn review_float_text_ink_keeps_joint_exclusion_when_a_break_constraint_is_added(
         parsed
             .dom
             .set_font_collection_with_limits(fonts, shodo::limits::Limits::default());
-        let cascade = raikiri_html::build_cascaded(&parsed);
+        let cascade = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
         raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
         let mut scene = Scene::new();
         crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4).unwrap();
@@ -5371,7 +5371,7 @@ fn review_full_width_float_keeps_displaced_text_ink_when_avoidance_is_added() {
         parsed
             .dom
             .set_font_collection_with_limits(fonts, shodo::limits::Limits::default());
-        let cascade = raikiri_html::build_cascaded(&parsed);
+        let cascade = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
         raikiri_dom::layout_single_page(&mut parsed.dom, &cascade, PageBox::A4).unwrap();
         let mut scene = Scene::new();
         crate::paint_single_page(&mut scene, &parsed.dom, &cascade, PageBox::A4).unwrap();
@@ -5411,7 +5411,7 @@ fn review_body_page_buffers(body_style: &str, content: &str) -> Vec<Vec<u8>> {
         },
     )
     .unwrap();
-    let cascade = raikiri_html::build_cascaded(&parsed);
+    let cascade = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
     let mut page = PageBox::new();
     page.width = 100.0;
     page.height = 100.0;

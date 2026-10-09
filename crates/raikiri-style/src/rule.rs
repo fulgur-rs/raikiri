@@ -563,14 +563,29 @@ pub(crate) fn parse_declaration_block_with_consumer_properties(
     input: &mut Parser<'_, '_>,
     consumer_properties: &[ConsumerPropertyRegistration],
 ) -> Vec<Declaration> {
+    // No block expands to more than `usize::MAX` declarations.
+    parse_declaration_block_within(input, consumer_properties, usize::MAX).unwrap_or_default()
+}
+
+/// [`parse_declaration_block_with_consumer_properties`], stopping as soon as
+/// the expanded declarations number more than `room`: the error is how many
+/// there were then, so that a huge block is never expanded in full.
+pub(crate) fn parse_declaration_block_within(
+    input: &mut Parser<'_, '_>,
+    consumer_properties: &[ConsumerPropertyRegistration],
+    room: usize,
+) -> Result<Vec<Declaration>, usize> {
     let mut parser = DeclParser {
         consumer_properties,
     };
     let mut out = Vec::new();
     for decl in RuleBodyParser::new(input, &mut parser).flatten() {
         expand_shorthand_into(&decl, |d| out.push(d));
+        if out.len() > room {
+            return Err(out.len());
+        }
     }
-    out
+    Ok(out)
 }
 
 /// Expand a shorthand declaration into the longhand declarations it represents.

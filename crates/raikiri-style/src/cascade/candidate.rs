@@ -25,6 +25,7 @@ use super::collect::{
     CASCADED_PSEUDO_ELEMENTS, PRESENTATIONAL_HINT_SOURCE_ORDER, PRESENTATIONAL_HINT_SPECIFICITY,
     RankedDecl, Specificity, cascade_rank,
 };
+use super::limits::{CandidateBudget, bytes_of};
 use super::rollback::{Rollback, rollback_kind};
 use super::rule_index::IndexedRule;
 
@@ -313,24 +314,31 @@ fn same_value(
         || a_source.declaration(a).value == b_source.declaration(b).value
 }
 
-/// Collects one element's candidates. The order of the pushes is the order
-/// that decides ties between equal precedence, which winner selection and
-/// the shorthand-longhand settling after it depend on.
+/// Collects one element's candidates, and those of its pseudo-elements. The
+/// order of the pushes is the order that decides ties between equal
+/// precedence, which winner selection and the shorthand-longhand settling
+/// after it depend on.
+///
+/// Every push is counted against the cascade's [`CandidateBudget`] before
+/// anything is added, so no candidate list grows past a limit.
 pub(crate) struct CandidateSink<'a> {
     decls: &'a mut Vec<Candidate>,
     custom: &'a mut Vec<CustomCandidate>,
     locals: &'a mut Vec<Declaration>,
     /// Position in `locals` of the element's first own declaration.
     local_start: usize,
+    budget: &'a mut CandidateBudget,
 }
 
 impl<'a> CandidateSink<'a> {
-    /// Collects into these vectors. The element's own declarations are
-    /// appended to `locals` and numbered from its current end.
+    /// Collects into these vectors, counting against `budget`. The element's
+    /// own declarations are appended to `locals` and numbered from its
+    /// current end.
     pub(crate) fn new(
         decls: &'a mut Vec<Candidate>,
         custom: &'a mut Vec<CustomCandidate>,
         locals: &'a mut Vec<Declaration>,
+        budget: &'a mut CandidateBudget,
     ) -> Self {
         let local_start = locals.len();
         Self {
@@ -338,37 +346,93 @@ impl<'a> CandidateSink<'a> {
             custom,
             locals,
             local_start,
+            budget,
         }
+    }
+
+    /// How many more candidates the element may collect.
+    pub(crate) fn room(&self) -> usize {
+        self.budget.room()
+    }
+
+    /// The error for `count` more candidates of the element, more than
+    /// [`Self::room`].
+    pub(crate) fn past_room(&self, count: usize) -> CascadeError {
+        self.budget.past_room(count)
     }
 
     /// Adds a candidate for every declaration of the active rule at position
     /// `rule` of `rules`; see [`push_rule_candidates`].
+    ///
+    /// # Errors
+    ///
+    /// Fails, adding nothing, when the declarations would pass a candidate
+    /// limit.
+    #[inline]
     pub(crate) fn push_rule(
         &mut self,
         rules: &[IndexedRule<'_>],
         rule: u32,
         precedence: impl Fn(&Declaration) -> Precedence,
-    ) {
+    ) -> Result<(), CascadeError> {
+        let declarations = rules[rule as usize].declarations;
+        self.budget.charge(declarations.len())?;
         push_rule_candidates(
             (&mut *self.decls, &mut *self.custom),
-            rules,
             rule,
+            declarations,
             precedence,
         );
+        Ok(())
+    }
+
+    /// Adds a candidate to `pseudo`, one of the element's pseudo-elements, for
+    /// every declaration of the active rule at position `rule` of `rules`;
+    /// see [`push_rule_candidates`]. The element and its pseudo-elements
+    /// share one candidate budget.
+    ///
+    /// # Errors
+    ///
+    /// Fails, adding nothing, when the declarations would pass a candidate
+    /// limit.
+    #[inline]
+    pub(crate) fn push_pseudo_rule(
+        &mut self,
+        pseudo: &mut PseudoInput,
+        rules: &[IndexedRule<'_>],
+        rule: u32,
+        precedence: impl Fn(&Declaration) -> Precedence,
+    ) -> Result<(), CascadeError> {
+        let declarations = rules[rule as usize].declarations;
+        self.budget.charge(declarations.len())?;
+        push_rule_candidates(
+            (&mut pseudo.decls, &mut pseudo.custom),
+            rule,
+            declarations,
+            precedence,
+        );
+        Ok(())
     }
 
     /// Adds a candidate for every declaration of the stored `style`-attribute
     /// block at position `block` of `blocks`, with the precedence `precedence`
     /// gives it.
+    ///
+    /// # Errors
+    ///
+    /// Fails, adding nothing, when the declarations would pass a candidate
+    /// limit.
     pub(crate) fn push_cached(
         &mut self,
         blocks: &[Box<[Declaration]>],
         block: u32,
         precedence: impl Fn(&Declaration) -> Precedence,
-    ) {
+    ) -> Result<(), CascadeError> {
+        let declarations = &blocks[block as usize];
+        self.budget.charge(declarations.len())?;
         // The cache checked that every position in a stored block fits in
         // `u32` when it stored the block.
-        for (decl, index) in blocks[block as usize].iter().zip(0u32..) {
+        for (decl, index) in declarations.iter().zip(0u32..) {
             push_candidate(
                 (&mut *self.decls, &mut *self.custom),
                 ValueRef::Cached { block, decl: index },
@@ -376,10 +440,17 @@ impl<'a> CandidateSink<'a> {
                 precedence(decl),
             );
         }
+        Ok(())
     }
 
     /// Adds a declaration of the element's own, moved when owned and cloned
     /// when borrowed.
+    ///
+    /// # Errors
+    ///
+    /// Fails, adding nothing, when the declaration would pass a candidate
+    /// limit or the element has more own declarations than a local handle
+    /// can number.
     pub(crate) fn push_local(
         &mut self,
         decl: Cow<'_, Declaration>,
@@ -387,6 +458,7 @@ impl<'a> CandidateSink<'a> {
     ) -> Result<(), CascadeError> {
         let index = u32::try_from(self.locals.len() - self.local_start)
             .map_err(|_| too_many("own declarations of one element"))?;
+        self.budget.charge(1)?;
         push_candidate(
             (&mut *self.decls, &mut *self.custom),
             ValueRef::Local(index),
@@ -421,19 +493,17 @@ pub(crate) fn too_many(what: &str) -> CascadeError {
     }
 }
 
-/// Adds a candidate for every declaration of the active rule at position
-/// `rule` of `rules`, with the precedence `precedence` gives it, to `custom`
-/// when it declares a custom property and to `decls` otherwise. The
-/// pseudo-element pass, whose candidates have no declarations of their own,
-/// collects with this directly.
-pub(crate) fn push_rule_candidates(
+/// Adds a candidate for every one of `declarations`, those of the active rule
+/// at position `rule`, with the precedence `precedence` gives it, to `custom`
+/// when it declares a custom property and to `decls` otherwise.
+fn push_rule_candidates(
     (decls, custom): (&mut Vec<Candidate>, &mut Vec<CustomCandidate>),
-    rules: &[IndexedRule<'_>],
     rule: u32,
+    declarations: &[Declaration],
     precedence: impl Fn(&Declaration) -> Precedence,
 ) {
     // `RuleIndex::new` checked that every position fits in `u32`.
-    for (decl, index) in rules[rule as usize].declarations.iter().zip(0u32..) {
+    for (decl, index) in declarations.iter().zip(0u32..) {
         push_candidate(
             (&mut *decls, &mut *custom),
             ValueRef::Rule { rule, decl: index },
@@ -530,19 +600,12 @@ pub(crate) struct ElementInput {
     pseudo: [PseudoInput; CASCADED_PSEUDO_ELEMENTS.len()],
 }
 
-/// The candidates of one pseudo-element of an element.
+/// The candidates of one pseudo-element of an element, which
+/// [`CandidateSink::push_pseudo_rule`] adds.
 #[derive(Default)]
 pub(crate) struct PseudoInput {
     decls: Vec<Candidate>,
     custom: Vec<CustomCandidate>,
-}
-
-impl PseudoInput {
-    /// The candidate lists rule declarations for this pseudo-element go to;
-    /// see [`push_rule_candidates`].
-    pub(crate) fn lists(&mut self) -> (&mut Vec<Candidate>, &mut Vec<CustomCandidate>) {
-        (&mut self.decls, &mut self.custom)
-    }
 }
 
 impl ElementInput {
@@ -558,16 +621,19 @@ impl ElementInput {
     }
 
     /// A sink for the element's own candidates, and the pseudo-elements'
-    /// inputs, for collecting into this empty input.
-    pub(crate) fn parts(
-        &mut self,
+    /// inputs, for collecting into this empty input. `budget` starts counting
+    /// the element's candidates from zero.
+    pub(crate) fn parts<'a>(
+        &'a mut self,
+        budget: &'a mut CandidateBudget,
     ) -> (
-        CandidateSink<'_>,
-        &mut [PseudoInput; CASCADED_PSEUDO_ELEMENTS.len()],
+        CandidateSink<'a>,
+        &'a mut [PseudoInput; CASCADED_PSEUDO_ELEMENTS.len()],
     ) {
         debug_assert!(self.is_empty(), "collection starts from an empty input");
+        budget.start_element();
         (
-            CandidateSink::new(&mut self.decls, &mut self.custom, &mut self.local),
+            CandidateSink::new(&mut self.decls, &mut self.custom, &mut self.local, budget),
             &mut self.pseudo,
         )
     }
@@ -664,13 +730,20 @@ pub(crate) struct OwnedCandidates {
 
 impl OwnedCandidates {
     /// Copies `decls` and `custom`, in their order, with the declarations
-    /// they refer to.
+    /// they refer to. The candidates were counted against the candidate
+    /// limits when they were collected, so copying them is not.
     pub(crate) fn copy(
         decls: ElementCandidates<'_>,
         custom: CustomCandidates<'_>,
     ) -> Result<Self, CascadeError> {
         let mut owned = Self::default();
-        let mut sink = CandidateSink::new(&mut owned.decls, &mut owned.custom, &mut owned.local);
+        let mut budget = CandidateBudget::unlimited();
+        let mut sink = CandidateSink::new(
+            &mut owned.decls,
+            &mut owned.custom,
+            &mut owned.local,
+            &mut budget,
+        );
         for candidate in decls.decls {
             sink.push_local(
                 Cow::Borrowed(decls.source.declaration(candidate.value)),
@@ -683,6 +756,7 @@ impl OwnedCandidates {
                 candidate.precedence,
             )?; // cov:ignore: the error branch needs a u32 handle overflow
         }
+        debug_assert_eq!(owned.bytes(), Self::copy_bytes(decls, custom));
         Ok(owned)
     }
 
@@ -693,12 +767,38 @@ impl OwnedCandidates {
         declarations: impl IntoIterator<Item = (Declaration, Precedence)>,
     ) -> Self {
         let mut owned = Self::default();
-        let mut sink = CandidateSink::new(&mut owned.decls, &mut owned.custom, &mut owned.local);
+        let mut budget = CandidateBudget::unlimited();
+        let mut sink = CandidateSink::new(
+            &mut owned.decls,
+            &mut owned.custom,
+            &mut owned.local,
+            &mut budget,
+        );
         for (decl, precedence) in declarations {
             sink.push_local(Cow::Owned(decl), precedence)
                 .expect("a test pushes few declarations");
         }
         owned
+    }
+
+    /// The inline bytes of the copied records: the declarations, which a
+    /// result keeping these candidates holds, and the candidates referring
+    /// to them. Counted by length, so equal copies count the same.
+    pub(crate) fn bytes(&self) -> u64 {
+        Self::bytes_for(self.decls.len(), self.custom.len())
+    }
+
+    /// The [`Self::bytes`] of the copy [`Self::copy`] makes of `decls` and
+    /// `custom`, known before copying them.
+    pub(crate) fn copy_bytes(decls: ElementCandidates<'_>, custom: CustomCandidates<'_>) -> u64 {
+        Self::bytes_for(decls.decls.len(), custom.decls.len())
+    }
+
+    /// Every copied candidate brings its own declaration.
+    fn bytes_for(decls: usize, custom: usize) -> u64 {
+        bytes_of::<Declaration>(decls.saturating_add(custom))
+            .saturating_add(bytes_of::<Candidate>(decls))
+            .saturating_add(bytes_of::<CustomCandidate>(custom))
     }
 
     pub(crate) fn candidates(&self) -> ElementCandidates<'_> {
