@@ -99,7 +99,7 @@ rustdoc は intra-doc link 記法しか解決検証しないため。
    (`--document-private-items`) でしか enforce されないなら本項の `mod@` 代替に倒す」。
    判定 command は上の「わざと壊して確かめる」手順そのまま (対象 item を 1 つだけ
    private に戻し、gate command で red になるかを見る) — 追加の道具は要らない。
-   gate §8.1 の doc build には `--document-private-items` を足していないため、
+   `scripts/gate.sh` の doc build には `--document-private-items` を足していないため、
    補助 command でしか検証されない widening は検証利得ゼロで visibility 拡大だけが
    残る (足していない理由は後述「既知の限界」参照)。
 4. **同じ scope に同名の item がある module は `mod@` を付ける。** `raikiri-style` では
@@ -112,7 +112,7 @@ rustdoc は intra-doc link 記法しか解決検証しないため。
 
 ### ⚠️ 「link 化した = 検証された」ではない
 
-gate `§8.1` の `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace` が検証するのは
+`scripts/gate.sh` の `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace` が検証するのは
 **rustdoc が document する doc に書かれた link だけ**である。**どの位置が検証されるかは
 source の見た目から予測できない。**
 
@@ -205,7 +205,7 @@ RUSTDOCFLAGS="-D warnings --cfg test" cargo doc --no-deps --document-private-ite
   **実行方法**: `scripts/doc-pointer-lint.sh` (追加で `-v` で全 occurrence を
   列挙、`--print-count` で ratchet 対象件数だけを出力してbaseline再生成に使う)。
   exit 0 = 両 role とも pass、1 = いずれか fail、2 = baseline file が
-  読めない等の tooling error。**gate §8.1 / `scripts/gate.sh` への統合はしていない**
+  読めない等の tooling error。**`scripts/gate.sh` への統合はしていない**
   — 本 checker は standalone。
 
   **opt-out 3 (rustdoc に拾われない位置) は本 checker では静的判定できない**。
@@ -218,13 +218,35 @@ RUSTDOCFLAGS="-D warnings --cfg test" cargo doc --no-deps --document-private-ite
 - **toolchain 依存がある。** intra-doc link の解決は rustc version で変わる。
   `rust-toolchain.toml` の pin では出ない unresolved link が新しい toolchain では
   出る実例があるため、toolchain bump 時は本節の command を再走させること。
-- **gate §8.1 の doc build は private / pub(crate) item の doc link を検証しない。**
-  `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace` (gate §8.1 が走らせる
+- **`scripts/gate.sh` の doc build は private / pub(crate) item の doc link を検証しない。**
+  `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --workspace` (`scripts/gate.sh` が走らせる
   既定 command) は `--document-private-items` を付けないため、public item の doc
   comment 内の link しか解決しない。**意図的に gate には追加していない** — doc
   build 時間の増加と missing_docs 相当の露出面拡大というコストが、未検証リスクに
   見合わないという判断。private / pub(crate) item の doc link を検証したい場合は、
   上の「わざと壊して確かめる」節の 2 本の補助 command を個別に走らせること。
+
+## 反復中は `scripts/affected.sh`、gate は merge 前に 1 回
+
+`scripts/gate.sh` は workspace 全体を test / clippy / doc / coverage 計装の複数構成で
+build する。同一マシンで複数 worktree が並走すると CPU・メモリ・disk を奪い合い、
+1 本あたりの時間が並列数に比例して伸びる。**編集 → 確認の反復で gate を回さない**こと。
+
+- **反復中 (inner loop)**: `scripts/affected.sh`。merge-base からの差分 (未 commit・
+  untracked 含む) を含む crate と、その library に依存する crate だけを `cargo clippy -p`
+  / `cargo test -p` する。dev-dependency 経由で届いた crate は test だけが影響を受ける
+  ため選択はするが、そこから先へは伝播させない。
+  - `--direct`: 変更を含む crate だけ (逆依存を展開しない)。最速の確認用。
+  - `--list`: 選択結果だけ表示して build しない。
+  - `raikiri-net` / `raikiri-wpt` が選ばれると loopback test を含むため、下の
+    「loopback を使う Rust test は sandbox 外で実行する」節に従う。
+  - root の `Cargo.toml` / `Cargo.lock` / `.cargo/` / `rust-toolchain*` の変更は
+    workspace 全体を選ぶ。`scripts/` など crate 外の変更は何も選ばない。
+- **merge 前**: `scripts/gate.sh` を **1 回**。coverage 有効時は test suite を
+  cargo-llvm-cov 計装下で 1 回だけ走らせ、その profile を patch coverage にも使う
+  (plain `cargo test` との二重実行はしない)。このため **未 commit の `*.rs` 変更が
+  あると build 前に FAIL する** — commit してから回す。
+- `affected.sh` の PASS は gate の代わりにならない。merge 前の検証結果としては扱わないこと。
 
 ## loopback を使う Rust test は sandbox 外で実行する
 
@@ -288,7 +310,7 @@ inline test は分離する、新規ファイルは最初から `tests.rs` で�
 
 `tests.rs` は **親ファイルに `mod tests;` 宣言が無いと、rustc が warning も error も
 出さずに黙って一切コンパイルしない** (module tree 外のファイルは存在しないのと
-同じ扱い)。分離の際は `scripts/orphan-tests-lint.sh` (gate §8.1(b) と CI の両方に
+同じ扱い)。分離の際は `scripts/orphan-tests-lint.sh` (`scripts/gate.sh` と CI の両方に
 組み込み済み) で宣言漏れが無いことを確認すること。検出ロジックは
 `scripts/lib/orphan_tests_check.py` 参照。
 

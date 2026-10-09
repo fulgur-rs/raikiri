@@ -1277,7 +1277,7 @@ fn bridge_alignment_align_self_value_delegates_to_self_alignment_to_taffy() {
 
 #[test]
 fn bridge_alignment_align_self_normal_maps_to_stretch_not_none() {
-    // Regression test (§8.3 review finding): `align-self: normal` must
+    // Regression test: `align-self: normal` must
     // NOT collapse to the same `None` mapping as `align-self: auto`.
     // `auto` computes to the parent's `align-items` value (CSS Box
     // Alignment 3 §8.3), which taffy's `align_self: None` already
@@ -1295,7 +1295,7 @@ fn bridge_alignment_align_self_normal_maps_to_stretch_not_none() {
 
 #[test]
 fn align_self_normal_stretches_even_when_parent_align_items_is_center() {
-    // End-to-end check of the §8.3 review finding: with the container's
+    // End-to-end check of the regression above: with the container's
     // `align-items: center`, a child with `align-self: auto` would
     // center (inheriting the parent's value per spec), but a child
     // with `align-self: normal` must independently stretch to fill the

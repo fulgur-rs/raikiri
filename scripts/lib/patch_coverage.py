@@ -5,7 +5,7 @@ Called by `scripts/patch-coverage.sh` after it has already produced an lcov
 report. This module owns the two pieces of logic that don't belong in shell:
 
   1. Parsing a `-U0` unified diff to get the exact set of *added* line
-     numbers per file (gate.md §8.1.1's "merge-base diff extraction").
+     numbers per file (the "merge-base diff extraction").
   2. Deciding whether an uncovered added line is exempted by a
      `// cov:ignore: <reason>` annotation (the "exemption mechanism").
 
@@ -1732,7 +1732,7 @@ def main() -> int:
         for ln in r.uncovered:
             print(f"  {r.path}:{ln}{note}")
     print()
-    print("Per gate.md §8.1.1: either add a covering test (task scope) or")
+    print("Either add a covering test (task scope) or")
     print("escalate to a follow-up item (out-of-scope) for each line above, or add")
     print("`// cov:ignore: <reason>` if it is a defensible untestable branch.")
     return 1

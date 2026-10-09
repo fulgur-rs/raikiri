@@ -1,28 +1,26 @@
 #!/usr/bin/env bash
-# scripts/patch-coverage.sh — gate.md §8.1.1 patch coverage, measured.
+# scripts/patch-coverage.sh — patch coverage, measured.
 #
-# the earlier change: §8.1.1 has required "100% of changed lines covered
-# or escalated" since it was written, but nothing in this repo could measure
-# it — cargo-llvm-cov was not installed and this script did not exist, so
-# every task degraded to manual listing + reviewer spot-check (documented
-# across 4 consecutive successive review cycles, style-12 through style-14).
+# The gate requires every changed line to be covered or escalated. Before
+# this script existed nothing in this repo could measure that, so it was
+# checked by manual listing and reviewer spot-checks.
 #
-# Approach (workspace lcov → merge-base diff → gated-crate judgment, per
-# gate.md §8.1.1, modeled on flpdf's patch-coverage.sh):
+# Approach (workspace lcov → merge-base diff → gated-crate judgment,
+# modeled on flpdf's patch-coverage.sh):
 #
 #   1. `cargo llvm-cov clean --workspace`, then run the *whole workspace*
 #      test suite under cargo-llvm-cov instrumentation, export lcov (the
 #      clean is required: incremental runs report stale line tables).
 #   2. Diff merge-base(<base>, HEAD)..HEAD for *.rs, in -U0 form, to get the
-#      exact added-line set per file (git.md §8.1.4's canonical merge-base
-#      handling: base is resolved once via `git merge-base`, not a bare
-#      ref, so a concurrent merge on <base> after this branch forked
-#      cannot change what counts as "this diff's lines").
+#      exact added-line set per file. The base is resolved once via
+#      `git merge-base`, not a bare ref, so a concurrent merge on <base>
+#      after this branch forked cannot change what counts as "this diff's
+#      lines".
 #   3. For each added line: covered (lcov hit>0) / cov:ignore-exempted /
 #      uncovered. See scripts/lib/patch_coverage.py's module docstring for
 #      the exact `cov:ignore:` scoping rule.
 #
-# "in-scope crate decision" (gate.md §51): every file this script considers comes
+# In-scope crate decision: every file this script considers comes
 # from `git diff`, which only ever names paths inside this repo — there is
 # no separate crate allowlist to apply. All *.rs files under crates/ are in
 # scope, including bench/test/example files: a benches/*.rs diff showing
@@ -32,9 +30,15 @@
 # where exactly this happened to crates/raikiri-style/benches/cascade.rs and
 # was escalated rather than silently passed.
 #
-# Usage: scripts/patch-coverage.sh [BASE_REF]
+# Usage: scripts/patch-coverage.sh [--lcov <path>] [BASE_REF]
 #
-#   BASE_REF   Ref to compute the merge-base against (default: main).
+#   --lcov <path>  Classify an existing lcov report instead of running the
+#                  instrumented suite here (step 1 above is skipped). The
+#                  caller is responsible for producing it from a clean
+#                  `cargo llvm-cov --workspace --features raikiri-net/http-ureq`
+#                  run of HEAD; scripts/gate.sh does this so the suite is
+#                  built and run only once per gate run.
+#   BASE_REF       Ref to compute the merge-base against (default: main).
 #
 # Env:
 #   RAIKIRI_COVERAGE_INCLUDE_IGNORED=1   Also run `#[ignore]`d tests
@@ -47,8 +51,8 @@
 #   RAIKIRI_GATE_TMPDIR                  See scripts/lib/tmpdir.sh.
 #
 # Exit status: 0 if every changed line is covered or cov:ignore-exempted,
-# 1 if any changed line is uncovered (gate.md §8.1.1: fix in-scope, or
-# escalate to a follow-up item out-of-scope, then re-run), 2 if coverage
+# 1 if any changed line is uncovered (fix in-scope, or escalate to a
+# follow-up item out-of-scope, then re-run), 2 if coverage
 # measurement could not complete — a dirty tree, cargo-llvm-cov not
 # installed, or a `cargo metadata` failure (see lib/patch_coverage.py's
 # load_cargo_metadata) — which is an infra problem, not a coverage
@@ -67,6 +71,15 @@ cd "$REPO_ROOT"
 # shellcheck source=lib/tmpdir.sh
 source "$SCRIPT_DIR/lib/tmpdir.sh"
 
+LCOV_IN=""
+if [[ "${1:-}" == "--lcov" ]]; then
+  if [[ -z "${2:-}" ]]; then
+    echo "patch-coverage.sh: --lcov requires a path" >&2
+    exit 2
+  fi
+  LCOV_IN="$2"
+  shift 2
+fi
 BASE_REF="${1:-main}"
 BASE_SHA="$(git merge-base "$BASE_REF" HEAD)"
 
@@ -110,7 +123,14 @@ echo
 # touches this worktree's own target/ dir (TMPDIR scratch from
 # scripts/lib/tmpdir.sh is unaffected), so concurrent worktrees just pay
 # their own rebuild cost.
-if [[ "${RAIKIRI_COVERAGE_INCLUDE_IGNORED:-0}" == "1" ]]; then
+if [[ -n "$LCOV_IN" ]]; then
+  if [[ ! -s "$LCOV_IN" ]]; then
+    echo "patch-coverage.sh: --lcov file missing or empty: $LCOV_IN" >&2
+    exit 2
+  fi
+  echo "-- using existing lcov report: $LCOV_IN --"
+  LCOV_OUT="$LCOV_IN"
+elif [[ "${RAIKIRI_COVERAGE_INCLUDE_IGNORED:-0}" == "1" ]]; then
   echo "-- cargo llvm-cov (normal + --ignored, accumulated) --"
   cargo llvm-cov clean --workspace
   # `--features raikiri-net/http-ureq`: raikiri-net's `http-ureq` feature

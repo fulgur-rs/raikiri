@@ -8,7 +8,7 @@
 - beads issue ID (`bd raikiri-spike-XXXX` のような tracker 参照)
 - milestone/epic 番号 (`M1.4a`, `M2+`, `Epic 4` など raikiri 内部のロードマップ表記)
 - 内部 audit/workflow プロセス名 (`milestone-gap-audit item`, `reviewer:spec pass`,
-  `audit Category M9` など raikiri-workflow の運用固有語)
+  `audit Category M9` など内部 workflow の運用固有語)
 - agent memory への参照 (`memory raikiri-implementation-independence` など — これは
   Claude Code の個人 memory store 内のファイルを指しており、bd はおろか
   **別の agent session からも参照不可能**)

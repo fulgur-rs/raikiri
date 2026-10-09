@@ -17,7 +17,7 @@
 # headroom regardless of how many sessions are concurrently building. This
 # is not a code fix (nothing about the workspace's Rust is wrong); it is an
 # environment pin, which is why it lives in a script rather than in
-# `rules/gate.md` prose.
+# prose guidance.
 #
 # Any gate script that shells out to `cargo` (test / clippy / doc / bench /
 # llvm-cov) should `source` this file first so all of them share the same
@@ -35,8 +35,8 @@
 # and that cwd does change: the earlier change's cascade-bench-compare.sh
 # builds its "good" side after `cd`-ing into a separate detached worktree,
 # so a relative RAIKIRI_GATE_TMPDIR would silently point at two different
-# directories for the two sides of that comparison. review §8.3 review
-# finding.
+# directories for the two sides of that comparison (a review
+# finding).
 case "$RAIKIRI_GATE_TMPDIR" in
   /*) ;; # already absolute
   *) RAIKIRI_GATE_TMPDIR="$PWD/$RAIKIRI_GATE_TMPDIR" ;;
@@ -50,7 +50,7 @@ export TMPDIR="$RAIKIRI_GATE_TMPDIR"
 
 # Best-effort noise: warn (do not fail) if TMPDIR still resolves to a tmpfs
 # mount, since that's the exact condition this file exists to avoid. This is
-# diagnostic only — gate.md §8.1.4-style "broaden the diagnostic scope" bias does not apply
+# diagnostic only — a "broaden the diagnostic scope" bias does not apply
 # here because a false warning costs nothing and a missed one reproduces the
 # whole bug. `df --output=fstype` is GNU-specific and the callers of this
 # file run under `set -euo pipefail`, so the whole diagnostic is wrapped in
