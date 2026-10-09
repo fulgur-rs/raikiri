@@ -1758,7 +1758,7 @@ fn html_inline_svg_stylesheet_opacity_groups_the_complete_root() {
     };
     let uncascaded = parse(&html[..], &options).expect("HTML parse succeeds");
     assert_eq!(uncascaded.stylesheet_sources.len(), 1);
-    let cascade = raikiri_html::build_cascaded(&uncascaded);
+    let cascade = raikiri_html::build_cascaded(&uncascaded).expect("the cascade succeeds");
     let mut doc = uncascaded.dom;
     layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout succeeds");
 
@@ -1794,7 +1794,7 @@ fn html_inline_svg_preserves_stylesheet_inherited_opacity() {
         base_url: None,
     };
     let uncascaded = parse(&html[..], &options).expect("HTML parse succeeds");
-    let cascade = raikiri_html::build_cascaded(&uncascaded);
+    let cascade = raikiri_html::build_cascaded(&uncascaded).expect("the cascade succeeds");
     let mut doc = uncascaded.dom;
     layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout succeeds");
 
@@ -1830,7 +1830,7 @@ fn html_inline_svg_root_background_stays_inside_the_opacity_group() {
         base_url: None,
     };
     let uncascaded = parse(&html[..], &options).expect("HTML parse succeeds");
-    let cascade = raikiri_html::build_cascaded(&uncascaded);
+    let cascade = raikiri_html::build_cascaded(&uncascaded).expect("the cascade succeeds");
     let mut doc = uncascaded.dom;
     layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout succeeds");
 
@@ -1872,7 +1872,7 @@ fn html_inline_svg_host_transparent_background_suppresses_source_background() {
         base_url: None,
     };
     let uncascaded = parse(&html[..], &options).expect("HTML parse succeeds");
-    let cascade = raikiri_html::build_cascaded(&uncascaded);
+    let cascade = raikiri_html::build_cascaded(&uncascaded).expect("the cascade succeeds");
     let mut doc = uncascaded.dom;
     layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout succeeds");
 

@@ -51,6 +51,56 @@ fn parse_html_with_limits_none_max_dom_nodes_disables_cap() {
 }
 
 #[test]
+fn parse_html_with_limits_reports_a_passed_cascade_limit() {
+    let opts = ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let html = &b"<style>p { color: red; margin: 0 }</style><p>Hi</p>"[..];
+    let limits = RenderLimits::builder()
+        .max_cascade_candidates_per_element(Some(0))
+        .build();
+    let err = parse_html_with_limits(html, &opts, limits)
+        .expect_err("an element with a candidate passes a zero limit");
+    assert!(
+        matches!(
+            err,
+            RenderError::LimitExceeded {
+                kind: LimitKind::CascadeCandidatesPerElement,
+                limit: 0,
+                actual: 1..,
+            }
+        ),
+        "{err:?}"
+    );
+
+    // The cascade's result has its own byte limit.
+    let limits = RenderLimits::builder()
+        .max_cascade_output_bytes(Some(1))
+        .build();
+    let err =
+        parse_html_with_limits(html, &opts, limits).expect_err("no document fits in one byte");
+    assert!(
+        matches!(
+            err,
+            RenderError::LimitExceeded {
+                kind: LimitKind::CascadeOutputBytes,
+                limit: 1,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+
+    // The aggregate footprint is not consulted.
+    let limits = RenderLimits::builder().max_aggregate_bytes(Some(1)).build();
+    let doc = parse_html_with_limits(html, &opts, limits)
+        .expect("the aggregate footprint does not bound the cascade");
+    assert!(!doc.cascade().computed.is_empty());
+}
+
+#[test]
 fn parse_html_returns_html_document_with_cascade_populated() {
     let opts = ParseOptions {
         extra_stylesheets: &[],
@@ -116,7 +166,7 @@ fn parse_html_baked_cascade_matches_manual_build_cascaded() {
     let via_parse_html = parse_html(&b"<p>Hi</p>"[..], &opts).expect("parse_html");
     let via_manual = {
         let uncascaded = crate::parse(&b"<p>Hi</p>"[..], &opts).expect("parse");
-        build_cascaded(&uncascaded)
+        build_cascaded(&uncascaded).expect("the cascade succeeds")
     };
     assert_eq!(
         via_parse_html.cascade().computed.len(),

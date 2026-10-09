@@ -25,6 +25,9 @@ fn external_consumer_can_reference_all_reexported_types() {
         RenderLimitsBuilder,
         LayoutError,
         Symbol,
+        CascadeLimits,
+        CascadeOptions,
+        CascadeLimitKind,
     )>;
 }
 
@@ -256,6 +259,17 @@ fn external_consumer_can_mutate_pub_fields_via_default_shorthand() {
     limits.max_aggregate_bytes = Some(4 * 1_073_741_824);
     limits.max_input_bytes = Some(64 * 1024 * 1024);
     limits.max_parse_warnings = Some(512);
+    limits.max_cascade_candidates_per_element = Some(4096);
+    limits.max_cascade_declarations = Some(1 << 20);
+    limits.max_cascade_selector_tests = None;
+    limits.max_cascade_retained_bytes = Some(16 * 1024 * 1024);
+    limits.max_cascade_output_bytes = Some(4 * 1_073_741_824);
+
+    // The cascade limits are configured the same way.
+    let mut cascade = CascadeOptions::default();
+    cascade.limits = limits.cascade_limits();
+    cascade.limits.max_output_bytes = Some(1 << 30);
+    let _ = CascadeLimits::default();
 
     let mut page_box = PageBox::default();
     page_box.width = 500.0;
@@ -301,6 +315,7 @@ fn external_consumer_can_mutate_pub_fields_via_default_shorthand() {
         page_box,
         lookahead,
         border,
+        cascade,
     );
 }
 
@@ -322,7 +337,7 @@ fn external_consumer_can_chain_builder_fluent_setters() {
     assert_eq!(lookahead.orphan_line_buffer, 2);
     assert!(lookahead.allow_cross_size_lookahead);
 
-    // Chain all seven RenderLimitsBuilder setters, pinning their `Self`
+    // Chain all twelve RenderLimitsBuilder setters, pinning their `Self`
     // return types.
     let limits = RenderLimits::builder()
         .max_document_pages(Some(100))
@@ -332,11 +347,21 @@ fn external_consumer_can_chain_builder_fluent_setters() {
         .max_aggregate_bytes(Some(512 * 1_024 * 1_024))
         .max_input_bytes(Some(16 * 1_024 * 1_024))
         .max_parse_warnings(Some(256))
+        .max_cascade_candidates_per_element(Some(1_024))
+        .max_cascade_declarations(Some(1 << 24))
+        .max_cascade_selector_tests(Some(1 << 26))
+        .max_cascade_retained_bytes(None)
+        .max_cascade_output_bytes(Some(2 * 1_073_741_824))
         .build();
     assert_eq!(limits.max_document_pages, Some(100));
     assert_eq!(limits.max_target_slots, Some(50_000));
     assert_eq!(limits.max_input_bytes, Some(16 * 1_024 * 1_024));
     assert_eq!(limits.max_parse_warnings, Some(256));
+    assert_eq!(limits.max_cascade_candidates_per_element, Some(1_024));
+    assert_eq!(limits.max_cascade_declarations, Some(1 << 24));
+    assert_eq!(limits.max_cascade_selector_tests, Some(1 << 26));
+    assert_eq!(limits.max_cascade_retained_bytes, None);
+    assert_eq!(limits.max_cascade_output_bytes, Some(2 * 1_073_741_824));
 
     // Cross-struct integration: also pin the fluent chains that insert
     // LookaheadConfig into LayoutConfig / BatchConfig. Pass `Some(...)` to

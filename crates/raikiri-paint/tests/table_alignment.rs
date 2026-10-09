@@ -688,7 +688,7 @@ fn vertical_baseline_block_children_keep_asymmetric_content_boxes() {
                 base_url: None,
             };
             let mut parsed = raikiri_html::parse(source.as_bytes(), &options).unwrap();
-            let computed = raikiri_html::build_cascaded(&parsed);
+            let computed = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
             layout_single_page(&mut parsed.dom, &computed, page()).unwrap();
             (parsed.dom, computed)
         };
@@ -1018,7 +1018,7 @@ fn html_ua_middle_and_row_inheritance_align_cell_ink() {
             )
             .unwrap(),
         );
-        let computed = raikiri_html::build_cascaded(&document);
+        let computed = raikiri_html::build_cascaded(&document).expect("the cascade succeeds");
         layout_single_page(&mut document.dom, &computed, page()).unwrap();
         let baselines: Vec<_> = scene(&document.dom, &computed)
             .commands
@@ -1825,7 +1825,7 @@ fn block_in_inline_and_preserved_lines_align_to_identical_cell_content() {
         )
         .unwrap(),
     );
-    let computed = raikiri_html::build_cascaded(&parsed);
+    let computed = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
     layout_single_page(&mut parsed.dom, &computed, page()).unwrap();
     for id in 0..parsed.dom.node_count() {
         let node = parsed.dom.get_node(id).unwrap();

@@ -3,8 +3,7 @@
 //!
 //! Equivalent to the public API in spec §L1060. Internal pipeline:
 //! [`crate::parse`](fn@crate::parse) → rule-tree build and first-page cascade → assemble.
-//! The cascade currently always returns `Ok`,
-//! so parse and limit errors can propagate.
+//! Parse, limit and cascade errors propagate.
 //!
 //! # Input byte cap
 //!
@@ -33,7 +32,7 @@ use std::io::Read;
 use crate::{ParseOptions, RaikiriTreeSink, effective_document_base_url, parse_with_sink};
 use raikiri_traits::{LimitKind, ParseError, RenderError, RenderLimits};
 
-use raikiri_style::PageContextQuery;
+use raikiri_style::{CascadeOptions, PageContextQuery};
 
 use crate::HtmlDocument;
 use crate::cascade::build_rule_tree;
@@ -43,8 +42,8 @@ use crate::cascade::build_rule_tree;
 /// A thin wrapper around [`parse_html_with_limits`] that passes
 /// [`RenderLimits::default()`]. The existing `parse_html` API therefore
 /// enforces the default 32 MiB input cap
-/// (`RenderLimits::default().max_input_bytes = Some(32 * 1024 * 1024)`)
-/// and the default 1,000,000-node DOM cap.
+/// (`RenderLimits::default().max_input_bytes = Some(32 * 1024 * 1024)`),
+/// the default 1,000,000-node DOM cap and the default cascade limits.
 ///
 /// # Errors
 ///
@@ -55,8 +54,11 @@ use crate::cascade::build_rule_tree;
 ///   input byte count exceeds [`RenderLimits::max_input_bytes`].
 /// - `RenderError::LimitExceeded { kind: LimitKind::DomNodes, .. }`:
 ///   parsed DOM node count exceeds [`RenderLimits::max_dom_nodes`].
-///
-/// The cascade is currently infallible (unwrapped with `.expect`).
+/// - `RenderError::LimitExceeded { kind: LimitKind::Cascade*, .. }`: the
+///   cascade passed one of [`RenderLimits::cascade_limits`].
+/// - `RenderError::Cascade(_)`: the allocator refused the cascade's result,
+///   or the stylesheets have more rules, selectors or declarations than the
+///   cascade can number.
 ///
 /// # Example
 ///
@@ -89,8 +91,10 @@ pub fn parse_html<R: Read>(
 ///
 /// [`RenderLimits::max_dom_nodes`] is checked after parsing and before rule-tree
 /// construction or cascading. `None` disables this check.
-/// Other `limits.*` fields (`max_aggregate_bytes` / etc.) are **not consulted**
-/// by `parse_html_with_limits` yet; they are reserved for downstream layers.
+/// The first-page cascade runs within [`RenderLimits::cascade_limits`], the
+/// `max_cascade_*` fields. Other `limits.*` fields (`max_aggregate_bytes` /
+/// etc.) are **not consulted** by `parse_html_with_limits`; they are for the
+/// layout stages or reserved.
 ///
 /// # Implementation
 ///
@@ -114,6 +118,12 @@ pub fn parse_html<R: Read>(
 /// - `RenderError::LimitExceeded { kind: LimitKind::DomNodes, limit, actual }`:
 ///   the parsed DOM node count exceeded `limits.max_dom_nodes.unwrap()`.
 ///   `actual` is the full arena node count, including the virtual root.
+/// - `RenderError::LimitExceeded { kind: LimitKind::Cascade*, .. }`: the
+///   cascade passed one of [`RenderLimits::cascade_limits`]; `actual` is the
+///   count it stopped at.
+/// - `RenderError::Cascade(_)`: the allocator refused the cascade's result,
+///   or the stylesheets have more rules, selectors or declarations than the
+///   cascade can number.
 pub fn parse_html_with_limits<R: Read>(
     mut input: R,
     options: &ParseOptions<'_>,
@@ -173,13 +183,15 @@ pub fn parse_html_with_limits<R: Read>(
     let rule_tree = build_rule_tree(&uncascaded);
     let media_context = raikiri_style::MediaContext::default();
     let font_faces = rule_tree.font_faces_for(&media_context);
-    let cascade = raikiri_style::cascade_with_media_context_for_page(
+    let mut cascade_options = CascadeOptions::default();
+    cascade_options.limits = limits.cascade_limits();
+    let cascade = raikiri_style::cascade_with_options(
         &uncascaded.dom,
         &rule_tree,
         &media_context,
         &first_page,
-    )
-    .expect("cascade は常に Ok のはず");
+        &cascade_options,
+    )?;
     Ok(HtmlDocument {
         uncascaded,
         cascade,
