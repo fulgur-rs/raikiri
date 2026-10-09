@@ -175,6 +175,11 @@ impl<'a> PositionedLines<'a> {
         self.lines
     }
 
+    /// Shared line offsets for page decoration ownership without extracting glyphs.
+    pub(crate) fn line_offset(&self, index: usize) -> Option<(f32, f32)> {
+        self.line_offsets.get(index).copied().flatten()
+    }
+
     /// The lines to draw, in order, with their runs.
     pub fn lines(&self) -> impl Iterator<Item = PositionedLine<'a>> + '_ {
         self.lines
