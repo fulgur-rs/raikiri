@@ -330,3 +330,23 @@ fn indexed_rules_borrow_their_expanded_declarations() {
 fn layer_order(tree: &RuleTree) -> crate::layer::LayerOrder<'_> {
     tree.layer_order(&crate::media::MediaContext::default())
 }
+
+#[test]
+fn the_index_records_which_pseudo_elements_its_selectors_target() {
+    let tree =
+        rule_tree("a::before { color: red } p::first-line { color: blue } div { color: green }");
+    let rules = sorted_rules(&tree);
+    let index =
+        RuleIndex::new(rules.iter().copied(), &layer_order(&tree)).expect("the index builds");
+    assert!(index.targets(PseudoElem::Before));
+    assert!(index.targets(PseudoElem::FirstLine));
+    for pseudo in [
+        PseudoElem::After,
+        PseudoElem::Marker,
+        PseudoElem::FirstLetter,
+        PseudoElem::Backdrop,
+        PseudoElem::FileSelectorButton,
+    ] {
+        assert!(!index.targets(pseudo), "{pseudo:?}");
+    }
+}

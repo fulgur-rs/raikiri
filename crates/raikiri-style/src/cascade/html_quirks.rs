@@ -178,7 +178,7 @@ fn is_blank_element<D: StyleDom>(dom: &D, elem_id: StyleNodeId) -> bool {
 /// this function's only caller
 /// ([`push_margin_collapsing_quirk_declarations`]): `parent_id` there is
 /// always `ancestor_path.last()`, i.e. the real DOM parent
-/// [`super::collect::collect_cascaded`] walked through `dom.child_ids(parent_id)` to reach
+/// [`super::inherit::walk_from`] walked through `dom.child_ids(parent_id)` to reach
 /// `target_id` in the first place — the same ancestor-path invariant
 /// [`super::selector_match::sibling_position`]'s own callers rely on.
 fn substantial_sibling_bounds<D: StyleDom>(
@@ -240,8 +240,8 @@ fn substantial_sibling_bounds<D: StyleDom>(
 /// margin again; zeroing the resolved computed value after cascade
 /// (bypassing origin/specificity entirely) would incorrectly clobber
 /// that. So this function pushes an [`Origin::UserAgent`] candidate
-/// declaration into the same flat candidate list [`super::collect::collect_cascaded`]
-/// already builds for this node from stylesheet rules and inline style,
+/// declaration into the same candidate list [`super::collect::Collector::collect`]
+/// builds for this node from stylesheet rules and inline style,
 /// and lets the normal [`super::collect::pick_winners`]/[`super::collect::beats`] machinery decide —
 /// [`super::collect::cascade_rank`] guarantees any `Origin::Author` declaration for the
 /// same property outranks this regardless of specificity. See
@@ -297,7 +297,7 @@ pub(crate) fn push_margin_collapsing_quirk_declarations<D: StyleDom>(
         return Ok(());
     };
     // cov:ignore: `parent_id` came from `ancestor_path`, which
-    // `collect_cascaded` only ever pushes `Element`-kind ids onto (this
+    // the cascade walk only ever pushes `Element`-kind ids onto (this
     // module's doc on `ancestor_path`), so `dom.node(parent_id)` resolving
     // to a node whose `as_element()` is `Some` is guaranteed by that same
     // invariant, not by anything local to this function. Defensive
@@ -632,7 +632,7 @@ mod tests {
         // real `Origin::Author` rule with zero specificity (universal
         // selector). Before this, both sides shared
         // `Origin::Author` and this exact zero-specificity/zero-source-order
-        // case only resolved via `collect_cascaded`'s push-order (hint
+        // case only resolved via the collector's push order (hint
         // pushed first, so the later-scanned real rule won the `beats` tie).
         // Now the rank difference alone decides it, independent of
         // specificity or push order — this test still pins "real author

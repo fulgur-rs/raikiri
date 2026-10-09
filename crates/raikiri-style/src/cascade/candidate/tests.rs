@@ -1,8 +1,8 @@
 use super::*;
-use crate::cascade::collect::collect_cascaded;
-use crate::cascade::test_support::{BLUE, RED};
+use crate::cascade::selector_match::MatchCaches;
+use crate::cascade::test_support::{BLUE, RED, collect_top_level};
 use crate::ruletree::build_rule_tree;
-use crate::style_dom::{StyleDom, StyleNodeId};
+use crate::style_dom::StyleNodeId;
 use crate::test_dom::TestDoc;
 
 fn author(source_order: u32) -> Precedence {
@@ -113,6 +113,16 @@ fn custom_properties_and_all_revert_layer_are_told_apart_by_their_slot() {
 }
 
 #[test]
+fn an_input_has_no_candidates_for_a_pseudo_element_the_cascade_does_not_collect() {
+    let input = ElementInput::default();
+    let shared = SharedDeclarations::new(&[], &[]);
+    assert!(matches!(
+        input.pseudo(PseudoElem::Backdrop, shared),
+        (None, None)
+    ));
+}
+
+#[test]
 fn filtered_views_keep_the_order_and_the_declarations() {
     let owned = owned(&[
         PropertyValue::Color(RED),
@@ -135,10 +145,12 @@ fn owned_copies_keep_the_candidates_and_make_every_handle_local() {
     doc.push_text(style, "p { color: red; --x: 1 }");
     let p = doc.push_element(0, "p", Some("opacity: 0.5 !important; --y: 2"));
     let tree = build_rule_tree(&doc);
-    let arena = collect_cascaded(&doc, doc.root_id(), &tree).expect("the cascade collects");
+    let caches = MatchCaches::default();
+    let (collector, inputs) = collect_top_level(&doc, &tree, &caches);
     let id = StyleNodeId(p as u64);
-    let decls = arena.candidates(id).expect("p has candidates");
-    let custom = arena.element(id).1.expect("p has custom properties");
+    let (decls, custom) = inputs[&id].element(collector.shared());
+    let decls = decls.expect("p has candidates");
+    let custom = custom.expect("p has custom properties");
     assert!(matches!(decls.decls()[0].value(), ValueRef::Rule { .. }));
 
     let owned = OwnedCandidates::copy(decls, custom).expect("the copy numbers its declarations");

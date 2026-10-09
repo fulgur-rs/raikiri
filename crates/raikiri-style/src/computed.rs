@@ -406,7 +406,7 @@ pub struct ComputedValues {
     ///
     /// Wrapping in [`Arc<Vec<..>>`] makes cascade winner cloning (`value.clone()`
     /// during `apply_winners` drain; move in `apply_value`) and inheritance-walk
-    /// cloning (stack push in `resolve_inheritance`, then
+    /// cloning (stack push in `crate::cascade::walk_from`, then
     /// `out[idx] = computed.clone()`) **shallow (Arc reference-count increments)**.
     /// Sharing one heap allocation prevents O(N × M) memory growth for
     /// `* { counter-reset: c0 c1 ... cN }` across M elements, a security-relevant
@@ -442,7 +442,7 @@ pub struct ComputedValues {
     ///
     /// The [`Arc<Vec<..>>`] wrapper makes cascade winner cloning (`value.clone()`
     /// during `apply_winners` drain; move in `apply_value`) and inheritance-walk
-    /// cloning (stack push in `resolve_inheritance`, then
+    /// cloning (stack push in `crate::cascade::walk_from`, then
     /// `out[idx] = computed.clone()`) **shallow (Arc reference-count increments)**.
     /// Sharing one heap allocation prevents O(N × M) memory growth for
     /// `* { content: "<large>" }` across N elements, a security-relevant DoS

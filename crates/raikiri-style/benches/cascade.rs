@@ -860,7 +860,7 @@ fn wide_adjacent_stylesheet() -> (String, Winners) {
 ///   any unrecognized component, so if a `selectors` upgrade ever changes how
 ///   a bare type selector decomposes into components, *every rule stops
 ///   matching every element*. The parse-side assertions below would still
-///   pass, `collect_cascaded`'s inner loop would never execute, and this file
+///   pass, the collector's rule loop would never push a candidate, and this file
 ///   would report a large improvement while measuring nothing.
 ///
 /// So the input assertions are not enough on their own: the function also

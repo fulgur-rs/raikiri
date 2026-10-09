@@ -2053,7 +2053,7 @@ fn parse_then_cascade_skips_template_descendants() {
     // that parsing then cascading can visit an element inside a template
     // without error or panic, and that its bits stay unchanged across cascade.
     //
-    // Additional check: a broken is_in_document() gate in resolve_inheritance
+    // Additional check: a broken is_in_document() gate in the cascade walk
     // may violate the `cascade.computed.len() == dom.node_count()` contract.
     // `html_document_cascade_populated_after_construct` in raikiri/src/lib.rs
     // previously checked this only for documents without templates. Later

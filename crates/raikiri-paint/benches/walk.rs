@@ -14,7 +14,7 @@
 //! read/copy cost change that neither `cargo test` nor `cargo clippy` can
 //! see, because the output is bit-identical and no lint fires) — this file
 //! gives `walk.rs`'s DFS the same instrument `cascade.rs` already gives
-//! `collect_cascaded`/`resolve_inheritance`, so a future change to the walk's
+//! the cascade walk, so a future change to the paint walk's
 //! per-node cost has something to regress against instead of landing silent.
 //!
 //! Unlike `cascade.rs`, this file does not carry validated before/after

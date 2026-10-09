@@ -31,20 +31,18 @@ use crate::rule::{
 use crate::specified::{INITIAL_BORDER, SpecifiedValues};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
 
-use super::candidate::{Candidate, CustomCandidates, ElementCandidates, OwnedCandidates};
-use super::collect::{CASCADED_PSEUDO_ELEMENTS, CascadedArena, RankedDecl, pick_winners};
+use super::candidate::{
+    Candidate, CustomCandidates, ElementCandidates, ElementInput, OwnedCandidates,
+    SharedDeclarations,
+};
+use super::collect::{CASCADED_PSEUDO_ELEMENTS, Collector, RankedDecl, pick_winners};
 use super::custom_property::{resolve_custom_properties, resolve_deferred_value};
 use super::first_line::first_line_property_applies;
+use super::rule_index::AncestorFilter;
+use super::selector_match::MatchCaches;
 use crate::error::CascadeError;
-
-type InheritanceStackEntry = (
-    StyleNodeId,
-    Option<StyleNodeId>,
-    Option<ResolveContext>,
-    Arc<CustomPropertyEnvironment>,
-    usize,
-    Option<StyleNodeId>,
-);
+use crate::media::MediaContext;
+use crate::ruletree::RuleTree;
 
 /// Number of recently resolved siblings remembered per parent as sharing
 /// sources. Repeated structures usually alternate between a handful of
@@ -52,42 +50,252 @@ type InheritanceStackEntry = (
 /// them without making a miss expensive.
 const SIBLING_SHARE_SLOTS: usize = 4;
 
+/// The default bound on the heap the sharing sources of every depth hold at
+/// once: each source's boxed input and its buffers' capacities, though not
+/// what its declarations own beyond their inline size. A node that would pass
+/// it is not remembered as a source: fewer nodes share, and every result
+/// stays the same. The sizes depend only on the document, so the walk stays
+/// deterministic.
+pub(crate) const SHARE_RETENTION_BUDGET: usize = 8 << 20;
+
+/// Cleared inputs kept for reuse by the next nodes, at most this many.
+const SPARE_INPUTS: usize = 2 * SIBLING_SHARE_SLOTS;
+
+/// A node this walk resolved, with the input it was resolved from. The input
+/// is boxed so that a share cache, of which a deep document has one per
+/// level, stays small and inputs move as pointers.
+struct ShareSource {
+    id: StyleNodeId,
+    input: Box<ElementInput>,
+    bytes: usize,
+}
+
 /// Recently resolved children of one parent (or of nodes that copied that
-/// parent's results), reused as computed-value sources for later siblings with identical cascade input.
-#[derive(Clone, Copy, Default)]
+/// parent's results), with their inputs, reused as computed-value sources for
+/// later siblings with identical cascade input.
+#[derive(Default)]
 struct SiblingShareCache {
     parent: Option<StyleNodeId>,
-    sources: [Option<StyleNodeId>; SIBLING_SHARE_SLOTS],
+    sources: [Option<ShareSource>; SIBLING_SHARE_SLOTS],
     next: usize,
 }
 
-impl SiblingShareCache {
-    fn reset_for(&mut self, parent: StyleNodeId) {
-        if self.parent != Some(parent) {
-            *self = Self {
-                parent: Some(parent),
-                ..Self::default()
-            };
+/// The inputs the walk holds besides the one it is resolving: the sharing
+/// sources of every depth, within a budget, and spares.
+struct InputStore {
+    /// Indexed by tree depth. The walk is depth-first, so while a parent's
+    /// children are being visited, deeper slots belong to their subtrees and
+    /// this depth's slot stays bound to that parent.
+    caches: Vec<SiblingShareCache>,
+    /// The bytes the sources hold, counted by [`Self::cost`].
+    held_bytes: usize,
+    /// The most the sources may hold; see [`SHARE_RETENTION_BUDGET`].
+    budget: usize,
+    /// Boxed like the sources' inputs, so that moving one between the two
+    /// allocates nothing.
+    #[expect(
+        clippy::vec_box,
+        reason = "spares move into share sources, which box their inputs"
+    )]
+    spares: Vec<Box<ElementInput>>,
+}
+
+impl InputStore {
+    fn new(budget: usize) -> Self {
+        Self {
+            caches: Vec::new(),
+            held_bytes: 0,
+            budget,
+            spares: Vec::new(),
         }
     }
 
-    fn remember(&mut self, source: StyleNodeId) {
-        self.sources[self.next] = Some(source);
-        self.next = (self.next + 1) % SIBLING_SHARE_SLOTS;
+    /// What holding `input` as a source costs: its box and its buffers.
+    fn cost(input: &ElementInput) -> usize {
+        std::mem::size_of::<ElementInput>() + input.buffer_bytes()
+    }
+
+    /// An empty input, reusing a spare's buffers when there is one.
+    fn take(&mut self) -> Box<ElementInput> {
+        self.spares.pop().unwrap_or_default()
+    }
+
+    /// Keeps `input` for reuse, unless enough spares are kept already or its
+    /// buffers alone would pass the budget, which would keep the next nodes
+    /// from being remembered.
+    fn give_back(&mut self, mut input: Box<ElementInput>) {
+        if self.spares.len() < SPARE_INPUTS && Self::cost(&input) <= self.budget {
+            input.clear();
+            self.spares.push(input);
+        }
+    }
+
+    /// The share cache of `depth`, bound to `parent`. A cache bound to another
+    /// parent gives its sources back first.
+    fn cache_for(&mut self, depth: usize, parent: StyleNodeId) -> &SiblingShareCache {
+        if self.caches.len() <= depth {
+            self.caches
+                .resize_with(depth + 1, SiblingShareCache::default);
+        }
+        if self.caches[depth].parent != Some(parent) {
+            self.caches[depth].parent = Some(parent);
+            self.caches[depth].next = 0;
+            for slot in 0..SIBLING_SHARE_SLOTS {
+                if let Some(source) = self.caches[depth].sources[slot].take() {
+                    self.held_bytes -= source.bytes;
+                    self.give_back(source.input);
+                }
+            }
+        }
+        &self.caches[depth]
+    }
+
+    /// Remembers `input`, which `id` was resolved from, in the share cache of
+    /// `depth`, which [`Self::cache_for`] bound to `share_parent`. The oldest
+    /// of the cache's sources makes room; a source that would pass the budget
+    /// is given back instead.
+    fn remember(
+        &mut self,
+        depth: usize,
+        share_parent: StyleNodeId,
+        id: StyleNodeId,
+        input: Box<ElementInput>,
+    ) {
+        debug_assert_eq!(self.caches[depth].parent, Some(share_parent));
+        let bytes = Self::cost(&input);
+        let cache = &self.caches[depth];
+        let evicted_bytes = cache.sources[cache.next]
+            .as_ref()
+            .map_or(0, |source| source.bytes);
+        if self.held_bytes - evicted_bytes + bytes > self.budget {
+            self.give_back(input);
+            return;
+        }
+        self.held_bytes = self.held_bytes - evicted_bytes + bytes;
+        let cache = &mut self.caches[depth];
+        let slot = cache.next;
+        cache.next = (slot + 1) % SIBLING_SHARE_SLOTS;
+        if let Some(evicted) = cache.sources[slot].replace(ShareSource { id, input, bytes }) {
+            self.give_back(evicted.input);
+        }
     }
 }
 
-/// Top-down inheritance walk. Children need their parent's computed values, so
-/// each stack entry stores the parent's node ID and retrieves its already-written
-/// values when visited. We save the parent's result before pushing its children
-/// and never overwrite it during the tree walk. The ID lets us retrieve the value
-/// again even if the output Vec grows. The first entry has no parent ID (`None`)
-/// and uses `parent_computed` instead. This avoids cloning [`ComputedValues`] for
-/// every child.
+/// One node waiting in the walk, with what its parent hands down.
+struct WalkEntry {
+    id: StyleNodeId,
+    /// The parent whose computed values the node inherits; `None` for the
+    /// walk's first node, which inherits the walk's `parent_computed`.
+    parent: Option<StyleNodeId>,
+    /// The `rem`/`rlh` context, `None` while the node has no element
+    /// ancestor; see [`walk_from`].
+    root_ctx: Option<ResolveContext>,
+    parent_custom_properties: Arc<CustomPropertyEnvironment>,
+    /// Tree depth, which picks the node's share cache.
+    depth: usize,
+    /// How many element ancestors the node has: the length `ancestor_path`
+    /// is truncated to before the node is visited.
+    ancestors: usize,
+    /// The parent whose children the node is matched against for sharing.
+    share_parent: Option<StyleNodeId>,
+    /// Whether the node is in [`WalkOptions::retain_subtree`].
+    in_retained_subtree: bool,
+    /// Whether the node descends from an element with a `::first-line` style.
+    in_first_line: bool,
+}
+
+/// How [`walk`] runs.
+#[derive(Clone, Copy)]
+pub(crate) struct WalkOptions {
+    /// Whether siblings with the same cascade input copy each other's
+    /// results. Tests turn it off for the reference the shared walk must
+    /// reproduce exactly.
+    pub(crate) sibling_sharing: bool,
+    /// The root of a subtree whose elements' candidates the walk keeps, in
+    /// [`WalkOutputs::retained_subtree`].
+    pub(crate) retain_subtree: Option<StyleNodeId>,
+    /// The most the sharing sources may hold; see [`SHARE_RETENTION_BUDGET`].
+    pub(crate) share_retention_budget: usize,
+}
+
+impl Default for WalkOptions {
+    fn default() -> Self {
+        Self {
+            sibling_sharing: true,
+            retain_subtree: None,
+            share_retention_budget: SHARE_RETENTION_BUDGET,
+        }
+    }
+}
+
+/// What one [`walk`] produces, indexed by node like
+/// [`super::CascadeResult::computed`].
+pub(crate) struct WalkOutputs {
+    pub(crate) computed: Vec<ComputedValues>,
+    pub(crate) authored_writing_modes: Vec<Option<WritingMode>>,
+    pub(crate) page_values: Vec<crate::property::PageValue>,
+    pub(crate) pseudo: HashMap<(StyleNodeId, PseudoElem), ComputedValues>,
+    pub(crate) svg_properties: HashMap<StyleNodeId, Vec<SvgStyleProperty>>,
+    pub(crate) first_letter_inputs: HashMap<StyleNodeId, super::first_letter::FirstLetterInputs>,
+    /// The candidates the first-letter methods recompute first-line text from:
+    /// those of the elements under an element with a `::first-line` style,
+    /// and of their `::before`, `::after` and `::first-line`. Kept only when
+    /// some element has first-letter inputs.
+    pub(crate) typographic_inheritance: HashMap<(StyleNodeId, Option<PseudoElem>), OwnedCandidates>,
+    pub(crate) opacity_specified: Vec<bool>,
+    pub(crate) background_color_specified: Vec<bool>,
+    /// The candidates of the elements of [`WalkOptions::retain_subtree`].
+    pub(crate) retained_subtree: HashMap<StyleNodeId, OwnedCandidates>,
+    /// How many nodes copied their results from a sibling.
+    pub(crate) shared_nodes: usize,
+}
+
+/// Cascades the whole document: [`walk_from`] its root, which inherits the
+/// initial values.
+pub(crate) fn walk<D: StyleDom>(
+    dom: &D,
+    rule_tree: &RuleTree,
+    media_context: &MediaContext,
+    options: WalkOptions,
+) -> Result<WalkOutputs, CascadeError> {
+    walk_from(
+        dom,
+        rule_tree,
+        media_context,
+        dom.root_id(),
+        &ComputedValues::initial(),
+        options,
+    )
+}
+
+/// The cascade's single walk: one pre-order depth-first traversal from `id`
+/// that collects each element's cascade input, chooses and applies its
+/// winners, and resolves its pseudo-elements before moving on.
+///
+/// # Visit order
+///
+/// Selector matching reads `ancestor_path`, the element ancestors of the
+/// node being visited, so the walk must visit ancestors before descendants;
+/// visiting a child before its parent would leave the parent absent and
+/// falsely reject a descendant or child combinator. Children also need their
+/// parent's computed values, which the walk writes before pushing them. The
+/// traversal is iterative with an explicit stack to avoid overflow. `stack`
+/// interleaves the pending work of several subtrees (sibling branches,
+/// cousins, ...), so each entry records how many element ancestors its node
+/// has, and truncating `ancestor_path` to that length undoes whatever a
+/// since-finished sibling subtree appended, reconstructing exactly the
+/// root..parent chain. Children are pushed in reverse so they are visited in
+/// document order, which also keeps the inline style cache and the share
+/// caches seeing nodes in document order.
+///
+/// Only `Element`-kind nodes join `ancestor_path`: CSS Selectors L4
+/// descendant and child combinators are defined in terms of element ancestry
+/// (<https://www.w3.org/TR/selectors-4/#descendant-combinators>: "an element
+/// B that is an arbitrary descendant of some ancestor element A").
 ///
 /// # Threading the `rem` context (design document §6.3)
 ///
-/// The third field of each stack entry, `Option<ResolveContext>`, indicates
+/// The `root_ctx` of each entry, `Option<ResolveContext>`, indicates
 /// **whether this node has an element ancestor**:
 ///
 /// - `None` — there is no element ancestor. If this node is an element, it is
@@ -117,79 +325,72 @@ impl SiblingShareCache {
 ///
 /// A node's results depend only on its parent's computed values and custom
 /// properties, the `rem`/`rlh` context, and its own cascade input (see
-/// [`CascadedArena::same_cascade_input`]). Siblings with identical cascade
-/// input therefore get identical computed values, pseudo-element values,
-/// `page` values, non-UA margin flags, and authored writing modes. Repeated
+/// [`ElementInput::same_input`]). Siblings with identical cascade input
+/// therefore get identical computed values, pseudo-element values, `page`
+/// values, non-UA margin flags, and authored writing modes. Repeated
 /// structures (list items, table cells, paragraphs, whitespace text between
 /// them) hit this constantly, so each depth keeps a few recently resolved
-/// children of the current parent and copies a match's results instead of
-/// redoing winner selection and absolutization. A node that copied its
-/// results from `source` hands its children the same parent context as
-/// `source`'s children, so those children are matched against `source`'s
-/// children: cousins under repeated parents share too. Sharing is limited to nodes
-/// with an element ancestor (`root_ctx` is `Some`), because a root element
-/// derives its own `rem` context from its computed values.
-///
-/// `pub(crate)` permits intra-doc links from other modules; making this private
-/// fails the documentation gate (repository rule 3).
-#[allow(clippy::too_many_arguments)] // the traversal writes several independent cascade outputs
-pub(crate) fn resolve_inheritance<D: StyleDom>(
-    dom: &D,
-    id: StyleNodeId,
-    parent_computed: &ComputedValues,
-    cascaded: &CascadedArena<'_>,
-    out: &mut Vec<ComputedValues>,
-    authored_writing_modes: &mut Vec<Option<WritingMode>>,
-    page_values: &mut [crate::property::PageValue],
-    pseudo_out: &mut HashMap<(StyleNodeId, PseudoElem), ComputedValues>,
-    svg_properties: &mut HashMap<StyleNodeId, Vec<SvgStyleProperty>>,
-    first_letter_inputs: &mut HashMap<StyleNodeId, super::first_letter::FirstLetterInputs>,
-) -> Result<(), CascadeError> {
-    resolve_inheritance_with(
-        dom,
-        id,
-        parent_computed,
-        cascaded,
-        out,
-        authored_writing_modes,
-        page_values,
-        pseudo_out,
-        svg_properties,
-        first_letter_inputs,
-        true,
-    )?; // cov:ignore: the error branch needs a u32 handle overflow
-    Ok(())
-}
-
-/// [`resolve_inheritance`] with sibling sharing switchable, returning how many
-/// nodes copied their results from a sibling. Tests use `sibling_sharing =
-/// false` as the reference the shared walk must reproduce exactly.
+/// children of the current parent, with their inputs, and copies a match's
+/// results instead of redoing winner selection and absolutization. A node
+/// that copied its results from `source` hands its children the same parent
+/// context as `source`'s children, so those children are matched against
+/// `source`'s children: cousins under repeated parents share too. Sharing is
+/// limited to nodes with an element ancestor (`root_ctx` is `Some`), because a
+/// root element derives its own `rem` context from its computed values. The
+/// walk holds no candidates beyond the node it resolves, those sharing
+/// sources (within [`WalkOptions::share_retention_budget`]), and what the options and the
+/// first-letter methods ask it to keep.
 ///
 /// # Errors
 ///
-/// Fails when the first-letter candidates kept in the result cannot be
-/// numbered (see [`OwnedCandidates::copy`]).
-#[allow(clippy::too_many_arguments)] // same outputs as resolve_inheritance plus the sharing switch
-pub(crate) fn resolve_inheritance_with<D: StyleDom>(
+/// Fails when the rule index cannot number the active rules, or a node's
+/// candidates or the candidates kept in the result cannot be numbered (see
+/// [`Collector::collect`] and [`OwnedCandidates::copy`]).
+pub(crate) fn walk_from<D: StyleDom>(
     dom: &D,
+    rule_tree: &RuleTree,
+    media_context: &MediaContext,
     id: StyleNodeId,
     parent_computed: &ComputedValues,
-    cascaded: &CascadedArena<'_>,
-    out: &mut Vec<ComputedValues>,
-    authored_writing_modes: &mut Vec<Option<WritingMode>>,
-    page_values: &mut [crate::property::PageValue],
-    pseudo_out: &mut HashMap<(StyleNodeId, PseudoElem), ComputedValues>,
-    svg_properties: &mut HashMap<StyleNodeId, Vec<SvgStyleProperty>>,
-    first_letter_inputs: &mut HashMap<StyleNodeId, super::first_letter::FirstLetterInputs>,
-    sibling_sharing: bool,
-) -> Result<usize, CascadeError> {
-    let mut shared_nodes = 0;
-    let mut stack: Vec<InheritanceStackEntry> =
-        vec![(id, None, None, empty_custom_properties(), 0, None)];
-    // Indexed by tree depth. The walk is depth-first, so while a parent's
-    // children are being visited, deeper slots belong to their subtrees and
-    // this depth's slot stays bound to that parent.
-    let mut share_caches: Vec<SiblingShareCache> = Vec::new();
+    options: WalkOptions,
+) -> Result<WalkOutputs, CascadeError> {
+    let match_caches = MatchCaches::default();
+    let mut collector = Collector::new(dom, rule_tree, media_context, &match_caches)?;
+    // Recomputing first-line text only matters to the first-letter methods.
+    let keep_typographic = collector.targets(PseudoElem::FirstLetter);
+    let node_count = dom.node_count();
+    let mut out = WalkOutputs {
+        // Reserve capacity only, rather than filling every slot with
+        // initial() up front: `ComputedValues` is large and cloning it is not
+        // cheap, and the walk overwrites almost every slot.
+        computed: Vec::with_capacity(node_count),
+        authored_writing_modes: vec![None; node_count],
+        page_values: vec![crate::property::PageValue::Auto; node_count],
+        pseudo: HashMap::new(),
+        svg_properties: HashMap::new(),
+        first_letter_inputs: HashMap::new(),
+        typographic_inheritance: HashMap::new(),
+        opacity_specified: vec![false; node_count],
+        background_color_specified: vec![false; node_count],
+        retained_subtree: HashMap::new(),
+        shared_nodes: 0,
+    };
+    let mut stack = vec![WalkEntry {
+        id,
+        parent: None,
+        root_ctx: None,
+        parent_custom_properties: empty_custom_properties(),
+        depth: 0,
+        ancestors: 0,
+        share_parent: None,
+        in_retained_subtree: options.retain_subtree == Some(id),
+        in_first_line: false,
+    }];
+    // Ancestor **element** ids, root-most first / immediate-parent last, and
+    // a Bloom filter over them, truncated and pushed in lockstep.
+    let mut ancestor_path: Vec<StyleNodeId> = Vec::new();
+    let mut ancestor_filter = AncestorFilter::new();
+    let mut store = InputStore::new(options.share_retention_budget);
     // Scratch buffer for `apply_winners`, allocated **outside** the walk loop
     // and reused for every node. Two per-node `HashMap`s previously accounted
     // for 3,667 allocations / 3.0 MB at n=1000 nodes, or 56.7% of all cascade
@@ -200,22 +401,25 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
     // Scratch buffer for the candidates that apply to `::first-line`, reused
     // the same way.
     let mut first_line_scratch: Vec<Candidate> = Vec::new();
-    while let Some((id, parent_id, root_ctx, parent_custom_properties, depth, share_parent)) =
-        stack.pop()
-    {
-        // Skip the entire subtree when is_in_document()==false.
-        //
-        // Previously resize + write + children push ran unconditionally to
-        // bring the computed length up to node_count(). Now `cascade()`
-        // pre-allocates `computed` to `dom.node_count()` and fills it with
-        // initial(), so unvisited slots naturally remain initial(). Thus:
-        //   - detached / template descendants retain initial() instead of
-        //     inheriting from inherit_from(parent) (nodes under
-        //     `<template style="color:red">` do not inherit red)
-        //   - the walk skips template subtrees (a performance improvement)
-        //
-        // Also skip unknown NodeIds (dom.node returns None). Leaving initial()
-        // intact is safer than the old code's inherit_from before writing.
+    while let Some(entry) = stack.pop() {
+        let WalkEntry {
+            id,
+            parent,
+            root_ctx,
+            parent_custom_properties,
+            depth,
+            ancestors,
+            share_parent,
+            in_retained_subtree,
+            in_first_line,
+        } = entry;
+        ancestor_path.truncate(ancestors);
+        ancestor_filter.truncate(ancestors);
+        // Skip the entire subtree when is_in_document()==false: detached and
+        // template descendants keep initial() instead of inheriting from their
+        // parent (nodes under `<template style="color:red">` do not inherit
+        // red), and selectors never match inside them. Unknown NodeIds
+        // (dom.node returns None) are skipped the same way.
         let Some(node) = dom.node(id).filter(|n| n.is_in_document()) else {
             continue;
         };
@@ -224,50 +428,70 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
             .as_element()
             .is_some_and(|element| element.namespace_uri() == Some("http://www.w3.org/2000/svg"));
         let mut node_svg_properties = Vec::new();
-        let parent_computed = parent_id.map_or(parent_computed, |parent| &out[parent.0 as usize]);
+        let parent_computed =
+            parent.map_or(parent_computed, |parent| &out.computed[parent.0 as usize]);
+        let idx = id.0 as usize;
 
-        if authored_writing_modes.len() <= id.0 as usize {
-            authored_writing_modes.resize(id.0 as usize + 1, None);
-        }
-        let share_source = match (share_parent, root_ctx) {
-            (Some(parent), Some(_)) if sibling_sharing => {
-                if share_caches.len() <= depth {
-                    share_caches.resize(depth + 1, SiblingShareCache::default());
+        // Collect this element's input. It then joins `ancestor_path` for its
+        // children.
+        let mut input = store.take();
+        if is_element && let Some(elem) = node.as_element() {
+            collector.collect(id, &elem, &ancestor_path, &ancestor_filter, &mut input)?;
+            // Whether the element's own candidates include `opacity` and
+            // `background-color`, whichever declaration wins.
+            if let (Some(candidates), _) = input.element(collector.shared()) {
+                for candidate in candidates.decls() {
+                    match candidate.key() {
+                        crate::property::PropertyKey::Opacity => out.opacity_specified[idx] = true,
+                        crate::property::PropertyKey::BackgroundColor => {
+                            out.background_color_specified[idx] = true;
+                        }
+                        _ => {}
+                    }
                 }
-                let cache = &mut share_caches[depth];
-                cache.reset_for(parent);
-                cache.sources.iter().flatten().copied().find(|&source| {
-                    dom.node(source).is_some_and(|source_node| {
+            }
+            ancestor_path.push(id);
+            ancestor_filter.push(&elem);
+        }
+
+        let shared = collector.shared();
+        let share_source = match (share_parent, root_ctx) {
+            (Some(parent), Some(_)) if options.sibling_sharing => store
+                .cache_for(depth, parent)
+                .sources
+                .iter()
+                .flatten()
+                .find(|source| {
+                    dom.node(source.id).is_some_and(|source_node| {
                         source_node.kind() == node.kind()
                             && source_node.as_element().is_some_and(|element| {
                                 element.namespace_uri() == Some("http://www.w3.org/2000/svg")
                             }) == is_svg
-                    }) && cascaded.same_cascade_input(source, id)
+                    }) && input.same_input(&source.input, shared)
                 })
-            }
+                .map(|source| source.id),
             _ => None,
         };
 
         let (computed, custom_properties, child_ctx, children_share_parent) = if let Some(source) =
             share_source
         {
-            shared_nodes += 1;
+            out.shared_nodes += 1;
             let src = source.0 as usize;
-            let idx = id.0 as usize;
-            page_values[idx] = page_values[src].clone();
-            authored_writing_modes[idx] = authored_writing_modes[src];
-            if let Some(properties) = svg_properties.get(&source) {
+            out.page_values[idx] = out.page_values[src].clone();
+            out.authored_writing_modes[idx] = out.authored_writing_modes[src];
+            if let Some(properties) = out.svg_properties.get(&source) {
                 node_svg_properties = properties.clone();
             }
             for pseudo in CASCADED_PSEUDO_ELEMENTS {
-                if let Some(values) = pseudo_out.get(&(source, pseudo)).cloned() {
-                    pseudo_out.insert((id, pseudo), values);
+                if let Some(values) = out.pseudo.get(&(source, pseudo)).cloned() {
+                    out.pseudo.insert((id, pseudo), values);
                 }
             }
-            if let Some(inputs) = first_letter_inputs.get(&source).cloned() {
-                first_letter_inputs.insert(id, inputs);
+            if let Some(inputs) = out.first_letter_inputs.get(&source).cloned() {
+                out.first_letter_inputs.insert(id, inputs);
             }
-            let computed = out[src].clone();
+            let computed = out.computed[src].clone();
             let custom_properties = computed.custom_properties.clone();
             // `source` was resolved by this walk (only freshly resolved
             // nodes are remembered), and this node now has exactly its
@@ -275,7 +499,7 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
             // context as `source`'s children and may share with them.
             (computed, custom_properties, root_ctx, source)
         } else {
-            let (element_candidates, element_custom) = cascaded.element(id);
+            let (element_candidates, element_custom) = input.element(shared);
             let local_custom_properties = element_custom
                 .map(|candidates| resolve_custom_properties(&parent_custom_properties, candidates));
             let custom_properties = local_custom_properties
@@ -296,8 +520,8 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
                     &mut specified,
                     parent_computed,
                     &custom_properties,
-                    Some(&mut page_values[id.0 as usize]),
-                    Some(&mut authored_writing_modes[id.0 as usize]),
+                    Some(&mut out.page_values[idx]),
+                    Some(&mut out.authored_writing_modes[idx]),
                     is_svg.then_some(&mut node_svg_properties),
                 );
             }
@@ -313,14 +537,14 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
                     // correct because **`root_ctx == None` means this node has no
                     // element parent**. Check this caller-side invariant:
                     //
-                    // - `cascade()` always starts at `dom.root_id()` (= Document
+                    // - `walk` always starts at `dom.root_id()` (= Document
                     //   node) and passes `ComputedValues::initial()` there.
-                    // - `collect_cascaded` creates winners only for Elements, so
-                    //   the Document node retains its initial computed values.
+                    // - Only elements have candidates, so the Document node
+                    //   retains its initial computed values.
                     // - Only the Document itself and its direct children still
                     //   have `root_ctx == None` (`Some` follows the first element).
                     //
-                    // Any future entry point that calls `resolve_inheritance` partway
+                    // Any future entry point that starts `walk_from` partway
                     // through a subtree (e.g. incremental restyle) must therefore
                     // supply `root_ctx` itself. This assertion catches an omission
                     // in debug builds.
@@ -373,7 +597,7 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
             // document-wide constant — a document can have multiple top-level
             // elements directly under the `Document` node, each independently
             // becoming its own `root_ctx == None` root with its own `rem` basis
-            // (see `resolve_inheritance`'s `root_ctx` doc above). A pseudo's
+            // (see `walk_from`'s `root_ctx` doc above). A pseudo's
             // `rem`/`rlh` basis must match whichever one its own real
             // originating element actually resolved against, and that value
             // only exists as this loop's *local* `child_ctx` at this exact
@@ -394,7 +618,7 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
             // does not make; see `CascadeResult::pseudo`'s doc.
             if is_element {
                 for pseudo in CASCADED_PSEUDO_ELEMENTS {
-                    let (candidates, custom_candidates) = cascaded.pseudo(id, pseudo);
+                    let (candidates, custom_candidates) = input.pseudo(pseudo, shared);
                     if candidates.is_none() && custom_candidates.is_none() {
                         continue;
                     }
@@ -439,15 +663,15 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
                     let ctx = child_ctx.expect(
                         "a generated pseudo-element candidate only exists for a \
                          StyleNodeKind::Element (is_element == true here, since \
-                         only elements are ever matched by a selector — \
-                         `collect_cascaded`'s pseudo-element pass runs inside \
-                         the same `if let Some(elem) = node.as_element()` guard \
-                         as its real-element pass), and `child_ctx` is `Some` \
-                         for every element by this point in the match above",
+                         only elements are ever matched by a selector — the \
+                         collector's pseudo-element pass runs only for nodes \
+                         `node.as_element()` returns an element for), and \
+                         `child_ctx` is `Some` for every element by this point \
+                         in the match above",
                     );
                     let mut pseudo_computed = pseudo_specified.finalize(&computed, &ctx);
                     if pseudo == PseudoElem::FirstLetter {
-                        first_letter_inputs.insert(
+                        out.first_letter_inputs.insert(
                             id,
                             super::first_letter::FirstLetterInputs {
                                 candidates: OwnedCandidates::copy(
@@ -460,32 +684,45 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
                     }
                     pseudo_computed.custom_properties = pseudo_custom_properties;
                     pseudo_computed.local_custom_properties = pseudo_local_custom_properties;
-                    pseudo_out.insert((id, pseudo), pseudo_computed);
+                    out.pseudo.insert((id, pseudo), pseudo_computed);
                 }
-            }
-
-            if sibling_sharing && root_ctx.is_some() {
-                share_caches[depth].remember(id);
             }
             (computed, custom_properties, child_ctx, id)
         };
 
-        if !node_svg_properties.is_empty() {
-            svg_properties.insert(id, node_svg_properties);
+        // Keep the candidates the options and the first-letter methods ask for.
+        let has_first_line = out.pseudo.contains_key(&(id, PseudoElem::FirstLine));
+        if keep_typographic && (in_first_line || has_first_line) {
+            keep_typographic_inputs(&input, id, shared, &mut out.typographic_inheritance)?;
+        }
+        if in_retained_subtree && let (Some(candidates), _) = input.element(shared) {
+            out.retained_subtree.insert(
+                id,
+                OwnedCandidates::copy(candidates, CustomCandidates::EMPTY)?, // cov:ignore: the error branch needs a u32 handle overflow
+            );
+        }
+        match (share_parent, root_ctx) {
+            (Some(parent), Some(_)) if options.sibling_sharing && share_source.is_none() => {
+                store.remember(depth, parent, id, input);
+            }
+            _ => store.give_back(input),
         }
 
-        // `out` may be shorter than node_count(): `cascade()` only reserves
-        // capacity, so a slot is created the first time the walk reaches it.
+        if !node_svg_properties.is_empty() {
+            out.svg_properties.insert(id, node_svg_properties);
+        }
+
+        // `computed` may be shorter than node_count(): only capacity was
+        // reserved, so a slot is created the first time the walk reaches it.
         // Ids usually arrive in increasing order, which makes this a plain
         // push; any gap left by an unvisited id is filled with initial().
-        let idx = id.0 as usize;
-        if out.len() < idx {
-            out.resize(idx, ComputedValues::initial());
+        if out.computed.len() < idx {
+            out.computed.resize(idx, ComputedValues::initial());
         }
-        if out.len() == idx {
-            out.push(computed);
+        if out.computed.len() == idx {
+            out.computed.push(computed);
         } else {
-            out[idx] = computed;
+            out.computed[idx] = computed;
         }
 
         // Push children onto the stack, looking up their already-written
@@ -496,28 +733,58 @@ pub(crate) fn resolve_inheritance_with<D: StyleDom>(
         // `child_ctx` is `Copy` (via `ResolveContext`) and can be reused inside
         // the closure.
         //
-        // Why preserve document order? `resolve_inheritance` itself does not
-        // rely on sibling visitation order: each node depends only on its
-        // parent's saved computed values and child_ctx, and the `winners`
-        // scratch buffer is fully drained before and after each node. We keep
-        // document order to match behavior **exactly** before the refactor.
-        // It also preserves the leak-detection direction documented by
-        // `winner_does_not_leak_into_next_sibling`: earlier `<p>` then later
-        // `<span>` in document order.
+        // Document order also preserves the leak-detection direction
+        // documented by `winner_does_not_leak_into_next_sibling`: earlier
+        // `<p>` then later `<span>` in document order.
         let start = stack.len();
-        stack.extend(dom.child_ids(id).map(|child_id| {
-            (
-                child_id,
-                Some(id),
-                child_ctx,
-                custom_properties.clone(),
-                depth + 1,
-                Some(children_share_parent),
-            )
+        let ancestors = ancestor_path.len();
+        let in_first_line = in_first_line || has_first_line;
+        stack.extend(dom.child_ids(id).map(|child| WalkEntry {
+            id: child,
+            parent: Some(id),
+            root_ctx: child_ctx,
+            parent_custom_properties: custom_properties.clone(),
+            depth: depth + 1,
+            ancestors,
+            share_parent: Some(children_share_parent),
+            in_retained_subtree: in_retained_subtree || options.retain_subtree == Some(child),
+            in_first_line,
         }));
         stack[start..].reverse();
     }
-    Ok(shared_nodes)
+    // Every node gets a slot, visited or not.
+    if out.computed.len() < node_count {
+        out.computed.resize(node_count, ComputedValues::initial());
+    }
+    if out.first_letter_inputs.is_empty() {
+        out.typographic_inheritance.clear();
+    }
+    Ok(out)
+}
+
+/// Keeps copies of `id`'s candidates, and of those of its `::before`,
+/// `::after` and `::first-line`, for recomputing first-line text later.
+fn keep_typographic_inputs(
+    input: &ElementInput,
+    id: StyleNodeId,
+    shared: SharedDeclarations<'_>,
+    kept: &mut HashMap<(StyleNodeId, Option<PseudoElem>), OwnedCandidates>,
+) -> Result<(), CascadeError> {
+    if let (Some(candidates), _) = input.element(shared) {
+        kept.insert(
+            (id, None),
+            OwnedCandidates::copy(candidates, CustomCandidates::EMPTY)?, // cov:ignore: the error branch needs a u32 handle overflow
+        );
+    }
+    for pseudo in [PseudoElem::Before, PseudoElem::After, PseudoElem::FirstLine] {
+        if let (Some(candidates), _) = input.pseudo(pseudo, shared) {
+            kept.insert(
+                (id, Some(pseudo)),
+                OwnedCandidates::copy(candidates, CustomCandidates::EMPTY)?, // cov:ignore: the error branch needs a u32 handle overflow
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Find a longhand's surviving value after origin or layer rollback.
@@ -735,10 +1002,10 @@ fn resolve_border_css_wide(
 ///
 /// # Origin of `candidates`
 ///
-/// [`resolve_inheritance`] obtains `candidates` through
-/// [`CascadedArena::element`] and [`CascadedArena::pseudo`], whose views pair
-/// **exactly this node's range** with **exactly this node's own declarations**
-/// (private fields prevent alternate slicing). Its `::first-line` filter,
+/// [`walk_from`] obtains `candidates` through [`ElementInput::element`] and
+/// [`ElementInput::pseudo`], whose views pair **exactly this node's
+/// candidates** with **exactly this node's own declarations** (private fields
+/// prevent other pairings). Its `::first-line` filter,
 /// [`super::first_line::cascade_with_first_line`] and the first-letter
 /// methods pass filtered copies of such views or views of [`OwnedCandidates`],
 /// which resolve to the same declarations. Thus neither `winner.idx` nor a

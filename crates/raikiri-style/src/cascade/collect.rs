@@ -3,7 +3,6 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::ops::Range;
 
 use cssparser::{Parser, ParserInput};
 use selectors::parser::Selector;
@@ -16,11 +15,11 @@ use crate::property::PropertyKey;
 use crate::rule::{Declaration, parse_declaration_block_with_consumer_properties};
 
 use super::candidate::{
-    Candidate, CandidateSink, CustomCandidate, CustomCandidates, ElementCandidates, Precedence,
-    ValueSource, push_rule_candidates, same_candidates, same_custom_candidates, too_many,
+    CandidateSink, ElementCandidates, ElementInput, Precedence, SharedDeclarations, pseudo_slot,
+    push_rule_candidates, too_many,
 };
 use crate::ruletree::{Origin, RuleTree};
-use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
+use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleQuirksMode};
 
 use super::html_quirks::{push_img_dimension_hints, push_margin_collapsing_quirk_declarations};
 use super::rule_index::{AncestorFilter, RuleIndex};
@@ -99,246 +98,6 @@ pub(crate) const CASCADED_PSEUDO_ELEMENTS: [PseudoElem; 5] = [
     PseudoElem::FirstLine,
     PseudoElem::FirstLetter,
 ];
-
-/// Output of [`collect_cascaded`]: all nodes' candidates in one flat `Vec`,
-/// indexed by per-node [`Range`] values, together with the rule index they
-/// were collected against.
-///
-/// The flat arena keeps candidate storage contiguous and records one range per
-/// node. This avoids per-node candidate containers while preserving document
-/// order. A candidate is a [`Candidate`] record whose handle refers to a
-/// declaration of an active rule, to one of a `style` attribute block stored
-/// for every element with that source (`blocks`), or to one of the element's
-/// own declarations (`locals`). The arena borrows the rule tree for `'r` and
-/// owns the cascade's [`RuleIndex`] and those declarations, so every
-/// declaration a handle refers to stays alive and unchanged for as long as the
-/// candidates are read.
-///
-/// # Why wrap this in a struct instead of `(Vec<_>, HashMap<_, Range<usize>>)`?
-///
-/// The `winner.idx` from [`pick_winners`] indexes **the supplied candidates**.
-/// A wrong slice can silently select a declaration for another node without
-/// going out of bounds, and a local handle resolved against another node's
-/// declarations would do the same. The flat arena adds precisely this risk:
-/// passing all `decls` or an incomplete slice such as `decls[range.start..]`
-/// to [`super::inherit::apply_winners`] instead of using
-/// [`candidates`](Self::candidates). Make production callers use only
-/// [`candidates`](Self::candidates), which supplies exactly this node's
-/// candidates together with exactly this node's own declarations.
-///
-/// `pub(crate)` follows [`super::inherit::resolve_inheritance`], which is
-/// also `pub(crate)` for an intra-doc link from another module. Other modules
-/// are not meant to construct or manipulate this arena: only
-/// [`collect_cascaded_with_media_context`] builds and populates it.
-pub(crate) struct CascadedArena<'r> {
-    /// The active style rules of this cascade, which the candidates were
-    /// matched against.
-    index: RuleIndex<'r>,
-    /// Flat storage for all elements' candidates in document visit order.
-    decls: Vec<Candidate>,
-    /// All custom-property candidates in document visit order.
-    custom_decls: Vec<CustomCandidate>,
-    /// The `style` attribute blocks stored by the declaration block cache,
-    /// at the positions cached handles name. They move here when collection
-    /// ends, so a cached handle can only be resolved after it.
-    blocks: Vec<Box<[Declaration]>>,
-    /// The elements' own declarations (presentational hints, quirks, inline
-    /// style, animation) in document visit order. A local handle counts from
-    /// the start of its element's range.
-    locals: Vec<Declaration>,
-    /// Per-element ranges in `decls`, `custom_decls` and `locals`. An element
-    /// with no candidates has no entry, matching the old
-    /// `if !per_node.is_empty() { out.insert(..) }` contract.
-    elements: HashMap<StyleNodeId, ElementRanges>,
-    /// Flat arena like `decls`, for the candidates of the originating
-    /// element's pseudo-elements. They all come from style rules, so they
-    /// have no declarations of their own.
-    pseudo_decls: Vec<Candidate>,
-    /// Custom-property counterpart of `pseudo_decls`.
-    pseudo_custom_decls: Vec<CustomCandidate>,
-    /// Per-`(id, pseudo)` ranges in `pseudo_decls` and `pseudo_custom_decls`.
-    /// One element may have independent candidates for several
-    /// pseudo-elements; a pair with no candidates has no entry.
-    pseudo: HashMap<(StyleNodeId, PseudoElem), PseudoRanges>,
-    /// Elements with an `opacity` or a `background-color` candidate of their
-    /// own (pseudo-elements excluded), with which of the two, in visit order.
-    specified: Vec<SpecifiedProperties>,
-}
-
-/// Where one element's candidates and own declarations are in the arena.
-struct ElementRanges {
-    decls: Range<usize>,
-    custom: Range<usize>,
-    locals: Range<usize>,
-}
-
-/// Where one pseudo-element's candidates are in the arena.
-struct PseudoRanges {
-    decls: Range<usize>,
-    custom: Range<usize>,
-}
-
-/// Whether an element's own candidates include `opacity` and
-/// `background-color`, whichever declaration wins.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct SpecifiedProperties {
-    pub(crate) id: StyleNodeId,
-    pub(crate) opacity: bool,
-    pub(crate) background_color: bool,
-}
-
-impl<'r> CascadedArena<'r> {
-    fn new(index: RuleIndex<'r>) -> Self {
-        Self {
-            index,
-            decls: Vec::new(),
-            custom_decls: Vec::new(),
-            blocks: Vec::new(),
-            locals: Vec::new(),
-            elements: HashMap::new(),
-            pseudo_decls: Vec::new(),
-            pseudo_custom_decls: Vec::new(),
-            pseudo: HashMap::new(),
-            specified: Vec::new(),
-        }
-    }
-
-    /// The elements whose own candidates include `opacity` or
-    /// `background-color`.
-    pub(crate) fn specified_properties(&self) -> &[SpecifiedProperties] {
-        &self.specified
-    }
-
-    /// Records which of the flagged properties `id`'s own candidates, just
-    /// collected into `decls[range]`, include.
-    fn record_specified_properties(&mut self, id: StyleNodeId, range: Range<usize>) {
-        let (mut opacity, mut background_color) = (false, false);
-        for candidate in &self.decls[range] {
-            match candidate.key() {
-                PropertyKey::Opacity => opacity = true,
-                PropertyKey::BackgroundColor => background_color = true,
-                _ => {}
-            }
-        }
-        if opacity || background_color {
-            self.specified.push(SpecifiedProperties {
-                id,
-                opacity,
-                background_color,
-            });
-        }
-    }
-
-    /// Resolves rule and cached handles against this cascade's rules and
-    /// stored blocks, and local handles against `locals`.
-    fn source<'a>(&'a self, locals: &'a [Declaration]) -> ValueSource<'a> {
-        ValueSource::new(self.index.rules(), &self.blocks, locals)
-    }
-
-    /// Candidates of `id`: **only this node's**, resolving local handles
-    /// against only this node's own declarations, suitable for passing
-    /// directly to [`pick_winners`].
-    ///
-    /// The view always holds `&self.decls[range]` and `&self.locals[locals]`,
-    /// where both ranges are exactly the ones `collect_cascaded` filled for
-    /// `id`. This struct exposes no path for callers to assemble the full
-    /// slice or shift a range.
-    pub(crate) fn candidates(&self, id: StyleNodeId) -> Option<ElementCandidates<'_>> {
-        self.element(id).0
-    }
-
-    /// The ordinary and custom-property candidates of `id`, found with one
-    /// lookup.
-    pub(crate) fn element(
-        &self,
-        id: StyleNodeId,
-    ) -> (Option<ElementCandidates<'_>>, Option<CustomCandidates<'_>>) {
-        match self.elements.get(&id) {
-            Some(ranges) => (self.element_candidates(ranges), self.element_custom(ranges)),
-            None => (None, None),
-        }
-    }
-
-    fn element_candidates(&self, ranges: &ElementRanges) -> Option<ElementCandidates<'_>> {
-        (!ranges.decls.is_empty()).then(|| {
-            ElementCandidates::new(
-                &self.decls[ranges.decls.clone()],
-                self.source(&self.locals[ranges.locals.clone()]),
-            )
-        })
-    }
-
-    fn element_custom(&self, ranges: &ElementRanges) -> Option<CustomCandidates<'_>> {
-        (!ranges.custom.is_empty()).then(|| {
-            CustomCandidates::new(
-                &self.custom_decls[ranges.custom.clone()],
-                self.source(&self.locals[ranges.locals.clone()]),
-            )
-        })
-    }
-
-    /// Every node that has candidates, with them, in no particular order.
-    pub(crate) fn all_candidates(
-        &self,
-    ) -> impl Iterator<Item = (StyleNodeId, ElementCandidates<'_>)> {
-        self.elements
-            .iter()
-            .filter_map(|(&id, ranges)| Some((id, self.element_candidates(ranges)?)))
-    }
-
-    /// Candidates for `(id, pseudo)`: the pseudo-element counterpart of
-    /// [`candidates`](Self::candidates).
-    pub(crate) fn pseudo_candidates(
-        &self,
-        id: StyleNodeId,
-        pseudo: PseudoElem,
-    ) -> Option<ElementCandidates<'_>> {
-        self.pseudo(id, pseudo).0
-    }
-
-    /// The ordinary and custom-property candidates of `(id, pseudo)`, found
-    /// with one lookup. They all come from style rules, so they resolve no
-    /// local handles.
-    pub(crate) fn pseudo(
-        &self,
-        id: StyleNodeId,
-        pseudo: PseudoElem,
-    ) -> (Option<ElementCandidates<'_>>, Option<CustomCandidates<'_>>) {
-        let Some(ranges) = self.pseudo.get(&(id, pseudo)) else {
-            return (None, None);
-        };
-        let decls = (!ranges.decls.is_empty()).then(|| {
-            ElementCandidates::new(&self.pseudo_decls[ranges.decls.clone()], self.source(&[]))
-        });
-        let custom = (!ranges.custom.is_empty()).then(|| {
-            CustomCandidates::new(
-                &self.pseudo_custom_decls[ranges.custom.clone()],
-                self.source(&[]),
-            )
-        });
-        (decls, custom)
-    }
-
-    /// Whether `a` and `b` carry exactly the same cascade input: equal
-    /// ordinary, custom-property, and per-pseudo-element candidate lists,
-    /// compared value by value including origin, importance, specificity,
-    /// and source order (see [`same_candidates`]).
-    ///
-    /// Everything node-specific that the cascade knows about an element —
-    /// matched rules, inline style, presentational hints, quirks
-    /// declarations — reaches the inheritance walk only through these lists.
-    /// Two nodes that agree here and share a parent therefore resolve to the
-    /// same computed values; see [`super::inherit::resolve_inheritance`].
-    pub(crate) fn same_cascade_input(&self, a: StyleNodeId, b: StyleNodeId) -> bool {
-        let same = |(a_decls, a_custom), (b_decls, b_custom)| {
-            same_candidates(a_decls, b_decls) && same_custom_candidates(a_custom, b_custom)
-        };
-        same(self.element(a), self.element(b))
-            && CASCADED_PSEUDO_ELEMENTS
-                .iter()
-                .all(|&pseudo| same(self.pseudo(a, pseudo), self.pseudo(b, pseudo)))
-    }
-}
 
 /// Parsed `style`-attribute blocks for one cascade, keyed by source text.
 ///
@@ -618,460 +377,327 @@ pub(crate) fn cascade_rank(origin: Origin, important: bool) -> u8 {
     }
 }
 
-/// `collect_cascaded` traverses nodes with DFS. Before descendant/child
-/// combinators were supported, per-node work was independent of other nodes
-/// and visit order did not matter. This is **no longer true**: selector
-/// matching uses the local `ancestor_path` (IDs of elements already visited).
-/// Correctness requires pre-order traversal with ancestors before descendants;
-/// otherwise ancestor lookups for combinators fail. The traversal remains
-/// iterative with an explicit `Vec` stack to avoid overflow, but each entry
-/// is `(StyleNodeId, usize)` rather than just `StyleNodeId`: the second value
-/// is the length to which the ancestor path must be truncated before the node.
-/// See the implementation comments below.
+/// Collects the cascade input of one element at a time, for one cascade.
 ///
-/// # Writing to the flat arena
-///
-/// Candidates for one node are appended **contiguously** to `out.decls`:
-/// presentational hints and quirks, matching stylesheet rules in source
-/// order, then inline style and animation. The node's own declarations go to
-/// `out.locals` alongside, and a local handle counts from the node's first
-/// one. Once all complete, the node's ranges are recorded. No other append
-/// occurs before the next node. Thus indices in the candidates returned by
-/// [`CascadedArena::candidates`] remain indices into **that node's own**
-/// candidates for [`pick_winners`]/[`super::inherit::apply_winners`].
-/// Passing indices in the global arena instead would break this contract.
-///
-/// # Errors
-///
-/// Fails when the rule index cannot number the active rules (see
-/// [`RuleIndex::new`]), when an element has more own declarations than a local
-/// handle can number, or when the declaration block cache cannot number a
-/// stored `style` attribute or its declarations.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "default-context entry point named by the surrounding cascade \
-                  documentation; production dispatch uses \
-                  collect_cascaded_with_media_context"
-    )
-)]
-pub(crate) fn collect_cascaded<'r, D: StyleDom>(
-    dom: &D,
-    id: StyleNodeId,
+/// The cascade walks the document once, in pre-order, and asks the collector
+/// for each element's input just before resolving it. Collection reads only
+/// the DOM and the rule tree, and fills its caches (inline style blocks, table
+/// cell padding, selector matching facts) in document order, as a separate
+/// pass in the same order would, so collecting in the walk produces exactly
+/// what such a pass does.
+pub(crate) struct Collector<'a, 'r, D: StyleDom> {
+    dom: &'a D,
     rule_tree: &'r RuleTree,
-) -> Result<CascadedArena<'r>, CascadeError> {
-    collect_cascaded_with_media_context(dom, id, rule_tree, &MediaContext::default())
+    quirks_mode: StyleQuirksMode,
+    match_ctx: MatchContext<'a, D>,
+    /// The active style rules of this cascade, bucketed by the selectors'
+    /// subject compounds.
+    index: RuleIndex<'r>,
+    block_cache: DeclarationBlockCache,
+    cell_padding_cache: HashMap<StyleNodeId, Option<u32>>,
+    /// Scratch list of the rules the index could not rule out for an element.
+    candidate_rules: Vec<u32>,
 }
 
-pub(crate) fn collect_cascaded_with_media_context<'r, D: StyleDom>(
-    dom: &D,
-    id: StyleNodeId,
-    rule_tree: &'r RuleTree,
-    media_context: &MediaContext,
-) -> Result<CascadedArena<'r>, CascadeError> {
-    // Document-wide constant — read once rather than
-    // per (node, rule) pair inside the loop below.
-    let layers = rule_tree.layer_order(media_context);
-    let quirks_mode = dom.quirks_mode();
-    // Sibling positions, languages and directionality are pure functions of
-    // the DOM, which stays immutably borrowed for this whole walk, so one
-    // set of match caches serves every element. A stylesheet cascade has no
-    // scoping element (`:scope` falls back to `:root` semantics, matched by
-    // `is_supported_selector`'s existing rejection of any selector
-    // containing `:scope` before it ever reaches the rule tree), and it
-    // skips inert candidates (`allow_detached = false`).
-    let match_caches = MatchCaches::default();
-    let match_ctx = MatchContext::new(dom, quirks_mode, None, false, &match_caches);
-    // The media context is fixed for this cascade invocation. Evaluate each
-    // condition once, keeping inactive rules out of every element's scan.
-    let mut style_rules = rule_tree.style_rules.iter().collect::<Vec<_>>();
-    style_rules.extend(
-        rule_tree
-            .media_rules
-            .iter()
-            .filter(|media| media.condition.matches(media_context))
-            .map(|media| &media.rule),
-    );
-    style_rules.sort_unstable_by_key(|rule| rule.source_order);
-    // Bucket the active rules once per cascade so each element only runs the
-    // full matcher against rules that can possibly match it. See the
-    // `rule_index` module docs for why the filtering never drops a match.
-    let mut out = CascadedArena::new(RuleIndex::new(style_rules, &layers)?);
-    let mut candidate_rules: Vec<u32> = Vec::new();
-    let mut block_cache = DeclarationBlockCache::default();
-    let mut cell_padding_cache = HashMap::new();
+impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
+    /// A collector for the rules of `rule_tree` active under `media_context`.
+    /// `match_caches` memoizes DOM-derived facts for every element of the
+    /// cascade.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the rule index cannot number the active rules (see
+    /// [`RuleIndex::new`]).
+    pub(crate) fn new(
+        dom: &'a D,
+        rule_tree: &'r RuleTree,
+        media_context: &MediaContext,
+        match_caches: &'a MatchCaches,
+    ) -> Result<Self, CascadeError> {
+        // Document-wide constant — read once per cascade rather than
+        // per (node, rule) pair.
+        let layers = rule_tree.layer_order(media_context);
+        let quirks_mode = dom.quirks_mode();
+        // Sibling positions, languages and directionality are pure functions of
+        // the DOM, which stays immutably borrowed for this whole walk, so one
+        // set of match caches serves every element. A stylesheet cascade has no
+        // scoping element (`:scope` falls back to `:root` semantics, matched by
+        // `is_supported_selector`'s existing rejection of any selector
+        // containing `:scope` before it ever reaches the rule tree), and it
+        // skips inert candidates (`allow_detached = false`).
+        let match_ctx = MatchContext::new(dom, quirks_mode, None, false, match_caches);
+        // The media context is fixed for this cascade invocation. Evaluate each
+        // condition once, keeping inactive rules out of every element's scan.
+        let mut style_rules = rule_tree.style_rules.iter().collect::<Vec<_>>();
+        style_rules.extend(
+            rule_tree
+                .media_rules
+                .iter()
+                .filter(|media| media.condition.matches(media_context))
+                .map(|media| &media.rule),
+        );
+        style_rules.sort_unstable_by_key(|rule| rule.source_order);
+        // Bucket the active rules once per cascade so each element only runs the
+        // full matcher against rules that can possibly match it. See the
+        // `rule_index` module docs for why the filtering never drops a match.
+        let index = RuleIndex::new(style_rules, &layers)?;
+        Ok(Self {
+            dom,
+            rule_tree,
+            quirks_mode,
+            match_ctx,
+            index,
+            block_cache: DeclarationBlockCache::default(),
+            cell_padding_cache: HashMap::new(),
+            candidate_rules: Vec::new(),
+        })
+    }
 
-    // Stack entries pair a node id with the `ancestor_path` length it should
-    // be truncated to *before* that node is processed.
-    // `stack` itself interleaves the pending work of
-    // multiple subtrees in one flat `Vec` (sibling branches, cousins, ...),
-    // so a plain push/pop can't recover "the current node's actual ancestor
-    // chain" by itself — truncating `ancestor_path` to the depth recorded
-    // when each entry was pushed undoes whatever a since-fully-processed
-    // sibling subtree appended, reconstructing exactly the root..parent
-    // chain for whichever node is popped next. Standard technique for
-    // recovering DFS ancestor paths from a single explicit stack; it stays
-    // O(1) amortized (`Vec::truncate` just shrinks `len`, no deallocation)
-    // and needs no `HashMap`/parent-pointer side table.
-    let mut stack: Vec<(StyleNodeId, usize)> = vec![(id, 0)];
-    // Ancestor **element** ids, root-most first / immediate-parent last
-    // (`ancestor_path.last()` = current node's parent). Only `Element`-kind
-    // nodes are ever pushed — `Document`/`Text`/etc. can never be matched by
-    // a compound selector, so they must not count as a combinator ancestor
-    // either (CSS Selectors L4 descendant/child combinators are defined in
-    // terms of element ancestry, e.g.
-    // <https://www.w3.org/TR/selectors-4/#descendant-combinators> "an
-    // element B that is an arbitrary descendant of some ancestor element
-    // A" — verbatim (see `match_combinator_chain`'s "Spec provenance note"
-    // for how this text was confirmed), both sides are elements).
-    let mut ancestor_path: Vec<StyleNodeId> = Vec::new();
-    // Bloom filter over the same ancestors, truncated and pushed in lockstep
-    // with `ancestor_path`.
-    let mut ancestor_filter = AncestorFilter::new();
-    // `::before`/`::after` candidate scratch buffers — declared outside the
-    // walk loop and drained (via `Vec::append`, see the flush site below) at
-    // the end of each element's processing, so they're always empty when a
-    // new element starts. Reused across the whole document walk rather than
-    // allocated fresh per element, same rationale as `resolve_inheritance`'s
-    // `winners` buffer.
-    let mut pseudo_before_decls: Vec<Candidate> = Vec::new();
-    let mut pseudo_after_decls: Vec<Candidate> = Vec::new();
-    let mut pseudo_marker_decls: Vec<Candidate> = Vec::new();
-    let mut pseudo_first_line_decls: Vec<Candidate> = Vec::new();
-    let mut pseudo_first_letter_decls: Vec<Candidate> = Vec::new();
-    let mut pseudo_before_custom: Vec<CustomCandidate> = Vec::new();
-    let mut pseudo_after_custom: Vec<CustomCandidate> = Vec::new();
-    let mut pseudo_marker_custom: Vec<CustomCandidate> = Vec::new();
-    let mut pseudo_first_line_custom: Vec<CustomCandidate> = Vec::new();
-    let mut pseudo_first_letter_custom: Vec<CustomCandidate> = Vec::new();
-    while let Some((id, depth)) = stack.pop() {
-        ancestor_path.truncate(depth);
-        ancestor_filter.truncate(depth);
-        if let Some(node) = dom.node(id) {
-            // Skip descendants of <template> and future inert subtrees alike.
-            // Silent bug fix: rule matching previously ran inside templates,
-            // wasting arena space (formerly per-node candidate vectors).
-            if !node.is_in_document() {
+    /// The declarations the collected inputs' rule and cached handles refer
+    /// to.
+    pub(crate) fn shared(&self) -> SharedDeclarations<'_> {
+        SharedDeclarations::new(self.index.rules(), &self.block_cache.blocks)
+    }
+
+    /// Whether some selector of an active rule targets `pseudo`.
+    pub(crate) fn targets(&self, pseudo: PseudoElem) -> bool {
+        self.index.targets(pseudo)
+    }
+
+    /// Collects the input of element `id` into the empty `input`.
+    ///
+    /// `ancestor_path` holds `id`'s element ancestors, root-most first and its
+    /// parent last, and `ancestor_filter` their hashes. Candidates are pushed
+    /// in the order that decides ties: presentational hints and quirks,
+    /// matching stylesheet rules in source order, then inline style and
+    /// animation.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the element has more own declarations than a local handle
+    /// can number, or when the declaration block cache cannot number a stored
+    /// `style` attribute or its declarations.
+    pub(crate) fn collect<E: StyleElement>(
+        &mut self,
+        id: StyleNodeId,
+        elem: &E,
+        ancestor_path: &[StyleNodeId],
+        ancestor_filter: &AncestorFilter,
+        input: &mut ElementInput,
+    ) -> Result<(), CascadeError> {
+        let dom = self.dom;
+        let (mut sink, pseudo_inputs) = input.parts();
+        // HTML presentational hints (later retagged to
+        // `Origin::AuthorPresentationalHint`, distinct from plain
+        // `Origin::Author`). This push is kept ahead of
+        // stylesheet-rule matching / inline style below for
+        // historical/document-order reasons, but it is no longer a
+        // *correctness* requirement: since the hint has its own
+        // `cascade_rank` tier (strictly between `UserAgent` and
+        // `Author`, see `push_img_dimension_hints` doc's "Cascade
+        // origin" section), rank alone decides against any real
+        // Author-origin declaration regardless of specificity,
+        // source_order, or push order — no tie can occur (that was
+        // only possible earlier, when hint and real Author
+        // declarations shared the same `Origin::Author` rank).
+        // The hint's `cascade_rank` value lies strictly between
+        // `Origin::User` and `Origin::Author` in both the Normal and the
+        // Important half of the rank table (see `cascade_rank`), never
+        // equal to the real `Author` rank; no test pins the push
+        // order itself (nothing here is order-*dependent* left to
+        // pin), but
+        // `img_width_attribute_overridable_by_author_stylesheet_regardless_of_specificity`
+        // continues to check the outcome this comment claims.
+        push_img_dimension_hints(elem, &mut sink)?;
+        push_table_attribute_hints(
+            dom,
+            elem,
+            ancestor_path,
+            &mut self.cell_padding_cache,
+            &mut sink,
+        )?; // cov:ignore: the error branch needs a u32 handle overflow
+        const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
+        let is_svg_root = elem.tag_name() == "svg"
+            && elem.namespace_uri() == Some(SVG_NAMESPACE)
+            && !ancestor_path.iter().any(|ancestor_id| {
+                dom.node(*ancestor_id).is_some_and(|ancestor| {
+                    ancestor.as_element().is_some_and(|ancestor| {
+                        ancestor.tag_name() == "svg"
+                            && ancestor.namespace_uri() == Some(SVG_NAMESPACE)
+                    })
+                })
+            });
+        if is_svg_root {
+            super::svg_hints::push_dimension_hints(elem, &mut sink)?;
+        }
+        if elem.namespace_uri() == Some(SVG_NAMESPACE) {
+            if !is_svg_root {
+                super::svg_hints::push_font_size_hint(elem, &mut sink)?;
+            }
+            for (attribute, property, expected_key) in [
+                ("display", "display", crate::property::PropertyKey::Display),
+                ("color", "color", crate::property::PropertyKey::Color),
+                (
+                    "font-family",
+                    "font-family",
+                    crate::property::PropertyKey::FontFamily,
+                ),
+                (
+                    "font-weight",
+                    "font-weight",
+                    crate::property::PropertyKey::FontWeight,
+                ),
+                (
+                    "font-style",
+                    "font-style",
+                    crate::property::PropertyKey::FontStyle,
+                ),
+                (
+                    "visibility",
+                    "visibility",
+                    crate::property::PropertyKey::Visibility,
+                ),
+                ("opacity", "opacity", crate::property::PropertyKey::Opacity),
+                (
+                    "background-color",
+                    "background-color",
+                    crate::property::PropertyKey::BackgroundColor,
+                ),
+            ] {
+                let Some(raw_value) = elem.attr(attribute) else {
+                    continue;
+                };
+                let mut input = ParserInput::new(raw_value);
+                let mut parser = Parser::new(&mut input);
+                if let Some(value) = crate::property::parse_value(property, &mut parser)
+                    && value.key() == expected_key
+                    && parser.expect_exhausted().is_ok()
+                {
+                    sink.push_hint(value)?;
+                }
+            }
+        }
+        // HTML LS §15.3.9 margin-collapsing quirks (quirks-mode
+        // margin-block zeroing) — `ancestor_path` here is still
+        // `id`'s ancestor chain *without* `id` itself (the walk pushes it
+        // only after this element's candidates are collected), so
+        // `ancestor_path.last()` is exactly `id`'s real DOM parent. See
+        // `push_margin_collapsing_quirk_declarations` doc for the
+        // full rule set and design rationale.
+        push_margin_collapsing_quirk_declarations(
+            dom,
+            id,
+            elem,
+            ancestor_path,
+            self.quirks_mode,
+            &mut sink,
+        )?; // cov:ignore: the error branch needs a u32 handle overflow
+        // stylesheet rule matching, restricted to the rules the
+        // index could not rule out (still in source order)
+        self.index
+            .candidate_rules(elem, ancestor_filter, &mut self.candidate_rules);
+        for &rule_idx in &self.candidate_rules {
+            let indexed = self.index.rule(rule_idx);
+            let rule = indexed.rule;
+            if indexed.has_element_selector
+                && let Some(spec) = match_complex_selector_list(
+                    &rule.selectors,
+                    self.match_ctx,
+                    elem,
+                    id,
+                    ancestor_path,
+                )
+            {
+                // The declarations were expanded when the rule was
+                // parsed (`crate::rule::expand_shorthand_into`), and the
+                // rule tree has no path that changes a rule after
+                // parsing.
+                sink.push_rule(self.index.rules(), rule_idx, |d| {
+                    Precedence::new(
+                        rule.origin,
+                        d.important,
+                        spec,
+                        rule.source_order,
+                        indexed.layer,
+                    )
+                });
+            }
+            if !indexed.has_pseudo_selector {
                 continue;
             }
-            if node.kind() == StyleNodeKind::Element
-                && let Some(elem) = node.as_element()
-            {
-                let start = out.decls.len();
-                let custom_start = out.custom_decls.len();
-                let locals_start = out.locals.len();
-                let mut sink =
-                    CandidateSink::new(&mut out.decls, &mut out.custom_decls, &mut out.locals);
-                // HTML presentational hints (later retagged to
-                // `Origin::AuthorPresentationalHint`, distinct from plain
-                // `Origin::Author`). This push is kept ahead of
-                // stylesheet-rule matching / inline style below for
-                // historical/document-order reasons, but it is no longer a
-                // *correctness* requirement: since the hint has its own
-                // `cascade_rank` tier (strictly between `UserAgent` and
-                // `Author`, see `push_img_dimension_hints` doc's "Cascade
-                // origin" section), rank alone decides against any real
-                // Author-origin declaration regardless of specificity,
-                // source_order, or push order — no tie can occur (that was
-                // only possible earlier, when hint and real Author
-                // declarations shared the same `Origin::Author` rank).
-                // Re-verified after the 4th `Origin::User` tier was inserted:
-                // the hint's `cascade_rank` value moved (see `cascade_rank`'s
-                // rank table) but stayed strictly between `Origin::User` and
-                // `Origin::Author` — never equal to the real `Author` rank in
-                // either the Normal or the Important half of the table — so
-                // this reasoning still holds unchanged; no test pins the push
-                // order itself (nothing here is order-*dependent* left to
-                // pin), but
-                // `img_width_attribute_overridable_by_author_stylesheet_regardless_of_specificity`
-                // continues to check the outcome this comment claims.
-                push_img_dimension_hints(&elem, &mut sink)?;
-                push_table_attribute_hints(
-                    dom,
-                    &elem,
-                    &ancestor_path,
-                    &mut cell_padding_cache,
-                    &mut sink,
-                )?; // cov:ignore: the error branch needs a u32 handle overflow
-                const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
-                let is_svg_root = elem.tag_name() == "svg"
-                    && elem.namespace_uri() == Some(SVG_NAMESPACE)
-                    && !ancestor_path.iter().any(|ancestor_id| {
-                        dom.node(*ancestor_id).is_some_and(|ancestor| {
-                            ancestor.as_element().is_some_and(|ancestor| {
-                                ancestor.tag_name() == "svg"
-                                    && ancestor.namespace_uri() == Some(SVG_NAMESPACE)
-                            })
-                        })
-                    });
-                if is_svg_root {
-                    super::svg_hints::push_dimension_hints(&elem, &mut sink)?;
-                }
-                if elem.namespace_uri() == Some(SVG_NAMESPACE) {
-                    if !is_svg_root {
-                        super::svg_hints::push_font_size_hint(&elem, &mut sink)?;
-                    }
-                    for (attribute, property, expected_key) in [
-                        ("display", "display", crate::property::PropertyKey::Display),
-                        ("color", "color", crate::property::PropertyKey::Color),
-                        (
-                            "font-family",
-                            "font-family",
-                            crate::property::PropertyKey::FontFamily,
-                        ),
-                        (
-                            "font-weight",
-                            "font-weight",
-                            crate::property::PropertyKey::FontWeight,
-                        ),
-                        (
-                            "font-style",
-                            "font-style",
-                            crate::property::PropertyKey::FontStyle,
-                        ),
-                        (
-                            "visibility",
-                            "visibility",
-                            crate::property::PropertyKey::Visibility,
-                        ),
-                        ("opacity", "opacity", crate::property::PropertyKey::Opacity),
-                        (
-                            "background-color",
-                            "background-color",
-                            crate::property::PropertyKey::BackgroundColor,
-                        ),
-                    ] {
-                        let Some(raw_value) = elem.attr(attribute) else {
-                            continue;
-                        };
-                        let mut input = ParserInput::new(raw_value);
-                        let mut parser = Parser::new(&mut input);
-                        if let Some(value) = crate::property::parse_value(property, &mut parser)
-                            && value.key() == expected_key
-                            && parser.expect_exhausted().is_ok()
-                        {
-                            sink.push_hint(value)?;
-                        }
-                    }
-                }
-                // HTML LS §15.3.9 margin-collapsing quirks (quirks-mode
-                // margin-block zeroing) — `ancestor_path` here is still
-                // `id`'s ancestor chain *without* `id` itself (that push
-                // happens further below, after this element's candidates
-                // are collected), so `ancestor_path.last()` is exactly
-                // `id`'s real DOM parent. See
-                // `push_margin_collapsing_quirk_declarations` doc for the
-                // full rule set and design rationale.
-                push_margin_collapsing_quirk_declarations(
-                    dom,
+            // Pseudo-elements — independent pass over the same rule's selector
+            // list (a rule's comma-separated list can target the real element
+            // via one selector and a pseudo-element via another, e.g.
+            // `a, a::before {..}`, so this isn't mutually exclusive with the
+            // match above). `selector_matches_pseudo_element` fast-returns
+            // `None` via `Selector::pseudo_element()`'s `O(1)` flag check for
+            // the (overwhelmingly common) selector that doesn't target a
+            // pseudo-element at all, so this second list walk stays cheap for
+            // documents with no pseudo-element rules.
+            for selector in rule.selectors.slice() {
+                let Some(pseudo) = selector_matches_pseudo_element(
+                    self.match_ctx,
+                    selector,
+                    elem,
                     id,
-                    &elem,
-                    &ancestor_path,
-                    quirks_mode,
-                    &mut sink,
-                )?; // cov:ignore: the error branch needs a u32 handle overflow
-                // stylesheet rule matching, restricted to the rules the
-                // index could not rule out (still in source order)
-                out.index
-                    .candidate_rules(&elem, &ancestor_filter, &mut candidate_rules);
-                for &rule_idx in &candidate_rules {
-                    let indexed = out.index.rule(rule_idx);
-                    let rule = indexed.rule;
-                    if indexed.has_element_selector
-                        && let Some(spec) = match_complex_selector_list(
-                            &rule.selectors,
-                            match_ctx,
-                            &elem,
-                            id,
-                            &ancestor_path,
-                        )
-                    {
-                        // The declarations were expanded when the rule was
-                        // parsed (`crate::rule::expand_shorthand_into`), and the
-                        // rule tree has no path that changes a rule after
-                        // parsing.
-                        sink.push_rule(out.index.rules(), rule_idx, |d| {
-                            Precedence::new(
-                                rule.origin,
-                                d.important,
-                                spec,
-                                rule.source_order,
-                                indexed.layer,
-                            )
-                        });
-                    }
-                    if !indexed.has_pseudo_selector {
-                        continue;
-                    }
-                    // `::before`/`::after` — independent pass over the same
-                    // rule's selector list (a rule's comma-separated list can
-                    // target the real element via one selector and a
-                    // pseudo-element via another, e.g. `a, a::before {..}`,
-                    // so this isn't mutually exclusive with the match above).
-                    // `selector_matches_pseudo_element` fast-returns `None`
-                    // via `Selector::pseudo_element()`'s `O(1)` flag check
-                    // for the (overwhelmingly common) selector that doesn't
-                    // target a pseudo-element at all, so this second list
-                    // walk stays cheap for documents with no `::before`/
-                    // `::after` rules.
-                    for selector in rule.selectors.slice() {
-                        let Some(pseudo) = selector_matches_pseudo_element(
-                            match_ctx,
-                            selector,
-                            &elem,
-                            id,
-                            &ancestor_path,
-                        ) else {
-                            continue;
-                        };
-                        let spec = specificity_of(selector);
-                        let (buf, custom_buf) = match pseudo {
-                            PseudoElem::Before => {
-                                (&mut pseudo_before_decls, &mut pseudo_before_custom)
-                            }
-                            PseudoElem::After => {
-                                (&mut pseudo_after_decls, &mut pseudo_after_custom)
-                            }
-                            PseudoElem::Marker => {
-                                (&mut pseudo_marker_decls, &mut pseudo_marker_custom)
-                            }
-                            PseudoElem::FirstLine => {
-                                (&mut pseudo_first_line_decls, &mut pseudo_first_line_custom)
-                            }
-                            PseudoElem::FirstLetter => (
-                                &mut pseudo_first_letter_decls,
-                                &mut pseudo_first_letter_custom,
-                            ),
-                            // cov:ignore: selector_matches_pseudo_element excludes boxless native pseudos
-                            PseudoElem::Backdrop | PseudoElem::FileSelectorButton => continue,
-                        };
-                        push_rule_candidates((buf, custom_buf), out.index.rules(), rule_idx, |d| {
-                            Precedence::new(
-                                rule.origin,
-                                d.important,
-                                spec,
-                                rule.source_order,
-                                indexed.layer,
-                            )
-                        });
-                    }
-                }
-                // inline style
-                if let Some(source) = elem.inline_style_source() {
-                    let block = block_cache.declarations(source, rule_tree)?;
-                    block_cache.push(&mut sink, block, |decl| {
-                        Precedence::new(
-                            Origin::Author,
-                            decl.important,
-                            INLINE_SPECIFICITY,
-                            INLINE_SOURCE_ORDER,
-                            LayerPosition {
-                                attached: true,
-                                ..LayerPosition::default()
-                            },
-                        )
-                    })?;
-                }
-                if let Some(source) = elem.animation_style_source() {
-                    let block = block_cache.declarations(source, rule_tree)?;
-                    block_cache.push(&mut sink, block, |_| {
-                        Precedence::new(
-                            Origin::Animation,
-                            // Animated values are never important.
-                            false,
-                            INLINE_SPECIFICITY,
-                            INLINE_SOURCE_ORDER,
-                            LayerPosition::default(),
-                        )
-                    })?;
-                }
-                let ranges = ElementRanges {
-                    decls: start..out.decls.len(),
-                    custom: custom_start..out.custom_decls.len(),
-                    locals: locals_start..out.locals.len(),
+                    ancestor_path,
+                ) else {
+                    continue;
                 };
-                if !ranges.decls.is_empty() {
-                    out.record_specified_properties(id, ranges.decls.clone());
-                }
-                if !ranges.decls.is_empty() || !ranges.custom.is_empty() {
-                    out.elements.insert(id, ranges);
-                }
-                // Flush this element's `::before`/`::after` scratch buffers
-                // into the shared pseudo arena — `Vec::append` moves (no
-                // clone) and leaves the scratch buffer empty, ready for the
-                // next element that has a pseudo match to reuse without a
-                // fresh allocation (same "declare outside the loop, drain in
-                // place" idiom `resolve_inheritance`'s `winners` buffer
-                // uses). Only elements with an actual match ever touch these
-                // buffers, so they stay empty (a cheap `is_empty` `Vec`, no
-                // allocation) for the common no-`::before`/`::after` case.
-                for (pseudo, buf, custom_buf) in [
-                    (
-                        PseudoElem::Before,
-                        &mut pseudo_before_decls,
-                        &mut pseudo_before_custom,
-                    ),
-                    (
-                        PseudoElem::After,
-                        &mut pseudo_after_decls,
-                        &mut pseudo_after_custom,
-                    ),
-                    (
-                        PseudoElem::Marker,
-                        &mut pseudo_marker_decls,
-                        &mut pseudo_marker_custom,
-                    ),
-                    (
-                        PseudoElem::FirstLine,
-                        &mut pseudo_first_line_decls,
-                        &mut pseudo_first_line_custom,
-                    ),
-                    (
-                        PseudoElem::FirstLetter,
-                        &mut pseudo_first_letter_decls,
-                        &mut pseudo_first_letter_custom,
-                    ),
-                ] {
-                    let decls_start = out.pseudo_decls.len();
-                    out.pseudo_decls.append(buf);
-                    let custom_start = out.pseudo_custom_decls.len();
-                    out.pseudo_custom_decls.append(custom_buf);
-                    let ranges = PseudoRanges {
-                        decls: decls_start..out.pseudo_decls.len(),
-                        custom: custom_start..out.pseudo_custom_decls.len(),
-                    };
-                    if !ranges.decls.is_empty() || !ranges.custom.is_empty() {
-                        out.pseudo.insert((id, pseudo), ranges);
-                    }
-                }
-                // This element becomes an ancestor for its own children
-                // (pushed just below with `ancestor_path.len()` as their
-                // truncation depth).
-                ancestor_path.push(id);
-                ancestor_filter.push(&elem);
+                let spec = specificity_of(selector);
+                // cov:ignore: selector_matches_pseudo_element excludes boxless native pseudos
+                let Some(slot) = pseudo_slot(pseudo) else {
+                    continue;
+                };
+                push_rule_candidates(
+                    pseudo_inputs[slot].lists(),
+                    self.index.rules(),
+                    rule_idx,
+                    |d| {
+                        Precedence::new(
+                            rule.origin,
+                            d.important,
+                            spec,
+                            rule.source_order,
+                            indexed.layer,
+                        )
+                    },
+                );
             }
-            // The stack is LIFO, so reverse children to visit them in document
-            // order. Extend `stack` directly from `child_ids`, then reverse
-            // only the newly appended tail in place. This removes one
-            // disposable intermediate `Vec`; `stack` retains the same
-            // amortized capacity-growth pattern as `for .. { stack.push(..) }`.
-            //
-            // Document-order pre-order is now **necessary** for correctness.
-            // Descendant/child combinator matching reads `ancestor_path`, which
-            // reflects DFS visit order. Visiting a child before its parent
-            // leaves the parent absent and falsely rejects the match. Before
-            // combinators were supported, visit order only preserved behavior;
-            // that older rationale no longer applies.
-            let child_depth = ancestor_path.len();
-            let start = stack.len();
-            stack.extend(dom.child_ids(id).map(|child| (child, child_depth)));
-            stack[start..].reverse();
-        } // cov:ignore: fallthrough-vs-continue region split inside a loop body; every test with an in-document element already exercises this closing brace, but cargo-llvm-cov does not attribute the hit to this line.
+        }
+        // inline style
+        if let Some(source) = elem.inline_style_source() {
+            let block = self.block_cache.declarations(source, self.rule_tree)?;
+            self.block_cache.push(&mut sink, block, |decl| {
+                Precedence::new(
+                    Origin::Author,
+                    decl.important,
+                    INLINE_SPECIFICITY,
+                    INLINE_SOURCE_ORDER,
+                    LayerPosition {
+                        attached: true,
+                        ..LayerPosition::default()
+                    },
+                )
+            })?;
+        }
+        if let Some(source) = elem.animation_style_source() {
+            let block = self.block_cache.declarations(source, self.rule_tree)?;
+            self.block_cache.push(&mut sink, block, |_| {
+                Precedence::new(
+                    Origin::Animation,
+                    // Animated values are never important.
+                    false,
+                    INLINE_SPECIFICITY,
+                    INLINE_SOURCE_ORDER,
+                    LayerPosition::default(),
+                )
+            })?;
+        }
+        Ok(())
     }
-    out.blocks = block_cache.blocks;
-    Ok(out)
 }
+
 pub(crate) fn specificity_of(selector: &Selector<RaikiriSelectorImpl>) -> Specificity {
     // Selector::specificity in selectors returns a packed 32-bit integer.
     selector.specificity()
@@ -1094,7 +720,7 @@ pub(crate) fn specificity_of(selector: &Selector<RaikiriSelectorImpl>) -> Specif
 /// zero allocations.
 ///
 /// The only caller is [`super::inherit::apply_winners`]. Its walk loop in
-/// [`super::inherit::resolve_inheritance`] owns and reuses the buffer.
+/// [`super::inherit::walk_from`] owns and reuses the buffer.
 ///
 /// # Call contract
 ///

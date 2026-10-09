@@ -3,12 +3,50 @@
 //! in that submodule's own `mod tests` instead — this module exists purely
 //! to avoid duplicating a helper body across multiple files.
 
+use std::collections::HashMap;
+
 use crate::computed::ComputedValues;
+use crate::media::MediaContext;
 use crate::property::CssColor;
-use crate::ruletree::{Origin, build_rule_tree};
+use crate::ruletree::{Origin, RuleTree, build_rule_tree};
+use crate::style_dom::{StyleDom, StyleNode, StyleNodeId, StyleNodeKind};
 use crate::test_dom::TestDoc;
 
+use super::candidate::ElementInput;
 use super::cascade;
+use super::collect::Collector;
+use super::rule_index::AncestorFilter;
+use super::selector_match::MatchCaches;
+
+/// Collects the cascade input of every element directly under the document
+/// node of `doc`, in document order, as the cascade walk does for a document
+/// without nested elements. The collector resolves the inputs' handles.
+pub(crate) fn collect_top_level<'a>(
+    doc: &'a TestDoc,
+    tree: &'a RuleTree,
+    caches: &'a MatchCaches,
+) -> (
+    Collector<'a, 'a, TestDoc>,
+    HashMap<StyleNodeId, ElementInput>,
+) {
+    let mut collector =
+        Collector::new(doc, tree, &MediaContext::default(), caches).expect("the rule index builds");
+    let mut inputs = HashMap::new();
+    let elements = doc.child_ids(doc.root_id()).filter(|&id| {
+        doc.node(id)
+            .is_some_and(|node| node.kind() == StyleNodeKind::Element)
+    });
+    for id in elements {
+        let node = doc.node(id).expect("the filter kept only nodes");
+        let elem = node.as_element().expect("an element node has an element");
+        let mut input = ElementInput::default();
+        collector
+            .collect(id, &elem, &[], &AncestorFilter::new(), &mut input)
+            .expect("collection succeeds");
+        inputs.insert(id, input);
+    }
+    (collector, inputs)
+}
 
 pub(crate) fn cascade_doc(css: &str, tag: &str, inline: Option<&str>) -> ComputedValues {
     let mut doc = TestDoc::new();

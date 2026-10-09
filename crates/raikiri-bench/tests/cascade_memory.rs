@@ -167,18 +167,28 @@ fn cascade_allocations_stay_under_their_ceilings() {
             "{what}: {value} exceeds {ceiling} for {nodes} nodes ({usage:?})"
         );
     }
+    // The cascade holds no candidates beyond the element it is resolving and
+    // the few sibling inputs it keeps for sharing, so its peak exceeds the
+    // result by working memory proportional to the document, not to the
+    // number of matched declarations.
+    let working = usage.peak_live.saturating_sub(usage.retained);
+    assert!(
+        working <= nodes * WORKING_BYTES_PER_NODE,
+        "the peak exceeds the result by {working} bytes, more than \
+         {WORKING_BYTES_PER_NODE} per node for {nodes} nodes ({usage:?})"
+    );
 }
 
-// Set from what the cascade used for 6,397 nodes once each candidate became a
-// 32-byte record: 201,855 allocations, 34.2 MB allocated, a 13.6 MiB largest
-// block (the computed values of every node, reserved once), a 19.6 MB peak
-// and 14.9 MB retained by the result. The array of every candidate
-// declaration in the document (4 MiB at the end) grows by doubling, so
-// allocated bytes and the peak move in steps as the candidate count passes a
-// power of two. Raise a ceiling together with a measurement that explains
-// the growth, and lower them when the candidate storage shrinks.
+// Set from what the cascade used for 6,397 nodes once it collected each
+// element's candidates in the inheritance walk: 201,896 allocations, 25.0 MB
+// allocated, a 13.6 MiB largest block (the computed values of every node,
+// reserved once), a 15.0 MB peak and 14.9 MB retained by the result, so the
+// peak exceeded the result by 17 bytes per node. Raise a ceiling together
+// with a measurement that explains the growth, and lower them when the
+// cascade's storage shrinks.
 const ALLOCATIONS_CEILING: usize = 300_000;
-const BYTES_CEILING: usize = 52_000_000;
+const BYTES_CEILING: usize = 38_000_000;
 const LARGEST_BLOCK_CEILING: usize = 22_000_000;
-const PEAK_CEILING: usize = 30_000_000;
+const PEAK_CEILING: usize = 23_000_000;
 const RETAINED_CEILING: usize = 22_000_000;
+const WORKING_BYTES_PER_NODE: usize = 64;

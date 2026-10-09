@@ -34,10 +34,10 @@ use super::types::*;
 //
 // # Sibling arm convention
 //
-// Follows the sibling convention established by
-// `crate::cascade::collect_cascaded` + `crate::cascade::pick_winners`:
-// per-candidate `(value, important, origin, specificity, source_order)` tuple,
-// group by `PropertyKey`, pick winner by `(rank, specificity, source_order)`
+// Follows the convention of the element cascade's winner selection
+// (`crate::cascade::pick_winners`): per candidate a value with its importance,
+// origin, specificity and source order, grouped by `PropertyKey`, the winner
+// picked by `(rank, specificity, source_order)`
 // where higher tuples beat lower. `rank` reuses `cascade_rank` verbatim —
 // `@page` rules and style rules share the same origin ordering (spec §6.2).
 // The only diverging element is the specificity type: `PageSpecificity` is a

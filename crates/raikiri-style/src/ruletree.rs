@@ -1038,9 +1038,8 @@ fn walk_and_collect<D: StyleDom, F: FnMut(&str)>(dom: &D, id: StyleNodeId, on_st
             // source_order by call order. `build_rule_tree` calls it for each `<style>`
             // element in visit order from this walk. Thus visitation order determines
             // source_order and the cascade tie-break.
-            // The two similar locations in cascade.rs (`collect_cascaded` /
-            // `resolve_inheritance`) only need to preserve behavior independent of
-            // visitation order, in contrast.
+            // The cascade walk (`crate::cascade::walk_from`) visits in the same
+            // order, but its results only depend on ancestors coming first.
             // Flat sibling order alone does not distinguish depth-first from
             // breadth-first traversal; mixed depths make the document-order
             // requirement observable.
