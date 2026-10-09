@@ -172,6 +172,82 @@ fn a_child_paragraph_split_across_columns_keeps_each_line_once() {
 }
 
 #[test]
+fn container_insets_preserve_public_columns_boxes_and_following_flow() {
+    for (css, width, column_width, right, height) in [
+        (
+            ".mc{padding:4px 5px;border:1px solid black}",
+            112.0,
+            40.0,
+            66.0,
+            50.0,
+        ),
+        (
+            ".mc{box-sizing:border-box;padding:4px 5px;border:1px solid black}",
+            100.0,
+            34.0,
+            60.0,
+            50.0,
+        ),
+        (
+            ".mc{min-height:60px;padding:4px 5px;border:1px solid black}",
+            112.0,
+            40.0,
+            66.0,
+            70.0,
+        ),
+    ] {
+        let document = lay_out("<div class=mc><p>A<br>B<br>C<br>D</p></div><p>E</p>", css);
+        assert_eq!(
+            text_origins(&document),
+            [
+                ("A".into(), (6.0, 21.0)),
+                ("B".into(), (6.0, 41.0)),
+                ("C".into(), (right, 21.0)),
+                ("D".into(), (right, 41.0)),
+                ("E".into(), (0.0, height + 16.0)),
+            ]
+        );
+        let page = document.page(0).unwrap();
+        let runs = page.text_runs();
+        let root = runs[0].line.root;
+        let columns: Vec<_> = page
+            .fragments()
+            .filter(|f| f.node() == root)
+            .map(|f| (f.rect(), f.fragmentainer()))
+            .collect();
+        assert_eq!(
+            columns,
+            [
+                (
+                    raikiri_traits::PaintRect::new(6.0, 5.0, column_width, 40.0),
+                    0
+                ),
+                (
+                    raikiri_traits::PaintRect::new(right, 5.0, column_width, 40.0),
+                    1
+                ),
+            ]
+        );
+        let container: Vec<_> = page
+            .fragments()
+            .filter(|f| page.dom().local_name(f.node()) == Some("div"))
+            .map(|f| f.rect())
+            .collect();
+        assert_eq!(
+            container,
+            [raikiri_traits::PaintRect::new(0.0, 0.0, width, height)]
+        );
+        assert_eq!(
+            page.paint_order_for_text_runs(&runs)
+                .iter()
+                .filter(|e| matches!(e, PaintEvent::TextLine(_)))
+                .count(),
+            5
+        );
+    }
+}
+
+#[test]
 fn a_split_child_keeps_both_boxes_and_source_fragment_ordinals() {
     let document = lay_out(
         "<div class=mc><p>A<br>B<br>C<br>D</p></div><p>E</p>",
