@@ -1572,11 +1572,12 @@ pub(crate) fn project_slices_with_control(
     nodes.sort_by_key(|node| node.node_id);
 
     for source in &nodes {
-        let is_table_header = document
+        work.check()?;
+        let header_placements = document
             .table_objects
             .headers
-            .owner(source.node_id.0 as usize)
-            .is_some();
+            .placements_of(source.node_id.0 as usize);
+        let is_table_header = header_placements.is_some();
         let kind = match source.node_kind {
             NodeKind::Text => PageFragmentKind::Text,
             NodeKind::Element if source.tag_name.as_deref() == Some("img") => {
@@ -1590,21 +1591,34 @@ pub(crate) fn project_slices_with_control(
                 PageFragmentLineRange::new(0, u32::try_from(metrics.len()).unwrap_or(u32::MAX))
             })
         });
-        for (page_slot, page) in pages.iter().enumerate() {
-            let Some((page_start, page_end)) = page.flow_range else {
-                continue;
-            };
-            if let Some(shift) = document
-                .table_objects
-                .headers
-                .shift(source.node_id.0 as usize, page_start)
-            {
-                if let Some(shift) = shift {
+        if let Some(header_placements) = header_placements {
+            // Repeated header boxes visit only their own pages, and every copy
+            // is charged so header size times page count stays bounded.
+            for (page_index, origin, shift) in header_placements {
+                let start = pages.partition_point(|page| page.page_index < page_index);
+                for (page_slot, page) in pages.iter().enumerate().skip(start) {
+                    if page.page_index != page_index {
+                        break;
+                    }
+                    let Some((page_start, _)) = page.flow_range else {
+                        continue;
+                    };
+                    if (page_start - origin).abs() > 0.001 {
+                        continue;
+                    }
+                    work.charge(1)?;
                     let y = source.abs_y + shift - page_start;
                     placements.push((page_slot, y, source.height, repeat_line_range, y));
                 }
-                continue;
             }
+        }
+        for (page_slot, page) in pages.iter().enumerate() {
+            if is_table_header {
+                break;
+            }
+            let Some((page_start, page_end)) = page.flow_range else {
+                continue;
+            };
             if source.is_repeat {
                 placements.push((
                     page_slot,
@@ -3947,6 +3961,7 @@ pub fn layout_pages_with_page_geometry_and_control(
     }
 
     super::table::headers::finish_boxes(document, &table_headers);
+    table_headers.index();
     document.table_objects.headers = table_headers;
 
     if !page_widths.is_empty() {
