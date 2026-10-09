@@ -1,6 +1,18 @@
 use super::*;
 
 #[test]
+fn column_rule_widths_use_border_pixel_snapping() {
+    for (specified, expected) in [(0.0, 0.0), (0.3, 1.0), (0.9, 1.0), (1.9, 1.0), (3.9, 3.0)] {
+        let values = cascade_doc(
+            "",
+            "div",
+            Some(&format!("column-rule:{specified}px solid red")),
+        );
+        assert_eq!(values.column_rule.width().px(), expected);
+    }
+}
+
+#[test]
 fn column_rule_shorthand_and_longhands_keep_independent_winners() {
     for source in [
         "column-rule:2px solid red;column-rule-color:blue",

@@ -6,6 +6,7 @@ use raikiri_style::property::{BorderColor, BorderStyle, CssColor, PositionValue}
 use raikiri_style::{CascadeResult, ComputedValues};
 use raikiri_traits::{LayoutError, NodeId, PaintClip, PaintRect};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
+use taffy::util::MaybeResolve;
 
 /// One column rule with producer-resolved geometry and used paint values.
 ///
@@ -54,6 +55,7 @@ impl ColumnRule {
 
 struct Group {
     origin: (f32, f32),
+    width: f32,
     height: f32,
     context: FragmentationContext,
     occupied: BTreeSet<usize>,
@@ -126,6 +128,7 @@ pub(crate) fn prepare(
                     node_id,
                     Group {
                         origin,
+                        width: content_width,
                         height,
                         context,
                         occupied: BTreeSet::new(),
@@ -149,19 +152,40 @@ pub(crate) fn prepare(
                 group.occupied.insert(range.fragmentainer);
             }
         }
-        // Foundational direct boxes have final column offsets but no custom
-        // fragment records. Read their resolved placement rather than count
-        // declared columns or infer occupancy from glyph ink.
-        if let Some(group) = parent_owner.and_then(|owner| groups.get_mut(&owner))
-            && document.parent_of(node_id) == parent_owner
+        // IFC ranges already include atomic content. Only the foundational
+        // box flow needs a fallback for placements without fragment records.
+        if let Some(parent_owner) = parent_owner
+            && let Some(group) = groups.get_mut(&parent_owner)
+            && document.parent_of(node_id) == Some(parent_owner)
+            && !document.nodes[parent_owner].is_ifc_root()
             && !fragmented.contains(&node_id)
             && layout.size.width > 0.0
             && layout.size.height > 0.0
         {
-            let stride = group.context.column_width + group.context.column_gap;
-            let column = ((layout.location.x - group.origin.0) / stride)
-                .round()
-                .max(0.0) as usize;
+            // The foundational flex projection carries the normal-flow
+            // column slot in its location. Margins and relative insets move
+            // the visible box within that slot, without occupying a new one.
+            // An ordinary, unfragmented block flow only occupies its first slot.
+            let column = if document.nodes[parent_owner].style.display
+                == taffy::style::Display::Flex
+            {
+                let resolve = |value: taffy::LengthPercentageAuto| {
+                    value.maybe_resolve(Some(group.width), crate::taffy_impl::resolve_calc)
+                };
+                let relative_x = if values.position == PositionValue::Relative {
+                    resolve(node.style.inset.left)
+                        .or_else(|| resolve(node.style.inset.right).map(|right| -right))
+                        .unwrap_or(0.0)
+                } else {
+                    0.0
+                };
+                let stride = group.context.column_width + group.context.column_gap;
+                ((layout.location.x - layout.margin.left - relative_x - group.origin.0) / stride)
+                    .round()
+                    .max(0.0) as usize
+            } else {
+                0
+            };
             group.occupied.insert(column);
         }
         stack.extend(node.children.iter().rev().map(|&child| (child, owner)));

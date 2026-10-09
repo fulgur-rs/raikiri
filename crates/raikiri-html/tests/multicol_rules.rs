@@ -106,6 +106,64 @@ fn public_rules_do_not_adjoin_empty_columns() {
 }
 
 #[test]
+fn relative_content_offsets_do_not_change_column_occupancy() {
+    for body in [
+        "<div class=mc><span style='display:inline-block;width:20px;height:20px;position:relative;left:60px;background:blue'></span></div>",
+        "<div class=mc><div style='height:20px;position:relative;left:60px;background:blue'></div><div style='height:20px;background:lime'></div></div>",
+    ] {
+        let document = lay_out(body, ".mc{height:20px;column-rule:2px solid red}");
+        assert!(rules(&document).is_empty(), "{body}");
+    }
+}
+
+#[test]
+fn foundational_relative_offsets_preserve_the_flow_column_slots() {
+    for inset in [
+        "left:60px",
+        "right:-60px",
+        "left:60%",
+        "left:calc(30% + 30px)",
+    ] {
+        let body = format!(
+            "<div class=mc><div style='height:40px;min-width:40px;position:relative;{inset};background:blue'><br></div><div style='height:40px;min-width:40px;background:lime'><br></div></div>"
+        );
+        let document = lay_out(&body, ".mc{height:20px;column-rule:2px solid red}");
+        assert_eq!(rules(&document), [(49.0, 0.0, 2.0, 20.0)], "{inset}");
+    }
+}
+
+#[test]
+fn public_rule_slices_respect_page_margins_on_every_page() {
+    let letters = (b'A'..=b'Z')
+        .map(|letter| (letter as char).to_string())
+        .collect::<Vec<_>>()
+        .join("<br>");
+    let document = lay_out(
+        &format!("<div class=mc>{letters}</div>"),
+        "@page{margin:20px}.mc{height:260px;column-rule:2px solid red}",
+    );
+    assert_eq!(document.page_count(), 3);
+    for (page_index, height, origin) in [(0, 120.0, 20.0), (1, 120.0, -100.0), (2, 20.0, -220.0)] {
+        let page = document.page(page_index).unwrap();
+        let rules = page
+            .paint_order()
+            .into_iter()
+            .filter_map(|event| match event {
+                PaintEvent::ColumnRule(rule) => Some(rule),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(
+            rules[0].rect,
+            raikiri_traits::PaintRect::new(69.0, 20.0, 2.0, height)
+        );
+        assert_eq!(rules[0].pattern_origin, origin);
+        assert_eq!(rules[0].pattern_height, 260.0);
+    }
+}
+
+#[test]
 fn public_rule_is_inside_owner_opacity_and_overflow_but_outside_its_columns() {
     let document = lay_out(
         "<div class=mc>A<br>B<br>C<br>D</div>",

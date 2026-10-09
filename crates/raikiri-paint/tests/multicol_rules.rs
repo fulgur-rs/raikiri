@@ -16,7 +16,7 @@ impl ImagePixelSource for NoPixels {
     }
 }
 
-fn raster(body: &str, css: &str) -> Vec<u8> {
+fn lay_out(body: &str, css: &str) -> raikiri_html::DocumentLayout {
     let fonts = FontCollectionBuilder::new()
         .font_bytes(
             "Ahem",
@@ -38,6 +38,11 @@ fn raster(body: &str, css: &str) -> Vec<u8> {
     .unwrap() else {
         panic!("completed layout")
     };
+    document
+}
+
+fn raster(body: &str, css: &str) -> Vec<u8> {
+    let document = lay_out(body, css);
     assert_eq!(document.page_count(), 1);
     let page = document.page(0).unwrap();
     let (document, cascade, page_box, _) = page.paint_inputs();
@@ -69,6 +74,95 @@ fn compare(body: &str, css: &str, reference: &str) {
             .count(),
         0
     );
+}
+
+#[test]
+fn relative_atomic_content_does_not_occupy_an_additional_column() {
+    let body = "<div class=mc><span style='display:inline-block;width:20px;height:20px;position:relative;left:60px;background:blue'></span></div>";
+    assert_eq!(
+        raster(body, ".mc{height:40px;column-rule:2px solid red}"),
+        raster(body, ".mc{height:40px}"),
+    );
+}
+
+#[test]
+fn wide_rule_is_below_the_owners_standalone_before_content() {
+    let actual = raster(
+        "<div class=mc><p>A<br>B<br>C<br>D</p></div>",
+        ".mc{height:40px;column-rule:160px solid red}.mc::before{content:'XX';position:absolute;color:blue}",
+    );
+    // The first black glyph covers the first blue X. The second X must
+    // remain above the rule, independently of the paragraph's legacy offsets.
+    let blue = actual
+        .chunks_exact(4)
+        .enumerate()
+        .filter(|(_, pixel)| *pixel == [0, 0, 255, 255])
+        .map(|(pixel, _)| (pixel % 180, pixel / 180))
+        .collect::<Vec<_>>();
+    let expected = (0..20)
+        .flat_map(|y| (20..40).map(move |x| (x, y)))
+        .collect::<Vec<_>>();
+    assert_eq!(blue, expected);
+}
+
+#[test]
+fn rule_widths_snap_to_whole_pixels_before_centering() {
+    for (specified, expected) in [(0.3, 1.0), (0.9, 1.0), (1.9, 1.0), (3.9, 3.0)] {
+        compare(
+            "<div class=mc>A<br>B<br>C<br>D</div>",
+            &format!(".mc{{column-rule:{specified}px solid red}}"),
+            &format!(
+                "<div style='position:absolute;left:{}px;top:0;width:{expected}px;height:40px;background:red'></div><div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:60px;top:0'>C<br>D</div>",
+                50.0 - expected / 2.0
+            ),
+        );
+    }
+}
+
+#[test]
+fn rule_page_slices_do_not_leak_into_page_margins() {
+    let letters = (b'A'..=b'Z')
+        .map(|letter| (letter as char).to_string())
+        .collect::<Vec<_>>()
+        .join("<br>");
+    let document = lay_out(
+        &format!("<div class=mc>{letters}</div>"),
+        "@page{margin:20px}.mc{height:260px;column-rule:2px solid red}",
+    );
+    assert_eq!(document.page_count(), 3);
+    for (index, height) in [(0, 120), (1, 120), (2, 20)] {
+        let page = document.page(index).unwrap();
+        let (source, cascade, page_box, origin) = page.paint_inputs();
+        let mut scene = Scene::new();
+        raikiri_paint::paint_single_page_with_origin_and_page_context(
+            &mut scene,
+            source,
+            cascade,
+            page_box,
+            origin,
+            index,
+            3,
+            false,
+            None,
+            &mut raikiri_dom::CounterSnapshotBudget::default(),
+        )
+        .unwrap();
+        let pixels = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+            |out| out.append_scene(scene, Affine::IDENTITY),
+            180,
+            160,
+        );
+        let red = pixels
+            .chunks_exact(4)
+            .enumerate()
+            .filter(|(_, pixel)| *pixel == [255, 0, 0, 255])
+            .map(|(pixel, _)| (pixel % 180, pixel / 180))
+            .collect::<Vec<_>>();
+        let expected = (20..20 + height)
+            .flat_map(|y| [(69, y), (70, y)])
+            .collect::<Vec<_>>();
+        assert_eq!(red, expected);
+    }
 }
 
 #[test]

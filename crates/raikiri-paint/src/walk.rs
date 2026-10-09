@@ -3919,6 +3919,7 @@ pub(crate) fn paint_document_impl(
                     }
                 }
                 let mut before_advance = 0.0;
+                let has_column_rules = document.column_rules(cascade, node_id).next().is_some();
                 if paints_on_page
                     && !raikiri_dom::paint_rules::hides_empty_table_cell(document, cascade, node_id)
                 {
@@ -4258,7 +4259,7 @@ pub(crate) fn paint_document_impl(
                     // The returned advance is used by the deferred `::after`
                     // frame below to preserve source order for an empty or
                     // otherwise unlaid-out originating box.
-                    before_advance = if !paints_as_absolute_continuation {
+                    before_advance = if !paints_as_absolute_continuation && !has_column_rules {
                         paint_generated_pseudo(
                             scene,
                             document,
@@ -4272,7 +4273,7 @@ pub(crate) fn paint_document_impl(
                             counter_snapshots,
                         )
                     } else {
-                        0.0 // cov:ignore: absolute continuation intentionally omits first pseudo paint
+                        0.0
                     };
                 }
                 // The fragmentainer clip encloses the element and its children;
@@ -4358,12 +4359,34 @@ pub(crate) fn paint_document_impl(
                         rule.rect.x += paint_x;
                         rule.rect.y += paint_y;
                         rule.pattern_origin += paint_y;
-                        let start = rule.rect.y.max(0.0);
-                        let end = (rule.rect.y + rule.rect.height).min(page_box.height);
+                        let content_top = margins.top + insets.top;
+                        let start = rule.rect.y.max(content_top);
+                        let end =
+                            (rule.rect.y + rule.rect.height).min(content_top + content_height);
                         rule.rect.y = start;
                         rule.rect.height = (end - start).max(0.0);
                         crate::column_rules::paint(scene, rule);
                     }
+                }
+                // A column rule is below all content, including a standalone
+                // generated overlay that the inline engine did not lay out.
+                if has_column_rules
+                    && paints_on_page
+                    && !paints_as_absolute_continuation
+                    && !raikiri_dom::paint_rules::hides_empty_table_cell(document, cascade, node_id)
+                {
+                    before_advance = paint_generated_pseudo(
+                        scene,
+                        document,
+                        cascade,
+                        node_id,
+                        raikiri_style::PseudoElem::Before,
+                        generated_x,
+                        generated_y,
+                        layout.size.width,
+                        paint_height,
+                        counter_snapshots,
+                    );
                 }
                 // Push this after the clip-pop frame and before children.
                 // Children therefore paint first, then `::after`, then the

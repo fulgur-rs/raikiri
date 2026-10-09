@@ -2421,7 +2421,18 @@ impl SpecifiedValues {
             // width is absolutized against the element's own font metrics.
             column_count: self.column_count,
             column_fill: self.column_fill,
-            column_rule: resolve_border(self.column_rule, font_size, own_line_height, ctx),
+            column_rule: {
+                let mut rule = resolve_border(self.column_rule, font_size, own_line_height, ctx);
+                // CSS Values 4: snap positive subpixel widths up and larger
+                // widths down before centering the producer's rule rectangle.
+                let width = rule.width.px();
+                rule.width = ComputedLength(if width > 0.0 {
+                    width.floor().max(1.0)
+                } else {
+                    0.0
+                });
+                rule
+            },
             column_width: resolve_column_width(self.column_width, font_size, own_line_height, ctx),
             custom_properties: crate::computed::empty_custom_properties(),
             local_custom_properties: crate::computed::empty_custom_properties(),
