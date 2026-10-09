@@ -693,6 +693,8 @@ pub struct SpecifiedValues {
     pub column_fill: ColumnFillValue,
     /// `column-width` specified value; non-inherited.
     pub column_width: ColumnWidthValue,
+    /// Non-inherited column rule; resolves without contributing to box geometry.
+    pub column_rule: Border,
 }
 
 /// Cascade sort key of a winning declaration: origin and importance rank,
@@ -1049,6 +1051,7 @@ impl SpecifiedValues {
             empty_cells: EmptyCellsValue::Show,
             column_count: ColumnCountValue::Auto,
             column_fill: ColumnFillValue::Balance,
+            column_rule: INITIAL_BORDER,
             column_width: ColumnWidthValue::Auto,
         }
     }
@@ -1214,6 +1217,7 @@ impl SpecifiedValues {
             // CSS Multi-column Layout 1: all three multicol properties are non-inherited.
             column_count: ColumnCountValue::Auto,
             column_fill: ColumnFillValue::Balance,
+            column_rule: INITIAL_BORDER,
             column_width: ColumnWidthValue::Auto,
             // CSS Text 3 §5.3: hyphens is inherited.
             hyphens: parent.hyphens,
@@ -2417,6 +2421,7 @@ impl SpecifiedValues {
             // width is absolutized against the element's own font metrics.
             column_count: self.column_count,
             column_fill: self.column_fill,
+            column_rule: resolve_border(self.column_rule, font_size, own_line_height, ctx),
             column_width: resolve_column_width(self.column_width, font_size, own_line_height, ctx),
             custom_properties: crate::computed::empty_custom_properties(),
             local_custom_properties: crate::computed::empty_custom_properties(),

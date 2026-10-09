@@ -387,6 +387,8 @@ pub struct Document {
     pub(crate) calc_values: Vec<Arc<CalcLengthPercentage>>,
     /// Fragments emitted by the active multicol strategy for this layout pass.
     pub(crate) fragment_tree: FragmentTree,
+    /// Column rules retained from final placements, relative to each owner.
+    pub(crate) column_rules: std::collections::BTreeMap<usize, Vec<raikiri_traits::PaintRect>>,
     /// Active nested fragmentainer stack while Taffy recursively lays out nodes.
     pub(crate) fragmentation_stack: Vec<FragmentationContext>,
     /// Vertical block containers being laid out whose absolutely positioned
@@ -512,6 +514,7 @@ impl Document {
             table_layout_error: None,
             calc_values: Vec::new(),
             fragment_tree: FragmentTree::default(),
+            column_rules: std::collections::BTreeMap::new(),
             fragmentation_stack: Vec::new(),
             vertical_oof_containing_blocks: Vec::new(),
             quirks_mode: QuirksMode::default(),

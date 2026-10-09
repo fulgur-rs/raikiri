@@ -27,6 +27,7 @@ pub(crate) struct PageProjection {
     markers: BTreeMap<usize, text_runs::MarkerText>,
     image_markers: BTreeMap<u32, BTreeMap<NodeId, PaintRect>>,
     generated_boxes: generated_boxes::GeneratedBoxes,
+    column_rules: crate::column_rules::PageColumnRules,
     /// Source clip geometry shared across pages rather than copied per page.
     overflow_clips: BTreeMap<NodeId, OverflowClipSource>,
     /// Geometry shared by column placements, independently of the page count.
@@ -41,6 +42,7 @@ impl PageProjection {
         self.markers.clear();
         self.image_markers.clear();
         self.generated_boxes.clear();
+        self.column_rules.clear();
         self.overflow_clips.clear();
         self.placement_overflow_clips.clear();
     }
@@ -141,6 +143,7 @@ impl Document {
             image_markers::prepare(self, cascade, &text_roots, &pages, &paragraphs, &mut work)?;
         let generated_boxes =
             generated_boxes::prepare(self, cascade, &text_roots, &pages, &paragraphs, &mut work)?;
+        let column_rules = crate::column_rules::project(self, cascade, &pages, &mut work)?;
         let events = crate::layout::page_fragment_events_from_pages(self, &pages);
         let mut links: Vec<Vec<(NodeId, String, Vec<PaintRect>)>> =
             pages.iter().map(|_| Vec::new()).collect();
@@ -176,6 +179,7 @@ impl Document {
             markers,
             image_markers,
             generated_boxes,
+            column_rules,
             overflow_clips,
             placement_overflow_clips,
         };

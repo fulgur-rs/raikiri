@@ -535,3 +535,5 @@ fn projection_is_cleared_by_text_relayout() {
     assert_eq!(doc.page_fragments(0).count(), 0);
     assert_eq!(doc.page_links(0).count(), 0);
 }
+
+mod column_rule_tests;

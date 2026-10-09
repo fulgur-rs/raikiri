@@ -652,6 +652,16 @@ fn non_initial_parent() -> ComputedValues {
         empty_cells: EmptyCellsValue::Hide,
         // CSS Multi-column Layout 1: non-inherited fields use non-initial
         // values so `inherit_from` assertions exercise the reset.
+        column_rule: crate::resolve::ComputedBorder {
+            width: crate::resolve::ComputedLength(7.0),
+            style: BorderStyle::Solid,
+            color: BorderColor::Resolved(CssColor {
+                r: 30,
+                g: 40,
+                b: 50,
+                a: 255,
+            }),
+        },
         column_count: ColumnCountValue::Count(3),
         column_fill: ColumnFillValue::Auto,
         column_width: ComputedColumnWidth::Px(24.0),
@@ -812,6 +822,7 @@ fn inherit_from_copies_inherited_and_resets_non_inherited() {
     assert_eq!(child.width, initial.width);
     assert_eq!(child.height, initial.height);
     // CSS Multi-column Layout 1: all three longhands are non-inherited.
+    assert_eq!(child.column_rule, initial.column_rule);
     assert_eq!(child.column_count, initial.column_count);
     assert_eq!(child.column_fill, initial.column_fill);
     assert_eq!(child.column_width, initial.column_width);

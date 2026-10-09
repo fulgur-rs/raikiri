@@ -56,6 +56,7 @@ mod phase_b;
 mod running;
 mod target;
 
+mod column_rules;
 pub mod document;
 pub mod dom_impl;
 pub mod fonts;
@@ -83,6 +84,7 @@ pub use layout::{
     PositionedLines, PositionedMarker, PositionedRun, cumulative_offset, relative_offset,
 };
 // cov:ignore: public re-exports have no runtime behavior to measure.
+pub use column_rules::ColumnRule;
 pub use layout::{
     InitialPageContext, InitialPageContextError, InitialPageProbeResources, MAX_LAYOUT_DEPTH,
     PageContentInsets, PageLayoutControl, PageMargins, PageSlice, first_page_name, layout_pages,

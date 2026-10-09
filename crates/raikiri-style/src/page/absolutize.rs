@@ -574,6 +574,8 @@ pub(super) fn absolutize_in_page_context(
         | PropertyValue::UnicodeBidi(_)
         | PropertyValue::Page(_)
         | PropertyValue::ColumnFill(_)
+        | PropertyValue::ColumnRuleStyle(_)
+        | PropertyValue::ColumnRuleColor(_)
         | PropertyValue::ColumnCount(_)
         | PropertyValue::ColumnWidth(ColumnWidthValue::Auto)
         | PropertyValue::FlexDirection(_)
@@ -626,6 +628,10 @@ pub(super) fn absolutize_in_page_context(
         PropertyValue::FontFeatureSettings(settings) => {
             PropertyValue::FontFeatureSettings(settings.canonicalized())
         }
+        PropertyValue::ColumnRule(rule) => PropertyValue::ColumnRule(basis.border(rule)),
+        PropertyValue::ColumnRuleWidth(width) => PropertyValue::ColumnRuleWidth(Length::Px(
+            resolve_length(width, font_size, own_line_height, ctx).px(),
+        )),
         PropertyValue::ColumnWidth(ColumnWidthValue::Length(length)) => {
             PropertyValue::ColumnWidth(ColumnWidthValue::Length(Length::Px(
                 resolve_length(length, font_size, own_line_height, ctx).px(),

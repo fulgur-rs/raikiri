@@ -41,6 +41,7 @@ pub struct TextHighlightRange {
 }
 
 pub mod border;
+mod column_rules;
 #[allow(
     dead_code,
     reason = "no caller until the paint walk dispatches ifc roots"

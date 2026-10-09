@@ -4353,6 +4353,18 @@ pub(crate) fn paint_document_impl(
                         ));
                     }
                 }
+                if paints_on_page && cv.visibility == raikiri_style::property::Visibility::Visible {
+                    for mut rule in document.column_rules(cascade, node_id) {
+                        rule.rect.x += paint_x;
+                        rule.rect.y += paint_y;
+                        rule.pattern_origin += paint_y;
+                        let start = rule.rect.y.max(0.0);
+                        let end = (rule.rect.y + rule.rect.height).min(page_box.height);
+                        rule.rect.y = start;
+                        rule.rect.height = (end - start).max(0.0);
+                        crate::column_rules::paint(scene, rule);
+                    }
+                }
                 // Push this after the clip-pop frame and before children.
                 // Children therefore paint first, then `::after`, then the
                 // clip closes.  A full IFC would place the after run after

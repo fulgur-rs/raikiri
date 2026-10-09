@@ -278,6 +278,7 @@ fn layout_single_page_with_table_projection(
     document.layout_warnings.clear();
     document.table_layout_error = None;
     document.fragment_tree.clear();
+    document.column_rules.clear();
     document.fragmentation_stack.clear();
 
     // Step 1: ComputedValues → taffy::Style bridge (currently a no-op site).
@@ -414,6 +415,7 @@ fn layout_single_page_with_table_projection(
     // `document.layout_warnings` buffer as Steps 1 / 2; Step 6 drains it.
     enforce_layout_invariants(document, body_id);
     document.fragment_tree.finalize();
+    document.column_rules = crate::column_rules::prepare(document, cascade)?;
 
     // Step 6: replay buffered LayoutWarn events.
     //
