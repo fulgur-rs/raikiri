@@ -8527,3 +8527,152 @@ fn review_contents_nonempty_text_interrupts_avoided_body_sibling_runs() {
         assert!(positions[2] >= 100.0);
     }
 }
+
+fn many_column_fixture(count: usize) -> (Document, CascadeResult, usize) {
+    use crate::fragment::{FragmentRect, LayoutFragment};
+    use crate::node::MulticolTextFragment;
+    let text = vec!["A"; count].join("\n");
+    let (mut doc, cascade, root) = crate::layout::test_support::ahem_paragraph(&text, "width:20px");
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+    doc.fragment_tree.fragments.clear();
+    doc.nodes[root].ifc.as_mut().unwrap().multicol_fragments = Some(
+        (0..count)
+            .map(|column| MulticolTextFragment {
+                line_start: column,
+                line_end: column + 1,
+                fragmentainer: column,
+                x: column as f32 * 20.0,
+                y: 0.0,
+            })
+            .collect(),
+    );
+    for column in 0..count {
+        doc.fragment_tree
+            .try_push(LayoutFragment {
+                node_id: root,
+                parent: None,
+                fragmentainer: column,
+                rect: FragmentRect {
+                    x: column as f32 * 20.0,
+                    y: 0.0,
+                    width: 20.0,
+                    height: 10.0,
+                },
+                fragmentainer_clip: None,
+                fragment_index: column,
+                fragment_count: count,
+                line_start: Some(column),
+                line_end: Some(column + 1),
+            })
+            .unwrap();
+    }
+    (doc, cascade, root)
+}
+
+#[test]
+fn many_columns_project_with_a_linear_work_budget() {
+    use raikiri_traits::NodeId;
+    for count in [128, 1000, 5000] {
+        let (mut doc, cascade, root) = many_column_fixture(count);
+        doc.fragment_tree.limit = (count * 16).min(doc.fragment_tree.limit);
+        let started = std::time::Instant::now();
+        doc.project_pages(
+            &cascade,
+            page_box_800x600(),
+            &[PageSlice {
+                page_index: 0,
+                content_origin_y: 0.0,
+                page_name: None,
+            }],
+            &[],
+        )
+        .unwrap();
+        eprintln!("column_projection {count} lines: {:?}", started.elapsed());
+        let first_break = doc.nodes[root]
+            .children
+            .iter()
+            .copied()
+            .find(|&id| doc.nodes[id].tag_name() == Some("br"))
+            .unwrap();
+        assert_eq!(
+            doc.page_fragments(0)
+                .filter(|f| f.node() == NodeId::new(first_break as u64))
+                .count(),
+            0
+        );
+        assert_eq!(
+            doc.page_fragments(0)
+                .filter(|f| f.kind() == crate::FragmentKind::Text)
+                .count(),
+            count
+        );
+        if count == 128 {
+            assert_eq!(doc.page_text_runs(&cascade, 0).len(), count);
+        }
+    }
+}
+
+#[test]
+fn column_projection_cancellation_keeps_the_previous_snapshot() {
+    let (mut doc, cascade) = committed_column_projection("");
+    let before: Vec<_> = doc
+        .page_fragments(0)
+        .map(|f| (f.node(), f.rect()))
+        .collect();
+    let checks = Cell::new(0);
+    let abort = || {
+        checks.set(checks.get() + 1);
+        checks.get() >= 10
+    };
+    let control = PageLayoutControl::default().with_abort_check(&abort);
+    assert!(matches!(
+        doc.project_pages_with_control(
+            &cascade,
+            page_box_800x600(),
+            &[PageSlice {
+                page_index: 0,
+                content_origin_y: 0.0,
+                page_name: None
+            }],
+            &[],
+            &control
+        ),
+        Err(LayoutError::Aborted)
+    ));
+    assert_eq!(checks.get(), 10);
+    assert_eq!(
+        doc.page_fragments(0)
+            .map(|f| (f.node(), f.rect()))
+            .collect::<Vec<_>>(),
+        before
+    );
+}
+
+#[test]
+fn column_projection_work_limit_keeps_the_previous_snapshot() {
+    let (mut doc, cascade) = committed_column_projection("");
+    let before: Vec<_> = doc
+        .page_fragments(0)
+        .map(|f| (f.node(), f.rect()))
+        .collect();
+    doc.fragment_tree.limit = 1;
+    assert!(matches!(
+        doc.project_pages(
+            &cascade,
+            page_box_800x600(),
+            &[PageSlice {
+                page_index: 0,
+                content_origin_y: 0.0,
+                page_name: None
+            }],
+            &[]
+        ),
+        Err(LayoutError::FragmentLimitExceeded { limit: 1 })
+    ));
+    assert_eq!(
+        doc.page_fragments(0)
+            .map(|f| (f.node(), f.rect()))
+            .collect::<Vec<_>>(),
+        before
+    );
+}

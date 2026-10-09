@@ -74,6 +74,26 @@ impl Document {
         slices: &[PageSlice],
         geometries: &[(PageBox, PageMargins, PageContentInsets)],
     ) -> Result<(), raikiri_traits::LayoutError> {
+        self.project_pages_with_control(
+            cascade,
+            fallback_page_box,
+            slices,
+            geometries,
+            &crate::PageLayoutControl::default(),
+        )
+    }
+
+    /// Replace page placements with bounded column work and caller cancellation.
+    /// Existing placements remain intact if projection fails.
+    #[doc(hidden)]
+    pub fn project_pages_with_control(
+        &mut self,
+        cascade: &CascadeResult,
+        fallback_page_box: PageBox,
+        slices: &[PageSlice],
+        geometries: &[(PageBox, PageMargins, PageContentInsets)],
+        control: &crate::PageLayoutControl<'_>,
+    ) -> Result<(), raikiri_traits::LayoutError> {
         let geometries: Vec<_> = slices
             .iter()
             .zip(geometries)
@@ -103,7 +123,14 @@ impl Document {
             })
             .collect();
         let (pages, text_roots, overflow_clips, placement_overflow_clips) =
-            crate::layout::project_slices(self, cascade, fallback_page_box, slices, &geometries);
+            crate::layout::project_slices_with_control(
+                self,
+                cascade,
+                fallback_page_box,
+                slices,
+                &geometries,
+                control,
+            )?;
         let markers = text_runs::prepare_markers(self, cascade, &text_roots, &pages)?;
         let image_markers = image_markers::prepare(self, cascade, &text_roots, &pages);
         let generated_boxes = generated_boxes::prepare(self, cascade, &text_roots, &pages);

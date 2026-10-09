@@ -944,7 +944,17 @@ pub(crate) fn run_pipeline(
         .iter()
         .map(|geometry| (geometry.page_box, geometry.margins, geometry.content_insets))
         .collect();
-    document.project_pages(&first_cascade, page_box, &slices, &geometries)?;
+    match document.project_pages_with_control(
+        &first_cascade,
+        page_box,
+        &slices,
+        &geometries,
+        &page_control,
+    ) {
+        Ok(()) => {}
+        Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted),
+        Err(error) => return Err(RenderError::from(error)),
+    }
 
     if let Some(property_observer) = property_observer {
         if is_aborted() {

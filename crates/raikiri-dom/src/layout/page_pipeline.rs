@@ -1,8 +1,18 @@
+mod column_projection;
+use column_projection::{ParagraphProjection, ProjectionWork};
+
 use super::*;
 use crate::page_projection::records::OverflowClipSource;
 use raikiri_traits::{PaintInsets, PaintRect};
 use std::cell::Cell;
 use std::collections::BTreeMap;
+
+type ProjectedSlices = (
+    Vec<PageFragment>,
+    Vec<ProjectedTextRoot>,
+    BTreeMap<NodeId, OverflowClipSource>,
+    Vec<PlacementOverflowClipSource>,
+);
 
 // Flex traversal skips Contents boxes when globally ordering effective
 // items; preserve their stored offsets relative to the visited parent.
@@ -1023,6 +1033,7 @@ pub(crate) fn page_fragments_from_slices_with_page_geometry(
 /// page-aware caller should provide every emitted page explicitly. Item
 /// rectangles remain relative to each page's `content_box` origin; consumers
 /// add `content_box.x/y` exactly once when placing them on the physical page.
+#[cfg(test)]
 pub(crate) fn project_slices(
     document: &Document,
     cascade: &CascadeResult,
@@ -1035,6 +1046,25 @@ pub(crate) fn project_slices(
     BTreeMap<NodeId, OverflowClipSource>,
     Vec<PlacementOverflowClipSource>,
 ) {
+    project_slices_with_control(
+        document,
+        cascade,
+        page_box,
+        slices,
+        page_geometries,
+        &PageLayoutControl::default(),
+    )
+    .expect("test projection stays within its work cap")
+}
+
+pub(crate) fn project_slices_with_control(
+    document: &Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    slices: &[PageSlice],
+    page_geometries: &[PageFragmentPageGeometry],
+    control: &PageLayoutControl<'_>,
+) -> Result<ProjectedSlices, LayoutError> {
     let fallback_geometry = resolve_page_fragment_geometry(cascade, page_box, 0);
     let mut ordered_slices: Vec<&PageSlice> = slices.iter().collect();
     ordered_slices.sort_by(|left, right| {
@@ -1072,9 +1102,11 @@ pub(crate) fn project_slices(
             .then_some((page_start, page_end));
     }
 
+    let mut work = ProjectionWork::new(control, document.fragment_tree.limit);
+    work.check()?;
     let mut text_roots = Vec::new();
     let Some(body_id) = find_body(document) else {
-        return (pages, text_roots, BTreeMap::new(), Vec::new());
+        return Ok((pages, text_roots, BTreeMap::new(), Vec::new()));
     };
 
     // Collect absolute post-pagination coordinates.  The arena index is the
@@ -1107,6 +1139,7 @@ pub(crate) fn project_slices(
     let mut ifc_piece_bounds: HashMap<usize, HashMap<usize, Vec<(BoxRect, u32)>>> = HashMap::new();
     let mut fragmented_inline_nodes = HashSet::new();
     let mut ifc_text_lines = HashMap::new();
+    let mut paragraph_cache = HashMap::<usize, ParagraphProjection>::new();
     let fragments = document.layout_fragments();
     let mut fragments_by_parent_and_node = HashMap::<(Option<usize>, usize), Vec<usize>>::new();
     let mut fragmented_nodes = HashSet::new();
@@ -1139,6 +1172,7 @@ pub(crate) fn project_slices(
         is_fragment_visit: bool,
         fragment_clip: Option<PaintRect>,
         overflow_chain: Option<usize>,
+        paragraph_column: Option<(usize, usize)>,
     }
     let mut stack = vec![ProjectionVisit {
         node: body_id,
@@ -1149,9 +1183,14 @@ pub(crate) fn project_slices(
         is_fragment_visit: false,
         fragment_clip: None,
         overflow_chain: None,
+        paragraph_column: None,
     }];
     while let Some(visit) = stack.pop() {
+        work.check()?;
         let node_id = visit.node;
+        if repeated_placement_nodes.contains(&node_id) {
+            work.charge(1)?;
+        }
         let (parent_abs_x, parent_abs_y) = visit.parent_origin;
         let inherited_repeat = visit.repeat;
         let Some(node) = document.get_node(node_id) else {
@@ -1203,6 +1242,7 @@ pub(crate) fn project_slices(
                         is_fragment_visit: true,
                         fragment_clip,
                         overflow_chain: visit.overflow_chain,
+                        paragraph_column: visit.paragraph_column,
                     });
                 }
                 continue;
@@ -1323,104 +1363,52 @@ pub(crate) fn project_slices(
                     overflow_chain: content_overflow_chain,
                 });
             }
-            let positioned = PositionedLines::new(
-                document,
-                cascade,
-                root_id,
-                visit.fragment.map(|index| fragments[index].fragmentainer),
-            );
-            let multicol = root_node.ifc_multicol_fragments().is_some();
-            let column_of_line = |line| {
-                root_node
-                    .ifc_multicol_fragments()
-                    .and_then(|ranges| {
-                        ranges
-                            .iter()
-                            .find(|range| line >= range.line_start && line < range.line_end)
-                    })
-                    .map_or(
-                        visit
-                            .fragment
-                            .map_or(0, |index| fragments[index].fragmentainer as u32),
-                        |range| range.fragmentainer as u32,
-                    )
-            };
-            let mut bounds_by_node: HashMap<usize, Vec<(BoxRect, u32)>> = HashMap::new();
-            for piece in root_node.ifc_inline_boxes().unwrap_or_default() {
-                let Some(offset) = positioned
-                    .as_ref()
-                    .and_then(|lines| lines.line_offset(piece.line))
-                else {
-                    continue;
-                };
-                let shift = positioned
-                    .as_ref()
-                    .and_then(|lines| lines.shifts.get(piece.line))
-                    .copied()
-                    .unwrap_or(0.0);
-                let rect = BoxRect {
-                    x: piece.border_box.x + offset.0,
-                    y: piece.border_box.y + offset.1 - shift,
-                    ..piece.border_box
-                };
-                let column = column_of_line(piece.line);
-                bounds_by_node
-                    .entry(piece.node)
-                    .and_modify(|pieces| {
-                        fragmented_inline_nodes.insert(piece.node);
-                        if multicol {
-                            pieces.push((rect, column));
-                            return;
-                        }
-                        let bounds = &mut pieces[0].0;
-                        let x = bounds.x.min(rect.x);
-                        let y = bounds.y.min(rect.y);
-                        *bounds = BoxRect {
-                            x,
-                            y,
-                            width: (bounds.x + bounds.width).max(rect.x + rect.width) - x,
-                            height: (bounds.y + bounds.height).max(rect.y + rect.height) - y,
-                        };
-                    })
-                    .or_insert_with(|| vec![(rect, column)]);
+            let column = visit.fragment.map(|index| fragments[index].fragmentainer);
+            if let std::collections::hash_map::Entry::Vacant(entry) = paragraph_cache.entry(root_id)
+            {
+                entry.insert(ParagraphProjection::prepare(
+                    document,
+                    cascade,
+                    root_id,
+                    column.unwrap_or(0),
+                    &mut work,
+                )?);
             }
-            ifc_piece_bounds.insert(root_id, bounds_by_node);
-            for (owner, owned) in document.ifc_text_lines_by_node(root_id) {
-                let mut groups: Vec<(f32, usize, u32, crate::IfcTextLines)> = Vec::new();
-                for (source_index, raw_line) in owned.lines.iter().enumerate() {
-                    let Some(offset) = positioned
-                        .as_ref()
-                        .and_then(|lines| lines.line_offset(raw_line.line))
-                    else {
-                        continue;
-                    };
-                    let shift = positioned
-                        .as_ref()
-                        .and_then(|lines| lines.shifts.get(raw_line.line))
-                        .copied()
-                        .unwrap_or(0.0);
-                    let column = column_of_line(raw_line.line);
-                    let line = crate::IfcTextLine {
-                        top: raw_line.top + offset.1 - shift,
-                        bottom: raw_line.bottom + offset.1 - shift,
-                        ..*raw_line
-                    };
-                    if let Some((x, _, previous_column, previous)) = groups.last_mut()
-                        && *x == offset.0
-                        && *previous_column == column
-                    {
-                        previous.lines.push(line);
-                    } else {
-                        let piece = crate::IfcTextLines {
-                            root: owned.root,
-                            width: owned.width,
-                            lines: vec![line],
-                        };
-                        groups.push((offset.0, source_index, column, piece));
+            let prepared = &paragraph_cache[&root_id];
+            if repeated_placement_nodes.contains(&root_id) && !prepared.multicol {
+                work.charge(
+                    prepared
+                        .combined
+                        .owners
+                        .values()
+                        .flat_map(|groups| groups.iter())
+                        .map(|(_, _, _, owned)| owned.lines.len())
+                        .sum(),
+                )?;
+            }
+            let selected = if prepared.multicol
+                && let Some(column) = column
+            {
+                prepared.columns.get(&column).cloned().unwrap_or_default()
+            } else {
+                let mut data = prepared.combined.clone();
+                if !prepared.multicol {
+                    for pieces in data.bounds.values_mut() {
+                        for (_, number) in pieces {
+                            *number = column.unwrap_or(0) as u32;
+                        }
+                    }
+                    for groups in data.owners.values_mut() {
+                        for (_, _, number, _) in groups {
+                            *number = column.unwrap_or(0) as u32;
+                        }
                     }
                 }
-                ifc_text_lines.insert(owner, groups);
-            }
+                data
+            };
+            fragmented_inline_nodes.extend(selected.fragmented);
+            ifc_piece_bounds.insert(root_id, selected.bounds);
+            ifc_text_lines.extend(selected.owners);
         }
         // An inline element of an inline engine paragraph is where its pieces
         // are on the lines; its recorded location is relative to its nearest
@@ -1445,7 +1433,15 @@ pub(crate) fn project_slices(
         };
         if include && abs_x.is_finite() && abs_y.is_finite() {
             let ifc_lines = (node.kind() == NodeKind::Text)
-                .then(|| ifc_text_lines.remove(&node_id))
+                .then(|| {
+                    ifc_text_lines.remove(&node_id).or_else(|| {
+                        document
+                            .ifc_root_of(node_id)
+                            .and_then(|root| paragraph_cache.get(&root))
+                            .filter(|prepared| prepared.combined.owners.contains_key(&node_id))
+                            .map(|_| Vec::new())
+                    })
+                })
                 .flatten();
             let source = PageFragmentSource {
                 node_id: NodeId::new(node_id as u64),
@@ -1526,6 +1522,24 @@ pub(crate) fn project_slices(
         } // cov:ignore: layout sanitization normally keeps source coordinates finite.
 
         if node.kind() == NodeKind::Element {
+            let paragraph_column = if node.is_ifc_root() {
+                visit.fragment.and_then(|index| {
+                    paragraph_cache
+                        .get(&node_id)
+                        .filter(|prepared| prepared.children.is_some())
+                        .map(|_| (node_id, fragments[index].fragmentainer))
+                })
+            } else {
+                visit.paragraph_column
+            };
+            let children = paragraph_column.map_or(node.children.as_slice(), |(root, column)| {
+                paragraph_cache[&root]
+                    .children
+                    .as_ref()
+                    .unwrap()
+                    .get(&(node_id, column))
+                    .map_or(&[], Vec::as_slice)
+            });
             // The children of an inline element of an inline engine paragraph
             // are located from the paragraph's root, not from the element.
             let (base_x, base_y) = if document.contributes_layout_offset(node_id) {
@@ -1533,7 +1547,7 @@ pub(crate) fn project_slices(
             } else {
                 (parent_abs_x, parent_abs_y)
             };
-            for &child_id in node.children.iter().rev() {
+            for &child_id in children.iter().rev() {
                 stack.push(ProjectionVisit {
                     node: child_id,
                     parent_origin: (base_x, base_y),
@@ -1543,6 +1557,7 @@ pub(crate) fn project_slices(
                     is_fragment_visit: false,
                     fragment_clip: visit.fragment_clip,
                     overflow_chain: content_overflow_chain,
+                    paragraph_column,
                 });
             }
         }
@@ -1714,7 +1729,7 @@ pub(crate) fn project_slices(
         })
         .collect();
 
-    (pages, text_roots, clip_sources, placement_overflow_clips)
+    Ok((pages, text_roots, clip_sources, placement_overflow_clips))
 }
 
 /// Collect deterministic page-local link events from page snapshots.
