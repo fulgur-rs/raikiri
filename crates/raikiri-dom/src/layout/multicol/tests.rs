@@ -2,7 +2,7 @@ use super::*;
 use taffy::Style;
 
 #[test]
-fn single_paragraph_balance_keeps_decorated_and_constrained_boxes_on_the_existing_path() {
+fn single_paragraph_balance_preserves_child_decoration_and_constraint_guards() {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
     let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
@@ -42,7 +42,9 @@ fn single_paragraph_balance_keeps_decorated_and_constrained_boxes_on_the_existin
     assert!(!can_balance_single_paragraph(&doc, parent, child));
     doc.nodes[child].unrounded_layout.border.bottom = 0.0;
     doc.nodes[parent].style.padding.left = LengthPercentage::length(4.0);
-    assert!(!can_balance_single_paragraph(&doc, parent, child));
+    assert!(can_balance_single_paragraph(&doc, parent, child));
+    doc.nodes[parent].style.border.top = LengthPercentage::length(1.0);
+    assert!(can_balance_single_paragraph(&doc, parent, child));
     doc.nodes[parent].style.padding.left = LengthPercentage::length(0.0);
     doc.nodes[parent].style.direction = TaffyDirection::Rtl;
     assert!(!can_balance_single_paragraph(&doc, parent, child));

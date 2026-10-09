@@ -142,26 +142,29 @@ pub(crate) fn compute_multicol_layout(
         if let Some(active) = tree.fragmentation_stack.last_mut() {
             *active = resolved;
         }
+        // The parent writes the container's layout after this callback.
+        // Resolve insets from the used percentage basis before placing children.
+        let css = &tree.nodes[index].style;
+        let basis = parent_width.unwrap_or(output.size.width).max(0.0);
+        let content_origin = Point {
+            x: multicol_resolve_inset(tree, css.padding.left, basis)
+                + multicol_resolve_inset(tree, css.border.left, basis),
+            y: multicol_resolve_inset(tree, css.padding.top, basis)
+                + multicol_resolve_inset(tree, css.border.top, basis),
+        };
+        let block_end_inset = multicol_resolve_inset(tree, css.padding.bottom, basis)
+            + multicol_resolve_inset(tree, css.border.bottom, basis);
         let used_height = if break_flow_scope {
-            // The parent writes the container's Taffy layout only after this
-            // callback returns. Resolve the content origin from the same used
-            // percentage basis instead of reading its stale layout insets.
-            let css = &tree.nodes[index].style;
-            let basis = parent_width.unwrap_or(output.size.width).max(0.0);
-            let content_origin = Point {
-                x: multicol_resolve_inset(tree, css.padding.left, basis)
-                    + multicol_resolve_inset(tree, css.border.left, basis),
-                y: multicol_resolve_inset(tree, css.padding.top, basis)
-                    + multicol_resolve_inset(tree, css.border.top, basis),
-            };
             break_flow::layout(tree, index, resolved, output.size, content_origin)
         } else {
             relayout_nested_multicol_children(
                 tree,
                 node_id,
                 resolved,
-                output.size.height,
+                output.size,
                 fragmentainer_height.is_some(),
+                content_origin,
+                block_end_inset,
             )
         };
         if fragmentainer_height.is_none() {
@@ -335,11 +338,9 @@ fn can_balance_single_paragraph(tree: &Document, parent: usize, child: usize) ->
     let parent = &tree.nodes[parent];
     let child = &tree.nodes[child];
     let layout = child.unrounded_layout;
-    // Block-edge decoration needs slice/clone geometry; keep the existing
+    // Child block-edge decoration needs slice/clone geometry; keep the existing
     // strategy until that geometry is carried by each fragment.
     parent.style.direction == TaffyDirection::Ltr
-        && parent.style.padding == Rect::zero()
-        && parent.style.border == Rect::zero()
         && layout.padding.top == 0.0
         && layout.padding.bottom == 0.0
         && layout.border.top == 0.0
@@ -357,10 +358,13 @@ fn relayout_nested_multicol_children(
     tree: &mut Document,
     node_id: TaffyNodeId,
     context: FragmentationContext,
-    fallback_height: f32,
+    border_box_size: Size<f32>,
     has_fragmentainer_height_constraint: bool,
+    content_origin: Point<f32>,
+    block_end_inset: f32,
 ) -> f32 {
     let index = usize::from(node_id);
+    let fallback_height = border_box_size.height;
     let children: Vec<usize> = tree.nodes[index]
         .children
         .iter()
@@ -378,7 +382,7 @@ fn relayout_nested_multicol_children(
             rect: crate::fragment::FragmentRect {
                 x: context.origin_x,
                 y: context.origin_y,
-                width: context.available_width,
+                width: border_box_size.width,
                 height: fallback_height,
             },
             fragmentainer_clip: None,
@@ -555,7 +559,7 @@ fn relayout_nested_multicol_children(
             context.origin_y + cursor,
         );
         let x = child_layout.location.x + context.column_offset_x(column);
-        let y = cursor + margin_top;
+        let y = content_origin.y + cursor + margin_top;
         child_layout.order = order as u32;
         child_layout.size = child_output.size;
         child_layout.location = Point { x, y };
@@ -575,7 +579,7 @@ fn relayout_nested_multicol_children(
                 fragmentainer: column_context.column_index,
                 rect: crate::fragment::FragmentRect {
                     x: child_layout.location.x,
-                    y: cursor + margin_top,
+                    y,
                     width: child_output.size.width,
                     height: child_output.size.height,
                 },
@@ -596,10 +600,14 @@ fn relayout_nested_multicol_children(
                 available_height: Some(*height),
                 ..context
             });
+        let record_context = FragmentationContext {
+            origin_y: content_origin.y,
+            ..record_context
+        };
         if record_nested_ifc_box_fragments(tree, child, child_fragment, record_context).is_none() {
             return fallback_height;
         }
-        cursor = y + child_output.size.height + margin_bottom;
+        cursor = y - content_origin.y + child_output.size.height + margin_bottom;
         if tree.nodes[child].kind() == NodeKind::Element {
             avoid_column_break_after_previous =
                 matches!(tree.nodes[child].break_after, BreakBetween::Avoid);
@@ -613,7 +621,7 @@ fn relayout_nested_multicol_children(
                 .map(|height| fallback_height.min(height))
                 .unwrap_or(fallback_height)
         };
-    let used = maximum.max(cursor).max(minimum_height);
+    let used = (maximum.max(cursor) + content_origin.y + block_end_inset).max(minimum_height);
     if let Some(fragment) = tree.fragment_tree.fragments.get_mut(container_fragment) {
         if has_fragmentainer_height_constraint {
             // Overflowing descendants do not expand a height-constrained border box.
@@ -818,7 +826,7 @@ fn record_nested_ifc_box_fragments(
                                 rect: crate::fragment::FragmentRect {
                                     x: base.rect.x + context.column_offset_x(column)
                                         - context.column_offset_x(base.fragmentainer),
-                                    y: 0.0,
+                                    y: context.origin_y,
                                     width: base.rect.width,
                                     height: fragment_height,
                                 },

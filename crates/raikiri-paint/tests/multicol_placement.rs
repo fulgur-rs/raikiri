@@ -81,6 +81,33 @@ fn balanced_line_columns_match_absolute_literal_text() {
 }
 
 #[test]
+fn a_padded_and_bordered_column_container_uses_its_content_origin() {
+    compare(
+        "<div class=mc><p>A<br>B<br>C<br>D</p></div><p>E</p>",
+        ".mc{padding:4px 5px;border:1px solid black;background:lime}",
+        "<div style='position:absolute;left:0;top:0;box-sizing:border-box;width:112px;height:50px;border:1px solid black;background:lime'></div><div style='position:absolute;left:6px;top:5px'>A<br>B</div><div style='position:absolute;left:66px;top:5px'>C<br>D</div><div style='position:absolute;left:0;top:50px'>E</div>",
+    );
+}
+
+#[test]
+fn a_border_box_column_container_balances_inside_its_insets() {
+    compare(
+        "<div class=mc><p>A<br>B<br>C<br>D</p></div><p>E</p>",
+        ".mc{box-sizing:border-box;padding:4px 5px;border:1px solid black;background:lime}",
+        "<div style='position:absolute;left:0;top:0;box-sizing:border-box;width:100px;height:50px;border:1px solid black;background:lime'></div><div style='position:absolute;left:6px;top:5px'>A<br>B</div><div style='position:absolute;left:60px;top:5px'>C<br>D</div><div style='position:absolute;left:0;top:50px'>E</div>",
+    );
+}
+
+#[test]
+fn a_padded_column_minimum_reserves_the_full_border_box() {
+    compare(
+        "<div class=mc><p>A<br>B<br>C<br>D</p></div><p>E</p>",
+        ".mc{min-height:60px;padding:4px 5px;border:1px solid black;background:lime}",
+        "<div style='position:absolute;left:0;top:0;box-sizing:border-box;width:112px;height:70px;border:1px solid black;background:lime'></div><div style='position:absolute;left:6px;top:5px'>A<br>B</div><div style='position:absolute;left:66px;top:5px'>C<br>D</div><div style='position:absolute;left:0;top:70px'>E</div>",
+    );
+}
+
+#[test]
 fn a_fragmented_child_paragraph_matches_absolute_literal_text() {
     compare(
         "<div class=mc><p>A<br>B<br>C<br>D</p></div><p>E</p>",
