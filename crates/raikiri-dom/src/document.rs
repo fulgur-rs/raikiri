@@ -452,6 +452,14 @@ impl Document {
         self.ifc.is_some()
     }
 
+    /// Lower the cap shared by retained layout fragments and break-flow or
+    /// page-projection work. A value above the current cap is ignored, so the
+    /// built-in bound can only tighten.
+    #[doc(hidden)]
+    pub fn lower_layout_fragment_limit(&mut self, limit: usize) {
+        self.fragment_tree.limit = self.fragment_tree.limit.min(limit);
+    }
+
     /// Paragraphs are built on several threads when a layout pass has at
     /// least `threshold` of them and [`Document::set_ifc_parallel_build`]
     /// allowed it. No effect without the inline engine.

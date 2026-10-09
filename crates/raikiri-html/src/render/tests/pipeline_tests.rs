@@ -978,33 +978,41 @@ fn pipeline_honors_cancellation_before_final_page_projection() {
 
 #[test]
 fn pipeline_reports_a_column_projection_work_limit() {
-    let count = 8000;
+    // With 8 one-line columns, a cap of 32 admits the layout fragments but
+    // not the column projection work, so the error comes from projection.
+    // Reaching the built-in cap instead needs thousands of columns, whose
+    // layout dominates the test's run time.
+    let count = 8;
+    let limit = 32;
     let html = format!(
-        "<style>body{{margin:0}}.mc{{width:160000px;column-count:{count};column-gap:0;orphans:1;widows:1}}p{{margin:0;font:10px/10px Ahem}}</style><div class=mc><p>{}</p></div>",
+        "<style>body{{margin:0}}.mc{{width:160px;column-count:{count};column-gap:0;orphans:1;widows:1}}p{{margin:0;font:10px/10px Ahem}}</style><div class=mc><p>{}</p></div>",
         vec!["A"; count].join("<br>")
     );
-    let doc = parse(&html);
     let fonts = crate::FontCollectionBuilder::new()
         .font_bytes("Ahem", super::AHEM.to_vec())
         .build()
         .unwrap();
     let resources = RenderResources::new().fonts(fonts);
-    let result = run_pipeline(
-        &doc,
-        PageDefaults::default(),
-        &LayoutConfig::default(),
-        PipelineInputs {
-            resources: Some(&resources),
-            consumer_properties: &[],
-            property_observer: None,
-            preload_background_images: false,
-        },
-    );
+    let render = |doc: &HtmlDocument| {
+        run_pipeline(
+            doc,
+            PageDefaults::default(),
+            &LayoutConfig::default(),
+            PipelineInputs {
+                resources: Some(&resources),
+                consumer_properties: &[],
+                property_observer: None,
+                preload_background_images: false,
+            },
+        )
+    };
+    let mut doc = parse(&html);
+    assert!(matches!(render(&doc), Ok(PipelineRun::Completed(_))));
+    doc.uncascaded.dom.lower_layout_fragment_limit(limit);
     assert!(matches!(
-        result,
-        Err(RenderError::Layout(LayoutError::FragmentLimitExceeded {
-            limit: 65536
-        }))
+        render(&doc),
+        Err(RenderError::Layout(LayoutError::FragmentLimitExceeded { limit: actual }))
+            if actual == limit
     ));
 }
 
