@@ -71,7 +71,7 @@ pub struct CascadeResult {
     generation: u64,
     svg_style_properties: HashMap<StyleNodeId, Vec<SvgStyleProperty>>,
     first_letter_inputs: HashMap<StyleNodeId, first_letter::FirstLetterInputs>,
-    typographic_inheritance: HashMap<(StyleNodeId, Option<PseudoElem>), Vec<CascadedDecl>>,
+    typographic_inheritance: HashMap<(StyleNodeId, Option<PseudoElem>), OwnedCandidates>,
     /// Index into [`Self::computed`] of the `@page` inheritance parent: the
     /// root element, or the Document node when the tree has no element child.
     root_element_index: usize,
@@ -332,7 +332,7 @@ pub fn cascade_with_media_context_for_page<D: StyleDom>(
 ) -> Result<CascadeResult, CascadeError> {
     // Phase 1: collect per-node cascaded values.
     let cascaded =
-        collect_cascaded_with_media_context(dom, dom.root_id(), rule_tree, media_context);
+        collect_cascaded_with_media_context(dom, dom.root_id(), rule_tree, media_context)?;
     cascade_from_candidates(dom, rule_tree, page_query, &cascaded, media_context)
 }
 
@@ -388,7 +388,7 @@ fn cascade_from_candidates<D: StyleDom>(
         &mut pseudo,
         &mut svg_style_properties,
         &mut first_letter_inputs,
-    );
+    )?;
     if computed.len() < dom.node_count() {
         computed.resize(dom.node_count(), ComputedValues::initial());
     }
@@ -407,18 +407,22 @@ fn cascade_from_candidates<D: StyleDom>(
             .keys()
             .any(|(_, pseudo)| *pseudo == PseudoElem::FirstLine)
     {
-        typographic_inheritance.extend(
-            cascaded
-                .all_candidates()
-                .map(|(id, values)| ((id, None), values.to_vec())),
-        );
+        for (id, values) in cascaded.all_candidates() {
+            typographic_inheritance.insert(
+                (id, None),
+                OwnedCandidates::copy(values, CustomCandidates::EMPTY)?,
+            );
+        }
         for &(id, pseudo) in pseudo.keys() {
             if matches!(
                 pseudo,
                 PseudoElem::Before | PseudoElem::After | PseudoElem::FirstLine
             ) && let Some(values) = cascaded.pseudo_candidates(id, pseudo)
             {
-                typographic_inheritance.insert((id, Some(pseudo)), values.to_vec());
+                typographic_inheritance.insert(
+                    (id, Some(pseudo)),
+                    OwnedCandidates::copy(values, CustomCandidates::EMPTY)?,
+                );
             }
         }
     }
@@ -442,6 +446,7 @@ fn cascade_from_candidates<D: StyleDom>(
 }
 
 mod candidate;
+use candidate::{CustomCandidates, OwnedCandidates};
 mod collect;
 pub(crate) mod rollback;
 pub(crate) use collect::*;

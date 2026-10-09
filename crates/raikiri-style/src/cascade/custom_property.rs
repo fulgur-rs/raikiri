@@ -12,7 +12,8 @@ use crate::property::{
     is_custom_property_name, parse_value,
 };
 
-use super::collect::{CustomCascadedDecl, RankedDecl, beats};
+use super::candidate::CustomCandidates;
+use super::collect::{RankedDecl, beats};
 
 /// Resolve a deferred declaration for either the element or page cascade.
 ///
@@ -1365,16 +1366,18 @@ pub(crate) fn select_custom_rollback_values<'a, P: Copy + Ord>(
 
 pub(crate) fn resolve_custom_properties(
     inherited: &Arc<CustomPropertyEnvironment>,
-    candidates: &[CustomCascadedDecl],
+    candidates: CustomCandidates<'_>,
 ) -> Arc<CustomPropertyEnvironment> {
-    let mut winners: HashMap<SmolStr, (CustomProperty, RankedDecl)> = HashMap::new();
-    for (idx, CustomCascadedDecl { value, precedence }) in candidates.iter().enumerate() {
+    // The winners borrow their declarations; only the final local values are
+    // cloned.
+    let mut winners: HashMap<&SmolStr, (&CustomProperty, RankedDecl)> = HashMap::new();
+    for (idx, (value, precedence)) in candidates.iter().enumerate() {
         let candidate = precedence.ranked(idx);
         let replace = winners
             .get(&value.name)
             .is_none_or(|(_, existing)| beats(candidate, *existing));
         if replace {
-            winners.insert(value.name.clone(), (value.clone(), candidate));
+            winners.insert(&value.name, (value, candidate));
         }
     }
 
@@ -1383,7 +1386,7 @@ pub(crate) fn resolve_custom_properties(
         .any(|(value, _)| custom_property_rollback(&value.value) != super::rollback::Rollback::None)
     {
         select_custom_rollback_values(candidates.iter().enumerate().map(
-            |(index, CustomCascadedDecl { value, precedence })| {
+            |(index, (value, precedence))| {
                 let (priority, origin, layer, important, _) =
                     precedence.layered(index, super::rollback::Rollback::None);
                 (value, priority, origin, layer, important)
@@ -1392,7 +1395,7 @@ pub(crate) fn resolve_custom_properties(
     } else {
         winners
             .into_iter()
-            .map(|(name, (value, _))| (name, value.value))
+            .map(|(name, (value, _))| (name.clone(), value.value.clone()))
             .collect()
     };
     resolve_custom_property_environment(inherited, &local)

@@ -1,3 +1,6 @@
+use std::borrow::Cow;
+
+use crate::error::CascadeError;
 use crate::property::{Length, LengthOrAuto, PropertyValue};
 use crate::rule::Declaration;
 use crate::ruletree::Origin;
@@ -5,9 +8,8 @@ use crate::style_dom::{
     StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind, StyleQuirksMode,
 };
 
-use super::collect::{
-    CascadedDecl, MARGIN_COLLAPSING_QUIRK_SOURCE_ORDER, MARGIN_COLLAPSING_QUIRK_SPECIFICITY,
-};
+use super::candidate::{CandidateSink, Precedence};
+use super::collect::{MARGIN_COLLAPSING_QUIRK_SOURCE_ORDER, MARGIN_COLLAPSING_QUIRK_SPECIFICITY};
 
 /// Promote HTML `<img width>` / `<img height>` to presentational hints.
 ///
@@ -24,7 +26,10 @@ use super::collect::{
 /// author declarations and beat normal user-origin declarations. This helper
 /// handles `img` dimensions only; `aspect-ratio` and other element mappings
 /// are outside its scope.
-pub(crate) fn push_img_dimension_hints(elem: &impl StyleElement, decls: &mut Vec<CascadedDecl>) {
+pub(crate) fn push_img_dimension_hints(
+    elem: &impl StyleElement,
+    sink: &mut CandidateSink<'_>,
+) -> Result<(), CascadeError> {
     // HTML-namespace gate:
     // this mapping is HTML LS's own presentational hint, scoped to the HTML
     // namespace — a foreign-namespace element that merely shares the local
@@ -37,18 +42,15 @@ pub(crate) fn push_img_dimension_hints(elem: &impl StyleElement, decls: &mut Vec
     // (`tag.eq_ignore_ascii_case("template") && elem.namespace_uri().is_none()`)
     // and the same principle applies to attribute-selector matching.
     if !elem.tag_name().eq_ignore_ascii_case("img") || elem.namespace_uri().is_some() {
-        return;
+        return Ok(());
     }
     if let Some(width) = elem.attr("width").and_then(parse_html_dimension_value) {
-        decls.push(CascadedDecl::hint(PropertyValue::Width(
-            LengthOrAuto::Length(width),
-        )));
+        sink.push_hint(PropertyValue::Width(LengthOrAuto::Length(width)))?;
     }
     if let Some(height) = elem.attr("height").and_then(parse_html_dimension_value) {
-        decls.push(CascadedDecl::hint(PropertyValue::Height(
-            LengthOrAuto::Length(height),
-        )));
+        sink.push_hint(PropertyValue::Height(LengthOrAuto::Length(height)))?;
     }
+    Ok(())
 }
 
 /// The "elements with default margins" HTML LS §15.3.9 "Margin collapsing
@@ -282,17 +284,17 @@ pub(crate) fn push_margin_collapsing_quirk_declarations<D: StyleDom>(
     elem: &impl StyleElement,
     ancestor_path: &[StyleNodeId],
     quirks_mode: StyleQuirksMode,
-    decls: &mut Vec<CascadedDecl>,
-) {
+    sink: &mut CandidateSink<'_>,
+) -> Result<(), CascadeError> {
     if quirks_mode != StyleQuirksMode::Quirks || elem.namespace_uri().is_some() {
-        return;
+        return Ok(());
     }
     let tag_name = elem.tag_name();
     if !is_element_with_default_margins(tag_name) {
-        return;
+        return Ok(());
     }
     let Some(&parent_id) = ancestor_path.last() else {
-        return;
+        return Ok(());
     };
     // cov:ignore: `parent_id` came from `ancestor_path`, which
     // `collect_cascaded` only ever pushes `Element`-kind ids onto (this
@@ -303,22 +305,22 @@ pub(crate) fn push_margin_collapsing_quirk_declarations<D: StyleDom>(
     // as `sibling_position`'s own `dom.node(child_id)`/`as_element()`
     // guards over `child_ids`.
     let Some(parent_node) = dom.node(parent_id) else {
-        return;
+        return Ok(());
     };
     // cov:ignore: see the comment on the `dom.node(parent_id)` guard above
     // — same invariant covers this arm too.
     let Some(parent_elem) = parent_node.as_element() else {
-        return;
+        return Ok(());
     };
     if parent_elem.namespace_uri().is_some() {
-        return;
+        return Ok(());
     }
     let parent_tag = parent_elem.tag_name();
     let is_body = parent_tag.eq_ignore_ascii_case("body");
     let is_td_or_th =
         parent_tag.eq_ignore_ascii_case("td") || parent_tag.eq_ignore_ascii_case("th");
     if !is_body && !is_td_or_th {
-        return;
+        return Ok(());
     }
 
     let (no_substantial_before, no_substantial_after) =
@@ -344,25 +346,29 @@ pub(crate) fn push_margin_collapsing_quirk_declarations<D: StyleDom>(
         zero_end = true;
     }
 
-    let quirk = |value| {
-        CascadedDecl::new(
-            Declaration::new(value, false),
-            Origin::UserAgent,
-            MARGIN_COLLAPSING_QUIRK_SPECIFICITY,
-            MARGIN_COLLAPSING_QUIRK_SOURCE_ORDER,
-            crate::layer::LayerPosition::default(),
+    let mut quirk = |value| {
+        sink.push_local(
+            Cow::Owned(Declaration::new(value, false)),
+            Precedence::new(
+                Origin::UserAgent,
+                false,
+                MARGIN_COLLAPSING_QUIRK_SPECIFICITY,
+                MARGIN_COLLAPSING_QUIRK_SOURCE_ORDER,
+                crate::layer::LayerPosition::default(),
+            ),
         )
     };
     if zero_start {
-        decls.push(quirk(PropertyValue::MarginTop(LengthOrAuto::Length(
-            Length::Px(0.0),
-        ))));
+        quirk(PropertyValue::MarginTop(LengthOrAuto::Length(Length::Px(
+            0.0,
+        ))))?;
     }
     if zero_end {
-        decls.push(quirk(PropertyValue::MarginBottom(LengthOrAuto::Length(
+        quirk(PropertyValue::MarginBottom(LengthOrAuto::Length(
             Length::Px(0.0),
-        ))));
+        )))?;
     }
+    Ok(())
 }
 
 /// HTML LS "rules for parsing dimension values"

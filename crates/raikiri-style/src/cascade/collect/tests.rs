@@ -1,8 +1,10 @@
 use super::*;
+use crate::cascade::candidate::OwnedCandidates;
 use crate::cascade::cascade;
 use crate::cascade::test_support::*;
 use crate::computed::ComputedValues;
 use crate::property::DisplayValue;
+use crate::property::PropertyValue;
 use crate::ruletree::build_rule_tree;
 use crate::test_dom::TestDoc;
 
@@ -440,7 +442,7 @@ fn collect_cascaded_groups_are_unchanged_by_flat_arena_refactor() {
     let p3 = doc.push_element(0, "p", Some("display: inline"));
 
     let tree = build_rule_tree(&doc);
-    let arena = collect_cascaded(&doc, doc.root_id(), &tree);
+    let arena = collect_cascaded(&doc, doc.root_id(), &tree).expect("the cascade collects");
 
     let id = |i: usize| StyleNodeId::new(i as u64);
 
@@ -454,48 +456,65 @@ fn collect_cascaded_groups_are_unchanged_by_flat_arena_refactor() {
 
     // p2: 2 stylesheet decls, no inline — order = rule/source order.
     let p2c = arena.candidates(id(p2)).expect("p2 has 2 stylesheet decls");
-    assert_eq!(p2c.len(), 2);
-    assert_eq!(p2c[0].value, PropertyValue::Color(RED));
-    assert_eq!(p2c[1].value, PropertyValue::BackgroundColor(BLUE));
+    assert_eq!(p2c.decls().len(), 2);
+    assert_eq!(*p2c.value(0), PropertyValue::Color(RED));
+    assert_eq!(*p2c.value(1), PropertyValue::BackgroundColor(BLUE));
     assert_eq!(
-        p2c[0].precedence.source_order(),
+        p2c.decls()[0].precedence().source_order(),
         0,
         "first rule keeps its source_order"
     );
     assert_eq!(
-        p2c[1].precedence.source_order(),
+        p2c.decls()[1].precedence().source_order(),
         1,
         "second rule keeps its source_order"
     );
-    // Every candidate carries the key of its value.
-    assert_eq!(p2c[0].key, PropertyKey::Color);
-    assert_eq!(p2c[1].key, PropertyKey::BackgroundColor);
+    // Every candidate carries the key of its value, and a stylesheet
+    // declaration is referred to in its rule rather than copied.
+    assert_eq!(p2c.decls()[0].key(), PropertyKey::Color);
+    assert_eq!(p2c.decls()[1].key(), PropertyKey::BackgroundColor);
+    assert_eq!(p2c.decls()[0].value(), ValueRef::Rule { rule: 0, decl: 0 });
+    assert_eq!(p2c.decls()[1].value(), ValueRef::Rule { rule: 1, decl: 0 });
 
     // p1 / p3: same 2 stylesheet decls, PLUS inline style appended last
     // (collect_cascaded pushes stylesheet rules before inline style).
     let p1c = arena.candidates(id(p1)).expect("p1 has decls");
-    assert_eq!(p1c.len(), 3, "2 stylesheet decls + 1 inline, inline last");
-    assert_eq!(p1c[0].value, PropertyValue::Color(RED));
-    assert_eq!(p1c[1].value, PropertyValue::BackgroundColor(BLUE));
-    assert_eq!(p1c[2].value, PropertyValue::Display(DisplayValue::Block));
-    assert_eq!(p1c[2].key, PropertyKey::Display);
-    assert_eq!(p1c[2].precedence.specificity(), INLINE_SPECIFICITY);
-    assert_eq!(p1c[2].precedence.source_order(), INLINE_SOURCE_ORDER);
+    assert_eq!(
+        p1c.decls().len(),
+        3,
+        "2 stylesheet decls + 1 inline, inline last"
+    );
+    assert_eq!(*p1c.value(0), PropertyValue::Color(RED));
+    assert_eq!(*p1c.value(1), PropertyValue::BackgroundColor(BLUE));
+    assert_eq!(*p1c.value(2), PropertyValue::Display(DisplayValue::Block));
+    assert_eq!(p1c.decls()[2].key(), PropertyKey::Display);
+    assert_eq!(
+        p1c.decls()[2].precedence().specificity(),
+        INLINE_SPECIFICITY
+    );
+    assert_eq!(
+        p1c.decls()[2].precedence().source_order(),
+        INLINE_SOURCE_ORDER
+    );
 
     let p3c = arena.candidates(id(p3)).expect("p3 has decls");
-    assert_eq!(p3c.len(), 3);
-    assert_eq!(p3c[2].value, PropertyValue::Display(DisplayValue::Inline));
+    assert_eq!(p3c.decls().len(), 3);
+    assert_eq!(*p3c.value(2), PropertyValue::Display(DisplayValue::Inline));
+    // Both inline declarations are their element's first own declaration,
+    // so their handles are equal, yet each resolves to its own value.
+    assert_eq!(p1c.decls()[2].value(), ValueRef::Local(0));
+    assert_eq!(p3c.decls()[2].value(), ValueRef::Local(0));
 
     // Stylesheet-only decls (p1/p2/p3 all matched the same 2 `p` rules)
     // carry identical specificity to each other — cross-node consistency
     // the old shared-selector-per-rule code guaranteed too.
     assert_eq!(
-        p1c[0].precedence.specificity(),
-        p2c[0].precedence.specificity()
+        p1c.decls()[0].precedence().specificity(),
+        p2c.decls()[0].precedence().specificity()
     );
     assert_eq!(
-        p2c[0].precedence.specificity(),
-        p3c[0].precedence.specificity()
+        p2c.decls()[0].precedence().specificity(),
+        p3c.decls()[0].precedence().specificity()
     );
 
     // Ranges must not overlap — a flat arena has to hold this invariant
@@ -508,29 +527,35 @@ fn collect_cascaded_groups_are_unchanged_by_flat_arena_refactor() {
     // three explicitly-named nodes (p1/p2/p3) — it would miss a stray
     // arena slot that belongs to no range, or one double-counted across
     // two ranges. The load-bearing check for "no slot unaccounted for"
-    // is the trailing `assert_eq!` after the loop: it compares the
-    // arena's total length against the sum of every named range's
+    // is the trailing `assert_eq!`s after the loop: they compare the
+    // arena's total lengths against the sum of every named range's
     // length, so any leaked/duplicated/orphaned slot shows up as a
     // length mismatch even if no two of the three named ranges overlap
-    // each other directly.
-    let mut ranges: Vec<_> = [p1, p2, p3]
-        .iter()
-        .map(|&n| arena.ranges.get(&id(n)).unwrap().clone())
-        .collect();
-    ranges.sort_by_key(|r| r.start);
-    for w in ranges.windows(2) {
-        assert!(
-            w[0].end <= w[1].start,
-            "per-node ranges must not overlap: {:?} vs {:?}",
-            w[0],
-            w[1]
-        );
-    }
+    // each other directly. The same holds for the elements' own
+    // declarations, which only p1 and p3 have.
+    let covered = |pick: fn(&ElementRanges) -> &Range<usize>| {
+        let mut ranges: Vec<_> = [p1, p2, p3]
+            .iter()
+            .map(|&n| pick(&arena.elements[&id(n)]).clone())
+            .collect();
+        ranges.sort_by_key(|r| r.start);
+        for w in ranges.windows(2) {
+            assert!(
+                w[0].end <= w[1].start,
+                "per-node ranges must not overlap: {:?} vs {:?}",
+                w[0],
+                w[1]
+            );
+        }
+        ranges.iter().map(|r| r.len()).sum::<usize>()
+    };
     assert_eq!(
         arena.decls.len(),
-        ranges.iter().map(|r| r.len()).sum::<usize>(),
+        covered(|r| &r.decls),
         "every arena slot belongs to exactly one node's range"
     );
+    assert_eq!(arena.locals.len(), covered(|r| &r.locals));
+    assert_eq!(arena.locals.len(), 2);
 }
 
 #[test]
@@ -717,7 +742,7 @@ fn pick_winners_panics_on_non_empty_scratch_buffer() {
         source_order: 0,
         idx: 0,
     })];
-    pick_winners(&[], &mut winners);
+    pick_winners(ElementCandidates::EMPTY, &mut winners);
 }
 
 fn source_hash(source: &str) -> u64 {
@@ -795,7 +820,7 @@ fn repeated_inline_styles_cascade_like_unique_ones() {
 fn a_value_written_past_update_value_is_caught() {
     let mut decl = Declaration::new(PropertyValue::Opacity(1.0), false);
     decl.value = PropertyValue::Color(crate::property::CssColor::BLACK);
-    let _ = CascadedDecl::new(decl, Origin::Author, 0, 0, LayerPosition::default());
+    let _ = OwnedCandidates::from_declarations([(decl, author_precedence())]);
 }
 
 #[cfg(debug_assertions)]
@@ -808,5 +833,10 @@ fn a_rollback_kind_left_behind_by_a_value_write_is_caught() {
         false,
     );
     decl.value = PropertyValue::BorderTopColorCssWide(CssWideKeyword::Revert);
-    let _ = CascadedDecl::new(decl, Origin::Author, 0, 0, LayerPosition::default());
+    let _ = OwnedCandidates::from_declarations([(decl, author_precedence())]);
+}
+
+#[cfg(debug_assertions)]
+fn author_precedence() -> Precedence {
+    Precedence::new(Origin::Author, false, 0, 0, LayerPosition::default())
 }

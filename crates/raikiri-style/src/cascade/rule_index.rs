@@ -52,6 +52,7 @@ use selectors::bloom::BloomFilter;
 use selectors::parser::{Combinator, Component, Selector, SelectorIter};
 
 use crate::RaikiriSelectorImpl;
+use crate::error::CascadeError;
 use crate::layer::{LayerOrder, LayerPosition};
 use crate::rule::{Declaration, StyleRule};
 use crate::style_dom::StyleElement;
@@ -221,10 +222,14 @@ impl<'a> RuleIndex<'a> {
     /// to be pushed (ascending source order); [`Self::candidate_rules`]
     /// returns rule indices in that same order. `layers` is the cascade's
     /// layer order, which gives each rule its layer position.
+    ///
+    /// Candidates refer to a declaration by the `u32` positions of its rule
+    /// and of the declaration in that rule, so this fails when either does
+    /// not fit, as it does when there are too many selectors to number.
     pub(crate) fn new(
         rules: impl IntoIterator<Item = &'a StyleRule>,
         layers: &LayerOrder<'_>,
-    ) -> Self {
+    ) -> Result<Self, CascadeError> {
         let mut index = Self {
             rules: Vec::new(),
             entries: Vec::new(),
@@ -234,7 +239,9 @@ impl<'a> RuleIndex<'a> {
             universal: Vec::new(),
         };
         for rule in rules {
-            let rule_idx = index.rules.len() as u32;
+            let rule_idx = u32::try_from(index.rules.len()).map_err(|_| too_many("style rules"))?;
+            u32::try_from(rule.declarations.len())
+                .map_err(|_| too_many("declarations in one style rule"))?;
             let mut has_element_selector = false;
             let mut has_pseudo_selector = false;
             for selector in rule.selectors.slice() {
@@ -246,7 +253,8 @@ impl<'a> RuleIndex<'a> {
                 let (key, hashes) = analyze_selector(selector);
                 let mut ancestor_hashes = [0; MAX_ANCESTOR_HASHES];
                 ancestor_hashes[..hashes.len()].copy_from_slice(&hashes);
-                let entry_idx = index.entries.len() as u32;
+                let entry_idx =
+                    u32::try_from(index.entries.len()).map_err(|_| too_many("selectors"))?;
                 index.entries.push(SelectorEntry {
                     rule: rule_idx,
                     ancestor_hashes,
@@ -271,11 +279,16 @@ impl<'a> RuleIndex<'a> {
                 has_pseudo_selector,
             });
         }
-        index
+        Ok(index)
     }
 
     pub(crate) fn rule(&self, idx: u32) -> &IndexedRule<'a> {
         &self.rules[idx as usize]
+    }
+
+    /// The active rules, at the positions [`Self::candidate_rules`] returns.
+    pub(crate) fn rules(&self) -> &[IndexedRule<'a>] {
+        &self.rules
     }
 
     /// Writes to `out` the indices of every rule that might match `elem`
@@ -311,6 +324,13 @@ impl<'a> RuleIndex<'a> {
     #[cfg(test)]
     pub(crate) fn rule_count(&self) -> usize {
         self.rules.len()
+    }
+}
+
+// cov:ignore: a stylesheet would need billions of rules, selectors or declarations in one rule to reach this
+fn too_many(what: &str) -> CascadeError {
+    CascadeError::Internal {
+        message: format!("more than u32::MAX {what} in one cascade"),
     }
 }
 

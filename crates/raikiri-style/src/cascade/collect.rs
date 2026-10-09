@@ -10,12 +10,15 @@ use selectors::parser::Selector;
 
 use crate::PseudoElem;
 use crate::RaikiriSelectorImpl;
+use crate::error::CascadeError;
 use crate::media::MediaContext;
-use crate::property::{CustomProperty, PropertyKey, PropertyValue};
+use crate::property::PropertyKey;
 use crate::rule::{Declaration, parse_declaration_block_with_consumer_properties};
 
-use super::candidate::Precedence;
-use super::rollback::Rollback;
+use super::candidate::{
+    Candidate, CandidateSink, CustomCandidate, CustomCandidates, ElementCandidates, Precedence,
+    ValueRef, ValueSource, push_candidate, same_candidates, same_custom_candidates,
+};
 use crate::ruletree::{Origin, RuleTree};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
 
@@ -97,103 +100,30 @@ pub(crate) const CASCADED_PSEUDO_ELEMENTS: [PseudoElem; 5] = [
     PseudoElem::FirstLetter,
 ];
 
-/// One candidate declaration of an element or of one of its pseudo-elements.
-/// `collect_cascaded` populates it; `pick_winners` ranks and selects winners.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct CascadedDecl {
-    pub(crate) value: PropertyValue,
-    /// The cascade slot of `value`, carried over from its [`Declaration`].
-    pub(crate) key: PropertyKey,
-    /// How `value` rolls the cascade back, carried over from its
-    /// [`Declaration`].
-    pub(crate) rollback: Rollback,
-    pub(crate) precedence: Precedence,
-}
-
-impl CascadedDecl {
-    /// The candidate an expanded declaration contributes from one source,
-    /// with the declaration's own importance.
-    pub(crate) fn new(
-        decl: Declaration,
-        origin: Origin,
-        specificity: Specificity,
-        source_order: u32,
-        layer: LayerPosition,
-    ) -> Self {
-        debug_assert_derived_fields(decl.key, decl.rollback, &decl.value);
-        Self {
-            precedence: Precedence::new(origin, decl.important, specificity, source_order, layer),
-            value: decl.value,
-            key: decl.key,
-            rollback: decl.rollback,
-        }
-    }
-
-    /// A presentational-hint candidate: never important, unlayered, in the
-    /// author presentational hint origin at its specificity and source order.
-    pub(crate) fn hint(value: PropertyValue) -> Self {
-        Self::new(
-            Declaration::new(value, false),
-            Origin::AuthorPresentationalHint,
-            PRESENTATIONAL_HINT_SPECIFICITY,
-            PRESENTATIONAL_HINT_SOURCE_ORDER,
-            LayerPosition::default(),
-        )
-    }
-}
-
-/// Checks, in debug builds, that a declaration's derived fields still describe
-/// its value. The value only changes through `Declaration::update_value`, which
-/// recomputes them; a direct write to `value` would leave them stale.
-fn debug_assert_derived_fields(key: PropertyKey, rollback: Rollback, value: &PropertyValue) {
-    debug_assert_eq!(key, value.key(), "stale declaration key");
-    debug_assert_eq!(
-        rollback,
-        super::rollback::rollback_kind(value),
-        "stale declaration rollback"
-    );
-}
-
-// One `CascadedDecl` is materialized per matched declaration of every element,
-// so its size bounds the candidate arena's footprint. Its fields take 162
-// bytes padded to 168, so a new field fits only in that slack; past it, raise
-// the bound together with a cascade memory measurement.
-const _: () = assert!(
-    std::mem::size_of::<CascadedDecl>() <= 168,
-    "CascadedDecl grew past 168 bytes: raise the bound together with a cascade memory measurement"
-);
-
-/// A custom-property candidate. Unlike ordinary declarations, custom
-/// properties are keyed by their case-sensitive name rather than by a fixed
-/// `PropertyKey` slot.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct CustomCascadedDecl {
-    pub(crate) value: CustomProperty,
-    pub(crate) precedence: Precedence,
-}
-
 /// Output of [`collect_cascaded`]: all nodes' candidates in one flat `Vec`,
 /// indexed by per-node [`Range`] values, together with the rule index they
 /// were collected against.
 ///
 /// The flat arena keeps candidate storage contiguous and records one range per
 /// node. This avoids per-node candidate containers while preserving document
-/// order. The arena borrows the rule tree for `'r` and owns the cascade's
-/// [`RuleIndex`], so everything the candidates were collected from stays
-/// alive and unchanged for as long as the candidates are read.
+/// order. A candidate is a [`Candidate`] record whose handle refers either to
+/// a declaration of an active rule or to one of the element's own
+/// declarations, which the arena keeps in `locals`. The arena borrows the rule
+/// tree for `'r` and owns the cascade's [`RuleIndex`], so every declaration a
+/// handle refers to stays alive and unchanged for as long as the candidates
+/// are read.
 ///
 /// # Why wrap this in a struct instead of `(Vec<_>, HashMap<_, Range<usize>>)`?
 ///
-/// The `winner.idx` from [`pick_winners`] indexes **the supplied slice**. A
-/// wrong slice can silently select a declaration for another node without
-/// going out of bounds. The flat arena adds precisely this risk: passing all
-/// `decls` or an incomplete slice such as `decls[range.start..]` to
-/// [`super::inherit::apply_winners`] instead of using
+/// The `winner.idx` from [`pick_winners`] indexes **the supplied candidates**.
+/// A wrong slice can silently select a declaration for another node without
+/// going out of bounds, and a local handle resolved against another node's
+/// declarations would do the same. The flat arena adds precisely this risk:
+/// passing all `decls` or an incomplete slice such as `decls[range.start..]`
+/// to [`super::inherit::apply_winners`] instead of using
 /// [`candidates`](Self::candidates). Make production callers use only
-/// [`candidates`](Self::candidates), which supplies exactly this node's range.
-/// The `decls`/`ranges` fields are `pub(crate)` so the owning cascade
-/// module can maintain the non-overlapping range invariant; implementation
-/// code reads candidates through the typed accessors.
+/// [`candidates`](Self::candidates), which supplies exactly this node's
+/// candidates together with exactly this node's own declarations.
 ///
 /// `pub(crate)` follows [`super::inherit::resolve_inheritance`], which is
 /// also `pub(crate)` for an intra-doc link from another module. Other modules
@@ -203,29 +133,44 @@ pub(crate) struct CascadedArena<'r> {
     /// The active style rules of this cascade, which the candidates were
     /// matched against.
     index: RuleIndex<'r>,
-    /// Flat storage for all nodes' candidates in document visit order.
-    pub(crate) decls: Vec<CascadedDecl>,
-    /// Per-node ranges in `decls`. A node with no candidates has no entry,
-    /// matching the old `if !per_node.is_empty() { out.insert(..) }` contract.
-    pub(crate) ranges: HashMap<StyleNodeId, Range<usize>>,
+    /// Flat storage for all elements' candidates in document visit order.
+    decls: Vec<Candidate>,
     /// All custom-property candidates in document visit order.
-    custom_decls: Vec<CustomCascadedDecl>,
-    /// Per-node ranges into `custom_decls`.
-    custom_ranges: HashMap<StyleNodeId, Range<usize>>,
-    /// Flat arena like `decls`/`ranges`, but keyed by the originating
-    /// element's `StyleNodeId` plus its `::before` or `::after` pseudo-element.
-    /// One element may have independent candidates for both. Empty `(id,
-    /// pseudo)` pairs have no entry, following the same contract.
-    pseudo_decls: Vec<CascadedDecl>,
-    /// Per-`(id, pseudo)` ranges in `pseudo_decls`.
-    pseudo_ranges: HashMap<(StyleNodeId, PseudoElem), Range<usize>>,
+    custom_decls: Vec<CustomCandidate>,
+    /// The elements' own declarations (presentational hints, quirks, inline
+    /// style, animation) in document visit order. A local handle counts from
+    /// the start of its element's range.
+    locals: Vec<Declaration>,
+    /// Per-element ranges in `decls`, `custom_decls` and `locals`. An element
+    /// with no candidates has no entry, matching the old
+    /// `if !per_node.is_empty() { out.insert(..) }` contract.
+    elements: HashMap<StyleNodeId, ElementRanges>,
+    /// Flat arena like `decls`, for the candidates of the originating
+    /// element's pseudo-elements. They all come from style rules, so they
+    /// have no declarations of their own.
+    pseudo_decls: Vec<Candidate>,
     /// Custom-property counterpart of `pseudo_decls`.
-    pseudo_custom_decls: Vec<CustomCascadedDecl>,
-    /// Per-`(id, pseudo)` ranges in `pseudo_custom_decls`.
-    pseudo_custom_ranges: HashMap<(StyleNodeId, PseudoElem), Range<usize>>,
+    pseudo_custom_decls: Vec<CustomCandidate>,
+    /// Per-`(id, pseudo)` ranges in `pseudo_decls` and `pseudo_custom_decls`.
+    /// One element may have independent candidates for several
+    /// pseudo-elements; a pair with no candidates has no entry.
+    pseudo: HashMap<(StyleNodeId, PseudoElem), PseudoRanges>,
     /// Elements with an `opacity` or a `background-color` candidate of their
     /// own (pseudo-elements excluded), with which of the two, in visit order.
     specified: Vec<SpecifiedProperties>,
+}
+
+/// Where one element's candidates and own declarations are in the arena.
+struct ElementRanges {
+    decls: Range<usize>,
+    custom: Range<usize>,
+    locals: Range<usize>,
+}
+
+/// Where one pseudo-element's candidates are in the arena.
+struct PseudoRanges {
+    decls: Range<usize>,
+    custom: Range<usize>,
 }
 
 /// Whether an element's own candidates include `opacity` and
@@ -242,13 +187,12 @@ impl<'r> CascadedArena<'r> {
         Self {
             index,
             decls: Vec::new(),
-            ranges: HashMap::new(),
             custom_decls: Vec::new(),
-            custom_ranges: HashMap::new(),
+            locals: Vec::new(),
+            elements: HashMap::new(),
             pseudo_decls: Vec::new(),
-            pseudo_ranges: HashMap::new(),
             pseudo_custom_decls: Vec::new(),
-            pseudo_custom_ranges: HashMap::new(),
+            pseudo: HashMap::new(),
             specified: Vec::new(),
         }
     }
@@ -264,7 +208,7 @@ impl<'r> CascadedArena<'r> {
     fn record_specified_properties(&mut self, id: StyleNodeId, range: Range<usize>) {
         let (mut opacity, mut background_color) = (false, false);
         for candidate in &self.decls[range] {
-            match candidate.key {
+            match candidate.key() {
                 PropertyKey::Opacity => opacity = true,
                 PropertyKey::BackgroundColor => background_color = true,
                 _ => {}
@@ -279,56 +223,83 @@ impl<'r> CascadedArena<'r> {
         }
     }
 
-    /// Candidate list for `id`: a slice **only for this node**, suitable for
-    /// passing directly to [`pick_winners`].
+    /// Resolves rule handles against this cascade's rules and local handles
+    /// against `locals`.
+    fn source<'a>(&'a self, locals: &'a [Declaration]) -> ValueSource<'a> {
+        ValueSource::new(self.index.rules(), locals)
+    }
+
+    /// Candidates of `id`: **only this node's**, resolving local handles
+    /// against only this node's own declarations, suitable for passing
+    /// directly to [`pick_winners`].
     ///
-    /// The slice is always `&self.decls[range]`, where `range` is exactly the
-    /// range filled by `collect_cascaded` for `id`. This struct exposes no
-    /// path for callers to assemble the full slice or shift `range.start`.
-    pub(crate) fn candidates(&self, id: StyleNodeId) -> Option<&[CascadedDecl]> {
-        self.ranges.get(&id).map(|range| &self.decls[range.clone()])
+    /// The view always holds `&self.decls[range]` and `&self.locals[locals]`,
+    /// where both ranges are exactly the ones `collect_cascaded` filled for
+    /// `id`. This struct exposes no path for callers to assemble the full
+    /// slice or shift a range.
+    pub(crate) fn candidates(&self, id: StyleNodeId) -> Option<ElementCandidates<'_>> {
+        self.element_candidates(self.elements.get(&id)?)
     }
 
-    /// Every node that has candidates, with its candidate slice, in no
-    /// particular order.
-    pub(crate) fn all_candidates(&self) -> impl Iterator<Item = (StyleNodeId, &[CascadedDecl])> {
-        self.ranges
+    fn element_candidates(&self, ranges: &ElementRanges) -> Option<ElementCandidates<'_>> {
+        (!ranges.decls.is_empty()).then(|| {
+            ElementCandidates::new(
+                &self.decls[ranges.decls.clone()],
+                self.source(&self.locals[ranges.locals.clone()]),
+            )
+        })
+    }
+
+    /// Every node that has candidates, with them, in no particular order.
+    pub(crate) fn all_candidates(
+        &self,
+    ) -> impl Iterator<Item = (StyleNodeId, ElementCandidates<'_>)> {
+        self.elements
             .iter()
-            .map(|(&id, range)| (id, &self.decls[range.clone()]))
+            .filter_map(|(&id, ranges)| Some((id, self.element_candidates(ranges)?)))
     }
 
-    pub(crate) fn custom_candidates(&self, id: StyleNodeId) -> Option<&[CustomCascadedDecl]> {
-        self.custom_ranges
-            .get(&id)
-            .map(|range| &self.custom_decls[range.clone()])
+    pub(crate) fn custom_candidates(&self, id: StyleNodeId) -> Option<CustomCandidates<'_>> {
+        let ranges = self.elements.get(&id)?;
+        (!ranges.custom.is_empty()).then(|| {
+            CustomCandidates::new(
+                &self.custom_decls[ranges.custom.clone()],
+                self.source(&self.locals[ranges.locals.clone()]),
+            )
+        })
     }
 
-    /// Candidates for `(id, pseudo)`: the `::before`/`::after` counterpart
-    /// of [`candidates`](Self::candidates).
+    /// Candidates for `(id, pseudo)`: the pseudo-element counterpart of
+    /// [`candidates`](Self::candidates).
     pub(crate) fn pseudo_candidates(
         &self,
         id: StyleNodeId,
         pseudo: PseudoElem,
-    ) -> Option<&[CascadedDecl]> {
-        self.pseudo_ranges
-            .get(&(id, pseudo))
-            .map(|range| &self.pseudo_decls[range.clone()])
+    ) -> Option<ElementCandidates<'_>> {
+        let ranges = self.pseudo.get(&(id, pseudo))?;
+        (!ranges.decls.is_empty()).then(|| {
+            ElementCandidates::new(&self.pseudo_decls[ranges.decls.clone()], self.source(&[]))
+        })
     }
 
     pub(crate) fn pseudo_custom_candidates(
         &self,
         id: StyleNodeId,
         pseudo: PseudoElem,
-    ) -> Option<&[CustomCascadedDecl]> {
-        self.pseudo_custom_ranges
-            .get(&(id, pseudo))
-            .map(|range| &self.pseudo_custom_decls[range.clone()])
+    ) -> Option<CustomCandidates<'_>> {
+        let ranges = self.pseudo.get(&(id, pseudo))?;
+        (!ranges.custom.is_empty()).then(|| {
+            CustomCandidates::new(
+                &self.pseudo_custom_decls[ranges.custom.clone()],
+                self.source(&[]),
+            )
+        })
     }
 
     /// Whether `a` and `b` carry exactly the same cascade input: equal
     /// ordinary, custom-property, and per-pseudo-element candidate lists,
     /// compared value by value including origin, importance, specificity,
-    /// and source order.
+    /// and source order (see [`same_candidates`]).
     ///
     /// Everything node-specific that the cascade knows about an element —
     /// matched rules, inline style, presentational hints, quirks
@@ -336,12 +307,16 @@ impl<'r> CascadedArena<'r> {
     /// Two nodes that agree here and share a parent therefore resolve to the
     /// same computed values; see [`super::inherit::resolve_inheritance`].
     pub(crate) fn same_cascade_input(&self, a: StyleNodeId, b: StyleNodeId) -> bool {
-        self.candidates(a) == self.candidates(b)
-            && self.custom_candidates(a) == self.custom_candidates(b)
+        same_candidates(self.candidates(a), self.candidates(b))
+            && same_custom_candidates(self.custom_candidates(a), self.custom_candidates(b))
             && CASCADED_PSEUDO_ELEMENTS.iter().all(|&pseudo| {
-                self.pseudo_candidates(a, pseudo) == self.pseudo_candidates(b, pseudo)
-                    && self.pseudo_custom_candidates(a, pseudo)
-                        == self.pseudo_custom_candidates(b, pseudo)
+                same_candidates(
+                    self.pseudo_candidates(a, pseudo),
+                    self.pseudo_candidates(b, pseudo),
+                ) && same_custom_candidates(
+                    self.pseudo_custom_candidates(a, pseudo),
+                    self.pseudo_custom_candidates(b, pseudo),
+                )
             })
     }
 }
@@ -403,69 +378,29 @@ impl DeclarationBlockCache {
 }
 
 /// Calls `push` with each declaration, owned when the block was freshly
-/// parsed and borrowed when it came from the cache.
+/// parsed and borrowed when it came from the cache, stopping at the first
+/// error.
 fn for_each_declaration(
     declarations: Cow<'_, [Declaration]>,
-    mut push: impl FnMut(Cow<'_, Declaration>),
-) {
+    mut push: impl FnMut(Cow<'_, Declaration>) -> Result<(), CascadeError>,
+) -> Result<(), CascadeError> {
     match declarations {
-        Cow::Owned(owned) => owned.into_iter().for_each(|d| push(Cow::Owned(d))),
-        Cow::Borrowed(borrowed) => borrowed.iter().for_each(|d| push(Cow::Borrowed(d))),
-    }
-}
-
-/// Pushes one declaration into `decls`/`custom_decls` (routing on
-/// `PropertyValue::CustomProperty`, same split every candidate list in this
-/// module uses). Takes the destination `Vec`s directly rather than a whole
-/// [`CascadedArena`] so the same function serves both the real-element path
-/// (`&mut out.decls, &mut out.custom_decls`, [`collect_cascaded`]) and the
-/// `::before`/`::after` path (a per-element scratch buffer pair,
-/// [`collect_cascaded`]'s pseudo-element section) without duplicating this
-/// match.
-///
-/// An owned value moves and a borrowed one is cloned straight into its
-/// candidate. `important` is the importance the candidate takes, which
-/// animations force to `false`.
-#[allow(clippy::too_many_arguments)] // the destination plus one candidate's precedence fields
-fn push_cascaded_decl(
-    (decls, custom_decls): (&mut Vec<CascadedDecl>, &mut Vec<CustomCascadedDecl>),
-    decl: Cow<'_, Declaration>,
-    important: bool,
-    origin: Origin,
-    specificity: Specificity,
-    source_order: u32,
-    layer: LayerPosition,
-) {
-    let (key, rollback) = (decl.key, decl.rollback);
-    let value = match decl {
-        Cow::Owned(decl) => decl.value,
-        Cow::Borrowed(decl) => decl.value.clone(),
-    };
-    debug_assert_derived_fields(key, rollback, &value);
-    let precedence = Precedence::new(origin, important, specificity, source_order, layer);
-    match value {
-        PropertyValue::CustomProperty(value) => {
-            custom_decls.push(CustomCascadedDecl { value, precedence })
-        }
-        value => decls.push(CascadedDecl {
-            value,
-            key,
-            rollback,
-            precedence,
-        }),
+        Cow::Owned(owned) => owned.into_iter().try_for_each(|d| push(Cow::Owned(d))),
+        Cow::Borrowed(borrowed) => borrowed.iter().try_for_each(|d| push(Cow::Borrowed(d))),
     }
 }
 
 /// Scratch slot for [`pick_winners`]: the provisional winner for one key.
 ///
-/// Crucially, [`idx`](Self::idx) is an **index**, not a [`PropertyValue`]:
+/// Crucially, [`idx`](Self::idx) is an **index**, not a
+/// [`PropertyValue`](crate::property::PropertyValue):
 /// - The slot is `Copy` with no `Drop`, so [`Option::take`] resets it without
 ///   dropping or reallocating the entire buffer.
 /// - Losing candidates are never cloned. Previously each candidate's
 ///   `value.clone()` was discarded if it lost; now only the winner is cloned
 ///   once for [`super::inherit::apply_value`].
 ///
-/// Like [`CascadedDecl`], this type uses named fields: [`beats`] compares
+/// Like [`Precedence`], this type uses named fields: [`beats`] compares
 /// precedence fields **in order**, and
 /// [`specificity`](Self::specificity) and [`source_order`](Self::source_order)
 /// are both `u32`; swapping tuple positions `.1` and `.2` would compile and
@@ -480,7 +415,7 @@ pub(crate) struct RankedDecl {
     pub(crate) specificity: Specificity,
     /// Source order in the stylesheet (inline style uses [`INLINE_SOURCE_ORDER`]).
     pub(crate) source_order: u32,
-    /// Position in the `candidates` slice passed to [`pick_winners`].
+    /// Position in the candidates passed to [`pick_winners`].
     pub(crate) idx: usize,
 }
 
@@ -642,12 +577,20 @@ pub(crate) fn cascade_rank(origin: Origin, important: bool) -> u8 {
 /// # Writing to the flat arena
 ///
 /// Candidates for one node are appended **contiguously** to `out.decls`:
-/// matching stylesheet rules in source order, then inline style. Once both
-/// complete, `start..out.decls.len()` becomes the node's range. No other
-/// append occurs before the next node. Thus indices in the slice returned
-/// by [`CascadedArena::candidates`] remain indices into **that node's own**
-/// `candidates` for [`pick_winners`]/[`super::inherit::apply_winners`].
+/// presentational hints and quirks, matching stylesheet rules in source
+/// order, then inline style and animation. The node's own declarations go to
+/// `out.locals` alongside, and a local handle counts from the node's first
+/// one. Once all complete, the node's ranges are recorded. No other append
+/// occurs before the next node. Thus indices in the candidates returned by
+/// [`CascadedArena::candidates`] remain indices into **that node's own**
+/// candidates for [`pick_winners`]/[`super::inherit::apply_winners`].
 /// Passing indices in the global arena instead would break this contract.
+///
+/// # Errors
+///
+/// Fails when the rule index cannot number the active rules (see
+/// [`RuleIndex::new`]) or an element has more own declarations than a local
+/// handle can number.
 #[cfg_attr(
     not(test),
     expect(
@@ -661,7 +604,7 @@ pub(crate) fn collect_cascaded<'r, D: StyleDom>(
     dom: &D,
     id: StyleNodeId,
     rule_tree: &'r RuleTree,
-) -> CascadedArena<'r> {
+) -> Result<CascadedArena<'r>, CascadeError> {
     collect_cascaded_with_media_context(dom, id, rule_tree, &MediaContext::default())
 }
 
@@ -670,7 +613,7 @@ pub(crate) fn collect_cascaded_with_media_context<'r, D: StyleDom>(
     id: StyleNodeId,
     rule_tree: &'r RuleTree,
     media_context: &MediaContext,
-) -> CascadedArena<'r> {
+) -> Result<CascadedArena<'r>, CascadeError> {
     // Document-wide constant — read once rather than
     // per (node, rule) pair inside the loop below.
     let layers = rule_tree.layer_order(media_context);
@@ -698,7 +641,7 @@ pub(crate) fn collect_cascaded_with_media_context<'r, D: StyleDom>(
     // Bucket the active rules once per cascade so each element only runs the
     // full matcher against rules that can possibly match it. See the
     // `rule_index` module docs for why the filtering never drops a match.
-    let mut out = CascadedArena::new(RuleIndex::new(style_rules, &layers));
+    let mut out = CascadedArena::new(RuleIndex::new(style_rules, &layers)?);
     let mut candidate_rules: Vec<u32> = Vec::new();
     let mut block_cache = DeclarationBlockCache::default();
     let mut cell_padding_cache = HashMap::new();
@@ -736,23 +679,23 @@ pub(crate) fn collect_cascaded_with_media_context<'r, D: StyleDom>(
     // new element starts. Reused across the whole document walk rather than
     // allocated fresh per element, same rationale as `resolve_inheritance`'s
     // `winners` buffer.
-    let mut pseudo_before_decls: Vec<CascadedDecl> = Vec::new();
-    let mut pseudo_after_decls: Vec<CascadedDecl> = Vec::new();
-    let mut pseudo_marker_decls: Vec<CascadedDecl> = Vec::new();
-    let mut pseudo_first_line_decls: Vec<CascadedDecl> = Vec::new();
-    let mut pseudo_first_letter_decls: Vec<CascadedDecl> = Vec::new();
-    let mut pseudo_before_custom: Vec<CustomCascadedDecl> = Vec::new();
-    let mut pseudo_after_custom: Vec<CustomCascadedDecl> = Vec::new();
-    let mut pseudo_marker_custom: Vec<CustomCascadedDecl> = Vec::new();
-    let mut pseudo_first_line_custom: Vec<CustomCascadedDecl> = Vec::new();
-    let mut pseudo_first_letter_custom: Vec<CustomCascadedDecl> = Vec::new();
+    let mut pseudo_before_decls: Vec<Candidate> = Vec::new();
+    let mut pseudo_after_decls: Vec<Candidate> = Vec::new();
+    let mut pseudo_marker_decls: Vec<Candidate> = Vec::new();
+    let mut pseudo_first_line_decls: Vec<Candidate> = Vec::new();
+    let mut pseudo_first_letter_decls: Vec<Candidate> = Vec::new();
+    let mut pseudo_before_custom: Vec<CustomCandidate> = Vec::new();
+    let mut pseudo_after_custom: Vec<CustomCandidate> = Vec::new();
+    let mut pseudo_marker_custom: Vec<CustomCandidate> = Vec::new();
+    let mut pseudo_first_line_custom: Vec<CustomCandidate> = Vec::new();
+    let mut pseudo_first_letter_custom: Vec<CustomCandidate> = Vec::new();
     while let Some((id, depth)) = stack.pop() {
         ancestor_path.truncate(depth);
         ancestor_filter.truncate(depth);
         if let Some(node) = dom.node(id) {
             // Skip descendants of <template> and future inert subtrees alike.
             // Silent bug fix: rule matching previously ran inside templates,
-            // wasting arena space (formerly per-node Vec<CascadedDecl>).
+            // wasting arena space (formerly per-node candidate vectors).
             if !node.is_in_document() {
                 continue;
             }
@@ -761,6 +704,9 @@ pub(crate) fn collect_cascaded_with_media_context<'r, D: StyleDom>(
             {
                 let start = out.decls.len();
                 let custom_start = out.custom_decls.len();
+                let locals_start = out.locals.len();
+                let mut sink =
+                    CandidateSink::new(&mut out.decls, &mut out.custom_decls, &mut out.locals);
                 // HTML presentational hints (later retagged to
                 // `Origin::AuthorPresentationalHint`, distinct from plain
                 // `Origin::Author`). This push is kept ahead of
@@ -784,14 +730,14 @@ pub(crate) fn collect_cascaded_with_media_context<'r, D: StyleDom>(
                 // pin), but
                 // `img_width_attribute_overridable_by_author_stylesheet_regardless_of_specificity`
                 // continues to check the outcome this comment claims.
-                push_img_dimension_hints(&elem, &mut out.decls);
+                push_img_dimension_hints(&elem, &mut sink)?;
                 push_table_attribute_hints(
                     dom,
                     &elem,
                     &ancestor_path,
                     &mut cell_padding_cache,
-                    &mut out.decls,
-                );
+                    &mut sink,
+                )?;
                 const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
                 let is_svg_root = elem.tag_name() == "svg"
                     && elem.namespace_uri() == Some(SVG_NAMESPACE)
@@ -804,11 +750,11 @@ pub(crate) fn collect_cascaded_with_media_context<'r, D: StyleDom>(
                         })
                     });
                 if is_svg_root {
-                    super::svg_hints::push_dimension_hints(&elem, &mut out.decls);
+                    super::svg_hints::push_dimension_hints(&elem, &mut sink)?;
                 }
                 if elem.namespace_uri() == Some(SVG_NAMESPACE) {
                     if !is_svg_root {
-                        super::svg_hints::push_font_size_hint(&elem, &mut out.decls);
+                        super::svg_hints::push_font_size_hint(&elem, &mut sink)?;
                     }
                     for (attribute, property, expected_key) in [
                         ("display", "display", crate::property::PropertyKey::Display),
@@ -849,7 +795,7 @@ pub(crate) fn collect_cascaded_with_media_context<'r, D: StyleDom>(
                             && value.key() == expected_key
                             && parser.expect_exhausted().is_ok()
                         {
-                            out.decls.push(CascadedDecl::hint(value));
+                            sink.push_hint(value)?;
                         }
                     }
                 }
@@ -867,8 +813,8 @@ pub(crate) fn collect_cascaded_with_media_context<'r, D: StyleDom>(
                     &elem,
                     &ancestor_path,
                     quirks_mode,
-                    &mut out.decls,
-                );
+                    &mut sink,
+                )?;
                 // stylesheet rule matching, restricted to the rules the
                 // index could not rule out (still in source order)
                 out.index
@@ -888,16 +834,19 @@ pub(crate) fn collect_cascaded_with_media_context<'r, D: StyleDom>(
                         // The declarations were expanded when the rule was
                         // parsed (`crate::rule::expand_shorthand_into`), and the
                         // rule tree has no path that changes a rule after
-                        // parsing.
-                        for d in indexed.declarations {
-                            push_cascaded_decl(
-                                (&mut out.decls, &mut out.custom_decls),
-                                Cow::Borrowed(d),
-                                d.important,
-                                rule.origin,
-                                spec,
-                                rule.source_order,
-                                indexed.layer,
+                        // parsing. `RuleIndex::new` checked that their
+                        // positions fit in `u32`.
+                        for (d, decl) in indexed.declarations.iter().zip(0u32..) {
+                            sink.push_rule(
+                                (rule_idx, decl),
+                                d,
+                                Precedence::new(
+                                    rule.origin,
+                                    d.important,
+                                    spec,
+                                    rule.source_order,
+                                    indexed.layer,
+                                ),
                             );
                         }
                     }
@@ -946,15 +895,21 @@ pub(crate) fn collect_cascaded_with_media_context<'r, D: StyleDom>(
                             // cov:ignore: selector_matches_pseudo_element excludes boxless native pseudos
                             PseudoElem::Backdrop | PseudoElem::FileSelectorButton => continue,
                         };
-                        for d in indexed.declarations {
-                            push_cascaded_decl(
+                        for (d, decl) in indexed.declarations.iter().zip(0u32..) {
+                            push_candidate(
                                 (buf, custom_buf),
-                                Cow::Borrowed(d),
-                                d.important,
-                                rule.origin,
-                                spec,
-                                rule.source_order,
-                                indexed.layer,
+                                ValueRef::Rule {
+                                    rule: rule_idx,
+                                    decl,
+                                },
+                                d,
+                                Precedence::new(
+                                    rule.origin,
+                                    d.important,
+                                    spec,
+                                    rule.source_order,
+                                    indexed.layer,
+                                ),
                             );
                         }
                     }
@@ -962,12 +917,9 @@ pub(crate) fn collect_cascaded_with_media_context<'r, D: StyleDom>(
                 // inline style
                 if let Some(source) = elem.inline_style_source() {
                     for_each_declaration(block_cache.declarations(source, rule_tree), |decl| {
-                        let important = decl.important;
-                        push_cascaded_decl(
-                            (&mut out.decls, &mut out.custom_decls),
-                            decl,
-                            important,
+                        let precedence = Precedence::new(
                             Origin::Author,
+                            decl.important,
                             INLINE_SPECIFICITY,
                             INLINE_SOURCE_ORDER,
                             LayerPosition {
@@ -975,30 +927,34 @@ pub(crate) fn collect_cascaded_with_media_context<'r, D: StyleDom>(
                                 ..LayerPosition::default()
                             },
                         );
-                    });
+                        sink.push_local(decl, precedence)
+                    })?;
                 }
                 if let Some(source) = elem.animation_style_source() {
                     for_each_declaration(block_cache.declarations(source, rule_tree), |decl| {
-                        push_cascaded_decl(
-                            (&mut out.decls, &mut out.custom_decls),
+                        sink.push_local(
                             decl,
-                            // Animated values are never important.
-                            false,
-                            Origin::Animation,
-                            INLINE_SPECIFICITY,
-                            INLINE_SOURCE_ORDER,
-                            LayerPosition::default(),
-                        );
-                    });
+                            Precedence::new(
+                                Origin::Animation,
+                                // Animated values are never important.
+                                false,
+                                INLINE_SPECIFICITY,
+                                INLINE_SOURCE_ORDER,
+                                LayerPosition::default(),
+                            ),
+                        )
+                    })?;
                 }
-                let end = out.decls.len();
-                if end > start {
-                    out.ranges.insert(id, start..end);
-                    out.record_specified_properties(id, start..end);
+                let ranges = ElementRanges {
+                    decls: start..out.decls.len(),
+                    custom: custom_start..out.custom_decls.len(),
+                    locals: locals_start..out.locals.len(),
+                };
+                if !ranges.decls.is_empty() {
+                    out.record_specified_properties(id, ranges.decls.clone());
                 }
-                let custom_end = out.custom_decls.len();
-                if custom_end > custom_start {
-                    out.custom_ranges.insert(id, custom_start..custom_end);
+                if !ranges.decls.is_empty() || !ranges.custom.is_empty() {
+                    out.elements.insert(id, ranges);
                 }
                 // Flush this element's `::before`/`::after` scratch buffers
                 // into the shared pseudo arena — `Vec::append` moves (no
@@ -1036,19 +992,16 @@ pub(crate) fn collect_cascaded_with_media_context<'r, D: StyleDom>(
                         &mut pseudo_first_letter_custom,
                     ),
                 ] {
-                    let pseudo_start = out.pseudo_decls.len();
+                    let decls_start = out.pseudo_decls.len();
                     out.pseudo_decls.append(buf);
-                    if out.pseudo_decls.len() > pseudo_start {
-                        out.pseudo_ranges
-                            .insert((id, pseudo), pseudo_start..out.pseudo_decls.len());
-                    }
-                    let pseudo_custom_start = out.pseudo_custom_decls.len();
+                    let custom_start = out.pseudo_custom_decls.len();
                     out.pseudo_custom_decls.append(custom_buf);
-                    if out.pseudo_custom_decls.len() > pseudo_custom_start {
-                        out.pseudo_custom_ranges.insert(
-                            (id, pseudo),
-                            pseudo_custom_start..out.pseudo_custom_decls.len(),
-                        );
+                    let ranges = PseudoRanges {
+                        decls: decls_start..out.pseudo_decls.len(),
+                        custom: custom_start..out.pseudo_custom_decls.len(),
+                    };
+                    if !ranges.decls.is_empty() || !ranges.custom.is_empty() {
+                        out.pseudo.insert((id, pseudo), ranges);
                     }
                 }
                 // This element becomes an ancestor for its own children
@@ -1075,7 +1028,7 @@ pub(crate) fn collect_cascaded_with_media_context<'r, D: StyleDom>(
             stack[start..].reverse();
         } // cov:ignore: fallthrough-vs-continue region split inside a loop body; every test with an in-document element already exercises this closing brace, but cargo-llvm-cov does not attribute the hit to this line.
     }
-    out
+    Ok(out)
 }
 pub(crate) fn specificity_of(selector: &Selector<RaikiriSelectorImpl>) -> Specificity {
     // Selector::specificity in selectors returns a packed 32-bit integer.
@@ -1112,26 +1065,32 @@ pub(crate) fn specificity_of(selector: &Selector<RaikiriSelectorImpl>) -> Specif
 /// The next node could then apply **another node's declaration**.
 ///
 /// [`PropertyKey`]: crate::property::PropertyKey
-pub(crate) fn pick_winners(candidates: &[CascadedDecl], winners: &mut Vec<Option<RankedDecl>>) {
+pub(crate) fn pick_winners(
+    candidates: ElementCandidates<'_>,
+    winners: &mut Vec<Option<RankedDecl>>,
+) {
     debug_assert!(
         winners.iter().all(Option::is_none),
         "pick_winners は空の scratch buffer を要求する — \
          前 node の winner slot が生き残っている (drain の unwind 等)"
     );
 
+    // Only the candidate records are read here; a declaration is looked up
+    // only for the winners, when they are applied.
+    let decls = candidates.decls();
     let mut has_rollback = false;
-    for (idx, candidate) in candidates.iter().enumerate() {
-        if matches!(candidate.value, PropertyValue::AllRevertLayer) {
+    for (idx, candidate) in decls.iter().enumerate() {
+        if candidate.is_all_revert_layer() {
             has_rollback = true;
             continue;
         }
         // Use the fieldless enum discriminant directly as the slot index.
         // `resize` handles new variants; no fixed upper bound is needed.
-        let slot = candidate.key as usize;
+        let slot = candidate.key() as usize;
         if winners.len() <= slot {
             winners.resize(slot + 1, None);
         }
-        let ranked = candidate.precedence.ranked(idx);
+        let ranked = candidate.precedence().ranked(idx);
         if winners[slot].is_none_or(|existing| beats(ranked, existing)) {
             winners[slot] = Some(ranked);
         }
@@ -1141,18 +1100,17 @@ pub(crate) fn pick_winners(candidates: &[CascadedDecl], winners: &mut Vec<Option
             let Some(existing) = *winner else {
                 continue;
             };
-            let key = candidates[existing.idx].key;
+            let key = decls[existing.idx].key();
             if matches!(key, PropertyKey::Direction | PropertyKey::UnicodeBidi) {
                 continue;
             }
-            let selected = super::rollback::select_layered_winner(candidates, |idx, candidate| {
-                let rollback = matches!(candidate.value, PropertyValue::AllRevertLayer);
-                if candidate.key != key && !rollback {
+            let selected = super::rollback::select_layered_winner(decls, |idx, candidate| {
+                if candidate.key() != key && !candidate.is_all_revert_layer() {
                     return None;
                 }
-                Some(candidate.precedence.layered(idx, candidate.rollback))
+                Some(candidate.precedence().layered(idx, candidate.rollback()))
             });
-            *winner = selected.map(|idx| candidates[idx].precedence.ranked(idx));
+            *winner = selected.map(|idx| decls[idx].precedence().ranked(idx));
         }
     }
 }
