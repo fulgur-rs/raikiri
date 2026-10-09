@@ -99,6 +99,10 @@ pub(crate) const CASCADED_PSEUDO_ELEMENTS: [PseudoElem; 5] = [
 /// Alias the tuple (including `Origin`) to avoid clippy::type_complexity.
 pub(crate) type CascadedDecl = (PropertyValue, bool, Origin, Specificity, u32, LayerPosition);
 
+// One `CascadedDecl` is materialized per matched declaration of every element,
+// so its size bounds the candidate arena's footprint.
+const _: () = assert!(std::mem::size_of::<CascadedDecl>() <= 168);
+
 /// A custom-property candidate. Unlike ordinary declarations, custom
 /// properties are keyed by their case-sensitive name rather than by a fixed
 /// `PropertyKey` slot.

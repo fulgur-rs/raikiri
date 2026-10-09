@@ -2583,6 +2583,8 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "raikiri",
+ "raikiri-html",
+ "raikiri-style",
 ]
 
 [[package]]

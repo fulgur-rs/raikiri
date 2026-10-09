@@ -2,13 +2,16 @@
 //!
 //! Rule-tree construction stays outside the timed closure. The workload
 //! probes check the resulting values so the benchmark does not silently time
-//! an empty or partial cascade.
+//! an empty or partial cascade. Each workload is built the first time its
+//! benchmark runs, so a name filter skips the setup of every other one.
 //!
 //! Run with:
 //!
 //! ```text
 //! cargo bench -p raikiri-style --bench cascade
 //! ```
+
+use std::cell::OnceCell;
 
 use criterion::{Criterion, Throughput};
 use raikiri_style::{
@@ -1595,6 +1598,124 @@ fn first_child_chain_workload(depth: usize) -> (BenchDoc, RuleTree, u64) {
     (doc, tree, depth as u64)
 }
 
+/// Returns the workload in `slot`, building it with `build` on first use and
+/// checking that it reports `expected` throughput elements.
+///
+/// Criterion calls `bench_function` for every configuration but runs its
+/// closure only for the benchmarks a name filter selects. Building each
+/// workload inside its closure therefore keeps the setup of unselected
+/// configurations (construction, probe cascade, assertions) out of a filtered
+/// run, and out of any profile taken of it. Throughput has to be set before
+/// `bench_function`, so it is computed from the configuration up front and the
+/// workload's own count is checked against it once built.
+// cov:ignore: bench harness — same reason as `BenchDoc::chain` above.
+fn prepared<T>(slot: &OnceCell<T>, expected: u64, build: impl FnOnce() -> (T, u64)) -> &T {
+    slot.get_or_init(|| {
+        let (workload, count) = build();
+        assert_eq!(
+            count, expected,
+            "workload throughput differs from the configured count"
+        );
+        workload
+    })
+}
+
+/// Splits a workload builder's `(doc, tree, count)` into the cached pair and
+/// its count.
+// cov:ignore: bench harness — same reason as `BenchDoc::chain` above.
+fn cached((doc, tree, count): (BenchDoc, RuleTree, u64)) -> ((BenchDoc, RuleTree), u64) {
+    ((doc, tree), count)
+}
+
+/// `n_rules` generated rules wrapped in `@media {query}` over `n_elems`
+/// elements. The probe checks the rules apply exactly when `active`, and that
+/// the opposite media context on the same tree inverts that.
+// cov:ignore: bench harness — same reason as `BenchDoc::chain` above.
+fn media_workload(
+    n_rules: usize,
+    n_elems: usize,
+    query: &str,
+    active: bool,
+) -> (BenchDoc, RuleTree, u64) {
+    let doc = BenchDoc::new(n_elems);
+    let (css, want) = stylesheet(n_rules);
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(&format!("@media {query} {{ {css} }}"), Origin::Author);
+    let initial = ComputedValues::initial();
+    let probe = cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS);
+    assert_eq!(probe.computed.len(), doc.node_count());
+    for (idx, node) in doc.nodes.iter().enumerate() {
+        if node.kind != StyleNodeKind::Element {
+            continue;
+        }
+        let cv = &probe.computed[idx];
+        assert_eq!(cv.color, if active { want.color } else { initial.color });
+        assert_eq!(
+            cv.font_size.px(),
+            if active {
+                want.font_size
+            } else {
+                initial.font_size.px()
+            }
+        );
+    }
+    // Invert the context on the same tree to prove that the inactive
+    // case contains valid rules, and that filtering is per invocation.
+    let screen = raikiri_style::cascade_with_media_context(
+        &BenchDoc::new(1),
+        &tree,
+        &raikiri_style::MediaContext::screen(),
+    )
+    .expect(CASCADE_NEVER_ERRS);
+    assert_eq!(
+        screen.computed[1].color,
+        if active { initial.color } else { want.color }
+    );
+    assert_eq!(
+        screen.computed[1].font_size.px(),
+        if active {
+            initial.font_size.px()
+        } else {
+            want.font_size
+        }
+    );
+    (doc, tree, n_elems as u64)
+}
+
+/// A wide `section` of `n_elems` `div`s, its children, and the
+/// `div:nth-child(odd)` query both DOM-query benchmarks run over them.
+// cov:ignore: bench harness — same reason as `BenchDoc::chain` above.
+type NthChildQuery = (BenchDoc, Vec<StyleNodeId>, SelectorQuery);
+
+// cov:ignore: bench harness — same reason as `BenchDoc::chain` above.
+fn nth_child_query_workload(n_elems: usize) -> (NthChildQuery, u64) {
+    let doc = BenchDoc::wide(n_elems);
+    let section = StyleNodeId::new(1);
+    let divs = doc.nodes[1]
+        .children
+        .iter()
+        .map(|&id| StyleNodeId::new(id as u64))
+        .collect::<Vec<_>>();
+    let query = SelectorQuery::parse("div:nth-child(odd)").expect("valid selector");
+    let ancestors = [section];
+    let per_call = divs
+        .iter()
+        .filter(|&&id| query.matches(&doc, id, &ancestors))
+        .count();
+    let matcher = query.matcher(&doc, None);
+    let shared = divs
+        .iter()
+        .filter(|&&id| matcher.matches(id, &ancestors))
+        .count();
+    assert_eq!(per_call, n_elems / 2, "every odd div matches");
+    assert_eq!(
+        shared, per_call,
+        "shared matcher disagrees with per-call matching"
+    );
+    let count = divs.len() as u64;
+    ((doc, divs, query), count)
+}
+
 fn bench_cascade(c: &mut Criterion) {
     let mut group = c.benchmark_group("cascade");
 
@@ -1608,67 +1729,33 @@ fn bench_cascade(c: &mut Criterion) {
         ("element_heavy_5x2000", 5usize, 2000usize, false),
         ("element_heavy_wrapped_5x2000", 5usize, 2000usize, true),
     ] {
-        let (doc, tree, declarations) = workload(n_rules, n_elems, wrapped);
-
         // Report throughput in declarations so the workloads share a unit.
+        let declarations = (n_rules * n_elems * DECLS_PER_RULE) as u64;
+        let slot = OnceCell::new();
         group.throughput(Throughput::Elements(declarations));
         group.bench_function(name, |b| {
-            b.iter_with_large_drop(|| cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS));
+            let (doc, tree) = prepared(&slot, declarations, || {
+                cached(workload(n_rules, n_elems, wrapped))
+            });
+            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_NEVER_ERRS));
         });
     }
 
     // Keep inactive rules in the tree to measure media filtering separately
     // from selector matching. Also exercise a fully active media workload.
+    //
+    // cov:ignore: bench harness — same reason as `BenchDoc::chain` above.
     for (name, n_rules, n_elems, query, active) in [
         ("media_inactive_2000x1000", 2000, 1000, "screen", false),
         ("media_active_50x500", 50, 500, "print", true),
     ] {
-        let doc = BenchDoc::new(n_elems);
-        let (css, want) = stylesheet(n_rules);
-        let mut tree = RuleTree::empty();
-        tree.add_stylesheet(&format!("@media {query} {{ {css} }}"), Origin::Author);
-        let initial = ComputedValues::initial();
-        let probe = cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS);
-        assert_eq!(probe.computed.len(), doc.node_count());
-        for (idx, node) in doc.nodes.iter().enumerate() {
-            if node.kind != StyleNodeKind::Element {
-                continue;
-            }
-            let cv = &probe.computed[idx];
-            assert_eq!(cv.color, if active { want.color } else { initial.color });
-            assert_eq!(
-                cv.font_size.px(),
-                if active {
-                    want.font_size
-                } else {
-                    initial.font_size.px()
-                }
-            );
-        }
-        // Invert the context on the same tree to prove that the inactive
-        // case contains valid rules, and that filtering is per invocation.
-        let screen = raikiri_style::cascade_with_media_context(
-            &BenchDoc::new(1),
-            &tree,
-            &raikiri_style::MediaContext::screen(),
-        )
-        .expect(CASCADE_NEVER_ERRS);
-        assert_eq!(
-            screen.computed[1].color,
-            if active { initial.color } else { want.color }
-        );
-        assert_eq!(
-            screen.computed[1].font_size.px(),
-            if active {
-                initial.font_size.px()
-            } else {
-                want.font_size
-            }
-        );
-
+        let slot = OnceCell::new();
         group.throughput(Throughput::Elements(n_elems as u64));
         group.bench_function(name, |b| {
-            b.iter_with_large_drop(|| cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS));
+            let (doc, tree) = prepared(&slot, n_elems as u64, || {
+                cached(media_workload(n_rules, n_elems, query, active))
+            });
+            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_NEVER_ERRS));
         });
     }
 
@@ -1678,18 +1765,23 @@ fn bench_cascade(c: &mut Criterion) {
     //
     // cov:ignore: bench harness — same reason as `BenchDoc::chain` above.
     {
-        let (doc, tree, match_attempts) =
-            combinator_chain_workload(COMBINATOR_CHAIN_SELECTOR_DEPTH, COMBINATOR_CHAIN_DOC_DEPTH);
-
         // Throughput denominated in elements attempted, not declarations:
         // every `div` in the chain triggers exactly one top-level call into
         // `match_combinator_chain` (see the module doc), which is the
         // quantity whose per-call allocation cost is under study here —
         // unlike the two configs above, most attempts do not go on to
         // produce any declarations at all.
+        let match_attempts = COMBINATOR_CHAIN_DOC_DEPTH as u64;
+        let slot = OnceCell::new();
         group.throughput(Throughput::Elements(match_attempts));
         group.bench_function("combinator_chain_5000x4", |b| {
-            b.iter_with_large_drop(|| cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS));
+            let (doc, tree) = prepared(&slot, match_attempts, || {
+                cached(combinator_chain_workload(
+                    COMBINATOR_CHAIN_SELECTOR_DEPTH,
+                    COMBINATOR_CHAIN_DOC_DEPTH,
+                ))
+            });
+            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_NEVER_ERRS));
         });
     }
 
@@ -1701,10 +1793,13 @@ fn bench_cascade(c: &mut Criterion) {
         ("inline_style_repeated_2000", true),
         ("inline_style_unique_2000", false),
     ] {
-        let (doc, tree, n) = inline_style_workload(2000, repeated);
-        group.throughput(Throughput::Elements(n));
+        let slot = OnceCell::new();
+        group.throughput(Throughput::Elements(2000));
         group.bench_function(name, |b| {
-            b.iter_with_large_drop(|| cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS));
+            let (doc, tree) = prepared(&slot, 2000, || {
+                cached(inline_style_workload(2000, repeated))
+            });
+            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_NEVER_ERRS));
         });
     }
 
@@ -1712,10 +1807,11 @@ fn bench_cascade(c: &mut Criterion) {
     //
     // cov:ignore: bench harness — same reason as `BenchDoc::chain` above.
     {
-        let (doc, tree, n) = has_child_chain_workload(2000);
-        group.throughput(Throughput::Elements(n));
+        let slot = OnceCell::new();
+        group.throughput(Throughput::Elements(2000));
         group.bench_function("has_child_chain_2000", |b| {
-            b.iter_with_large_drop(|| cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS));
+            let (doc, tree) = prepared(&slot, 2000, || cached(has_child_chain_workload(2000)));
+            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_NEVER_ERRS));
         });
     }
 
@@ -1726,40 +1822,21 @@ fn bench_cascade(c: &mut Criterion) {
     //
     // cov:ignore: bench harness — same reason as `BenchDoc::chain` above.
     {
-        let doc = BenchDoc::wide(4000);
-        let section = StyleNodeId::new(1);
-        let divs = doc.nodes[1]
-            .children
-            .iter()
-            .map(|&id| StyleNodeId::new(id as u64))
-            .collect::<Vec<_>>();
-        let query = SelectorQuery::parse("div:nth-child(odd)").expect("valid selector");
-        let ancestors = [section];
-        let per_call = divs
-            .iter()
-            .filter(|&&id| query.matches(&doc, id, &ancestors))
-            .count();
-        let matcher = query.matcher(&doc, None);
-        let shared = divs
-            .iter()
-            .filter(|&&id| matcher.matches(id, &ancestors))
-            .count();
-        assert_eq!(per_call, 2000, "every odd div matches");
-        assert_eq!(
-            shared, per_call,
-            "shared matcher disagrees with per-call matching"
-        );
-        group.throughput(Throughput::Elements(divs.len() as u64));
+        let ancestors = [StyleNodeId::new(1)];
+        let slot = OnceCell::new();
+        group.throughput(Throughput::Elements(4000));
         group.bench_function("query_nth_child_per_call_4000", |b| {
+            let (doc, divs, query) = prepared(&slot, 4000, || nth_child_query_workload(4000));
             b.iter(|| {
                 divs.iter()
-                    .filter(|&&id| query.matches(&doc, id, &ancestors))
+                    .filter(|&&id| query.matches(doc, id, &ancestors))
                     .count()
             });
         });
         group.bench_function("query_nth_child_shared_matcher_4000", |b| {
+            let (doc, divs, query) = prepared(&slot, 4000, || nth_child_query_workload(4000));
             b.iter(|| {
-                let matcher = query.matcher(&doc, None);
+                let matcher = query.matcher(doc, None);
                 divs.iter()
                     .filter(|&&id| matcher.matches(id, &ancestors))
                     .count()
@@ -1773,11 +1850,17 @@ fn bench_cascade(c: &mut Criterion) {
     //
     // cov:ignore: bench harness — same reason as `BenchDoc::chain` above.
     {
-        let (doc, tree, match_attempts) =
-            descendant_miss_workload(DESCENDANT_MISS_RULES, DESCENDANT_MISS_DOC_DEPTH);
+        let match_attempts = (DESCENDANT_MISS_RULES * DESCENDANT_MISS_DOC_DEPTH) as u64;
+        let slot = OnceCell::new();
         group.throughput(Throughput::Elements(match_attempts));
         group.bench_function("descendant_miss_1000x50", |b| {
-            b.iter_with_large_drop(|| cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS));
+            let (doc, tree) = prepared(&slot, match_attempts, || {
+                cached(descendant_miss_workload(
+                    DESCENDANT_MISS_RULES,
+                    DESCENDANT_MISS_DOC_DEPTH,
+                ))
+            });
+            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_NEVER_ERRS));
         });
     }
 
@@ -1789,13 +1872,17 @@ fn bench_cascade(c: &mut Criterion) {
     //
     // cov:ignore: bench harness — same reason as `BenchDoc::chain` above.
     {
-        let (doc, tree, match_attempts) = mixed_combinator_workload(MIXED_CHAIN_ARTICLES);
-
         // Throughput denominated in elements attempted, same convention as
-        // `combinator_chain_5000x4` above.
+        // `combinator_chain_5000x4` above: one `div` per article plus the
+        // negative control.
+        let match_attempts = MIXED_CHAIN_ARTICLES as u64 + 1;
+        let slot = OnceCell::new();
         group.throughput(Throughput::Elements(match_attempts));
         group.bench_function("mixed_combinator_chain_300", |b| {
-            b.iter_with_large_drop(|| cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS));
+            let (doc, tree) = prepared(&slot, match_attempts, || {
+                cached(mixed_combinator_workload(MIXED_CHAIN_ARTICLES))
+            });
+            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_NEVER_ERRS));
         });
     }
 
@@ -1809,17 +1896,20 @@ fn bench_cascade(c: &mut Criterion) {
         ("sparse_class_2000x500", 2000usize, 500usize, false),
         ("sparse_id_2000x500", 2000usize, 500usize, true),
     ] {
-        let (doc, tree, elems) = if is_id {
-            sparse_id_workload(n_rules, n_elems)
-        } else {
-            sparse_class_workload(n_rules, n_elems)
-        };
-
         // Throughput in elements: rule count is fixed per bench name, so
         // per-element time is directly comparable across names.
+        let elems = n_elems as u64;
+        let slot = OnceCell::new();
         group.throughput(Throughput::Elements(elems));
         group.bench_function(name, |b| {
-            b.iter_with_large_drop(|| cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS));
+            let (doc, tree) = prepared(&slot, elems, || {
+                cached(if is_id {
+                    sparse_id_workload(n_rules, n_elems)
+                } else {
+                    sparse_class_workload(n_rules, n_elems)
+                })
+            });
+            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_NEVER_ERRS));
         });
     }
 
@@ -1831,19 +1921,23 @@ fn bench_cascade(c: &mut Criterion) {
     //
     // cov:ignore: bench harness — same reason as `BenchDoc::chain` above.
     for n_elems in [500usize, 1000, 2000, 4000] {
-        let (doc, tree, elems) = wide_nth_workload(n_elems);
+        let elems = n_elems as u64;
+        let slot = OnceCell::new();
         group.throughput(Throughput::Elements(elems));
         group.bench_function(format!("nth_child_wide_{n_elems}"), |b| {
-            b.iter_with_large_drop(|| cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS));
+            let (doc, tree) = prepared(&slot, elems, || cached(wide_nth_workload(n_elems)));
+            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_NEVER_ERRS));
         });
     }
 
     // cov:ignore: bench harness — same reason as `BenchDoc::chain` above.
     for n_elems in [500usize, 1000, 2000, 4000] {
-        let (doc, tree, elems) = wide_adjacent_workload(n_elems);
+        let elems = n_elems as u64;
+        let slot = OnceCell::new();
         group.throughput(Throughput::Elements(elems));
         group.bench_function(format!("adjacent_wide_{n_elems}"), |b| {
-            b.iter_with_large_drop(|| cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS));
+            let (doc, tree) = prepared(&slot, elems, || cached(wide_adjacent_workload(n_elems)));
+            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_NEVER_ERRS));
         });
     }
 
@@ -1852,10 +1946,14 @@ fn bench_cascade(c: &mut Criterion) {
     //
     // cov:ignore: bench harness — same reason as `BenchDoc::chain` above.
     {
-        let (doc, tree, elems) = first_child_chain_workload(FIRST_CHILD_CHAIN_DEPTH);
+        let elems = FIRST_CHILD_CHAIN_DEPTH as u64;
+        let slot = OnceCell::new();
         group.throughput(Throughput::Elements(elems));
         group.bench_function("first_child_chain_5000", |b| {
-            b.iter_with_large_drop(|| cascade(&doc, &tree).expect(CASCADE_NEVER_ERRS));
+            let (doc, tree) = prepared(&slot, elems, || {
+                cached(first_child_chain_workload(FIRST_CHILD_CHAIN_DEPTH))
+            });
+            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_NEVER_ERRS));
         });
     }
 
