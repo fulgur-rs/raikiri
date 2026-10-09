@@ -664,6 +664,7 @@ fn non_initial_parent() -> ComputedValues {
         },
         column_count: ColumnCountValue::Count(3),
         column_fill: ColumnFillValue::Auto,
+        column_span: crate::property::ColumnSpanValue::All,
         column_width: ComputedColumnWidth::Px(24.0),
         custom_properties: CustomPropertyEnvironment::from_map(HashMap::from([(
             SmolStr::new("--fixture"),
@@ -825,6 +826,7 @@ fn inherit_from_copies_inherited_and_resets_non_inherited() {
     assert_eq!(child.column_rule, initial.column_rule);
     assert_eq!(child.column_count, initial.column_count);
     assert_eq!(child.column_fill, initial.column_fill);
+    assert_eq!(child.column_span, initial.column_span);
     assert_eq!(child.column_width, initial.column_width);
     assert_eq!(child.box_sizing, initial.box_sizing);
     // CSS Overflow 3 §3.1: overflow-x/overflow-y are

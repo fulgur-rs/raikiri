@@ -760,6 +760,22 @@ css_keywords!(ColumnFillValue {
     BalanceAll => "balance-all",
 });
 
+/// `column-span` from CSS Multi-column Layout 1 section 6.1.
+/// The non-inherited computed value is the specified keyword.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ColumnSpanValue {
+    /// Stay in the ordinary column flow.
+    None,
+    /// Span all columns of the applicable multicolumn container.
+    All,
+}
+
+css_keywords!(ColumnSpanValue {
+    None => "none",
+    All => "all",
+});
+
 /// `column-width` value from CSS Multi-column Layout.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -6781,6 +6797,7 @@ impl DeferredValue {
                 | PropertyKey::ColumnRuleWidth
                 | PropertyKey::ColumnRuleStyle
                 | PropertyKey::ColumnRuleColor
+                | PropertyKey::ColumnSpan
         ) {
             return None;
         }
@@ -9960,6 +9977,8 @@ pub enum PropertyValue {
     /// CSS Multi-column Layout Module Level 1 §7.1
     /// (<https://www.w3.org/TR/css-multicol-1/#propdef-column-fill>).
     ColumnFill(ColumnFillValue),
+    /// `column-span` — non-inherited, initial `none`.
+    ColumnSpan(ColumnSpanValue),
     /// `font-feature-settings: normal | <feature-tag-value>#` — inherited,
     /// initial `normal`; carries explicit OpenType feature settings into the
     /// Shodo text shaper. Appended to preserve existing variant discriminants.
@@ -10577,6 +10596,8 @@ pub enum PropertyKey {
     ColumnRuleWidth,
     ColumnRuleStyle,
     ColumnRuleColor,
+    // Appended to preserve existing property key slots.
+    ColumnSpan,
 }
 
 impl PropertyValue {
@@ -10829,6 +10850,7 @@ impl PropertyValue {
             PropertyValue::ColumnWidth(_) => PropertyKey::ColumnWidth,
             PropertyValue::Columns(_) => PropertyKey::Columns,
             PropertyValue::ColumnFill(_) => PropertyKey::ColumnFill,
+            PropertyValue::ColumnSpan(_) => PropertyKey::ColumnSpan,
             PropertyValue::HyphenateCharacter(_) => PropertyKey::HyphenateCharacter,
             PropertyValue::HyphenateLimitChars(_) => PropertyKey::HyphenateLimitChars,
             PropertyValue::TextSpacingTrim(_) => PropertyKey::TextSpacingTrim,
@@ -11985,6 +12007,7 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "gap" => PropertyKey::Gap,
         "column-count" => PropertyKey::ColumnCount,
         "column-fill" => PropertyKey::ColumnFill,
+        "column-span" => PropertyKey::ColumnSpan,
         "column-width" => PropertyKey::ColumnWidth,
         "columns" => PropertyKey::Columns,
         "column-rule" => PropertyKey::ColumnRule,

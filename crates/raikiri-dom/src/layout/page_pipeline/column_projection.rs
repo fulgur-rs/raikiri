@@ -35,6 +35,13 @@ impl<'a, 'b> ProjectionWork<'a, 'b> {
     pub(crate) fn check(&self) -> Result<(), LayoutError> {
         self.control.check_aborted()
     }
+    pub(crate) fn page_available(&self, page_index: u32) -> Result<bool, LayoutError> {
+        self.control.check_discovery_page_index(page_index)?;
+        Ok(self
+            .control
+            .max_pages
+            .is_none_or(|limit| page_index < limit))
+    }
     pub(crate) fn charge(&mut self, amount: usize) -> Result<(), LayoutError> {
         self.check()?;
         self.remaining = self

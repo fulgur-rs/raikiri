@@ -2006,6 +2006,13 @@ fn resolve_defaulting_value(value: PropertyValue, inherited: &ComputedValues) ->
                     INITIAL_BORDER.style
                 });
             }
+            crate::property::PropertyKey::ColumnSpan => {
+                return PropertyValue::ColumnSpan(if keyword == CssWideKeyword::Inherit {
+                    inherited.column_span
+                } else {
+                    crate::property::ColumnSpanValue::None
+                });
+            }
             crate::property::PropertyKey::ColumnRuleColor => {
                 return PropertyValue::ColumnRuleColor(if keyword == CssWideKeyword::Inherit {
                     inherited.column_rule.color
@@ -2696,6 +2703,7 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::ColumnCount(_)
         | PropertyValue::ColumnWidth(_)
         | PropertyValue::ColumnFill(_)
+        | PropertyValue::ColumnSpan(_)
         | PropertyValue::Columns(_)
         | PropertyValue::ColumnRule(_)
         | PropertyValue::ColumnRuleWidth(_)
@@ -3156,6 +3164,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::Page(value) => target.page = value,
         PropertyValue::ColumnCount(value) => target.column_count = value,
         PropertyValue::ColumnFill(value) => target.column_fill = value,
+        PropertyValue::ColumnSpan(value) => target.column_span = value,
         PropertyValue::ColumnWidth(value) => target.column_width = value,
         PropertyValue::ColumnRuleWidth(value) => target.column_rule.width = value,
         PropertyValue::ColumnRuleStyle(value) => target.column_rule.style = value,

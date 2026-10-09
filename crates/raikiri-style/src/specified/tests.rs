@@ -596,6 +596,7 @@ fn parent_fixture() -> ComputedValues {
         },
         column_count: ColumnCountValue::Count(3),
         column_fill: crate::property::ColumnFillValue::Auto,
+        column_span: crate::property::ColumnSpanValue::All,
         column_width: crate::resolve::ComputedColumnWidth::Px(24.0),
         custom_properties: crate::computed::empty_custom_properties(),
         local_custom_properties: crate::computed::empty_custom_properties(),
@@ -906,6 +907,7 @@ fn inherit_from_leaves_non_inherited_fields_at_initial() {
     // CSS Multi-column Layout 1: all three longhands are non-inherited.
     assert_eq!(child.column_count, initial.column_count);
     assert_eq!(child.column_fill, initial.column_fill);
+    assert_eq!(child.column_span, initial.column_span);
     assert_eq!(child.column_width, initial.column_width);
     assert_eq!(child.box_sizing, BoxSizing::ContentBox);
     // CSS Overflow 3 §3.1: overflow-x and overflow-y are non-inherited.

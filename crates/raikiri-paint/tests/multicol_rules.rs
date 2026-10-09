@@ -440,3 +440,21 @@ fn transparent_rules_and_short_dashes_preserve_literal_native_pixels() {
         raster("", ""),
     );
 }
+
+#[test]
+fn spanning_heading_interrupts_native_rules_and_restarts_column_text() {
+    compare(
+        "<div class=mc><p>A<br>B<br>C<br>D</p><div class=span>E</div><p>F<br>G<br>H<br>I</p></div><p>J</p>",
+        ".mc{column-rule:2px solid red}.span{column-span:all;color:blue}",
+        "<div style='position:absolute;left:49px;top:0;width:2px;height:40px;background:red'></div><div style='position:absolute;left:49px;top:60px;width:2px;height:40px;background:red'></div><div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:60px;top:0'>C<br>D</div><div style='position:absolute;left:0;top:40px;width:100px;height:20px;color:blue'>E</div><div style='position:absolute;left:0;top:60px'>F<br>G</div><div style='position:absolute;left:60px;top:60px'>H<br>I</div><div style='position:absolute;left:0;top:100px'>J</div>",
+    );
+}
+
+#[test]
+fn spanning_heading_respects_native_owner_opacity_and_clip_stack() {
+    compare(
+        "<div class=mc><p>A<br>B<br>C<br>D</p><div class=span>E</div><p>F<br>G<br>H<br>I</p></div><p>J</p>",
+        ".mc{column-rule:2px solid red;opacity:.5;overflow:hidden}.span{column-span:all;background:lime;color:blue}",
+        "<div style='position:absolute;left:0;top:0;width:100px;height:100px;opacity:.5;overflow:hidden'><div style='position:absolute;left:49px;top:0;width:2px;height:40px;background:red'></div><div style='position:absolute;left:49px;top:60px;width:2px;height:40px;background:red'></div><div style='position:absolute;left:0;top:0'>A<br>B</div><div style='position:absolute;left:60px;top:0'>C<br>D</div><div style='position:absolute;left:0;top:40px;width:100px;height:20px;background:lime;color:blue'>E</div><div style='position:absolute;left:0;top:60px'>F<br>G</div><div style='position:absolute;left:60px;top:60px'>H<br>I</div></div><div style='position:absolute;left:0;top:100px'>J</div>",
+    );
+}

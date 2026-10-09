@@ -1,8 +1,12 @@
 mod break_flow;
 mod constrained_chain;
+mod paged_spanning;
 mod paragraph_group;
+mod spanning;
 
 use super::*;
+
+pub(super) use paged_spanning::paginate_spanning_columns;
 
 /// Dispatch a multicolumn container through the nested fragmentation seam.
 ///
@@ -66,11 +70,16 @@ pub(crate) fn compute_multicol_layout(
     // path preserves the item's unfragmented minimum before we apply the
     // column offsets below. Text-bearing children retain the existing custom
     // line-range projection.
-    let custom_scope = (tree.fragmentation_stack.is_empty()
-        && (multicol_has_nested_descendant(tree, index)
-            || (multicol_has_direct_block_child(tree, index)
-                && tree.nodes[index].style.size.height == Dimension::auto())
-            || multicol_has_direct_break_flow(tree, index))
+    let span_scope = tree.nodes[index]
+        .children
+        .iter()
+        .any(|&child| spanning::is_spanner(tree, child));
+    let custom_scope = (span_scope
+        || tree.fragmentation_stack.is_empty()
+            && (multicol_has_nested_descendant(tree, index)
+                || (multicol_has_direct_block_child(tree, index)
+                    && tree.nodes[index].style.size.height == Dimension::auto())
+                || multicol_has_direct_break_flow(tree, index))
         || !tree.fragmentation_stack.is_empty())
         && (!multicol_has_min_constrained_child(tree, index)
             || multicol_has_direct_break_flow(tree, index))
@@ -136,7 +145,7 @@ pub(crate) fn compute_multicol_layout(
             .fold(0.0_f32, f32::max);
         output.size.height = output.size.height.min(min_child_height);
     }
-    let break_flow_scope = break_flow::supports(tree, index, context);
+    let break_flow_scope = !span_scope && break_flow::supports(tree, index, context);
     let constrained_chain = (inputs.run_mode == RunMode::PerformLayout
         && !custom_scope
         && !break_flow_scope
@@ -480,6 +489,12 @@ fn relayout_nested_multicol_children(
             tree.nodes[child].is_in_document() && tree.nodes[child].style.display != Display::None
         })
         .collect();
+    let has_spanners = children
+        .iter()
+        .any(|&child| spanning::is_spanner(tree, child));
+    if has_spanners {
+        spanning::retire_preliminary_fragments(tree, &children);
+    }
     let Some(container_fragment) = tree
         .fragment_tree
         .try_push(crate::fragment::LayoutFragment {
@@ -501,6 +516,61 @@ fn relayout_nested_multicol_children(
     else {
         return fallback_height;
     };
+    tree.nodes[index].multicol_groups.clear();
+    let used = if has_spanners {
+        spanning::layout(
+            tree,
+            index,
+            &children,
+            container_fragment,
+            context,
+            border_box_size,
+            content_origin,
+            block_end_inset,
+        )
+    } else {
+        layout_column_group(
+            tree,
+            index,
+            &children,
+            0,
+            container_fragment,
+            context,
+            border_box_size,
+            content_origin,
+            block_end_inset,
+            false,
+        )
+    };
+    if let Some(fragment) = tree.fragment_tree.fragments.get_mut(container_fragment) {
+        fragment.rect.height = if tree.nodes[index]
+            .multicol
+            .is_some_and(|style| style.height_definite)
+        {
+            fallback_height
+        } else if has_fragmentainer_height_constraint {
+            used.min(fallback_height)
+        } else {
+            used
+        };
+    } // cov:ignore: the successful try_push index remains stable throughout recursive group layout.
+    used
+}
+
+#[allow(clippy::too_many_arguments)]
+fn layout_column_group(
+    tree: &mut Document,
+    index: usize,
+    children: &[usize],
+    source_order: usize,
+    container_fragment: usize,
+    context: FragmentationContext,
+    border_box_size: Size<f32>,
+    content_origin: Point<f32>,
+    block_end_inset: f32,
+    retain_group: bool,
+) -> f32 {
+    let fallback_height = border_box_size.height;
     // Definite-height columns place block children sequentially. For
     // auto-height columns, the selected fill mode controls balancing below.
     let fragment_height = context.available_height;
@@ -518,7 +588,7 @@ fn relayout_nested_multicol_children(
         && !multicol_has_nested_descendant(tree, index)
     {
         let mut measurements = Vec::with_capacity(children.len());
-        for &child in &children {
+        for &child in children {
             let child_inputs = LayoutInput {
                 run_mode: RunMode::PerformLayout,
                 sizing_mode: SizingMode::InherentSize,
@@ -572,9 +642,15 @@ fn relayout_nested_multicol_children(
         .as_ref()
         .and_then(|(entries, _)| paragraph_group::balance(tree, index, entries, context));
     let paragraph_balance = auto_measurements.as_ref().and_then(|(entries, _)| {
-        let [(child, _, _, _, _, _)] = entries.as_slice() else {
+        let mut boxes = entries.iter().filter(|(child, output, _, _, _, _)| {
+            tree.nodes[*child].kind() != NodeKind::Text
+                || output.size.height != 0.0
+                || tree.nodes[*child].ifc.is_some()
+        });
+        let (child, _, _, _, _, _) = boxes.next()?;
+        if boxes.next().is_some() {
             return None;
-        };
+        }
         let node = &tree.nodes[*child];
         if !can_balance_single_paragraph(tree, index, *child) {
             return None;
@@ -584,10 +660,12 @@ fn relayout_nested_multicol_children(
         (fragments.len() > 1).then_some((*child, fragments, height))
     });
     let mut avoid_column_break_after_previous = false;
-    for (order, child) in children.into_iter().enumerate() {
+    let mut occupied = std::collections::BTreeSet::new();
+    for (local_order, &child) in children.iter().enumerate() {
+        let order = source_order + local_order;
         let measured = auto_measurements
             .as_ref()
-            .and_then(|(entries, _)| entries.get(order));
+            .and_then(|(entries, _)| entries.get(local_order));
         let (mut child_output, mut child_layout, margin_top, margin_bottom, needed) =
             if let Some((_, output, layout, margin_top, margin_bottom, needed)) = measured {
                 (*output, *layout, *margin_top, *margin_bottom, *needed)
@@ -639,7 +717,7 @@ fn relayout_nested_multicol_children(
             };
         let planned = group_balance
             .as_ref()
-            .and_then(|group| group.placements[order].as_ref());
+            .and_then(|group| group.placements[local_order].as_ref());
         if let Some(placement) = planned {
             column = placement.first_column;
             cursor = placement.first_y - margin_top;
@@ -741,6 +819,18 @@ fn relayout_nested_multicol_children(
         if record_nested_ifc_box_fragments(tree, child, child_fragment, record_context).is_none() {
             return fallback_height;
         }
+        if let Some(root) = tree.nodes[child].ifc.as_ref()
+            && let Some(ranges) = &root.multicol_fragments
+        {
+            occupied.extend(
+                ranges
+                    .iter()
+                    .filter(|range| range.line_start < range.line_end)
+                    .map(|range| range.fragmentainer),
+            );
+        } else if child_output.size.width > 0.0 && child_output.size.height > 0.0 {
+            occupied.insert(column);
+        }
         if let Some(placement) = planned {
             column = placement.last_column;
             cursor = placement.last_y;
@@ -753,6 +843,19 @@ fn relayout_nested_multicol_children(
                 matches!(tree.nodes[child].break_after, BreakBetween::Avoid);
         }
     }
+    if retain_group {
+        tree.nodes[index]
+            .multicol_groups
+            .push(crate::fragment::MulticolGroup {
+                context: FragmentationContext {
+                    origin_x: content_origin.x,
+                    origin_y: content_origin.y,
+                    ..context
+                },
+                height: maximum.max(cursor),
+                occupied,
+            });
+    }
     let minimum_height =
         if auto_measurements.is_some() && !multicol_has_nested_descendant(tree, index) {
             0.0
@@ -761,16 +864,7 @@ fn relayout_nested_multicol_children(
                 .map(|height| fallback_height.min(height))
                 .unwrap_or(fallback_height)
         };
-    let used = (maximum.max(cursor) + content_origin.y + block_end_inset).max(minimum_height);
-    if let Some(fragment) = tree.fragment_tree.fragments.get_mut(container_fragment) {
-        if has_fragmentainer_height_constraint {
-            // Overflowing descendants do not expand a height-constrained border box.
-            fragment.rect.height = used.min(fallback_height);
-        } else {
-            fragment.rect.height = used;
-        }
-    }
-    used
+    (maximum.max(cursor) + content_origin.y + block_end_inset).max(minimum_height)
 }
 
 // cov:ignore: nested box and float fragment records are exercised by the ignored flex-float WPT.
@@ -1304,6 +1398,16 @@ fn refresh_nested_text_fragments(
     node_id: usize,
     context: FragmentationContext,
 ) {
+    // Auto fill without a block constraint has no soft column breaks.
+    let context =
+        if context.available_height.is_none() && context.column_fill == ColumnFillValue::Auto {
+            FragmentationContext {
+                column_count: context.column_index.saturating_add(1),
+                ..context
+            }
+        } else {
+            context
+        };
     let nested_row_flex_scope = nested_row_flex_float_scope(tree, node_id);
     let is_floated = tree.nodes[node_id].style.float.is_floated();
     let float_fragmentainer = tree.parent_of(node_id).and_then(|parent| {

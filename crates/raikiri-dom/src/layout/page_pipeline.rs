@@ -279,6 +279,9 @@ fn layout_single_page_with_table_projection(
     document.table_layout_error = None;
     document.fragment_tree.clear();
     document.column_rules.clear();
+    for node in &mut document.nodes {
+        node.multicol_groups.clear();
+    }
     document.fragmentation_stack.clear();
 
     // Step 1: ComputedValues → taffy::Style bridge (currently a no-op site).
@@ -1212,7 +1215,12 @@ pub(crate) fn project_slices_with_control(
             continue;
         }
         let layout = node.unrounded_layout;
-        if !visit.is_fragment_visit {
+        // A nested column container has a placement record and a retained
+        // container root for the same source node. Enter that root before
+        // visiting the node's DOM children, whose records belong to it.
+        if !visit.is_fragment_visit
+            || fragments_by_parent_and_node.contains_key(&(visit.fragment, node_id))
+        {
             if let Some(indices) = fragments_by_parent_and_node.get(&(visit.fragment, node_id)) {
                 for &index in indices.iter().rev() {
                     let origin = fragments[index].paint_origin(
@@ -2410,6 +2418,107 @@ pub fn layout_pages_with_page_geometry_and_control(
         }
         y
     }
+
+    // Page heights are known here, after source layout has established each
+    // owner's position. Retain page-local column placements before collecting
+    // paragraph and fragment projections, including the changed following flow.
+    let mut column_work = ProjectionWork::with_remaining(
+        control,
+        document.fragment_tree.limit,
+        document
+            .fragment_tree
+            .limit
+            .saturating_sub(document.fragment_tree.break_flow_work_used),
+    );
+    let mut spanning_owners: Vec<_> = document
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, node)| !node.multicol_groups.is_empty())
+        .map(|(id, _)| id)
+        .collect();
+    spanning_owners.sort_by(|&a, &b| {
+        current_abs_y(document, a, &parent_of).total_cmp(&current_abs_y(document, b, &parent_of))
+    });
+    for owner in spanning_owners {
+        let owner_y = root_flow_offset + current_abs_y(document, owner, &parent_of);
+        let delta = paginate_spanning_columns(
+            document,
+            owner,
+            owner_y,
+            &|y| {
+                let index = page_index_for_y(y);
+                (index, page_origin(index), page_step_at(index))
+            },
+            &mut column_work,
+        )?;
+        if delta == 0.0 {
+            continue;
+        }
+        let mut child = owner;
+        while let Some(parent) = document.layout_parent_of(child) {
+            if document.nodes[child].style.position == TaffyPosition::Absolute
+                || document.nodes[child].style.float.is_floated()
+            {
+                break;
+            }
+            column_work.charge(document.nodes[parent].children.len())?;
+            let ifc_boxes: HashSet<_> =
+                document.nodes[parent].ifc_boxes().iter().copied().collect();
+            follow_moved_ifc_block(document, child, delta);
+            let mut after = false;
+            let siblings = document.nodes[parent].children.clone();
+            for sibling in siblings {
+                if sibling == child {
+                    after = true;
+                    continue;
+                }
+                if !after
+                    || document.nodes[sibling].style.position == TaffyPosition::Absolute
+                    || document.nodes[sibling].style.float.is_floated()
+                    || document.nodes[sibling].in_ifc_subtree()
+                    || ifc_boxes.contains(&sibling)
+                {
+                    continue;
+                }
+                document.nodes[sibling].unrounded_layout.location.y += delta;
+                let parent_fragments: HashSet<_> = document
+                    .fragment_tree
+                    .fragments
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, fragment)| fragment.node_id == parent)
+                    .map(|(id, _)| id)
+                    .collect();
+                for fragment in &mut document.fragment_tree.fragments {
+                    if fragment.node_id == sibling
+                        && fragment
+                            .parent
+                            .is_some_and(|id| parent_fragments.contains(&id))
+                    {
+                        fragment.rect.y += delta;
+                    }
+                }
+            }
+            if !document.nodes[parent].style.size.height.is_auto() {
+                break;
+            }
+            document.nodes[parent].unrounded_layout.size.height += delta;
+            for fragment in &mut document.fragment_tree.fragments {
+                if fragment.node_id == parent {
+                    fragment.rect.height += delta;
+                }
+            }
+            if parent == body_id {
+                break; // cov:ignore: the body has a pinned viewport height and exits at the preceding fixed-height boundary.
+            }
+            child = parent;
+        }
+    }
+    document.fragment_tree.break_flow_work_used =
+        document.fragment_tree.limit - column_work.remaining();
+    document.fragment_tree.finalize();
+    document.column_rules = crate::column_rules::prepare(document, cascade)?;
 
     fn materialize_y(
         document: &mut Document,

@@ -74,6 +74,7 @@ pub enum ComputedProperty {
     TabSize,
     LetterSpacing,
     WordSpacing,
+    ColumnSpan,
 }
 
 impl ComputedProperty {
@@ -135,6 +136,7 @@ impl ComputedProperty {
         Self::TabSize,
         Self::LetterSpacing,
         Self::WordSpacing,
+        Self::ColumnSpan,
     ];
 
     /// Looks up a property by name, ASCII case-insensitively. Legacy aliases
@@ -200,6 +202,7 @@ impl ComputedProperty {
             "tab-size" => Self::TabSize,
             "letter-spacing" => Self::LetterSpacing,
             "word-spacing" => Self::WordSpacing,
+            "column-span" => Self::ColumnSpan,
             _ => return None,
         })
     }
@@ -339,6 +342,7 @@ impl ComputedProperty {
                 return Some(value);
             }
             ComputedProperty::TextSpacingTrim => computed.text_spacing_trim.as_css_str(),
+            ComputedProperty::ColumnSpan => computed.column_span.as_css_str(),
             ComputedProperty::TextAutospace => {
                 return serialize_value(&PropertyValue::TextAutospace(computed.text_autospace));
             }

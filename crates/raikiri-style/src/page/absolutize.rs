@@ -574,6 +574,7 @@ pub(super) fn absolutize_in_page_context(
         | PropertyValue::UnicodeBidi(_)
         | PropertyValue::Page(_)
         | PropertyValue::ColumnFill(_)
+        | PropertyValue::ColumnSpan(_)
         | PropertyValue::ColumnRuleStyle(_)
         | PropertyValue::ColumnRuleColor(_)
         | PropertyValue::ColumnCount(_)

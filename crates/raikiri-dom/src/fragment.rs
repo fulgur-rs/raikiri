@@ -113,6 +113,14 @@ impl FragmentationContext {
     }
 }
 
+/// A column group retained in its owner's border-box coordinate space.
+#[derive(Clone, Debug)]
+pub(crate) struct MulticolGroup {
+    pub(crate) context: FragmentationContext,
+    pub(crate) height: f32,
+    pub(crate) occupied: std::collections::BTreeSet<usize>,
+}
+
 /// A resumable point in a fragmented child flow.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct BreakToken {
@@ -190,6 +198,8 @@ const MAX_LAYOUT_FRAGMENTS: usize = 65_536;
 #[derive(Clone, Debug)]
 pub(crate) struct FragmentTree {
     pub(crate) fragments: Vec<LayoutFragment>,
+    /// Preliminary records retired after recursive source layout finishes.
+    retired: std::collections::HashSet<usize>,
     /// Break points retained for a later incremental/reflow consumer.
     pub(crate) break_tokens: Vec<BreakToken>,
     /// Separate caps for fragments and estimated break-flow measurement work.
@@ -204,6 +214,7 @@ impl Default for FragmentTree {
     fn default() -> Self {
         Self {
             fragments: Vec::new(),
+            retired: std::collections::HashSet::new(),
             break_tokens: Vec::new(),
             limit: MAX_LAYOUT_FRAGMENTS,
             break_flow_work_used: 0,
@@ -215,6 +226,7 @@ impl Default for FragmentTree {
 impl FragmentTree {
     pub(crate) fn clear(&mut self) {
         self.fragments.clear();
+        self.retired.clear();
         self.break_tokens.clear();
         self.break_flow_work_used = 0;
         self.limit_exceeded = false;
@@ -234,8 +246,33 @@ impl FragmentTree {
         self.break_tokens.push(token);
     }
 
+    pub(crate) fn retire_nodes(&mut self, nodes: &std::collections::HashSet<usize>) {
+        // Keep indices stable while recursive callers retain their container.
+        self.retired.extend(
+            self.fragments
+                .iter()
+                .enumerate()
+                .filter(|(_, fragment)| nodes.contains(&fragment.node_id))
+                .map(|(index, _)| index),
+        );
+    }
+
     /// Assign stable source-node order and total counts after layout finishes.
     pub(crate) fn finalize(&mut self) {
+        if !self.retired.is_empty() {
+            let old = std::mem::take(&mut self.fragments);
+            let mut remap = vec![None; old.len()];
+            for (index, fragment) in old.into_iter().enumerate() {
+                if !self.retired.contains(&index) {
+                    remap[index] = Some(self.fragments.len());
+                    self.fragments.push(fragment);
+                }
+            }
+            for fragment in &mut self.fragments {
+                fragment.parent = fragment.parent.and_then(|parent| remap[parent]);
+            }
+            self.retired.clear();
+        }
         let mut counts = std::collections::HashMap::<usize, usize>::new();
         for fragment in &self.fragments {
             *counts.entry(fragment.node_id).or_default() += 1;
