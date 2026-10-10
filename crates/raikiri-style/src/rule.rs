@@ -112,10 +112,11 @@ pub struct Declaration {
     pub(crate) rollback: Rollback,
 }
 
-// The cascade clones one declaration per matched candidate.
+// A rule tree holds every declaration of its style rules, and an element
+// keeps its own declarations, such as those of its `style` attribute.
 const _: () = assert!(
-    std::mem::size_of::<Declaration>() <= 152,
-    "Declaration grew past 152 bytes: raise the bound together with a cascade memory measurement"
+    std::mem::size_of::<Declaration>() <= 80,
+    "Declaration grew past 80 bytes: raise the bound together with a cascade memory measurement"
 );
 
 impl Declaration {

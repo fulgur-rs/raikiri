@@ -5,15 +5,14 @@ use std::sync::Arc;
 
 use crate::cascade::{ResolvedAgainstInherited, resolve_relative_font_size};
 use crate::property::{
-    BackgroundShorthand, BackgroundSize, Border, BorderColor, BorderRadius, BorderStyle,
-    BoxShadowItem, ColumnWidthValue, ColumnsShorthand, CssPosition, CssPositionOffset,
-    FlexBasisValue, FlexShorthand, FontShorthand, FontShorthandSize, GapShorthand,
-    GridInflexibleBreadth, GridTemplateTracks, GridTrackBreadth, GridTrackList,
-    GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto, LengthOrNormal,
-    LengthPercentageCalc, Outline, OutlineColor, OutlineStyle, OverflowXY, PropertyValue, Sides,
-    TextDecorationInset, TextDecorationShorthand, TextDecorationThickness, TextIndentLength,
-    TextIndentValue, TextShadowItem, TextShadowLength, TextUnderlineOffset, TransformFunction,
-    resolve_overflow,
+    BackgroundSize, Border, BorderColor, BorderRadius, BorderStyle, BoxShadowItem,
+    ColumnWidthValue, ColumnsShorthand, CssPosition, CssPositionOffset, FlexBasisValue,
+    FlexShorthand, FontShorthand, FontShorthandSize, GapShorthand, GridInflexibleBreadth,
+    GridTemplateTracks, GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat,
+    GridTrackSize, Length, LengthOrAuto, LengthOrNormal, LengthPercentageCalc, Outline,
+    OutlineColor, OutlineStyle, OverflowXY, PropertyValue, Sides, TextDecorationInset,
+    TextDecorationShorthand, TextDecorationThickness, TextIndentLength, TextIndentValue,
+    TextShadowItem, TextShadowLength, TextUnderlineOffset, TransformFunction, resolve_overflow,
 };
 use crate::resolve::{
     ComputedBackgroundSize, ComputedCssPositionOffset, ComputedFlexBasis,
@@ -795,18 +794,17 @@ pub(super) fn absolutize_in_page_context(
         PropertyValue::BackgroundPosition(v) => {
             PropertyValue::BackgroundPosition(basis.css_position(v))
         }
-        PropertyValue::Background(shorthand) => PropertyValue::Background(BackgroundShorthand {
-            color_expression: shorthand.color_expression,
-            image: crate::resolve::resolve_background_image(
+        PropertyValue::Background(mut shorthand) => {
+            shorthand.image = crate::resolve::resolve_background_image(
                 shorthand.image,
                 font_size,
                 own_line_height,
                 ctx,
-            ),
-            position: basis.css_position(shorthand.position),
-            size: basis.background_size(shorthand.size),
-            ..shorthand
-        }),
+            );
+            shorthand.position = basis.css_position(shorthand.position);
+            shorthand.size = basis.background_size(shorthand.size);
+            PropertyValue::Background(shorthand)
+        }
         // ── text-decoration-thickness / text-decoration-inset ────────────
         PropertyValue::TextDecorationThickness(t) => {
             PropertyValue::TextDecorationThickness(match t {

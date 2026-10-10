@@ -6783,7 +6783,7 @@ fn apply_value_direct_grid_area_shorthand_fall_through() {
         row_end: GridLineValue::Line(3),
         column_end: GridLineValue::Line(4),
     };
-    apply_value(PropertyValue::GridArea(area.clone()), &mut cv);
+    apply_value(PropertyValue::GridArea(Arc::new(area.clone())), &mut cv);
     assert_eq!(cv.grid_row_start, area.row_start);
     assert_eq!(cv.grid_column_start, area.column_start);
     assert_eq!(cv.grid_row_end, area.row_end);
@@ -7453,7 +7453,10 @@ fn apply_value_direct_background_shorthand_fall_through() {
         clip: VisualBox::PaddingBox,
         origin: VisualBox::ContentBox,
     };
-    apply_value(PropertyValue::Background(shorthand.clone()), &mut cv);
+    apply_value(
+        PropertyValue::Background(Box::new(shorthand.clone())),
+        &mut cv,
+    );
     assert_eq!(cv.background_color, RED);
     assert_eq!(cv.background_image, shorthand.image);
     assert_eq!(cv.background_repeat, shorthand.repeat);
@@ -9654,11 +9657,11 @@ fn marker_shorthand_direct_application_resets_all_three_inherited_fields() {
     specified.list_style_position = ListStylePosition::Inside;
     specified.list_style_image = crate::property::BackgroundImage::Url("old.png".into());
     apply_value(
-        PropertyValue::ListStyle(crate::property::ListStyleShorthand {
+        PropertyValue::ListStyle(Box::new(crate::property::ListStyleShorthand {
             kind: ListStyleType::Disc,
             position: ListStylePosition::Outside,
             image: crate::property::BackgroundImage::None,
-        }),
+        })),
         &mut specified,
     );
     assert_eq!(specified.list_style_type, ListStyleType::Disc);

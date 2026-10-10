@@ -8667,7 +8667,10 @@ pub enum PropertyValue {
     /// `list-style-image: none | <url>` — inherited, initial: `none`.
     ListStyleImage(BackgroundImage),
     /// `list-style` sets type, position and image, including omitted defaults.
-    ListStyle(ListStyleShorthand),
+    /// Boxed so that it does not set the size of every `PropertyValue`: it
+    /// is expanded into its longhands when parsed (see
+    /// [`crate::rule::expand_shorthand_into`]), so few values hold it.
+    ListStyle(Box<ListStyleShorthand>),
     /// `counter-reset: [ <counter-name> <integer>? ]+ | none` —
     /// non-inherited. The spec's initial value is `none` (CSS Lists 3 §4.1), which
     /// this implementation represents as an empty list.
@@ -9704,8 +9707,12 @@ pub enum PropertyValue {
     /// accepted; the offset from the border edge is absolutized. `<percentage>`
     /// is outside the grammar.
     OutlineOffset(Length),
-    /// `grid-area` shorthand — placement for one grid item.
-    GridArea(GridAreaShorthand),
+    /// `grid-area` shorthand — placement for one grid item. Shared behind an
+    /// [`Arc`] so that it does not set the size of every `PropertyValue`: it
+    /// reaches the cascade unexpanded, where a winning value is cloned for
+    /// every element it applies to, and cloning an `Arc` only counts a
+    /// reference.
+    GridArea(Arc<GridAreaShorthand>),
     /// `grid` shorthand — the supported explicit `rows / columns` form.
     Grid(GridShorthand),
     /// `grid-template-columns` — non-inherited, initial:
@@ -9869,8 +9876,10 @@ pub enum PropertyValue {
     /// fields): shorthands do not reach the cascade stage (see
     /// [`crate::rule::expand_shorthand_into`]), so discriminant order does not
     /// matter. Avoiding shifts of existing variants takes priority (see the
-    /// declaration-order section of [`PropertyKey`]).
-    Background(BackgroundShorthand),
+    /// declaration-order section of [`PropertyKey`]). Boxed so that it does
+    /// not set the size of every `PropertyValue`; being expanded when parsed,
+    /// few values hold it.
+    Background(Box<BackgroundShorthand>),
     /// `object-fit` — **non-inherited**, initial: [`ObjectFit::Fill`] (CSS
     /// Images 3 §5.1; see [`ObjectFit`]). Appended as a new 1:1 disjoint field
     /// under the placement rule in [`PropertyKey`].
@@ -10146,12 +10155,13 @@ pub enum PropertyValue {
     ColumnRuleColor(BorderColor),
 }
 
-// The cascade keeps one `PropertyValue` per candidate declaration and copies
-// winners by value, so its size is paid on every element. A larger variant
-// payload should be boxed, or this bound raised together with a measurement.
+// Every declaration a rule tree holds carries one `PropertyValue`, and the
+// cascade clones each winning value for the element it applies to, so its
+// size is paid per declaration and per element. A larger variant payload
+// should be boxed, or this bound raised together with a measurement.
 const _: () = assert!(
-    std::mem::size_of::<PropertyValue>() <= 144,
-    "PropertyValue grew past 144 bytes: box the new variant's payload, or raise the bound with a cascade measurement"
+    std::mem::size_of::<PropertyValue>() <= 72,
+    "PropertyValue grew past 72 bytes: box the new variant's payload, or raise the bound with a cascade measurement"
 );
 
 /// Property key: the discriminant used to select a winner for each property in
