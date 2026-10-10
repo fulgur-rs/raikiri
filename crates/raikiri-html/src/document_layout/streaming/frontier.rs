@@ -30,6 +30,8 @@ use raikiri_style::property::{
 use raikiri_style::{CascadeResult, ComputedColumnWidth};
 use raikiri_traits::NodeKind;
 
+use crate::document_layout::DocumentLayout;
+
 const XHTML: &str = "http://www.w3.org/1999/xhtml";
 
 /// Where a partly parsed document stops being final.
@@ -103,6 +105,65 @@ fn open_elements(document: &Document, traced: &[usize]) -> Vec<usize> {
         }
     }
     open
+}
+
+/// How many leading pages of `laid_out`, a layout of the snapshot
+/// `document`, are final.
+///
+/// Content before the frontier is final, and so is everything up to the
+/// last node, apart from one thing: content that arrives later can join the
+/// last node with an avoided break. The earliest page holding content at or
+/// after either point is not final, and neither is the page before it,
+/// whose end break depends on what that content does. Every earlier page
+/// lies wholly before both points.
+pub(crate) fn final_page_count(
+    document: &Document,
+    cascade: &CascadeResult,
+    frontier: Frontier,
+    laid_out: &DocumentLayout,
+) -> u32 {
+    let order = preorder(document);
+    let Some(&last) = order.last() else {
+        return 0;
+    };
+    let mut position = vec![usize::MAX; document.node_count()];
+    for (index, &id) in order.iter().enumerate() {
+        position[id] = index;
+    }
+    let mut earliest_unstable = position[join_avoided_breaks(document, cascade, last)];
+    if let Frontier::At(id) = frontier {
+        earliest_unstable = earliest_unstable.min(position[id]);
+    }
+
+    let page_count = laid_out.page_count();
+    let mut first_page = vec![page_count; document.node_count()];
+    for index in 0..page_count {
+        for fragment in laid_out.page_at(index as usize).fragments() {
+            let node = fragment.node().0 as usize;
+            if let Some(page) = first_page.get_mut(node) {
+                *page = (*page).min(index);
+            }
+        }
+    }
+    let unstable_page = order[earliest_unstable..]
+        .iter()
+        .map(|&id| first_page[id])
+        .min()
+        .unwrap_or(page_count);
+    unstable_page.saturating_sub(1)
+}
+
+/// Every node reachable from the document root, in tree order.
+fn preorder(document: &Document) -> Vec<usize> {
+    let mut order = Vec::new();
+    let mut stack = vec![document.root_index()];
+    while let Some(id) = stack.pop() {
+        order.push(id);
+        if let Some(node) = document.get_node(id) {
+            stack.extend(node.children.iter().rev().copied());
+        }
+    }
+    order
 }
 
 fn computed(cascade: &CascadeResult, id: usize) -> Option<&ComputedValues> {
