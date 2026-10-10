@@ -606,6 +606,88 @@ fn replace_page_swaps_the_page_context_and_starts_a_new_generation() {
 }
 
 #[test]
+fn extract_renumbers_the_results_for_part_of_the_tree() {
+    let css = "p::before { content: \"x\" } p::first-letter { color: red } \
+        p::first-line { color: blue } p { page: chapter } rect { color: blue; opacity: .25 }";
+    let mut doc = TestDoc::new();
+    let html = doc.push_element(0, "html", None);
+    let style = doc.push_element(html, "style", None);
+    doc.push_text(style, css);
+    let body = doc.push_element(html, "body", None);
+    let first = doc.push_element(body, "p", None);
+    doc.push_text(first, "first");
+    let second = doc.push_element(body, "p", Some("color: green"));
+    let text = doc.push_text(second, "second");
+    let svg = doc.push_element_with_namespace(second, "svg", "http://www.w3.org/2000/svg", &[]);
+    let rect = doc.push_element_with_namespace(svg, "rect", "http://www.w3.org/2000/svg", &[]);
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+    assert!(!result.first_letter_inputs.is_empty());
+    assert!(!result.svg_style_properties.is_empty());
+    assert!(!result.typographic_inheritance.is_empty());
+
+    let nodes = [0, html, body, second, text, svg, rect];
+    let part = result.extract(&nodes);
+    assert_ne!(part.generation(), result.generation());
+    assert_eq!(part.computed.len(), nodes.len());
+    for (new, &old) in nodes.iter().enumerate() {
+        assert_eq!(part.computed[new], result.computed[old]);
+        assert_eq!(part.page_values[new], result.page_values[old]);
+        assert_eq!(part.opacity_specified[new], result.opacity_specified[old]);
+        assert_eq!(
+            part.background_color_specified[new],
+            result.background_color_specified[old]
+        );
+        assert_eq!(
+            part.authored_writing_modes[new],
+            result.authored_writing_modes[old]
+        );
+        for kind in [PseudoElem::Before, PseudoElem::FirstLetter] {
+            let key = |id: usize| (StyleNodeId(id as u64), kind);
+            assert_eq!(part.pseudo.get(&key(new)), result.pseudo.get(&key(old)));
+        }
+        let id = |id: usize| StyleNodeId(id as u64);
+        assert_eq!(
+            part.svg_style_properties.get(&id(new)),
+            result.svg_style_properties.get(&id(old))
+        );
+        assert_eq!(
+            part.first_letter_inputs.contains_key(&id(new)),
+            result.first_letter_inputs.contains_key(&id(old))
+        );
+    }
+    // Entries for nodes left out are dropped.
+    assert_eq!(
+        part.pseudo.len(),
+        result
+            .pseudo
+            .keys()
+            .filter(|(id, _)| id.0 != first as u64)
+            .count()
+    );
+    assert_eq!(
+        part.typographic_inheritance.len(),
+        result
+            .typographic_inheritance
+            .keys()
+            .filter(|(id, _)| nodes.contains(&(id.0 as usize)))
+            .count()
+    );
+    assert_eq!(
+        part.root_element_computed() as *const ComputedValues,
+        &part.computed[1] as *const ComputedValues
+    );
+    assert_eq!(part.page, result.page);
+
+    // Without the root element, `@page` inherits from the first node.
+    let detached = result.extract(&[0, second]);
+    assert_eq!(
+        detached.root_element_computed() as *const ComputedValues,
+        &detached.computed[0] as *const ComputedValues
+    );
+}
+
+#[test]
 fn hanging_punctuation_combinations_survive_cascade_inheritance_and_overrides() {
     let mut doc = TestDoc::new();
     let parent = doc.push_element(0, "div", Some("hanging-punctuation:last force-end first"));

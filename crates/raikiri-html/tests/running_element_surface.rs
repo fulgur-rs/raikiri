@@ -152,7 +152,7 @@ fn the_selected_element_lays_out_at_the_margin_box_width() {
     assert_eq!(running.height(), 3.0 + 2.0 + 60.0 + 2.0 + 7.0);
     let element = laid_out
         .fragments()
-        .find(|fragment| fragment.node() == node)
+        .find(|fragment| running.source_node(fragment.node()) == Some(node))
         .expect("the element's box");
     let rect = element.paint_rect();
     assert_eq!(
@@ -160,6 +160,7 @@ fn the_selected_element_lays_out_at_the_margin_box_width() {
         (0.0, 3.0, 200.0, 64.0)
     );
     assert_eq!(laid_out.geometry().page_box.height, running.height());
+    assert_eq!(running.source_node(NodeId(u64::MAX)), None);
 }
 
 #[test]

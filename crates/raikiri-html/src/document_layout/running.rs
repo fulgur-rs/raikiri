@@ -259,6 +259,9 @@ fn preorder(document: &Document) -> Vec<(usize, usize)> {
 /// everything by the margin box's content-box origin.
 pub struct RunningElementLayout {
     node: NodeId,
+    /// For each node of [`Self::document`], the node of the source document
+    /// it was copied from.
+    source_nodes: Vec<usize>,
     document: Document,
     cascade: CascadeResult,
     slice: raikiri_dom::PageSlice,
@@ -271,6 +274,16 @@ impl RunningElementLayout {
     /// The running element.
     pub fn node(&self) -> NodeId {
         self.node
+    }
+
+    /// The node of the laid-out document that `node`, a node of
+    /// [`Self::page`], was copied from. `None` for a node the page does not
+    /// have.
+    pub fn source_node(&self, node: NodeId) -> Option<NodeId> {
+        let index = usize::try_from(node.0).ok()?;
+        self.source_nodes
+            .get(index)
+            .map(|&source| NodeId(source as u64))
     }
 
     /// Width of the containing block the element was laid out in.
@@ -286,6 +299,11 @@ impl RunningElementLayout {
 
     /// The laid-out element as a page of [`Self::width`] by
     /// [`Self::height`] with no page margins.
+    ///
+    /// The page is read from a copy that holds only the element's subtree
+    /// and its ancestors, numbered on its own: node ids the page reports
+    /// are that copy's, and [`Self::source_node`] maps them back to the
+    /// document's.
     ///
     /// Besides the element's own fragments, the page can have a box fragment
     /// for `<body>`. It carries no decoration and extends below
@@ -338,34 +356,32 @@ pub(crate) fn layout_running_element(
         // cov:ignore: the caller only passes nodes the running index found in the document.
         return Ok(None);
     };
-    let mut ancestors = Vec::new();
+    // The element's ancestors from the root down, then its subtree in
+    // preorder, copied out of the document with the cascade renumbered to
+    // match.
+    let mut nodes = Vec::new();
     let mut parent = source.parent_of(index);
     while let Some(id) = parent {
-        ancestors.push(id);
+        nodes.push(id);
         parent = source.parent_of(id);
     }
-    let mut in_subtree = vec![false; source.node_count()];
+    nodes.reverse();
+    let ancestor_count = nodes.len();
     let mut stack = vec![index];
     while let Some(id) = stack.pop() {
-        if let Some(flag) = in_subtree.get_mut(id) {
-            *flag = true;
-        }
+        nodes.push(id);
         if let Some(n) = source.get_node(id) {
-            stack.extend(n.children.iter().copied());
+            stack.extend(n.children.iter().rev().copied());
         }
     }
-
-    let mut document = source.clone();
-    document.retain_children(|child| in_subtree[child] || ancestors.contains(&child));
+    let mut document = source.extract_nodes(&nodes);
     document.mark_in_document_flags();
+    let mut cascade = cascade.extract(&nodes);
+    let index = ancestor_count;
 
-    let mut cascade = cascade.clone();
-    for &ancestor in &ancestors {
-        let Some(original) = cascade.computed.get(ancestor) else {
-            continue;
-        };
+    for ancestor in 0..index {
         // What the ancestor passes down by inheritance, without its own box.
-        let mut boxless = ComputedValues::inherit_from(original);
+        let mut boxless = ComputedValues::inherit_from(&cascade.computed[ancestor]);
         boxless.display = DisplayValue::Block;
         cascade.computed[ancestor] = boxless;
     }
@@ -423,12 +439,7 @@ pub(crate) fn layout_running_element(
     .max(0.0);
     let height = document
         .page_fragments(0)
-        .filter(|fragment| {
-            in_subtree
-                .get(fragment.node().0 as usize)
-                .copied()
-                .unwrap_or(false)
-        })
+        .filter(|fragment| fragment.node().0 as usize >= index)
         .map(|fragment| {
             let rect = fragment.paint_rect();
             rect.y + rect.height
@@ -443,6 +454,7 @@ pub(crate) fn layout_running_element(
     let style = cascade.page.clone();
     Ok(Some(RunningElementLayout {
         node,
+        source_nodes: nodes,
         document,
         cascade,
         slice,
