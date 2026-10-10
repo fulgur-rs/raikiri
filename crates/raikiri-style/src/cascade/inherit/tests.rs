@@ -415,6 +415,98 @@ fn text_node_inherits_from_element_parent() {
     assert_eq!(r.computed[t].color, RED);
 }
 
+#[test]
+fn inherited_lists_and_image_urls_are_shared_with_descendants() {
+    // A descendant's inherited feature lists and list-style-image share the
+    // ancestor's, so their length costs nothing per node. The authored
+    // feature order is not the computed one, so the parent sorts it once.
+    let url = format!("{}.png", "a".repeat(64));
+    let style = format!(
+        "font-feature-settings: \"liga\" 1, \"kern\" 0; \
+         font-variation-settings: \"wght\" 700, \"wdth\" 80; list-style-image: url({url})"
+    );
+    let mut doc = TestDoc::new();
+    let p = doc.push_element(0, "p", Some(style.as_str()));
+    let span = doc.push_element(p, "span", None);
+    let text = doc.push_text(span, "Hi");
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).unwrap();
+    let parent = &r.computed[p];
+    for node in [span, text] {
+        let child = &r.computed[node];
+        match (&parent.font_feature_settings, &child.font_feature_settings) {
+            (
+                crate::property::FontFeatureSettings::Features(a),
+                crate::property::FontFeatureSettings::Features(b),
+            ) => {
+                assert_eq!(a.first().map(|setting| setting.tag), Some(*b"kern"));
+                assert!(Arc::ptr_eq(a, b), "font-feature-settings copied");
+            }
+            other => panic!("expected feature lists, got {other:?}"),
+        }
+        match (
+            &parent.font_variation_settings,
+            &child.font_variation_settings,
+        ) {
+            (
+                crate::property::FontVariationSettings::Settings(a),
+                crate::property::FontVariationSettings::Settings(b),
+            ) => assert!(Arc::ptr_eq(a, b), "font-variation-settings copied"),
+            other => panic!("expected variation lists, got {other:?}"),
+        }
+        match (&parent.list_style_image, &child.list_style_image) {
+            (
+                crate::property::BackgroundImage::Url(a),
+                crate::property::BackgroundImage::Url(b),
+            ) => {
+                assert_eq!(a.as_str(), url);
+                assert_eq!(a.as_str().as_ptr(), b.as_str().as_ptr(), "URL copied");
+            }
+            other => panic!("expected image URLs, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn canonical_feature_lists_are_kept_as_they_are() {
+    let canonical: Arc<[crate::property::FontFeatureSetting]> = Arc::from(vec![
+        crate::property::FontFeatureSetting {
+            tag: *b"kern",
+            value: 0,
+        },
+        crate::property::FontFeatureSetting {
+            tag: *b"liga",
+            value: 1,
+        },
+    ]);
+    match crate::property::FontFeatureSettings::Features(canonical.clone()).canonicalized() {
+        crate::property::FontFeatureSettings::Features(kept) => {
+            assert!(Arc::ptr_eq(&kept, &canonical));
+        }
+        other => panic!("expected a feature list, got {other:?}"),
+    }
+    // A repeated tag is not canonical: the last value of it wins.
+    let repeated: Arc<[crate::property::FontFeatureSetting]> = Arc::from(vec![
+        crate::property::FontFeatureSetting {
+            tag: *b"kern",
+            value: 0,
+        },
+        crate::property::FontFeatureSetting {
+            tag: *b"kern",
+            value: 1,
+        },
+    ]);
+    assert_eq!(
+        crate::property::FontFeatureSettings::Features(repeated).canonicalized(),
+        crate::property::FontFeatureSettings::Features(Arc::from(vec![
+            crate::property::FontFeatureSetting {
+                tag: *b"kern",
+                value: 1,
+            },
+        ]))
+    );
+}
+
 fn cascade_parent_child(
     parent_tag: &str,
     parent_inline: Option<&str>,
@@ -2615,20 +2707,26 @@ fn font_variation_settings_inherits_and_child_value_overrides() {
 
     // Specified order and duplicate tags are retained by parsing; the computed
     // value keeps the last tag value and sorts the canonical list.
-    let parent_value = FontVariationSettings::Settings(vec![
-        FontVariationSetting {
+    let parent_value = FontVariationSettings::Settings(
+        vec![
+            FontVariationSetting {
+                tag: "wdth".into(),
+                value: 200.0,
+            },
+            FontVariationSetting {
+                tag: "wght".into(),
+                value: 640.0,
+            },
+        ]
+        .into(),
+    );
+    let child_value = FontVariationSettings::Settings(
+        vec![FontVariationSetting {
             tag: "wdth".into(),
-            value: 200.0,
-        },
-        FontVariationSetting {
-            tag: "wght".into(),
-            value: 640.0,
-        },
-    ]);
-    let child_value = FontVariationSettings::Settings(vec![FontVariationSetting {
-        tag: "wdth".into(),
-        value: 120.0,
-    }]);
+            value: 120.0,
+        }]
+        .into(),
+    );
     let mut doc = TestDoc::new();
     let parent = doc.push_element(
         0,
@@ -2659,20 +2757,26 @@ fn font_variation_settings_inherits_and_child_value_overrides() {
 fn font_feature_settings_inherits_and_child_value_overrides() {
     use crate::property::{FontFeatureSetting, FontFeatureSettings};
 
-    let parent_value = FontFeatureSettings::Features(vec![
-        FontFeatureSetting {
+    let parent_value = FontFeatureSettings::Features(
+        vec![
+            FontFeatureSetting {
+                tag: *b"kern",
+                value: 0,
+            },
+            FontFeatureSetting {
+                tag: *b"liga",
+                value: 0,
+            },
+        ]
+        .into(),
+    );
+    let child_value = FontFeatureSettings::Features(
+        vec![FontFeatureSetting {
             tag: *b"kern",
             value: 0,
-        },
-        FontFeatureSetting {
-            tag: *b"liga",
-            value: 0,
-        },
-    ]);
-    let child_value = FontFeatureSettings::Features(vec![FontFeatureSetting {
-        tag: *b"kern",
-        value: 0,
-    }]);
+        }]
+        .into(),
+    );
     let mut doc = TestDoc::new();
     let parent = doc.push_element(
         0,
@@ -4971,7 +5075,7 @@ fn mix_blend_mode_is_non_inherited() {
 fn mask_image_wired_through_cascade_from_inline_style() {
     use crate::property::MaskImage;
     let cv = cascade_doc("", "div", Some("mask-image: url(mask.svg)"));
-    assert_eq!(cv.mask_image, MaskImage::Url("mask.svg".to_string()));
+    assert_eq!(cv.mask_image, MaskImage::Url("mask.svg".into()));
 }
 
 #[test]
@@ -4989,10 +5093,7 @@ fn mask_image_is_non_inherited() {
     let span = doc.push_element(p, "span", None);
     let tree = build_rule_tree(&doc);
     let r = cascade(&doc, &tree).expect("cascade Ok");
-    assert_eq!(
-        r.computed[p].mask_image,
-        MaskImage::Url("mask.svg".to_string())
-    );
+    assert_eq!(r.computed[p].mask_image, MaskImage::Url("mask.svg".into()));
     assert_eq!(r.computed[span].mask_image, MaskImage::None);
 }
 
@@ -5154,7 +5255,7 @@ fn background_image_wired_through_cascade_from_inline_style() {
     let cv = cascade_doc("", "div", Some("background-image: url(marble.svg)"));
     assert_eq!(
         cv.background_image,
-        BackgroundImage::Url("marble.svg".to_string())
+        BackgroundImage::Url("marble.svg".into())
     );
 }
 
@@ -5191,7 +5292,7 @@ fn background_image_is_non_inherited() {
     let r = cascade(&doc, &tree).expect("cascade Ok");
     assert_eq!(
         r.computed[p].background_image,
-        BackgroundImage::Url("marble.svg".to_string())
+        BackgroundImage::Url("marble.svg".into())
     );
     // CSS Backgrounds and Borders 3 §2.3 "Inherited: no" — the child
     // without its own winner resets to the spec initial (`none`), not
@@ -5214,7 +5315,7 @@ fn background_image_wired_through_cascade_from_inline_style_with_gradient() {
     );
     assert!(matches!(
         cv.background_image,
-        BackgroundImage::Gradient(Gradient::Linear(_))
+        BackgroundImage::Gradient(ref gradient) if matches!(**gradient, Gradient::Linear(_))
     ));
 }
 
@@ -5234,10 +5335,7 @@ fn background_image_invalid_gradient_does_not_overwrite_an_earlier_url() {
         "div",
         Some("background-image: url(a.png); background-image: linear-gradient(red)"),
     );
-    assert_eq!(
-        cv.background_image,
-        BackgroundImage::Url("a.png".to_string())
-    );
+    assert_eq!(cv.background_image, BackgroundImage::Url("a.png".into()));
 }
 
 #[test]
@@ -5261,10 +5359,7 @@ fn background_image_radial_gradient_position_before_shape_does_not_overwrite_an_
             "background-image: url(a.png); background-image: radial-gradient(at center circle, red, blue)",
         ),
     );
-    assert_eq!(
-        cv.background_image,
-        BackgroundImage::Url("a.png".to_string())
-    );
+    assert_eq!(cv.background_image, BackgroundImage::Url("a.png".into()));
 }
 
 #[test]
@@ -7436,7 +7531,7 @@ fn apply_value_direct_background_shorthand_fall_through() {
     let shorthand = BackgroundShorthand {
         color_expression: None,
         color: RED,
-        image: BackgroundImage::Url("tile.png".to_string()),
+        image: BackgroundImage::Url("tile.png".into()),
         repeat: BackgroundRepeat {
             x: BackgroundRepeatKeyword::Round,
             y: BackgroundRepeatKeyword::Space,
@@ -7477,10 +7572,7 @@ fn background_shorthand_expands_to_8_longhands_through_real_cascade() {
         Some("background: red url(a.png) no-repeat fixed border-box"),
     );
     assert_eq!(cv.background_color, RED);
-    assert_eq!(
-        cv.background_image,
-        BackgroundImage::Url("a.png".to_string())
-    );
+    assert_eq!(cv.background_image, BackgroundImage::Url("a.png".into()));
     assert_eq!(cv.background_attachment, BackgroundAttachment::Fixed);
     assert_eq!(cv.background_clip, VisualBox::BorderBox);
     assert_eq!(cv.background_origin, VisualBox::BorderBox);
@@ -7529,14 +7621,20 @@ fn font_shorthand_expands_supported_longhands_through_real_cascade() {
 fn font_shorthand_resets_inherited_variation_settings_and_respects_source_order() {
     use crate::property::{FontVariationSetting, FontVariationSettings};
 
-    let inherited_value = FontVariationSettings::Settings(vec![FontVariationSetting {
-        tag: "wght".into(),
-        value: 640.0,
-    }]);
-    let explicit_value = FontVariationSettings::Settings(vec![FontVariationSetting {
-        tag: "wght".into(),
-        value: 700.0,
-    }]);
+    let inherited_value = FontVariationSettings::Settings(
+        vec![FontVariationSetting {
+            tag: "wght".into(),
+            value: 640.0,
+        }]
+        .into(),
+    );
+    let explicit_value = FontVariationSettings::Settings(
+        vec![FontVariationSetting {
+            tag: "wght".into(),
+            value: 700.0,
+        }]
+        .into(),
+    );
     let mut doc = TestDoc::new();
     let parent = doc.push_element(0, "p", Some("font-variation-settings: \"wght\" 640"));
     let shorthand_child = doc.push_element(parent, "span", Some("font: 16px serif"));

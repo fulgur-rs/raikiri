@@ -1032,7 +1032,7 @@ fn margin_box_spec(
         _ => None,
     };
     let background_image_url = match margin_box_property(rule, PropertyKey::BackgroundImage) {
-        Some(PropertyValue::BackgroundImage(BackgroundImage::Url(url))) => Some(url.clone()),
+        Some(PropertyValue::BackgroundImage(BackgroundImage::Url(url))) => Some(url.to_string()),
         _ => None,
     };
     let background_image_lime = background_image_url

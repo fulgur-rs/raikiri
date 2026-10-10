@@ -203,12 +203,12 @@ fn isolation_and_mix_blend_mode_pass_through_finalize_unchanged() {
 #[test]
 fn mask_image_and_clip_path_pass_through_finalize_unchanged() {
     let specified = SpecifiedValues {
-        mask_image: MaskImage::Url("mask.svg".to_string()),
+        mask_image: MaskImage::Url("mask.svg".into()),
         clip_path: ClipPath::GeometryBox(GeometryBox::PaddingBox),
         ..SpecifiedValues::initial()
     };
     let computed = specified.finalize(&ComputedValues::initial(), &ResolveContext::initial());
-    assert_eq!(computed.mask_image, MaskImage::Url("mask.svg".to_string()));
+    assert_eq!(computed.mask_image, MaskImage::Url("mask.svg".into()));
     assert_eq!(
         computed.clip_path,
         ClipPath::GeometryBox(GeometryBox::PaddingBox)
@@ -410,14 +410,20 @@ fn parent_fixture() -> ComputedValues {
             width: Some(FontVariantEastAsianWidth::ProportionalWidth),
             ruby: true,
         },
-        font_variation_settings: FontVariationSettings::Settings(vec![FontVariationSetting {
-            tag: SmolStr::new("wght"),
-            value: 640.0,
-        }]),
-        font_feature_settings: FontFeatureSettings::Features(vec![FontFeatureSetting {
-            tag: *b"kern",
-            value: 0,
-        }]),
+        font_variation_settings: FontVariationSettings::Settings(
+            vec![FontVariationSetting {
+                tag: SmolStr::new("wght"),
+                value: 640.0,
+            }]
+            .into(),
+        ),
+        font_feature_settings: FontFeatureSettings::Features(
+            vec![FontFeatureSetting {
+                tag: *b"kern",
+                value: 0,
+            }]
+            .into(),
+        ),
         font_variant_caps: FontVariantCaps::SmallCaps,
         text_transform: TextTransform::Uppercase,
         text_combine_upright: TextCombineUpright::All,
@@ -538,7 +544,7 @@ fn parent_fixture() -> ComputedValues {
         },
         // CSS Backgrounds and Borders 3 §2.3: non-inherited; use a non-initial value as required
         // by this fixture.
-        background_image: BackgroundImage::Url("fixture.png".to_string()),
+        background_image: BackgroundImage::Url("fixture.png".into()),
         // CSS Images Module Level 3 §5.1/§5.2: both are non-inherited; set values other than the
         // initial `fill` / `50% 50%`.
         object_fit: ObjectFit::Cover,
@@ -560,7 +566,7 @@ fn parent_fixture() -> ComputedValues {
         mix_blend_mode: MixBlendMode::Multiply,
         // CSS Masking Level 1 §7.1/§5.1: both are non-inherited; set values other than the
         // initial `none`.
-        mask_image: MaskImage::Url("mask.svg".to_string()),
+        mask_image: MaskImage::Url("mask.svg".into()),
         clip_path: ClipPath::GeometryBox(GeometryBox::PaddingBox),
         transform_origin: ComputedValues::initial().transform_origin,
         transform_origin_z: crate::resolve::ComputedLength(0.0),

@@ -3018,8 +3018,14 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::FontPalette(value) => target.font_palette = value,
         PropertyValue::FontVariantNumeric(value) => target.font_variant_numeric = value,
         PropertyValue::FontVariantEastAsian(value) => target.font_variant_east_asian = value,
-        PropertyValue::FontVariationSettings(value) => target.font_variation_settings = value,
-        PropertyValue::FontFeatureSettings(value) => target.font_feature_settings = value,
+        // Canonicalized here, once per element that declares them, so that the
+        // inherited lists every other node copies are already computed.
+        PropertyValue::FontVariationSettings(value) => {
+            target.font_variation_settings = value.canonicalized();
+        }
+        PropertyValue::FontFeatureSettings(value) => {
+            target.font_feature_settings = value.canonicalized();
+        }
         PropertyValue::TextTransform(tt) => target.text_transform = tt,
         PropertyValue::TextCombineUpright(value) => target.text_combine_upright = value,
         PropertyValue::TextOrientation(value) => target.text_orientation = value,

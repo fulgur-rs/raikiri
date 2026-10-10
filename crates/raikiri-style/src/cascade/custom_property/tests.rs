@@ -244,10 +244,13 @@ fn var_in_font_shorthand_projects_each_deferred_longhand() {
     assert_eq!(parent_cv.font_variant_position, FontVariantPosition::Sub);
     assert_eq!(
         parent_cv.font_variation_settings,
-        FontVariationSettings::Settings(vec![FontVariationSetting {
-            tag: "wght".into(),
-            value: 640.0,
-        }])
+        FontVariationSettings::Settings(
+            vec![FontVariationSetting {
+                tag: "wght".into(),
+                value: 640.0,
+            }]
+            .into()
+        )
     );
 
     assert_eq!(cv.font_kerning, FontKerning::Auto);
@@ -282,10 +285,13 @@ fn var_in_font_shorthand_projects_each_deferred_longhand() {
     );
     assert_eq!(
         child_later_cv.font_variation_settings,
-        FontVariationSettings::Settings(vec![FontVariationSetting {
-            tag: "wght".into(),
-            value: 700.0,
-        }])
+        FontVariationSettings::Settings(
+            vec![FontVariationSetting {
+                tag: "wght".into(),
+                value: 700.0,
+            }]
+            .into()
+        )
     );
 }
 

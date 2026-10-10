@@ -1741,8 +1741,9 @@ impl FontVariantEastAsian {
 pub enum FontFeatureSettings {
     /// `normal` — the initial value, with no author-specified feature changes.
     Normal,
-    /// A non-empty list of specified feature tag/value pairs.
-    Features(Vec<FontFeatureSetting>),
+    /// A non-empty list of specified feature tag/value pairs, shared so that
+    /// the computed value every descendant inherits is not copied per node.
+    Features(Arc<[FontFeatureSetting]>),
 }
 
 /// One `<feature-tag-value>` pair in `font-feature-settings`.
@@ -1757,10 +1758,16 @@ pub struct FontFeatureSetting {
 
 impl FontFeatureSettings {
     /// Return the computed representation: last entry per tag, sorted by tag.
+    /// A list already in that form, such as an inherited computed value, is
+    /// returned as it is, sharing its entries.
     pub(crate) fn canonicalized(self) -> Self {
         match self {
             Self::Normal => Self::Normal,
-            Self::Features(mut settings) => {
+            Self::Features(settings) => {
+                if settings.windows(2).all(|pair| pair[0].tag < pair[1].tag) {
+                    return Self::Features(settings);
+                }
+                let mut settings = settings.to_vec();
                 settings.sort_by_key(|setting| setting.tag);
                 let mut canonical: Vec<FontFeatureSetting> = Vec::with_capacity(settings.len());
                 for setting in settings {
@@ -1772,7 +1779,7 @@ impl FontFeatureSettings {
                     }
                     canonical.push(setting);
                 }
-                Self::Features(canonical)
+                Self::Features(canonical.into())
             }
         }
     }
@@ -1791,8 +1798,9 @@ pub enum FontVariationSettings {
     /// `normal` — initial value.
     Normal,
     /// Non-empty setting list. It keeps authored order when specified and
-    /// canonical order when computed.
-    Settings(Vec<FontVariationSetting>),
+    /// canonical order when computed, and is shared so that the computed
+    /// value every descendant inherits is not copied per node.
+    Settings(Arc<[FontVariationSetting]>),
 }
 
 /// One `<opentype-tag> <number>` pair in `font-variation-settings`.
@@ -1807,10 +1815,16 @@ pub struct FontVariationSetting {
 
 impl FontVariationSettings {
     /// Return the computed representation: last entry per tag, sorted by tag.
+    /// A list already in that form, such as an inherited computed value, is
+    /// returned as it is, sharing its entries.
     pub(crate) fn canonicalized(self) -> Self {
         match self {
             Self::Normal => Self::Normal,
-            Self::Settings(mut settings) => {
+            Self::Settings(settings) => {
+                if settings.windows(2).all(|pair| pair[0].tag < pair[1].tag) {
+                    return Self::Settings(settings);
+                }
+                let mut settings = settings.to_vec();
                 settings.sort_by(|left, right| left.tag.cmp(&right.tag));
                 let mut canonical: Vec<FontVariationSetting> = Vec::with_capacity(settings.len());
                 for setting in settings {
@@ -1822,7 +1836,7 @@ impl FontVariationSettings {
                     }
                     canonical.push(setting);
                 }
-                Self::Settings(canonical)
+                Self::Settings(canonical.into())
             }
         }
     }
@@ -7249,10 +7263,11 @@ pub struct CssPosition {
 pub enum BackgroundImage {
     /// `none` — the spec initial value. Draw no background image.
     None,
-    /// `<url>` — the URL for one image layer. Stored as a raw `String`
-    /// (following sibling `url` fields such as [`ContentComponent::Image`],
-    /// without depending on the `url` crate).
-    Url(String),
+    /// `<url>` — the URL for one image layer, kept as its raw text without
+    /// depending on the `url` crate. A [`SmolStr`] so that the inherited
+    /// `list-style-image` every descendant copies shares a long URL instead
+    /// of copying it per node.
+    Url(SmolStr),
     /// `<gradient>` — one of six gradient functions. Conic filling is
     /// implemented in the paint layer; linear and radial still paint as
     /// their solid first stop (see the type docs). This variant retains
@@ -7260,8 +7275,10 @@ pub enum BackgroundImage {
     /// [`ComputedValues`](crate::computed::ComputedValues); the font-relative
     /// part of `<length-percentage>` is absolutized to `Px` in the computed
     /// layer, and only `<percentage>` is deferred to painting (see the
-    /// `resolve_background_image` docs).
-    Gradient(Gradient),
+    /// `resolve_background_image` docs). Shared so that copying the value,
+    /// as every descendant does with an inherited `list-style-image`, does not
+    /// copy its color stops.
+    Gradient(Arc<Gradient>),
 }
 
 /// `<angle>` (CSS Values 4 §7.1 "Angle Units: the &lt;angle&gt; type and

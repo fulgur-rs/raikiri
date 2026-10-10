@@ -2688,9 +2688,12 @@ pub fn resolve_background_image(
 ) -> BackgroundImage {
     match specified {
         BackgroundImage::None | BackgroundImage::Url(_) => specified,
-        BackgroundImage::Gradient(g) => {
-            BackgroundImage::Gradient(resolve_gradient(g, font_size, own_line_height, ctx))
-        }
+        BackgroundImage::Gradient(g) => BackgroundImage::Gradient(Arc::new(resolve_gradient(
+            Arc::unwrap_or_clone(g),
+            font_size,
+            own_line_height,
+            ctx,
+        ))),
     }
 }
 

@@ -853,7 +853,7 @@ fn background_image_parse_url_unquoted_form() {
     assert_eq!(
         parse("url(foo.png)", "background-image"),
         Some(PropertyValue::BackgroundImage(BackgroundImage::Url(
-            "foo.png".to_string()
+            "foo.png".into()
         )))
     );
 }
@@ -863,7 +863,7 @@ fn background_image_parse_url_quoted_form() {
     assert_eq!(
         parse("url(\"foo.png\")", "background-image"),
         Some(PropertyValue::BackgroundImage(BackgroundImage::Url(
-            "foo.png".to_string()
+            "foo.png".into()
         )))
     );
 }
@@ -907,9 +907,17 @@ fn oklab_shorter() -> GradientColorInterpolation {
     }
 }
 
-fn expect_linear_gradient(value: Option<PropertyValue>) -> LinearGradient {
+/// The gradient a parsed `background-image` holds, if it holds one.
+fn background_gradient(value: &Option<PropertyValue>) -> Option<&Gradient> {
     match value {
-        Some(PropertyValue::BackgroundImage(BackgroundImage::Gradient(Gradient::Linear(g)))) => g,
+        Some(PropertyValue::BackgroundImage(BackgroundImage::Gradient(gradient))) => Some(gradient),
+        _ => None,
+    }
+}
+
+fn expect_linear_gradient(value: Option<PropertyValue>) -> LinearGradient {
+    match background_gradient(&value) {
+        Some(Gradient::Linear(g)) => g.clone(),
         // cov:ignore: this branch only executes when a caller's `parse(...)`
         // unexpectedly fails to produce a linear gradient — every call site
         // below passes, so llvm-cov reports this panic arm as an uncovered
@@ -920,16 +928,16 @@ fn expect_linear_gradient(value: Option<PropertyValue>) -> LinearGradient {
 }
 
 fn expect_radial_gradient(value: Option<PropertyValue>) -> RadialGradient {
-    match value {
-        Some(PropertyValue::BackgroundImage(BackgroundImage::Gradient(Gradient::Radial(g)))) => g,
+    match background_gradient(&value) {
+        Some(Gradient::Radial(g)) => g.clone(),
         // cov:ignore: same reasoning as `expect_linear_gradient`'s panic arm.
         other => panic!("expected a radial gradient BackgroundImage, got {other:?}"),
     }
 }
 
 fn expect_conic_gradient(value: Option<PropertyValue>) -> ConicGradient {
-    match value {
-        Some(PropertyValue::BackgroundImage(BackgroundImage::Gradient(Gradient::Conic(g)))) => g,
+    match background_gradient(&value) {
+        Some(Gradient::Conic(g)) => g.clone(),
         // cov:ignore: same reasoning as `expect_linear_gradient`'s panic arm.
         other => panic!("expected a conic gradient BackgroundImage, got {other:?}"),
     }
@@ -942,7 +950,7 @@ fn background_image_parses_linear_gradient_with_default_direction_and_interpolat
     assert_eq!(
         parse("linear-gradient(red, blue)", "background-image"),
         Some(PropertyValue::BackgroundImage(BackgroundImage::Gradient(
-            Gradient::Linear(LinearGradient {
+            Arc::new(Gradient::Linear(LinearGradient {
                 repeating: false,
                 direction: LinearGradientDirection::Side(SideOrCorner {
                     horizontal: None,
@@ -950,7 +958,7 @@ fn background_image_parses_linear_gradient_with_default_direction_and_interpolat
                 }),
                 interpolation: oklab_shorter(),
                 stops: Arc::new(vec![gradient_stop(RED, None), gradient_stop(BLUE, None),]),
-            })
+            }))
         )))
     );
 }
@@ -1080,7 +1088,7 @@ fn background_image_parses_linear_gradient_side_and_corner_any_order() {
         "background-image",
     );
     let expected = Some(PropertyValue::BackgroundImage(BackgroundImage::Gradient(
-        Gradient::Linear(LinearGradient {
+        Arc::new(Gradient::Linear(LinearGradient {
             repeating: false,
             direction: LinearGradientDirection::Side(SideOrCorner {
                 horizontal: Some(HorizontalSide::Left),
@@ -1088,7 +1096,7 @@ fn background_image_parses_linear_gradient_side_and_corner_any_order() {
             }),
             interpolation: oklab_shorter(),
             stops: Arc::new(vec![gradient_stop(RED, None), gradient_stop(BLUE, None)]),
-        }),
+        })),
     )));
     assert_eq!(to_top_left, expected);
     assert_eq!(to_left_top, expected);
@@ -1256,7 +1264,7 @@ fn background_image_parses_radial_gradient_with_default_shape_size_and_position(
     assert_eq!(
         parse("radial-gradient(red, blue)", "background-image"),
         Some(PropertyValue::BackgroundImage(BackgroundImage::Gradient(
-            Gradient::Radial(RadialGradient {
+            Arc::new(Gradient::Radial(RadialGradient {
                 repeating: false,
                 shape: RadialShape::Ellipse,
                 size: RadialSize::Extent(RadialExtent::FarthestCorner),
@@ -1266,7 +1274,7 @@ fn background_image_parses_radial_gradient_with_default_shape_size_and_position(
                 },
                 interpolation: oklab_shorter(),
                 stops: Arc::new(vec![gradient_stop(RED, None), gradient_stop(BLUE, None)]),
-            })
+            }))
         )))
     );
 }
@@ -1461,7 +1469,7 @@ fn background_image_parses_conic_gradient_with_default_angle_and_position() {
     assert_eq!(
         parse("conic-gradient(red, blue)", "background-image"),
         Some(PropertyValue::BackgroundImage(BackgroundImage::Gradient(
-            Gradient::Conic(ConicGradient {
+            Arc::new(Gradient::Conic(ConicGradient {
                 repeating: false,
                 angle: Angle(0.0),
                 position: CssPosition {
@@ -1479,7 +1487,7 @@ fn background_image_parses_conic_gradient_with_default_angle_and_position() {
                         position: None,
                     },
                 ]),
-            })
+            }))
         )))
     );
 }
@@ -1694,7 +1702,7 @@ fn background_shorthand_spec_example_url_position_size_color_repeat_attachment_b
         "url(\"chess.png\") 40% / 10em gray round fixed border-box",
         "background",
     ));
-    assert_eq!(got.image, BackgroundImage::Url("chess.png".to_string()));
+    assert_eq!(got.image, BackgroundImage::Url("chess.png".into()));
     assert_eq!(
         got.position,
         CssPosition {
@@ -1746,7 +1754,7 @@ fn background_shorthand_spec_example_box_before_image_and_color() {
     ));
     assert_eq!(got.clip, VisualBox::PaddingBox);
     assert_eq!(got.origin, VisualBox::PaddingBox);
-    assert_eq!(got.image, BackgroundImage::Url("paper.jpg".to_string()));
+    assert_eq!(got.image, BackgroundImage::Url("paper.jpg".into()));
     assert_eq!(
         got.color,
         CssColor {
@@ -1805,7 +1813,7 @@ fn background_shorthand_reordered_position_before_slash_size() {
             a: 255
         }
     );
-    assert_eq!(got.image, BackgroundImage::Url("metal.jpg".to_string()));
+    assert_eq!(got.image, BackgroundImage::Url("metal.jpg".into()));
     assert_eq!(
         got.position,
         CssPosition {
@@ -2423,7 +2431,7 @@ fn mask_image_parse_url_unquoted_form() {
     assert_eq!(
         parse("url(mask.svg#m)", "mask-image"),
         Some(PropertyValue::MaskImage(MaskImage::Url(
-            "mask.svg#m".to_string()
+            "mask.svg#m".into()
         )))
     );
 }
@@ -2433,7 +2441,7 @@ fn mask_image_parse_url_quoted_form() {
     assert_eq!(
         parse("url(\"mask.svg#m\")", "mask-image"),
         Some(PropertyValue::MaskImage(MaskImage::Url(
-            "mask.svg#m".to_string()
+            "mask.svg#m".into()
         )))
     );
 }
@@ -2446,9 +2454,8 @@ fn mask_image_parse_gradient_reuses_the_shared_gradient_parser() {
     // the `<gradient>` alternative is reachable through `mask-image`.
     assert!(matches!(
         parse("linear-gradient(red, blue)", "mask-image"),
-        Some(PropertyValue::MaskImage(MaskImage::Gradient(
-            Gradient::Linear(_)
-        )))
+        Some(PropertyValue::MaskImage(MaskImage::Gradient(gradient)))
+            if matches!(*gradient, Gradient::Linear(_))
     ));
 }
 

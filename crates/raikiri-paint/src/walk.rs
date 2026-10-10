@@ -4052,7 +4052,9 @@ fn paint_element_background_slice(
     if painting.x1 <= painting.x0 || painting.y1 <= painting.y0 {
         return;
     }
-    if let BackgroundImage::Gradient(Gradient::Conic(conic)) = bg_image {
+    if let BackgroundImage::Gradient(gradient) = bg_image
+        && let Gradient::Conic(conic) = &**gradient
+    {
         if bg.a != 0 {
             let base = Color::from_rgba8(bg.r, bg.g, bg.b, bg.a);
             fill_rounded_background(

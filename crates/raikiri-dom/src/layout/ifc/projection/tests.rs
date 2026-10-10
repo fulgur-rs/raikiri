@@ -1162,7 +1162,9 @@ fn unsupported_marker_style_returns_an_explicit_projection_error() {
     else {
         panic!("parsed axis")
     };
-    values[0].tag = "bad".into();
+    let mut corrupted = values.to_vec();
+    corrupted[0].tag = "bad".into();
+    *values = corrupted.into();
     assert!(matches!(
         project(&fixture),
         Err(IfcError::Unsupported { .. })

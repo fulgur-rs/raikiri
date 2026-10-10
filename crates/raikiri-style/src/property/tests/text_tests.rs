@@ -5338,90 +5338,111 @@ fn font_variation_settings_preserves_specified_order_and_duplicates() {
         ("normal", FontVariationSettings::Normal, "normal"),
         (
             "\"wght\" 0e999",
-            FontVariationSettings::Settings(vec![FontVariationSetting {
-                tag: SmolStr::new("wght"),
-                value: 0.0,
-            }]),
+            FontVariationSettings::Settings(
+                vec![FontVariationSetting {
+                    tag: SmolStr::new("wght"),
+                    value: 0.0,
+                }]
+                .into(),
+            ),
             "\"wght\" 0",
         ),
         (
             "\"wght\" 700",
-            FontVariationSettings::Settings(vec![FontVariationSetting {
-                tag: SmolStr::new("wght"),
-                value: 700.0,
-            }]),
+            FontVariationSettings::Settings(
+                vec![FontVariationSetting {
+                    tag: SmolStr::new("wght"),
+                    value: 700.0,
+                }]
+                .into(),
+            ),
             "\"wght\" 700",
         ),
         (
             "\"AB@D\" 0.5",
-            FontVariationSettings::Settings(vec![FontVariationSetting {
-                tag: SmolStr::new("AB@D"),
-                value: 0.5,
-            }]),
+            FontVariationSettings::Settings(
+                vec![FontVariationSetting {
+                    tag: SmolStr::new("AB@D"),
+                    value: 0.5,
+                }]
+                .into(),
+            ),
             "\"AB@D\" 0.5",
         ),
         (
             "\"wght\" 700, \"wght\" 500",
-            FontVariationSettings::Settings(vec![
-                FontVariationSetting {
-                    tag: SmolStr::new("wght"),
-                    value: 700.0,
-                },
-                FontVariationSetting {
-                    tag: SmolStr::new("wght"),
-                    value: 500.0,
-                },
-            ]),
+            FontVariationSettings::Settings(
+                vec![
+                    FontVariationSetting {
+                        tag: SmolStr::new("wght"),
+                        value: 700.0,
+                    },
+                    FontVariationSetting {
+                        tag: SmolStr::new("wght"),
+                        value: 500.0,
+                    },
+                ]
+                .into(),
+            ),
             "\"wght\" 700, \"wght\" 500",
         ),
         (
             "\"wght\" 700, \"XHGT\" 0.7",
-            FontVariationSettings::Settings(vec![
-                FontVariationSetting {
-                    tag: SmolStr::new("wght"),
-                    value: 700.0,
-                },
-                FontVariationSetting {
-                    tag: SmolStr::new("XHGT"),
-                    value: 0.7,
-                },
-            ]),
+            FontVariationSettings::Settings(
+                vec![
+                    FontVariationSetting {
+                        tag: SmolStr::new("wght"),
+                        value: 700.0,
+                    },
+                    FontVariationSetting {
+                        tag: SmolStr::new("XHGT"),
+                        value: 0.7,
+                    },
+                ]
+                .into(),
+            ),
             "\"wght\" 700, \"XHGT\" 0.7",
         ),
         (
             "\"wght\" 100, \"wdth\" 200",
-            FontVariationSettings::Settings(vec![
-                FontVariationSetting {
-                    tag: SmolStr::new("wght"),
-                    value: 100.0,
-                },
-                FontVariationSetting {
-                    tag: SmolStr::new("wdth"),
-                    value: 200.0,
-                },
-            ]),
+            FontVariationSettings::Settings(
+                vec![
+                    FontVariationSetting {
+                        tag: SmolStr::new("wght"),
+                        value: 100.0,
+                    },
+                    FontVariationSetting {
+                        tag: SmolStr::new("wdth"),
+                        value: 200.0,
+                    },
+                ]
+                .into(),
+            ),
             "\"wght\" 100, \"wdth\" 200",
         ),
         (
             "\"wght\" 100, \"wdth\" 200, \"wght\" 300, \"wdth\" 400",
-            FontVariationSettings::Settings(vec![
-                FontVariationSetting {
-                    tag: SmolStr::new("wght"),
-                    value: 100.0,
-                },
-                FontVariationSetting {
-                    tag: SmolStr::new("wdth"),
-                    value: 200.0,
-                },
-                FontVariationSetting {
-                    tag: SmolStr::new("wght"),
-                    value: 300.0,
-                },
-                FontVariationSetting {
-                    tag: SmolStr::new("wdth"),
-                    value: 400.0,
-                },
-            ]),
+            FontVariationSettings::Settings(
+                vec![
+                    FontVariationSetting {
+                        tag: SmolStr::new("wght"),
+                        value: 100.0,
+                    },
+                    FontVariationSetting {
+                        tag: SmolStr::new("wdth"),
+                        value: 200.0,
+                    },
+                    FontVariationSetting {
+                        tag: SmolStr::new("wght"),
+                        value: 300.0,
+                    },
+                    FontVariationSetting {
+                        tag: SmolStr::new("wdth"),
+                        value: 400.0,
+                    },
+                ]
+                .into(),
+            ),
             "\"wght\" 100, \"wdth\" 200, \"wght\" 300, \"wdth\" 400",
         ),
     ];
@@ -5468,42 +5489,51 @@ fn font_feature_settings_preserves_specified_order_and_duplicates() {
         ("normal", FontFeatureSettings::Normal, "normal"),
         (
             r#""kern""#,
-            FontFeatureSettings::Features(vec![FontFeatureSetting {
-                tag: *b"kern",
-                value: 1,
-            }]),
+            FontFeatureSettings::Features(
+                vec![FontFeatureSetting {
+                    tag: *b"kern",
+                    value: 1,
+                }]
+                .into(),
+            ),
             r#""kern" 1"#,
         ),
         (
             r#""liga" off, "kern" on"#,
-            FontFeatureSettings::Features(vec![
-                FontFeatureSetting {
-                    tag: *b"liga",
-                    value: 0,
-                },
-                FontFeatureSetting {
-                    tag: *b"kern",
-                    value: 1,
-                },
-            ]),
+            FontFeatureSettings::Features(
+                vec![
+                    FontFeatureSetting {
+                        tag: *b"liga",
+                        value: 0,
+                    },
+                    FontFeatureSetting {
+                        tag: *b"kern",
+                        value: 1,
+                    },
+                ]
+                .into(),
+            ),
             r#""liga" 0, "kern" 1"#,
         ),
         (
             r#""kern" 1, "KERN" 2, "kern" 0"#,
-            FontFeatureSettings::Features(vec![
-                FontFeatureSetting {
-                    tag: *b"kern",
-                    value: 1,
-                },
-                FontFeatureSetting {
-                    tag: *b"KERN",
-                    value: 2,
-                },
-                FontFeatureSetting {
-                    tag: *b"kern",
-                    value: 0,
-                },
-            ]),
+            FontFeatureSettings::Features(
+                vec![
+                    FontFeatureSetting {
+                        tag: *b"kern",
+                        value: 1,
+                    },
+                    FontFeatureSetting {
+                        tag: *b"KERN",
+                        value: 2,
+                    },
+                    FontFeatureSetting {
+                        tag: *b"kern",
+                        value: 0,
+                    },
+                ]
+                .into(),
+            ),
             r#""kern" 1, "KERN" 2, "kern" 0"#,
         ),
     ];

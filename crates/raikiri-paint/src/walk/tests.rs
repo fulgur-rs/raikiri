@@ -6,6 +6,19 @@ use raikiri_style::property::ContentComponent;
 use raikiri_style::{build_rule_tree, cascade};
 use taffy::Style;
 
+/// The conic gradient a computed `background-image` holds.
+fn conic_of(
+    image: &raikiri_style::property::BackgroundImage,
+) -> raikiri_style::property::ConicGradient {
+    match image {
+        raikiri_style::property::BackgroundImage::Gradient(gradient) => match &**gradient {
+            raikiri_style::property::Gradient::Conic(conic) => conic.clone(),
+            other => panic!("expected conic, got {other:?}"),
+        },
+        other => panic!("expected conic, got {other:?}"),
+    }
+}
+
 #[test]
 fn vertical_align_length_uses_css_raise_lower_sign_in_y_down_space() {
     assert_eq!(
@@ -3595,12 +3608,7 @@ fn conic_angular_offsets_cover_missing_angle_and_percent() {
     );
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
-    let conic = match &cascade.computed[id].background_image {
-        raikiri_style::property::BackgroundImage::Gradient(
-            raikiri_style::property::Gradient::Conic(g),
-        ) => g.clone(),
-        other => panic!("expected conic, got {other:?}"),
-    };
+    let conic = conic_of(&cascade.computed[id].background_image);
     let first = angular_stop_offset(conic.stops[0].position);
     assert!(first.is_some_and(|v| (v - 0.125).abs() < 0.001));
 }
@@ -3656,12 +3664,7 @@ fn conic_center_and_sweep_cover_pinned_quadrants() {
     );
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
-    let center_conic = match &cascade.computed[center_id].background_image {
-        raikiri_style::property::BackgroundImage::Gradient(
-            raikiri_style::property::Gradient::Conic(g),
-        ) => g.clone(),
-        other => panic!("expected conic, got {other:?}"),
-    };
+    let center_conic = conic_of(&cascade.computed[center_id].background_image);
     assert_eq!(center_conic.stops.len(), 8);
     let positioning = kurbo::Rect::new(0.0, 0.0, 200.0, 200.0);
     let center = conic_center(&center_conic.position, positioning);
@@ -3675,12 +3678,7 @@ fn conic_center_and_sweep_cover_pinned_quadrants() {
     };
     let gradient = conic_to_peniko(&center_conic, center, current).expect("sweep");
     assert_eq!(gradient.stops.len(), 8);
-    let angle_conic = match &cascade.computed[angle_id].background_image {
-        raikiri_style::property::BackgroundImage::Gradient(
-            raikiri_style::property::Gradient::Conic(g),
-        ) => g.clone(),
-        other => panic!("expected conic, got {other:?}"),
-    };
+    let angle_conic = conic_of(&cascade.computed[angle_id].background_image);
     let default_center = conic_center(&angle_conic.position, positioning);
     assert!((default_center.x - 100.0).abs() < 0.01);
     assert!((default_center.y - 100.0).abs() < 0.01);
@@ -3706,18 +3704,8 @@ fn conic_paint_covers_empty_square_and_rounded_boxes() {
     );
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
-    let square = match &cascade.computed[square_id].background_image {
-        raikiri_style::property::BackgroundImage::Gradient(
-            raikiri_style::property::Gradient::Conic(g),
-        ) => g.clone(),
-        other => panic!("expected conic, got {other:?}"),
-    };
-    let round = match &cascade.computed[round_id].background_image {
-        raikiri_style::property::BackgroundImage::Gradient(
-            raikiri_style::property::Gradient::Conic(g),
-        ) => g.clone(),
-        other => panic!("expected conic, got {other:?}"),
-    };
+    let square = conic_of(&cascade.computed[square_id].background_image);
+    let round = conic_of(&cascade.computed[round_id].background_image);
     let current = CssColor {
         r: 0,
         g: 0,

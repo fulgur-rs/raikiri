@@ -101,7 +101,7 @@ pub(crate) fn prepare_background_image(
     else {
         return;
     };
-    *source = absolute.to_string();
+    *source = absolute.as_str().into();
     let _ = resolver.resolve(ResolverRequest::new(&absolute));
 }
 

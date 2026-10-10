@@ -920,7 +920,7 @@ pub(super) fn parse_font_variation_settings(
         }
     }
 
-    Some(FontVariationSettings::Settings(settings))
+    Some(FontVariationSettings::Settings(settings.into()))
 }
 
 /// Parse CSS Fonts 4 `font-feature-settings` while preserving the specified list.
@@ -961,7 +961,7 @@ pub(super) fn parse_font_feature_settings(
         }
     }
 
-    Some(FontFeatureSettings::Features(settings))
+    Some(FontFeatureSettings::Features(settings.into()))
 }
 
 pub(super) fn parse_font_style(input: &mut Parser<'_, '_>) -> Option<FontStyle> {

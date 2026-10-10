@@ -392,10 +392,11 @@ pub struct SpecifiedValues {
     pub font_variant_numeric: FontVariantNumeric,
     /// [`ComputedValues::font_variant_east_asian`] staging; inherited computed value.
     pub font_variant_east_asian: FontVariantEastAsian,
-    /// Specified sequence; preserves authored order and duplicates until finalization.
-    /// Inherited values come from the parent computed value.
+    /// Computed variation settings: a declared list is canonicalized when it
+    /// is applied, and an inherited one is the parent computed value.
     pub font_variation_settings: FontVariationSettings,
-    /// Specified OpenType features; inherited values come from the parent computed value.
+    /// Computed OpenType features: a declared list is canonicalized when it
+    /// is applied, and an inherited one is the parent computed value.
     pub font_feature_settings: FontFeatureSettings,
     /// Staging value for [`ComputedValues::font_variant_caps`]; computed-equivalent because
     /// `FontVariantCaps` carries no lengths.
@@ -2172,8 +2173,10 @@ impl SpecifiedValues {
             font_palette: self.font_palette.clone(),
             font_variant_numeric: self.font_variant_numeric,
             font_variant_east_asian: self.font_variant_east_asian,
-            font_variation_settings: self.font_variation_settings.canonicalized(),
-            font_feature_settings: self.font_feature_settings.canonicalized(),
+            // Already canonical (see the fields' docs), so an inherited list
+            // passes through shared, without a walk over it per node.
+            font_variation_settings: self.font_variation_settings,
+            font_feature_settings: self.font_feature_settings,
             // The computed value is the specified keyword (see FontVariantCaps docs); with no
             // lengths, no relative resolution is needed. Pass through this node's winner.
             font_variant_caps: self.font_variant_caps,
