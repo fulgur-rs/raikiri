@@ -6,7 +6,7 @@ use std::cell::{Cell, Ref, RefCell};
 
 use html5ever::interface::{Attribute, ElementFlags, NodeOrText, QualName, TreeSink};
 use html5ever::tendril::StrTendril;
-use html5ever::tree_builder::QuirksMode;
+use html5ever::tree_builder::{QuirksMode, Tracer, TreeBuilder};
 use markup5ever::ns;
 use raikiri_dom::Document;
 use raikiri_traits::{Dom, RenderWarning, WarningKind};
@@ -89,6 +89,23 @@ impl RaikiriTreeSink {
         idx
     }
 
+    /// The document parsed so far, finished as [`TreeSink::finish`] would
+    /// finish it, while the parser keeps its own state.
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "the progressive driver is not wired in yet")
+    )]
+    pub(crate) fn snapshot(&self) -> UncascadedDocument {
+        self.flush_text();
+        assemble_document(
+            self.document.borrow().clone(),
+            self.warnings.borrow().clone(),
+            &self.qual_names.borrow(),
+            &self.attributes.borrow(),
+            convert_quirks(self.quirks_mode.get()),
+        )
+    }
+
     /// Append Text to the parent's last child.
     ///
     /// The HTML tokenizer may split a single inline run across callbacks.
@@ -158,53 +175,13 @@ impl TreeSink for RaikiriTreeSink {
 
     fn finish(self) -> UncascadedDocument {
         self.flush_text();
-        let mut document = self.document.into_inner();
-        let warnings = self.warnings.into_inner();
-        let qual_names = self.qual_names.into_inner();
-        let attributes = self.attributes.into_inner();
-
-        // Copy metadata tables into raikiri-dom::Node.
-        // qual_names → Node.namespace (non-HTML only).
-        // attributes → Node.attributes (null namespace, excluding style) + Node.inline_style.
-        wire_side_tables(&mut document, &qual_names, &attributes);
-
-        // Store the value reported by html5ever's set_quirks_mode callback on the
-        // Document itself. The cascade (raikiri-style id/class selector matching)
-        // reads it through `impl StyleDom for Document`.
-        let quirks_mode = convert_quirks(self.quirks_mode.get());
-        document.set_quirks_mode(quirks_mode);
-
-        // Remove the old strip_non_element_stubs behavior (which physically removed
-        // pseudo-tag "#comment" and "#pi" Elements from the tree).
-        // Persist Comment and ProcessingInstruction as the NodeData::Comment and
-        // NodeData::ProcessingInstruction variants in the tree, matching WHATWG
-        // DOM §4 NodeType. Both variants have their IS_IN_DOCUMENT bit cleared
-        // by `mark_in_document_flags` step 2. Therefore:
-        //
-        // - The TaffyChildIter is_in_document filter excludes them from layout child
-        //   counts (raikiri-dom/src/taffy_impl.rs:38,61,71).
-        // - extract_inline_stylesheets / find_head_element / find_body skip them via
-        //   the is_in_document() and Element gates.
-        // - All cascade and paint traversals skip them through the same gates.
-        //
-        // Clear IS_IN_DOCUMENT on detached template contents, detached nodes
-        // (transient foster parenting), and Comment/PI nodes. Do this before
-        // extract_inline_stylesheets, which skips them through the
-        // is_in_document() gate.
-        document.mark_in_document_flags();
-
-        let stylesheet_sources = extract_inline_stylesheets(&document)
-            .into_iter()
-            .map(|(source, media)| crate::StylesheetSource::new(source, media))
-            .collect();
-        UncascadedDocument {
-            dom: document,
-            stylesheet_sources,
-            user_stylesheet_sources: Vec::new(),
-            user_stylesheet_insertion_index: 0,
-            warnings,
-            quirks_mode,
-        }
+        assemble_document(
+            self.document.into_inner(),
+            self.warnings.into_inner(),
+            &self.qual_names.into_inner(),
+            &self.attributes.into_inner(),
+            convert_quirks(self.quirks_mode.get()),
+        )
     }
 
     fn parse_error(&self, msg: Cow<'static, str>) {
@@ -967,6 +944,88 @@ fn convert_quirks(mode: QuirksMode) -> raikiri_traits::QuirksMode {
         QuirksMode::LimitedQuirks => raikiri_traits::QuirksMode::LimitedQuirks,
         QuirksMode::NoQuirks => raikiri_traits::QuirksMode::NoQuirks,
     }
+}
+
+/// Turn the tree builder's state into an [`UncascadedDocument`]: copy the
+/// metadata tables onto the nodes, record the quirks mode, mark in-document
+/// nodes and extract inline stylesheets.
+fn assemble_document(
+    mut document: Document,
+    warnings: Vec<RenderWarning>,
+    qual_names: &FxHashMap<usize, QualName>,
+    attributes: &FxHashMap<usize, Vec<Attribute>>,
+    quirks_mode: raikiri_traits::QuirksMode,
+) -> UncascadedDocument {
+    // Copy metadata tables into raikiri-dom::Node.
+    // qual_names → Node.namespace (non-HTML only).
+    // attributes → Node.attributes (null namespace, excluding style) + Node.inline_style.
+    wire_side_tables(&mut document, qual_names, attributes);
+
+    // Store the value reported by html5ever's set_quirks_mode callback on the
+    // Document itself. The cascade (raikiri-style id/class selector matching)
+    // reads it through `impl StyleDom for Document`.
+    document.set_quirks_mode(quirks_mode);
+
+    // Remove the old strip_non_element_stubs behavior (which physically removed
+    // pseudo-tag "#comment" and "#pi" Elements from the tree).
+    // Persist Comment and ProcessingInstruction as the NodeData::Comment and
+    // NodeData::ProcessingInstruction variants in the tree, matching WHATWG
+    // DOM §4 NodeType. Both variants have their IS_IN_DOCUMENT bit cleared
+    // by `mark_in_document_flags` step 2. Therefore:
+    //
+    // - The TaffyChildIter is_in_document filter excludes them from layout child
+    //   counts (raikiri-dom/src/taffy_impl.rs:38,61,71).
+    // - extract_inline_stylesheets / find_head_element / find_body skip them via
+    //   the is_in_document() and Element gates.
+    // - All cascade and paint traversals skip them through the same gates.
+    //
+    // Clear IS_IN_DOCUMENT on detached template contents, detached nodes
+    // (transient foster parenting), and Comment/PI nodes. Do this before
+    // extract_inline_stylesheets, which skips them through the
+    // is_in_document() gate.
+    document.mark_in_document_flags();
+
+    let stylesheet_sources = extract_inline_stylesheets(&document)
+        .into_iter()
+        .map(|(source, media)| crate::StylesheetSource::new(source, media))
+        .collect();
+    UncascadedDocument {
+        dom: document,
+        stylesheet_sources,
+        user_stylesheet_sources: Vec::new(),
+        user_stylesheet_insertion_index: 0,
+        warnings,
+        quirks_mode,
+    }
+}
+
+/// Every element handle the tree builder holds, in the order
+/// [`TreeBuilder::trace_handles`] reports them: its stack of open elements
+/// from the root down, then the list of active formatting elements and its
+/// head and form element pointers. The document handle is left out.
+///
+/// The tree builder does not tell the sink about every element it pops, so
+/// this is the only way to see which elements may still receive children.
+/// The list over-approximates the stack of open elements; see
+/// `streaming::frontier::open_elements` for how it is narrowed.
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "the progressive driver is not wired in yet")
+)]
+pub(crate) fn traced_handles(builder: &TreeBuilder<usize, RaikiriTreeSink>) -> Vec<usize> {
+    struct Collect(RefCell<Vec<usize>>);
+    impl Tracer for Collect {
+        type Handle = usize;
+        fn trace_handle(&self, node: &usize) {
+            self.0.borrow_mut().push(*node);
+        }
+    }
+    let collect = Collect(RefCell::new(Vec::new()));
+    builder.trace_handles(&collect);
+    let mut handles = collect.0.into_inner();
+    // The first handle is the document itself.
+    handles.remove(0);
+    handles
 }
 
 #[cfg(test)]

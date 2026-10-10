@@ -373,5 +373,11 @@ fn events_by_first_page(
     (by_page, unplaced)
 }
 
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "the progressive driver is not wired in yet")
+)]
+mod frontier;
+
 #[cfg(test)]
 mod tests;

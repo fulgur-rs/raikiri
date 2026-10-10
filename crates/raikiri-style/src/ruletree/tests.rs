@@ -3068,3 +3068,42 @@ fn contextual_highlight_sources_follow_literal_layer_and_important_precedence() 
         assert_eq!(result.custom_highlight_background("missing", blue), None);
     }
 }
+
+#[test]
+fn forward_dependent_selectors_are_detected() {
+    let forward = [
+        "div:has(p) {}",
+        "p:empty {}",
+        "li:last-child {}",
+        "li:only-child {}",
+        "p:last-of-type {}",
+        "p:only-of-type {}",
+        "li:nth-last-child(2) {}",
+        "li:nth-last-of-type(2n) {}",
+        "li:not(:last-child) {}",
+        "li:is(.a, :only-child) {}",
+        "li:where(:nth-last-child(1)) {}",
+    ];
+    for css in forward {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(css, Origin::Author);
+        assert_eq!(tree.style_rules().len(), 1, "{css} must parse");
+        assert!(tree.has_forward_dependent_selectors(), "{css}");
+    }
+    let backward = [
+        "p {}",
+        "li:first-child {}",
+        "li:nth-child(2n+1) {}",
+        "p:first-of-type {}",
+        "h1 + p {}",
+        "h1 ~ p {}",
+        "div > p:not(.x) {}",
+        "li:nth-child(2 of .a) {}",
+    ];
+    for css in backward {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(css, Origin::Author);
+        assert_eq!(tree.style_rules().len(), 1, "{css} must parse");
+        assert!(!tree.has_forward_dependent_selectors(), "{css}");
+    }
+}
