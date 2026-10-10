@@ -1291,3 +1291,37 @@ fn inline_svg_document_current_color_inherits_from_the_use_instance() {
         );
     }
 }
+
+#[test]
+fn margin_boxes_resolve_page_counters_on_each_page() {
+    let document = dom("<style>@page{size:300px 200px;margin:40px;\
+         @bottom-center{content:'p.' counter(page) ' / ' counter(pages)}}\
+         @page :first{@top-center{content:'FIRST ONLY';background:#fcc}\
+         @bottom-center{content:none}}\
+         body{margin:0}div{height:100px}</style><div></div><div></div><div></div>");
+    let layout = completed(
+        layout(
+            &document,
+            PageDefaults::default(),
+            LayoutConfig::default(),
+            LayoutOptions::new(),
+        )
+        .unwrap(),
+    );
+    assert_eq!(layout.page_count(), 3);
+    let first = layout.page(0).unwrap().margin_boxes();
+    assert_eq!(first.len(), 1, "{first:?}");
+    assert_eq!(first[0].slot, crate::PageMarginBoxSlot::TopCenter);
+    assert_eq!(first[0].content, "FIRST ONLY");
+    assert!(first[0].background_color.is_some());
+    assert!(!first[0].text_runs().is_empty());
+    for index in 1..3 {
+        let boxes = layout.page(index).unwrap().margin_boxes();
+        assert_eq!(boxes.len(), 1, "{boxes:?}");
+        assert_eq!(boxes[0].slot, crate::PageMarginBoxSlot::BottomCenter);
+        assert_eq!(boxes[0].content, format!("p.{} / 3", index + 1));
+        let runs = boxes[0].text_runs();
+        assert!(!runs.is_empty());
+        assert!(runs.iter().all(|run| run.origin.1 > 160.0));
+    }
+}

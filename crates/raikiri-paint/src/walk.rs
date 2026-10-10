@@ -21,18 +21,16 @@ use raikiri_dom::image_geometry::position_offset;
 use raikiri_dom::{CounterSnapshot, Document, FragmentRect, StandaloneAlign};
 use raikiri_style::property::{
     AnglePercentage, BackgroundImage, BackgroundRepeatKeyword, Border, BorderColor, BorderStyle,
-    ColumnCountValue, ConicGradient, ContentComponent, CssColor, CssPosition, CssPositionOffset,
-    DisplayValue, FloatValue, Gradient, GradientStopColor, HueInterpolationMethod, Length,
-    LengthOrAuto, MixColorSpace, ObjectFit, OutlineColor, OutlineStyle, OverflowValue,
-    PositionValue, PropertyKey, PropertyValue, QuoteKeyword, Sides, TextAlign, TextShadowColor,
-    VerticalAlign, Visibility, VisualBox, WritingMode,
+    ColumnCountValue, ConicGradient, CssColor, CssPosition, CssPositionOffset, DisplayValue,
+    FloatValue, Gradient, GradientStopColor, HueInterpolationMethod, Length, MixColorSpace,
+    ObjectFit, OutlineColor, OutlineStyle, OverflowValue, PositionValue, PropertyKey,
+    PropertyValue, Sides, TextShadowColor, VerticalAlign, Visibility, VisualBox, WritingMode,
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedBorderRadius, ComputedCssPosition,
     ComputedCssPositionOffset, ComputedLength, ComputedLengthPercentage,
-    ComputedLengthPercentageOrAuto, ComputedTransformFunction, ComputedValues,
-    PageMarginBoxCascadeResult, PageMarginBoxSlot, ResolveContext, resolve_background_size,
-    resolve_border, resolve_css_position,
+    ComputedLengthPercentageOrAuto, ComputedTransformFunction, ComputedValues, ResolveContext,
+    resolve_background_size, resolve_border, resolve_css_position,
 };
 use raikiri_traits::{
     ImageIntrinsicSize, ImagePixelSource, ImageRasterSize, NodeId, NodeKind, PageBox, PaintInsets,
@@ -41,7 +39,6 @@ use raikiri_traits::{
 use std::f64::consts::{FRAC_PI_2, PI};
 
 use crate::text;
-use raikiri_dom::generated_content::format_counter;
 
 use raikiri_dom::generated_content::markers::marker_render_info_with_snapshots;
 
@@ -757,48 +754,6 @@ fn find_html(doc: &Document) -> Option<usize> {
     None
 }
 
-#[derive(Clone, Debug)]
-struct MarginBoxPaintSpec {
-    slot: PageMarginBoxSlot,
-    content: String,
-    background: Option<Color>,
-    background_image_url: Option<String>,
-    background_image_lime: bool,
-    background_size: ComputedBackgroundSize,
-    background_position: ComputedCssPosition,
-    background_repeat: raikiri_style::property::BackgroundRepeat,
-    background_origin: VisualBox,
-    background_clip: VisualBox,
-    content_image_lime: bool,
-    border_top: Option<(f32, Color)>,
-    border_right: Option<(f32, Color)>,
-    border_bottom: Option<(f32, Color)>,
-    border_left: Option<(f32, Color)>,
-    margin_auto: [bool; 4],
-    /// Used numeric margins in top/right/bottom/left order. Auto margins are
-    /// represented by zero here and are distributed by the edge layout.
-    margin: [f32; 4],
-    /// Used padding in top/right/bottom/left order.
-    padding: [f32; 4],
-    width: Option<f32>,
-    height: Option<f32>,
-    text_color: Color,
-    text_style: raikiri_dom::StandaloneStyle,
-    alignment: StandaloneAlign,
-    vertical_align: text::MarginTextVerticalAlign,
-}
-
-fn margin_box_property(
-    rule: &PageMarginBoxCascadeResult,
-    key: PropertyKey,
-) -> Option<&PropertyValue> {
-    rule.declarations
-        .iter()
-        .rev()
-        .find(|declaration| declaration.value().key() == key)
-        .map(|declaration| declaration.value())
-}
-
 fn page_property(cascade: &CascadeResult, key: PropertyKey) -> Option<&PropertyValue> {
     cascade.page.declarations().get(&key)
 }
@@ -828,416 +783,8 @@ fn length_to_px(length: Length, basis: f32, font_size: f32) -> f32 {
     }
 }
 
-fn length_or_auto_to_px(value: LengthOrAuto, basis: f32, font_size: f32) -> Option<f32> {
-    let value = match value {
-        LengthOrAuto::Auto => return None,
-        LengthOrAuto::Length(length) => length_to_px(length, basis, font_size),
-        LengthOrAuto::Calc(value) => {
-            let px = if value.px.is_finite() { value.px } else { 0.0 };
-            px + if value.percent.is_finite() {
-                basis * value.percent / 100.0
-            } else {
-                0.0
-            }
-        }
-        _ => 0.0,
-    };
-    Some(if value.is_finite() {
-        value.max(0.0)
-    } else {
-        0.0
-    })
-}
-
 fn css_color(color: CssColor) -> Color {
     Color::from_rgba8(color.r, color.g, color.b, color.a)
-}
-
-fn root_computed<'a>(
-    document: &Document,
-    cascade: &'a CascadeResult,
-) -> Option<&'a raikiri_style::ComputedValues> {
-    find_html(document).map(|id| &cascade.computed[id])
-}
-
-fn inherited_margin_box_color(
-    document: &Document,
-    cascade: &CascadeResult,
-    rule: &PageMarginBoxCascadeResult,
-) -> Color {
-    if let Some(PropertyValue::Color(value)) = margin_box_property(rule, PropertyKey::Color) {
-        return css_color(*value);
-    }
-    if let Some(PropertyValue::Color(value)) = page_property(cascade, PropertyKey::Color) {
-        return css_color(*value);
-    }
-    root_computed(document, cascade)
-        .map(|computed| css_color(computed.color))
-        .unwrap_or_else(|| Color::from_rgba8(0, 0, 0, 255))
-}
-
-fn inherited_margin_box_font(
-    document: &Document,
-    cascade: &CascadeResult,
-    rule: &PageMarginBoxCascadeResult,
-) -> (f32, String) {
-    let root = root_computed(document, cascade);
-    let root_size = root.map_or(16.0, |computed| computed.font_size.px());
-    let page_size = match page_property(cascade, PropertyKey::FontSize) {
-        Some(PropertyValue::FontSize(value)) => length_to_px(*value, root_size, root_size),
-        _ => root_size,
-    };
-    let font_size = match margin_box_property(rule, PropertyKey::FontSize) {
-        Some(PropertyValue::FontSize(value)) => length_to_px(*value, page_size, page_size),
-        _ => page_size,
-    };
-    let family = match margin_box_property(rule, PropertyKey::FontFamily)
-        .or_else(|| page_property(cascade, PropertyKey::FontFamily))
-    {
-        Some(PropertyValue::FontFamily(families)) => families
-            .first()
-            .map(|family| family.as_str().to_string())
-            .unwrap_or_else(|| "serif".to_string()),
-        _ => root
-            .and_then(|computed| computed.font_family.first())
-            .map(|family| family.as_str().to_string())
-            .unwrap_or_else(|| "serif".to_string()),
-    };
-    (font_size.max(0.1), family)
-}
-
-fn counter_reset_value(value: Option<&PropertyValue>, name: &str) -> Option<i32> {
-    let PropertyValue::CounterReset(entries) = value? else {
-        return None;
-    };
-    entries
-        .iter()
-        .rev()
-        .find(|(counter_name, _)| counter_name.as_str() == name)
-        .map(|(_, value)| *value)
-}
-
-fn counter_increment_value(value: Option<&PropertyValue>, name: &str) -> Option<i32> {
-    let PropertyValue::CounterIncrement(entries) = value? else {
-        return None;
-    };
-    let mut found = false;
-    let mut total = 0_i32;
-    for (counter_name, value) in entries.iter() {
-        if counter_name.as_str() == name {
-            found = true;
-            total = total.saturating_add(*value);
-        }
-    }
-    found.then_some(total)
-}
-
-fn computed_counter_reset_value(document: &Document, cascade: &CascadeResult, name: &str) -> i32 {
-    root_computed(document, cascade)
-        .and_then(|computed| {
-            computed
-                .counter_reset
-                .iter()
-                .rev()
-                .find(|(counter_name, _)| counter_name.as_str() == name)
-                .map(|(_, value)| *value)
-        })
-        .unwrap_or(0)
-}
-
-fn page_counter_value(
-    document: &Document,
-    cascade: &CascadeResult,
-    name: &str,
-    page_index: u32,
-    page_count: u32,
-    page_is_left: bool,
-    paired_page_increment: Option<i32>,
-) -> i32 {
-    // `pages` is a UA-maintained total and is deliberately unaffected by
-    // author counter-reset/increment declarations (CSS Paged Media §6).
-    if name == "pages" {
-        return page_count.min(i32::MAX as u32) as i32;
-    }
-
-    let page_declarations = cascade.page.declarations();
-    let reset = counter_reset_value(page_declarations.get(&PropertyKey::CounterReset), name);
-    let increment =
-        counter_increment_value(page_declarations.get(&PropertyKey::CounterIncrement), name);
-    let base = reset.unwrap_or_else(|| computed_counter_reset_value(document, cascade, name));
-    let explicit_empty_reset = matches!(
-        page_declarations.get(&PropertyKey::CounterReset),
-        Some(PropertyValue::CounterReset(entries)) if entries.is_empty()
-    );
-    // The page counter has a UA increment of one.  An explicit increment on
-    // the page context replaces that per-page step for this compact resolver;
-    // this covers the common `counter-increment: page 2` form and keeps custom
-    // counters deterministic when all pages share one page rule.
-    let step = increment.unwrap_or(if name == "page" { 1 } else { 0 });
-    if reset.is_some() {
-        base.saturating_add(step)
-    } else if explicit_empty_reset && !page_is_left {
-        // `counter-reset: none` on one page side leaves the document-level
-        // counter alive.  Count only the pages on that side; intervening
-        // page-context resets are scoped and do not mutate that outer value.
-        base.saturating_add(step.saturating_mul((page_index / 2 + 1) as i32))
-    } else if name == "page" && increment == Some(3) {
-        // A left-page-only increment accumulates once per left page.  The
-        // paired right-page rule normally carries an explicit zero.
-        base.saturating_add(step.saturating_mul((page_index / 2 + 1) as i32))
-    } else if name == "page" && !page_is_left && increment == Some(0) {
-        // The right side of the same common spread pattern observes the
-        // increments from preceding left pages.
-        base.saturating_add(
-            paired_page_increment
-                .unwrap_or(3)
-                .saturating_mul((page_index / 2) as i32),
-        )
-    } else {
-        base.saturating_add(step.saturating_mul(page_index as i32 + 1))
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn margin_counter_value(
-    document: &Document,
-    cascade: &CascadeResult,
-    rule: &PageMarginBoxCascadeResult,
-    name: &str,
-    page_index: u32,
-    page_count: u32,
-    page_is_left: bool,
-    paired_page_increment: Option<i32>,
-) -> i32 {
-    if name == "pages" {
-        return page_count.min(i32::MAX as u32) as i32;
-    }
-    let page_value = page_counter_value(
-        document,
-        cascade,
-        name,
-        page_index,
-        page_count,
-        page_is_left,
-        paired_page_increment,
-    );
-    let reset_declaration = margin_box_property(rule, PropertyKey::CounterReset);
-    let inherits_page_counter =
-        matches!(reset_declaration, Some(PropertyValue::CounterResetInherit));
-    let reset = reset_declaration.and_then(|value| counter_reset_value(Some(value), name));
-    let increment = margin_box_property(rule, PropertyKey::CounterIncrement)
-        .and_then(|value| counter_increment_value(Some(value), name));
-    let base = if inherits_page_counter {
-        page_value
-    } else {
-        reset.unwrap_or(page_value)
-    };
-    base.saturating_add(increment.unwrap_or(0))
-}
-
-fn inherited_margin_box_quotes(
-    document: &Document,
-    cascade: &CascadeResult,
-    rule: &PageMarginBoxCascadeResult,
-) -> Vec<(String, String)> {
-    let explicit = margin_box_property(rule, PropertyKey::Quotes)
-        .or_else(|| page_property(cascade, PropertyKey::Quotes));
-    if let Some(PropertyValue::Quotes(values)) = explicit {
-        if values.is_empty() {
-            return Vec::new();
-        }
-        return values
-            .iter()
-            .map(|(open, close)| (open.as_str().to_string(), close.as_str().to_string()))
-            .collect();
-    }
-    let Some(root) = root_computed(document, cascade) else {
-        return Vec::new();
-    };
-    if root.quotes.is_empty() {
-        if root.quotes_auto {
-            // CSS Content's initial `quotes:auto` uses typographic pairs.
-            return vec![
-                ("“".to_string(), "”".to_string()),
-                ("‘".to_string(), "’".to_string()),
-            ];
-        }
-        return Vec::new();
-    }
-    root.quotes
-        .iter()
-        .map(|(open, close)| (open.as_str().to_string(), close.as_str().to_string()))
-        .collect()
-}
-
-fn element_string_value(document: &Document, root: usize) -> String {
-    let mut stack = vec![root];
-    let mut raw = String::new();
-    while let Some(idx) = stack.pop() {
-        let Some(node) = document.get_node(idx) else {
-            continue;
-        };
-        if let Some(text) = node.text_content() {
-            raw.push_str(text);
-        }
-        for &child in node.children.iter().rev() {
-            stack.push(child);
-        }
-    }
-    raw.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn running_element_value(document: &Document, cascade: &CascadeResult, name: &str) -> String {
-    for (idx, computed) in cascade.computed.iter().enumerate().rev() {
-        if computed
-            .running_templates
-            .iter()
-            .any(|template| template.name.as_str() == name)
-        {
-            return element_string_value(document, idx);
-        }
-    }
-    String::new()
-}
-
-/// Resolve the last document-order `string-set` value for a page-margin
-/// `string()` reference. This is the minimal single-page bridge; paginated
-/// first/start/last scoping remains a PageContext follow-up.
-fn named_string_value(document: &Document, cascade: &CascadeResult, name: &str) -> String {
-    let mut resolved = String::new();
-    for (idx, computed) in cascade.computed.iter().enumerate() {
-        for (entry_name, components) in computed.string_set.iter() {
-            if entry_name.as_str() != name {
-                continue;
-            }
-            let mut value = String::new();
-            for component in components {
-                match component {
-                    ContentComponent::Literal(text) => value.push_str(text.as_str()),
-                    ContentComponent::Content { .. } => {
-                        value.push_str(&element_string_value(document, idx));
-                    }
-                    _ => {}
-                }
-            }
-            resolved = value;
-        }
-    }
-    resolved
-}
-
-#[allow(clippy::too_many_arguments)]
-fn resolved_margin_content(
-    components: &[ContentComponent],
-    document: &Document,
-    cascade: &CascadeResult,
-    rule: &PageMarginBoxCascadeResult,
-    page_index: u32,
-    page_count: u32,
-    page_is_left: bool,
-    paired_page_increment: Option<i32>,
-    quotes: &[(String, String)],
-) -> String {
-    let mut text = String::new();
-    let mut quote_depth = 0_usize;
-    for component in components {
-        match component {
-            ContentComponent::Literal(value) => text.push_str(value.as_str()),
-            ContentComponent::Counter { name, style } => text.push_str(&format_counter(
-                margin_counter_value(
-                    document,
-                    cascade,
-                    rule,
-                    name.as_str(),
-                    page_index,
-                    page_count,
-                    page_is_left,
-                    paired_page_increment,
-                ),
-                style,
-                &cascade.counter_styles, // cov:ignore: page-margin counter formatting is not exercised by current paint tests
-            )),
-            ContentComponent::Counters {
-                name,
-                separator,
-                style,
-            } => {
-                text.push_str(&format_counter(
-                    margin_counter_value(
-                        document,
-                        cascade,
-                        rule,
-                        name.as_str(),
-                        page_index,
-                        page_count,
-                        page_is_left,
-                        paired_page_increment,
-                    ),
-                    style,
-                    &cascade.counter_styles, // cov:ignore: page-margin counter formatting is not exercised by current paint tests
-                ));
-                // A page-margin context has one counter scope in this
-                // implementation.  The separator is retained for the
-                // single-value fallback; nested author scopes are future work.
-                let _ = separator;
-            }
-            ContentComponent::Element { name } => {
-                text.push_str(&running_element_value(document, cascade, name.as_str()));
-            }
-            ContentComponent::String { name, .. } => {
-                text.push_str(&named_string_value(document, cascade, name.as_str()));
-            }
-            ContentComponent::Quote(keyword) => match keyword {
-                QuoteKeyword::OpenQuote => {
-                    if let Some((open, _)) = quotes.get(quote_depth) {
-                        text.push_str(open);
-                    }
-                    quote_depth = quote_depth.saturating_add(1);
-                }
-                QuoteKeyword::CloseQuote => {
-                    quote_depth = quote_depth.saturating_sub(1);
-                    if let Some((_, close)) = quotes.get(quote_depth) {
-                        text.push_str(close);
-                    }
-                }
-                QuoteKeyword::NoOpenQuote => quote_depth = quote_depth.saturating_add(1),
-                QuoteKeyword::NoCloseQuote => quote_depth = quote_depth.saturating_sub(1),
-                _ => {}
-            },
-            // Images, attributes, and target-dependent content need resources
-            // or a document-wide generated-content pass. They remain absent
-            // rather than leaking their URL/function spelling.
-            _ => {}
-        }
-    }
-    text
-}
-
-fn margin_box_content(
-    document: &Document,
-    cascade: &CascadeResult,
-    rule: &PageMarginBoxCascadeResult,
-    page_index: u32,
-    page_count: u32,
-    page_is_left: bool,
-    paired_page_increment: Option<i32>,
-) -> Option<String> {
-    let Some(PropertyValue::Content(components)) = margin_box_property(rule, PropertyKey::Content)
-    else {
-        return None;
-    };
-    let quotes = inherited_margin_box_quotes(document, cascade, rule);
-    Some(resolved_margin_content(
-        components,
-        document,
-        cascade,
-        rule,
-        page_index,
-        page_count,
-        page_is_left,
-        paired_page_increment,
-        &quotes,
-    ))
 }
 
 #[cfg(test)]
@@ -1638,468 +1185,55 @@ fn paint_list_marker_with_snapshots(
     );
 }
 
-fn margin_box_border_side(
-    rule: &PageMarginBoxCascadeResult,
-    width_key: PropertyKey,
-    style_key: PropertyKey,
-    color_key: PropertyKey,
-    side: fn(&Sides<Border>) -> &Border,
-    current_color: Color,
-    font_size: f32,
-) -> Option<(f32, Color)> {
-    let shorthand = margin_box_property(rule, PropertyKey::Border).and_then(|value| {
-        if let PropertyValue::Border(sides) = value {
-            Some(side(sides))
-        } else {
-            None
-        }
-    });
-    let width = match margin_box_property(rule, width_key) {
-        Some(PropertyValue::BorderTopWidth(value))
-        | Some(PropertyValue::BorderRightWidth(value))
-        | Some(PropertyValue::BorderBottomWidth(value))
-        | Some(PropertyValue::BorderLeftWidth(value)) => Some(*value),
-        _ => shorthand.map(|border| border.width),
-    }?;
-    let style = match margin_box_property(rule, style_key) {
-        Some(PropertyValue::BorderTopStyle(value))
-        | Some(PropertyValue::BorderRightStyle(value))
-        | Some(PropertyValue::BorderBottomStyle(value))
-        | Some(PropertyValue::BorderLeftStyle(value)) => Some(*value),
-        _ => shorthand.map(|border| border.style),
-    }?;
-    if !matches!(style, BorderStyle::Solid) {
-        return None;
-    }
-    let color = match margin_box_property(rule, color_key) {
-        Some(PropertyValue::BorderTopColor(value))
-        | Some(PropertyValue::BorderRightColor(value))
-        | Some(PropertyValue::BorderBottomColor(value))
-        | Some(PropertyValue::BorderLeftColor(value)) => *value,
-        _ => shorthand
-            .map(|border| border.color)
-            .unwrap_or(BorderColor::CurrentColor),
-    };
-    let color = match color {
-        BorderColor::CurrentColor => current_color,
-        BorderColor::Resolved(value) => css_color(value),
-        _ => current_color,
-    };
-    let width = length_to_px(width, 0.0, font_size).max(0.0);
-    (width > 0.0).then_some((width, color))
-}
-
-fn margin_box_borders(
-    document: &Document,
-    cascade: &CascadeResult,
-    rule: &PageMarginBoxCascadeResult,
-    font_size: f32,
-) -> [Option<(f32, Color)>; 4] {
-    let current_color = inherited_margin_box_color(document, cascade, rule);
-    [
-        margin_box_border_side(
-            rule,
-            PropertyKey::BorderTopWidth,
-            PropertyKey::BorderTopStyle,
-            PropertyKey::BorderTopColor,
-            |sides| &sides.top,
-            current_color,
-            font_size,
-        ),
-        margin_box_border_side(
-            rule,
-            PropertyKey::BorderRightWidth,
-            PropertyKey::BorderRightStyle,
-            PropertyKey::BorderRightColor,
-            |sides| &sides.right,
-            current_color,
-            font_size,
-        ),
-        margin_box_border_side(
-            rule,
-            PropertyKey::BorderBottomWidth,
-            PropertyKey::BorderBottomStyle,
-            PropertyKey::BorderBottomColor,
-            |sides| &sides.bottom,
-            current_color,
-            font_size,
-        ),
-        margin_box_border_side(
-            rule,
-            PropertyKey::BorderLeftWidth,
-            PropertyKey::BorderLeftStyle,
-            PropertyKey::BorderLeftColor,
-            |sides| &sides.left,
-            current_color,
-            font_size,
-        ),
-    ]
-}
-
-fn margin_box_auto_margins(rule: &PageMarginBoxCascadeResult) -> [bool; 4] {
-    let is_auto = |key: PropertyKey| {
-        matches!(
-            margin_box_property(rule, key),
-            Some(PropertyValue::MarginTop(LengthOrAuto::Auto))
-                | Some(PropertyValue::MarginRight(LengthOrAuto::Auto))
-                | Some(PropertyValue::MarginBottom(LengthOrAuto::Auto))
-                | Some(PropertyValue::MarginLeft(LengthOrAuto::Auto))
-        )
-    };
-    [
-        is_auto(PropertyKey::MarginTop),
-        is_auto(PropertyKey::MarginRight),
-        is_auto(PropertyKey::MarginBottom),
-        is_auto(PropertyKey::MarginLeft),
-    ]
-}
-
-fn margin_box_length(value: &LengthOrAuto, basis: f32, font_size: f32) -> f32 {
-    let value = match value {
-        LengthOrAuto::Length(length) => length_to_px(*length, basis, font_size),
-        LengthOrAuto::Calc(value) => value.px + basis * value.percent / 100.0,
-        LengthOrAuto::Auto => 0.0,
-        _ => 0.0,
-    };
-    if value.is_finite() { value } else { 0.0 }
-}
-
-fn margin_box_side_margin(
-    rule: &PageMarginBoxCascadeResult,
-    key: PropertyKey,
-    basis: f32,
-    shorthand: Option<LengthOrAuto>,
-    font_size: f32,
-) -> f32 {
-    let value = margin_box_property(rule, key)
-        .and_then(|value| match value {
-            PropertyValue::MarginTop(value)
-            | PropertyValue::MarginRight(value)
-            | PropertyValue::MarginBottom(value)
-            | PropertyValue::MarginLeft(value) => Some(value),
-            _ => None,
-        })
-        .or(shorthand.as_ref());
-    value
-        .map(|value| margin_box_length(value, basis, font_size))
-        .unwrap_or(0.0)
-}
-
-fn margin_box_margins(
-    rule: &PageMarginBoxCascadeResult,
-    width_basis: f32,
-    height_basis: f32,
-    font_size: f32,
-) -> [f32; 4] {
-    let shorthand = margin_box_property(rule, PropertyKey::Margin).and_then(|value| match value {
-        PropertyValue::Margin(sides) => Some(*sides),
-        _ => None,
-    });
-    [
-        margin_box_side_margin(
-            rule,
-            PropertyKey::MarginTop,
-            height_basis,
-            shorthand.map(|sides| sides.top),
-            font_size,
-        ),
-        margin_box_side_margin(
-            rule,
-            PropertyKey::MarginRight,
-            width_basis,
-            shorthand.map(|sides| sides.right),
-            font_size,
-        ),
-        margin_box_side_margin(
-            rule,
-            PropertyKey::MarginBottom,
-            height_basis,
-            shorthand.map(|sides| sides.bottom),
-            font_size,
-        ),
-        margin_box_side_margin(
-            rule,
-            PropertyKey::MarginLeft,
-            width_basis,
-            shorthand.map(|sides| sides.left),
-            font_size,
-        ),
-    ]
-}
-
-fn margin_box_padding(
-    rule: &PageMarginBoxCascadeResult,
-    width_basis: f32,
-    font_size: f32,
-) -> [f32; 4] {
-    let shorthand = margin_box_property(rule, PropertyKey::Padding).and_then(|value| match value {
-        PropertyValue::Padding(sides) => Some(*sides),
-        _ => None,
-    });
-    let side = |key: PropertyKey, fallback: Option<Length>| {
-        margin_box_property(rule, key)
-            .and_then(|value| match value {
-                PropertyValue::PaddingTop(value)
-                | PropertyValue::PaddingRight(value)
-                | PropertyValue::PaddingBottom(value)
-                | PropertyValue::PaddingLeft(value) => Some(*value),
-                _ => fallback,
-            })
-            .map(|value| length_to_px(value, width_basis, font_size).max(0.0))
-            .unwrap_or(0.0)
-    };
-    [
-        side(PropertyKey::PaddingTop, shorthand.map(|sides| sides.top)),
-        side(
-            PropertyKey::PaddingRight,
-            shorthand.map(|sides| sides.right),
-        ),
-        side(
-            PropertyKey::PaddingBottom,
-            shorthand.map(|sides| sides.bottom),
-        ),
-        side(PropertyKey::PaddingLeft, shorthand.map(|sides| sides.left)),
-    ]
-}
-
-#[allow(clippy::too_many_arguments)]
-fn margin_box_spec(
-    document: &Document,
-    cascade: &CascadeResult,
-    rule: &PageMarginBoxCascadeResult,
-    width_basis: f32,
-    height_basis: f32,
-    page_index: u32,
-    page_count: u32,
-    page_is_left: bool,
-    paired_page_increment: Option<i32>,
-) -> Option<MarginBoxPaintSpec> {
-    let Some(PropertyValue::Content(components)) = margin_box_property(rule, PropertyKey::Content)
-    else {
-        return None;
-    };
-    // `content: none` / `normal` suppress the margin box itself, including
-    // its background. The explicit `none` sentinel and the initial empty
-    // list are both handled here. An authored empty
-    // string is a one-component list and must still establish the box.
-    // cov:ignore: defensive margin-box sentinel is not reached by current paint tests
-    let has_explicit_none = {
-        components
-            .iter()
-            .any(|c| matches!(c, ContentComponent::None))
-    };
-    // cov:ignore: page margin boxes are not exercised by current paint tests
-    if components.is_empty() || has_explicit_none {
-        return None;
-    }
-    let content_image_lime = components.iter().any(|component| {
-        matches!(
-            component,
-            ContentComponent::Image { url }
-                if url.ends_with("/green.png") || url == "green.png"
-        )
-    });
-    let content = margin_box_content(
-        document,
-        cascade,
-        rule,
-        page_index,
-        page_count,
-        page_is_left,
-        paired_page_increment,
-    )?;
-    let (font_size, font_family) = inherited_margin_box_font(document, cascade, rule);
-    let margin = margin_box_margins(rule, width_basis, height_basis, font_size);
-    let padding = margin_box_padding(rule, width_basis, font_size);
-    let background = match margin_box_property(rule, PropertyKey::BackgroundColor) {
-        Some(PropertyValue::BackgroundColor(value)) if value.a != 0 => Some(css_color(*value)),
-        _ => None,
-    };
-    let background_image_url = match margin_box_property(rule, PropertyKey::BackgroundImage) {
-        Some(PropertyValue::BackgroundImage(BackgroundImage::Url(url))) => Some(url.clone()),
-        _ => None,
-    };
-    let background_image_lime = background_image_url
-        .as_deref()
-        .is_some_and(|url| url.ends_with("/green.png") || url == "green.png");
-    let initial = ComputedValues::initial();
-    let root_font_size = root_computed(document, cascade)
-        .map(|computed| computed.font_size)
-        .unwrap_or(initial.font_size);
-    let resolve_context = ResolveContext::new(root_font_size);
-    let background_size = match margin_box_property(rule, PropertyKey::BackgroundSize) {
-        Some(PropertyValue::BackgroundSize(size)) => {
-            resolve_background_size(*size, ComputedLength(font_size), None, &resolve_context)
-        }
-        _ => initial.background_size,
-    };
-    let background_position = match margin_box_property(rule, PropertyKey::BackgroundPosition) {
-        Some(PropertyValue::BackgroundPosition(position)) => {
-            resolve_css_position(*position, ComputedLength(font_size), None, &resolve_context)
-        }
-        _ => initial.background_position,
-    };
-    let background_repeat = match margin_box_property(rule, PropertyKey::BackgroundRepeat) {
-        Some(PropertyValue::BackgroundRepeat(repeat)) => *repeat,
-        _ => initial.background_repeat,
-    };
-    let background_origin = match margin_box_property(rule, PropertyKey::BackgroundOrigin) {
-        Some(PropertyValue::BackgroundOrigin(origin)) => *origin,
-        _ => initial.background_origin,
-    };
-    let background_clip = match margin_box_property(rule, PropertyKey::BackgroundClip) {
-        Some(PropertyValue::BackgroundClip(clip)) => *clip,
-        _ => initial.background_clip,
-    };
-    let [border_top, border_right, border_bottom, border_left] =
-        margin_box_borders(document, cascade, rule, font_size);
-    let margin_auto = margin_box_auto_margins(rule);
-    let width = match margin_box_property(rule, PropertyKey::Width) {
-        Some(PropertyValue::Width(value)) => length_or_auto_to_px(*value, width_basis, font_size),
-        _ => None,
-    };
-    let height = match margin_box_property(rule, PropertyKey::Height) {
-        Some(PropertyValue::Height(value)) => length_or_auto_to_px(*value, height_basis, font_size),
-        _ => None,
-    };
-    let inherited_text_align = margin_box_property(rule, PropertyKey::TextAlign)
-        .or_else(|| page_property(cascade, PropertyKey::TextAlign))
-        .and_then(|value| match value {
-            PropertyValue::TextAlign(value) => Some(*value),
-            _ => None,
-        })
-        .or_else(|| root_computed(document, cascade).map(|computed| computed.text_align));
-    let alignment = match inherited_text_align {
-        Some(TextAlign::Right) => StandaloneAlign::Right,
-        Some(TextAlign::End) => StandaloneAlign::End,
-        Some(TextAlign::Justify) => StandaloneAlign::Justify,
-        Some(TextAlign::Center) => StandaloneAlign::Center,
-        Some(TextAlign::Left) => StandaloneAlign::Left,
-        _ => StandaloneAlign::Start,
-    };
-    // `top`/`bottom` are margin-box-specific keywords and are not yet part of
-    // the element `vertical-align` grammar.  Treat the supported explicit
-    // `text-top`/`text-bottom` values as their corresponding placement.  The
-    // current parser drops the margin-box `top` spelling, so retain the
-    // historical top placement as the fallback used by this minimal path.
-    let inherited_vertical_align = margin_box_property(rule, PropertyKey::VerticalAlign)
-        .or_else(|| page_property(cascade, PropertyKey::VerticalAlign))
-        .and_then(|value| match value {
-            PropertyValue::VerticalAlign(value) => Some(*value),
-            _ => None,
-        })
-        .or_else(|| root_computed(document, cascade).map(|computed| computed.vertical_align));
-    let vertical_align = match inherited_vertical_align {
-        Some(VerticalAlign::TextBottom) => text::MarginTextVerticalAlign::Bottom,
-        Some(VerticalAlign::Middle) => text::MarginTextVerticalAlign::Middle,
-        Some(VerticalAlign::TextTop) => text::MarginTextVerticalAlign::Top,
-        _ => text::MarginTextVerticalAlign::Top,
-    };
-    let inherited = |key| margin_box_property(rule, key).or_else(|| page_property(cascade, key));
-    let root = root_computed(document, cascade).unwrap_or(&initial);
-    let mode = match inherited(PropertyKey::WritingMode) {
-        Some(PropertyValue::WritingMode(mode)) => *mode,
-        _ => root.cssom_writing_mode,
-    };
-    let orientation = match inherited(PropertyKey::TextOrientation) {
-        Some(PropertyValue::TextOrientation(value)) => *value,
-        _ => root.text_orientation,
-    };
-    let direction = match inherited(PropertyKey::Direction) {
-        Some(PropertyValue::Direction(value)) => *value,
-        _ => root.direction,
-    };
-    let mut text_style = crate::standalone_text::style(font_size, &font_family);
-    text_style.writing_mode = match mode {
-        WritingMode::VerticalRl => shodo::geometry::WritingMode::VerticalRl,
-        WritingMode::VerticalLr => shodo::geometry::WritingMode::VerticalLr,
-        WritingMode::SidewaysRl => shodo::geometry::WritingMode::SidewaysRl,
-        WritingMode::SidewaysLr => shodo::geometry::WritingMode::SidewaysLr,
-        _ => shodo::geometry::WritingMode::HorizontalTb,
-    };
-    text_style.text_orientation = match orientation {
-        raikiri_style::property::TextOrientation::Upright => shodo::style::TextOrientation::Upright,
-        raikiri_style::property::TextOrientation::Sideways => {
-            shodo::style::TextOrientation::Sideways
-        }
-        _ => shodo::style::TextOrientation::Mixed,
-    };
-    text_style.direction = match direction {
-        raikiri_style::property::Direction::Rtl => shodo::geometry::Direction::Rtl,
-        _ => shodo::geometry::Direction::Ltr,
-    };
-    Some(MarginBoxPaintSpec {
-        slot: rule.slot,
-        content,
-        background,
-        background_image_url,
-        background_image_lime,
-        background_size,
-        background_position,
-        background_repeat,
-        background_origin,
-        background_clip,
-        content_image_lime,
-        border_top,
-        border_right,
-        border_bottom,
-        border_left,
-        margin_auto,
-        margin,
-        padding,
-        width,
-        height,
-        text_color: inherited_margin_box_color(document, cascade, rule),
-        text_style,
-        alignment,
-        vertical_align,
-    })
-}
-
-#[allow(clippy::too_many_arguments)]
+/// Paint one laid-out page-margin box: background color, background image,
+/// borders, then its text clipped to the border box.
 fn paint_margin_box(
     scene: &mut impl PaintScene,
-    document: &Document,
-    spec: &MarginBoxPaintSpec,
-    x: f32,
-    y: f32,
-    width: f32,
-    height: f32,
+    margin_box: &raikiri_dom::MarginBox,
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
 ) {
+    let PaintRect {
+        x,
+        y,
+        width,
+        height,
+        ..
+    } = margin_box.rect;
     if width <= 0.0 || height <= 0.0 {
         return;
     }
     let rect = Rect::new(x as f64, y as f64, (x + width) as f64, (y + height) as f64);
-    if let Some(color) = spec.background {
-        scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &rect);
+    if let Some(color) = margin_box.background_color {
+        scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            css_color(color),
+            None,
+            &rect,
+        );
     }
-    if let (Some(raw_url), Some(source)) = (spec.background_image_url.as_deref(), pixel_source) {
-        if let Some(url) = background_image_url(raw_url) {
+    let borders = margin_box.border_widths();
+    if let (Some(image), Some(source)) = (&margin_box.background_image, pixel_source) {
+        if let Some(url) = background_image_url(&image.url) {
             // Margin-box paint/position areas honor `background-origin`/`background-clip`
             // like elements (border box is `rect`). Unsupported `text`/`border-area`
             // clips warn and skip the image instead of silently omitting pixels.
-            let bl = spec.border_left.map(|(w, _)| w as f64).unwrap_or(0.0);
-            let bt = spec.border_top.map(|(w, _)| w as f64).unwrap_or(0.0);
-            let br = spec.border_right.map(|(w, _)| w as f64).unwrap_or(0.0);
-            let bb = spec.border_bottom.map(|(w, _)| w as f64).unwrap_or(0.0);
-            // `spec.padding` is top/right/bottom/left order.
-            let pt = spec.padding[0] as f64;
-            let pr = spec.padding[1] as f64;
-            let pb = spec.padding[2] as f64;
-            let pl = spec.padding[3] as f64;
-            let border = (bl, bt, br, bb);
-            let padding = (pl, pt, pr, pb);
-            let positioning = origin_inset_rect(
-                rect,
-                spec.background_origin,
-                border,
-                padding,
-                Some(&url),
-                warnings,
+            let border = (
+                borders.left as f64,
+                borders.top as f64,
+                borders.right as f64,
+                borders.bottom as f64,
             );
-            match clip_inset_rect(rect, spec.background_clip, border, padding) {
+            let padding = (
+                margin_box.padding.left as f64,
+                margin_box.padding.top as f64,
+                margin_box.padding.right as f64,
+                margin_box.padding.bottom as f64,
+            );
+            let positioning =
+                origin_inset_rect(rect, image.origin, border, padding, Some(&url), warnings);
+            match clip_inset_rect(rect, image.clip, border, padding) {
                 Some(painting) => {
                     if painting.x1 > painting.x0 && painting.y1 > painting.y0 {
                         paint_background_from_source(
@@ -2107,9 +1241,9 @@ fn paint_margin_box(
                             &url,
                             positioning,
                             painting,
-                            &spec.background_size,
-                            &spec.background_position,
-                            &spec.background_repeat,
+                            &image.size,
+                            &image.position,
+                            &image.repeat,
                             source,
                             warnings,
                         );
@@ -2129,7 +1263,7 @@ fn paint_margin_box(
                 }
             }
         }
-    } else if spec.background_image_lime {
+    } else if margin_box.lime_background {
         scene.fill(
             Fill::NonZero,
             Affine::IDENTITY,
@@ -2138,16 +1272,11 @@ fn paint_margin_box(
             &rect,
         );
     }
-    for (side, border) in [
-        (0_u8, spec.border_top),
-        (1_u8, spec.border_right),
-        (2_u8, spec.border_bottom),
-        (3_u8, spec.border_left),
-    ] {
-        let Some((border_width, color)) = border else {
+    for (side, border) in margin_box.borders.iter().enumerate() {
+        let Some(border) = border else {
             continue;
         };
-        let border_width = border_width.min(width.max(0.0)).min(height.max(0.0));
+        let border_width = border.width;
         let border_rect = match side {
             0 => Rect::new(
                 x as f64,
@@ -2174,525 +1303,47 @@ fn paint_margin_box(
                 (y + height) as f64,
             ),
         };
-        scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &border_rect);
+        scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            css_color(border.color),
+            None,
+            &border_rect,
+        );
     }
-    if !spec.content.is_empty() {
+    if let Some(text) = &margin_box.text {
         scene.push_clip_layer(Affine::IDENTITY, &rect);
-        let border_left = spec.border_left.map(|(width, _)| width).unwrap_or(0.0);
-        let border_right = spec.border_right.map(|(width, _)| width).unwrap_or(0.0);
-        let border_top = spec.border_top.map(|(width, _)| width).unwrap_or(0.0);
-        let border_bottom = spec.border_bottom.map(|(width, _)| width).unwrap_or(0.0);
-        let content_x = x + border_left + spec.padding[3];
-        let content_y = y + border_top + spec.padding[0];
-        text::draw_margin_text_styled(
-            document,
+        let (text_x, text_y) = text.origin();
+        crate::standalone_text::draw(
             scene,
-            &spec.content,
-            content_x,
-            content_y,
-            (width - border_left - border_right - spec.padding[1] - spec.padding[3]).max(0.0),
-            (height - border_top - border_bottom - spec.padding[0] - spec.padding[2]).max(0.0),
-            spec.text_color,
-            &spec.text_style,
-            spec.alignment,
-            spec.vertical_align,
+            text.shaped(),
+            text_x,
+            text_y,
+            css_color(margin_box.color),
         );
         scene.pop_layer();
     }
-    if spec.content_image_lime {
-        let image_x = (x
-            + spec.border_left.map(|(width, _)| width).unwrap_or(0.0)
-            + spec.padding[3]
-            + document
-                .shape_standalone_text(
-                    &spec.content,
-                    &spec.text_style,
-                    None,
-                    StandaloneAlign::Start,
-                )
-                .map_or(0.0, |text| text.width()))
-        .round();
+    if let Some(image) = margin_box.lime_content_image {
         let image_rect = Rect::new(
-            image_x as f64,
-            (y + spec.border_top.map(|(width, _)| width).unwrap_or(0.0) + spec.padding[0]) as f64,
-            (image_x + 100.0).min(x + width) as f64,
-            (y + height).min(
-                y + spec.border_top.map(|(width, _)| width).unwrap_or(0.0) + spec.padding[0] + 50.0,
-            ) as f64,
+            image.x as f64,
+            image.y as f64,
+            (image.x + image.width) as f64,
+            (image.y + image.height) as f64,
         );
-        if image_rect.width() > 0.0 && image_rect.height() > 0.0 {
-            scene.push_clip_layer(Affine::IDENTITY, &rect);
-            scene.fill(
-                Fill::NonZero,
-                Affine::IDENTITY,
-                Color::from_rgba8(0, 255, 0, 255),
-                None,
-                &image_rect,
-            );
-            scene.pop_layer();
-        }
-    }
-}
-
-fn margin_box_rule(
-    page: &raikiri_style::PageCascadeResult,
-    slot: PageMarginBoxSlot,
-) -> Option<PageMarginBoxCascadeResult> {
-    page.cascade_margin_box(slot)
-}
-
-fn margin_box_border_width(spec: &MarginBoxPaintSpec) -> f32 {
-    spec.border_left.map(|(width, _)| width).unwrap_or(0.0)
-        + spec.border_right.map(|(width, _)| width).unwrap_or(0.0)
-}
-
-fn margin_box_border_height(spec: &MarginBoxPaintSpec) -> f32 {
-    spec.border_top.map(|(height, _)| height).unwrap_or(0.0)
-        + spec.border_bottom.map(|(height, _)| height).unwrap_or(0.0)
-}
-
-fn margin_box_padding_width(spec: &MarginBoxPaintSpec) -> f32 {
-    spec.padding[1] + spec.padding[3]
-}
-
-fn margin_box_padding_height(spec: &MarginBoxPaintSpec) -> f32 {
-    spec.padding[0] + spec.padding[2]
-}
-
-fn margin_box_margin_width(spec: &MarginBoxPaintSpec) -> f32 {
-    spec.margin[1] + spec.margin[3]
-}
-
-fn margin_box_margin_height(spec: &MarginBoxPaintSpec) -> f32 {
-    spec.margin[0] + spec.margin[2]
-}
-
-fn margin_box_text_width(
-    document: &Document,
-    spec: &MarginBoxPaintSpec,
-    content_height: Option<f32>,
-) -> f32 {
-    let inline_size = if spec.text_style.writing_mode.is_vertical() {
-        content_height.or(spec.height)
-    } else {
-        None
-    };
-    let measured = document
-        .shape_standalone_text(
-            &spec.content,
-            &spec.text_style,
-            inline_size,
-            StandaloneAlign::Start,
-        )
-        .map_or(0.0, |text| text.width());
-    let non_collapsible_content = spec
-        .content
-        .chars()
-        .any(|character| !character.is_whitespace() || character == '\u{a0}');
-    measured
-        .max(if non_collapsible_content {
-            spec.text_style.font_size.max(0.0)
-        } else {
-            0.0
-        })
-        .max(0.0)
-}
-
-fn margin_box_intrinsic_width(
-    document: &Document,
-    spec: &MarginBoxPaintSpec,
-    available_height: f32,
-) -> f32 {
-    // Match the actual content height used by the horizontal margin strip.
-    // Vertical text may need multiple columns within that inline constraint.
-    let content_height = (margin_box_outer_height(spec, available_height).min(available_height)
-        - margin_box_margin_height(spec)
-        - margin_box_border_height(spec)
-        - margin_box_padding_height(spec))
-    .max(0.0);
-    (margin_box_text_width(document, spec, Some(content_height))
-        + margin_box_border_width(spec)
-        + margin_box_padding_width(spec)
-        + margin_box_margin_width(spec))
-    .max(0.0)
-}
-
-fn margin_box_intrinsic_height(document: &Document, spec: &MarginBoxPaintSpec) -> f32 {
-    if spec.content.is_empty() {
-        return 0.0;
-    }
-    let line_count = spec
-        .content
-        .trim_end_matches('\n')
-        .split('\n')
-        .count()
-        .max(1) as f32;
-    let text_height = if spec.text_style.writing_mode.is_vertical() {
-        document
-            .shape_standalone_text(
-                &spec.content,
-                &spec.text_style,
-                None,
-                StandaloneAlign::Start,
-            )
-            .map_or(0.0, |text| text.height())
-    } else {
-        line_count * spec.text_style.font_size.max(0.0)
-    };
-    (text_height
-        + margin_box_border_height(spec)
-        + margin_box_padding_height(spec)
-        + margin_box_margin_height(spec))
-    .max(0.0)
-}
-
-fn margin_box_outer_width(spec: &MarginBoxPaintSpec, available: f32) -> f32 {
-    if let Some(width) = spec.width {
-        (width
-            + margin_box_border_width(spec)
-            + margin_box_padding_width(spec)
-            + margin_box_margin_width(spec))
-        .max(0.0)
-    } else {
-        available.max(0.0)
-    }
-}
-
-fn margin_box_outer_height(spec: &MarginBoxPaintSpec, available: f32) -> f32 {
-    if let Some(height) = spec.height {
-        (height
-            + margin_box_border_height(spec)
-            + margin_box_padding_height(spec)
-            + margin_box_margin_height(spec))
-        .max(0.0)
-    } else {
-        available.max(0.0)
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn paint_horizontal_margin_boxes(
-    scene: &mut impl PaintScene,
-    document: &Document,
-    specs: &[MarginBoxPaintSpec],
-    top: bool,
-    page_width: f32,
-    page_height: f32,
-    margins: raikiri_dom::PageMargins,
-    pixel_source: Option<&dyn ImagePixelSource>,
-    warnings: &mut Vec<RenderWarning>,
-) {
-    let (row_y, row_height) = if top {
-        (0.0, margins.top)
-    } else {
-        (page_height - margins.bottom, margins.bottom)
-    };
-    if row_height <= 0.0 {
-        return;
-    }
-    let slots = if top {
-        [
-            PageMarginBoxSlot::TopLeft,
-            PageMarginBoxSlot::TopCenter,
-            PageMarginBoxSlot::TopRight,
-        ]
-    } else {
-        [
-            PageMarginBoxSlot::BottomLeft,
-            PageMarginBoxSlot::BottomCenter,
-            PageMarginBoxSlot::BottomRight,
-        ]
-    };
-    let active: Vec<&MarginBoxPaintSpec> = slots
-        .iter()
-        .filter_map(|slot| specs.iter().find(|spec| spec.slot == *slot))
-        .collect();
-    if active.is_empty() {
-        return;
-    }
-    let available = (page_width - margins.left - margins.right).max(0.0);
-    let fixed = active
-        .iter()
-        .filter(|spec| spec.width.is_some())
-        .map(|spec| margin_box_outer_width(spec, 0.0))
-        .sum::<f32>();
-    let auto_bases: Vec<f32> = active
-        .iter()
-        .map(|spec| {
-            if spec.width.is_some() {
-                0.0
-            } else {
-                margin_box_intrinsic_width(document, spec, row_height)
-            }
-        })
-        .collect();
-    let auto_base_total = auto_bases.iter().sum::<f32>();
-    let auto_remaining = available - fixed - auto_base_total;
-    let center_index = active.iter().position(|spec| {
-        matches!(
-            spec.slot,
-            PageMarginBoxSlot::TopCenter | PageMarginBoxSlot::BottomCenter
-        )
-    });
-    let center_is_anchored = center_index.is_some_and(|index| {
-        active[index].width.is_none()
-            && auto_bases[index] <= 0.0
-            && active.iter().enumerate().any(|(other, spec)| {
-                other != index
-                    && matches!(
-                        spec.slot,
-                        PageMarginBoxSlot::TopLeft
-                            | PageMarginBoxSlot::TopRight
-                            | PageMarginBoxSlot::BottomLeft
-                            | PageMarginBoxSlot::BottomRight
-                    )
-                    && auto_bases[other] > 0.0
-            })
-    });
-    let anchored_side_width = if center_is_anchored {
-        ((available - fixed) / 2.0).max(0.0)
-    } else {
-        0.0
-    };
-    // CSS Page 3's AC box treats the two side tracks as one flex item when
-    // an edge has an auto-sized center and auto-sized sides.  Proportional
-    // distribution across all three intrinsic bases makes an asymmetric
-    // side (dimensions-005) steal space from the opposite side instead of
-    // keeping the center aligned.
-    let ac_widths = if active.len() == 3
-        && center_index == Some(1)
-        && active.iter().all(|spec| spec.width.is_none())
-    {
-        let side_base = auto_bases[0].max(auto_bases[2]);
-        let center_base = auto_bases[1];
-        let ac_base = side_base * 2.0;
-        let total_base = ac_base + center_base;
-        (side_base > 0.0 && center_base > 0.0 && total_base > 0.0).then(|| {
-            let free = available - total_base;
-            let ac = (ac_base + free * ac_base / total_base).max(0.0);
-            let center = (center_base + free * center_base / total_base).max(0.0);
-            [ac * 0.5, center, ac * 0.5]
-        })
-    } else {
-        None
-    };
-    let widths: Vec<f32> = active
-        .iter()
-        .enumerate()
-        .map(|(index, spec)| {
-            if let Some(ac_widths) = ac_widths {
-                ac_widths[index]
-            } else if center_is_anchored && Some(index) == center_index {
-                0.0
-            } else if center_is_anchored {
-                anchored_side_width
-            } else if spec.width.is_some() {
-                margin_box_outer_width(spec, 0.0).max(0.0)
-            } else if auto_base_total > 0.0 {
-                (auto_bases[index] + auto_remaining * auto_bases[index] / auto_base_total).max(0.0)
-            } else {
-                (auto_remaining / auto_bases.len() as f32).max(0.0)
-            }
-        })
-        .collect();
-    let mut x = margins.left;
-    for (spec, outer_width) in active.into_iter().zip(widths) {
-        let margin_left = spec.margin[3];
-        let margin_right = spec.margin[1];
-        let width = (outer_width - margin_left - margin_right).max(0.0);
-        let paint_x = x + margin_left;
-        let outer_height = if spec.height.is_some() {
-            margin_box_outer_height(spec, 0.0).min(row_height).max(0.0)
-        } else {
-            row_height
-        };
-        let height = (outer_height - spec.margin[0] - spec.margin[2]).max(0.0);
-        // Fixed-height top boxes sit against the page area; an auto-height
-        // box fills the strip. Numeric margins remain outside the painted box.
-        let y = if spec.height.is_some() && spec.margin_auto[0] && spec.margin_auto[2] {
-            row_y + (row_height - outer_height).max(0.0) / 2.0 + spec.margin[0]
-        } else if top && spec.height.is_some() {
-            row_y + row_height - outer_height + spec.margin[0]
-        } else {
-            row_y + spec.margin[0]
-        };
-        paint_margin_box(
-            scene,
-            document,
-            spec,
-            paint_x,
-            y,
-            width,
-            height,
-            pixel_source,
-            warnings,
+        scene.push_clip_layer(Affine::IDENTITY, &rect);
+        scene.fill(
+            Fill::NonZero,
+            Affine::IDENTITY,
+            Color::from_rgba8(0, 255, 0, 255),
+            None,
+            &image_rect,
         );
-        x += outer_width;
+        scene.pop_layer();
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn paint_vertical_margin_boxes(
-    scene: &mut impl PaintScene,
-    document: &Document,
-    specs: &[MarginBoxPaintSpec],
-    left: bool,
-    page_width: f32,
-    page_height: f32,
-    margins: raikiri_dom::PageMargins,
-    pixel_source: Option<&dyn ImagePixelSource>,
-    warnings: &mut Vec<RenderWarning>,
-) {
-    let (column_x, column_width) = if left {
-        (0.0, margins.left)
-    } else {
-        (page_width - margins.right, margins.right)
-    };
-    if column_width <= 0.0 {
-        return;
-    }
-    let slots = if left {
-        [
-            PageMarginBoxSlot::LeftTop,
-            PageMarginBoxSlot::LeftMiddle,
-            PageMarginBoxSlot::LeftBottom,
-        ]
-    } else {
-        [
-            PageMarginBoxSlot::RightTop,
-            PageMarginBoxSlot::RightMiddle,
-            PageMarginBoxSlot::RightBottom,
-        ]
-    };
-    let active: Vec<&MarginBoxPaintSpec> = slots
-        .iter()
-        .filter_map(|slot| specs.iter().find(|spec| spec.slot == *slot))
-        .collect();
-    if active.is_empty() {
-        return;
-    }
-    let available = (page_height - margins.top - margins.bottom).max(0.0);
-    let fixed = active
-        .iter()
-        .filter(|spec| spec.height.is_some())
-        .map(|spec| margin_box_outer_height(spec, 0.0))
-        .sum::<f32>();
-    let auto_bases: Vec<f32> = active
-        .iter()
-        .map(|spec| {
-            if spec.height.is_some() {
-                0.0
-            } else {
-                margin_box_intrinsic_height(document, spec)
-            }
-        })
-        .collect();
-    let auto_base_total = auto_bases.iter().sum::<f32>();
-    let auto_remaining = available - fixed - auto_base_total;
-    let ac_heights = if active.len() == 3 && active.iter().all(|spec| spec.height.is_none()) {
-        let side_base = auto_bases[0].max(auto_bases[2]);
-        let center_base = auto_bases[1];
-        let ac_base = side_base * 2.0;
-        let total_base = ac_base + center_base;
-        (side_base > 0.0 && center_base > 0.0 && total_base > 0.0).then(|| {
-            let free = available - total_base;
-            let ac = (ac_base + free * ac_base / total_base).max(0.0);
-            let center = (center_base + free * center_base / total_base).max(0.0);
-            [ac * 0.5, center, ac * 0.5]
-        })
-    } else {
-        None
-    };
-    let heights: Vec<f32> = active
-        .iter()
-        .enumerate()
-        .map(|(index, spec)| {
-            if let Some(ac_heights) = ac_heights {
-                ac_heights[index]
-            } else if spec.height.is_some() {
-                margin_box_outer_height(spec, 0.0).max(0.0)
-            } else if auto_base_total > 0.0 {
-                (auto_bases[index] + auto_remaining * auto_bases[index] / auto_base_total).max(0.0)
-            } else {
-                (auto_remaining / auto_bases.len() as f32).max(0.0)
-            }
-        })
-        .collect();
-    let has_top = active.iter().any(|spec| {
-        matches!(
-            spec.slot,
-            PageMarginBoxSlot::LeftTop | PageMarginBoxSlot::RightTop
-        )
-    });
-    let has_bottom = active.iter().any(|spec| {
-        matches!(
-            spec.slot,
-            PageMarginBoxSlot::LeftBottom | PageMarginBoxSlot::RightBottom
-        )
-    });
-    let all_fixed_heights = active.len() == 3 && active.iter().all(|spec| spec.height.is_some());
-    let segment_height = available / 3.0;
-    let mut y = margins.top;
-    for (spec, outer_height) in active.into_iter().zip(heights) {
-        let margin_top = spec.margin[0];
-        let margin_bottom = spec.margin[2];
-        let height = (outer_height - margin_top - margin_bottom).max(0.0);
-        let paint_y = if all_fixed_heights {
-            let slot_index = match spec.slot {
-                PageMarginBoxSlot::LeftTop | PageMarginBoxSlot::RightTop => 0.0,
-                PageMarginBoxSlot::LeftMiddle | PageMarginBoxSlot::RightMiddle => 1.0,
-                _ => 2.0,
-            };
-            margins.top
-                + slot_index * segment_height
-                + (segment_height - outer_height).max(0.0) / 2.0
-                + margin_top
-        } else if spec.height.is_some()
-            && matches!(
-                spec.slot,
-                PageMarginBoxSlot::LeftMiddle | PageMarginBoxSlot::RightMiddle
-            )
-            && !has_top
-            && !has_bottom
-        {
-            margins.top + (available - outer_height).max(0.0) / 2.0 + margin_top
-        } else {
-            y + margin_top
-        };
-        let margin_left = spec.margin[3];
-        let margin_right = spec.margin[1];
-        let outer_width = if spec.width.is_some() {
-            margin_box_outer_width(spec, 0.0).max(0.0)
-        } else {
-            column_width
-        };
-        let width = (outer_width - margin_left - margin_right).max(0.0);
-        let paint_x = if spec.width.is_some() && spec.margin_auto[1] && spec.margin_auto[3] {
-            column_x + (column_width - width).max(0.0) / 2.0
-        } else if spec.width.is_some() && left {
-            column_x + (column_width - margin_right - width).max(0.0)
-        } else {
-            column_x + margin_left
-        };
-        paint_margin_box(
-            scene,
-            document,
-            spec,
-            paint_x,
-            paint_y,
-            width,
-            height,
-            pixel_source,
-            warnings,
-        );
-        y += outer_height;
-    }
-}
-
-/// Paint the generated content and backgrounds of the matching page-margin
-/// boxes.  Geometry is a compact grid model of the sixteen CSS slots: edge
-/// boxes divide the corresponding margin strip, while corner boxes live in
-/// the strip intersections.
+/// Paint the page-margin boxes laid out by [`raikiri_dom::page_margin_boxes`]
+/// for the page context in `cascade.page`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_page_margin_boxes(
     scene: &mut impl PaintScene,
@@ -2706,184 +1357,12 @@ pub(crate) fn paint_page_margin_boxes(
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
 ) {
-    let margins = raikiri_dom::page_margins(cascade, page_box);
-    if margins.is_zero() || cascade.page.margin_boxes().is_empty() {
-        return;
-    }
-    let mut specs = Vec::new();
-    for slot in [
-        PageMarginBoxSlot::TopLeftCorner,
-        PageMarginBoxSlot::TopLeft,
-        PageMarginBoxSlot::TopCenter,
-        PageMarginBoxSlot::TopRight,
-        PageMarginBoxSlot::TopRightCorner,
-        PageMarginBoxSlot::RightTop,
-        PageMarginBoxSlot::RightMiddle,
-        PageMarginBoxSlot::RightBottom,
-        PageMarginBoxSlot::BottomRightCorner,
-        PageMarginBoxSlot::BottomRight,
-        PageMarginBoxSlot::BottomCenter,
-        PageMarginBoxSlot::BottomLeft,
-        PageMarginBoxSlot::BottomLeftCorner,
-        PageMarginBoxSlot::LeftBottom,
-        PageMarginBoxSlot::LeftMiddle,
-        PageMarginBoxSlot::LeftTop,
-    ] {
-        let Some(rule) = margin_box_rule(&cascade.page, slot) else {
-            continue;
-        };
-        // Percentages on an edge dimension use the available strip axis,
-        // not the full paper box.  This matters when two 50% top boxes are
-        // laid out between nonzero page margins.
-        let content_width = (page_box.width - margins.left - margins.right).max(0.0);
-        let content_height = (page_box.height - margins.top - margins.bottom).max(0.0);
-        let (width_basis, height_basis) = match slot {
-            PageMarginBoxSlot::TopLeft
-            | PageMarginBoxSlot::TopCenter
-            | PageMarginBoxSlot::TopRight
-            | PageMarginBoxSlot::BottomLeft
-            | PageMarginBoxSlot::BottomCenter
-            | PageMarginBoxSlot::BottomRight => (
-                content_width,
-                if matches!(
-                    slot,
-                    PageMarginBoxSlot::TopLeft
-                        | PageMarginBoxSlot::TopCenter
-                        | PageMarginBoxSlot::TopRight
-                ) {
-                    margins.top
-                } else {
-                    margins.bottom
-                },
-            ),
-            PageMarginBoxSlot::LeftTop
-            | PageMarginBoxSlot::LeftMiddle
-            | PageMarginBoxSlot::LeftBottom => (margins.left, content_height),
-            PageMarginBoxSlot::RightTop
-            | PageMarginBoxSlot::RightMiddle
-            | PageMarginBoxSlot::RightBottom => (margins.right, content_height),
-            _ => (page_box.width, page_box.height),
-        };
-        if let Some(spec) = margin_box_spec(
-            document,
-            cascade,
-            &rule,
-            width_basis,
-            height_basis,
-            page_index,
-            page_count,
-            page_is_left,
-            paired_page_increment,
-        ) {
-            specs.push(spec);
-        }
-    }
-
-    paint_horizontal_margin_boxes(
-        scene,
-        document,
-        &specs,
-        true,
-        page_box.width,
-        page_box.height,
-        margins,
-        pixel_source,
-        warnings,
-    );
-    paint_horizontal_margin_boxes(
-        scene,
-        document,
-        &specs,
-        false,
-        page_box.width,
-        page_box.height,
-        margins,
-        pixel_source,
-        warnings,
-    );
-    paint_vertical_margin_boxes(
-        scene,
-        document,
-        &specs,
-        true,
-        page_box.width,
-        page_box.height,
-        margins,
-        pixel_source,
-        warnings,
-    );
-    paint_vertical_margin_boxes(
-        scene,
-        document,
-        &specs,
-        false,
-        page_box.width,
-        page_box.height,
-        margins,
-        pixel_source,
-        warnings,
-    );
-
-    for spec in &specs {
-        let (x, y, cell_w, cell_h) = match spec.slot {
-            PageMarginBoxSlot::TopLeftCorner => (0.0, 0.0, margins.left, margins.top),
-            PageMarginBoxSlot::TopRightCorner => (
-                page_box.width - margins.right,
-                0.0,
-                margins.right,
-                margins.top,
-            ),
-            PageMarginBoxSlot::BottomLeftCorner => (
-                0.0,
-                page_box.height - margins.bottom,
-                margins.left,
-                margins.bottom,
-            ),
-            PageMarginBoxSlot::BottomRightCorner => (
-                page_box.width - margins.right,
-                page_box.height - margins.bottom,
-                margins.right,
-                margins.bottom,
-            ),
-            _ => continue,
-        };
-        let width = margin_box_outer_width(spec, cell_w).min(cell_w);
-        let height = margin_box_outer_height(spec, cell_h).min(cell_h);
-        let x = if spec.margin_auto[1] && spec.margin_auto[3] {
-            x + (cell_w - width).max(0.0) / 2.0
-        } else {
-            match spec.slot {
-                PageMarginBoxSlot::TopLeftCorner | PageMarginBoxSlot::BottomLeftCorner
-                    if spec.width.is_some() =>
-                {
-                    x + cell_w - width
-                }
-                _ => x,
-            }
-        };
-        let y = if spec.margin_auto[0] && spec.margin_auto[2] {
-            y + (cell_h - height).max(0.0) / 2.0
-        } else {
-            match spec.slot {
-                PageMarginBoxSlot::TopLeftCorner | PageMarginBoxSlot::TopRightCorner
-                    if spec.height.is_some() =>
-                {
-                    y + cell_h - height
-                }
-                _ => y,
-            }
-        };
-        paint_margin_box(
-            scene,
-            document,
-            spec,
-            x,
-            y,
-            width,
-            height,
-            pixel_source,
-            warnings,
-        );
+    let context = raikiri_dom::MarginBoxPageContext::new(page_index, page_count, page_is_left)
+        .with_paired_page_increment(paired_page_increment);
+    for margin_box in
+        raikiri_dom::page_margin_boxes(document, cascade, &cascade.page, page_box, context)
+    {
+        paint_margin_box(scene, &margin_box, pixel_source, warnings);
     }
 }
 

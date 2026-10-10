@@ -10,9 +10,9 @@ pub use page::{InlineSvg, Page, PageGeometry, PageMode, RasterImage};
 // cov:ignore: public type re-exports have no executable mapping; API integration tests verify them.
 pub use raikiri_dom::{
     ClipKind, ColumnRule, DecorationKind, DecorationLine, DecorationStyle, FontBlob, FontId,
-    FontRef, FontVariation, Fragment, FragmentKind, GeneratedBox, GeneratedKind, Glyph,
-    OverflowClip, PaintEvent, PositionedGlyphRun, RepeatKind, RunSource, Synthesis, Tag,
-    TextLineId,
+    FontRef, FontVariation, Fragment, FragmentKind, GeneratedBox, GeneratedKind, Glyph, MarginBox,
+    MarginBoxBackgroundImage, MarginBoxBorder, MarginBoxText, OverflowClip, PaintEvent,
+    PositionedGlyphRun, RepeatKind, RunSource, Synthesis, Tag, TextLineId,
 };
 
 use crate::render::{PipelineInputs, PipelineOutput, PipelineRun, run_pipeline};
@@ -235,12 +235,23 @@ impl DocumentLayout {
 
     fn page_at(&self, i: usize) -> Page<'_> {
         let (document, cascade) = self.out.layout_for_page(self.out.slices[i].page_index);
+        // A right page pairs with the left page before it; the first page,
+        // which has none, pairs with the one after it.
+        let paired_style = if self.out.slices[i].page_index % 2 == 1 {
+            None
+        } else if i > 0 {
+            self.out.page_styles.get(i - 1)
+        } else {
+            self.out.page_styles.get(i + 1)
+        };
         Page {
             slice: &self.out.slices[i],
             geometry: &self.out.geometries[i],
             style: &self.out.page_styles[i],
             document,
             cascade,
+            page_count: self.page_count(),
+            paired_style,
         }
     }
 
