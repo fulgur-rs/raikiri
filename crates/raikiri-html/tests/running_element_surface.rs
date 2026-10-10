@@ -152,7 +152,7 @@ fn the_selected_element_lays_out_at_the_margin_box_width() {
     assert_eq!(running.height(), 3.0 + 2.0 + 60.0 + 2.0 + 7.0);
     let element = laid_out
         .fragments()
-        .find(|fragment| fragment.node() == node)
+        .find(|fragment| running.source_node(fragment.node()) == Some(node))
         .expect("the element's box");
     let rect = element.paint_rect();
     assert_eq!(
@@ -160,6 +160,7 @@ fn the_selected_element_lays_out_at_the_margin_box_width() {
         (0.0, 3.0, 200.0, 64.0)
     );
     assert_eq!(laid_out.geometry().page_box.height, running.height());
+    assert_eq!(running.source_node(NodeId(u64::MAX)), None);
 }
 
 #[test]
@@ -256,6 +257,34 @@ fn margins_in_percent_and_auto_and_unusable_widths_are_handled() {
         .expect("layout")
         .expect("running");
     assert_eq!(unusable.width(), 0.0);
+}
+
+#[test]
+fn a_running_layout_is_made_once_per_element_and_width() {
+    let result =
+        lay_out(r#"<div class="hdr" id="a">A</div><div class="hdr" id="b">B</div><p>Body</p>"#);
+    let page = result.pages().next().expect("page");
+    let first = page
+        .running_element("hdr", StringFetchMode::First)
+        .expect("first");
+    let last = page
+        .running_element("hdr", StringFetchMode::Last)
+        .expect("last");
+    let layout = |node, width| {
+        result
+            .layout_running_element(node, width)
+            .expect("layout")
+            .expect("running")
+    };
+    let shared = layout(first, 100.0);
+    assert!(std::ptr::eq(shared, layout(first, 100.0)));
+    assert!(!std::ptr::eq(shared, layout(first, 50.0)));
+    assert!(!std::ptr::eq(shared, layout(last, 100.0)));
+    // Widths that cannot be used all lay out at 0.
+    let zero = layout(first, 0.0);
+    for unusable in [-5.0, -0.0, f32::NAN, f32::INFINITY] {
+        assert!(std::ptr::eq(zero, layout(first, unusable)));
+    }
 }
 
 #[test]

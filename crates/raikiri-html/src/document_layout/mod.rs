@@ -12,9 +12,9 @@ pub use running::RunningElementLayout;
 // cov:ignore: public type re-exports have no executable mapping; API integration tests verify them.
 pub use raikiri_dom::{
     ClipKind, ColumnRule, DecorationKind, DecorationLine, DecorationStyle, FontBlob, FontId,
-    FontRef, FontVariation, Fragment, FragmentKind, GeneratedBox, GeneratedKind, Glyph,
-    OverflowClip, PaintEvent, PositionedGlyphRun, RepeatKind, RunSource, Synthesis, Tag,
-    TextLineId,
+    FontRef, FontVariation, Fragment, FragmentKind, GeneratedBox, GeneratedKind, Glyph, MarginBox,
+    MarginBoxBackgroundImage, MarginBoxBorder, MarginBoxText, OverflowClip, PaintEvent,
+    PositionedGlyphRun, RepeatKind, RunSource, Synthesis, Tag, TextLineId,
 };
 
 use crate::render::{PipelineInputs, PipelineOutput, PipelineRun, run_pipeline};
@@ -202,6 +202,7 @@ pub fn layout(
     let rendered = navigation::build_rendered(&out);
     let anchors = navigation::build_anchors(DomView::new(&out.document), &out);
     let running = build_running_index(&out);
+    let running_layouts = running::LayoutCache::new(&running);
     if signal.as_ref().is_some_and(|signal| signal.is_aborted()) {
         return Ok(LayoutStatus::Aborted);
     }
@@ -210,6 +211,7 @@ pub fn layout(
         anchors,
         rendered,
         running,
+        running_layouts,
     }))
 }
 
@@ -219,6 +221,7 @@ pub struct DocumentLayout {
     anchors: AnchorIndex,
     rendered: std::collections::HashSet<raikiri_traits::NodeId>,
     running: running::RunningIndex,
+    running_layouts: running::LayoutCache,
 }
 
 /// Index the running elements by the pages the rendered content around them
@@ -268,12 +271,23 @@ impl DocumentLayout {
 
     fn page_at(&self, i: usize) -> Page<'_> {
         let (document, cascade) = self.out.layout_for_page(self.out.slices[i].page_index);
+        // A right page pairs with the left page before it; the first page,
+        // which has none, pairs with the one after it.
+        let paired_style = if self.out.slices[i].page_index % 2 == 1 {
+            None
+        } else if i > 0 {
+            self.out.page_styles.get(i - 1)
+        } else {
+            self.out.page_styles.get(i + 1)
+        };
         Page {
             slice: &self.out.slices[i],
             geometry: &self.out.geometries[i],
             style: &self.out.page_styles[i],
             document,
             cascade,
+            page_count: self.page_count(),
+            paired_style,
             running: Some(&self.running),
         }
     }
@@ -283,18 +297,20 @@ impl DocumentLayout {
     /// it (CSS GCPM 3 §1.2).
     ///
     /// Use [`Page::running_element`] to find the element a margin box shows
-    /// on a page. Returns `None` when `node` is not a running element. The
-    /// element is laid out again on each call; a caller that shows the same
-    /// element at the same width on several pages can keep the result.
+    /// on a page. Returns `None` when `node` is not a running element.
+    ///
+    /// The layout of an element depends only on the element and the width,
+    /// so it is made once and kept: a margin box that shows the same element
+    /// on many pages gets the same layout back for each page.
     pub fn layout_running_element(
         &self,
         node: raikiri_traits::NodeId,
         width: f32,
-    ) -> Result<Option<RunningElementLayout>, RenderError> {
-        if !self.running.contains(node) {
-            return Ok(None);
-        }
-        running::layout_running_element(&self.out.document, &self.out.cascade, node, width)
+    ) -> Result<Option<&RunningElementLayout>, RenderError> {
+        let width = running::used_width(width);
+        self.running_layouts.get_or_try_make(node, width, || {
+            running::layout_running_element(&self.out.document, &self.out.cascade, node, width)
+        })
     }
 
     /// In-document link destinations. Positions are in layout space until
