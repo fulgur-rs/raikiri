@@ -259,6 +259,34 @@ fn margins_in_percent_and_auto_and_unusable_widths_are_handled() {
 }
 
 #[test]
+fn a_running_layout_is_made_once_per_element_and_width() {
+    let result =
+        lay_out(r#"<div class="hdr" id="a">A</div><div class="hdr" id="b">B</div><p>Body</p>"#);
+    let page = result.pages().next().expect("page");
+    let first = page
+        .running_element("hdr", StringFetchMode::First)
+        .expect("first");
+    let last = page
+        .running_element("hdr", StringFetchMode::Last)
+        .expect("last");
+    let layout = |node, width| {
+        result
+            .layout_running_element(node, width)
+            .expect("layout")
+            .expect("running")
+    };
+    let shared = layout(first, 100.0);
+    assert!(std::ptr::eq(shared, layout(first, 100.0)));
+    assert!(!std::ptr::eq(shared, layout(first, 50.0)));
+    assert!(!std::ptr::eq(shared, layout(last, 100.0)));
+    // Widths that cannot be used all lay out at 0.
+    let zero = layout(first, 0.0);
+    for unusable in [-5.0, -0.0, f32::NAN, f32::INFINITY] {
+        assert!(std::ptr::eq(zero, layout(first, unusable)));
+    }
+}
+
+#[test]
 fn a_document_without_running_elements_selects_nothing() {
     let html = br#"<!doctype html><style>@page { size: 300px 200px }</style><p id="p">Body</p>"#;
     let resources = RenderResources::new();

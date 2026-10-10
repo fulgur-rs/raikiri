@@ -14,6 +14,7 @@
 //!   layout that is read through the same [`Page`] accessors as a document
 //!   page, so a painter draws it with the code it already has.
 
+use std::cell::OnceCell;
 use std::collections::HashMap;
 
 use raikiri_dom::{Document, PageLayoutControl, layout_pages_with_page_geometry_and_control};
@@ -139,12 +140,79 @@ impl RunningIndex {
             _ => on_page.next().map(|placement| placement.node).or(entry),
         }
     }
+}
 
-    /// Whether `node` is a running element of this document.
-    pub(crate) fn contains(&self, node: NodeId) -> bool {
-        self.pools
+/// Running-element layouts already made, kept as long as the document layout
+/// so that later requests borrow them instead of laying the element out
+/// again.
+///
+/// Each running element has an append-only chain of layouts, one per width
+/// it was laid out at. A link is never removed or replaced once set, so a
+/// layout handed out stays valid while the cache lives.
+#[derive(Default)]
+pub(crate) struct LayoutCache {
+    /// One chain per running element, sorted by node.
+    chains: Vec<(NodeId, OnceCell<Box<CachedLayout>>)>,
+}
+
+struct CachedLayout {
+    width_bits: u32,
+    layout: RunningElementLayout,
+    next: OnceCell<Box<CachedLayout>>,
+}
+
+impl LayoutCache {
+    /// An empty cache for the running elements of `index`.
+    pub(crate) fn new(index: &RunningIndex) -> Self {
+        let mut nodes: Vec<NodeId> = index
+            .pools
             .values()
-            .any(|pool| pool.iter().any(|placement| placement.node == node))
+            .flat_map(|pool| pool.iter().map(|placement| placement.node))
+            .collect();
+        nodes.sort_unstable_by_key(|node| node.0);
+        nodes.dedup();
+        Self {
+            chains: nodes
+                .into_iter()
+                .map(|node| (node, OnceCell::new()))
+                .collect(),
+        }
+    }
+
+    /// The layout of running element `node` at `width`, made with `make` the
+    /// first time it is asked for. `None` when `node` is not a running
+    /// element or `make` gives no layout; neither that nor an error is kept.
+    pub(crate) fn get_or_try_make<E>(
+        &self,
+        node: NodeId,
+        width: f32,
+        make: impl FnOnce() -> Result<Option<RunningElementLayout>, E>,
+    ) -> Result<Option<&RunningElementLayout>, E> {
+        let Ok(position) = self
+            .chains
+            .binary_search_by_key(&node.0, |(node, _)| node.0)
+        else {
+            return Ok(None);
+        };
+        let width_bits = width.to_bits();
+        let mut slot = &self.chains[position].1;
+        while let Some(link) = slot.get() {
+            if link.width_bits == width_bits {
+                return Ok(Some(&link.layout));
+            }
+            slot = &link.next;
+        }
+        let Some(layout) = make()? else {
+            return Ok(None); // cov:ignore: a document with a body always emits a page slice.
+        };
+        let link = slot.get_or_init(|| {
+            Box::new(CachedLayout {
+                width_bits,
+                layout,
+                next: OnceCell::new(),
+            })
+        });
+        Ok(Some(&link.layout))
     }
 }
 
@@ -237,7 +305,18 @@ impl RunningElementLayout {
     }
 }
 
-/// Lay running element `node` out at `width` CSS px.
+/// The width a running element is laid out at for a requested `width`:
+/// negative and non-finite widths lay out at 0.
+pub(crate) fn used_width(width: f32) -> f32 {
+    if width.is_finite() && width > 0.0 {
+        width
+    } else {
+        0.0
+    }
+}
+
+/// Lay running element `node` out at `width` CSS px, a width
+/// [`used_width`] returned.
 ///
 /// `source` is the laid-out document: its replaced elements already carry
 /// their resolved intrinsic sizes, so nothing is fetched again. Only the
@@ -259,12 +338,6 @@ pub(crate) fn layout_running_element(
         // cov:ignore: the caller only passes nodes the running index found in the document.
         return Ok(None);
     };
-    let width = if width.is_finite() {
-        width.max(0.0)
-    } else {
-        0.0
-    };
-
     let mut ancestors = Vec::new();
     let mut parent = source.parent_of(index);
     while let Some(id) = parent {
