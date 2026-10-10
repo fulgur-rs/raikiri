@@ -19,9 +19,10 @@ use smol_str::SmolStr;
 use crate::ComputedValues;
 use crate::computed::CustomPropertyEnvironment;
 use crate::property::{
-    BackgroundImage, BasicShape, ClipPath, ContentComponent, FilterFunction, FontFeatureSettings,
-    FontLanguageOverride, FontPaletteValue, FontVariationSettings, Gradient, GridLineValue,
-    GridTemplateAreasValue, HyphenateCharacter, ListStyleType, PositionValue, TextEmphasisStyle,
+    BackgroundImage, BasicShape, ClipPath, ContentComponent, CounterStyle, FilterFunction,
+    FontFeatureSettings, FontLanguageOverride, FontPaletteValue, FontVariationSettings, Gradient,
+    GridLineValue, GridTemplateAreasValue, HyphenateCharacter, ListStyleType, PositionValue,
+    TextEmphasisStyle,
 };
 use crate::resolve::{ComputedGridTemplateTracks, ComputedGridTrackListComponent};
 
@@ -235,7 +236,7 @@ pub(crate) fn own_heap_bytes(values: &ComputedValues, parent: &ComputedValues) -
             background_color_expression.as_ref(),
             parent.background_color_expression.as_ref(),
         )
-        + list(font_family, &parent.font_family, |_| 0)
+        + list(font_family, &parent.font_family, |family| str_heap(&family.0.0))
         + str_of(list_style_type_str(list_style_type), list_style_type_str(&parent.list_style_type))
         + image(list_style_image, &parent.list_style_image)
         + list(counter_reset, &parent.counter_reset, |(name, _)| str_heap(name))
@@ -288,8 +289,8 @@ fn str_of(value: Option<&SmolStr>, parent: Option<&SmolStr>) -> u64 {
     }
 }
 
-/// The heap of a list, unless it is the one `parent` holds: its entries and
-/// what each of them holds, as `item` measures it.
+/// The heap of a list, unless it is the one `parent` holds: its buffer and
+/// what each entry holds, as `item` measures it.
 fn list<T>(value: &Arc<Vec<T>>, parent: &Arc<Vec<T>>, item: impl Fn(&T) -> u64) -> u64 {
     if Arc::ptr_eq(value, parent) {
         return 0;
@@ -297,30 +298,54 @@ fn list<T>(value: &Arc<Vec<T>>, parent: &Arc<Vec<T>>, item: impl Fn(&T) -> u64) 
     vec_heap(value, item)
 }
 
-fn vec_heap<T>(value: &[T], item: impl Fn(&T) -> u64) -> u64 {
+/// The heap of a vector: its whole buffer, spare capacity included, and
+/// what each entry holds.
+fn vec_heap<T>(value: &Vec<T>, item: impl Fn(&T) -> u64) -> u64 {
+    (value.capacity() * size_of::<T>()) as u64 + value.iter().map(item).sum::<u64>()
+}
+
+/// The heap of a shared slice, whose allocation holds exactly its entries.
+fn slice_heap<T>(value: &[T], item: impl Fn(&T) -> u64) -> u64 {
     std::mem::size_of_val(value) as u64 + value.iter().map(item).sum::<u64>()
+}
+
+/// The name a counter style refers to, when it names one.
+fn counter_style(style: &CounterStyle) -> u64 {
+    match style {
+        CounterStyle::Named(name) => str_heap(name),
+        CounterStyle::Decimal => 0,
+    }
 }
 
 fn content_component(component: &ContentComponent) -> u64 {
     match component {
         ContentComponent::Literal(text) => str_heap(text),
-        ContentComponent::Counter { name, .. }
-        | ContentComponent::String { name, .. }
+        ContentComponent::Counter { name, style } => str_heap(name) + counter_style(style),
+        ContentComponent::String { name, .. }
         | ContentComponent::Element { name, .. }
         | ContentComponent::Attr { name } => str_heap(name),
         ContentComponent::Counters {
-            name, separator, ..
-        } => str_heap(name) + separator.capacity() as u64,
+            name,
+            separator,
+            style,
+        } => str_heap(name) + separator.capacity() as u64 + counter_style(style),
         ContentComponent::AttrFallback { name, fallback } => {
             str_heap(name) + fallback.as_ref().map_or(0, str_heap)
         }
-        ContentComponent::TargetCounter { url, name, .. } => url.capacity() as u64 + str_heap(name),
+        ContentComponent::TargetCounter { url, name, style } => {
+            url.capacity() as u64 + str_heap(name) + counter_style(style)
+        }
         ContentComponent::TargetCounters {
             url,
             name,
             separator,
-            ..
-        } => url.capacity() as u64 + str_heap(name) + separator.capacity() as u64,
+            style,
+        } => {
+            url.capacity() as u64
+                + str_heap(name)
+                + separator.capacity() as u64
+                + counter_style(style)
+        }
         ContentComponent::TargetText { url, .. } | ContentComponent::Image { url } => {
             url.capacity() as u64
         }
@@ -358,7 +383,7 @@ fn features(value: &FontFeatureSettings, parent: &FontFeatureSettings) -> u64 {
         {
             0
         }
-        (FontFeatureSettings::Features(list), _) => vec_heap(list, |_| 0),
+        (FontFeatureSettings::Features(list), _) => slice_heap(list, |_| 0),
         _ => 0,
     }
 }
@@ -371,7 +396,7 @@ fn variations(value: &FontVariationSettings, parent: &FontVariationSettings) -> 
             0
         }
         (FontVariationSettings::Settings(list), _) => {
-            vec_heap(list, |setting| str_heap(&setting.tag))
+            slice_heap(list, |setting| str_heap(&setting.tag))
         }
         _ => 0,
     }

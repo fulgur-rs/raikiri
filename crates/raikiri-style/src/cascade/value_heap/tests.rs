@@ -159,3 +159,40 @@ fn strings_inside_every_kind_of_value_count() {
         3 * size_of::<ContentComponent>() as u64 + 3 * LONG.len() as u64
     );
 }
+
+#[test]
+fn family_names_counter_styles_and_spare_capacity_count() {
+    use crate::Atom;
+    use crate::computed::RunningTemplate;
+    use crate::property::{CounterStyle, FontFamilyKind, FontFamilyName};
+    let parent = ComputedValues::initial();
+    let name = SmolStr::new(LONG);
+    let mut values = parent.clone();
+    values.font_family = Arc::new(vec![FontFamilyName(
+        Atom(name.clone()),
+        FontFamilyKind::Named,
+    )]);
+    assert_eq!(
+        own_heap_bytes(&values, &parent),
+        values.font_family.capacity() as u64 * size_of::<FontFamilyName>() as u64
+            + LONG.len() as u64
+    );
+    let mut values = parent.clone();
+    values.content = Arc::new(vec![ContentComponent::Counter {
+        name: SmolStr::new("c"),
+        style: CounterStyle::Named(name.clone()),
+    }]);
+    assert_eq!(
+        own_heap_bytes(&values, &parent),
+        size_of::<ContentComponent>() as u64 + LONG.len() as u64
+    );
+    // A vector's whole buffer counts, not only the entries in use.
+    let mut values = parent.clone();
+    let mut templates = Vec::with_capacity(8);
+    templates.push(RunningTemplate::new(SmolStr::new("r")));
+    values.running_templates = templates;
+    assert_eq!(
+        own_heap_bytes(&values, &parent),
+        8 * size_of::<RunningTemplate>() as u64
+    );
+}

@@ -591,3 +591,42 @@ fn inherited_values_count_once() {
         100 * std::mem::size_of::<crate::resolve::ComputedTextShadow>() as u64
     );
 }
+
+#[test]
+fn first_line_styles_count_the_heap_they_resolve_again() {
+    // The span's own text-shadow is resolved again for its first-line style,
+    // and that list counts as output too.
+    let mut doc = TestDoc::new();
+    let style = doc.push_element(0, "style", None);
+    doc.push_text(style, "p::first-line { color: red }");
+    let p = doc.push_element(0, "p", Some("display: block"));
+    doc.push_text(p, "text ");
+    let span = doc.push_element(p, "span", Some("text-shadow: 1px 1px red, 2px 2px blue"));
+    doc.push_text(span, "more");
+    let tree = build_rule_tree(&doc);
+    let root = StyleNodeId(p as u64);
+    let media = MediaContext::default();
+    let options = WalkOptions {
+        retain_subtree: Some(root),
+        limits: unlimited(),
+        ..WalkOptions::default()
+    };
+    let walk_bytes = walk(&doc, &tree, &media, options)
+        .expect("the walk succeeds")
+        .counts
+        .output_bytes;
+    let inline_bytes =
+        walk_bytes + (doc.node_count() * std::mem::size_of::<Option<ComputedValues>>()) as u64;
+    let (kind, _, actual) = exceeded(cascade_with_first_line_within(
+        &doc,
+        &tree,
+        &media,
+        root,
+        output_limit(inline_bytes),
+    ));
+    assert_eq!(kind, CascadeLimitKind::OutputBytes);
+    assert!(
+        actual
+            >= inline_bytes + 2 * std::mem::size_of::<crate::resolve::ComputedTextShadow>() as u64
+    );
+}
