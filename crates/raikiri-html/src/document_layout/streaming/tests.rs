@@ -667,7 +667,6 @@ fn streamed_pages_carry_the_base_url() {
     assert_eq!(base.0.as_deref(), Some("https://example.com/other/"));
 }
 
-
 /// Feed `html` in `chunk`-byte pieces with a checkpoint every byte, stopping
 /// at the first error, then finish.
 fn stream_with_checkpoints(
