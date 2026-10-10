@@ -43,6 +43,7 @@ pub use document_layout::{
     Page, PageGeometry, PageMode, PaintEvent, PositionedGlyphRun, RasterImage, RepeatKind,
     RunSource, Synthesis, Tag, TextLineId, layout,
 };
+pub use document_layout::{PageSink, StreamPage, StreamStatus, StreamSummary, StreamingLayout};
 pub use document_parse::{parse_html, parse_html_with_limits};
 pub use font_collection::{
     BundledFont, FontCollectionBuildError, FontCollectionBuilder, MAX_BUNDLED_FONT_BYTES,

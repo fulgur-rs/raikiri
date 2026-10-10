@@ -4,11 +4,13 @@ mod dom_view;
 mod navigation;
 mod page;
 mod running;
+mod streaming;
 
 pub use dom_view::DomView;
 pub use navigation::{Anchor, AnchorIndex, Link};
 pub use page::{InlineSvg, Page, PageGeometry, PageMode, RasterImage};
 pub use running::RunningElementLayout;
+pub use streaming::{PageSink, StreamPage, StreamStatus, StreamSummary, StreamingLayout};
 // cov:ignore: public type re-exports have no executable mapping; API integration tests verify them.
 pub use raikiri_dom::{
     ClipKind, ColumnRule, DecorationKind, DecorationLine, DecorationStyle, FontBlob, FontId,

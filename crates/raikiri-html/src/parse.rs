@@ -124,7 +124,7 @@ fn flatten_fragment_root(document: &mut raikiri_dom::Document) {
     document.detach_from_parent(html);
 }
 
-fn finish_document(
+pub(crate) fn finish_document(
     mut doc: UncascadedDocument,
     options: &ParseOptions<'_>,
 ) -> Result<UncascadedDocument, ParseError> {
