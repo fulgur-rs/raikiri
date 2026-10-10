@@ -7,9 +7,8 @@ use crate::Atom;
 use crate::property::{
     Length, PropertyValue, parse_length_allow_negative, parse_non_negative_length, parse_value,
 };
-use crate::rule::{
-    Declaration, ParsedDeclaration, expand_shorthand_into, parse_page_context_declaration_block,
-};
+use crate::rule::{Declaration, ParsedDeclaration, expand_shorthand_into};
+use crate::ruletree::ParseBudget;
 
 use super::types::*;
 
@@ -26,9 +25,17 @@ use super::types::*;
 /// its pseudo-page, whitespace between a `:` and its pseudo keyword, or
 /// whitespace between two pseudo-pages of the same compound — returns
 /// `Err`, which cssparser converts into "drop the whole @page rule".
+///
+/// Each entry of the list counts as a selector against `budget` as it is
+/// parsed, so a huge list stops at the first entry past the limit. A page
+/// rule is a rule of its own, so with no rule left the prelude is not parsed.
 pub(crate) fn parse_page_prelude<'i>(
     input: &mut Parser<'i, '_>,
+    budget: &mut ParseBudget,
 ) -> Result<PageSelector, ParseError<'i, ()>> {
+    if !budget.rule_fits() {
+        return Err(input.new_custom_error(()));
+    }
     // Empty prelude → `@page { … }` matches every page. Represented as a
     // single empty entry so the cascade code can iterate uniformly.
     if input.is_exhausted() {
@@ -43,7 +50,13 @@ pub(crate) fn parse_page_prelude<'i>(
     // closure invocation consumes every token up to the delimiter — so any
     // trailing garbage inside a compound propagates as an Err and the whole
     // `@page` rule is dropped.
-    let entries = input.parse_comma_separated(parse_compound_selector)?;
+    let entries = input.parse_comma_separated(|input| {
+        let entry = parse_compound_selector(input)?;
+        if !budget.selectors(1) {
+            return Err(input.new_custom_error(()));
+        }
+        Ok(entry)
+    })?;
     Ok(PageSelector { entries })
 }
 
@@ -203,9 +216,13 @@ pub(crate) enum PageBodyItem {
 /// cssparser's error-recovery skip — declarations before and after it still
 /// parse (pinned by
 /// `ruletree::tests::page_unknown_nested_at_rule_body_is_skipped_declaration_survives`).
-pub(crate) struct PageDeclParser;
+pub(crate) struct PageDeclParser<'b> {
+    /// What the rule tree may still retain; each margin box spends it as
+    /// it is parsed.
+    budget: &'b mut ParseBudget,
+}
 
-impl<'i> DeclarationParser<'i> for PageDeclParser {
+impl<'i> DeclarationParser<'i> for PageDeclParser<'_> {
     type Declaration = PageBodyItem;
     type Error = ();
 
@@ -278,7 +295,7 @@ impl<'i> DeclarationParser<'i> for PageDeclParser {
 
 // Recognizes the sixteen margin-box at-rule idents — see `PageDeclParser`'s
 // doc for the split with `QualifiedRuleParser` below.
-impl<'i> AtRuleParser<'i> for PageDeclParser {
+impl<'i> AtRuleParser<'i> for PageDeclParser<'_> {
     type Prelude = PageMarginBoxSlot;
     type AtRule = PageBodyItem;
     type Error = ();
@@ -324,17 +341,27 @@ impl<'i> AtRuleParser<'i> for PageDeclParser {
     /// The margin-box grammar has no descriptors of its own (unlike the
     /// `@page` block body itself, which additionally recognizes `size` /
     /// `marks` / `bleed` — see [`PageDeclParser::parse_value`]), so this
-    /// reuses [`parse_page_context_declaration_block`] directly rather than routing
-    /// through this type's `DeclarationParser` impl. See
+    /// reuses [`crate::rule::parse_page_context_declaration_block`] directly
+    /// rather than routing through this type's `DeclarationParser` impl. See
     /// [`PageMarginBoxRule::declarations`] for the shorthand-expansion guarantee
     /// this inherits.
+    ///
+    /// The margin box counts as a rule and its declarations count as they
+    /// expand, so a margin box past a rule tree limit is dropped and its
+    /// body is not parsed further.
     fn parse_block<'t>(
         &mut self,
         prelude: Self::Prelude,
         _start: &ParserState,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::AtRule, ParseError<'i, Self::Error>> {
-        let declarations = parse_page_context_declaration_block(input);
+        if !self.budget.rules(1) {
+            return Err(input.new_custom_error(()));
+        }
+        let declarations = self
+            .budget
+            .page_context_declaration_block(input)
+            .ok_or_else(|| input.new_custom_error(()))?;
         Ok(PageBodyItem::MarginBox(PageMarginBoxRule {
             slot: prelude,
             declarations,
@@ -344,13 +371,13 @@ impl<'i> AtRuleParser<'i> for PageDeclParser {
 
 // Qualified-rule parser (nested rule) is also a no-op — see `PageDeclParser`'s
 // doc.
-impl<'i> QualifiedRuleParser<'i> for PageDeclParser {
+impl<'i> QualifiedRuleParser<'i> for PageDeclParser<'_> {
     type Prelude = ();
     type QualifiedRule = PageBodyItem;
     type Error = ();
 }
 
-impl<'i> RuleBodyItemParser<'i, PageBodyItem, ()> for PageDeclParser {
+impl<'i> RuleBodyItemParser<'i, PageBodyItem, ()> for PageDeclParser<'_> {
     fn parse_qualified(&self) -> bool {
         false
     }
@@ -405,7 +432,7 @@ pub(crate) struct PageBlockBody {
 /// block are kept rather than reduced here; [`PageMarginBoxRule`]'s doc gives
 /// the same rationale for duplicate margin-box slots).
 ///
-/// # Not a *direct* reuse of [`crate::rule::parse_declaration_block`] — except for margin boxes
+/// # Not a *direct* reuse of [`crate::rule::parse_page_context_declaration_block`] — except for margin boxes
 ///
 /// Unlike qualified style rules, the `@page` block body itself is parsed by
 /// a dedicated [`PageDeclParser`] rather than [`crate::rule`]'s
@@ -419,30 +446,61 @@ pub(crate) struct PageBlockBody {
 /// declaration at all, so `PageDeclParser::parse_value` never sees them —
 /// `PageDeclParser`'s `AtRuleParser` impl handles them instead (see that
 /// impl's doc), and *its* `parse_block` **does** reuse
-/// [`crate::rule::parse_page_context_declaration_block`] directly, because a margin-box
-/// at-rule's body has no descriptors of its own — it is exactly the
-/// ordinary-declaration-list grammar that function already implements.
+/// [`crate::rule::parse_page_context_declaration_block`] directly, because a
+/// margin-box at-rule's body has no descriptors of its own — it is exactly
+/// the ordinary-declaration-list grammar that function already implements.
 ///
 /// # Shorthand expansion
 ///
 /// Ordinary declarations are expanded before they are stored in the page
 /// declaration list. Margin-box bodies use the ordinary declaration parser.
-pub(crate) fn parse_page_declaration_block(input: &mut Parser<'_, '_>) -> PageBlockBody {
-    let mut parser = PageDeclParser;
+///
+/// # Rule tree limits
+///
+/// Declarations and descriptors count against `budget` as they are kept,
+/// and margin boxes as they are parsed. Parsing stops at the first item
+/// past a limit, leaving the rest of the body unparsed; the rule tree then
+/// drops the rule.
+pub(crate) fn parse_page_declaration_block(
+    input: &mut Parser<'_, '_>,
+    budget: &mut ParseBudget,
+) -> PageBlockBody {
+    let mut parser = PageDeclParser { budget };
     let mut declarations = Vec::new();
     let mut size_declarations = Vec::new();
     let mut marks_declarations = Vec::new();
     let mut bleed_declarations = Vec::new();
     let mut margin_box_rules = Vec::new();
-    for item in RuleBodyParser::new(input, &mut parser).flatten() {
-        match item {
-            PageBodyItem::Property(decl) => {
+    let mut body = RuleBodyParser::new(input, &mut parser);
+    while let Some(item) = body.next() {
+        let kept = match item {
+            Ok(PageBodyItem::Property(decl)) => {
+                let before = declarations.len();
                 expand_shorthand_into(&decl, |d| declarations.push(d));
+                declarations.len() - before
             }
-            PageBodyItem::Size(decl) => size_declarations.push(decl),
-            PageBodyItem::Marks(decl) => marks_declarations.push(decl),
-            PageBodyItem::Bleed(decl) => bleed_declarations.push(decl),
-            PageBodyItem::MarginBox(rule) => margin_box_rules.push(rule),
+            Ok(PageBodyItem::Size(decl)) => {
+                size_declarations.push(decl);
+                1
+            }
+            Ok(PageBodyItem::Marks(decl)) => {
+                marks_declarations.push(decl);
+                1
+            }
+            Ok(PageBodyItem::Bleed(decl)) => {
+                bleed_declarations.push(decl);
+                1
+            }
+            // A margin box counted itself and its declarations as it was
+            // parsed.
+            Ok(PageBodyItem::MarginBox(rule)) => {
+                margin_box_rules.push(rule);
+                0
+            }
+            Err(_) => 0,
+        };
+        if !body.parser.budget.declarations(kept) {
+            break;
         }
     }
     PageBlockBody {

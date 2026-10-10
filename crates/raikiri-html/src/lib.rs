@@ -33,6 +33,7 @@ pub use cascade::{
     build_cascaded_with_media_context, build_cascaded_with_media_context_for_page,
     build_cascaded_with_media_context_for_page_and_consumer_properties,
     build_cascaded_with_options, build_rule_tree, build_rule_tree_with_consumer_properties,
+    build_rule_tree_with_limits,
 };
 pub use document::HtmlDocument;
 // cov:ignore: these type/function re-exports have no executable code; API integration tests and rustdoc verify them.

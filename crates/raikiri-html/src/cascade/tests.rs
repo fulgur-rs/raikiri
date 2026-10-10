@@ -107,6 +107,34 @@ fn parsed_extra_layer_order_precedes_later_dom_user_stylesheets() {
 }
 
 #[test]
+fn build_rule_tree_with_limits_reports_a_passed_limit() {
+    let doc = parsed_extra_stylesheet("p {display:block}");
+    let mut limits = raikiri_style::RuleTreeLimits::default();
+    limits.max_selectors = Some(0);
+    let Err(error) = build_rule_tree_with_limits(&doc, &[], &limits) else {
+        panic!("the user agent's rules hold selectors");
+    };
+    assert!(
+        matches!(
+            error,
+            raikiri_style::CascadeError::LimitExceeded {
+                kind: raikiri_style::CascadeLimitKind::StyleSelectors,
+                limit: 0,
+                ..
+            }
+        ),
+        "{error:?}"
+    );
+    // The tree built within the default limits holds the same rules.
+    let tree = build_rule_tree_with_limits(&doc, &[], &raikiri_style::RuleTreeLimits::default())
+        .expect("the default limits admit the document");
+    assert_eq!(
+        tree.style_rules().len(),
+        build_rule_tree(&doc).style_rules().len()
+    );
+}
+
+#[test]
 fn build_cascaded_with_options_reports_a_passed_limit() {
     let doc = parsed_extra_stylesheet("p {display:block}");
     let mut options = raikiri_style::CascadeOptions::default();

@@ -93,6 +93,22 @@ fn parse_html_with_limits_reports_a_passed_cascade_limit() {
         "{err:?}"
     );
 
+    // The document's stylesheets are retained within the rule tree limits.
+    let limits = RenderLimits::builder().max_style_rules(Some(1)).build();
+    let err = parse_html_with_limits(html, &opts, limits)
+        .expect_err("the user agent and the document hold more than one rule");
+    assert!(
+        matches!(
+            err,
+            RenderError::LimitExceeded {
+                kind: LimitKind::StyleRules,
+                limit: 1,
+                actual,
+            } if actual > 1
+        ),
+        "{err:?}"
+    );
+
     // The aggregate footprint is not consulted.
     let limits = RenderLimits::builder().max_aggregate_bytes(Some(1)).build();
     let doc = parse_html_with_limits(html, &opts, limits)

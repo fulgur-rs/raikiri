@@ -35,7 +35,7 @@ use raikiri_traits::{LimitKind, ParseError, RenderError, RenderLimits};
 use raikiri_style::{CascadeOptions, PageContextQuery};
 
 use crate::HtmlDocument;
-use crate::cascade::build_rule_tree;
+use crate::cascade::build_rule_tree_with_limits;
 
 /// Parse an HTML byte stream and return a fully cascaded [`HtmlDocument`].
 ///
@@ -54,6 +54,8 @@ use crate::cascade::build_rule_tree;
 ///   input byte count exceeds [`RenderLimits::max_input_bytes`].
 /// - `RenderError::LimitExceeded { kind: LimitKind::DomNodes, .. }`:
 ///   parsed DOM node count exceeds [`RenderLimits::max_dom_nodes`].
+/// - `RenderError::LimitExceeded { kind: LimitKind::Style*, .. }`: the
+///   document's stylesheets passed one of [`RenderLimits::rule_tree_limits`].
 /// - `RenderError::LimitExceeded { kind: LimitKind::Cascade*, .. }`: the
 ///   cascade passed one of [`RenderLimits::cascade_limits`].
 /// - `RenderError::Cascade(_)`: the allocator refused the cascade's result,
@@ -91,10 +93,11 @@ pub fn parse_html<R: Read>(
 ///
 /// [`RenderLimits::max_dom_nodes`] is checked after parsing and before rule-tree
 /// construction or cascading. `None` disables this check.
-/// The first-page cascade runs within [`RenderLimits::cascade_limits`], the
-/// `max_cascade_*` fields. Other `limits.*` fields (`max_aggregate_bytes` /
-/// etc.) are **not consulted** by `parse_html_with_limits`; they are for the
-/// layout stages or reserved.
+/// The rule tree is built within [`RenderLimits::rule_tree_limits`], the
+/// `max_style_*` fields, and the first-page cascade runs within
+/// [`RenderLimits::cascade_limits`], the `max_cascade_*` fields. Other
+/// `limits.*` fields (`max_aggregate_bytes` / etc.) are **not consulted** by
+/// `parse_html_with_limits`; they are for the layout stages or reserved.
 ///
 /// # Implementation
 ///
@@ -118,6 +121,9 @@ pub fn parse_html<R: Read>(
 /// - `RenderError::LimitExceeded { kind: LimitKind::DomNodes, limit, actual }`:
 ///   the parsed DOM node count exceeded `limits.max_dom_nodes.unwrap()`.
 ///   `actual` is the full arena node count, including the virtual root.
+/// - `RenderError::LimitExceeded { kind: LimitKind::Style*, .. }`: the
+///   document's stylesheets passed one of [`RenderLimits::rule_tree_limits`];
+///   `actual` is the count parsing stopped at.
 /// - `RenderError::LimitExceeded { kind: LimitKind::Cascade*, .. }`: the
 ///   cascade passed one of [`RenderLimits::cascade_limits`]; `actual` is the
 ///   count it stopped at.
@@ -180,7 +186,7 @@ pub fn parse_html_with_limits<R: Read>(
     let mut first_page = PageContextQuery::default();
     first_page.is_first = true;
     first_page.is_right = true;
-    let rule_tree = build_rule_tree(&uncascaded);
+    let rule_tree = build_rule_tree_with_limits(&uncascaded, &[], &limits.rule_tree_limits())?;
     let media_context = raikiri_style::MediaContext::default();
     let font_faces = rule_tree.font_faces_for(&media_context);
     let mut cascade_options = CascadeOptions::default();

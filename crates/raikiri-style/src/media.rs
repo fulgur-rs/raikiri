@@ -273,10 +273,63 @@ impl MediaQuery {
 /// Each list holds queries that can match in some context, including valid
 /// paper features not yet evaluated by this implementation. Queries that are
 /// malformed or always `not all` are dropped while parsing.
-#[derive(Clone, Debug, PartialEq)]
+///
+/// A nested condition links to the condition around it instead of copying
+/// its lists, so nesting a group costs the same at any depth. Comparing,
+/// formatting and dropping walk the links in a loop, so a long chain needs
+/// no deep recursion.
+#[derive(Clone)]
 pub(crate) struct MediaCondition {
-    lists: Arc<[Vec<MediaQuery>]>,
+    /// The innermost list, linked to the lists around it.
+    lists: Arc<MediaLists>,
+    /// Whether any of the lists qualifies by paper dimensions.
     paper_dependent: bool,
+}
+
+struct MediaLists {
+    queries: Arc<[MediaQuery]>,
+    /// Whether these queries qualify by paper dimensions.
+    paper_dependent: bool,
+    outer: Option<Arc<MediaLists>>,
+}
+
+impl Drop for MediaLists {
+    fn drop(&mut self) {
+        // Unlink each list this one solely owns before it is dropped, so that
+        // dropping it recurses no further.
+        let mut outer = self.outer.take();
+        while let Some(lists) = outer {
+            outer = Arc::into_inner(lists).and_then(|mut lists| lists.outer.take());
+        }
+    }
+}
+
+impl MediaLists {
+    /// What two lists compare by.
+    fn key(&self) -> (&[MediaQuery], bool) {
+        (&self.queries, self.paper_dependent)
+    }
+}
+
+impl PartialEq for MediaCondition {
+    fn eq(&self, other: &Self) -> bool {
+        self.paper_dependent == other.paper_dependent
+            && self
+                .lists()
+                .map(MediaLists::key)
+                .eq(other.lists().map(MediaLists::key))
+    }
+}
+
+impl std::fmt::Debug for MediaCondition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut lists: Vec<&[MediaQuery]> = self.lists().map(|lists| &*lists.queries).collect();
+        lists.reverse();
+        f.debug_struct("MediaCondition")
+            .field("lists", &lists)
+            .field("paper_dependent", &self.paper_dependent)
+            .finish()
+    }
 }
 
 /// A parsed qualified rule that is guarded by a media condition.
@@ -296,25 +349,37 @@ impl MediaCondition {
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-        self.lists.iter().any(Vec::is_empty)
+        self.lists().any(|lists| lists.queries.is_empty())
     }
 
     pub(crate) fn matches(&self, context: &MediaContext) -> bool {
-        self.lists
-            .iter()
-            .all(|list| list.iter().any(|query| query.matches(context)))
+        self.lists()
+            .all(|lists| lists.queries.iter().any(|query| query.matches(context)))
     }
 
+    /// The condition where `other` applies inside `self`. Each of `other`'s
+    /// lists, outermost first, is linked onto `self`; the queries are shared.
     pub(crate) fn intersect(&self, other: &Self) -> Self {
+        let mut inner: Vec<&MediaLists> = other.lists().collect();
+        inner.reverse();
+        let lists = inner
+            .into_iter()
+            .fold(Arc::clone(&self.lists), |outer, lists| {
+                Arc::new(MediaLists {
+                    queries: Arc::clone(&lists.queries),
+                    paper_dependent: lists.paper_dependent,
+                    outer: Some(outer),
+                })
+            });
         Self {
-            lists: self
-                .lists
-                .iter()
-                .chain(other.lists.iter())
-                .cloned()
-                .collect(),
+            lists,
             paper_dependent: self.paper_dependent || other.paper_dependent,
         }
+    }
+
+    /// The lists, innermost first.
+    fn lists(&self) -> impl Iterator<Item = &MediaLists> {
+        std::iter::successors(Some(&*self.lists), |lists| lists.outer.as_deref())
     }
 }
 
@@ -327,7 +392,11 @@ pub(crate) fn parse_media_prelude(source: &str) -> Option<MediaCondition> {
     let mut parser = Parser::new(&mut input);
     let (list, paper_dependent) = parse_media_query_list(&mut parser).ok()?;
     (!list.is_empty()).then(|| MediaCondition {
-        lists: Arc::from([list]),
+        lists: Arc::new(MediaLists {
+            queries: Arc::from(list),
+            paper_dependent,
+            outer: None,
+        }),
         paper_dependent,
     })
 }

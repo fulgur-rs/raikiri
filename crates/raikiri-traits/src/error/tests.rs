@@ -114,6 +114,12 @@ fn a_cascade_limit_converts_to_the_render_limit_it_comes_from() {
             LimitKind::CascadeRetainedBytes,
         ),
         (CascadeLimitKind::OutputBytes, LimitKind::CascadeOutputBytes),
+        (CascadeLimitKind::StyleRules, LimitKind::StyleRules),
+        (CascadeLimitKind::StyleSelectors, LimitKind::StyleSelectors),
+        (
+            CascadeLimitKind::StyleDeclarations,
+            LimitKind::StyleDeclarations,
+        ),
     ] {
         let error: RenderError = CascadeError::LimitExceeded {
             kind: cascade,

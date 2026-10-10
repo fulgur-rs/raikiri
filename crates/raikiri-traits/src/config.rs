@@ -5,7 +5,7 @@
 //! promoted these limits to `RenderLimits` (formerly limited to BatchConfig, now
 //! shared by plan and Streaming).
 
-use raikiri_style::CascadeLimits;
+use raikiri_style::{CascadeLimits, RuleTreeLimits};
 
 use crate::page::TargetRegistry;
 
@@ -120,11 +120,30 @@ pub struct RenderLimits {
     /// `var()` substitution builds or the lists inherited values copy, is
     /// not counted.
     pub max_cascade_output_bytes: Option<u64>,
+    /// The most rules counted while the document's stylesheets are parsed
+    /// into its rule tree; see
+    /// [`RuleTreeLimits::max_rules`](raikiri_style::RuleTreeLimits::max_rules),
+    /// whose default this takes. Exceeding it yields
+    /// `LimitExceeded { kind: StyleRules }`.
+    pub max_style_rules: Option<u64>,
+    /// The most selectors counted while the document's stylesheets are
+    /// parsed; see
+    /// [`RuleTreeLimits::max_selectors`](raikiri_style::RuleTreeLimits::max_selectors),
+    /// whose default this takes. Exceeding it yields
+    /// `LimitExceeded { kind: StyleSelectors }`.
+    pub max_style_selectors: Option<u64>,
+    /// The most declarations counted while the document's stylesheets are
+    /// parsed, after shorthand expansion; see
+    /// [`RuleTreeLimits::max_declarations`](raikiri_style::RuleTreeLimits::max_declarations),
+    /// whose default this takes. Exceeding it yields
+    /// `LimitExceeded { kind: StyleDeclarations }`.
+    pub max_style_declarations: Option<u64>,
 }
 
 impl Default for RenderLimits {
     fn default() -> Self {
         let cascade = CascadeLimits::default();
+        let rule_tree = RuleTreeLimits::default();
         Self {
             max_document_pages: Some(10_000),
             max_dom_nodes: Some(1_000_000),
@@ -145,6 +164,9 @@ impl Default for RenderLimits {
             max_cascade_selector_tests: cascade.max_selector_tests,
             max_cascade_retained_bytes: cascade.max_retained_bytes,
             max_cascade_output_bytes: cascade.max_output_bytes,
+            max_style_rules: rule_tree.max_rules,
+            max_style_selectors: rule_tree.max_selectors,
+            max_style_declarations: rule_tree.max_declarations,
         }
     }
 }
@@ -171,6 +193,16 @@ impl RenderLimits {
         limits.max_output_bytes = self.max_cascade_output_bytes;
         limits
     }
+
+    /// The limits of a rule tree built within these limits: the `max_style_*`
+    /// fields.
+    pub fn rule_tree_limits(&self) -> RuleTreeLimits {
+        let mut limits = RuleTreeLimits::default();
+        limits.max_rules = self.max_style_rules;
+        limits.max_selectors = self.max_style_selectors;
+        limits.max_declarations = self.max_style_declarations;
+        limits
+    }
 }
 
 /// Fluent builder for `RenderLimits`. Unset fields use their default values.
@@ -188,6 +220,9 @@ pub struct RenderLimitsBuilder {
     max_cascade_selector_tests: Option<Option<u64>>,
     max_cascade_retained_bytes: Option<Option<u64>>,
     max_cascade_output_bytes: Option<Option<u64>>,
+    max_style_rules: Option<Option<u64>>,
+    max_style_selectors: Option<Option<u64>>,
+    max_style_declarations: Option<Option<u64>>,
 }
 
 impl RenderLimitsBuilder {
@@ -263,6 +298,24 @@ impl RenderLimitsBuilder {
         self
     }
 
+    /// Set `max_style_rules` (`None` disables the limit).
+    pub fn max_style_rules(mut self, v: Option<u64>) -> Self {
+        self.max_style_rules = Some(v);
+        self
+    }
+
+    /// Set `max_style_selectors` (`None` disables the limit).
+    pub fn max_style_selectors(mut self, v: Option<u64>) -> Self {
+        self.max_style_selectors = Some(v);
+        self
+    }
+
+    /// Set `max_style_declarations` (`None` disables the limit).
+    pub fn max_style_declarations(mut self, v: Option<u64>) -> Self {
+        self.max_style_declarations = Some(v);
+        self
+    }
+
     /// Build; unset fields use their default values.
     pub fn build(self) -> RenderLimits {
         let d = RenderLimits::default();
@@ -291,6 +344,11 @@ impl RenderLimitsBuilder {
             max_cascade_output_bytes: self
                 .max_cascade_output_bytes
                 .unwrap_or(d.max_cascade_output_bytes),
+            max_style_rules: self.max_style_rules.unwrap_or(d.max_style_rules),
+            max_style_selectors: self.max_style_selectors.unwrap_or(d.max_style_selectors),
+            max_style_declarations: self
+                .max_style_declarations
+                .unwrap_or(d.max_style_declarations),
         }
     }
 }
