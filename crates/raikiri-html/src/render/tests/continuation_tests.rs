@@ -149,6 +149,51 @@ fn a_page_that_only_continues_a_box_keeps_the_first_layout() {
 }
 
 #[test]
+fn content_after_a_page_that_only_continues_a_box_is_laid_out_at_its_own_width() {
+    // Page 1 holds only the middle of the tall box, so the relayout resumes
+    // at page 2, where the paragraph starts below the box's tail.
+    let expected = words(30);
+    let out = run(&format!(
+        "{PAGES}<div style='height:400px'></div><p>{}</p>",
+        expected.join(" ")
+    ));
+    let firsts: Vec<u32> = out
+        .continuations
+        .iter()
+        .map(|continuation| continuation.first_page)
+        .collect();
+    assert_eq!(firsts, vec![2]);
+    assert!(page_lines(&out, 1).is_empty());
+    let lines = page_lines(&out, 2);
+    assert_eq!(lines[0].len(), 7);
+    assert_eq!(lines.into_iter().flatten().collect::<Vec<_>>(), expected);
+}
+
+#[test]
+fn content_after_columns_is_laid_out_at_its_own_width() {
+    // Pages that start inside the columns keep the first layout; the first
+    // later page that starts in the paragraph after them is resumed at the
+    // wider width, with no word of the paragraph lost or repeated.
+    let expected: Vec<String> = (0..30).map(|index| format!("x{index:03}")).collect();
+    let out = run(&format!(
+        "{PAGES}<div style='column-count:2;column-gap:0'><p>{}</p></div><p>{}</p>",
+        words(400).join(" "),
+        expected.join(" ")
+    ));
+    assert_eq!(out.continuations.len(), 1);
+    let first = out.continuations[0].first_page;
+    assert!(first > 1);
+    let lines = page_lines(&out, first);
+    assert!(lines[0].len() > 3, "{lines:?}");
+    let paragraph: Vec<String> = (0..out.slices.len() as u32)
+        .flat_map(|page| page_lines(&out, page))
+        .flatten()
+        .filter(|word| expected.contains(word))
+        .collect();
+    assert_eq!(paragraph, expected);
+}
+
+#[test]
 fn content_after_an_empty_first_page_is_laid_out_at_its_own_width() {
     let expected = words(30);
     let out = run(&format!(

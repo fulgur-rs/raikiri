@@ -109,12 +109,38 @@ impl Document {
     /// for example a page that only continues one tall box, or one that
     /// starts inside a multicolumn container.
     pub fn page_start(&self, cascade: &CascadeResult, page_index: u32) -> Option<PageStart> {
+        self.first_page_start(cascade, [page_index])
+            .map(|(_, start)| start)
+    }
+
+    /// The first of the projected pages `page_indices`, in the order given,
+    /// whose start [`Document::page_start`] can name, with that start.
+    ///
+    /// Walks the document's source order once for all the pages.
+    pub fn first_page_start(
+        &self,
+        cascade: &CascadeResult,
+        page_indices: impl IntoIterator<Item = u32>,
+    ) -> Option<(u32, PageStart)> {
+        let order = preorder(self);
+        page_indices.into_iter().find_map(|page_index| {
+            Some((page_index, self.page_start_in(cascade, page_index, &order)?))
+        })
+    }
+
+    /// [`Document::page_start`], given the source order `order` of
+    /// [`preorder`].
+    fn page_start_in(
+        &self,
+        cascade: &CascadeResult,
+        page_index: u32,
+        order: &[u32],
+    ) -> Option<PageStart> {
         let page = self
             .page_projection
             .pages
             .iter()
             .find(|page| page.page_index == page_index)?;
-        let order = preorder(self);
         let mut start = page
             .items
             .iter()

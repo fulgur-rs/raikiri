@@ -913,7 +913,7 @@ fn layout_page_origin_is_applied_once_to_fragments_and_links() {
     assert_eq!(rect, raikiri_traits::PaintRect::new(25.0, 25.0, 10.0, 10.0));
     assert_eq!(
         page.geometry().content_box,
-        raikiri_traits::PaintRect::new(25.0, 25.0, 60.0, 50.0)
+        raikiri_traits::PaintRect::new(25.0, 25.0, 50.0, 50.0)
     );
     let text = page
         .fragments()
@@ -1431,4 +1431,29 @@ fn right_page_counters_use_the_increment_of_the_paired_left_page() {
             vec![]
         ]
     );
+}
+
+// The page border and padding inset the page area, so an auto-width block
+// fills the space inside them instead of overflowing the right inset.
+#[test]
+fn layout_auto_width_blocks_fill_the_page_area_inside_page_padding_and_border() {
+    let doc = dom(
+        "<style>body{margin:0} @page{size:100px 100px;margin:10px;padding:5px;border:2px solid} div{height:10px}</style><div></div>",
+    );
+    let result = completed(
+        layout(
+            &doc,
+            PageDefaults::default(),
+            LayoutConfig::default(),
+            LayoutOptions::new(),
+        )
+        .unwrap(),
+    );
+    let page = result.page(0).unwrap();
+    let rect = page
+        .fragments()
+        .find(|f| page.dom().local_name(f.node()) == Some("div"))
+        .unwrap()
+        .rect();
+    assert_eq!(rect, raikiri_traits::PaintRect::new(17.0, 17.0, 66.0, 10.0));
 }

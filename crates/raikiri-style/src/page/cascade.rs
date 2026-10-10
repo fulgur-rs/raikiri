@@ -6,7 +6,7 @@ use smol_str::SmolStr;
 use crate::Atom;
 use crate::cascade::{
     ResolvedAgainstInherited, cascade_rank, resolve_against_inherited, resolve_css_wide_color_font,
-    resolve_custom_property_environment, resolve_deferred_value,
+    resolve_custom_property_environment, resolve_page_deferred_value,
 };
 use crate::computed::{ComputedValues, CustomPropertyEnvironment, empty_custom_properties};
 use crate::media::MediaContext;
@@ -191,7 +191,7 @@ impl PageMarginBoxCascadeResult {
                     PropertyKey::Color | PropertyKey::BackgroundColor | PropertyKey::FontSize
                 )
             {
-                resolve_deferred_value(deferred, custom_properties.as_ref())
+                resolve_page_deferred_value(deferred, custom_properties.as_ref())
             } else {
                 Some(value.clone())
             }
@@ -1100,7 +1100,7 @@ pub fn cascade_page_with_media_context(
     // ordinary winners. Invalid computed values still win their own slot.
     let candidate_rollback = |value: &PropertyValue| {
         if let PropertyValue::Deferred(deferred) = value {
-            resolve_deferred_value(deferred, custom_properties.as_ref())
+            resolve_page_deferred_value(deferred, custom_properties.as_ref())
                 .as_ref()
                 .map_or(
                     crate::cascade::rollback::Rollback::None,
@@ -1237,7 +1237,7 @@ pub fn cascade_page_with_media_context(
         .filter_map(|(k, (_, _, _, _, value))| {
             let value = match value {
                 PropertyValue::Deferred(deferred) => {
-                    resolve_deferred_value(&deferred, custom_properties.as_ref())
+                    resolve_page_deferred_value(&deferred, custom_properties.as_ref())
                 }
                 value => Some(value),
             }?;

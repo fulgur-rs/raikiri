@@ -12,7 +12,7 @@ use raikiri_dom::{
     Document, PageLayoutControl, PageSlice, PageStart, PageStartToken,
     layout_pages_with_page_geometry_and_resolver_and_base_url_and_control,
 };
-use raikiri_style::{CascadeResult, MediaContext, RuleTree, cascade_with_media_context_for_page};
+use raikiri_style::{CascadeOptions, CascadeResult, MediaContext, RuleTree, cascade_with_options};
 use raikiri_traits::{LayoutError, ReplacedResolver};
 
 use super::{PageCascader, ResolvedPageGeometry, content_width_for_geometry, page_query_for_slice};
@@ -32,6 +32,8 @@ pub(super) struct ContinuationInputs<'a> {
     pub(super) source: &'a Document,
     pub(super) tree: &'a RuleTree,
     pub(super) media_context: &'a MediaContext,
+    /// The options of the run's element cascade.
+    pub(super) cascade_options: &'a CascadeOptions,
     pub(super) cascader: &'a PageCascader<'a>,
     pub(super) defaults: &'a raikiri_traits::PageDefaults,
     pub(super) resolver: &'a dyn ReplacedResolver,
@@ -60,8 +62,11 @@ struct Segment<'d> {
 /// `slices` and `geometries` describe the pages of `document`, which must
 /// already be projected onto them. On return they describe the final pages;
 /// pages from each continuation's `first_page` on come from that
-/// continuation. A page start that cannot be resumed ends the search, and
-/// the remaining pages keep the width of the layout before them.
+/// continuation. A page whose start cannot be named, such as one that only
+/// continues a tall box or starts inside columns, keeps the width of the
+/// layout before it, and the next page of another width whose start can be
+/// named is resumed instead. A start that cannot be resumed ends the search,
+/// and the remaining pages keep the width of the layout before them.
 pub(super) fn continue_at_page_widths(
     inputs: &ContinuationInputs<'_>,
     document: &Document,
@@ -73,11 +78,6 @@ pub(super) fn continue_at_page_widths(
     let mut run_start = 0_usize;
     loop {
         let run_width = content_width_for_geometry(geometries[run_start]);
-        let Some(page) = (run_start + 1..slices.len()).find(|&page| {
-            (content_width_for_geometry(geometries[page]) - run_width).abs() > WIDTH_TOLERANCE
-        }) else {
-            break;
-        };
         let segment = match continuations.last() {
             Some(continuation) => Segment {
                 document: &continuation.document,
@@ -85,9 +85,18 @@ pub(super) fn continue_at_page_widths(
             },
             None => Segment { document, cascade },
         };
-        let Some(start) = segment.document.page_start(segment.cascade, page as u32) else {
+        let other_widths = (run_start + 1..slices.len())
+            .filter(|&page| {
+                (content_width_for_geometry(geometries[page]) - run_width).abs() > WIDTH_TOLERANCE
+            })
+            .map(|page| page as u32);
+        let Some((page, start)) = segment
+            .document
+            .first_page_start(segment.cascade, other_widths)
+        else {
             break;
         };
+        let page = page as usize;
         let Some((continuation, pages)) = relayout_from(inputs, slices, geometries, page, start)?
         else {
             break;
@@ -112,11 +121,14 @@ fn relayout_from(
     start: PageStart,
 ) -> Result<Option<(Continuation, Vec<PageSlice>)>, LayoutError> {
     let geometry = geometries[page];
-    let mut cascade = cascade_with_media_context_for_page(
+    // The run's element cascade already succeeded on the same input with the
+    // same options, and the cascade's limits count only its input.
+    let mut cascade = cascade_with_options(
         inputs.source,
         inputs.tree,
         inputs.media_context,
         &page_query_for_slice(&slices[page]),
+        inputs.cascade_options,
     )
     .expect("cascade は常に Ok のはず");
     let mut document = inputs.pristine.clone();

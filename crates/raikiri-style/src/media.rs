@@ -822,11 +822,14 @@ fn parse_mf_name<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, Axis> {
 ///
 /// Relative units resolve against the initial font size (MQ4 §1.3); `lh` and
 /// `rlh` need a line height that has no initial length, so they are unknown.
+/// Viewport-percentage lengths are not evaluated here either: the value is
+/// parsed before a media context is known.
 fn parse_mf_value<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, f32> {
     let location = input.current_source_location();
     let initial = ComputedLength(INITIAL_FONT_SIZE_PX);
     match parse_length_allow_negative(input) {
         Some(Length::Lh(_) | Length::Rlh(_)) | None => Err(location.new_custom_error(())),
+        Some(length) if length.is_viewport_relative() => Err(location.new_custom_error(())),
         Some(length) => Ok(resolve_length(length, initial, None, &ResolveContext::new(initial)).0),
     }
 }

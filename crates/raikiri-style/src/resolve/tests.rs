@@ -10,6 +10,9 @@ use crate::specified::SpecifiedValues;
 const CTX: ResolveContext = ResolveContext {
     root_font_size: ComputedLength(INITIAL_FONT_SIZE_PX),
     root_line_height: None,
+    viewport_width: 480.0,
+    viewport_height: 288.0,
+    vertical_root: false,
 };
 
 #[test]
@@ -1781,4 +1784,30 @@ fn circular_corner_constructor_preserves_each_value_until_axis_resolution() {
         radius.used(200.0, 100.0),
         [[50.0, 25.0], [10.0, 10.0], [80.0, 40.0], [0.0, 0.0]]
     );
+}
+
+#[test]
+fn viewport_lengths_resolve_against_the_context_viewport() {
+    let ctx = ResolveContext::initial().with_viewport(400.0, 200.0);
+    let size = |length| resolve_length(length, ComputedLength(16.0), None, &ctx);
+    assert_eq!(size(Length::Vw(50.0)), ComputedLength(200.0));
+    assert_eq!(size(Length::Vi(50.0)), ComputedLength(200.0));
+    assert_eq!(size(Length::Vh(50.0)), ComputedLength(100.0));
+    assert_eq!(size(Length::Vb(50.0)), ComputedLength(100.0));
+    assert_eq!(size(Length::Vmin(10.0)), ComputedLength(20.0));
+    assert_eq!(size(Length::Vmax(10.0)), ComputedLength(40.0));
+    assert_eq!(
+        resolve_length_percentage(Length::Vh(10.0), ComputedLength(16.0), None, &ctx),
+        ComputedLengthPercentage::Px(20.0)
+    );
+    assert_eq!(
+        resolve_font_size(Length::Vw(5.0), ComputedLength(16.0), None, &ctx),
+        ComputedLength(20.0)
+    );
+}
+
+#[test]
+fn the_default_viewport_is_the_nominal_print_page_box() {
+    let ctx = ResolveContext::initial();
+    assert_eq!((ctx.viewport_width, ctx.viewport_height), (480.0, 288.0));
 }

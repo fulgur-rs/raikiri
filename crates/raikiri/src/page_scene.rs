@@ -461,7 +461,7 @@ pub fn build_page_scene_for_page_named(
     let html_arena_idx = find_first_element_by_tag(dom, "html");
     let body_arena_idx = find_first_element_by_tag(dom, "body");
     let body_id = body_arena_idx.map(|idx| NodeId::new(idx as u64));
-    let content_width = margins.content_width(page_box).max(0.0);
+    let content_width = insets.page_area_width(margins, page_box);
     let (body_left_extra, body_top_extra) =
         html_margin_offsets(cascade, html_arena_idx, content_width);
     // The body's border box is the synthetic root, which spans the page

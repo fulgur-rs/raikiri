@@ -567,9 +567,136 @@ pub enum Length {
     /// `ResolveContext::root_line_height` directly
     /// (see [`crate::resolve::resolve_font_size`]).
     Rlh(f32),
+    /// Viewport-percentage length: `vw`, 1% of the viewport's width.
+    /// `50vw` → `Vw(50.0)`.
+    ///
+    /// Spec: CSS Values 4 §6.1.2 Viewport-percentage Lengths
+    /// (<https://www.w3.org/TR/css-values-4/#viewport-relative-lengths>).
+    /// The small (`svw`), large (`lvw`) and dynamic (`dvw`) variants parse to
+    /// [`Length::SizedViewport`]. The viewport itself is supplied
+    /// by [`crate::resolve::ResolveContext::viewport_width`] and
+    /// [`crate::resolve::ResolveContext::viewport_height`].
+    Vw(f32),
+    /// Viewport-percentage length: `vh`, 1% of the
+    /// viewport's height. See [`Length::Vw`].
+    Vh(f32),
+    /// Viewport-percentage length: `vi`, 1% of the
+    /// viewport's size in the root element's inline axis. Only horizontal
+    /// writing modes are implemented, so it resolves as [`Length::Vw`].
+    Vi(f32),
+    /// Viewport-percentage length: `vb`, 1% of the
+    /// viewport's size in the root element's block axis. Only horizontal
+    /// writing modes are implemented, so it resolves as [`Length::Vh`].
+    Vb(f32),
+    /// Viewport-percentage length: `vmin`,
+    /// the smaller of [`Length::Vw`] and [`Length::Vh`].
+    Vmin(f32),
+    /// Viewport-percentage length: `vmax`,
+    /// the larger of [`Length::Vw`] and [`Length::Vh`].
+    Vmax(f32),
+    /// A small (`s`), large (`l`) or dynamic (`d`) viewport-percentage
+    /// length, such as `10svh` → `SizedViewport(Small, Vh, 10.0)`.
+    ///
+    /// Spec: CSS Values 4 §6.1.2.1
+    /// (<https://www.w3.org/TR/css-values-4/#viewport-variants>). Paged media
+    /// has one fixed viewport, so each resolves as its plain unit (see
+    /// [`Length::default_viewport`]); the variant is kept so the specified
+    /// value serializes as written.
+    SizedViewport(ViewportSize, ViewportUnit, f32),
+}
+
+/// The viewport size a sized viewport-percentage unit refers to.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ViewportSize {
+    /// `s`: the small viewport.
+    Small,
+    /// `l`: the large viewport.
+    Large,
+    /// `d`: the dynamic viewport.
+    Dynamic,
+}
+
+impl ViewportSize {
+    /// The unit prefix: `s`, `l` or `d`.
+    pub fn prefix(self) -> &'static str {
+        match self {
+            ViewportSize::Small => "s",
+            ViewportSize::Large => "l",
+            ViewportSize::Dynamic => "d",
+        }
+    }
+}
+
+/// The plain viewport-percentage unit of a [`Length::SizedViewport`].
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ViewportUnit {
+    /// `vw`.
+    Vw,
+    /// `vh`.
+    Vh,
+    /// `vi`.
+    Vi,
+    /// `vb`.
+    Vb,
+    /// `vmin`.
+    Vmin,
+    /// `vmax`.
+    Vmax,
+}
+
+impl ViewportUnit {
+    /// The unit name without a size prefix, such as `vh`.
+    pub fn name(self) -> &'static str {
+        match self {
+            ViewportUnit::Vw => "vw",
+            ViewportUnit::Vh => "vh",
+            ViewportUnit::Vi => "vi",
+            ViewportUnit::Vb => "vb",
+            ViewportUnit::Vmin => "vmin",
+            ViewportUnit::Vmax => "vmax",
+        }
+    }
+
+    /// `value` in this unit as a plain viewport-percentage [`Length`].
+    pub fn length(self, value: f32) -> Length {
+        match self {
+            ViewportUnit::Vw => Length::Vw(value),
+            ViewportUnit::Vh => Length::Vh(value),
+            ViewportUnit::Vi => Length::Vi(value),
+            ViewportUnit::Vb => Length::Vb(value),
+            ViewportUnit::Vmin => Length::Vmin(value),
+            ViewportUnit::Vmax => Length::Vmax(value),
+        }
+    }
 }
 
 impl Length {
+    /// A [`Length::SizedViewport`] as its plain unit, which is the same size
+    /// in paged media; any other length unchanged.
+    pub fn default_viewport(self) -> Length {
+        match self {
+            Length::SizedViewport(_, unit, value) => unit.length(value),
+            other => other,
+        }
+    }
+
+    /// Whether this is a viewport-percentage length (`vw`, `vh`, `vi`, `vb`,
+    /// `vmin`, `vmax`).
+    pub(crate) fn is_viewport_relative(self) -> bool {
+        matches!(
+            self,
+            Length::Vw(_)
+                | Length::Vh(_)
+                | Length::Vi(_)
+                | Length::Vb(_)
+                | Length::Vmin(_)
+                | Length::Vmax(_)
+                | Length::SizedViewport(..)
+        )
+    }
+
     /// The numeric value regardless of unit.
     pub(crate) fn payload(self) -> f32 {
         match self {
@@ -590,7 +717,14 @@ impl Length {
             | Length::In(v)
             | Length::Pc(v)
             | Length::Lh(v)
-            | Length::Rlh(v) => v,
+            | Length::Rlh(v)
+            | Length::Vw(v)
+            | Length::Vh(v)
+            | Length::Vi(v)
+            | Length::Vb(v)
+            | Length::Vmin(v)
+            | Length::Vmax(v)
+            | Length::SizedViewport(_, _, v) => v,
         }
     }
 }

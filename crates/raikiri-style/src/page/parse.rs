@@ -7,7 +7,9 @@ use crate::Atom;
 use crate::property::{
     Length, PropertyValue, parse_length_allow_negative, parse_non_negative_length, parse_value,
 };
-use crate::rule::{Declaration, ParsedDeclaration, expand_shorthand_into, parse_declaration_block};
+use crate::rule::{
+    Declaration, ParsedDeclaration, expand_shorthand_into, parse_page_context_declaration_block,
+};
 
 use super::types::*;
 
@@ -213,6 +215,12 @@ impl<'i> DeclarationParser<'i> for PageDeclParser {
         input: &mut Parser<'i, 't>,
         _declaration_start: &ParserState,
     ) -> Result<PageBodyItem, ParseError<'i, Self::Error>> {
+        // Page-context lengths are resolved after the cascade, without a
+        // viewport, so a declaration using a viewport-percentage length is
+        // dropped as invalid (see `parse_page_context_declaration_block`).
+        if !name.starts_with("--") && crate::property::has_viewport_length(input) {
+            return Err(input.new_custom_error(()));
+        }
         if name.eq_ignore_ascii_case("size") {
             let value = parse_page_size_value(input)?;
             let important = parse_important_and_exhaust(input)?;
@@ -316,7 +324,7 @@ impl<'i> AtRuleParser<'i> for PageDeclParser {
     /// The margin-box grammar has no descriptors of its own (unlike the
     /// `@page` block body itself, which additionally recognizes `size` /
     /// `marks` / `bleed` — see [`PageDeclParser::parse_value`]), so this
-    /// reuses [`parse_declaration_block`] directly rather than routing
+    /// reuses [`parse_page_context_declaration_block`] directly rather than routing
     /// through this type's `DeclarationParser` impl. See
     /// [`PageMarginBoxRule::declarations`] for the shorthand-expansion guarantee
     /// this inherits.
@@ -326,7 +334,7 @@ impl<'i> AtRuleParser<'i> for PageDeclParser {
         _start: &ParserState,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::AtRule, ParseError<'i, Self::Error>> {
-        let declarations = parse_declaration_block(input);
+        let declarations = parse_page_context_declaration_block(input);
         Ok(PageBodyItem::MarginBox(PageMarginBoxRule {
             slot: prelude,
             declarations,
@@ -411,7 +419,7 @@ pub(crate) struct PageBlockBody {
 /// declaration at all, so `PageDeclParser::parse_value` never sees them —
 /// `PageDeclParser`'s `AtRuleParser` impl handles them instead (see that
 /// impl's doc), and *its* `parse_block` **does** reuse
-/// [`crate::rule::parse_declaration_block`] directly, because a margin-box
+/// [`crate::rule::parse_page_context_declaration_block`] directly, because a margin-box
 /// at-rule's body has no descriptors of its own — it is exactly the
 /// ordinary-declaration-list grammar that function already implements.
 ///

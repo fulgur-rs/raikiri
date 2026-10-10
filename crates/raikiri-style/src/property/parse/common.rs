@@ -1,6 +1,6 @@
 //! Numeric, length and identifier helpers shared by several property parser domains.
 
-use cssparser::{BasicParseError, ParseError, Parser, Token};
+use cssparser::{BasicParseError, ParseError, Parser, ParserInput, Token};
 use smol_str::SmolStr;
 
 use crate::property::types::*;
@@ -391,18 +391,19 @@ pub(crate) fn parse_length_value(
             // "`lh` / `rlh`" and resolving them against the parent).
             "lh" => Some(Length::Lh(*value)),
             "rlh" => Some(Length::Rlh(*value)),
-            // (b) Unsupported: viewport-relative units (`vw`/`vh`/…) and
-            // `cap`/`rcap` are silently dropped. Neither can be resolved using
-            // only the specified layer (the style layer lacks viewport size
-            // and font ascent), so this work is tracked in a follow-up task.
+            // (b) Unsupported: `cap`/`rcap` are silently dropped. They cannot
+            // be resolved using only the specified layer (the style layer
+            // lacks font ascent), so this work is tracked in a follow-up task.
             //
             // This arm also drops every other unrecognized unit, such as
             // container-query units `cqw`/`cqh`/`cqi`/`cqb`/`cqmin`/`cqmax`
             // (CSS Contain 3 §6 <https://www.w3.org/TR/css-contain-3/#container-lengths>;
-            // the style layer also lacks container size, as with viewport size).
+            // the style layer lacks container size).
             // This comment is the canonical list of unsupported units; do not
             // repeat this list elsewhere just to extend it.
-            _ => None,
+            //
+            // The viewport-percentage units are the only other ones accepted.
+            unit => viewport_length(unit, *value),
         },
         Token::Percentage { unit_value, .. } if allow_percentage => {
             // Authored-number reverse conversion and overflow saturation:
@@ -418,6 +419,87 @@ pub(crate) fn parse_length_value(
         Token::Number { value, .. } if *value == 0.0 => Some(Length::Px(0.0)),
         _ => None,
     }
+}
+
+/// The viewport-percentage length (CSS Values 4 §6.1.2
+/// <https://www.w3.org/TR/css-values-4/#viewport-relative-lengths>) of
+/// `value` in the lowercase `unit`, or `None` when `unit` is not one.
+///
+/// The small (`s`), large (`l`) and dynamic (`d`) variants keep their size
+/// in [`Length::SizedViewport`].
+fn viewport_length(unit: &str, value: f32) -> Option<Length> {
+    let (size, unit) = match unit.as_bytes().first() {
+        Some(b's') => (Some(ViewportSize::Small), &unit[1..]),
+        Some(b'l') => (Some(ViewportSize::Large), &unit[1..]),
+        Some(b'd') => (Some(ViewportSize::Dynamic), &unit[1..]),
+        _ => (None, unit),
+    };
+    let unit = match unit {
+        "vw" => ViewportUnit::Vw,
+        "vh" => ViewportUnit::Vh,
+        "vi" => ViewportUnit::Vi,
+        "vb" => ViewportUnit::Vb,
+        "vmin" => ViewportUnit::Vmin,
+        "vmax" => ViewportUnit::Vmax,
+        _ => return None,
+    };
+    Some(match size {
+        Some(size) => Length::SizedViewport(size, unit, value),
+        None => unit.length(value),
+    })
+}
+
+/// Whether the rest of `input`, including any nested block or function,
+/// holds a dimension in a viewport-percentage unit. `input` is left where it
+/// was.
+///
+/// The page context uses this to drop declarations whose viewport-percentage
+/// lengths it cannot resolve yet (see
+/// [`crate::page::parse_page_declaration_block`]). The arguments of `var()`
+/// are skipped: which of them is used is only known after substitution, so
+/// [`has_viewport_length_in`] checks the substituted value instead.
+pub(crate) fn has_viewport_length(input: &mut Parser<'_, '_>) -> bool {
+    fn scan(input: &mut Parser<'_, '_>) -> bool {
+        while let Ok(token) = input.next() {
+            let nested = match token {
+                Token::Dimension { unit, .. } => {
+                    if viewport_length(&unit.to_ascii_lowercase(), 0.0).is_some() {
+                        return true;
+                    }
+                    false
+                }
+                Token::Function(name) => !name.eq_ignore_ascii_case("var"),
+                Token::ParenthesisBlock | Token::SquareBracketBlock | Token::CurlyBracketBlock => {
+                    true
+                }
+                _ => false,
+            };
+            if nested
+                && input
+                    .parse_nested_block(|block| {
+                        let found = scan(block);
+                        // A nested block must be consumed to its end.
+                        while block.next().is_ok() {}
+                        Ok::<_, ParseError<'_, ()>>(found)
+                    })
+                    .unwrap_or(false)
+            {
+                return true;
+            }
+        }
+        false
+    }
+    let start = input.state();
+    let found = scan(input);
+    input.reset(&start);
+    found
+}
+
+/// [`has_viewport_length`] over a whole value, such as the result of
+/// substituting `var()` references.
+pub(crate) fn has_viewport_length_in(css: &str) -> bool {
+    let mut input = ParserInput::new(css);
+    has_viewport_length(&mut Parser::new(&mut input))
 }
 
 /// `<length [0,∞]>` — [`parse_length_value`] with `allow_percentage=false`

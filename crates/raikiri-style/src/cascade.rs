@@ -449,6 +449,7 @@ pub fn cascade_with_options<D: StyleDom>(
         media_context,
         WalkOptions {
             limits: options.limits,
+            viewport: options.viewport,
             ..WalkOptions::default()
         },
     )?;

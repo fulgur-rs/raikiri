@@ -22,6 +22,12 @@ fn serialize_length_formats_each_unit() {
     assert_eq!(serialize_length(&Length::Pc(1.0)), "1pc");
     assert_eq!(serialize_length(&Length::Lh(1.0)), "1lh");
     assert_eq!(serialize_length(&Length::Rlh(1.0)), "1rlh");
+    assert_eq!(serialize_length(&Length::Vw(1.0)), "1vw");
+    assert_eq!(serialize_length(&Length::Vh(1.0)), "1vh");
+    assert_eq!(serialize_length(&Length::Vi(1.0)), "1vi");
+    assert_eq!(serialize_length(&Length::Vb(1.0)), "1vb");
+    assert_eq!(serialize_length(&Length::Vmin(1.0)), "1vmin");
+    assert_eq!(serialize_length(&Length::Vmax(1.0)), "1vmax");
 }
 
 #[test]

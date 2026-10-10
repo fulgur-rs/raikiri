@@ -162,10 +162,10 @@ fn parse_length_value_rejects_percentage_in_length_only_mode() {
 
 #[test]
 fn parse_length_value_rejects_unsupported_unit() {
-    // (b) Unsupported — this helper still silently drops viewport-relative units,
-    // `cap`, and `rcap`; `lh` and `rlh` have moved to the accepted set
-    // (see `parse_length_value_accepts_lh` / `_rlh` below).
-    assert_eq!(parse_length("10vw", false), None);
+    // (b) Unsupported — this helper still silently drops `cap` and `rcap`;
+    // `lh`, `rlh` and the viewport-relative units have moved to the accepted
+    // set (see `parse_length_value_accepts_lh` / `_rlh` below).
+    assert_eq!(parse_length("10rcap", false), None);
     assert_eq!(parse_length("1cap", true), None);
     // Container-query units (CSS Contain 3 §6): check the `cq*` list cited in
     // the comment just before the `_` arm with this assertion. If the comment
@@ -299,4 +299,67 @@ fn parse_length_value_unit_dispatch_case_insensitive() {
     assert_eq!(parse_length("2EX", false), Some(Length::Ex(2.0)));
     assert_eq!(parse_length("2CH", false), Some(Length::Ch(2.0)));
     assert_eq!(parse_length("2IC", false), Some(Length::Ic(2.0)));
+}
+
+#[test]
+fn parse_length_value_accepts_viewport_percentage_units() {
+    // CSS Values 4 §6.1.2 (https://www.w3.org/TR/css-values-4/#viewport-relative-lengths).
+    assert_eq!(parse_length("50vw", false), Some(Length::Vw(50.0)));
+    assert_eq!(parse_length("100VH", false), Some(Length::Vh(100.0)));
+    assert_eq!(parse_length("1vi", false), Some(Length::Vi(1.0)));
+    assert_eq!(parse_length("2vb", false), Some(Length::Vb(2.0)));
+    assert_eq!(parse_length("3vmin", false), Some(Length::Vmin(3.0)));
+    assert_eq!(parse_length("4vmax", false), Some(Length::Vmax(4.0)));
+    // The small, large and dynamic variants keep their size so that they
+    // serialize as written, and resolve as the plain unit.
+    let svh = Length::SizedViewport(ViewportSize::Small, ViewportUnit::Vh, 5.0);
+    assert_eq!(parse_length("5svh", false), Some(svh));
+    assert_eq!(svh.default_viewport(), Length::Vh(5.0));
+    assert_eq!(crate::property::serialize_length(&svh), "5svh");
+    assert_eq!(
+        parse_length("6lvw", false),
+        Some(Length::SizedViewport(
+            ViewportSize::Large,
+            ViewportUnit::Vw,
+            6.0
+        ))
+    );
+    assert_eq!(
+        parse_length("7dvmax", false),
+        Some(Length::SizedViewport(
+            ViewportSize::Dynamic,
+            ViewportUnit::Vmax,
+            7.0
+        ))
+    );
+    assert_eq!(parse_length("8xvh", false), None);
+    assert_eq!(parse_length("9cqh", false), None);
+}
+
+#[test]
+fn has_viewport_length_finds_units_in_nested_blocks_and_rewinds() {
+    let mut input = ParserInput::new("10px max(1px, calc(2vh + 1px)) end");
+    let mut parser = Parser::new(&mut input);
+    assert!(has_viewport_length(&mut parser));
+    assert_eq!(
+        parser.next(),
+        Ok(&cssparser::Token::Dimension {
+            has_sign: false,
+            value: 10.0,
+            int_value: Some(10),
+            unit: "px".into(),
+        })
+    );
+    let mut input = ParserInput::new("10px \"10vh\" vh calc(1em)");
+    let mut parser = Parser::new(&mut input);
+    assert!(!has_viewport_length(&mut parser));
+}
+
+#[test]
+fn has_viewport_length_leaves_var_arguments_to_substitution() {
+    let mut input = ParserInput::new("var(--m, 10vh)");
+    let mut parser = Parser::new(&mut input);
+    assert!(!has_viewport_length(&mut parser));
+    assert!(has_viewport_length_in("calc(1px + 2vw)"));
+    assert!(!has_viewport_length_in("calc(1px + 2em)"));
 }

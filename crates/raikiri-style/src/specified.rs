@@ -1572,7 +1572,22 @@ impl SpecifiedValues {
     /// In a synthetic DOM, several elements can each be "roots" in this
     /// sense (see the `walk_from` docs); that same criterion decides
     /// whether `match-parent` has a parent.
+    ///
+    /// Viewport-percentage lengths resolve against the default viewport of
+    /// [`ResolveContext::initial`]; use [`Self::finalize_as_root_in_viewport`]
+    /// to give the actual one.
     pub fn finalize_as_root(self) -> ComputedValues {
+        let ctx = ResolveContext::initial();
+        self.finalize_as_root_in_viewport(ctx.viewport_width, ctx.viewport_height)
+    }
+
+    /// [`Self::finalize_as_root`] with a `width` × `height` CSS px viewport,
+    /// the basis of the viewport-percentage lengths.
+    ///
+    /// The viewport is the only reference value this function takes from its
+    /// caller: unlike the font-relative bases, it does not come from the
+    /// element tree.
+    pub fn finalize_as_root_in_viewport(self, width: f32, height: f32) -> ComputedValues {
         // Phase 2: with no parent, use the initial values. The `em` / `rem` reference follows the
         // parent-metrics clause of CSS Values 4 §6.1.1 quoted above. **That clause does not cover
         // `<percentage>`**: its subject is "the font-relative lengths", not percentages. The 24px
@@ -1587,11 +1602,14 @@ impl SpecifiedValues {
         // from `ResolveContext::initial()`: `font-size: 1rlh` on the root refers to itself under
         // the ordinary definition of `rlh` (only the root can be its own referent; see the
         // `resolve_font_size` docs).
+        let initial = ResolveContext::initial()
+            .with_viewport(width, height)
+            .with_vertical_root(self.writing_mode != WritingMode::HorizontalTb);
         let font_size = resolve_font_size(
             self.font_size,
             ComputedLength(crate::computed::INITIAL_FONT_SIZE_PX),
             None,
-            &ResolveContext::initial(),
+            &initial,
         );
         // CSS Text 3 §6.1: "Computes to start when specified on the root element." This special
         // case does not consult any parent text_align or direction and stays local to this
@@ -1605,12 +1623,7 @@ impl SpecifiedValues {
         // the self-reference basis `None` ("initial values" = `normal`; see above). Other
         // font-relative units, such as `em`, still use this element's own font size through the
         // same `resolve_line_height` call as in `finalize`.
-        let line_height = resolve_line_height(
-            self.line_height,
-            font_size,
-            None,
-            &ResolveContext::initial(),
-        );
+        let line_height = resolve_line_height(self.line_height, font_size, None, &initial);
         // Phase 3 context: `rem` uses the root element's computed font size (its own); `rlh`
         // similarly uses its resolved line height. Box properties are outside the self-reference
         // rule above. `used_line_height_length` derives the same value as the `child_ctx` that
@@ -1618,7 +1631,9 @@ impl SpecifiedValues {
         // `rlh_on_root_element_matches_child_root_line_height_basis` under `mod@crate::cascade`
         // checks that the two agree.
         let own_line_height = used_line_height_length(line_height, font_size);
-        let ctx = ResolveContext::with_root_line_height(font_size, own_line_height);
+        let ctx = ResolveContext::with_root_line_height(font_size, own_line_height)
+            .with_viewport(width, height)
+            .with_vertical_root(self.writing_mode != WritingMode::HorizontalTb);
         self.absolutize_with(font_size, line_height, text_align, &ctx)
     }
 
