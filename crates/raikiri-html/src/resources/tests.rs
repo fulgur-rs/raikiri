@@ -251,7 +251,7 @@ fn relative_background_urls_preload_against_the_document_base() {
         .network_provider(&provider)
         .base_url(base.clone());
     let doc = crate::parse_html_with_resources(
-        br#"<!doctype html><style>@page { background-image:url(page.svg) }</style><div style="background-image:url(img/element.svg)">one</div>"#.as_slice(),
+        br#"<!doctype html><style>@page { background-image:url(page.svg) }</style><div style="background-image:url(img/element.svg)">one</div><p style="background-image:url(#frag)">two</p><p style="background-image:url('')">three</p>"#.as_slice(),
         &resources,
     ).unwrap();
     let crate::render::PipelineRun::Completed(_) = crate::render::run_pipeline(

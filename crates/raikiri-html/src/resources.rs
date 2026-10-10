@@ -965,6 +965,12 @@ impl<'a> RenderResources<'a> {
             if signal.is_some_and(|signal| signal.is_aborted()) {
                 break;
             }
+            // `url()` and `url(#id)` name no external image; joining them
+            // against the base would turn them into the document itself.
+            let trimmed = raw_url.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
             let Some(original_url) = Url::parse(raw_url)
                 .ok()
                 .or_else(|| base_url.and_then(|base| base.join(raw_url).ok()))
