@@ -13,10 +13,11 @@ pub use running::RunningElementLayout;
 pub use streaming::{PageSink, StreamPage, StreamStatus, StreamSummary, StreamingLayout};
 // cov:ignore: public type re-exports have no executable mapping; API integration tests verify them.
 pub use raikiri_dom::{
-    ClipKind, ColumnRule, DecorationKind, DecorationLine, DecorationStyle, FontBlob, FontId,
-    FontRef, FontVariation, Fragment, FragmentKind, GeneratedBox, GeneratedKind, Glyph, MarginBox,
-    MarginBoxBackgroundImage, MarginBoxBorder, MarginBoxText, OverflowClip, PaintEvent,
-    PositionedGlyphRun, RepeatKind, RunSource, Synthesis, Tag, TextLineId,
+    ClipKind, ColumnRule, DecorationKind, DecorationLine, DecorationStyle, DeferredGlyph,
+    DeferredSlot, DeferredValue, FontBlob, FontId, FontRef, FontVariation, Fragment, FragmentKind,
+    GeneratedBox, GeneratedKind, Glyph, MarginBox, MarginBoxBackgroundImage, MarginBoxBorder,
+    MarginBoxText, OverflowClip, PaintEvent, PositionedGlyphRun, RepeatKind, RunSource, Synthesis,
+    Tag, TextLineId,
 };
 
 use crate::render::{PipelineInputs, PipelineOutput, PipelineRun, run_pipeline};
@@ -289,6 +290,7 @@ impl DocumentLayout {
             document,
             cascade,
             page_count: self.page_count(),
+            page_count_deferred: false,
             paired_style,
             running: Some(&self.running),
         }

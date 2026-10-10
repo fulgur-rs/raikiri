@@ -38,11 +38,11 @@ pub use document::HtmlDocument;
 // cov:ignore: these type/function re-exports have no executable code; API integration tests and rustdoc verify them.
 pub use document_layout::{
     Anchor, AnchorIndex, ClipKind, ColumnRule, DecorationKind, DecorationLine, DecorationStyle,
-    DocumentLayout, DomView, FontBlob, FontId, FontRef, FontVariation, Fragment, FragmentKind,
-    GeneratedBox, GeneratedKind, Glyph, InlineSvg, LayoutOptions, LayoutStatus, Link, MarginBox,
-    MarginBoxBackgroundImage, MarginBoxBorder, MarginBoxText, OverflowClip, Page, PageGeometry,
-    PageMode, PaintEvent, PositionedGlyphRun, RasterImage, RepeatKind, RunSource, Synthesis, Tag,
-    TextLineId, layout,
+    DeferredGlyph, DeferredSlot, DeferredValue, DocumentLayout, DomView, FontBlob, FontId, FontRef,
+    FontVariation, Fragment, FragmentKind, GeneratedBox, GeneratedKind, Glyph, InlineSvg,
+    LayoutOptions, LayoutStatus, Link, MarginBox, MarginBoxBackgroundImage, MarginBoxBorder,
+    MarginBoxText, OverflowClip, Page, PageGeometry, PageMode, PaintEvent, PositionedGlyphRun,
+    RasterImage, RepeatKind, RunSource, Synthesis, Tag, TextLineId, layout,
 };
 pub use document_layout::{PageSink, StreamPage, StreamStatus, StreamSummary, StreamingLayout};
 pub use document_parse::{parse_html, parse_html_with_limits};
