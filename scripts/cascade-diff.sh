@@ -34,12 +34,13 @@
 #
 # The merge-base build is cached under $RAIKIRI_CASCADE_DIFF_CACHE (default:
 # ~/.cache/raikiri/cascade-diff), keyed by the merge-base commit, the tool's
-# sources and manifest, the toolchain, and the build settings from the
-# environment and cargo configuration, so repeated runs against one base
-# skip building it. A cached build is only reused while the environment
-# variables its build scripts and crates declared that they read keep the
-# values they had, as cargo would only reuse it then. The merge-base checkout is a throwaway worktree under the
-# main checkout's .worktrees/, removed when the run ends.
+# sources and manifest, the compiler cargo built the head with, and the
+# build settings from the environment and cargo configuration, so repeated
+# runs against one base skip building it. A cached build is only reused
+# while the environment variables its build scripts and crates declared that
+# they read keep the values they had, as cargo would only reuse it then, and
+# only when that compiler built it. The merge-base checkout is a throwaway
+# worktree under the main checkout's .worktrees/, removed when the run ends.
 #
 # Exit status: 0 when no case differs, 1 when some case differs, 2 on a usage
 # or tooling error, including a build that crashes or hangs on a case (the
@@ -147,15 +148,16 @@ overflow-checks = true
 EOF
 }
 
-# Builds the tool's sources from the current tree against the crates of tree
-# $1, with that tree's lockfile, into a target directory owned by that tree,
-# then copies the binary to $2. A target directory per tree keeps concurrent
-# sessions from overwriting each other's binaries.
+# Builds the tool's sources and build script from the current tree against
+# the crates of tree $1, with that tree's lockfile, into a target directory
+# owned by that tree, then copies the binary to $2. A target directory per
+# tree keeps concurrent sessions from overwriting each other's binaries.
 build_tool() {
   local tree="$1" binary="$2"
   local manifest_dir
   manifest_dir="$(mktemp -d "$SCRATCH/tool.XXXXXX")"
   cp -rf "$REPO_ROOT/crates/raikiri-cascade-diff/src" "$manifest_dir/src"
+  cp -f "$REPO_ROOT/crates/raikiri-cascade-diff/build.rs" "$manifest_dir/build.rs"
   tool_manifest "$tree" > "$manifest_dir/Cargo.toml"
   cp -f "$tree/Cargo.lock" "$manifest_dir/Cargo.lock"
   CARGO_TARGET_DIR="$tree/target/cascade-diff" \
@@ -195,17 +197,14 @@ build_settings() {
 }
 
 # What the merge-base build depends on besides the tree's files, which the
-# commit already names: the tool's sources and manifest, the compiler, and
-# the build settings. The compiler is asked for its version as cargo runs
-# it: RUSTC, else CARGO_BUILD_RUSTC, else rustc, so that one replaced in
-# place changes the key. Only a build.rustc that a configuration file sets
-# is not followed, and those files are part of the build settings.
+# commit already names: the tool's sources and manifest, the compiler, given
+# as $1, and the build settings.
 base_build_key() {
   {
     echo "$BASE_SHA"
-    (cd "$REPO_ROOT/crates/raikiri-cascade-diff" && find src -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum)
+    (cd "$REPO_ROOT/crates/raikiri-cascade-diff" && find build.rs src -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum)
     tool_manifest TREE
-    "${RUSTC:-${CARGO_BUILD_RUSTC:-rustc}}" -vV
+    printf '%s\n' "$1"
     build_settings
   } | sha256sum | cut -d' ' -f1
 }
@@ -239,23 +238,29 @@ environment_values() {
 }
 
 # Copies the cached merge-base build to $1, or builds it in a throwaway
-# worktree, caches it and copies it.
+# worktree, caches it and copies it. $2 is the head build.
 #
-# A cached build is reused only while the environment variables it declared
-# that it reads keep the values they had when it was built, which is what
-# cargo checks before reusing a build. Each entry is named by the build key
-# and a hash of those values, is published whole by renaming a finished
-# directory into place, and is never changed after, so a run sees a complete
-# entry or none.
+# The compiler is the one cargo built the head with, which the head reports:
+# cargo picks it from RUSTC, build.rustc or the default, and gives it to the
+# tool's build script, which records its version. A compiler that cargo
+# sees change rebuilds the head, so the key changes with it. A cached build
+# is reused only when that compiler built it too, and only while the
+# environment variables it declared that it reads keep the values they had
+# when it was built, which is what cargo checks before reusing a build. Each
+# entry is named by the build key and a hash of those values, is published
+# whole by renaming a finished directory into place, and is never changed
+# after, so a run sees a complete entry or none.
 base_build() {
-  local binary="$1" key entry partial
-  key="$(base_build_key)"
+  local binary="$1" head="$2" compiler key entry partial
+  compiler="$("$head" compiler)"
+  key="$(base_build_key "$compiler")"
   if [[ "$USE_CACHE" -eq 1 ]]; then
     for entry in "$CACHE_ROOT/$key"-*/; do
       entry="${entry%/}"
       [[ -f "$entry/variables" && -x "$entry/raikiri-cascade-diff" ]] || continue
       [[ "$(environment_values < "$entry/variables" | sha256sum | cut -c1-16)" == "${entry##*-}" ]] \
         || continue
+      [[ "$("$entry/raikiri-cascade-diff" compiler 2>/dev/null)" == "$compiler" ]] || continue
       # Another run may remove the entry meanwhile. Before the copy, this
       # one then builds. After it, marking the entry as used must not make
       # it again, as a file that no later build could be renamed over.
@@ -289,7 +294,7 @@ base_build() {
 
 echo "-- building head ($REPO_ROOT) --"
 build_tool "$REPO_ROOT" "$SCRATCH/diff-head"
-base_build "$SCRATCH/diff-base"
+base_build "$SCRATCH/diff-base" "$SCRATCH/diff-head"
 echo
 
 # Both builds come from the same tool sources, so they must generate the same
