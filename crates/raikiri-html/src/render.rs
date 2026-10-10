@@ -1172,13 +1172,22 @@ impl PipelineOutput {
         &self,
         page_index: u32,
     ) -> (&raikiri_dom::Document, &raikiri_style::CascadeResult) {
+        match self.layout_slot_for_page(page_index) {
+            0 => (&self.document, &self.cascade),
+            slot => {
+                let continuation = &self.continuations[slot - 1];
+                (&continuation.document, &continuation.cascade)
+            }
+        }
+    }
+
+    /// Which laid-out document holds `page_index`: `0` for the original
+    /// layout, `k + 1` for continuation `k`.
+    pub(crate) fn layout_slot_for_page(&self, page_index: u32) -> usize {
         self.continuations
             .iter()
-            .rev()
-            .find(|continuation| continuation.first_page <= page_index)
-            .map_or((&self.document, &self.cascade), |continuation| {
-                (&continuation.document, &continuation.cascade)
-            })
+            .rposition(|continuation| continuation.first_page <= page_index)
+            .map_or(0, |index| index + 1)
     }
 }
 

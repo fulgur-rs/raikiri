@@ -43,6 +43,31 @@ pub struct InlineSvg {
     pub host_opacity: Option<f32>,
 }
 
+/// Prepared inline SVG sources of one laid-out document, keyed by SVG root
+/// node and viewport size.
+///
+/// The prepared source depends only on the root's subtree, its computed
+/// styles and its viewport size, so a root painted on several pages (a
+/// running header, or an SVG split across a page break) is serialized,
+/// parsed and restyled once. Placement is taken from each fragment.
+#[derive(Debug, Default)]
+pub(crate) struct InlineSvgCache {
+    sources: std::cell::RefCell<rustc_hash::FxHashMap<(usize, u32, u32), PreparedSvg>>,
+}
+
+#[cfg(test)]
+impl InlineSvgCache {
+    pub(super) fn len(&self) -> usize {
+        self.sources.borrow().len()
+    }
+}
+
+#[derive(Debug, Clone)]
+struct PreparedSvg {
+    source: String,
+    host_opacity: Option<f32>,
+}
+
 /// One laid-out page, borrowed from a [`super::DocumentLayout`].
 #[derive(Clone, Copy)]
 pub struct Page<'a> {
@@ -60,6 +85,8 @@ pub struct Page<'a> {
     /// The document's running elements; `None` on a page that is itself a
     /// laid-out running element.
     pub(super) running: Option<super::running::RunningSource<'a>>,
+    /// Prepared inline SVG sources of [`Self::document`].
+    pub(super) svg_sources: &'a InlineSvgCache,
 }
 
 /// A running element placed in a page-margin box.
@@ -311,6 +338,35 @@ impl<'a> Page<'a> {
             }
             current = dom.parent(node);
         }
+        let key = (id, viewport.width.to_bits(), viewport.height.to_bits());
+        if let Some(prepared) = self.svg_sources.sources.borrow().get(&key) {
+            return Ok(Some(InlineSvg {
+                source: prepared.source.clone(),
+                viewport,
+                host_opacity: prepared.host_opacity,
+            }));
+        }
+        let Some(prepared) = self.prepare_inline_svg(fragment, id, viewport, computed)? else {
+            return Ok(None); // cov:ignore: The checked SVG namespace/root predicate guarantees a serializable root.
+        };
+        let svg = InlineSvg {
+            source: prepared.source.clone(),
+            viewport,
+            host_opacity: prepared.host_opacity,
+        };
+        self.svg_sources.sources.borrow_mut().insert(key, prepared);
+        Ok(Some(svg))
+    }
+
+    /// Serializes, parses and restyles the SVG root of `fragment`.
+    fn prepare_inline_svg(
+        &self,
+        fragment: &Fragment<'a>,
+        id: usize,
+        viewport: PaintRect,
+        computed: &ComputedValues,
+    ) -> Result<Option<PreparedSvg>, raikiri_svg::SvgError> {
+        let dom = self.dom();
         let Some(source) = self
             .document
             .serialize_svg_subtree(id)
@@ -385,9 +441,8 @@ impl<'a> Page<'a> {
             },
             &element_styles,
         )?;
-        Ok(Some(InlineSvg {
+        Ok(Some(PreparedSvg {
             source,
-            viewport,
             host_opacity,
         }))
     }

@@ -399,6 +399,77 @@ fn inline_svg_attribute_height_paginates_with_one_original_viewport() {
 }
 
 #[test]
+fn inline_svg_split_across_pages_is_prepared_once() {
+    let document = dom(
+        "<style>@page {size:200px 100px;margin:10px} body {margin:0} svg {display:block}</style><svg width='40' height='180'><rect width='40' height='180' fill='red'/></svg>",
+    );
+    let layout = completed(
+        layout(
+            &document,
+            PageDefaults::default(),
+            LayoutConfig::default(),
+            LayoutOptions::new(),
+        )
+        .unwrap(),
+    );
+    assert_eq!(layout.pages().count(), 3);
+    let mut sources = Vec::new();
+    for (index, page) in layout.pages().enumerate() {
+        let fragment = page
+            .fragments()
+            .find(|f| page.dom().local_name(f.node()) == Some("svg"))
+            .unwrap();
+        let svg = page.inline_svg(&fragment).unwrap().unwrap();
+        assert_eq!(svg.viewport.y, 10.0 - 80.0 * index as f32);
+        sources.push(svg.source);
+    }
+    assert!(sources.iter().all(|source| *source == sources[0]));
+    assert_eq!(
+        layout
+            .svg_sources
+            .iter()
+            .map(|cache| cache.len())
+            .sum::<usize>(),
+        1
+    );
+}
+
+#[test]
+fn inline_svg_in_a_running_element_is_prepared_once() {
+    let document = dom(
+        "<style>@page {size:200px 100px;margin:30px 10px;@top-left{content:element(hdr)}} body {margin:0} .hdr {position:running(hdr)} p {break-after:page}</style><div class='hdr'><svg width='20' height='10'><rect width='20' height='10' fill='red'/></svg></div><p>a</p><p>b</p><p>c</p>",
+    );
+    let layout = completed(
+        layout(
+            &document,
+            PageDefaults::default(),
+            LayoutConfig::default(),
+            LayoutOptions::new(),
+        )
+        .unwrap(),
+    );
+    assert!(layout.pages().count() >= 3);
+    let mut sources = Vec::new();
+    let mut running = None;
+    for page in layout.pages() {
+        let margin_box = page.margin_boxes().into_iter().next().unwrap();
+        let placed = page
+            .margin_box_running_element(&margin_box)
+            .unwrap()
+            .unwrap();
+        let element = placed.layout.page();
+        let fragment = element
+            .fragments()
+            .find(|f| element.dom().local_name(f.node()) == Some("svg"))
+            .unwrap();
+        sources.push(element.inline_svg(&fragment).unwrap().unwrap().source);
+        running = Some(placed.layout);
+    }
+    assert!(sources.iter().all(|source| *source == sources[0]));
+    assert_eq!(running.unwrap().svg_sources.len(), 1);
+}
+
+#[test]
 fn inline_svg_payload_uses_the_resolved_content_box_and_host_style() {
     let document = dom(
         "<style>@page {size:300px 200px;margin:10px} body {margin:0} svg {box-sizing:border-box;width:200px;height:120px;border:2px solid black;padding:10%;color:blue;opacity:.5}</style><svg xmlns='http://www.w3.org/2000/svg' width='200' height='120' style='display:block'><rect width='10' height='10' fill='currentColor' opacity='inherit'/></svg>",
