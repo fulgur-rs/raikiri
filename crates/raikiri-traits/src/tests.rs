@@ -151,6 +151,25 @@ fn render_limits_defaults() {
     assert_eq!(d.max_cascade_retained_bytes, cascade.max_retained_bytes);
     assert_eq!(d.max_cascade_output_bytes, cascade.max_output_bytes);
     assert_eq!(d.cascade_limits(), cascade);
+    // The rule tree limits take the rule tree's own defaults.
+    let rule_tree = raikiri_style::RuleTreeLimits::default();
+    assert_eq!(d.max_style_rules, rule_tree.max_rules);
+    assert_eq!(d.max_style_selectors, rule_tree.max_selectors);
+    assert_eq!(d.max_style_declarations, rule_tree.max_declarations);
+    assert_eq!(d.rule_tree_limits(), rule_tree);
+}
+
+#[test]
+fn render_limits_configure_the_rule_tree() {
+    let limits = RenderLimits::builder()
+        .max_style_rules(Some(1))
+        .max_style_selectors(None)
+        .max_style_declarations(Some(3))
+        .build();
+    let rule_tree = limits.rule_tree_limits();
+    assert_eq!(rule_tree.max_rules, Some(1));
+    assert_eq!(rule_tree.max_selectors, None);
+    assert_eq!(rule_tree.max_declarations, Some(3));
 }
 
 #[test]
