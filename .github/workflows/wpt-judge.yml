@@ -21,13 +21,13 @@ on:
       path_prefix:
         description: Only tests below this WPT directory
         type: choice
-        default: css/CSS2 (2230)
+        default: css/CSS2 (2223)
         # Every directory with judgeable tests at the pinned WPT revision. The
         # count in parentheses is the number of judgeable tests not yet in a
         # baseline when the list was made; the List step strips it.
         options:
-          - css (2974)
-          - css/CSS2 (2230)
+          - css (2967)
+          - css/CSS2 (2223)
           - css/CSS2/backgrounds (269)
           - css/CSS2/bidi-text (3)
           - css/CSS2/borders (255)
@@ -39,7 +39,7 @@ on:
           - css/CSS2/fonts (147)
           - css/CSS2/generate (17)
           - css/CSS2/generated-content (52)
-          - css/CSS2/i18n (57)
+          - css/CSS2/i18n (50)
           - css/CSS2/linebox (45)
           - css/CSS2/lists (123)
           - css/CSS2/margin-padding-clear (29)
