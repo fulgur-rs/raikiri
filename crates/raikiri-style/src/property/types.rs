@@ -567,9 +567,51 @@ pub enum Length {
     /// `ResolveContext::root_line_height` directly
     /// (see [`crate::resolve::resolve_font_size`]).
     Rlh(f32),
+    /// Viewport-percentage length: `vw`, 1% of the viewport's width.
+    /// `50vw` → `Vw(50.0)`.
+    ///
+    /// Spec: CSS Values 4 §6.1.2 Viewport-percentage Lengths
+    /// (<https://www.w3.org/TR/css-values-4/#viewport-relative-lengths>).
+    /// In paged media the viewport is fixed for the whole document, so the
+    /// small (`svw`), large (`lvw`) and dynamic (`dvw`) variants are all the
+    /// same size and parse to this variant too. The viewport itself is supplied
+    /// by [`crate::resolve::ResolveContext::viewport_width`] and
+    /// [`crate::resolve::ResolveContext::viewport_height`].
+    Vw(f32),
+    /// Viewport-percentage length: `vh` (and `svh` / `lvh` / `dvh`), 1% of the
+    /// viewport's height. See [`Length::Vw`].
+    Vh(f32),
+    /// Viewport-percentage length: `vi` (and `svi` / `lvi` / `dvi`), 1% of the
+    /// viewport's size in the root element's inline axis. Only horizontal
+    /// writing modes are implemented, so it resolves as [`Length::Vw`].
+    Vi(f32),
+    /// Viewport-percentage length: `vb` (and `svb` / `lvb` / `dvb`), 1% of the
+    /// viewport's size in the root element's block axis. Only horizontal
+    /// writing modes are implemented, so it resolves as [`Length::Vh`].
+    Vb(f32),
+    /// Viewport-percentage length: `vmin` (and its `s` / `l` / `d` variants),
+    /// the smaller of [`Length::Vw`] and [`Length::Vh`].
+    Vmin(f32),
+    /// Viewport-percentage length: `vmax` (and its `s` / `l` / `d` variants),
+    /// the larger of [`Length::Vw`] and [`Length::Vh`].
+    Vmax(f32),
 }
 
 impl Length {
+    /// Whether this is a viewport-percentage length (`vw`, `vh`, `vi`, `vb`,
+    /// `vmin`, `vmax`).
+    pub(crate) fn is_viewport_relative(self) -> bool {
+        matches!(
+            self,
+            Length::Vw(_)
+                | Length::Vh(_)
+                | Length::Vi(_)
+                | Length::Vb(_)
+                | Length::Vmin(_)
+                | Length::Vmax(_)
+        )
+    }
+
     /// The numeric value regardless of unit.
     pub(crate) fn payload(self) -> f32 {
         match self {
@@ -590,7 +632,13 @@ impl Length {
             | Length::In(v)
             | Length::Pc(v)
             | Length::Lh(v)
-            | Length::Rlh(v) => v,
+            | Length::Rlh(v)
+            | Length::Vw(v)
+            | Length::Vh(v)
+            | Length::Vi(v)
+            | Length::Vb(v)
+            | Length::Vmin(v)
+            | Length::Vmax(v) => v,
         }
     }
 }

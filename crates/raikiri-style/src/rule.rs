@@ -552,6 +552,9 @@ impl StyleRule {
 /// expand into four longhand declarations at the exit of this function. This
 /// spec-correct expansion enables natural per-side winner selection in the
 /// cascade; see the [`expand_shorthand_into`] docs for details.
+// Only tests call this outside the crate's docs: margin-box bodies, its one
+// other caller, use `parse_page_context_declaration_block` instead.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declaration> {
     parse_declaration_block_with_consumer_properties(input, &[])
 }
@@ -559,12 +562,33 @@ pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declara
 /// Parse a declaration block with an optional set of consumer-owned property
 /// registrations.  The default wrapper above intentionally keeps all existing
 /// callers on the zero-overhead path.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn parse_declaration_block_with_consumer_properties(
     input: &mut Parser<'_, '_>,
     consumer_properties: &[ConsumerPropertyRegistration],
 ) -> Vec<Declaration> {
     // No block expands to more than `usize::MAX` declarations.
     parse_declaration_block_within(input, consumer_properties, usize::MAX).unwrap_or_default()
+}
+
+/// [`parse_declaration_block`] for a declaration list in the page context
+/// (a margin-box body), which drops every declaration that uses a
+/// viewport-percentage length.
+///
+/// The page context resolves its lengths after the cascade, without a
+/// viewport, so such a declaration is treated as invalid, and the cascade
+/// falls back to the next candidate, as it does for any unsupported value.
+/// Custom properties keep their tokens and are not dropped.
+pub(crate) fn parse_page_context_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declaration> {
+    let mut parser = DeclParser {
+        consumer_properties: &[],
+        drop_viewport_lengths: true,
+    };
+    let mut out = Vec::new();
+    for decl in RuleBodyParser::new(input, &mut parser).flatten() {
+        expand_shorthand_into(&decl, |d| out.push(d));
+    }
+    out
 }
 
 /// [`parse_declaration_block_with_consumer_properties`], stopping as soon as
@@ -577,6 +601,7 @@ pub(crate) fn parse_declaration_block_within(
 ) -> Result<Vec<Declaration>, usize> {
     let mut parser = DeclParser {
         consumer_properties,
+        drop_viewport_lengths: false,
     };
     let mut out = Vec::new();
     for decl in RuleBodyParser::new(input, &mut parser).flatten() {
@@ -1527,6 +1552,10 @@ pub(crate) fn parse_declaration_value<'i>(
 /// Per-declaration parser for cssparser::RuleBodyParser.
 struct DeclParser<'a> {
     consumer_properties: &'a [ConsumerPropertyRegistration],
+    /// Whether declarations other than custom properties that use a
+    /// viewport-percentage length are dropped; see
+    /// [`parse_page_context_declaration_block`].
+    drop_viewport_lengths: bool,
 }
 
 impl<'i, 'a> DeclarationParser<'i> for DeclParser<'a> {
@@ -1539,6 +1568,12 @@ impl<'i, 'a> DeclarationParser<'i> for DeclParser<'a> {
         input: &mut Parser<'i, 't>,
         _declaration_start: &ParserState,
     ) -> Result<ParsedDeclaration, ParseError<'i, Self::Error>> {
+        if self.drop_viewport_lengths
+            && !name.starts_with("--")
+            && crate::property::has_viewport_length(input)
+        {
+            return Err(input.new_custom_error(()));
+        }
         parse_declaration_value(name, input, self.consumer_properties)
     }
 }

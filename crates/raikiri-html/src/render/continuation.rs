@@ -12,7 +12,7 @@ use raikiri_dom::{
     Document, PageLayoutControl, PageSlice, PageStart, PageStartToken,
     layout_pages_with_page_geometry_and_resolver_and_base_url_and_control,
 };
-use raikiri_style::{CascadeResult, MediaContext, RuleTree, cascade_with_media_context_for_page};
+use raikiri_style::{CascadeOptions, CascadeResult, MediaContext, RuleTree, cascade_with_options};
 use raikiri_traits::{LayoutError, ReplacedResolver};
 
 use super::{PageCascader, ResolvedPageGeometry, content_width_for_geometry, page_query_for_slice};
@@ -32,6 +32,8 @@ pub(super) struct ContinuationInputs<'a> {
     pub(super) source: &'a Document,
     pub(super) tree: &'a RuleTree,
     pub(super) media_context: &'a MediaContext,
+    /// The options of the run's element cascade.
+    pub(super) cascade_options: &'a CascadeOptions,
     pub(super) cascader: &'a PageCascader<'a>,
     pub(super) defaults: &'a raikiri_traits::PageDefaults,
     pub(super) resolver: &'a dyn ReplacedResolver,
@@ -112,11 +114,14 @@ fn relayout_from(
     start: PageStart,
 ) -> Result<Option<(Continuation, Vec<PageSlice>)>, LayoutError> {
     let geometry = geometries[page];
-    let mut cascade = cascade_with_media_context_for_page(
+    // The run's element cascade already succeeded on the same input with the
+    // same options, and the cascade's limits count only its input.
+    let mut cascade = cascade_with_options(
         inputs.source,
         inputs.tree,
         inputs.media_context,
         &page_query_for_slice(&slices[page]),
+        inputs.cascade_options,
     )
     .expect("cascade は常に Ok のはず");
     let mut document = inputs.pristine.clone();

@@ -19,6 +19,8 @@ use crate::resolve::{
 const CTX: ResolveContext = ResolveContext {
     root_font_size: ComputedLength(INITIAL_FONT_SIZE_PX),
     root_line_height: None,
+    viewport_width: 480.0,
+    viewport_height: 288.0,
 };
 
 /// Fixture passed as `parent: &ComputedValues` to `finalize`, with only its font size changed

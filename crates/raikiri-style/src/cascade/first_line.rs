@@ -193,10 +193,18 @@ pub(crate) fn cascade_with_first_line_within<D: StyleDom>(
         };
         let ctx = if ctx.is_none() && node.kind() == StyleNodeKind::Element {
             let cv = &normal.computed[id.0 as usize];
-            Some(ResolveContext::with_root_line_height(
-                cv.font_size,
-                used_line_height_length(cv.line_height, cv.font_size),
-            ))
+            Some(
+                ResolveContext::with_root_line_height(
+                    cv.font_size,
+                    used_line_height_length(cv.line_height, cv.font_size),
+                )
+                // The walk above resolves viewport-percentage lengths against
+                // the media context's viewport too.
+                .with_viewport(
+                    media.viewport_width() as f32,
+                    media.viewport_height() as f32,
+                ),
+            )
         } else {
             ctx
         };

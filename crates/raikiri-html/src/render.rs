@@ -546,6 +546,23 @@ fn preload_page_background_images(
     }
 }
 
+/// The size of the page area of a page with the context `page`: the initial
+/// containing block when `page` is the first page.
+///
+/// CSS Values 4 §6.1.2 makes the viewport-percentage lengths "relative to the
+/// size of the initial containing block", and CSS Paged Media 3 §3: "The
+/// edges of the page area on the first page establish the rectangle that is
+/// the initial containing block of the document." The page area is the
+/// content area of the page box, inside its border and padding.
+fn page_area_size(page: &PageCascadeResult, defaults: &PageDefaults) -> (f32, f32) {
+    let geometry = resolve_page_geometry(page, page_box_for_page(page, defaults));
+    let insets = geometry.content_insets;
+    (
+        (content_width_for_geometry(geometry) - insets.left - insets.right).max(0.0),
+        geometry.content_box.height,
+    )
+}
+
 fn content_width_for_geometry(geometry: ResolvedPageGeometry) -> f32 {
     (geometry.page_box.width - geometry.margins.left - geometry.margins.right).max(0.0)
 }
@@ -718,6 +735,17 @@ pub(crate) fn run_pipeline(
     first_query.is_right = true;
     let mut cascade_options = CascadeOptions::default();
     cascade_options.limits = config.limits.cascade_limits();
+    // The viewport-percentage lengths need the first page's page area before
+    // the element cascade, whose root the page context inherits from. Take it
+    // from the page context inheriting initial values; the root's styles only
+    // matter to font-relative page lengths, which are checked again below.
+    let provisional_page = cascade_page_with_media_context(
+        &tree,
+        &first_query,
+        PageInheritance::LegacyInitialValues,
+        media_context,
+    );
+    cascade_options.viewport = Some(page_area_size(&provisional_page, &defaults));
     let mut first_cascade = cascade_with_options(
         &doc.uncascaded.dom,
         &tree,
@@ -772,8 +800,26 @@ pub(crate) fn run_pipeline(
         },
     )
     .map_err(map_initial_page_context_error)?;
-    let first_cascade = resolved_initial_context.cascade;
+    let mut first_cascade = resolved_initial_context.cascade;
     let page_box = resolved_initial_context.page_box;
+    // A named first page, or page lengths relative to the root's font, can
+    // give the first page another page area than the provisional one. The
+    // element cascade is then run again in that viewport; the page context
+    // it already resolved is kept.
+    let page_area = page_area_size(&first_cascade.page, &defaults);
+    if cascade_options.viewport != Some(page_area) {
+        cascade_options.viewport = Some(page_area);
+        let page = first_cascade.page.clone();
+        first_cascade = cascade_with_options(
+            &doc.uncascaded.dom,
+            &tree,
+            media_context,
+            &first_query,
+            &cascade_options,
+        )?;
+        first_cascade.replace_page(page);
+    }
+    let first_cascade = first_cascade;
     // Only `page` in a cascade result depends on the page query, so the
     // first-page cascade serves as the element cascade of every later page.
     let page_cascader = PageCascader {
@@ -958,6 +1004,7 @@ pub(crate) fn run_pipeline(
             source: &doc.uncascaded.dom,
             tree: &tree,
             media_context,
+            cascade_options: &cascade_options,
             cascader: &page_cascader,
             defaults: &defaults,
             resolver: &resolver,

@@ -85,10 +85,18 @@ impl Default for CascadeLimits {
 
 /// How [`super::cascade_with_options`] runs.
 #[non_exhaustive]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct CascadeOptions {
     /// Limits on the cascade's work and on its result's memory.
     pub limits: CascadeLimits,
+    /// The viewport as `(width, height)` in CSS px: the basis of the
+    /// viewport-percentage lengths (`vw`, `vh`, `vmin`, `vmax`, ...).
+    ///
+    /// CSS Values 4 §6.1.2 makes them relative to the initial containing
+    /// block, which in paged media is the page area of the first page, not
+    /// the page box media queries see. `None` uses the media context's
+    /// viewport.
+    pub viewport: Option<(f32, f32)>,
 }
 
 /// A count against one of the limits. It keeps what is left before the

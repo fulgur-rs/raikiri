@@ -4533,6 +4533,12 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             // the computed layer.
             Length::Lh(_) => Some("Length::Lh"),
             Length::Rlh(_) => Some("Length::Rlh"),
+            Length::Vw(_) => Some("Length::Vw"),
+            Length::Vh(_) => Some("Length::Vh"),
+            Length::Vi(_) => Some("Length::Vi"),
+            Length::Vb(_) => Some("Length::Vb"),
+            Length::Vmin(_) => Some("Length::Vmin"),
+            Length::Vmax(_) => Some("Length::Vmax"),
         }
     }
     /// For positions where `%` **does not remain** at the computed layer:

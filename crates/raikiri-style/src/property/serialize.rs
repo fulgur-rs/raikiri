@@ -644,6 +644,12 @@ pub(crate) fn serialize_length(length: &Length) -> String {
         Length::Pc(v) => serialize_dimension(v, "pc"),
         Length::Lh(v) => serialize_dimension(v, "lh"),
         Length::Rlh(v) => serialize_dimension(v, "rlh"),
+        Length::Vw(v) => serialize_dimension(v, "vw"),
+        Length::Vh(v) => serialize_dimension(v, "vh"),
+        Length::Vi(v) => serialize_dimension(v, "vi"),
+        Length::Vb(v) => serialize_dimension(v, "vb"),
+        Length::Vmin(v) => serialize_dimension(v, "vmin"),
+        Length::Vmax(v) => serialize_dimension(v, "vmax"),
     }
 }
 
