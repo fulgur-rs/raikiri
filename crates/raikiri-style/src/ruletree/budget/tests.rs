@@ -69,6 +69,9 @@ fn nested_selectors_count_the_parent_at_every_use() {
     // three branches, two selectors each time.
     assert_eq!(counts("a, b { :is(&, .x, .y) {} }"), [1, 10, 0]);
     assert_eq!(counts("a, b { :is(.x, .y) {} }"), [1, 4, 0]);
+    // In `:has()` only the branch that holds `&` has the parent placed in
+    // it, so the parent is measured once.
+    assert_eq!(counts("a, b { :has(&, .x, .y) {} }"), [1, 6, 0]);
     // A rule that makes no rule of its own is counted all the same.
     assert_eq!(counts("a, b { & { @layer x; } }"), [1, 4, 0]);
     let tree = tree_within(

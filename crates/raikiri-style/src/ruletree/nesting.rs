@@ -468,8 +468,9 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleBodyParser<'_> {
 /// is placed in them. A selector holds the parent at every `&`, or once at
 /// the `&` the parser gives a selector without one, and counts as the
 /// parent's weight at each. Placing the parent in a logical list that holds
-/// `&` measures the parent's selectors again for every selector of the
-/// list, so each of those counts as many as the parent has selectors.
+/// `&` measures the parent's selectors again for every selector of the list
+/// (of a `:has()` list, for every one that holds `&`), so each of those
+/// counts as many as the parent has selectors.
 fn nested_selector_count(
     selectors: &SelectorList<RaikiriSelectorImpl>,
     parent: &NestingParent,
@@ -502,7 +503,16 @@ impl ParentUses {
                     self.add_list(list.slice().iter())
                 }
                 Component::NthOf(data) => self.add_list(data.selectors().iter()),
-                Component::Has(list) => self.add_list(list.iter().map(|child| &child.selector)),
+                // Only the relative selectors that hold `&` have the parent
+                // placed in them; the others are kept as they are.
+                Component::Has(list) => {
+                    for child in list
+                        .iter()
+                        .filter(|child| child.selector.has_parent_selector())
+                    {
+                        self.add_placement(&child.selector);
+                    }
+                }
                 _ => {}
             }
         }
@@ -518,10 +528,16 @@ impl ParentUses {
             return;
         }
         for selector in list {
-            self.measured = self.measured.saturating_add(1);
-            if selector.has_parent_selector() {
-                self.add_selector(selector);
-            }
+            self.add_placement(selector);
+        }
+    }
+
+    /// Placing the parent in `selector` measures the parent once, and then
+    /// uses it as `selector` does.
+    fn add_placement(&mut self, selector: &Selector<RaikiriSelectorImpl>) {
+        self.measured = self.measured.saturating_add(1);
+        if selector.has_parent_selector() {
+            self.add_selector(selector);
         }
     }
 }

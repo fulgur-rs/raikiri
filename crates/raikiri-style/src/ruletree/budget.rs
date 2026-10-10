@@ -50,9 +50,10 @@ pub struct RuleTreeLimits {
     /// A nested rule's selectors hold the list they nest in at every `&`,
     /// and a selector without one holds it once. Each counts as that list's
     /// weighted size at every `&`. A logical list holding `&` also makes each
-    /// of its selectors count as many as the parent list has selectors,
-    /// since placing the parent measures it again for each of them. A
-    /// selector list that would pass the limit is not parsed.
+    /// of its selectors, or in `:has()` each of those holding `&`, count as
+    /// many as the parent list has selectors, since placing the parent
+    /// measures it again for each of them. A selector list that would pass
+    /// the limit is not parsed.
     ///
     /// Defaults to `Some(2^20)`.
     pub max_selectors: Option<u64>,
