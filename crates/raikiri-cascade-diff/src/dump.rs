@@ -8,17 +8,20 @@
 //! for other page queries — are queried with fixed arguments, the way layout
 //! and paint query them. Each group of queries runs as its own section, so a
 //! panic in one is recorded on a line of its own and the rest of the case is
-//! still compared. The only output left out is run-specific identity (the
-//! cascade generation counter), which differs between any two runs.
+//! still compared. The output left out is run-specific identity (the cascade
+//! generation counter), which differs between any two runs, and the
+//! custom-property environments, which print how bindings are shared between
+//! nodes rather than what they are; the custom properties a case names are
+//! printed by value instead.
 
 use std::collections::BTreeSet;
 use std::fmt::{Debug, Write as _};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use raikiri_style::{
-    Atom, CascadeResult, ComputedValues, CssColor, FirstLineStyles, MediaContext, PageContextQuery,
-    PageInheritance, PseudoElem, RuleTree, StyleDom, StyleNode, StyleNodeId, StyleNodeKind,
-    cascade_page_with_media_context,
+    Atom, CascadeResult, ComputedValues, CssColor, FirstLineStyles, MediaContext,
+    PageCascadeResult, PageContextQuery, PageInheritance, PageMarginBoxSlot, PseudoElem, RuleTree,
+    StyleDom, StyleNode, StyleNodeId, StyleNodeKind, cascade_page_with_media_context,
 };
 
 use crate::canon::{canonicalize, struct_fields};
@@ -33,10 +36,15 @@ pub(crate) struct Inputs<'a, D> {
     pub(crate) custom_names: &'a [&'a str],
 }
 
+/// The struct whose literals print how custom-property bindings are shared
+/// between nodes rather than what they are. Fields holding one are left out
+/// of every value (see [`push_custom_properties`]).
+const CUSTOM_PROPERTY_ENVIRONMENT: &str = "CustomPropertyEnvironment";
+
 /// Appends `value` as `label: Name` followed by one indented line per field,
 /// or as a single `label: value` line when it is not a struct.
 fn push_value(out: &mut String, label: &str, value: &dyn Debug) {
-    let canon = canonicalize(&format!("{value:?}"));
+    let canon = canonicalize(&format!("{value:?}"), Some(CUSTOM_PROPERTY_ENVIRONMENT));
     match struct_fields(&canon) {
         Some((name, fields)) => {
             let _ = writeln!(out, "{label}: {name}");
@@ -47,6 +55,32 @@ fn push_value(out: &mut String, label: &str, value: &dyn Debug) {
         None => {
             let _ = writeln!(out, "{label}: {canon}");
         }
+    }
+}
+
+/// Appends computed values that are not a node's own, such as a
+/// first-letter style: [`push_value`], and then the custom properties
+/// `names` resolve on them, labeled `label custom`.
+fn push_derived(out: &mut String, label: &str, computed: &ComputedValues, names: &[&str]) {
+    push_value(out, label, computed);
+    push_custom_properties(out, &format!("{label} custom"), computed, names);
+}
+
+/// Appends a page result, and then each margin box one of its rules fills
+/// as layout resolves it, with the page's custom properties substituted, so
+/// those are compared by value.
+fn push_page(out: &mut String, label: &str, page: &PageCascadeResult) {
+    push_value(out, label, page);
+    let mut slots: Vec<PageMarginBoxSlot> =
+        page.margin_boxes().iter().map(|rule| rule.slot).collect();
+    slots.sort_by_key(|slot| format!("{slot:?}"));
+    slots.dedup();
+    for slot in slots {
+        push_value(
+            out,
+            &format!("{label} margin[{slot:?}]"),
+            &page.cascade_margin_box(slot),
+        );
     }
 }
 
@@ -86,7 +120,7 @@ pub(crate) fn cascade_result<D: StyleDom>(
         &result.authored_writing_modes,
     );
     push_value(out, "page_values", &result.page_values);
-    push_value(out, "page", &result.page);
+    push_page(out, "page", &result.page);
     push_value(out, "counter_styles", &result.counter_styles);
     push_value(
         out,
@@ -112,7 +146,7 @@ pub(crate) fn cascade_result<D: StyleDom>(
         }
     });
     section(out, "first letters", |out| {
-        first_letters(out, inputs.dom, result)
+        first_letters(out, inputs, result)
     });
     section(out, "highlights", |out| highlight_backgrounds(out, result));
     section(out, "page queries", |out| page_queries(out, inputs, result));
@@ -131,22 +165,29 @@ pub(crate) fn section(out: &mut String, name: &str, write: impl FnOnce(&mut Stri
 }
 
 /// Appends the effective value of every name in `names` that `computed`
-/// resolves, walking inherited bindings the way `var()` does.
+/// resolves, walking inherited bindings the way `var()` does, and then the
+/// values declared on the node itself.
 fn push_custom_properties(
     out: &mut String,
     label: &str,
     computed: &ComputedValues,
     names: &[&str],
 ) {
-    let values: Vec<String> = names
-        .iter()
-        .filter_map(|name| {
-            let value = computed.resolved_custom_property(name)?;
-            Some(format!("{name}={value:?}"))
-        })
-        .collect();
-    if !values.is_empty() {
-        let _ = writeln!(out, "{label}: {}", values.join(", "));
+    let effective = names.iter().filter_map(|name| {
+        let value = computed.resolved_custom_property(name)?;
+        Some(format!("{name}={value:?}"))
+    });
+    let local = names.iter().filter_map(|name| {
+        let value = computed.local_resolved_custom_property(name)?;
+        Some(format!("{name}={value:?}"))
+    });
+    for (suffix, values) in [
+        ("", effective.collect::<Vec<_>>()),
+        (" local", local.collect()),
+    ] {
+        if !values.is_empty() {
+            let _ = writeln!(out, "{label}{suffix}: {}", values.join(", "));
+        }
     }
 }
 
@@ -155,7 +196,8 @@ fn push_custom_properties(
 /// usual parents of the letter's text — through the `::first-line`
 /// pseudo-elements that enclose it, as layout resolves them once it knows the
 /// letter's actual parent.
-fn first_letters<D: StyleDom>(out: &mut String, dom: &D, result: &CascadeResult) {
+fn first_letters<D: StyleDom>(out: &mut String, inputs: &Inputs<'_, D>, result: &CascadeResult) {
+    let (dom, names) = (inputs.dom, inputs.custom_names);
     let _ = writeln!(
         out,
         "has_first_letter_styles: {}",
@@ -166,7 +208,7 @@ fn first_letters<D: StyleDom>(out: &mut String, dom: &D, result: &CascadeResult)
         let Some(style) = result.resolve_first_letter_style(origin, own) else {
             continue;
         };
-        push_value(out, &format!("first_letter[{index}]"), &style);
+        push_derived(out, &format!("first_letter[{index}]"), &style, names);
         for parent in first_descendants(dom, origin) {
             let lines = enclosing_first_lines(dom, result, parent);
             if lines.is_empty() {
@@ -189,9 +231,9 @@ fn first_letters<D: StyleDom>(out: &mut String, dom: &D, result: &CascadeResult)
                     continue; // cov:ignore: unreachable — `origin` has first-letter inputs, `lines` is non-empty with a `::first-line` style first, and `parent` descends from it
                 };
                 let label = format!("first_letter[{index}] at [{}, {generated:?}]", parent.0);
-                push_value(out, &format!("{label} parent"), &inherited);
+                push_derived(out, &format!("{label} parent"), &inherited, names);
                 if let Some(style) = result.resolve_first_letter_style(origin, &inherited) {
-                    push_value(out, &label, &style);
+                    push_derived(out, &label, &style, names);
                 }
             }
         }
@@ -304,13 +346,18 @@ fn page_queries<D>(out: &mut String, inputs: &Inputs<'_, D>, result: &CascadeRes
             PageInheritance::FromRoot(result.root_element_computed()),
             inputs.media,
         );
-        push_value(out, &format!("page[{label}]"), &page);
+        push_page(out, &format!("page[{label}]"), &page);
     }
 }
 
 /// Appends the canonical text of the styles the `::first-line` entry point
-/// returned for its block.
-pub(crate) fn first_line_styles(out: &mut String, styles: Option<&FirstLineStyles>) {
+/// returned for its block, with the custom properties `names` resolve on
+/// them.
+pub(crate) fn first_line_styles(
+    out: &mut String,
+    styles: Option<&FirstLineStyles>,
+    names: &[&str],
+) {
     match styles {
         None => {
             let _ = writeln!(out, "first_line: None");
@@ -319,29 +366,99 @@ pub(crate) fn first_line_styles(out: &mut String, styles: Option<&FirstLineStyle
             let _ = writeln!(out, "first_line.root: {}", styles.root.0);
             for (index, computed) in styles.computed.iter().enumerate() {
                 if let Some(computed) = computed {
-                    push_value(out, &format!("first_line[{index}]"), computed);
+                    push_derived(out, &format!("first_line[{index}]"), computed, names);
                 }
             }
         }
     }
 }
 
-/// Every name in `source` that could be a custom property: `--` followed by
-/// name code points, sorted. A name no node defines prints nothing.
-pub(crate) fn custom_property_names(source: &str) -> Vec<&str> {
+/// Every name in `sources` that could be a custom property, sorted: each
+/// run of name code points and escapes that decodes to `--` and more. CSS
+/// tokenizes an identifier this way wherever it is nested, so an escaped
+/// name is found by its value at any depth. A name no node defines prints
+/// nothing.
+pub(crate) fn custom_property_names<'a>(sources: impl IntoIterator<Item = &'a str>) -> Vec<String> {
     let is_name = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_' || !c.is_ascii();
     let mut names = BTreeSet::new();
-    let mut position = 0;
-    while let Some(offset) = source[position..].find("--") {
-        let start = position + offset;
-        let tail = &source[start + 2..];
-        let length = tail.find(|c: char| !is_name(c)).unwrap_or(tail.len());
-        if length > 0 {
-            names.insert(&source[start..start + 2 + length]);
+    for source in sources {
+        // CSS drops a leading byte order mark and reads a NUL in its input as
+        // U+FFFD before it tokenizes, escaped or not.
+        let chars: Vec<char> = source
+            .strip_prefix('\u{feff}')
+            .unwrap_or(source)
+            .chars()
+            .map(|c| {
+                if c == '\0' {
+                    char::REPLACEMENT_CHARACTER
+                } else {
+                    c
+                }
+            })
+            .collect();
+        let mut position = 0;
+        while position < chars.len() {
+            let mut name = String::new();
+            while let Some(&c) = chars.get(position) {
+                if is_name(c) {
+                    name.push(c);
+                    position += 1;
+                } else if c == '\\'
+                    && chars
+                        .get(position + 1)
+                        .is_some_and(|&next| !is_newline(next))
+                {
+                    position += 1;
+                    name.push(escaped_code_point(&chars, &mut position));
+                } else {
+                    break;
+                }
+            }
+            if name.is_empty() {
+                position += 1;
+            } else if name.len() > 2 && name.starts_with("--") {
+                // `--` alone is reserved, not a custom property name.
+                names.insert(name);
+            }
         }
-        position = start + 2 + length;
     }
     names.into_iter().collect()
+}
+
+fn is_newline(c: char) -> bool {
+    matches!(c, '\n' | '\r' | '\x0c')
+}
+
+/// Decodes the escape whose backslash precedes `chars[*position]`, as CSS
+/// Syntax 3 consumes an escaped code point: up to six hex digits and one
+/// whitespace after them, or else the code point itself.
+fn escaped_code_point(chars: &[char], position: &mut usize) -> char {
+    let start = *position;
+    let mut value = 0;
+    while let Some(digit) = chars.get(*position).and_then(|c| c.to_digit(16)) {
+        if *position - start == 6 {
+            break;
+        }
+        value = value * 16 + digit;
+        *position += 1;
+    }
+    if *position == start {
+        *position += 1;
+        return chars[start];
+    }
+    match chars.get(*position) {
+        Some('\r') => {
+            *position += 1;
+            if chars.get(*position) == Some(&'\n') {
+                *position += 1;
+            }
+        }
+        Some(' ' | '\t' | '\n' | '\x0c') => *position += 1,
+        _ => {}
+    }
+    char::from_u32(value)
+        .filter(|&c| c != '\0')
+        .unwrap_or(char::REPLACEMENT_CHARACTER)
 }
 
 /// 64-bit FNV-1a, a stable hash for comparing dumps across processes.

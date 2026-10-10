@@ -2591,8 +2591,11 @@ dependencies = [
 name = "raikiri-cascade-diff"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "raikiri-html",
  "raikiri-style",
+ "raikiri-traits",
+ "url",
 ]
 
 [[package]]

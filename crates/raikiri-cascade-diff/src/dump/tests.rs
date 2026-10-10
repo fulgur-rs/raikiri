@@ -50,6 +50,24 @@ fn first_letter_styles_are_resolved_through_enclosing_first_lines() {
         !out.contains(&format!("at [{span}, Some(Before)]")),
         "{out}"
     );
+    assert!(!out.contains(CUSTOM_PROPERTY_ENVIRONMENT), "{out}");
+}
+
+#[test]
+fn derived_styles_print_custom_properties_by_value() {
+    let mut doc = GenDoc::new(StyleQuirksMode::NoQuirks);
+    let p = doc.append(0, GenNode::element("p"));
+    doc.append(p, GenNode::text("text"));
+    let out = dump_of(
+        &doc,
+        "p { --a: 1 } p::first-letter { color: red }",
+        &["--a", "--b"],
+    );
+    assert!(
+        out.contains(&format!("first_letter[{p}] custom: --a=\"1\"\n")),
+        "{out}"
+    );
+    assert!(!out.contains(CUSTOM_PROPERTY_ENVIRONMENT), "{out}");
 }
 
 #[test]
@@ -100,6 +118,32 @@ fn outputs_reached_only_through_methods_are_printed() {
     for query in ["first", "left", "named", "named first", "blank"] {
         assert!(out.contains(&format!("page[{query}]: ")), "{out}");
     }
+    // The page results hold the root's custom-property environment, which
+    // is not printed either.
+    assert!(!out.contains(CUSTOM_PROPERTY_ENVIRONMENT), "{out}");
+}
+
+#[test]
+fn page_margin_boxes_are_printed_as_layout_resolves_them() {
+    let mut doc = GenDoc::new(StyleQuirksMode::NoQuirks);
+    doc.append(0, GenNode::element("html"));
+    // A page-local custom property used only in a margin box shows up in
+    // the margin box's resolved declarations.
+    let dump = |ink: &str| {
+        dump_of(
+            &doc,
+            &format!("@page {{ --ink: {ink}; @top-center {{ color: var(--ink) }} }}"),
+            &[],
+        )
+    };
+    let red = dump("red");
+    assert!(red.contains("page margin[TopCenter]: Some("), "{red}");
+    assert!(
+        red.contains("page[first] margin[TopCenter]: Some("),
+        "{red}"
+    );
+    assert_ne!(red, dump("blue"));
+    assert!(!red.contains(CUSTOM_PROPERTY_ENVIRONMENT), "{red}");
 }
 
 #[test]
@@ -127,7 +171,7 @@ fn custom_properties_of_pseudo_elements_are_printed() {
 #[test]
 fn the_first_line_styles_of_a_block_are_printed_per_node() {
     let mut out = String::new();
-    first_line_styles(&mut out, None);
+    first_line_styles(&mut out, None, &[]);
     assert_eq!(out, "first_line: None\n");
     let mut computed = vec![None, Some(ComputedValues::initial()), None];
     computed[2] = Some(ComputedValues::initial());
@@ -136,21 +180,51 @@ fn the_first_line_styles_of_a_block_are_printed_per_node() {
         computed,
     };
     let mut out = String::new();
-    first_line_styles(&mut out, Some(&styles));
+    first_line_styles(&mut out, Some(&styles), &["--a"]);
     assert!(
         out.starts_with("first_line.root: 1\nfirst_line[1]: ComputedValues\n"),
         "{out}"
     );
     assert!(out.contains("first_line[2]: ComputedValues\n"), "{out}");
     assert!(!out.contains("first_line[0]"), "{out}");
+    assert!(!out.contains(CUSTOM_PROPERTY_ENVIRONMENT), "{out}");
 }
 
 #[test]
 fn custom_property_names_are_scanned_from_the_source() {
     assert_eq!(
-        custom_property_names("a { --b: 1; --a-b_c: var(--b) } <!-- c --> --é- --"),
+        custom_property_names(["a { --b: 1; --a-b_c: var(--b) } <!-- c --> --é- --"]),
         vec!["--a-b_c", "--b", "--é-"]
     );
+    // An escaped name is found by its value, wherever the escapes are, in
+    // any of the sources: a hex escape takes one whitespace after it, and a
+    // CRLF counts as one.
+    assert_eq!(
+        custom_property_names([
+            "--\\66 oo: 1",
+            "p { \\2d\\2d bar: 2 }",
+            "--\\62\r\naz: 3; --\\-q: 4"
+        ]),
+        vec!["---q", "--bar", "--baz", "--foo"]
+    );
+    // However deeply it is nested.
+    let deep = format!("{}--\\64 eep: 1{}", "{".repeat(200), "}".repeat(200));
+    assert_eq!(custom_property_names([deep.as_str()]), vec!["--deep"]);
+    // A NUL, a surrogate or a code point past Unicode decodes to U+FFFD, a
+    // backslash before a newline escapes nothing, and a hex escape stops
+    // after six digits.
+    assert_eq!(
+        custom_property_names(["--a\\0 ; --b\\d800 ; --c\\110000 ; --d\\\n ; --e\\0000411"]),
+        vec!["--a\u{fffd}", "--b\u{fffd}", "--c\u{fffd}", "--d", "--eA1"]
+    );
+    // So does a NUL in the source itself, which CSS reads as U+FFFD, escaped
+    // or not.
+    assert_eq!(
+        custom_property_names(["--f\0g: 1; --h\\\0i: 2"]),
+        vec!["--f\u{fffd}g", "--h\u{fffd}i"]
+    );
+    // A leading byte order mark is not part of the first name.
+    assert_eq!(custom_property_names(["\u{feff}--j: 1"]), vec!["--j"]);
 }
 
 #[test]

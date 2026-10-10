@@ -142,8 +142,62 @@ fn dump_reads_html_cases_from_a_list() {
     let lines: Vec<&str> = out.lines().collect();
     assert_eq!(lines.len(), 2);
     assert!(lines[0].starts_with(&format!("html:{}\t", html.path())));
-    assert!(render(&format!("html:{}", html.path())).starts_with("root_element_index:"));
-    assert!(render("html:/nonexistent/raikiri-cascade-diff.html").starts_with("IO-ERROR:"));
+    assert!(render(&format!("html:{}", html.path()), None).starts_with("root_element_index:"));
+    assert!(render("html:/nonexistent/raikiri-cascade-diff.html", None).starts_with("IO-ERROR:"));
+}
+
+#[test]
+fn html_cases_under_a_root_read_their_linked_stylesheets() {
+    let root = std::env::temp_dir().join(format!(
+        "raikiri-cascade-diff-{}-html-root",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(root.join("css/support")).unwrap();
+    std::fs::create_dir_all(root.join("css/test")).unwrap();
+    std::fs::write(root.join("css/support/root.css"), "p { margin-left: 7px }").unwrap();
+    std::fs::write(
+        root.join("css/test/local.css"),
+        "@import \"rules.txt\"; p { --local: 1; --\\65 sc: 2 }",
+    )
+    .unwrap();
+    std::fs::write(root.join("css/test/rules.txt"), "p { margin-right: 9px }").unwrap();
+    let page = root.join("css/test/page.html");
+    std::fs::write(
+        &page,
+        "<!doctype html><link rel=stylesheet href=\"/css/support/root.css\">\
+         <link rel=stylesheet href=\"local.css\"><p style=\"--\\61 ttr: 3\">x</p>",
+    )
+    .unwrap();
+    let case = format!("html:{}", page.display());
+    let linked = render(&case, Some(&root));
+    // A root-relative and a relative link both resolve against the root, and
+    // custom properties declared only in a linked stylesheet are printed,
+    // effective and local alike, as are those whose names are escaped there
+    // or in a style attribute.
+    assert!(linked.contains("left: Px(7.0) }"), "{linked}");
+    assert!(
+        linked.contains(": --attr=\"3\", --esc=\"2\", --local=\"1\""),
+        "{linked}"
+    );
+    assert!(
+        linked.contains(" local: --attr=\"3\", --esc=\"2\", --local=\"1\""),
+        "{linked}"
+    );
+    // A file that is not CSS is not imported.
+    assert!(!linked.contains("right: Px(9.0)"), "{linked}");
+    // Without a root the links are not followed.
+    let unlinked = render(&case, None);
+    assert!(!unlinked.contains("left: Px(7.0) }"), "{unlinked}");
+    // `show` takes the same root.
+    let (status, shown) = run_to_string(&["show", "--html-root", root.to_str().unwrap(), &case]);
+    assert_eq!(status, ExitCode::SUCCESS);
+    assert_eq!(shown, linked);
+    // Sharing of custom-property bindings is not printed, only their values.
+    assert!(
+        !linked.contains("CustomPropertyEnvironment { local: {\"--local\""),
+        "{linked}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]
@@ -170,7 +224,7 @@ fn invalid_arguments_are_usage_errors() {
 fn show_and_describe_print_one_case() {
     let (status, out) = run_to_string(&["show", "gen:3:print"]);
     assert_eq!(status, ExitCode::SUCCESS);
-    assert_eq!(out, render("gen:3:print"));
+    assert_eq!(out, render("gen:3:print", None));
     let (status, out) = run_to_string(&["describe", "3"]);
     assert_eq!(status, ExitCode::SUCCESS);
     assert!(out.contains("/* Author */"));
@@ -187,7 +241,7 @@ fn write_failures_are_reported() {
 #[test]
 fn malformed_case_ids_are_reported() {
     for case in ["gen:3", "gen:x:print", "gen:3:bogus", "other:3"] {
-        assert_eq!(render(case), format!("BAD CASE: {case}\n"));
+        assert_eq!(render(case, None), format!("BAD CASE: {case}\n"));
     }
 }
 
@@ -243,7 +297,7 @@ fn a_seed_without_a_designated_block_runs_the_entry_point_for_its_first_element(
         .expect("a seed in range has no designated block");
     let case = generate::generate(seed);
     let root = first_line_root(&case.doc);
-    let text = render(&format!("gen:{seed}:first-line"));
+    let text = render(&format!("gen:{seed}:first-line"), None);
     let unsupported = format!("unsupported first-line node {}", root.0);
     assert!(
         text.contains(&unsupported) || text.contains("first_line"),
@@ -260,7 +314,7 @@ fn every_designated_block_reaches_the_first_line_entry_point() {
         let Some(root) = generate::generate(seed).first_line_root else {
             continue;
         };
-        let text = render(&format!("gen:{seed}:first-line"));
+        let text = render(&format!("gen:{seed}:first-line"), None);
         assert!(
             text.contains(&format!("first_line.root: {root}\n")),
             "seed {seed}: {}",
@@ -275,16 +329,16 @@ fn html_cases_run_the_first_line_entry_point_for_their_first_first_line_block() 
         "first-line.html",
         "<!doctype html><style>p::first-line { color: red }</style><p>x <b>y</b></p>",
     );
-    let text = render(&format!("html:{}", inline.path()));
+    let text = render(&format!("html:{}", inline.path()), None);
     assert!(text.contains("first_line.root: "), "{text}");
     let nested = TempFile::new(
         "first-line-nested.html",
         "<!doctype html><style>div::first-line { color: red }</style><div><p>x</p></div>",
     );
-    let text = render(&format!("html:{}", nested.path()));
+    let text = render(&format!("html:{}", nested.path()), None);
     assert!(text.contains("first_line: ERR: "), "{text}");
     let plain = TempFile::new("plain.html", "<!doctype html><p>x</p>");
-    let text = render(&format!("html:{}", plain.path()));
+    let text = render(&format!("html:{}", plain.path()), None);
     assert!(!text.contains("first_line"), "{text}");
     // The outer block has a block child, so the inner one is tried next.
     let both = TempFile::new(
@@ -292,7 +346,7 @@ fn html_cases_run_the_first_line_entry_point_for_their_first_first_line_block() 
         "<!doctype html><style>div::first-line, p::first-line { color: red }</style>\
          <div><p>x</p></div>",
     );
-    let text = render(&format!("html:{}", both.path()));
+    let text = render(&format!("html:{}", both.path()), None);
     assert!(text.contains("first_line: ERR: "), "{text}");
     assert!(text.contains("first_line.root: "), "{text}");
 }
