@@ -1,6 +1,6 @@
 use std::io::Write;
 
-use raikiri_traits::{AbortController, LimitKind, ParseError, RenderLimits};
+use raikiri_traits::{AbortController, LimitKind, ParseError, RenderLimits, WarningKind};
 
 use super::*;
 use crate::StringFetchMode;
@@ -295,7 +295,7 @@ type PageLog = Vec<(u32, Vec<NodeId>)>;
 struct Shared(std::rc::Rc<std::cell::RefCell<PageLog>>);
 
 impl PageSink for Shared {
-    type Output = ();
+    type Output = StreamSummary;
 
     fn page(
         &mut self,
@@ -307,8 +307,8 @@ impl PageSink for Shared {
         Ok(())
     }
 
-    fn finish(self, _summary: StreamSummary) -> std::io::Result<()> {
-        Ok(())
+    fn finish(self, summary: StreamSummary) -> std::io::Result<StreamSummary> {
+        Ok(summary)
     }
 }
 
@@ -316,6 +316,16 @@ impl PageSink for Shared {
 /// `checkpoint` bytes. Returns all pages and how many arrived before
 /// `finish`.
 fn stream_progressively(html: &str, chunk: usize, checkpoint: usize) -> (PageLog, usize) {
+    let (pages, early, _) = stream_with_summary(html, chunk, checkpoint);
+    (pages, early)
+}
+
+/// [`stream_progressively`], also returning the summary.
+fn stream_with_summary(
+    html: &str,
+    chunk: usize,
+    checkpoint: usize,
+) -> (PageLog, usize, StreamSummary) {
     let resources = RenderResources::new();
     let shared = Shared::default();
     let mut stream = StreamingLayout::new(
@@ -329,13 +339,9 @@ fn stream_progressively(html: &str, chunk: usize, checkpoint: usize) -> (PageLog
         stream.feed(piece).expect("feed");
     }
     let early = shared.0.borrow().len();
-    completed_unit(stream.finish().expect("finish"));
+    let summary = completed(stream.finish().expect("finish"));
     let pages = shared.0.borrow().clone();
-    (pages, early)
-}
-
-fn completed_unit(status: StreamStatus<()>) {
-    assert!(matches!(status, StreamStatus::Completed(())), "aborted");
+    (pages, early, summary)
 }
 
 /// A long document mixing the constructs the frontier treats specially.
@@ -421,7 +427,7 @@ fn an_open_table_holds_its_pages() {
         !shared.0.borrow().is_empty(),
         "closing the table finalises pages"
     );
-    completed_unit(stream.finish().expect("finish"));
+    completed(stream.finish().expect("finish"));
     assert_eq!(*shared.0.borrow(), expected);
 }
 
@@ -453,4 +459,92 @@ fn progressive_pages_match_batch_layout_with_page_rules_and_floats() {
         assert_eq!(pages, expected, "chunk {chunk}, checkpoint {checkpoint}");
         assert!(early > 0, "chunk {chunk}, checkpoint {checkpoint}");
     }
+}
+
+fn ignored(summary: &StreamSummary) -> Vec<(Option<NodeId>, String)> {
+    summary
+        .warnings
+        .iter()
+        .filter(|warning| matches!(warning.kind, WarningKind::StreamingContentIgnored))
+        .map(|warning| (warning.node_id, warning.details.clone()))
+        .collect()
+}
+
+fn paragraphs(count: usize) -> String {
+    let mut html = String::new();
+    for paragraph in 0..count {
+        html.push_str("<p>");
+        for word in 0..50 {
+            html.push_str(&format!("p{paragraph}w{word} "));
+        }
+        html.push_str("</p>");
+    }
+    html
+}
+
+#[test]
+fn styles_inside_body_are_not_applied() {
+    let html = "<p>a</p><style>p { break-before: page }</style><p>b</p>";
+    assert_eq!(batch_pages(html).len(), 2);
+    let (pages, _, summary) = stream_with_summary(html, html.len(), usize::MAX);
+    assert_eq!(pages.len(), 1);
+    let ignored = ignored(&summary);
+    assert_eq!(ignored.len(), 1, "{ignored:?}");
+    assert!(ignored[0].1.contains("<style>"));
+}
+
+#[test]
+fn styles_in_head_still_apply() {
+    let html = "<style>p { break-before: page }</style><p>a</p><p>b</p>";
+    let (pages, _, summary) = stream_with_summary(html, html.len(), usize::MAX);
+    assert_eq!(pages, batch_pages(html));
+    assert!(ignored(&summary).is_empty());
+}
+
+#[test]
+fn fixed_elements_after_the_first_delivered_page_are_skipped() {
+    let fixed = "<div style='position: fixed; top: 0'>stamp</div>";
+    let html = format!("{}{fixed}<p>end</p>", paragraphs(60));
+    let (pages, early, summary) = stream_with_summary(&html, 1000, 1);
+    assert!(early > 0);
+    let ignored = ignored(&summary);
+    assert_eq!(ignored.len(), 1, "{ignored:?}");
+    assert!(ignored[0].1.contains("position: fixed"));
+    // Batch layout repeats the element on every page; the stream does not
+    // draw it anywhere.
+    let stamp = ignored[0].0.expect("node");
+    assert!(pages.iter().all(|(_, nodes)| !nodes.contains(&stamp)));
+    assert!(
+        batch_pages(&html)
+            .iter()
+            .all(|(_, nodes)| nodes.contains(&stamp))
+    );
+}
+
+#[test]
+fn fixed_elements_before_the_first_delivered_page_repeat() {
+    let html = format!(
+        "<div style='position: fixed; top: 0'>stamp</div>{}",
+        paragraphs(60)
+    );
+    let (pages, early, summary) = stream_with_summary(&html, 1000, 1);
+    assert!(early > 0);
+    assert_eq!(pages, batch_pages(&html));
+    assert!(ignored(&summary).is_empty());
+}
+
+#[test]
+fn late_body_attributes_are_ignored_after_delivery() {
+    let html = format!("{}<body style='font-size: 40px'><p>end</p>", paragraphs(60));
+    let (_, early, summary) = stream_with_summary(&html, 1000, 1);
+    assert!(early > 0);
+    let ignored = ignored(&summary);
+    assert_eq!(ignored.len(), 1, "{ignored:?}");
+    assert!(ignored[0].1.contains("style"));
+
+    // Without a delivered page the attributes still apply.
+    let (pages, early, summary) = stream_with_summary(&html, html.len(), usize::MAX);
+    assert_eq!(early, 0);
+    assert_eq!(pages, batch_pages(&html));
+    assert!(self::ignored(&summary).is_empty());
 }
