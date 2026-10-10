@@ -94,6 +94,12 @@ impl<'a> StreamPage<'a> {
         }
     }
 
+    /// The document's base URL, for resolving the targets of
+    /// [`Page::links`]. See [`DocumentLayout::base_url`].
+    pub fn base_url(&self) -> Option<&'a url::Url> {
+        self.layout.base_url()
+    }
+
     /// Lay running element `node` out at `width` CSS px. See
     /// [`DocumentLayout::layout_running_element`].
     pub fn layout_running_element(
