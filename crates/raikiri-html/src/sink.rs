@@ -6,7 +6,7 @@ use std::cell::{Cell, Ref, RefCell};
 
 use html5ever::interface::{Attribute, ElementFlags, NodeOrText, QualName, TreeSink};
 use html5ever::tendril::StrTendril;
-use html5ever::tree_builder::QuirksMode;
+use html5ever::tree_builder::{QuirksMode, Tracer, TreeBuilder};
 use markup5ever::ns;
 use raikiri_dom::Document;
 use raikiri_traits::{Dom, RenderWarning, WarningKind};
@@ -41,6 +41,23 @@ pub struct RaikiriTreeSink {
     /// Intended to receive [`raikiri_traits::RenderLimits::max_parse_warnings`];
     /// see that field's documentation for the rationale.
     max_parse_warnings: Option<usize>,
+    /// Character data for one insertion point that has not reached the
+    /// Document yet. The tokenizer splits a text run at
+    /// every input chunk boundary, and merging each piece into the Document's
+    /// immutable text storage would copy the whole run again per piece.
+    /// Every other tree mutation and every node creation calls
+    /// [`RaikiriTreeSink::flush_text`] first, so the text lands at the same
+    /// position and gets the same node id it always did, however the input
+    /// was split.
+    pending_text: RefCell<Option<(TextTarget, String)>>,
+    /// Set once a streaming layout has delivered pages: attributes that a
+    /// repeated `<html>` or `<body>` tag would add are then ignored, since
+    /// they could restyle those pages.
+    root_attributes_frozen: Cell<bool>,
+    /// Elements whose ignored attributes were reported. One warning per
+    /// element keeps a tag repeated throughout the input from adding a
+    /// warning each time.
+    root_attributes_reported: RefCell<Vec<usize>>,
 }
 
 impl RaikiriTreeSink {
@@ -60,6 +77,9 @@ impl RaikiriTreeSink {
             warnings: RefCell::new(Vec::new()),
             quirks_mode: Cell::new(QuirksMode::NoQuirks),
             max_parse_warnings,
+            pending_text: RefCell::new(None),
+            root_attributes_frozen: Cell::new(false),
+            root_attributes_reported: RefCell::new(Vec::new()),
         }
     }
 
@@ -71,6 +91,7 @@ impl RaikiriTreeSink {
     /// Here, only register the tag and default Style in the Document and store
     /// full-fidelity metadata in the side tables.
     fn make_element(&self, name: QualName, attrs: Vec<Attribute>) -> usize {
+        self.flush_text();
         let tag: SmolStr = AsRef::<str>::as_ref(&name.local).into();
         let idx =
             self.document
@@ -81,16 +102,79 @@ impl RaikiriTreeSink {
         idx
     }
 
+    /// Ignore attributes that later repeated `<html>` or `<body>` tags would
+    /// add, recording a warning instead.
+    pub(crate) fn freeze_root_attributes(&self) {
+        self.root_attributes_frozen.set(true);
+    }
+
+    /// The document parsed so far, finished as [`TreeSink::finish`] would
+    /// finish it, while the parser keeps its own state.
+    pub(crate) fn snapshot(&self) -> UncascadedDocument {
+        self.flush_text();
+        assemble_document(
+            self.document.borrow().clone(),
+            self.warnings.borrow().clone(),
+            &self.qual_names.borrow(),
+            &self.attributes.borrow(),
+            convert_quirks(self.quirks_mode.get()),
+        )
+    }
+
     /// Append Text to the parent's last child.
     ///
     /// The HTML tokenizer may split a single inline run across callbacks.
     /// Separate adjacent Text nodes would become separate block leaves and cause
     /// spurious line breaks in normal flow. Merge with the last Text node as required by TreeSink.
+    /// Consecutive pieces for one parent are buffered in `pending_text` and
+    /// merged once, when another mutation or `finish` flushes them.
     fn append_text_smart(&self, parent: usize, text: StrTendril) {
-        self.document
-            .borrow_mut()
-            .append_text_coalesced(parent, text.to_string());
+        self.buffer_text(TextTarget::Append(parent), &text);
     }
+
+    /// Adds `text` to the buffer, flushing first if it targets another
+    /// insertion point.
+    fn buffer_text(&self, target: TextTarget, text: &str) {
+        let mut pending = self.pending_text.borrow_mut();
+        if let Some((pending_target, buffer)) = pending.as_mut()
+            && *pending_target == target
+        {
+            buffer.push_str(text);
+            return;
+        }
+        if let Some((pending_target, buffer)) = pending.replace((target, text.to_owned())) {
+            self.write_text(pending_target, buffer);
+        }
+    }
+
+    /// Writes buffered character data to the Document.
+    fn flush_text(&self) {
+        let pending = self.pending_text.borrow_mut().take();
+        if let Some((target, buffer)) = pending {
+            self.write_text(target, buffer);
+        }
+    }
+
+    fn write_text(&self, target: TextTarget, text: String) {
+        let mut document = self.document.borrow_mut();
+        match target {
+            TextTarget::Append(parent) => {
+                document.append_text_coalesced(parent, text);
+            }
+            TextTarget::Before { parent, sibling } => {
+                document.insert_text_before_coalesced(parent, sibling, text);
+            }
+        }
+    }
+}
+
+/// Where buffered character data will be inserted.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TextTarget {
+    /// At the end of `parent`'s children.
+    Append(usize),
+    /// Directly before `sibling`, a child of `parent`.
+    Before { parent: usize, sibling: usize },
 }
 
 impl Default for RaikiriTreeSink {
@@ -105,53 +189,14 @@ impl TreeSink for RaikiriTreeSink {
     type ElemName<'a> = Ref<'a, QualName>;
 
     fn finish(self) -> UncascadedDocument {
-        let mut document = self.document.into_inner();
-        let warnings = self.warnings.into_inner();
-        let qual_names = self.qual_names.into_inner();
-        let attributes = self.attributes.into_inner();
-
-        // Copy metadata tables into raikiri-dom::Node.
-        // qual_names → Node.namespace (non-HTML only).
-        // attributes → Node.attributes (null namespace, excluding style) + Node.inline_style.
-        wire_side_tables(&mut document, &qual_names, &attributes);
-
-        // Store the value reported by html5ever's set_quirks_mode callback on the
-        // Document itself. The cascade (raikiri-style id/class selector matching)
-        // reads it through `impl StyleDom for Document`.
-        let quirks_mode = convert_quirks(self.quirks_mode.get());
-        document.set_quirks_mode(quirks_mode);
-
-        // Remove the old strip_non_element_stubs behavior (which physically removed
-        // pseudo-tag "#comment" and "#pi" Elements from the tree).
-        // Persist Comment and ProcessingInstruction as the NodeData::Comment and
-        // NodeData::ProcessingInstruction variants in the tree, matching WHATWG
-        // DOM §4 NodeType. Both variants have their IS_IN_DOCUMENT bit cleared
-        // by `mark_in_document_flags` step 2. Therefore:
-        //
-        // - The TaffyChildIter is_in_document filter excludes them from layout child
-        //   counts (raikiri-dom/src/taffy_impl.rs:38,61,71).
-        // - extract_inline_stylesheets / find_head_element / find_body skip them via
-        //   the is_in_document() and Element gates.
-        // - All cascade and paint traversals skip them through the same gates.
-        //
-        // Clear IS_IN_DOCUMENT on detached template contents, detached nodes
-        // (transient foster parenting), and Comment/PI nodes. Do this before
-        // extract_inline_stylesheets, which skips them through the
-        // is_in_document() gate.
-        document.mark_in_document_flags();
-
-        let stylesheet_sources = extract_inline_stylesheets(&document)
-            .into_iter()
-            .map(|(source, media)| crate::StylesheetSource::new(source, media))
-            .collect();
-        UncascadedDocument {
-            dom: document,
-            stylesheet_sources,
-            user_stylesheet_sources: Vec::new(),
-            user_stylesheet_insertion_index: 0,
-            warnings,
-            quirks_mode,
-        }
+        self.flush_text();
+        assemble_document(
+            self.document.into_inner(),
+            self.warnings.into_inner(),
+            &self.qual_names.into_inner(),
+            &self.attributes.into_inner(),
+            convert_quirks(self.quirks_mode.get()),
+        )
     }
 
     fn parse_error(&self, msg: Cow<'static, str>) {
@@ -169,13 +214,19 @@ impl TreeSink for RaikiriTreeSink {
             });
             return;
         };
+        // Streaming warnings share the vector; only parse errors count
+        // toward the cap.
+        let recorded = warnings
+            .iter()
+            .filter(|warning| matches!(warning.kind, WarningKind::HtmlParseError { .. }))
+            .count();
         if cap == 0 {
             // There is no slot for a real warning, but—as for cap > 0—add a synthetic
             // entry on the first call indicating that at least one parse error occurred
             // and was suppressed. An unconditional no-op would make this case
             // indistinguishable from zero parse errors and would silently disable the
             // trip-and-record behavior used for cap > 0.
-            if warnings.is_empty() {
+            if recorded == 0 {
                 warnings.push(RenderWarning {
                     kind: WarningKind::HtmlParseError {
                         message: "parse errors suppressed (max_parse_warnings = 0)".to_string(),
@@ -191,7 +242,7 @@ impl TreeSink for RaikiriTreeSink {
         // were suppressed. Without it, consumers could not distinguish exactly cap
         // errors from many more. Record at most cap - 1 real parse errors.
         let last_real_slot = cap - 1;
-        match warnings.len().cmp(&last_real_slot) {
+        match recorded.cmp(&last_real_slot) {
             std::cmp::Ordering::Less => {
                 warnings.push(RenderWarning {
                     kind: WarningKind::HtmlParseError {
@@ -249,6 +300,7 @@ impl TreeSink for RaikiriTreeSink {
         // (previously a "#comment" pseudo-tag Element stripped in sink.finish).
         // Allocate detached (parent=None); html5ever later attaches it with
         // append(parent, ...).
+        self.flush_text();
         self.document
             .borrow_mut()
             .append_comment(None, text.to_string())
@@ -257,6 +309,7 @@ impl TreeSink for RaikiriTreeSink {
     fn create_pi(&self, target: StrTendril, data: StrTendril) -> usize {
         // Persist as a NodeData::ProcessingInstruction variant
         // (previously a "#pi" pseudo-tag Element that was stripped).
+        self.flush_text();
         self.document.borrow_mut().append_processing_instruction(
             None,
             target.to_string(),
@@ -267,6 +320,7 @@ impl TreeSink for RaikiriTreeSink {
     fn append(&self, parent: &usize, child: NodeOrText<usize>) {
         match child {
             NodeOrText::AppendNode(c) => {
+                self.flush_text();
                 self.document.borrow_mut().attach_child(*parent, c);
             }
             NodeOrText::AppendText(text) => {
@@ -342,6 +396,7 @@ impl TreeSink for RaikiriTreeSink {
             .expect("append_before_sibling: sibling has no parent");
         match new_node {
             NodeOrText::AppendNode(c) => {
+                self.flush_text();
                 // Detach if already attached (TreeSink contract: new_node can have an
                 // old parent).
                 self.document.borrow_mut().detach_from_parent(c);
@@ -350,17 +405,13 @@ impl TreeSink for RaikiriTreeSink {
                     .insert_child_before(parent, *sibling, c);
             }
             NodeOrText::AppendText(text) => {
-                // Create a new Text node in the arena. It cannot start detached because
-                // append_text requires a parent: append it to the parent's end, detach it,
-                // then insert_before.
-                let text_id = self
-                    .document
-                    .borrow_mut()
-                    .append_text(parent, text.to_string());
-                self.document.borrow_mut().detach_from_parent(text_id);
-                self.document
-                    .borrow_mut()
-                    .insert_child_before(parent, *sibling, text_id);
+                self.buffer_text(
+                    TextTarget::Before {
+                        parent,
+                        sibling: *sibling,
+                    },
+                    &text,
+                );
             }
         }
     }
@@ -368,19 +419,41 @@ impl TreeSink for RaikiriTreeSink {
     fn add_attrs_if_missing(&self, target: &usize, attrs: Vec<Attribute>) {
         let mut store = self.attributes.borrow_mut();
         let existing = store.entry(*target).or_default();
-        for a in attrs {
-            let name_exists = existing.iter().any(|e| e.name == a.name);
-            if !name_exists {
-                existing.push(a);
-            }
+        let missing: Vec<Attribute> = attrs
+            .into_iter()
+            .filter(|a| !existing.iter().any(|e| e.name == a.name))
+            .collect();
+        if missing.is_empty() {
+            return;
         }
+        if self.root_attributes_frozen.get() {
+            let mut reported = self.root_attributes_reported.borrow_mut();
+            if reported.contains(target) {
+                return;
+            }
+            reported.push(*target);
+            let names: Vec<&str> = missing.iter().map(|a| a.name.local.as_ref()).collect();
+            self.warnings.borrow_mut().push(RenderWarning {
+                kind: WarningKind::StreamingContentIgnored,
+                node_id: Some(raikiri_traits::NodeId(*target as u64)),
+                details: format!(
+                    "attributes {} of a repeated <html> or <body> tag arrived after pages \
+                     were delivered; attributes of later repeated tags are ignored too",
+                    names.join(", ")
+                ),
+            });
+            return;
+        }
+        existing.extend(missing);
     }
 
     fn remove_from_parent(&self, target: &usize) {
+        self.flush_text();
         self.document.borrow_mut().detach_from_parent(*target);
     }
 
     fn reparent_children(&self, node: &usize, new_parent: &usize) {
+        self.flush_text();
         self.document
             .borrow_mut()
             .reparent_children(*node, *new_parent);
@@ -588,7 +661,9 @@ pub(crate) fn stylesheet_media_attribute(
         .map(ToOwned::to_owned)
 }
 
-fn collect_body_inline_stylesheet_ids(doc: &Document) -> Vec<raikiri_traits::NodeId> {
+/// Non-empty stylesheet `<style>` elements outside `<head>`, in document
+/// order. Their sheets end the sink's `stylesheet_sources`, one each.
+pub(crate) fn collect_body_inline_stylesheet_ids(doc: &Document) -> Vec<raikiri_traits::NodeId> {
     use raikiri_traits::{Dom, Node};
 
     let head_id = find_head_element(doc);
@@ -914,6 +989,84 @@ fn convert_quirks(mode: QuirksMode) -> raikiri_traits::QuirksMode {
         QuirksMode::LimitedQuirks => raikiri_traits::QuirksMode::LimitedQuirks,
         QuirksMode::NoQuirks => raikiri_traits::QuirksMode::NoQuirks,
     }
+}
+
+/// Turn the tree builder's state into an [`UncascadedDocument`]: copy the
+/// metadata tables onto the nodes, record the quirks mode, mark in-document
+/// nodes and extract inline stylesheets.
+fn assemble_document(
+    mut document: Document,
+    warnings: Vec<RenderWarning>,
+    qual_names: &FxHashMap<usize, QualName>,
+    attributes: &FxHashMap<usize, Vec<Attribute>>,
+    quirks_mode: raikiri_traits::QuirksMode,
+) -> UncascadedDocument {
+    // Copy metadata tables into raikiri-dom::Node.
+    // qual_names → Node.namespace (non-HTML only).
+    // attributes → Node.attributes (null namespace, excluding style) + Node.inline_style.
+    wire_side_tables(&mut document, qual_names, attributes);
+
+    // Store the value reported by html5ever's set_quirks_mode callback on the
+    // Document itself. The cascade (raikiri-style id/class selector matching)
+    // reads it through `impl StyleDom for Document`.
+    document.set_quirks_mode(quirks_mode);
+
+    // Remove the old strip_non_element_stubs behavior (which physically removed
+    // pseudo-tag "#comment" and "#pi" Elements from the tree).
+    // Persist Comment and ProcessingInstruction as the NodeData::Comment and
+    // NodeData::ProcessingInstruction variants in the tree, matching WHATWG
+    // DOM §4 NodeType. Both variants have their IS_IN_DOCUMENT bit cleared
+    // by `mark_in_document_flags` step 2. Therefore:
+    //
+    // - The TaffyChildIter is_in_document filter excludes them from layout child
+    //   counts (raikiri-dom/src/taffy_impl.rs:38,61,71).
+    // - extract_inline_stylesheets / find_head_element / find_body skip them via
+    //   the is_in_document() and Element gates.
+    // - All cascade and paint traversals skip them through the same gates.
+    //
+    // Clear IS_IN_DOCUMENT on detached template contents, detached nodes
+    // (transient foster parenting), and Comment/PI nodes. Do this before
+    // extract_inline_stylesheets, which skips them through the
+    // is_in_document() gate.
+    document.mark_in_document_flags();
+
+    let stylesheet_sources = extract_inline_stylesheets(&document)
+        .into_iter()
+        .map(|(source, media)| crate::StylesheetSource::new(source, media))
+        .collect();
+    UncascadedDocument {
+        dom: document,
+        stylesheet_sources,
+        user_stylesheet_sources: Vec::new(),
+        user_stylesheet_insertion_index: 0,
+        warnings,
+        quirks_mode,
+    }
+}
+
+/// Every element handle the tree builder holds, in the order
+/// [`TreeBuilder::trace_handles`] reports them: its stack of open elements
+/// from the root down, then the list of active formatting elements and its
+/// head and form element pointers. The document handle is left out.
+///
+/// The tree builder does not tell the sink about every element it pops, so
+/// this is the only way to see which elements may still receive children.
+/// The list over-approximates the stack of open elements; the streaming
+/// layout's stable frontier search narrows it to the elements still open.
+pub(crate) fn traced_handles(builder: &TreeBuilder<usize, RaikiriTreeSink>) -> Vec<usize> {
+    struct Collect(RefCell<Vec<usize>>);
+    impl Tracer for Collect {
+        type Handle = usize;
+        fn trace_handle(&self, node: &usize) {
+            self.0.borrow_mut().push(*node);
+        }
+    }
+    let collect = Collect(RefCell::new(Vec::new()));
+    builder.trace_handles(&collect);
+    let mut handles = collect.0.into_inner();
+    // The first handle is the document itself.
+    handles.remove(0);
+    handles
 }
 
 #[cfg(test)]

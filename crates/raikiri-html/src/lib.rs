@@ -19,6 +19,7 @@ mod document_layout;
 mod document_parse;
 mod font_collection;
 mod import;
+mod input;
 pub use import::expand_live_stylesheet_imports;
 mod parse;
 mod render;
@@ -39,11 +40,15 @@ pub use document::HtmlDocument;
 // cov:ignore: these type/function re-exports have no executable code; API integration tests and rustdoc verify them.
 pub use document_layout::{
     Anchor, AnchorIndex, ClipKind, ColumnRule, DecorationKind, DecorationLine, DecorationStyle,
-    DocumentLayout, DomView, FontBlob, FontId, FontRef, FontVariation, Fragment, FragmentKind,
-    GeneratedBox, GeneratedKind, Glyph, InlineSvg, LayoutOptions, LayoutStatus, Link, MarginBox,
-    MarginBoxBackgroundImage, MarginBoxBorder, MarginBoxRunning, MarginBoxText, OverflowClip, Page,
-    PageGeometry, PageMode, PaintEvent, PlacedRunningElement, PositionedGlyphRun, RasterImage,
-    RepeatKind, RunSource, RunningElementLayout, Synthesis, Tag, TextLineId, TextShadow, layout,
+    DeferredGlyph, DeferredSlot, DeferredValue, DocumentLayout, DomView, FontBlob, FontId, FontRef,
+    FontVariation, Fragment, FragmentKind, GeneratedBox, GeneratedKind, Glyph, InlineSvg,
+    LayoutOptions, LayoutStatus, Link, MarginBox, MarginBoxBackgroundImage, MarginBoxBorder,
+    MarginBoxRunning, MarginBoxText, OverflowClip, Page, PageGeometry, PageMode, PaintEvent,
+    PlacedRunningElement, PositionedGlyphRun, RasterImage, RepeatKind, RunSource,
+    RunningElementLayout, Synthesis, Tag, TextLineId, TextShadow, layout,
+};
+pub use document_layout::{
+    PageCountRunningElement, PageSink, StreamPage, StreamStatus, StreamSummary, StreamingLayout,
 };
 pub use document_parse::{parse_html, parse_html_with_limits};
 pub use font_collection::{

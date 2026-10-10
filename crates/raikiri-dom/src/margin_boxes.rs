@@ -16,16 +16,17 @@ use crate::{
 };
 use raikiri_style::property::{
     BackgroundImage, BackgroundRepeat, Border, BorderColor, BorderStyle, ContentComponent,
-    CssColor, Length, LengthOrAuto, PropertyKey, PropertyValue, QuoteKeyword, Sides,
+    CounterStyle, CssColor, Length, LengthOrAuto, PropertyKey, PropertyValue, QuoteKeyword, Sides,
     StringFetchMode, TextAlign, VerticalAlign, VisualBox, WritingMode,
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedCssPosition, ComputedLength, ComputedValues,
-    PageCascadeResult, PageMarginBoxCascadeResult, PageMarginBoxSlot, ResolveContext,
-    resolve_background_size, resolve_css_position,
+    CounterStyleRegistry, PageCascadeResult, PageMarginBoxCascadeResult, PageMarginBoxSlot,
+    ResolveContext, resolve_background_size, resolve_css_position,
 };
 use raikiri_traits::{NodeId, NodeKind, PageBox, PaintInsets, PaintRect};
 use smol_str::SmolStr;
+use std::ops::Range;
 use std::sync::Arc;
 
 #[cfg(test)]
@@ -44,6 +45,10 @@ pub struct MarginBoxPageContext {
     /// `counter-increment` of the `page` counter on the paired left page,
     /// for a right page whose own page rule sets an increment of zero.
     pub paired_page_increment: Option<i32>,
+    /// Whether `page_count` is only a placeholder because the number of
+    /// pages is not known yet. `counter(pages)` then formats the placeholder
+    /// and is reported in [`MarginBox::deferred`].
+    pub page_count_deferred: bool,
 }
 
 impl MarginBoxPageContext {
@@ -54,7 +59,15 @@ impl MarginBoxPageContext {
             page_count,
             page_is_left,
             paired_page_increment: None,
+            page_count_deferred: false,
         }
+    }
+
+    /// Treat `page_count` as a placeholder for a number of pages that is
+    /// not known yet. Choose a placeholder as wide as the expected value.
+    pub fn with_deferred_page_count(mut self) -> Self {
+        self.page_count_deferred = true;
+        self
     }
 
     /// Supply the increment of the paired left page.
@@ -129,6 +142,57 @@ impl std::fmt::Debug for MarginBoxText {
     }
 }
 
+/// What a [`DeferredSlot`] stands for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DeferredValue {
+    /// The number of pages, `counter(pages)`.
+    PageCount,
+}
+
+/// Part of a margin box's content that shows a placeholder for a value
+/// known only after the last page (see
+/// [`MarginBoxPageContext::with_deferred_page_count`]).
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct DeferredSlot {
+    /// What the slot stands for.
+    pub value: DeferredValue,
+    /// UTF-8 byte range of [`MarginBox::content`] holding the placeholder.
+    pub range: Range<usize>,
+    style: CounterStyle,
+    registry: Arc<CounterStyleRegistry>,
+}
+
+impl DeferredSlot {
+    /// The slot's text once the number of pages is `page_count`, in the
+    /// counter style the content asked for.
+    pub fn text(&self, page_count: u32) -> String {
+        format_counter(
+            page_count.min(i32::MAX as u32) as i32,
+            &self.style,
+            &self.registry,
+        )
+    }
+}
+
+/// A glyph of [`MarginBox::text_runs`] that shows part of a deferred slot.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct DeferredGlyph {
+    /// Index into [`MarginBox::deferred`].
+    pub slot: usize,
+    /// Index into the runs returned by [`MarginBox::text_runs`].
+    pub run: usize,
+    /// Index into that run's glyphs.
+    pub glyph: usize,
+    /// UTF-8 byte range of [`MarginBox::content`] the glyph shows. A
+    /// ligature that joins the placeholder with neighboring text reaches
+    /// past [`DeferredSlot::range`]; whoever replaces the glyph also draws
+    /// the content outside the slot range in its place.
+    pub text_range: Range<usize>,
+}
+
 /// The `element(<name>, <fetch>)` a page-margin box shows, and where.
 ///
 /// Which element of that name applies depends on the page; the document
@@ -175,6 +239,9 @@ pub struct MarginBox {
     /// Shaped content, `None` when the content is empty or the content box
     /// has no area.
     pub text: Option<MarginBoxText>,
+    /// Placeholders in [`Self::content`] for values not known yet, in
+    /// content order. Empty unless the page context defers the page count.
+    pub deferred: Vec<DeferredSlot>,
     /// The running element the box shows, when its `content` is a single
     /// `element()` (CSS GCPM 3 §1.2.1, §1.2.2). A painter that draws the element
     /// draws it in place of [`Self::text`]; [`Self::text`] and
@@ -204,6 +271,7 @@ impl MarginBox {
             borders: [None; 4],
             padding: PaintInsets::new(0.0, 0.0, 0.0, 0.0),
             text: None,
+            deferred: Vec::new(),
             running: None,
             lime_background: false,
             lime_content_image: None,
@@ -222,6 +290,45 @@ impl MarginBox {
     /// Vertical writing modes are not represented by glyph runs and return
     /// no runs; [`Self::text`] still carries their shaped lines.
     pub fn text_runs(&self) -> Vec<PositionedGlyphRun<'_>> {
+        self.runs(None)
+    }
+
+    /// The glyphs of [`Self::text_runs`] that show the placeholders of
+    /// [`Self::deferred`], in run and glyph order. A consumer that writes
+    /// the page before the page count is known draws these glyphs where it
+    /// can replace them, then writes [`DeferredSlot::text`] in their place.
+    ///
+    /// A box in a vertical writing mode has no glyph runs and so no deferred
+    /// glyphs; redraw such a box from margin boxes laid out with the real
+    /// page count instead.
+    pub fn deferred_glyphs(&self) -> Vec<DeferredGlyph> {
+        if self.deferred.is_empty() {
+            return Vec::new();
+        }
+        let mut starts = Vec::new();
+        let runs = self.runs(Some(&mut starts));
+        let mut out = Vec::new();
+        for (run_index, (run, start)) in runs.iter().zip(starts).enumerate() {
+            for (glyph_index, glyph) in run.glyphs.iter().enumerate() {
+                let range = start + glyph.text_range.start..start + glyph.text_range.end;
+                // A ligature can join the ends of two adjacent slots, so a
+                // glyph is reported once for every slot it overlaps.
+                for (slot, _) in self.deferred.iter().enumerate().filter(|(_, slot)| {
+                    range.start < slot.range.end && slot.range.start < range.end
+                }) {
+                    out.push(DeferredGlyph {
+                        slot,
+                        run: run_index,
+                        glyph: glyph_index,
+                        text_range: range.clone(),
+                    });
+                }
+            }
+        }
+        out
+    }
+
+    fn runs(&self, starts: Option<&mut Vec<usize>>) -> Vec<PositionedGlyphRun<'_>> {
         let mut out = Vec::new();
         let Some(text) = &self.text else {
             return out;
@@ -249,6 +356,7 @@ impl MarginBox {
             root,
             RunSource::MarginBox(self.slot),
             &mut out,
+            starts,
         );
         out
     }
@@ -287,6 +395,7 @@ enum MarginTextVerticalAlign {
 struct MarginBoxSpec {
     slot: PageMarginBoxSlot,
     content: String,
+    deferred: Vec<DeferredSlot>,
     background: Option<CssColor>,
     background_image_url: Option<String>,
     background_image_lime: bool,
@@ -519,6 +628,7 @@ fn page_counter_value(
         page_count,
         page_is_left,
         paired_page_increment,
+        ..
     } = context;
     // `pages` is a UA-maintained total and is deliberately unaffected by
     // author counter-reset/increment declarations (CSS Paged Media §6).
@@ -682,6 +792,10 @@ fn named_string_value(document: &Document, cascade: &CascadeResult, name: &str) 
     resolved
 }
 
+/// How many characters per decimal digit a deferred page count placeholder
+/// may take in its counter style; Roman numerals take up to four.
+const MAX_PLACEHOLDER_WIDENING: usize = 4;
+
 fn resolved_margin_content(
     components: &[ContentComponent],
     document: &Document,
@@ -690,27 +804,46 @@ fn resolved_margin_content(
     rule: &PageMarginBoxCascadeResult,
     context: MarginBoxPageContext,
     quotes: &[(String, String)],
-) -> String {
+) -> (String, Vec<(Range<usize>, CounterStyle)>) {
+    let mut deferred = Vec::new();
     let mut text = String::new();
     let mut quote_depth = 0_usize;
+    let mut push_counter = |text: &mut String, name: &str, style: &CounterStyle| {
+        let start = text.len();
+        let value = margin_counter_value(document, cascade, page, rule, name, context);
+        let mut formatted = format_counter(value, style, &cascade.counter_styles);
+        let is_deferred = name == "pages" && context.page_count_deferred;
+        if is_deferred {
+            // The placeholder is a large number. Styles such as `symbolic`
+            // grow linearly with the value, so a placeholder far longer than
+            // its decimal form is shown in decimal; the slot's final text
+            // still uses the requested style. An empty placeholder is shown
+            // in decimal too, so the slot keeps glyphs that mark where the
+            // final text goes.
+            let decimal = value.to_string();
+            if formatted.is_empty()
+                || formatted.chars().count() > MAX_PLACEHOLDER_WIDENING * decimal.len()
+            {
+                formatted = decimal;
+            }
+        }
+        text.push_str(&formatted);
+        if is_deferred {
+            deferred.push((start..text.len(), style.clone()));
+        }
+    };
     for component in components {
         match component {
             ContentComponent::Literal(value) => text.push_str(value.as_str()),
-            ContentComponent::Counter { name, style } => text.push_str(&format_counter(
-                margin_counter_value(document, cascade, page, rule, name.as_str(), context),
-                style,
-                &cascade.counter_styles,
-            )),
+            ContentComponent::Counter { name, style } => {
+                push_counter(&mut text, name.as_str(), style);
+            }
             ContentComponent::Counters {
                 name,
                 separator,
                 style,
             } => {
-                text.push_str(&format_counter(
-                    margin_counter_value(document, cascade, page, rule, name.as_str(), context),
-                    style,
-                    &cascade.counter_styles,
-                ));
+                push_counter(&mut text, name.as_str(), style);
                 // A page-margin context has one counter scope in this
                 // implementation.  The separator is retained for the
                 // single-value fallback; nested author scopes are future work.
@@ -745,7 +878,7 @@ fn resolved_margin_content(
             _ => {}
         }
     }
-    text
+    (text, deferred)
 }
 
 fn margin_box_content(
@@ -754,15 +887,57 @@ fn margin_box_content(
     page: &PageCascadeResult,
     rule: &PageMarginBoxCascadeResult,
     context: MarginBoxPageContext,
-) -> Option<String> {
+) -> Option<(String, Vec<DeferredSlot>)> {
     let Some(PropertyValue::Content(components)) = margin_box_property(rule, PropertyKey::Content)
     else {
         return None;
     };
     let quotes = inherited_margin_box_quotes(document, cascade, page, rule);
-    Some(resolved_margin_content(
-        components, document, cascade, page, rule, context, &quotes,
-    ))
+    let (text, deferred) =
+        resolved_margin_content(components, document, cascade, page, rule, context, &quotes);
+    let registry = (!deferred.is_empty()).then(|| {
+        Arc::new(fallback_chains(
+            &cascade.counter_styles,
+            deferred.iter().map(|(_, style)| style),
+        ))
+    });
+    let deferred = deferred
+        .into_iter()
+        .map(|(range, style)| DeferredSlot {
+            value: DeferredValue::PageCount,
+            range,
+            style,
+            registry: Arc::clone(registry.as_ref().expect("created for deferred slots")),
+        })
+        .collect();
+    Some((text, deferred))
+}
+
+/// The rules of `registry` that formatting in `styles` can reach: each named
+/// style and its `fallback` chain. A deferred slot keeps these rather than a
+/// copy of every rule the document defines.
+fn fallback_chains<'s>(
+    registry: &CounterStyleRegistry,
+    styles: impl Iterator<Item = &'s CounterStyle>,
+) -> CounterStyleRegistry {
+    let mut chains = CounterStyleRegistry::new();
+    for style in styles {
+        let CounterStyle::Named(name) = style else {
+            continue;
+        };
+        let mut next = Some(name.clone());
+        while let Some(name) = next.take() {
+            if chains.get(&name).is_some() {
+                break;
+            }
+            let Some(rule) = registry.get(&name) else {
+                break;
+            };
+            next = Some(rule.fallback.clone());
+            chains.insert(rule.clone());
+        }
+    }
+    chains
 }
 
 fn margin_box_border_side(
@@ -1023,7 +1198,7 @@ fn margin_box_spec(
                 if url.ends_with("/green.png") || url == "green.png"
         )
     });
-    let content = margin_box_content(document, cascade, page, rule, context)?;
+    let (content, deferred) = margin_box_content(document, cascade, page, rule, context)?;
     let (font_size, font_family) = inherited_margin_box_font(document, cascade, page, rule);
     let margin = margin_box_margins(rule, width_basis, height_basis, font_size);
     let padding = margin_box_padding(rule, width_basis, font_size);
@@ -1147,6 +1322,7 @@ fn margin_box_spec(
     Some(MarginBoxSpec {
         slot: rule.slot,
         content,
+        deferred,
         background,
         background_image_url,
         background_image_lime,
@@ -1243,6 +1419,7 @@ fn place_margin_box(
         slot: spec.slot,
         rect,
         content: spec.content.clone(),
+        deferred: spec.deferred.clone(),
         color: spec.text_color,
         background_color: spec.background,
         background_image: spec

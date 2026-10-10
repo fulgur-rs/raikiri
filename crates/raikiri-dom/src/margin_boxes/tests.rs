@@ -109,6 +109,7 @@ fn fixed_margin_spec() -> MarginBoxSpec {
     MarginBoxSpec {
         slot: PageMarginBoxSlot::TopCenter,
         content: String::new(),
+        deferred: Vec::new(),
         background: Some(CssColor {
             r: 255,
             g: 0,
@@ -530,3 +531,140 @@ fn margin_box_text_is_debuggable_and_borders_clamp_to_the_box() {
 }
 
 mod layout_tests;
+
+#[test]
+fn a_deferred_page_count_marks_its_placeholder() {
+    let (doc, cascade) = page_cascade_fixture(
+        "@page { margin: 40px; \
+           @top-left { content: 'p.' counter(page) ' of ' counter(pages) ' (' \
+                       counter(pages, upper-roman) ')'; font-family: Ahem; font-size: 10px } }",
+    );
+    let boxes = page_margin_boxes(
+        &doc,
+        &cascade,
+        &cascade.page,
+        small_page(),
+        MarginBoxPageContext::new(0, 999, false).with_deferred_page_count(),
+    );
+    let [head] = boxes.as_slice() else {
+        panic!("one box: {boxes:?}");
+    };
+    assert_eq!(head.content, "p.1 of 999 (CMXCIX)");
+    let ranges: Vec<_> = head
+        .deferred
+        .iter()
+        .map(|slot| slot.range.clone())
+        .collect();
+    assert_eq!(ranges, [7..10, 12..18]);
+    assert!(
+        head.deferred
+            .iter()
+            .all(|slot| slot.value == DeferredValue::PageCount)
+    );
+    assert_eq!(head.deferred[0].text(12), "12");
+    assert_eq!(head.deferred[1].text(12), "XII");
+
+    let runs = head.text_runs();
+    let glyphs = head.deferred_glyphs();
+    assert_eq!(glyphs.len(), 3 + 6);
+    for glyph in &glyphs {
+        let run = &runs[glyph.run];
+        let shown = &run.text[run.glyphs[glyph.glyph].text_range.clone()];
+        assert_eq!(
+            &head.content[glyph.text_range.clone()],
+            shown,
+            "glyph text range of slot {}",
+            glyph.slot
+        );
+        assert!(
+            head.deferred[glyph.slot].range.start <= glyph.text_range.start
+                && glyph.text_range.end <= head.deferred[glyph.slot].range.end
+        );
+        let expected = if glyph.slot == 0 { "9" } else { "CMXIV" };
+        assert!(
+            expected.contains(shown),
+            "slot {} shows {shown:?}",
+            glyph.slot
+        );
+    }
+}
+
+#[test]
+fn a_deferred_page_count_in_a_linear_style_is_shown_in_decimal() {
+    let (doc, cascade) = page_cascade_fixture(
+        "@counter-style ticks { system: symbolic; symbols: 'x' } \
+         @page { margin: 40px; \
+           @top-left { content: counter(pages, ticks); font-family: Ahem; font-size: 10px } }",
+    );
+    let boxes = page_margin_boxes(
+        &doc,
+        &cascade,
+        &cascade.page,
+        small_page(),
+        MarginBoxPageContext::new(0, 99_999, false).with_deferred_page_count(),
+    );
+    let [head] = boxes.as_slice() else {
+        panic!("one box: {boxes:?}");
+    };
+    assert_eq!(head.content, "99999");
+    assert_eq!(head.deferred[0].range, 0..5);
+    assert_eq!(head.deferred[0].text(3), "xxx");
+}
+
+#[test]
+fn an_empty_deferred_placeholder_is_shown_in_decimal() {
+    let (doc, cascade) = page_cascade_fixture(
+        "@counter-style pair { system: cyclic; symbols: '' 'X' } \
+         @page { margin: 40px; \
+           @top-left { content: 'of ' counter(pages, pair); font-family: Ahem; font-size: 10px } }",
+    );
+    let boxes = page_margin_boxes(
+        &doc,
+        &cascade,
+        &cascade.page,
+        small_page(),
+        MarginBoxPageContext::new(0, 99_999, false).with_deferred_page_count(),
+    );
+    let [head] = boxes.as_slice() else {
+        panic!("one box: {boxes:?}");
+    };
+    assert_eq!(head.content, "of 99999");
+    assert_eq!(head.deferred[0].range, 3..8);
+    assert_eq!(head.deferred[0].text(2), "X");
+    assert_eq!(head.deferred_glyphs().len(), 5);
+}
+
+#[test]
+fn a_deferred_slot_formats_through_its_fallback_chain() {
+    let (doc, cascade) = page_cascade_fixture(
+        "@counter-style few { system: cyclic; symbols: 'a'; range: 1 2; fallback: ticks } \
+         @counter-style ticks { system: symbolic; symbols: 'x' } \
+         @counter-style unrelated { system: cyclic; symbols: 'u' } \
+         @page { margin: 40px; \
+           @top-left { content: counter(pages, few); font-family: Ahem; font-size: 10px } }",
+    );
+    let boxes = page_margin_boxes(
+        &doc,
+        &cascade,
+        &cascade.page,
+        small_page(),
+        MarginBoxPageContext::new(0, 9, false).with_deferred_page_count(),
+    );
+    let [head] = boxes.as_slice() else {
+        panic!("one box: {boxes:?}");
+    };
+    let slot = &head.deferred[0];
+    assert_eq!(slot.text(2), "a");
+    assert_eq!(slot.text(3), "xxx");
+}
+
+#[test]
+fn a_known_page_count_has_no_deferred_slots() {
+    let (doc, cascade) = page_cascade_fixture(
+        "@page { margin: 40px; @top-left { content: counter(pages); font-family: Ahem } }",
+    );
+    let boxes = layout_page(&doc, &cascade, small_page());
+    assert_eq!(boxes[0].content, "1");
+    assert!(boxes[0].deferred.is_empty());
+    assert!(boxes[0].deferred_glyphs().is_empty());
+}

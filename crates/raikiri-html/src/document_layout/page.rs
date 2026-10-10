@@ -52,6 +52,9 @@ pub struct Page<'a> {
     pub(super) document: &'a raikiri_dom::Document,
     pub(super) cascade: &'a raikiri_style::CascadeResult,
     pub(super) page_count: u32,
+    /// Whether `page_count` is a placeholder for a number of pages not
+    /// known yet.
+    pub(super) page_count_deferred: bool,
     /// The `@page` cascade of the left page paired with this right page.
     pub(super) paired_style: Option<&'a PageCascadeResult>,
     /// The document's running elements; `None` on a page that is itself a
@@ -68,6 +71,12 @@ pub struct PlacedRunningElement<'a> {
     /// Where the origin of [`super::RunningElementLayout::page`] goes on
     /// this page, in CSS px.
     pub origin: (f32, f32),
+}
+
+/// A [`PlacedRunningElement`] that owns its layout.
+pub(crate) struct OwnedRunningElement {
+    pub(crate) layout: super::RunningElementLayout,
+    pub(crate) origin: (f32, f32),
 }
 
 /// Resolved raster pixels and their complete object placement on a page.
@@ -91,6 +100,13 @@ pub struct RasterImage {
 }
 
 impl<'a> Page<'a> {
+    /// This page with `placeholder` standing in for the number of pages.
+    pub(super) fn with_deferred_page_count(mut self, placeholder: u32) -> Self {
+        self.page_count = placeholder;
+        self.page_count_deferred = true;
+        self
+    }
+
     /// Zero-based page index.
     pub fn index(&self) -> u32 {
         self.slice.page_index
@@ -473,6 +489,10 @@ impl<'a> Page<'a> {
     /// `counter(pages)`, quotes, and the document-wide values of `string()`
     /// and `element()`. Each box's text is available as glyph runs through
     /// [`MarginBox::text_runs`].
+    ///
+    /// On a page streamed before the number of pages is known,
+    /// `counter(pages)` shows a placeholder and each box lists it in
+    /// [`MarginBox::deferred`]; see [`crate::StreamPage::page`].
     pub fn margin_boxes(&self) -> Vec<MarginBox> {
         // The first page is a right page, as in the page context queries.
         let page_is_left = self.slice.page_index % 2 == 1;
@@ -488,12 +508,15 @@ impl<'a> Page<'a> {
                 _ => None,
             }
         });
-        let context = raikiri_dom::MarginBoxPageContext::new(
+        let mut context = raikiri_dom::MarginBoxPageContext::new(
             self.slice.page_index,
             self.page_count,
             page_is_left,
         )
         .with_paired_page_increment(paired_page_increment);
+        if self.page_count_deferred {
+            context = context.with_deferred_page_count();
+        }
         raikiri_dom::page_margin_boxes(
             self.document,
             self.cascade,
@@ -572,6 +595,37 @@ impl<'a> Page<'a> {
             layout,
             origin: (content.x, content.y + free * running.block_align),
         }))
+    }
+
+    /// [`Self::margin_box_running_element`], laid out anew rather than
+    /// borrowed from the document layout's cache, so that it can outlive
+    /// the layout.
+    pub(crate) fn owned_margin_box_running_element(
+        &self,
+        margin_box: &MarginBox,
+    ) -> Result<Option<OwnedRunningElement>, RenderError> {
+        let (Some(source), Some(running)) = (self.running, margin_box.running.as_ref()) else {
+            return Ok(None);
+        };
+        let Some(node) = source
+            .index
+            .select(&running.name, running.fetch, self.slice.page_index)
+        else {
+            return Ok(None);
+        };
+        let content = running.content_box;
+        let Some(layout) = super::running::layout_running_element(
+            source.document,
+            source.cascade,
+            node,
+            super::running::used_width(content.width),
+        )?
+        else {
+            return Ok(None); // cov:ignore: a selected node is always a running element.
+        };
+        let free = (content.height - layout.height()).max(0.0);
+        let origin = (content.x, content.y + free * running.block_align);
+        Ok(Some(OwnedRunningElement { layout, origin }))
     }
 
     /// Structure and attributes of the document.

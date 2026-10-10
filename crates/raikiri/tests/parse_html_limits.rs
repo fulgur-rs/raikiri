@@ -6,7 +6,8 @@
 //! `RenderError::LimitExceeded { kind: LimitKind::InputBytes, .. }`.
 //! Because html5ever silently accepts truncated input, `Read::take` alone
 //! cannot detect a cap violation. The implementation uses the "+1 probe":
-//! `take(cap + 1) + read_to_end` (crates/raikiri-html/src/document_parse.rs).
+//! `take(cap + 1)` plus a byte counter while the input is parsed in chunks
+//! (crates/raikiri-html/src/document_parse.rs).
 //!
 //! Consumers can adjust the cap with [`RenderLimitsBuilder::max_input_bytes`]
 //! (or direct field assignment) and disable it with `None`. See the
@@ -103,8 +104,8 @@ fn parse_html_accepts_input_exactly_at_cap() {
 /// This is the core SEC-HIGH assertion after introducing the InputBytes kind.
 ///
 /// Generate input with `std::io::repeat` to avoid allocating over 32 MiB
-/// in the test source. The internal `read_to_end` still necessarily
-/// allocates approximately 32 MiB (cap + 1 bytes).
+/// in the test source. The parser still holds the text it read before the
+/// cap was crossed (approximately 32 MiB).
 #[test]
 fn parse_html_rejects_input_one_byte_over_cap() {
     // Stream 32 MiB + 1 byte to save memory in the test source.
