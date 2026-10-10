@@ -92,3 +92,26 @@ fn page_context_declarations_with_viewport_lengths_are_dropped() {
     use ComputedLengthPercentageOrAuto::Px;
     assert_eq!(size_of(&out, "a").0, Px(360.0));
 }
+
+#[test]
+fn marker_images_are_sized_in_the_final_viewport() {
+    // A viewBox-only SVG marker is one em square, and the em here is
+    // relative to the named first page's area, not the provisional one.
+    let out = run("<style>\
+        @page { size: 400px 200px; margin: 20px }\
+        @page cover { margin: 50px }\
+        body { margin: 0 }\
+        li { page: cover; font-size: 10vh; list-style: inside url('data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 10 10%22%3E%3Crect width=%2210%22 height=%2210%22/%3E%3C/svg%3E') }\
+        </style><li>one</li>");
+    let item = out
+        .cascade
+        .computed
+        .iter()
+        .position(|cv| cv.display == raikiri_style::DisplayValue::ListItem)
+        .expect("list item");
+    let size = out
+        .document
+        .list_marker_image_size(item)
+        .expect("prepared marker");
+    assert_eq!((size.width, size.height), (10.0, 10.0));
+}

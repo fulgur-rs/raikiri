@@ -817,6 +817,19 @@ pub(crate) fn run_pipeline(
             &cascade_options,
         )?;
         first_cascade.replace_page(page);
+        // Marker images without full intrinsic dimensions are sized from
+        // the marker's font, which can be viewport-relative.
+        resources.preload_list_marker_images(
+            &first_cascade,
+            runtime.effective_base_url,
+            &runtime.warnings,
+            &mut marker_image_seen,
+            &mut marker_image_attempts,
+            signal.as_ref(),
+        );
+        if let Some(source) = resources.image_pixel_source_ref() {
+            dom.prepare_list_marker_images(&first_cascade, source, runtime.effective_base_url);
+        }
     }
     let first_cascade = first_cascade;
     // Only `page` in a cascade result depends on the page query, so the
