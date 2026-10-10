@@ -372,6 +372,7 @@ impl TextRunOmission {
 }
 
 /// Paragraphs whose original line identities do not uniquely select a column placement.
+#[derive(Debug, Default, Clone)]
 pub(super) struct RunContext {
     overlapping: HashSet<usize>,
 }
@@ -816,13 +817,19 @@ fn root_runs<'a>(
     let x = page.content_box.x + root.x;
     let y = page.content_box.y + root.y - flow_range.map_or(0.0, |(start, _)| start);
     let decoration_context = crate::text_decoration::context_for_root(document, cascade, root.node);
-    for line in positioned.lines() {
+    for (index, line) in positioned.all_lines().iter().enumerate() {
+        let Some(offset) = positioned.line_offset(index) else {
+            continue;
+        };
         if let Some((start, end)) = flow_range {
-            let top = root.y + line.offset.1 + line.line.block_offset();
-            if !line_center_on_page(top, top + line.line.block_size(), start, end) {
+            let top = root.y + offset.1 + line.block_offset();
+            if !line_center_on_page(top, top + line.block_size(), start, end) {
                 continue;
             }
         }
+        let Some(line) = positioned.line_at(index) else {
+            continue;
+        };
         let line_origin = (x + line.offset.0, y + line.offset.1);
         let decorations = crate::text_decoration::positioned_line_decorations(
             document,
@@ -853,6 +860,108 @@ fn root_runs<'a>(
     Some(())
 }
 
+/// The node whose table-header repeat moves the runs of text root `node`.
+fn text_source(document: &Document, node: usize) -> usize {
+    generated_origin(node).map_or_else(|| document.ifc_source_owner(node), |(owner, _)| owner)
+}
+
+/// The lowest and highest block-axis line center of `root` in shared flow
+/// coordinates, over the lines [`root_runs`] can draw. `None` when no line
+/// has a finite center.
+fn line_center_span(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: &ProjectedTextRoot,
+) -> Option<(f32, f32)> {
+    let positioned = PositionedLines::new(document, cascade, root.node, root.fragmentainer)?;
+    let mut span: Option<(f32, f32)> = None;
+    for (index, line) in positioned.all_lines().iter().enumerate() {
+        let Some(offset) = positioned.line_offset(index) else {
+            continue;
+        };
+        // The same arithmetic as `root_runs` and `line_center_on_page`.
+        let top = root.y + offset.1 + line.block_offset();
+        let center = (top + (top + line.block_size())) * 0.5;
+        if !center.is_finite() {
+            continue;
+        }
+        span = Some(span.map_or((center, center), |(low, high)| {
+            (low.min(center), high.max(center))
+        }));
+    }
+    span
+}
+
+/// For each page fragment, by position in `pages`, the indices into `roots`
+/// of the text roots that can draw on it, in document order.
+///
+/// A root is left out only when [`Document::page_text_runs`] would draw
+/// nothing of it on that page: a paragraph none of whose line centers falls
+/// in the page's flow slice, or a marker on a page other than its first.
+/// Repeated roots, and roots that a repeated table header may move, are kept
+/// on every page and filtered per page as before.
+pub(super) fn roots_by_page(
+    document: &Document,
+    cascade: &CascadeResult,
+    roots: &[ProjectedTextRoot],
+    markers: &BTreeMap<usize, MarkerText>,
+    pages: &[PageFragment],
+) -> Vec<Vec<usize>> {
+    let mut by_page = vec![Vec::new(); pages.len()];
+    // Flow slices in increasing order allow a binary search for the pages a
+    // paragraph spans; otherwise every page is checked.
+    let ordered = pages.iter().all(|page| page.flow_range.is_some())
+        && pages.windows(2).all(|pair| {
+            let (Some(first), Some(second)) = (pair[0].flow_range, pair[1].flow_range) else {
+                return false; // cov:ignore: every slice was checked above
+            };
+            first.0 <= second.0 && first.1 <= second.1
+        });
+    for (index, root) in roots.iter().enumerate() {
+        let moved_by_header = document
+            .table_objects
+            .headers
+            .owner(text_source(document, root.node))
+            .is_some();
+        if root.is_repeat || moved_by_header {
+            for page in &mut by_page {
+                page.push(index);
+            }
+            continue;
+        }
+        if let Some((owner, PseudoElem::Marker)) = generated_origin(root.node) {
+            let first_page = markers.get(&owner).and_then(|marker| marker.first_page);
+            for (position, page) in pages.iter().enumerate() {
+                if first_page == Some(page.page_index) {
+                    by_page[position].push(index);
+                }
+            }
+            continue;
+        }
+        let Some((low, high)) = line_center_span(document, cascade, root) else {
+            continue;
+        };
+        // `line_center_on_page` keeps a center in `[start - 0.001, end - 0.001)`.
+        let reaches = |range: (f32, f32)| high >= range.0 - 0.001 && low < range.1 - 0.001;
+        let first = if ordered {
+            pages.partition_point(|page| page.flow_range.is_some_and(|(_, end)| end - 0.001 <= low))
+        } else {
+            0
+        };
+        for (position, page) in pages.iter().enumerate().skip(first) {
+            let Some(range) = page.flow_range else {
+                continue;
+            };
+            if reaches(range) {
+                by_page[position].push(index);
+            } else if ordered && range.0 - 0.001 > high {
+                break;
+            }
+        }
+    }
+    by_page
+}
+
 impl Document {
     /// Positioned glyph runs of the paragraphs on one page, in document
     /// order. `cascade` is the one the document was laid out with.
@@ -864,13 +973,13 @@ impl Document {
     ) -> Vec<PositionedGlyphRun<'a>> {
         let mut runs = Vec::new();
         let projection = &self.page_projection;
-        let context = RunContext::new(self, &projection.text_roots);
-        let pages = projection.pages.iter();
-        for page in pages.filter(|page| page.page_index == page_index) {
-            for root in &projection.text_roots {
-                let mut root = *root;
-                let source = generated_origin(root.node)
-                    .map_or_else(|| self.ifc_source_owner(root.node), |(owner, _)| owner);
+        let context = &projection.run_context;
+        let pages = projection.pages.iter().enumerate();
+        for (position, page) in pages.filter(|(_, page)| page.page_index == page_index) {
+            let indices = projection.text_roots_by_page.get(position);
+            for &index in indices.into_iter().flatten() {
+                let mut root = projection.text_roots[index];
+                let source = text_source(self, root.node);
                 if let Some(shift) = self
                     .table_objects
                     .headers
@@ -883,11 +992,11 @@ impl Document {
                     root.is_repeat = true;
                 }
                 if let Some((owner, PseudoElem::Marker)) = generated_origin(root.node) {
-                    if omission(self, cascade, &context, root.node).is_none() {
+                    if omission(self, cascade, context, root.node).is_none() {
                         marker_runs(self, page, &root, owner, &mut runs);
                     }
                 } else {
-                    root_runs(self, cascade, page, &context, &root, &mut runs);
+                    root_runs(self, cascade, page, context, &root, &mut runs);
                 }
             }
         }
