@@ -1,0 +1,28 @@
+[package]
+name = "webidl-dual-engine-spike"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[features]
+default = ["boa", "v8"]
+boa = ["dep:boa_engine", "dep:boa_gc"]
+v8 = ["dep:v8"]
+wasm = ["boa", "boa_engine/js"]
+
+[dependencies]
+raikiri-dom = { path = "../../crates/raikiri-dom" }
+boa_engine = { version = "=0.22.0", optional = true, default-features = false, features = ["annex-b"] }
+boa_gc = { version = "=0.22.0", optional = true }
+v8 = { version = "=152.2.0", optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+weedle = "=0.13.1"
+
+[build-dependencies]
+weedle = "=0.13.1"
+
+[profile.dev]
+debug = false
