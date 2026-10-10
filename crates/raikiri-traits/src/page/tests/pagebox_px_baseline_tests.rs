@@ -152,3 +152,38 @@ fn pagebox_from_page_size_uses_a4_for_auto_or_invalid_relative_input() {
         PageBox::A4
     );
 }
+
+#[test]
+fn pagebox_from_page_size_or_uses_fallback_for_ua_chosen_sizes() {
+    let letter = PageBox::US_LETTER;
+    assert_eq!(PageBox::from_page_size_or(None, letter), letter);
+    assert_eq!(
+        PageBox::from_page_size_or(Some(raikiri_style::PageSize::Auto), letter),
+        letter
+    );
+
+    let landscape = PageBox::from_page_size_or(
+        Some(raikiri_style::PageSize::Named {
+            keyword: None,
+            orientation: Some(raikiri_style::PageOrientation::Landscape),
+        }),
+        letter,
+    );
+    assert_eq!(
+        landscape,
+        PageBox {
+            width: 1056.0,
+            height: 816.0
+        }
+    );
+
+    let named = PageBox::from_page_size_or(
+        Some(raikiri_style::PageSize::Named {
+            keyword: Some(raikiri_style::PageSizeKeyword::A4),
+            orientation: None,
+        }),
+        letter,
+    );
+    assert!((named.width - PageBox::A4.width).abs() < 0.01);
+    assert!((named.height - PageBox::A4.height).abs() < 0.01);
+}

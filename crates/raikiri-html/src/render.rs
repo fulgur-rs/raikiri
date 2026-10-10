@@ -439,9 +439,7 @@ fn page_query_for_slice(slice: &PageSlice) -> PageContextQuery {
 }
 
 fn page_box_for_page(page: &PageCascadeResult, defaults: &PageDefaults) -> PageBox {
-    page.size()
-        .map(|size| PageBox::from_page_size(Some(size)))
-        .unwrap_or(defaults.page_box)
+    PageBox::from_page_size_or(page.size(), defaults.page_box)
 }
 
 /// Reruns only the `@page` cascade for page queries of one pipeline run.

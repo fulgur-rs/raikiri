@@ -74,12 +74,22 @@ impl PageBox {
 
     /// Resolve a cascaded CSS `size` descriptor into a concrete page box.
     ///
-    /// `None` and `auto` use the A4 fallback. Absolute CSS lengths use the
-    /// CSS 96-DPI conversion; relative lengths use the initial 16px font size
-    /// because page descriptors have no element font context at this boundary.
-    /// Invalid or non-positive values also use the fallback.
+    /// Equivalent to [`PageBox::from_page_size_or`] with the A4 fallback.
     pub fn from_page_size(size: Option<PageSize>) -> Self {
-        let fallback = Self::A4;
+        Self::from_page_size_or(size, Self::A4)
+    }
+
+    /// Resolve a cascaded CSS `size` descriptor, using `fallback` wherever the
+    /// descriptor leaves the paper size to the user agent.
+    ///
+    /// `None` and `auto` use `fallback` as is. An orientation without a size
+    /// keyword (`size: landscape`) rotates `fallback` to that orientation,
+    /// because CSS Paged Media 3 leaves the page size to the user agent in
+    /// both cases (<https://www.w3.org/TR/css-page-3/#page-size-prop>). Absolute CSS lengths use the CSS 96-DPI
+    /// conversion; relative lengths use the initial 16px font size because
+    /// page descriptors have no element font context at this boundary.
+    /// Invalid or non-positive values also use `fallback`.
+    pub fn from_page_size_or(size: Option<PageSize>, fallback: PageBox) -> Self {
         let Some(size) = size else {
             return fallback;
         };
@@ -201,8 +211,8 @@ impl Default for PageBox {
 #[non_exhaustive]
 #[derive(Debug, Clone, Default)]
 pub struct PageDefaults {
-    /// Default paper size (initial value when not overridden by `@page size`).
-    /// Defaults to A4.
+    /// Default paper size, used when `@page size` is absent, `auto`, or an
+    /// orientation alone (which rotates this size). Defaults to A4.
     pub page_box: PageBox,
 }
 
