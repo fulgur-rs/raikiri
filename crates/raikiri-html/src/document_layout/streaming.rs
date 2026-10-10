@@ -571,7 +571,8 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
             None,
             signal.as_ref(),
         )?;
-        if delivery == Delivery::Aborted {
+        // The sink can fire the signal while handling the last page.
+        if delivery == Delivery::Aborted || signal.is_some_and(|signal| signal.is_aborted()) {
             return Ok(StreamStatus::Aborted);
         }
         let page_count = laid_out.page_count();

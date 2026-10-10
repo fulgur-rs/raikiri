@@ -47,6 +47,29 @@ impl PageProjection {
         self.overflow_clips.clear();
         self.placement_overflow_clips.clear();
     }
+
+    /// Position of page `page_index` in [`Self::pages`]. Pages are projected
+    /// in page order, so the position the index implies is tried before a
+    /// search; walking every page then costs linear time, not quadratic.
+    fn page_position(&self, page_index: u32) -> Option<usize> {
+        let first = self.pages.first()?.page_index;
+        if let Some(guess) = page_index.checked_sub(first).map(|offset| offset as usize)
+            && self
+                .pages
+                .get(guess)
+                .is_some_and(|page| page.page_index == page_index)
+        {
+            return Some(guess);
+        }
+        self.pages
+            .iter()
+            .position(|page| page.page_index == page_index)
+    }
+
+    fn page(&self, page_index: u32) -> Option<&PageFragment> {
+        self.page_position(page_index)
+            .map(|index| &self.pages[index])
+    }
 }
 
 impl Document {
@@ -191,9 +214,7 @@ impl Document {
     #[doc(hidden)]
     pub fn page_fragments(&self, page_index: u32) -> impl Iterator<Item = Fragment<'_>> + '_ {
         self.page_projection
-            .pages
-            .iter()
-            .find(|page| page.page_index == page_index)
+            .page(page_index)
             .into_iter()
             .flat_map(move |page| {
                 page.items.iter().map(move |item| {
@@ -216,9 +237,7 @@ impl Document {
     #[doc(hidden)]
     pub fn page_overflow_clips(&self, page_index: u32) -> impl Iterator<Item = OverflowClip> + '_ {
         self.page_projection
-            .pages
-            .iter()
-            .find(|page| page.page_index == page_index)
+            .page(page_index)
             .into_iter()
             .flat_map(move |page| {
                 let mut entries: Vec<_> = self.overflow_clips_on_page(page).into_values().collect();
@@ -285,9 +304,7 @@ impl Document {
         page_index: u32,
     ) -> impl Iterator<Item = (NodeId, &str, &[PaintRect])> + '_ {
         self.page_projection
-            .pages
-            .iter()
-            .position(|page| page.page_index == page_index)
+            .page_position(page_index)
             .and_then(|index| self.page_projection.links.get(index))
             .into_iter()
             .flatten()

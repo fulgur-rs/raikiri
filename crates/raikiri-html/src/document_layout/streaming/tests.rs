@@ -245,6 +245,23 @@ fn abort_between_pages_stops_delivery() {
 }
 
 #[test]
+fn abort_on_the_last_page_skips_finishing_the_sink() {
+    let last = batch_pages(PAGED).len() as u32 - 1;
+    let controller = AbortController::new();
+    let config = LayoutConfig::builder()
+        .signal(Some(controller.signal.clone()))
+        .build();
+    let mut record = Record {
+        abort_on_page: Some((last, controller)),
+        ..Record::default()
+    };
+    let status = stream(PAGED, 64, &mut record, config).expect("stream");
+    assert!(matches!(status, StreamStatus::Aborted));
+    assert_eq!(record.pages.len(), last as usize + 1);
+    assert!(!record.finished);
+}
+
+#[test]
 fn running_elements_are_laid_out_from_the_streamed_page() {
     struct Running(Option<f32>);
     impl PageSink for &mut Running {
