@@ -77,6 +77,18 @@ fn rooted_files_serve_paths_under_the_root() {
             inner.fetch_one_hop(request("file:///out.css")),
             Err(NetworkError::Other(_))
         ));
+        // The type follows the name requested, not the link's target.
+        std::os::unix::fs::symlink("a.txt", dir.0.join("css/alias.css")).unwrap();
+        std::os::unix::fs::symlink("a.css", dir.0.join("css/alias.txt")).unwrap();
+        let css = body(inner.fetch_one_hop(request("file:///alias.css")));
+        assert_eq!(&css.bytes[..], b"text");
+        assert_eq!(css.content_type.as_deref(), Some("text/css"));
+        let text = body(inner.fetch_one_hop(request("file:///alias.txt")));
+        assert_eq!(&text.bytes[..], b"p {}");
+        assert_eq!(
+            text.content_type.as_deref(),
+            Some("application/octet-stream")
+        );
     }
     // Any other file is not CSS, so a stylesheet import does not inline it.
     let text = body(files.fetch_one_hop(request("file:///css/a.txt")));

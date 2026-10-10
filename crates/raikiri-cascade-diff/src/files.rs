@@ -36,19 +36,19 @@ impl NetworkProvider for RootedFiles {
             }
         }
         // A symbolic link under the root may still lead out of it.
-        let path = std::fs::canonicalize(&file).map_err(NetworkError::Io)?;
-        if !path.starts_with(std::fs::canonicalize(&self.root).map_err(NetworkError::Io)?) {
+        let target = std::fs::canonicalize(&file).map_err(NetworkError::Io)?;
+        if !target.starts_with(std::fs::canonicalize(&self.root).map_err(NetworkError::Io)?) {
             return Err(NetworkError::Other(format!(
                 "outside the root: {}",
                 request.url
             )));
         }
-        let bytes = std::fs::read(&path).map_err(NetworkError::Io)?;
-        // Local files have no headers, so the type follows the extension. A
-        // stylesheet import is only inlined from a CSS response, and any
-        // other file is served as one that is not CSS, as a web server would
-        // serve it.
-        let is_css = path
+        let bytes = std::fs::read(&target).map_err(NetworkError::Io)?;
+        // Local files have no headers, so the type follows the extension of
+        // the name requested, not of a link's target, as a web server would
+        // give it. A stylesheet import is only inlined from a CSS response,
+        // and any other file is served as one that is not CSS.
+        let is_css = file
             .extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case("css"));
         let content_type = if is_css {
