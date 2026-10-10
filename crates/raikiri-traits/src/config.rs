@@ -109,16 +109,16 @@ pub struct RenderLimits {
     pub max_cascade_retained_bytes: Option<u64>,
     /// The most bytes the cascade's result may hold: the computed values of
     /// every node and pseudo-element, and the candidates it keeps, counted
-    /// before they are allocated; see
+    /// before they are allocated, and the heap the values hold, counted once
+    /// each node is resolved; see
     /// [`CascadeLimits::max_output_bytes`](raikiri_style::CascadeLimits::max_output_bytes),
     /// whose default this takes and which admits [`Self::max_dom_nodes`]
     /// nodes with two pseudo-element styles per element. Exceeding it yields
     /// `LimitExceeded { kind: CascadeOutputBytes }`.
     ///
-    /// Each cascade run is bounded on its own, and the inline size of the
-    /// values is what counts: the heap they own, such as the strings
-    /// `var()` substitution builds or the lists inherited values copy, is
-    /// not counted.
+    /// Each cascade run is bounded on its own. The heap the computed values
+    /// hold of their own, such as the strings `var()` substitution builds,
+    /// counts too; a value a node inherits counts once.
     pub max_cascade_output_bytes: Option<u64>,
     /// The most rules counted while the document's stylesheets are parsed
     /// into its rule tree; see
