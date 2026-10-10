@@ -369,6 +369,7 @@ fn consumer_property_conditions_use_the_registered_grammar() {
         ConsumerPropertyRegistration::integer("bookmark-level"),
         ConsumerPropertyRegistration::integer_or_none("bookmark-state"),
         ConsumerPropertyRegistration::text("bookmark-label"),
+        ConsumerPropertyRegistration::keyword("bookmark-open", &["open", "closed"]),
     ];
     for (declaration, expected) in [
         ("bookmark-level: 1", true),
@@ -381,6 +382,13 @@ fn consumer_property_conditions_use_the_registered_grammar() {
         ("bookmark-level: 1.5", false),
         ("bookmark-state: invalid", false),
         ("bookmark-label:", false),
+        ("bookmark-open: Closed", true),
+        ("bookmark-open: ajar", false),
+        ("bookmark-open: open closed", false),
+        ("bookmark-open: \"open\"", false),
+        ("bookmark-open: \"var(--x)\"", false),
+        ("bookmark-open: v\\61r(--x)", true),
+        ("bookmark-open: foo([var(--x)])", true),
     ] {
         let mut input = ParserInput::new(declaration);
         let mut parser = Parser::new(&mut input);

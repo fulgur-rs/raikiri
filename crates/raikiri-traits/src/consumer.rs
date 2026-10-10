@@ -12,6 +12,8 @@ pub enum ConsumerPropertyValue {
     Text(String),
     /// The registered grammar's explicit `none` keyword.
     None,
+    /// One keyword of a keyword grammar, in its registered spelling.
+    Keyword(String),
 }
 
 /// One resolved consumer-property declaration in document order.

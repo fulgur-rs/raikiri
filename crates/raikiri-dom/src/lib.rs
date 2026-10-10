@@ -55,6 +55,7 @@ mod node;
 mod page_projection;
 mod phase_b;
 mod running;
+pub use running::element_string_value;
 mod target;
 
 mod column_rules;
