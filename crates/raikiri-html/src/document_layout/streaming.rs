@@ -649,12 +649,9 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
         };
         let signal = settings.config.signal.clone();
         let (mut by_page, unplaced_events) = events_by_first_page(&laid_out, events);
-        let Some(page_count_margin_boxes) = page_count_margin_boxes(
-            &laid_out,
-            delivered,
-            page_count_placeholder(&settings.config),
-            signal.as_ref(),
-        ) else {
+        let Some(page_count_margin_boxes) =
+            page_count_margin_boxes(&laid_out, delivered, signal.as_ref())
+        else {
             return Ok(StreamStatus::Aborted);
         };
         let delivery = deliver(
@@ -756,12 +753,11 @@ fn page_count_placeholder(config: &LayoutConfig) -> u32 {
 }
 
 /// The margin boxes of the first `delivered` pages, with the real page count,
-/// for the pages whose margin boxes showed `placeholder` when delivered.
-/// Returns `None` when the abort signal fires.
+/// for the pages whose margin boxes showed a page count placeholder when
+/// delivered. Returns `None` when the abort signal fires.
 fn page_count_margin_boxes(
     laid_out: &DocumentLayout,
     delivered: u32,
-    placeholder: u32,
     signal: Option<&raikiri_traits::AbortSignal>,
 ) -> Option<Vec<(u32, Vec<MarginBox>)>> {
     let mut boxes = Vec::new();
@@ -770,8 +766,11 @@ fn page_count_margin_boxes(
             return None;
         }
         let page = laid_out.page_at(index as usize);
+        // A slot is deferred whatever the placeholder's value, so the
+        // smallest one finds the slots without formatting a large number in
+        // the content's counter style.
         let deferred = page
-            .with_deferred_page_count(placeholder)
+            .with_deferred_page_count(1)
             .margin_boxes()
             .iter()
             .any(|margin_box| !margin_box.deferred.is_empty());

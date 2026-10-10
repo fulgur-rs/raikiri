@@ -891,11 +891,11 @@ fn rebuilding_page_count_margin_boxes_stops_on_abort() {
         panic!("aborted");
     };
     let pages = laid_out.page_count();
-    let rebuilt = page_count_margin_boxes(&laid_out, pages, 99, None).expect("not aborted");
+    let rebuilt = page_count_margin_boxes(&laid_out, pages, None).expect("not aborted");
     assert_eq!(rebuilt.len(), pages as usize);
     let controller = AbortController::new();
     controller.abort();
-    assert!(page_count_margin_boxes(&laid_out, pages, 99, Some(&controller.signal)).is_none());
+    assert!(page_count_margin_boxes(&laid_out, pages, Some(&controller.signal)).is_none());
 }
 
 /// Serves `main.css`, which imports `nested.css`, counting the requests.
