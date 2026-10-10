@@ -65,6 +65,9 @@ fn nothing_applies_before_the_first_assignment() {
 fn unknown_names_select_nothing() {
     let index = index(&[(1, 0, true)]);
     assert_eq!(index.select("ftr", StringFetchMode::First, 0), None);
-    assert!(index.contains(NodeId(1)));
-    assert!(!index.contains(NodeId(2)));
+    let cache = LayoutCache::new(&index);
+    let none = cache.get_or_try_make(NodeId(2), 10.0, || -> Result<_, ()> {
+        unreachable!("only running elements are laid out")
+    });
+    assert!(matches!(none, Ok(None)));
 }

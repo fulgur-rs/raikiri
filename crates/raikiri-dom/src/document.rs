@@ -1761,6 +1761,94 @@ impl Document {
         element.animation_style = animation_style;
     }
 
+    /// A new document holding only `nodes` of this one, in that order: node
+    /// `i` of the new document is `nodes[i]` of this one.
+    ///
+    /// `nodes` lists the Document root first and the other nodes in
+    /// document order, for example the ancestors of an element from the root
+    /// down followed by the element's subtree in preorder. A copied node's
+    /// children are its children that are listed; a node whose parent is not
+    /// listed before it is left detached. The copies keep their data (attributes, text, resolved
+    /// image sizes, canvas bitmaps) and the document keeps its fonts and
+    /// decoded marker images, but no layout state is carried over: the new
+    /// document is laid out from scratch with a cascade renumbered the same
+    /// way (`CascadeResult::extract` in raikiri-style). `<template>`
+    /// contents, which are outside the tree, are not copied.
+    ///
+    /// The cost is proportional to the number of nodes listed, not to the
+    /// size of this document. Panics if a listed index is out of range.
+    pub fn extract_nodes(&self, nodes: &[usize]) -> Document {
+        // Every field is named so that a new one has to be considered here.
+        let Document {
+            table_objects: _,
+            page_projection: _,
+            nodes: arena,
+            resolved_image_urls,
+            canvas_bitmap_bytes: _,
+            list_marker_images,
+            legacy_inside_marker_advances: _,
+            root: _,
+            layout_dirty: _,
+            ifc,
+            layout_cascade_generation: _,
+            body_inline_margins: _,
+            body_block_start_margin: _,
+            continuation_break: _,
+            flags_dirty: _,
+            stylesheets,
+            layout_warnings: _,
+            table_layout_error: _,
+            calc_values: _,
+            fragment_tree: _,
+            column_rules: _,
+            fragmentation_stack: _,
+            vertical_oof_containing_blocks: _,
+            quirks_mode,
+        } = self;
+
+        let new_of_old: std::collections::HashMap<usize, usize> = nodes
+            .iter()
+            .enumerate()
+            .map(|(new, &old)| (old, new))
+            .collect();
+        let mut copied: Vec<Node> = nodes
+            .iter()
+            .map(|&old| {
+                let source = &arena[old];
+                let mut node = Node::new_document();
+                node.data = source.data.clone();
+                if let Some(element) = node.data.as_element_mut() {
+                    element.template_contents = None;
+                }
+                node.flags = source.flags;
+                node
+            })
+            .collect();
+        for (new, &old) in nodes.iter().enumerate().skip(1) {
+            let parent = arena[old]
+                .parent
+                .and_then(|parent| new_of_old.get(&parent).copied())
+                .filter(|&parent| parent < new);
+            if let Some(parent) = parent {
+                copied[new].parent = Some(parent);
+                copied[parent].children.push(new);
+            }
+        }
+
+        let mut document = Document::new();
+        document.nodes = copied;
+        document.root = 0;
+        document.resolved_image_urls = remap_keys(resolved_image_urls, nodes);
+        document.list_marker_images = remap_keys(list_marker_images, nodes);
+        document.canvas_bitmap_bytes = CanvasBitmapByteCount(None);
+        document.ifc = ifc.clone();
+        document.stylesheets = stylesheets.clone();
+        document.quirks_mode = *quirks_mode;
+        document.layout_dirty = true;
+        document.flags_dirty = true;
+        document
+    }
+
     /// Apply a predicate to every node's children Vec and remove entries for
     /// which it returns `false`. This generic bulk-detach primitive avoids N
     /// calls to `detach_from_parent` at O(K*N), preventing quadratic work on
@@ -2642,6 +2730,21 @@ impl Document {
     pub fn quirks_mode(&self) -> QuirksMode {
         self.quirks_mode
     }
+}
+
+/// The entries of `map` for `nodes`, keyed by position in `nodes`.
+fn remap_keys<V: Clone>(
+    map: &std::collections::HashMap<usize, V>,
+    nodes: &[usize],
+) -> std::collections::HashMap<usize, V> {
+    if map.is_empty() {
+        return Default::default();
+    }
+    nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(new, old)| map.get(old).map(|value| (new, value.clone())))
+        .collect()
 }
 
 impl Default for Document {
