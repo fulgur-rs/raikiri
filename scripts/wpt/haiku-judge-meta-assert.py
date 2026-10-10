@@ -41,7 +41,6 @@ from pathlib import Path
 
 DEFAULT_MODEL = "claude-haiku-5-5"
 PROMPT_VERSION = "1"
-DECISIONS = ("pass", "fail", "needs-human", "not-renderable")
 
 SYSTEM_PROMPT = """\
 You judge screenshots of CSS conformance tests rendered by a layout engine.
@@ -68,15 +67,22 @@ printing, hover, or readable glyph shapes.
 
 Be strict: answer pass only when you would bet on it."""
 
-SCHEMA = {
-    "type": "object",
-    "properties": {
-        "decision": {"type": "string", "enum": list(DECISIONS)},
-        "reason": {"type": "string"},
-    },
-    "required": ["decision", "reason"],
-    "additionalProperties": False,
-}
+
+
+def verdict_model():
+    """The structured verdict; pydantic ships with the anthropic SDK."""
+    from typing import Literal
+
+    from pydantic import BaseModel, ConfigDict
+
+    class Verdict(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+        decision: Literal["pass", "fail", "needs-human", "not-renderable"]
+        reason: str
+
+    return Verdict
+
 
 TAG_RE = re.compile(r"<[^>]+>")
 SPACE_RE = re.compile(r"\s+")
@@ -185,19 +191,16 @@ def request_params(model: str, text: str, png: bytes) -> dict:
                 ],
             }
         ],
-        "output_config": {"format": {"type": "json_schema", "schema": SCHEMA}},
     }
 
 
-def parse_message(message) -> dict:
-    text = next((block.text for block in message.content if block.type == "text"), "")
-    verdict = json.loads(text)
-    usage = message.usage
-    verdict["usage"] = {
+def to_cache_entry(verdict, usage) -> dict:
+    entry = verdict.model_dump()
+    entry["usage"] = {
         "input_tokens": usage.input_tokens,
         "output_tokens": usage.output_tokens,
     }
-    return verdict
+    return entry
 
 
 class Cache:
@@ -265,7 +268,10 @@ def command_run(args) -> int:
 
     def judge(item):
         test_id, key, text, png = item
-        verdict = parse_message(api.messages.create(**request_params(args.model, text, png)))
+        message = api.messages.parse(
+            **request_params(args.model, text, png), output_format=verdict_model()
+        )
+        verdict = to_cache_entry(message.parsed_output, message.usage)
         cache.put(key, verdict)
         return test_id, verdict, False
 
@@ -285,6 +291,10 @@ def command_batch_submit(args) -> int:
     cache = Cache(args.cache or review_dir / "judge-cache")
     requests = []
     keys = {}
+    # Batch requests take a plain JSON schema rather than the parse() helper's model.
+    output_config = {
+        "format": {"type": "json_schema", "schema": verdict_model().model_json_schema()}
+    }
     for index, row in enumerate(load_rows(review_dir)):
         test_id, text, png = build_request(review_dir, row)
         key = cache_key(args.model, text, png)
@@ -295,7 +305,9 @@ def command_batch_submit(args) -> int:
         requests.append(
             Request(
                 custom_id=custom_id,
-                params=MessageCreateParamsNonStreaming(**request_params(args.model, text, png)),
+                params=MessageCreateParamsNonStreaming(
+                    **request_params(args.model, text, png), output_config=output_config
+                ),
             )
         )
     if not requests:
@@ -318,10 +330,14 @@ def command_batch_collect(args) -> int:
         print(f"{batch.id}: {batch.processing_status} ({batch.request_counts.processing} processing)")
         return 2
     failed = 0
+    verdict_type = verdict_model()
     for result in api.messages.batches.results(batch.id):
         entry = state["requests"][result.custom_id]
         if result.result.type == "succeeded":
-            cache.put(entry["key"], parse_message(result.result.message))
+            message = result.result.message
+            text = next(block.text for block in message.content if block.type == "text")
+            verdict = verdict_type.model_validate_json(text)
+            cache.put(entry["key"], to_cache_entry(verdict, message.usage))
         else:
             failed += 1
             print(f"{entry['test_id']}: {result.result.type}", file=sys.stderr)
