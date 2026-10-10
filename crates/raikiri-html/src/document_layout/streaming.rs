@@ -29,7 +29,8 @@ use crate::parse::finish_document;
 use crate::sink::{collect_body_inline_stylesheet_ids, traced_handles};
 use crate::types::UncascadedDocument;
 use crate::{
-    ConsumerPropertyRegistration, HtmlDocument, RaikiriTreeSink, RenderResources, build_rule_tree,
+    ConsumerPropertyRegistration, HtmlDocument, MarginBox, RaikiriTreeSink, RenderResources,
+    build_rule_tree,
 };
 use frontier::{Frontier, final_page_count, stable_frontier};
 
@@ -84,8 +85,9 @@ impl<'a> StreamPage<'a> {
     /// placeholder has as many digits as the page limit
     /// ([`raikiri_traits::RenderLimits::max_document_pages`]) allows. Write
     /// [`crate::DeferredSlot::text`] of [`StreamSummary::page_count`] in its
-    /// place once [`PageSink::finish`] runs. Pages delivered by
-    /// [`StreamingLayout::finish`] show the real number.
+    /// place once [`PageSink::finish`] runs, or draw the page's margin boxes
+    /// from [`StreamSummary::page_count_margin_boxes`] instead. Pages
+    /// delivered by [`StreamingLayout::finish`] show the real number.
     pub fn page(&self) -> Page<'a> {
         let page = self.layout.page_at(self.index as usize);
         match self.page_count_placeholder {
@@ -124,6 +126,11 @@ pub struct StreamSummary {
     /// Consumer property events of elements without a fragment on any page,
     /// in document order.
     pub unplaced_events: Vec<ConsumerPropertyEvent>,
+    /// The margin boxes, laid out with the real page count, of every page
+    /// that was delivered with a page count placeholder in its margin boxes,
+    /// in page order. The page count can change the size of a margin box and
+    /// of its neighbours, so these replace all margin boxes of the page.
+    pub page_count_margin_boxes: Vec<(u32, Vec<MarginBox>)>,
 }
 
 /// Result of [`StreamingLayout::finish`].
@@ -550,6 +557,11 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
         };
         let signal = settings.config.signal.clone();
         let (mut by_page, unplaced_events) = events_by_first_page(&laid_out, events);
+        let page_count_margin_boxes = page_count_margin_boxes(
+            &laid_out,
+            delivered,
+            page_count_placeholder(&settings.config),
+        );
         let delivery = deliver(
             &mut sink,
             &laid_out,
@@ -571,6 +583,7 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
             anchors,
             warnings: std::mem::take(&mut out.warnings),
             unplaced_events,
+            page_count_margin_boxes,
         };
         sink.finish(summary)
             .map(StreamStatus::Completed)
@@ -644,6 +657,26 @@ fn page_count_placeholder(config: &LayoutConfig) -> u32 {
         .map_or(u32::MAX.ilog10() + 1, |limit| limit.max(1).ilog10() + 1)
         .min(9);
     10_u32.pow(digits) - 1
+}
+
+/// The margin boxes of the first `delivered` pages, with the real page count,
+/// for the pages whose margin boxes showed `placeholder` when delivered.
+fn page_count_margin_boxes(
+    laid_out: &DocumentLayout,
+    delivered: u32,
+    placeholder: u32,
+) -> Vec<(u32, Vec<MarginBox>)> {
+    (0..delivered.min(laid_out.page_count()))
+        .filter_map(|index| {
+            let page = laid_out.page_at(index as usize);
+            let deferred = page
+                .with_deferred_page_count(placeholder)
+                .margin_boxes()
+                .iter()
+                .any(|margin_box| !margin_box.deferred.is_empty());
+            deferred.then(|| (index, page.margin_boxes()))
+        })
+        .collect()
 }
 
 fn failed_earlier() -> RenderError {

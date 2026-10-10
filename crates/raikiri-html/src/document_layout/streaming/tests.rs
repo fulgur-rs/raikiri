@@ -555,7 +555,7 @@ fn pages_streamed_early_defer_the_page_count() {
     /// the final page count.
     struct Footers(Vec<(String, Vec<String>)>);
     impl PageSink for &mut Footers {
-        type Output = u32;
+        type Output = StreamSummary;
         fn page(
             &mut self,
             page: StreamPage<'_>,
@@ -571,8 +571,8 @@ fn pages_streamed_early_defer_the_page_count() {
             self.0.push((footer.content.clone(), deferred));
             Ok(())
         }
-        fn finish(self, summary: StreamSummary) -> std::io::Result<u32> {
-            Ok(summary.page_count)
+        fn finish(self, summary: StreamSummary) -> std::io::Result<StreamSummary> {
+            Ok(summary)
         }
     }
 
@@ -592,9 +592,10 @@ fn pages_streamed_early_defer_the_page_count() {
     for piece in html.as_bytes().chunks(1000) {
         stream.feed(piece).expect("feed");
     }
-    let StreamStatus::Completed(page_count) = stream.finish().expect("finish") else {
+    let StreamStatus::Completed(summary) = stream.finish().expect("finish") else {
         panic!("aborted");
     };
+    let page_count = summary.page_count;
     assert!(page_count > 2);
     let early: Vec<_> = footers
         .0
@@ -615,6 +616,25 @@ fn pages_streamed_early_defer_the_page_count() {
         }
     }
     assert!(footers.0.last().is_some_and(|(_, slots)| slots.is_empty()));
+
+    // The summary relays out exactly the pages that showed the placeholder.
+    let relaid: Vec<_> = summary
+        .page_count_margin_boxes
+        .iter()
+        .map(|(index, boxes)| {
+            let footer = boxes.first().expect("footer box");
+            assert!(footer.deferred.is_empty());
+            (*index, footer.content.clone())
+        })
+        .collect();
+    let expected: Vec<_> = footers
+        .0
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, slots))| !slots.is_empty())
+        .map(|(index, _)| (index as u32, format!("{} / {page_count}", index + 1)))
+        .collect();
+    assert_eq!(relaid, expected);
 }
 
 #[test]
