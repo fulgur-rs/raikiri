@@ -84,7 +84,7 @@ impl<'a> StreamPage<'a> {
         &self,
         node: NodeId,
         width: f32,
-    ) -> Result<Option<RunningElementLayout>, RenderError> {
+    ) -> Result<Option<&'a RunningElementLayout>, RenderError> {
         self.layout.layout_running_element(node, width)
     }
 }
