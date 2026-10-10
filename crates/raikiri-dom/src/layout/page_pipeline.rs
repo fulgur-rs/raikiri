@@ -3545,11 +3545,14 @@ pub fn layout_pages_with_page_geometry_and_control(
                     let block_raw_y = root_flow_offset
                         + current_abs_y(document, block_id, &parent_of)
                         - flow_shift;
+                    // The block already sits `flow_shift` below its raw
+                    // position, so the move is measured from where it is now.
+                    let block_effective_y = effective_y - (raw_y - block_raw_y);
                     let target_page = current_page.saturating_add(1);
                     check_candidate_page!('candidate_loop, target_page);
-                    let delta = page_origin(target_page) - block_raw_y;
+                    let delta = page_origin(target_page) - block_effective_y;
                     if delta.is_finite() && delta > 0.0 {
-                        materialize_y(document, block_id, block_raw_y + delta, &parent_of);
+                        materialize_y(document, block_id, block_effective_y + delta, &parent_of);
                         flow_shift += delta;
                         effective_y += delta;
                     }
