@@ -119,7 +119,7 @@ impl Document {
         page_index: u32,
         _page_name: Option<&str>,
     ) -> Vec<PaintEvent<'a>> {
-        self.page_paint_order_impl(cascade, page_index, None)
+        self.page_paint_order_impl(cascade, page_index, None, true)
     }
 
     /// Paint order with one text event per line in the supplied page runs.
@@ -143,14 +143,17 @@ impl Document {
         for paragraph in lines.values_mut() {
             paragraph.sort_unstable_by_key(|line| line.index);
         }
-        self.page_paint_order_impl(cascade, page_index, Some(&lines))
+        self.page_paint_order_impl(cascade, page_index, Some(&lines), true)
     }
 
+    /// The paint order of one page. With `skip_empty`, subtrees that list
+    /// nothing on the page are not walked; the events are the same.
     fn page_paint_order_impl<'a>(
         &'a self,
         cascade: &'a CascadeResult,
         page_index: u32,
         lines: Option<&HashMap<NodeId, Vec<TextLineId>>>,
+        skip_empty: bool,
     ) -> Vec<PaintEvent<'a>> {
         let Some(page) = self
             .page_projection
@@ -178,6 +181,10 @@ impl Document {
             }
         }
 
+        let entered = skip_empty
+            .then(|| self.page_paint_nodes(&items, page_index, lines))
+            .flatten();
+
         let mut events = Vec::new();
         // An explicit stack, like the painter's, so a deep DOM cannot
         // overflow the call stack.
@@ -198,6 +205,13 @@ impl Document {
                 }
                 Frame::Visit(node_id) => node_id,
             };
+            // A subtree with nothing on this page lists no events.
+            if entered
+                .as_ref()
+                .is_some_and(|entered| !entered.contains(&node_id))
+            {
+                continue;
+            }
             let Some(node) = self.get_node(node_id) else {
                 continue; // cov:ignore: node ids on the stack come from the arena
             };
@@ -370,8 +384,21 @@ impl Document {
         }
         let mut line_clips = HashMap::new();
         let mut line_overflow_chains = HashMap::new();
+        // Only the paragraphs with lines or generated boxes in the events
+        // need their line clips.
+        let listed_roots: HashSet<usize> = events
+            .iter()
+            .filter_map(|event| match event {
+                PaintEvent::TextLine(line) => Some(line.root),
+                PaintEvent::GeneratedBox(fragment) => Some(fragment.line.root),
+                _ => None,
+            })
+            .filter_map(|root| usize::try_from(root.0).ok())
+            .collect();
         for root in &self.page_projection.text_roots {
-            if root.fragment_clip.is_none() && root.overflow_chain.is_none() {
+            if (root.fragment_clip.is_none() && root.overflow_chain.is_none())
+                || !listed_roots.contains(&root.node)
+            {
                 continue;
             }
             let indices: Vec<usize> = if let Some((owner, PseudoElem::Marker)) =
@@ -484,6 +511,68 @@ impl Document {
             clipped_events.extend(std::iter::repeat_n(PaintEvent::PopClip, overflow.len()));
         }
         clipped_events
+    }
+
+    /// The nodes the paint walk of one page has to enter: every node that can
+    /// list an event on the page, and its ancestors. A node's paint parent
+    /// (its DOM parent, the paragraph root beside whose lines it is laid out,
+    /// or the owner of its anonymous table cell) is always one of its DOM
+    /// ancestors, so the walk reaches all of them.
+    ///
+    /// `None` when a source of events cannot be traced to a node of the
+    /// arena; the walk then enters every node.
+    fn page_paint_nodes(
+        &self,
+        items: &PageItems<'_>,
+        page_index: u32,
+        lines: Option<&HashMap<NodeId, Vec<TextLineId>>>,
+    ) -> Option<HashSet<usize>> {
+        let projection = &self.page_projection;
+        let ids = |ids: &mut dyn Iterator<Item = NodeId>| -> Vec<usize> {
+            ids.filter_map(|id| usize::try_from(id.0).ok()).collect()
+        };
+        let mut sources: Vec<usize> = items.by_node.keys().copied().collect();
+        sources.extend(ids(&mut lines.into_iter().flat_map(HashMap::keys).copied()));
+        sources.extend(
+            items
+                .generated_boxes
+                .into_iter()
+                .flat_map(BTreeMap::keys)
+                .flat_map(|&(root, node, _)| [root, node]),
+        );
+        sources.extend(ids(&mut projection
+            .column_rules
+            .get(&page_index)
+            .into_iter()
+            .flat_map(BTreeMap::keys)
+            .copied()));
+        sources.extend(ids(&mut projection
+            .image_markers
+            .get(&page_index)
+            .into_iter()
+            .flat_map(BTreeMap::keys)
+            .copied()));
+        sources.extend(ids(&mut items.overflow_clips.keys().copied()));
+        // An opacity group is listed wherever its element is visited, even
+        // when nothing inside it is on the page.
+        sources.extend(projection.opacity_layers.iter().copied());
+
+        let mut entered = HashSet::new();
+        for source in sources {
+            // Generated content and anonymous table cells are painted
+            // within the subtree of the element that owns them.
+            let owner = crate::generated_content::generated_origin(source)
+                .map_or_else(|| self.ifc_source_owner(source), |(owner, _)| owner);
+            self.get_node(owner)?;
+            let mut current = Some(owner);
+            while let Some(id) = current {
+                if !entered.insert(id) {
+                    break;
+                }
+                current = self.parent_of(id);
+            }
+        }
+        Some(entered)
     }
 
     /// Multicolumn containers that may need unprojected legacy column-height
@@ -667,3 +756,6 @@ fn push_paragraph<'a>(
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -29,6 +29,9 @@ pub(crate) struct PageProjection {
     text_roots_by_page: Vec<Vec<usize>>,
     /// Column-overlap facts about `text_roots`, shared by every page.
     run_context: text_runs::RunContext,
+    /// Elements that open an opacity group, which the paint order lists on
+    /// every page it visits them.
+    opacity_layers: Vec<usize>,
     /// Standalone marker text shaped once, shared by every page placement.
     markers: BTreeMap<usize, text_runs::MarkerText>,
     image_markers: BTreeMap<u32, BTreeMap<NodeId, PaintRect>>,
@@ -47,6 +50,7 @@ impl PageProjection {
         self.text_roots.clear();
         self.text_roots_by_page.clear();
         self.run_context = text_runs::RunContext::default();
+        self.opacity_layers.clear();
         self.markers.clear();
         self.image_markers.clear();
         self.generated_boxes.clear();
@@ -178,6 +182,13 @@ impl Document {
         let text_roots_by_page =
             text_runs::roots_by_page(self, cascade, &text_roots, &markers, &pages);
         let run_context = text_runs::RunContext::new(self, &text_roots);
+        let opacity_layers = cascade
+            .computed
+            .iter()
+            .enumerate()
+            .filter(|(_, cv)| crate::paint_rules::opacity_layer(cv).is_some())
+            .map(|(id, _)| id)
+            .collect();
         let events = crate::layout::page_fragment_events_from_pages(self, &pages);
         let mut links: Vec<Vec<(NodeId, String, Vec<PaintRect>)>> =
             pages.iter().map(|_| Vec::new()).collect();
@@ -212,6 +223,7 @@ impl Document {
             text_roots,
             text_roots_by_page,
             run_context,
+            opacity_layers,
             markers,
             image_markers,
             generated_boxes,
