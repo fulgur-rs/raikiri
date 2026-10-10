@@ -82,7 +82,7 @@ jobs:
               source = path.read_text(errors="replace")
               if link.search(source) or "<script" in source.lower():
                   continue
-              if not re.search(r"passes? if", source, re.I):
+              if not re.search(r"passes? if|\bto pass,", source, re.I):
                   continue
               ids.append(test_id)
           print(f"{len(ids)} candidates")
