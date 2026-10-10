@@ -238,8 +238,8 @@ echo
 
 # Copy binaries out so they survive regardless of what happens to either
 # tree's target/ afterward (the worktree is removed on exit).
-cp "$BAD_EXE" "$SCRATCH/cascade-bad"
-cp "$GOOD_EXE" "$SCRATCH/cascade-good"
+cp -f "$BAD_EXE" "$SCRATCH/cascade-bad"
+cp -f "$GOOD_EXE" "$SCRATCH/cascade-good"
 chmod +x "$SCRATCH/cascade-bad" "$SCRATCH/cascade-good"
 
 echo "-- interleaving $N runs of each (pinned flags: ${CRITERION_FLAGS[*]}) --"

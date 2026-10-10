@@ -382,17 +382,24 @@ pub(crate) fn custom_property_names<'a>(sources: impl IntoIterator<Item = &'a st
     let is_name = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_' || !c.is_ascii();
     let mut names = BTreeSet::new();
     for source in sources {
-        let chars: Vec<char> = source.chars().collect();
+        // CSS drops a leading byte order mark and reads a NUL in its input as
+        // U+FFFD before it tokenizes, escaped or not.
+        let chars: Vec<char> = source
+            .strip_prefix('\u{feff}')
+            .unwrap_or(source)
+            .chars()
+            .map(|c| {
+                if c == '\0' {
+                    char::REPLACEMENT_CHARACTER
+                } else {
+                    c
+                }
+            })
+            .collect();
         let mut position = 0;
         while position < chars.len() {
             let mut name = String::new();
             while let Some(&c) = chars.get(position) {
-                // CSS reads a NUL in its input as U+FFFD before it tokenizes.
-                let c = if c == '\0' {
-                    char::REPLACEMENT_CHARACTER
-                } else {
-                    c
-                };
                 if is_name(c) {
                     name.push(c);
                     position += 1;

@@ -272,9 +272,9 @@ base_build() {
   environment_values < "$partial/variables" > "$partial/environment"
   cp -f "$binary" "$partial/raikiri-cascade-diff"
   entry="$CACHE_ROOT/$key-$(sha256sum < "$partial/environment" | cut -c1-16)"
-  # When another run has published the same entry, the rename fails and
-  # that one is kept.
-  mv -T "$partial" "$entry" 2>/dev/null || rm -rf "$partial"
+  # When another run has published the same entry, the rename fails, even
+  # when forced, and that one is kept.
+  mv -f -T "$partial" "$entry" 2>/dev/null || rm -rf "$partial"
   local stale
   find "$CACHE_ROOT" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' \
     | sort -rn | tail -n +"$((CACHE_KEEP + 1))" | cut -d' ' -f2- \

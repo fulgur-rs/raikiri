@@ -217,8 +217,14 @@ fn custom_property_names_are_scanned_from_the_source() {
         custom_property_names(["--a\\0 ; --b\\d800 ; --c\\110000 ; --d\\\n ; --e\\0000411"]),
         vec!["--a\u{fffd}", "--b\u{fffd}", "--c\u{fffd}", "--d", "--eA1"]
     );
-    // So does a NUL in the source itself, which CSS reads as U+FFFD.
-    assert_eq!(custom_property_names(["--f\0g: 1"]), vec!["--f\u{fffd}g"]);
+    // So does a NUL in the source itself, which CSS reads as U+FFFD, escaped
+    // or not.
+    assert_eq!(
+        custom_property_names(["--f\0g: 1; --h\\\0i: 2"]),
+        vec!["--f\u{fffd}g", "--h\u{fffd}i"]
+    );
+    // A leading byte order mark is not part of the first name.
+    assert_eq!(custom_property_names(["\u{feff}--j: 1"]), vec!["--j"]);
 }
 
 #[test]
