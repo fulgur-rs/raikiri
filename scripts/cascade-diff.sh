@@ -3,6 +3,7 @@
 #
 # Usage: scripts/cascade-diff.sh [--base <ref>] [--seeds <n>] [--wpt <dir>]...
 #                                [--wpt-default] [--show <n>] [--timeout <s>]
+#                                [--no-cache]
 #
 #   --base <ref>    Ref whose merge-base with HEAD is the baseline
 #                   (default: origin/main).
@@ -16,6 +17,8 @@
 #                   (default: 3).
 #   --timeout <s>   Stop a build that has not run every case after this many
 #                   seconds (default: 3600).
+#   --no-cache      Build the merge-base again even when a build of it is
+#                   cached (see below).
 #
 # Builds crates/raikiri-cascade-diff twice — against a detached checkout of
 # the merge-base and against the current tree — runs both builds on the same
@@ -25,12 +28,24 @@
 # a difference. Both builds enable debug assertions and overflow checks, so a
 # broken internal invariant shows up as a panic as well.
 #
+# WPT cases are parsed at their path under the WPT checkout, which also serves
+# their linked stylesheets, so root-relative links such as /css/support/...
+# resolve.
+#
+# The merge-base build is cached under $RAIKIRI_CASCADE_DIFF_CACHE (default:
+# ~/.cache/raikiri/cascade-diff), keyed by the merge-base commit, the tool's
+# sources and manifest, and the toolchain, so repeated runs against one base
+# skip building it. The merge-base checkout is a throwaway worktree under the
+# main checkout's .worktrees/, removed when the run ends.
+#
 # Exit status: 0 when no case differs, 1 when some case differs, 2 on a usage
 # or tooling error, including a build that crashes or hangs on a case (the
 # case is named).
 
 set -Eeuo pipefail
-trap 'echo "cascade-diff.sh: line $LINENO: \`$BASH_COMMAND\` failed" >&2; exit 2' ERR
+# The trap also runs in subshells, which only pass the failure on; the
+# command that failed at the top level is the one reported.
+trap 'if [[ $BASH_SUBSHELL -eq 0 ]]; then echo "cascade-diff.sh: line $LINENO: \`$BASH_COMMAND\` failed" >&2; fi; exit 2' ERR
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/repo_root.sh
@@ -45,6 +60,7 @@ BASE_REF="origin/main"
 SEEDS=2000
 SHOW=3
 TIMEOUT=3600
+USE_CACHE=1
 WPT_DIRS=()
 DEFAULT_WPT_DIRS=(
   css/css-cascade css/css-variables css/selectors css/css-pseudo css/css-lists
@@ -65,6 +81,7 @@ while [[ $# -gt 0 ]]; do
     --wpt-default) WPT_DIRS+=("${DEFAULT_WPT_DIRS[@]}"); shift ;;
     --show) [[ $# -ge 2 ]] || usage_error "--show needs a count"; SHOW="$2"; shift 2 ;;
     --timeout) [[ $# -ge 2 ]] || usage_error "--timeout needs seconds"; TIMEOUT="$2"; shift 2 ;;
+    --no-cache) USE_CACHE=0; shift ;;
     *) usage_error "unknown argument: $1" ;;
   esac
 done
@@ -74,12 +91,20 @@ done
 
 BASE_SHA="$(git merge-base "$BASE_REF" HEAD)"
 SCRATCH="$(mktemp -d "$TMPDIR/raikiri-cascade-diff.XXXXXX")"
-BASE_TREE="$SCRATCH/base-tree"
+# Throwaway worktrees that run cargo live under the main checkout's
+# .worktrees/, whichever worktree this runs in.
+MAIN_ROOT="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
+BASE_TREE="$MAIN_ROOT/.worktrees/cascade-diff-base-$$-$RANDOM"
+CACHE_ROOT="${RAIKIRI_CASCADE_DIFF_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/raikiri/cascade-diff}"
+# Cached base builds kept, most recently used first.
+CACHE_KEEP=8
 
 cleanup() {
   # A failure while cleaning up must not replace the run's exit status.
   trap - ERR
-  git -C "$REPO_ROOT" worktree remove --force "$BASE_TREE" >/dev/null 2>&1 || true
+  if [[ -d "$BASE_TREE" ]]; then
+    git -C "$REPO_ROOT" worktree remove --force "$BASE_TREE" >/dev/null 2>&1 || true
+  fi
   rm -rf "$SCRATCH" || true
 }
 trap cleanup EXIT
@@ -90,19 +115,14 @@ echo "base ref  : $BASE_REF"
 echo "base sha  : $BASE_SHA"
 echo "seeds     : 0..$SEEDS"
 echo "TMPDIR    : $TMPDIR"
+echo "cache     : $CACHE_ROOT"
 echo
 
-# Builds the tool's sources from the current tree against the raikiri-style and
-# raikiri-html crates of tree $1, with that tree's lockfile, into a target
-# directory owned by that tree, then copies the binary to $2. A target
-# directory per tree keeps concurrent sessions from overwriting each other's
-# binaries.
-build_tool() {
-  local tree="$1" binary="$2"
-  local manifest_dir
-  manifest_dir="$(mktemp -d "$SCRATCH/tool.XXXXXX")"
-  cp -rf "$REPO_ROOT/crates/raikiri-cascade-diff/src" "$manifest_dir/src"
-  cat > "$manifest_dir/Cargo.toml" <<EOF
+# Prints the manifest the tool is built with against the crates of tree $1.
+# Its dependencies mirror crates/raikiri-cascade-diff/Cargo.toml.
+tool_manifest() {
+  local tree="$1"
+  cat <<EOF
 [package]
 name = "raikiri-cascade-diff"
 version = "0.0.0"
@@ -112,6 +132,9 @@ publish = false
 [dependencies]
 raikiri-style = { path = "$tree/crates/raikiri-style" }
 raikiri-html = { path = "$tree/crates/raikiri-html" }
+raikiri-traits = { path = "$tree/crates/raikiri-traits" }
+bytes = "1"
+url = "2.5"
 
 [profile.release]
 debug-assertions = true
@@ -119,25 +142,73 @@ overflow-checks = true
 
 [workspace]
 EOF
+}
+
+# Builds the tool's sources from the current tree against the crates of tree
+# $1, with that tree's lockfile, into a target directory owned by that tree,
+# then copies the binary to $2. A target directory per tree keeps concurrent
+# sessions from overwriting each other's binaries.
+build_tool() {
+  local tree="$1" binary="$2"
+  local manifest_dir
+  manifest_dir="$(mktemp -d "$SCRATCH/tool.XXXXXX")"
+  cp -rf "$REPO_ROOT/crates/raikiri-cascade-diff/src" "$manifest_dir/src"
+  tool_manifest "$tree" > "$manifest_dir/Cargo.toml"
   cp -f "$tree/Cargo.lock" "$manifest_dir/Cargo.lock"
   CARGO_TARGET_DIR="$tree/target/cascade-diff" \
     cargo build --release --quiet --manifest-path "$manifest_dir/Cargo.toml"
   cp -f "$tree/target/cascade-diff/release/raikiri-cascade-diff" "$binary"
 }
 
+# What the merge-base build depends on besides the tree's files, which the
+# commit already names: the tool's sources and manifest, and the toolchain.
+base_build_key() {
+  {
+    echo "$BASE_SHA"
+    (cd "$REPO_ROOT/crates/raikiri-cascade-diff" && find src -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum)
+    tool_manifest TREE
+    rustc -vV
+  } | sha256sum | cut -d' ' -f1
+}
+
+# Copies the cached merge-base build to $1, or builds it in a throwaway
+# worktree, caches it and copies it.
+base_build() {
+  local binary="$1" cached
+  cached="$CACHE_ROOT/$(base_build_key)/raikiri-cascade-diff"
+  if [[ "$USE_CACHE" -eq 1 && -x "$cached" ]]; then
+    echo "-- using the cached build of merge-base $BASE_SHA ($cached) --"
+    touch "$(dirname "$cached")"
+    cp -f "$cached" "$binary"
+    return 0
+  fi
+  echo "-- checking out merge-base $BASE_SHA into a detached worktree --"
+  mkdir -p "$MAIN_ROOT/.worktrees"
+  # Repository hooks are for working checkouts, not for this throwaway tree.
+  git -c core.hooksPath=/dev/null worktree add --detach "$BASE_TREE" "$BASE_SHA" >/dev/null
+  echo "-- building base ($BASE_TREE) --"
+  build_tool "$BASE_TREE" "$binary"
+  # A concurrent run may store the same key; the rename keeps either copy whole.
+  mkdir -p "$(dirname "$cached")"
+  cp -f "$binary" "$cached.partial.$$"
+  mv -f "$cached.partial.$$" "$cached"
+  local stale
+  find "$CACHE_ROOT" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' \
+    | sort -rn | tail -n +"$((CACHE_KEEP + 1))" | cut -d' ' -f2- \
+    | while IFS= read -r stale; do rm -rf "$stale"; done
+}
+
 echo "-- building head ($REPO_ROOT) --"
 build_tool "$REPO_ROOT" "$SCRATCH/diff-head"
-echo "-- checking out merge-base $BASE_SHA into a detached worktree --"
-# Repository hooks are for working checkouts, not for this throwaway tree.
-git -c core.hooksPath=/dev/null worktree add --detach "$BASE_TREE" "$BASE_SHA" >/dev/null
-echo "-- building base ($BASE_TREE) --"
-build_tool "$BASE_TREE" "$SCRATCH/diff-base"
+base_build "$SCRATCH/diff-base"
 echo
 
 # Both builds come from the same tool sources, so they must generate the same
 # inputs; a mismatch means a stale build, not a cascade change.
 for seed in 0 1 2 3 4 5 6 7; do
-  if ! cmp -s <("$SCRATCH/diff-base" describe "$seed") <("$SCRATCH/diff-head" describe "$seed"); then
+  "$SCRATCH/diff-base" describe "$seed" > "$SCRATCH/describe-base.txt"
+  "$SCRATCH/diff-head" describe "$seed" > "$SCRATCH/describe-head.txt"
+  if ! cmp -s "$SCRATCH/describe-base.txt" "$SCRATCH/describe-head.txt"; then
     echo "error: the two builds generate different inputs for seed $seed" >&2
     exit 2
   fi
@@ -150,6 +221,7 @@ wpt_revision() {
 }
 
 DUMP_ARGS=(dump --seeds "0..$SEEDS")
+SHOW_ARGS=(show)
 WPT_REVISION=""
 if [[ ${#WPT_DIRS[@]} -gt 0 ]]; then
   WPT_ROOT="$(wpt_cache_dir)"
@@ -168,7 +240,8 @@ if [[ ${#WPT_DIRS[@]} -gt 0 ]]; then
     find "$WPT_ROOT/$dir" -type f -name '*.html' | LC_ALL=C sort >> "$HTML_LIST"
   done
   echo "html cases: $(wc -l < "$HTML_LIST") files from ${#WPT_DIRS[@]} WPT directories at $WPT_REVISION"
-  DUMP_ARGS+=(--html-list "$HTML_LIST")
+  DUMP_ARGS+=(--html-list "$HTML_LIST" --html-root "$WPT_ROOT")
+  SHOW_ARGS+=(--html-root "$WPT_ROOT")
 fi
 
 # Runs build $2 on every case into $3. A crash or a hang is a tooling error:
@@ -247,8 +320,8 @@ while IFS= read -r case_id && [[ $shown -lt $SHOW ]]; do
   echo
   echo "== diff for $case_id (base → head) =="
   diff -u \
-    <("$SCRATCH/diff-base" show "$case_id") \
-    <("$SCRATCH/diff-head" show "$case_id") | head -n 60 || true
+    <("$SCRATCH/diff-base" "${SHOW_ARGS[@]}" "$case_id") \
+    <("$SCRATCH/diff-head" "${SHOW_ARGS[@]}" "$case_id") | head -n 60 || true
 done < "$SCRATCH/differing.txt"
 echo
 echo "FAIL: some cases differ between the merge-base and HEAD"

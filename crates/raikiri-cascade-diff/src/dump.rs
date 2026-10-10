@@ -36,12 +36,25 @@ pub(crate) struct Inputs<'a, D> {
 /// Appends `value` as `label: Name` followed by one indented line per field,
 /// or as a single `label: value` line when it is not a struct.
 fn push_value(out: &mut String, label: &str, value: &dyn Debug) {
+    push_fields(out, label, value, &[]);
+}
+
+/// The fields of computed values that print how custom-property bindings
+/// are shared between nodes rather than what they are. Their effective and
+/// local values are printed instead (see `push_custom_properties`).
+const CUSTOM_PROPERTY_FIELDS: [&str; 2] = ["custom_properties: ", "local_custom_properties: "];
+
+/// [`push_value`], leaving out the struct fields that start with one of
+/// `skipped`.
+fn push_fields(out: &mut String, label: &str, value: &dyn Debug, skipped: &[&str]) {
     let canon = canonicalize(&format!("{value:?}"));
     match struct_fields(&canon) {
         Some((name, fields)) => {
             let _ = writeln!(out, "{label}: {name}");
             for field in fields {
-                let _ = writeln!(out, "  {field}");
+                if !skipped.iter().any(|prefix| field.starts_with(prefix)) {
+                    let _ = writeln!(out, "  {field}");
+                }
             }
         }
         None => {
@@ -67,12 +80,14 @@ pub(crate) fn cascade_result<D: StyleDom>(
         .position(|computed| std::ptr::eq(computed, root));
     let _ = writeln!(out, "root_element_index: {root_index:?}");
     for (index, computed) in result.computed.iter().enumerate() {
-        push_value(out, &format!("computed[{index}]"), computed);
+        let label = format!("computed[{index}]");
+        push_fields(out, &label, computed, &CUSTOM_PROPERTY_FIELDS);
     }
     let mut pseudo: Vec<_> = result.pseudo.iter().collect();
     pseudo.sort_by_key(|((id, kind), _)| (id.0, format!("{kind:?}")));
     for ((id, kind), computed) in &pseudo {
-        push_value(out, &format!("pseudo[{}, {kind:?}]", id.0), computed);
+        let label = format!("pseudo[{}, {kind:?}]", id.0);
+        push_fields(out, &label, computed, &CUSTOM_PROPERTY_FIELDS);
     }
     push_value(out, "opacity_specified", &result.opacity_specified);
     push_value(
@@ -131,22 +146,29 @@ pub(crate) fn section(out: &mut String, name: &str, write: impl FnOnce(&mut Stri
 }
 
 /// Appends the effective value of every name in `names` that `computed`
-/// resolves, walking inherited bindings the way `var()` does.
+/// resolves, walking inherited bindings the way `var()` does, and then the
+/// values declared on the node itself.
 fn push_custom_properties(
     out: &mut String,
     label: &str,
     computed: &ComputedValues,
     names: &[&str],
 ) {
-    let values: Vec<String> = names
-        .iter()
-        .filter_map(|name| {
-            let value = computed.resolved_custom_property(name)?;
-            Some(format!("{name}={value:?}"))
-        })
-        .collect();
-    if !values.is_empty() {
-        let _ = writeln!(out, "{label}: {}", values.join(", "));
+    let effective = names.iter().filter_map(|name| {
+        let value = computed.resolved_custom_property(name)?;
+        Some(format!("{name}={value:?}"))
+    });
+    let local = names.iter().filter_map(|name| {
+        let value = computed.local_resolved_custom_property(name)?;
+        Some(format!("{name}={value:?}"))
+    });
+    for (suffix, values) in [
+        ("", effective.collect::<Vec<_>>()),
+        (" local", local.collect()),
+    ] {
+        if !values.is_empty() {
+            let _ = writeln!(out, "{label}{suffix}: {}", values.join(", "));
+        }
     }
 }
 

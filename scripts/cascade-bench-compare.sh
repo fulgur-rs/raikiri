@@ -179,13 +179,18 @@ if ! git cat-file -e "$BASE_SHA:$BENCH_FILE" 2>/dev/null; then
 fi
 
 SCRATCH="$(mktemp -d "$TMPDIR/raikiri-cascade-bench.XXXXXX")"
-GOOD_WORKTREE="$SCRATCH/good-tree"
+# Throwaway worktrees that run cargo live under the main checkout's
+# .worktrees/, whichever worktree this runs in.
+MAIN_ROOT="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"
+GOOD_WORKTREE="$MAIN_ROOT/.worktrees/cascade-bench-base-$$-$RANDOM"
 GOOD_CRIT="$SCRATCH/crit-good"
 BAD_CRIT="$SCRATCH/crit-bad"
 mkdir -p "$GOOD_CRIT" "$BAD_CRIT"
 
 cleanup() {
-  git -C "$REPO_ROOT" worktree remove --force "$GOOD_WORKTREE" >/dev/null 2>&1 || true
+  if [[ -d "$GOOD_WORKTREE" ]]; then
+    git -C "$REPO_ROOT" worktree remove --force "$GOOD_WORKTREE" >/dev/null 2>&1 || true
+  fi
   rm -rf "$SCRATCH"
 }
 trap cleanup EXIT
@@ -220,7 +225,9 @@ echo "bad exe: $BAD_EXE"
 echo
 
 echo "-- checking out merge-base $BASE_SHA into a detached worktree --"
-git worktree add --detach "$GOOD_WORKTREE" "$BASE_SHA" >/dev/null
+mkdir -p "$MAIN_ROOT/.worktrees"
+# Repository hooks are for working checkouts, not for this throwaway tree.
+git -c core.hooksPath=/dev/null worktree add --detach "$GOOD_WORKTREE" "$BASE_SHA" >/dev/null
 echo "-- building good ($BASE_SHA) bench binary in $GOOD_WORKTREE (separate target dir) --"
 GOOD_JSON="$SCRATCH/good-build.json"
 (cd "$GOOD_WORKTREE" && cargo bench -p raikiri-style --bench cascade --no-run --locked --message-format=json) \

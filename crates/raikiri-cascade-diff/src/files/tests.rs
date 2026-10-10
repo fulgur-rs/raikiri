@@ -1,0 +1,77 @@
+use super::*;
+use raikiri_traits::{Body, Method, ResourceKind};
+
+/// A directory that is removed when dropped.
+struct TempDir(PathBuf);
+
+impl TempDir {
+    fn new(name: &str) -> Self {
+        let path = std::env::temp_dir().join(format!(
+            "raikiri-cascade-diff-{}-{name}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(path.join("css")).expect("create temporary directory");
+        Self(path)
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn request(url: &str) -> Request {
+    Request {
+        url: Url::parse(url).expect("valid URL"),
+        method: Method::Get,
+        content_type: None,
+        headers: Vec::new(),
+        body: Body::Empty,
+        signal: None,
+        kind: ResourceKind::ExternalStylesheet,
+    }
+}
+
+fn body(outcome: Result<FetchOutcome, NetworkError>) -> FetchedResource {
+    match outcome {
+        Ok(FetchOutcome::Body(resource)) => resource,
+        other => panic!("expected a body, got {other:?}"),
+    }
+}
+
+#[test]
+fn rooted_files_serve_paths_under_the_root() {
+    let dir = TempDir::new("rooted");
+    std::fs::write(dir.0.join("css/a.css"), "p {}").unwrap();
+    std::fs::write(dir.0.join("css/a.txt"), "text").unwrap();
+    let files = RootedFiles {
+        root: dir.0.clone(),
+    };
+    let css = body(files.fetch_one_hop(request("file:///css/a.css")));
+    assert_eq!(&css.bytes[..], b"p {}");
+    assert_eq!(css.content_type.as_deref(), Some("text/css"));
+    // `..` cannot leave the root: URL parsing resolves it first.
+    let css = body(files.fetch_one_hop(request("file:///../../css/a.css")));
+    assert_eq!(&css.bytes[..], b"p {}");
+    let text = body(files.fetch_one_hop(request("file:///css/a.txt")));
+    assert_eq!(text.content_type, None);
+    assert!(matches!(
+        files.fetch_one_hop(request("file:///css/missing.css")),
+        Err(NetworkError::Io(_))
+    ));
+    assert!(matches!(
+        files.fetch_one_hop(request("https://example.com/a.css")),
+        Err(NetworkError::Other(_))
+    ));
+}
+
+#[test]
+fn documents_get_their_path_under_the_root_as_their_url() {
+    let root = Path::new("/srv/wpt");
+    assert_eq!(
+        document_url(root, Path::new("/srv/wpt/css/x/a b.html")).map(String::from),
+        Some("file:///css/x/a%20b.html".to_owned())
+    );
+    assert_eq!(document_url(root, Path::new("/elsewhere/a.html")), None);
+}

@@ -7,8 +7,8 @@
 //! that preserves cascade behavior is expected to report none.
 //!
 //! ```text
-//! raikiri-cascade-diff dump [--seeds START..END] [--html-list FILE]
-//! raikiri-cascade-diff show CASE
+//! raikiri-cascade-diff dump [--seeds START..END] [--html-list FILE] [--html-root DIR]
+//! raikiri-cascade-diff show [--html-root DIR] CASE
 //! raikiri-cascade-diff describe SEED
 //! ```
 //!
@@ -24,14 +24,21 @@
 //! Case ids are `gen:SEED:print`, `gen:SEED:screen`, `gen:SEED:first-line`
 //! and `html:PATH`. A case that panics is recorded with its panic message
 //! instead of a cascade result, so a new panic is reported as a difference.
+//!
+//! With `--html-root`, an HTML case under that directory is parsed at the
+//! URL `file:///` plus its path relative to the directory, and its linked
+//! stylesheets are read from the directory, so root-relative links resolve
+//! as they do on a server rooted there.
 
 mod canon;
 mod doc;
 mod dump;
+mod files;
 mod generate;
 
 use std::io::{BufWriter, Write};
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use raikiri_style::{
@@ -46,8 +53,9 @@ const MEDIA: [&str; 3] = ["print", "screen", "first-line"];
 /// result.
 const ERROR_PREFIXES: [&str; 4] = ["BAD CASE: ", "IO-ERROR: ", "PARSE-ERROR: ", "ERR: "];
 
-const USAGE: &str = "usage: raikiri-cascade-diff dump [--seeds START..END] [--html-list FILE]
-       raikiri-cascade-diff show CASE
+const USAGE: &str =
+    "usage: raikiri-cascade-diff dump [--seeds START..END] [--html-list FILE] [--html-root DIR]
+       raikiri-cascade-diff show [--html-root DIR] CASE
        raikiri-cascade-diff describe SEED";
 
 // cov:ignore: process entry point; the logic lives in `run`, which the unit tests drive with an in-memory writer
@@ -68,7 +76,10 @@ fn main() -> ExitCode {
 fn run(args: &[String], out: &mut dyn Write) -> ExitCode {
     let written = match args.first().map(String::as_str) {
         Some("dump") => return dump(&args[1..], out),
-        Some("show") if args.len() == 2 => out.write_all(render(&args[1]).as_bytes()),
+        Some("show") if args.len() == 2 => out.write_all(render(&args[1], None).as_bytes()),
+        Some("show") if args.len() == 4 && args[1] == "--html-root" => {
+            out.write_all(render(&args[3], Some(Path::new(&args[2]))).as_bytes())
+        }
         Some("describe") if args.len() == 2 => match args[1].parse::<u64>() {
             Ok(seed) => out.write_all(generate::describe(&generate::generate(seed)).as_bytes()),
             Err(_) => return usage(),
@@ -90,6 +101,7 @@ fn usage() -> ExitCode {
 fn dump(args: &[String], out: &mut dyn Write) -> ExitCode {
     let mut seeds = 0..0u64;
     let mut html = Vec::new();
+    let mut root = None;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match (arg.as_str(), iter.next()) {
@@ -104,6 +116,7 @@ fn dump(args: &[String], out: &mut dyn Write) -> ExitCode {
                     return ExitCode::from(2);
                 }
             },
+            ("--html-root", Some(dir)) => root = Some(PathBuf::from(dir)),
             _ => return usage(),
         }
     }
@@ -111,19 +124,19 @@ fn dump(args: &[String], out: &mut dyn Write) -> ExitCode {
         .flat_map(|seed| MEDIA.iter().map(move |media| format!("gen:{seed}:{media}")))
         .chain(html.into_iter().map(|path| format!("html:{path}")));
     for case in cases {
-        if write_case_line(out, &case).is_err() {
+        if write_case_line(out, &case, root.as_deref()).is_err() {
             return ExitCode::FAILURE;
         }
     }
     ExitCode::SUCCESS
 }
 
-fn write_case_line(out: &mut dyn Write, case: &str) -> std::io::Result<()> {
+fn write_case_line(out: &mut dyn Write, case: &str, root: Option<&Path>) -> std::io::Result<()> {
     // The id goes out before the case runs, so a crash or a hang leaves it on
     // an unfinished last line that names the case.
     write!(out, "{case}\t")?;
     out.flush()?;
-    let columns = case_columns(&render(case));
+    let columns = case_columns(&render(case, root));
     writeln!(out, "{columns}")?;
     out.flush()
 }
@@ -152,8 +165,9 @@ fn parse_range(text: &str) -> Option<std::ops::Range<u64>> {
 }
 
 /// The canonical text of one case, or a description of why it has none.
-fn render(case: &str) -> String {
-    guarded(|| render_unguarded(case))
+/// `root` is the directory linked stylesheets of HTML cases are read from.
+fn render(case: &str, root: Option<&Path>) -> String {
+    guarded(|| render_unguarded(case, root))
 }
 
 /// Runs `f`, turning a panic into a `PANIC: <message>` line.
@@ -173,7 +187,7 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
         .unwrap_or("<non-string panic payload>")
 }
 
-fn render_unguarded(case: &str) -> String {
+fn render_unguarded(case: &str, root: Option<&Path>) -> String {
     let bad_case = || format!("BAD CASE: {case}\n");
     if let Some(rest) = case.strip_prefix("gen:") {
         let Some((seed, media)) = rest.split_once(':') else {
@@ -211,7 +225,7 @@ fn render_unguarded(case: &str) -> String {
         out
     } else if let Some(path) = case.strip_prefix("html:") {
         match std::fs::read(path) {
-            Ok(bytes) => html_into(&bytes),
+            Ok(bytes) => html_into(&bytes, Path::new(path), root),
             Err(error) => format!("IO-ERROR: {error}\n"),
         }
     } else {
@@ -219,18 +233,34 @@ fn render_unguarded(case: &str) -> String {
     }
 }
 
-fn html_into(bytes: &[u8]) -> String {
+/// Cascades the HTML document `bytes`, read from `path`. Under `root`, its
+/// linked stylesheets are read from that directory.
+fn html_into(bytes: &[u8], path: &Path, root: Option<&Path>) -> String {
+    let files = root.map(|root| files::RootedFiles {
+        root: root.to_owned(),
+    });
     let options = raikiri_html::ParseOptions {
         extra_stylesheets: &[],
-        network: None,
-        base_url: None,
+        network: files
+            .as_ref()
+            .map(|files| files as &dyn raikiri_traits::NetworkProvider),
+        base_url: root.and_then(|root| files::document_url(root, path)),
     };
     let mut out = String::new();
     match raikiri_html::parse(bytes, &options) {
         Ok(document) => {
             let tree = raikiri_html::build_rule_tree(&document);
             let media = MediaContext::print();
-            let source = String::from_utf8_lossy(bytes);
+            // Custom properties may also be declared in linked stylesheets.
+            let mut source = String::from_utf8_lossy(bytes).into_owned();
+            for part in document
+                .stylesheet_sources
+                .iter()
+                .flat_map(|sheet| &sheet.parts)
+            {
+                source.push('\n');
+                source.push_str(&part.source);
+            }
             let names = dump::custom_property_names(&source);
             let inputs = dump::Inputs {
                 dom: &document.dom,

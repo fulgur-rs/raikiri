@@ -8,12 +8,15 @@ license.workspace = true
 publish = false
 
 # `scripts/cascade-diff.sh` also builds this crate's sources outside the
-# workspace, against the merge-base checkout of the two crates below, with a
-# generated manifest. Keep the dependency list to these two path crates so that
-# generated manifest stays a faithful copy.
+# workspace, against the merge-base checkout of the path crates below, with a
+# generated manifest. Keep that manifest's dependency list in step with this
+# one: the same path crates, and the same version requirements for the others.
 [dependencies]
 raikiri-style = { workspace = true }
 raikiri-html = { workspace = true }
+raikiri-traits = { workspace = true }
+bytes = { workspace = true }
+url = { workspace = true }
 
 [lints]
 workspace = true
