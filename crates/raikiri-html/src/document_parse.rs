@@ -10,9 +10,10 @@
 //! `parse_html_with_limits` reads [`RenderLimits::max_input_bytes`] and bounds
 //! input reads. This closes SEC-HIGH: an unbounded-read DoS in `parse_html`
 //! where attacker-supplied HTML of arbitrary size could exhaust memory.
-//! The implementation probes with `Read::take(cap + 1)` and `read_to_end`:
-//! after reading, it checks whether `buf.len() > cap` and returns
-//! `RenderError::LimitExceeded { kind: LimitKind::InputBytes, .. }` if so.
+//! Input is parsed as it is read, in chunks, and the reader is wrapped in
+//! `Read::take(cap + 1)` with a byte counter. As soon as more than `cap`
+//! bytes have been read, parsing stops and the call returns
+//! `RenderError::LimitExceeded { kind: LimitKind::InputBytes, .. }`.
 //! A plain `take(cap)` would not detect the limit because html5ever silently
 //! accepts truncated input.
 //!
@@ -30,7 +31,7 @@
 use std::io::Read;
 
 use crate::{ParseOptions, RaikiriTreeSink, effective_document_base_url, parse_with_sink};
-use raikiri_traits::{LimitKind, ParseError, RenderError, RenderLimits};
+use raikiri_traits::{LimitKind, RenderError, RenderLimits};
 
 use raikiri_style::{CascadeOptions, PageContextQuery};
 
@@ -101,13 +102,17 @@ pub fn parse_html<R: Read>(
 ///
 /// # Implementation
 ///
-/// With `Some(cap)`, `input.by_ref().take(cap + 1).read_to_end(&mut buf)`
-/// performs a bounded probe. If `buf.len() > cap`, input exceeded the cap.
-/// A plain `Read::take(cap)` truncates silently at the cap, and html5ever
-/// parses truncated input without warning; this "+1 probe" is needed to
-/// detect an over-limit input.
+/// Input is not buffered as a whole: it is read in chunks and each chunk is
+/// passed to html5ever as soon as it arrives. With `Some(cap)`, the reader is
+/// wrapped in `take(cap + 1)` and every byte read is counted; reading byte
+/// `cap + 1` stops the parse. A plain `Read::take(cap)` truncates silently at
+/// the cap, and html5ever parses truncated input without warning; this
+/// "+1 probe" is needed to detect an over-limit input.
 ///
-/// With `None`, `input.read_to_end(&mut buf)` reads without a limit.
+/// With `None`, the input is read to its end without a limit.
+///
+/// Because parsing and reading are interleaved, an input that is both
+/// invalid UTF-8 and over the cap reports whichever problem comes first.
 ///
 /// # Errors
 ///
@@ -131,47 +136,32 @@ pub fn parse_html<R: Read>(
 ///   or the stylesheets have more rules, selectors or declarations than the
 ///   cascade can number.
 pub fn parse_html_with_limits<R: Read>(
-    mut input: R,
+    input: R,
     options: &ParseOptions<'_>,
     limits: RenderLimits,
 ) -> Result<HtmlDocument, RenderError> {
-    let mut buf: Vec<u8> = Vec::new();
-    match limits.max_input_bytes {
+    // Construct the sink explicitly: the crate::parse thin-wrapper path
+    // always uses `RaikiriTreeSink::default()`, so it cannot consult
+    // `limits.max_parse_warnings`.
+    let sink = RaikiriTreeSink::new(limits.max_parse_warnings);
+    let uncascaded = match limits.max_input_bytes {
         Some(cap) => {
-            // "+1 probe": reading cap + 1 bytes proves that input exceeds cap.
-            // Use saturating_add to avoid overflow when cap == u64::MAX.
-            let probe_cap = cap.saturating_add(1);
-            input
-                .by_ref()
-                .take(probe_cap)
-                .read_to_end(&mut buf)
-                .map_err(|e| RenderError::Parse(ParseError::Io(e)))?;
-
-            if (buf.len() as u64) > cap {
+            let mut capped = CappedInput::new(input, cap);
+            let parsed = parse_with_sink(&mut capped, sink, options);
+            if let Some(actual) = capped.exceeded() {
                 return Err(RenderError::LimitExceeded {
                     kind: LimitKind::InputBytes,
                     limit: cap,
-                    actual: buf.len() as u64,
+                    actual,
                 });
             }
+            parsed
         }
-        None => {
-            // The consumer explicitly disabled the cap (the fail-closed default is
-            // 32 MiB; this branch is reached only through opt-out).
-            input
-                .read_to_end(&mut buf)
-                .map_err(|e| RenderError::Parse(ParseError::Io(e)))?;
-        }
+        // The consumer explicitly disabled the cap (the fail-closed default
+        // is 32 MiB; this branch is reached only through opt-out).
+        None => parse_with_sink(input, sink, options),
     }
-
-    // Below cap: pass the materialized slice to crate::parse_with_sink.
-    // The crate::parse thin-wrapper path always uses
-    // `RaikiriTreeSink::default()`, so it cannot consult
-    // `limits.max_parse_warnings`; construct the sink explicitly here.
-    // parse_with_sink internally calls `read_to_end`. Passing `&[u8]` makes
-    // one memcpy; a second allocation is unavoidable, but the cap bounds memory use.
-    let sink = RaikiriTreeSink::new(limits.max_parse_warnings);
-    let uncascaded = parse_with_sink(buf.as_slice(), sink, options).map_err(RenderError::Parse)?;
+    .map_err(RenderError::Parse)?;
     if let Some(limit) = limits.max_dom_nodes {
         let actual = uncascaded.dom.node_count() as u64;
         if actual > limit {
@@ -204,4 +194,42 @@ pub fn parse_html_with_limits<R: Read>(
         font_faces,
         effective_base_url,
     })
+}
+
+/// Reader that stops with an error once more than `cap` bytes were read.
+///
+/// The inner reader is limited to `cap + 1` bytes, so the reported count is
+/// exactly `cap + 1` when the cap is exceeded, and nothing past that byte is
+/// ever requested from the caller's reader.
+struct CappedInput<R> {
+    inner: std::io::Take<R>,
+    cap: u64,
+    read: u64,
+}
+
+impl<R: Read> CappedInput<R> {
+    fn new(input: R, cap: u64) -> Self {
+        // Use saturating_add to avoid overflow when cap == u64::MAX.
+        Self {
+            inner: input.take(cap.saturating_add(1)),
+            cap,
+            read: 0,
+        }
+    }
+
+    /// The number of bytes read, if it exceeded the cap.
+    fn exceeded(&self) -> Option<u64> {
+        (self.read > self.cap).then_some(self.read)
+    }
+}
+
+impl<R: Read> Read for CappedInput<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let read = self.inner.read(buf)?;
+        self.read += read as u64;
+        if self.read > self.cap {
+            return Err(std::io::Error::other("input byte cap exceeded"));
+        }
+        Ok(read)
+    }
 }
