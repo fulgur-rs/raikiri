@@ -20,9 +20,9 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use cssparser::{ParseError, Parser, ParserInput, Token};
 use raikiri_style::{
-    Atom, CascadeResult, ComputedValues, CssColor, FirstLineStyles, MediaContext, PageContextQuery,
-    PageInheritance, PseudoElem, RuleTree, StyleDom, StyleNode, StyleNodeId, StyleNodeKind,
-    cascade_page_with_media_context,
+    Atom, CascadeResult, ComputedValues, CssColor, FirstLineStyles, MediaContext,
+    PageCascadeResult, PageContextQuery, PageInheritance, PageMarginBoxSlot, PseudoElem, RuleTree,
+    StyleDom, StyleNode, StyleNodeId, StyleNodeKind, cascade_page_with_media_context,
 };
 
 use crate::canon::{canonicalize, struct_fields};
@@ -67,6 +67,24 @@ fn push_derived(out: &mut String, label: &str, computed: &ComputedValues, names:
     push_custom_properties(out, &format!("{label} custom"), computed, names);
 }
 
+/// Appends a page result, and then each margin box one of its rules fills
+/// as layout resolves it, with the page's custom properties substituted, so
+/// those are compared by value.
+fn push_page(out: &mut String, label: &str, page: &PageCascadeResult) {
+    push_value(out, label, page);
+    let mut slots: Vec<PageMarginBoxSlot> =
+        page.margin_boxes().iter().map(|rule| rule.slot).collect();
+    slots.sort_by_key(|slot| format!("{slot:?}"));
+    slots.dedup();
+    for slot in slots {
+        push_value(
+            out,
+            &format!("{label} margin[{slot:?}]"),
+            &page.cascade_margin_box(slot),
+        );
+    }
+}
+
 fn node_id(index: usize) -> StyleNodeId {
     StyleNodeId::new(index as u64)
 }
@@ -103,7 +121,7 @@ pub(crate) fn cascade_result<D: StyleDom>(
         &result.authored_writing_modes,
     );
     push_value(out, "page_values", &result.page_values);
-    push_value(out, "page", &result.page);
+    push_page(out, "page", &result.page);
     push_value(out, "counter_styles", &result.counter_styles);
     push_value(
         out,
@@ -329,7 +347,7 @@ fn page_queries<D>(out: &mut String, inputs: &Inputs<'_, D>, result: &CascadeRes
             PageInheritance::FromRoot(result.root_element_computed()),
             inputs.media,
         );
-        push_value(out, &format!("page[{label}]"), &page);
+        push_page(out, &format!("page[{label}]"), &page);
     }
 }
 

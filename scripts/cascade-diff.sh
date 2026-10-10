@@ -236,19 +236,30 @@ environment_values() {
 }
 
 # Copies the cached merge-base build to $1, or builds it in a throwaway
-# worktree, caches it and copies it. A cached build is reused only while the
-# environment variables it declared that it reads keep the values they had
-# when it was built, which is what cargo checks before reusing a build.
+# worktree, caches it and copies it.
+#
+# A cached build is reused only while the environment variables it declared
+# that it reads keep the values they had when it was built, which is what
+# cargo checks before reusing a build. Each entry is named by the build key
+# and a hash of those values, is published whole by renaming a finished
+# directory into place, and is never changed after, so a run sees a complete
+# entry or none.
 base_build() {
-  local binary="$1" entry cached
-  entry="$CACHE_ROOT/$(base_build_key)"
-  cached="$entry/raikiri-cascade-diff"
-  if [[ "$USE_CACHE" -eq 1 && -x "$cached" && -f "$entry/variables" && -f "$entry/environment" ]] \
-    && environment_values < "$entry/variables" | cmp -s - "$entry/environment"; then
-    echo "-- using the cached build of merge-base $BASE_SHA ($cached) --"
-    touch "$entry"
-    cp -f "$cached" "$binary"
-    return 0
+  local binary="$1" key entry partial
+  key="$(base_build_key)"
+  if [[ "$USE_CACHE" -eq 1 ]]; then
+    for entry in "$CACHE_ROOT/$key"-*/; do
+      entry="${entry%/}"
+      [[ -f "$entry/variables" && -x "$entry/raikiri-cascade-diff" ]] || continue
+      [[ "$(environment_values < "$entry/variables" | sha256sum | cut -c1-16)" == "${entry##*-}" ]] \
+        || continue
+      # Another run may remove the entry meanwhile; then this one builds.
+      if cp -f "$entry/raikiri-cascade-diff" "$binary" 2>/dev/null; then
+        echo "-- using the cached build of merge-base $BASE_SHA ($entry) --"
+        touch "$entry"
+        return 0
+      fi
+    done
   fi
   echo "-- checking out merge-base $BASE_SHA into a detached worktree --"
   mkdir -p "$MAIN_ROOT/.worktrees"
@@ -256,15 +267,15 @@ base_build() {
   git -c core.hooksPath=/dev/null worktree add --detach "$BASE_TREE" "$BASE_SHA" >/dev/null
   echo "-- building base ($BASE_TREE) --"
   build_tool "$BASE_TREE" "$binary"
-  # A concurrent run may store the same key; each rename keeps a file whole,
-  # and a mix of two runs' files only makes the next run build again.
-  mkdir -p "$entry"
-  declared_environment "$BASE_TREE/target/cascade-diff" > "$entry/variables.partial.$$"
-  environment_values < "$entry/variables.partial.$$" > "$entry/environment.partial.$$"
-  cp -f "$binary" "$cached.partial.$$"
-  mv -f "$entry/variables.partial.$$" "$entry/variables"
-  mv -f "$entry/environment.partial.$$" "$entry/environment"
-  mv -f "$cached.partial.$$" "$cached"
+  partial="$CACHE_ROOT/.partial-$key-$$"
+  mkdir -p "$partial"
+  declared_environment "$BASE_TREE/target/cascade-diff" > "$partial/variables"
+  environment_values < "$partial/variables" > "$partial/environment"
+  cp -f "$binary" "$partial/raikiri-cascade-diff"
+  entry="$CACHE_ROOT/$key-$(sha256sum < "$partial/environment" | cut -c1-16)"
+  # When another run has published the same entry, the rename fails and
+  # that one is kept.
+  mv -T "$partial" "$entry" 2>/dev/null || rm -rf "$partial"
   local stale
   find "$CACHE_ROOT" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' \
     | sort -rn | tail -n +"$((CACHE_KEEP + 1))" | cut -d' ' -f2- \

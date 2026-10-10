@@ -124,6 +124,29 @@ fn outputs_reached_only_through_methods_are_printed() {
 }
 
 #[test]
+fn page_margin_boxes_are_printed_as_layout_resolves_them() {
+    let mut doc = GenDoc::new(StyleQuirksMode::NoQuirks);
+    doc.append(0, GenNode::element("html"));
+    // A page-local custom property used only in a margin box shows up in
+    // the margin box's resolved declarations.
+    let dump = |ink: &str| {
+        dump_of(
+            &doc,
+            &format!("@page {{ --ink: {ink}; @top-center {{ color: var(--ink) }} }}"),
+            &[],
+        )
+    };
+    let red = dump("red");
+    assert!(red.contains("page margin[TopCenter]: Some("), "{red}");
+    assert!(
+        red.contains("page[first] margin[TopCenter]: Some("),
+        "{red}"
+    );
+    assert_ne!(red, dump("blue"));
+    assert!(!red.contains(CUSTOM_PROPERTY_ENVIRONMENT), "{red}");
+}
+
+#[test]
 fn a_panicking_section_keeps_its_output_and_the_rest_of_the_dump() {
     let mut out = String::from("before\n");
     section(&mut out, "probe", |out| {
