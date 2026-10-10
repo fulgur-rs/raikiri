@@ -419,7 +419,8 @@ META_ASSERT_RE = re.compile(r"""<meta\b[^>]*\bname\s*=\s*["']?assert\b""", re.I)
 EVENT_HANDLER_RE = re.compile(r"<[a-z][^>]*\son[a-z]+\s*=", re.I)
 # Server-absolute URLs are rooted at the WPT checkout, which the renderer only
 # maps for /fonts/; other such resources would silently be missing.
-ROOT_RELATIVE_URL_RE = re.compile(r"""\b(?:src|href)\s*=\s*["']?/(?!/|fonts/)""", re.I)
+# The /fonts/ mapping only rewrites quoted URLs, so an unquoted one is excluded too.
+ROOT_RELATIVE_URL_RE = re.compile(r"""\b(?:src|href)\s*=\s*(?:["']/(?!/|fonts/)|/(?!/))""", re.I)
 TEST_SUFFIXES = (".xht", ".xhtml", ".html", ".htm")
 
 
@@ -433,7 +434,9 @@ def is_judge_candidate(test_id: str, source: str) -> bool:
         return False
     if EVENT_HANDLER_RE.search(source) or ROOT_RELATIVE_URL_RE.search(source):
         return False
-    return any(pattern.search(source) for pattern in CONDITION_RES)
+    # Use the extractor itself, so a phrase it would not send (for example one
+    # inside the meta assert) does not admit the test.
+    return bool(pass_condition(source))
 
 
 def command_list_tests(args) -> int:

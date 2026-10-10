@@ -111,11 +111,12 @@ jobs:
           fetch_token() {
             curl -sSf -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
               "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" \
-              | jq -r .value > "$ANTHROPIC_IDENTITY_TOKEN_FILE.tmp"
-            mv -f "$ANTHROPIC_IDENTITY_TOKEN_FILE.tmp" "$ANTHROPIC_IDENTITY_TOKEN_FILE"
+              | jq -er .value > "$ANTHROPIC_IDENTITY_TOKEN_FILE.tmp" \
+              && mv -f "$ANTHROPIC_IDENTITY_TOKEN_FILE.tmp" "$ANTHROPIC_IDENTITY_TOKEN_FILE"
           }
-          fetch_token
-          ( while sleep 120; do fetch_token; done ) &
+          fetch_token || { echo "could not fetch the GitHub OIDC token" >&2; exit 1; }
+          # A failed refresh keeps the previous token; the next one retries.
+          ( while sleep 120; do fetch_token || echo "token refresh failed" >&2; done ) &
           refresher=$!
           trap 'kill "$refresher"' EXIT
           uv run --script scripts/wpt/haiku-judge-meta-assert.py run \
