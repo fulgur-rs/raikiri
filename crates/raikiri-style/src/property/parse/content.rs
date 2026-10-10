@@ -149,9 +149,9 @@ pub(crate) fn is_reserved_counter_name(ident: &str) -> bool {
 }
 
 /// Parse a registered consumer property's resolved-text grammar from a complete
-/// CSS value string.  The returned style components are an internal bridge;
-/// the public consumer event converts them to an owned neutral `String`.
-pub(crate) fn parse_consumer_text_value(source: &str) -> Option<Vec<ContentComponent>> {
+/// CSS value string.  The producer resolves the returned components to the
+/// owned neutral `String` that a consumer event carries.
+pub fn parse_consumer_text_value(source: &str) -> Option<Vec<ContentComponent>> {
     let mut input = ParserInput::new(source);
     let mut parser = Parser::new(&mut input);
     parser

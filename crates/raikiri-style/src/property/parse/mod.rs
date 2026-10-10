@@ -15,6 +15,7 @@ mod visual;
 pub(crate) use box_model::*;
 pub use color::*;
 pub(crate) use common::*;
+pub use content::parse_consumer_text_value;
 pub(crate) use content::*;
 pub(crate) use layout::*;
 pub use text::*;
