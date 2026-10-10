@@ -1458,7 +1458,7 @@ pub(crate) fn parse_registered_consumer_value(
         .find(|registration| registration.matches_css_name(name))?;
     let start = input.state();
     let raw = consume_deferred_value(input)?;
-    let has_deferred_substitution = raw.to_ascii_lowercase().contains("var(");
+    let has_deferred_substitution = contains_var_function(raw.as_str());
     if !has_deferred_substitution {
         let valid = match registration.grammar() {
             ConsumerPropertyGrammar::Integer => {
@@ -1506,6 +1506,47 @@ pub(crate) fn parse_registered_consumer_value(
         name: registration.storage_name(),
         value: raw,
     }))
+}
+
+/// Whether `raw` calls `var()` anywhere, judged from real `Function` tokens so
+/// that a quoted `"var("` or an escaped spelling is classified like the
+/// tokenizer sees it. Nesting deeper than the scanner's limit counts as a
+/// call, which defers validation to substitution time rather than rejecting.
+fn contains_var_function(raw: &str) -> bool {
+    const MAX_DEPTH: usize = 128;
+    fn scan(parser: &mut Parser<'_, '_>, depth: usize) -> bool {
+        if depth > MAX_DEPTH {
+            return true;
+        }
+        loop {
+            let token = match parser.next_including_whitespace_and_comments() {
+                Ok(token) => token.clone(),
+                Err(_) => return false,
+            };
+            let nested = match token {
+                cssparser::Token::Function(name) if name.eq_ignore_ascii_case("var") => {
+                    return true;
+                }
+                cssparser::Token::Function(_)
+                | cssparser::Token::ParenthesisBlock
+                | cssparser::Token::SquareBracketBlock
+                | cssparser::Token::CurlyBracketBlock => true,
+                _ => false,
+            };
+            if nested
+                && parser
+                    .parse_nested_block(|nested| {
+                        Ok::<_, cssparser::ParseError<'_, ()>>(scan(nested, depth + 1))
+                    })
+                    .unwrap_or(false)
+            {
+                return true;
+            }
+        }
+    }
+    let mut parser_input = cssparser::ParserInput::new(raw);
+    let mut parser = Parser::new(&mut parser_input);
+    scan(&mut parser, 0)
 }
 
 /// The registered spelling of a keyword-grammar value that is exactly one

@@ -614,8 +614,9 @@ fn text_consumer_properties_resolve_counters_and_named_strings() {
          h2 { counter-increment: section; \
               bookmark-label: counters(chapter, \"/\") \"-\" counter(section) string(missing, last) \" of \" string(title) } \
          .hidden { display: none; string-set: title \"Hidden\" } \
+         .contents { display: contents; string-set: title \"Contents\" } \
          .quote { bookmark-label: open-quote }</style>\
-         <h1>Intro</h1><h2>A</h2><h1>Next</h1><div class=hidden>x</div><h2>B</h2><p class=quote>q</p>");
+         <h1>Intro</h1><h2>A</h2><h1>Next\u{000C}Page</h1><div class=hidden>x</div><div class=contents><h2>B</h2></div><p class=quote>q</p>");
     let registrations = [crate::ConsumerPropertyRegistration::text("bookmark-label")];
     let mut observer = CollectProperties::default();
     layout(
@@ -631,8 +632,8 @@ fn text_consumer_properties_resolve_counters_and_named_strings() {
         [
             text("I. Intro"),
             text("1-1 of Intro"),
-            text("II. Next"),
-            text("2-1 of Next"),
+            text("II. Next Page"),
+            text("2-1 of Next\u{000C}Page"),
         ]
     );
 }

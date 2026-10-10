@@ -1071,6 +1071,13 @@ fn resolve_string_set_component(
     reason = "Helper for resolve_string_set_component; \
               same not-yet-production-driven status."
 )]
+/// The string value of element `idx` that a bare `content()` or
+/// `content(text)` in `string-set` assigns (CSS GCPM 3 §1.1.1.1), with only
+/// CSS document white space collapsed.
+pub fn element_string_value(doc: &Document, idx: usize) -> String {
+    element_text_string_value(doc, idx)
+}
+
 fn element_text_string_value(doc: &Document, idx: usize) -> String {
     let mut raw = String::new();
     collect_descendant_text(doc, idx, &mut raw);

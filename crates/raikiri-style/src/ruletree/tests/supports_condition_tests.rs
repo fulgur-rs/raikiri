@@ -386,6 +386,9 @@ fn consumer_property_conditions_use_the_registered_grammar() {
         ("bookmark-open: ajar", false),
         ("bookmark-open: open closed", false),
         ("bookmark-open: \"open\"", false),
+        ("bookmark-open: \"var(--x)\"", false),
+        ("bookmark-open: v\\61r(--x)", true),
+        ("bookmark-open: foo([var(--x)])", true),
     ] {
         let mut input = ParserInput::new(declaration);
         let mut parser = Parser::new(&mut input);

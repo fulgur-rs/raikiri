@@ -295,19 +295,21 @@ impl<'a> ConsumerTextContext<'a> {
         };
         let assignments = computed.string_set.clone();
         for (name, components) in assignments.iter() {
-            if let Some(value) = self.resolve(document, node_id, components) {
+            if let Some(value) = self.resolve(document, node_id, components, true) {
                 self.strings.insert(name.clone(), value);
             }
         }
     }
 
     /// The text of `components` at `node_id`, or `None` when a component has
-    /// no text approximation here.
+    /// no text approximation here. `string_set` selects the named-string
+    /// pipeline's element text, which collapses only CSS document white space.
     fn resolve(
         &mut self,
         document: &raikiri_dom::Document,
         node_id: usize,
         components: &[raikiri_style::property::ContentComponent],
+        string_set: bool,
     ) -> Option<String> {
         use raikiri_dom::generated_content::{format_counter_component, format_counters_component};
         use raikiri_style::property::{ContentComponent, ContentTextKeyword};
@@ -334,6 +336,11 @@ impl<'a> ConsumerTextContext<'a> {
                     } else if let Some(fallback) = fallback {
                         output.push_str(fallback);
                     }
+                }
+                ContentComponent::Content {
+                    keyword: ContentTextKeyword::Text,
+                } if string_set => {
+                    output.push_str(&raikiri_dom::element_string_value(document, node_id));
                 }
                 ContentComponent::Content {
                     keyword: ContentTextKeyword::Text,
@@ -380,7 +387,7 @@ fn consumer_property_value(
         ConsumerPropertyGrammar::IntegerOrNone => parse_consumer_integer_or_none(raw),
         ConsumerPropertyGrammar::Text => {
             let components = raikiri_style::property::parse_consumer_text_value(raw)?;
-            text.resolve(document, node_id, &components)
+            text.resolve(document, node_id, &components, false)
                 .map(ConsumerPropertyValue::Text)
         }
         ConsumerPropertyGrammar::Keyword(keywords) => parse_consumer_keyword(raw, keywords),
@@ -430,7 +437,11 @@ fn resolved_consumer_property_events(
             && let Some(computed) = cascade.computed.get(node_id)
         {
             hidden |= computed.display == raikiri_style::property::DisplayValue::None;
-            if tracks_strings && !hidden && !computed.string_set.is_empty() {
+            // `display: contents` generates no box of its own, but its
+            // children still do.
+            let generates_box =
+                !hidden && computed.display != raikiri_style::property::DisplayValue::Contents;
+            if tracks_strings && generates_box && !computed.string_set.is_empty() {
                 text.apply_string_set(document, node_id);
             }
             for registration in registrations {
