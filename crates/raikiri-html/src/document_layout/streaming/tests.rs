@@ -891,11 +891,44 @@ fn rebuilding_page_count_margin_boxes_stops_on_abort() {
         panic!("aborted");
     };
     let pages = laid_out.page_count();
-    let rebuilt = page_count_margin_boxes(&laid_out, pages, None).expect("not aborted");
+    let (rebuilt, running) = page_count_margin_boxes(&laid_out, pages, None)
+        .expect("layout")
+        .expect("not aborted");
     assert_eq!(rebuilt.len(), pages as usize);
+    assert!(running.is_empty());
     let controller = AbortController::new();
     controller.abort();
-    assert!(page_count_margin_boxes(&laid_out, pages, Some(&controller.signal)).is_none());
+    assert!(
+        page_count_margin_boxes(&laid_out, pages, Some(&controller.signal))
+            .expect("layout")
+            .is_none()
+    );
+}
+
+#[test]
+fn rebuilt_margin_boxes_come_with_their_running_elements() {
+    let html = format!(
+        "<style>h1 {{ position: running(title) }} \
+         @page {{ margin: 40px; @top-left {{ content: element(title) }} \
+           @bottom-center {{ content: counter(pages) }} }}</style><h1>Title</h1>{}",
+        paragraphs(60)
+    );
+    let (pages, early, summary) = stream_with_summary(&html, 1000, 1);
+    assert!(early > 0);
+    let rebuilt = &summary.page_count_margin_boxes;
+    assert_eq!(rebuilt.len(), early);
+    assert_eq!(summary.page_count_running_elements.len(), early);
+    for element in &summary.page_count_running_elements {
+        let (_, boxes) = rebuilt
+            .iter()
+            .find(|(index, _)| *index == element.page)
+            .expect("rebuilt page");
+        let margin_box = &boxes[element.margin_box];
+        let running = margin_box.running.as_ref().expect("running box");
+        assert_eq!(element.layout.width(), running.content_box.width);
+        assert!(element.layout.height() > 0.0);
+    }
+    assert!(pages.len() > early);
 }
 
 /// Serves `main.css`, which imports `nested.css`, counting the requests.

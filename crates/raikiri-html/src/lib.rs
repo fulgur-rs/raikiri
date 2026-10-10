@@ -47,7 +47,9 @@ pub use document_layout::{
     PlacedRunningElement, PositionedGlyphRun, RasterImage, RepeatKind, RunSource,
     RunningElementLayout, Synthesis, Tag, TextLineId, TextShadow, layout,
 };
-pub use document_layout::{PageSink, StreamPage, StreamStatus, StreamSummary, StreamingLayout};
+pub use document_layout::{
+    PageCountRunningElement, PageSink, StreamPage, StreamStatus, StreamSummary, StreamingLayout,
+};
 pub use document_parse::{parse_html, parse_html_with_limits};
 pub use font_collection::{
     BundledFont, FontCollectionBuildError, FontCollectionBuilder, MAX_BUNDLED_FONT_BYTES,

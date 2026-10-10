@@ -73,6 +73,12 @@ pub struct PlacedRunningElement<'a> {
     pub origin: (f32, f32),
 }
 
+/// A [`PlacedRunningElement`] that owns its layout.
+pub(crate) struct OwnedRunningElement {
+    pub(crate) layout: super::RunningElementLayout,
+    pub(crate) origin: (f32, f32),
+}
+
 /// Resolved raster pixels and their complete object placement on a page.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -589,6 +595,37 @@ impl<'a> Page<'a> {
             layout,
             origin: (content.x, content.y + free * running.block_align),
         }))
+    }
+
+    /// [`Self::margin_box_running_element`], laid out anew rather than
+    /// borrowed from the document layout's cache, so that it can outlive
+    /// the layout.
+    pub(crate) fn owned_margin_box_running_element(
+        &self,
+        margin_box: &MarginBox,
+    ) -> Result<Option<OwnedRunningElement>, RenderError> {
+        let (Some(source), Some(running)) = (self.running, margin_box.running.as_ref()) else {
+            return Ok(None);
+        };
+        let Some(node) = source
+            .index
+            .select(&running.name, running.fetch, self.slice.page_index)
+        else {
+            return Ok(None);
+        };
+        let content = running.content_box;
+        let Some(layout) = super::running::layout_running_element(
+            source.document,
+            source.cascade,
+            node,
+            super::running::used_width(content.width),
+        )?
+        else {
+            return Ok(None); // cov:ignore: a selected node is always a running element.
+        };
+        let free = (content.height - layout.height()).max(0.0);
+        let origin = (content.x, content.y + free * running.block_align);
+        Ok(Some(OwnedRunningElement { layout, origin }))
     }
 
     /// Structure and attributes of the document.

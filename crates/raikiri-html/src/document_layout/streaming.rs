@@ -137,6 +137,28 @@ pub struct StreamSummary {
     /// in page order. The page count can change the size of a margin box and
     /// of its neighbours, so these replace all margin boxes of the page.
     pub page_count_margin_boxes: Vec<(u32, Vec<MarginBox>)>,
+    /// The running elements that [`Self::page_count_margin_boxes`] show,
+    /// laid out at the width of their margin boxes, in page and box order.
+    /// Draw them in place of the boxes' [`MarginBox::text`], as
+    /// [`Page::margin_box_running_element`] describes.
+    pub page_count_running_elements: Vec<PageCountRunningElement>,
+}
+
+/// A running element shown by one of
+/// [`StreamSummary::page_count_margin_boxes`].
+#[derive(Debug)]
+#[non_exhaustive]
+pub struct PageCountRunningElement {
+    /// Index of the page.
+    pub page: u32,
+    /// Index into the page's margin boxes in
+    /// [`StreamSummary::page_count_margin_boxes`].
+    pub margin_box: usize,
+    /// The element laid out at the width of the margin box's content box.
+    pub layout: RunningElementLayout,
+    /// Where the origin of [`RunningElementLayout::page`] goes on the page,
+    /// in CSS px.
+    pub origin: (f32, f32),
 }
 
 /// Result of [`StreamingLayout::finish`].
@@ -786,8 +808,8 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
         };
         let signal = settings.config.signal.clone();
         let (mut by_page, unplaced_events) = events_by_first_page(&laid_out, events);
-        let Some(page_count_margin_boxes) =
-            page_count_margin_boxes(&laid_out, delivered, signal.as_ref())
+        let Some((page_count_margin_boxes, page_count_running_elements)) =
+            page_count_margin_boxes(&laid_out, delivered, signal.as_ref())?
         else {
             return Ok(StreamStatus::Aborted);
         };
@@ -814,6 +836,7 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
             warnings: std::mem::take(&mut out.warnings),
             unplaced_events,
             page_count_margin_boxes,
+            page_count_running_elements,
         };
         sink.finish(summary)
             .map(StreamStatus::Completed)
@@ -896,11 +919,12 @@ fn page_count_margin_boxes(
     laid_out: &DocumentLayout,
     delivered: u32,
     signal: Option<&raikiri_traits::AbortSignal>,
-) -> Option<Vec<(u32, Vec<MarginBox>)>> {
+) -> Result<Option<RebuiltMarginBoxes>, RenderError> {
     let mut boxes = Vec::new();
+    let mut running = Vec::new();
     for index in 0..delivered.min(laid_out.page_count()) {
         if signal.is_some_and(|signal| signal.is_aborted()) {
-            return None;
+            return Ok(None);
         }
         let page = laid_out.page_at(index as usize);
         // A slot is deferred whatever the placeholder's value, so the
@@ -912,11 +936,25 @@ fn page_count_margin_boxes(
             .iter()
             .any(|margin_box| !margin_box.deferred.is_empty());
         if deferred {
-            boxes.push((index, page.margin_boxes()));
+            let margin_boxes = page.margin_boxes();
+            for (position, margin_box) in margin_boxes.iter().enumerate() {
+                if let Some(element) = page.owned_margin_box_running_element(margin_box)? {
+                    running.push(PageCountRunningElement {
+                        page: index,
+                        margin_box: position,
+                        layout: element.layout,
+                        origin: element.origin,
+                    });
+                }
+            }
+            boxes.push((index, margin_boxes));
         }
     }
-    Some(boxes)
+    Ok(Some((boxes, running)))
 }
+
+/// Rebuilt margin boxes per page, and the running elements they show.
+type RebuiltMarginBoxes = (Vec<(u32, Vec<MarginBox>)>, Vec<PageCountRunningElement>);
 
 fn failed_earlier() -> RenderError {
     RenderError::Configuration("streaming layout input already failed".to_owned())

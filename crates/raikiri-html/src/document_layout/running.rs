@@ -295,6 +295,16 @@ pub struct RunningElementLayout {
     height: f32,
 }
 
+impl std::fmt::Debug for RunningElementLayout {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RunningElementLayout")
+            .field("node", &self.node)
+            .field("width", &self.width())
+            .field("height", &self.height)
+            .finish_non_exhaustive()
+    }
+}
+
 impl RunningElementLayout {
     /// The running element.
     pub fn node(&self) -> NodeId {

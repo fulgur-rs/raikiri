@@ -11,7 +11,9 @@ pub use navigation::{Anchor, AnchorIndex, Link};
 pub use page::PlacedRunningElement;
 pub use page::{InlineSvg, Page, PageGeometry, PageMode, RasterImage};
 pub use running::RunningElementLayout;
-pub use streaming::{PageSink, StreamPage, StreamStatus, StreamSummary, StreamingLayout};
+pub use streaming::{
+    PageCountRunningElement, PageSink, StreamPage, StreamStatus, StreamSummary, StreamingLayout,
+};
 // cov:ignore: public type re-exports have no executable mapping; API integration tests verify them.
 pub use raikiri_dom::{
     ClipKind, ColumnRule, DecorationKind, DecorationLine, DecorationStyle, DeferredGlyph,
