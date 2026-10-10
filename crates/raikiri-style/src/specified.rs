@@ -1602,7 +1602,9 @@ impl SpecifiedValues {
         // from `ResolveContext::initial()`: `font-size: 1rlh` on the root refers to itself under
         // the ordinary definition of `rlh` (only the root can be its own referent; see the
         // `resolve_font_size` docs).
-        let initial = ResolveContext::initial().with_viewport(width, height);
+        let initial = ResolveContext::initial()
+            .with_viewport(width, height)
+            .with_vertical_root(self.writing_mode != WritingMode::HorizontalTb);
         let font_size = resolve_font_size(
             self.font_size,
             ComputedLength(crate::computed::INITIAL_FONT_SIZE_PX),
@@ -1630,7 +1632,8 @@ impl SpecifiedValues {
         // checks that the two agree.
         let own_line_height = used_line_height_length(line_height, font_size);
         let ctx = ResolveContext::with_root_line_height(font_size, own_line_height)
-            .with_viewport(width, height);
+            .with_viewport(width, height)
+            .with_vertical_root(self.writing_mode != WritingMode::HorizontalTb);
         self.absolutize_with(font_size, line_height, text_align, &ctx)
     }
 

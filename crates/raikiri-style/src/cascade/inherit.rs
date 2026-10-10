@@ -652,7 +652,8 @@ pub(crate) fn walk_from<D: StyleDom>(
                         computed.font_size,
                         used_line_height_length(computed.line_height, computed.font_size),
                     )
-                    .with_viewport(viewport.0, viewport.1),
+                    .with_viewport(viewport.0, viewport.1)
+                    .with_vertical_root(computed.cssom_writing_mode != WritingMode::HorizontalTb),
                 ),
                 None => None,
             };

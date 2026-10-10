@@ -203,6 +203,9 @@ pub(crate) fn cascade_with_first_line_within<D: StyleDom>(
                 .with_viewport(
                     media.viewport_width() as f32,
                     media.viewport_height() as f32,
+                )
+                .with_vertical_root(
+                    cv.cssom_writing_mode != crate::property::WritingMode::HorizontalTb,
                 ),
             )
         } else {

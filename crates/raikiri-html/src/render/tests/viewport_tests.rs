@@ -115,3 +115,35 @@ fn marker_images_are_sized_in_the_final_viewport() {
         .expect("prepared marker");
     assert_eq!((size.width, size.height), (10.0, 10.0));
 }
+
+#[test]
+fn vi_and_vb_follow_a_vertical_root() {
+    let out = run("<style>\
+        @page { size: 400px 200px; margin: 20px }\
+        html { writing-mode: vertical-rl } body { margin: 0 }\
+        #a { width: 50vi; height: 50vb }\
+        </style><div id=a></div>");
+    use ComputedLengthPercentageOrAuto::Px;
+    assert_eq!(size_of(&out, "a"), (Px(80.0), Px(180.0)));
+}
+
+#[test]
+fn a_viewport_calc_through_var_resolves_for_text_decoration_and_shadow() {
+    let out = run("<style>\
+        @page { size: 400px 200px; margin: 20px }\
+        body { margin: 0 }\
+        #a { --o: calc(10vh); text-underline-offset: var(--o); text-shadow: var(--o) 0 }\
+        </style><div id=a>x</div>");
+    let node = (0..out.document.node_count())
+        .find(|&node| out.document.element_attribute(node, "id") == Some("a"))
+        .expect("element");
+    let computed = &out.cascade.computed[node];
+    assert_eq!(
+        computed.text_underline_offset,
+        raikiri_style::ComputedTextUnderlineOffset::Length(raikiri_style::ComputedLength(16.0))
+    );
+    assert_eq!(
+        computed.text_shadow[0].offset_x,
+        raikiri_style::ComputedLength(16.0)
+    );
+}

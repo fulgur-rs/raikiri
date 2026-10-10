@@ -1466,6 +1466,10 @@ pub struct ResolveContext {
     /// Height of the viewport in CSS px: the basis of `vh` (and of `vb`,
     /// `vmin` and `vmax`). See [`Self::viewport_width`].
     pub viewport_height: f32,
+    /// Whether the root element's writing mode is vertical, so that its
+    /// inline axis, the basis of `vi`, is the viewport's height and its
+    /// block axis, the basis of `vb`, is the viewport's width.
+    pub vertical_root: bool,
 }
 
 /// The viewport size [`ResolveContext`]'s constructors start from: the
@@ -1495,16 +1499,28 @@ impl ResolveContext {
         self
     }
 
+    /// This context with the root element's writing mode vertical or not.
+    pub fn with_vertical_root(mut self, vertical: bool) -> Self {
+        self.vertical_root = vertical;
+        self
+    }
+
     /// `length` in CSS px when it is a viewport-percentage length, `None`
     /// for any other unit.
-    ///
-    /// Only horizontal writing modes are implemented, so the root element's
-    /// inline axis is always horizontal: `vi` is `vw` and `vb` is `vh`.
     pub(crate) fn viewport_length(&self, length: Length) -> Option<f32> {
         let (width, height) = (self.viewport_width, self.viewport_height);
+        // CSS Values 4 §6.1.2: `vi` and `vb` follow the root element's
+        // inline and block axes.
+        let (inline, block) = if self.vertical_root {
+            (height, width)
+        } else {
+            (width, height)
+        };
         let (basis, value) = match length.default_viewport() {
-            Length::Vw(v) | Length::Vi(v) => (width, v),
-            Length::Vh(v) | Length::Vb(v) => (height, v),
+            Length::Vw(v) => (width, v),
+            Length::Vh(v) => (height, v),
+            Length::Vi(v) => (inline, v),
+            Length::Vb(v) => (block, v),
             Length::Vmin(v) => (width.min(height), v),
             Length::Vmax(v) => (width.max(height), v),
             _ => return None,
@@ -1524,6 +1540,7 @@ impl ResolveContext {
             root_line_height: None,
             viewport_width: DEFAULT_VIEWPORT.0,
             viewport_height: DEFAULT_VIEWPORT.1,
+            vertical_root: false,
         }
     }
 
@@ -1542,6 +1559,7 @@ impl ResolveContext {
             root_line_height,
             viewport_width: DEFAULT_VIEWPORT.0,
             viewport_height: DEFAULT_VIEWPORT.1,
+            vertical_root: false,
         }
     }
 
@@ -1584,6 +1602,7 @@ impl ResolveContext {
             root_line_height: None,
             viewport_width: DEFAULT_VIEWPORT.0,
             viewport_height: DEFAULT_VIEWPORT.1,
+            vertical_root: false,
         }
     }
 }
