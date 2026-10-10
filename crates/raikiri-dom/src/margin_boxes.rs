@@ -175,8 +175,8 @@ pub struct MarginBox {
     /// Shaped content, `None` when the content is empty or the content box
     /// has no area.
     pub text: Option<MarginBoxText>,
-    /// The running element the box shows, when its `content` has an
-    /// `element()` (CSS GCPM 3 §1.2.2). A painter that draws the element
+    /// The running element the box shows, when its `content` is a single
+    /// `element()` (CSS GCPM 3 §1.2.1, §1.2.2). A painter that draws the element
     /// draws it in place of [`Self::text`]; [`Self::text`] and
     /// [`Self::content`] carry the element's text as a flat fallback.
     pub running: Option<MarginBoxRunning>,
@@ -1168,10 +1168,13 @@ fn margin_box_spec(
         text_style,
         alignment,
         vertical_align,
-        running: components.iter().find_map(|component| match component {
-            ContentComponent::Element { name, fetch } => Some((name.clone(), *fetch)),
+        // `element()` cannot be combined with other content values (CSS
+        // GCPM 3 §1.2.1). A combined value keeps its flattened text and
+        // shows no running element.
+        running: match components.as_slice() {
+            [ContentComponent::Element { name, fetch }] => Some((name.clone(), *fetch)),
             _ => None,
-        }),
+        },
     })
 }
 
