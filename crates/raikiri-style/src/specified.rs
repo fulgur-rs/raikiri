@@ -63,19 +63,27 @@ use crate::resolve::{
     ComputedBoxShadowItem, ComputedLength, ComputedLineHeight, ComputedTextIndent, ResolveContext,
     calc_ch_factor, calc_ch_offset, empty_computed_box_shadow_list,
     empty_computed_text_shadow_list, lift_border_spacing, lift_font_size, lift_letter_spacing,
-    lift_line_height, lift_tab_size, lift_text_indent, lift_text_shadow_item, lift_word_spacing,
-    resolve_background_image, resolve_background_size, resolve_border, resolve_border_radius,
-    resolve_border_spacing, resolve_box_shadow_item, resolve_column_width, resolve_css_position,
-    resolve_flex_basis, resolve_font_size, resolve_grid_auto_track_list,
-    resolve_grid_template_tracks, resolve_length, resolve_length_percentage,
-    resolve_length_percentage_or_auto, resolve_length_percentage_or_normal,
-    resolve_length_percentage_with_ch, resolve_letter_spacing, resolve_letter_spacing_with_ch,
-    resolve_line_height, resolve_margin_length_or_auto, resolve_outline, resolve_tab_size,
-    resolve_text_decoration_inset, resolve_text_decoration_thickness, resolve_text_indent_calc,
-    resolve_text_shadow_item, resolve_text_underline_offset, resolve_transform_function,
-    resolve_vertical_align, resolve_word_spacing, resolve_word_spacing_with_ch,
-    used_line_height_length,
+    lift_line_height, lift_tab_size, lift_text_indent, lift_word_spacing, resolve_background_image,
+    resolve_background_size, resolve_border, resolve_border_radius, resolve_border_spacing,
+    resolve_box_shadow_item, resolve_column_width, resolve_css_position, resolve_flex_basis,
+    resolve_font_size, resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
+    resolve_length_percentage, resolve_length_percentage_or_auto,
+    resolve_length_percentage_or_normal, resolve_length_percentage_with_ch, resolve_letter_spacing,
+    resolve_letter_spacing_with_ch, resolve_line_height, resolve_margin_length_or_auto,
+    resolve_outline, resolve_tab_size, resolve_text_decoration_inset,
+    resolve_text_decoration_thickness, resolve_text_indent_calc, resolve_text_shadow_item,
+    resolve_text_underline_offset, resolve_transform_function, resolve_vertical_align,
+    resolve_word_spacing, resolve_word_spacing_with_ch, used_line_height_length,
 };
+
+/// The `text-shadow` of a node's [`SpecifiedValues`].
+#[derive(Clone, Debug, PartialEq)]
+pub enum SpecifiedTextShadow {
+    /// A declared list, whose lengths phase 3 absolutizes.
+    Specified(Arc<Vec<TextShadowItem>>),
+    /// The parent's computed list, inherited as it is.
+    Inherited(Arc<Vec<crate::resolve::ComputedTextShadow>>),
+}
 
 /// Per-node values after applying cascade winners but before absolutization.
 ///
@@ -538,13 +546,14 @@ pub struct SpecifiedValues {
     pub quotes: Arc<Vec<(SmolStr, SmolStr)>>,
     /// Whether an empty quotes list is the initial `auto` value.
     pub quotes_auto: bool,
-    /// **Specified** `text-shadow`; phase 3 ([`resolve_text_shadow_item`]) absolutizes three
-    /// lengths in each item. Like [`Self::padding`], this remains specified, but unlike `padding`
-    /// it is **inherited** and is a variable-length list rather than four `Sides<T>`. See the
-    /// [`ComputedValues::text_shadow`] docs. `Self::inherit_from` seeds it by lifting the
-    /// parent's computed values with [`lift_text_shadow_item`], rather than resetting it to
-    /// initial, as for `padding` (the same approach as `Self::text_indent`).
-    pub text_shadow: Arc<Vec<TextShadowItem>>,
+    /// `text-shadow`, which is **inherited** and a variable-length list. A
+    /// declared list is [`SpecifiedTextShadow::Specified`], and phase 3
+    /// ([`resolve_text_shadow_item`]) absolutizes three lengths in each item.
+    /// `Self::inherit_from` seeds it with the parent's computed list as
+    /// [`SpecifiedTextShadow::Inherited`], which phase 3 keeps as it is, so a
+    /// node that declares none shares its parent's list. See the
+    /// [`ComputedValues::text_shadow`] docs.
+    pub text_shadow: SpecifiedTextShadow,
     /// **Specified** `grid-template-columns`; phase 3 absolutizes `<length-percentage>` in its
     /// track list but preserves `none`. This follows the "keyword or absolutize" pattern of
     /// [`Self::flex_basis`] across an entire track list instead of one value.
@@ -953,7 +962,7 @@ impl SpecifiedValues {
             quotes_auto: true,
             // CSS Text Decoration Module Level 3 §4: text-shadow is initially `none`; use the
             // shared empty Arc slot (see the `empty_text_shadow_list` docs).
-            text_shadow: empty_text_shadow_list(),
+            text_shadow: SpecifiedTextShadow::Specified(empty_text_shadow_list()),
             // CSS Grid Layout Module Level 1 §7.2/§7.3: all grid-template-* properties are
             // initially `none`.
             grid_template_columns: GridTemplateTracks::None,
@@ -1236,22 +1245,10 @@ impl SpecifiedValues {
             // CSS Fragmentation Module Level 3 §3.3: both orphans and widows are inherited.
             orphans: parent.orphans,
             widows: parent.widows,
-            // CSS Text Decoration Module Level 3 §4: text-shadow is inherited. Lift each item in
-            // its `Arc<Vec<TextShadowItem>>` with `lift_text_shadow_item` (`Px` remains fixed).
-            // Reuse the shared Arc slot for an empty list instead of allocating per node. Unlike
-            // lifts such as `Self::text_indent`, this maps an entire list, so the empty-list
-            // check follows the approach for other list properties such as content.
-            text_shadow: if parent.text_shadow.is_empty() {
-                empty_text_shadow_list()
-            } else {
-                Arc::new(
-                    parent
-                        .text_shadow
-                        .iter()
-                        .map(|c| lift_text_shadow_item(*c))
-                        .collect(),
-                )
-            },
+            // CSS Text Decoration Module Level 3 §4: text-shadow is inherited. The parent's
+            // computed list is already absolute, so it is kept as it is, shared, rather than
+            // lifted back into specified items and resolved again on every node.
+            text_shadow: SpecifiedTextShadow::Inherited(parent.text_shadow.clone()),
             // CSS Text Decoration 4 §2.8: text-underline-offset is inherited.
             text_underline_offset: match parent.text_underline_offset {
                 crate::resolve::ComputedTextUnderlineOffset::Auto => TextUnderlineOffset::Auto,
@@ -2293,17 +2290,19 @@ impl SpecifiedValues {
             // (`resolve_text_shadow_item`), `<color>` passed through
             // unchanged (no length). Empty list (`none`) reuses the shared
             // computed-layer empty Arc slot rather than allocating.
-            text_shadow: if self.text_shadow.is_empty() {
-                empty_computed_text_shadow_list()
-            } else {
-                Arc::new(
-                    self.text_shadow
+            text_shadow: match self.text_shadow {
+                SpecifiedTextShadow::Inherited(computed) => computed,
+                SpecifiedTextShadow::Specified(shadows) if shadows.is_empty() => {
+                    empty_computed_text_shadow_list()
+                }
+                SpecifiedTextShadow::Specified(shadows) => Arc::new(
+                    shadows
                         .iter()
                         .map(|item| {
                             resolve_text_shadow_item(*item, font_size, own_line_height, ctx)
                         })
                         .collect(),
-                )
+                ),
             },
             // Absolutize `<length-percentage>` in the entire track list of grid-template-columns
             // and grid-template-rows (see resolve_grid_template_tracks docs).
