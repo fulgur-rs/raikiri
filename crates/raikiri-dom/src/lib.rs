@@ -114,7 +114,7 @@ pub use page_projection::paint_order::{ClipKind, PaintEvent};
 // cov:ignore: public type re-exports have no executable mapping; API integration tests verify them.
 pub use page_projection::text_runs::{
     FontBlob, FontId, FontRef, FontVariation, GeneratedKind, Glyph, PositionedGlyphRun, RunSource,
-    Synthesis, Tag, TextLineId,
+    Synthesis, Tag, TextLineId, TextShadow,
 };
 pub use raikiri_traits::{NodeKind, QuirksMode};
 // cov:ignore: public re-exports have no executable coverage mapping.

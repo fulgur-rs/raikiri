@@ -245,6 +245,7 @@ impl MarginBox {
             &text.shaped,
             text.origin,
             self.color,
+            &[],
             root,
             RunSource::MarginBox(self.slot),
             &mut out,

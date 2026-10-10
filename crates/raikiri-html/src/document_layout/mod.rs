@@ -15,7 +15,7 @@ pub use raikiri_dom::{
     ClipKind, ColumnRule, DecorationKind, DecorationLine, DecorationStyle, FontBlob, FontId,
     FontRef, FontVariation, Fragment, FragmentKind, GeneratedBox, GeneratedKind, Glyph, MarginBox,
     MarginBoxBackgroundImage, MarginBoxBorder, MarginBoxRunning, MarginBoxText, OverflowClip,
-    PaintEvent, PositionedGlyphRun, RepeatKind, RunSource, Synthesis, Tag, TextLineId,
+    PaintEvent, PositionedGlyphRun, RepeatKind, RunSource, Synthesis, Tag, TextLineId, TextShadow,
 };
 
 use crate::render::{PipelineInputs, PipelineOutput, PipelineRun, run_pipeline};
