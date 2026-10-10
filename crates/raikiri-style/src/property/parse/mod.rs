@@ -308,7 +308,7 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // reject negatives and other keywords as invalid under the grammar.
         "line-height" => parse_line_height(input).map(PropertyValue::LineHeight),
         "display" => parse_display(input).map(PropertyValue::Display),
-        "list-style" => parse_list_style(input).map(PropertyValue::ListStyle),
+        "list-style" => parse_list_style(input).map(|v| PropertyValue::ListStyle(Box::new(v))),
         "list-style-type" => parse_list_style_type(input).map(PropertyValue::ListStyleType),
         "list-style-position" => {
             parse_list_style_position(input).map(PropertyValue::ListStylePosition)
@@ -1101,7 +1101,9 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // CSS Grid Layout Module Level 1 §7.2. The common WPT shorthand
         // form is `<grid-template-rows> / <grid-template-columns>`.
         "grid" => parse_grid_shorthand(input).map(PropertyValue::Grid),
-        "grid-area" => parse_grid_area_shorthand(input).map(PropertyValue::GridArea),
+        "grid-area" => {
+            parse_grid_area_shorthand(input).map(|v| PropertyValue::GridArea(Arc::new(v)))
+        }
         // CSS Grid Layout Module Level 1 §7.2
         // <https://www.w3.org/TR/css-grid-1/#track-sizing>.
         "grid-template-columns" => {
@@ -1181,7 +1183,9 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // <https://www.w3.org/TR/css-backgrounds-3/#the-background>. Any-order
         // `||` fan-out of the 8 longhands above, single layer only
         // (`BackgroundShorthand` doc's Non-goal section).
-        "background" => parse_background_shorthand(input).map(PropertyValue::Background),
+        "background" => {
+            parse_background_shorthand(input).map(|v| PropertyValue::Background(Box::new(v)))
+        }
         // CSS Images Module Level 3 §5.1
         // <https://www.w3.org/TR/css-images-3/#the-object-fit>.
         "object-fit" => parse_object_fit(input).map(PropertyValue::ObjectFit),

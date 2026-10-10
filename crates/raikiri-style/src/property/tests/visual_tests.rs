@@ -1630,7 +1630,7 @@ fn background_image_rejects_comma_list_with_none_and_gradient_variants() {
 
 fn expect_background(value: Option<PropertyValue>) -> BackgroundShorthand {
     match value {
-        Some(PropertyValue::Background(shorthand)) => shorthand,
+        Some(PropertyValue::Background(shorthand)) => *shorthand,
         // cov:ignore: this branch only executes when a caller's
         // `parse(..., "background")` unexpectedly fails to parse or
         // parses to the wrong variant; every call site in this test
@@ -1947,7 +1947,7 @@ fn background_shorthand_rejects_size_without_a_preceding_position() {
 
 #[test]
 fn background_shorthand_key_maps_to_background_property_key() {
-    let v = PropertyValue::Background(BackgroundShorthand {
+    let v = PropertyValue::Background(Box::new(BackgroundShorthand {
         color_expression: None,
         color: CssColor::TRANSPARENT,
         image: BackgroundImage::None,
@@ -1966,7 +1966,7 @@ fn background_shorthand_key_maps_to_background_property_key() {
         },
         clip: VisualBox::BorderBox,
         origin: VisualBox::PaddingBox,
-    });
+    }));
     assert_eq!(v.key(), PropertyKey::Background);
 }
 

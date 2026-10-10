@@ -3102,6 +3102,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::OutlineColor(v) => target.outline.color = v,
         PropertyValue::OutlineOffset(v) => target.outline_offset = v,
         PropertyValue::GridArea(area) => {
+            let area = Arc::unwrap_or_clone(area);
             target.grid_row_start = area.row_start;
             target.grid_column_start = area.column_start;
             target.grid_row_end = area.row_end;

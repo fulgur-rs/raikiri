@@ -2436,7 +2436,9 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
     };
     assert_eq!(
         absolutize_in_page_context(
-            ResolvedAgainstInherited::for_test(PropertyValue::Background(shorthand.clone())),
+            ResolvedAgainstInherited::for_test(PropertyValue::Background(Box::new(
+                shorthand.clone()
+            ))),
             fs,
             None,
             &ctx,
@@ -2444,7 +2446,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             OutlineStyle::None,
             OverflowXY::both(OverflowValue::Visible),
         ),
-        PropertyValue::Background(BackgroundShorthand {
+        PropertyValue::Background(Box::new(BackgroundShorthand {
             position: CssPosition {
                 horizontal: CssPositionOffset::Start(Length::Px(20.0)),
                 vertical: CssPositionOffset::Start(Length::Px(32.0)),
@@ -2454,7 +2456,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
                 height: LengthOrAuto::Length(Length::Px(64.0)),
             },
             ..shorthand
-        }),
+        })),
     );
     // `font` shorthand fall-through — resolves its own `size`/
     // `line-height` fields (distinct em/rem values, same
@@ -3378,12 +3380,12 @@ property_key_samples! {
         rows: GridTemplateTracks::None,
         columns: GridTemplateTracks::None,
     }),
-    GridArea => PropertyValue::GridArea(GridAreaShorthand {
+    GridArea => PropertyValue::GridArea(Arc::new(GridAreaShorthand {
         row_start: GridLineValue::Line(1),
         column_start: GridLineValue::Line(1),
         row_end: GridLineValue::Line(2),
         column_end: GridLineValue::Line(2),
-    }),
+    })),
     CounterReset => PropertyValue::CounterReset(Arc::new(vec![("c".into(), 0)])),
     CounterIncrement => PropertyValue::CounterIncrement(Arc::new(vec![("c".into(), 1)])),
     CounterSet => PropertyValue::CounterSet(Arc::new(vec![("c".into(), 2)])),
@@ -3877,7 +3879,7 @@ property_key_samples! {
     // payloads distinct from their standalone longhand samples above, to
     // catch a field-swap regression in the shorthand's own fall-through
     // arms.
-    Background => PropertyValue::Background(BackgroundShorthand {
+    Background => PropertyValue::Background(Box::new(BackgroundShorthand {
         color_expression: None,
         color: GREEN,
         image: BackgroundImage::Url("tile.png".to_string()),
@@ -3896,7 +3898,7 @@ property_key_samples! {
         },
         clip: VisualBox::PaddingBox,
         origin: VisualBox::ContentBox,
-    }),
+    })),
     // CSS Images Module Level 3 §5.1 — keyword-only, carries no length.
     // `Contain` is the non-initial worst case (`fill` is the spec
     // initial, same reasoning as `BackgroundAttachment`'s `Fixed`
@@ -3999,7 +4001,7 @@ property_key_samples! {
     ListStyleType => PropertyValue::ListStyleType(ListStyleType::Named("decimal".into())),
     ListStylePosition => PropertyValue::ListStylePosition(ListStylePosition::Inside),
     ListStyleImage => PropertyValue::ListStyleImage(BackgroundImage::Url("marker.png".into())),
-    ListStyle => PropertyValue::ListStyle(crate::property::ListStyleShorthand { kind: ListStyleType::Disc, position: ListStylePosition::Inside, image: BackgroundImage::None }),
+    ListStyle => PropertyValue::ListStyle(Box::new(crate::property::ListStyleShorthand { kind: ListStyleType::Disc, position: ListStylePosition::Inside, image: BackgroundImage::None })),
     ColumnCount => PropertyValue::ColumnCount(ColumnCountValue::Count(3)),
     ColumnRule => PropertyValue::ColumnRule(Border {
         width: Length::Em(2.0), style: BorderStyle::Solid, color: BorderColor::Resolved(RED),
@@ -5596,15 +5598,15 @@ fn background_shorthand_size_cover_and_contain_are_not_specified_layer_residue()
         }
     }
     assert_eq!(
-        specified_layer_residue(&PropertyValue::Background(shorthand_with_size(
+        specified_layer_residue(&PropertyValue::Background(Box::new(shorthand_with_size(
             BackgroundSize::Cover
-        ))),
+        )))),
         None,
     );
     assert_eq!(
-        specified_layer_residue(&PropertyValue::Background(shorthand_with_size(
+        specified_layer_residue(&PropertyValue::Background(Box::new(shorthand_with_size(
             BackgroundSize::Contain
-        ))),
+        )))),
         None,
     );
 }
