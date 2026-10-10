@@ -20,7 +20,64 @@ on:
         default: "200"
       path_prefix:
         description: Only tests below this WPT directory
-        default: css/CSS2
+        type: choice
+        default: css/CSS2 (2223)
+        # Every directory with judgeable tests at the pinned WPT revision. The
+        # count in parentheses is the number of judgeable tests not yet in a
+        # baseline when the list was made; the List step strips it.
+        options:
+          - css (2967)
+          - css/CSS2 (2223)
+          - css/CSS2/backgrounds (269)
+          - css/CSS2/bidi-text (3)
+          - css/CSS2/borders (255)
+          - css/CSS2/box-display (15)
+          - css/CSS2/cascade (64)
+          - css/CSS2/colors (3)
+          - css/CSS2/css1 (1)
+          - css/CSS2/floats-clear (12)
+          - css/CSS2/fonts (147)
+          - css/CSS2/generate (17)
+          - css/CSS2/generated-content (52)
+          - css/CSS2/i18n (50)
+          - css/CSS2/linebox (45)
+          - css/CSS2/lists (123)
+          - css/CSS2/margin-padding-clear (29)
+          - css/CSS2/normal-flow (60)
+          - css/CSS2/other-formats (2)
+          - css/CSS2/page-box (9)
+          - css/CSS2/pagination (7)
+          - css/CSS2/positioning (31)
+          - css/CSS2/sec5 (1)
+          - css/CSS2/selectors (52)
+          - css/CSS2/syntax (3)
+          - css/CSS2/tables (581)
+          - css/CSS2/text (146)
+          - css/CSS2/ui (180)
+          - css/CSS2/values (1)
+          - css/CSS2/visufx (25)
+          - css/CSS2/visuren (22)
+          - css/CSS2/zindex (17)
+          - css/WOFF2 (2)
+          - css/compositing (1)
+          - css/css-animations (55)
+          - css/css-backgrounds (80)
+          - css/css-break (1)
+          - css/css-counter-styles (3)
+          - css/css-display (91)
+          - css/css-flexbox (16)
+          - css/css-fonts (2)
+          - css/css-gcpm (20)
+          - css/css-lists (2)
+          - css/css-multicol (1)
+          - css/css-page (12)
+          - css/css-round-display (15)
+          - css/css-speech (11)
+          - css/css-text (26)
+          - css/css-text-decor (78)
+          - css/css-transforms (1)
+          - css/css-ui (206)
+          - css/css-writing-modes (121)
       model:
         description: Claude model id
         default: claude-haiku-5-5
@@ -71,6 +128,8 @@ jobs:
         env:
           PATH_PREFIX: ${{ inputs.path_prefix }}
         run: |
+          # Drop the " (N)" count shown in the dropdown.
+          PATH_PREFIX="${PATH_PREFIX%% (*}"
           uv run --script scripts/wpt/haiku-judge-meta-assert.py list-tests \
             --wpt-root target/wpt \
             --path-prefix "$PATH_PREFIX" \

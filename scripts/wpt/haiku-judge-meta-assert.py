@@ -457,7 +457,13 @@ def command_list_tests(args) -> int:
         test_id = path.relative_to(root).as_posix()
         if test_id in excluded:
             continue
-        if is_judge_candidate(test_id, path.read_text(errors="replace")):
+        try:
+            source = path.read_bytes().decode("utf-8")
+        except UnicodeDecodeError:
+            # The renderer reads tests as UTF-8, so other encodings (the
+            # character-encoding tests) cannot be rendered faithfully.
+            continue
+        if is_judge_candidate(test_id, source):
             ids.append(test_id)
     args.output.write_text("".join(f"{test_id}\n" for test_id in ids))
     print(f"{len(ids)} candidates")
