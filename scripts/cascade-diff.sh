@@ -195,14 +195,17 @@ build_settings() {
 }
 
 # What the merge-base build depends on besides the tree's files, which the
-# commit already names: the tool's sources and manifest, the toolchain, and
-# the build settings.
+# commit already names: the tool's sources and manifest, the compiler, and
+# the build settings. The compiler is asked for its version as cargo runs
+# it: RUSTC, else CARGO_BUILD_RUSTC, else rustc, so that one replaced in
+# place changes the key. Only a build.rustc that a configuration file sets
+# is not followed, and those files are part of the build settings.
 base_build_key() {
   {
     echo "$BASE_SHA"
     (cd "$REPO_ROOT/crates/raikiri-cascade-diff" && find src -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum)
     tool_manifest TREE
-    rustc -vV
+    "${RUSTC:-${CARGO_BUILD_RUSTC:-rustc}}" -vV
     build_settings
   } | sha256sum | cut -d' ' -f1
 }
@@ -253,10 +256,12 @@ base_build() {
       [[ -f "$entry/variables" && -x "$entry/raikiri-cascade-diff" ]] || continue
       [[ "$(environment_values < "$entry/variables" | sha256sum | cut -c1-16)" == "${entry##*-}" ]] \
         || continue
-      # Another run may remove the entry meanwhile; then this one builds.
+      # Another run may remove the entry meanwhile. Before the copy, this
+      # one then builds. After it, marking the entry as used must not make
+      # it again, as a file that no later build could be renamed over.
       if cp -f "$entry/raikiri-cascade-diff" "$binary" 2>/dev/null; then
         echo "-- using the cached build of merge-base $BASE_SHA ($entry) --"
-        touch "$entry"
+        touch -c "$entry"
         return 0
       fi
     done
