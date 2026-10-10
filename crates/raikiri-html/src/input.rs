@@ -55,6 +55,13 @@ impl<P: TendrilSink<html5ever::tendril::fmt::UTF8>> Utf8Feed<P> {
             self.pending[self.pending_len..self.pending_len + take].copy_from_slice(&bytes[..take]);
             self.pending_len += take;
             bytes = &bytes[take..];
+            // A byte that cannot continue the character is reported now, as
+            // whole-input decoding would, not when the input ends.
+            if let Err(error) = std::str::from_utf8(&self.pending[..self.pending_len])
+                && let Some(len) = error.error_len()
+            {
+                return Err(invalid_sequence(len, self.consumed));
+            }
             if self.pending_len < width {
                 return Ok(());
             }

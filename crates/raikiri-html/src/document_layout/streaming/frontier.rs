@@ -9,6 +9,10 @@
 //!   arrived yet: tables (auto layout measures every row), flex and grid
 //!   containers, multi-column containers (balancing measures all content)
 //!   and boxes with `break-inside: avoid*`;
+//! - an open element with auto directionality (`dir=auto`, or `<bdi>`
+//!   without a valid `dir`), whose direction comes from its first strong
+//!   character, which may not have arrived yet, and which `:dir()` exposes
+//!   to the styles of everything inside it;
 //! - the start of the trailing inline run of the innermost open block
 //!   container, because a paragraph's bidi direction, `text-wrap: balance`
 //!   and orphans / widows depend on all of its lines;
@@ -62,9 +66,17 @@ pub(crate) fn stable_frontier(
         .collect();
     chain.sort_unstable();
 
+    // The outermost open element with auto directionality, which precedes
+    // everything after it in tree order apart from a trailing inline run
+    // that starts before it.
+    let mut auto_direction = None;
     for &(_, id) in &chain {
+        if auto_direction.is_none() && has_auto_direction(document, id) {
+            auto_direction = Some(id);
+        }
         if computed(cascade, id).is_none_or(needs_all_children) {
-            return Frontier::At(join_avoided_breaks(document, cascade, id));
+            let held = auto_direction.unwrap_or(id);
+            return Frontier::At(join_avoided_breaks(document, cascade, held));
         }
     }
     let innermost_block = chain
@@ -72,13 +84,20 @@ pub(crate) fn stable_frontier(
         .rev()
         .map(|&(_, id)| id)
         .find(|&id| computed(cascade, id).is_some_and(|values| !is_inline_level(values)));
-    let Some(block) = innermost_block else {
-        return Frontier::End;
+    let run = innermost_block.and_then(|block| trailing_inline_run(document, cascade, block));
+    let held = match (auto_direction, run) {
+        (Some(auto), Some(start)) if !is_inclusive_ancestor(document, auto, start) => Some(start),
+        (Some(auto), _) => Some(auto),
+        (None, run) => run,
     };
-    match trailing_inline_run(document, cascade, block) {
-        Some(start) => Frontier::At(join_avoided_breaks(document, cascade, start)),
+    match held {
+        Some(id) => Frontier::At(join_avoided_breaks(document, cascade, id)),
         None => Frontier::End,
     }
+}
+
+fn is_inclusive_ancestor(document: &Document, ancestor: usize, id: usize) -> bool {
+    std::iter::successors(Some(id), |&node| document.parent_of(node)).any(|node| node == ancestor)
 }
 
 /// Narrow the tree builder's handles to the elements that may still receive
@@ -195,6 +214,21 @@ fn needs_all_children(values: &ComputedValues) -> bool {
     ) || matches!(values.column_count, ColumnCountValue::Count(_))
         || matches!(values.column_width, ComputedColumnWidth::Px(_))
         || values.break_inside != BreakInside::Auto
+}
+
+/// Whether the element's directionality is resolved from its text (HTML
+/// §3.2.6.4): `dir=auto`, or a `<bdi>` whose `dir` is missing or invalid.
+fn has_auto_direction(document: &Document, id: usize) -> bool {
+    match document.element_attribute(id, "dir") {
+        Some(value) if value.eq_ignore_ascii_case("auto") => true,
+        Some(value) if value.eq_ignore_ascii_case("ltr") || value.eq_ignore_ascii_case("rtl") => {
+            false
+        }
+        _ => document
+            .get_node(id)
+            .and_then(|node| node.tag_name())
+            .is_some_and(|tag| tag.eq_ignore_ascii_case("bdi")),
+    }
 }
 
 fn is_inline_level(values: &ComputedValues) -> bool {

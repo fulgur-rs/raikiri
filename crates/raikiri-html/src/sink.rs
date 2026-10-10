@@ -54,6 +54,10 @@ pub struct RaikiriTreeSink {
     /// repeated `<html>` or `<body>` tag would add are then ignored, since
     /// they could restyle those pages.
     root_attributes_frozen: Cell<bool>,
+    /// Elements whose ignored attributes were reported. One warning per
+    /// element keeps a tag repeated throughout the input from adding a
+    /// warning each time.
+    root_attributes_reported: RefCell<Vec<usize>>,
 }
 
 impl RaikiriTreeSink {
@@ -75,6 +79,7 @@ impl RaikiriTreeSink {
             max_parse_warnings,
             pending_text: RefCell::new(None),
             root_attributes_frozen: Cell::new(false),
+            root_attributes_reported: RefCell::new(Vec::new()),
         }
     }
 
@@ -416,13 +421,18 @@ impl TreeSink for RaikiriTreeSink {
             return;
         }
         if self.root_attributes_frozen.get() {
+            let mut reported = self.root_attributes_reported.borrow_mut();
+            if reported.contains(target) {
+                return;
+            }
+            reported.push(*target);
             let names: Vec<&str> = missing.iter().map(|a| a.name.local.as_ref()).collect();
             self.warnings.borrow_mut().push(RenderWarning {
                 kind: WarningKind::StreamingContentIgnored,
                 node_id: Some(raikiri_traits::NodeId(*target as u64)),
                 details: format!(
                     "attributes {} of a repeated <html> or <body> tag arrived after pages \
-                     were delivered",
+                     were delivered; attributes of later repeated tags are ignored too",
                     names.join(", ")
                 ),
             });
@@ -1035,8 +1045,8 @@ fn assemble_document(
 ///
 /// The tree builder does not tell the sink about every element it pops, so
 /// this is the only way to see which elements may still receive children.
-/// The list over-approximates the stack of open elements; see
-/// `streaming::frontier::open_elements` for how it is narrowed.
+/// The list over-approximates the stack of open elements; the streaming
+/// layout's stable frontier search narrows it to the elements still open.
 pub(crate) fn traced_handles(builder: &TreeBuilder<usize, RaikiriTreeSink>) -> Vec<usize> {
     struct Collect(RefCell<Vec<usize>>);
     impl Tracer for Collect {

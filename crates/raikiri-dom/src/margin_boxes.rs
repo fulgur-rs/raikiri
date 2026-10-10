@@ -302,11 +302,11 @@ impl MarginBox {
         for (run_index, (run, start)) in runs.iter().zip(starts).enumerate() {
             for (glyph_index, glyph) in run.glyphs.iter().enumerate() {
                 let range = start + glyph.text_range.start..start + glyph.text_range.end;
-                if let Some(slot) = self
-                    .deferred
-                    .iter()
-                    .position(|slot| range.start < slot.range.end && slot.range.start < range.end)
-                {
+                // A ligature can join the ends of two adjacent slots, so a
+                // glyph is reported once for every slot it overlaps.
+                for (slot, _) in self.deferred.iter().enumerate().filter(|(_, slot)| {
+                    range.start < slot.range.end && slot.range.start < range.end
+                }) {
                     out.push(DeferredGlyph {
                         slot,
                         run: run_index,
@@ -782,6 +782,10 @@ fn named_string_value(document: &Document, cascade: &CascadeResult, name: &str) 
     resolved
 }
 
+/// How many characters per decimal digit a deferred page count placeholder
+/// may take in its counter style; Roman numerals take up to four.
+const MAX_PLACEHOLDER_WIDENING: usize = 4;
+
 fn resolved_margin_content(
     components: &[ContentComponent],
     document: &Document,
@@ -796,12 +800,21 @@ fn resolved_margin_content(
     let mut quote_depth = 0_usize;
     let mut push_counter = |text: &mut String, name: &str, style: &CounterStyle| {
         let start = text.len();
-        text.push_str(&format_counter(
-            margin_counter_value(document, cascade, page, rule, name, context),
-            style,
-            &cascade.counter_styles,
-        ));
-        if name == "pages" && context.page_count_deferred {
+        let value = margin_counter_value(document, cascade, page, rule, name, context);
+        let mut formatted = format_counter(value, style, &cascade.counter_styles);
+        let is_deferred = name == "pages" && context.page_count_deferred;
+        if is_deferred {
+            // The placeholder is a large number. Styles such as `symbolic`
+            // grow linearly with the value, so a placeholder far longer than
+            // its decimal form is shown in decimal; the slot's final text
+            // still uses the requested style.
+            let decimal = value.to_string();
+            if formatted.chars().count() > MAX_PLACEHOLDER_WIDENING * decimal.len() {
+                formatted = decimal;
+            }
+        }
+        text.push_str(&formatted);
+        if is_deferred {
             deferred.push((start..text.len(), style.clone()));
         }
     };

@@ -3231,4 +3231,12 @@ fn forward_dependent_selectors_are_detected() {
         assert_eq!(tree.style_rules().len(), 1, "{css} must parse");
         assert!(!tree.has_forward_dependent_selectors(), "{css}");
     }
+    for css in [
+        "@media print { li:last-child {} }",
+        "@media (min-width: 100000px) { p:empty {} }",
+    ] {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(css, Origin::Author);
+        assert!(tree.has_forward_dependent_selectors(), "{css}");
+    }
 }

@@ -580,6 +580,28 @@ fn a_deferred_page_count_marks_its_placeholder() {
 }
 
 #[test]
+fn a_deferred_page_count_in_a_linear_style_is_shown_in_decimal() {
+    let (doc, cascade) = page_cascade_fixture(
+        "@counter-style ticks { system: symbolic; symbols: 'x' } \
+         @page { margin: 40px; \
+           @top-left { content: counter(pages, ticks); font-family: Ahem; font-size: 10px } }",
+    );
+    let boxes = page_margin_boxes(
+        &doc,
+        &cascade,
+        &cascade.page,
+        small_page(),
+        MarginBoxPageContext::new(0, 99_999, false).with_deferred_page_count(),
+    );
+    let [head] = boxes.as_slice() else {
+        panic!("one box: {boxes:?}");
+    };
+    assert_eq!(head.content, "99999");
+    assert_eq!(head.deferred[0].range, 0..5);
+    assert_eq!(head.deferred[0].text(3), "xxx");
+}
+
+#[test]
 fn a_known_page_count_has_no_deferred_slots() {
     let (doc, cascade) = page_cascade_fixture(
         "@page { margin: 40px; @top-left { content: counter(pages); font-family: Ahem } }",

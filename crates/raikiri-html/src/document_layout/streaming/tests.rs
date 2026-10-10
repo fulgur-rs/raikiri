@@ -343,15 +343,22 @@ fn stream_with_summary(
     chunk: usize,
     checkpoint: usize,
 ) -> (PageLog, usize, StreamSummary) {
+    stream_with_config(html, chunk, checkpoint, LayoutConfig::default())
+}
+
+/// [`stream_with_summary`] with a layout configuration.
+fn stream_with_config(
+    html: &str,
+    chunk: usize,
+    checkpoint: usize,
+    config: LayoutConfig,
+) -> (PageLog, usize, StreamSummary) {
     let resources = RenderResources::new();
     let shared = Shared::default();
-    let mut stream = StreamingLayout::new(
-        &resources,
-        PageDefaults::default(),
-        LayoutConfig::default(),
-        shared.clone(),
-    )
-    .checkpoint_bytes(checkpoint);
+    let mut stream =
+        StreamingLayout::new(&resources, PageDefaults::default(), config, shared.clone())
+            // A checkpoint smaller than a piece falls after each piece.
+            .checkpoint_bytes(checkpoint.max(chunk));
     for piece in html.as_bytes().chunks(chunk) {
         stream.feed(piece).expect("feed");
     }
@@ -421,7 +428,11 @@ fn an_open_table_holds_its_pages() {
         html.push_str(&format!("<tr><td>row {row}</td><td>cell</td></tr>"));
     }
     let open_part = html.len();
-    html.push_str("</table><p>after</p>");
+    html.push_str("</table><p>after</p><!--");
+    // Pad the rest to the length of the open part, so that each feed below
+    // ends at a checkpoint.
+    html.push_str(&" ".repeat(2 * open_part - html.len() - 3));
+    html.push_str("-->");
     let expected = batch_pages(&html);
     assert!(expected.len() > 2);
 
@@ -433,7 +444,7 @@ fn an_open_table_holds_its_pages() {
         LayoutConfig::default(),
         shared.clone(),
     )
-    .checkpoint_bytes(1);
+    .checkpoint_bytes(open_part);
     stream.feed(&html.as_bytes()[..open_part]).expect("feed");
     assert!(
         shared.0.borrow().is_empty(),
@@ -539,6 +550,47 @@ fn fixed_elements_after_the_first_delivered_page_are_skipped() {
 }
 
 #[test]
+fn fixed_elements_with_malformed_inline_styles_are_skipped() {
+    // The unterminated comment would swallow anything appended to the
+    // inline style, while the `position` declaration before it still holds.
+    let fixed = "<div style='position: fixed; top: 0;/*'>stamp</div>";
+    let html = format!("{}{fixed}<p>end</p>", paragraphs(60));
+    let (pages, early, summary) = stream_with_summary(&html, 1000, 1);
+    assert!(early > 0);
+    let ignored = ignored(&summary);
+    assert_eq!(ignored.len(), 1, "{ignored:?}");
+    let stamp = ignored[0].0.expect("node");
+    assert!(pages.iter().all(|(_, nodes)| !nodes.contains(&stamp)));
+}
+
+#[test]
+fn late_fixed_elements_are_found_in_the_layout_media_context() {
+    let fixed = "<div class=stamp>stamp</div>";
+    let html = format!(
+        "<style>@media (min-width: 600px) {{ .stamp {{ position: fixed; top: 0 }} }}</style>{}{fixed}<p>end</p>",
+        paragraphs(60)
+    );
+    let config = LayoutConfig::builder()
+        .media_context(raikiri_style::MediaContext::with_viewport(
+            crate::MediaType::Print,
+            1000,
+            1400,
+        ))
+        .build();
+    let (pages, early, summary) = stream_with_config(&html, 1000, 1, config);
+    assert!(early > 0);
+    let ignored = ignored(&summary);
+    assert_eq!(ignored.len(), 1, "{ignored:?}");
+    let stamp = ignored[0].0.expect("node");
+    assert!(pages.iter().all(|(_, nodes)| !nodes.contains(&stamp)));
+
+    // The default context leaves the element in flow, where it is laid out.
+    let (pages, _, summary) = stream_with_summary(&html, 1000, 1);
+    assert!(self::ignored(&summary).is_empty());
+    assert_eq!(pages, batch_pages(&html));
+}
+
+#[test]
 fn fixed_elements_before_the_first_delivered_page_repeat() {
     let html = format!(
         "<div style='position: fixed; top: 0'>stamp</div>{}",
@@ -564,6 +616,20 @@ fn late_body_attributes_are_ignored_after_delivery() {
     assert_eq!(early, 0);
     assert_eq!(pages, batch_pages(&html));
     assert!(self::ignored(&summary).is_empty());
+}
+
+#[test]
+fn repeated_late_body_tags_are_reported_once() {
+    let html = format!(
+        "{}{}<p>end</p>",
+        paragraphs(60),
+        "<body x><body y><html z>".repeat(50)
+    );
+    let (_, early, summary) = stream_with_summary(&html, 1000, 1);
+    assert!(early > 0);
+    let ignored = ignored(&summary);
+    // One warning each for <body> and <html>.
+    assert_eq!(ignored.len(), 2, "{ignored:?}");
 }
 
 #[test]
@@ -605,7 +671,7 @@ fn pages_streamed_early_defer_the_page_count() {
         LayoutConfig::default(),
         &mut footers,
     )
-    .checkpoint_bytes(1);
+    .checkpoint_bytes(1000);
     for piece in html.as_bytes().chunks(1000) {
         stream.feed(piece).expect("feed");
     }
@@ -704,8 +770,8 @@ fn streamed_pages_carry_the_base_url() {
     assert_eq!(base.0.as_deref(), Some("https://example.com/other/"));
 }
 
-/// Feed `html` in `chunk`-byte pieces with a checkpoint every byte, stopping
-/// at the first error, then finish.
+/// Feed `html` in `chunk`-byte pieces with a checkpoint after each piece,
+/// stopping at the first error, then finish.
 fn stream_with_checkpoints(
     html: &str,
     chunk: usize,
@@ -714,7 +780,7 @@ fn stream_with_checkpoints(
 ) -> Result<StreamStatus<StreamSummary>, RenderError> {
     let resources = RenderResources::new();
     let mut stream = StreamingLayout::new(&resources, PageDefaults::default(), config, record)
-        .checkpoint_bytes(1);
+        .checkpoint_bytes(chunk);
     for piece in html.as_bytes().chunks(chunk) {
         stream.feed(piece)?;
     }
@@ -768,6 +834,29 @@ fn sink_errors_at_a_checkpoint_stop_the_stream() {
 }
 
 #[test]
+fn one_large_feed_still_checkpoints_at_every_boundary() {
+    // The sink fails on the first page, which is final after the first
+    // checkpoint. Bytes after that boundary are invalid UTF-8; feeding them
+    // before the checkpoint would report the input error instead.
+    let mut html = long_document().into_bytes();
+    html.extend_from_slice(b"\xFF");
+    let resources = RenderResources::new();
+    let mut record = Record {
+        fail_on_page: Some(0),
+        ..Record::default()
+    };
+    let mut stream = StreamingLayout::new(
+        &resources,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        &mut record,
+    )
+    .checkpoint_bytes(html.len() / 2);
+    let error = stream.feed(&html).expect_err("sink error");
+    assert!(matches!(error, RenderError::Io(_)), "{error:?}");
+}
+
+#[test]
 fn background_image_preloading_can_be_turned_off() {
     let html = "<div style='background-image: url(missing.png); height: 10px'></div>";
     let resources = RenderResources::new();
@@ -782,4 +871,81 @@ fn background_image_preloading_can_be_turned_off() {
     stream.feed(html.as_bytes()).expect("feed");
     completed(stream.finish().expect("finish"));
     assert_eq!(record.pages, batch_pages(html));
+}
+
+#[test]
+fn rebuilding_page_count_margin_boxes_stops_on_abort() {
+    let html = format!(
+        "<style>@page {{ margin: 40px; @bottom-center {{ content: counter(pages) }} }}</style>{}",
+        paragraphs(60)
+    );
+    let resources = RenderResources::new();
+    let doc = crate::parse_html_with_resources(html.as_bytes(), &resources).expect("parse");
+    let LayoutStatus::Completed(laid_out) = layout(
+        &doc,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        LayoutOptions::new().resources(&resources),
+    )
+    .expect("layout") else {
+        panic!("aborted");
+    };
+    let pages = laid_out.page_count();
+    let rebuilt = page_count_margin_boxes(&laid_out, pages, 99, None).expect("not aborted");
+    assert_eq!(rebuilt.len(), pages as usize);
+    let controller = AbortController::new();
+    controller.abort();
+    assert!(page_count_margin_boxes(&laid_out, pages, 99, Some(&controller.signal)).is_none());
+}
+
+/// Serves `main.css`, which imports `nested.css`, counting the requests.
+#[derive(Default)]
+struct SheetProvider {
+    requests: std::sync::Mutex<Vec<String>>,
+}
+
+impl NetworkProvider for SheetProvider {
+    fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
+        self.requests
+            .lock()
+            .unwrap()
+            .push(request.url.path().to_owned());
+        let css = match request.url.path() {
+            "/main.css" => "@import 'nested.css'; p { color: green }",
+            "/nested.css" => "p { margin: 4px 0 }",
+            _ => return Err(NetworkError::Other("not found".to_owned())),
+        };
+        Ok(FetchOutcome::Body(FetchedResource {
+            bytes: bytes::Bytes::from(css),
+            content_type: Some("text/css".to_owned()),
+            final_url: request.url,
+            encoding: None,
+        }))
+    }
+}
+
+#[test]
+fn style_sheets_are_fetched_once_per_stream() {
+    let provider = SheetProvider::default();
+    let resources = RenderResources::new()
+        .network_provider(&provider)
+        .base_url(url::Url::parse("https://page.example/").unwrap());
+    let html = format!(
+        "<head><link rel=stylesheet href=main.css></head><body>{}",
+        paragraphs(60)
+    );
+    let mut record = Record::default();
+    let mut stream = StreamingLayout::new(
+        &resources,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        &mut record,
+    )
+    .checkpoint_bytes(1000);
+    stream.feed(html.as_bytes()).expect("feed");
+    completed(stream.finish().expect("finish"));
+    assert!(record.pages.len() > 1);
+    let mut requests = provider.requests.lock().unwrap().clone();
+    requests.sort();
+    assert_eq!(requests, ["/main.css", "/nested.css"]);
 }

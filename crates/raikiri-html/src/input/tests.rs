@@ -135,6 +135,8 @@ fn encoding_errors_match_whole_input_messages() {
         b"ok\xF0\x9F\x98",
         b"\xC3",
         b"x\xED\xA0\x80",
+        b"\xE1x",
+        b"\xF0\x9Fx",
     ];
     for input in cases {
         let expected = String::from_utf8(input.to_vec()).unwrap_err().to_string();
@@ -147,6 +149,9 @@ fn encoding_errors_match_whole_input_messages() {
                 "input {input:?} split at {split}"
             );
         }
+        let bytes: Vec<&[u8]> = input.chunks(1).collect();
+        let error = feed_chunks(&bytes).expect_err("invalid utf-8 must fail");
+        assert_eq!(encoding_reason(error), expected, "input {input:?} by byte");
     }
 }
 

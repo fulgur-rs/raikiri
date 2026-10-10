@@ -131,6 +131,18 @@ fn void_elements_do_not_stay_open() {
 }
 
 #[test]
+fn open_elements_with_auto_direction_hold_from_their_start() {
+    assert_eq!(frontier_of("<p>a</p><div dir=AUTO><p>x</p>"), "<div>");
+    assert_eq!(frontier_of("<p>a</p><p>b <bdi>x"), "\"b \"");
+    assert_eq!(
+        frontier_of("<p>a</p><div><bdi style='display:block'>x"),
+        "<bdi>"
+    );
+    assert_eq!(frontier_of("<p>a</p><div dir=rtl><p>x</p>"), "end");
+    assert_eq!(frontier_of("<div dir=auto><p>x</p></div><p>y</p>"), "end");
+}
+
+#[test]
 fn forward_dependent_selectors_hold_everything() {
     // The virtual document root has no tag and no text.
     assert_eq!(

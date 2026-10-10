@@ -7,8 +7,11 @@
 //! `frontier` module for what makes a page final). The remaining pages
 //! arrive from [`StreamingLayout::finish`]. Content that holds the whole
 //! document back, such as an open table or a selector like `:last-child`,
-//! delays delivery but never changes the pages: they are always the pages a
-//! batch layout of the whole input produces.
+//! delays delivery but never changes the pages already delivered.
+//!
+//! The pages are those of a batch layout of the whole input, except where
+//! later content would have to change pages already delivered: that content
+//! is left out and reported, as [`StreamingLayout`] lists.
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -16,8 +19,9 @@ use std::io::Write;
 use html5ever::driver::{ParseOpts, Parser, parse_document};
 use raikiri_style::property::{DisplayValue, PositionValue};
 use raikiri_traits::{
-    ConsumerPropertyEvent, LayoutConfig, LimitKind, NetworkProvider, NodeId, NodeKind,
-    PageDefaults, RenderError, RenderWarning, WarningKind,
+    ConsumerPropertyEvent, FetchOutcome, FetchedResource, LayoutConfig, LimitKind, Method,
+    NetworkError, NetworkProvider, NodeId, NodeKind, PageDefaults, RenderError, RenderWarning,
+    Request, WarningKind,
 };
 
 use super::{
@@ -83,7 +87,9 @@ impl<'a> StreamPage<'a> {
     /// pages: its [`Page::margin_boxes`] show a placeholder for
     /// `counter(pages)` and list it in [`crate::MarginBox::deferred`]. The
     /// placeholder has as many digits as the page limit
-    /// ([`raikiri_traits::RenderLimits::max_document_pages`]) allows. Write
+    /// ([`raikiri_traits::RenderLimits::max_document_pages`]) allows, and is
+    /// shown in decimal where the requested counter style would make it far
+    /// longer, as `symbolic` styles do. Write
     /// [`crate::DeferredSlot::text`] of [`StreamSummary::page_count`] in its
     /// place once [`PageSink::finish`] runs, or draw the page's margin boxes
     /// from [`StreamSummary::page_count_margin_boxes`] instead. Pages
@@ -228,6 +234,57 @@ struct Settings<'r, 'a> {
     config: LayoutConfig,
     consumer_properties: &'r [ConsumerPropertyRegistration],
     preload_background_images: bool,
+    /// The network every cascade fetches style sheets through.
+    network: Option<StreamNetwork<'r>>,
+}
+
+/// A network provider that fetches each style sheet once per stream.
+///
+/// Every checkpoint finishes the document parsed so far again, which loads
+/// its external style sheets and imports. Without the cache each of those
+/// loads would be fetched again and charged again to the resources' byte
+/// budget. Failed fetches are not kept, so a later checkpoint retries them.
+struct StreamNetwork<'r> {
+    inner: crate::resources::ResourceNetworkProvider<'r>,
+    bodies: std::sync::Mutex<HashMap<(url::Url, raikiri_traits::ResourceKind), FetchedResource>>,
+}
+
+impl<'r> StreamNetwork<'r> {
+    fn new(inner: crate::resources::ResourceNetworkProvider<'r>) -> Self {
+        Self {
+            inner,
+            bodies: std::sync::Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+impl NetworkProvider for StreamNetwork<'_> {
+    fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
+        let cacheable =
+            request.method == Method::Get && matches!(request.body, raikiri_traits::Body::Empty);
+        let key = (request.url.clone(), request.kind);
+        if cacheable
+            && let Some(body) = self
+                .bodies
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .get(&key)
+        {
+            return Ok(FetchOutcome::Body(body.clone()));
+        }
+        let outcome = self.inner.fetch_one_hop(request)?;
+        if cacheable && let FetchOutcome::Body(body) = &outcome {
+            self.bodies
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(key, body.clone());
+        }
+        Ok(outcome)
+    }
+
+    fn max_import_depth(&self) -> Option<u32> {
+        self.inner.max_import_depth()
+    }
 }
 
 /// A cascaded document and what [`Settings::cascade`] found on the way.
@@ -254,21 +311,42 @@ fn late_fixed_elements(document: &HtmlDocument, from: usize) -> Vec<usize> {
 
 /// Keep element `id` from generating boxes, through its inline style so
 /// that every cascade of the document sees it.
+///
+/// The author's inline declarations are replaced rather than extended: an
+/// element without boxes needs none of them, and appending to them could
+/// land the declaration inside an unterminated comment or block.
 fn hide_element(dom: &mut raikiri_dom::Document, id: usize) {
-    use raikiri_traits::{Dom, Element, Node};
-
-    let existing = dom.node(NodeId(id as u64)).and_then(|node| {
-        node.as_element()
-            .and_then(|element| element.inline_style_source().map(str::to_owned))
-    });
-    let style = match existing {
-        Some(style) => format!("{style}; display: none !important"),
-        None => "display: none !important".to_owned(),
-    };
-    dom.set_element_inline_style(id, Some(style.into()));
+    dom.set_element_inline_style(id, Some("display: none !important".into()));
 }
 
 impl Settings<'_, '_> {
+    /// Replace the parse-time cascade, computed for the default media
+    /// context, with the one layout uses, so that the frontier and the late
+    /// fixed elements are found with the styles the pages are laid out with.
+    fn recascade_for_layout(
+        &self,
+        document: &mut HtmlDocument,
+        limits: &raikiri_traits::RenderLimits,
+    ) -> Result<(), RenderError> {
+        let media_context = &self.config.media_context;
+        if *media_context == raikiri_style::MediaContext::default() {
+            return Ok(());
+        }
+        let mut first_page = raikiri_style::PageContextQuery::default();
+        first_page.is_first = true;
+        first_page.is_right = true;
+        let mut options = raikiri_style::CascadeOptions::default();
+        options.limits = limits.cascade_limits();
+        document.cascade = raikiri_style::cascade_with_options(
+            &document.uncascaded.dom,
+            &build_rule_tree(&document.uncascaded),
+            media_context,
+            &first_page,
+            &options,
+        )?;
+        Ok(())
+    }
+
     /// Finish and cascade a parsed document, leaving out what a streaming
     /// layout does not apply: `<style>` elements inside `<body>`, and fixed
     /// positioned elements whose node id is `late_nodes_from` or more. With
@@ -290,8 +368,8 @@ impl Settings<'_, '_> {
             details: "a <style> element inside <body> is not applied while streaming".to_owned(),
         }));
 
-        let network = self.resources.network_adapter();
-        let network_ref = network
+        let network_ref = self
+            .network
             .as_ref()
             .map(|provider| provider as &dyn NetworkProvider);
         let extra_stylesheets = self.resources.extra_stylesheets();
@@ -303,6 +381,7 @@ impl Settings<'_, '_> {
         let forward_dependent =
             forward_dependent && build_rule_tree(&uncascaded).has_forward_dependent_selectors();
         let mut document = assemble_document(uncascaded, &options, &limits)?;
+        self.recascade_for_layout(&mut document, &limits)?;
 
         let late =
             late_nodes_from.map_or_else(Vec::new, |from| late_fixed_elements(&document, from));
@@ -318,6 +397,7 @@ impl Settings<'_, '_> {
                 });
             }
             document = assemble_document(uncascaded, &options, &limits)?;
+            self.recascade_for_layout(&mut document, &limits)?;
         }
         Ok(Cascaded {
             document,
@@ -380,6 +460,7 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
                 config,
                 consumer_properties: &[],
                 preload_background_images: true,
+                network: resources.network_adapter().map(StreamNetwork::new),
             },
             sink,
             input: Utf8Feed::new(parse_document(tree, ParseOpts::default())),
@@ -452,14 +533,25 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
                 actual: self.input_bytes,
             });
         }
-        self.input.feed(bytes).map_err(RenderError::Parse)?;
-        if self.aborted {
-            return Ok(());
-        }
-        self.unchecked_bytes = self.unchecked_bytes.saturating_add(bytes.len());
-        if self.unchecked_bytes >= self.checkpoint_bytes {
-            self.unchecked_bytes = 0;
-            self.checkpoint()?;
+        // Split the input at checkpoint boundaries, so that checkpoints follow
+        // the input however the caller chunks it.
+        let mut rest = bytes;
+        while !rest.is_empty() {
+            if self.aborted {
+                return self.input.feed(rest).map_err(RenderError::Parse);
+            }
+            let room = self
+                .checkpoint_bytes
+                .saturating_sub(self.unchecked_bytes)
+                .max(1);
+            let (piece, tail) = rest.split_at(room.min(rest.len()));
+            rest = tail;
+            self.input.feed(piece).map_err(RenderError::Parse)?;
+            self.unchecked_bytes += piece.len();
+            if self.unchecked_bytes >= self.checkpoint_bytes {
+                self.unchecked_bytes = 0;
+                self.checkpoint()?;
+            }
         }
         Ok(())
     }
@@ -557,11 +649,14 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
         };
         let signal = settings.config.signal.clone();
         let (mut by_page, unplaced_events) = events_by_first_page(&laid_out, events);
-        let page_count_margin_boxes = page_count_margin_boxes(
+        let Some(page_count_margin_boxes) = page_count_margin_boxes(
             &laid_out,
             delivered,
             page_count_placeholder(&settings.config),
-        );
+            signal.as_ref(),
+        ) else {
+            return Ok(StreamStatus::Aborted);
+        };
         let delivery = deliver(
             &mut sink,
             &laid_out,
@@ -662,22 +757,29 @@ fn page_count_placeholder(config: &LayoutConfig) -> u32 {
 
 /// The margin boxes of the first `delivered` pages, with the real page count,
 /// for the pages whose margin boxes showed `placeholder` when delivered.
+/// Returns `None` when the abort signal fires.
 fn page_count_margin_boxes(
     laid_out: &DocumentLayout,
     delivered: u32,
     placeholder: u32,
-) -> Vec<(u32, Vec<MarginBox>)> {
-    (0..delivered.min(laid_out.page_count()))
-        .filter_map(|index| {
-            let page = laid_out.page_at(index as usize);
-            let deferred = page
-                .with_deferred_page_count(placeholder)
-                .margin_boxes()
-                .iter()
-                .any(|margin_box| !margin_box.deferred.is_empty());
-            deferred.then(|| (index, page.margin_boxes()))
-        })
-        .collect()
+    signal: Option<&raikiri_traits::AbortSignal>,
+) -> Option<Vec<(u32, Vec<MarginBox>)>> {
+    let mut boxes = Vec::new();
+    for index in 0..delivered.min(laid_out.page_count()) {
+        if signal.is_some_and(|signal| signal.is_aborted()) {
+            return None;
+        }
+        let page = laid_out.page_at(index as usize);
+        let deferred = page
+            .with_deferred_page_count(placeholder)
+            .margin_boxes()
+            .iter()
+            .any(|margin_box| !margin_box.deferred.is_empty());
+        if deferred {
+            boxes.push((index, page.margin_boxes()));
+        }
+    }
+    Some(boxes)
 }
 
 fn failed_earlier() -> RenderError {

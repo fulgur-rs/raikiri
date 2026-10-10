@@ -304,10 +304,12 @@ impl RuleTree {
     /// `:not()`, `:is()`, `:where()` and `:nth-*(of ...)`. Every other
     /// supported selector depends only on an element's ancestors, earlier
     /// siblings and attributes, so its result is final once the element is
-    /// parsed.
+    /// parsed. Rules inside `@media` count whatever the media context, so
+    /// the answer holds for every context the document may be laid out in.
     pub fn has_forward_dependent_selectors(&self) -> bool {
         self.style_rules
             .iter()
+            .chain(self.media_rules.iter().map(|media| &media.rule))
             .any(|rule| rule.selectors.slice().iter().any(is_forward_dependent))
     }
 
