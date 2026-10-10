@@ -440,7 +440,7 @@ fn inherited_lists_and_image_urls_are_shared_with_descendants() {
                 crate::property::FontFeatureSettings::Features(b),
             ) => {
                 assert_eq!(a.first().map(|setting| setting.tag), Some(*b"kern"));
-                assert!(Arc::ptr_eq(a, b), "font-feature-settings copied");
+                assert!(a.shares(b), "font-feature-settings copied");
             }
             other => panic!("expected feature lists, got {other:?}"),
         }
@@ -451,7 +451,7 @@ fn inherited_lists_and_image_urls_are_shared_with_descendants() {
             (
                 crate::property::FontVariationSettings::Settings(a),
                 crate::property::FontVariationSettings::Settings(b),
-            ) => assert!(Arc::ptr_eq(a, b), "font-variation-settings copied"),
+            ) => assert!(a.shares(b), "font-variation-settings copied"),
             other => panic!("expected variation lists, got {other:?}"),
         }
         match (&parent.list_style_image, &child.list_style_image) {
@@ -469,42 +469,102 @@ fn inherited_lists_and_image_urls_are_shared_with_descendants() {
 
 #[test]
 fn canonical_feature_lists_are_kept_as_they_are() {
-    let canonical: Arc<[crate::property::FontFeatureSetting]> = Arc::from(vec![
-        crate::property::FontFeatureSetting {
-            tag: *b"kern",
-            value: 0,
-        },
-        crate::property::FontFeatureSetting {
-            tag: *b"liga",
-            value: 1,
-        },
-    ]);
-    match crate::property::FontFeatureSettings::Features(canonical.clone()).canonicalized() {
-        crate::property::FontFeatureSettings::Features(kept) => {
-            assert!(Arc::ptr_eq(&kept, &canonical));
-        }
+    use crate::property::{FontFeatureList, FontFeatureSetting, FontFeatureSettings};
+    let setting = |tag: &[u8; 4], value| FontFeatureSetting { tag: *tag, value };
+    let canonical = FontFeatureList::from(vec![setting(b"kern", 0), setting(b"liga", 1)]);
+    match FontFeatureSettings::Features(canonical.clone()).canonicalized() {
+        FontFeatureSettings::Features(kept) => assert!(kept.shares(&canonical)),
         other => panic!("expected a feature list, got {other:?}"),
     }
-    // A repeated tag is not canonical: the last value of it wins.
-    let repeated: Arc<[crate::property::FontFeatureSetting]> = Arc::from(vec![
-        crate::property::FontFeatureSetting {
-            tag: *b"kern",
-            value: 0,
-        },
-        crate::property::FontFeatureSetting {
-            tag: *b"kern",
-            value: 1,
-        },
-    ]);
+    // The lists print and compare as their entries alone.
     assert_eq!(
-        crate::property::FontFeatureSettings::Features(repeated).canonicalized(),
-        crate::property::FontFeatureSettings::Features(Arc::from(vec![
-            crate::property::FontFeatureSetting {
-                tag: *b"kern",
+        format!("{canonical:?}"),
+        format!("{:?}", [setting(b"kern", 0), setting(b"liga", 1)])
+    );
+    let axes = vec![crate::property::FontVariationSetting {
+        tag: "wght".into(),
+        value: 700.0,
+    }];
+    assert_eq!(
+        format!(
+            "{:?}",
+            crate::property::FontVariationList::from(axes.clone())
+        ),
+        format!("{axes:?}")
+    );
+    // A repeated tag is not canonical: the last value of it wins.
+    let repeated = FontFeatureList::from(vec![setting(b"kern", 0), setting(b"kern", 1)]);
+    assert_eq!(
+        FontFeatureSettings::Features(repeated).canonicalized(),
+        FontFeatureSettings::Features(vec![setting(b"kern", 1)].into())
+    );
+}
+
+#[test]
+fn finalizing_public_specified_values_sorts_their_feature_lists() {
+    // A list set through the public specified values, not by a cascade, is
+    // still computed: sorted by tag, the last value of a repeated tag kept.
+    use crate::property::{
+        FontFeatureSetting, FontFeatureSettings, FontVariationSetting, FontVariationSettings,
+    };
+    let mut specified = SpecifiedValues::initial();
+    specified.font_feature_settings = FontFeatureSettings::Features(
+        vec![
+            FontFeatureSetting {
+                tag: *b"liga",
                 value: 1,
             },
-        ]))
+            FontFeatureSetting {
+                tag: *b"kern",
+                value: 0,
+            },
+            FontFeatureSetting {
+                tag: *b"liga",
+                value: 0,
+            },
+        ]
+        .into(),
     );
+    specified.font_variation_settings = FontVariationSettings::Settings(
+        vec![
+            FontVariationSetting {
+                tag: "wght".into(),
+                value: 700.0,
+            },
+            FontVariationSetting {
+                tag: "wdth".into(),
+                value: 80.0,
+            },
+        ]
+        .into(),
+    );
+    let computed = specified.finalize_as_root();
+    assert_eq!(
+        computed.font_feature_settings,
+        FontFeatureSettings::Features(
+            vec![
+                FontFeatureSetting {
+                    tag: *b"kern",
+                    value: 0
+                },
+                FontFeatureSetting {
+                    tag: *b"liga",
+                    value: 0
+                },
+            ]
+            .into()
+        )
+    );
+    match &computed.font_variation_settings {
+        FontVariationSettings::Settings(settings) => {
+            let tags: Vec<&str> = settings
+                .iter()
+                .map(|setting| setting.tag.as_str())
+                .collect();
+            assert_eq!(tags, ["wdth", "wght"]);
+        }
+        other => panic!("expected variation settings, got {other:?}"),
+    }
 }
 
 fn cascade_parent_child(

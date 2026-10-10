@@ -1730,6 +1730,86 @@ impl FontVariantEastAsian {
     }
 }
 
+/// A list of tagged font settings, shared between the nodes that inherit
+/// it, that records whether it is in computed order.
+macro_rules! tagged_settings_list {
+    ($(#[$doc:meta])* $name:ident, $item:ty) => {
+        $(#[$doc])*
+        ///
+        /// It dereferences to its entries. Whether they are already sorted by
+        /// tag with one entry per tag is found once, when the list is made,
+        /// so computing the value of a list that is already in that order,
+        /// such as one every descendant inherits, costs nothing per node.
+        #[derive(Clone)]
+        pub struct $name {
+            items: Arc<[$item]>,
+            canonical: bool,
+        }
+
+        impl $name {
+            fn new(items: Arc<[$item]>) -> Self {
+                let canonical = items.windows(2).all(|pair| pair[0].tag < pair[1].tag);
+                Self { items, canonical }
+            }
+
+            /// Whether `self` and `other` share their entries.
+            pub fn shares(&self, other: &Self) -> bool {
+                Arc::ptr_eq(&self.items, &other.items)
+            }
+
+            /// The list in computed order: the last entry per tag, sorted by
+            /// tag. A list already in that order is returned as it is.
+            fn canonicalized(self) -> Self {
+                if self.canonical {
+                    return self;
+                }
+                let mut items = self.items.to_vec();
+                items.sort_by(|left, right| left.tag.cmp(&right.tag));
+                let mut canonical: Vec<$item> = Vec::with_capacity(items.len());
+                for item in items {
+                    if let Some(last) = canonical.last_mut()
+                        && last.tag == item.tag
+                    {
+                        *last = item;
+                        continue;
+                    }
+                    canonical.push(item);
+                }
+                Self {
+                    items: canonical.into(),
+                    canonical: true,
+                }
+            }
+        }
+
+        impl From<Vec<$item>> for $name {
+            fn from(items: Vec<$item>) -> Self {
+                Self::new(items.into())
+            }
+        }
+
+        impl std::ops::Deref for $name {
+            type Target = [$item];
+
+            fn deref(&self) -> &[$item] {
+                &self.items
+            }
+        }
+
+        impl PartialEq for $name {
+            fn eq(&self, other: &Self) -> bool {
+                self.items == other.items
+            }
+        }
+
+        impl std::fmt::Debug for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                self.items.fmt(f)
+            }
+        }
+    };
+}
+
 /// `font-feature-settings` values from CSS Fonts 4 §6.12
 /// (<https://www.w3.org/TR/2026/WD-css-fonts-4-20260906/#font-feature-settings-prop>).
 ///
@@ -1743,7 +1823,7 @@ pub enum FontFeatureSettings {
     Normal,
     /// A non-empty list of specified feature tag/value pairs, shared so that
     /// the computed value every descendant inherits is not copied per node.
-    Features(Arc<[FontFeatureSetting]>),
+    Features(FontFeatureList),
 }
 
 /// One `<feature-tag-value>` pair in `font-feature-settings`.
@@ -1756,6 +1836,14 @@ pub struct FontFeatureSetting {
     pub value: u32,
 }
 
+tagged_settings_list!(
+    /// The `<feature-tag-value>` pairs of a `font-feature-settings` list.
+    FontFeatureList,
+    FontFeatureSetting
+);
+
+impl Eq for FontFeatureList {}
+
 impl FontFeatureSettings {
     /// Return the computed representation: last entry per tag, sorted by tag.
     /// A list already in that form, such as an inherited computed value, is
@@ -1763,24 +1851,7 @@ impl FontFeatureSettings {
     pub(crate) fn canonicalized(self) -> Self {
         match self {
             Self::Normal => Self::Normal,
-            Self::Features(settings) => {
-                if settings.windows(2).all(|pair| pair[0].tag < pair[1].tag) {
-                    return Self::Features(settings);
-                }
-                let mut settings = settings.to_vec();
-                settings.sort_by_key(|setting| setting.tag);
-                let mut canonical: Vec<FontFeatureSetting> = Vec::with_capacity(settings.len());
-                for setting in settings {
-                    if let Some(last) = canonical.last_mut()
-                        && last.tag == setting.tag
-                    {
-                        *last = setting;
-                        continue;
-                    }
-                    canonical.push(setting);
-                }
-                Self::Features(canonical.into())
-            }
+            Self::Features(settings) => Self::Features(settings.canonicalized()),
         }
     }
 }
@@ -1800,7 +1871,7 @@ pub enum FontVariationSettings {
     /// Non-empty setting list. It keeps authored order when specified and
     /// canonical order when computed, and is shared so that the computed
     /// value every descendant inherits is not copied per node.
-    Settings(Arc<[FontVariationSetting]>),
+    Settings(FontVariationList),
 }
 
 /// One `<opentype-tag> <number>` pair in `font-variation-settings`.
@@ -1813,6 +1884,12 @@ pub struct FontVariationSetting {
     pub value: f32,
 }
 
+tagged_settings_list!(
+    /// The `<opentype-tag> <number>` pairs of a `font-variation-settings` list.
+    FontVariationList,
+    FontVariationSetting
+);
+
 impl FontVariationSettings {
     /// Return the computed representation: last entry per tag, sorted by tag.
     /// A list already in that form, such as an inherited computed value, is
@@ -1820,24 +1897,7 @@ impl FontVariationSettings {
     pub(crate) fn canonicalized(self) -> Self {
         match self {
             Self::Normal => Self::Normal,
-            Self::Settings(settings) => {
-                if settings.windows(2).all(|pair| pair[0].tag < pair[1].tag) {
-                    return Self::Settings(settings);
-                }
-                let mut settings = settings.to_vec();
-                settings.sort_by(|left, right| left.tag.cmp(&right.tag));
-                let mut canonical: Vec<FontVariationSetting> = Vec::with_capacity(settings.len());
-                for setting in settings {
-                    if let Some(last) = canonical.last_mut()
-                        && last.tag == setting.tag
-                    {
-                        *last = setting;
-                        continue;
-                    }
-                    canonical.push(setting);
-                }
-                Self::Settings(canonical.into())
-            }
+            Self::Settings(settings) => Self::Settings(settings.canonicalized()),
         }
     }
 }

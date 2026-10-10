@@ -392,11 +392,10 @@ pub struct SpecifiedValues {
     pub font_variant_numeric: FontVariantNumeric,
     /// [`ComputedValues::font_variant_east_asian`] staging; inherited computed value.
     pub font_variant_east_asian: FontVariantEastAsian,
-    /// Computed variation settings: a declared list is canonicalized when it
-    /// is applied, and an inherited one is the parent computed value.
+    /// Specified sequence; preserves authored order and duplicates until finalization.
+    /// Inherited values come from the parent computed value.
     pub font_variation_settings: FontVariationSettings,
-    /// Computed OpenType features: a declared list is canonicalized when it
-    /// is applied, and an inherited one is the parent computed value.
+    /// Specified OpenType features; inherited values come from the parent computed value.
     pub font_feature_settings: FontFeatureSettings,
     /// Staging value for [`ComputedValues::font_variant_caps`]; computed-equivalent because
     /// `FontVariantCaps` carries no lengths.
@@ -2173,10 +2172,10 @@ impl SpecifiedValues {
             font_palette: self.font_palette.clone(),
             font_variant_numeric: self.font_variant_numeric,
             font_variant_east_asian: self.font_variant_east_asian,
-            // Already canonical (see the fields' docs), so an inherited list
-            // passes through shared, without a walk over it per node.
-            font_variation_settings: self.font_variation_settings,
-            font_feature_settings: self.font_feature_settings,
+            // An inherited list is already in computed order, which the list
+            // records, so it passes through shared without a walk over it.
+            font_variation_settings: self.font_variation_settings.canonicalized(),
+            font_feature_settings: self.font_feature_settings.canonicalized(),
             // The computed value is the specified keyword (see FontVariantCaps docs); with no
             // lengths, no relative resolution is needed. Pass through this node's winner.
             font_variant_caps: self.font_variant_caps,
