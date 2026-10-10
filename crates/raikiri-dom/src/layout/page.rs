@@ -511,6 +511,9 @@ pub fn page_margins_for_page(
     // Without those descriptors the existing zero fallback is retained.
     let page_area_width = page_dimension(declarations, PropertyKey::Width, page_box.width);
     let page_area_height = page_dimension(declarations, PropertyKey::Height, page_box.height);
+    // The descriptors size the content area, so the page border and padding
+    // come out of the auto margins too.
+    let insets = page_content_insets_for_page(page, page_box);
     if let Some(area_width) = page_area_width {
         let auto_left = matches!(left_value, Some(LengthOrAuto::Auto));
         let auto_right = matches!(right_value, Some(LengthOrAuto::Auto));
@@ -519,7 +522,12 @@ pub fn page_margins_for_page(
             // Auto page margins absorb the full remainder, including a
             // negative one when the requested page area is larger than the
             // physical page box.
-            let remaining = page_box.width - area_width - margins.left - margins.right;
+            let remaining = page_box.width
+                - area_width
+                - insets.left
+                - insets.right
+                - margins.left
+                - margins.right;
             let auto_margin = remaining / auto_count as f32;
             if auto_left {
                 margins.left = auto_margin;
@@ -534,7 +542,12 @@ pub fn page_margins_for_page(
         let auto_bottom = matches!(bottom_value, Some(LengthOrAuto::Auto));
         let auto_count = usize::from(auto_top) + usize::from(auto_bottom);
         if auto_count > 0 {
-            let remaining = page_box.height - area_height - margins.top - margins.bottom;
+            let remaining = page_box.height
+                - area_height
+                - insets.top
+                - insets.bottom
+                - margins.top
+                - margins.bottom;
             let auto_margin = remaining / auto_count as f32;
             if auto_top {
                 margins.top = auto_margin;
