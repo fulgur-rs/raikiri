@@ -66,7 +66,7 @@ pub struct SvgStyleProperty {
 /// CascadeResult-level `gcpm_directives` / `running_templates` per document
 /// would move downstream to raikiri-dom. Keep `#[non_exhaustive]` for future
 /// field additions.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct CascadeResult {
     generation: u64,

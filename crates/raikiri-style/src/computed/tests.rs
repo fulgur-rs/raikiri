@@ -262,9 +262,7 @@ fn non_initial_parent() -> ComputedValues {
         counter_set: Arc::new(vec![(SmolStr::new("page"), 5)]),
         content: Arc::new(vec![ContentComponent::Literal(SmolStr::new("x"))]),
         string_set: Arc::new(vec![(SmolStr::new("s"), Vec::new())]),
-        running_templates: vec![RunningTemplate {
-            name: SmolStr::new("hdr"),
-        }],
+        running_templates: vec![RunningTemplate::new("hdr")],
         text_align: TextAlign::Center,
         hanging_punctuation: HangingPunctuation::First,
         // CSS Text 4: explicit autospace and word-space-transform values for inheritance coverage.

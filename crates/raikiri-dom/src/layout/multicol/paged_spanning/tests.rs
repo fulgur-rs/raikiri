@@ -55,7 +55,10 @@ fn source_fragments() -> (Document, usize, usize, usize) {
 #[test]
 fn a_fallback_child_shift_moves_its_column_clip_with_the_source_box() {
     let (mut tree, _, child, container) = source_fragments();
-    shift_child(&mut tree, child, container, 10.0);
+    let mut shifts = HashMap::new();
+    shift_child(&mut tree, &mut shifts, child, 4.0);
+    shift_child(&mut tree, &mut shifts, child, 6.0);
+    apply_shifts(&mut tree, container, &shifts);
     let source = tree.fragment_tree.fragments[1];
     assert_eq!(
         source.rect,

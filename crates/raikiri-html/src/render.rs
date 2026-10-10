@@ -484,7 +484,10 @@ pub(crate) struct ResolvedPageGeometry {
     pub(crate) content_box: PaintRect,
 }
 
-fn resolve_page_geometry(page: &PageCascadeResult, page_box: PageBox) -> ResolvedPageGeometry {
+pub(crate) fn resolve_page_geometry(
+    page: &PageCascadeResult,
+    page_box: PageBox,
+) -> ResolvedPageGeometry {
     let margins = page_margins_for_page(page, page_box);
     let content_insets = page_content_insets_for_page(page, page_box);
     let content_box = PaintRect::new(

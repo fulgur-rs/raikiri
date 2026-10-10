@@ -38,9 +38,10 @@ pub use document::HtmlDocument;
 pub use document_layout::{
     Anchor, AnchorIndex, ClipKind, ColumnRule, DecorationKind, DecorationLine, DecorationStyle,
     DocumentLayout, DomView, FontBlob, FontId, FontRef, FontVariation, Fragment, FragmentKind,
-    GeneratedBox, GeneratedKind, Glyph, InlineSvg, LayoutOptions, LayoutStatus, Link, OverflowClip,
-    Page, PageGeometry, PageMode, PaintEvent, PositionedGlyphRun, RasterImage, RepeatKind,
-    RunSource, Synthesis, Tag, TextLineId, layout,
+    GeneratedBox, GeneratedKind, Glyph, InlineSvg, LayoutOptions, LayoutStatus, Link, MarginBox,
+    MarginBoxBackgroundImage, MarginBoxBorder, MarginBoxText, OverflowClip, Page, PageGeometry,
+    PageMode, PaintEvent, PositionedGlyphRun, RasterImage, RepeatKind, RunSource, Synthesis, Tag,
+    TextLineId, layout,
 };
 pub use document_parse::{parse_html, parse_html_with_limits};
 pub use font_collection::{
@@ -68,6 +69,8 @@ pub use raikiri_style::{
 // `PageCascadeResult` (see `Page::page_style`) reports declarations keyed and
 // valued by these.
 pub use raikiri_style::property::{PropertyKey, PropertyValue};
+// `Page::running_element` selects with the `element()` keyword.
+pub use raikiri_style::property::StringFetchMode;
 
 /// The computed-value types read from [`ComputedValues`] (for example through
 /// `Page::computed`), named in the computed layer so a painter can annotate

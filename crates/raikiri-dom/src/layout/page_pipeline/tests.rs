@@ -7851,7 +7851,7 @@ fn before_avoid_moves_the_connected_sibling_run_to_the_next_page() {
 }
 
 #[test]
-fn running_templates_keep_the_normal_flow_computed_position() {
+fn running_elements_are_removed_from_the_normal_flow() {
     use raikiri_style::{build_rule_tree, cascade};
 
     for position in ["static", "relative", "sticky", "absolute", "fixed"] {
@@ -7869,29 +7869,25 @@ fn running_templates_keep_the_normal_flow_computed_position() {
         let cascade = cascade(&doc, &rules).unwrap();
         // The winning running() value replaces the preceding declaration
         // but records a template without changing the initial position.
+        // CSS GCPM 3 §1.2.1 removes the element from the normal flow: it
+        // generates no box, and its block display moves to the template.
         assert_eq!(cascade.computed[root].position, PositionValue::Static);
+        assert_eq!(cascade.computed[root].display, DisplayValue::None);
         assert_eq!(cascade.computed[root].running_templates.len(), 1);
         assert_eq!(cascade.computed[root].running_templates[0].name, "header");
+        assert_eq!(
+            cascade.computed[root].running_templates[0].display,
+            DisplayValue::Block
+        );
     }
 
-    assert_eq!(
-        page_sibling_positions(
-            &[60, 30, 30],
-            "break-before:avoid",
-            "",
-            "position:running(header)"
-        ),
-        (vec![0.0, 100.0, 130.0], 2)
-    );
-    assert_eq!(
-        page_sibling_positions(
-            &[20, 20, 20],
-            "break-before:page",
-            "",
-            "position:running(header)"
-        ),
-        (vec![0.0, 20.0, 100.0], 2)
-    );
+    // Neither their size nor their break properties reach the flow.
+    for (before, after) in [("break-before:avoid", ""), ("break-before:page", "")] {
+        assert_eq!(
+            page_sibling_positions(&[60, 30, 30], before, after, "position:running(header)"),
+            (vec![0.0, 0.0, 0.0], 1)
+        );
+    }
 }
 
 #[test]

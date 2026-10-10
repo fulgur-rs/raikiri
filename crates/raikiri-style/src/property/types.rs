@@ -2510,12 +2510,16 @@ pub enum ContentComponent {
         name: SmolStr,
         fetch: StringFetchMode,
     },
-    /// `element(<custom-ident>)` — CSS GCPM 3 §1.2.2.
+    /// `element(<custom-ident>, [ first | start | last | first-except ]?)` —
+    /// CSS GCPM 3 §1.2.2 <https://www.w3.org/TR/css-gcpm-3/#element-syntax>.
     ///
-    /// The running-element name is retained for the downstream margin-box
-    /// resolver. Page-scoped first/start/last selection remains outside this
-    /// minimal single-page bridge.
-    Element { name: SmolStr },
+    /// The running-element name and the page-relative selection keyword are
+    /// retained for the downstream margin-box resolver. The keywords are the
+    /// same as `string()`'s, with the same `first` default.
+    Element {
+        name: SmolStr,
+        fetch: StringFetchMode,
+    },
     /// `attr(<attribute-name>)` (§2.1).
     ///
     /// The legacy untyped form resolves a missing attribute to an empty

@@ -151,47 +151,144 @@ fn multicol_subtree_has_float_skips_hidden_descendants() {
 }
 
 #[test]
-fn nested_row_flex_float_scope_returns_false_without_a_multicol_ancestor() {
+fn flex_float_chain_is_not_a_scope_without_a_multicol_ancestor() {
     let mut doc = Document::new();
     let node = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
 
-    assert!(!nested_row_flex_float_scope(&doc, node));
+    assert!(!FlexFloatChain::of_ancestors(&doc, node).is_scope());
+}
+
+// The chain carried down a traversal must agree with walking every node's
+// ancestors, for every arrangement of the boxes that end or extend a chain.
+#[test]
+fn flex_float_chain_matches_an_ancestor_walk() {
+    fn walk(tree: &Document, node_id: usize) -> bool {
+        let mut has_row_flex = false;
+        let mut has_float = false;
+        let mut ancestor = Some(node_id);
+        while let Some(current) = ancestor {
+            let node = &tree.nodes[current];
+            has_float |= node.style.float.is_floated();
+            if node.authored_writing_mode == Some(raikiri_style::property::WritingMode::VerticalRl)
+            {
+                return false;
+            }
+            if let Some(multicol) = node.multicol {
+                return has_row_flex && has_float && multicol.horizontal;
+            }
+            has_row_flex |= node.style.display == Display::Flex
+                && node.style.flex_direction == taffy::FlexDirection::Row;
+            ancestor = tree.parent_of(current);
+        }
+        false
+    }
+    let multicol = |horizontal| crate::fragment::MulticolStyle {
+        count: Some(2),
+        width: None,
+        column_fill: ColumnFillValue::Balance,
+        gap: 0.0,
+        gap_percent: None,
+        height_definite: false,
+        horizontal,
+        orphans: 1,
+        widows: 1,
+    };
+    const KINDS: usize = 7;
+    for mut arrangement in 0..KINDS.pow(4) {
+        let mut doc = Document::new();
+        let mut parent = 0;
+        let mut nodes = Vec::new();
+        for _ in 0..4 {
+            let node = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
+            match arrangement % KINDS {
+                0 => {}
+                1 => doc.nodes[node].style.display = Display::Flex,
+                2 => {
+                    doc.nodes[node].style.display = Display::Flex;
+                    doc.nodes[node].style.flex_direction = taffy::FlexDirection::Column;
+                }
+                3 => doc.nodes[node].style.float = taffy::Float::Left,
+                4 => {
+                    doc.nodes[node].authored_writing_mode =
+                        Some(raikiri_style::property::WritingMode::VerticalRl)
+                }
+                5 => doc.nodes[node].multicol = Some(multicol(true)),
+                _ => doc.nodes[node].multicol = Some(multicol(false)),
+            }
+            arrangement /= KINDS;
+            nodes.push(node);
+            parent = node;
+        }
+        let mut carried = FlexFloatChain::of_ancestors(&doc, 0);
+        for &node in &nodes {
+            carried = carried.below(&doc, node);
+            assert_eq!(carried.is_scope(), walk(&doc, node));
+            assert_eq!(
+                FlexFloatChain::of_ancestors(&doc, node).is_scope(),
+                walk(&doc, node)
+            );
+        }
+    }
 }
 
 #[test]
-fn nested_logical_min_block_size_scope_stops_at_the_subtree_root() {
+fn ancestor_facts_resolve_each_chain_once_from_the_top() {
+    use raikiri_style::{build_rule_tree, cascade};
+
     let mut doc = Document::new();
-    let outer = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let subtree_root = doc.append_element(Some(outer), "div", Style::default(), None::<&str>);
-    let child = doc.append_element(Some(subtree_root), "div", Style::default(), None::<&str>);
-    doc.nodes[outer].has_logical_min_block_size = true;
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let sized = doc.append_element(Some(body), "div", Style::default(), Some("width:400px"));
+    let half = doc.append_element(Some(sized), "div", Style::default(), Some("width:50%"));
+    let auto = doc.append_element(Some(half), "div", Style::default(), None::<&str>);
+    let intrinsic = doc.append_element(
+        Some(auto),
+        "div",
+        Style::default(),
+        Some("width:min-content;position:absolute"),
+    );
+    let flex = doc.append_element(
+        Some(intrinsic),
+        "div",
+        Style::default(),
+        Some("display:flex"),
+    );
+    let vertical = doc.append_element(
+        Some(flex),
+        "div",
+        Style::default(),
+        Some("writing-mode:vertical-rl"),
+    );
+    let leaf = doc.append_element(Some(vertical), "div", Style::default(), None::<&str>);
+    let late_parent = doc.append_element(Some(body), "div", Style::default(), Some("width:30px"));
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut parent_of = vec![None; doc.nodes.len()];
+    for parent in 0..doc.nodes.len() {
+        for &child in &doc.nodes[parent].children {
+            parent_of[child] = Some(parent);
+        }
+    }
+    // Reparent `half` under a node later in the arena: resolution must still
+    // reach the parent before the child.
+    parent_of[half] = Some(late_parent);
+    let facts = AncestorFacts::new(&doc, &cascade, &parent_of, 800.0);
 
-    assert!(!nested_logical_min_block_size_scope(
-        &doc,
-        child,
-        subtree_root
-    ));
-
-    doc.nodes[subtree_root].has_logical_min_block_size = true;
-    assert!(nested_logical_min_block_size_scope(
-        &doc,
-        child,
-        subtree_root
-    ));
-}
-
-#[test]
-fn nested_logical_min_block_size_scope_returns_false_for_an_unrelated_node() {
-    let mut doc = Document::new();
-    let subtree_root = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let unrelated = doc.append_element(None, "div", Style::default(), None::<&str>);
-    doc.nodes[subtree_root].has_logical_min_block_size = true;
-
-    assert!(!nested_logical_min_block_size_scope(
-        &doc,
-        unrelated,
-        subtree_root
-    ));
+    assert_eq!(facts.content_width[sized], 400.0);
+    assert_eq!(facts.content_width[half], 15.0);
+    assert_eq!(facts.content_width[leaf], 15.0);
+    assert_eq!(facts.authored_containing_width(half), Some(30.0));
+    assert_eq!(facts.authored_containing_width(auto), Some(15.0));
+    // `min-content` is intrinsic, so the search continues past it.
+    assert_eq!(facts.authored_containing_width(flex), Some(15.0));
+    assert!(!facts.out_of_flow_ancestor[intrinsic]);
+    assert!(facts.out_of_flow_ancestor[flex]);
+    assert!(!facts.non_block_flow_ancestor[flex]);
+    assert!(facts.non_block_flow_ancestor[vertical]);
+    assert!(!facts.vertical[flex]);
+    assert!(facts.vertical[vertical] && facts.vertical[leaf]);
+    assert!(!facts.multicol_ancestor[leaf]);
+    assert_eq!(facts.authored_containing_width(html), None);
 }
 
 #[test]
@@ -768,7 +865,9 @@ fn multicol_gap_fixture_metrics(style_attr: &str) -> MulticolMetrics {
             }
         }
     }
-    multicol_metrics_for_node(&cascade, &parent_of, container, 800.0).expect("multicol metrics")
+    let ancestors = AncestorFacts::new(&doc, &cascade, &parent_of, 800.0);
+    multicol_metrics_with_width(&cascade, container, ancestors.content_width[container])
+        .expect("multicol metrics")
 }
 
 #[test]

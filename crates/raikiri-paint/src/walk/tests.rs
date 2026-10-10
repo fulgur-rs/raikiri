@@ -1,7 +1,8 @@
 use super::*;
 use anyrender::Scene;
 use anyrender::recording::RenderCommand;
-use raikiri_dom::{Document, StandaloneAlign};
+use raikiri_dom::Document;
+use raikiri_style::property::ContentComponent;
 use raikiri_style::{build_rule_tree, cascade};
 use taffy::Style;
 
@@ -825,30 +826,6 @@ fn background_image_dimensions_resolve_size_against_intrinsic_metadata() {
 }
 
 #[test]
-fn inherited_margin_box_font_uses_root_computed_family() {
-    let mut document = Document::new();
-    let style = document.append_element(
-        Some(document.root_index()),
-        "style",
-        Style::default(),
-        None::<&str>,
-    );
-    document.append_text(style, "@page { @top-left { content: 'x'; } }");
-    let rules = build_rule_tree(&document);
-    let cascade = cascade(&document, &rules).expect("cascade Ok");
-    let rule = cascade
-        .page
-        .margin_boxes()
-        .first()
-        .expect("the @page fixture has a margin box");
-
-    assert_eq!(
-        inherited_margin_box_font(&document, &cascade, rule),
-        (16.0, "serif".to_owned())
-    );
-}
-
-#[test]
 fn ratio_only_auto_background_uses_positioning_area_as_default_size() {
     let intrinsic = raikiri_traits::ImageIntrinsicSize {
         width: None,
@@ -960,92 +937,6 @@ fn canvas_background_with_page_margins_keeps_canvas_layer() {
     );
     assert!(!raikiri_dom::page_margins(&cascade, PageBox::A4).is_zero());
     assert_eq!(fill_count(&document, &cascade), 2);
-}
-
-fn margin_row_margins(top: f32) -> raikiri_dom::PageMargins {
-    raikiri_dom::PageMargins {
-        top,
-        right: 10.0,
-        bottom: 10.0,
-        left: 10.0,
-    }
-}
-
-fn fixed_margin_spec() -> MarginBoxPaintSpec {
-    let initial = ComputedValues::initial();
-    MarginBoxPaintSpec {
-        slot: PageMarginBoxSlot::TopCenter,
-        content: String::new(),
-        background: Some(Color::from_rgba8(255, 0, 0, 255)),
-        background_image_url: None,
-        background_image_lime: false,
-        background_size: initial.background_size,
-        background_position: initial.background_position,
-        background_repeat: initial.background_repeat,
-        background_origin: initial.background_origin,
-        background_clip: initial.background_clip,
-        content_image_lime: false,
-        border_top: None,
-        border_right: None,
-        border_bottom: None,
-        border_left: None,
-        margin_auto: [false; 4],
-        margin: [0.0; 4],
-        padding: [0.0; 4],
-        width: Some(100.0),
-        height: None,
-        text_color: Color::from_rgba8(0, 0, 0, 255),
-        text_style: crate::standalone_text::style(16.0, ""),
-        alignment: StandaloneAlign::Start,
-        vertical_align: text::MarginTextVerticalAlign::Top,
-    }
-}
-
-fn paint_margin_row(
-    specs: &[MarginBoxPaintSpec],
-    top: bool,
-    margins: raikiri_dom::PageMargins,
-) -> usize {
-    let mut scene = Scene::new();
-    let mut warnings = Vec::new();
-    paint_horizontal_margin_boxes(
-        &mut scene,
-        &Document::new(),
-        specs,
-        top,
-        PageBox::A4.width,
-        PageBox::A4.height,
-        margins,
-        None,
-        &mut warnings,
-    );
-    assert!(warnings.is_empty());
-    scene
-        .commands
-        .iter()
-        .filter(|command| matches!(command, RenderCommand::Fill(_)))
-        .count()
-}
-
-#[test]
-fn margin_row_without_specs_paints_nothing() {
-    assert_eq!(paint_margin_row(&[], true, margin_row_margins(10.0)), 0);
-}
-
-#[test]
-fn margin_row_without_row_height_paints_nothing() {
-    assert_eq!(
-        paint_margin_row(&[fixed_margin_spec()], true, margin_row_margins(0.0)),
-        0
-    );
-}
-
-#[test]
-fn margin_row_paints_fixed_width_background() {
-    assert_eq!(
-        paint_margin_row(&[fixed_margin_spec()], true, margin_row_margins(10.0)),
-        1
-    );
 }
 
 fn transformed_box_scene(transform: &str, origin: &str) -> Scene {
@@ -2773,18 +2664,62 @@ fn background_element_origins_clips_and_rounded_images() {
     );
 }
 
+fn fixed_margin_box() -> raikiri_dom::MarginBox {
+    let mut margin_box = raikiri_dom::MarginBox::new(
+        raikiri_style::PageMarginBoxSlot::TopCenter,
+        PaintRect::new(0.0, 0.0, 100.0, 50.0),
+    );
+    margin_box.background_color = Some(CssColor {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    });
+    margin_box
+}
+
+fn margin_box_image(
+    origin: VisualBox,
+    clip: VisualBox,
+) -> Option<raikiri_dom::MarginBoxBackgroundImage> {
+    // The image layer comes from a laid-out box: the layer has no public
+    // constructor.
+    let (document, cascade) = {
+        let mut document = Document::new();
+        let html =
+            document.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let style = document.append_element(Some(html), "style", Style::default(), None::<&str>);
+        document.append_text(
+            style,
+            "@page { margin: 10px; @top-center { content: ''; \
+               background-image: url(https://example.test/red.png) } }",
+        );
+        let rules = build_rule_tree(&document);
+        let cascade = cascade(&document, &rules).expect("cascade Ok");
+        (document, cascade)
+    };
+    let laid_out = raikiri_dom::page_margin_boxes(
+        &document,
+        &cascade,
+        &cascade.page,
+        PageBox::A4,
+        raikiri_dom::MarginBoxPageContext::new(0, 1, false),
+    );
+    let mut image = laid_out.into_iter().next()?.background_image?;
+    assert_eq!(image.url, "https://example.test/red.png");
+    image.origin = origin;
+    image.clip = clip;
+    Some(image)
+}
+
 #[test]
 fn background_margin_box_origin_clip_and_unsupported_images() {
-    let initial = ComputedValues::initial();
-    let mut spec = fixed_margin_spec();
-    spec.background_image_url = Some("https://example.test/red.png".into());
-    spec.background_origin = raikiri_style::property::VisualBox::ContentBox;
-    spec.background_clip = raikiri_style::property::VisualBox::PaddingBox;
-    spec.border_left = Some((4.0, Color::from_rgba8(0, 0, 0, 255)));
-    spec.border_top = Some((4.0, Color::from_rgba8(0, 0, 0, 255)));
-    spec.border_right = Some((4.0, Color::from_rgba8(0, 0, 0, 255)));
-    spec.border_bottom = Some((4.0, Color::from_rgba8(0, 0, 0, 255)));
-    spec.padding = [2.0, 2.0, 2.0, 2.0];
+    let mut margin_box = fixed_margin_box();
+    margin_box.background_image = margin_box_image(VisualBox::ContentBox, VisualBox::PaddingBox);
+    assert!(margin_box.background_image.is_some());
+    let border = Some(raikiri_dom::MarginBoxBorder::new(4.0, CssColor::BLACK));
+    margin_box.borders = [border; 4];
+    margin_box.padding = PaintInsets::new(2.0, 2.0, 2.0, 2.0);
     struct RedPixels;
     impl raikiri_traits::ImagePixelSource for RedPixels {
         fn get_decoded(
@@ -2801,37 +2736,52 @@ fn background_margin_box_origin_clip_and_unsupported_images() {
     let source = RedPixels;
     let mut scene = Scene::new();
     let mut warnings = Vec::new();
-    paint_margin_box(
-        &mut scene,
-        &Document::new(),
-        &spec,
-        0.0,
-        0.0,
-        100.0,
-        50.0,
-        Some(&source),
-        &mut warnings,
-    );
+    paint_margin_box(&mut scene, &margin_box, Some(&source), &mut warnings);
     assert!(warnings.is_empty());
+    let fills = scene
+        .commands
+        .iter()
+        .filter(|command| matches!(command, RenderCommand::Fill(_)))
+        .count();
+    // The background color, at least one image tile and four border sides.
+    assert!(fills >= 6, "{fills} fills");
 
-    let mut unsupported = fixed_margin_spec();
-    unsupported.background_image_url = Some("https://example.test/red.png".into());
-    unsupported.background_clip = raikiri_style::property::VisualBox::Text;
+    let mut unsupported = fixed_margin_box();
+    unsupported.background_image = margin_box_image(VisualBox::BorderBox, VisualBox::Text);
     let mut unsupported_scene = Scene::new();
     let mut unsupported_warnings = Vec::new();
     paint_margin_box(
         &mut unsupported_scene,
-        &Document::new(),
         &unsupported,
-        0.0,
-        0.0,
-        100.0,
-        50.0,
         Some(&source),
         &mut unsupported_warnings,
     );
     assert!(!unsupported_warnings.is_empty());
-    let _ = initial;
+}
+
+#[test]
+fn margin_box_without_area_paints_nothing() {
+    let mut margin_box = fixed_margin_box();
+    margin_box.rect = PaintRect::new(0.0, 0.0, 0.0, 50.0);
+    let mut scene = Scene::new();
+    paint_margin_box(&mut scene, &margin_box, None, &mut Vec::new());
+    assert!(scene.commands.is_empty());
+}
+
+#[test]
+fn lime_margin_box_placeholders_fill_inside_the_box() {
+    let mut margin_box = fixed_margin_box();
+    margin_box.background_color = None;
+    margin_box.lime_background = true;
+    margin_box.lime_content_image = Some(PaintRect::new(10.0, 0.0, 50.0, 20.0));
+    let mut scene = Scene::new();
+    paint_margin_box(&mut scene, &margin_box, None, &mut Vec::new());
+    let fills = scene
+        .commands
+        .iter()
+        .filter(|command| matches!(command, RenderCommand::Fill(_)))
+        .count();
+    assert_eq!(fills, 2, "the lime background and the lime content image");
 }
 
 #[test]
@@ -3152,20 +3102,44 @@ fn engine_document() -> Document {
 }
 
 #[test]
-fn a_margin_box_width_follows_the_document_font() {
-    // "serif" resolves to Ahem in the document layer (30px for "abc" at 10px);
-    // the system serif font is nowhere near that.
-    let doc = engine_document();
-    let mut spec = fixed_margin_spec();
-    spec.content = "abc".to_owned();
-    spec.text_style.families = vec!["serif".to_owned()];
-    spec.text_style.font_size = 10.0;
-    assert_eq!(margin_box_text_width(&doc, &spec, None), 30.0);
-    assert_eq!(doc.standalone_text_calls(), 1);
-    // Vertical content width is the block advance of one column.
-    spec.text_style.writing_mode = shodo::geometry::WritingMode::VerticalRl;
-    assert_eq!(margin_box_text_width(&doc, &spec, None), 10.0);
-    assert_eq!(doc.standalone_text_calls(), 2);
+fn a_vertical_margin_box_is_drawn_down_its_column() {
+    let mut doc = engine_document();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let style = doc.append_element(Some(html), "style", Style::default(), Some("display:none"));
+    doc.append_text(
+        style,
+        "@page { margin: 40px; @top-left { content: 'abc'; font-family: Ahem; \
+           font-size: 10px; writing-mode: vertical-rl } }",
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut scene = Scene::new();
+    let mut warnings = Vec::new();
+    paint_page_margin_boxes(
+        &mut scene,
+        &doc,
+        &cascade,
+        PageBox::A4,
+        0,
+        1,
+        false,
+        None,
+        None,
+        &mut warnings,
+    );
+    assert!(warnings.is_empty());
+    let glyphs: Vec<_> = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::GlyphRun(run) => Some(run.glyphs.iter().map(|g| (g.x, g.y))),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    assert_eq!(glyphs.len(), 3);
+    assert_eq!(glyphs[0].0, glyphs[1].0);
+    assert_eq!(glyphs[1].1 - glyphs[0].1, 10.0);
 }
 
 struct NoImages;
@@ -3239,53 +3213,6 @@ fn margin_boxes_are_measured_and_drawn_by_the_engine() {
     // `standalone_text_eligible`, which shapes nothing.
     let (_, calls) = margin_box_glyph_ys();
     assert_eq!(calls, 4);
-}
-
-#[test]
-fn a_vertical_writing_margin_box_advances_glyphs_down_the_column() {
-    let doc = engine_document();
-    let mut spec = fixed_margin_spec();
-    spec.content = "abc".to_owned();
-    spec.text_style.families = vec!["Ahem".to_owned()];
-    spec.text_style.font_size = 10.0;
-    let glyphs = |spec: &MarginBoxPaintSpec| -> Vec<(f64, f64)> {
-        let mut scene = Scene::new();
-        paint_margin_box(
-            &mut scene,
-            &doc,
-            spec,
-            0.0,
-            0.0,
-            200.0,
-            40.0,
-            None,
-            &mut Vec::new(),
-        );
-        scene
-            .commands
-            .iter()
-            .filter_map(|command| match command {
-                RenderCommand::GlyphRun(run) => Some(
-                    run.glyphs
-                        .iter()
-                        .map(|g| (f64::from(g.x), f64::from(g.y)))
-                        .collect::<Vec<_>>(),
-                ),
-                _ => None,
-            })
-            .flatten()
-            .collect()
-    };
-    let horizontal = glyphs(&spec);
-    assert_eq!(doc.standalone_text_calls(), 1);
-    spec.text_style.writing_mode = shodo::geometry::WritingMode::VerticalRl;
-    let vertical = glyphs(&spec);
-    assert_eq!(doc.standalone_text_calls(), 2, "the engine drew it");
-    assert!(!vertical.is_empty());
-    assert_ne!(vertical, horizontal);
-    assert_eq!(vertical.len(), 3);
-    assert_eq!(vertical[0].0, vertical[1].0);
-    assert_eq!(vertical[1].1 - vertical[0].1, 10.0);
 }
 
 #[test]
@@ -4308,153 +4235,6 @@ fn whitespace_only_marker_content_has_no_glyph_paint() {
     assert!(scene.commands.is_empty());
 }
 
-#[test]
-fn margin_box_flow_inherits_from_root_and_page_and_allows_local_override() {
-    use shodo::geometry::{Direction, WritingMode as Mode};
-    use shodo::style::TextOrientation as Orientation;
-    for (page, local, mode, orientation, direction) in [
-        (
-            "",
-            "",
-            Mode::VerticalRl,
-            Orientation::Upright,
-            Direction::Rtl,
-        ),
-        (
-            "writing-mode:sideways-lr;text-orientation:sideways;direction:ltr;",
-            "",
-            Mode::SidewaysLr,
-            Orientation::Sideways,
-            Direction::Ltr,
-        ),
-        (
-            "writing-mode:sideways-lr;",
-            "writing-mode:vertical-lr;text-orientation:mixed;direction:ltr;",
-            Mode::VerticalLr,
-            Orientation::Mixed,
-            Direction::Ltr,
-        ),
-        (
-            "writing-mode:vertical-rl;",
-            "writing-mode:horizontal-tb;",
-            Mode::HorizontalTb,
-            Orientation::Upright,
-            Direction::Rtl,
-        ),
-        (
-            "",
-            "writing-mode:sideways-rl;",
-            Mode::SidewaysRl,
-            Orientation::Upright,
-            Direction::Rtl,
-        ),
-    ] {
-        let mut doc = engine_document();
-        let html = doc.append_element(
-            Some(0),
-            "html",
-            Style::default(),
-            Some("display:block;writing-mode:vertical-rl;text-orientation:upright;direction:rtl"),
-        );
-        let node = doc.append_element(Some(html), "style", Style::default(), Some("display:none"));
-        doc.append_text(node, format!("@page {{ {page} @top-left {{ content:'ab';font-family:Ahem;font-size:10px;text-align:end; {local} }} }}"));
-        let rules = build_rule_tree(&doc);
-        let cascade = cascade(&doc, &rules).unwrap();
-        let rule = cascade.page.margin_boxes().first().unwrap();
-        let spec = margin_box_spec(&doc, &cascade, rule, 100.0, 40.0, 0, 1, false, None).unwrap();
-        assert_eq!(spec.text_style.writing_mode, mode, "{page} {local}");
-        assert_eq!(spec.text_style.text_orientation, orientation);
-        assert_eq!(spec.text_style.direction, direction);
-        assert_eq!(spec.alignment, StandaloneAlign::End);
-        let mut scene = Scene::new();
-        paint_margin_box(
-            &mut scene,
-            &doc,
-            &spec,
-            0.0,
-            0.0,
-            100.0,
-            40.0,
-            None,
-            &mut Vec::new(),
-        );
-        let positions: Vec<_> = scene
-            .commands
-            .iter()
-            .filter_map(|cmd| match cmd {
-                RenderCommand::GlyphRun(run) => Some(run.glyphs.iter().map(|g| (g.x, g.y))),
-                _ => None,
-            })
-            .flatten()
-            .collect();
-        assert_eq!(positions.len(), 2);
-        if mode.is_vertical() {
-            assert_eq!(positions[0].0, positions[1].0);
-            assert_eq!((positions[1].1 - positions[0].1).abs(), 10.0);
-        } else {
-            assert_eq!(positions[0].1, positions[1].1);
-            assert_eq!((positions[1].0 - positions[0].0).abs(), 10.0);
-        }
-    }
-}
-
-#[test]
-fn vertical_margin_box_intrinsics_use_physical_axes() {
-    let doc = engine_document();
-    let mut spec = fixed_margin_spec();
-    spec.content = "abc\ndef".into();
-    spec.text_style = crate::standalone_text::style(10.0, "Ahem");
-    spec.text_style.writing_mode = shodo::geometry::WritingMode::VerticalRl;
-    assert_eq!(margin_box_text_width(&doc, &spec, None), 20.0);
-    assert_eq!(margin_box_intrinsic_height(&doc, &spec), 30.0);
-}
-
-#[test]
-fn vertical_auto_width_counts_columns_wrapped_to_the_content_height() {
-    let doc = engine_document();
-    let mut spec = fixed_margin_spec();
-    spec.content = "ab cd ef".into();
-    spec.text_style = crate::standalone_text::style(10.0, "Ahem");
-    spec.text_style.writing_mode = shodo::geometry::WritingMode::VerticalRl;
-    spec.height = Some(25.0);
-    assert_eq!(margin_box_text_width(&doc, &spec, None), 30.0);
-}
-
-#[test]
-fn vertical_margin_row_distributes_auto_width_using_wrapped_columns() {
-    let doc = engine_document();
-    let mut long = fixed_margin_spec();
-    long.slot = PageMarginBoxSlot::TopLeft;
-    long.content = "ab cd ef".into();
-    long.text_style = crate::standalone_text::style(10.0, "Ahem");
-    long.text_style.writing_mode = shodo::geometry::WritingMode::VerticalRl;
-    long.width = None;
-    let mut short = long.clone();
-    short.slot = PageMarginBoxSlot::TopRight;
-    short.content = "ab".into();
-    let mut scene = Scene::new();
-    paint_horizontal_margin_boxes(
-        &mut scene,
-        &doc,
-        &[long, short],
-        true,
-        220.0,
-        200.0,
-        margin_row_margins(25.0),
-        None,
-        &mut Vec::new(),
-    );
-    let widths: Vec<_> = scene
-        .commands
-        .iter()
-        .filter_map(|command| match command {
-            RenderCommand::Fill(fill) => Some(kurbo::Shape::bounding_box(&fill.shape).width()),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(widths, [150.0, 50.0]);
-}
-
 fn fragmented_flex_float_paint_fixture() -> (Document, CascadeResult, Scene, usize) {
     let mut document = Document::new();
     let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
@@ -4584,53 +4364,6 @@ fn generated_flow_height_caches_zero_for_an_unknown_node_id() {
     );
     assert_eq!(cache.get(&usize::MAX), Some(&0.0));
 }
-
-#[test]
-fn margin_box_layer_precedence_reaches_the_paint_consumer() {
-    for (sheets, expected) in [
-        (
-            [
-                "@layer a,b; @layer b{@page{@top-left{color:blue}}}",
-                "@layer a{@page{@top-left{color:red}}}",
-            ],
-            raikiri_style::CssColor {
-                r: 0,
-                g: 0,
-                b: 255,
-                a: 255,
-            },
-        ),
-        (
-            [
-                "@layer a,b; @layer a{@page{@top-left{color:red!important}}}",
-                "@layer b{@page{@top-left{color:blue!important}}} @page{@top-left{color:green!important}}",
-            ],
-            raikiri_style::CssColor {
-                r: 255,
-                g: 0,
-                b: 0,
-                a: 255,
-            },
-        ),
-    ] {
-        let mut tree = raikiri_style::RuleTree::empty();
-        for sheet in sheets {
-            tree.add_stylesheet(sheet, raikiri_style::Origin::Author);
-        }
-        let page = raikiri_style::cascade_page(
-            &tree,
-            &raikiri_style::PageContextQuery::default(),
-            raikiri_style::PageInheritance::LegacyInitialValues,
-        );
-        let rule = margin_box_rule(&page, PageMarginBoxSlot::TopLeft).unwrap();
-        assert_eq!(
-            margin_box_property(&rule, PropertyKey::Color),
-            Some(&PropertyValue::Color(expected))
-        );
-    }
-}
-
-mod css_wide_margin_tests;
 
 #[test]
 fn large_inset_corner_background_is_cropped_not_rescaled() {

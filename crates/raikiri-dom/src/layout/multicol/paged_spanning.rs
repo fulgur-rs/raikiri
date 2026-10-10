@@ -27,6 +27,9 @@ pub(in crate::layout) fn paginate_spanning_columns(
     work.charge(children.len())?;
     let mut groups = Vec::<MulticolGroup>::new();
     let mut replacements = HashMap::<usize, Vec<LayoutFragment>>::new();
+    // Fragment shifts are applied in one pass after the walk: scanning every
+    // fragment for each shifted child is quadratic in the group's children.
+    let mut shifts = HashMap::<usize, f32>::new();
     let mut start = 0;
     let mut group_index = 0;
     let mut delta = 0.0;
@@ -76,7 +79,7 @@ pub(in crate::layout) fn paginate_spanning_columns(
                 }
                 for &id in segment {
                     let Some(fragments) = per_child.remove(&id) else {
-                        shift_child(tree, id, container, delta);
+                        shift_child(tree, &mut shifts, id, delta);
                         continue;
                     };
                     let first = fragments[0].rect;
@@ -129,12 +132,12 @@ pub(in crate::layout) fn paginate_spanning_columns(
                     ..old.clone()
                 });
                 for &id in segment {
-                    shift_child(tree, id, container, delta);
+                    shift_child(tree, &mut shifts, id, delta);
                 }
             }
         }
         if let Some(id) = spanner {
-            shift_child(tree, id, container, delta);
+            shift_child(tree, &mut shifts, id, delta);
             let layout = tree.nodes[id].unrounded_layout;
             let y = owner_y + layout.location.y;
             let (_, origin, height) = page_for(y);
@@ -143,12 +146,13 @@ pub(in crate::layout) fn paginate_spanning_columns(
                 && y + layout.size.height > origin + height + 0.001
             {
                 let shift = origin + height - y;
-                shift_child(tree, id, container, shift);
+                shift_child(tree, &mut shifts, id, shift);
                 delta += shift;
             }
         }
         start = end + 1;
     }
+    apply_shifts(tree, container, &shifts);
     replace_fragments(tree, replacements, work)?;
     tree.nodes[owner].multicol_groups = groups;
     tree.nodes[owner].unrounded_layout.size.height += delta;
@@ -160,10 +164,22 @@ pub(in crate::layout) fn paginate_spanning_columns(
     Ok(delta)
 }
 
-fn shift_child(tree: &mut Document, id: usize, container: usize, delta: f32) {
+/// Move a child now and record the same move for its container fragments.
+fn shift_child(tree: &mut Document, shifts: &mut HashMap<usize, f32>, id: usize, delta: f32) {
     tree.nodes[id].unrounded_layout.location.y += delta;
+    *shifts.entry(id).or_default() += delta;
+}
+
+/// Move the recorded children's fragments in `container`, with their column
+/// clips, in one pass over the fragment tree.
+fn apply_shifts(tree: &mut Document, container: usize, shifts: &HashMap<usize, f32>) {
+    if shifts.is_empty() {
+        return;
+    }
     for fragment in &mut tree.fragment_tree.fragments {
-        if fragment.node_id == id && fragment.parent == Some(container) {
+        if fragment.parent == Some(container)
+            && let Some(&delta) = shifts.get(&fragment.node_id)
+        {
             fragment.rect.y += delta;
             if let Some(clip) = &mut fragment.fragmentainer_clip {
                 clip.y += delta;

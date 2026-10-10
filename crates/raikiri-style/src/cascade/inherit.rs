@@ -2860,7 +2860,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
                 target.position = PositionValue::Fixed;
             }
             PositionValue::Running(name) => {
-                target.running_templates.push(RunningTemplate { name });
+                target.running_templates.push(RunningTemplate::new(name));
             }
         },
         PropertyValue::TextAlign(t) => target.text_align = t,
