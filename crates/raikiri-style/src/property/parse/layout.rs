@@ -1309,7 +1309,7 @@ pub(super) fn parse_list_style_image(input: &mut Parser<'_, '_>) -> Option<Backg
         return Some(BackgroundImage::None);
     }
     let url = input.expect_url().ok()?;
-    Some(BackgroundImage::Url(url.as_ref().to_string()))
+    Some(BackgroundImage::Url(url.as_ref().into()))
 }
 
 /// Parse `list-style-type`'s `<counter-style-name> | <string>` grammar.

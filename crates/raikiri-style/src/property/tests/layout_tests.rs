@@ -133,7 +133,7 @@ fn list_style_image_parses_none_and_url() {
     assert_eq!(
         parse_entire("url(marker.png)", "list-style-image"),
         Some(PropertyValue::ListStyleImage(BackgroundImage::Url(
-            "marker.png".to_string()
+            "marker.png".into()
         )))
     );
     assert_eq!(

@@ -657,9 +657,9 @@ pub(super) fn parse_background_image(input: &mut Parser<'_, '_>) -> Option<Backg
         return Some(BackgroundImage::None);
     }
     if let Ok(gradient) = input.try_parse(parse_gradient) {
-        return Some(BackgroundImage::Gradient(gradient));
+        return Some(BackgroundImage::Gradient(Arc::new(gradient)));
     }
-    parse_url_value(input).map(BackgroundImage::Url)
+    parse_url_value(input).map(|url| BackgroundImage::Url(url.into()))
 }
 
 /// Parse `mask-image: <mask-reference>` (one layer; see the scope carving

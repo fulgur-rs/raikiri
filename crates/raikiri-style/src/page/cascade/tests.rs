@@ -832,16 +832,19 @@ fn cascade_page_font_variation_settings_canonicalizes_computed_value() {
             .declarations()
             .get(&PropertyKey::FontVariationSettings),
         Some(&PropertyValue::FontVariationSettings(
-            FontVariationSettings::Settings(vec![
-                FontVariationSetting {
-                    tag: "wdth".into(),
-                    value: 200.0,
-                },
-                FontVariationSetting {
-                    tag: "wght".into(),
-                    value: 640.0,
-                },
-            ])
+            FontVariationSettings::Settings(
+                vec![
+                    FontVariationSetting {
+                        tag: "wdth".into(),
+                        value: 200.0,
+                    },
+                    FontVariationSetting {
+                        tag: "wght".into(),
+                        value: 640.0,
+                    },
+                ]
+                .into()
+            )
         ))
     );
 }
@@ -857,16 +860,19 @@ fn cascade_page_font_feature_settings_canonicalizes_computed_value() {
     assert_eq!(
         result.declarations().get(&PropertyKey::FontFeatureSettings),
         Some(&PropertyValue::FontFeatureSettings(
-            FontFeatureSettings::Features(vec![
-                FontFeatureSetting {
-                    tag: *b"kern",
-                    value: 0,
-                },
-                FontFeatureSetting {
-                    tag: *b"liga",
-                    value: 0,
-                },
-            ])
+            FontFeatureSettings::Features(
+                vec![
+                    FontFeatureSetting {
+                        tag: *b"kern",
+                        value: 0,
+                    },
+                    FontFeatureSetting {
+                        tag: *b"liga",
+                        value: 0,
+                    },
+                ]
+                .into()
+            )
         ))
     );
 }
@@ -3870,7 +3876,7 @@ property_key_samples! {
     // doc explains why), so `Gradient(..)` wouldn't exercise anything
     // `Url` doesn't already.
     BackgroundImage => PropertyValue::BackgroundImage(BackgroundImage::Url(
-        "marble.svg".to_string(),
+        "marble.svg".into(),
     )),
     // CSS Backgrounds and Borders 3 §2.10 — shorthand fall-through
     // (`Flex`/`Gap`/`Border` above use the same "sample a shorthand with
@@ -3882,7 +3888,7 @@ property_key_samples! {
     Background => PropertyValue::Background(Box::new(BackgroundShorthand {
         color_expression: None,
         color: GREEN,
-        image: BackgroundImage::Url("tile.png".to_string()),
+        image: BackgroundImage::Url("tile.png".into()),
         repeat: BackgroundRepeat {
             x: BackgroundRepeatKeyword::Space,
             y: BackgroundRepeatKeyword::Round,
@@ -3935,7 +3941,7 @@ property_key_samples! {
     // (`multiply`, not `normal`), same rationale as `Isolation` above.
     MixBlendMode => PropertyValue::MixBlendMode(MixBlendMode::Multiply),
     // CSS Masking Level 1 §7.1 — non-initial (`Url`, not `None`).
-    MaskImage => PropertyValue::MaskImage(MaskImage::Url("mask.svg".to_string())),
+    MaskImage => PropertyValue::MaskImage(MaskImage::Url("mask.svg".into())),
     // CSS Masking Level 1 §5.1 — non-initial (`GeometryBox`, not
     // `None`).
     ClipPath => PropertyValue::ClipPath(ClipPath::GeometryBox(GeometryBox::PaddingBox)),

@@ -140,35 +140,42 @@ fn font_shorthand_serialization_rejects_unrepresentable_or_noninitial_subpropert
     );
     assert_unserializable_with!(
         font_variation_settings,
-        crate::property::FontVariationSettings::Settings(vec![
-            crate::property::FontVariationSetting {
+        crate::property::FontVariationSettings::Settings(
+            vec![crate::property::FontVariationSetting {
                 tag: "wght".into(),
                 value: 700.0,
-            }
-        ])
+            }]
+            .into()
+        )
     );
     assert_unserializable_with!(
         font_feature_settings,
-        crate::property::FontFeatureSettings::Features(vec![crate::property::FontFeatureSetting {
-            tag: *b"sinf",
-            value: 1,
-        }])
+        crate::property::FontFeatureSettings::Features(
+            vec![crate::property::FontFeatureSetting {
+                tag: *b"sinf",
+                value: 1,
+            }]
+            .into()
+        )
     );
 }
 
 #[test]
 fn font_variation_settings_serializes_the_computed_value() {
     let mut computed = ComputedValues::initial();
-    computed.font_variation_settings = crate::property::FontVariationSettings::Settings(vec![
-        crate::property::FontVariationSetting {
-            tag: "wdth".into(),
-            value: 90.0,
-        },
-        crate::property::FontVariationSetting {
-            tag: "wght".into(),
-            value: 700.0,
-        },
-    ]);
+    computed.font_variation_settings = crate::property::FontVariationSettings::Settings(
+        vec![
+            crate::property::FontVariationSetting {
+                tag: "wdth".into(),
+                value: 90.0,
+            },
+            crate::property::FontVariationSetting {
+                tag: "wght".into(),
+                value: 700.0,
+            },
+        ]
+        .into(),
+    );
     let mut ch_advance = |_: &ChFontKey| -> f32 { panic!("no ch lengths") };
 
     assert_eq!(
@@ -182,16 +189,19 @@ fn font_feature_settings_serializes_the_canonical_computed_value() {
     use crate::property::{FontFeatureSetting, FontFeatureSettings};
 
     let mut computed = ComputedValues::initial();
-    computed.font_feature_settings = FontFeatureSettings::Features(vec![
-        FontFeatureSetting {
-            tag: *b"kern",
-            value: 0,
-        },
-        FontFeatureSetting {
-            tag: *b"liga",
-            value: 0,
-        },
-    ]);
+    computed.font_feature_settings = FontFeatureSettings::Features(
+        vec![
+            FontFeatureSetting {
+                tag: *b"kern",
+                value: 0,
+            },
+            FontFeatureSetting {
+                tag: *b"liga",
+                value: 0,
+            },
+        ]
+        .into(),
+    );
     let mut ch_advance =
         |_: &ChFontKey| -> f32 { panic!("feature settings do not use ch lengths") };
 

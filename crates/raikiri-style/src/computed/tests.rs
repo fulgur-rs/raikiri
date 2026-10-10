@@ -415,14 +415,20 @@ fn non_initial_parent() -> ComputedValues {
             width: Some(FontVariantEastAsianWidth::ProportionalWidth),
             ruby: true,
         },
-        font_variation_settings: FontVariationSettings::Settings(vec![FontVariationSetting {
-            tag: SmolStr::new("wght"),
-            value: 640.0,
-        }]),
-        font_feature_settings: FontFeatureSettings::Features(vec![FontFeatureSetting {
-            tag: *b"kern",
-            value: 0,
-        }]),
+        font_variation_settings: FontVariationSettings::Settings(
+            vec![FontVariationSetting {
+                tag: SmolStr::new("wght"),
+                value: 640.0,
+            }]
+            .into(),
+        ),
+        font_feature_settings: FontFeatureSettings::Features(
+            vec![FontFeatureSetting {
+                tag: *b"kern",
+                value: 0,
+            }]
+            .into(),
+        ),
         // CSS Fonts Module Level 3 §6.6: `SmallCaps` differs from the initial
         // `Normal` (as required for every field of
         // non_initial_parent).
@@ -617,7 +623,7 @@ fn non_initial_parent() -> ComputedValues {
         // CSS Masking Level 1 §7.1/§5.1: both are non-inherited,
         // so use values different from the initial `none`
         // (as required for non_initial_parent).
-        mask_image: MaskImage::Url("mask.svg".to_string()),
+        mask_image: MaskImage::Url("mask.svg".into()),
         clip_path: ClipPath::GeometryBox(GeometryBox::PaddingBox),
         // The transform-origin fields use their initial values in this fixture.
         transform_origin: ComputedValues::initial().transform_origin,

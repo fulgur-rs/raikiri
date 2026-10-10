@@ -2172,6 +2172,8 @@ impl SpecifiedValues {
             font_palette: self.font_palette.clone(),
             font_variant_numeric: self.font_variant_numeric,
             font_variant_east_asian: self.font_variant_east_asian,
+            // An inherited list is already in computed order, which the list
+            // records, so it passes through shared without a walk over it.
             font_variation_settings: self.font_variation_settings.canonicalized(),
             font_feature_settings: self.font_feature_settings.canonicalized(),
             // The computed value is the specified keyword (see FontVariantCaps docs); with no
