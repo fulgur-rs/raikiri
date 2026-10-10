@@ -30,7 +30,9 @@
 
 use std::io::Read;
 
-use crate::{ParseOptions, RaikiriTreeSink, effective_document_base_url, parse_with_sink};
+use crate::{
+    ParseOptions, RaikiriTreeSink, UncascadedDocument, effective_document_base_url, parse_with_sink,
+};
 use raikiri_traits::{LimitKind, RenderError, RenderLimits};
 
 use raikiri_style::{CascadeOptions, PageContextQuery};
@@ -162,6 +164,16 @@ pub fn parse_html_with_limits<R: Read>(
         None => parse_with_sink(input, sink, options),
     }
     .map_err(RenderError::Parse)?;
+    assemble_document(uncascaded, options, &limits)
+}
+
+/// Check the DOM node cap on a parsed document and run its first-page
+/// cascade.
+pub(crate) fn assemble_document(
+    uncascaded: UncascadedDocument,
+    options: &ParseOptions<'_>,
+    limits: &RenderLimits,
+) -> Result<HtmlDocument, RenderError> {
     if let Some(limit) = limits.max_dom_nodes {
         let actual = uncascaded.dom.node_count() as u64;
         if actual > limit {
