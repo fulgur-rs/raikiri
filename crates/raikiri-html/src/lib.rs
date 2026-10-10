@@ -13,6 +13,7 @@
 //!   [`FontCollectionBuilder`] and passed with [`RenderResources::fonts`].
 
 mod cascade;
+mod css_urls;
 mod document;
 mod document_layout;
 mod document_parse;
