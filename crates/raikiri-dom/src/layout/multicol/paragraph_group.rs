@@ -3,6 +3,7 @@ use super::*;
 type Measurement = (usize, LayoutOutput, TaffyLayout, f32, f32, f32);
 
 pub(super) struct Group {
+    /// One entry per paragraph visited, from the chunk's first paragraph.
     pub(super) placements: Vec<Option<Placement>>,
     pub(super) height: f32,
 }
@@ -161,6 +162,8 @@ struct FlowCursor {
 }
 
 struct Chunk {
+    /// Placements start at the resumed paragraph, so a page of a long group
+    /// costs that page's paragraphs rather than the whole group's.
     group: Group,
     next: Option<FlowCursor>,
 }
@@ -180,13 +183,15 @@ fn fill_chunk(
     height: f32,
     resume: FlowCursor,
 ) -> Option<Chunk> {
-    let mut placements: Vec<Option<Placement>> = (0..paragraphs.len()).map(|_| None).collect();
+    let mut placements: Vec<Option<Placement>> = Vec::new();
     let mut column = 0usize;
     let mut cursor = 0.0f32;
     let mut pending_margin = Margins::default();
     let mut maximum = 0.0f32;
     let mut column_has_content = false;
     for (paragraph_index, paragraph) in paragraphs.iter().enumerate().skip(resume.paragraph) {
+        placements.push(None);
+        let slot = placements.len() - 1;
         let Some(paragraph) = paragraph else {
             continue;
         };
@@ -205,7 +210,7 @@ fn fill_chunk(
             // Retain both extrema across empty boxes: collapsing their summed
             // margins again would lose the negative member of the chain.
             pending_margin = adjoining.with(paragraph.margin_bottom);
-            placements[paragraph_index] = Some(Placement {
+            placements[slot] = Some(Placement {
                 first_column: column,
                 first_y: top,
                 first_height: 0.0,
@@ -279,7 +284,7 @@ fn fill_chunk(
             if start < paragraph.extents.len() {
                 column = column.checked_add(1)?;
                 if column >= context.column_count {
-                    placements[paragraph_index] = Some(Placement {
+                    placements[slot] = Some(Placement {
                         first_column,
                         first_y,
                         first_height,
@@ -300,7 +305,7 @@ fn fill_chunk(
             }
         }
         pending_margin = Margins::default().with(paragraph.margin_bottom);
-        placements[paragraph_index] = Some(Placement {
+        placements[slot] = Some(Placement {
             first_column,
             first_y,
             first_height,
@@ -382,12 +387,16 @@ pub(super) fn paginate(
         if !work.page_available(page_index)? {
             break;
         }
-        work.charge(entries.len().saturating_add(line_count))?;
         let capacity = page_origin + page_height - absolute_y;
         if !capacity.is_finite() || capacity <= 0.0 {
             return Ok(None);
         }
-        let Some(mut chunk) = fill_chunk(&paragraphs, context, capacity, resume) else {
+        // A fill visits the paragraphs from `resume` until the page's columns
+        // are full; charge what it visited. Placing lines is logarithmic in
+        // a paragraph's lines, and each placed range is charged below.
+        let filled = fill_chunk(&paragraphs, context, capacity, resume);
+        work.charge(visited(&paragraphs, resume, filled.as_ref()))?;
+        let Some(mut chunk) = filled else {
             // A short remainder can contain fewer lines than the paragraph's
             // break minima. Retry at the next complete page, without a soft
             // break inside the paragraph or a zero-progress page loop.
@@ -404,9 +413,10 @@ pub(super) fn paginate(
                 if high - low <= 0.001 {
                     break;
                 }
-                work.charge(entries.len().saturating_add(line_count))?;
                 let trial = (low + high) * 0.5;
-                if let Some(candidate) = fill_chunk(&paragraphs, context, trial, resume)
+                let filled = fill_chunk(&paragraphs, context, trial, resume);
+                work.charge(visited(&paragraphs, resume, filled.as_ref()))?;
+                if let Some(candidate) = filled
                     && candidate.next.is_none()
                 {
                     high = trial;
@@ -423,7 +433,8 @@ pub(super) fn paginate(
         };
         let group_y = absolute_y - owner_y;
         let mut occupied = std::collections::BTreeSet::new();
-        for (index, placement) in chunk.group.placements.into_iter().enumerate() {
+        for (offset, placement) in chunk.group.placements.into_iter().enumerate() {
+            let index = resume.paragraph + offset;
             let Some(placement) = placement else {
                 continue;
             };
@@ -489,4 +500,12 @@ pub(super) fn paginate(
         absolute_y = page_origin + page_height;
     }
     Ok(Some(result))
+}
+
+/// Paragraphs a fill from `resume` visited. A failed fill stops anywhere up
+/// to the end of the group, so it is charged as if it visited the rest.
+fn visited(paragraphs: &[Option<Paragraph>], resume: FlowCursor, chunk: Option<&Chunk>) -> usize {
+    chunk.map_or(paragraphs.len().saturating_sub(resume.paragraph), |chunk| {
+        chunk.group.placements.len()
+    }) + 1
 }

@@ -270,9 +270,7 @@ fn parent_fixture() -> ComputedValues {
         counter_set: Arc::new(vec![(SmolStr::new("page"), 5)]),
         content: empty_content_list(),
         string_set: empty_string_set_entries(),
-        running_templates: vec![RunningTemplate {
-            name: SmolStr::new("hdr"),
-        }],
+        running_templates: vec![RunningTemplate::new("hdr")],
         text_align: TextAlign::Center,
         hanging_punctuation: HangingPunctuation::First,
         text_autospace: TextAutospace::NoAutospace,

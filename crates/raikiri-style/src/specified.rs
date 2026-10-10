@@ -1890,6 +1890,11 @@ impl SpecifiedValues {
                 min_height_ch,
             ),
         };
+        // CSS2 §9.7: same-node coupling forces the computed `display` value to depend on the
+        // cascaded `float` value. See the `resolve_display_for_float` docs; this happens in
+        // phase 3 like overflow cross-axis coupling.
+        let display = resolve_display_for_float(self.display, self.float);
+        let mut running_templates = std::mem::take(&mut self.running_templates);
         ComputedValues {
             color: self.color,
             background_color: self
@@ -1902,10 +1907,7 @@ impl SpecifiedValues {
             font_size,
             font_weight: self.font_weight,
             line_height,
-            // CSS2 §9.7: same-node coupling forces the computed `display` value to depend on the
-            // cascaded `float` value. See the `resolve_display_for_float` docs; this happens in
-            // phase 3 like overflow cross-axis coupling.
-            display: resolve_display_for_float(self.display, self.float),
+            display: running_display(&mut running_templates, display),
             list_style_type: self.list_style_type,
             list_style_position: self.list_style_position,
             list_style_image: self.list_style_image,
@@ -1914,7 +1916,7 @@ impl SpecifiedValues {
             counter_set: self.counter_set,
             content: self.content,
             string_set: self.string_set,
-            running_templates: self.running_templates,
+            running_templates,
             position: self.position,
             // The caller has already resolved match-parent (see function docs).
             text_align,
@@ -2477,6 +2479,24 @@ pub(crate) const INITIAL_BORDER: Border = Border {
     style: BorderStyle::None,
     color: BorderColor::CurrentColor,
 };
+
+/// The computed `display` of an element with `position: running(<name>)`.
+///
+/// CSS GCPM 3 §1.2.1 <https://www.w3.org/TR/css-gcpm-3/#running-syntax>:
+/// "The element is removed from the normal flow, and is available to place
+/// in a page margin box using `element()`." The element therefore generates
+/// no box where it stands, and the display it would have had is recorded on
+/// its template for the margin-box layout. Elements without a running
+/// template keep `display`.
+fn running_display(templates: &mut [RunningTemplate], display: DisplayValue) -> DisplayValue {
+    if templates.is_empty() {
+        return display;
+    }
+    for template in templates.iter_mut() {
+        template.display = display;
+    }
+    DisplayValue::None
+}
 
 #[cfg(test)]
 mod tests;

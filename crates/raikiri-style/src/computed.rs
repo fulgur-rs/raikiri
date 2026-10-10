@@ -225,6 +225,24 @@ pub(crate) fn empty_custom_properties() -> Arc<CustomPropertyEnvironment> {
 pub struct RunningTemplate {
     /// The case-preserved smol-str name in `running(<name>)`.
     pub name: SmolStr,
+    /// The `display` the element lays out with when a page margin box
+    /// places it through `element()`.
+    ///
+    /// CSS GCPM 3 §1.2.1 removes a running element from the normal flow,
+    /// so the element's own computed [`ComputedValues::display`] is `none`
+    /// (no box in the document). The value it would otherwise have had is
+    /// kept here for the margin-box layout of the element.
+    pub display: DisplayValue,
+}
+
+impl RunningTemplate {
+    /// A running template for `running(<name>)` that lays out as a block.
+    pub fn new(name: impl Into<SmolStr>) -> Self {
+        Self {
+            name: name.into(),
+            display: DisplayValue::Block,
+        }
+    }
 }
 
 /// Font matching data captured when an authored `ch` value is computed.
@@ -468,7 +486,11 @@ pub struct ComputedValues {
     /// This field always has **zero or one entry per node**: `position` is a
     /// single-valued property, so an element can have at most one `running(name)`:
     /// - `position: static`, another keyword, or no rule → empty
-    /// - `position: running(name)` → `[RunningTemplate { name }]`
+    /// - `position: running(name)` → `[RunningTemplate { name, display }]`
+    ///
+    /// A node with an entry has a computed `display: none`: the running
+    /// element is removed from the normal flow (CSS GCPM 3 §1.2.1) and the
+    /// display it would have had moves into [`RunningTemplate::display`].
     ///
     /// The `Vec` shape follows the SmolStr wire-through pattern used by
     /// `content` / `string_set` (reuse of an established precedent). Downstream

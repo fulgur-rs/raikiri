@@ -2467,6 +2467,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                 document.nodes[parent].ifc_boxes().iter().copied().collect();
             follow_moved_ifc_block(document, child, delta);
             let mut after = false;
+            let mut moved = HashSet::new();
             let siblings = document.nodes[parent].children.clone();
             for sibling in siblings {
                 if sibling == child {
@@ -2482,6 +2483,11 @@ pub fn layout_pages_with_page_geometry_and_control(
                     continue;
                 }
                 document.nodes[sibling].unrounded_layout.location.y += delta;
+                moved.insert(sibling);
+            }
+            // Move the following siblings' fragments in one pass rather than
+            // scanning every fragment for each sibling.
+            if !moved.is_empty() {
                 let parent_fragments: HashSet<_> = document
                     .fragment_tree
                     .fragments
@@ -2491,7 +2497,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                     .map(|(id, _)| id)
                     .collect();
                 for fragment in &mut document.fragment_tree.fragments {
-                    if fragment.node_id == sibling
+                    if moved.contains(&fragment.node_id)
                         && fragment
                             .parent
                             .is_some_and(|id| parent_fragments.contains(&id))

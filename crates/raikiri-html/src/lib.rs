@@ -69,6 +69,8 @@ pub use raikiri_style::{
 // `PageCascadeResult` (see `Page::page_style`) reports declarations keyed and
 // valued by these.
 pub use raikiri_style::property::{PropertyKey, PropertyValue};
+// `Page::running_element` selects with the `element()` keyword.
+pub use raikiri_style::property::StringFetchMode;
 
 /// The computed-value types read from [`ComputedValues`] (for example through
 /// `Page::computed`), named in the computed layer so a painter can annotate

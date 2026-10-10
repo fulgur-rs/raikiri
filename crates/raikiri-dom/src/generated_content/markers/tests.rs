@@ -170,6 +170,7 @@ fn running_element_content_is_not_resolved_as_marker_text() {
     let marker = marker_content_text(
         &[ContentComponent::Element {
             name: "header".into(),
+            fetch: Default::default(),
         }],
         &[] as &[(&str, &str)],
         false,

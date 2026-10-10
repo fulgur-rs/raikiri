@@ -1724,12 +1724,27 @@ fn running_template_wired_through_cascade_from_inline_style() {
     // following the counter-* / content / string-set wire-through pattern.
     use crate::computed::RunningTemplate;
     let cv = cascade_doc("", "div", Some("position: running(header)"));
-    assert_eq!(
-        cv.running_templates,
-        vec![RunningTemplate {
-            name: SmolStr::new("header")
-        }]
+    let mut expected = RunningTemplate::new("header");
+    expected.display = DisplayValue::Inline;
+    assert_eq!(cv.running_templates, vec![expected]);
+}
+
+#[test]
+fn running_element_is_removed_from_the_flow_and_keeps_its_display_on_the_template() {
+    // CSS GCPM 3 §1.2.1: a running element is removed from the normal flow.
+    // It generates no box where it stands; the display it lays out with in
+    // a margin box moves onto its template.
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("display: flex; float: left; position: running(header)"),
     );
+    assert_eq!(cv.display, DisplayValue::None);
+    assert_eq!(cv.running_templates.len(), 1);
+    assert_eq!(cv.running_templates[0].display, DisplayValue::Flex);
+
+    let plain = cascade_doc("", "div", Some("display: flex; position: static"));
+    assert_eq!(plain.display, DisplayValue::Flex);
 }
 
 #[test]
@@ -5973,24 +5988,20 @@ fn bolder_lighter_resolve_against_unrounded_fractional_parent_weight() {
 fn multiple_elements_each_carry_own_running_template() {
     // Multiple elements each have a distinct running(name): each node stores
     // its own seed (per-document concatenation belongs downstream).
-    use crate::computed::RunningTemplate;
     let mut doc = TestDoc::new();
     let h = doc.push_element(0, "header", Some("position: running(hdr)"));
     let f = doc.push_element(0, "footer", Some("position: running(ftr)"));
     let tree = build_rule_tree(&doc);
     let r = cascade(&doc, &tree).expect("cascade Ok");
-    assert_eq!(
-        r.computed[h].running_templates,
-        vec![RunningTemplate {
-            name: SmolStr::new("hdr")
-        }]
-    );
-    assert_eq!(
-        r.computed[f].running_templates,
-        vec![RunningTemplate {
-            name: SmolStr::new("ftr")
-        }]
-    );
+    let names = |idx: usize| {
+        r.computed[idx]
+            .running_templates
+            .iter()
+            .map(|template| template.name.clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(names(h), vec![SmolStr::new("hdr")]);
+    assert_eq!(names(f), vec![SmolStr::new("ftr")]);
 }
 
 #[test]

@@ -1,4 +1,5 @@
 use super::{DomView, Fragment, MarginBox, OverflowClip, PaintEvent, PositionedGlyphRun};
+use raikiri_style::property::StringFetchMode;
 use raikiri_style::{ComputedValues, PageCascadeResult};
 use raikiri_traits::{NodeId, PaintInsets, PaintRect};
 
@@ -52,6 +53,9 @@ pub struct Page<'a> {
     pub(super) page_count: u32,
     /// The `@page` cascade of the left page paired with this right page.
     pub(super) paired_style: Option<&'a PageCascadeResult>,
+    /// The document's running elements; `None` on a page that is itself a
+    /// laid-out running element.
+    pub(super) running: Option<&'a super::running::RunningIndex>,
 }
 
 /// Resolved raster pixels and their complete object placement on a page.
@@ -505,6 +509,24 @@ impl<'a> Page<'a> {
             self.geometry.page_box,
             self.slice.content_origin_y,
         )
+    }
+
+    /// The running element (`position: running(<name>)`) that a page margin
+    /// box with `content: element(<name>, <fetch>)` shows on this page, per
+    /// CSS GCPM 3 §1.2.2 <https://www.w3.org/TR/css-gcpm-3/#element-syntax>.
+    ///
+    /// A running element is assigned on the page of the rendered content
+    /// that follows it in document order. `first` (the default keyword) and
+    /// `last` take the first or last element assigned on this page, `start`
+    /// the first one only when no content of this page comes before it, and
+    /// `first-except` none on a page with an assignment; otherwise each
+    /// falls back to the last element assigned on an earlier page. `None`
+    /// when no element of that name applies yet.
+    ///
+    /// Lay the element out with
+    /// [`DocumentLayout::layout_running_element`](super::DocumentLayout::layout_running_element).
+    pub fn running_element(&self, name: &str, fetch: StringFetchMode) -> Option<NodeId> {
+        self.running?.select(name, fetch, self.slice.page_index)
     }
 
     /// Structure and attributes of the document.
