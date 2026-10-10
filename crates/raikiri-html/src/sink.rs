@@ -94,10 +94,6 @@ impl RaikiriTreeSink {
 
     /// The document parsed so far, finished as [`TreeSink::finish`] would
     /// finish it, while the parser keeps its own state.
-    #[cfg_attr(
-        not(test),
-        allow(dead_code, reason = "the progressive driver is not wired in yet")
-    )]
     pub(crate) fn snapshot(&self) -> UncascadedDocument {
         self.flush_text();
         assemble_document(
@@ -1013,10 +1009,6 @@ fn assemble_document(
 /// this is the only way to see which elements may still receive children.
 /// The list over-approximates the stack of open elements; see
 /// `streaming::frontier::open_elements` for how it is narrowed.
-#[cfg_attr(
-    not(test),
-    allow(dead_code, reason = "the progressive driver is not wired in yet")
-)]
 pub(crate) fn traced_handles(builder: &TreeBuilder<usize, RaikiriTreeSink>) -> Vec<usize> {
     struct Collect(RefCell<Vec<usize>>);
     impl Tracer for Collect {

@@ -286,3 +286,171 @@ fn running_elements_are_laid_out_from_the_streamed_page() {
     ));
     assert!(running.0.is_some_and(|height| height > 0.0));
 }
+
+/// Per page, its index and the nodes of its fragments.
+type PageLog = Vec<(u32, Vec<NodeId>)>;
+
+/// Pages a sink saw, shared with the test while the stream owns the sink.
+#[derive(Clone, Default)]
+struct Shared(std::rc::Rc<std::cell::RefCell<PageLog>>);
+
+impl PageSink for Shared {
+    type Output = ();
+
+    fn page(
+        &mut self,
+        page: StreamPage<'_>,
+        _events: Vec<ConsumerPropertyEvent>,
+    ) -> std::io::Result<()> {
+        let nodes = page.page().fragments().map(|f| f.node()).collect();
+        self.0.borrow_mut().push((page.index(), nodes));
+        Ok(())
+    }
+
+    fn finish(self, _summary: StreamSummary) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Stream `html` in `chunk`-byte pieces with a checkpoint every
+/// `checkpoint` bytes. Returns all pages and how many arrived before
+/// `finish`.
+fn stream_progressively(html: &str, chunk: usize, checkpoint: usize) -> (PageLog, usize) {
+    let resources = RenderResources::new();
+    let shared = Shared::default();
+    let mut stream = StreamingLayout::new(
+        &resources,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        shared.clone(),
+    )
+    .checkpoint_bytes(checkpoint);
+    for piece in html.as_bytes().chunks(chunk) {
+        stream.feed(piece).expect("feed");
+    }
+    let early = shared.0.borrow().len();
+    completed_unit(stream.finish().expect("finish"));
+    let pages = shared.0.borrow().clone();
+    (pages, early)
+}
+
+fn completed_unit(status: StreamStatus<()>) {
+    assert!(matches!(status, StreamStatus::Completed(())), "aborted");
+}
+
+/// A long document mixing the constructs the frontier treats specially.
+fn long_document() -> String {
+    let mut html = String::from(
+        "<!doctype html><style>h2 { break-after: avoid } .keep { break-inside: avoid }</style><body>",
+    );
+    for section in 0..12 {
+        html.push_str(&format!("<h2>Section {section}</h2>"));
+        for paragraph in 0..6 {
+            html.push_str("<p>");
+            for word in 0..60 {
+                html.push_str(&format!("word{section}x{paragraph}x{word} "));
+            }
+            html.push_str("<b>bold</b> tail</p>\n");
+        }
+        match section % 4 {
+            0 => html.push_str(
+                "<table><tr><td>a</td><td>b</td></tr><tr><td>long cell text</td><td>c</td></tr></table>",
+            ),
+            1 => html.push_str(
+                "<div style='display:flex'><div>one</div><div>two</div></div>",
+            ),
+            2 => html.push_str("<div class=keep><p>kept</p><p>together</p></div>"),
+            _ => html.push_str("<div><div><p>nested</p></div> trailing text</div>"),
+        }
+    }
+    html.push_str("</body>");
+    html
+}
+
+#[test]
+fn progressive_pages_match_batch_layout() {
+    let html = long_document();
+    let expected = batch_pages(&html);
+    assert!(expected.len() > 8, "the fixture spans many pages");
+    for (chunk, checkpoint) in [(2048, 1), (300, 4096), (5000, 1)] {
+        let (pages, early) = stream_progressively(&html, chunk, checkpoint);
+        assert_eq!(pages, expected, "chunk {chunk}, checkpoint {checkpoint}");
+        assert!(
+            early >= expected.len() / 2,
+            "chunk {chunk}, checkpoint {checkpoint}: only {early} pages before finish"
+        );
+    }
+}
+
+#[test]
+fn forward_dependent_selectors_hold_pages_until_finish() {
+    let html = long_document().replace("<style>", "<style>p:last-child { color: red } ");
+    let expected = batch_pages(&html);
+    let (pages, early) = stream_progressively(&html, 512, 1);
+    assert_eq!(pages, expected);
+    assert_eq!(early, 0);
+}
+
+#[test]
+fn an_open_table_holds_its_pages() {
+    let mut html = String::from("<table>");
+    for row in 0..400 {
+        html.push_str(&format!("<tr><td>row {row}</td><td>cell</td></tr>"));
+    }
+    let open_part = html.len();
+    html.push_str("</table><p>after</p>");
+    let expected = batch_pages(&html);
+    assert!(expected.len() > 2);
+
+    let resources = RenderResources::new();
+    let shared = Shared::default();
+    let mut stream = StreamingLayout::new(
+        &resources,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        shared.clone(),
+    )
+    .checkpoint_bytes(1);
+    stream.feed(&html.as_bytes()[..open_part]).expect("feed");
+    assert!(
+        shared.0.borrow().is_empty(),
+        "nothing is final in an open table"
+    );
+    stream.feed(&html.as_bytes()[open_part..]).expect("feed");
+    assert!(
+        !shared.0.borrow().is_empty(),
+        "closing the table finalises pages"
+    );
+    completed_unit(stream.finish().expect("finish"));
+    assert_eq!(*shared.0.borrow(), expected);
+}
+
+#[test]
+fn progressive_pages_match_batch_layout_with_page_rules_and_floats() {
+    let mut html = String::from(
+        "<style>@page :first { margin: 2in } h1 { position: running(title) } \
+         .chapter { break-before: page } .side { float: right; width: 30% }</style>\
+         <h1>Running title</h1>",
+    );
+    for chapter in 0..5 {
+        html.push_str("<section class=chapter>");
+        html.push_str(&format!(
+            "<h2>Chapter {chapter}</h2><div class=side>aside {chapter}</div>"
+        ));
+        for paragraph in 0..8 {
+            html.push_str("<p>");
+            for word in 0..40 {
+                html.push_str(&format!("w{chapter}x{paragraph}x{word} "));
+            }
+            html.push_str("</p>");
+        }
+        html.push_str("</section>");
+    }
+    let expected = batch_pages(&html);
+    assert!(expected.len() > 5);
+    for (chunk, checkpoint) in [(1500, 1), (700, 2000)] {
+        let (pages, early) = stream_progressively(&html, chunk, checkpoint);
+        assert_eq!(pages, expected, "chunk {chunk}, checkpoint {checkpoint}");
+        assert!(early > 0, "chunk {chunk}, checkpoint {checkpoint}");
+    }
+}
