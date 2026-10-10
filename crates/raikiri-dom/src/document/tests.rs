@@ -4,6 +4,7 @@ mod attach_child_fragment_tests;
 mod canvas_tests;
 mod element_attribute_mutation_tests;
 mod element_attribute_ns_tests;
+mod extract_nodes_tests;
 mod find_body_flat_tree_tests;
 mod insert_child_before_fragment_tests;
 mod layout_fragment_limit_tests;
