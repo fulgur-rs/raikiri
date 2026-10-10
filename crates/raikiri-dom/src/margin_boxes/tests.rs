@@ -602,6 +602,30 @@ fn a_deferred_page_count_in_a_linear_style_is_shown_in_decimal() {
 }
 
 #[test]
+fn a_deferred_slot_formats_through_its_fallback_chain() {
+    let (doc, cascade) = page_cascade_fixture(
+        "@counter-style few { system: cyclic; symbols: 'a'; range: 1 2; fallback: ticks } \
+         @counter-style ticks { system: symbolic; symbols: 'x' } \
+         @counter-style unrelated { system: cyclic; symbols: 'u' } \
+         @page { margin: 40px; \
+           @top-left { content: counter(pages, few); font-family: Ahem; font-size: 10px } }",
+    );
+    let boxes = page_margin_boxes(
+        &doc,
+        &cascade,
+        &cascade.page,
+        small_page(),
+        MarginBoxPageContext::new(0, 9, false).with_deferred_page_count(),
+    );
+    let [head] = boxes.as_slice() else {
+        panic!("one box: {boxes:?}");
+    };
+    let slot = &head.deferred[0];
+    assert_eq!(slot.text(2), "a");
+    assert_eq!(slot.text(3), "xxx");
+}
+
+#[test]
 fn a_known_page_count_has_no_deferred_slots() {
     let (doc, cascade) = page_cascade_fixture(
         "@page { margin: 40px; @top-left { content: counter(pages); font-family: Ahem } }",

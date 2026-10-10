@@ -292,6 +292,10 @@ impl MarginBox {
     /// [`Self::deferred`], in run and glyph order. A consumer that writes
     /// the page before the page count is known draws these glyphs where it
     /// can replace them, then writes [`DeferredSlot::text`] in their place.
+    ///
+    /// A box in a vertical writing mode has no glyph runs and so no deferred
+    /// glyphs; redraw such a box from margin boxes laid out with the real
+    /// page count instead.
     pub fn deferred_glyphs(&self) -> Vec<DeferredGlyph> {
         if self.deferred.is_empty() {
             return Vec::new();
@@ -881,7 +885,12 @@ fn margin_box_content(
     let quotes = inherited_margin_box_quotes(document, cascade, page, rule);
     let (text, deferred) =
         resolved_margin_content(components, document, cascade, page, rule, context, &quotes);
-    let registry = (!deferred.is_empty()).then(|| Arc::new(cascade.counter_styles.clone()));
+    let registry = (!deferred.is_empty()).then(|| {
+        Arc::new(fallback_chains(
+            &cascade.counter_styles,
+            deferred.iter().map(|(_, style)| style),
+        ))
+    });
     let deferred = deferred
         .into_iter()
         .map(|(range, style)| DeferredSlot {
@@ -892,6 +901,33 @@ fn margin_box_content(
         })
         .collect();
     Some((text, deferred))
+}
+
+/// The rules of `registry` that formatting in `styles` can reach: each named
+/// style and its `fallback` chain. A deferred slot keeps these rather than a
+/// copy of every rule the document defines.
+fn fallback_chains<'s>(
+    registry: &CounterStyleRegistry,
+    styles: impl Iterator<Item = &'s CounterStyle>,
+) -> CounterStyleRegistry {
+    let mut chains = CounterStyleRegistry::new();
+    for style in styles {
+        let CounterStyle::Named(name) = style else {
+            continue;
+        };
+        let mut next = Some(name.clone());
+        while let Some(name) = next.take() {
+            if chains.get(&name).is_some() {
+                break;
+            }
+            let Some(rule) = registry.get(&name) else {
+                break;
+            };
+            next = Some(rule.fallback.clone());
+            chains.insert(rule.clone());
+        }
+    }
+    chains
 }
 
 fn margin_box_border_side(
