@@ -381,8 +381,8 @@ impl<'a> Page<'a> {
     /// A line belongs to the page that holds its center, the same rule as
     /// [`Fragment::line_range`], so every line appears on exactly one page;
     /// a paragraph repeated on every page (inside `position: fixed`) appears
-    /// on each. Propagated text decorations are included; shadows are not
-    /// included yet. Margin box text comes from [`Self::margin_boxes`].
+    /// on each. Propagated text decorations and used text shadows are
+    /// included. Margin box text comes from [`Self::margin_boxes`].
     /// Text list markers are included, including standalone markers of
     /// empty items. A standalone marker belongs to its item's first
     /// principal fragment and is not repeated on continuation pages. Missing

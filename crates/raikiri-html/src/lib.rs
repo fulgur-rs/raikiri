@@ -41,7 +41,7 @@ pub use document_layout::{
     GeneratedBox, GeneratedKind, Glyph, InlineSvg, LayoutOptions, LayoutStatus, Link, MarginBox,
     MarginBoxBackgroundImage, MarginBoxBorder, MarginBoxText, OverflowClip, Page, PageGeometry,
     PageMode, PaintEvent, PositionedGlyphRun, RasterImage, RepeatKind, RunSource, Synthesis, Tag,
-    TextLineId, layout,
+    TextLineId, TextShadow, layout,
 };
 pub use document_parse::{parse_html, parse_html_with_limits};
 pub use font_collection::{
