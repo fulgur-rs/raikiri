@@ -1,0 +1,120 @@
+name: WPT model judge
+
+# Judges WPT tests that have no reference file (mostly CSS2 .xht) by sending
+# each rendering, its meta assert, and its "Test passes if" text to a Claude
+# model. Manual only, so every run's API spend is an explicit decision.
+# Requires the ANTHROPIC_API_KEY repository secret.
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: Maximum number of tests to judge (cached verdicts are free)
+        default: "200"
+      path_prefix:
+        description: Only tests below this WPT directory
+        default: css/CSS2
+      model:
+        description: Claude model id
+        default: claude-haiku-5-5
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  judge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        # Same toolchain resolution as ci.yml (rust-toolchain.toml).
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Install system dependencies
+        # fontconfig headers are needed to build shodo's system-fonts feature.
+        run: |
+          sudo apt-get -o Acquire::Retries=2 update
+          sudo apt-get install -y libfontconfig1-dev pkg-config
+
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Fetch WPT at the pinned revision
+        run: scripts/wpt/fetch.sh
+
+      - name: Build the review renderer
+        run: cargo build --release --locked -p raikiri-wpt --bin prepare-meta-assert-review
+
+      - name: List tests without a reference
+        env:
+          PATH_PREFIX: ${{ inputs.path_prefix }}
+          LIMIT: ${{ inputs.limit }}
+        run: |
+          python3 -I - <<'EOF'
+          import os, re
+          from pathlib import Path
+          root = Path("target/wpt").resolve()
+          prefix = os.environ["PATH_PREFIX"].strip("/")
+          limit = int(os.environ["LIMIT"])
+          link = re.compile(r'rel\s*=\s*["\'](?:match|mismatch)["\']', re.I)
+          skip = re.compile(r"(^|/)(support|reference)/|-ref\b|-notref\b")
+          ids = []
+          for path in sorted((root / prefix).rglob("*")):
+              if path.suffix not in (".xht", ".xhtml", ".html", ".htm"):
+                  continue
+              test_id = path.relative_to(root).as_posix()
+              if skip.search(test_id):
+                  continue
+              source = path.read_text(errors="replace")
+              if link.search(source) or "<script" in source.lower():
+                  continue
+              if not re.search(r"passes? if", source, re.I):
+                  continue
+              ids.append(test_id)
+          print(f"{len(ids)} candidates, judging up to {limit}")
+          Path("judge-tests.txt").write_text("\n".join(ids[:limit]) + "\n")
+          EOF
+
+      - name: Render
+        run: |
+          ./target/release/prepare-meta-assert-review \
+            --wpt-root target/wpt \
+            --tests judge-tests.txt \
+            --output target/meta-assert-review
+
+      - name: Restore verdict cache
+        # Verdicts are keyed by model, prompt, and PNG hash, so only changed
+        # renderings cost anything on the next run.
+        uses: actions/cache@v4
+        with:
+          path: target/meta-assert-review/judge-cache
+          key: wpt-judge-${{ inputs.model }}-${{ github.run_id }}
+          restore-keys: wpt-judge-${{ inputs.model }}-
+
+      - name: Judge
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          MODEL: ${{ inputs.model }}
+        run: |
+          python3 -m pip install --quiet anthropic
+          python3 scripts/wpt/haiku-judge-meta-assert.py run \
+            --review-dir target/meta-assert-review \
+            --model "$MODEL" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload review
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wpt-judge-review
+          path: |
+            target/meta-assert-review/manifest.jsonl
+            target/meta-assert-review/reviews.jsonl
+            target/meta-assert-review/screenshots/
