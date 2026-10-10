@@ -2592,7 +2592,6 @@ name = "raikiri-cascade-diff"
 version = "0.1.0"
 dependencies = [
  "bytes",
- "cssparser",
  "raikiri-html",
  "raikiri-style",
  "raikiri-traits",

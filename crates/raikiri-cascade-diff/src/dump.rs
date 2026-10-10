@@ -18,7 +18,6 @@ use std::collections::BTreeSet;
 use std::fmt::{Debug, Write as _};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use cssparser::{ParseError, Parser, ParserInput, Token};
 use raikiri_style::{
     Atom, CascadeResult, ComputedValues, CssColor, FirstLineStyles, MediaContext,
     PageCascadeResult, PageContextQuery, PageInheritance, PageMarginBoxSlot, PseudoElem, RuleTree,
@@ -375,53 +374,78 @@ pub(crate) fn first_line_styles(
 }
 
 /// Every name in `sources` that could be a custom property, sorted: each
-/// `--` followed by name code points, and each identifier a source
-/// tokenizes into as CSS that starts with `--`, which finds an escaped name
-/// by its value. A name no node defines prints nothing.
+/// run of name code points and escapes that decodes to `--` and more. CSS
+/// tokenizes an identifier this way wherever it is nested, so an escaped
+/// name is found by its value at any depth. A name no node defines prints
+/// nothing.
 pub(crate) fn custom_property_names<'a>(sources: impl IntoIterator<Item = &'a str>) -> Vec<String> {
     let is_name = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_' || !c.is_ascii();
     let mut names = BTreeSet::new();
     for source in sources {
+        let chars: Vec<char> = source.chars().collect();
         let mut position = 0;
-        while let Some(offset) = source[position..].find("--") {
-            let start = position + offset;
-            let tail = &source[start + 2..];
-            let length = tail.find(|c: char| !is_name(c)).unwrap_or(tail.len());
-            if length > 0 {
-                names.insert(source[start..start + 2 + length].to_owned());
+        while position < chars.len() {
+            let mut name = String::new();
+            while let Some(&c) = chars.get(position) {
+                if is_name(c) {
+                    name.push(c);
+                    position += 1;
+                } else if c == '\\'
+                    && chars
+                        .get(position + 1)
+                        .is_some_and(|&next| !is_newline(next))
+                {
+                    position += 1;
+                    name.push(escaped_code_point(&chars, &mut position));
+                } else {
+                    break;
+                }
             }
-            position = start + 2 + length;
+            if name.is_empty() {
+                position += 1;
+            } else if name.len() > 2 && name.starts_with("--") {
+                // `--` alone is reserved, not a custom property name.
+                names.insert(name);
+            }
         }
-        let mut input = ParserInput::new(source);
-        tokenized_names(&mut Parser::new(&mut input), 0, &mut names);
     }
     names.into_iter().collect()
 }
 
-/// Adds the identifiers `input` tokenizes into that are custom property
-/// names, in blocks nested up to a fixed depth.
-fn tokenized_names(input: &mut Parser<'_, '_>, depth: usize, names: &mut BTreeSet<String>) {
-    const MAX_DEPTH: usize = 64;
-    while let Ok(token) = input.next_including_whitespace_and_comments().cloned() {
-        match token {
-            // `--` alone is reserved, not a custom property name.
-            Token::Ident(name) if name.len() > 2 && name.starts_with("--") => {
-                names.insert(name.to_string());
-            }
-            Token::Function(_)
-            | Token::ParenthesisBlock
-            | Token::SquareBracketBlock
-            | Token::CurlyBracketBlock
-                if depth < MAX_DEPTH =>
-            {
-                let _ = input.parse_nested_block(|nested| {
-                    tokenized_names(nested, depth + 1, names);
-                    Ok::<_, ParseError<'_, ()>>(())
-                });
-            }
-            _ => {}
+fn is_newline(c: char) -> bool {
+    matches!(c, '\n' | '\r' | '\x0c')
+}
+
+/// Decodes the escape whose backslash precedes `chars[*position]`, as CSS
+/// Syntax 3 consumes an escaped code point: up to six hex digits and one
+/// whitespace after them, or else the code point itself.
+fn escaped_code_point(chars: &[char], position: &mut usize) -> char {
+    let start = *position;
+    let mut value = 0;
+    while let Some(digit) = chars.get(*position).and_then(|c| c.to_digit(16)) {
+        if *position - start == 6 {
+            break;
         }
+        value = value * 16 + digit;
+        *position += 1;
     }
+    if *position == start {
+        *position += 1;
+        return chars[start];
+    }
+    match chars.get(*position) {
+        Some('\r') => {
+            *position += 1;
+            if chars.get(*position) == Some(&'\n') {
+                *position += 1;
+            }
+        }
+        Some(' ' | '\t' | '\n' | '\x0c') => *position += 1,
+        _ => {}
+    }
+    char::from_u32(value)
+        .filter(|&c| c != '\0')
+        .unwrap_or(char::REPLACEMENT_CHARACTER)
 }
 
 /// 64-bit FNV-1a, a stable hash for comparing dumps across processes.

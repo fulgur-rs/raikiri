@@ -197,14 +197,26 @@ fn custom_property_names_are_scanned_from_the_source() {
         vec!["--a-b_c", "--b", "--é-"]
     );
     // An escaped name is found by its value, wherever the escapes are, in
-    // any of the sources.
+    // any of the sources: a hex escape takes one whitespace after it, and a
+    // CRLF counts as one.
     assert_eq!(
-        custom_property_names(["--\\66 oo: 1", "p { \\2d\\2d bar: 2 }"]),
-        vec!["--bar", "--foo"]
+        custom_property_names([
+            "--\\66 oo: 1",
+            "p { \\2d\\2d bar: 2 }",
+            "--\\62\r\naz: 3; --\\-q: 4"
+        ]),
+        vec!["---q", "--bar", "--baz", "--foo"]
     );
-    // Blocks nested too deeply are still scanned for names as text.
-    let deep = format!("{}--deep: 1{}", "(".repeat(100_000), ")".repeat(100_000));
+    // However deeply it is nested.
+    let deep = format!("{}--\\64 eep: 1{}", "{".repeat(200), "}".repeat(200));
     assert_eq!(custom_property_names([deep.as_str()]), vec!["--deep"]);
+    // A NUL, a surrogate or a code point past Unicode decodes to U+FFFD, a
+    // backslash before a newline escapes nothing, and a hex escape stops
+    // after six digits.
+    assert_eq!(
+        custom_property_names(["--a\\0 ; --b\\d800 ; --c\\110000 ; --d\\\n ; --e\\0000411"]),
+        vec!["--a\u{fffd}", "--b\u{fffd}", "--c\u{fffd}", "--d", "--eA1"]
+    );
 }
 
 #[test]

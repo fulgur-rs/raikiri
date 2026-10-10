@@ -137,7 +137,6 @@ raikiri-style = { path = "$tree/crates/raikiri-style" }
 raikiri-html = { path = "$tree/crates/raikiri-html" }
 raikiri-traits = { path = "$tree/crates/raikiri-traits" }
 bytes = "1"
-cssparser = "0.37"
 url = "2.5"
 
 [profile.release]
