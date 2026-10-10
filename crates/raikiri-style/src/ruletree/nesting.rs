@@ -8,18 +8,25 @@ use cssparser::{DeclarationParser, RuleBodyItemParser, RuleBodyParser, ToCss};
 /// Preserve each declaration run's selectors and position among child rules.
 /// Direct declarations keep the parent's pseudo-elements and per-branch
 /// specificity, as required by CSS Nesting 1's nested declarations rule.
+///
+/// Each of `selectors` counts as `weight` selectors against the rule tree's
+/// limits: 1 for a top-level rule, and for a nested rule the count of the
+/// list it nests in, whose selectors it holds.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn parse_style_body(
     input: &mut Parser<'_, '_>,
     selectors: SelectorList<RaikiriSelectorImpl>,
+    weight: usize,
     source: &str,
     depth: usize,
     namespaces: &NamespaceMap,
     supports_context: &SupportsContext<'_>,
     budget: &mut ParseBudget,
 ) -> Vec<GroupItem> {
+    let count = selectors.slice().len().saturating_mul(weight);
     parse_body(
         input,
-        BodyParent::Style(selectors),
+        BodyParent::Style(selectors, count),
         source,
         depth,
         namespaces,
@@ -50,17 +57,45 @@ pub(super) fn parse_highlight_body(
 
 #[derive(Clone)]
 enum BodyParent {
-    Style(SelectorList<RaikiriSelectorImpl>),
+    /// A style rule's selectors, and how many selectors they count as.
+    Style(SelectorList<RaikiriSelectorImpl>, usize),
     Highlight(Arc<str>),
 }
 
 impl BodyParent {
-    /// The selectors every rule made from this body holds.
+    /// The selectors every rule made from this body counts as.
     fn selector_count(&self) -> usize {
         match self {
-            Self::Style(selectors) => selectors.slice().len(),
+            Self::Style(_, count) => *count,
             Self::Highlight(_) => 0,
         }
+    }
+}
+
+/// The parent list placed in the rules nested in a body: the body's
+/// selectors without their pseudo-element branches, which are invalid in the
+/// implicit `:is()` parent and contribute neither matches nor specificity to
+/// a child selector.
+fn nesting_parent_of(parent: &BodyParent) -> SelectorList<RaikiriSelectorImpl> {
+    let BodyParent::Style(parent_selectors, _) = parent else {
+        // An unrepresentable highlight parent cannot match, but independent
+        // branches of a forgiving child selector remain valid.
+        return SelectorList::from_iter(std::iter::empty());
+    };
+    if parent_selectors
+        .slice()
+        .iter()
+        .all(|s| !s.has_pseudo_element())
+    {
+        parent_selectors.clone()
+    } else {
+        let parents: Vec<_> = parent_selectors
+            .slice()
+            .iter()
+            .filter(|s| !s.has_pseudo_element())
+            .cloned()
+            .collect();
+        SelectorList::from_iter(parents.into_iter())
     }
 }
 
@@ -136,7 +171,7 @@ fn parse_body(
 
 fn body_item(parent: &BodyParent, declarations: Vec<Declaration>) -> GroupItem {
     match parent {
-        BodyParent::Style(selectors) => GroupItem::Style(StyleRule {
+        BodyParent::Style(selectors, _) => GroupItem::Style(StyleRule {
             selectors: selectors.clone(),
             declarations,
             source_order: 0,
@@ -265,7 +300,10 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleBodyParser<'_> {
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::Prelude, cssparser::ParseError<'i, ()>> {
         let start = input.state();
-        let count = check_selector_token_depth(input, 0)?;
+        // Each nested selector holds the parent list, so it counts as that
+        // list's weighted size; the work of placing the parent in it grows
+        // the same way.
+        let count = check_selector_token_depth(input, 0)?.saturating_mul(self.nested_weight());
         // A prelude without a block, such as a declaration cssparser retries
         // as a rule, is not parsed. Nor is a rule when no rule is left, or a
         // list of more selectors than the tree may still retain.
@@ -282,33 +320,7 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleBodyParser<'_> {
             ParseRelative::ForNesting,
         )
         .map_err(|_| input.new_custom_error(()))?;
-        // Pseudo-element branches are invalid in the implicit :is() parent:
-        // they contribute neither matches nor specificity to a child selector.
-        let nesting_parent = self.nesting_parent.get_or_insert_with(|| {
-            let BodyParent::Style(parent_selectors) = self.parent else {
-                // An unrepresentable highlight parent cannot match, but independent
-                // branches of a forgiving child selector remain valid.
-                return SelectorList::from_iter(std::iter::empty());
-            };
-            if parent_selectors
-                .slice()
-                .iter()
-                .all(|s| !s.has_pseudo_element())
-            {
-                parent_selectors.clone()
-            } else {
-                let parents: Vec<_> = parent_selectors
-                    .slice()
-                    .iter()
-                    .filter(|s| !s.has_pseudo_element())
-                    .cloned()
-                    .collect();
-                SelectorList::from_iter(parents.into_iter())
-            }
-        });
-        let parent_cost = *self.parent_cost.get_or_insert_with(|| {
-            selector_list_cost(nesting_parent, None).unwrap_or(MAX_SELECTOR_WORK + 1)
-        });
+        let (nesting_parent, parent_cost) = self.nesting_parent();
         if selector_list_cost(&selectors, Some(parent_cost)).is_none() {
             return Err(input.new_custom_error(()));
         }
@@ -346,9 +358,11 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleBodyParser<'_> {
         _start: &cssparser::ParserState,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::QualifiedRule, cssparser::ParseError<'i, ()>> {
+        let weight = self.nested_weight();
         let items = parse_style_body(
             input,
             selectors,
+            weight,
             self.source,
             self.depth + 1,
             self.namespaces,
@@ -359,6 +373,27 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleBodyParser<'_> {
             return Err(input.new_custom_error(()));
         }
         Ok(BodyItem::Rule(GroupItem::Sequence(items)))
+    }
+}
+
+impl StyleBodyParser<'_> {
+    /// The parent list placed in this body's nested rules, and its weighted
+    /// size (see `selector_list_cost`), built on first use.
+    fn nesting_parent(&mut self) -> (&SelectorList<RaikiriSelectorImpl>, usize) {
+        let parent = self.parent;
+        let nesting_parent = self
+            .nesting_parent
+            .get_or_insert_with(|| nesting_parent_of(parent));
+        let cost = *self.parent_cost.get_or_insert_with(|| {
+            selector_list_cost(nesting_parent, None).unwrap_or(MAX_SELECTOR_WORK + 1)
+        });
+        (nesting_parent, cost)
+    }
+
+    /// What each selector of a rule nested in this body counts as: the
+    /// weighted size of the parent list it holds, and at least one.
+    fn nested_weight(&mut self) -> usize {
+        self.nesting_parent().1.max(1)
     }
 }
 

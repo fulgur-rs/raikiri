@@ -1944,6 +1944,7 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for GroupRuleParser<'_, '_> {
             QualifiedPrelude::Style(selectors) => GroupItem::Sequence(parse_style_body(
                 input,
                 selectors,
+                1,
                 self.source,
                 self.depth + 1,
                 self.namespaces,
@@ -2729,6 +2730,7 @@ impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for StyleRuleParser<'s, 'b> 
             QualifiedPrelude::Style(selectors) => ParsedRule::Style(parse_style_body(
                 input,
                 selectors,
+                1,
                 self.source,
                 0,
                 self.namespaces,

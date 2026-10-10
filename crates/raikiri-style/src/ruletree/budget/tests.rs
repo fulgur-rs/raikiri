@@ -43,15 +43,80 @@ fn style_rules_count_their_selectors_and_expanded_declarations() {
     assert_eq!(counts("a, b { color: red; margin: 0 }"), [1, 2, 5]);
     assert_eq!(counts("a {}"), [1, 1, 0]);
     // A run of declarations on each side of a nested rule is a rule of its
-    // own, with the parent's selectors.
+    // own, with the parent's selectors. The nested selector holds both of
+    // them, so it counts as two.
     assert_eq!(
         counts("a, b { color: red; c { color: blue } color: green }"),
-        [3, 5, 3]
+        [3, 6, 3]
     );
+    // Nested again, `e` holds `:is(a, b) c, :is(a, b) d`, five components
+    // each.
+    assert_eq!(counts("a, b { c, d { e {} } }"), [1, 10, 0]);
+    // A highlight body has no selectors to pass on.
+    assert_eq!(counts("::highlight(h) { b {} }"), [1, 1, 0]);
     assert_eq!(
         counts("::highlight(h) { background-color: red }"),
         [1, 0, 1]
     );
+}
+
+#[test]
+fn nested_rules_under_a_long_parent_list_stop_at_the_selector_limit() {
+    // Placing a parent in each nested rule costs work for every parent
+    // selector, so that work is bounded by the selector limit: here it is
+    // passed after 65 nested rules, not after the 10,000 the body holds.
+    let parent = (0..1000)
+        .map(|i| format!(".p{i}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let css = format!("{parent} {{ {} }}", "b{}".repeat(10_000));
+    let limits = RuleTreeLimits {
+        max_selectors: Some(1 << 16),
+        ..unlimited()
+    };
+    let tree = tree_within(&css, limits);
+    assert_eq!(
+        exceeded(&tree),
+        (CascadeLimitKind::StyleSelectors, 1 << 16, 66_000)
+    );
+    assert_eq!(tree.budget.counts()[0], 65);
+    // A parent that is one selector holding a long logical list weighs as
+    // much: `:is()` and its 1,000 branches.
+    let parent = (0..1000)
+        .map(|i| format!(".p{i}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let css = format!(":is({parent}) {{ {} }}", "b{}".repeat(10_000));
+    let tree = tree_within(&css, limits);
+    assert_eq!(
+        exceeded(&tree),
+        (CascadeLimitKind::StyleSelectors, 1 << 16, 66_066)
+    );
+    assert_eq!(tree.budget.counts()[0], 65);
+}
+
+#[test]
+fn nested_rules_weigh_only_the_parent_they_hold() {
+    // Pseudo-element branches are left out of the parent a nested rule
+    // holds, so here the nested rules hold none of them.
+    let tree = tree_within(
+        "a::before, b::after, c::first-line { :is(&, .x) { color: red } :is(&, .y) { color: blue } }",
+        RuleTreeLimits {
+            max_selectors: Some(5),
+            ..unlimited()
+        },
+    );
+    assert!(tree.limit_exceeded().is_none());
+    assert_eq!(tree.budget.counts()[1], 2);
+}
+
+#[test]
+fn without_a_limit_any_count_fits() {
+    let mut budget = ParseBudget::new(&unlimited(), 0);
+    assert!(budget.selectors(1));
+    assert!(budget.selectors_fit(usize::MAX));
+    assert!(budget.rule_fits());
+    assert!(!budget.exceeded());
 }
 
 #[test]
