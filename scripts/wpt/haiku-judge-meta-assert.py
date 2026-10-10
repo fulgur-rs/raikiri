@@ -40,7 +40,7 @@ import sys
 from pathlib import Path
 
 DEFAULT_MODEL = "claude-haiku-5-5"
-PROMPT_VERSION = "1"
+PROMPT_VERSION = "2"
 
 SYSTEM_PROMPT = """\
 You judge screenshots of CSS conformance tests rendered by a layout engine.
@@ -50,9 +50,9 @@ condition written for a human ("Test passes if ..."). Decide whether the \
 screenshot satisfies the pass condition.
 
 Rendering notes:
-- All text is drawn with the Ahem test font, so every glyph is a solid \
-square box. You cannot read text in the screenshot; the pass condition is \
-given to you as text instead. Judge layout, colors, sizes, and positions.
+- Text drawn with the Ahem test font shows every glyph as a solid square \
+box, and such text cannot be read. Other text may be readable; use it when \
+it is. The pass condition is always given to you as text.
 - The viewport is the full screenshot. Content below it is not visible.
 
 Decisions:
@@ -263,23 +263,38 @@ def command_run(args) -> int:
             results.append((test_id, verdict, True))
         else:
             pending.append((test_id, key, text, png))
+    max_requests = getattr(args, "max_requests", None)
+    if max_requests is not None and len(pending) > max_requests:
+        print(f"{len(pending) - max_requests} uncached rows left for a later run")
+        pending = pending[:max_requests]
     if pending:
         api = client()
 
     def judge(item):
         test_id, key, text, png = item
-        message = api.messages.parse(
-            **request_params(args.model, text, png), output_format=verdict_model()
-        )
+        try:
+            message = api.messages.parse(
+                **request_params(args.model, text, png), output_format=verdict_model()
+            )
+        except Exception as error:  # one failed request must not discard the others
+            print(f"{test_id}: {error}", file=sys.stderr)
+            return None
         verdict = to_cache_entry(message.parsed_output, message.usage)
         cache.put(key, verdict)
         return test_id, verdict, False
 
+    failed = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as pool:
         for result in pool.map(judge, pending):
-            results.append(result)
+            if result is None:
+                failed += 1
+            else:
+                results.append(result)
     write_reviews(review_dir / args.output, results, args.model)
     summarize(results, args.model)
+    if failed:
+        print(f"{failed} requests failed; their rows are missing from the reviews")
+        return 1
     return 0
 
 
@@ -362,6 +377,13 @@ def command_dump_prompts(args) -> int:
     return 0
 
 
+def non_negative_int(raw: str) -> int:
+    value = int(raw)
+    if value < 0:
+        raise argparse.ArgumentTypeError(f"must not be negative: {value}")
+    return value
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -372,6 +394,12 @@ def main() -> int:
         command.add_argument("--cache", type=Path, help="verdict cache (default: REVIEW_DIR/judge-cache)")
         command.add_argument("--output", default="reviews.jsonl")
         command.add_argument("--jobs", type=int, default=4)
+        if name == "run":
+            command.add_argument(
+                "--max-requests",
+                type=non_negative_int,
+                help="judge at most N uncached rows; the rest wait for a later run",
+            )
     args = parser.parse_args()
     handlers = {
         "run": command_run,
