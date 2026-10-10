@@ -42,3 +42,18 @@ fn absolute_fragment_empty_and_namespace_urls_are_kept() {
         r#"@namespace url(ns); a { background: url("https://example.test/css/a.png") }"#
     );
 }
+
+#[test]
+fn namespace_blocks_and_unjoinable_bases_are_left_alone() {
+    // A block after `@namespace` ends the prelude; urls inside still resolve.
+    assert_eq!(
+        resolve("@namespace x { a { background: url(a.png) } }"),
+        r#"@namespace x { a { background: url("https://example.test/css/a.png") } }"#
+    );
+    // Nested function arguments in the prelude are skipped as a unit.
+    let source = "@namespace x foo(url(ns)); a { color: red }";
+    assert_eq!(resolve(source), source);
+    let data = Url::parse("data:text/css,a{}").unwrap();
+    let source = "a { background: url(a.png) }";
+    assert_eq!(absolutize_urls(source, &data), source);
+}
