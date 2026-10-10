@@ -816,9 +816,17 @@ impl<'a> RenderResources<'a> {
         attempts: &mut usize,
         signal: Option<&AbortSignal>,
     ) {
-        self.preload_element_background_images(&cascade.computed, warnings, seen, attempts, signal);
+        self.preload_element_background_images(
+            &cascade.computed,
+            None,
+            warnings,
+            seen,
+            attempts,
+            signal,
+        );
         self.preload_page_context_background_images(
             &cascade.page,
+            None,
             warnings,
             seen,
             attempts,
@@ -836,6 +844,7 @@ impl<'a> RenderResources<'a> {
     pub(crate) fn preload_element_background_images(
         &self,
         computed: &[ComputedValues],
+        base_url: Option<&Url>,
         warnings: &SharedRenderWarnings,
         seen: &mut std::collections::HashSet<Url>,
         attempts: &mut usize,
@@ -854,7 +863,7 @@ impl<'a> RenderResources<'a> {
                 BackgroundImage::Url(raw_url) => Some(raw_url.as_str()),
                 _ => None,
             });
-        self.preload_background_urls(raw_urls, warnings, seen, attempts, signal);
+        self.preload_background_urls(raw_urls, base_url, warnings, seen, attempts, signal);
     }
 
     /// Fetch image markers before layout because their dimensions affect lines.
@@ -891,6 +900,7 @@ impl<'a> RenderResources<'a> {
             .collect();
         self.preload_background_urls(
             urls.iter().map(String::as_str),
+            base_url,
             warnings,
             seen,
             attempts,
@@ -903,6 +913,7 @@ impl<'a> RenderResources<'a> {
     pub(crate) fn preload_page_context_background_images(
         &self,
         page: &PageCascadeResult,
+        base_url: Option<&Url>,
         warnings: &SharedRenderWarnings,
         seen: &mut std::collections::HashSet<Url>,
         attempts: &mut usize,
@@ -933,12 +944,18 @@ impl<'a> RenderResources<'a> {
                 raw_urls.push(raw_url);
             }
         }
-        self.preload_background_urls(raw_urls, warnings, seen, attempts, signal);
+        self.preload_background_urls(raw_urls, base_url, warnings, seen, attempts, signal);
     }
 
+    /// Fetch and decode CSS background images ahead of paint.
+    ///
+    /// Computed `url()` values are kept as authored, so a relative URL is
+    /// resolved here against the document base URL, as list-marker images
+    /// are. Paint looks the image up by the same absolute URL.
     fn preload_background_urls<'u>(
         &self,
         raw_urls: impl IntoIterator<Item = &'u str>,
+        base_url: Option<&Url>,
         warnings: &SharedRenderWarnings,
         seen: &mut std::collections::HashSet<Url>,
         attempts: &mut usize,
@@ -948,7 +965,10 @@ impl<'a> RenderResources<'a> {
             if signal.is_some_and(|signal| signal.is_aborted()) {
                 break;
             }
-            let Ok(original_url) = Url::parse(raw_url) else {
+            let Some(original_url) = Url::parse(raw_url)
+                .ok()
+                .or_else(|| base_url.and_then(|base| base.join(raw_url).ok()))
+            else {
                 continue;
             };
             if original_url.cannot_be_a_base() && original_url.scheme() != "data" {

@@ -244,6 +244,44 @@ fn inside_marker_fetch_is_independent_of_background_preloading() {
 }
 
 #[test]
+fn relative_background_urls_preload_against_the_document_base() {
+    let provider = SvgNetworkProvider::default();
+    let base = Url::parse("https://images.test/assets/document.html").unwrap();
+    let resources = RenderResources::new()
+        .network_provider(&provider)
+        .base_url(base.clone());
+    let doc = crate::parse_html_with_resources(
+        br#"<!doctype html><style>@page { background-image:url(page.svg) }</style><div style="background-image:url(img/element.svg)">one</div>"#.as_slice(),
+        &resources,
+    ).unwrap();
+    let crate::render::PipelineRun::Completed(_) = crate::render::run_pipeline(
+        &doc,
+        raikiri_traits::PageDefaults::default(),
+        &raikiri_traits::LayoutConfig::default(),
+        crate::render::PipelineInputs {
+            resources: Some(&resources),
+            consumer_properties: &[],
+            property_observer: None,
+            preload_background_images: true,
+        },
+    )
+    .unwrap() else {
+        panic!("complete pipeline");
+    };
+    let element = base.join("img/element.svg").unwrap();
+    let page = base.join("page.svg").unwrap();
+    assert_eq!(
+        *provider.requests.lock().unwrap(),
+        [
+            (element.clone(), ResourceKind::Image),
+            (page.clone(), ResourceKind::Image)
+        ]
+    );
+    assert!(resources.intrinsic_size(&element).is_some());
+    assert!(resources.intrinsic_size(&page).is_some());
+}
+
+#[test]
 fn suppressed_marker_images_preserve_the_shared_background_request_budget() {
     let provider = SvgNetworkProvider::default();
     let resources = RenderResources::new().network_provider(&provider);
