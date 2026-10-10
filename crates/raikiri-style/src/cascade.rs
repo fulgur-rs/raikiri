@@ -267,6 +267,76 @@ impl CascadeResult {
         self.page = page;
         self.generation = NEXT_CASCADE_GENERATION.fetch_add(1, Ordering::Relaxed);
     }
+
+    /// The results for part of the tree, renumbered: node `i` of the new
+    /// result is node `old_of_new[i]` of this one. Every index in
+    /// `old_of_new` must be in range.
+    ///
+    /// This pairs with a document copy that keeps only some nodes; the
+    /// result gets a fresh [`Self::generation`]. When the `@page` inheritance
+    /// parent is not kept, the new result's is its first node.
+    pub fn extract(&self, old_of_new: &[usize]) -> Self {
+        // Every field is named so that a new one has to be considered here.
+        let Self {
+            generation: _,
+            svg_style_properties,
+            first_letter_inputs,
+            typographic_inheritance,
+            root_element_index,
+            custom_highlight_styles,
+            custom_highlight_sources,
+            computed,
+            opacity_specified,
+            background_color_specified,
+            authored_writing_modes,
+            page,
+            counter_styles,
+            page_values,
+            pseudo,
+        } = self;
+        let new_of_old: HashMap<u64, u64> = old_of_new
+            .iter()
+            .enumerate()
+            .map(|(new, &old)| (old as u64, new as u64))
+            .collect();
+        let node = |id: &StyleNodeId| new_of_old.get(&id.0).map(|&new| StyleNodeId(new));
+        Self {
+            generation: NEXT_CASCADE_GENERATION.fetch_add(1, Ordering::Relaxed),
+            svg_style_properties: svg_style_properties
+                .iter()
+                .filter_map(|(id, value)| Some((node(id)?, value.clone())))
+                .collect(),
+            first_letter_inputs: first_letter_inputs
+                .iter()
+                .filter_map(|(id, value)| Some((node(id)?, value.clone())))
+                .collect(),
+            typographic_inheritance: typographic_inheritance
+                .iter()
+                .filter_map(|((id, pseudo), value)| Some(((node(id)?, *pseudo), value.clone())))
+                .collect(),
+            root_element_index: new_of_old
+                .get(&(*root_element_index as u64))
+                .map_or(0, |&new| new as usize),
+            custom_highlight_styles: custom_highlight_styles.clone(),
+            custom_highlight_sources: custom_highlight_sources.clone(),
+            computed: renumber(computed, old_of_new),
+            opacity_specified: renumber(opacity_specified, old_of_new),
+            background_color_specified: renumber(background_color_specified, old_of_new),
+            authored_writing_modes: renumber(authored_writing_modes, old_of_new),
+            page: page.clone(),
+            counter_styles: counter_styles.clone(),
+            page_values: renumber(page_values, old_of_new),
+            pseudo: pseudo
+                .iter()
+                .filter_map(|((id, kind), value)| Some(((node(id)?, *kind), value.clone())))
+                .collect(),
+        }
+    }
+}
+
+/// `values[old_of_new[i]]` for each `i`.
+fn renumber<T: Clone>(values: &[T], old_of_new: &[usize]) -> Vec<T> {
+    old_of_new.iter().map(|&old| values[old].clone()).collect()
 }
 
 /// Index of the node whose computed values the `@page` cascade inherits from.
