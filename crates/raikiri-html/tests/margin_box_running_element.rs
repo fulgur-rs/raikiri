@@ -177,3 +177,25 @@ fn a_running_layout_page_has_no_running_elements_of_its_own() {
             .is_none()
     );
 }
+
+#[test]
+fn an_element_combined_with_other_content_keeps_the_flat_text() {
+    let result = lay_out(
+        r#"@top-center { content: "Chapter: " element(hdr) }"#,
+        r#"<div class="hdr">H</div><p>A</p>"#,
+    );
+    let page = result.pages().next().expect("page");
+    let margin_box = slot(&page, PageMarginBoxSlot::TopCenter);
+    assert!(margin_box.running.is_none());
+    assert!(
+        page.margin_box_running_element(&margin_box)
+            .expect("layout")
+            .is_none()
+    );
+    let text: String = margin_box
+        .text_runs()
+        .iter()
+        .map(|run| run.text.to_string())
+        .collect();
+    assert_eq!(text.trim(), "Chapter: H");
+}
