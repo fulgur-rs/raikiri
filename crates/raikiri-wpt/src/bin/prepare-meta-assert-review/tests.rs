@@ -85,3 +85,37 @@ fn html_extension_filter_includes_wpt_variants() {
     assert!(is_html_like(Path::new("a.xht")));
     assert!(!is_html_like(Path::new("a.js")));
 }
+
+#[test]
+fn listed_candidates_keep_reftests_and_tests_without_assert() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("css/CSS2");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("with-ref.xht"),
+        r#"<html><head><link rel="match" href="ref.xht"/><meta name="assert" content="A"/></head></html>"#,
+    )
+    .unwrap();
+    fs::write(dir.join("plain.html"), "<p>Test passes if green.").unwrap();
+    let list = root.path().join("list.txt");
+    fs::write(
+        &list,
+        "# comment\ncss/CSS2/with-ref.xht\n\ncss/CSS2/plain.html\n",
+    )
+    .unwrap();
+
+    let candidates = listed_candidates(root.path(), &list).unwrap();
+    let ids: Vec<_> = candidates.iter().map(|c| c.test_id.as_str()).collect();
+    assert_eq!(ids, ["css/CSS2/with-ref.xht", "css/CSS2/plain.html"]);
+    assert_eq!(candidates[0].assert_text, "A");
+    assert_eq!(candidates[1].assert_text, "");
+
+    fs::write(&list, "../outside.html\n").unwrap();
+    assert!(listed_candidates(root.path(), &list).is_err());
+}
+
+#[test]
+fn tests_option_takes_a_list_path() {
+    let args = parse_args(&["--tests".to_owned(), "list.txt".to_owned()]).unwrap();
+    assert_eq!(args.tests, Some(PathBuf::from("list.txt")));
+}
