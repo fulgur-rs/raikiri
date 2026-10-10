@@ -1698,12 +1698,19 @@ fn roots_below_the_threshold_are_built_in_sequence() {
 }
 
 #[test]
-fn a_document_that_did_not_allow_it_is_built_in_sequence() {
-    // Many roots, threshold 0, but nothing said the collection is safe.
+fn parallel_builds_are_on_by_default() {
+    let mut fixture = many_paragraphs(8);
+    enable(&mut fixture);
+    assert!(fixture.doc.ifc_parallel_build());
+}
+
+#[test]
+fn a_document_that_turned_it_off_is_built_in_sequence() {
+    // Many roots, threshold 0, but parallel builds are off.
     let mut fixture = many_paragraphs(8);
     enable(&mut fixture);
     fixture.doc.set_ifc_parallel_threshold(0);
-    assert!(!fixture.doc.ifc_parallel_build());
+    fixture.doc.set_ifc_parallel_build(false);
     assign(&mut fixture);
     assert_eq!(fixture.doc.ifc_last_build(), Some(IfcBuildMode::Sequential));
 }
@@ -1819,6 +1826,67 @@ fn parallel_and_sequential_builds_agree_when_a_fallback_family_is_needed() {
         fonts_of(&sequential)
     );
     assert_eq!(parallel, sequential);
+}
+
+/// Paragraphs in many scripts, symbols and emoji, so that most of them need a
+/// fallback face from the installed fonts.
+fn many_mixed_script_paragraphs(n: usize) -> Fixture {
+    const SAMPLES: [&str; 12] = [
+        "plain latin text",
+        "日本語の段落です",
+        "한국어 문단",
+        "ภาษาไทย ข้อความ",
+        "עברית טקסט",
+        "نص عربي قصير",
+        "हिन्दी पाठ",
+        "Ελληνικά κείμενο",
+        "Кириллица текст",
+        "emoji 😀🎉 ✓ ☃",
+        "math ∑ ∫ ≠ ⊕ ⌘",
+        "runes ᚠᚢᚦ Ꭰ ⵣ",
+    ];
+    block_fixture("", |doc, root| {
+        doc.append_text(root, SAMPLES[0]);
+        let body = doc.parent_of(root).expect("body");
+        for i in 1..n {
+            let p = doc.append_element(
+                Some(body),
+                "div",
+                taffy::Style::default(),
+                Some("display:block;font-size:10px;line-height:12px"),
+            );
+            doc.append_text(p, format!("{} {i}", SAMPLES[i % SAMPLES.len()]));
+        }
+    })
+}
+
+/// A new layer of the installed fonts: nothing is loaded yet, so every
+/// fallback face is loaded by whichever worker asks for it first.
+fn fresh_system_fonts() -> shodo::font::FontCollection {
+    let limits = Limits {
+        max_faces_per_layer: None,
+        max_layer_blob_bytes: None,
+        ..Limits::default()
+    };
+    shodo::font::FontCollection::with_options(&limits, shodo::font::FontOptions::default())
+}
+
+#[test]
+fn parallel_and_sequential_builds_agree_over_lazily_loaded_installed_fonts() {
+    // Each build starts from a fresh system layer, so workers race to load
+    // the fallback faces. The faces chosen must not depend on that order.
+    let build = |parallel| {
+        let mut fixture = many_mixed_script_paragraphs(48);
+        fixture
+            .doc
+            .set_font_collection_with_limits(fresh_system_fonts(), Limits::default());
+        signature(fixture, parallel)
+    };
+    let sequential = build(false);
+    assert_eq!(sequential.len(), 48);
+    for _ in 0..4 {
+        assert_eq!(build(true), sequential);
+    }
 }
 
 #[test]

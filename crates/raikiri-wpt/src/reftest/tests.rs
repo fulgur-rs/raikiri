@@ -1590,15 +1590,13 @@ fn the_engine_falls_back_to_the_installed_fonts_when_no_font_directory_exists() 
     // `require_inline_fonts` is off by default, so a checkout without the
     // WPT fonts still renders.
     assert!(!ReftestConfig::default().require_inline_fonts);
-    let (collection, bundled_only) =
+    let collection =
         inline_engine_collection_from(&[PathBuf::from("/nonexistent-wpt-fonts")], false)
             .expect("falls back");
     assert_eq!(
         collection.layer_handle().id(),
         raikiri_dom::system_font_collection().layer_handle().id()
     );
-    // The installed fonts load lazily: no parallel build over them.
-    assert!(!bundled_only);
 }
 
 #[test]
@@ -1614,9 +1612,8 @@ fn a_font_directory_gives_the_engine_a_bundled_layer() {
     let dir =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../raikiri-dom/tests/data/text-autospace");
     for require in [false, true] {
-        let (collection, bundled_only) =
+        let collection =
             inline_engine_collection_from(std::slice::from_ref(&dir), require).expect("collection");
-        assert!(bundled_only);
         assert_ne!(
             collection.layer_handle().id(),
             raikiri_dom::system_font_collection().layer_handle().id()

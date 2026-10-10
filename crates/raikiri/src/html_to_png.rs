@@ -32,12 +32,7 @@ use crate::parse_html;
 /// installed fonts.
 fn use_fonts(dom: &mut raikiri_dom::Document, fonts: Option<raikiri_html::RenderFonts>) {
     if let Some(fonts) = fonts {
-        // shodo does not guarantee deterministic matching during concurrent
-        // registration for collections with system-font discovery enabled.
-        let collection = fonts.into_collection();
-        let bundled_only = collection.is_bundled_only();
-        dom.set_font_collection(collection);
-        dom.set_ifc_parallel_build(bundled_only);
+        dom.set_font_collection(fonts.into_collection());
     }
 }
 

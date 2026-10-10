@@ -677,10 +677,6 @@ fn enable_inline_engine(
         raikiri_dom::build_inline_document_fonts(&shared, font_faces, font_loader)
     };
     dom.set_font_collection(fonts);
-    // The layer of the installed fonts loads a face the first time a lookup
-    // selects it, so threads would race to decide which face a fallback lands
-    // on: only a font set of bundled fonts builds paragraphs in parallel.
-    dom.set_ifc_parallel_build(resources.inline_engine_parallel_build());
     report
 }
 

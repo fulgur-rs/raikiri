@@ -2144,7 +2144,7 @@ pub(crate) fn prepare_wpt_live_document(
     let font_face_tree = raikiri::build_rule_tree(&resolved);
     let font_loader = WptFontLoader::discover(page_base.as_deref())
         .or_else(|| WptFontLoader::discover(wpt_root.as_deref()));
-    let (fonts, _) = wpt_document_fonts(
+    let fonts = wpt_document_fonts(
         &font_face_tree.font_faces_for(&media_context),
         font_loader
             .as_ref()
@@ -2302,7 +2302,7 @@ pub(crate) fn update_live_wpt_stylesheet_sources(
         .or_else(|| WptFontLoader::discover(Some(wpt_root)));
     // The installed fonts stand in when the WPT fonts are missing, so this
     // cannot fail.
-    if let Ok((fonts, _)) = wpt_document_fonts(
+    if let Ok(fonts) = wpt_document_fonts(
         &setup.font_face_tree.font_faces_for(&setup.media_context),
         font_loader
             .as_ref()
@@ -2575,7 +2575,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
     // The document's `@font-face` faces go into a layer of their own over
     // the WPT fonts, under their authored family names.
     let font_face_tree = raikiri::build_rule_tree(&uncascaded);
-    let (fonts, bundled_only) = wpt_document_fonts(
+    let fonts = wpt_document_fonts(
         &font_face_tree.font_faces_for(&media_context),
         resources.font_loader,
         resources.require_inline_fonts,
@@ -2584,13 +2584,6 @@ pub(crate) fn render_raikiri_pages_with_resources(
     // when the page geometry varies) takes the same fonts.
     let use_fonts = |dom: &mut raikiri_dom::Document| {
         dom.set_font_collection(fonts.clone());
-        // The WPT collection is built with system fonts off, and the
-        // `@font-face` layer above it only holds the document's own faces, so
-        // no face is loaded on first use: building paragraphs on several
-        // threads gives the same result as building them in sequence. The
-        // installed fonts load faces on first use, so the fallback builds in
-        // sequence.
-        dom.set_ifc_parallel_build(bundled_only);
     };
     use_fonts(&mut uncascaded.dom);
     let mut first_query = PageContextQuery::default();
@@ -3045,7 +3038,7 @@ pub(crate) fn wpt_font_collection_from(
 }
 
 /// The inline engine's font layer from the first candidate directory that
-/// works, and whether it holds bundled fonts only.
+/// works.
 ///
 /// Without such a directory the layer of the installed fonts is used, unless
 /// `require` is set.
@@ -3055,11 +3048,11 @@ pub(crate) fn wpt_font_collection_from(
 pub(crate) fn inline_engine_collection_from(
     candidates: &[PathBuf],
     require: bool,
-) -> Result<(shodo::font::FontCollection, bool), String> {
+) -> Result<shodo::font::FontCollection, String> {
     match wpt_font_collection_from(candidates) {
-        Ok(collection) => Ok((collection, true)),
+        Ok(collection) => Ok(collection),
         Err(error) if require => Err(error),
-        Err(_) => Ok((raikiri_dom::system_font_collection(), false)),
+        Err(_) => Ok(raikiri_dom::system_font_collection()),
     }
 }
 
@@ -3084,9 +3077,7 @@ pub fn check_inline_formatting_fonts() -> Result<(), String> {
 /// The fonts a WPT document is laid out with: the WPT bundled fonts (the
 /// installed fonts when they are missing, unless `require` is set) under a
 /// document layer of the document's `@font-face` faces, fetched with
-/// `loader` (none when `loader` is `None`). The flag tells whether the
-/// collection holds bundled fonts only, so paragraphs may be built on several
-/// threads.
+/// `loader` (none when `loader` is `None`).
 ///
 /// # Errors
 /// The WPT fonts are missing and `require` is set.
@@ -3094,19 +3085,15 @@ pub(crate) fn wpt_document_fonts(
     faces: &raikiri_style::FontFaceRegistry,
     loader: Option<&dyn raikiri_dom::FontFaceLoader>,
     require: bool,
-) -> Result<(shodo::font::FontCollection, bool), String> {
-    let (shared, bundled_only) =
-        inline_engine_collection_from(&inline_engine_font_candidates(), require)?;
+) -> Result<shodo::font::FontCollection, String> {
+    let shared = inline_engine_collection_from(&inline_engine_font_candidates(), require)?;
     if faces.is_empty() {
-        return Ok((shared, bundled_only));
+        return Ok(shared);
     }
     // The faces are registered in a layer of their own under their authored
     // family names, so computed `font-family` lists need no rewriting.
     let loader = loader.unwrap_or(&NoFaceLoader);
-    Ok((
-        raikiri_dom::build_inline_document_fonts(&shared, faces, loader).0,
-        bundled_only,
-    ))
+    Ok(raikiri_dom::build_inline_document_fonts(&shared, faces, loader).0)
 }
 
 // ── Rendering: blitz ───────────────────────────────────────────────────

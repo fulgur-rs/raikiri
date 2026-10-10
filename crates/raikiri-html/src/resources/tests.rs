@@ -1969,23 +1969,6 @@ fn the_default_resources_use_the_system_layer_for_the_inline_engine() {
 }
 
 #[test]
-fn only_a_bundled_font_set_allows_parallel_builds() {
-    // The shared system layer loads installed faces lazily, so threads would
-    // race to decide which face is a fallback.
-    assert!(!RenderResources::new().inline_engine_parallel_build());
-    assert!(
-        RenderResources::new()
-            .fonts(ahem_fonts(false))
-            .inline_engine_parallel_build()
-    );
-    assert!(
-        !RenderResources::new()
-            .fonts(ahem_fonts(true))
-            .inline_engine_parallel_build()
-    );
-}
-
-#[test]
 fn a_font_set_is_the_layer_of_the_inline_engine() {
     let fonts = ahem_fonts(false);
     let expected = fonts.collection().layer_handle().id();
