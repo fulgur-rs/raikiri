@@ -527,3 +527,5 @@ fn margin_box_text_is_debuggable_and_borders_clamp_to_the_box() {
     let debug = format!("{:?}", placed.text.unwrap());
     assert!(debug.contains("lines: 1"), "{debug}");
 }
+
+mod layout_tests;

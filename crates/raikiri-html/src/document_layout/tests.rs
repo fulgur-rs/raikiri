@@ -1325,3 +1325,42 @@ fn margin_boxes_resolve_page_counters_on_each_page() {
         assert!(runs.iter().all(|run| run.origin.1 > 160.0));
     }
 }
+
+#[test]
+fn right_page_counters_use_the_increment_of_the_paired_left_page() {
+    let document = dom("<style>@page{size:300px 200px;margin:40px}\
+         @page :left{counter-increment:page 2}\
+         @page :right{counter-increment:page 0;\
+         @bottom-center{content:'p.' counter(page)}}\
+         body{margin:0}div{height:100px}</style>\
+         <div></div><div></div><div></div><div></div>");
+    let layout = completed(
+        layout(
+            &document,
+            PageDefaults::default(),
+            LayoutConfig::default(),
+            LayoutOptions::new(),
+        )
+        .unwrap(),
+    );
+    assert_eq!(layout.page_count(), 4);
+    let contents: Vec<Vec<String>> = layout
+        .pages()
+        .map(|page| {
+            page.margin_boxes()
+                .into_iter()
+                .map(|margin_box| margin_box.content)
+                .collect()
+        })
+        .collect();
+    // Right pages skip their own step and count the left pages before them.
+    assert_eq!(
+        contents,
+        [
+            vec!["p.0".to_owned()],
+            vec![],
+            vec!["p.2".to_owned()],
+            vec![]
+        ]
+    );
+}
