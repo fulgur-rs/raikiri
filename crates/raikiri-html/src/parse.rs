@@ -5,7 +5,6 @@ use std::io::Read;
 
 use html5ever::driver::{ParseOpts, parse_document, parse_fragment as parse_html_fragment};
 use html5ever::interface::QualName;
-use html5ever::tendril::TendrilSink;
 use html5ever::tree_builder::TreeSink;
 use markup5ever::{LocalName, Namespace};
 use raikiri_traits::{
@@ -18,6 +17,7 @@ use crate::import::{
     ImportBudget, expand_stylesheet_imports_with_budget, network_error_summary, redacted_url,
     sanitize_policy_violation,
 };
+use crate::input::Utf8Feed;
 use crate::sink::RaikiriTreeSink;
 use crate::types::{ParseOptions, StylesheetSource, UncascadedDocument};
 
@@ -70,9 +70,9 @@ where
     R: Read,
     S: TreeSink<Handle = usize, Output = UncascadedDocument>,
 {
-    let buf = read_utf8(input)?;
-    let doc = parse_document(sink, ParseOpts::default()).one(buf.as_str());
-    finish_document(doc, options)
+    let mut feed = Utf8Feed::new(parse_document(sink, ParseOpts::default()));
+    feed.feed_reader(input)?;
+    finish_document(feed.finish()?, options)
 }
 
 /// Parse HTML markup using the browser's fragment algorithm for an element context.
@@ -88,21 +88,20 @@ pub fn parse_fragment<R: Read>(
     context_namespace: &str,
     context_element_allows_scripting: bool,
 ) -> Result<UncascadedDocument, ParseError> {
-    let buf = read_utf8(input)?;
     let context_name = QualName::new(
         None,
         Namespace::from(context_namespace),
         LocalName::from(context_local_name),
     );
-    let doc = parse_html_fragment(
+    let mut feed = Utf8Feed::new(parse_html_fragment(
         RaikiriTreeSink::default(),
         ParseOpts::default(),
         context_name,
         Vec::new(),
         context_element_allows_scripting,
-    )
-    .one(buf.as_str());
-    let mut doc = finish_document(doc, options)?;
+    ));
+    feed.feed_reader(input)?;
+    let mut doc = finish_document(feed.finish()?, options)?;
     flatten_fragment_root(&mut doc.dom);
     Ok(doc)
 }
@@ -123,17 +122,6 @@ fn flatten_fragment_root(document: &mut raikiri_dom::Document) {
     }
     document.reparent_children(html, root);
     document.detach_from_parent(html);
-}
-
-fn read_utf8(mut input: impl Read) -> Result<String, ParseError> {
-    // Separate I/O and UTF-8 failures so a reader's InvalidData is not
-    // confused with an encoding failure.
-    let mut bytes = Vec::new();
-    input.read_to_end(&mut bytes).map_err(ParseError::Io)?;
-    String::from_utf8(bytes).map_err(|error| ParseError::Encoding {
-        label: String::from("utf-8"),
-        reason: error.to_string(),
-    })
 }
 
 fn finish_document(

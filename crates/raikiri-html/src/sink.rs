@@ -41,6 +41,13 @@ pub struct RaikiriTreeSink {
     /// Intended to receive [`raikiri_traits::RenderLimits::max_parse_warnings`];
     /// see that field's documentation for the rationale.
     max_parse_warnings: Option<usize>,
+    /// Character data for one insertion point that has not reached the
+    /// Document yet. The tokenizer splits a text run at
+    /// every input chunk boundary, and merging each piece into the Document's
+    /// immutable text storage would copy the whole run again per piece.
+    /// Every other tree mutation calls [`RaikiriTreeSink::flush_text`] first,
+    /// so the text lands at the same position it always did.
+    pending_text: RefCell<Option<(TextTarget, String)>>,
 }
 
 impl RaikiriTreeSink {
@@ -60,6 +67,7 @@ impl RaikiriTreeSink {
             warnings: RefCell::new(Vec::new()),
             quirks_mode: Cell::new(QuirksMode::NoQuirks),
             max_parse_warnings,
+            pending_text: RefCell::new(None),
         }
     }
 
@@ -86,11 +94,55 @@ impl RaikiriTreeSink {
     /// The HTML tokenizer may split a single inline run across callbacks.
     /// Separate adjacent Text nodes would become separate block leaves and cause
     /// spurious line breaks in normal flow. Merge with the last Text node as required by TreeSink.
+    /// Consecutive pieces for one parent are buffered in `pending_text` and
+    /// merged once, when another mutation or `finish` flushes them.
     fn append_text_smart(&self, parent: usize, text: StrTendril) {
-        self.document
-            .borrow_mut()
-            .append_text_coalesced(parent, text.to_string());
+        self.buffer_text(TextTarget::Append(parent), &text);
     }
+
+    /// Adds `text` to the buffer, flushing first if it targets another
+    /// insertion point.
+    fn buffer_text(&self, target: TextTarget, text: &str) {
+        let mut pending = self.pending_text.borrow_mut();
+        if let Some((pending_target, buffer)) = pending.as_mut()
+            && *pending_target == target
+        {
+            buffer.push_str(text);
+            return;
+        }
+        if let Some((pending_target, buffer)) = pending.replace((target, text.to_owned())) {
+            self.write_text(pending_target, buffer);
+        }
+    }
+
+    /// Writes buffered character data to the Document.
+    fn flush_text(&self) {
+        let pending = self.pending_text.borrow_mut().take();
+        if let Some((target, buffer)) = pending {
+            self.write_text(target, buffer);
+        }
+    }
+
+    fn write_text(&self, target: TextTarget, text: String) {
+        let mut document = self.document.borrow_mut();
+        match target {
+            TextTarget::Append(parent) => {
+                document.append_text_coalesced(parent, text);
+            }
+            TextTarget::Before { parent, sibling } => {
+                document.insert_text_before_coalesced(parent, sibling, text);
+            }
+        }
+    }
+}
+
+/// Where buffered character data will be inserted.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TextTarget {
+    /// At the end of `parent`'s children.
+    Append(usize),
+    /// Directly before `sibling`, a child of `parent`.
+    Before { parent: usize, sibling: usize },
 }
 
 impl Default for RaikiriTreeSink {
@@ -105,6 +157,7 @@ impl TreeSink for RaikiriTreeSink {
     type ElemName<'a> = Ref<'a, QualName>;
 
     fn finish(self) -> UncascadedDocument {
+        self.flush_text();
         let mut document = self.document.into_inner();
         let warnings = self.warnings.into_inner();
         let qual_names = self.qual_names.into_inner();
@@ -267,6 +320,7 @@ impl TreeSink for RaikiriTreeSink {
     fn append(&self, parent: &usize, child: NodeOrText<usize>) {
         match child {
             NodeOrText::AppendNode(c) => {
+                self.flush_text();
                 self.document.borrow_mut().attach_child(*parent, c);
             }
             NodeOrText::AppendText(text) => {
@@ -342,6 +396,7 @@ impl TreeSink for RaikiriTreeSink {
             .expect("append_before_sibling: sibling has no parent");
         match new_node {
             NodeOrText::AppendNode(c) => {
+                self.flush_text();
                 // Detach if already attached (TreeSink contract: new_node can have an
                 // old parent).
                 self.document.borrow_mut().detach_from_parent(c);
@@ -350,17 +405,13 @@ impl TreeSink for RaikiriTreeSink {
                     .insert_child_before(parent, *sibling, c);
             }
             NodeOrText::AppendText(text) => {
-                // Create a new Text node in the arena. It cannot start detached because
-                // append_text requires a parent: append it to the parent's end, detach it,
-                // then insert_before.
-                let text_id = self
-                    .document
-                    .borrow_mut()
-                    .append_text(parent, text.to_string());
-                self.document.borrow_mut().detach_from_parent(text_id);
-                self.document
-                    .borrow_mut()
-                    .insert_child_before(parent, *sibling, text_id);
+                self.buffer_text(
+                    TextTarget::Before {
+                        parent,
+                        sibling: *sibling,
+                    },
+                    &text,
+                );
             }
         }
     }
@@ -377,10 +428,12 @@ impl TreeSink for RaikiriTreeSink {
     }
 
     fn remove_from_parent(&self, target: &usize) {
+        self.flush_text();
         self.document.borrow_mut().detach_from_parent(*target);
     }
 
     fn reparent_children(&self, node: &usize, new_parent: &usize) {
+        self.flush_text();
         self.document
             .borrow_mut()
             .reparent_children(*node, *new_parent);

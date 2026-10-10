@@ -624,6 +624,44 @@ impl Document {
         self.append_text(parent, text)
     }
 
+    /// Insert character data before `before`, merging it into the text node
+    /// directly preceding `before` when there is one.
+    ///
+    /// The positional counterpart of [`Document::append_text_coalesced`]: the
+    /// HTML tree builder's "insert a character" step appends to an adjacent
+    /// Text node at the insertion point (for example when foster parenting
+    /// text in front of a table) instead of creating one node per callback.
+    /// `before` must be a child of `parent`.
+    pub fn insert_text_before_coalesced(
+        &mut self,
+        parent: usize,
+        before: usize,
+        text: impl Into<SmolStr>,
+    ) -> usize {
+        let text = text.into();
+        let kids = &self.nodes[parent].children;
+        let previous = kids
+            .iter()
+            .position(|&c| c == before)
+            .and_then(|pos| pos.checked_sub(1))
+            .map(|pos| kids[pos]);
+        if let Some(previous) = previous
+            && let NodeData::Text(data) = &mut self.nodes[previous].data
+        {
+            let mut merged = String::with_capacity(data.text_content.len() + text.len());
+            merged.push_str(data.text_content.as_str());
+            merged.push_str(text.as_str());
+            data.text_content = SmolStr::new(merged);
+            self.invalidate_layout_cache();
+            self.flags_dirty = true;
+            return previous;
+        }
+        let id = self.append_text(parent, text);
+        self.detach_from_parent(id);
+        self.insert_child_before(parent, before, id);
+        id
+    }
+
     /// Add a Comment node to the arena.
     ///
     /// If `parent` is `Some(idx)`, append it to that node's children. With
