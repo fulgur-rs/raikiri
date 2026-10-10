@@ -89,19 +89,22 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
     let args = parse_args(&raw_args[1..])?;
-    let mut baseline = read_baseline(&args.baseline)?;
-    if args.exclude_baseline != args.baseline && args.exclude_baseline.exists() {
-        baseline.extend(read_baseline(&args.exclude_baseline)?);
-    }
     let wpt_sha = git_head(&args.wpt_root).unwrap_or_else(|| "unknown".to_owned());
+    // An explicit list bypasses discovery, so the exclusion baselines are not read.
     let candidates = match &args.tests {
         Some(list) => listed_candidates(&args.wpt_root, list)?,
-        None => discover_candidates(
-            &args.wpt_root,
-            &baseline,
-            args.include_parsing,
-            args.path_prefix.as_deref(),
-        )?,
+        None => {
+            let mut baseline = read_baseline(&args.baseline)?;
+            if args.exclude_baseline != args.baseline && args.exclude_baseline.exists() {
+                baseline.extend(read_baseline(&args.exclude_baseline)?);
+            }
+            discover_candidates(
+                &args.wpt_root,
+                &baseline,
+                args.include_parsing,
+                args.path_prefix.as_deref(),
+            )?
+        }
     };
     let candidates: Vec<_> = candidates
         .into_iter()
