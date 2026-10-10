@@ -63,3 +63,66 @@ fn end_percent_positions_resolve_from_the_end_edge() {
         75.0
     );
 }
+
+#[test]
+fn background_axis_helpers_reject_non_finite_edges() {
+    let computed = raikiri_style::ComputedValues::initial();
+    let position = &computed.background_position;
+    let repeat = &computed.background_repeat;
+    assert!(
+        axis_origins(
+            f64::INFINITY,
+            100.0,
+            0.0,
+            100.0,
+            20.0,
+            20.0,
+            &position.horizontal,
+            &repeat.x,
+            None,
+        )
+        .is_none()
+    );
+    assert!(
+        axis_origins(
+            0.0,
+            100.0,
+            0.0,
+            f64::INFINITY,
+            20.0,
+            20.0,
+            &position.horizontal,
+            &repeat.x,
+            None,
+        )
+        .is_none()
+    );
+    let (tile, count) = round_axis_tiles(0.0, 20.0, BackgroundRepeatKeyword::Round);
+    assert_eq!((tile, count), (20.0, Some(1)));
+}
+
+#[test]
+fn background_tiles_cover_the_painting_area() {
+    let computed = raikiri_style::ComputedValues::initial();
+    let tiles = background_tiles(
+        (10.0, 10.0, 100.0, 50.0),
+        (0.0, 0.0, 120.0, 70.0),
+        (40.0, 30.0),
+        &computed.background_position,
+        &computed.background_repeat,
+    )
+    .expect("repeat tiles");
+    assert_eq!((tiles.width, tiles.height), (40.0, 30.0));
+    assert_eq!(tiles.x, vec![-30.0, 10.0, 50.0, 90.0]);
+    assert_eq!(tiles.y, vec![-20.0, 10.0, 40.0]);
+    assert!(
+        background_tiles(
+            (0.0, 0.0, 100.0, 50.0),
+            (0.0, 0.0, 0.0, 50.0),
+            (40.0, 30.0),
+            &computed.background_position,
+            &computed.background_repeat,
+        )
+        .is_none()
+    );
+}
