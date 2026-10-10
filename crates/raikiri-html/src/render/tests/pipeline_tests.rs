@@ -213,6 +213,39 @@ fn pipeline_reports_a_passed_cascade_limit() {
 }
 
 #[test]
+fn pipeline_reports_a_passed_rule_tree_limit() {
+    let doc = parse("<style>div { color: red }</style><div>styled</div>");
+    let config = LayoutConfig::builder()
+        .limits(
+            raikiri_traits::RenderLimits::builder()
+                .max_style_declarations(Some(0))
+                .build(),
+        )
+        .build();
+
+    let result = run_pipeline(
+        &doc,
+        PageDefaults::default(),
+        &config,
+        PipelineInputs {
+            resources: None,
+            consumer_properties: &[],
+            property_observer: None,
+            preload_background_images: true,
+        },
+    );
+
+    assert!(matches!(
+        result,
+        Err(RenderError::LimitExceeded {
+            kind: raikiri_traits::LimitKind::StyleDeclarations,
+            limit: 0,
+            actual: 1..,
+        })
+    ));
+}
+
+#[test]
 fn pipeline_rejects_a_zero_page_limit_before_layout() {
     let doc = parse("<div>one page is still an excess</div>");
     let config = LayoutConfig::builder()
@@ -786,7 +819,7 @@ fn pipeline_resolves_a_named_first_page_from_the_first_page_cascade() {
 
     // The page context derived for the named first page matches a full
     // cascade of the same query.
-    let tree = build_rule_tree_with_consumer_properties(&doc.uncascaded, &[]);
+    let tree = crate::cascade::build_rule_tree_with_consumer_properties(&doc.uncascaded, &[]);
     let mut query = PageContextQuery::default();
     query.is_first = true;
     query.is_right = true;

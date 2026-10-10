@@ -24,7 +24,7 @@ use raikiri_style::{
 };
 
 use crate::HtmlDocument;
-use crate::cascade::build_rule_tree_with_consumer_properties;
+use crate::cascade::build_rule_tree_with_limits;
 #[cfg(doc)]
 use crate::parse_html_with_resources;
 use crate::resources::{
@@ -765,7 +765,11 @@ pub(crate) fn run_pipeline(
 
     // Every cascade of this run reads the same parsed document, stylesheets,
     // consumer registrations, and media context, so the rule tree is built once.
-    let tree = build_rule_tree_with_consumer_properties(&doc.uncascaded, consumer_properties);
+    let tree = build_rule_tree_with_limits(
+        &doc.uncascaded,
+        consumer_properties,
+        &config.limits.rule_tree_limits(),
+    )?;
 
     // The parse-time font registry is cached for the default environment.
     // Other layout environments must select faces using their own dimensions,

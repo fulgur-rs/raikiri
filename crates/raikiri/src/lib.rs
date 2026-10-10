@@ -35,8 +35,9 @@ pub use raikiri_html::{
     build_cascaded, build_cascaded_for_page, build_cascaded_with_consumer_properties,
     build_cascaded_with_media_context, build_cascaded_with_media_context_for_page,
     build_cascaded_with_media_context_for_page_and_consumer_properties,
-    build_cascaded_with_options, build_rule_tree, build_rule_tree_with_consumer_properties, layout,
-    parse_html, parse_html_with_limits, parse_html_with_resources,
+    build_cascaded_with_options, build_rule_tree, build_rule_tree_with_consumer_properties,
+    build_rule_tree_with_limits, layout, parse_html, parse_html_with_limits,
+    parse_html_with_resources,
 };
 
 pub use raikiri_html::{
@@ -257,7 +258,7 @@ pub use raikiri_style::{
     FontFamilyKind, FontFamilyName, Length, LengthOrAuto, MediaContext, MediaType, Origin,
     PageBleed, PageCascadeResult, PageContextQuery, PageInheritance, PageMarginBoxCascadeResult,
     PageMarginBoxSlot, PageMarks, PageOrientation, PageSize, PageSizeKeyword, PropertyValue,
-    QualifiedRuleRecord, RuleNode, RuleTree, Sides, cascade_with_media_context,
+    QualifiedRuleRecord, RuleNode, RuleTree, RuleTreeLimits, Sides, cascade_with_media_context,
     cascade_with_media_context_for_page, cascade_with_options,
 };
 // `Border`, `BorderColor`, `BorderStyle`, and `LineHeight` are not exported
