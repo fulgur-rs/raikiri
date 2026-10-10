@@ -3,8 +3,9 @@
 
 use crate::Document;
 use raikiri_style::property::{
-    BorderCollapseValue, ContentComponent, DisplayValue, EmptyCellsValue, FloatValue,
-    OverflowValue, OverflowXY, PositionValue, Visibility, WhiteSpaceCollapse, ZIndexValue,
+    BackgroundImage, BorderCollapseValue, ContentComponent, DisplayValue, EmptyCellsValue,
+    FloatValue, OverflowValue, OverflowXY, PositionValue, Visibility, WhiteSpaceCollapse,
+    ZIndexValue,
 };
 use raikiri_style::{CascadeResult, ComputedValues, PseudoElem, StyleNodeId};
 use raikiri_traits::{NodeKind, PaintClip, PaintInsets, PaintRect};
@@ -229,6 +230,23 @@ pub fn is_visibility_hidden_table_part(cv: &ComputedValues) -> bool {
                 | DisplayValue::TableHeaderGroup
                 | DisplayValue::TableFooterGroup
         )
+}
+
+/// Whether a table row or row group has a background or border to paint.
+///
+/// A part without one paints nothing inside its cells, so it needs no
+/// per-cell clip.
+pub fn paints_table_part_decoration(cv: &ComputedValues) -> bool {
+    cv.background_color.a > 0
+        || !matches!(cv.background_image, BackgroundImage::None)
+        || [
+            &cv.border.top,
+            &cv.border.right,
+            &cv.border.bottom,
+            &cv.border.left,
+        ]
+        .into_iter()
+        .any(|side| side.width().px() > 0.0)
 }
 
 /// Stable-sorts a parent's children into paint order.

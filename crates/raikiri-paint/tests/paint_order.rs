@@ -305,6 +305,31 @@ fn repeated_table_headers_keep_native_and_public_subtree_order() {
     }
 }
 
+/// A row group's per-cell background clips cover only the cells in the
+/// group's slice on the page, and a group with nothing to paint has none.
+#[test]
+fn table_part_cell_clips_stay_on_their_page() {
+    let rows = "<tr><td>X</td></tr>".repeat(9);
+    let css = "@page{size:100px 100px;margin:0}body{margin:0}table{border-spacing:2px}td{padding:0;width:20px;height:18px}";
+    let clips = |page: &Page<'_>| {
+        page.paint_order()
+            .into_iter()
+            .filter(|event| matches!(event, PaintEvent::PushClip(_, ClipKind::TableCell)))
+            .count()
+    };
+    let result = assert_same_order(
+        &format!("<table><tbody style='background:blue'>{rows}</tbody></table>"),
+        css,
+    );
+    assert!(result.page_count() > 1);
+    let per_page: Vec<usize> = result.pages().map(|page| clips(&page)).collect();
+    // Five rows fit on a page; a row cut by the page edge counts on both.
+    assert!(per_page.iter().all(|&count| count <= 6), "{per_page:?}");
+    assert!(per_page.iter().sum::<usize>() >= 9, "{per_page:?}");
+    let plain = assert_same_order(&format!("<table><tbody>{rows}</tbody></table>"), css);
+    assert!(plain.pages().all(|page| clips(&page) == 0));
+}
+
 /// The walker draws the body's box on every page, as the root of the page's
 /// content; `paint_order` lists it only on the pages its box reaches. Here
 /// the body's box ends on page 1 while its paragraphs go on to page 2, and
