@@ -797,18 +797,16 @@ fn inherit_from_copies_inherited_fields() {
     // (the same proxy as the `font_family` assertion).
     assert_eq!(child.quotes, parent.quotes);
     assert!(Arc::ptr_eq(&child.quotes, &parent.quotes));
-    // CSS Text Decoration Module Level 3 §4: text-shadow is inherited. Lift each item from
-    // computed to specified via `lift_text_shadow_item` (as px); `<color>` passes through
-    // unchanged.
-    assert_eq!(
-        *child.text_shadow,
-        vec![TextShadowItem {
-            offset_x: crate::property::TextShadowLength::Length(Length::Px(1.0)),
-            offset_y: crate::property::TextShadowLength::Length(Length::Px(2.0)),
-            blur_radius: crate::property::TextShadowLength::Length(Length::Px(3.0)),
-            color: TextShadowColor::Resolved(CssColor::BLACK),
-        }]
-    );
+    // CSS Text Decoration Module Level 3 §4: text-shadow is inherited. The parent's computed
+    // list is kept as it is, shared, and finalizing passes it through.
+    match &child.text_shadow {
+        crate::specified::SpecifiedTextShadow::Inherited(inherited) => {
+            assert!(Arc::ptr_eq(inherited, &parent.text_shadow));
+        }
+        other => panic!("expected the inherited list, got {other:?}"),
+    }
+    let finalized = child.clone().finalize(&parent, &CTX);
+    assert!(Arc::ptr_eq(&finalized.text_shadow, &parent.text_shadow));
     // CSS Fragmentation Module Level 3 §3.3: both orphans and widows are inherited.
     assert_eq!(child.orphans, 5);
     assert_eq!(child.widows, 7);
@@ -1409,7 +1407,7 @@ fn finalize_absolutizes_each_side_independently() {
 #[test]
 fn finalize_absolutizes_each_text_shadow_item_independently() {
     let mut sv = SpecifiedValues::initial();
-    sv.text_shadow = Arc::new(vec![
+    sv.text_shadow = crate::specified::SpecifiedTextShadow::Specified(Arc::new(vec![
         TextShadowItem {
             offset_x: crate::property::TextShadowLength::Length(Length::Em(1.0)),
             offset_y: crate::property::TextShadowLength::Length(Length::Rem(2.0)),
@@ -1422,7 +1420,7 @@ fn finalize_absolutizes_each_text_shadow_item_independently() {
             blur_radius: crate::property::TextShadowLength::Length(Length::Px(0.0)),
             color: TextShadowColor::Resolved(CssColor::BLACK),
         },
-    ]);
+    ]));
     let cv = sv.finalize(&parent_with_font_size(16.0), &CTX);
     assert_eq!(
         *cv.text_shadow,
@@ -1451,7 +1449,10 @@ fn finalize_absolutizes_each_text_shadow_item_independently() {
 #[test]
 fn finalize_empty_text_shadow_list_reuses_shared_computed_empty_arc() {
     let sv = SpecifiedValues::initial();
-    assert!(sv.text_shadow.is_empty());
+    assert!(matches!(
+        &sv.text_shadow,
+        crate::specified::SpecifiedTextShadow::Specified(shadows) if shadows.is_empty()
+    ));
     let cv = sv.finalize(&parent_with_font_size(16.0), &CTX);
     assert!(cv.text_shadow.is_empty());
     assert!(Arc::ptr_eq(

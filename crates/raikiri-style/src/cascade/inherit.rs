@@ -3089,7 +3089,9 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             target.quotes_auto = false;
             target.quotes = v;
         }
-        PropertyValue::TextShadow(shadows) => target.text_shadow = shadows,
+        PropertyValue::TextShadow(shadows) => {
+            target.text_shadow = crate::specified::SpecifiedTextShadow::Specified(shadows);
+        }
         PropertyValue::BorderRadius(v) => target.border_radius = v,
         PropertyValue::BorderRadiusTopLeft(v) => target.border_radius.top_left = v,
         PropertyValue::BorderRadiusTopRight(v) => target.border_radius.top_right = v,
