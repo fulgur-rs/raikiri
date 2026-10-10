@@ -119,3 +119,22 @@ fn tests_option_takes_a_list_path() {
     let args = parse_args(&["--tests".to_owned(), "list.txt".to_owned()]).unwrap();
     assert_eq!(args.tests, Some(PathBuf::from("list.txt")));
 }
+
+#[test]
+fn render_png_writes_the_first_page_and_reports_missing_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let test = dir.path().join("test.html");
+    fs::write(
+        &test,
+        "<html><body style=\"margin:0;background:blue\"></body></html>",
+    )
+    .unwrap();
+    let output = dir.path().join("out.png");
+
+    render_png(&test, &output, 20, 10).unwrap();
+    let decoder = png::Decoder::new(io::BufReader::new(fs::File::open(&output).unwrap()));
+    let info = decoder.read_info().unwrap().info().clone();
+    assert_eq!((info.width, info.height), (20, 10));
+
+    assert!(render_png(&dir.path().join("missing.html"), &output, 20, 10).is_err());
+}

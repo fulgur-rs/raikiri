@@ -267,6 +267,33 @@ fn render_raikiri_pages_compatibility_wrapper_returns_document() {
 }
 
 #[test]
+fn render_raikiri_file_pages_resolves_relative_stylesheets() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("support")).unwrap();
+    std::fs::write(
+        dir.path().join("support/green.css"),
+        "html, body { margin: 0; background: rgb(0, 128, 0) }",
+    )
+    .unwrap();
+    let test = dir.path().join("test.html");
+    std::fs::write(
+        &test,
+        r#"<html><head><link rel="stylesheet" href="support/green.css"></head><body></body></html>"#,
+    )
+    .unwrap();
+
+    let rendered = render_raikiri_file_pages(&test, 16, 16).expect("file should render");
+    assert_eq!(rendered.pages.len(), 1);
+    assert_eq!(&rendered.pages[0].rgba[..4], &[0, 128, 0, 255]);
+
+    let missing = dir.path().join("missing.html");
+    assert!(matches!(
+        render_raikiri_file_pages(&missing, 16, 16),
+        Err(ReftestError::Io { path, .. }) if path == missing
+    ));
+}
+
+#[test]
 fn render_raikiri_pages_rejects_an_oversized_page_edge() {
     let html = r#"<html><head><style>@page { size: 16385px 100px; margin: 0 }</style></head><body>x</body></html>"#;
     let error = match render_raikiri_pages(html, 10, 10) {
