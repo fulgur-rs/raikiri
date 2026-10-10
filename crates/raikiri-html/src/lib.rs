@@ -13,6 +13,7 @@
 //!   [`FontCollectionBuilder`] and passed with [`RenderResources::fonts`].
 
 mod cascade;
+mod css_urls;
 mod document;
 mod document_layout;
 mod document_parse;
@@ -79,6 +80,14 @@ pub mod computed {
     pub use raikiri_style::computed_api::*;
 }
 pub use shodo::font::FontCollection;
+
+/// Used image geometry that Raikiri's own painter applies, for painters that
+/// draw background images themselves.
+pub mod image_geometry {
+    pub use raikiri_dom::image_geometry::{
+        BackgroundTiles, background_image_dimensions, background_tiles,
+    };
+}
 
 pub use raikiri_traits::PaintClip; // cov:ignore: type-only re-export has no executable code or lcov record.
 pub use raikiri_traits::{

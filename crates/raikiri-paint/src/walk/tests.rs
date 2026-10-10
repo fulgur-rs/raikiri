@@ -2860,37 +2860,6 @@ fn background_tiling_edge_cases_cover_defensive_branches() {
         &repeat,
     );
     assert_eq!(background_fill_count(&tiny), 0);
-    // Direct helper edge cases.
-    assert!(
-        axis_origins(
-            f64::INFINITY,
-            100.0,
-            0.0,
-            100.0,
-            20.0,
-            20.0,
-            &position.horizontal,
-            &repeat.x,
-            None,
-        )
-        .is_none()
-    );
-    assert!(
-        axis_origins(
-            0.0,
-            100.0,
-            0.0,
-            f64::INFINITY,
-            20.0,
-            20.0,
-            &position.horizontal,
-            &repeat.x,
-            None,
-        )
-        .is_none()
-    );
-    let (tile, count) = round_axis_tiles(0.0, 20.0, BackgroundRepeatKeyword::Round);
-    assert_eq!((tile, count), (20.0, Some(1)));
 }
 
 #[test]

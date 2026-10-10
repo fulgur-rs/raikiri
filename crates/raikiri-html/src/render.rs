@@ -567,10 +567,12 @@ fn resolve_page_geometries(
     (geometries, styles)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn preload_page_background_images(
     cascader: &PageCascader<'_>,
     slices: &[PageSlice],
     resources: &RenderResources<'_>,
+    base_url: Option<&url::Url>,
     warnings: &SharedRenderWarnings,
     signal: Option<&raikiri_traits::AbortSignal>,
     seen: &mut HashSet<url::Url>,
@@ -585,6 +587,7 @@ fn preload_page_background_images(
     }
     resources.preload_element_background_images(
         &cascader.base.computed,
+        base_url,
         warnings,
         seen,
         attempts,
@@ -592,7 +595,9 @@ fn preload_page_background_images(
     );
     for slice in slices {
         let page = cascader.page(&page_query_for_slice(slice));
-        resources.preload_page_context_background_images(&page, warnings, seen, attempts, signal);
+        resources.preload_page_context_background_images(
+            &page, base_url, warnings, seen, attempts, signal,
+        );
     }
 }
 
@@ -1108,6 +1113,7 @@ pub(crate) fn run_pipeline(
             &page_cascader,
             &slices,
             resources,
+            runtime.effective_base_url,
             &runtime.warnings,
             signal.as_ref(),
             &mut marker_image_seen,
