@@ -628,3 +628,84 @@ fn background_image_preloading_can_be_turned_off() {
     completed(stream.finish().expect("finish"));
     assert_eq!(record.pages, batch_pages(html));
 }
+
+#[test]
+fn pages_streamed_early_defer_the_page_count() {
+    /// Per page: the bottom box's content and its deferred slot texts for
+    /// the final page count.
+    struct Footers(Vec<(String, Vec<String>)>);
+    impl PageSink for &mut Footers {
+        type Output = u32;
+        fn page(
+            &mut self,
+            page: StreamPage<'_>,
+            _events: Vec<ConsumerPropertyEvent>,
+        ) -> std::io::Result<()> {
+            let boxes = page.page().margin_boxes();
+            let footer = boxes.first().expect("footer box");
+            let deferred = footer
+                .deferred
+                .iter()
+                .map(|slot| footer.content[slot.range.clone()].to_owned())
+                .collect();
+            self.0.push((footer.content.clone(), deferred));
+            Ok(())
+        }
+        fn finish(self, summary: StreamSummary) -> std::io::Result<u32> {
+            Ok(summary.page_count)
+        }
+    }
+
+    let html = format!(
+        "<style>@page {{ margin: 40px; @bottom-center {{ content: counter(page) ' / ' counter(pages) }} }}</style>{}",
+        paragraphs(60)
+    );
+    let resources = RenderResources::new();
+    let mut footers = Footers(Vec::new());
+    let mut stream = StreamingLayout::new(
+        &resources,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        &mut footers,
+    )
+    .checkpoint_bytes(1);
+    for piece in html.as_bytes().chunks(1000) {
+        stream.feed(piece).expect("feed");
+    }
+    let StreamStatus::Completed(page_count) = stream.finish().expect("finish") else {
+        panic!("aborted");
+    };
+    assert!(page_count > 2);
+    let early: Vec<_> = footers
+        .0
+        .iter()
+        .filter(|(_, slots)| !slots.is_empty())
+        .collect();
+    assert!(
+        !early.is_empty(),
+        "some pages arrive before the count is known"
+    );
+    for (index, (content, slots)) in footers.0.iter().enumerate() {
+        if slots.is_empty() {
+            assert_eq!(*content, format!("{} / {page_count}", index + 1));
+        } else {
+            // The default page limit of 10000 has five digits.
+            assert_eq!(*content, format!("{} / 99999", index + 1));
+            assert_eq!(slots, &["99999"]);
+        }
+    }
+    assert!(footers.0.last().is_some_and(|(_, slots)| slots.is_empty()));
+}
+
+#[test]
+fn the_placeholder_has_as_many_digits_as_the_page_limit() {
+    let config = |limit| {
+        LayoutConfig::builder()
+            .limits(RenderLimits::builder().max_document_pages(limit).build())
+            .build()
+    };
+    assert_eq!(page_count_placeholder(&config(Some(10_000))), 99_999);
+    assert_eq!(page_count_placeholder(&config(Some(9))), 9);
+    assert_eq!(page_count_placeholder(&config(Some(0))), 9);
+    assert_eq!(page_count_placeholder(&config(None)), 999_999_999);
+}

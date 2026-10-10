@@ -509,11 +509,15 @@ fn marker_runs<'a>(
         NodeId::new(root.node as u64),
         RunSource::Generated(NodeId::new(owner as u64), GeneratedKind::Marker),
         out,
+        None,
     );
 }
 
 /// Glyph runs of standalone text whose container's top-left is at `origin`,
 /// in the way the built-in painter draws it.
+///
+/// With `starts`, also push the UTF-8 byte offset in the shaped text at
+/// which each pushed run's [`PositionedGlyphRun::text`] begins.
 pub(crate) fn standalone_runs<'a>(
     text: &'a crate::StandaloneText,
     origin: (f32, f32),
@@ -522,6 +526,7 @@ pub(crate) fn standalone_runs<'a>(
     line_root: NodeId,
     source: RunSource,
     out: &mut Vec<PositionedGlyphRun<'a>>,
+    mut starts: Option<&mut Vec<usize>>,
 ) {
     let (x, y) = origin;
     for (index, line) in text.lines().iter().enumerate() {
@@ -577,6 +582,9 @@ pub(crate) fn standalone_runs<'a>(
                 })
                 .collect();
             let metrics = run.metrics();
+            if let Some(starts) = starts.as_deref_mut() {
+                starts.push(text_range.start);
+            }
             out.push(PositionedGlyphRun {
                 line: TextLineId {
                     root: line_root,

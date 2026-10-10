@@ -66,6 +66,8 @@ pub trait PageSink {
 pub struct StreamPage<'a> {
     layout: &'a DocumentLayout,
     index: u32,
+    /// Stands for the number of pages while it is not known yet.
+    page_count_placeholder: Option<u32>,
 }
 
 impl<'a> StreamPage<'a> {
@@ -75,8 +77,21 @@ impl<'a> StreamPage<'a> {
     }
 
     /// The laid-out page.
+    ///
+    /// A page delivered before the input ended does not know the number of
+    /// pages: its [`Page::margin_boxes`] show a placeholder for
+    /// `counter(pages)` and list it in [`crate::MarginBox::deferred`]. The
+    /// placeholder has as many digits as the page limit
+    /// ([`raikiri_traits::RenderLimits::max_document_pages`]) allows. Write
+    /// [`crate::DeferredSlot::text`] of [`StreamSummary::page_count`] in its
+    /// place once [`PageSink::finish`] runs. Pages delivered by
+    /// [`StreamingLayout::finish`] show the real number.
     pub fn page(&self) -> Page<'a> {
-        self.layout.page_at(self.index as usize)
+        let page = self.layout.page_at(self.index as usize);
+        match self.page_count_placeholder {
+            Some(placeholder) => page.with_deferred_page_count(placeholder),
+            None => page,
+        }
     }
 
     /// Lay running element `node` out at `width` CSS px. See
@@ -473,6 +488,7 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
             &mut by_page,
             &mut self.delivered,
             final_pages,
+            Some(page_count_placeholder(&self.settings.config)),
             signal.as_ref(),
         )?;
         if delivery == Delivery::Aborted {
@@ -534,6 +550,7 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
             &mut by_page,
             &mut delivered,
             laid_out.page_count(),
+            None,
             signal.as_ref(),
         )?;
         if delivery == Delivery::Aborted {
@@ -592,6 +609,7 @@ fn deliver<S: PageSink>(
     by_page: &mut [Vec<ConsumerPropertyEvent>],
     delivered: &mut u32,
     until: u32,
+    page_count_placeholder: Option<u32>,
     signal: Option<&raikiri_traits::AbortSignal>,
 ) -> Result<Delivery, RenderError> {
     while *delivered < until {
@@ -602,12 +620,24 @@ fn deliver<S: PageSink>(
         let page = StreamPage {
             layout: laid_out,
             index,
+            page_count_placeholder,
         };
         let events = std::mem::take(&mut by_page[index as usize]);
         sink.page(page, events).map_err(RenderError::Io)?;
         *delivered += 1;
     }
     Ok(Delivery::Done)
+}
+
+/// The number standing for the page count on pages delivered before it is
+/// known: all nines, with as many digits as the page limit has.
+fn page_count_placeholder(config: &LayoutConfig) -> u32 {
+    let digits = config
+        .limits
+        .max_document_pages
+        .map_or(u32::MAX.ilog10() + 1, |limit| limit.max(1).ilog10() + 1)
+        .min(9);
+    10_u32.pow(digits) - 1
 }
 
 fn failed_earlier() -> RenderError {

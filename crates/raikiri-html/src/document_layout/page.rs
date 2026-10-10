@@ -52,6 +52,9 @@ pub struct Page<'a> {
     pub(super) document: &'a raikiri_dom::Document,
     pub(super) cascade: &'a raikiri_style::CascadeResult,
     pub(super) page_count: u32,
+    /// Whether `page_count` is a placeholder for a number of pages not
+    /// known yet.
+    pub(super) page_count_deferred: bool,
     /// The `@page` cascade of the left page paired with this right page.
     pub(super) paired_style: Option<&'a PageCascadeResult>,
     /// The document's running elements; `None` on a page that is itself a
@@ -91,6 +94,13 @@ pub struct RasterImage {
 }
 
 impl<'a> Page<'a> {
+    /// This page with `placeholder` standing in for the number of pages.
+    pub(super) fn with_deferred_page_count(mut self, placeholder: u32) -> Self {
+        self.page_count = placeholder;
+        self.page_count_deferred = true;
+        self
+    }
+
     /// Zero-based page index.
     pub fn index(&self) -> u32 {
         self.slice.page_index
@@ -473,6 +483,10 @@ impl<'a> Page<'a> {
     /// `counter(pages)`, quotes, and the document-wide values of `string()`
     /// and `element()`. Each box's text is available as glyph runs through
     /// [`MarginBox::text_runs`].
+    ///
+    /// On a page streamed before the number of pages is known,
+    /// `counter(pages)` shows a placeholder and each box lists it in
+    /// [`MarginBox::deferred`]; see [`crate::StreamPage::page`].
     pub fn margin_boxes(&self) -> Vec<MarginBox> {
         // The first page is a right page, as in the page context queries.
         let page_is_left = self.slice.page_index % 2 == 1;
@@ -488,12 +502,15 @@ impl<'a> Page<'a> {
                 _ => None,
             }
         });
-        let context = raikiri_dom::MarginBoxPageContext::new(
+        let mut context = raikiri_dom::MarginBoxPageContext::new(
             self.slice.page_index,
             self.page_count,
             page_is_left,
         )
         .with_paired_page_increment(paired_page_increment);
+        if self.page_count_deferred {
+            context = context.with_deferred_page_count();
+        }
         raikiri_dom::page_margin_boxes(
             self.document,
             self.cascade,

@@ -104,8 +104,8 @@ pub use layout::{
 #[doc(hidden)]
 pub use layout::{StandaloneAlign, StandaloneStyle, StandaloneText};
 pub use margin_boxes::{
-    MarginBox, MarginBoxBackgroundImage, MarginBoxBorder, MarginBoxPageContext, MarginBoxRunning,
-    MarginBoxText, page_margin_boxes,
+    DeferredGlyph, DeferredSlot, DeferredValue, MarginBox, MarginBoxBackgroundImage,
+    MarginBoxBorder, MarginBoxPageContext, MarginBoxText, page_margin_boxes,
 };
 pub use node::{CanvasBitmap, CanvasBitmapError, ElementData, Node, NodeData, NodeFlags, TextData};
 pub use page_projection::continuation::{PageStart, PageStartToken};

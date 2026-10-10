@@ -342,6 +342,7 @@ impl RunningElementLayout {
             document: &self.document,
             cascade: &self.cascade,
             page_count: 1,
+            page_count_deferred: false,
             paired_style: None,
             running: None,
         }
