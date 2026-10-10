@@ -206,6 +206,7 @@ fn invalid_arguments_are_usage_errors() {
         &[][..],
         &["show"][..],
         &["describe", "x"][..],
+        &["compiler", "x"][..],
         &["bogus"][..],
         &["dump", "--seeds", "1-2"][..],
         &["dump", "--seeds"][..],
@@ -231,10 +232,21 @@ fn show_and_describe_print_one_case() {
 }
 
 #[test]
+fn compiler_prints_the_version_the_build_script_recorded() {
+    let (status, out) = run_to_string(&["compiler"]);
+    assert_eq!(status, ExitCode::SUCCESS);
+    assert_eq!(out, COMPILER);
+    assert!(out.starts_with("rustc "), "{out}");
+    assert!(out.contains("\nrelease: "), "{out}");
+}
+
+#[test]
 fn write_failures_are_reported() {
     let args = vec!["dump".to_owned(), "--seeds".to_owned(), "0..1".to_owned()];
     assert_eq!(run(&args, &mut FailingWriter), ExitCode::FAILURE);
     let args = vec!["show".to_owned(), "gen:0:print".to_owned()];
+    assert_eq!(run(&args, &mut FailingWriter), ExitCode::FAILURE);
+    let args = vec!["compiler".to_owned()];
     assert_eq!(run(&args, &mut FailingWriter), ExitCode::FAILURE);
 }
 

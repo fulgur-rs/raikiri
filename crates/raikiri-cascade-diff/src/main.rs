@@ -10,6 +10,7 @@
 //! raikiri-cascade-diff dump [--seeds START..END] [--html-list FILE] [--html-root DIR]
 //! raikiri-cascade-diff show [--html-root DIR] CASE
 //! raikiri-cascade-diff describe SEED
+//! raikiri-cascade-diff compiler
 //! ```
 //!
 //! `dump` prints one `CASE<TAB>HASH<TAB>STATUS` line per case, where `STATUS`
@@ -19,7 +20,8 @@
 //! leaves it on an unfinished last line. `show` prints the full canonical text
 //! of one case so the two builds can be diffed field by field. `describe`
 //! prints the document and stylesheets a seed generates, to turn a reported
-//! case into a unit test.
+//! case into a unit test. `compiler` prints the `-vV` output of the compiler
+//! cargo built the tool with, which the script keys its cached builds by.
 //!
 //! Case ids are `gen:SEED:print`, `gen:SEED:screen`, `gen:SEED:first-line`
 //! and `html:PATH`. A case that panics is recorded with its panic message
@@ -56,7 +58,12 @@ const ERROR_PREFIXES: [&str; 4] = ["BAD CASE: ", "IO-ERROR: ", "PARSE-ERROR: ", 
 const USAGE: &str =
     "usage: raikiri-cascade-diff dump [--seeds START..END] [--html-list FILE] [--html-root DIR]
        raikiri-cascade-diff show [--html-root DIR] CASE
-       raikiri-cascade-diff describe SEED";
+       raikiri-cascade-diff describe SEED
+       raikiri-cascade-diff compiler";
+
+/// The `-vV` output of the compiler cargo built this binary with, as the
+/// build script recorded it.
+const COMPILER: &str = include_str!(concat!(env!("OUT_DIR"), "/compiler"));
 
 // cov:ignore: process entry point; the logic lives in `run`, which the unit tests drive with an in-memory writer
 fn main() -> ExitCode {
@@ -84,6 +91,7 @@ fn run(args: &[String], out: &mut dyn Write) -> ExitCode {
             Ok(seed) => out.write_all(generate::describe(&generate::generate(seed)).as_bytes()),
             Err(_) => return usage(),
         },
+        Some("compiler") if args.len() == 1 => out.write_all(COMPILER.as_bytes()),
         _ => return usage(),
     };
     if written.is_ok() {
