@@ -222,12 +222,13 @@ declared_environment() {
 }
 
 # Prints the value of each environment variable named on standard input, or
-# that it is unset.
+# that it is unset. A value is printed as its bytes in hex, so that none of
+# them, trailing newlines included, is lost on the way.
 environment_values() {
-  local name value
+  local name
   while IFS= read -r name; do
-    if value="$(printenv -- "$name")"; then
-      printf '%s=%s\n' "$name" "$value"
+    if printenv -- "$name" > /dev/null; then
+      printf '%s=%s\n' "$name" "$(printenv -- "$name" | od -A n -v -t x1 | tr -d ' \n')"
     else
       printf '%s is unset\n' "$name"
     fi
