@@ -337,3 +337,12 @@ fn has_viewport_length_finds_units_in_nested_blocks_and_rewinds() {
     let mut parser = Parser::new(&mut input);
     assert!(!has_viewport_length(&mut parser));
 }
+
+#[test]
+fn has_viewport_length_leaves_var_arguments_to_substitution() {
+    let mut input = ParserInput::new("var(--m, 10vh)");
+    let mut parser = Parser::new(&mut input);
+    assert!(!has_viewport_length(&mut parser));
+    assert!(has_viewport_length_in("calc(1px + 2vw)"));
+    assert!(!has_viewport_length_in("calc(1px + 2em)"));
+}

@@ -1,6 +1,6 @@
 //! Numeric, length and identifier helpers shared by several property parser domains.
 
-use cssparser::{BasicParseError, ParseError, Parser, Token};
+use cssparser::{BasicParseError, ParseError, Parser, ParserInput, Token};
 use smol_str::SmolStr;
 
 use crate::property::types::*;
@@ -450,7 +450,9 @@ fn viewport_length(unit: &str, value: f32) -> Option<Length> {
 ///
 /// The page context uses this to drop declarations whose viewport-percentage
 /// lengths it cannot resolve yet (see
-/// [`crate::page::parse_page_declaration_block`]).
+/// [`crate::page::parse_page_declaration_block`]). The arguments of `var()`
+/// are skipped: which of them is used is only known after substitution, so
+/// [`has_viewport_length_in`] checks the substituted value instead.
 pub(crate) fn has_viewport_length(input: &mut Parser<'_, '_>) -> bool {
     fn scan(input: &mut Parser<'_, '_>) -> bool {
         while let Ok(token) = input.next() {
@@ -461,10 +463,10 @@ pub(crate) fn has_viewport_length(input: &mut Parser<'_, '_>) -> bool {
                     }
                     false
                 }
-                Token::Function(_)
-                | Token::ParenthesisBlock
-                | Token::SquareBracketBlock
-                | Token::CurlyBracketBlock => true,
+                Token::Function(name) => !name.eq_ignore_ascii_case("var"),
+                Token::ParenthesisBlock | Token::SquareBracketBlock | Token::CurlyBracketBlock => {
+                    true
+                }
                 _ => false,
             };
             if nested
@@ -486,6 +488,13 @@ pub(crate) fn has_viewport_length(input: &mut Parser<'_, '_>) -> bool {
     let found = scan(input);
     input.reset(&start);
     found
+}
+
+/// [`has_viewport_length`] over a whole value, such as the result of
+/// substituting `var()` references.
+pub(crate) fn has_viewport_length_in(css: &str) -> bool {
+    let mut input = ParserInput::new(css);
+    has_viewport_length(&mut Parser::new(&mut input))
 }
 
 /// `<length [0,∞]>` — [`parse_length_value`] with `allow_percentage=false`

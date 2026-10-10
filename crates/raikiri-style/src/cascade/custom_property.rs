@@ -25,12 +25,31 @@ pub(crate) fn resolve_deferred_value(
     custom_properties: &CustomPropertyEnvironment,
 ) -> Option<PropertyValue> {
     let substituted = substitute_vars(&deferred.value, &mut |name| custom_properties.get(name), 0)?;
+    resolve_substituted_value(deferred, &substituted)
+}
+
+/// [`resolve_deferred_value`] for the page context, whose lengths are
+/// resolved without a viewport: a value that uses a viewport-percentage
+/// length after substitution is invalid at computed-value time, as the same
+/// value written directly is dropped at parse time.
+pub(crate) fn resolve_page_deferred_value(
+    deferred: &DeferredValue,
+    custom_properties: &CustomPropertyEnvironment,
+) -> Option<PropertyValue> {
+    let substituted = substitute_vars(&deferred.value, &mut |name| custom_properties.get(name), 0)?;
+    if crate::property::has_viewport_length_in(&substituted) {
+        return None;
+    }
+    resolve_substituted_value(deferred, &substituted)
+}
+
+fn resolve_substituted_value(deferred: &DeferredValue, substituted: &str) -> Option<PropertyValue> {
     if deferred.key == PropertyKey::HyphenateLimitChars {
         // The integer components need to know whether a fractional number came
         // from a math function: calc results are rounded, direct fractional
         // tokens are invalid. Parse the substituted token stream before the
         // generic math simplifier erases that distinction.
-        let mut input = ParserInput::new(substituted.as_ref());
+        let mut input = ParserInput::new(substituted);
         let mut parser = Parser::new(&mut input);
         let value = parse_value(&deferred.property, &mut parser)?;
         parser.expect_exhausted().ok()?;
@@ -39,7 +58,7 @@ pub(crate) fn resolve_deferred_value(
     if deferred.key == PropertyKey::TextUnderlineOffset {
         // Preserve the substituted calc's em and percentage terms for the
         // property-specific computed-value resolver.
-        let mut input = ParserInput::new(substituted.as_ref());
+        let mut input = ParserInput::new(substituted);
         let mut parser = Parser::new(&mut input);
         let value = parse_value(&deferred.property, &mut parser)?;
         parser.expect_exhausted().ok()?;
@@ -49,16 +68,16 @@ pub(crate) fn resolve_deferred_value(
         // The text-shadow parser must see the substituted calc source: generic
         // simplification would erase mixed em/px terms, calculated-blur
         // provenance, or percentages that cancel to zero.
-        let mut input = ParserInput::new(substituted.as_ref());
+        let mut input = ParserInput::new(substituted);
         let mut parser = Parser::new(&mut input);
         let value = parse_value(&deferred.property, &mut parser)?;
         parser.expect_exhausted().ok()?;
         return project_deferred_value(value, deferred.key);
     }
-    let simplified = match simplify_math_functions(&substituted) {
+    let simplified = match simplify_math_functions(substituted) {
         Some(value) => value,
         None => {
-            let value = parse_simple_calc_length_percentage(&substituted)?;
+            let value = parse_simple_calc_length_percentage(substituted)?;
             return calc_length_percentage_value(deferred.key, value);
         }
     };

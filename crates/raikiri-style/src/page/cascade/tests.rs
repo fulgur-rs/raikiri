@@ -1414,6 +1414,34 @@ fn cascade_page_resolves_custom_property_inherited_from_root() {
     );
 }
 
+// Page lengths are resolved without a viewport, so a viewport-percentage
+// length that reaches a page property through `var()` makes the value
+// invalid at computed-value time instead of resolving against a default.
+#[test]
+fn cascade_page_rejects_viewport_lengths_substituted_through_var() {
+    let result = page(
+        "@page { --m: 10vh; margin-top: 20px; margin-top: var(--m) }",
+        &ComputedValues::initial(),
+    );
+    assert!(!result.declarations().contains_key(&PropertyKey::MarginTop));
+}
+
+// Only the substituted value is checked: a viewport-percentage length in an
+// unused `var()` fallback does not invalidate the declaration.
+#[test]
+fn cascade_page_keeps_var_whose_unused_fallback_has_a_viewport_length() {
+    let result = page(
+        "@page { --m: 30px; margin-top: var(--m, 10vh) }",
+        &ComputedValues::initial(),
+    );
+    assert_eq!(
+        result.declarations().get(&PropertyKey::MarginTop),
+        Some(&PropertyValue::MarginTop(LengthOrAuto::Length(Length::Px(
+            30.0
+        ))))
+    );
+}
+
 #[test]
 fn cascade_page_drops_invalid_deferred_value_at_computed_time() {
     let root = ComputedValues::initial();
