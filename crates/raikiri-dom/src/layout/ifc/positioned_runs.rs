@@ -198,6 +198,12 @@ impl<'a> PositionedLines<'a> {
             })
     }
 
+    /// Line `index` with its runs, or `None` when it is not drawn here.
+    pub(crate) fn line_at(&self, index: usize) -> Option<PositionedLine<'a>> {
+        let offset = (*self.line_offsets.get(index)?)?;
+        Some(self.line(index, &self.lines[index], offset))
+    }
+
     fn line(&self, index: usize, line: &'a shodo::Line, offset: (f32, f32)) -> PositionedLine<'a> {
         let converter = PhysicalConverter::new(
             self.writing_mode,

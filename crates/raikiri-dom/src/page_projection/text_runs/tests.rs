@@ -168,3 +168,122 @@ fn a_typographic_box_is_not_reported_as_generated_before_text() {
         );
     }
 }
+
+/// Two Ahem paragraphs, one X per 10px line: 25 lines, then 3 lines below.
+fn tall_paragraphs() -> (Document, CascadeResult, [usize; 2]) {
+    let mut document = Document::new();
+    let body = document.append_element(
+        Some(0),
+        "body",
+        taffy::Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let mut roots = [0; 2];
+    for (root, count) in roots.iter_mut().zip([25, 3]) {
+        *root = document.append_element(
+            Some(body),
+            "div",
+            taffy::Style::default(),
+            Some("display:block;width:10px;font:10px/10px Ahem"),
+        );
+        document.append_text(*root, vec!["X"; count].join(" "));
+    }
+    document.mark_in_document_flags();
+    let fonts = crate::build_wpt_font_collection(std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/text-autospace"
+    )))
+    .unwrap();
+    document.set_font_collection(fonts);
+    let cascade =
+        raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
+    crate::layout_single_page(&mut document, &cascade, raikiri_traits::PageBox::A4).unwrap();
+    (document, cascade, roots)
+}
+
+fn project_at(document: &mut Document, cascade: &CascadeResult, origins: &[f32]) {
+    let slices: Vec<_> = origins
+        .iter()
+        .enumerate()
+        .map(|(index, &content_origin_y)| crate::PageSlice {
+            page_index: index as u32,
+            content_origin_y,
+            page_name: None,
+        })
+        .collect();
+    document
+        .project_pages(cascade, raikiri_traits::PageBox::A4, &slices, &[])
+        .unwrap();
+}
+
+/// The distinct lines of a page's runs, as (root, line index) in run order.
+fn page_lines(document: &Document, cascade: &CascadeResult, page: u32) -> Vec<(usize, usize)> {
+    let mut lines = Vec::new();
+    for run in document.page_text_runs(cascade, page) {
+        let line = (run.line.root.0 as usize, run.line.index);
+        if lines.last() != Some(&line) {
+            lines.push(line);
+        }
+    }
+    lines
+}
+
+#[test]
+fn each_page_draws_only_the_lines_in_its_flow_slice() {
+    let (mut document, cascade, [first, second]) = tall_paragraphs();
+    project_at(&mut document, &cascade, &[0.0, 100.0, 200.0, 300.0]);
+    let lines_of = |root, range: std::ops::Range<usize>| range.map(move |index| (root, index));
+    assert_eq!(
+        page_lines(&document, &cascade, 0),
+        lines_of(first, 0..10).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        page_lines(&document, &cascade, 1),
+        lines_of(first, 10..20).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        page_lines(&document, &cascade, 2),
+        lines_of(first, 20..25)
+            .chain(lines_of(second, 0..3))
+            .collect::<Vec<_>>()
+    );
+    assert!(page_lines(&document, &cascade, 3).is_empty());
+    // Each paragraph is listed only for the pages its lines reach.
+    let by_page = &document.page_projection.text_roots_by_page;
+    let roots = &document.page_projection.text_roots;
+    let listed = |page: usize| -> Vec<usize> {
+        by_page[page]
+            .iter()
+            .map(|&index| roots[index].node)
+            .collect()
+    };
+    assert_eq!(listed(0), [first]);
+    assert_eq!(listed(1), [first]);
+    assert_eq!(listed(2), [first, second]);
+    assert!(listed(3).is_empty());
+}
+
+#[test]
+fn pages_without_ordered_flow_slices_are_each_checked() {
+    let (mut document, cascade, [first, second]) = tall_paragraphs();
+    // A repeated origin gives the first page a slice that runs past the
+    // second's, so the pages cannot be searched in order.
+    project_at(&mut document, &cascade, &[0.0, 0.0, 250.0]);
+    let first_lines = (0..25).map(|index| (first, index));
+    let second_lines = (0..3).map(|index| (second, index));
+    assert_eq!(
+        page_lines(&document, &cascade, 0),
+        first_lines
+            .clone()
+            .chain(second_lines.clone())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        page_lines(&document, &cascade, 1),
+        first_lines.collect::<Vec<_>>()
+    );
+    assert_eq!(
+        page_lines(&document, &cascade, 2),
+        second_lines.collect::<Vec<_>>()
+    );
+}
