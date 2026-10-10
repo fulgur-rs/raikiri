@@ -21,45 +21,47 @@ on:
       path_prefix:
         description: Only tests below this WPT directory
         type: choice
-        default: css/CSS2
+        default: css/CSS2 (2230)
         # Directories with at least ten judgeable tests at the pinned WPT
         # revision; `css` covers every directory, including the smaller ones.
+        # The count in parentheses is the number of judgeable tests not yet in
+        # a baseline when the list was made; the List step strips it.
         options:
-          - css
-          - css/CSS2
-          - css/CSS2/backgrounds
-          - css/CSS2/borders
-          - css/CSS2/box-display
-          - css/CSS2/cascade
-          - css/CSS2/floats-clear
-          - css/CSS2/fonts
-          - css/CSS2/generate
-          - css/CSS2/generated-content
-          - css/CSS2/i18n
-          - css/CSS2/linebox
-          - css/CSS2/lists
-          - css/CSS2/margin-padding-clear
-          - css/CSS2/normal-flow
-          - css/CSS2/positioning
-          - css/CSS2/selectors
-          - css/CSS2/tables
-          - css/CSS2/text
-          - css/CSS2/ui
-          - css/CSS2/visufx
-          - css/CSS2/visuren
-          - css/CSS2/zindex
-          - css/css-animations
-          - css/css-backgrounds
-          - css/css-display
-          - css/css-flexbox
-          - css/css-gcpm
-          - css/css-page
-          - css/css-round-display
-          - css/css-speech
-          - css/css-text
-          - css/css-text-decor
-          - css/css-ui
-          - css/css-writing-modes
+          - css (2974)
+          - css/CSS2 (2230)
+          - css/CSS2/backgrounds (269)
+          - css/CSS2/borders (255)
+          - css/CSS2/box-display (15)
+          - css/CSS2/cascade (64)
+          - css/CSS2/floats-clear (12)
+          - css/CSS2/fonts (147)
+          - css/CSS2/generate (17)
+          - css/CSS2/generated-content (52)
+          - css/CSS2/i18n (57)
+          - css/CSS2/linebox (45)
+          - css/CSS2/lists (123)
+          - css/CSS2/margin-padding-clear (29)
+          - css/CSS2/normal-flow (60)
+          - css/CSS2/positioning (31)
+          - css/CSS2/selectors (52)
+          - css/CSS2/tables (581)
+          - css/CSS2/text (146)
+          - css/CSS2/ui (180)
+          - css/CSS2/visufx (25)
+          - css/CSS2/visuren (22)
+          - css/CSS2/zindex (17)
+          - css/css-animations (55)
+          - css/css-backgrounds (80)
+          - css/css-display (91)
+          - css/css-flexbox (16)
+          - css/css-gcpm (20)
+          - css/css-page (12)
+          - css/css-round-display (15)
+          - css/css-speech (11)
+          - css/css-text (26)
+          - css/css-text-decor (78)
+          - css/css-ui (206)
+          - css/css-writing-modes (121)
       model:
         description: Claude model id
         default: claude-haiku-5-5
@@ -110,6 +112,8 @@ jobs:
         env:
           PATH_PREFIX: ${{ inputs.path_prefix }}
         run: |
+          # Drop the " (N)" count shown in the dropdown.
+          PATH_PREFIX="${PATH_PREFIX%% (*}"
           uv run --script scripts/wpt/haiku-judge-meta-assert.py list-tests \
             --wpt-root target/wpt \
             --path-prefix "$PATH_PREFIX" \
