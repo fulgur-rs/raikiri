@@ -629,3 +629,40 @@ fn the_placeholder_has_as_many_digits_as_the_page_limit() {
     assert_eq!(page_count_placeholder(&config(Some(0))), 9);
     assert_eq!(page_count_placeholder(&config(None)), 999_999_999);
 }
+
+#[test]
+fn streamed_pages_carry_the_base_url() {
+    struct BaseUrl(Option<String>);
+    impl PageSink for &mut BaseUrl {
+        type Output = ();
+        fn page(
+            &mut self,
+            page: StreamPage<'_>,
+            _events: Vec<ConsumerPropertyEvent>,
+        ) -> std::io::Result<()> {
+            self.0 = page.base_url().map(ToString::to_string);
+            Ok(())
+        }
+        fn finish(self, _summary: StreamSummary) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let resources =
+        RenderResources::new().base_url(url::Url::parse("https://example.com/doc/").unwrap());
+    let mut base = BaseUrl(None);
+    let mut stream = StreamingLayout::new(
+        &resources,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        &mut base,
+    );
+    stream
+        .feed(b"<base href='https://example.com/other/'><p><a href='x'>x</a></p>")
+        .expect("feed");
+    assert!(matches!(
+        stream.finish().expect("finish"),
+        StreamStatus::Completed(())
+    ));
+    assert_eq!(base.0.as_deref(), Some("https://example.com/other/"));
+}
