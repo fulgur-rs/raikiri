@@ -14,9 +14,10 @@ use std::collections::HashMap;
 use std::io::Write;
 
 use html5ever::driver::{ParseOpts, Parser, parse_document};
+use raikiri_style::property::{DisplayValue, PositionValue};
 use raikiri_traits::{
-    ConsumerPropertyEvent, LayoutConfig, LimitKind, NetworkProvider, NodeId, PageDefaults,
-    RenderError, RenderWarning,
+    ConsumerPropertyEvent, LayoutConfig, LimitKind, NetworkProvider, NodeId, NodeKind,
+    PageDefaults, RenderError, RenderWarning, WarningKind,
 };
 
 use super::{
@@ -25,7 +26,7 @@ use super::{
 use crate::document_parse::assemble_document;
 use crate::input::Utf8Feed;
 use crate::parse::finish_document;
-use crate::sink::traced_handles;
+use crate::sink::{collect_body_inline_stylesheet_ids, traced_handles};
 use crate::types::UncascadedDocument;
 use crate::{
     ConsumerPropertyRegistration, HtmlDocument, RaikiriTreeSink, RenderResources, build_rule_tree,
@@ -123,7 +124,18 @@ pub enum StreamStatus<T> {
 /// of input, the document parsed so far is laid out and the pages no later
 /// input can change are delivered; each of those layouts covers the whole
 /// prefix, so a checkpoint costs as much as a layout of everything fed so
-/// far. Input must be
+/// far.
+///
+/// Delivered pages never change, so content that would change them is left
+/// out, each case reported in [`StreamSummary::warnings`] as
+/// [`WarningKind::StreamingContentIgnored`]:
+///
+/// - `<style>` elements inside `<body>` are not applied; put style sheets in
+///   `<head>`;
+/// - a `position: fixed` element created after the first page was delivered
+///   is not laid out;
+/// - attributes added by a repeated `<html>` or `<body>` tag after the first
+///   page was delivered are ignored. Input must be
 /// UTF-8. The input byte cap and the other parse limits come from the
 /// [`RenderResources`]. Only print media is supported.
 ///
@@ -170,6 +182,10 @@ pub struct StreamingLayout<'r, 'a, S> {
     checkpoint_bytes: usize,
     /// Pages already handed to the sink.
     delivered: u32,
+    /// Node count of the document whose pages were delivered first. Fixed
+    /// positioned elements created after that are not laid out: they would
+    /// repeat on pages already delivered.
+    late_nodes_from: Option<usize>,
     /// The abort signal fired during a checkpoint.
     aborted: bool,
     /// The first input failure. [`StreamingLayout::feed`] returns it to its
@@ -187,15 +203,66 @@ struct Settings<'r, 'a> {
     preload_background_images: bool,
 }
 
+/// A cascaded document and what [`Settings::cascade`] found on the way.
+struct Cascaded {
+    document: HtmlDocument,
+    forward_dependent: bool,
+    /// Warnings for the content left out.
+    ignored: Vec<RenderWarning>,
+}
+
+/// Fixed positioned elements with node id `from` or more.
+fn late_fixed_elements(document: &HtmlDocument, from: usize) -> Vec<usize> {
+    let dom = &document.uncascaded.dom;
+    (from..dom.node_count())
+        .filter(|&id| {
+            dom.get_node(id)
+                .is_some_and(|node| node.kind() == NodeKind::Element && node.is_in_document())
+                && document.cascade.computed.get(id).is_some_and(|values| {
+                    values.position == PositionValue::Fixed && values.display != DisplayValue::None
+                })
+        })
+        .collect()
+}
+
+/// Keep element `id` from generating boxes, through its inline style so
+/// that every cascade of the document sees it.
+fn hide_element(dom: &mut raikiri_dom::Document, id: usize) {
+    use raikiri_traits::{Dom, Element, Node};
+
+    let existing = dom.node(NodeId(id as u64)).and_then(|node| {
+        node.as_element()
+            .and_then(|element| element.inline_style_source().map(str::to_owned))
+    });
+    let style = match existing {
+        Some(style) => format!("{style}; display: none !important"),
+        None => "display: none !important".to_owned(),
+    };
+    dom.set_element_inline_style(id, Some(style.into()));
+}
+
 impl Settings<'_, '_> {
-    /// Finish and cascade a parsed document. With `forward_dependent`, also
-    /// report whether its style sheets hold selectors that depend on later
-    /// content.
+    /// Finish and cascade a parsed document, leaving out what a streaming
+    /// layout does not apply: `<style>` elements inside `<body>`, and fixed
+    /// positioned elements whose node id is `late_nodes_from` or more. With
+    /// `forward_dependent`, also report whether the style sheets hold
+    /// selectors that depend on later content.
     fn cascade(
         &self,
-        parsed: UncascadedDocument,
+        mut parsed: UncascadedDocument,
         forward_dependent: bool,
-    ) -> Result<(HtmlDocument, bool), RenderError> {
+        late_nodes_from: Option<usize>,
+    ) -> Result<Cascaded, RenderError> {
+        let mut ignored = Vec::new();
+        let body_sheets = collect_body_inline_stylesheet_ids(&parsed.dom);
+        let kept = parsed.stylesheet_sources.len() - body_sheets.len();
+        parsed.stylesheet_sources.truncate(kept);
+        ignored.extend(body_sheets.into_iter().map(|id| RenderWarning {
+            kind: WarningKind::StreamingContentIgnored,
+            node_id: Some(id),
+            details: "a <style> element inside <body> is not applied while streaming".to_owned(),
+        }));
+
         let network = self.resources.network_adapter();
         let network_ref = network
             .as_ref()
@@ -204,11 +271,32 @@ impl Settings<'_, '_> {
         let options = self
             .resources
             .parse_options(&extra_stylesheets, network_ref);
+        let limits = self.resources.parse_limits();
         let uncascaded = finish_document(parsed, &options).map_err(RenderError::Parse)?;
         let forward_dependent =
             forward_dependent && build_rule_tree(&uncascaded).has_forward_dependent_selectors();
-        let document = assemble_document(uncascaded, &options, &self.resources.parse_limits())?;
-        Ok((document, forward_dependent))
+        let mut document = assemble_document(uncascaded, &options, &limits)?;
+
+        let late =
+            late_nodes_from.map_or_else(Vec::new, |from| late_fixed_elements(&document, from));
+        if !late.is_empty() {
+            let mut uncascaded = document.uncascaded;
+            for &id in &late {
+                hide_element(&mut uncascaded.dom, id);
+                ignored.push(RenderWarning {
+                    kind: WarningKind::StreamingContentIgnored,
+                    node_id: Some(NodeId(id as u64)),
+                    details: "a position: fixed element arrived after pages were delivered"
+                        .to_owned(),
+                });
+            }
+            document = assemble_document(uncascaded, &options, &limits)?;
+        }
+        Ok(Cascaded {
+            document,
+            forward_dependent,
+            ignored,
+        })
     }
 
     /// Lay `document` out, collecting its consumer property events.
@@ -272,6 +360,7 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
             unchecked_bytes: 0,
             checkpoint_bytes: CHECKPOINT_BYTES,
             delivered: 0,
+            late_nodes_from: None,
             aborted: false,
             failure: Failure::None,
         }
@@ -353,7 +442,11 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
         let builder = &self.input.parser().tokenizer.sink;
         let traced = traced_handles(builder);
         let parsed = builder.sink.snapshot();
-        let (document, forward_dependent) = self.settings.cascade(parsed, true)?;
+        let Cascaded {
+            document,
+            forward_dependent,
+            ..
+        } = self.settings.cascade(parsed, true, self.late_nodes_from)?;
         let frontier = stable_frontier(
             &document.uncascaded.dom,
             &document.cascade,
@@ -386,6 +479,15 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
         if delivery == Delivery::Aborted {
             self.aborted = true;
         }
+        if self.delivered > 0 && self.late_nodes_from.is_none() {
+            self.late_nodes_from = Some(document.uncascaded.dom.node_count());
+            self.input
+                .parser()
+                .tokenizer
+                .sink
+                .sink
+                .freeze_root_attributes();
+        }
         Ok(())
     }
 
@@ -412,10 +514,16 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
             input,
             mut sink,
             mut delivered,
+            late_nodes_from,
             ..
         } = self;
         let parsed = input.finish().map_err(RenderError::Parse)?;
-        let (document, _) = settings.cascade(parsed, false)?;
+        let Cascaded {
+            mut document,
+            ignored,
+            ..
+        } = settings.cascade(parsed, false, late_nodes_from)?;
+        document.uncascaded.warnings.extend(ignored);
         let Some((laid_out, events)) = settings.run_layout(&document)? else {
             return Ok(StreamStatus::Aborted);
         };

@@ -50,6 +50,10 @@ pub struct RaikiriTreeSink {
     /// position and gets the same node id it always did, however the input
     /// was split.
     pending_text: RefCell<Option<(TextTarget, String)>>,
+    /// Set once a streaming layout has delivered pages: attributes that a
+    /// repeated `<html>` or `<body>` tag would add are then ignored, since
+    /// they could restyle those pages.
+    root_attributes_frozen: Cell<bool>,
 }
 
 impl RaikiriTreeSink {
@@ -70,6 +74,7 @@ impl RaikiriTreeSink {
             quirks_mode: Cell::new(QuirksMode::NoQuirks),
             max_parse_warnings,
             pending_text: RefCell::new(None),
+            root_attributes_frozen: Cell::new(false),
         }
     }
 
@@ -90,6 +95,12 @@ impl RaikiriTreeSink {
         self.qual_names.borrow_mut().insert(idx, name);
         self.attributes.borrow_mut().insert(idx, attrs);
         idx
+    }
+
+    /// Ignore attributes that later repeated `<html>` or `<body>` tags would
+    /// add, recording a warning instead.
+    pub(crate) fn freeze_root_attributes(&self) {
+        self.root_attributes_frozen.set(true);
     }
 
     /// The document parsed so far, finished as [`TreeSink::finish`] would
@@ -397,12 +408,27 @@ impl TreeSink for RaikiriTreeSink {
     fn add_attrs_if_missing(&self, target: &usize, attrs: Vec<Attribute>) {
         let mut store = self.attributes.borrow_mut();
         let existing = store.entry(*target).or_default();
-        for a in attrs {
-            let name_exists = existing.iter().any(|e| e.name == a.name);
-            if !name_exists {
-                existing.push(a);
-            }
+        let missing: Vec<Attribute> = attrs
+            .into_iter()
+            .filter(|a| !existing.iter().any(|e| e.name == a.name))
+            .collect();
+        if missing.is_empty() {
+            return;
         }
+        if self.root_attributes_frozen.get() {
+            let names: Vec<&str> = missing.iter().map(|a| a.name.local.as_ref()).collect();
+            self.warnings.borrow_mut().push(RenderWarning {
+                kind: WarningKind::StreamingContentIgnored,
+                node_id: Some(raikiri_traits::NodeId(*target as u64)),
+                details: format!(
+                    "attributes {} of a repeated <html> or <body> tag arrived after pages \
+                     were delivered",
+                    names.join(", ")
+                ),
+            });
+            return;
+        }
+        existing.extend(missing);
     }
 
     fn remove_from_parent(&self, target: &usize) {
@@ -619,7 +645,9 @@ pub(crate) fn stylesheet_media_attribute(
         .map(ToOwned::to_owned)
 }
 
-fn collect_body_inline_stylesheet_ids(doc: &Document) -> Vec<raikiri_traits::NodeId> {
+/// Non-empty stylesheet `<style>` elements outside `<head>`, in document
+/// order. Their sheets end the sink's `stylesheet_sources`, one each.
+pub(crate) fn collect_body_inline_stylesheet_ids(doc: &Document) -> Vec<raikiri_traits::NodeId> {
     use raikiri_traits::{Dom, Node};
 
     let head_id = find_head_element(doc);

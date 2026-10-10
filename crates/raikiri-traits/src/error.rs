@@ -381,6 +381,13 @@ pub enum WarningKind {
     /// subtree's events are still listed; `RenderWarning::node_id` names the
     /// subtree root and `RenderWarning::details` the reason.
     PaintOrderApproximated,
+    /// A streaming layout ignored content it cannot honour: content that
+    /// would change pages already delivered (such as a `position: fixed`
+    /// element arriving after the first page), or content a streaming
+    /// layout never applies (such as a `<style>` element inside `<body>`).
+    /// `RenderWarning::node_id` names the element and
+    /// `RenderWarning::details` what was ignored.
+    StreamingContentIgnored,
 }
 
 /// Behavior when the consumer convergence loop exhausts `max_target_iterations`
