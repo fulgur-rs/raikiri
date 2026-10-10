@@ -46,6 +46,7 @@ import html
 import json
 import re
 import sys
+import threading
 from pathlib import Path
 
 DEFAULT_MODEL = "claude-haiku-5-5"
@@ -276,10 +277,23 @@ def client():
     return anthropic.Anthropic()
 
 
+def auth_errors() -> tuple[type[Exception], ...]:
+    import anthropic
+    from anthropic.lib.credentials import WorkloadIdentityError
+
+    return (
+        anthropic.AuthenticationError,
+        anthropic.PermissionDeniedError,
+        anthropic.CredentialsError,
+        WorkloadIdentityError,
+    )
+
+
 def command_run(args) -> int:
     review_dir = args.review_dir
     cache = Cache(args.cache or review_dir / "judge-cache")
     api = None
+    fatal: tuple[type[Exception], ...] = ()
     results: list[tuple[str, dict, bool]] = []
     pending = []
     for row in load_rows(review_dir):
@@ -296,9 +310,15 @@ def command_run(args) -> int:
         pending = pending[:max_requests]
     if pending:
         api = client()
+        fatal = auth_errors()
+    # Credential failures repeat for every request, so the first one stops
+    # the run instead of being sent again for each remaining row.
+    stop = threading.Event()
 
     def judge(item):
         test_id, key, text, png = item
+        if stop.is_set():
+            return None
         try:
             message = api.messages.parse(
                 **request_params(args.model, text, png), output_format=verdict_model()
@@ -308,6 +328,11 @@ def command_run(args) -> int:
                 raise ValueError(f"no verdict (stop_reason={message.stop_reason})")
             verdict = to_cache_entry(message.parsed_output, message.usage)
             cache.put(key, verdict)
+        except fatal as error:
+            if not stop.is_set():
+                stop.set()
+                print(f"{test_id}: {error}", file=sys.stderr)
+            return None
         except Exception as error:  # one failed request must not discard the others
             print(f"{test_id}: {error}", file=sys.stderr)
             return None
@@ -322,6 +347,9 @@ def command_run(args) -> int:
                 results.append(result)
     write_reviews(review_dir / args.output, results, args.model)
     summarize(results, args.model)
+    if stop.is_set():
+        print(f"stopped on an authentication error; {failed} rows were not judged")
+        return 1
     if failed:
         print(f"{failed} requests failed; their rows are missing from the reviews")
         return 1

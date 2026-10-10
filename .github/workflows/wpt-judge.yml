@@ -174,6 +174,13 @@ jobs:
               && mv -f "$ANTHROPIC_IDENTITY_TOKEN_FILE.tmp" "$ANTHROPIC_IDENTITY_TOKEN_FILE"
           }
           fetch_token || { echo "could not fetch the GitHub OIDC token" >&2; exit 1; }
+          # Print the claims a federation rule matches on (not the signed
+          # token), so a rejected exchange can be compared with the rule.
+          cut -d. -f2 "$ANTHROPIC_IDENTITY_TOKEN_FILE" | tr '_-' '/+' \
+            | { b=$(cat); while [ $(( ${#b} % 4 )) -ne 0 ]; do b="$b="; done; printf '%s' "$b"; } \
+            | base64 -d \
+            | jq '{iss, aud, sub, event_name, ref, workflow_ref, repository, repository_owner, repository_owner_id}' \
+            || echo "could not decode the token claims" >&2
           # A failed refresh keeps the previous token; the next one retries.
           ( while sleep 120; do fetch_token || echo "token refresh failed" >&2; done ) &
           refresher=$!
