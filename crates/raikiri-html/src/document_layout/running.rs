@@ -230,6 +230,8 @@ impl RunningElementLayout {
             style: &self.style,
             document: &self.document,
             cascade: &self.cascade,
+            page_count: 1,
+            paired_style: None,
             running: None,
         }
     }

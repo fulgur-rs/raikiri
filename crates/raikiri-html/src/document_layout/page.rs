@@ -1,4 +1,4 @@
-use super::{DomView, Fragment, OverflowClip, PaintEvent, PositionedGlyphRun};
+use super::{DomView, Fragment, MarginBox, OverflowClip, PaintEvent, PositionedGlyphRun};
 use raikiri_style::property::StringFetchMode;
 use raikiri_style::{ComputedValues, PageCascadeResult};
 use raikiri_traits::{NodeId, PaintInsets, PaintRect};
@@ -50,6 +50,9 @@ pub struct Page<'a> {
     pub(super) style: &'a PageCascadeResult,
     pub(super) document: &'a raikiri_dom::Document,
     pub(super) cascade: &'a raikiri_style::CascadeResult,
+    pub(super) page_count: u32,
+    /// The `@page` cascade of the left page paired with this right page.
+    pub(super) paired_style: Option<&'a PageCascadeResult>,
     /// The document's running elements; `None` on a page that is itself a
     /// laid-out running element.
     pub(super) running: Option<&'a super::running::RunningIndex>,
@@ -378,8 +381,8 @@ impl<'a> Page<'a> {
     /// A line belongs to the page that holds its center, the same rule as
     /// [`Fragment::line_range`], so every line appears on exactly one page;
     /// a paragraph repeated on every page (inside `position: fixed`) appears
-    /// on each. Propagated text decorations are included; margin boxes and
-    /// shadows are not included yet.
+    /// on each. Propagated text decorations are included; shadows are not
+    /// included yet. Margin box text comes from [`Self::margin_boxes`].
     /// Text list markers are included, including standalone markers of
     /// empty items. A standalone marker belongs to its item's first
     /// principal fragment and is not repeated on continuation pages. Missing
@@ -447,6 +450,45 @@ impl<'a> Page<'a> {
     ) -> Vec<PaintEvent<'a>> {
         self.document
             .page_paint_order_for_text_runs(self.cascade, self.slice.page_index, runs)
+    }
+
+    /// Page-margin boxes of this page (CSS Paged Media 3 §4.2) in drawing
+    /// order: the top row, the bottom row, the left and right columns, then
+    /// the corners. Draw them after the page background and border and
+    /// before [`Self::paint_order`].
+    ///
+    /// Generated content is resolved for this page: `counter(page)`,
+    /// `counter(pages)`, quotes, and the document-wide values of `string()`
+    /// and `element()`. Each box's text is available as glyph runs through
+    /// [`MarginBox::text_runs`].
+    pub fn margin_boxes(&self) -> Vec<MarginBox> {
+        // The first page is a right page, as in the page context queries.
+        let page_is_left = self.slice.page_index % 2 == 1;
+        let paired_page_increment = self.paired_style.and_then(|paired| {
+            match paired
+                .declarations()
+                .get(&raikiri_style::PropertyKey::CounterIncrement)
+            {
+                Some(raikiri_style::PropertyValue::CounterIncrement(entries)) => entries
+                    .iter()
+                    .find(|(name, _)| name.as_str() == "page")
+                    .map(|(_, value)| *value),
+                _ => None,
+            }
+        });
+        let context = raikiri_dom::MarginBoxPageContext::new(
+            self.slice.page_index,
+            self.page_count,
+            page_is_left,
+        )
+        .with_paired_page_increment(paired_page_increment);
+        raikiri_dom::page_margin_boxes(
+            self.document,
+            self.cascade,
+            self.style,
+            self.geometry.page_box,
+            context,
+        )
     }
 
     /// The laid-out document, its cascade, the page box and the page's
