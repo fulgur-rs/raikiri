@@ -452,6 +452,12 @@ ROOT_RELATIVE_URL_RE = re.compile(r"""\b(?:src|href)\s*=\s*(?:["']/(?!/|fonts/)|
 TEST_SUFFIXES = (".xht", ".xhtml", ".html", ".htm")
 
 
+# A condition checked by scrolling the page or a box cannot be decided from
+# one screenshot. Mentions of scrollbars or a "scrolling mechanism" describe
+# what is painted, so they stay.
+SCROLL_ACTION_RE = re.compile(r"\bscroll(?:ed|ing)?\b(?!\s*(?:bar|mechanism))", re.I)
+
+
 def is_judge_candidate(test_id: str, source: str) -> bool:
     """A test the judge can decide: a meta assert, no reference, nothing that
     needs script or unmapped server-absolute resources, and a pass condition
@@ -464,7 +470,8 @@ def is_judge_candidate(test_id: str, source: str) -> bool:
         return False
     # Use the extractor itself, so a phrase it would not send (for example one
     # inside the meta assert) does not admit the test.
-    return bool(pass_condition(source))
+    condition = pass_condition(source)
+    return bool(condition) and not SCROLL_ACTION_RE.search(condition)
 
 
 def command_list_tests(args) -> int:

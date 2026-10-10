@@ -21,17 +21,17 @@ on:
       path_prefix:
         description: Only tests below this WPT directory
         type: choice
-        default: css/CSS2 (2223)
+        default: css/CSS2 (1993)
         # Every directory with judgeable tests at the pinned WPT revision. The
         # count in parentheses is the number of judgeable tests not yet in a
         # baseline when the list was made; the List step strips it.
         options:
-          - css (2967)
-          - css/CSS2 (2223)
-          - css/CSS2/backgrounds (269)
+          - css (2733)
+          - css/CSS2 (1993)
+          - css/CSS2/backgrounds (53)
           - css/CSS2/bidi-text (3)
           - css/CSS2/borders (255)
-          - css/CSS2/box-display (15)
+          - css/CSS2/box-display (13)
           - css/CSS2/cascade (64)
           - css/CSS2/colors (3)
           - css/CSS2/css1 (1)
@@ -47,13 +47,13 @@ on:
           - css/CSS2/other-formats (2)
           - css/CSS2/page-box (9)
           - css/CSS2/pagination (7)
-          - css/CSS2/positioning (31)
+          - css/CSS2/positioning (23)
           - css/CSS2/sec5 (1)
           - css/CSS2/selectors (52)
           - css/CSS2/syntax (3)
           - css/CSS2/tables (581)
           - css/CSS2/text (146)
-          - css/CSS2/ui (180)
+          - css/CSS2/ui (176)
           - css/CSS2/values (1)
           - css/CSS2/visufx (25)
           - css/CSS2/visuren (22)
@@ -61,7 +61,7 @@ on:
           - css/WOFF2 (2)
           - css/compositing (1)
           - css/css-animations (55)
-          - css/css-backgrounds (80)
+          - css/css-backgrounds (77)
           - css/css-break (1)
           - css/css-counter-styles (3)
           - css/css-display (91)
@@ -76,7 +76,7 @@ on:
           - css/css-text (26)
           - css/css-text-decor (78)
           - css/css-transforms (1)
-          - css/css-ui (206)
+          - css/css-ui (205)
           - css/css-writing-modes (121)
       model:
         description: Claude model id
