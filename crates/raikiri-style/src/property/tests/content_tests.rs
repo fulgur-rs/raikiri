@@ -585,6 +585,33 @@ fn content_string_with_fetch_last_keyword() {
 }
 
 #[test]
+fn content_element_keeps_its_page_selection_keyword() {
+    // CSS GCPM 3 §1.2.2: element(<custom-ident>, [first|start|last|first-except]?),
+    // with `first` when the keyword is omitted.
+    assert_eq!(
+        content_items("element(header)"),
+        vec![ContentComponent::Element {
+            name: SmolStr::new("header"),
+            fetch: StringFetchMode::First,
+        }]
+    );
+    for (keyword, fetch) in [
+        ("first", StringFetchMode::First),
+        ("start", StringFetchMode::Start),
+        ("last", StringFetchMode::Last),
+        ("first-except", StringFetchMode::FirstExcept),
+    ] {
+        assert_eq!(
+            content_items(&format!("element(header, {keyword})")),
+            vec![ContentComponent::Element {
+                name: SmolStr::new("header"),
+                fetch,
+            }]
+        );
+    }
+}
+
+#[test]
 fn content_target_text_default_part_is_content() {
     // When target-text() omits its second argument, raikiri uses ContentPart::Content
     // as its fallback (not based on a spec declaration of a "default":

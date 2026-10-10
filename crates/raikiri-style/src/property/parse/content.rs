@@ -431,9 +431,13 @@ pub(super) fn parse_string_fn(input: &mut Parser<'_, '_>) -> Option<ContentCompo
 }
 
 fn parse_element_fn(input: &mut Parser<'_, '_>) -> Option<ContentComponent> {
-    Some(ContentComponent::Element {
-        name: parse_custom_ident(input)?,
-    })
+    let name = parse_custom_ident(input)?;
+    let fetch = if input.try_parse(|i| i.expect_comma()).is_ok() {
+        parse_string_fetch(input)?
+    } else {
+        StringFetchMode::default()
+    };
+    Some(ContentComponent::Element { name, fetch })
 }
 
 pub(super) fn parse_string_fetch(input: &mut Parser<'_, '_>) -> Option<StringFetchMode> {

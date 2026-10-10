@@ -703,7 +703,7 @@ impl TryFrom<ContentComponent> for ContentValueItem {
                 name: Symbol::new(name),
                 fetch,
             },
-            ContentComponent::Element { name } => Self::Element {
+            ContentComponent::Element { name, .. } => Self::Element {
                 name: Symbol::new(name),
             },
             ContentComponent::Attr { name } => Self::Attr {

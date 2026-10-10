@@ -1181,7 +1181,7 @@ fn resolved_margin_content(
                 // single-value fallback; nested author scopes are future work.
                 let _ = separator;
             }
-            ContentComponent::Element { name } => {
+            ContentComponent::Element { name, .. } => {
                 text.push_str(&running_element_value(document, cascade, name.as_str()));
             }
             ContentComponent::String { name, .. } => {
