@@ -2085,6 +2085,68 @@ fn nested_opaque_at_rule_bodies_respect_cumulative_byte_budget() {
 }
 
 #[test]
+fn adding_stylesheets_defers_the_derived_views_until_read() {
+    // Each stylesheet adds only its own rules. What is derived from all of
+    // them is built once, when first read, so many small stylesheets take
+    // time linear in their total size.
+    let mut tree = RuleTree::empty();
+    for i in 0..3 {
+        tree.add_stylesheet(
+            &format!(
+                "::highlight(h{i}) {{ background-color: red }} \
+                 @layer l{i} {{ @font-face {{ font-family: f{i}; src: url(f.woff) }} }}"
+            ),
+            Origin::Author,
+        );
+        assert!(tree.derived.get().is_none());
+    }
+    assert_eq!(tree.custom_highlight_styles().len(), 3);
+    assert_eq!(tree.font_faces().len(), 3);
+    assert!(tree.derived.get().is_some());
+    tree.add_stylesheet(
+        "@layer l3 { @counter-style c { system: cyclic; symbols: '*' } }",
+        Origin::Author,
+    );
+    assert!(tree.derived.get().is_none());
+    assert!(tree.counter_styles().get("c").is_some());
+    assert_eq!(tree.custom_highlight_styles().len(), 3);
+}
+
+#[test]
+fn layered_registries_keep_layer_order_across_additions() {
+    // `low` is declared before `high`, so rules in `high` win wherever they
+    // appear. The views are built after the first stylesheet and again after
+    // the second, whose rules come later but in the lower layer.
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "@layer low, high; \
+         @layer high { \
+           @font-face { font-family: f; src: url(high.woff); font-style: italic } \
+           @counter-style c { system: cyclic; symbols: 'H' } }",
+        Origin::Author,
+    );
+    let style = |tree: &RuleTree| tree.font_faces().get("f").map(|rule| rule.style);
+    let cyclic = |tree: &RuleTree| {
+        tree.counter_styles().get("c").map(|rule| {
+            matches!(
+                rule.system,
+                crate::counter_style::CounterStyleSystem::Cyclic
+            )
+        })
+    };
+    assert_eq!(style(&tree), Some(crate::font_face::FontFaceStyle::Italic));
+    assert_eq!(cyclic(&tree), Some(true));
+    tree.add_stylesheet(
+        "@layer low { \
+           @font-face { font-family: f; src: url(low.woff) } \
+           @counter-style c { system: fixed; symbols: 'L' } }",
+        Origin::Author,
+    );
+    assert_eq!(style(&tree), Some(crate::font_face::FontFaceStyle::Italic));
+    assert_eq!(cyclic(&tree), Some(true));
+}
+
+#[test]
 fn rule_tree_caps_nested_opaque_body_retention() {
     let mut css = "x".repeat(512 * 1024);
     for _ in 0..20 {

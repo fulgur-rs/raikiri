@@ -11,7 +11,7 @@ use cssparser::{Parser, ParserInput, SourceLocation, StyleSheetParser, Token};
 use selectors::parser::{ParseRelative, Parser as SelectorParser, Selector, SelectorList};
 use std::cell::OnceCell;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::consumer::ConsumerPropertyRegistration;
 use crate::counter_style::{
@@ -222,9 +222,6 @@ impl AtRuleRecord {
 pub struct RuleTree {
     /// Qualified style rules (`selectors { declarations }`), kept in source order.
     pub(crate) style_rules: Vec<StyleRule>,
-    /// Winning unconditional custom-highlight background colors.
-    custom_highlight_styles: HashMap<String, CssColor>,
-    custom_highlight_sources: HashMap<String, smol_str::SmolStr>,
     highlight_log: Vec<Registration<(Arc<str>, HighlightColor, bool)>>,
     /// `@page` at-rules. `source_order` starts at zero independently of `style_rules`.
     /// [`crate::page::cascade_page`] applies the cascade; per-page `PageBox`
@@ -235,7 +232,9 @@ pub struct RuleTree {
     pub page_rules: Vec<PageRule>,
     /// Registry mapping `@counter-style` names to rules.
     /// Same-name rules follow CSS Counter Styles Level 3's standard cascade
-    /// order and are stored as complete rule values.
+    /// order and are stored as complete rule values. When the tree has
+    /// layers, [`RuleTree::counter_styles`] reads the registry rebuilt in
+    /// layer order instead.
     pub(crate) counter_styles: CounterStyleRegistry,
     /// Registry mapping `@font-face` family names to rules.
     ///
@@ -246,6 +245,8 @@ pub struct RuleTree {
     /// [`crate::cascade::cascade_rank`].
     /// Only rules without a media condition populate this view. Use
     /// [`RuleTree::font_faces_for`] to include matching conditional rules.
+    /// When the tree has layers, [`RuleTree::font_faces`] reads the registry
+    /// rebuilt in layer order instead.
     pub(crate) font_faces: FontFaceRegistry,
     /// Every `@counter-style` and `@font-face` registration in insertion order,
     /// including those from stylesheets and groups with a media condition, so the
@@ -278,6 +279,20 @@ pub struct RuleTree {
     /// Consumer-owned CSS property registrations used while parsing declarations.
     /// Empty in the compatibility/default path.
     consumer_properties: Vec<ConsumerPropertyRegistration>,
+    /// The views derived from every stylesheet added so far. They are built
+    /// the first time one is read and dropped when a stylesheet is added, so
+    /// adding many stylesheets does not rebuild them once per stylesheet.
+    derived: OnceLock<DerivedViews>,
+}
+
+/// What [`RuleTree`] derives from all of its stylesheets at once.
+struct DerivedViews {
+    /// Winning unconditional custom-highlight background colors.
+    custom_highlight_styles: HashMap<String, CssColor>,
+    custom_highlight_sources: HashMap<String, smol_str::SmolStr>,
+    /// The registries rebuilt in layer order, when the tree has layers.
+    /// Without layers the registries built while parsing are the answer.
+    layered_registries: Option<(FontFaceRegistry, CounterStyleRegistry)>,
 }
 
 impl RuleTree {
@@ -315,11 +330,11 @@ impl RuleTree {
     /// [`crate::CascadeResult::custom_highlight_background`] resolves them with
     /// the foreground of the highlighted text.
     pub fn custom_highlight_styles(&self) -> &HashMap<String, CssColor> {
-        &self.custom_highlight_styles
+        &self.derived().custom_highlight_styles
     }
 
     pub(crate) fn custom_highlight_sources(&self) -> &HashMap<String, smol_str::SmolStr> {
-        &self.custom_highlight_sources
+        &self.derived().custom_highlight_sources
     }
 
     /// Read-only accessor for the `@counter-style` registry.
@@ -347,7 +362,10 @@ impl RuleTree {
     /// let _ = &tree.counter_styles;
     /// ```
     pub fn counter_styles(&self) -> &CounterStyleRegistry {
-        &self.counter_styles
+        match &self.derived().layered_registries {
+            Some((_, counter_styles)) => counter_styles,
+            None => &self.counter_styles,
+        }
     }
 
     /// Read-only accessor for the `@font-face` registry.
@@ -372,7 +390,10 @@ impl RuleTree {
     /// let _ = &tree.font_faces;
     /// ```
     pub fn font_faces(&self) -> &FontFaceRegistry {
-        &self.font_faces
+        match &self.derived().layered_registries {
+            Some((font_faces, _)) => font_faces,
+            None => &self.font_faces,
+        }
     }
 
     /// The `@font-face` registry for one media context.
@@ -453,8 +474,6 @@ impl RuleTree {
     pub fn empty() -> Self {
         Self {
             style_rules: Vec::new(),
-            custom_highlight_styles: HashMap::new(),
-            custom_highlight_sources: HashMap::new(),
             highlight_log: Vec::new(),
             page_rules: Vec::new(),
             counter_styles: CounterStyleRegistry::new(),
@@ -472,6 +491,7 @@ impl RuleTree {
                 nesting::MAX_SELECTOR_REVALIDATION_BYTES,
             ),
             consumer_properties: Vec::new(),
+            derived: OnceLock::new(),
         }
     }
 
@@ -636,6 +656,17 @@ impl RuleTree {
         let consumer_properties = self.consumer_properties.clone();
         let supports_context = SupportsContext::new(source, &consumer_properties);
         self.add_parsed_stylesheet(source, origin, condition, &supports_context);
+        // The views derived from every stylesheet are rebuilt when next read.
+        self.derived = OnceLock::new();
+    }
+
+    fn derived(&self) -> &DerivedViews {
+        self.derived.get_or_init(|| self.derive_views())
+    }
+
+    /// Selects the winning custom highlights, and rebuilds the registries in
+    /// layer order when the tree has layers.
+    fn derive_views(&self) -> DerivedViews {
         let order = self.layers.order(None);
         let mut highlights: HashMap<&str, Vec<_>> = HashMap::new();
         for (index, registration) in self.highlight_log.iter().enumerate() {
@@ -681,29 +712,36 @@ impl RuleTree {
                 })
             })
             .collect();
-        self.custom_highlight_styles = winning_highlights
+        let custom_highlight_styles = winning_highlights
             .iter()
             .map(|(name, color, _)| (name.clone(), *color))
             .collect();
-        self.custom_highlight_sources = winning_highlights
+        let custom_highlight_sources = winning_highlights
             .into_iter()
             .filter_map(|(name, _, source)| source.map(|source| (name, source)))
             .collect();
-        if !self.layers.is_empty() {
-            self.font_faces = replay_layered(
-                &self.font_face_log,
-                None,
-                &order,
-                FontFaceRegistry::new,
-                FontFaceRegistry::insert_with_origin,
-            );
-            self.counter_styles = replay_layered(
-                &self.counter_style_log,
-                None,
-                &order,
-                CounterStyleRegistry::new,
-                CounterStyleRegistry::insert_with_origin,
-            );
+        let layered_registries = (!self.layers.is_empty()).then(|| {
+            (
+                replay_layered(
+                    &self.font_face_log,
+                    None,
+                    &order,
+                    FontFaceRegistry::new,
+                    FontFaceRegistry::insert_with_origin,
+                ),
+                replay_layered(
+                    &self.counter_style_log,
+                    None,
+                    &order,
+                    CounterStyleRegistry::new,
+                    CounterStyleRegistry::insert_with_origin,
+                ),
+            )
+        });
+        DerivedViews {
+            custom_highlight_styles,
+            custom_highlight_sources,
+            layered_registries,
         }
     }
 
