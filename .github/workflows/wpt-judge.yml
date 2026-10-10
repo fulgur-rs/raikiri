@@ -20,7 +20,46 @@ on:
         default: "200"
       path_prefix:
         description: Only tests below this WPT directory
+        type: choice
         default: css/CSS2
+        # Directories with at least ten judgeable tests at the pinned WPT
+        # revision; `css` covers every directory, including the smaller ones.
+        options:
+          - css
+          - css/CSS2
+          - css/CSS2/backgrounds
+          - css/CSS2/borders
+          - css/CSS2/box-display
+          - css/CSS2/cascade
+          - css/CSS2/floats-clear
+          - css/CSS2/fonts
+          - css/CSS2/generate
+          - css/CSS2/generated-content
+          - css/CSS2/i18n
+          - css/CSS2/linebox
+          - css/CSS2/lists
+          - css/CSS2/margin-padding-clear
+          - css/CSS2/normal-flow
+          - css/CSS2/positioning
+          - css/CSS2/selectors
+          - css/CSS2/tables
+          - css/CSS2/text
+          - css/CSS2/ui
+          - css/CSS2/visufx
+          - css/CSS2/visuren
+          - css/CSS2/zindex
+          - css/css-animations
+          - css/css-backgrounds
+          - css/css-display
+          - css/css-flexbox
+          - css/css-gcpm
+          - css/css-page
+          - css/css-round-display
+          - css/css-speech
+          - css/css-text
+          - css/css-text-decor
+          - css/css-ui
+          - css/css-writing-modes
       model:
         description: Claude model id
         default: claude-haiku-5-5
