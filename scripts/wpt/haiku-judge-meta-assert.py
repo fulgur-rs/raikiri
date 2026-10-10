@@ -324,6 +324,8 @@ def command_batch_collect(args) -> int:
     review_dir = args.review_dir
     cache = Cache(args.cache or review_dir / "judge-cache")
     state = json.loads((review_dir / "judge-batch.json").read_text())
+    # Cache keys include the model, so collect under the model that was submitted.
+    args.model = state["model"]
     api = client()
     batch = api.messages.batches.retrieve(state["batch_id"])
     if batch.processing_status != "ended":
