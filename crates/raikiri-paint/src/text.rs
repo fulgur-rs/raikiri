@@ -24,8 +24,11 @@ pub(crate) fn synthetic_embolden(enabled: bool, font_size: f32) -> Vec2 {
     }
 }
 
-/// Vertical placement of generated margin-box text.
+/// Vertical placement of standalone text inside a box. Page-margin boxes are
+/// placed by `raikiri_dom::page_margin_boxes`; the remaining callers draw at
+/// the top, and the other placements are exercised by tests.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) enum MarginTextVerticalAlign {
     Top,
     Middle,

@@ -216,6 +216,8 @@ pub enum RunSource {
     /// (CSS Overflow 3 §5.1). Its text is `…`, or periods when the font has
     /// no ellipsis character.
     Ellipsis(NodeId),
+    /// The generated content of a page-margin box (CSS Paged Media 3 §4.2).
+    MarginBox(raikiri_style::PageMarginBoxSlot),
 }
 
 /// The pseudo-element generated text comes from.
@@ -460,11 +462,32 @@ fn marker_runs<'a>(
         } else {
             page.content_origin_y
         };
-    for (index, line) in marker.shaped.lines().iter().enumerate() {
+    standalone_runs(
+        &marker.shaped,
+        (x, y),
+        marker.color,
+        NodeId::new(root.node as u64),
+        RunSource::Generated(NodeId::new(owner as u64), GeneratedKind::Marker),
+        out,
+    );
+}
+
+/// Glyph runs of standalone text whose container's top-left is at `origin`,
+/// in the way the built-in painter draws it.
+pub(crate) fn standalone_runs<'a>(
+    text: &'a crate::StandaloneText,
+    origin: (f32, f32),
+    color: CssColor,
+    line_root: NodeId,
+    source: RunSource,
+    out: &mut Vec<PositionedGlyphRun<'a>>,
+) {
+    let (x, y) = origin;
+    for (index, line) in text.lines().iter().enumerate() {
         let converter = shodo::geometry::PhysicalConverter::new(
             line.writing_mode(),
             line.used_direction(),
-            marker.shaped.container(),
+            text.container(),
         );
         for fragment in line.fragments() {
             let shodo::Fragment::GlyphRun(run) = fragment else {
@@ -485,10 +508,8 @@ fn marker_runs<'a>(
                 .zip(ranges)
                 .filter_map(|((i, glyph), range)| {
                     let (gx, gy) = run.glyph_origin(i)?;
-                    let (gx, gy) = converter.point(
-                        gx + marker.shaped.hang_shift(index),
-                        gy + line.block_offset(),
-                    );
+                    let (gx, gy) =
+                        converter.point(gx + text.hang_shift(index), gy + line.block_offset());
                     Some((x + gx, y + gy, glyph, range))
                 })
                 .collect();
@@ -517,10 +538,10 @@ fn marker_runs<'a>(
             let metrics = run.metrics();
             out.push(PositionedGlyphRun {
                 line: TextLineId {
-                    root: NodeId::new(root.node as u64),
+                    root: line_root,
                     index,
                 },
-                source: RunSource::Generated(NodeId::new(owner as u64), GeneratedKind::Marker),
+                source,
                 font: FontRef {
                     id: FontId {
                         blob,
@@ -546,7 +567,7 @@ fn marker_runs<'a>(
                 descent: metrics.descent,
                 text: line.text().get(text_range).unwrap_or_default(),
                 glyphs,
-                color: marker.color,
+                color,
                 decorations: Vec::new(),
             });
         }
