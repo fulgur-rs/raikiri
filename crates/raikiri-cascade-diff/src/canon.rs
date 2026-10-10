@@ -7,7 +7,9 @@
 //! set literal makes the text a function of the value alone, so outputs of two
 //! builds can be compared as strings.
 
-/// Returns `debug` with the entries of every map and set literal sorted.
+/// Returns `debug` with the entries of every map and set literal sorted, and
+/// without every struct field, at any depth, whose value is a literal of the
+/// struct named `dropped`.
 ///
 /// A brace group preceded by an identifier is a struct or enum-variant literal
 /// (`Name { field: value }`) and keeps its field order. Any other brace group
@@ -16,12 +18,12 @@
 /// before the group that contains them, so the result does not depend on the
 /// order of entries at any depth. String and character literals are copied
 /// verbatim, so braces and commas inside them are not structure.
-pub(crate) fn canonicalize(debug: &str) -> String {
+pub(crate) fn canonicalize(debug: &str, dropped: Option<&str>) -> String {
     let chars: Vec<char> = debug.chars().collect();
     let mut pos = 0;
     // With no closing bracket to stop at, the top level consumes the whole
     // input; an unbalanced closing bracket is copied like any other character.
-    canonicalize_until(&chars, &mut pos, None)
+    canonicalize_until(&chars, &mut pos, None, dropped)
 }
 
 /// Splits the canonical text of a struct literal into its top-level fields.
@@ -39,7 +41,12 @@ pub(crate) fn struct_fields(text: &str) -> Option<(&str, Vec<&str>)> {
     Some((name, split_top_level(inner)))
 }
 
-fn canonicalize_until(chars: &[char], pos: &mut usize, close: Option<char>) -> String {
+fn canonicalize_until(
+    chars: &[char],
+    pos: &mut usize,
+    close: Option<char>,
+    dropped: Option<&str>,
+) -> String {
     let mut out = String::new();
     while *pos < chars.len() {
         let c = chars[*pos];
@@ -51,7 +58,7 @@ fn canonicalize_until(chars: &[char], pos: &mut usize, close: Option<char>) -> S
             '(' | '[' => {
                 let end = if c == '(' { ')' } else { ']' };
                 *pos += 1;
-                let inner = canonicalize_until(chars, pos, Some(end));
+                let inner = canonicalize_until(chars, pos, Some(end), dropped);
                 out.push(c);
                 out.push_str(&inner);
                 if *pos < chars.len() {
@@ -66,10 +73,13 @@ fn canonicalize_until(chars: &[char], pos: &mut usize, close: Option<char>) -> S
                     .next_back()
                     .is_some_and(|prev| prev.is_alphanumeric() || prev == '_');
                 *pos += 1;
-                let inner = canonicalize_until(chars, pos, Some('}'));
+                let inner = canonicalize_until(chars, pos, Some('}'), dropped);
                 out.push('{');
                 if is_struct {
-                    out.push_str(&inner);
+                    match dropped {
+                        Some(name) => out.push_str(&without_fields_of(&inner, name)),
+                        None => out.push_str(&inner),
+                    }
                 } else {
                     let mut entries = split_top_level(&inner);
                     entries.sort_unstable();
@@ -87,6 +97,25 @@ fn canonicalize_until(chars: &[char], pos: &mut usize, close: Option<char>) -> S
         }
     }
     out
+}
+
+/// The canonical inner text of a struct literal (` a: x, b: y `) without the
+/// fields whose value is a `name` literal.
+fn without_fields_of(inner: &str, name: &str) -> String {
+    let literal = format!("{name} {{");
+    let fields: Vec<&str> = split_top_level(inner.trim())
+        .into_iter()
+        .filter(|field| {
+            !field
+                .split_once(": ")
+                .is_some_and(|(_, value)| value.starts_with(&literal))
+        })
+        .collect();
+    if fields.is_empty() {
+        String::new()
+    } else {
+        format!(" {} ", fields.join(", "))
+    }
 }
 
 /// Copies one string or character literal, including its escapes.

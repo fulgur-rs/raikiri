@@ -16,6 +16,7 @@ raikiri-style = { workspace = true }
 raikiri-html = { workspace = true }
 raikiri-traits = { workspace = true }
 bytes = { workspace = true }
+cssparser = { workspace = true }
 url = { workspace = true }
 
 [lints]

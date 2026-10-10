@@ -155,22 +155,36 @@ fn html_cases_under_a_root_read_their_linked_stylesheets() {
     std::fs::create_dir_all(root.join("css/support")).unwrap();
     std::fs::create_dir_all(root.join("css/test")).unwrap();
     std::fs::write(root.join("css/support/root.css"), "p { margin-left: 7px }").unwrap();
-    std::fs::write(root.join("css/test/local.css"), "p { --local: 1 }").unwrap();
+    std::fs::write(
+        root.join("css/test/local.css"),
+        "@import \"rules.txt\"; p { --local: 1; --\\65 sc: 2 }",
+    )
+    .unwrap();
+    std::fs::write(root.join("css/test/rules.txt"), "p { margin-right: 9px }").unwrap();
     let page = root.join("css/test/page.html");
     std::fs::write(
         &page,
         "<!doctype html><link rel=stylesheet href=\"/css/support/root.css\">\
-         <link rel=stylesheet href=\"local.css\"><p>x</p>",
+         <link rel=stylesheet href=\"local.css\"><p style=\"--\\61 ttr: 3\">x</p>",
     )
     .unwrap();
     let case = format!("html:{}", page.display());
     let linked = render(&case, Some(&root));
     // A root-relative and a relative link both resolve against the root, and
     // custom properties declared only in a linked stylesheet are printed,
-    // effective and local alike.
+    // effective and local alike, as are those whose names are escaped there
+    // or in a style attribute.
     assert!(linked.contains("left: Px(7.0) }"), "{linked}");
-    assert!(linked.contains(": --local=\"1\""), "{linked}");
-    assert!(linked.contains(" local: --local=\"1\""), "{linked}");
+    assert!(
+        linked.contains(": --attr=\"3\", --esc=\"2\", --local=\"1\""),
+        "{linked}"
+    );
+    assert!(
+        linked.contains(" local: --attr=\"3\", --esc=\"2\", --local=\"1\""),
+        "{linked}"
+    );
+    // A file that is not CSS is not imported.
+    assert!(!linked.contains("right: Px(9.0)"), "{linked}");
     // Without a root the links are not followed.
     let unlinked = render(&case, None);
     assert!(!unlinked.contains("left: Px(7.0) }"), "{unlinked}");

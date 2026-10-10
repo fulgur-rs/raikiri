@@ -34,7 +34,8 @@
 #
 # The merge-base build is cached under $RAIKIRI_CASCADE_DIFF_CACHE (default:
 # ~/.cache/raikiri/cascade-diff), keyed by the merge-base commit, the tool's
-# sources and manifest, and the toolchain, so repeated runs against one base
+# sources and manifest, the toolchain, and the build settings from the
+# environment and cargo configuration, so repeated runs against one base
 # skip building it. The merge-base checkout is a throwaway worktree under the
 # main checkout's .worktrees/, removed when the run ends.
 #
@@ -134,6 +135,7 @@ raikiri-style = { path = "$tree/crates/raikiri-style" }
 raikiri-html = { path = "$tree/crates/raikiri-html" }
 raikiri-traits = { path = "$tree/crates/raikiri-traits" }
 bytes = "1"
+cssparser = "0.37"
 url = "2.5"
 
 [profile.release]
@@ -160,14 +162,47 @@ build_tool() {
   cp -f "$tree/target/cascade-diff/release/raikiri-cascade-diff" "$binary"
 }
 
+# Prints the build settings cargo takes from outside the tree: the
+# environment variables that change how it compiles, and the cargo
+# configuration files that apply where it runs, in this checkout and the
+# directories above it, and in CARGO_HOME. Both builds run with them, so a
+# cached build made with others is not reused.
+build_settings() {
+  local name dir file
+  while IFS= read -r name; do
+    printf '%s=%s\n' "$name" "${!name}"
+  done < <(compgen -e | LC_ALL=C sort \
+    | grep -E '^(RUSTFLAGS|RUSTDOCFLAGS|RUSTC|RUSTC_[A-Z0-9_]+|CARGO_ENCODED_RUSTFLAGS|CARGO_BUILD_[A-Z0-9_]+|CARGO_PROFILE_[A-Z0-9_]+|CARGO_TARGET_[A-Z0-9_]+|CARGO_UNSTABLE_[A-Z0-9_]+)$' \
+    | grep -v -x CARGO_TARGET_DIR || true)
+  dir="$REPO_ROOT"
+  while :; do
+    for file in "$dir/.cargo/config.toml" "$dir/.cargo/config"; do
+      if [[ -f "$file" ]]; then
+        echo "== $file"
+        cat "$file"
+      fi
+    done
+    [[ "$dir" == / ]] && break
+    dir="$(dirname "$dir")"
+  done
+  for file in "${CARGO_HOME:-$HOME/.cargo}/config.toml" "${CARGO_HOME:-$HOME/.cargo}/config"; do
+    if [[ -f "$file" ]]; then
+      echo "== $file"
+      cat "$file"
+    fi
+  done
+}
+
 # What the merge-base build depends on besides the tree's files, which the
-# commit already names: the tool's sources and manifest, and the toolchain.
+# commit already names: the tool's sources and manifest, the toolchain, and
+# the build settings.
 base_build_key() {
   {
     echo "$BASE_SHA"
     (cd "$REPO_ROOT/crates/raikiri-cascade-diff" && find src -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum)
     tool_manifest TREE
     rustc -vV
+    build_settings
   } | sha256sum | cut -d' ' -f1
 }
 

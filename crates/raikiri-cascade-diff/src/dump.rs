@@ -8,13 +8,17 @@
 //! for other page queries — are queried with fixed arguments, the way layout
 //! and paint query them. Each group of queries runs as its own section, so a
 //! panic in one is recorded on a line of its own and the rest of the case is
-//! still compared. The only output left out is run-specific identity (the
-//! cascade generation counter), which differs between any two runs.
+//! still compared. The output left out is run-specific identity (the cascade
+//! generation counter), which differs between any two runs, and the
+//! custom-property environments, which print how bindings are shared between
+//! nodes rather than what they are; the custom properties a case names are
+//! printed by value instead.
 
 use std::collections::BTreeSet;
 use std::fmt::{Debug, Write as _};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
+use cssparser::{ParseError, Parser, ParserInput, Token};
 use raikiri_style::{
     Atom, CascadeResult, ComputedValues, CssColor, FirstLineStyles, MediaContext, PageContextQuery,
     PageInheritance, PseudoElem, RuleTree, StyleDom, StyleNode, StyleNodeId, StyleNodeKind,
@@ -33,34 +37,34 @@ pub(crate) struct Inputs<'a, D> {
     pub(crate) custom_names: &'a [&'a str],
 }
 
+/// The struct whose literals print how custom-property bindings are shared
+/// between nodes rather than what they are. Fields holding one are left out
+/// of every value (see [`push_custom_properties`]).
+const CUSTOM_PROPERTY_ENVIRONMENT: &str = "CustomPropertyEnvironment";
+
 /// Appends `value` as `label: Name` followed by one indented line per field,
 /// or as a single `label: value` line when it is not a struct.
 fn push_value(out: &mut String, label: &str, value: &dyn Debug) {
-    push_fields(out, label, value, &[]);
-}
-
-/// The fields of computed values that print how custom-property bindings
-/// are shared between nodes rather than what they are. Their effective and
-/// local values are printed instead (see `push_custom_properties`).
-const CUSTOM_PROPERTY_FIELDS: [&str; 2] = ["custom_properties: ", "local_custom_properties: "];
-
-/// [`push_value`], leaving out the struct fields that start with one of
-/// `skipped`.
-fn push_fields(out: &mut String, label: &str, value: &dyn Debug, skipped: &[&str]) {
-    let canon = canonicalize(&format!("{value:?}"));
+    let canon = canonicalize(&format!("{value:?}"), Some(CUSTOM_PROPERTY_ENVIRONMENT));
     match struct_fields(&canon) {
         Some((name, fields)) => {
             let _ = writeln!(out, "{label}: {name}");
             for field in fields {
-                if !skipped.iter().any(|prefix| field.starts_with(prefix)) {
-                    let _ = writeln!(out, "  {field}");
-                }
+                let _ = writeln!(out, "  {field}");
             }
         }
         None => {
             let _ = writeln!(out, "{label}: {canon}");
         }
     }
+}
+
+/// Appends computed values that are not a node's own, such as a
+/// first-letter style: [`push_value`], and then the custom properties
+/// `names` resolve on them, labeled `label custom`.
+fn push_derived(out: &mut String, label: &str, computed: &ComputedValues, names: &[&str]) {
+    push_value(out, label, computed);
+    push_custom_properties(out, &format!("{label} custom"), computed, names);
 }
 
 fn node_id(index: usize) -> StyleNodeId {
@@ -80,14 +84,12 @@ pub(crate) fn cascade_result<D: StyleDom>(
         .position(|computed| std::ptr::eq(computed, root));
     let _ = writeln!(out, "root_element_index: {root_index:?}");
     for (index, computed) in result.computed.iter().enumerate() {
-        let label = format!("computed[{index}]");
-        push_fields(out, &label, computed, &CUSTOM_PROPERTY_FIELDS);
+        push_value(out, &format!("computed[{index}]"), computed);
     }
     let mut pseudo: Vec<_> = result.pseudo.iter().collect();
     pseudo.sort_by_key(|((id, kind), _)| (id.0, format!("{kind:?}")));
     for ((id, kind), computed) in &pseudo {
-        let label = format!("pseudo[{}, {kind:?}]", id.0);
-        push_fields(out, &label, computed, &CUSTOM_PROPERTY_FIELDS);
+        push_value(out, &format!("pseudo[{}, {kind:?}]", id.0), computed);
     }
     push_value(out, "opacity_specified", &result.opacity_specified);
     push_value(
@@ -127,7 +129,7 @@ pub(crate) fn cascade_result<D: StyleDom>(
         }
     });
     section(out, "first letters", |out| {
-        first_letters(out, inputs.dom, result)
+        first_letters(out, inputs, result)
     });
     section(out, "highlights", |out| highlight_backgrounds(out, result));
     section(out, "page queries", |out| page_queries(out, inputs, result));
@@ -177,7 +179,8 @@ fn push_custom_properties(
 /// usual parents of the letter's text — through the `::first-line`
 /// pseudo-elements that enclose it, as layout resolves them once it knows the
 /// letter's actual parent.
-fn first_letters<D: StyleDom>(out: &mut String, dom: &D, result: &CascadeResult) {
+fn first_letters<D: StyleDom>(out: &mut String, inputs: &Inputs<'_, D>, result: &CascadeResult) {
+    let (dom, names) = (inputs.dom, inputs.custom_names);
     let _ = writeln!(
         out,
         "has_first_letter_styles: {}",
@@ -188,7 +191,7 @@ fn first_letters<D: StyleDom>(out: &mut String, dom: &D, result: &CascadeResult)
         let Some(style) = result.resolve_first_letter_style(origin, own) else {
             continue;
         };
-        push_value(out, &format!("first_letter[{index}]"), &style);
+        push_derived(out, &format!("first_letter[{index}]"), &style, names);
         for parent in first_descendants(dom, origin) {
             let lines = enclosing_first_lines(dom, result, parent);
             if lines.is_empty() {
@@ -211,9 +214,9 @@ fn first_letters<D: StyleDom>(out: &mut String, dom: &D, result: &CascadeResult)
                     continue; // cov:ignore: unreachable — `origin` has first-letter inputs, `lines` is non-empty with a `::first-line` style first, and `parent` descends from it
                 };
                 let label = format!("first_letter[{index}] at [{}, {generated:?}]", parent.0);
-                push_value(out, &format!("{label} parent"), &inherited);
+                push_derived(out, &format!("{label} parent"), &inherited, names);
                 if let Some(style) = result.resolve_first_letter_style(origin, &inherited) {
-                    push_value(out, &label, &style);
+                    push_derived(out, &label, &style, names);
                 }
             }
         }
@@ -331,8 +334,13 @@ fn page_queries<D>(out: &mut String, inputs: &Inputs<'_, D>, result: &CascadeRes
 }
 
 /// Appends the canonical text of the styles the `::first-line` entry point
-/// returned for its block.
-pub(crate) fn first_line_styles(out: &mut String, styles: Option<&FirstLineStyles>) {
+/// returned for its block, with the custom properties `names` resolve on
+/// them.
+pub(crate) fn first_line_styles(
+    out: &mut String,
+    styles: Option<&FirstLineStyles>,
+    names: &[&str],
+) {
     match styles {
         None => {
             let _ = writeln!(out, "first_line: None");
@@ -341,29 +349,61 @@ pub(crate) fn first_line_styles(out: &mut String, styles: Option<&FirstLineStyle
             let _ = writeln!(out, "first_line.root: {}", styles.root.0);
             for (index, computed) in styles.computed.iter().enumerate() {
                 if let Some(computed) = computed {
-                    push_value(out, &format!("first_line[{index}]"), computed);
+                    push_derived(out, &format!("first_line[{index}]"), computed, names);
                 }
             }
         }
     }
 }
 
-/// Every name in `source` that could be a custom property: `--` followed by
-/// name code points, sorted. A name no node defines prints nothing.
-pub(crate) fn custom_property_names(source: &str) -> Vec<&str> {
+/// Every name in `sources` that could be a custom property, sorted: each
+/// `--` followed by name code points, and each identifier a source
+/// tokenizes into as CSS that starts with `--`, which finds an escaped name
+/// by its value. A name no node defines prints nothing.
+pub(crate) fn custom_property_names<'a>(sources: impl IntoIterator<Item = &'a str>) -> Vec<String> {
     let is_name = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_' || !c.is_ascii();
     let mut names = BTreeSet::new();
-    let mut position = 0;
-    while let Some(offset) = source[position..].find("--") {
-        let start = position + offset;
-        let tail = &source[start + 2..];
-        let length = tail.find(|c: char| !is_name(c)).unwrap_or(tail.len());
-        if length > 0 {
-            names.insert(&source[start..start + 2 + length]);
+    for source in sources {
+        let mut position = 0;
+        while let Some(offset) = source[position..].find("--") {
+            let start = position + offset;
+            let tail = &source[start + 2..];
+            let length = tail.find(|c: char| !is_name(c)).unwrap_or(tail.len());
+            if length > 0 {
+                names.insert(source[start..start + 2 + length].to_owned());
+            }
+            position = start + 2 + length;
         }
-        position = start + 2 + length;
+        let mut input = ParserInput::new(source);
+        tokenized_names(&mut Parser::new(&mut input), 0, &mut names);
     }
     names.into_iter().collect()
+}
+
+/// Adds the identifiers `input` tokenizes into that are custom property
+/// names, in blocks nested up to a fixed depth.
+fn tokenized_names(input: &mut Parser<'_, '_>, depth: usize, names: &mut BTreeSet<String>) {
+    const MAX_DEPTH: usize = 64;
+    while let Ok(token) = input.next_including_whitespace_and_comments().cloned() {
+        match token {
+            // `--` alone is reserved, not a custom property name.
+            Token::Ident(name) if name.len() > 2 && name.starts_with("--") => {
+                names.insert(name.to_string());
+            }
+            Token::Function(_)
+            | Token::ParenthesisBlock
+            | Token::SquareBracketBlock
+            | Token::CurlyBracketBlock
+                if depth < MAX_DEPTH =>
+            {
+                let _ = input.parse_nested_block(|nested| {
+                    tokenized_names(nested, depth + 1, names);
+                    Ok::<_, ParseError<'_, ()>>(())
+                });
+            }
+            _ => {}
+        }
+    }
 }
 
 /// 64-bit FNV-1a, a stable hash for comparing dumps across processes.

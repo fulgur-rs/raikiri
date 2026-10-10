@@ -54,8 +54,12 @@ fn rooted_files_serve_paths_under_the_root() {
     // `..` cannot leave the root: URL parsing resolves it first.
     let css = body(files.fetch_one_hop(request("file:///../../css/a.css")));
     assert_eq!(&css.bytes[..], b"p {}");
+    // Any other file is not CSS, so a stylesheet import does not inline it.
     let text = body(files.fetch_one_hop(request("file:///css/a.txt")));
-    assert_eq!(text.content_type, None);
+    assert_eq!(
+        text.content_type.as_deref(),
+        Some("application/octet-stream")
+    );
     assert!(matches!(
         files.fetch_one_hop(request("file:///css/missing.css")),
         Err(NetworkError::Io(_))
@@ -74,4 +78,19 @@ fn documents_get_their_path_under_the_root_as_their_url() {
         Some("file:///css/x/a%20b.html".to_owned())
     );
     assert_eq!(document_url(root, Path::new("/elsewhere/a.html")), None);
+    // Relative paths are taken from the current directory, with `.` and
+    // `..` resolved by name, so either path may be written either way.
+    let here = std::env::current_dir().expect("current directory");
+    for (root, path) in [
+        (Path::new("."), Path::new("css/a.html")),
+        (Path::new("./css/.."), Path::new("css/./a.html")),
+        (here.as_path(), Path::new("css/a.html")),
+        (Path::new("."), &here.join("css/a.html")),
+    ] {
+        assert_eq!(
+            document_url(root, path).map(String::from),
+            Some("file:///css/a.html".to_owned()),
+            "{root:?} {path:?}"
+        );
+    }
 }

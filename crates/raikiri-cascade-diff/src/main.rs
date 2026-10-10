@@ -42,8 +42,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use raikiri_style::{
-    CascadeResult, MediaContext, PseudoElem, RuleTree, StyleDom, StyleNode, StyleNodeId,
-    StyleNodeKind,
+    CascadeResult, MediaContext, PseudoElem, RuleTree, StyleDom, StyleElement, StyleNode,
+    StyleNodeId, StyleNodeKind,
 };
 
 /// Media variants every generated case is cascaded under.
@@ -251,17 +251,27 @@ fn html_into(bytes: &[u8], path: &Path, root: Option<&Path>) -> String {
         Ok(document) => {
             let tree = raikiri_html::build_rule_tree(&document);
             let media = MediaContext::print();
-            // Custom properties may also be declared in linked stylesheets.
-            let mut source = String::from_utf8_lossy(bytes).into_owned();
-            for part in document
+            // Custom properties may also be declared in linked stylesheets
+            // and, with escaped names, in any style sheet or style attribute,
+            // whose decoded source the document holds.
+            let html = String::from_utf8_lossy(bytes);
+            let attributes: Vec<String> = (0..document.dom.node_count())
+                .filter_map(|index| {
+                    let node = document.dom.node(StyleNodeId::new(index as u64))?;
+                    Some(node.as_element()?.inline_style_source()?.to_owned())
+                })
+                .collect();
+            let sheets = document
                 .stylesheet_sources
                 .iter()
                 .flat_map(|sheet| &sheet.parts)
-            {
-                source.push('\n');
-                source.push_str(&part.source);
-            }
-            let names = dump::custom_property_names(&source);
+                .map(|part| part.source.as_str());
+            let names = dump::custom_property_names(
+                std::iter::once(html.as_ref())
+                    .chain(sheets)
+                    .chain(attributes.iter().map(String::as_str)),
+            );
+            let names: Vec<&str> = names.iter().map(String::as_str).collect();
             let inputs = dump::Inputs {
                 dom: &document.dom,
                 tree: &tree,
@@ -277,7 +287,9 @@ fn html_into(bytes: &[u8], path: &Path, root: Option<&Path>) -> String {
                 .unwrap_or_default();
             for root in origins.into_iter().take(3) {
                 match raikiri_style::cascade_with_first_line(&document.dom, &tree, &media, root) {
-                    Ok(cascade) => dump::first_line_styles(&mut out, cascade.first_line.as_ref()),
+                    Ok(cascade) => {
+                        dump::first_line_styles(&mut out, cascade.first_line.as_ref(), &names)
+                    }
                     Err(error) => out.push_str(&format!("first_line: ERR: {error:?}\n")),
                 }
             }
@@ -309,7 +321,7 @@ fn first_line_into<D: StyleDom>(out: &mut String, inputs: &dump::Inputs<'_, D>, 
     match raikiri_style::cascade_with_first_line(inputs.dom, inputs.tree, inputs.media, root) {
         Ok(cascade) => {
             dump::cascade_result(out, inputs, &cascade.normal);
-            dump::first_line_styles(out, cascade.first_line.as_ref());
+            dump::first_line_styles(out, cascade.first_line.as_ref(), inputs.custom_names);
         }
         Err(error) => out.push_str(&format!("ERR: {error:?}\n")),
     }
