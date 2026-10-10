@@ -216,6 +216,31 @@ impl LayoutCache {
     }
 }
 
+/// What a page needs to show the document's running elements.
+#[derive(Clone, Copy)]
+pub(crate) struct RunningSource<'a> {
+    pub(crate) index: &'a RunningIndex,
+    pub(crate) layouts: &'a LayoutCache,
+    /// The laid-out document and its cascade.
+    pub(crate) document: &'a Document,
+    pub(crate) cascade: &'a CascadeResult,
+}
+
+impl<'a> RunningSource<'a> {
+    /// Running element `node` laid out at `width`, made once per element
+    /// and width.
+    pub(crate) fn layout(
+        self,
+        node: NodeId,
+        width: f32,
+    ) -> Result<Option<&'a RunningElementLayout>, RenderError> {
+        let width = used_width(width);
+        self.layouts.get_or_try_make(node, width, || {
+            layout_running_element(self.document, self.cascade, node, width)
+        })
+    }
+}
+
 /// In-document nodes in document order, each with the position just past
 /// its subtree.
 fn preorder(document: &Document) -> Vec<(usize, usize)> {

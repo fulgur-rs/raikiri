@@ -136,6 +136,7 @@ fn fixed_margin_spec() -> MarginBoxSpec {
         text_style: text_style(16.0, ""),
         alignment: StandaloneAlign::Start,
         vertical_align: MarginTextVerticalAlign::Top,
+        running: None,
     }
 }
 
