@@ -36,7 +36,9 @@
 # ~/.cache/raikiri/cascade-diff), keyed by the merge-base commit, the tool's
 # sources and manifest, the toolchain, and the build settings from the
 # environment and cargo configuration, so repeated runs against one base
-# skip building it. The merge-base checkout is a throwaway worktree under the
+# skip building it. A cached build is only reused while the environment
+# variables its build scripts and crates declared that they read keep the
+# values they had, as cargo would only reuse it then. The merge-base checkout is a throwaway worktree under the
 # main checkout's .worktrees/, removed when the run ends.
 #
 # Exit status: 0 when no case differs, 1 when some case differs, 2 on a usage
@@ -206,14 +208,45 @@ base_build_key() {
   } | sha256sum | cut -d' ' -f1
 }
 
+# Prints the names of the environment variables the release build in target
+# directory $1 declared that it reads: those its build scripts asked cargo to
+# watch (`cargo:rerun-if-env-changed`), and those its crates read at compile
+# time, which rustc records in their dep-info files.
+declared_environment() {
+  local release="$1/release"
+  {
+    cat "$release"/build/*/output 2>/dev/null \
+      | sed -n -E 's/^cargo::?rerun-if-env-changed=(.*)$/\1/p' || true
+    cat "$release"/deps/*.d 2>/dev/null \
+      | sed -n -E 's/^# env-dep:([^=]*).*$/\1/p' || true
+  } | LC_ALL=C sort -u
+}
+
+# Prints the value of each environment variable named on standard input, or
+# that it is unset.
+environment_values() {
+  local name value
+  while IFS= read -r name; do
+    if value="$(printenv -- "$name")"; then
+      printf '%s=%s\n' "$name" "$value"
+    else
+      printf '%s is unset\n' "$name"
+    fi
+  done
+}
+
 # Copies the cached merge-base build to $1, or builds it in a throwaway
-# worktree, caches it and copies it.
+# worktree, caches it and copies it. A cached build is reused only while the
+# environment variables it declared that it reads keep the values they had
+# when it was built, which is what cargo checks before reusing a build.
 base_build() {
-  local binary="$1" cached
-  cached="$CACHE_ROOT/$(base_build_key)/raikiri-cascade-diff"
-  if [[ "$USE_CACHE" -eq 1 && -x "$cached" ]]; then
+  local binary="$1" entry cached
+  entry="$CACHE_ROOT/$(base_build_key)"
+  cached="$entry/raikiri-cascade-diff"
+  if [[ "$USE_CACHE" -eq 1 && -x "$cached" && -f "$entry/variables" && -f "$entry/environment" ]] \
+    && environment_values < "$entry/variables" | cmp -s - "$entry/environment"; then
     echo "-- using the cached build of merge-base $BASE_SHA ($cached) --"
-    touch "$(dirname "$cached")"
+    touch "$entry"
     cp -f "$cached" "$binary"
     return 0
   fi
@@ -223,9 +256,14 @@ base_build() {
   git -c core.hooksPath=/dev/null worktree add --detach "$BASE_TREE" "$BASE_SHA" >/dev/null
   echo "-- building base ($BASE_TREE) --"
   build_tool "$BASE_TREE" "$binary"
-  # A concurrent run may store the same key; the rename keeps either copy whole.
-  mkdir -p "$(dirname "$cached")"
+  # A concurrent run may store the same key; each rename keeps a file whole,
+  # and a mix of two runs' files only makes the next run build again.
+  mkdir -p "$entry"
+  declared_environment "$BASE_TREE/target/cascade-diff" > "$entry/variables.partial.$$"
+  environment_values < "$entry/variables.partial.$$" > "$entry/environment.partial.$$"
   cp -f "$binary" "$cached.partial.$$"
+  mv -f "$entry/variables.partial.$$" "$entry/variables"
+  mv -f "$entry/environment.partial.$$" "$entry/environment"
   mv -f "$cached.partial.$$" "$cached"
   local stale
   find "$CACHE_ROOT" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' \
