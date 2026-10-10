@@ -329,10 +329,16 @@ def command_run(args) -> int:
 
 
 def command_batch_submit(args) -> int:
+    review_dir = args.review_dir
+    state_path = review_dir / "judge-batch.json"
+    if state_path.exists():
+        # Its verdicts are not cached yet, so a second submit would pay for
+        # the same rows again and lose the first batch's id.
+        print(f"{state_path} holds a batch that was not collected; run batch-collect first")
+        return 2
     from anthropic.types.message_create_params import MessageCreateParamsNonStreaming
     from anthropic.types.messages.batch_create_params import Request
 
-    review_dir = args.review_dir
     cache = Cache(args.cache or review_dir / "judge-cache")
     requests = []
     keys = {}
@@ -360,7 +366,7 @@ def command_batch_submit(args) -> int:
         return 0
     batch = client().messages.batches.create(requests=requests)
     state = {"batch_id": batch.id, "model": args.model, "requests": keys}
-    (review_dir / "judge-batch.json").write_text(json.dumps(state, indent=1))
+    state_path.write_text(json.dumps(state, indent=1))
     print(f"submitted {len(requests)} requests as {batch.id}")
     return 0
 
@@ -368,7 +374,8 @@ def command_batch_submit(args) -> int:
 def command_batch_collect(args) -> int:
     review_dir = args.review_dir
     cache = Cache(args.cache or review_dir / "judge-cache")
-    state = json.loads((review_dir / "judge-batch.json").read_text())
+    state_path = review_dir / "judge-batch.json"
+    state = json.loads(state_path.read_text())
     # Cache keys include the model, so collect under the model that was submitted.
     args.model = state["model"]
     api = client()
@@ -394,6 +401,9 @@ def command_batch_collect(args) -> int:
             continue
         cache.put(entry["key"], to_cache_entry(verdict, message.usage))
     print(f"collected {batch.id}; {failed} requests did not succeed")
+    # The batch has ended and its successes are cached, so a new batch may be
+    # submitted for whatever is still uncached.
+    state_path.rename(review_dir / f"judge-batch.{batch.id}.collected.json")
     # Every succeeded verdict is now cached. Write the reviews from the cache
     # alone, so failed rows are left out instead of being sent again here.
     args.max_requests = 0
@@ -404,26 +414,46 @@ def command_batch_collect(args) -> int:
 # Reftest links may leave the rel value unquoted.
 REFTEST_LINK_RE = re.compile(r"""rel\s*=\s*["']?(?:match|mismatch)\b""", re.I)
 NON_TEST_RE = re.compile(r"(^|/)(support|reference)/|-ref\b|-notref\b")
+META_ASSERT_RE = re.compile(r"""<meta\b[^>]*\bname\s*=\s*["']?assert\b""", re.I)
+# Inline event handlers run script that the renderer never executes.
+EVENT_HANDLER_RE = re.compile(r"<[a-z][^>]*\son[a-z]+\s*=", re.I)
+# Server-absolute URLs are rooted at the WPT checkout, which the renderer only
+# maps for /fonts/; other such resources would silently be missing.
+ROOT_RELATIVE_URL_RE = re.compile(r"""\b(?:src|href)\s*=\s*["']?/(?!/|fonts/)""", re.I)
 TEST_SUFFIXES = (".xht", ".xhtml", ".html", ".htm")
 
 
 def is_judge_candidate(test_id: str, source: str) -> bool:
-    """A test the judge can decide: no reference, no script, and a pass condition
+    """A test the judge can decide: a meta assert, no reference, nothing that
+    needs script or unmapped server-absolute resources, and a pass condition
     that `pass_condition` knows how to extract."""
-    if NON_TEST_RE.search(test_id):
+    if NON_TEST_RE.search(test_id) or not META_ASSERT_RE.search(source):
         return False
     if REFTEST_LINK_RE.search(source) or "<script" in source.lower():
+        return False
+    if EVENT_HANDLER_RE.search(source) or ROOT_RELATIVE_URL_RE.search(source):
         return False
     return any(pattern.search(source) for pattern in CONDITION_RES)
 
 
 def command_list_tests(args) -> int:
     root = args.wpt_root.resolve()
+    # Tests already in a baseline were accepted before; judging them again
+    # would only spend requests.
+    excluded = set()
+    for path in args.exclude:
+        excluded.update(
+            line.strip()
+            for line in path.read_text().splitlines()
+            if line.strip() and not line.startswith("#")
+        )
     ids = []
     for path in sorted((root / args.path_prefix.strip("/")).rglob("*")):
         if path.suffix not in TEST_SUFFIXES or not path.is_file():
             continue
         test_id = path.relative_to(root).as_posix()
+        if test_id in excluded:
+            continue
         if is_judge_candidate(test_id, path.read_text(errors="replace")):
             ids.append(test_id)
     args.output.write_text("".join(f"{test_id}\n" for test_id in ids))
@@ -472,6 +502,13 @@ def main() -> int:
     listing.add_argument("--wpt-root", type=Path, default=Path("target/wpt"))
     listing.add_argument("--path-prefix", default="css")
     listing.add_argument("--output", type=Path, default=Path("judge-tests.txt"))
+    listing.add_argument(
+        "--exclude",
+        type=Path,
+        action="append",
+        default=[],
+        help="baseline file whose test ids are skipped (repeatable)",
+    )
     args = parser.parse_args()
     handlers = {
         "list-tests": command_list_tests,

@@ -74,6 +74,8 @@ jobs:
           uv run --script scripts/wpt/haiku-judge-meta-assert.py list-tests \
             --wpt-root target/wpt \
             --path-prefix "$PATH_PREFIX" \
+            --exclude expectations/meta-assert-baseline.txt \
+            --exclude expectations/raikiri-baseline.txt \
             --output judge-tests.txt
 
       - name: Render
@@ -138,5 +140,6 @@ jobs:
           path: |
             target/meta-assert-review/manifest.jsonl
             target/meta-assert-review/reviews.jsonl
+            target/meta-assert-review/reviews.template.jsonl
             target/meta-assert-review/html/
             target/meta-assert-review/screenshots/
