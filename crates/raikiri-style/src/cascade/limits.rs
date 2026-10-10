@@ -146,13 +146,24 @@ impl Counter {
         self.left = self.limit.unwrap_or(u64::MAX);
     }
 
+    /// The kind, the limit and the count reached for adding `amount`, which
+    /// passes what is left.
+    pub(crate) fn exceeding(&self, amount: u64) -> (CascadeLimitKind, u64, u64) {
+        (
+            self.kind,
+            self.limit.unwrap_or(u64::MAX),
+            self.count().saturating_add(amount),
+        )
+    }
+
     /// The error for adding `amount`, which passes what is left.
     #[cold]
     pub(crate) fn past(&self, amount: u64) -> CascadeError {
+        let (kind, limit, actual) = self.exceeding(amount);
         CascadeError::LimitExceeded {
-            kind: self.kind,
-            limit: self.limit.unwrap_or(u64::MAX),
-            actual: self.count().saturating_add(amount),
+            kind,
+            limit,
+            actual,
         }
     }
 

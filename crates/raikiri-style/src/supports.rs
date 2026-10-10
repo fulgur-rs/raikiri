@@ -169,8 +169,15 @@ fn parse_supports_selector<'i>(
     input.expect_function_matching("selector")?;
     input.parse_nested_block(|input| {
         let start = input.state();
-        crate::selector_depth::check_selector_token_depth(input, 0)?;
+        let selectors = crate::selector_depth::check_selector_token_depth(input, 0)?;
         input.reset(&start);
+        // A top-level comma means a list, never one complex selector, so the
+        // test is false without parsing what may be a huge list. An error
+        // token still invalidates the test, as a failed parse would.
+        if selectors > 1 {
+            input.expect_no_error_token()?;
+            return Ok(false);
+        }
         if input.try_parse(parse_custom_highlight_prelude).is_ok() {
             return Ok(true);
         }

@@ -24,8 +24,9 @@ pub enum CascadeError {
         message: String,
     },
     /// The input needs more of something than a configured limit allows (see
-    /// [`crate::CascadeLimits`]). The counts depend only on the document and
-    /// its stylesheets, so the same input fails the same way every time.
+    /// [`crate::CascadeLimits`] and [`crate::RuleTreeLimits`]). The counts
+    /// depend only on the document and its stylesheets, so the same input
+    /// fails the same way every time.
     LimitExceeded {
         /// Which limit the input passed.
         kind: CascadeLimitKind,
@@ -42,7 +43,8 @@ pub enum CascadeError {
     },
 }
 
-/// Which of [`crate::CascadeLimits`] an input passed.
+/// Which of [`crate::CascadeLimits`] or [`crate::RuleTreeLimits`] an input
+/// passed.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CascadeLimitKind {
@@ -56,6 +58,12 @@ pub enum CascadeLimitKind {
     RetainedBytes,
     /// [`crate::CascadeLimits::max_output_bytes`].
     OutputBytes,
+    /// [`crate::RuleTreeLimits::max_rules`].
+    StyleRules,
+    /// [`crate::RuleTreeLimits::max_selectors`].
+    StyleSelectors,
+    /// [`crate::RuleTreeLimits::max_declarations`].
+    StyleDeclarations,
 }
 
 impl std::fmt::Display for CascadeError {

@@ -498,7 +498,7 @@ pub enum PageMarginBoxSlot {
 /// are meaningful in a margin at-rule's body (enumerated in the spec's
 /// Appendix A). This parser does not enforce that restriction: the body is
 /// parsed as an ordinary declaration list, via the same
-/// [`crate::rule::parse_declaration_block`] qualified style rules use (see
+/// [`crate::rule::parse_declaration_block_within`] inline styles use (see
 /// the `AtRuleParser` impl for [`PageDeclParser`](super::PageDeclParser)), so `declarations` can
 /// carry any property [`crate::property::parse_value`] recognizes, whether
 /// or not it is spec-applicable to a margin context. This mirrors

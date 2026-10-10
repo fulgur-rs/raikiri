@@ -87,7 +87,7 @@ pub use page::{
 pub mod ruletree;
 pub use ruletree::{
     AtRuleBody, AtRuleRecord, CssRule, CssRuleKind, Origin, QualifiedRuleRecord, RuleNode,
-    RuleTree, build_rule_tree, walk_style_elements,
+    RuleTree, RuleTreeLimits, build_rule_tree, walk_style_elements,
 };
 
 pub mod computed;

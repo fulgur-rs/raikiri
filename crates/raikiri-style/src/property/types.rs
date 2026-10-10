@@ -7790,7 +7790,7 @@ pub enum BackgroundSize {
 /// [`parse_background_shorthand`] — the parser stops at the first
 /// unrecognized token (the comma) after parsing everything before it, and
 /// the leftover comma (plus any further layers) makes the whole declaration
-/// invalid at the [`crate::rule::parse_declaration_block`] call site's
+/// invalid at the [`crate::rule::parse_declaration_block_within`] call site's
 /// `expect_exhausted` check, so it is dropped entirely. This is a deliberate
 /// divergence from the spec's per-layer compositing: this crate never
 /// renders a first-layer-only approximation of a multi-layer declaration
@@ -8829,9 +8829,9 @@ pub enum PropertyValue {
     /// [`crate::rule::expand_shorthand_into`] expands it into four longhand variants
     /// ([`PaddingTop`](Self::PaddingTop) / [`PaddingRight`](Self::PaddingRight) /
     /// [`PaddingBottom`](Self::PaddingBottom) / [`PaddingLeft`](Self::PaddingLeft))
-    /// when the declaration is parsed (`parse_declaration_block`), and the
-    /// element cascade only ever reads those expanded declarations. This gives
-    /// the 1/2/3/4 expansion and follows CSS Cascading L4 §3 "Shorthand Properties"
+    /// when the declaration is parsed, and the element cascade only ever reads
+    /// those expanded declarations. This gives the 1/2/3/4 expansion and
+    /// follows CSS Cascading L4 §3 "Shorthand Properties"
     /// <https://www.w3.org/TR/css-cascade-4/#shorthand> verbatim: "A shorthand
     /// property sets all of its longhand sub-properties, exactly as if expanded in
     /// place." Each side can then win the cascade independently. These expansion
@@ -8968,10 +8968,10 @@ pub enum PropertyValue {
     /// [`crate::rule::expand_shorthand_into`] expands it into the four longhand
     /// variants ([`MarginTop`](Self::MarginTop) / [`MarginRight`](Self::MarginRight) /
     /// [`MarginBottom`](Self::MarginBottom) / [`MarginLeft`](Self::MarginLeft))
-    /// when the declaration is parsed (`parse_declaration_block`), and the
-    /// element cascade only reads those expanded declarations. This follows
-    /// the 1/2/3/4-value expansion in spec §3.2 and CSS Cascading L4 §3,
-    /// "Shorthand Properties" <https://www.w3.org/TR/css-cascade-4/#shorthand>:
+    /// when the declaration is parsed, and the element cascade only reads
+    /// those expanded declarations. This follows the 1/2/3/4-value expansion
+    /// in spec §3.2 and CSS Cascading L4 §3, "Shorthand Properties"
+    /// <https://www.w3.org/TR/css-cascade-4/#shorthand>:
     /// "A shorthand property sets all of its longhand sub-properties,
     /// exactly as if expanded in place." Per-side cascade winners therefore
     /// work naturally. The expansion guarantee prevents this variant from
@@ -9059,7 +9059,7 @@ pub enum PropertyValue {
     /// **This variant is not observed during element cascade**:
     /// [`crate::rule::expand_shorthand_into`] expands it into twelve longhand
     /// variants (four sides × three sub-properties) when the declaration is
-    /// parsed (`parse_declaration_block`), and the element cascade only reads
+    /// parsed, and the element cascade only reads
     /// those expanded declarations. This follows CSS Cascading
     /// L4 §3 "Shorthand Properties"
     /// <https://www.w3.org/TR/css-cascade-4/#shorthand>: "A shorthand

@@ -520,6 +520,7 @@ pub use first_line::{FirstLineCascade, FirstLineStyles, cascade_with_first_line}
 mod inherit;
 pub(crate) use inherit::*;
 mod limits;
+pub(crate) use limits::Counter;
 pub use limits::{CascadeLimits, CascadeOptions};
 
 #[cfg(test)]

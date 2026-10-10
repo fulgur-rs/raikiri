@@ -422,6 +422,11 @@ pub(crate) fn walk_from<D: StyleDom>(
     parent_computed: &ComputedValues,
     options: WalkOptions,
 ) -> Result<WalkOutputs, CascadeError> {
+    // A rule tree past one of its limits retained only part of its
+    // stylesheets, and cascading that part would style the document wrongly.
+    if let Some(error) = rule_tree.limit_exceeded() {
+        return Err(error);
+    }
     let viewport = options.viewport.unwrap_or((
         media_context.viewport_width() as f32,
         media_context.viewport_height() as f32,

@@ -2053,11 +2053,14 @@ fn nested_opaque_at_rule_bodies_respect_cumulative_byte_budget() {
     }
 
     let budget = css.len() * 2;
-    let mut remaining = budget;
+    let mut remaining = OpaqueBudget {
+        body_bytes: budget,
+        nodes: MAX_NESTED_OPAQUE_NODES,
+    };
     let nodes = parse_nested_rule_nodes(&css, &mut remaining);
 
     assert!(!nodes.is_empty());
-    assert!(remaining < budget);
+    assert!(remaining.body_bytes < budget);
     fn retained_body_bytes(nodes: &[RuleNode]) -> usize {
         nodes
             .iter()
@@ -2070,7 +2073,7 @@ fn nested_opaque_at_rule_bodies_respect_cumulative_byte_budget() {
             })
             .sum()
     }
-    assert_eq!(retained_body_bytes(&nodes), budget - remaining);
+    assert_eq!(retained_body_bytes(&nodes), budget - remaining.body_bytes);
 
     let mut depth = 0;
     let mut node = nodes.first();
@@ -2109,6 +2112,66 @@ fn rule_tree_caps_nested_opaque_body_retention() {
     assert!(retained > 0);
     assert!(retained <= MAX_CUMULATIVE_NESTED_OPAQUE_BODY_BYTES);
     assert_eq!(record.children().len(), 1);
+}
+
+#[test]
+fn opaque_nodes_spend_the_inspection_node_budget() {
+    // Statements and empty blocks copy no body, but each is a node.
+    for item in ["@a;", "a{}", "@a{}"] {
+        let mut budget = OpaqueBudget {
+            body_bytes: usize::MAX,
+            nodes: 100,
+        };
+        let nodes = parse_nested_rule_nodes(&item.repeat(1000), &mut budget);
+        assert_eq!((nodes.len(), budget.nodes), (100, 0), "{item}");
+    }
+    // Descendants share the budget with their ancestors, in source order.
+    let mut budget = OpaqueBudget {
+        body_bytes: usize::MAX,
+        nodes: 3,
+    };
+    let nodes = parse_nested_rule_nodes("@a { @b; @c; @d; } @e;", &mut budget);
+    let [RuleNode::AtRule(record)] = nodes.as_slice() else {
+        panic!("expected only the first block");
+    };
+    let names: Vec<_> = record
+        .children()
+        .iter()
+        .map(|node| match node {
+            RuleNode::AtRule(record) => record.name.as_str(),
+            RuleNode::Qualified(record) => record.prelude.as_str(),
+        })
+        .collect();
+    assert_eq!(names, ["b", "c"]);
+    // A tree stops at its node budget across stylesheets.
+    let css = format!("@future {{{}}}", "@a;".repeat(MAX_NESTED_OPAQUE_NODES + 10));
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(&css, Origin::Author);
+    tree.add_stylesheet("@future { @a; }", Origin::Author);
+    let children: Vec<_> = tree
+        .opaque_at_rules()
+        .iter()
+        .map(|record| record.children().len())
+        .collect();
+    assert_eq!(children, [MAX_NESTED_OPAQUE_NODES, 0]);
+}
+
+#[test]
+fn large_group_bodies_keep_every_inspection_node() {
+    // As in a utility-class stylesheet: rules with short bodies, grouped by
+    // breakpoint. Every rule stays visible to inspection.
+    let rules: String = (0..12_000).map(|i| format!(".c{i}{{color:red}}")).collect();
+    let css: String = (0..5)
+        .map(|i| format!("@media (min-width: {}px) {{{rules}}}", 640 + 128 * i))
+        .collect();
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(&css, Origin::Author);
+    let children: Vec<_> = tree
+        .opaque_at_rules()
+        .iter()
+        .map(|record| record.children().len())
+        .collect();
+    assert_eq!(children, [12_000; 5]);
 }
 
 #[test]
