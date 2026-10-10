@@ -47,13 +47,34 @@ fn build_with_style(n_divs: usize) -> Vec<u8> {
     s.into_bytes()
 }
 
+/// One `<style>` element holding `n_rules` rules, one per line. The tokenizer
+/// splits raw text at every newline, so this is the shape that turns
+/// quadratic if each piece is merged into the text node separately.
+fn build_long_style(n_rules: usize) -> Vec<u8> {
+    let mut s = String::with_capacity(n_rules * 24 + 100);
+    s.push_str("<html><head><style>\n");
+    for i in 0..n_rules {
+        s.push_str(&format!(".c{i}{{color:red}}\n"));
+    }
+    s.push_str("</style></head><body><p>x</p></body></html>");
+    s.into_bytes()
+}
+
 fn bench_parse(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse");
-    for (name, html, n_elems) in [
-        ("parse_flat_500", build_flat_html(500), 500u64),
-        ("parse_flat_2000", build_flat_html(2000), 2000u64),
-        ("parse_deep_100", build_deep_html(100), 100u64),
-        ("parse_with_style_500", build_with_style(500), 500u64),
+    // `min_nodes` is the parse sanity floor; the long-style case parses to a
+    // handful of nodes, so its throughput unit (rules) is not a node count.
+    for (name, html, n_elems, min_nodes) in [
+        ("parse_flat_500", build_flat_html(500), 500u64, 500),
+        ("parse_flat_2000", build_flat_html(2000), 2000u64, 2000),
+        ("parse_deep_100", build_deep_html(100), 100u64, 100),
+        ("parse_with_style_500", build_with_style(500), 500u64, 500),
+        (
+            "parse_long_style_20000",
+            build_long_style(20000),
+            20000u64,
+            4,
+        ),
     ] {
         let opts = ParseOptions {
             extra_stylesheets: &[],
@@ -61,7 +82,7 @@ fn bench_parse(c: &mut Criterion) {
             base_url: None,
         };
         let doc = parse(html.as_slice(), &opts).expect("parse sanity");
-        assert!(doc.dom.node_count() > n_elems as usize);
+        assert!(doc.dom.node_count() > min_nodes);
         group.throughput(Throughput::Elements(n_elems));
         group.bench_function(name, |b| {
             b.iter(|| {
