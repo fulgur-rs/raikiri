@@ -93,6 +93,25 @@ impl CustomPropertyEnvironment {
         Self::from_local(&empty_custom_properties(), local)
     }
 
+    /// The heap this environment's own declarations hold, not those of the
+    /// ancestor environments it shares: the map's entries and the strings of
+    /// their names and values.
+    pub(crate) fn local_heap_bytes(&self) -> u64 {
+        let text = |value: &SmolStr| {
+            if value.is_heap_allocated() {
+                value.len() as u64
+            } else {
+                0
+            }
+        };
+        (self.local.capacity() * std::mem::size_of::<(SmolStr, Option<SmolStr>)>()) as u64
+            + self
+                .local
+                .iter()
+                .map(|(name, value)| text(name) + value.as_ref().map_or(0, text))
+                .sum::<u64>()
+    }
+
     /// Look up the effective value, walking shared ancestor environments.
     pub(crate) fn get(&self, name: &str) -> Option<SmolStr> {
         let mut current = Some(self);

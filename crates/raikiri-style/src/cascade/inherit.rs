@@ -44,6 +44,7 @@ use super::first_line::first_line_property_applies;
 use super::limits::{CascadeLimits, ResultBudget, WalkCounts, bytes_of, exhausted, try_filled};
 use super::rule_index::AncestorFilter;
 use super::selector_match::MatchCaches;
+use super::value_heap::own_heap_bytes;
 use crate::error::CascadeError;
 use crate::media::MediaContext;
 use crate::ruletree::RuleTree;
@@ -560,7 +561,10 @@ pub(crate) fn walk_from<D: StyleDom>(
             // the resolving path.
             for pseudo in CASCADED_PSEUDO_ELEMENTS {
                 if let Some(values) = out.pseudo.get(&(source, pseudo)) {
-                    budget.output(entry_bytes(&out.pseudo, 0))?;
+                    budget.output(entry_bytes(
+                        &out.pseudo,
+                        own_heap_bytes(values, &out.computed[src]),
+                    ))?;
                     let values = values.clone();
                     try_insert(&mut out.pseudo, (id, pseudo), values)?;
                 }
@@ -574,6 +578,9 @@ pub(crate) fn walk_from<D: StyleDom>(
                 try_insert(&mut out.first_letter_inputs, id, inputs)?;
             }
             let computed = out.computed[src].clone();
+            // Counted as resolving the node would count it, so that the
+            // count does not depend on sharing.
+            budget.output(own_heap_bytes(&computed, parent_computed))?;
             let custom_properties = computed.custom_properties.clone();
             // `source` was resolved by this walk (only freshly resolved
             // nodes are remembered), and this node now has exactly its
@@ -642,6 +649,9 @@ pub(crate) fn walk_from<D: StyleDom>(
             };
             computed.custom_properties = custom_properties.clone();
             computed.local_custom_properties = local_custom_properties;
+            // The heap is counted once it exists: one node's values can pass
+            // the limit by what that node holds, a bounded amount.
+            budget.output(own_heap_bytes(&computed, parent_computed))?;
 
             // The rem/rlh context passed to children. Only after phases 2 + 2.5
             // for the root element are `root_font_size` / `root_line_height` known,
@@ -772,7 +782,10 @@ pub(crate) fn walk_from<D: StyleDom>(
                     }
                     pseudo_computed.custom_properties = pseudo_custom_properties;
                     pseudo_computed.local_custom_properties = pseudo_local_custom_properties;
-                    budget.output(entry_bytes(&out.pseudo, 0))?;
+                    budget.output(entry_bytes(
+                        &out.pseudo,
+                        own_heap_bytes(&pseudo_computed, &computed),
+                    ))?;
                     try_insert(&mut out.pseudo, (id, pseudo), pseudo_computed)?;
                 }
             }

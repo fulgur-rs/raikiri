@@ -2323,14 +2323,15 @@ impl SpecifiedValues {
             // absolutize as in track sizing. Pass through this node's winner.
             grid_template_areas: self.grid_template_areas,
             // Apply the same track-size absolutization to grid-auto-columns / -rows as to
-            // grid_template_columns.
-            grid_auto_columns: resolve_grid_auto_track_list(
+            // grid_template_columns. The initial `auto` list has nothing to absolutize, so a
+            // node without a declaration shares the computed initial list.
+            grid_auto_columns: resolve_auto_tracks(
                 &self.grid_auto_columns,
                 font_size,
                 own_line_height,
                 ctx,
             ),
-            grid_auto_rows: resolve_grid_auto_track_list(
+            grid_auto_rows: resolve_auto_tracks(
                 &self.grid_auto_rows,
                 font_size,
                 own_line_height,
@@ -2512,6 +2513,22 @@ fn running_display(templates: &mut [RunningTemplate], display: DisplayValue) -> 
         template.display = display;
     }
     DisplayValue::None
+}
+
+/// The computed `grid-auto-columns` / `grid-auto-rows` list: the shared
+/// initial list for the initial value, which needs no absolutization,
+/// otherwise a resolved copy of `tracks`.
+fn resolve_auto_tracks(
+    tracks: &Arc<Vec<GridTrackSize>>,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> Arc<Vec<crate::resolve::ComputedGridTrackSize>> {
+    if Arc::ptr_eq(tracks, &initial_grid_auto_track_list()) {
+        crate::resolve::initial_computed_grid_auto_track_list()
+    } else {
+        resolve_grid_auto_track_list(tracks, font_size, own_line_height, ctx)
+    }
 }
 
 #[cfg(test)]

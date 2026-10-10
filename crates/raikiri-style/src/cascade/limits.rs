@@ -8,14 +8,13 @@ use crate::error::{CascadeError, CascadeLimitKind};
 /// Every limit counts something that depends only on the document and its
 /// stylesheets, never on the allocator, so an input that passes one fails
 /// with [`CascadeError::LimitExceeded`] the same way every time. A memory
-/// limit fails before the cascade allocates what it counts; a work limit
-/// fails as soon as the work passes it. `None` lifts a limit. The defaults
-/// leave ordinary documents far below every limit.
+/// limit fails before the cascade allocates what it counts, except for the
+/// heap one node's values hold, which is counted once the node is resolved;
+/// a work limit fails as soon as the work passes it. `None` lifts a limit.
+/// The defaults leave ordinary documents far below every limit.
 ///
 /// The limits apply to one cascade run. What they count is listed with each
-/// one; in particular the heap that computed values own (strings and lists
-/// copied into them) is not counted, and the time of one selector test is
-/// not bounded.
+/// one; the time of one selector test is not bounded.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CascadeLimits {
@@ -58,10 +57,17 @@ pub struct CascadeLimits {
     /// The most bytes the result may hold: the per-node values (computed
     /// values, page values, authored writing modes and flags) for every node
     /// of the document, the computed values of the pseudo-elements, the SVG
-    /// paint properties, and the kept candidates. Counted by inline size, not
-    /// the heap the values own, such as the strings `var()` substitution
-    /// builds or the lists inherited values copy; the per-node part is
-    /// counted before it is allocated.
+    /// paint properties, the kept candidates, and the heap computed values
+    /// hold of their own: the strings and lists a node does not share with
+    /// its parent's values, such as the strings `var()` substitution builds
+    /// and the lists a node resolves for itself.
+    ///
+    /// A value a node inherits or otherwise shares with its parent counts
+    /// once, on the node that has it first. A list a node takes from a
+    /// declaration counts on every node that holds it, although the rule
+    /// tree shares it, so the count bounds the result from above. The
+    /// per-node part is counted before it is allocated, and the heap of one
+    /// node's values once that node is resolved.
     ///
     /// Defaults to `Some(8 GiB)`. Every node costs about the size of one
     /// [`crate::ComputedValues`], a few kilobytes, and every pseudo-element

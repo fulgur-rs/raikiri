@@ -431,7 +431,8 @@ pub fn cascade_with_media_context_for_page<D: StyleDom>(
 ///   need more of the cascade's work or of its result's memory than
 ///   `options.limits` allows. The counts depend only on the input, so the same
 ///   input fails the same way every time, before the cascade allocates what
-///   the count stands for.
+///   the count stands for, or, for the heap one node's values hold, once that
+///   node is resolved.
 /// - [`CascadeError::ResourceExhausted`] when the allocator refuses one of the
 ///   result's buffers.
 /// - [`CascadeError::Internal`] when the stylesheets have more rules,
@@ -520,6 +521,7 @@ pub use first_line::{FirstLineCascade, FirstLineStyles, cascade_with_first_line}
 mod inherit;
 pub(crate) use inherit::*;
 mod limits;
+mod value_heap;
 pub(crate) use limits::Counter;
 pub use limits::{CascadeLimits, CascadeOptions};
 

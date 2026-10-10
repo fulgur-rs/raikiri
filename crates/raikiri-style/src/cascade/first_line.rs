@@ -81,6 +81,7 @@ pub(crate) fn first_line_property_applies(key: PropertyKey) -> bool {
 
 use super::inherit::{WalkOptions, apply_winners, walk};
 use super::limits::{Counter, bytes_of, try_filled};
+use super::value_heap::own_heap_bytes;
 use super::{CascadeLimits, CascadeResult, finish};
 use crate::property::DisplayValue;
 use crate::resolve::{ResolveContext, used_line_height_length};
@@ -271,6 +272,7 @@ pub(crate) fn cascade_with_first_line_within<D: StyleDom>(
         let mut cv = specified.finalize(&inherited, &context);
         cv.custom_properties = ordinary.custom_properties.clone();
         cv.local_custom_properties = ordinary.local_custom_properties.clone();
+        output.add(own_heap_bytes(&cv, &inherited))?;
         computed[id.0 as usize] = Some(cv);
         stack.extend(dom.child_ids(id).map(|child| (child, id)));
     }

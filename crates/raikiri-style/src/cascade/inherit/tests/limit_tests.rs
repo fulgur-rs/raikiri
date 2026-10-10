@@ -535,3 +535,98 @@ fn the_public_entry_point_reports_a_passed_limit() {
     .expect("two candidates fit");
     assert_eq!(result.computed.len(), doc.node_count());
 }
+
+fn output_bytes(doc: &TestDoc, tree: &RuleTree, sibling_sharing: bool) -> u64 {
+    walk_within(doc, tree, unlimited(), sibling_sharing)
+        .expect("the walk succeeds")
+        .counts
+        .output_bytes
+}
+
+fn paragraphs(css: &str, inline: impl Fn(usize) -> Option<String>) -> (TestDoc, RuleTree) {
+    small_doc(css, |doc, body| {
+        for i in 0..4 {
+            doc.push_element(body, "p", inline(i).as_deref());
+        }
+    })
+}
+
+#[test]
+fn values_a_node_holds_of_its_own_count_as_output() {
+    let base = paragraphs("", |_| None);
+    let base = output_bytes(&base.0, &base.1, true);
+    // Each element resolves its own `var()` substitution: a custom property
+    // on each keeps the elements from sharing.
+    let big = "x".repeat(1024);
+    let substituted = paragraphs(
+        &format!(":root {{ --b: {big} }} p {{ --a: var(--b) var(--b) }}"),
+        |i| Some(format!("--u: {i}")),
+    );
+    // A long declared list, which sharing siblings copy.
+    let shadows = vec!["1px 1px red"; 100].join(",");
+    let listed = paragraphs(&format!("p {{ box-shadow: {shadows} }}"), |_| None);
+    let shadow_list = 100 * std::mem::size_of::<crate::resolve::ComputedBoxShadowItem>() as u64;
+    for ((doc, tree), at_least) in [(&substituted, 4 * 2 * 1024), (&listed, 4 * shadow_list)] {
+        let shared = output_bytes(doc, tree, true);
+        assert_eq!(
+            shared,
+            output_bytes(doc, tree, false),
+            "sharing changed the count"
+        );
+        assert!(shared >= base + at_least, "{shared} < {base} + {at_least}");
+        assert_last_output_fails(doc, tree, true);
+        assert_last_output_fails(doc, tree, false);
+    }
+}
+
+#[test]
+fn inherited_values_count_once() {
+    // The paragraphs share the body's text-shadow list, which counts on the
+    // body alone.
+    let base = paragraphs("", |_| None);
+    let shadows = vec!["1px 1px red"; 100].join(",");
+    let inherited = paragraphs(&format!("body {{ text-shadow: {shadows} }}"), |_| None);
+    assert_eq!(
+        output_bytes(&inherited.0, &inherited.1, true) - output_bytes(&base.0, &base.1, true),
+        100 * std::mem::size_of::<crate::resolve::ComputedTextShadow>() as u64
+    );
+}
+
+#[test]
+fn first_line_styles_count_the_heap_they_resolve_again() {
+    // The span's own text-shadow is resolved again for its first-line style,
+    // and that list counts as output too.
+    let mut doc = TestDoc::new();
+    let style = doc.push_element(0, "style", None);
+    doc.push_text(style, "p::first-line { color: red }");
+    let p = doc.push_element(0, "p", Some("display: block"));
+    doc.push_text(p, "text ");
+    let span = doc.push_element(p, "span", Some("text-shadow: 1px 1px red, 2px 2px blue"));
+    doc.push_text(span, "more");
+    let tree = build_rule_tree(&doc);
+    let root = StyleNodeId(p as u64);
+    let media = MediaContext::default();
+    let options = WalkOptions {
+        retain_subtree: Some(root),
+        limits: unlimited(),
+        ..WalkOptions::default()
+    };
+    let walk_bytes = walk(&doc, &tree, &media, options)
+        .expect("the walk succeeds")
+        .counts
+        .output_bytes;
+    let inline_bytes =
+        walk_bytes + (doc.node_count() * std::mem::size_of::<Option<ComputedValues>>()) as u64;
+    let (kind, _, actual) = exceeded(cascade_with_first_line_within(
+        &doc,
+        &tree,
+        &media,
+        root,
+        output_limit(inline_bytes),
+    ));
+    assert_eq!(kind, CascadeLimitKind::OutputBytes);
+    assert!(
+        actual
+            >= inline_bytes + 2 * std::mem::size_of::<crate::resolve::ComputedTextShadow>() as u64
+    );
+}
