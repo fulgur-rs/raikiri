@@ -29,8 +29,10 @@ and use `--apply` only for accepted `pass` rows.
 
 `scripts/wpt/haiku-judge-meta-assert.py` writes the same `reviews.jsonl` rows
 with `claude-haiku-5-5`, so large sets can be offloaded while individual rows
-stay open to agent review. It needs `ANTHROPIC_API_KEY` and
-`python3 -m pip install anthropic`. Verdicts are cached by model, prompt, and
+stay open to agent review. It needs `python3 -m pip install anthropic` and
+credentials in the environment (an API key locally; in CI the
+`WPT model judge` workflow uses Workload Identity Federation, so no key is
+stored). Verdicts are cached by model, prompt, and
 PNG hash under `judge-cache/`; `batch-submit` / `batch-collect` use the Message
 Batches API at half price. `dump-prompts` writes the exact prompt per row
 without calling the API.

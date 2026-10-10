@@ -3,7 +3,14 @@ name: WPT model judge
 # Judges WPT tests that have no reference file (mostly CSS2 .xht) by sending
 # each rendering, its meta assert, and its "Test passes if" text to a Claude
 # model. Manual only, so every run's API spend is an explicit decision.
-# Requires the ANTHROPIC_API_KEY repository secret.
+#
+# Authentication uses Workload Identity Federation: the job's GitHub OIDC
+# token is exchanged for a short-lived Anthropic token, so no API key is
+# stored anywhere. The federation rule should match only
+# job_workflow_ref fulgur-rs/raikiri/.github/workflows/wpt-judge.yml@refs/heads/main.
+# The IDs it needs are repository variables (not secrets):
+#   ANTHROPIC_FEDERATION_RULE_ID, ANTHROPIC_ORGANIZATION_ID,
+#   ANTHROPIC_SERVICE_ACCOUNT_ID, ANTHROPIC_WORKSPACE_ID
 
 on:
   workflow_dispatch:
@@ -20,6 +27,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 concurrency:
   group: ${{ github.workflow }}
@@ -100,10 +108,27 @@ jobs:
 
       - name: Judge
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+          ANTHROPIC_IDENTITY_TOKEN_FILE: ${{ runner.temp }}/gha-jwt
           MODEL: ${{ inputs.model }}
         run: |
           python3 -m pip install --quiet anthropic
+          # GitHub OIDC tokens live about five minutes and each one can be
+          # exchanged only once, while the SDK re-reads the file on every
+          # refresh. Keep a fresh token in the file for the whole run.
+          fetch_token() {
+            curl -sSf -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" \
+              | jq -r .value > "$ANTHROPIC_IDENTITY_TOKEN_FILE.tmp"
+            mv "$ANTHROPIC_IDENTITY_TOKEN_FILE.tmp" "$ANTHROPIC_IDENTITY_TOKEN_FILE"
+          }
+          fetch_token
+          ( while sleep 120; do fetch_token; done ) &
+          refresher=$!
+          trap 'kill "$refresher"' EXIT
           python3 scripts/wpt/haiku-judge-meta-assert.py run \
             --review-dir target/meta-assert-review \
             --model "$MODEL" \

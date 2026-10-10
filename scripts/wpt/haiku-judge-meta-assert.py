@@ -15,7 +15,8 @@ never judged twice.
 
 Usage:
 
-    # one request per row (needs ANTHROPIC_API_KEY and `pip install anthropic`)
+    # one request per row (`pip install anthropic`; credentials come from the
+    # environment: ANTHROPIC_API_KEY or the Workload Identity Federation variables)
     scripts/wpt/haiku-judge-meta-assert.py run --review-dir target/meta-assert-review
 
     # Message Batches API (50% cheaper, results usually within an hour)
