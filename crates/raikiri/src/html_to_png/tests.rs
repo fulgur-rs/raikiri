@@ -231,7 +231,7 @@ fn ahem_fonts() -> raikiri_html::RenderFonts {
 }
 
 #[test]
-fn a_bundled_font_set_builds_in_parallel_and_the_installed_fonts_do_not() {
+fn a_bundled_font_set_builds_in_parallel() {
     let mut dom = raikiri_dom::Document::new();
     use_fonts(&mut dom, None);
     assert!(!dom.has_font_collection());

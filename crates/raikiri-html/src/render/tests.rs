@@ -38,7 +38,7 @@ fn ahem_fonts() -> crate::RenderFonts {
 }
 
 #[test]
-fn a_bundled_font_set_enables_parallel_builds_and_the_system_layer_does_not() {
+fn bundled_fonts_and_the_system_layer_both_build_paragraphs_in_parallel() {
     let mut dom = raikiri_dom::Document::new();
     enable_inline_engine(
         &mut dom,
@@ -47,7 +47,7 @@ fn a_bundled_font_set_enables_parallel_builds_and_the_system_layer_does_not() {
         &NoLoader,
     );
     assert!(dom.has_font_collection());
-    assert!(!dom.ifc_parallel_build());
+    assert!(dom.ifc_parallel_build());
     let mut dom = raikiri_dom::Document::new();
     enable_inline_engine(
         &mut dom,

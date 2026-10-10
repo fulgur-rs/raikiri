@@ -573,19 +573,6 @@ impl<'a> RenderResources<'a> {
             .unwrap_or_else(raikiri_dom::system_font_collection)
     }
 
-    /// Whether paragraphs may be built on several threads: the font set was
-    /// built from bundled fonts only.
-    ///
-    /// The layer of the installed fonts loads a face the first time a lookup
-    /// selects it, and shodo does not guarantee deterministic matching during
-    /// concurrent registration. A collection with system-font discovery
-    /// disabled can be built in parallel.
-    pub fn inline_engine_parallel_build(&self) -> bool {
-        self.font_collection
-            .as_ref()
-            .is_some_and(shodo::font::FontCollection::is_bundled_only)
-    }
-
     /// Set the limits used when parsing HTML.
     pub fn render_limits(mut self, limits: RenderLimits) -> Self {
         self.render_limits = limits;

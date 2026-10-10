@@ -62,7 +62,7 @@ pub fn render_screen_url(
 
     let page_query = PageContextQuery::default();
     let font_face_tree = raikiri::build_rule_tree(&uncascaded);
-    let (fonts, bundled_only) = wpt_document_fonts(
+    let fonts = wpt_document_fonts(
         &font_face_tree.font_faces_for(&media_context),
         Some(&NetworkFontLoader {
             provider,
@@ -72,7 +72,6 @@ pub fn render_screen_url(
     )
     .map_err(ScreenRenderError::new)?;
     uncascaded.dom.set_font_collection(fonts);
-    uncascaded.dom.set_ifc_parallel_build(bundled_only);
     let mut cascade =
         build_cascaded_with_media_context_for_page(&uncascaded, &media_context, &page_query)
             .map_err(|error| ScreenRenderError::new(error.to_string()))?;

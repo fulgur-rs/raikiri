@@ -474,10 +474,9 @@ impl Document {
         }
     }
 
-    /// Allow building paragraphs on several threads. Only safe when the font
-    /// collection has no system faces that are loaded on first use: the face
-    /// chosen for text no family covers would then depend on thread
-    /// scheduling. Off by default; no effect without the inline engine.
+    /// Allow building paragraphs on several threads. The paragraphs are the
+    /// same as when built in sequence, whatever the font collection. On by
+    /// default; no effect without the inline engine.
     #[doc(hidden)]
     pub fn set_ifc_parallel_build(&mut self, allowed: bool) {
         if let Some(state) = self.ifc.as_mut() {

@@ -286,11 +286,10 @@ pub(crate) struct IfcState {
     /// Paragraphs are built on several threads when there are at least this
     /// many roots and `parallel_build` is set.
     pub(crate) parallel_threshold: usize,
-    /// The font collection is known to hold no system faces that are loaded
-    /// on first use. Only then does building on several threads give the same
-    /// paragraphs as building in sequence: the face chosen when no family
-    /// covers a character depends on the order in which such faces were
-    /// loaded. Off by default.
+    /// Whether many roots may be built on several threads. Either way gives
+    /// the same paragraphs, also over the installed fonts: shodo picks a
+    /// fallback face from the platform catalog in a fixed order, not from the
+    /// order in which faces were first loaded. On by default.
     pub(crate) parallel_build: bool,
     /// How the roots of the last layout pass were built.
     pub(crate) last_build: Option<IfcBuildMode>,
@@ -320,7 +319,7 @@ impl IfcState {
             layout_cx: LayoutContext::new(),
             standalone_calls: AtomicUsize::new(0),
             parallel_threshold: DEFAULT_PARALLEL_THRESHOLD,
-            parallel_build: false,
+            parallel_build: true,
             last_build: None,
             page_width: None,
         }

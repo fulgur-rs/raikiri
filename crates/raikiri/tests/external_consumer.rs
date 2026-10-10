@@ -438,5 +438,4 @@ fn render_fonts_are_reachable_from_the_facade() {
     let _: RenderWithFonts = html_to_png_with_render_fonts::<Input>;
     let _: fn(RenderResources<'static>, RenderFonts) -> RenderResources<'static> =
         RenderResources::fonts;
-    assert!(!RenderResources::new().inline_engine_parallel_build());
 }
