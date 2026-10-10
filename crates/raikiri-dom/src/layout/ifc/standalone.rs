@@ -13,7 +13,7 @@ use shodo::style::{
     FontFamily, GenericFamily, InlineStyle, LineHeight, LineOptions, ParagraphStyle, TextAlign,
     TextOrientation, TextWrapMode, WhiteSpaceCollapse,
 };
-use shodo::{AtomicSizes, LayoutContext, Line, RichText};
+use shodo::{AtomicSizes, LayoutContext, Line, Paragraph, RichText};
 use std::sync::atomic::Ordering;
 
 /// Width handed to the line breaker when the caller wants one line.
@@ -65,6 +65,7 @@ pub enum StandaloneAlign {
 }
 
 /// Lines of one shaped run.
+#[derive(Debug)]
 pub struct StandaloneText {
     lines: Vec<Line>,
     /// Per line, how far content moves along the logical inline axis when blanks
@@ -172,51 +173,70 @@ fn without_trailing_blanks(text: &str) -> String {
 }
 
 /// Break `text` into lines with the document's engine and fonts.
-fn shape_lines(
-    fonts: &FontCollection,
-    limits: &Limits,
-    text: &str,
-    style: &StandaloneStyle,
-    width: Option<f32>,
-    align: StandaloneAlign,
-) -> Option<Vec<Line>> {
-    let inline = InlineStyle {
-        font_families: style
-            .families
-            .iter()
-            .map(|name| family_from_css(name))
-            .collect(),
-        font_size: style.font_size,
-        direction: style.direction,
-        text_orientation: style.text_orientation,
-        line_height: LineHeight::Normal,
-        white_space_collapse: WhiteSpaceCollapse::Preserve,
-        text_wrap_mode: TextWrapMode::Wrap,
-        ..InlineStyle::default()
-    };
-    let paragraph_style = ParagraphStyle {
-        root: inline.clone(),
-        writing_mode: style.writing_mode,
-        direction: style.direction,
-        ..ParagraphStyle::default()
-    };
-    // The layout context is per call: the document's shared one needs
-    // `&mut`.
-    let mut cx = LayoutContext::new();
-    let paragraph = RichText::with_limits(&paragraph_style, limits)
-        .push(text, &inline)
-        .build(&mut cx, fonts)
-        .ok()?;
-    let options = LineOptions {
-        text_align: align_of(align),
-        ..LineOptions::default()
-    };
-    Some(paragraph.break_all(
-        &mut cx,
-        &options,
-        width.unwrap_or(UNBOUNDED_WIDTH),
-        &AtomicSizes::EMPTY,
-    ))
+/// A built paragraph of one standalone run, ready to break at any width.
+struct Shaped {
+    paragraph: Paragraph,
+    // The layout context is per run: the document's shared one needs `&mut`.
+    cx: LayoutContext,
+}
+
+impl Shaped {
+    fn build(
+        fonts: &FontCollection,
+        limits: &Limits,
+        text: &str,
+        style: &StandaloneStyle,
+    ) -> Option<Self> {
+        let inline = InlineStyle {
+            font_families: style
+                .families
+                .iter()
+                .map(|name| family_from_css(name))
+                .collect(),
+            font_size: style.font_size,
+            direction: style.direction,
+            text_orientation: style.text_orientation,
+            line_height: LineHeight::Normal,
+            white_space_collapse: WhiteSpaceCollapse::Preserve,
+            text_wrap_mode: TextWrapMode::Wrap,
+            ..InlineStyle::default()
+        };
+        let paragraph_style = ParagraphStyle {
+            root: inline.clone(),
+            writing_mode: style.writing_mode,
+            direction: style.direction,
+            ..ParagraphStyle::default()
+        };
+        let mut cx = LayoutContext::new();
+        let paragraph = RichText::with_limits(&paragraph_style, limits)
+            .push(text, &inline)
+            .build(&mut cx, fonts)
+            .ok()?;
+        Some(Self { paragraph, cx })
+    }
+
+    fn lines(&mut self, width: Option<f32>, align: StandaloneAlign) -> Vec<Line> {
+        let options = LineOptions {
+            text_align: align_of(align),
+            ..LineOptions::default()
+        };
+        self.paragraph.break_all(
+            &mut self.cx,
+            &options,
+            width.unwrap_or(UNBOUNDED_WIDTH),
+            &AtomicSizes::EMPTY,
+        )
+    }
+}
+
+/// The inline constraint of a standalone run.
+#[derive(Clone, Copy)]
+enum StandaloneWidth {
+    /// A caller-supplied constraint, or none.
+    Given(Option<f32>),
+    /// The run's own unconstrained width, as if it were measured with no
+    /// constraint first and then shaped again inside that width.
+    Fit,
 }
 
 fn widest(lines: &[Line]) -> f32 {
@@ -247,6 +267,31 @@ impl Document {
         width: Option<f32>,
         align: StandaloneAlign,
     ) -> Option<StandaloneText> {
+        self.shape_standalone(text, style, StandaloneWidth::Given(width), align)
+    }
+
+    /// Shape `text` inside its own unconstrained width.
+    ///
+    /// The result is the one [`Document::shape_standalone_text`] gives with
+    /// `width` set to the [`StandaloneText::width`] of an unconstrained run,
+    /// but the text is shaped once instead of twice.
+    #[doc(hidden)]
+    pub fn shape_standalone_text_fitted(
+        &self,
+        text: &str,
+        style: &StandaloneStyle,
+        align: StandaloneAlign,
+    ) -> Option<StandaloneText> {
+        self.shape_standalone(text, style, StandaloneWidth::Fit, align)
+    }
+
+    fn shape_standalone(
+        &self,
+        text: &str,
+        style: &StandaloneStyle,
+        width: StandaloneWidth,
+        align: StandaloneAlign,
+    ) -> Option<StandaloneText> {
         if !self.standalone_text_eligible(text, style.font_size) {
             return None;
         }
@@ -258,18 +303,41 @@ impl Document {
                 (&installed.0, &installed.1)
             }
         };
-        let lines = shape_lines(fonts, limits, text, style, width, align)?;
+        let mut shaped = Shaped::build(fonts, limits, text, style)?;
         // shodo keeps the trailing spaces that fit on the last line and before
         // a forced break inside `inline_size`; the width leaves them out. The
         // width and the alignment shift therefore use a copy without trailing
         // blanks.
         let stripped = without_trailing_blanks(text);
+        let mut ink = if stripped == text || stripped.is_empty() {
+            None
+        } else {
+            Some(Shaped::build(fonts, limits, &stripped, style)?)
+        };
+        let width = match width {
+            StandaloneWidth::Given(width) => width,
+            StandaloneWidth::Fit => {
+                let measured = match &mut ink {
+                    Some(ink) => widest(&ink.lines(None, align)),
+                    None if stripped == text => widest(&shaped.lines(None, align)),
+                    None => 0.0,
+                };
+                let measured = measured.max(0.0);
+                Some(if style.writing_mode.is_vertical() {
+                    shaped.lines(None, align).iter().map(Line::block_size).sum()
+                } else {
+                    measured
+                })
+            }
+        };
+        let lines = shaped.lines(width, align);
         let ink_lines = if stripped == text {
             None
-        } else if stripped.is_empty() {
-            Some(Vec::new())
         } else {
-            Some(shape_lines(fonts, limits, &stripped, style, width, align)?)
+            Some(
+                ink.as_mut()
+                    .map_or_else(Vec::new, |ink| ink.lines(width, align)),
+            )
         };
         let line_width = widest(ink_lines.as_deref().unwrap_or(&lines));
         // Start-like alignments put the content at the same place with or

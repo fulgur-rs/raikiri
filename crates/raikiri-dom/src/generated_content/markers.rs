@@ -53,9 +53,9 @@ impl Document {
             },
             ..crate::StandaloneStyle::default()
         };
-        let measured =
-            self.shape_standalone_text(content, &style, None, crate::StandaloneAlign::Start)?;
-        let width = measured.width();
+        let shaped =
+            self.shape_standalone_text_fitted(content, &style, crate::StandaloneAlign::Start)?;
+        let width = shaped.width();
         if width <= 0.0 {
             return None;
         }
@@ -65,8 +65,7 @@ impl Document {
             }
             _ => padding_left - width - 4.0,
         };
-        self.shape_standalone_text(content, &style, Some(width), crate::StandaloneAlign::Start)
-            .map(|shaped| (shaped, offset))
+        Some((shaped, offset))
     }
 }
 
@@ -129,6 +128,7 @@ fn custom_marker_text(registry: &CounterStyleRegistry, name: &str, value: u32) -
     ))
 }
 
+#[cfg(test)]
 fn list_marker_text(
     document: &Document,
     cascade: &CascadeResult,
@@ -288,7 +288,6 @@ pub fn marker_render_info_with_snapshots<'a>(
 ) -> Option<(&'a raikiri_style::ComputedValues, String)> {
     // cov:ignore: signature close has no executable mapping
     let computed = cascade.computed.get(node_id)?;
-    let ordinal = list_item_ordinal(document, cascade, node_id);
     let marker_computed = cascade.pseudo.get(&(
         raikiri_style::StyleNodeId::new(node_id as u64),
         raikiri_style::PseudoElem::Marker,
@@ -299,6 +298,14 @@ pub fn marker_render_info_with_snapshots<'a>(
     }
     let base = snapshots.get(node_id).unwrap_or(&EMPTY_COUNTER_SNAPSHOT);
     let counters = CounterSnapshotView::new(base, marker_computed);
+    // The sibling scan is only a fallback for a missing `list-item` counter.
+    // Skipping it when the counter exists keeps a long list linear instead of
+    // rescanning every preceding sibling for each item.
+    let ordinal = if counters.values_for("list-item").is_empty() {
+        list_item_ordinal(document, cascade, node_id)
+    } else {
+        0
+    };
     let marker_ordinal = list_item_marker_ordinal(&counters, ordinal);
     let content = marker_computed
         .and_then(|marker| {
@@ -312,11 +319,7 @@ pub fn marker_render_info_with_snapshots<'a>(
             )
         })
         .or_else(|| {
-            if !counters.values_for("list-item").is_empty() {
-                list_marker_text_with_ordinal(cascade, &computed.list_style_type, marker_ordinal)
-            } else {
-                list_marker_text(document, cascade, node_id, &computed.list_style_type)
-            }
+            list_marker_text_with_ordinal(cascade, &computed.list_style_type, marker_ordinal)
         })?;
     Some((style, content))
 }

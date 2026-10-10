@@ -4186,8 +4186,8 @@ fn a_list_marker_is_measured_and_drawn_with_the_document_font() {
         &mut scene, &document, &cascade, first, 0.0, 0.0, 200.0, 30.0, 0.0,
     );
     assert_eq!(glyph_xs(&scene), [-24.0, -14.0, -4.0]);
-    // One engine result for the measurement, one for the drawing.
-    assert_eq!(document.standalone_text_calls(), 2);
+    // The marker is measured and drawn from one engine result.
+    assert_eq!(document.standalone_text_calls(), 1);
 }
 
 #[test]

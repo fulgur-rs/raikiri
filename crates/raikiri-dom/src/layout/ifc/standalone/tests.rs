@@ -382,3 +382,24 @@ fn standalone_propagates_direction_and_upright_orientation() {
         }
     }
 }
+
+#[test]
+fn a_fitted_run_matches_one_shaped_inside_its_measured_width() {
+    let doc = enabled();
+    let vertical = StandaloneStyle {
+        writing_mode: WritingMode::VerticalRl,
+        ..ahem(10.0)
+    };
+    for style in [ahem(10.0), vertical] {
+        for text in ["1. ", "42.", "• ", "a\nbc ", " ", "ab  \n"] {
+            let align = StandaloneAlign::Start;
+            let fitted = doc.shape_standalone_text_fitted(text, &style, align);
+            let reshaped = doc
+                .shape_standalone_text(text, &style, None, align)
+                .and_then(|measured| {
+                    doc.shape_standalone_text(text, &style, Some(measured.width()), align)
+                });
+            assert_eq!(format!("{fitted:?}"), format!("{reshaped:?}"), "{text:?}");
+        }
+    }
+}
