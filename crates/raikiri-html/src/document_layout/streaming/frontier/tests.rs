@@ -176,8 +176,56 @@ fn open_boxes_sized_by_their_content_hold_from_their_start() {
         frontier_of("<p>a</p><div style='position:absolute'><p>x</p>"),
         "<div>"
     );
+    // A float with a definite width still sits in the trailing inline run
+    // of its parent.
     assert_eq!(
         frontier_of("<p>a</p><div style='float:left; width:10em'><p>x</p>"),
+        "<div>"
+    );
+    assert_eq!(
+        frontier_of("<p>a</p><div style='width:10em'><p>x</p>"),
         "end"
+    );
+}
+
+#[test]
+fn foster_parented_open_elements_hold_before_their_table() {
+    // The div is moved before the table, so its text precedes the table.
+    assert_eq!(frontier_of("<p>before</p><table><div>one"), "\"one\"");
+}
+
+#[test]
+fn open_fixed_boxes_hold_everything() {
+    assert_eq!(
+        frontier_of("<p>a</p><div style='position:fixed'><p>head</p>"),
+        frontier_of("<style>p:last-child { color: red }</style><p>a</p>")
+    );
+}
+
+#[test]
+fn open_svg_holds_from_its_root() {
+    assert_eq!(
+        frontier_of("<p>a</p><svg style='display:block'><rect/>"),
+        "<svg>"
+    );
+}
+
+#[test]
+fn boxless_wrappers_belong_to_the_surrounding_run() {
+    assert_eq!(
+        frontier_of("<div>prefix <span style='display:contents'>inside"),
+        "\"prefix \""
+    );
+}
+
+#[test]
+fn open_inline_layout_boxes_hold_from_the_surrounding_run() {
+    assert_eq!(
+        frontier_of("<div>prefix <span style='display:inline-flex'><b>item"),
+        "\"prefix \""
+    );
+    assert_eq!(
+        frontier_of("<div>prefix <aside style='float:left'><p>item</p>"),
+        "\"prefix \""
     );
 }

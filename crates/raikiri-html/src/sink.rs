@@ -214,13 +214,19 @@ impl TreeSink for RaikiriTreeSink {
             });
             return;
         };
+        // Streaming warnings share the vector; only parse errors count
+        // toward the cap.
+        let recorded = warnings
+            .iter()
+            .filter(|warning| matches!(warning.kind, WarningKind::HtmlParseError { .. }))
+            .count();
         if cap == 0 {
             // There is no slot for a real warning, but—as for cap > 0—add a synthetic
             // entry on the first call indicating that at least one parse error occurred
             // and was suppressed. An unconditional no-op would make this case
             // indistinguishable from zero parse errors and would silently disable the
             // trip-and-record behavior used for cap > 0.
-            if warnings.is_empty() {
+            if recorded == 0 {
                 warnings.push(RenderWarning {
                     kind: WarningKind::HtmlParseError {
                         message: "parse errors suppressed (max_parse_warnings = 0)".to_string(),
@@ -236,7 +242,7 @@ impl TreeSink for RaikiriTreeSink {
         // were suppressed. Without it, consumers could not distinguish exactly cap
         // errors from many more. Record at most cap - 1 real parse errors.
         let last_real_slot = cap - 1;
-        match warnings.len().cmp(&last_real_slot) {
+        match recorded.cmp(&last_real_slot) {
             std::cmp::Ordering::Less => {
                 warnings.push(RenderWarning {
                     kind: WarningKind::HtmlParseError {

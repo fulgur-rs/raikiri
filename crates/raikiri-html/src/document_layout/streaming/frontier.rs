@@ -7,7 +7,7 @@
 //!
 //! - an open element whose layout depends on children that may not have
 //!   arrived yet: tables (auto layout measures every row), flex and grid
-//!   containers, multi-column containers (balancing measures all content)
+//!   containers, multi-column containers (balancing measures all content),
 //!   boxes with `break-inside: avoid*`, and shrink-to-fit or
 //!   `min-content` wide boxes (floats and absolutely positioned boxes with
 //!   an auto width), whose width comes from their widest content;
@@ -15,13 +15,25 @@
 //!   without a valid `dir`), whose direction comes from its first strong
 //!   character, which may not have arrived yet, and which `:dir()` exposes
 //!   to the styles of everything inside it;
+//! - an open fixed positioned box, which holds everything: it repeats on
+//!   every page;
+//! - the outermost element of open foreign content such as SVG, which is
+//!   laid out and painted as a whole;
 //! - the start of the trailing inline run of the innermost open block
 //!   container, because a paragraph's bidi direction, `text-wrap: balance`
-//!   and orphans / widows depend on all of its lines;
+//!   and orphans / widows depend on all of its lines. Inline-level boxes,
+//!   floats, absolutely positioned boxes and boxes that generate no box of
+//!   their own belong to the run around them rather than being block
+//!   containers here, and an open box of the first kind above that belongs
+//!   to a run holds from the start of that run, since its size reflows the
+//!   lines before it;
 //! - the document root, when a selector's result can change as later
 //!   siblings or descendants arrive (see
 //!   [`raikiri_style::RuleTree::has_forward_dependent_selectors`]); the
 //!   style of an open ancestor such as `<body>` could still change.
+//!
+//! "Earliest" is in tree order: foster parenting can put an open element
+//! before an open table.
 //!
 //! A frontier node joined to the content before it by `break-before:
 //! avoid*` or `break-after: avoid*` moves back to that content, since the
@@ -58,47 +70,91 @@ pub(crate) fn stable_frontier(
     traced: &[usize],
     forward_dependent_selectors: bool,
 ) -> Frontier {
+    let root = document.root_index();
     if forward_dependent_selectors {
-        return Frontier::At(document.root_index());
+        return Frontier::At(root);
     }
-    let mut chain: Vec<(usize, usize)> = open_html_elements(document, traced)
+    let open: Vec<usize> = open_elements(document, traced)
         .into_iter()
-        .map(|id| (depth(document, id), id))
+        .filter(|&id| {
+            document
+                .get_node(id)
+                .is_some_and(|node| node.kind() == NodeKind::Element && node.is_in_document())
+        })
         .collect();
-    chain.sort_unstable();
+    // A fixed positioned box repeats on every page, the earlier ones too.
+    if open.iter().any(|&id| {
+        computed(cascade, id).is_some_and(|values| {
+            values.position == PositionValue::Fixed && values.display != DisplayValue::None
+        })
+    }) {
+        return Frontier::At(root);
+    }
+    let mut position = vec![usize::MAX; document.node_count()];
+    for (index, id) in preorder(document).into_iter().enumerate() {
+        position[id] = index;
+    }
 
-    // The outermost open element with auto directionality, which precedes
-    // everything after it in tree order apart from a trailing inline run
-    // that starts before it.
-    let mut auto_direction = None;
-    for &(_, id) in &chain {
-        if auto_direction.is_none() && has_auto_direction(document, id) {
-            auto_direction = Some(id);
+    let mut held = Vec::new();
+    for &id in &open {
+        if !is_html_element_in_document(document, id) {
+            // Foreign content such as SVG is laid out and painted as a
+            // whole, from its outermost element.
+            if document
+                .parent_of(id)
+                .is_none_or(|parent| is_html_element_in_document(document, parent))
+            {
+                held.push(surrounding_run_start(document, cascade, &position, id));
+            }
+            continue;
+        }
+        if has_auto_direction(document, id) {
+            held.push(id);
         }
         if computed(cascade, id).is_none_or(needs_all_children) {
-            let held = auto_direction.unwrap_or(id);
-            return Frontier::At(join_avoided_breaks(document, cascade, held));
+            held.push(surrounding_run_start(document, cascade, &position, id));
         }
     }
-    let innermost_block = chain
+    let innermost_block = open
         .iter()
-        .rev()
-        .map(|&(_, id)| id)
-        .find(|&id| computed(cascade, id).is_some_and(|values| !is_inline_level(values)));
-    let run = innermost_block.and_then(|block| trailing_inline_run(document, cascade, block));
-    let held = match (auto_direction, run) {
-        (Some(auto), Some(start)) if !is_inclusive_ancestor(document, auto, start) => Some(start),
-        (Some(auto), _) => Some(auto),
-        (None, run) => run,
-    };
-    match held {
+        .copied()
+        .filter(|&id| {
+            is_html_element_in_document(document, id) && !joins_inline_run(document, cascade, id)
+        })
+        .max_by_key(|&id| depth(document, id));
+    held.extend(innermost_block.and_then(|block| trailing_inline_run(document, cascade, block)));
+    match held.into_iter().min_by_key(|&id| position[id]) {
         Some(id) => Frontier::At(join_avoided_breaks(document, cascade, id)),
         None => Frontier::End,
     }
 }
 
-fn is_inclusive_ancestor(document: &Document, ancestor: usize, id: usize) -> bool {
-    std::iter::successors(Some(id), |&node| document.parent_of(node)).any(|node| node == ancestor)
+/// Where the inline content that `id` belongs to starts: `id` itself, or,
+/// when `id` sits in the inline formatting context of its parent (as an
+/// inline-level box, a float or an absolutely positioned box), the start of
+/// the trailing inline run around it, climbing through inline ancestors. A
+/// box there that changes size reflows the lines before it.
+fn surrounding_run_start(
+    document: &Document,
+    cascade: &CascadeResult,
+    position: &[usize],
+    id: usize,
+) -> usize {
+    let root = document.root_index();
+    let mut held = id;
+    let mut current = id;
+    while joins_inline_run(document, cascade, current) {
+        let Some(parent) = document.parent_of(current).filter(|&parent| parent != root) else {
+            break;
+        };
+        if let Some(start) = trailing_inline_run(document, cascade, parent)
+            && position[start] < position[held]
+        {
+            held = start;
+        }
+        current = parent;
+    }
+    held
 }
 
 /// The HTML elements of `document` that may still receive children, given
