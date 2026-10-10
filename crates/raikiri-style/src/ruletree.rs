@@ -35,7 +35,7 @@ mod nesting;
 
 pub(crate) use budget::ParseBudget;
 pub use budget::RuleTreeLimits;
-use nesting::{parse_highlight_body, parse_style_body};
+use nesting::{SelectorCount, parse_highlight_body, parse_style_body};
 
 /// Cascade origin (CSS Cascading L4 §6.2).
 ///
@@ -1904,8 +1904,10 @@ fn parse_qualified_prelude<'i>(
     if let Ok(name) = input.try_parse(parse_custom_highlight_prelude) {
         return Ok(QualifiedPrelude::CustomHighlight(name));
     }
-    // A list of more selectors than the tree may still retain is not parsed.
-    if !budget.selectors_fit(selectors) {
+    // The prelude counts its selectors, for the first rule the body makes,
+    // from its tokens, so a list of more selectors than the tree may still
+    // retain is not parsed.
+    if !budget.selectors(selectors) {
         return Err(input.new_custom_error(()));
     }
     SelectorList::parse(
@@ -1979,15 +1981,19 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for GroupRuleParser<'_, '_> {
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::QualifiedRule, cssparser::ParseError<'i, ()>> {
         let item = match prelude {
-            QualifiedPrelude::Style(selectors) => GroupItem::Sequence(parse_style_body(
-                input,
-                selectors,
-                self.source,
-                self.depth + 1,
-                self.namespaces,
-                self.supports_context,
-                self.budget,
-            )),
+            QualifiedPrelude::Style(selectors) => {
+                let count = SelectorCount::top_level(&selectors);
+                GroupItem::Sequence(parse_style_body(
+                    input,
+                    selectors,
+                    count,
+                    self.source,
+                    self.depth + 1,
+                    self.namespaces,
+                    self.supports_context,
+                    self.budget,
+                ))
+            }
             QualifiedPrelude::CustomHighlight(name) => GroupItem::Sequence(parse_highlight_body(
                 input,
                 name,
@@ -2764,15 +2770,19 @@ impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for StyleRuleParser<'s, 'b> 
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::QualifiedRule, cssparser::ParseError<'i, Self::Error>> {
         let rule = match prelude {
-            QualifiedPrelude::Style(selectors) => ParsedRule::Style(parse_style_body(
-                input,
-                selectors,
-                self.source,
-                0,
-                self.namespaces,
-                self.supports_context,
-                self.budget,
-            )),
+            QualifiedPrelude::Style(selectors) => {
+                let count = SelectorCount::top_level(&selectors);
+                ParsedRule::Style(parse_style_body(
+                    input,
+                    selectors,
+                    count,
+                    self.source,
+                    0,
+                    self.namespaces,
+                    self.supports_context,
+                    self.budget,
+                ))
+            }
             QualifiedPrelude::CustomHighlight(name) => ParsedRule::Style(parse_highlight_body(
                 input,
                 name,

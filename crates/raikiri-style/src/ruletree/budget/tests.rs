@@ -43,15 +43,151 @@ fn style_rules_count_their_selectors_and_expanded_declarations() {
     assert_eq!(counts("a, b { color: red; margin: 0 }"), [1, 2, 5]);
     assert_eq!(counts("a {}"), [1, 1, 0]);
     // A run of declarations on each side of a nested rule is a rule of its
-    // own, with the parent's selectors.
+    // own, with the parent's selectors. The nested selector holds both of
+    // them, so it counts as two.
     assert_eq!(
         counts("a, b { color: red; c { color: blue } color: green }"),
-        [3, 5, 3]
+        [3, 6, 3]
     );
+    // Nested again, `e` holds `:is(a, b) c, :is(a, b) d`, five components
+    // each. `a, b` and `c, d` make no rule of their own, but their preludes
+    // count them.
+    assert_eq!(counts("a, b { c, d { e {} } }"), [1, 16, 0]);
+    // A highlight body has no selectors to pass on.
+    assert_eq!(counts("::highlight(h) { b {} }"), [1, 1, 0]);
     assert_eq!(
         counts("::highlight(h) { background-color: red }"),
         [1, 0, 1]
     );
+}
+
+#[test]
+fn nested_selectors_count_the_parent_at_every_use() {
+    // Three `&` hold `a, b` three times.
+    assert_eq!(counts("a, b { & & & {} }"), [1, 8, 0]);
+    // Placing the parent in `:is(&, .x, .y)` measures it for each of the
+    // three branches, two selectors each time.
+    assert_eq!(counts("a, b { :is(&, .x, .y) {} }"), [1, 10, 0]);
+    assert_eq!(counts("a, b { :is(.x, .y) {} }"), [1, 4, 0]);
+    // In `:has()` only the branch that holds `&` has the parent placed in
+    // it, so the parent is measured once.
+    assert_eq!(counts("a, b { :has(&, .x, .y) {} }"), [1, 6, 0]);
+    // A rule that makes no rule of its own is counted all the same.
+    assert_eq!(counts("a, b { & { @layer x; } }"), [1, 4, 0]);
+    let tree = tree_within(
+        "a, b { & { @layer x; } & { @layer y; } }",
+        RuleTreeLimits {
+            max_selectors: Some(5),
+            ..unlimited()
+        },
+    );
+    assert_eq!(exceeded(&tree), (CascadeLimitKind::StyleSelectors, 5, 6));
+}
+
+#[test]
+fn later_rules_from_one_list_count_its_weighted_size() {
+    // `:is(.a, .b, .c)` is one selector of four components. Its first rule
+    // counts it once; the run after the nested rule holds the whole list
+    // again and counts four, as does `x`, which holds it.
+    assert_eq!(
+        counts(":is(.a, .b, .c) { color: red; x {} color: blue }"),
+        [3, 9, 2]
+    );
+    // The rules of nested groups count the same way.
+    assert_eq!(
+        counts(":is(.a, .b, .c) { @media print { color: red } @media screen { color: blue } }"),
+        [4, 5, 2]
+    );
+    // So the groups of a long logical list stop at the selector limit.
+    let parent = (0..1000)
+        .map(|i| format!(".p{i}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let css = format!(":is({parent}) {{ {} }}", "@media all{}".repeat(10_000));
+    let tree = tree_within(
+        &css,
+        RuleTreeLimits {
+            max_selectors: Some(1 << 16),
+            ..unlimited()
+        },
+    );
+    assert_eq!(
+        exceeded(&tree),
+        (CascadeLimitKind::StyleSelectors, 1 << 16, 66_067)
+    );
+}
+
+#[test]
+fn nested_rules_under_a_long_parent_list_stop_at_the_selector_limit() {
+    // Placing a parent in each nested rule costs work for every parent
+    // selector, so that work is bounded by the selector limit: here it is
+    // passed after the parent's 1,000 and 64 nested rules, not after the
+    // 10,000 the body holds.
+    let parent = (0..1000)
+        .map(|i| format!(".p{i}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let limits = RuleTreeLimits {
+        max_selectors: Some(1 << 16),
+        ..unlimited()
+    };
+    for nested in ["b{}", "&{@layer x;}", "@media all{b{}}"] {
+        let css = format!("{parent} {{ {} }}", nested.repeat(10_000));
+        let tree = tree_within(&css, limits);
+        assert_eq!(
+            exceeded(&tree),
+            (CascadeLimitKind::StyleSelectors, 1 << 16, 66_000),
+            "{nested}"
+        );
+    }
+    let css = format!("{parent} {{ {} }}", "b{}".repeat(10_000));
+    assert_eq!(tree_within(&css, limits).budget.counts()[0], 64);
+    // A parent that is one selector holding a long logical list weighs as
+    // much: `:is()` and its 1,000 branches.
+    let css = format!(":is({parent}) {{ {} }}", "b{}".repeat(10_000));
+    let tree = tree_within(&css, limits);
+    assert_eq!(
+        exceeded(&tree),
+        (CascadeLimitKind::StyleSelectors, 1 << 16, 66_067)
+    );
+    assert_eq!(tree.budget.counts()[0], 65);
+    // So does a long logical list holding `&` in the nested rule: placing
+    // the parent measures its 1,000 selectors for each of the list's 65
+    // branches.
+    let branches = (0..64)
+        .map(|i| format!(".a{i}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let css = format!("{parent} {{ :is(&, {branches}) {{}} }}");
+    assert_eq!(
+        exceeded(&tree_within(&css, limits)),
+        (CascadeLimitKind::StyleSelectors, 1 << 16, 67_000)
+    );
+}
+
+#[test]
+fn nested_rules_weigh_only_the_parent_they_hold() {
+    // Pseudo-element branches are left out of the parent a nested rule
+    // holds, so here the nested rules hold none of them and count one each,
+    // beside the parent's three.
+    let tree = tree_within(
+        "a::before, b::after, c::first-line { :is(&, .x) { color: red } :is(&, .y) { color: blue } }",
+        RuleTreeLimits {
+            max_selectors: Some(5),
+            ..unlimited()
+        },
+    );
+    assert!(tree.limit_exceeded().is_none());
+    assert_eq!(tree.budget.counts()[1], 5);
+}
+
+#[test]
+fn without_a_limit_any_count_fits() {
+    let mut budget = ParseBudget::new(&unlimited(), 0);
+    assert!(budget.selectors(1));
+    assert!(budget.selectors_fit(usize::MAX));
+    assert!(budget.rule_fits());
+    assert!(!budget.exceeded());
 }
 
 #[test]
@@ -313,12 +449,12 @@ fn a_selector_list_past_the_limit_is_not_parsed() {
     };
     // A list is counted from its tokens before it is parsed, so the count
     // reached is the whole list's, at the top level, in a group and nested
-    // in a style rule.
+    // in a style rule, where it adds to the parent's one.
     let huge = format!("{} {{}}", vec!["a"; 100_000].join(", "));
     for (css, actual) in [
         ("a, b, c {}", 3),
         ("@media print { a, b, c {} }", 3),
-        ("a { b, c, d {} }", 3),
+        ("a { b, c, d {} }", 4),
         (huge.as_str(), 100_000),
     ] {
         assert_eq!(

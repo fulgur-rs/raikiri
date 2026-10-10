@@ -36,8 +36,24 @@ pub struct RuleTreeLimits {
     /// The most selectors counted: those of style rules, summed over their
     /// selector lists, and the entries of `@page` selector lists. The
     /// cascade indexes every style rule selector and may test it against
-    /// every element. A selector list that would pass the limit is not
-    /// parsed.
+    /// every element.
+    ///
+    /// A style rule's selectors are counted when its prelude is parsed, and
+    /// that count stands for the first rule made from them. Each later one,
+    /// such as a run of declarations after a nested rule or the rule of a
+    /// nested group, holds the whole list again, so it counts as the list's
+    /// weighted size when that is more: one for each simple selector and
+    /// combinator, those in the branches of logical lists (`:is()`,
+    /// `:where()`, `:not()`, `:has()`, `of`) included. A list too large to
+    /// measure passes the limit there.
+    ///
+    /// A nested rule's selectors hold the list they nest in at every `&`,
+    /// and a selector without one holds it once. Each counts as that list's
+    /// weighted size at every `&`. A logical list holding `&` also makes each
+    /// of its selectors, or in `:has()` each of those holding `&`, count as
+    /// many as the parent list has selectors, since placing the parent
+    /// measures it again for each of them. A selector list that would pass
+    /// the limit is not parsed.
     ///
     /// Defaults to `Some(2^20)`.
     pub max_selectors: Option<u64>,
@@ -122,14 +138,14 @@ impl ParseBudget {
         ]
     }
 
-    /// Accounts for one more style rule whose list holds `selectors`
-    /// selectors, or `false` when that passes a limit.
+    /// Accounts for one more style rule and the `selectors` it counts beyond
+    /// those its prelude counted, or `false` when that passes a limit.
     pub(crate) fn style_rule(&mut self, selectors: usize) -> bool {
         self.rules_n(1) && self.selectors_n(selectors as u64)
     }
 
-    /// Accounts for `count` more selectors outside style rules, or `false`
-    /// when that passes the limit.
+    /// Accounts for `count` more selectors, such as those of a prelude, or
+    /// `false` when that passes the limit.
     pub(crate) fn selectors(&mut self, count: usize) -> bool {
         self.selectors_n(count as u64)
     }
@@ -139,7 +155,7 @@ impl ParseBudget {
     /// body, which always makes at least one rule, is checked this way
     /// before it is parsed.
     pub(crate) fn rule_fits(&mut self) -> bool {
-        if self.exceeded.is_none() && self.rules.left() == 0 {
+        if self.exceeded.is_none() && !self.rules.fits(1) {
             self.exceeded = Some(self.rules.exceeding(1));
         }
         self.exceeded.is_none()
@@ -148,9 +164,10 @@ impl ParseBudget {
     /// Whether `count` more selectors fit under the limit, counting
     /// nothing; when they do not, the limit is passed as if they had been
     /// counted. A selector list is checked this way before it is parsed.
+    /// Without a limit any count fits, however large.
     pub(crate) fn selectors_fit(&mut self, count: usize) -> bool {
         let count = count as u64;
-        if self.exceeded.is_none() && count > self.selectors.left() {
+        if self.exceeded.is_none() && !self.selectors.fits(count) {
             self.exceeded = Some(self.selectors.exceeding(count));
         }
         self.exceeded.is_none()

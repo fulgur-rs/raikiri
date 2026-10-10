@@ -1,16 +1,41 @@
 //! Style-rule bodies, including nested style rules and supported groups.
 
+use std::cell::Cell;
+
 use super::*;
 use crate::rule::{ParsedDeclaration, expand_shorthand_into, parse_declaration_value};
 use crate::selector_depth::check_selector_token_depth;
 use cssparser::{DeclarationParser, RuleBodyItemParser, RuleBodyParser, ToCss};
 
+/// What the rules made from a style rule's selectors count as against the
+/// rule tree's limits (see [`RuleTreeLimits::max_selectors`]).
+#[derive(Clone, Copy)]
+pub(super) struct SelectorCount {
+    /// What the rule's prelude counted, which stands for the first rule
+    /// made from the selectors.
+    prelude: usize,
+    /// The selectors' weighted size, when the prelude measured it.
+    weight: Option<usize>,
+}
+
+impl SelectorCount {
+    /// What a top-level rule's prelude counts: one for each selector.
+    pub(super) fn top_level(selectors: &SelectorList<RaikiriSelectorImpl>) -> Self {
+        Self {
+            prelude: selectors.slice().len(),
+            weight: None,
+        }
+    }
+}
+
 /// Preserve each declaration run's selectors and position among child rules.
 /// Direct declarations keep the parent's pseudo-elements and per-branch
 /// specificity, as required by CSS Nesting 1's nested declarations rule.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn parse_style_body(
     input: &mut Parser<'_, '_>,
     selectors: SelectorList<RaikiriSelectorImpl>,
+    count: SelectorCount,
     source: &str,
     depth: usize,
     namespaces: &NamespaceMap,
@@ -19,7 +44,7 @@ pub(super) fn parse_style_body(
 ) -> Vec<GroupItem> {
     parse_body(
         input,
-        BodyParent::Style(selectors),
+        &BodyParent::new(ParentRule::Style(selectors, count)),
         source,
         depth,
         namespaces,
@@ -39,7 +64,7 @@ pub(super) fn parse_highlight_body(
 ) -> Vec<GroupItem> {
     parse_body(
         input,
-        BodyParent::Highlight(name.into()),
+        &BodyParent::new(ParentRule::Highlight(name.into())),
         source,
         depth,
         namespaces,
@@ -48,19 +73,109 @@ pub(super) fn parse_highlight_body(
     )
 }
 
-#[derive(Clone)]
-enum BodyParent {
-    Style(SelectorList<RaikiriSelectorImpl>),
+/// The rule a body's rules are made from. The groups nested in the body make
+/// their rules from it too, and share what is built from it.
+struct BodyParent {
+    rule: ParentRule,
+    /// Whether the count the rule's prelude made still stands for the next
+    /// rule made from it.
+    prelude_count: Cell<bool>,
+    /// The weighted size of the rule's selectors, measured on first use
+    /// when the prelude did not measure it.
+    weight: OnceCell<usize>,
+    /// The parent list placed in the rules nested in the body, built on
+    /// first use.
+    nesting: OnceCell<NestingParent>,
+}
+
+enum ParentRule {
+    /// A style rule's selectors, and what the rules made from them count as.
+    Style(SelectorList<RaikiriSelectorImpl>, SelectorCount),
     Highlight(Arc<str>),
 }
 
+/// The parent list placed in nested rules.
+struct NestingParent {
+    selectors: SelectorList<RaikiriSelectorImpl>,
+    /// Its weighted size (see [`selector_list_cost`]), or more than the work
+    /// a selector list may cost.
+    cost: usize,
+}
+
+impl NestingParent {
+    /// What the list counts as at each `&`: its weighted size, and at least
+    /// one.
+    fn weight(&self) -> usize {
+        self.cost.max(1)
+    }
+}
+
 impl BodyParent {
-    /// The selectors every rule made from this body holds.
-    fn selector_count(&self) -> usize {
-        match self {
-            Self::Style(selectors) => selectors.slice().len(),
-            Self::Highlight(_) => 0,
+    fn new(rule: ParentRule) -> Self {
+        Self {
+            rule,
+            prelude_count: Cell::new(true),
+            weight: OnceCell::new(),
+            nesting: OnceCell::new(),
         }
+    }
+
+    /// The selectors the next rule made from this body counts: none for the
+    /// first, which the rule's prelude counted. Each later rule holds the
+    /// whole list again with little text of its own, so it counts as the
+    /// list's weighted size when that is more; a list too large to measure
+    /// passes any limit.
+    fn next_rule_selectors(&self) -> usize {
+        let ParentRule::Style(selectors, count) = &self.rule else {
+            return 0;
+        };
+        if self.prelude_count.replace(false) {
+            return 0;
+        }
+        let weight = self.weight.get_or_init(|| {
+            count
+                .weight
+                .or_else(|| selector_list_cost(selectors, None))
+                .unwrap_or(usize::MAX)
+        });
+        count.prelude.max(*weight)
+    }
+
+    /// The parent list placed in the rules nested in this body, built once
+    /// for the body and every group nested in it.
+    fn nesting(&self) -> &NestingParent {
+        self.nesting.get_or_init(|| {
+            let selectors = nesting_parent_of(&self.rule);
+            let cost = selector_list_cost(&selectors, None).unwrap_or(MAX_SELECTOR_WORK + 1);
+            NestingParent { selectors, cost }
+        })
+    }
+}
+
+/// The parent list placed in the rules nested in a body: the body's
+/// selectors without their pseudo-element branches, which are invalid in the
+/// implicit `:is()` parent and contribute neither matches nor specificity to
+/// a child selector.
+fn nesting_parent_of(parent: &ParentRule) -> SelectorList<RaikiriSelectorImpl> {
+    let ParentRule::Style(parent_selectors, _) = parent else {
+        // An unrepresentable highlight parent cannot match, but independent
+        // branches of a forgiving child selector remain valid.
+        return SelectorList::from_iter(std::iter::empty());
+    };
+    if parent_selectors
+        .slice()
+        .iter()
+        .all(|s| !s.has_pseudo_element())
+    {
+        parent_selectors.clone()
+    } else {
+        let parents: Vec<_> = parent_selectors
+            .slice()
+            .iter()
+            .filter(|s| !s.has_pseudo_element())
+            .cloned()
+            .collect();
+        SelectorList::from_iter(parents.into_iter())
     }
 }
 
@@ -70,7 +185,7 @@ impl BodyParent {
 /// a limit stops there.
 fn parse_body(
     input: &mut Parser<'_, '_>,
-    parent: BodyParent,
+    parent: &BodyParent,
     source: &str,
     depth: usize,
     namespaces: &NamespaceMap,
@@ -83,14 +198,12 @@ fn parse_body(
         return Vec::new();
     }
     let mut parser = StyleBodyParser {
-        parent: &parent,
+        parent,
         source,
         depth,
         namespaces,
         supports_context,
         budget,
-        nesting_parent: None,
-        parent_cost: None,
     };
     let mut declarations = Vec::new();
     // Whether the current run of declarations has been counted as a rule.
@@ -103,7 +216,7 @@ fn parse_body(
                 // A run is counted when it starts, so that a run past the rule
                 // limit is not parsed on.
                 if !run_counted {
-                    if !body.parser.budget.style_rule(parent.selector_count()) {
+                    if !body.parser.budget.style_rule(parent.next_rule_selectors()) {
                         return items;
                     }
                     run_counted = true;
@@ -114,7 +227,7 @@ fn parse_body(
             }
             Ok(BodyItem::Rule(rule)) => {
                 if !declarations.is_empty() {
-                    items.push(body_item(&parent, std::mem::take(&mut declarations)));
+                    items.push(body_item(parent, std::mem::take(&mut declarations)));
                 }
                 run_counted = false;
                 items.push(rule);
@@ -127,23 +240,24 @@ fn parse_body(
     }
     // A body without declarations or nested rules is one empty rule.
     if !declarations.is_empty()
-        || (items.is_empty() && (run_counted || parser.budget.style_rule(parent.selector_count())))
+        || (items.is_empty()
+            && (run_counted || parser.budget.style_rule(parent.next_rule_selectors())))
     {
-        items.push(body_item(&parent, declarations));
+        items.push(body_item(parent, declarations));
     }
     items
 }
 
 fn body_item(parent: &BodyParent, declarations: Vec<Declaration>) -> GroupItem {
-    match parent {
-        BodyParent::Style(selectors) => GroupItem::Style(StyleRule {
+    match &parent.rule {
+        ParentRule::Style(selectors, _) => GroupItem::Style(StyleRule {
             selectors: selectors.clone(),
             declarations,
             source_order: 0,
             origin: Origin::Author,
             layer: None,
         }),
-        BodyParent::Highlight(name) => GroupItem::CustomHighlight {
+        ParentRule::Highlight(name) => GroupItem::CustomHighlight {
             name: name.clone(),
             color: custom_highlight_color(&declarations),
         },
@@ -162,8 +276,6 @@ struct StyleBodyParser<'a> {
     namespaces: &'a NamespaceMap,
     supports_context: &'a SupportsContext<'a>,
     budget: &'a mut ParseBudget,
-    nesting_parent: Option<SelectorList<RaikiriSelectorImpl>>,
-    parent_cost: Option<usize>,
 }
 
 impl<'i> DeclarationParser<'i> for StyleBodyParser<'_> {
@@ -241,7 +353,7 @@ impl<'i> cssparser::AtRuleParser<'i> for StyleBodyParser<'_> {
         }
         let items = parse_body(
             input,
-            self.parent.clone(),
+            self.parent,
             self.source,
             self.depth + 1,
             self.namespaces,
@@ -256,7 +368,9 @@ impl<'i> cssparser::AtRuleParser<'i> for StyleBodyParser<'_> {
 }
 
 impl<'i> cssparser::QualifiedRuleParser<'i> for StyleBodyParser<'_> {
-    type Prelude = SelectorList<RaikiriSelectorImpl>;
+    /// The rule's selectors with the parent placed in them, and what the
+    /// rules made from them count as.
+    type Prelude = (SelectorList<RaikiriSelectorImpl>, SelectorCount);
     type QualifiedRule = BodyItem;
     type Error = ();
 
@@ -267,12 +381,17 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleBodyParser<'_> {
         let start = input.state();
         let count = check_selector_token_depth(input, 0)?;
         // A prelude without a block, such as a declaration cssparser retries
-        // as a rule, is not parsed. Nor is a rule when no rule is left, or a
-        // list of more selectors than the tree may still retain.
-        if !prelude_opens_block(self.source, input)
-            || !self.budget.rule_fits()
-            || !self.budget.selectors_fit(count)
-        {
+        // as a rule, is not parsed, and the parent is not measured for it.
+        // Nor is a rule when no rule is left.
+        if !prelude_opens_block(self.source, input) || !self.budget.rule_fits() {
+            return Err(input.new_custom_error(()));
+        }
+        // Nor is a list that would pass the selector limit: each of its
+        // selectors holds the parent at least once.
+        let body = self.parent;
+        let parent = body.nesting();
+        let least = count.saturating_mul(parent.weight());
+        if !self.budget.selectors_fit(least) {
             return Err(input.new_custom_error(()));
         }
         input.reset(&start);
@@ -282,37 +401,19 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleBodyParser<'_> {
             ParseRelative::ForNesting,
         )
         .map_err(|_| input.new_custom_error(()))?;
-        // Pseudo-element branches are invalid in the implicit :is() parent:
-        // they contribute neither matches nor specificity to a child selector.
-        let nesting_parent = self.nesting_parent.get_or_insert_with(|| {
-            let BodyParent::Style(parent_selectors) = self.parent else {
-                // An unrepresentable highlight parent cannot match, but independent
-                // branches of a forgiving child selector remain valid.
-                return SelectorList::from_iter(std::iter::empty());
-            };
-            if parent_selectors
-                .slice()
-                .iter()
-                .all(|s| !s.has_pseudo_element())
-            {
-                parent_selectors.clone()
-            } else {
-                let parents: Vec<_> = parent_selectors
-                    .slice()
-                    .iter()
-                    .filter(|s| !s.has_pseudo_element())
-                    .cloned()
-                    .collect();
-                SelectorList::from_iter(parents.into_iter())
-            }
-        });
-        let parent_cost = *self.parent_cost.get_or_insert_with(|| {
-            selector_list_cost(nesting_parent, None).unwrap_or(MAX_SELECTOR_WORK + 1)
-        });
-        if selector_list_cost(&selectors, Some(parent_cost)).is_none() {
+        let Some(weight) = selector_list_cost(&selectors, Some(parent.cost)) else {
+            return Err(input.new_custom_error(()));
+        };
+        // The selectors are counted before the parent is placed in them, so
+        // that placing it is counted whatever the rule's body holds.
+        let count = SelectorCount {
+            prelude: nested_selector_count(&selectors, parent),
+            weight: Some(weight),
+        };
+        if !self.budget.selectors(count.prelude) {
             return Err(input.new_custom_error(()));
         }
-        let selectors = selectors.replace_parent_selector(nesting_parent);
+        let selectors = selectors.replace_parent_selector(&parent.selectors);
         if selectors.slice().iter().any(|selector| {
             selector_needs_revalidation(selector, false, false, &mut HashMap::new())
         }) {
@@ -335,20 +436,21 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleBodyParser<'_> {
                 ParseRelative::No,
             )
             .map_err(|_| input.new_custom_error(()))?;
-            return Ok(reparsed);
+            return Ok((reparsed, count));
         }
-        Ok(selectors)
+        Ok((selectors, count))
     }
 
     fn parse_block<'t>(
         &mut self,
-        selectors: Self::Prelude,
+        (selectors, count): Self::Prelude,
         _start: &cssparser::ParserState,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::QualifiedRule, cssparser::ParseError<'i, ()>> {
         let items = parse_style_body(
             input,
             selectors,
+            count,
             self.source,
             self.depth + 1,
             self.namespaces,
@@ -359,6 +461,84 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleBodyParser<'_> {
             return Err(input.new_custom_error(()));
         }
         Ok(BodyItem::Rule(GroupItem::Sequence(items)))
+    }
+}
+
+/// What a nested rule's prelude counts its `selectors` as, before `parent`
+/// is placed in them. A selector holds the parent at every `&`, or once at
+/// the `&` the parser gives a selector without one, and counts as the
+/// parent's weight at each. Placing the parent in a logical list that holds
+/// `&` measures the parent's selectors again for every selector of the list
+/// (of a `:has()` list, for every one that holds `&`), so each of those
+/// counts as many as the parent has selectors.
+fn nested_selector_count(
+    selectors: &SelectorList<RaikiriSelectorImpl>,
+    parent: &NestingParent,
+) -> usize {
+    let mut uses = ParentUses::default();
+    for selector in selectors.slice() {
+        uses.add_selector(selector);
+    }
+    uses.references
+        .saturating_mul(parent.weight())
+        .saturating_add(uses.measured.saturating_mul(parent.selectors.slice().len()))
+}
+
+/// How often placing a parent in selectors uses it.
+#[derive(Default)]
+struct ParentUses {
+    /// The `&` it is placed at.
+    references: usize,
+    /// The selectors of logical lists it is placed in.
+    measured: usize,
+}
+
+impl ParentUses {
+    fn add_selector(&mut self, selector: &Selector<RaikiriSelectorImpl>) {
+        use selectors::parser::Component;
+        for component in selector.iter_raw_match_order() {
+            match component {
+                Component::ParentSelector => self.references = self.references.saturating_add(1),
+                Component::Is(list) | Component::Where(list) | Component::Negation(list) => {
+                    self.add_list(list.slice().iter())
+                }
+                Component::NthOf(data) => self.add_list(data.selectors().iter()),
+                // Only the relative selectors that hold `&` have the parent
+                // placed in them; the others are kept as they are.
+                Component::Has(list) => {
+                    for child in list
+                        .iter()
+                        .filter(|child| child.selector.has_parent_selector())
+                    {
+                        self.add_placement(&child.selector);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// The parent is placed in each selector of a list once one of them
+    /// holds `&`.
+    fn add_list<'a>(
+        &mut self,
+        list: impl Iterator<Item = &'a Selector<RaikiriSelectorImpl>> + Clone,
+    ) {
+        if !list.clone().any(|selector| selector.has_parent_selector()) {
+            return;
+        }
+        for selector in list {
+            self.add_placement(selector);
+        }
+    }
+
+    /// Placing the parent in `selector` measures the parent once, and then
+    /// uses it as `selector` does.
+    fn add_placement(&mut self, selector: &Selector<RaikiriSelectorImpl>) {
+        self.measured = self.measured.saturating_add(1);
+        if selector.has_parent_selector() {
+            self.add_selector(selector);
+        }
     }
 }
 

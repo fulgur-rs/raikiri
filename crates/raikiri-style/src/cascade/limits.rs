@@ -141,6 +141,12 @@ impl Counter {
         self.left
     }
 
+    /// Whether adding `amount` would succeed: it fits in what is left, or
+    /// there is no limit and the count saturates.
+    pub(crate) fn fits(&self, amount: u64) -> bool {
+        amount <= self.left || self.limit.is_none()
+    }
+
     /// Starts counting again from zero.
     pub(crate) fn reset(&mut self) {
         self.left = self.limit.unwrap_or(u64::MAX);
