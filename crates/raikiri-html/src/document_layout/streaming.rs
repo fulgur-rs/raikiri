@@ -124,7 +124,8 @@ pub enum StreamStatus<T> {
 /// of input, the document parsed so far is laid out and the pages no later
 /// input can change are delivered; each of those layouts covers the whole
 /// prefix, so a checkpoint costs as much as a layout of everything fed so
-/// far.
+/// far. Input must be UTF-8. The input byte cap and the other parse limits
+/// come from the [`RenderResources`]. Only print media is supported.
 ///
 /// Delivered pages never change, so content that would change them is left
 /// out, each case reported in [`StreamSummary::warnings`] as
@@ -135,9 +136,7 @@ pub enum StreamStatus<T> {
 /// - a `position: fixed` element created after the first page was delivered
 ///   is not laid out;
 /// - attributes added by a repeated `<html>` or `<body>` tag after the first
-///   page was delivered are ignored. Input must be
-/// UTF-8. The input byte cap and the other parse limits come from the
-/// [`RenderResources`]. Only print media is supported.
+///   page was delivered are ignored.
 ///
 /// ```
 /// use raikiri_html::{
