@@ -16,8 +16,8 @@ use crate::{
 };
 use raikiri_style::property::{
     BackgroundImage, BackgroundRepeat, Border, BorderColor, BorderStyle, ContentComponent,
-    CssColor, Length, LengthOrAuto, PropertyKey, PropertyValue, QuoteKeyword, Sides, TextAlign,
-    VerticalAlign, VisualBox, WritingMode,
+    CssColor, Length, LengthOrAuto, PropertyKey, PropertyValue, QuoteKeyword, Sides,
+    StringFetchMode, TextAlign, VerticalAlign, VisualBox, WritingMode,
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedCssPosition, ComputedLength, ComputedValues,
@@ -25,6 +25,7 @@ use raikiri_style::{
     resolve_background_size, resolve_css_position,
 };
 use raikiri_traits::{NodeId, NodeKind, PageBox, PaintInsets, PaintRect};
+use smol_str::SmolStr;
 use std::sync::Arc;
 
 #[cfg(test)]
@@ -128,6 +129,25 @@ impl std::fmt::Debug for MarginBoxText {
     }
 }
 
+/// The `element(<name>, <fetch>)` a page-margin box shows, and where.
+///
+/// Which element of that name applies depends on the page; the document
+/// layout picks it and lays it out at the width of [`Self::content_box`].
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct MarginBoxRunning {
+    /// Running element name.
+    pub name: SmolStr,
+    /// Which element of the name the page shows.
+    pub fetch: StringFetchMode,
+    /// Content box of the margin box, in page coordinates.
+    pub content_box: PaintRect,
+    /// Share of the free block space placed above the element: 0 aligns it
+    /// to the top of the content box, 0.5 centers it, 1 aligns it to the
+    /// bottom (the margin box's `vertical-align`).
+    pub block_align: f32,
+}
+
 /// A laid-out page-margin box.
 ///
 /// Positions are in CSS px with the origin at the top-left of the page box
@@ -155,6 +175,11 @@ pub struct MarginBox {
     /// Shaped content, `None` when the content is empty or the content box
     /// has no area.
     pub text: Option<MarginBoxText>,
+    /// The running element the box shows, when its `content` has an
+    /// `element()` (CSS GCPM 3 §1.2.2). A painter that draws the element
+    /// draws it in place of [`Self::text`]; [`Self::text`] and
+    /// [`Self::content`] carry the element's text as a flat fallback.
+    pub running: Option<MarginBoxRunning>,
     /// Test-suite placeholder: fill the border box with lime instead of a
     /// background image that refers to `green.png`.
     #[doc(hidden)]
@@ -179,6 +204,7 @@ impl MarginBox {
             borders: [None; 4],
             padding: PaintInsets::new(0.0, 0.0, 0.0, 0.0),
             text: None,
+            running: None,
             lime_background: false,
             lime_content_image: None,
         }
@@ -286,6 +312,8 @@ struct MarginBoxSpec {
     text_style: StandaloneStyle,
     alignment: StandaloneAlign,
     vertical_align: MarginTextVerticalAlign,
+    /// The first `element()` of `content`.
+    running: Option<(SmolStr, StringFetchMode)>,
 }
 
 /// Horizontal standalone style for a `font-family` string. Family names keep
@@ -1141,6 +1169,10 @@ fn margin_box_spec(
         text_style,
         alignment,
         vertical_align,
+        running: components.iter().find_map(|component| match component {
+            ContentComponent::Element { name, fetch } => Some((name.clone(), *fetch)),
+            _ => None,
+        }),
     })
 }
 
@@ -1164,6 +1196,16 @@ fn place_margin_box(
         (rect.width - border_left - border_right - spec.padding[1] - spec.padding[3]).max(0.0);
     let content_height =
         (rect.height - border_top - border_bottom - spec.padding[0] - spec.padding[2]).max(0.0);
+    let running = spec.running.as_ref().map(|(name, fetch)| MarginBoxRunning {
+        name: name.clone(),
+        fetch: *fetch,
+        content_box: PaintRect::new(content_x, content_y, content_width, content_height),
+        block_align: match spec.vertical_align {
+            MarginTextVerticalAlign::Top => 0.0,
+            MarginTextVerticalAlign::Middle => 0.5,
+            MarginTextVerticalAlign::Bottom => 1.0,
+        },
+    });
     let text = place_margin_text(
         document,
         spec,
@@ -1224,6 +1266,7 @@ fn place_margin_box(
             spec.padding[3],
         ),
         text,
+        running,
         lime_background: spec.background_image_lime,
         lime_content_image,
     })
