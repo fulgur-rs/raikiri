@@ -2053,11 +2053,14 @@ fn nested_opaque_at_rule_bodies_respect_cumulative_byte_budget() {
     }
 
     let budget = css.len() * 2;
-    let mut remaining = budget;
+    let mut remaining = OpaqueBudget {
+        body_bytes: budget,
+        nodes: MAX_NESTED_OPAQUE_NODES,
+    };
     let nodes = parse_nested_rule_nodes(&css, &mut remaining);
 
     assert!(!nodes.is_empty());
-    assert!(remaining < budget);
+    assert!(remaining.body_bytes < budget);
     fn retained_body_bytes(nodes: &[RuleNode]) -> usize {
         nodes
             .iter()
@@ -2070,7 +2073,7 @@ fn nested_opaque_at_rule_bodies_respect_cumulative_byte_budget() {
             })
             .sum()
     }
-    assert_eq!(retained_body_bytes(&nodes), budget - remaining);
+    assert_eq!(retained_body_bytes(&nodes), budget - remaining.body_bytes);
 
     let mut depth = 0;
     let mut node = nodes.first();
@@ -2079,6 +2082,68 @@ fn nested_opaque_at_rule_bodies_respect_cumulative_byte_budget() {
         node = record.children().first();
     }
     assert!(depth < 16, "the byte budget must truncate the owned chain");
+}
+
+#[test]
+fn adding_stylesheets_defers_the_derived_views_until_read() {
+    // Each stylesheet adds only its own rules. What is derived from all of
+    // them is built once, when first read, so many small stylesheets take
+    // time linear in their total size.
+    let mut tree = RuleTree::empty();
+    for i in 0..3 {
+        tree.add_stylesheet(
+            &format!(
+                "::highlight(h{i}) {{ background-color: red }} \
+                 @layer l{i} {{ @font-face {{ font-family: f{i}; src: url(f.woff) }} }}"
+            ),
+            Origin::Author,
+        );
+        assert!(tree.derived.get().is_none());
+    }
+    assert_eq!(tree.custom_highlight_styles().len(), 3);
+    assert_eq!(tree.font_faces().len(), 3);
+    assert!(tree.derived.get().is_some());
+    tree.add_stylesheet(
+        "@layer l3 { @counter-style c { system: cyclic; symbols: '*' } }",
+        Origin::Author,
+    );
+    assert!(tree.derived.get().is_none());
+    assert!(tree.counter_styles().get("c").is_some());
+    assert_eq!(tree.custom_highlight_styles().len(), 3);
+}
+
+#[test]
+fn layered_registries_keep_layer_order_across_additions() {
+    // `low` is declared before `high`, so rules in `high` win wherever they
+    // appear. The views are built after the first stylesheet and again after
+    // the second, whose rules come later but in the lower layer.
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "@layer low, high; \
+         @layer high { \
+           @font-face { font-family: f; src: url(high.woff); font-style: italic } \
+           @counter-style c { system: cyclic; symbols: 'H' } }",
+        Origin::Author,
+    );
+    let style = |tree: &RuleTree| tree.font_faces().get("f").map(|rule| rule.style);
+    let cyclic = |tree: &RuleTree| {
+        tree.counter_styles().get("c").map(|rule| {
+            matches!(
+                rule.system,
+                crate::counter_style::CounterStyleSystem::Cyclic
+            )
+        })
+    };
+    assert_eq!(style(&tree), Some(crate::font_face::FontFaceStyle::Italic));
+    assert_eq!(cyclic(&tree), Some(true));
+    tree.add_stylesheet(
+        "@layer low { \
+           @font-face { font-family: f; src: url(low.woff) } \
+           @counter-style c { system: fixed; symbols: 'L' } }",
+        Origin::Author,
+    );
+    assert_eq!(style(&tree), Some(crate::font_face::FontFaceStyle::Italic));
+    assert_eq!(cyclic(&tree), Some(true));
 }
 
 #[test]
@@ -2109,6 +2174,66 @@ fn rule_tree_caps_nested_opaque_body_retention() {
     assert!(retained > 0);
     assert!(retained <= MAX_CUMULATIVE_NESTED_OPAQUE_BODY_BYTES);
     assert_eq!(record.children().len(), 1);
+}
+
+#[test]
+fn opaque_nodes_spend_the_inspection_node_budget() {
+    // Statements and empty blocks copy no body, but each is a node.
+    for item in ["@a;", "a{}", "@a{}"] {
+        let mut budget = OpaqueBudget {
+            body_bytes: usize::MAX,
+            nodes: 100,
+        };
+        let nodes = parse_nested_rule_nodes(&item.repeat(1000), &mut budget);
+        assert_eq!((nodes.len(), budget.nodes), (100, 0), "{item}");
+    }
+    // Descendants share the budget with their ancestors, in source order.
+    let mut budget = OpaqueBudget {
+        body_bytes: usize::MAX,
+        nodes: 3,
+    };
+    let nodes = parse_nested_rule_nodes("@a { @b; @c; @d; } @e;", &mut budget);
+    let [RuleNode::AtRule(record)] = nodes.as_slice() else {
+        panic!("expected only the first block");
+    };
+    let names: Vec<_> = record
+        .children()
+        .iter()
+        .map(|node| match node {
+            RuleNode::AtRule(record) => record.name.as_str(),
+            RuleNode::Qualified(record) => record.prelude.as_str(),
+        })
+        .collect();
+    assert_eq!(names, ["b", "c"]);
+    // A tree stops at its node budget across stylesheets.
+    let css = format!("@future {{{}}}", "@a;".repeat(MAX_NESTED_OPAQUE_NODES + 10));
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(&css, Origin::Author);
+    tree.add_stylesheet("@future { @a; }", Origin::Author);
+    let children: Vec<_> = tree
+        .opaque_at_rules()
+        .iter()
+        .map(|record| record.children().len())
+        .collect();
+    assert_eq!(children, [MAX_NESTED_OPAQUE_NODES, 0]);
+}
+
+#[test]
+fn large_group_bodies_keep_every_inspection_node() {
+    // As in a utility-class stylesheet: rules with short bodies, grouped by
+    // breakpoint. Every rule stays visible to inspection.
+    let rules: String = (0..12_000).map(|i| format!(".c{i}{{color:red}}")).collect();
+    let css: String = (0..5)
+        .map(|i| format!("@media (min-width: {}px) {{{rules}}}", 640 + 128 * i))
+        .collect();
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(&css, Origin::Author);
+    let children: Vec<_> = tree
+        .opaque_at_rules()
+        .iter()
+        .map(|record| record.children().len())
+        .collect();
+    assert_eq!(children, [12_000; 5]);
 }
 
 #[test]

@@ -100,12 +100,46 @@ pub(super) fn prepare(
         work.charge(pieces.len().saturating_add(1))?;
         prepared.push((*root, pieces));
     }
+    // Pages with a flow range, ordered by their start, so a paragraph that
+    // is not repeated on every page visits only the pages its lines can land on
+    // instead of every page.
+    let mut by_flow: Vec<_> = pages
+        .iter()
+        .filter_map(|page| page.flow_range.map(|(start, end)| (start, end, page)))
+        .collect();
+    by_flow.sort_by(|left, right| left.0.total_cmp(&right.0));
+    let ends_ordered = by_flow.windows(2).all(|pair| pair[0].1 <= pair[1].1);
     let mut result = GeneratedBoxes::new();
-    for page in pages {
-        for (root, pieces) in &prepared {
+    for (root, pieces) in &prepared {
+        let source = document.ifc_source_owner(root.node);
+        // Fixed-position roots and repeated table headers can land on any page.
+        let repeated = root.is_repeat || document.table_objects.headers.owner(source).is_some();
+        let candidates: Box<dyn Iterator<Item = &PageFragment>> = if repeated {
+            Box::new(pages.iter())
+        } else {
+            let mut centers = pieces
+                .iter()
+                .map(|&(_, _, _, offset, _, top, height)| root.y + offset.1 + top + height * 0.5)
+                .filter(|center| center.is_finite());
+            let Some(first) = centers.next() else {
+                continue;
+            };
+            let (low, high) = centers.fold((first, first), |(low, high), center| {
+                (low.min(center), high.max(center))
+            });
+            // The slack keeps the pruning conservative; the exact test below
+            // still decides which page owns each line.
+            let last = by_flow.partition_point(|&(start, _, _)| start - 1.0 <= high);
+            let first = if ends_ordered {
+                by_flow[..last].partition_point(|&(_, end, _)| end + 1.0 <= low)
+            } else {
+                0
+            };
+            Box::new(by_flow[first..last].iter().map(|&(_, _, page)| page))
+        };
+        for page in candidates {
             work.charge(1)?;
             let mut root = *root;
-            let source = document.ifc_source_owner(root.node);
             if let Some(shift) = document
                 .table_objects
                 .headers

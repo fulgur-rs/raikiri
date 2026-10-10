@@ -15,7 +15,7 @@ pub(super) fn parse_style_body(
     depth: usize,
     namespaces: &NamespaceMap,
     supports_context: &SupportsContext<'_>,
-    selector_revalidation_budget: &mut usize,
+    budget: &mut ParseBudget,
 ) -> Vec<GroupItem> {
     parse_body(
         input,
@@ -24,7 +24,7 @@ pub(super) fn parse_style_body(
         depth,
         namespaces,
         supports_context,
-        selector_revalidation_budget,
+        budget,
     )
 }
 
@@ -35,7 +35,7 @@ pub(super) fn parse_highlight_body(
     depth: usize,
     namespaces: &NamespaceMap,
     supports_context: &SupportsContext<'_>,
-    selector_revalidation_budget: &mut usize,
+    budget: &mut ParseBudget,
 ) -> Vec<GroupItem> {
     parse_body(
         input,
@@ -44,7 +44,7 @@ pub(super) fn parse_highlight_body(
         depth,
         namespaces,
         supports_context,
-        selector_revalidation_budget,
+        budget,
     )
 }
 
@@ -54,6 +54,20 @@ enum BodyParent {
     Highlight(Arc<str>),
 }
 
+impl BodyParent {
+    /// The selectors every rule made from this body holds.
+    fn selector_count(&self) -> usize {
+        match self {
+            Self::Style(selectors) => selectors.slice().len(),
+            Self::Highlight(_) => 0,
+        }
+    }
+}
+
+/// Parses one body into its rules: a rule for each run of declarations, and
+/// the nested rules between them. Every declaration is counted as soon as it
+/// is expanded, and every rule before its contents are parsed, so a body past
+/// a limit stops there.
 fn parse_body(
     input: &mut Parser<'_, '_>,
     parent: BodyParent,
@@ -61,9 +75,11 @@ fn parse_body(
     depth: usize,
     namespaces: &NamespaceMap,
     supports_context: &SupportsContext<'_>,
-    selector_revalidation_budget: &mut usize,
+    budget: &mut ParseBudget,
 ) -> Vec<GroupItem> {
-    if depth > MAX_OPAQUE_RULE_NESTING_DEPTH {
+    // Every body makes at least one rule, so with no rule left it is not
+    // parsed at all.
+    if depth > MAX_OPAQUE_RULE_NESTING_DEPTH || !budget.rule_fits() {
         return Vec::new();
     }
     let mut parser = StyleBodyParser {
@@ -72,26 +88,47 @@ fn parse_body(
         depth,
         namespaces,
         supports_context,
-        selector_revalidation_budget,
+        budget,
         nesting_parent: None,
         parent_cost: None,
     };
     let mut declarations = Vec::new();
+    // Whether the current run of declarations has been counted as a rule.
+    let mut run_counted = false;
     let mut items = Vec::new();
-    for item in RuleBodyParser::new(input, &mut parser).flatten() {
+    let mut body = RuleBodyParser::new(input, &mut parser);
+    while let Some(item) = body.next() {
         match item {
-            BodyItem::Declaration(declaration) => {
+            Ok(BodyItem::Declaration(declaration)) => {
+                // A run is counted when it starts, so that a run past the rule
+                // limit is not parsed on.
+                if !run_counted {
+                    if !body.parser.budget.style_rule(parent.selector_count()) {
+                        return items;
+                    }
+                    run_counted = true;
+                }
+                let before = declarations.len();
                 expand_shorthand_into(&declaration, |d| declarations.push(d));
+                body.parser.budget.declarations(declarations.len() - before);
             }
-            BodyItem::Rule(rule) => {
+            Ok(BodyItem::Rule(rule)) => {
                 if !declarations.is_empty() {
                     items.push(body_item(&parent, std::mem::take(&mut declarations)));
                 }
+                run_counted = false;
                 items.push(rule);
             }
+            Err(_) => {}
+        }
+        if body.parser.budget.exceeded() {
+            return items;
         }
     }
-    if !declarations.is_empty() || items.is_empty() {
+    // A body without declarations or nested rules is one empty rule.
+    if !declarations.is_empty()
+        || (items.is_empty() && (run_counted || parser.budget.style_rule(parent.selector_count())))
+    {
         items.push(body_item(&parent, declarations));
     }
     items
@@ -124,7 +161,7 @@ struct StyleBodyParser<'a> {
     depth: usize,
     namespaces: &'a NamespaceMap,
     supports_context: &'a SupportsContext<'a>,
-    selector_revalidation_budget: &'a mut usize,
+    budget: &'a mut ParseBudget,
     nesting_parent: Option<SelectorList<RaikiriSelectorImpl>>,
     parent_cost: Option<usize>,
 }
@@ -154,13 +191,17 @@ impl<'i> cssparser::AtRuleParser<'i> for StyleBodyParser<'_> {
         name: cssparser::CowRcStr<'i>,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::Prelude, cssparser::ParseError<'i, ()>> {
-        if let Some((_, condition)) =
-            parse_group_prelude(&name, input, self.source, self.supports_context)?
-        {
+        if let Some((_, condition)) = parse_group_prelude(
+            &name,
+            input,
+            self.source,
+            self.supports_context,
+            self.budget,
+        )? {
             return Ok(condition);
         }
         if name.eq_ignore_ascii_case("layer") {
-            return parse_layer_names(input).map(GroupCondition::Layer);
+            return parse_layer_names(input, self.budget).map(GroupCondition::Layer);
         }
         Err(input.new_custom_error(()))
     }
@@ -170,6 +211,7 @@ impl<'i> cssparser::AtRuleParser<'i> for StyleBodyParser<'_> {
         prelude: Self::Prelude,
         _start: &cssparser::ParserState,
     ) -> Result<Self::AtRule, ()> {
+        // The prelude counted the layers a statement declares.
         match prelude {
             GroupCondition::Layer(names) if !names.is_empty() => {
                 Ok(BodyItem::Rule(GroupItem::LayerStatement(names)))
@@ -187,6 +229,16 @@ impl<'i> cssparser::AtRuleParser<'i> for StyleBodyParser<'_> {
         if matches!(&prelude, GroupCondition::Layer(names) if names.len() > 1) {
             return Err(input.new_custom_error(()));
         }
+        // A nested group is a rule of its own. A named layer block's layers
+        // were counted with its prelude, and an anonymous one declares a
+        // layer of its own.
+        let rules = match &prelude {
+            GroupCondition::Layer(names) => usize::from(names.is_empty()),
+            _ => 1,
+        };
+        if !self.budget.rules(rules) {
+            return Err(input.new_custom_error(()));
+        }
         let items = parse_body(
             input,
             self.parent.clone(),
@@ -194,7 +246,7 @@ impl<'i> cssparser::AtRuleParser<'i> for StyleBodyParser<'_> {
             self.depth + 1,
             self.namespaces,
             self.supports_context,
-            self.selector_revalidation_budget,
+            self.budget,
         );
         if !nested_block_has_closing_brace(self.source, input) {
             return Err(input.new_custom_error(()));
@@ -213,7 +265,16 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleBodyParser<'_> {
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::Prelude, cssparser::ParseError<'i, ()>> {
         let start = input.state();
-        check_selector_token_depth(input, 0)?;
+        let count = check_selector_token_depth(input, 0)?;
+        // A prelude without a block, such as a declaration cssparser retries
+        // as a rule, is not parsed. Nor is a rule when no rule is left, or a
+        // list of more selectors than the tree may still retain.
+        if !prelude_opens_block(self.source, input)
+            || !self.budget.rule_fits()
+            || !self.budget.selectors_fit(count)
+        {
+            return Err(input.new_custom_error(()));
+        }
         input.reset(&start);
         let selectors = SelectorList::parse(
             &NamespacedSelectorParser::for_nesting(self.namespaces),
@@ -260,12 +321,12 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleBodyParser<'_> {
             // which drops contextually invalid forgiving branches and recomputes
             // specificity. Ordinary nesting keeps its shared selector graph.
             let source =
-                selector_css_for_revalidation(&selectors, self.selector_revalidation_budget)
+                selector_css_for_revalidation(&selectors, &mut self.budget.selector_revalidation)
                     .map_err(|_| input.new_custom_error(()))?;
             let mut source_input = ParserInput::new(&source);
             let mut parser = Parser::new(&mut source_input);
             check_selector_token_depth(&mut parser, 0).map_err(|_| input.new_custom_error(()))?;
-            let source = reject_recursive_nth(&source, self.selector_revalidation_budget)
+            let source = reject_recursive_nth(&source, &mut self.budget.selector_revalidation)
                 .map_err(|_| input.new_custom_error(()))?;
             let mut source_input = ParserInput::new(&source);
             let reparsed = SelectorList::parse(
@@ -292,7 +353,7 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleBodyParser<'_> {
             self.depth + 1,
             self.namespaces,
             self.supports_context,
-            self.selector_revalidation_budget,
+            self.budget,
         );
         if !nested_block_has_closing_brace(self.source, input) {
             return Err(input.new_custom_error(()));

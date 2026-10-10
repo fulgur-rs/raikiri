@@ -540,8 +540,30 @@ impl StyleRule {
     }
 }
 
-/// Consume a declaration list to produce `Vec<Declaration>`.
-/// Silently drop unrecognized property names and invalid values.
+/// [`parse_declaration_block_within`] without consumer-owned properties or a
+/// bound.
+#[cfg(test)]
+pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declaration> {
+    parse_declaration_block_with_consumer_properties(input, &[])
+}
+
+/// [`parse_declaration_block_within`] without a bound.
+#[cfg(test)]
+pub(crate) fn parse_declaration_block_with_consumer_properties(
+    input: &mut Parser<'_, '_>,
+    consumer_properties: &[ConsumerPropertyRegistration],
+) -> Vec<Declaration> {
+    // No block expands to more than `usize::MAX` declarations.
+    parse_declaration_block_within(input, consumer_properties, usize::MAX).unwrap_or_default()
+}
+
+/// Consume a declaration list to produce `Vec<Declaration>`, with an
+/// optional set of consumer-owned property registrations. Silently drop
+/// unrecognized property names and invalid values.
+///
+/// Parsing stops as soon as the expanded declarations number more than
+/// `room`: the error is how many there were then, so that a huge block is
+/// never expanded in full.
 ///
 /// # Shorthand expansion
 ///
@@ -552,24 +574,6 @@ impl StyleRule {
 /// expand into four longhand declarations at the exit of this function. This
 /// spec-correct expansion enables natural per-side winner selection in the
 /// cascade; see the [`expand_shorthand_into`] docs for details.
-pub(crate) fn parse_declaration_block(input: &mut Parser<'_, '_>) -> Vec<Declaration> {
-    parse_declaration_block_with_consumer_properties(input, &[])
-}
-
-/// Parse a declaration block with an optional set of consumer-owned property
-/// registrations.  The default wrapper above intentionally keeps all existing
-/// callers on the zero-overhead path.
-pub(crate) fn parse_declaration_block_with_consumer_properties(
-    input: &mut Parser<'_, '_>,
-    consumer_properties: &[ConsumerPropertyRegistration],
-) -> Vec<Declaration> {
-    // No block expands to more than `usize::MAX` declarations.
-    parse_declaration_block_within(input, consumer_properties, usize::MAX).unwrap_or_default()
-}
-
-/// [`parse_declaration_block_with_consumer_properties`], stopping as soon as
-/// the expanded declarations number more than `room`: the error is how many
-/// there were then, so that a huge block is never expanded in full.
 pub(crate) fn parse_declaration_block_within(
     input: &mut Parser<'_, '_>,
     consumer_properties: &[ConsumerPropertyRegistration],
@@ -577,9 +581,37 @@ pub(crate) fn parse_declaration_block_within(
 ) -> Result<Vec<Declaration>, usize> {
     let mut parser = DeclParser {
         consumer_properties,
+        drop_viewport_lengths: false,
     };
+    parse_declarations_within(input, &mut parser, room)
+}
+
+/// [`parse_declaration_block_within`] for a declaration list in the page
+/// context (a margin-box body), which drops every declaration that uses a
+/// viewport-percentage length.
+///
+/// The page context resolves its lengths after the cascade, without a
+/// viewport, so such a declaration is treated as invalid, and the cascade
+/// falls back to the next candidate, as it does for any unsupported value.
+/// Custom properties keep their tokens and are not dropped.
+pub(crate) fn parse_page_context_declaration_block(
+    input: &mut Parser<'_, '_>,
+    room: usize,
+) -> Result<Vec<Declaration>, usize> {
+    let mut parser = DeclParser {
+        consumer_properties: &[],
+        drop_viewport_lengths: true,
+    };
+    parse_declarations_within(input, &mut parser, room)
+}
+
+fn parse_declarations_within(
+    input: &mut Parser<'_, '_>,
+    parser: &mut DeclParser<'_>,
+    room: usize,
+) -> Result<Vec<Declaration>, usize> {
     let mut out = Vec::new();
-    for decl in RuleBodyParser::new(input, &mut parser).flatten() {
+    for decl in RuleBodyParser::new(input, parser).flatten() {
         expand_shorthand_into(&decl, |d| out.push(d));
         if out.len() > room {
             return Err(out.len());
@@ -1458,7 +1490,7 @@ pub(crate) fn parse_registered_consumer_value(
         .find(|registration| registration.matches_css_name(name))?;
     let start = input.state();
     let raw = consume_deferred_value(input)?;
-    let has_deferred_substitution = raw.to_ascii_lowercase().contains("var(");
+    let has_deferred_substitution = contains_var_function(raw.as_str());
     if !has_deferred_substitution {
         let valid = match registration.grammar() {
             ConsumerPropertyGrammar::Integer => {
@@ -1493,6 +1525,9 @@ pub(crate) fn parse_registered_consumer_value(
                     .is_ok()
             }
             ConsumerPropertyGrammar::Text => parse_consumer_text_value(raw.as_str()).is_some(),
+            ConsumerPropertyGrammar::Keyword(keywords) => {
+                parse_consumer_keyword(raw.as_str(), keywords).is_some()
+            }
         };
         if !valid {
             input.reset(&start);
@@ -1503,6 +1538,69 @@ pub(crate) fn parse_registered_consumer_value(
         name: registration.storage_name(),
         value: raw,
     }))
+}
+
+/// Whether `raw` calls `var()` anywhere, judged from real `Function` tokens so
+/// that a quoted `"var("` or an escaped spelling is classified like the
+/// tokenizer sees it. Nesting deeper than the scanner's limit counts as a
+/// call, which defers validation to substitution time rather than rejecting.
+fn contains_var_function(raw: &str) -> bool {
+    const MAX_DEPTH: usize = 128;
+    fn scan(parser: &mut Parser<'_, '_>, depth: usize) -> bool {
+        if depth > MAX_DEPTH {
+            return true;
+        }
+        loop {
+            let token = match parser.next_including_whitespace_and_comments() {
+                Ok(token) => token.clone(),
+                Err(_) => return false,
+            };
+            let nested = match token {
+                cssparser::Token::Function(name) if name.eq_ignore_ascii_case("var") => {
+                    return true;
+                }
+                cssparser::Token::Function(_)
+                | cssparser::Token::ParenthesisBlock
+                | cssparser::Token::SquareBracketBlock
+                | cssparser::Token::CurlyBracketBlock => true,
+                _ => false,
+            };
+            if nested
+                && parser
+                    .parse_nested_block(|nested| {
+                        Ok::<_, cssparser::ParseError<'_, ()>>(scan(nested, depth + 1))
+                    })
+                    .unwrap_or(false)
+            {
+                return true;
+            }
+        }
+    }
+    let mut parser_input = cssparser::ParserInput::new(raw);
+    let mut parser = Parser::new(&mut parser_input);
+    scan(&mut parser, 0)
+}
+
+/// The registered spelling of a keyword-grammar value that is exactly one
+/// listed identifier.
+pub(crate) fn parse_consumer_keyword(
+    raw: &str,
+    keywords: &'static [&'static str],
+) -> Option<&'static str> {
+    let mut parser_input = cssparser::ParserInput::new(raw);
+    let mut parser = Parser::new(&mut parser_input);
+    parser
+        .parse_entirely(
+            |parser| -> Result<&'static str, cssparser::ParseError<'_, ()>> {
+                let ident = parser.expect_ident().cloned()?;
+                keywords
+                    .iter()
+                    .copied()
+                    .find(|keyword| keyword.eq_ignore_ascii_case(&ident))
+                    .ok_or_else(|| parser.new_custom_error(()))
+            },
+        )
+        .ok()
 }
 
 /// Parse one declaration, including importance and exhaustive consumption.
@@ -1527,6 +1625,10 @@ pub(crate) fn parse_declaration_value<'i>(
 /// Per-declaration parser for cssparser::RuleBodyParser.
 struct DeclParser<'a> {
     consumer_properties: &'a [ConsumerPropertyRegistration],
+    /// Whether declarations other than custom properties that use a
+    /// viewport-percentage length are dropped; see
+    /// [`parse_page_context_declaration_block`].
+    drop_viewport_lengths: bool,
 }
 
 impl<'i, 'a> DeclarationParser<'i> for DeclParser<'a> {
@@ -1539,6 +1641,12 @@ impl<'i, 'a> DeclarationParser<'i> for DeclParser<'a> {
         input: &mut Parser<'i, 't>,
         _declaration_start: &ParserState,
     ) -> Result<ParsedDeclaration, ParseError<'i, Self::Error>> {
+        if self.drop_viewport_lengths
+            && !name.starts_with("--")
+            && crate::property::has_viewport_length(input)
+        {
+            return Err(input.new_custom_error(()));
+        }
         parse_declaration_value(name, input, self.consumer_properties)
     }
 }

@@ -194,6 +194,30 @@ fn page_auto_margins_preserve_negative_remainder() {
     assert_eq!(margins.bottom, -20.0);
 }
 
+// The legacy `width`/`height` descriptors size the page area, so the page
+// padding and border come out of the auto margins, not out of that area.
+#[test]
+fn page_auto_margins_keep_the_declared_page_area_inside_padding() {
+    use raikiri_style::{Origin, RuleTree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let _body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let mut rules = RuleTree::empty();
+    rules.add_stylesheet(
+        "@page { size: 200px; width: 100px; height: 100px; margin: auto; padding: 10px }",
+        Origin::Author,
+    );
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let page = raikiri_traits::PageBox::from_page_size(cascade.page.size());
+    let margins = page_margins(&cascade, page);
+    let insets = page_content_insets(&cascade, page);
+    assert_eq!(margins.left, 40.0);
+    assert_eq!(margins.top, 40.0);
+    assert_eq!(insets.page_area_width(margins, page), 100.0);
+    assert_eq!(insets.page_area_height(margins, page), 100.0);
+}
+
 #[test]
 fn page_geometry_helpers_delegate_to_the_page_only_variants() {
     use raikiri_style::{Origin, RuleTree, cascade};
@@ -253,8 +277,9 @@ fn find_body_returns_first_body_in_document_order() {
 #[test]
 fn apply_page_content_box_sets_body_style_size_to_content_dimensions() {
     // The production Step 4 helper writes the page content box, not the full
-    // paper size: horizontal margins narrow the width, and vertical margins
-    // plus top/bottom content insets narrow the height.
+    // paper size: horizontal margins plus left/right content insets narrow
+    // the width, and vertical margins plus top/bottom content insets narrow
+    // the height.
     use raikiri_traits::PageBox;
     use taffy::{Dimension, Size};
 
@@ -279,7 +304,7 @@ fn apply_page_content_box_sets_body_style_size_to_content_dimensions() {
     let size: Size<Dimension> = doc.nodes[body].style.size;
     assert_eq!(
         size.width,
-        Dimension::length(PageBox::A4.width - 10.0 - 10.0)
+        Dimension::length(PageBox::A4.width - 10.0 - 10.0 - 4.0 - 2.0)
     );
     assert_eq!(
         size.height,

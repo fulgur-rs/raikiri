@@ -487,6 +487,8 @@ css/css-break/zero-height-page-break-001-print.html
 css/css-page/background-image-only-for-print.html
 css/css-page/page-background-image-print.html
 css/css-page/page-background-005-print.html
+css/css-page/page-box-007-print.html
+css/css-page/page-box-011-print.html
 css/css-page/margin-boxes/background-001-print.html
 # --- css-lists marker foundation (exact static reftest, 800x600) ---
 css/css-display/display-flow-root-002.html

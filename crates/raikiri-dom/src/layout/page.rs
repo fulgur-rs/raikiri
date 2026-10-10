@@ -150,15 +150,11 @@ pub(crate) fn apply_page_content_box_to_body(
     margins: PageMargins,
     insets: PageContentInsets,
 ) {
-    // Page border/padding shift the painted page origin, but they do not
-    // establish a narrower inline containing block for document flow.  Keep
-    // the initial containing-block width at the margin content width; the
-    // paint walk applies the horizontal inset when positioning the flow.
+    // The body root spans the page area, inside the page border and
+    // padding; the paint walk applies their insets when positioning it.
     doc.nodes[body_id].style.size = Size {
-        width: Dimension::length(margins.content_width(page_box).max(0.0)),
-        height: Dimension::length(
-            (margins.content_height(page_box) - insets.top - insets.bottom).max(0.0),
-        ),
+        width: Dimension::length(insets.page_area_width(margins, page_box)),
+        height: Dimension::length(insets.page_area_height(margins, page_box)),
     };
 }
 
@@ -298,6 +294,24 @@ pub struct PageContentInsets {
     pub bottom: f32,
     /// Left border plus padding.
     pub left: f32,
+}
+
+impl PageContentInsets {
+    /// Width of the page area: the content area of a page box whose margins
+    /// are `margins`, inside these border and padding insets.
+    ///
+    /// CSS Paged Media 3 §3: "The content area of a page box is called the
+    /// page area." It is the inline size of the initial containing block, so
+    /// document flow wraps to it.
+    pub fn page_area_width(self, margins: PageMargins, page_box: PageBox) -> f32 {
+        (margins.content_width(page_box) - self.left - self.right).max(0.0)
+    }
+
+    /// Height of the page area of a page box whose margins are `margins`.
+    /// See [`Self::page_area_width`].
+    pub fn page_area_height(self, margins: PageMargins, page_box: PageBox) -> f32 {
+        (margins.content_height(page_box) - self.top - self.bottom).max(0.0)
+    }
 }
 
 fn page_box_side(
@@ -497,6 +511,9 @@ pub fn page_margins_for_page(
     // Without those descriptors the existing zero fallback is retained.
     let page_area_width = page_dimension(declarations, PropertyKey::Width, page_box.width);
     let page_area_height = page_dimension(declarations, PropertyKey::Height, page_box.height);
+    // The descriptors size the content area, so the page border and padding
+    // come out of the auto margins too.
+    let insets = page_content_insets_for_page(page, page_box);
     if let Some(area_width) = page_area_width {
         let auto_left = matches!(left_value, Some(LengthOrAuto::Auto));
         let auto_right = matches!(right_value, Some(LengthOrAuto::Auto));
@@ -505,7 +522,12 @@ pub fn page_margins_for_page(
             // Auto page margins absorb the full remainder, including a
             // negative one when the requested page area is larger than the
             // physical page box.
-            let remaining = page_box.width - area_width - margins.left - margins.right;
+            let remaining = page_box.width
+                - area_width
+                - insets.left
+                - insets.right
+                - margins.left
+                - margins.right;
             let auto_margin = remaining / auto_count as f32;
             if auto_left {
                 margins.left = auto_margin;
@@ -520,7 +542,12 @@ pub fn page_margins_for_page(
         let auto_bottom = matches!(bottom_value, Some(LengthOrAuto::Auto));
         let auto_count = usize::from(auto_top) + usize::from(auto_bottom);
         if auto_count > 0 {
-            let remaining = page_box.height - area_height - margins.top - margins.bottom;
+            let remaining = page_box.height
+                - area_height
+                - insets.top
+                - insets.bottom
+                - margins.top
+                - margins.bottom;
             let auto_margin = remaining / auto_count as f32;
             if auto_top {
                 margins.top = auto_margin;

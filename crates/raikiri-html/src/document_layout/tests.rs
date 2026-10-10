@@ -570,6 +570,74 @@ fn layout_delivers_consumer_properties_before_returning() {
     assert_eq!(observer.0, 1);
 }
 
+#[derive(Default)]
+struct CollectProperties(Vec<raikiri_traits::ConsumerPropertyValue>);
+impl ConsumerPropertyObserver for CollectProperties {
+    fn observe_event(&mut self, event: ConsumerPropertyEvent) -> std::io::Result<()> {
+        self.0.push(event.value);
+        Ok(())
+    }
+}
+
+#[test]
+fn keyword_consumer_properties_report_the_registered_spelling() {
+    let doc = dom("<style>:root { --state: Closed; --bad: ajar } \
+         .ignored { bookmark-state: open; bookmark-state: ajar }</style>\
+         <h1 style='bookmark-state: OPEN'>a</h1>\
+         <h2 style='bookmark-state: var(--state)'>b</h2>\
+         <h3 style='bookmark-state: var(--bad)'>c</h3>\
+         <h4 class='ignored'>d</h4>");
+    let registrations = [crate::ConsumerPropertyRegistration::keyword(
+        "bookmark-state",
+        &["open", "closed"],
+    )];
+    let mut observer = CollectProperties::default();
+    layout(
+        &doc,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        LayoutOptions::new().consumer_properties(&registrations, &mut observer),
+    )
+    .expect("layout");
+    let keyword = |value: &str| raikiri_traits::ConsumerPropertyValue::Keyword(value.into());
+    assert_eq!(
+        observer.0,
+        [keyword("open"), keyword("closed"), keyword("open")]
+    );
+}
+
+#[test]
+fn text_consumer_properties_resolve_counters_and_named_strings() {
+    let doc = dom("<style>body { counter-reset: chapter } \
+         h1 { counter-increment: chapter; counter-reset: section; string-set: title content(); \
+              bookmark-label: counter(chapter, upper-roman) \". \" content() } \
+         h2 { counter-increment: section; \
+              bookmark-label: counters(chapter, \"/\") \"-\" counter(section) string(missing, last) \" of \" string(title) } \
+         .hidden { display: none; string-set: title \"Hidden\" } \
+         .contents { display: contents; string-set: title \"Contents\" } \
+         .quote { bookmark-label: open-quote }</style>\
+         <h1>Intro</h1><h2>A</h2><h1>Next\u{000C}Page</h1><div class=hidden>x</div><div class=contents><h2>B</h2></div><p class=quote>q</p>");
+    let registrations = [crate::ConsumerPropertyRegistration::text("bookmark-label")];
+    let mut observer = CollectProperties::default();
+    layout(
+        &doc,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        LayoutOptions::new().consumer_properties(&registrations, &mut observer),
+    )
+    .expect("layout");
+    let text = |value: &str| raikiri_traits::ConsumerPropertyValue::Text(value.into());
+    assert_eq!(
+        observer.0,
+        [
+            text("I. Intro"),
+            text("1-1 of Intro"),
+            text("II. Next Page"),
+            text("2-1 of Next\u{000C}Page"),
+        ]
+    );
+}
+
 #[test]
 fn layout_returns_observer_errors() {
     let doc = dom("<h1 style='bookmark-level: 1'>x</h1>");
@@ -845,7 +913,7 @@ fn layout_page_origin_is_applied_once_to_fragments_and_links() {
     assert_eq!(rect, raikiri_traits::PaintRect::new(25.0, 25.0, 10.0, 10.0));
     assert_eq!(
         page.geometry().content_box,
-        raikiri_traits::PaintRect::new(25.0, 25.0, 60.0, 50.0)
+        raikiri_traits::PaintRect::new(25.0, 25.0, 50.0, 50.0)
     );
     let text = page
         .fragments()
@@ -1363,4 +1431,29 @@ fn right_page_counters_use_the_increment_of_the_paired_left_page() {
             vec![]
         ]
     );
+}
+
+// The page border and padding inset the page area, so an auto-width block
+// fills the space inside them instead of overflowing the right inset.
+#[test]
+fn layout_auto_width_blocks_fill_the_page_area_inside_page_padding_and_border() {
+    let doc = dom(
+        "<style>body{margin:0} @page{size:100px 100px;margin:10px;padding:5px;border:2px solid} div{height:10px}</style><div></div>",
+    );
+    let result = completed(
+        layout(
+            &doc,
+            PageDefaults::default(),
+            LayoutConfig::default(),
+            LayoutOptions::new(),
+        )
+        .unwrap(),
+    );
+    let page = result.page(0).unwrap();
+    let rect = page
+        .fragments()
+        .find(|f| page.dom().local_name(f.node()) == Some("div"))
+        .unwrap()
+        .rect();
+    assert_eq!(rect, raikiri_traits::PaintRect::new(17.0, 17.0, 66.0, 10.0));
 }

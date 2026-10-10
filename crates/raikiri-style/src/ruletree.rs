@@ -11,12 +11,13 @@ use cssparser::{Parser, ParserInput, SourceLocation, StyleSheetParser, Token};
 use selectors::parser::{ParseRelative, Parser as SelectorParser, Selector, SelectorList};
 use std::cell::OnceCell;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::consumer::ConsumerPropertyRegistration;
 use crate::counter_style::{
     CounterStyleRegistry, CounterStyleRule, parse_counter_style_rule, parse_counter_style_rule_name,
 };
+use crate::error::CascadeError;
 use crate::font_face::{FontFaceRegistry, FontFaceRule, parse_font_face_rule};
 use crate::layer::{LayerId, LayerName, LayerOrder, LayerTable, parse_layer_names};
 use crate::media::{MediaCondition, MediaContext, MediaRule, parse_media_prelude};
@@ -29,8 +30,11 @@ use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNode
 use crate::supports::supports_condition;
 use crate::{Atom, PseudoClass, PseudoElem, RaikiriSelectorImpl, RaikiriSelectorParser};
 
+mod budget;
 mod nesting;
 
+pub(crate) use budget::ParseBudget;
+pub use budget::RuleTreeLimits;
 use nesting::{parse_highlight_body, parse_style_body};
 
 /// Cascade origin (CSS Cascading L4 §6.2).
@@ -218,9 +222,6 @@ impl AtRuleRecord {
 pub struct RuleTree {
     /// Qualified style rules (`selectors { declarations }`), kept in source order.
     pub(crate) style_rules: Vec<StyleRule>,
-    /// Winning unconditional custom-highlight background colors.
-    custom_highlight_styles: HashMap<String, CssColor>,
-    custom_highlight_sources: HashMap<String, smol_str::SmolStr>,
     highlight_log: Vec<Registration<(Arc<str>, HighlightColor, bool)>>,
     /// `@page` at-rules. `source_order` starts at zero independently of `style_rules`.
     /// [`crate::page::cascade_page`] applies the cascade; per-page `PageBox`
@@ -231,7 +232,9 @@ pub struct RuleTree {
     pub page_rules: Vec<PageRule>,
     /// Registry mapping `@counter-style` names to rules.
     /// Same-name rules follow CSS Counter Styles Level 3's standard cascade
-    /// order and are stored as complete rule values.
+    /// order and are stored as complete rule values. When the tree has
+    /// layers, [`RuleTree::counter_styles`] reads the registry rebuilt in
+    /// layer order instead.
     pub(crate) counter_styles: CounterStyleRegistry,
     /// Registry mapping `@font-face` family names to rules.
     ///
@@ -242,6 +245,8 @@ pub struct RuleTree {
     /// [`crate::cascade::cascade_rank`].
     /// Only rules without a media condition populate this view. Use
     /// [`RuleTree::font_faces_for`] to include matching conditional rules.
+    /// When the tree has layers, [`RuleTree::font_faces`] reads the registry
+    /// rebuilt in layer order instead.
     pub(crate) font_faces: FontFaceRegistry,
     /// Every `@counter-style` and `@font-face` registration in insertion order,
     /// including those from stylesheets and groups with a media condition, so the
@@ -265,13 +270,29 @@ pub struct RuleTree {
     /// Cross-kind source-order index. The individual compatibility views keep
     /// their historical counters; this vector records their retained order.
     pub(crate) rules: Vec<CssRule>,
-    /// Remaining budget for overlapping bodies retained by nested opaque rules.
-    opaque_body_budget: usize,
-    /// Remaining cumulative bytes for contextual selector reparsing.
-    selector_revalidation_budget: usize,
+    /// What nested opaque inspection may still retain.
+    opaque_budget: OpaqueBudget,
+    /// What the parsers may still spend: the cumulative bytes for contextual
+    /// selector reparsing, and the rules, selectors and declarations they
+    /// may still count under the tree's [`RuleTreeLimits`].
+    budget: ParseBudget,
     /// Consumer-owned CSS property registrations used while parsing declarations.
     /// Empty in the compatibility/default path.
     consumer_properties: Vec<ConsumerPropertyRegistration>,
+    /// The views derived from every stylesheet added so far. They are built
+    /// the first time one is read and dropped when a stylesheet is added, so
+    /// adding many stylesheets does not rebuild them once per stylesheet.
+    derived: OnceLock<DerivedViews>,
+}
+
+/// What [`RuleTree`] derives from all of its stylesheets at once.
+struct DerivedViews {
+    /// Winning unconditional custom-highlight background colors.
+    custom_highlight_styles: HashMap<String, CssColor>,
+    custom_highlight_sources: HashMap<String, smol_str::SmolStr>,
+    /// The registries rebuilt in layer order, when the tree has layers.
+    /// Without layers the registries built while parsing are the answer.
+    layered_registries: Option<(FontFaceRegistry, CounterStyleRegistry)>,
 }
 
 impl RuleTree {
@@ -324,11 +345,11 @@ impl RuleTree {
     /// [`crate::CascadeResult::custom_highlight_background`] resolves them with
     /// the foreground of the highlighted text.
     pub fn custom_highlight_styles(&self) -> &HashMap<String, CssColor> {
-        &self.custom_highlight_styles
+        &self.derived().custom_highlight_styles
     }
 
     pub(crate) fn custom_highlight_sources(&self) -> &HashMap<String, smol_str::SmolStr> {
-        &self.custom_highlight_sources
+        &self.derived().custom_highlight_sources
     }
 
     /// Read-only accessor for the `@counter-style` registry.
@@ -356,7 +377,10 @@ impl RuleTree {
     /// let _ = &tree.counter_styles;
     /// ```
     pub fn counter_styles(&self) -> &CounterStyleRegistry {
-        &self.counter_styles
+        match &self.derived().layered_registries {
+            Some((_, counter_styles)) => counter_styles,
+            None => &self.counter_styles,
+        }
     }
 
     /// Read-only accessor for the `@font-face` registry.
@@ -381,7 +405,10 @@ impl RuleTree {
     /// let _ = &tree.font_faces;
     /// ```
     pub fn font_faces(&self) -> &FontFaceRegistry {
-        &self.font_faces
+        match &self.derived().layered_registries {
+            Some((font_faces, _)) => font_faces,
+            None => &self.font_faces,
+        }
     }
 
     /// The `@font-face` registry for one media context.
@@ -457,12 +484,11 @@ impl RuleTree {
         &self.rules
     }
 
-    /// An empty RuleTree (zero rules).
+    /// An empty RuleTree (zero rules), retaining at most what the default
+    /// [`RuleTreeLimits`] allow (see [`RuleTree::with_limits`]).
     pub fn empty() -> Self {
         Self {
             style_rules: Vec::new(),
-            custom_highlight_styles: HashMap::new(),
-            custom_highlight_sources: HashMap::new(),
             highlight_log: Vec::new(),
             page_rules: Vec::new(),
             counter_styles: CounterStyleRegistry::new(),
@@ -474,10 +500,39 @@ impl RuleTree {
             media_rules: Vec::new(),
             next_style_order: 0,
             rules: Vec::new(),
-            opaque_body_budget: MAX_CUMULATIVE_NESTED_OPAQUE_BODY_BYTES,
-            selector_revalidation_budget: nesting::MAX_SELECTOR_REVALIDATION_BYTES,
+            opaque_budget: OpaqueBudget::new(),
+            budget: ParseBudget::new(
+                &RuleTreeLimits::default(),
+                nesting::MAX_SELECTOR_REVALIDATION_BYTES,
+            ),
             consumer_properties: Vec::new(),
+            derived: OnceLock::new(),
         }
+    }
+
+    /// The same tree retaining at most what `limits` allow from now on; what
+    /// it retained so far counts against them too. A limit the tree has
+    /// already passed stays passed, whatever `limits` allow.
+    /// [`RuleTree::empty`] uses the default [`RuleTreeLimits`].
+    #[must_use]
+    pub fn with_limits(mut self, limits: RuleTreeLimits) -> Self {
+        self.budget = self.budget.with_limits(&limits);
+        self
+    }
+
+    /// The limit the tree's stylesheets passed, if any.
+    ///
+    /// Such a tree adds nothing from later stylesheets. When a stylesheet
+    /// passed the limit, the tree kept the top-level rules before the one
+    /// that passed it; when [`RuleTree::with_limits`] set limits below what
+    /// the tree already held, it keeps all of that. Every element cascade of it
+    /// ([`crate::cascade_with_options`] and the entry points built on it)
+    /// fails with this error. [`RuleTree::style_rules`], [`RuleTree::rules`],
+    /// the registries and the `@page` cascade
+    /// ([`crate::cascade_page_with_media_context`]) read the retained prefix,
+    /// so a caller that reads them checks this first.
+    pub fn limit_exceeded(&self) -> Option<CascadeError> {
+        self.budget.error()
     }
 
     /// Empty rule tree configured to retain the supplied consumer-owned
@@ -539,8 +594,14 @@ impl RuleTree {
     ///
     /// An over-limit nested rule is skipped with its descendants; valid ancestor
     /// declarations and sibling rules remain. Opaque inspection uses independent
-    /// body-byte and nesting budgets.
+    /// body-byte, node and nesting budgets.
     ///
+    /// The tree retains at most what its [`RuleTreeLimits`] allow, counted
+    /// over every stylesheet added to it. When a stylesheet passes a limit,
+    /// the tree keeps the top-level rules before the one that passed it,
+    /// adds nothing more from this or any later stylesheet, and reports the
+    /// limit through [`RuleTree::limit_exceeded`]; every element cascade of
+    /// the tree then fails.
     pub fn add_stylesheet(&mut self, source: &str, origin: Origin) {
         self.add_conditional_stylesheet(source, origin, None);
     }
@@ -575,6 +636,11 @@ impl RuleTree {
         origin: Origin,
         media: &[&str],
     ) {
+        // A tree past one of its limits retains nothing more, so its guards
+        // are not parsed either.
+        if self.budget.exceeded() {
+            return;
+        }
         let mut condition: Option<MediaCondition> = None;
         for list in media
             .iter()
@@ -598,9 +664,24 @@ impl RuleTree {
         origin: Origin,
         condition: Option<&MediaCondition>,
     ) {
+        // A tree past one of its limits retains nothing more.
+        if self.budget.exceeded() {
+            return;
+        }
         let consumer_properties = self.consumer_properties.clone();
         let supports_context = SupportsContext::new(source, &consumer_properties);
         self.add_parsed_stylesheet(source, origin, condition, &supports_context);
+        // The views derived from every stylesheet are rebuilt when next read.
+        self.derived = OnceLock::new();
+    }
+
+    fn derived(&self) -> &DerivedViews {
+        self.derived.get_or_init(|| self.derive_views())
+    }
+
+    /// Selects the winning custom highlights, and rebuilds the registries in
+    /// layer order when the tree has layers.
+    fn derive_views(&self) -> DerivedViews {
         let order = self.layers.order(None);
         let mut highlights: HashMap<&str, Vec<_>> = HashMap::new();
         for (index, registration) in self.highlight_log.iter().enumerate() {
@@ -646,29 +727,36 @@ impl RuleTree {
                 })
             })
             .collect();
-        self.custom_highlight_styles = winning_highlights
+        let custom_highlight_styles = winning_highlights
             .iter()
             .map(|(name, color, _)| (name.clone(), *color))
             .collect();
-        self.custom_highlight_sources = winning_highlights
+        let custom_highlight_sources = winning_highlights
             .into_iter()
             .filter_map(|(name, _, source)| source.map(|source| (name, source)))
             .collect();
-        if !self.layers.is_empty() {
-            self.font_faces = replay_layered(
-                &self.font_face_log,
-                None,
-                &order,
-                FontFaceRegistry::new,
-                FontFaceRegistry::insert_with_origin,
-            );
-            self.counter_styles = replay_layered(
-                &self.counter_style_log,
-                None,
-                &order,
-                CounterStyleRegistry::new,
-                CounterStyleRegistry::insert_with_origin,
-            );
+        let layered_registries = (!self.layers.is_empty()).then(|| {
+            (
+                replay_layered(
+                    &self.font_face_log,
+                    None,
+                    &order,
+                    FontFaceRegistry::new,
+                    FontFaceRegistry::insert_with_origin,
+                ),
+                replay_layered(
+                    &self.counter_style_log,
+                    None,
+                    &order,
+                    CounterStyleRegistry::new,
+                    CounterStyleRegistry::insert_with_origin,
+                ),
+            )
+        });
+        DerivedViews {
+            custom_highlight_styles,
+            custom_highlight_sources,
+            layered_registries,
         }
     }
 
@@ -679,13 +767,24 @@ impl RuleTree {
         condition: Option<&MediaCondition>,
         supports_context: &SupportsContext<'_>,
     ) {
+        let charset_name_end = leading_charset_name_end(source);
+        // A leading `@charset` is a rule of its own, so with no rule left its
+        // prelude is not read.
+        if charset_name_end.is_some() && !self.budget.rule_fits() {
+            return;
+        }
+        let charset = charset_name_end.and_then(|after_name| charset_prelude(source, after_name));
+        if charset.is_some() {
+            // The room checked above holds its record.
+            self.budget.rules(1);
+        }
         let mut input = ParserInput::new(source);
         let mut parser = Parser::new(&mut input);
         let mut namespaces = NamespaceMap::new();
         let mut rule_parser = StyleRuleParser {
             source,
-            opaque_body_budget: &mut self.opaque_body_budget,
-            selector_revalidation_budget: &mut self.selector_revalidation_budget,
+            opaque_budget: &mut self.opaque_budget,
+            budget: &mut self.budget,
             namespaces: &mut namespaces,
             supports_context,
         };
@@ -698,7 +797,7 @@ impl RuleTree {
             font_face_log: &mut self.font_face_log,
             counter_style_log: &mut self.counter_style_log,
         };
-        if let Some(prelude) = leading_charset_prelude(source) {
+        if let Some(prelude) = charset {
             let index = self.opaque_at_rules.len();
             self.opaque_at_rules.push(AtRuleRecord {
                 name: "charset".to_owned(),
@@ -715,7 +814,16 @@ impl RuleTree {
             });
             rule_order = rule_order.wrapping_add(1);
         }
-        for rule in StyleSheetParser::new(&mut parser, &mut rule_parser).flatten() {
+        let mut sheet = StyleSheetParser::new(&mut parser, &mut rule_parser);
+        while let Some(rule) = sheet.next() {
+            // Once a limit is passed the rule that passed it is dropped, and
+            // the rest of the stylesheet is never parsed.
+            if sheet.parser.budget.exceeded() {
+                break;
+            }
+            let Ok(rule) = rule else {
+                continue;
+            };
             match rule {
                 ParsedRule::Style(items) => {
                     let mut sink = GroupSink {
@@ -1115,7 +1223,8 @@ fn is_css_ident_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')
 }
 
-fn leading_charset_prelude(source: &str) -> Option<String> {
+/// Where the prelude of a leading `@charset` starts, after its name.
+fn leading_charset_name_end(source: &str) -> Option<usize> {
     let bytes = source.as_bytes();
     let mut start = 0;
     loop {
@@ -1152,7 +1261,12 @@ fn leading_charset_prelude(source: &str) -> Option<String> {
     }) {
         return None;
     }
+    Some(after_name)
+}
 
+/// The prelude of a leading `@charset` whose name ends at `after_name`.
+fn charset_prelude(source: &str, after_name: usize) -> Option<String> {
+    let bytes = source.as_bytes();
     let mut i = after_name;
     let mut stack = Vec::new();
     while i < bytes.len() {
@@ -1319,6 +1433,49 @@ enum NestedParsedRule {
 const MAX_OPAQUE_RULE_NESTING_DEPTH: usize = 128;
 // Descendant bodies overlap their ancestors, so cap their aggregate owned copies.
 const MAX_CUMULATIVE_NESTED_OPAQUE_BODY_BYTES: usize = 8 * 1024 * 1024;
+// Statements and empty blocks copy no body, so cap the nodes too. As many as the
+// rules a tree counts by default, so that under the default limits the node
+// count alone never cuts short the inspection of rules the tree also counts.
+// Content the tree does not count, such as statements inside an unknown
+// at-rule, is cut at this many nodes.
+const MAX_NESTED_OPAQUE_NODES: usize = 1 << 19;
+
+/// What nested opaque inspection may still retain, over every stylesheet of a
+/// tree. A node past either budget is left out of the inspection view.
+struct OpaqueBudget {
+    body_bytes: usize,
+    nodes: usize,
+}
+
+impl OpaqueBudget {
+    fn new() -> Self {
+        Self {
+            body_bytes: MAX_CUMULATIVE_NESTED_OPAQUE_BODY_BYTES,
+            nodes: MAX_NESTED_OPAQUE_NODES,
+        }
+    }
+
+    /// Spends one node that copies a body of `body_bytes`, or `false` when
+    /// too little is left, in which case the node is not retained.
+    fn spend(&mut self, body_bytes: usize) -> bool {
+        if self.nodes == 0 || body_bytes > self.body_bytes {
+            return false;
+        }
+        self.nodes -= 1;
+        self.body_bytes -= body_bytes;
+        true
+    }
+}
+
+/// Whether the qualified-rule prelude `input` has consumed is followed by
+/// the block that makes it a rule. cssparser ends a prelude at `{`, or at
+/// `;` when it retries a failed declaration as a nested rule, or at the end
+/// of the input; without a block the rule is invalid whatever the prelude.
+fn prelude_opens_block(source: &str, input: &Parser<'_, '_>) -> bool {
+    source
+        .get(input.position().byte_index()..)
+        .is_some_and(|rest| rest.starts_with('{'))
+}
 
 fn nested_block_has_closing_brace(source: &str, input: &Parser<'_, '_>) -> bool {
     let position = input.position().byte_index();
@@ -1341,7 +1498,7 @@ fn nested_block_has_closing_brace(source: &str, input: &Parser<'_, '_>) -> bool 
 struct RawRuleParser<'s, 'b> {
     depth: usize,
     source: &'s str,
-    remaining_body_bytes: &'b mut usize,
+    budget: &'b mut OpaqueBudget,
 }
 
 impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for RawRuleParser<'s, 'b> {
@@ -1365,6 +1522,9 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for RawRuleParser<'s, 'b> {
         (name, prelude): Self::Prelude,
         _start: &cssparser::ParserState,
     ) -> Result<Self::AtRule, ()> {
+        if !self.budget.spend(0) {
+            return Err(());
+        }
         Ok(NestedParsedRule::AtRule(AtRuleRecord {
             name,
             prelude,
@@ -1382,15 +1542,11 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for RawRuleParser<'s, 'b> {
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::AtRule, cssparser::ParseError<'i, Self::Error>> {
         let body = consume_raw_component_values(input, self.source)?;
-        if !nested_block_has_closing_brace(self.source, input) {
+        if !nested_block_has_closing_brace(self.source, input) || !self.budget.spend(body.len()) {
             return Err(input.new_custom_error(()));
         }
-        if body.len() > *self.remaining_body_bytes {
-            return Err(input.new_custom_error(()));
-        }
-        *self.remaining_body_bytes -= body.len();
         let children = if self.depth < MAX_OPAQUE_RULE_NESTING_DEPTH {
-            parse_nested_rule_nodes_at_depth(&body, self.depth + 1, self.remaining_body_bytes)
+            parse_nested_rule_nodes_at_depth(&body, self.depth + 1, self.budget)
         } else {
             Vec::new()
         };
@@ -1424,13 +1580,9 @@ impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for RawRuleParser<'s, 'b> {
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::QualifiedRule, cssparser::ParseError<'i, Self::Error>> {
         let body = consume_raw_component_values(input, self.source)?;
-        if !nested_block_has_closing_brace(self.source, input) {
+        if !nested_block_has_closing_brace(self.source, input) || !self.budget.spend(body.len()) {
             return Err(input.new_custom_error(()));
         }
-        if body.len() > *self.remaining_body_bytes {
-            return Err(input.new_custom_error(()));
-        }
-        *self.remaining_body_bytes -= body.len();
         Ok(NestedParsedRule::Qualified(QualifiedRuleRecord {
             prelude,
             body,
@@ -1440,38 +1592,42 @@ impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for RawRuleParser<'s, 'b> {
     }
 }
 
-fn parse_nested_rule_nodes(source: &str, remaining_body_bytes: &mut usize) -> Vec<RuleNode> {
-    parse_nested_rule_nodes_at_depth(source, 0, remaining_body_bytes)
+fn parse_nested_rule_nodes(source: &str, budget: &mut OpaqueBudget) -> Vec<RuleNode> {
+    parse_nested_rule_nodes_at_depth(source, 0, budget)
 }
 
 fn parse_nested_rule_nodes_at_depth(
     source: &str,
     depth: usize,
-    remaining_body_bytes: &mut usize,
+    budget: &mut OpaqueBudget,
 ) -> Vec<RuleNode> {
     let mut input = ParserInput::new(source);
     let mut parser = Parser::new(&mut input);
     let mut rule_parser = RawRuleParser {
         depth,
         source,
-        remaining_body_bytes,
+        budget,
     };
     let mut nodes = Vec::new();
-    for (source_order, rule) in StyleSheetParser::new(&mut parser, &mut rule_parser)
-        .flatten()
-        .enumerate()
-    {
-        let node = match rule {
-            NestedParsedRule::AtRule(mut record) => {
-                record.source_order = source_order as u32;
-                RuleNode::AtRule(Box::new(record))
-            }
-            NestedParsedRule::Qualified(mut record) => {
-                record.source_order = source_order as u32;
-                RuleNode::Qualified(record)
-            }
-        };
-        nodes.push(node);
+    let mut rules = StyleSheetParser::new(&mut parser, &mut rule_parser);
+    while let Some(rule) = rules.next() {
+        if let Ok(rule) = rule {
+            let source_order = nodes.len() as u32;
+            nodes.push(match rule {
+                NestedParsedRule::AtRule(mut record) => {
+                    record.source_order = source_order;
+                    RuleNode::AtRule(Box::new(record))
+                }
+                NestedParsedRule::Qualified(mut record) => {
+                    record.source_order = source_order;
+                    RuleNode::Qualified(record)
+                }
+            });
+        }
+        // No node is retained once they are used up, so the rest is not parsed.
+        if rules.parser.budget.nodes == 0 {
+            break;
+        }
     }
     nodes
 }
@@ -1561,11 +1717,14 @@ fn parse_descriptor_prelude<'i>(
 fn parse_descriptor_block(
     prelude: DescriptorPrelude,
     input: &mut Parser<'_, '_>,
+    budget: &mut ParseBudget,
 ) -> Option<Box<DescriptorRule>> {
     match prelude {
-        DescriptorPrelude::FontFace => parse_font_face_rule(input).map(DescriptorRule::FontFace),
+        DescriptorPrelude::FontFace => {
+            parse_font_face_rule(input, budget).map(DescriptorRule::FontFace)
+        }
         DescriptorPrelude::CounterStyle(name) => {
-            parse_counter_style_rule(name, input).map(DescriptorRule::CounterStyle)
+            parse_counter_style_rule(name, input, budget).map(DescriptorRule::CounterStyle)
         }
     }
     .map(Box::new)
@@ -1577,9 +1736,15 @@ fn parse_group_prelude<'i>(
     input: &mut Parser<'i, '_>,
     source: &str,
     context: &SupportsContext<'_>,
+    budget: &mut ParseBudget,
 ) -> Result<Option<(String, GroupCondition)>, cssparser::ParseError<'i, ()>> {
     if !name.eq_ignore_ascii_case("media") && !name.eq_ignore_ascii_case("supports") {
         return Ok(None);
+    }
+    // A group is a rule of its own, so with no rule left its prelude is not
+    // parsed.
+    if !budget.rule_fits() {
+        return Err(input.new_custom_error(()));
     }
     let prelude = consume_raw_component_values(input, source)?;
     let condition = if name.eq_ignore_ascii_case("media") {
@@ -1596,7 +1761,7 @@ struct GroupRuleParser<'s, 'b> {
     source: &'s str,
     namespaces: &'b NamespaceMap,
     supports_context: &'b SupportsContext<'b>,
-    selector_revalidation_budget: &'b mut usize,
+    budget: &'b mut ParseBudget,
 }
 
 fn parse_group_items(
@@ -1605,18 +1770,26 @@ fn parse_group_items(
     depth: usize,
     namespaces: &NamespaceMap,
     supports_context: &SupportsContext<'_>,
-    selector_revalidation_budget: &mut usize,
+    budget: &mut ParseBudget,
 ) -> Vec<GroupItem> {
     let mut rule_parser = GroupRuleParser {
         depth,
         source,
         namespaces,
         supports_context,
-        selector_revalidation_budget,
+        budget,
     };
-    StyleSheetParser::new(input, &mut rule_parser)
-        .flatten()
-        .collect()
+    let mut items = Vec::new();
+    let mut group = StyleSheetParser::new(input, &mut rule_parser);
+    while let Some(item) = group.next() {
+        // Past a limit the tree retains nothing more, so the rest of the
+        // group is skipped without being parsed.
+        if group.parser.budget.exceeded() {
+            break;
+        }
+        items.extend(item);
+    }
+    items
 }
 
 impl<'i> cssparser::AtRuleParser<'i> for GroupRuleParser<'_, '_> {
@@ -1629,16 +1802,20 @@ impl<'i> cssparser::AtRuleParser<'i> for GroupRuleParser<'_, '_> {
         name: cssparser::CowRcStr<'i>,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::Prelude, cssparser::ParseError<'i, ()>> {
-        if let Some((_, condition)) =
-            parse_group_prelude(&name, input, self.source, self.supports_context)?
-        {
+        if let Some((_, condition)) = parse_group_prelude(
+            &name,
+            input,
+            self.source,
+            self.supports_context,
+            self.budget,
+        )? {
             return Ok(GroupItemPrelude::Group(condition));
         }
         if name.eq_ignore_ascii_case("layer") {
-            return parse_layer_names(input).map(GroupItemPrelude::Layer);
+            return parse_layer_names(input, self.budget).map(GroupItemPrelude::Layer);
         }
         if name.eq_ignore_ascii_case("page") {
-            return parse_page_prelude(input).map(GroupItemPrelude::Page);
+            return parse_page_prelude(input, self.budget).map(GroupItemPrelude::Page);
         }
         if let Some(prelude) = parse_descriptor_prelude(&name, input)? {
             return Ok(GroupItemPrelude::Descriptor(prelude));
@@ -1651,6 +1828,7 @@ impl<'i> cssparser::AtRuleParser<'i> for GroupRuleParser<'_, '_> {
         prelude: Self::Prelude,
         _start: &cssparser::ParserState,
     ) -> Result<Self::AtRule, ()> {
+        // The prelude counted the layers a statement declares.
         match prelude {
             GroupItemPrelude::Layer(names) if !names.is_empty() => {
                 Ok(GroupItem::LayerStatement(names))
@@ -1665,6 +1843,16 @@ impl<'i> cssparser::AtRuleParser<'i> for GroupRuleParser<'_, '_> {
         _start: &cssparser::ParserState,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::AtRule, cssparser::ParseError<'i, ()>> {
+        // A nested group, a descriptor block and a page are rules of their
+        // own. A named layer block's layers were counted with its prelude,
+        // and an anonymous one declares a layer of its own.
+        let rules = match &prelude {
+            GroupItemPrelude::Layer(names) => usize::from(names.is_empty()),
+            _ => 1,
+        };
+        if !self.budget.rules(rules) {
+            return Err(input.new_custom_error(()));
+        }
         let item = match prelude {
             GroupItemPrelude::Layer(names) => {
                 if names.len() > 1 {
@@ -1677,7 +1865,7 @@ impl<'i> cssparser::AtRuleParser<'i> for GroupRuleParser<'_, '_> {
                         self.depth + 1,
                         self.namespaces,
                         self.supports_context,
-                        self.selector_revalidation_budget,
+                        self.budget,
                     )
                 } else {
                     Vec::new()
@@ -1692,7 +1880,7 @@ impl<'i> cssparser::AtRuleParser<'i> for GroupRuleParser<'_, '_> {
                         self.depth + 1,
                         self.namespaces,
                         self.supports_context,
-                        self.selector_revalidation_budget,
+                        self.budget,
                     )
                 } else {
                     Vec::new()
@@ -1700,10 +1888,11 @@ impl<'i> cssparser::AtRuleParser<'i> for GroupRuleParser<'_, '_> {
                 GroupItem::Group(condition, items)
             }
             GroupItemPrelude::Page(selector) => {
-                GroupItem::Page(selector, parse_page_declaration_block(input))
+                GroupItem::Page(selector, parse_page_declaration_block(input, self.budget))
             }
             GroupItemPrelude::Descriptor(prelude) => GroupItem::Descriptor(
-                parse_descriptor_block(prelude, input).ok_or_else(|| input.new_custom_error(()))?,
+                parse_descriptor_block(prelude, input, self.budget)
+                    .ok_or_else(|| input.new_custom_error(()))?,
             ),
         };
         if !nested_block_has_closing_brace(self.source, input) {
@@ -1715,13 +1904,24 @@ impl<'i> cssparser::AtRuleParser<'i> for GroupRuleParser<'_, '_> {
 
 fn parse_qualified_prelude<'i>(
     input: &mut Parser<'i, '_>,
+    source: &str,
     namespaces: &NamespaceMap,
+    budget: &mut ParseBudget,
 ) -> Result<QualifiedPrelude, cssparser::ParseError<'i, ()>> {
     let start = input.state();
-    crate::selector_depth::check_selector_token_depth(input, 0)?;
+    let selectors = crate::selector_depth::check_selector_token_depth(input, 0)?;
+    // A rule with a block makes at least one rule, so with no rule left it
+    // is not parsed.
+    if !prelude_opens_block(source, input) || !budget.rule_fits() {
+        return Err(input.new_custom_error(()));
+    }
     input.reset(&start);
     if let Ok(name) = input.try_parse(parse_custom_highlight_prelude) {
         return Ok(QualifiedPrelude::CustomHighlight(name));
+    }
+    // A list of more selectors than the tree may still retain is not parsed.
+    if !budget.selectors_fit(selectors) {
+        return Err(input.new_custom_error(()));
     }
     SelectorList::parse(
         &NamespacedSelectorParser::new(namespaces),
@@ -1784,7 +1984,7 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for GroupRuleParser<'_, '_> {
         &mut self,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::Prelude, cssparser::ParseError<'i, ()>> {
-        parse_qualified_prelude(input, self.namespaces)
+        parse_qualified_prelude(input, self.source, self.namespaces, self.budget)
     }
 
     fn parse_block<'t>(
@@ -1801,7 +2001,7 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for GroupRuleParser<'_, '_> {
                 self.depth + 1,
                 self.namespaces,
                 self.supports_context,
-                self.selector_revalidation_budget,
+                self.budget,
             )),
             QualifiedPrelude::CustomHighlight(name) => GroupItem::Sequence(parse_highlight_body(
                 input,
@@ -1810,7 +2010,7 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for GroupRuleParser<'_, '_> {
                 self.depth + 1,
                 self.namespaces,
                 self.supports_context,
-                self.selector_revalidation_budget,
+                self.budget,
             )),
         };
         if !nested_block_has_closing_brace(self.source, input) {
@@ -2252,10 +2452,10 @@ impl<'i, 'a> SelectorParser<'i> for NamespacedSelectorParser<'a> {
 
 struct StyleRuleParser<'s, 'b> {
     source: &'s str,
-    opaque_body_budget: &'b mut usize,
+    opaque_budget: &'b mut OpaqueBudget,
     namespaces: &'b mut NamespaceMap,
     supports_context: &'b SupportsContext<'b>,
-    selector_revalidation_budget: &'b mut usize,
+    budget: &'b mut ParseBudget,
 }
 
 impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
@@ -2268,18 +2468,27 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
         name: cssparser::CowRcStr<'i>,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::Prelude, cssparser::ParseError<'i, Self::Error>> {
+        // Every top-level at-rule leaves a record, so with no rule left its
+        // prelude is not parsed.
+        if !self.budget.rule_fits() {
+            return Err(input.new_custom_error(()));
+        }
         if name.eq_ignore_ascii_case("page") {
-            return parse_page_prelude(input).map(ParsedAtRulePrelude::Page);
+            return parse_page_prelude(input, self.budget).map(ParsedAtRulePrelude::Page);
         }
         if name.eq_ignore_ascii_case("layer") {
             let start = input.position();
-            if let Ok(names) = input.try_parse(parse_layer_names) {
+            if let Ok(names) = input.try_parse(|input| parse_layer_names(input, self.budget)) {
                 consume_raw_component_values(input, self.source)?;
                 return Ok(ParsedAtRulePrelude::Layer {
                     name: name.to_string(),
                     prelude: input.slice_from(start).to_owned(),
                     names,
                 });
+            }
+            // Names past a limit are not read again as an opaque prelude.
+            if self.budget.exceeded() {
+                return Err(input.new_custom_error(()));
             }
         }
         if name.eq_ignore_ascii_case("namespace") {
@@ -2299,9 +2508,13 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
         // end of the current rule list. Consume component values rather than
         // rejecting the at-rule, retaining comments and whitespace from the
         // original source through `slice`.
-        if let Some((prelude, condition)) =
-            parse_group_prelude(&name, input, self.source, self.supports_context)?
-        {
+        if let Some((prelude, condition)) = parse_group_prelude(
+            &name,
+            input,
+            self.source,
+            self.supports_context,
+            self.budget,
+        )? {
             return Ok(ParsedAtRulePrelude::Group {
                 name: name.to_string(),
                 prelude,
@@ -2330,6 +2543,10 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
         prelude: Self::Prelude,
         _start: &cssparser::ParserState,
     ) -> Result<Self::AtRule, ()> {
+        // The record; the prelude counted the layers a statement declares.
+        if !self.budget.rules(1) {
+            return Err(());
+        }
         match prelude {
             ParsedAtRulePrelude::Page(_) => Err(()),
             ParsedAtRulePrelude::Layer {
@@ -2389,6 +2606,16 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
         _start: &cssparser::ParserState,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::AtRule, cssparser::ParseError<'i, Self::Error>> {
+        // Every block at-rule leaves a record or a page rule. A named layer
+        // block's layers were counted with its prelude, and an anonymous
+        // one declares a layer of its own.
+        let rules = match &prelude {
+            ParsedAtRulePrelude::Layer { names, .. } => 1 + usize::from(names.is_empty()),
+            _ => 1,
+        };
+        if !self.budget.rules(rules) {
+            return Err(input.new_custom_error(()));
+        }
         match prelude {
             ParsedAtRulePrelude::Layer {
                 name,
@@ -2405,13 +2632,13 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
                     0,
                     self.namespaces,
                     self.supports_context,
-                    self.selector_revalidation_budget,
+                    self.budget,
                 );
                 let body = input.slice_from(start).to_owned();
                 if !nested_block_has_closing_brace(self.source, input) {
                     return Err(input.new_custom_error(()));
                 }
-                let children = parse_nested_rule_nodes(&body, self.opaque_body_budget);
+                let children = parse_nested_rule_nodes(&body, self.opaque_budget);
                 Ok(ParsedRule::Group(
                     AtRuleRecord {
                         name,
@@ -2429,10 +2656,10 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
                 // `@page` body = declaration list + `size` / `marks` / `bleed`
                 // descriptors + nested margin-box at-rules — parsed by a
                 // dedicated `crate::page::parse_page_declaration_block` (not
-                // the generic `parse_declaration_block` qualified rules use).
+                // the declaration parser of style rule bodies).
                 // Unsupported properties/descriptors retain the existing
                 // silent-drop behavior.
-                let body = parse_page_declaration_block(input);
+                let body = parse_page_declaration_block(input, self.budget);
                 if !nested_block_has_closing_brace(self.source, input) {
                     return Err(input.new_custom_error(()));
                 }
@@ -2470,13 +2697,13 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
                     0,
                     self.namespaces,
                     self.supports_context,
-                    self.selector_revalidation_budget,
+                    self.budget,
                 );
                 let body = input.slice_from(start).to_owned();
                 if !nested_block_has_closing_brace(self.source, input) {
                     return Err(input.new_custom_error(()));
                 }
-                let children = parse_nested_rule_nodes(&body, self.opaque_body_budget);
+                let children = parse_nested_rule_nodes(&body, self.opaque_budget);
                 let record = AtRuleRecord {
                     name,
                     prelude,
@@ -2492,7 +2719,7 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
                 if !nested_block_has_closing_brace(self.source, input) {
                     return Err(input.new_custom_error(()));
                 }
-                let children = parse_nested_rule_nodes(&body, self.opaque_body_budget);
+                let children = parse_nested_rule_nodes(&body, self.opaque_budget);
                 Ok(ParsedRule::OpaqueAtRule(AtRuleRecord {
                     name,
                     prelude,
@@ -2510,12 +2737,12 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
                 // Descriptor recovery can still produce a valid registration
                 // when malformed raw values or EOF prevent an inspection record.
                 let start = input.position();
-                let rule = parse_descriptor_block(descriptor, input);
+                let rule = parse_descriptor_block(descriptor, input, self.budget);
                 let body = input.slice_from(start).to_owned();
                 let record = if nested_block_has_closing_brace(self.source, input)
                     && css_component_values_are_balanced(&body)
                 {
-                    let children = parse_nested_rule_nodes(&body, self.opaque_body_budget);
+                    let children = parse_nested_rule_nodes(&body, self.opaque_budget);
                     Some(AtRuleRecord {
                         name,
                         prelude,
@@ -2542,7 +2769,7 @@ impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for StyleRuleParser<'s, 'b> 
         &mut self,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::Prelude, cssparser::ParseError<'i, Self::Error>> {
-        parse_qualified_prelude(input, self.namespaces)
+        parse_qualified_prelude(input, self.source, self.namespaces, self.budget)
     }
 
     fn parse_block<'t>(
@@ -2559,7 +2786,7 @@ impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for StyleRuleParser<'s, 'b> 
                 0,
                 self.namespaces,
                 self.supports_context,
-                self.selector_revalidation_budget,
+                self.budget,
             )),
             QualifiedPrelude::CustomHighlight(name) => ParsedRule::Style(parse_highlight_body(
                 input,
@@ -2568,7 +2795,7 @@ impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for StyleRuleParser<'s, 'b> 
                 0,
                 self.namespaces,
                 self.supports_context,
-                self.selector_revalidation_budget,
+                self.budget,
             )),
         };
         if !nested_block_has_closing_brace(self.source, input) {

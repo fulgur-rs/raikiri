@@ -114,14 +114,14 @@ pub(crate) fn expand_stylesheet_imports_with_budget(
     budget: &mut ImportBudget,
 ) -> Vec<StylesheetPart> {
     let Some(network) = network else {
-        return unexpanded_parts(source);
+        return unexpanded_parts(source, base_url);
     };
 
     let normalized_base = normalize_base_url(base_url);
     let normalized_root = normalize_base_url(root_url);
     let max_depth = network.max_import_depth().unwrap_or(MAX_IMPORT_DEPTH);
     if root_url.is_some() && normalized_root.is_none() {
-        return unexpanded_parts(source);
+        return unexpanded_parts(source, None);
     }
     let mut expander = ImportExpander {
         network,
@@ -173,22 +173,31 @@ pub fn expand_live_stylesheet_imports(
         .collect()
 }
 
-fn unexpanded_parts(source: &str) -> Vec<StylesheetPart> {
+/// One part holding `source`, with relative `url()` values resolved against
+/// the stylesheet's `base_url` when it is known.
+fn unexpanded_parts(source: &str, base_url: Option<&Url>) -> Vec<StylesheetPart> {
     vec![StylesheetPart {
-        source: source.to_owned(),
+        source: with_absolute_urls(source, base_url),
         media: Vec::new(),
     }]
+}
+
+fn with_absolute_urls(source: &str, base_url: Option<&Url>) -> String {
+    match base_url {
+        Some(base) => crate::css_urls::absolutize_urls(source, base).into_owned(),
+        None => source.to_owned(),
+    }
 }
 
 impl ImportExpander<'_> {
     fn expand(&mut self, source: &str, base_url: Option<&Url>, depth: u32) -> Vec<StylesheetPart> {
         if depth >= self.max_depth {
-            return unexpanded_parts(source);
+            return unexpanded_parts(source, base_url);
         }
 
         let imports = scan_leading_imports(source);
         if imports.is_empty() {
-            return unexpanded_parts(source);
+            return unexpanded_parts(source, base_url);
         }
 
         let mut expanded = Vec::new();
@@ -199,7 +208,7 @@ impl ImportExpander<'_> {
             if let Some(mut child) = self.resolve_import(&import, base_url, depth) {
                 if !pending.is_empty() {
                     expanded.push(StylesheetPart {
-                        source: std::mem::take(&mut pending),
+                        source: with_absolute_urls(&std::mem::take(&mut pending), base_url),
                         media: Vec::new(),
                     });
                 }
@@ -212,7 +221,7 @@ impl ImportExpander<'_> {
         pending.push_str(&source[cursor..]);
         if !pending.is_empty() {
             expanded.push(StylesheetPart {
-                source: pending,
+                source: with_absolute_urls(&pending, base_url),
                 media: Vec::new(),
             });
         }

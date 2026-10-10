@@ -835,6 +835,24 @@ pub fn render_raikiri_pages(
     render_raikiri_pages_inner(html, width, height, None, None).map_err(map_raster_or_raikiri_error)
 }
 
+/// Render the file at `path` into one image per output page, resolving
+/// relative images, stylesheets, and fonts against the file's directory.
+///
+/// This is the single-document counterpart of the reftest pair runner, for
+/// callers that inspect a rendering without comparing it to a reference.
+pub fn render_raikiri_file_pages(
+    path: &Path,
+    width: u32,
+    height: u32,
+) -> Result<RenderedDocument, ReftestError> {
+    let html = std::fs::read_to_string(path).map_err(|source| ReftestError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    render_raikiri_pages_inner(&html, width, height, path.parent(), path.parent())
+        .map_err(map_raster_or_raikiri_error)
+}
+
 fn map_raster_or_raikiri_error(error: Box<dyn std::error::Error>) -> ReftestError {
     match error.downcast::<raikiri::RenderError>() {
         Ok(error) => ReftestError::Raster(*error),
@@ -1624,10 +1642,12 @@ fn authored_document_page_viewport(
     fallback.width = width;
     fallback.height = height;
     let paper = page_box_or_fallback(&page, fallback);
+    // The page area sits inside the page border and padding, as in layout.
     let margins = raikiri_dom::page_margins_for_page(&page, paper);
+    let insets = raikiri_dom::page_content_insets_for_page(&page, paper);
     (
-        (paper.width - margins.left - margins.right).max(1.0),
-        (paper.height - margins.top - margins.bottom).max(1.0),
+        insets.page_area_width(margins, paper).max(1.0),
+        insets.page_area_height(margins, paper).max(1.0),
     )
 }
 
@@ -2708,10 +2728,10 @@ pub(crate) fn render_raikiri_pages_with_resources(
         let page_box = page_box_or_fallback(&page, fallback_page_box);
         let margins = page_margins_for_page(&page, page_box);
         let insets = page_content_insets_for_page(&page, page_box);
-        let step = (margins.content_height(page_box) - insets.top - insets.bottom).max(1.0);
-        // Match the layout pass: page decorations shift the flow origin but
-        // do not reduce the inline containing-block width.
-        let content_width = margins.content_width(page_box).max(1.0);
+        let step = insets.page_area_height(margins, page_box).max(1.0);
+        // Match the layout pass: the page area inside the page border and
+        // padding.
+        let content_width = insets.page_area_width(margins, page_box).max(1.0);
         page_steps.push(step);
         page_widths.push(content_width);
     }
@@ -2853,7 +2873,10 @@ pub(crate) fn render_raikiri_pages_with_resources(
                 .get(slice.page_index as usize)
                 .copied()
                 .filter(|width| width.is_finite() && *width > 0.0)
-                .unwrap_or_else(|| page_margins(&cascade, page_box).content_width(page_box));
+                .unwrap_or_else(|| {
+                    raikiri_dom::page_content_insets(&cascade, page_box)
+                        .page_area_width(page_margins(&cascade, page_box), page_box)
+                });
             relayout_text_for_width(&mut uncascaded.dom, &cascade, page_width);
         }
         let active_page_name = slice.page_name.clone();

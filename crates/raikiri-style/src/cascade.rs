@@ -449,6 +449,7 @@ pub fn cascade_with_options<D: StyleDom>(
         media_context,
         WalkOptions {
             limits: options.limits,
+            viewport: options.viewport,
             ..WalkOptions::default()
         },
     )?;
@@ -519,6 +520,7 @@ pub use first_line::{FirstLineCascade, FirstLineStyles, cascade_with_first_line}
 mod inherit;
 pub(crate) use inherit::*;
 mod limits;
+pub(crate) use limits::Counter;
 pub use limits::{CascadeLimits, CascadeOptions};
 
 #[cfg(test)]

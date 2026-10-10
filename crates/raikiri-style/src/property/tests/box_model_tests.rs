@@ -441,14 +441,15 @@ fn padding_shorthand_mixed_with_auto_drops_via_leftover() {
     );
 }
 
-// Verification #6: drop unsupported units outside our grammar (such as vw / cap).
+// Verification #6: drop unsupported units outside our grammar (such as cqw / cap).
 #[test]
 fn padding_top_rejects_unsupported_unit() {
-    // (b) Unsupported: vw / cap and similar units are valid per spec, but
+    // (b) Unsupported: cqw / cap and similar units are valid per spec, but
     // not implemented. parse_length_value drops them and propagates `None`,
-    // dropping the declaration. `ch` / `lh` / `rlh` have moved to the accepted set
-    // (see `padding_top_accepts_ch` / `padding_top_accepts_lh`).
-    assert_eq!(parse("10vw", "padding-top"), None);
+    // dropping the declaration. `ch` / `lh` / `rlh` and the viewport units have
+    // moved to the accepted set (see `padding_top_accepts_ch` /
+    // `padding_top_accepts_lh`).
+    assert_eq!(parse("10cqw", "padding-top"), None);
     assert_eq!(parse("5cap", "padding-top"), None);
 }
 
@@ -2031,12 +2032,12 @@ fn width_rejects_fit_content_function() {
 
 #[test]
 fn width_rejects_unsupported_unit() {
-    // (b) Unsupported: vw / cap and similar units are valid per spec but
+    // (b) Unsupported: cqw / cap and similar units are valid per spec but
     // not implemented. parse_length_value drops them and propagates None.
-    // `ch` / `lh` / `rlh` have
+    // `ch` / `lh` / `rlh` and the viewport units have
     // moved to the accepted set.
     // (see `width_accepts_absolute_unit` / `width_accepts_lh`).
-    assert_eq!(parse("10vw", "width"), None);
+    assert_eq!(parse("10cqw", "width"), None);
     assert_eq!(parse("5cap", "width"), None);
 }
 

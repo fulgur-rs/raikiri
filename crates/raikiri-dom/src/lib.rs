@@ -55,6 +55,7 @@ mod node;
 mod page_projection;
 mod phase_b;
 mod running;
+pub use running::element_string_value;
 mod target;
 
 mod column_rules;
@@ -104,7 +105,7 @@ pub use layout::{
 pub use layout::{StandaloneAlign, StandaloneStyle, StandaloneText};
 pub use margin_boxes::{
     DeferredGlyph, DeferredSlot, DeferredValue, MarginBox, MarginBoxBackgroundImage,
-    MarginBoxBorder, MarginBoxPageContext, MarginBoxText, page_margin_boxes,
+    MarginBoxBorder, MarginBoxPageContext, MarginBoxRunning, MarginBoxText, page_margin_boxes,
 };
 pub use node::{CanvasBitmap, CanvasBitmapError, ElementData, Node, NodeData, NodeFlags, TextData};
 pub use page_projection::continuation::{PageStart, PageStartToken};
@@ -114,7 +115,7 @@ pub use page_projection::paint_order::{ClipKind, PaintEvent};
 // cov:ignore: public type re-exports have no executable mapping; API integration tests verify them.
 pub use page_projection::text_runs::{
     FontBlob, FontId, FontRef, FontVariation, GeneratedKind, Glyph, PositionedGlyphRun, RunSource,
-    Synthesis, Tag, TextLineId,
+    Synthesis, Tag, TextLineId, TextShadow,
 };
 pub use raikiri_traits::{NodeKind, QuirksMode};
 // cov:ignore: public re-exports have no executable coverage mapping.

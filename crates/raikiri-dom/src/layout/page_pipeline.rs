@@ -292,11 +292,10 @@ fn layout_single_page_with_table_projection(
     // uses the content width, not the outer paper width.
     let margins = page_margins(cascade, page_box);
     let insets = page_content_insets(cascade, page_box);
-    // Page decorations affect the physical origin, not the inline size of the
-    // initial containing block.  This also keeps text from wrapping merely
-    // because an @page rule adds border/padding around the paper.
-    let content_width = margins.content_width(page_box).max(0.0);
-    let content_height = (margins.content_height(page_box) - insets.top - insets.bottom).max(0.0);
+    // The page border and padding inset the page area, the initial
+    // containing block, on every side.
+    let content_width = insets.page_area_width(margins, page_box);
+    let content_height = insets.page_area_height(margins, page_box);
 
     // Step 2b: resolve `ch` lengths of box properties with the inline
     // engine's fonts before taffy sizes the boxes.
@@ -915,9 +914,8 @@ pub(crate) fn resolve_page_fragment_geometry(
 ) -> PageFragmentPageGeometry {
     let margins = page_margins(cascade, page_box);
     let content_insets = page_content_insets(cascade, page_box);
-    let content_width = margins.content_width(page_box).max(0.0);
-    let content_height =
-        (margins.content_height(page_box) - content_insets.top - content_insets.bottom).max(0.0);
+    let content_width = content_insets.page_area_width(margins, page_box);
+    let content_height = content_insets.page_area_height(margins, page_box);
     let content_box = PageFragmentRect::new(
         margins.left + content_insets.left,
         margins.top + content_insets.top,
@@ -2329,12 +2327,12 @@ pub fn layout_pages_with_page_geometry_and_control(
         .and_then(|html_id| {
             used_style_length_percentage_auto(
                 document.nodes[html_id].style.margin.top,
-                margins.content_width(page_box),
+                insets.page_area_width(margins, page_box),
             )
             .or_else(|| {
                 used_computed_length_percentage_or_auto(
                     cascade.computed[html_id].margin.top,
-                    margins.content_width(page_box),
+                    insets.page_area_width(margins, page_box),
                 )
             })
             .map(|value| value.max(0.0))
@@ -2342,11 +2340,9 @@ pub fn layout_pages_with_page_geometry_and_control(
         .unwrap_or(0.0);
     let body_margin_top = document.body_block_start_margin;
     let root_margin_top = html_margin_top + body_margin_top;
-    // Keep the scheduled inline size identical to the first layout pass;
-    // page border/padding are applied as a paint offset, not as a narrower
-    // containing block.
-    let content_width = margins.content_width(page_box).max(0.0);
-    let content_height = (margins.content_height(page_box) - insets.top - insets.bottom).max(0.0);
+    // Keep the scheduled inline size identical to the first layout pass.
+    let content_width = insets.page_area_width(margins, page_box);
+    let content_height = insets.page_area_height(margins, page_box);
     // A page with margins consuming the entire paper still needs a finite
     // cursor for forced breaks.  No valid page box reaches this path in normal
     // CSS, but the fallback keeps the API panic-free for direct callers.
@@ -3549,11 +3545,14 @@ pub fn layout_pages_with_page_geometry_and_control(
                     let block_raw_y = root_flow_offset
                         + current_abs_y(document, block_id, &parent_of)
                         - flow_shift;
+                    // The block already sits `flow_shift` below its raw
+                    // position, so the move is measured from where it is now.
+                    let block_effective_y = effective_y - (raw_y - block_raw_y);
                     let target_page = current_page.saturating_add(1);
                     check_candidate_page!('candidate_loop, target_page);
-                    let delta = page_origin(target_page) - block_raw_y;
+                    let delta = page_origin(target_page) - block_effective_y;
                     if delta.is_finite() && delta > 0.0 {
-                        materialize_y(document, block_id, block_raw_y + delta, &parent_of);
+                        materialize_y(document, block_id, block_effective_y + delta, &parent_of);
                         flow_shift += delta;
                         effective_y += delta;
                     }

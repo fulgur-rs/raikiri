@@ -85,3 +85,56 @@ fn html_extension_filter_includes_wpt_variants() {
     assert!(is_html_like(Path::new("a.xht")));
     assert!(!is_html_like(Path::new("a.js")));
 }
+
+#[test]
+fn listed_candidates_keep_reftests_and_tests_without_assert() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("css/CSS2");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("with-ref.xht"),
+        r#"<html><head><link rel="match" href="ref.xht"/><meta name="assert" content="A"/></head></html>"#,
+    )
+    .unwrap();
+    fs::write(dir.join("plain.html"), "<p>Test passes if green.").unwrap();
+    let list = root.path().join("list.txt");
+    fs::write(
+        &list,
+        "# comment\ncss/CSS2/with-ref.xht\n\ncss/CSS2/plain.html\n",
+    )
+    .unwrap();
+
+    let candidates = listed_candidates(root.path(), &list).unwrap();
+    let ids: Vec<_> = candidates.iter().map(|c| c.test_id.as_str()).collect();
+    assert_eq!(ids, ["css/CSS2/with-ref.xht", "css/CSS2/plain.html"]);
+    assert_eq!(candidates[0].assert_text, "A");
+    assert_eq!(candidates[1].assert_text, "");
+
+    fs::write(&list, "../outside.html\n").unwrap();
+    assert!(listed_candidates(root.path(), &list).is_err());
+}
+
+#[test]
+fn tests_option_takes_a_list_path() {
+    let args = parse_args(&["--tests".to_owned(), "list.txt".to_owned()]).unwrap();
+    assert_eq!(args.tests, Some(PathBuf::from("list.txt")));
+}
+
+#[test]
+fn render_png_writes_the_first_page_and_reports_missing_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let test = dir.path().join("test.html");
+    fs::write(
+        &test,
+        "<html><body style=\"margin:0;background:blue\"></body></html>",
+    )
+    .unwrap();
+    let output = dir.path().join("out.png");
+
+    render_png(&test, &output, 20, 10).unwrap();
+    let decoder = png::Decoder::new(io::BufReader::new(fs::File::open(&output).unwrap()));
+    let info = decoder.read_info().unwrap().info().clone();
+    assert_eq!((info.width, info.height), (20, 10));
+
+    assert!(render_png(&dir.path().join("missing.html"), &output, 20, 10).is_err());
+}

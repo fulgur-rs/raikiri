@@ -16,6 +16,9 @@ pub enum ConsumerPropertyGrammar {
     IntegerOrNone,
     /// A CSS content list that is resolved to neutral text by the producer.
     Text,
+    /// Exactly one of the listed CSS identifiers, matched ASCII
+    /// case-insensitively and reported with the registered spelling.
+    Keyword(&'static [&'static str]),
 }
 
 /// Registration for one consumer-owned CSS property.
@@ -47,6 +50,12 @@ impl ConsumerPropertyRegistration {
     /// Register a resolved-text property.
     pub fn text(name: impl AsRef<str>) -> Self {
         Self::new(name, ConsumerPropertyGrammar::Text)
+    }
+
+    /// Register a property whose value is one of `keywords`, such as
+    /// `bookmark-state: open | closed`.
+    pub fn keyword(name: impl AsRef<str>, keywords: &'static [&'static str]) -> Self {
+        Self::new(name, ConsumerPropertyGrammar::Keyword(keywords))
     }
 
     /// Construct a registration with an explicit neutral grammar.

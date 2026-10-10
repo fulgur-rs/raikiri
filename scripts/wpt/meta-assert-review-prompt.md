@@ -24,3 +24,20 @@ Allowed decisions:
 Do not edit `expectations/meta-assert-baseline.txt` during review. After review,
 run `apply-meta-assert-review.py` first without `--apply`, inspect its summary,
 and use `--apply` only for accepted `pass` rows.
+
+## Bulk judging with a model
+
+`scripts/wpt/haiku-judge-meta-assert.py` writes the same `reviews.jsonl` rows
+with `claude-haiku-5-5`, so large sets can be offloaded while individual rows
+stay open to agent review. Run it as `mise run wpt:judge -- run`: mise pins uv,
+and uv installs the `anthropic` SDK from the script's inline metadata. It needs
+credentials in the environment (an API key locally; in CI the
+`WPT model judge` workflow uses Workload Identity Federation, so no key is
+stored). Verdicts are cached by model, prompt, and
+PNG hash under `judge-cache/`; `batch-submit` / `batch-collect` use the Message
+Batches API at half price. `dump-prompts` writes the exact prompt per row
+without calling the API.
+
+`prepare-meta-assert-review --tests LIST` renders exactly the listed test ids,
+including reftests and `.xht` files, which is how a judge is calibrated against
+tests whose reftest outcome is already known.

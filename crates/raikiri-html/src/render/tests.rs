@@ -61,3 +61,4 @@ fn a_bundled_font_set_enables_parallel_builds_and_the_system_layer_does_not() {
 
 mod continuation_tests;
 mod pipeline_tests;
+mod viewport_tests;

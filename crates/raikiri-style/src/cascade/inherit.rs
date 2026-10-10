@@ -233,6 +233,9 @@ pub(crate) struct WalkOptions {
     pub(crate) stored_block_budget: usize,
     /// Limits on the walk's work and on what its outputs hold.
     pub(crate) limits: CascadeLimits,
+    /// The basis of the viewport-percentage lengths; see
+    /// [`crate::CascadeOptions::viewport`].
+    pub(crate) viewport: Option<(f32, f32)>,
 }
 
 impl Default for WalkOptions {
@@ -243,6 +246,7 @@ impl Default for WalkOptions {
             share_retention_budget: SHARE_RETENTION_BUDGET,
             stored_block_budget: STORED_BLOCK_BUDGET,
             limits: CascadeLimits::default(),
+            viewport: None,
         }
     }
 }
@@ -418,6 +422,15 @@ pub(crate) fn walk_from<D: StyleDom>(
     parent_computed: &ComputedValues,
     options: WalkOptions,
 ) -> Result<WalkOutputs, CascadeError> {
+    // A rule tree past one of its limits retained only part of its
+    // stylesheets, and cascading that part would style the document wrongly.
+    if let Some(error) = rule_tree.limit_exceeded() {
+        return Err(error);
+    }
+    let viewport = options.viewport.unwrap_or((
+        media_context.viewport_width() as f32,
+        media_context.viewport_height() as f32,
+    ));
     let match_caches = MatchCaches::default();
     let mut collector = Collector::new(
         dom,
@@ -624,7 +637,7 @@ pub(crate) fn walk_from<D: StyleDom>(
                          親の computed font-size は initial でなければならない \
                          (subtree の途中から walk を開始していないか?)"
                     );
-                    specified.finalize_as_root()
+                    specified.finalize_as_root_in_viewport(viewport.0, viewport.1)
                 }
             };
             computed.custom_properties = custom_properties.clone();
@@ -639,10 +652,14 @@ pub(crate) fn walk_from<D: StyleDom>(
             // checks that the two agree.
             let child_ctx = match root_ctx {
                 Some(ctx) => Some(ctx),
-                None if is_element => Some(ResolveContext::with_root_line_height(
-                    computed.font_size,
-                    used_line_height_length(computed.line_height, computed.font_size),
-                )),
+                None if is_element => Some(
+                    ResolveContext::with_root_line_height(
+                        computed.font_size,
+                        used_line_height_length(computed.line_height, computed.font_size),
+                    )
+                    .with_viewport(viewport.0, viewport.1)
+                    .with_vertical_root(computed.cssom_writing_mode != WritingMode::HorizontalTb),
+                ),
                 None => None,
             };
 

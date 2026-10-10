@@ -48,7 +48,7 @@ pub use property::{
     Outline, OutlineColor, OutlineStyle, PathShape, PolygonShape, PropertyKey, PropertyValue,
     ShapeRadius, Sides, TextDecorationSkipInk, TextDecorationSkipSpaces, TextOrientation,
     TextShadowColor, TextShadowItem, TextShadowLength, TextSpacingTrim, TextUnderlineOffset,
-    VisualBox, WordSpaceTransform, WordSpacingValue,
+    ViewportSize, ViewportUnit, VisualBox, WordSpaceTransform, WordSpacingValue,
 };
 
 mod layer;
@@ -87,7 +87,7 @@ pub use page::{
 pub mod ruletree;
 pub use ruletree::{
     AtRuleBody, AtRuleRecord, CssRule, CssRuleKind, Origin, QualifiedRuleRecord, RuleNode,
-    RuleTree, build_rule_tree, walk_style_elements,
+    RuleTree, RuleTreeLimits, build_rule_tree, walk_style_elements,
 };
 
 pub mod computed;

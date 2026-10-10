@@ -83,7 +83,7 @@ use cssparser::{
 use smol_str::SmolStr;
 
 use crate::cascade::cascade_rank;
-use crate::ruletree::Origin;
+use crate::ruletree::{Origin, ParseBudget};
 
 // ---------------------------------------------------------------------------
 // Source — the `src` descriptor's `<font-src>` components.
@@ -236,7 +236,7 @@ impl FontFaceRule {
 /// per-declaration output of [`FontFaceDeclParser`], folded into a
 /// [`FontFaceRule`] by [`build_rule`] (later declarations of the same
 /// descriptor win, matching ordinary CSS declaration-list semantics — the
-/// same "later wins" fold [`crate::rule::parse_declaration_block`]'s callers
+/// same "later wins" fold [`crate::rule::parse_declaration_block_within`]'s callers
 /// rely on for the cascade).
 enum ParsedDescriptor {
     Family(SmolStr),
@@ -325,8 +325,22 @@ fn parse_font_face_block(input: &mut Parser<'_, '_>) -> Vec<ParsedDescriptor> {
 
 /// Parse one descriptor block with the same recovery and validity as the standalone parser.
 /// Crate-visible so stylesheet and conditional group parsing share this grammar.
-pub(crate) fn parse_font_face_rule(input: &mut Parser<'_, '_>) -> Option<FontFaceRule> {
-    build_rule(None, parse_font_face_block(input))
+///
+/// Each descriptor counts as a declaration against `budget` as it is parsed,
+/// so a block past the limit stops there and yields no rule.
+pub(crate) fn parse_font_face_rule(
+    input: &mut Parser<'_, '_>,
+    budget: &mut ParseBudget,
+) -> Option<FontFaceRule> {
+    let mut parser = FontFaceDeclParser;
+    let mut descriptors = Vec::new();
+    for descriptor in RuleBodyParser::new(input, &mut parser).flatten() {
+        if !budget.declarations(1) {
+            return None;
+        }
+        descriptors.push(descriptor);
+    }
+    build_rule(None, descriptors)
 }
 
 fn build_rule(family: Option<SmolStr>, descriptors: Vec<ParsedDescriptor>) -> Option<FontFaceRule> {

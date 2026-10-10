@@ -4,7 +4,7 @@
 //! <https://www.w3.org/TR/css-cascade-5/#layer-order>.
 
 use crate::media::{MediaCondition, MediaContext};
-use crate::ruletree::Origin;
+use crate::ruletree::{Origin, ParseBudget};
 use cssparser::{Parser, Token};
 use smol_str::SmolStr;
 use std::collections::HashMap;
@@ -20,8 +20,13 @@ pub(crate) struct LayerId {
 pub(crate) type LayerName = Vec<SmolStr>;
 
 /// Parse optional block names or a statement's comma-separated name list.
+///
+/// Each segment of each name declares a layer, so each counts as a rule
+/// against `budget` as its name is parsed; the names stop at the first one
+/// past the limit.
 pub(crate) fn parse_layer_names<'i>(
     input: &mut Parser<'i, '_>,
+    budget: &mut ParseBudget,
 ) -> Result<Vec<LayerName>, cssparser::ParseError<'i, ()>> {
     if input.is_exhausted() {
         return Ok(Vec::new());
@@ -46,6 +51,9 @@ pub(crate) fn parse_layer_names<'i>(
                 }
                 _ => return Err(input.new_custom_error(())),
             }
+        }
+        if !budget.rules(name.len()) {
+            return Err(input.new_custom_error(()));
         }
         Ok(name)
     })

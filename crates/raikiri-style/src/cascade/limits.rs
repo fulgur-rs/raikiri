@@ -85,10 +85,18 @@ impl Default for CascadeLimits {
 
 /// How [`super::cascade_with_options`] runs.
 #[non_exhaustive]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct CascadeOptions {
     /// Limits on the cascade's work and on its result's memory.
     pub limits: CascadeLimits,
+    /// The viewport as `(width, height)` in CSS px: the basis of the
+    /// viewport-percentage lengths (`vw`, `vh`, `vmin`, `vmax`, ...).
+    ///
+    /// CSS Values 4 §6.1.2 makes them relative to the initial containing
+    /// block, which in paged media is the page area of the first page, not
+    /// the page box media queries see. `None` uses the media context's
+    /// viewport.
+    pub viewport: Option<(f32, f32)>,
 }
 
 /// A count against one of the limits. It keeps what is left before the
@@ -138,13 +146,24 @@ impl Counter {
         self.left = self.limit.unwrap_or(u64::MAX);
     }
 
+    /// The kind, the limit and the count reached for adding `amount`, which
+    /// passes what is left.
+    pub(crate) fn exceeding(&self, amount: u64) -> (CascadeLimitKind, u64, u64) {
+        (
+            self.kind,
+            self.limit.unwrap_or(u64::MAX),
+            self.count().saturating_add(amount),
+        )
+    }
+
     /// The error for adding `amount`, which passes what is left.
     #[cold]
     pub(crate) fn past(&self, amount: u64) -> CascadeError {
+        let (kind, limit, actual) = self.exceeding(amount);
         CascadeError::LimitExceeded {
-            kind: self.kind,
-            limit: self.limit.unwrap_or(u64::MAX),
-            actual: self.count().saturating_add(amount),
+            kind,
+            limit,
+            actual,
         }
     }
 

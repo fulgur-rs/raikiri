@@ -28,6 +28,7 @@ fn external_consumer_can_reference_all_reexported_types() {
         CascadeLimits,
         CascadeOptions,
         CascadeLimitKind,
+        RuleTreeLimits,
     )>;
 }
 
@@ -264,6 +265,11 @@ fn external_consumer_can_mutate_pub_fields_via_default_shorthand() {
     limits.max_cascade_selector_tests = None;
     limits.max_cascade_retained_bytes = Some(16 * 1024 * 1024);
     limits.max_cascade_output_bytes = Some(4 * 1_073_741_824);
+    limits.max_style_rules = Some(1 << 20);
+    limits.max_style_selectors = None;
+    limits.max_style_declarations = Some(1 << 22);
+    let mut rule_tree = RuleTreeLimits::default();
+    rule_tree.max_rules = limits.rule_tree_limits().max_rules;
 
     // The cascade limits are configured the same way.
     let mut cascade = CascadeOptions::default();
@@ -316,6 +322,7 @@ fn external_consumer_can_mutate_pub_fields_via_default_shorthand() {
         lookahead,
         border,
         cascade,
+        rule_tree,
     );
 }
 
@@ -337,7 +344,7 @@ fn external_consumer_can_chain_builder_fluent_setters() {
     assert_eq!(lookahead.orphan_line_buffer, 2);
     assert!(lookahead.allow_cross_size_lookahead);
 
-    // Chain all twelve RenderLimitsBuilder setters, pinning their `Self`
+    // Chain all fifteen RenderLimitsBuilder setters, pinning their `Self`
     // return types.
     let limits = RenderLimits::builder()
         .max_document_pages(Some(100))
@@ -352,6 +359,9 @@ fn external_consumer_can_chain_builder_fluent_setters() {
         .max_cascade_selector_tests(Some(1 << 26))
         .max_cascade_retained_bytes(None)
         .max_cascade_output_bytes(Some(2 * 1_073_741_824))
+        .max_style_rules(Some(1 << 18))
+        .max_style_selectors(Some(1 << 19))
+        .max_style_declarations(None)
         .build();
     assert_eq!(limits.max_document_pages, Some(100));
     assert_eq!(limits.max_target_slots, Some(50_000));
@@ -362,6 +372,9 @@ fn external_consumer_can_chain_builder_fluent_setters() {
     assert_eq!(limits.max_cascade_selector_tests, Some(1 << 26));
     assert_eq!(limits.max_cascade_retained_bytes, None);
     assert_eq!(limits.max_cascade_output_bytes, Some(2 * 1_073_741_824));
+    assert_eq!(limits.max_style_rules, Some(1 << 18));
+    assert_eq!(limits.max_style_selectors, Some(1 << 19));
+    assert_eq!(limits.max_style_declarations, None);
 
     // Cross-struct integration: also pin the fluent chains that insert
     // LookaheadConfig into LayoutConfig / BatchConfig. Pass `Some(...)` to

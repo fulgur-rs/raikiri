@@ -467,7 +467,7 @@ fn background_size_rejects_css_wide_keyword() {
 
 #[test]
 fn background_size_rejects_unknown_unit() {
-    assert_eq!(parse("10vw", "background-size"), None);
+    assert_eq!(parse("10cqw", "background-size"), None);
 }
 
 #[test]

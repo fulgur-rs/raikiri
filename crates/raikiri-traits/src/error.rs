@@ -186,6 +186,9 @@ fn render_limit_kind(kind: CascadeLimitKind) -> Option<LimitKind> {
         CascadeLimitKind::SelectorTests => LimitKind::CascadeSelectorTests,
         CascadeLimitKind::RetainedBytes => LimitKind::CascadeRetainedBytes,
         CascadeLimitKind::OutputBytes => LimitKind::CascadeOutputBytes,
+        CascadeLimitKind::StyleRules => LimitKind::StyleRules,
+        CascadeLimitKind::StyleSelectors => LimitKind::StyleSelectors,
+        CascadeLimitKind::StyleDeclarations => LimitKind::StyleDeclarations,
         // cov:ignore: every current kind is mapped above; a kind added later
         // stays a cascade error until it is mapped here
         _ => return None,
@@ -253,6 +256,12 @@ pub enum LimitKind {
     CascadeRetainedBytes,
     /// Exceeded `max_cascade_output_bytes`.
     CascadeOutputBytes,
+    /// Exceeded `max_style_rules`.
+    StyleRules,
+    /// Exceeded `max_style_selectors`.
+    StyleSelectors,
+    /// Exceeded `max_style_declarations`.
+    StyleDeclarations,
 }
 
 /// Render completion summary (Finding #4 completion protocol).

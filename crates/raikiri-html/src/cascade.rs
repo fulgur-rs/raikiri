@@ -5,7 +5,7 @@
 
 use raikiri_style::{
     CascadeError, CascadeOptions, CascadeResult, ConsumerPropertyRegistration, MediaContext,
-    Origin, PageContextQuery, RuleTree, cascade_with_options,
+    Origin, PageContextQuery, RuleTree, RuleTreeLimits, cascade_with_options,
 };
 use raikiri_traits::StylesheetKind;
 
@@ -185,17 +185,54 @@ pub fn build_cascaded_with_options(
 ///
 /// Keeping this operation separate lets a paged renderer retain the parsed
 /// `@page` rules while it performs a per-page cascade in a later page loop.
+///
+/// The tree retains its stylesheets within the default [`RuleTreeLimits`],
+/// as [`build_rule_tree_with_consumer_properties`] describes.
 pub fn build_rule_tree(doc: &UncascadedDocument) -> RuleTree {
     build_rule_tree_with_consumer_properties(doc, &[])
 }
 
 /// Build a rule tree configured for the supplied consumer-owned properties.
+///
+/// The tree retains its stylesheets within the default [`RuleTreeLimits`];
+/// a tree past one of them is refused by every element cascade, and
+/// [`RuleTree::limit_exceeded`] says what its other readers see.
+/// [`build_rule_tree_with_limits`] takes other limits and reports a passed
+/// one directly.
 pub fn build_rule_tree_with_consumer_properties(
     doc: &UncascadedDocument,
     consumer_properties: &[ConsumerPropertyRegistration],
 ) -> RuleTree {
-    let mut tree = RuleTree::empty_with_consumer_properties(consumer_properties);
+    fill_rule_tree(
+        RuleTree::empty_with_consumer_properties(consumer_properties),
+        doc,
+    )
+}
 
+/// Build a rule tree configured for the supplied consumer-owned properties,
+/// retaining its stylesheets within `limits`.
+///
+/// # Errors
+///
+/// Fails when the document's stylesheets pass one of `limits`; see
+/// [`RuleTree::limit_exceeded`].
+pub fn build_rule_tree_with_limits(
+    doc: &UncascadedDocument,
+    consumer_properties: &[ConsumerPropertyRegistration],
+    limits: &RuleTreeLimits,
+) -> Result<RuleTree, CascadeError> {
+    let tree = fill_rule_tree(
+        RuleTree::empty_with_consumer_properties(consumer_properties).with_limits(*limits),
+        doc,
+    );
+    match tree.limit_exceeded() {
+        Some(error) => Err(error),
+        None => Ok(tree),
+    }
+}
+
+/// Adds the document's stylesheets to `tree`, each with its origin.
+fn fill_rule_tree(mut tree: RuleTree, doc: &UncascadedDocument) -> RuleTree {
     // Map every stylesheet associated with the Document to an Origin by kind.
     // Call order (insertion order) determines cascade source_order.
     let mut dom_stylesheets = doc.dom.stylesheets();

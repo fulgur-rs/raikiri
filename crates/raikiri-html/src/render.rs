@@ -24,7 +24,7 @@ use raikiri_style::{
 };
 
 use crate::HtmlDocument;
-use crate::cascade::build_rule_tree_with_consumer_properties;
+use crate::cascade::build_rule_tree_with_limits;
 #[cfg(doc)]
 use crate::parse_html_with_resources;
 use crate::resources::{
@@ -170,6 +170,26 @@ fn parse_consumer_integer(raw: &str) -> Option<i32> {
         .ok()
 }
 
+fn parse_consumer_keyword(
+    raw: &str,
+    keywords: &'static [&'static str],
+) -> Option<ConsumerPropertyValue> {
+    let mut input = cssparser::ParserInput::new(raw);
+    let mut parser = cssparser::Parser::new(&mut input);
+    parser
+        .parse_entirely(
+            |parser| -> Result<ConsumerPropertyValue, cssparser::ParseError<'_, ()>> {
+                let ident = parser.expect_ident().cloned()?;
+                keywords
+                    .iter()
+                    .find(|keyword| keyword.eq_ignore_ascii_case(&ident))
+                    .map(|keyword| ConsumerPropertyValue::Keyword((*keyword).to_owned()))
+                    .ok_or_else(|| parser.new_custom_error(()))
+            },
+        )
+        .ok()
+}
+
 fn parse_consumer_integer_or_none(raw: &str) -> Option<ConsumerPropertyValue> {
     let mut input = cssparser::ParserInput::new(raw);
     let mut parser = cssparser::Parser::new(&mut input);
@@ -230,117 +250,127 @@ fn element_text_value(document: &raikiri_dom::Document, node_id: usize) -> Strin
     output
 }
 
-#[derive(Debug)]
-enum ConsumerTextPart {
-    Literal(String),
-    Attribute {
-        name: String,
-        fallback: Option<String>,
-    },
-    ElementText,
+/// Document-order state read by resolved-text consumer values.
+///
+/// `counter()` / `counters()` read the counters in effect at the element, after
+/// its own `counter-reset` / `counter-increment` / `counter-set`, exactly as
+/// the element's `::before` content starts from. `string()` reads the named
+/// string's latest `string-set` assignment at or before the element in
+/// document order; the page-relative keywords (`first`, `start`, `last`,
+/// `first-except`) have no page to select within here and are ignored. A name
+/// that has not been assigned yet resolves to the empty string (CSS GCPM 3
+/// §1.1.2).
+struct ConsumerTextContext<'a> {
+    cascade: &'a raikiri_style::CascadeResult,
+    counters: Option<Option<Vec<raikiri_dom::CounterSnapshot>>>,
+    strings: std::collections::HashMap<smol_str::SmolStr, String>,
 }
 
-fn parse_consumer_text_parts(raw: &str) -> Option<Vec<ConsumerTextPart>> {
-    let mut input = cssparser::ParserInput::new(raw);
-    let mut parser = cssparser::Parser::new(&mut input);
-    parser
-        .parse_entirely(
-            |parser| -> Result<Vec<ConsumerTextPart>, cssparser::ParseError<'_, ()>> {
-                let mut parts = Vec::new();
-                loop {
-                    let token = match parser.next() {
-                        Ok(token) => token.clone(),
-                        Err(cssparser::BasicParseError {
-                            kind: cssparser::BasicParseErrorKind::EndOfInput,
-                            ..
-                        }) => break,
-                        // cov:ignore: declarations are validated by the style parser before this reparse
-                        Err(error) => return Err(error.into()),
-                    };
-                    match token {
-                        cssparser::Token::QuotedString(value) => {
-                            parts.push(ConsumerTextPart::Literal(value.to_string()));
-                        }
-                        cssparser::Token::Function(name) => {
-                            let function_name = name.to_ascii_lowercase();
-                            let part = parser.parse_nested_block(|nested| {
-                                if function_name == "attr" {
-                                    let attribute = nested.expect_ident()?.to_string();
-                                    let fallback =
-                                        if nested.try_parse(|parser| parser.expect_comma()).is_ok()
-                                        {
-                                            Some(nested.expect_string()?.to_string())
-                                        } else {
-                                            None
-                                        };
-                                    nested.expect_exhausted()?;
-                                    Ok(ConsumerTextPart::Attribute {
-                                        name: attribute,
-                                        fallback,
-                                    })
-                                } else if function_name == "content" {
-                                    if nested
-                                        .try_parse(|parser| parser.expect_ident_matching("text"))
-                                        .is_err()
-                                    {
-                                        // The generic text grammar accepts the
-                                        // omitted argument as the element text;
-                                        // any other keyword is not approximated.
-                                        // cov:ignore: the style grammar rejects unsupported content arguments first
-                                        if !nested.is_exhausted() {
-                                            return Err(nested.new_custom_error(()));
-                                        }
-                                    }
-                                    nested.expect_exhausted()?;
-                                    Ok(ConsumerTextPart::ElementText)
-                                } else {
-                                    Err(nested.new_custom_error(())) // cov:ignore: unknown functions are rejected by the style grammar
-                                }
-                            })?;
-                            parts.push(part);
-                        }
-                        _ => return Err(parser.new_custom_error(())), // cov:ignore: non-text tokens are rejected by the style grammar
-                    }
-                }
-                if parts.is_empty() {
-                    return Err(parser.new_custom_error(())); // cov:ignore: empty content lists are rejected by the style grammar
-                }
-                Ok(parts)
-            },
-        )
-        .ok()
-}
+impl<'a> ConsumerTextContext<'a> {
+    fn new(cascade: &'a raikiri_style::CascadeResult) -> Self {
+        Self {
+            cascade,
+            counters: None,
+            strings: std::collections::HashMap::new(),
+        }
+    }
 
-fn resolve_consumer_text(
-    document: &raikiri_dom::Document,
-    node_id: usize,
-    raw: &str,
-) -> Option<String> {
-    let parts = parse_consumer_text_parts(raw)?;
-    let node = document.get_node(node_id)?;
-    let mut output = String::new();
-    for part in parts {
-        match part {
-            ConsumerTextPart::Literal(value) => output.push_str(&value),
-            ConsumerTextPart::Attribute { name, fallback } => {
-                let value = node.attribute(&name).or_else(|| {
-                    let normalized = name.to_ascii_lowercase();
-                    (normalized != name)
-                        .then(|| node.attribute(&normalized))
-                        .flatten()
-                });
-                if let Some(value) = value {
-                    output.push_str(value);
-                } else if let Some(fallback) = fallback {
-                    output.push_str(&fallback);
-                }
-            }
-            ConsumerTextPart::ElementText => {
-                output.push_str(&element_text_value(document, node_id))
+    /// The counters at `node_id`, or `None` when the snapshots would exceed
+    /// their memory budget.
+    fn counters_at(
+        &mut self,
+        document: &raikiri_dom::Document,
+        node_id: usize,
+    ) -> Option<&raikiri_dom::CounterSnapshot> {
+        self.counters
+            .get_or_insert_with(|| raikiri_dom::counter_snapshots(document, self.cascade).ok())
+            .as_ref()?
+            .get(node_id)
+    }
+
+    /// Record the element's `string-set` assignments in declaration order.
+    fn apply_string_set(&mut self, document: &raikiri_dom::Document, node_id: usize) {
+        let Some(computed) = self.cascade.computed.get(node_id) else {
+            return; // cov:ignore: cascade output has one computed value per arena node
+        };
+        let assignments = computed.string_set.clone();
+        for (name, components) in assignments.iter() {
+            if let Some(value) = self.resolve(document, node_id, components, true) {
+                self.strings.insert(name.clone(), value);
             }
         }
     }
-    Some(output)
+
+    /// The text of `components` at `node_id`, or `None` when a component has
+    /// no text approximation here. `string_set` selects the named-string
+    /// pipeline's element text, which collapses only CSS document white space.
+    fn resolve(
+        &mut self,
+        document: &raikiri_dom::Document,
+        node_id: usize,
+        components: &[raikiri_style::property::ContentComponent],
+        string_set: bool,
+    ) -> Option<String> {
+        use raikiri_dom::generated_content::{format_counter_component, format_counters_component};
+        use raikiri_style::property::{ContentComponent, ContentTextKeyword};
+
+        let node = document.get_node(node_id)?;
+        let attribute = |name: &str| {
+            node.attribute(name).or_else(|| {
+                let normalized = name.to_ascii_lowercase();
+                (normalized != name)
+                    .then(|| node.attribute(&normalized))
+                    .flatten()
+            })
+        };
+        let mut output = String::new();
+        for component in components {
+            match component {
+                ContentComponent::Literal(value) => output.push_str(value),
+                ContentComponent::Attr { name } => {
+                    output.push_str(attribute(name).unwrap_or_default());
+                }
+                ContentComponent::AttrFallback { name, fallback } => {
+                    if let Some(value) = attribute(name) {
+                        output.push_str(value);
+                    } else if let Some(fallback) = fallback {
+                        output.push_str(fallback);
+                    }
+                }
+                ContentComponent::Content {
+                    keyword: ContentTextKeyword::Text,
+                } if string_set => {
+                    output.push_str(&raikiri_dom::element_string_value(document, node_id));
+                }
+                ContentComponent::Content {
+                    keyword: ContentTextKeyword::Text,
+                } => output.push_str(&element_text_value(document, node_id)),
+                ContentComponent::Counter { name, style } => {
+                    let registry = &self.cascade.counter_styles;
+                    let counters = self.counters_at(document, node_id)?;
+                    output.push_str(&format_counter_component(counters, name, style, registry));
+                }
+                ContentComponent::Counters {
+                    name,
+                    separator,
+                    style,
+                } => {
+                    let registry = &self.cascade.counter_styles;
+                    let counters = self.counters_at(document, node_id)?;
+                    output.push_str(&format_counters_component(
+                        counters, name, separator, style, registry,
+                    ));
+                }
+                ContentComponent::String { name, .. } => {
+                    if let Some(value) = self.strings.get(name) {
+                        output.push_str(value);
+                    }
+                }
+                _ => return None,
+            }
+        }
+        Some(output)
+    }
 }
 
 fn consumer_property_value(
@@ -348,6 +378,7 @@ fn consumer_property_value(
     node_id: usize,
     registration: &ConsumerPropertyRegistration,
     raw: &str,
+    text: &mut ConsumerTextContext<'_>,
 ) -> Option<ConsumerPropertyValue> {
     match registration.grammar() {
         ConsumerPropertyGrammar::Integer => {
@@ -355,8 +386,11 @@ fn consumer_property_value(
         }
         ConsumerPropertyGrammar::IntegerOrNone => parse_consumer_integer_or_none(raw),
         ConsumerPropertyGrammar::Text => {
-            resolve_consumer_text(document, node_id, raw).map(ConsumerPropertyValue::Text)
+            let components = raikiri_style::property::parse_consumer_text_value(raw)?;
+            text.resolve(document, node_id, &components, false)
+                .map(ConsumerPropertyValue::Text)
         }
+        ConsumerPropertyGrammar::Keyword(keywords) => parse_consumer_keyword(raw, keywords),
         _ => None, // cov:ignore: non-exhaustive grammar variants are future-only
     }
 }
@@ -376,14 +410,20 @@ fn resolved_consumer_property_events(
         .get_node(root)
         .map(|node| node.children.clone())
         .unwrap_or_default();
-    let mut stack: Vec<(usize, Option<usize>)> = root_children
+    // Elements that generate no box assign no named strings (CSS GCPM 3
+    // §1.1.1 assigns them when the element's box is created).
+    let mut stack: Vec<(usize, Option<usize>, bool)> = root_children
         .into_iter()
         .rev()
-        .map(|child| (child, Some(root)))
+        .map(|child| (child, Some(root), false))
         .collect();
     let mut source_order = 0_u32;
+    let mut text = ConsumerTextContext::new(cascade);
+    let tracks_strings = registrations
+        .iter()
+        .any(|registration| registration.grammar() == ConsumerPropertyGrammar::Text);
 
-    while let Some((node_id, parent_id)) = stack.pop() {
+    while let Some((node_id, parent_id, mut hidden)) = stack.pop() {
         let Some(node) = document.get_node(node_id) else {
             continue; // cov:ignore: the document traversal stack contains arena-owned indices
         };
@@ -396,6 +436,14 @@ fn resolved_consumer_property_events(
         if node.kind() == raikiri_traits::NodeKind::Element
             && let Some(computed) = cascade.computed.get(node_id)
         {
+            hidden |= computed.display == raikiri_style::property::DisplayValue::None;
+            // `display: contents` generates no box of its own, but its
+            // children still do.
+            let generates_box =
+                !hidden && computed.display != raikiri_style::property::DisplayValue::Contents;
+            if tracks_strings && generates_box && !computed.string_set.is_empty() {
+                text.apply_string_set(document, node_id);
+            }
             for registration in registrations {
                 let storage_name = format!("--{}", registration.name());
                 let raw = if registration.inherits() {
@@ -406,7 +454,8 @@ fn resolved_consumer_property_events(
                 let Some(raw) = raw else {
                     continue;
                 };
-                let Some(value) = consumer_property_value(document, node_id, registration, &raw)
+                let Some(value) =
+                    consumer_property_value(document, node_id, registration, &raw, &mut text)
                 else {
                     continue;
                 };
@@ -423,7 +472,7 @@ fn resolved_consumer_property_events(
         let mut children = node.children.clone();
         children.reverse();
         for child in children {
-            stack.push((child, Some(node_id)));
+            stack.push((child, Some(node_id), hidden));
         }
     }
     events
@@ -439,9 +488,7 @@ fn page_query_for_slice(slice: &PageSlice) -> PageContextQuery {
 }
 
 fn page_box_for_page(page: &PageCascadeResult, defaults: &PageDefaults) -> PageBox {
-    page.size()
-        .map(|size| PageBox::from_page_size(Some(size)))
-        .unwrap_or(defaults.page_box)
+    PageBox::from_page_size_or(page.size(), defaults.page_box)
 }
 
 /// Reruns only the `@page` cascade for page queries of one pipeline run.
@@ -493,8 +540,8 @@ pub(crate) fn resolve_page_geometry(
     let content_box = PaintRect::new(
         margins.left + content_insets.left,
         margins.top + content_insets.top,
-        margins.content_width(page_box),
-        (margins.content_height(page_box) - content_insets.top - content_insets.bottom).max(0.0),
+        content_insets.page_area_width(margins, page_box),
+        content_insets.page_area_height(margins, page_box),
     );
     ResolvedPageGeometry {
         page_box,
@@ -520,10 +567,12 @@ fn resolve_page_geometries(
     (geometries, styles)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn preload_page_background_images(
     cascader: &PageCascader<'_>,
     slices: &[PageSlice],
     resources: &RenderResources<'_>,
+    base_url: Option<&url::Url>,
     warnings: &SharedRenderWarnings,
     signal: Option<&raikiri_traits::AbortSignal>,
     seen: &mut HashSet<url::Url>,
@@ -538,6 +587,7 @@ fn preload_page_background_images(
     }
     resources.preload_element_background_images(
         &cascader.base.computed,
+        base_url,
         warnings,
         seen,
         attempts,
@@ -545,12 +595,27 @@ fn preload_page_background_images(
     );
     for slice in slices {
         let page = cascader.page(&page_query_for_slice(slice));
-        resources.preload_page_context_background_images(&page, warnings, seen, attempts, signal);
+        resources.preload_page_context_background_images(
+            &page, base_url, warnings, seen, attempts, signal,
+        );
     }
 }
 
+/// The size of the page area of a page with the context `page`: the initial
+/// containing block when `page` is the first page.
+///
+/// CSS Values 4 §6.1.2 makes the viewport-percentage lengths "relative to the
+/// size of the initial containing block", and CSS Paged Media 3 §3: "The
+/// edges of the page area on the first page establish the rectangle that is
+/// the initial containing block of the document." The page area is the
+/// content area of the page box, inside its border and padding.
+fn page_area_size(page: &PageCascadeResult, defaults: &PageDefaults) -> (f32, f32) {
+    let content_box = resolve_page_geometry(page, page_box_for_page(page, defaults)).content_box;
+    (content_box.width, content_box.height)
+}
+
 fn content_width_for_geometry(geometry: ResolvedPageGeometry) -> f32 {
-    (geometry.page_box.width - geometry.margins.left - geometry.margins.right).max(0.0)
+    geometry.content_box.width
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -700,7 +765,11 @@ pub(crate) fn run_pipeline(
 
     // Every cascade of this run reads the same parsed document, stylesheets,
     // consumer registrations, and media context, so the rule tree is built once.
-    let tree = build_rule_tree_with_consumer_properties(&doc.uncascaded, consumer_properties);
+    let tree = build_rule_tree_with_limits(
+        &doc.uncascaded,
+        consumer_properties,
+        &config.limits.rule_tree_limits(),
+    )?;
 
     // The parse-time font registry is cached for the default environment.
     // Other layout environments must select faces using their own dimensions,
@@ -721,6 +790,17 @@ pub(crate) fn run_pipeline(
     first_query.is_right = true;
     let mut cascade_options = CascadeOptions::default();
     cascade_options.limits = config.limits.cascade_limits();
+    // The viewport-percentage lengths need the first page's page area before
+    // the element cascade, whose root the page context inherits from. Take it
+    // from the page context inheriting initial values; the root's styles only
+    // matter to font-relative page lengths, which are checked again below.
+    let provisional_page = cascade_page_with_media_context(
+        &tree,
+        &first_query,
+        PageInheritance::LegacyInitialValues,
+        media_context,
+    );
+    cascade_options.viewport = Some(page_area_size(&provisional_page, &defaults));
     let mut first_cascade = cascade_with_options(
         &doc.uncascaded.dom,
         &tree,
@@ -775,8 +855,39 @@ pub(crate) fn run_pipeline(
         },
     )
     .map_err(map_initial_page_context_error)?;
-    let first_cascade = resolved_initial_context.cascade;
+    let mut first_cascade = resolved_initial_context.cascade;
     let page_box = resolved_initial_context.page_box;
+    // A named first page, or page lengths relative to the root's font, can
+    // give the first page another page area than the provisional one. The
+    // element cascade is then run again in that viewport; the page context
+    // it already resolved is kept.
+    let page_area = page_area_size(&first_cascade.page, &defaults);
+    if cascade_options.viewport != Some(page_area) {
+        cascade_options.viewport = Some(page_area);
+        let page = first_cascade.page.clone();
+        first_cascade = cascade_with_options(
+            &doc.uncascaded.dom,
+            &tree,
+            media_context,
+            &first_query,
+            &cascade_options,
+        )?;
+        first_cascade.replace_page(page);
+        // Marker images without full intrinsic dimensions are sized from
+        // the marker's font, which can be viewport-relative.
+        resources.preload_list_marker_images(
+            &first_cascade,
+            runtime.effective_base_url,
+            &runtime.warnings,
+            &mut marker_image_seen,
+            &mut marker_image_attempts,
+            signal.as_ref(),
+        );
+        if let Some(source) = resources.image_pixel_source_ref() {
+            dom.prepare_list_marker_images(&first_cascade, source, runtime.effective_base_url);
+        }
+    }
+    let first_cascade = first_cascade;
     // Only `page` in a cascade result depends on the page query, so the
     // first-page cascade serves as the element cascade of every later page.
     let page_cascader = PageCascader {
@@ -961,6 +1072,7 @@ pub(crate) fn run_pipeline(
             source: &doc.uncascaded.dom,
             tree: &tree,
             media_context,
+            cascade_options: &cascade_options,
             cascader: &page_cascader,
             defaults: &defaults,
             resolver: &resolver,
@@ -1005,6 +1117,7 @@ pub(crate) fn run_pipeline(
             &page_cascader,
             &slices,
             resources,
+            runtime.effective_base_url,
             &runtime.warnings,
             signal.as_ref(),
             &mut marker_image_seen,

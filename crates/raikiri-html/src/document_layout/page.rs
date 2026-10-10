@@ -1,4 +1,5 @@
 use super::{DomView, Fragment, MarginBox, OverflowClip, PaintEvent, PositionedGlyphRun};
+use crate::RenderError;
 use raikiri_style::property::StringFetchMode;
 use raikiri_style::{ComputedValues, PageCascadeResult};
 use raikiri_traits::{NodeId, PaintInsets, PaintRect};
@@ -58,7 +59,18 @@ pub struct Page<'a> {
     pub(super) paired_style: Option<&'a PageCascadeResult>,
     /// The document's running elements; `None` on a page that is itself a
     /// laid-out running element.
-    pub(super) running: Option<&'a super::running::RunningIndex>,
+    pub(super) running: Option<super::running::RunningSource<'a>>,
+}
+
+/// A running element placed in a page-margin box.
+#[derive(Clone, Copy)]
+#[non_exhaustive]
+pub struct PlacedRunningElement<'a> {
+    /// The element laid out at the width of the margin box's content box.
+    pub layout: &'a super::RunningElementLayout,
+    /// Where the origin of [`super::RunningElementLayout::page`] goes on
+    /// this page, in CSS px.
+    pub origin: (f32, f32),
 }
 
 /// Resolved raster pixels and their complete object placement on a page.
@@ -391,8 +403,8 @@ impl<'a> Page<'a> {
     /// A line belongs to the page that holds its center, the same rule as
     /// [`Fragment::line_range`], so every line appears on exactly one page;
     /// a paragraph repeated on every page (inside `position: fixed`) appears
-    /// on each. Propagated text decorations are included; shadows are not
-    /// included yet. Margin box text comes from [`Self::margin_boxes`].
+    /// on each. Propagated text decorations and used text shadows are
+    /// included. Margin box text comes from [`Self::margin_boxes`].
     /// Text list markers are included, including standalone markers of
     /// empty items. A standalone marker belongs to its item's first
     /// principal fragment and is not repeated on continuation pages. Missing
@@ -543,7 +555,40 @@ impl<'a> Page<'a> {
     /// Lay the element out with
     /// [`DocumentLayout::layout_running_element`](super::DocumentLayout::layout_running_element).
     pub fn running_element(&self, name: &str, fetch: StringFetchMode) -> Option<NodeId> {
-        self.running?.select(name, fetch, self.slice.page_index)
+        self.running?
+            .index
+            .select(name, fetch, self.slice.page_index)
+    }
+
+    /// The running element `margin_box` shows on this page, laid out at the
+    /// width of its content box and aligned in it by the box's
+    /// `vertical-align` (CSS GCPM 3 §1.2.2). `None` when the box shows no
+    /// running element or none applies on this page.
+    ///
+    /// Draw the element's page at [`PlacedRunningElement::origin`], clipped
+    /// to the margin box, in place of [`MarginBox::text`].
+    pub fn margin_box_running_element(
+        &self,
+        margin_box: &MarginBox,
+    ) -> Result<Option<PlacedRunningElement<'a>>, RenderError> {
+        let (Some(source), Some(running)) = (self.running, margin_box.running.as_ref()) else {
+            return Ok(None);
+        };
+        let Some(node) = source
+            .index
+            .select(&running.name, running.fetch, self.slice.page_index)
+        else {
+            return Ok(None);
+        };
+        let content = running.content_box;
+        let Some(layout) = source.layout(node, content.width)? else {
+            return Ok(None); // cov:ignore: a selected node is always a running element.
+        };
+        let free = (content.height - layout.height()).max(0.0);
+        Ok(Some(PlacedRunningElement {
+            layout,
+            origin: (content.x, content.y + free * running.block_align),
+        }))
     }
 
     /// Structure and attributes of the document.

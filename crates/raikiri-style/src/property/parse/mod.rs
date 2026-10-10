@@ -15,6 +15,7 @@ mod visual;
 pub(crate) use box_model::*;
 pub use color::*;
 pub(crate) use common::*;
+pub use content::parse_consumer_text_value;
 pub(crate) use content::*;
 pub(crate) use layout::*;
 pub use text::*;
@@ -444,8 +445,8 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         "margin-bottom" => parse_margin_side(input).map(PropertyValue::MarginBottom),
         "margin-left" => parse_margin_side(input).map(PropertyValue::MarginLeft),
         // CSS Box 3 §3.2 margin shorthand. Expands 1–4 values. During cascade,
-        // `PropertyValue::Margin` expands into four longhands in `parse_declaration_block`
-        // and is therefore not normally observed (see the `PropertyValue::Margin`
+        // `PropertyValue::Margin` expands into four longhands when the declaration is
+        // parsed and is therefore not normally observed (see the `PropertyValue::Margin`
         // doc and `crate::rule::expand_shorthand_into`).
         "margin" => parse_margin_shorthand(input).map(PropertyValue::Margin),
         // CSS Logical Properties and Values 1 §4.2 margin-inline-start/-end /
@@ -565,7 +566,7 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // || <color>` (any order, each component at most once, at least one present).
         // Apply the same Border to all four sides. During cascade,
         // `PropertyValue::Border` expands into 12 longhands (four sides × three
-        // subproperties) in `parse_declaration_block` and is not normally observed
+        // subproperties) when the declaration is parsed and is not normally observed
         // (see the `PropertyValue::Border` doc and `crate::rule::expand_shorthand_into`).
         "border" => {
             if let Ok(kw) = input.try_parse(parse_css_wide_keyword_res) {

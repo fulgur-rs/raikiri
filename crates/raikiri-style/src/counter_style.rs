@@ -77,7 +77,7 @@ use smol_str::SmolStr;
 
 use crate::cascade::cascade_rank;
 use crate::property::{is_reserved_custom_ident, parse_custom_ident};
-use crate::ruletree::Origin;
+use crate::ruletree::{Origin, ParseBudget};
 
 // ---------------------------------------------------------------------------
 // Symbol — `<symbol>` production, narrowed to `<string> | <custom-ident>`.
@@ -696,7 +696,7 @@ impl CounterStyleRule {
 /// per-declaration output of [`CounterStyleDeclParser`], folded into a
 /// [`CounterStyleRule`] by [`build_rule`] (later declarations of the same
 /// descriptor win, matching ordinary CSS declaration-list semantics — the
-/// same "later wins" fold [`crate::rule::parse_declaration_block`]'s callers
+/// same "later wins" fold [`crate::rule::parse_declaration_block_within`]'s callers
 /// rely on for the cascade).
 enum ParsedDescriptor {
     System(CounterStyleSystem),
@@ -788,11 +788,23 @@ fn parse_counter_style_block(input: &mut Parser<'_, '_>) -> Vec<ParsedDescriptor
 
 /// Parse one descriptor block with the same recovery and validity as the standalone parser.
 /// Crate-visible so stylesheet and conditional group parsing share this grammar.
+///
+/// Each descriptor counts as a declaration against `budget` as it is parsed,
+/// so a block past the limit stops there and yields no rule.
 pub(crate) fn parse_counter_style_rule(
     name: SmolStr,
     input: &mut Parser<'_, '_>,
+    budget: &mut ParseBudget,
 ) -> Option<CounterStyleRule> {
-    let rule = build_rule(name, parse_counter_style_block(input));
+    let mut parser = CounterStyleDeclParser;
+    let mut descriptors = Vec::new();
+    for descriptor in RuleBodyParser::new(input, &mut parser).flatten() {
+        if !budget.declarations(1) {
+            return None;
+        }
+        descriptors.push(descriptor);
+    }
+    let rule = build_rule(name, descriptors);
     rule.is_valid().then_some(rule)
 }
 

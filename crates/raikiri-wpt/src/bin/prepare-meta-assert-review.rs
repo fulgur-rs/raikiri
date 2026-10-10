@@ -23,7 +23,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 use raikiri_wpt::reftest::parse_reftest_links;
-use raikiri_wpt::reftest::render_raikiri;
+use raikiri_wpt::reftest::render_raikiri_file_pages;
 
 const DEFAULT_WPT_ROOT: &str = "target/wpt";
 const DEFAULT_BASELINE: &str = "expectations/meta-assert-baseline.txt";
@@ -43,6 +43,7 @@ struct Args {
     width: u32,
     height: u32,
     include_parsing: bool,
+    tests: Option<PathBuf>,
 }
 
 impl Default for Args {
@@ -57,6 +58,7 @@ impl Default for Args {
             width: DEFAULT_WIDTH,
             height: DEFAULT_HEIGHT,
             include_parsing: false,
+            tests: None,
         }
     }
 }
@@ -87,17 +89,23 @@ fn run() -> Result<(), String> {
         return Ok(());
     }
     let args = parse_args(&raw_args[1..])?;
-    let mut baseline = read_baseline(&args.baseline)?;
-    if args.exclude_baseline != args.baseline && args.exclude_baseline.exists() {
-        baseline.extend(read_baseline(&args.exclude_baseline)?);
-    }
     let wpt_sha = git_head(&args.wpt_root).unwrap_or_else(|| "unknown".to_owned());
-    let candidates = discover_candidates(
-        &args.wpt_root,
-        &baseline,
-        args.include_parsing,
-        args.path_prefix.as_deref(),
-    )?;
+    // An explicit list bypasses discovery, so the exclusion baselines are not read.
+    let candidates = match &args.tests {
+        Some(list) => listed_candidates(&args.wpt_root, list)?,
+        None => {
+            let mut baseline = read_baseline(&args.baseline)?;
+            if args.exclude_baseline != args.baseline && args.exclude_baseline.exists() {
+                baseline.extend(read_baseline(&args.exclude_baseline)?);
+            }
+            discover_candidates(
+                &args.wpt_root,
+                &baseline,
+                args.include_parsing,
+                args.path_prefix.as_deref(),
+            )?
+        }
+    };
     let candidates: Vec<_> = candidates
         .into_iter()
         .take(args.limit.unwrap_or(usize::MAX))
@@ -132,17 +140,21 @@ fn run() -> Result<(), String> {
         fs::write(&html_path, &candidate.source)
             .map_err(|e| format!("could not write {}: {e}", html_path.display()))?;
 
-        let (status, error) =
-            match render_png(&candidate.source, &screenshot_path, args.width, args.height) {
-                Ok(()) => {
-                    rendered += 1;
-                    ("pending", None)
-                }
-                Err(error) => {
-                    errors += 1;
-                    ("render-error", Some(error))
-                }
-            };
+        let (status, error) = match render_png(
+            &args.wpt_root.join(&candidate.relative_path),
+            &screenshot_path,
+            args.width,
+            args.height,
+        ) {
+            Ok(()) => {
+                rendered += 1;
+                ("pending", None)
+            }
+            Err(error) => {
+                errors += 1;
+                ("render-error", Some(error))
+            }
+        };
         write_manifest_entry(
             &mut manifest,
             &candidate,
@@ -179,7 +191,7 @@ fn run() -> Result<(), String> {
 }
 
 fn usage() -> &'static str {
-    "Usage: prepare-meta-assert-review [OPTIONS]\n\n  --wpt-root PATH       WPT checkout (default: target/wpt)\n  --baseline PATH       baseline file used for exclusion (default: expectations/raikiri-baseline.txt)\n  --output PATH         review artifact directory (default: target/meta-assert-review)\n  --limit N             process at most N candidates\n  --width N             viewport width (default: 800)\n  --height N            viewport height (default: 600)\n  --include-parsing     include tests below a parsing/ directory\n\nThe command writes manifest.jsonl, reviews.template.jsonl, html/, and screenshots/. It never edits the baseline."
+    "Usage: prepare-meta-assert-review [OPTIONS]\n\n  --wpt-root PATH       WPT checkout (default: target/wpt)\n  --baseline PATH       baseline file used for exclusion (default: expectations/raikiri-baseline.txt)\n  --output PATH         review artifact directory (default: target/meta-assert-review)\n  --limit N             process at most N candidates\n  --width N             viewport width (default: 800)\n  --height N            viewport height (default: 600)\n  --include-parsing     include tests below a parsing/ directory\n  --tests PATH          review exactly the test ids listed in PATH (one per line),\n                        including reftests and tests without a meta assert\n\nThe command writes manifest.jsonl, reviews.template.jsonl, html/, and screenshots/. It never edits the baseline."
 }
 
 fn parse_args(args: &[String]) -> Result<Args, String> {
@@ -206,6 +218,7 @@ fn parse_args(args: &[String]) -> Result<Args, String> {
             "--baseline" => parsed.baseline = PathBuf::from(value(&mut index)?),
             "--exclude-baseline" => parsed.exclude_baseline = PathBuf::from(value(&mut index)?),
             "--output" => parsed.output = PathBuf::from(value(&mut index)?),
+            "--tests" => parsed.tests = Some(PathBuf::from(value(&mut index)?)),
             "--path-prefix" => parsed.path_prefix = Some(value(&mut index)?),
             "--limit" => parsed.limit = Some(parse_usize(&value(&mut index)?, option)?),
             "--width" => parsed.width = parse_u32(&value(&mut index)?, option)?,
@@ -303,6 +316,40 @@ fn discover_candidates(
         candidates.push(Candidate {
             test_id,
             relative_path: path,
+            source,
+            assert_text,
+        });
+    }
+    Ok(candidates)
+}
+
+/// Build candidates from an explicit test-id list.
+///
+/// Unlike discovery, a listed test is kept even when it has reftest links or
+/// no meta assert, so a reviewer can be calibrated against tests whose
+/// reftest outcome is already known. A missing assert is recorded as empty.
+fn listed_candidates(wpt_root: &Path, list: &Path) -> Result<Vec<Candidate>, String> {
+    let content = fs::read_to_string(list)
+        .map_err(|e| format!("could not read test list {}: {e}", list.display()))?;
+    let mut candidates = Vec::new();
+    for test_id in content
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+    {
+        let relative_path = PathBuf::from(test_id);
+        if relative_path
+            .components()
+            .any(|component| !matches!(component, Component::Normal(_)))
+        {
+            return Err(format!("test id must be a relative WPT path: {test_id}"));
+        }
+        let source = fs::read_to_string(wpt_root.join(&relative_path))
+            .map_err(|e| format!("could not read {test_id}: {e}"))?;
+        let assert_text = extract_meta_assert(&source).unwrap_or_default();
+        candidates.push(Candidate {
+            test_id: test_id.to_owned(),
+            relative_path,
             source,
             assert_text,
         });
@@ -417,8 +464,18 @@ fn attr(tag: &str, tag_lower: &str, name: &str) -> Option<String> {
     None
 }
 
-fn render_png(html: &str, output: &Path, width: u32, height: u32) -> Result<(), String> {
-    let image = render_raikiri(html, width, height).map_err(|error| error.to_string())?;
+/// Render the test file and write its first page as a PNG.
+///
+/// Rendering from the file path lets relative images, stylesheets, and the
+/// WPT fonts resolve the same way they do for reftests.
+fn render_png(test: &Path, output: &Path, width: u32, height: u32) -> Result<(), String> {
+    let document =
+        render_raikiri_file_pages(test, width, height).map_err(|error| error.to_string())?;
+    let image = document
+        .pages
+        .into_iter()
+        .next()
+        .ok_or_else(|| "rendering produced no pages".to_owned())?;
     let file = fs::File::create(output).map_err(|e| format!("{}: {e}", output.display()))?;
     let writer = io::BufWriter::new(file);
     let mut encoder = png::Encoder::new(writer, image.width, image.height);

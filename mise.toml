@@ -10,3 +10,7 @@ run = "scripts/wpt/run-raikiri.sh"
 description = "Run upstream WPT print reftests with the Raikiri product"
 env = { RAIKIRI_WPT_TEST_TYPE = "print-reftest" }
 run = "scripts/wpt/run-raikiri.sh"
+
+[tasks."wpt:judge"]
+description = "Judge prepared meta-assert review rows with a Claude model"
+run = "uv run --script scripts/wpt/haiku-judge-meta-assert.py"

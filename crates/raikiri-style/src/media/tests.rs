@@ -293,6 +293,68 @@ fn nested_media_lists_intersect() {
     assert!(both.matches(&MediaContext::print()));
     assert!(!both.matches(&MediaContext::screen()));
     assert!(!both.matches(&MediaContext::with_viewport(MediaType::Print, 200, 192)));
+    // The intersection links to the outer condition and shares the inner
+    // queries instead of copying either, so nesting costs the same at any
+    // depth.
+    assert!(Arc::ptr_eq(
+        both.lists.outer.as_ref().unwrap(),
+        &outer.lists
+    ));
+    assert!(Arc::ptr_eq(&both.lists.queries, &inner.lists.queries));
+    let deeper = both.intersect(&outer);
+    assert!(Arc::ptr_eq(
+        deeper.lists.outer.as_ref().unwrap(),
+        &both.lists
+    ));
+    assert_eq!(deeper.lists().count(), 3);
+    // A condition of several lists is linked on list by list, outermost first.
+    let chained = outer.intersect(&both);
+    let innermost_first: Vec<_> = chained
+        .lists()
+        .map(|lists| Arc::as_ptr(&lists.queries))
+        .collect();
+    assert_eq!(
+        innermost_first,
+        [
+            Arc::as_ptr(&inner.lists.queries),
+            Arc::as_ptr(&outer.lists.queries),
+            Arc::as_ptr(&outer.lists.queries),
+        ]
+    );
+    assert!(chained.matches(&MediaContext::with_viewport(MediaType::Print, 400, 400)));
+    assert!(!chained.matches(&MediaContext::with_viewport(MediaType::Print, 200, 192)));
+}
+
+#[test]
+fn long_chains_compare_format_and_drop_without_deep_recursion() {
+    // Far deeper than a test thread's stack allows one frame per list.
+    let print = parse_media_prelude("print").unwrap();
+    let mut chain = print.clone();
+    for _ in 0..200_000 {
+        chain = chain.intersect(&print);
+    }
+    let same = chain.clone();
+    assert_eq!(chain, same);
+    assert_ne!(chain, chain.intersect(&print));
+    assert_ne!(chain, print);
+    drop(same);
+    drop(chain);
+    // Through the public entry point, as nested import conditions build it.
+    let media = vec!["print"; 100_000];
+    let mut tree = crate::ruletree::RuleTree::empty();
+    tree.add_stylesheet_with_media_conditions(
+        "a { color: red }",
+        crate::ruletree::Origin::Author,
+        &media,
+    );
+    drop(tree);
+    // Formatting lists the outermost list first, as the conditions nest.
+    let width = parse_media_prelude("(min-width: 300px)").unwrap();
+    let text = format!("{:?}", print.intersect(&width));
+    assert!(
+        text.find("Typed").unwrap() < text.find("Condition(").unwrap(),
+        "{text}"
+    );
 }
 
 #[test]

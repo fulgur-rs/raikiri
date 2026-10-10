@@ -5,7 +5,7 @@ use super::records::{PageFragment, ProjectedTextRoot};
 use crate::generated_content::generated_origin;
 use crate::layout::{PositionedLine, PositionedLines, PositionedRun, line_center_on_page};
 use crate::{Document, relative_offset};
-use raikiri_style::property::{CssColor, DisplayValue, PositionValue};
+use raikiri_style::property::{CssColor, DisplayValue, PositionValue, TextShadowColor};
 use raikiri_style::resolve::ComputedLengthPercentageOrAuto;
 use raikiri_style::{CascadeResult, ComputedValues, PseudoElem};
 use raikiri_traits::{NodeId, NodeKind};
@@ -20,6 +20,7 @@ pub(super) struct MarkerText {
     shaped: Arc<crate::StandaloneText>,
     offset_x: f32,
     color: CssColor,
+    shadows: Vec<TextShadow>,
     first_page: Option<u32>,
 }
 
@@ -104,6 +105,7 @@ pub(super) fn prepare_markers(
                     shaped: Arc::new(shaped),
                     offset_x,
                     color: style.color,
+                    shadows: text_shadows(style),
                     first_page: first_pages.get(&owner).copied(),
                 },
             );
@@ -172,6 +174,43 @@ pub struct PositionedGlyphRun<'a> {
     /// Used decoration segments, including lines propagated from ancestors.
     /// Generated text and ellipses have no decoration segments in this version.
     pub decorations: Vec<crate::DecorationLine>,
+    /// Used `text-shadow` list of the run's text (CSS Text Decoration 3 §4),
+    /// in declaration order: the first shadow is painted on top, and every
+    /// shadow is painted below the run's glyphs. Empty for `none` and for
+    /// page-margin box text.
+    pub shadows: Vec<TextShadow>,
+}
+
+/// One used `text-shadow` of a [`PositionedGlyphRun`].
+///
+/// The shadow is the run's glyphs filled with [`Self::color`], moved by
+/// [`Self::offset`] and blurred as for `box-shadow` (CSS Backgrounds 3 §7.1):
+/// a Gaussian blur with a standard deviation of half the blur radius.
+#[derive(Clone, Copy, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct TextShadow {
+    /// Horizontal and vertical offset in CSS px, with y growing downwards.
+    pub offset: (f32, f32),
+    /// Blur radius in CSS px; zero draws a sharp shadow.
+    pub blur_radius: f32,
+    /// Shadow color, with `currentcolor` resolved to the text color.
+    pub color: CssColor,
+}
+
+/// The used `text-shadow` list of text styled by `style`.
+pub(crate) fn text_shadows(style: &ComputedValues) -> Vec<TextShadow> {
+    style
+        .text_shadow
+        .iter()
+        .map(|shadow| TextShadow {
+            offset: (shadow.offset_x.px(), shadow.offset_y.px()),
+            blur_radius: shadow.blur_radius.px().max(0.0),
+            color: match shadow.color {
+                TextShadowColor::Resolved(color) => color,
+                _ => style.color,
+            },
+        })
+        .collect()
 }
 
 impl PositionedGlyphRun<'_> {
@@ -466,6 +505,7 @@ fn marker_runs<'a>(
         &marker.shaped,
         (x, y),
         marker.color,
+        &marker.shadows,
         NodeId::new(root.node as u64),
         RunSource::Generated(NodeId::new(owner as u64), GeneratedKind::Marker),
         out,
@@ -482,6 +522,7 @@ pub(crate) fn standalone_runs<'a>(
     text: &'a crate::StandaloneText,
     origin: (f32, f32),
     color: CssColor,
+    shadows: &[TextShadow],
     line_root: NodeId,
     source: RunSource,
     out: &mut Vec<PositionedGlyphRun<'a>>,
@@ -577,6 +618,7 @@ pub(crate) fn standalone_runs<'a>(
                 glyphs,
                 color,
                 decorations: Vec::new(),
+                shadows: shadows.to_vec(),
             });
         }
     }
@@ -745,6 +787,7 @@ fn glyph_run<'a>(
         glyphs,
         color,
         decorations: Vec::new(),
+        shadows: text_shadows(positioned.style),
     })
 }
 

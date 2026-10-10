@@ -8,6 +8,7 @@ mod streaming;
 
 pub use dom_view::DomView;
 pub use navigation::{Anchor, AnchorIndex, Link};
+pub use page::PlacedRunningElement;
 pub use page::{InlineSvg, Page, PageGeometry, PageMode, RasterImage};
 pub use running::RunningElementLayout;
 pub use streaming::{PageSink, StreamPage, StreamStatus, StreamSummary, StreamingLayout};
@@ -16,8 +17,8 @@ pub use raikiri_dom::{
     ClipKind, ColumnRule, DecorationKind, DecorationLine, DecorationStyle, DeferredGlyph,
     DeferredSlot, DeferredValue, FontBlob, FontId, FontRef, FontVariation, Fragment, FragmentKind,
     GeneratedBox, GeneratedKind, Glyph, MarginBox, MarginBoxBackgroundImage, MarginBoxBorder,
-    MarginBoxText, OverflowClip, PaintEvent, PositionedGlyphRun, RepeatKind, RunSource, Synthesis,
-    Tag, TextLineId,
+    MarginBoxRunning, MarginBoxText, OverflowClip, PaintEvent, PositionedGlyphRun, RepeatKind,
+    RunSource, Synthesis, Tag, TextLineId, TextShadow,
 };
 
 use crate::render::{PipelineInputs, PipelineOutput, PipelineRun, run_pipeline};
@@ -292,7 +293,7 @@ impl DocumentLayout {
             page_count: self.page_count(),
             page_count_deferred: false,
             paired_style,
-            running: Some(&self.running),
+            running: Some(self.running_source()),
         }
     }
 
@@ -311,10 +312,16 @@ impl DocumentLayout {
         node: raikiri_traits::NodeId,
         width: f32,
     ) -> Result<Option<&RunningElementLayout>, RenderError> {
-        let width = running::used_width(width);
-        self.running_layouts.get_or_try_make(node, width, || {
-            running::layout_running_element(&self.out.document, &self.out.cascade, node, width)
-        })
+        self.running_source().layout(node, width)
+    }
+
+    fn running_source(&self) -> running::RunningSource<'_> {
+        running::RunningSource {
+            index: &self.running,
+            layouts: &self.running_layouts,
+            document: &self.out.document,
+            cascade: &self.out.cascade,
+        }
     }
 
     /// In-document link destinations. Positions are in layout space until

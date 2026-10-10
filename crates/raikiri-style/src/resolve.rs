@@ -1451,9 +1451,83 @@ pub struct ResolveContext {
     ///
     /// [`Length::Lh`]: crate::property::Length::Lh
     pub root_line_height: Option<ComputedLength>,
+    /// Width of the viewport in CSS px: the basis of `vw` (and of `vi`,
+    /// `vmin` and `vmax`).
+    ///
+    /// CSS Values 4 §6.1.2 "Viewport-percentage Lengths"
+    /// (<https://www.w3.org/TR/css-values-4/#viewport-relative-lengths>):
+    /// "The viewport-percentage lengths are relative to the size of the
+    /// initial containing block". The constructors default it to the nominal
+    /// print page box of [`MediaContext::print`]; set the actual size with
+    /// [`Self::with_viewport`].
+    ///
+    /// [`MediaContext::print`]: crate::MediaContext::print
+    pub viewport_width: f32,
+    /// Height of the viewport in CSS px: the basis of `vh` (and of `vb`,
+    /// `vmin` and `vmax`). See [`Self::viewport_width`].
+    pub viewport_height: f32,
+    /// Whether the root element's writing mode is vertical, so that its
+    /// inline axis, the basis of `vi`, is the viewport's height and its
+    /// block axis, the basis of `vb`, is the viewport's width.
+    pub vertical_root: bool,
 }
 
+/// The viewport size [`ResolveContext`]'s constructors start from: the
+/// nominal print page box of [`crate::MediaContext::print`].
+const DEFAULT_VIEWPORT: (f32, f32) = {
+    let media = crate::media::MediaContext::print();
+    (
+        media.viewport_width() as f32,
+        media.viewport_height() as f32,
+    )
+};
+
 impl ResolveContext {
+    /// This context with the viewport, the basis of the viewport-percentage
+    /// lengths, set to `width` × `height` CSS px.
+    ///
+    /// ```
+    /// use raikiri_style::{ComputedLength, ResolveContext};
+    ///
+    /// let ctx = ResolveContext::initial().with_viewport(600.0, 800.0);
+    /// assert_eq!((ctx.viewport_width, ctx.viewport_height), (600.0, 800.0));
+    /// assert_eq!(ctx.root_font_size, ComputedLength(16.0));
+    /// ```
+    pub fn with_viewport(mut self, width: f32, height: f32) -> Self {
+        self.viewport_width = width;
+        self.viewport_height = height;
+        self
+    }
+
+    /// This context with the root element's writing mode vertical or not.
+    pub fn with_vertical_root(mut self, vertical: bool) -> Self {
+        self.vertical_root = vertical;
+        self
+    }
+
+    /// `length` in CSS px when it is a viewport-percentage length, `None`
+    /// for any other unit.
+    pub(crate) fn viewport_length(&self, length: Length) -> Option<f32> {
+        let (width, height) = (self.viewport_width, self.viewport_height);
+        // CSS Values 4 §6.1.2: `vi` and `vb` follow the root element's
+        // inline and block axes.
+        let (inline, block) = if self.vertical_root {
+            (height, width)
+        } else {
+            (width, height)
+        };
+        let (basis, value) = match length.default_viewport() {
+            Length::Vw(v) => (width, v),
+            Length::Vh(v) => (height, v),
+            Length::Vi(v) => (inline, v),
+            Length::Vb(v) => (block, v),
+            Length::Vmin(v) => (width.min(height), v),
+            Length::Vmax(v) => (width.max(height), v),
+            _ => return None,
+        };
+        Some(basis * value / 100.0)
+    }
+
     /// Construct with the root element's computed font-size.
     ///
     /// `root_line_height` is unresolved (`None`); use
@@ -1464,6 +1538,9 @@ impl ResolveContext {
         Self {
             root_font_size,
             root_line_height: None,
+            viewport_width: DEFAULT_VIEWPORT.0,
+            viewport_height: DEFAULT_VIEWPORT.1,
+            vertical_root: false,
         }
     }
 
@@ -1480,6 +1557,9 @@ impl ResolveContext {
         Self {
             root_font_size,
             root_line_height,
+            viewport_width: DEFAULT_VIEWPORT.0,
+            viewport_height: DEFAULT_VIEWPORT.1,
+            vertical_root: false,
         }
     }
 
@@ -1520,6 +1600,9 @@ impl ResolveContext {
         Self {
             root_font_size: ComputedLength(INITIAL_FONT_SIZE_PX),
             root_line_height: None,
+            viewport_width: DEFAULT_VIEWPORT.0,
+            viewport_height: DEFAULT_VIEWPORT.1,
+            vertical_root: false,
         }
     }
 }
@@ -1824,6 +1907,15 @@ pub fn resolve_font_size(
             .unwrap_or(ComputedLength(INITIAL_FONT_SIZE_PX)),
         Length::Rlh(v) => resolve_lh_multiplier(v, ctx.root_line_height)
             .unwrap_or(ComputedLength(INITIAL_FONT_SIZE_PX)),
+        Length::Vw(_)
+        | Length::Vh(_)
+        | Length::Vi(_)
+        | Length::Vb(_)
+        | Length::Vmin(_)
+        | Length::Vmax(_)
+        | Length::SizedViewport(..) => {
+            ComputedLength(ctx.viewport_length(specified).unwrap_or(0.0))
+        }
     }
 }
 
@@ -1925,6 +2017,15 @@ pub(crate) fn resolve_length(
         Length::Lh(v) => resolve_lh_multiplier(v, own_line_height).unwrap_or(ComputedLength::ZERO),
         Length::Rlh(v) => {
             resolve_lh_multiplier(v, ctx.root_line_height).unwrap_or(ComputedLength::ZERO)
+        }
+        Length::Vw(_)
+        | Length::Vh(_)
+        | Length::Vi(_)
+        | Length::Vb(_)
+        | Length::Vmin(_)
+        | Length::Vmax(_)
+        | Length::SizedViewport(..) => {
+            ComputedLength(ctx.viewport_length(specified).unwrap_or(0.0))
         }
     }
 }
@@ -2338,6 +2439,15 @@ pub fn resolve_length_percentage(
                 .map(ComputedLength::px)
                 .unwrap_or(0.0),
         ),
+        Length::Vw(_)
+        | Length::Vh(_)
+        | Length::Vi(_)
+        | Length::Vb(_)
+        | Length::Vmin(_)
+        | Length::Vmax(_)
+        | Length::SizedViewport(..) => {
+            ComputedLengthPercentage::Px(ctx.viewport_length(specified).unwrap_or(0.0))
+        }
     }
 }
 

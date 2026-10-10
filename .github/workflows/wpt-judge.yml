@@ -1,0 +1,212 @@
+name: WPT model judge
+
+# Judges WPT tests that have no reference file (mostly CSS2 .xht) by sending
+# each rendering, its meta assert, and its "Test passes if" text to a Claude
+# model. Manual only, so every run's API spend is an explicit decision.
+#
+# Authentication uses Workload Identity Federation: the job's GitHub OIDC
+# token is exchanged for a short-lived Anthropic token, so no API key is
+# stored anywhere. The federation rule should match only the claim
+# workflow_ref = fulgur-rs/raikiri/.github/workflows/wpt-judge.yml@refs/heads/main.
+# The IDs it needs are repository variables (not secrets):
+#   ANTHROPIC_FEDERATION_RULE_ID, ANTHROPIC_ORGANIZATION_ID,
+#   ANTHROPIC_SERVICE_ACCOUNT_ID, ANTHROPIC_WORKSPACE_ID
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: Maximum number of new (uncached) model requests
+        default: "200"
+      path_prefix:
+        description: Only tests below this WPT directory
+        type: choice
+        default: css/CSS2 (1993)
+        # Every directory with judgeable tests at the pinned WPT revision. The
+        # count in parentheses is the number of judgeable tests not yet in a
+        # baseline when the list was made; the List step strips it.
+        options:
+          - css (2733)
+          - css/CSS2 (1993)
+          - css/CSS2/backgrounds (53)
+          - css/CSS2/bidi-text (3)
+          - css/CSS2/borders (255)
+          - css/CSS2/box-display (13)
+          - css/CSS2/cascade (64)
+          - css/CSS2/colors (3)
+          - css/CSS2/css1 (1)
+          - css/CSS2/floats-clear (12)
+          - css/CSS2/fonts (147)
+          - css/CSS2/generate (17)
+          - css/CSS2/generated-content (52)
+          - css/CSS2/i18n (50)
+          - css/CSS2/linebox (45)
+          - css/CSS2/lists (123)
+          - css/CSS2/margin-padding-clear (29)
+          - css/CSS2/normal-flow (60)
+          - css/CSS2/other-formats (2)
+          - css/CSS2/page-box (9)
+          - css/CSS2/pagination (7)
+          - css/CSS2/positioning (23)
+          - css/CSS2/sec5 (1)
+          - css/CSS2/selectors (52)
+          - css/CSS2/syntax (3)
+          - css/CSS2/tables (581)
+          - css/CSS2/text (146)
+          - css/CSS2/ui (176)
+          - css/CSS2/values (1)
+          - css/CSS2/visufx (25)
+          - css/CSS2/visuren (22)
+          - css/CSS2/zindex (17)
+          - css/WOFF2 (2)
+          - css/compositing (1)
+          - css/css-animations (55)
+          - css/css-backgrounds (77)
+          - css/css-break (1)
+          - css/css-counter-styles (3)
+          - css/css-display (91)
+          - css/css-flexbox (16)
+          - css/css-fonts (2)
+          - css/css-gcpm (20)
+          - css/css-lists (2)
+          - css/css-multicol (1)
+          - css/css-page (12)
+          - css/css-round-display (15)
+          - css/css-speech (11)
+          - css/css-text (26)
+          - css/css-text-decor (78)
+          - css/css-transforms (1)
+          - css/css-ui (205)
+          - css/css-writing-modes (121)
+      model:
+        description: Claude model id
+        default: claude-haiku-5-5
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  judge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        # Same toolchain resolution as ci.yml (rust-toolchain.toml).
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Install system dependencies
+        # fontconfig headers are needed to build shodo's system-fonts feature.
+        run: |
+          sudo apt-get -o Acquire::Retries=2 update
+          sudo apt-get install -y libfontconfig1-dev pkg-config
+
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Fetch WPT at the pinned revision
+        run: scripts/wpt/fetch.sh
+
+      - name: Build the review renderer
+        run: cargo build --release --locked -p raikiri-wpt --bin prepare-meta-assert-review
+
+      - name: Setup mise
+        # Installs the uv pinned in mise.toml; uv then installs the judge's
+        # dependencies from the script's inline metadata.
+        uses: jdx/mise-action@v2
+        with:
+          install_args: uv
+
+      - name: List tests without a reference
+        env:
+          PATH_PREFIX: ${{ inputs.path_prefix }}
+        run: |
+          # Drop the " (N)" count shown in the dropdown.
+          PATH_PREFIX="${PATH_PREFIX%% (*}"
+          uv run --script scripts/wpt/haiku-judge-meta-assert.py list-tests \
+            --wpt-root target/wpt \
+            --path-prefix "$PATH_PREFIX" \
+            --exclude expectations/meta-assert-baseline.txt \
+            --exclude expectations/raikiri-baseline.txt \
+            --output judge-tests.txt
+
+      - name: Render
+        run: |
+          ./target/release/prepare-meta-assert-review \
+            --wpt-root target/wpt \
+            --tests judge-tests.txt \
+            --output target/meta-assert-review
+
+      - name: Restore verdict cache
+        # Verdicts are keyed by model, prompt, and PNG hash, so only changed
+        # renderings cost anything on the next run.
+        uses: actions/cache/restore@v4
+        with:
+          path: target/meta-assert-review/judge-cache
+          key: wpt-judge-${{ inputs.model }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: wpt-judge-${{ inputs.model }}-
+
+      - name: Judge
+        env:
+          ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+          ANTHROPIC_IDENTITY_TOKEN_FILE: ${{ runner.temp }}/gha-jwt
+          MODEL: ${{ inputs.model }}
+          LIMIT: ${{ inputs.limit }}
+        run: |
+          set -o pipefail
+          # GitHub OIDC tokens live about five minutes and each one can be
+          # exchanged only once, while the SDK re-reads the file on every
+          # refresh. Keep a fresh token in the file for the whole run.
+          fetch_token() {
+            curl -sSf -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" \
+              | jq -er .value > "$ANTHROPIC_IDENTITY_TOKEN_FILE.tmp" \
+              && mv -f "$ANTHROPIC_IDENTITY_TOKEN_FILE.tmp" "$ANTHROPIC_IDENTITY_TOKEN_FILE"
+          }
+          fetch_token || { echo "could not fetch the GitHub OIDC token" >&2; exit 1; }
+          # Print the claims a federation rule matches on (not the signed
+          # token), so a rejected exchange can be compared with the rule.
+          cut -d. -f2 "$ANTHROPIC_IDENTITY_TOKEN_FILE" | tr '_-' '/+' \
+            | { b=$(cat); while [ $(( ${#b} % 4 )) -ne 0 ]; do b="$b="; done; printf '%s' "$b"; } \
+            | base64 -d \
+            | jq '{iss, aud, sub, event_name, ref, workflow_ref, repository, repository_owner, repository_owner_id}' \
+            || echo "could not decode the token claims" >&2
+          # A failed refresh keeps the previous token; the next one retries.
+          ( while sleep 120; do fetch_token || echo "token refresh failed" >&2; done ) &
+          refresher=$!
+          trap 'kill "$refresher"' EXIT
+          uv run --script scripts/wpt/haiku-judge-meta-assert.py run \
+            --review-dir target/meta-assert-review \
+            --model "$MODEL" \
+            --max-requests "$LIMIT" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Save verdict cache
+        # Save even when some requests failed, so paid verdicts are kept.
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: target/meta-assert-review/judge-cache
+          key: wpt-judge-${{ inputs.model }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Upload review
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wpt-judge-review
+          path: |
+            target/meta-assert-review/manifest.jsonl
+            target/meta-assert-review/reviews.jsonl
+            target/meta-assert-review/reviews.template.jsonl
+            target/meta-assert-review/html/
+            target/meta-assert-review/screenshots/

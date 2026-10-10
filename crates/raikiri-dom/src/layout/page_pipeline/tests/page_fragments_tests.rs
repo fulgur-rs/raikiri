@@ -591,7 +591,7 @@ fn page_fragment_margin_padding_coordinates_are_applied_once() {
     );
     assert_eq!(
         page.content_box,
-        PageFragmentRect::new(25.0, 25.0, 60.0, 50.0)
+        PageFragmentRect::new(25.0, 25.0, 50.0, 50.0)
     );
 
     let item = page

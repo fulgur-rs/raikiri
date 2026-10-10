@@ -149,6 +149,34 @@ fn selector_function_reports_supported_complex_selectors() {
 }
 
 #[test]
+fn selector_function_lists_are_false_without_being_parsed() {
+    // A top-level comma makes a list, which is never one complex selector.
+    for condition in ["selector(.a, .b)", "selector(p, :unknown)", "selector(p,)"] {
+        assert!(!supports_condition(condition), "{condition}");
+        assert!(
+            supports_condition(&format!("not {condition}")),
+            "{condition}"
+        );
+    }
+    // An error token still invalidates the whole condition.
+    for condition in ["not selector(.a, \"bad\nstring\")", "not selector(.a, [)])"] {
+        assert!(!supports_condition(condition), "{condition}");
+    }
+    // So a huge list costs nothing against the tree's selector limit.
+    let list = vec!["a"; 1 << 16].join(",");
+    let mut tree = RuleTree::empty().with_limits(RuleTreeLimits {
+        max_selectors: Some(1),
+        ..RuleTreeLimits::default()
+    });
+    tree.add_stylesheet(
+        &format!("@supports not selector({list}) {{ p {{ color: red }} }}"),
+        Origin::Author,
+    );
+    assert!(tree.limit_exceeded().is_none());
+    assert_eq!(tree.style_rules().len(), 1);
+}
+
+#[test]
 fn selector_function_rejects_invalid_forgiving_branches_recursively() {
     for condition in [
         "selector(:is(.a, :unknown))",
@@ -369,6 +397,7 @@ fn consumer_property_conditions_use_the_registered_grammar() {
         ConsumerPropertyRegistration::integer("bookmark-level"),
         ConsumerPropertyRegistration::integer_or_none("bookmark-state"),
         ConsumerPropertyRegistration::text("bookmark-label"),
+        ConsumerPropertyRegistration::keyword("bookmark-open", &["open", "closed"]),
     ];
     for (declaration, expected) in [
         ("bookmark-level: 1", true),
@@ -381,6 +410,13 @@ fn consumer_property_conditions_use_the_registered_grammar() {
         ("bookmark-level: 1.5", false),
         ("bookmark-state: invalid", false),
         ("bookmark-label:", false),
+        ("bookmark-open: Closed", true),
+        ("bookmark-open: ajar", false),
+        ("bookmark-open: open closed", false),
+        ("bookmark-open: \"open\"", false),
+        ("bookmark-open: \"var(--x)\"", false),
+        ("bookmark-open: v\\61r(--x)", true),
+        ("bookmark-open: foo([var(--x)])", true),
     ] {
         let mut input = ParserInput::new(declaration);
         let mut parser = Parser::new(&mut input);

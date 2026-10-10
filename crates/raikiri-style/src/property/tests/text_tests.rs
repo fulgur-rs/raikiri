@@ -598,12 +598,12 @@ fn line_height_rejects_css_wide_keyword() {
 
 #[test]
 fn line_height_rejects_unsupported_unit() {
-    // parse_length_value silently drops unsupported units such as `vw` /
+    // parse_length_value silently drops unsupported units such as `cqw` /
     // `cap`; its `None` result also drops the line-height declaration.
     // `ch`, `lh`, and `rlh` have moved to the accepted cases; see
     // `line_height_accepts_ch` and `line_height_accepts_lh`.
     // This test covers only the units still unsupported.
-    assert_eq!(parse("10vw", "line-height"), None);
+    assert_eq!(parse("10cqw", "line-height"), None);
     assert_eq!(parse("10cap", "line-height"), None);
 }
 

@@ -13,6 +13,7 @@
 //!   [`FontCollectionBuilder`] and passed with [`RenderResources::fonts`].
 
 mod cascade;
+mod css_urls;
 mod document;
 mod document_layout;
 mod document_parse;
@@ -33,6 +34,7 @@ pub use cascade::{
     build_cascaded_with_media_context, build_cascaded_with_media_context_for_page,
     build_cascaded_with_media_context_for_page_and_consumer_properties,
     build_cascaded_with_options, build_rule_tree, build_rule_tree_with_consumer_properties,
+    build_rule_tree_with_limits,
 };
 pub use document::HtmlDocument;
 // cov:ignore: these type/function re-exports have no executable code; API integration tests and rustdoc verify them.
@@ -41,8 +43,9 @@ pub use document_layout::{
     DeferredGlyph, DeferredSlot, DeferredValue, DocumentLayout, DomView, FontBlob, FontId, FontRef,
     FontVariation, Fragment, FragmentKind, GeneratedBox, GeneratedKind, Glyph, InlineSvg,
     LayoutOptions, LayoutStatus, Link, MarginBox, MarginBoxBackgroundImage, MarginBoxBorder,
-    MarginBoxText, OverflowClip, Page, PageGeometry, PageMode, PaintEvent, PositionedGlyphRun,
-    RasterImage, RepeatKind, RunSource, Synthesis, Tag, TextLineId, layout,
+    MarginBoxRunning, MarginBoxText, OverflowClip, Page, PageGeometry, PageMode, PaintEvent,
+    PlacedRunningElement, PositionedGlyphRun, RasterImage, RepeatKind, RunSource,
+    RunningElementLayout, Synthesis, Tag, TextLineId, TextShadow, layout,
 };
 pub use document_layout::{PageSink, StreamPage, StreamStatus, StreamSummary, StreamingLayout};
 pub use document_parse::{parse_html, parse_html_with_limits};
@@ -81,6 +84,14 @@ pub mod computed {
     pub use raikiri_style::computed_api::*;
 }
 pub use shodo::font::FontCollection;
+
+/// Used image geometry that Raikiri's own painter applies, for painters that
+/// draw background images themselves.
+pub mod image_geometry {
+    pub use raikiri_dom::image_geometry::{
+        BackgroundTiles, background_image_dimensions, background_tiles,
+    };
+}
 
 pub use raikiri_traits::PaintClip; // cov:ignore: type-only re-export has no executable code or lcov record.
 pub use raikiri_traits::{

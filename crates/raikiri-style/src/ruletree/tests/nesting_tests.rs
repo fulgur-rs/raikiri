@@ -19,7 +19,7 @@ fn retained_contextual_repairs_share_a_budget_across_rules_and_stylesheets() {
     };
     for separate_sheets in [false, true] {
         let mut tree = RuleTree::empty();
-        tree.selector_revalidation_budget = nesting::MAX_SELECTOR_REVALIDATION_BYTES / SCALE;
+        tree.budget.selector_revalidation = nesting::MAX_SELECTOR_REVALIDATION_BYTES / SCALE;
         let grouped = format!(
             "@supports (display:block){{@layer nested{{{}}}}}",
             parent(3)
