@@ -101,7 +101,7 @@ pub(super) fn prepare(
         prepared.push((*root, pieces));
     }
     // Pages with a flow range, ordered by their start, so a paragraph that
-    // is not a repeated header visits only the pages its lines can land on
+    // is not repeated on every page visits only the pages its lines can land on
     // instead of every page.
     let mut by_flow: Vec<_> = pages
         .iter()
@@ -112,7 +112,8 @@ pub(super) fn prepare(
     let mut result = GeneratedBoxes::new();
     for (root, pieces) in &prepared {
         let source = document.ifc_source_owner(root.node);
-        let repeated = document.table_objects.headers.owner(source).is_some();
+        // Fixed-position roots and repeated table headers can land on any page.
+        let repeated = root.is_repeat || document.table_objects.headers.owner(source).is_some();
         let candidates: Box<dyn Iterator<Item = &PageFragment>> = if repeated {
             Box::new(pages.iter())
         } else {
