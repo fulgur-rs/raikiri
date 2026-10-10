@@ -43,8 +43,9 @@ pub use document_layout::{
     DeferredGlyph, DeferredSlot, DeferredValue, DocumentLayout, DomView, FontBlob, FontId, FontRef,
     FontVariation, Fragment, FragmentKind, GeneratedBox, GeneratedKind, Glyph, InlineSvg,
     LayoutOptions, LayoutStatus, Link, MarginBox, MarginBoxBackgroundImage, MarginBoxBorder,
-    MarginBoxText, OverflowClip, Page, PageGeometry, PageMode, PaintEvent, PositionedGlyphRun,
-    RasterImage, RepeatKind, RunSource, Synthesis, Tag, TextLineId, layout,
+    MarginBoxRunning, MarginBoxText, OverflowClip, Page, PageGeometry, PageMode, PaintEvent,
+    PlacedRunningElement, PositionedGlyphRun, RasterImage, RepeatKind, RunSource,
+    RunningElementLayout, Synthesis, Tag, TextLineId, TextShadow, layout,
 };
 pub use document_layout::{PageSink, StreamPage, StreamStatus, StreamSummary, StreamingLayout};
 pub use document_parse::{parse_html, parse_html_with_limits};

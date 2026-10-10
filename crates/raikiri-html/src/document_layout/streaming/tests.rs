@@ -549,86 +549,6 @@ fn late_body_attributes_are_ignored_after_delivery() {
     assert!(self::ignored(&summary).is_empty());
 }
 
-/// Feed `html` in `chunk`-byte pieces with a checkpoint every byte, stopping
-/// at the first error, then finish.
-fn stream_with_checkpoints(
-    html: &str,
-    chunk: usize,
-    record: &mut Record,
-    config: LayoutConfig,
-) -> Result<StreamStatus<StreamSummary>, RenderError> {
-    let resources = RenderResources::new();
-    let mut stream = StreamingLayout::new(&resources, PageDefaults::default(), config, record)
-        .checkpoint_bytes(1);
-    for piece in html.as_bytes().chunks(chunk) {
-        stream.feed(piece)?;
-    }
-    stream.finish()
-}
-
-#[test]
-fn an_abort_before_a_checkpoint_stops_the_stream() {
-    let controller = AbortController::new();
-    controller.abort();
-    let config = LayoutConfig::builder()
-        .signal(Some(controller.signal.clone()))
-        .build();
-    let mut record = Record::default();
-    let status =
-        stream_with_checkpoints(&long_document(), 2048, &mut record, config).expect("stream");
-    assert!(matches!(status, StreamStatus::Aborted));
-    assert!(record.pages.is_empty());
-    assert!(!record.finished);
-}
-
-#[test]
-fn an_abort_during_a_checkpoint_stops_the_stream() {
-    let controller = AbortController::new();
-    let config = LayoutConfig::builder()
-        .signal(Some(controller.signal.clone()))
-        .build();
-    let mut record = Record {
-        abort_on_page: Some((0, controller)),
-        ..Record::default()
-    };
-    let status =
-        stream_with_checkpoints(&long_document(), 2048, &mut record, config).expect("stream");
-    assert!(matches!(status, StreamStatus::Aborted));
-    assert_eq!(record.pages.len(), 1);
-    assert!(!record.finished);
-}
-
-#[test]
-fn sink_errors_at_a_checkpoint_stop_the_stream() {
-    let mut record = Record {
-        fail_on_page: Some(0),
-        ..Record::default()
-    };
-    let error =
-        stream_with_checkpoints(&long_document(), 2048, &mut record, LayoutConfig::default())
-            .expect_err("sink error");
-    assert!(matches!(error, RenderError::Io(_)));
-    assert!(record.pages.is_empty());
-    assert!(!record.finished);
-}
-
-#[test]
-fn background_image_preloading_can_be_turned_off() {
-    let html = "<div style='background-image: url(missing.png); height: 10px'></div>";
-    let resources = RenderResources::new();
-    let mut record = Record::default();
-    let mut stream = StreamingLayout::new(
-        &resources,
-        PageDefaults::default(),
-        LayoutConfig::default(),
-        &mut record,
-    )
-    .preload_background_images(false);
-    stream.feed(html.as_bytes()).expect("feed");
-    completed(stream.finish().expect("finish"));
-    assert_eq!(record.pages, batch_pages(html));
-}
-
 #[test]
 fn pages_streamed_early_defer_the_page_count() {
     /// Per page: the bottom box's content and its deferred slot texts for
@@ -745,4 +665,84 @@ fn streamed_pages_carry_the_base_url() {
         StreamStatus::Completed(())
     ));
     assert_eq!(base.0.as_deref(), Some("https://example.com/other/"));
+}
+
+/// Feed `html` in `chunk`-byte pieces with a checkpoint every byte, stopping
+/// at the first error, then finish.
+fn stream_with_checkpoints(
+    html: &str,
+    chunk: usize,
+    record: &mut Record,
+    config: LayoutConfig,
+) -> Result<StreamStatus<StreamSummary>, RenderError> {
+    let resources = RenderResources::new();
+    let mut stream = StreamingLayout::new(&resources, PageDefaults::default(), config, record)
+        .checkpoint_bytes(1);
+    for piece in html.as_bytes().chunks(chunk) {
+        stream.feed(piece)?;
+    }
+    stream.finish()
+}
+
+#[test]
+fn an_abort_before_a_checkpoint_stops_the_stream() {
+    let controller = AbortController::new();
+    controller.abort();
+    let config = LayoutConfig::builder()
+        .signal(Some(controller.signal.clone()))
+        .build();
+    let mut record = Record::default();
+    let status =
+        stream_with_checkpoints(&long_document(), 2048, &mut record, config).expect("stream");
+    assert!(matches!(status, StreamStatus::Aborted));
+    assert!(record.pages.is_empty());
+    assert!(!record.finished);
+}
+
+#[test]
+fn an_abort_during_a_checkpoint_stops_the_stream() {
+    let controller = AbortController::new();
+    let config = LayoutConfig::builder()
+        .signal(Some(controller.signal.clone()))
+        .build();
+    let mut record = Record {
+        abort_on_page: Some((0, controller)),
+        ..Record::default()
+    };
+    let status =
+        stream_with_checkpoints(&long_document(), 2048, &mut record, config).expect("stream");
+    assert!(matches!(status, StreamStatus::Aborted));
+    assert_eq!(record.pages.len(), 1);
+    assert!(!record.finished);
+}
+
+#[test]
+fn sink_errors_at_a_checkpoint_stop_the_stream() {
+    let mut record = Record {
+        fail_on_page: Some(0),
+        ..Record::default()
+    };
+    let error =
+        stream_with_checkpoints(&long_document(), 2048, &mut record, LayoutConfig::default())
+            .expect_err("sink error");
+    assert!(matches!(error, RenderError::Io(_)));
+    assert!(record.pages.is_empty());
+    assert!(!record.finished);
+}
+
+#[test]
+fn background_image_preloading_can_be_turned_off() {
+    let html = "<div style='background-image: url(missing.png); height: 10px'></div>";
+    let resources = RenderResources::new();
+    let mut record = Record::default();
+    let mut stream = StreamingLayout::new(
+        &resources,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        &mut record,
+    )
+    .preload_background_images(false);
+    stream.feed(html.as_bytes()).expect("feed");
+    completed(stream.finish().expect("finish"));
+    assert_eq!(record.pages, batch_pages(html));
 }

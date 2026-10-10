@@ -17,7 +17,7 @@ use crate::{
 use raikiri_style::property::{
     BackgroundImage, BackgroundRepeat, Border, BorderColor, BorderStyle, ContentComponent,
     CounterStyle, CssColor, Length, LengthOrAuto, PropertyKey, PropertyValue, QuoteKeyword, Sides,
-    TextAlign, VerticalAlign, VisualBox, WritingMode,
+    StringFetchMode, TextAlign, VerticalAlign, VisualBox, WritingMode,
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedCssPosition, ComputedLength, ComputedValues,
@@ -25,6 +25,7 @@ use raikiri_style::{
     ResolveContext, resolve_background_size, resolve_css_position,
 };
 use raikiri_traits::{NodeId, NodeKind, PageBox, PaintInsets, PaintRect};
+use smol_str::SmolStr;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -187,6 +188,25 @@ pub struct DeferredGlyph {
     pub glyph: usize,
 }
 
+/// The `element(<name>, <fetch>)` a page-margin box shows, and where.
+///
+/// Which element of that name applies depends on the page; the document
+/// layout picks it and lays it out at the width of [`Self::content_box`].
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub struct MarginBoxRunning {
+    /// Running element name.
+    pub name: SmolStr,
+    /// Which element of the name the page shows.
+    pub fetch: StringFetchMode,
+    /// Content box of the margin box, in page coordinates.
+    pub content_box: PaintRect,
+    /// Share of the free block space placed above the element: 0 aligns it
+    /// to the top of the content box, 0.5 centers it, 1 aligns it to the
+    /// bottom (the margin box's `vertical-align`).
+    pub block_align: f32,
+}
+
 /// A laid-out page-margin box.
 ///
 /// Positions are in CSS px with the origin at the top-left of the page box
@@ -217,6 +237,11 @@ pub struct MarginBox {
     /// Placeholders in [`Self::content`] for values not known yet, in
     /// content order. Empty unless the page context defers the page count.
     pub deferred: Vec<DeferredSlot>,
+    /// The running element the box shows, when its `content` is a single
+    /// `element()` (CSS GCPM 3 §1.2.1, §1.2.2). A painter that draws the element
+    /// draws it in place of [`Self::text`]; [`Self::text`] and
+    /// [`Self::content`] carry the element's text as a flat fallback.
+    pub running: Option<MarginBoxRunning>,
     /// Test-suite placeholder: fill the border box with lime instead of a
     /// background image that refers to `green.png`.
     #[doc(hidden)]
@@ -242,6 +267,7 @@ impl MarginBox {
             padding: PaintInsets::new(0.0, 0.0, 0.0, 0.0),
             text: None,
             deferred: Vec::new(),
+            running: None,
             lime_background: false,
             lime_content_image: None,
         }
