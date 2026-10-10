@@ -1493,6 +1493,9 @@ pub(crate) fn parse_registered_consumer_value(
                     .is_ok()
             }
             ConsumerPropertyGrammar::Text => parse_consumer_text_value(raw.as_str()).is_some(),
+            ConsumerPropertyGrammar::Keyword(keywords) => {
+                parse_consumer_keyword(raw.as_str(), keywords).is_some()
+            }
         };
         if !valid {
             input.reset(&start);
@@ -1503,6 +1506,28 @@ pub(crate) fn parse_registered_consumer_value(
         name: registration.storage_name(),
         value: raw,
     }))
+}
+
+/// The registered spelling of a keyword-grammar value that is exactly one
+/// listed identifier.
+pub(crate) fn parse_consumer_keyword(
+    raw: &str,
+    keywords: &'static [&'static str],
+) -> Option<&'static str> {
+    let mut parser_input = cssparser::ParserInput::new(raw);
+    let mut parser = Parser::new(&mut parser_input);
+    parser
+        .parse_entirely(
+            |parser| -> Result<&'static str, cssparser::ParseError<'_, ()>> {
+                let ident = parser.expect_ident().cloned()?;
+                keywords
+                    .iter()
+                    .copied()
+                    .find(|keyword| keyword.eq_ignore_ascii_case(&ident))
+                    .ok_or_else(|| parser.new_custom_error(()))
+            },
+        )
+        .ok()
 }
 
 /// Parse one declaration, including importance and exhaustive consumption.

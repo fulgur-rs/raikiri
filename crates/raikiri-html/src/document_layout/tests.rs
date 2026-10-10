@@ -570,6 +570,42 @@ fn layout_delivers_consumer_properties_before_returning() {
     assert_eq!(observer.0, 1);
 }
 
+#[derive(Default)]
+struct CollectProperties(Vec<raikiri_traits::ConsumerPropertyValue>);
+impl ConsumerPropertyObserver for CollectProperties {
+    fn observe_event(&mut self, event: ConsumerPropertyEvent) -> std::io::Result<()> {
+        self.0.push(event.value);
+        Ok(())
+    }
+}
+
+#[test]
+fn keyword_consumer_properties_report_the_registered_spelling() {
+    let doc = dom("<style>:root { --state: Closed; --bad: ajar } \
+         .ignored { bookmark-state: open; bookmark-state: ajar }</style>\
+         <h1 style='bookmark-state: OPEN'>a</h1>\
+         <h2 style='bookmark-state: var(--state)'>b</h2>\
+         <h3 style='bookmark-state: var(--bad)'>c</h3>\
+         <h4 class='ignored'>d</h4>");
+    let registrations = [crate::ConsumerPropertyRegistration::keyword(
+        "bookmark-state",
+        &["open", "closed"],
+    )];
+    let mut observer = CollectProperties::default();
+    layout(
+        &doc,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        LayoutOptions::new().consumer_properties(&registrations, &mut observer),
+    )
+    .expect("layout");
+    let keyword = |value: &str| raikiri_traits::ConsumerPropertyValue::Keyword(value.into());
+    assert_eq!(
+        observer.0,
+        [keyword("open"), keyword("closed"), keyword("open")]
+    );
+}
+
 #[test]
 fn layout_returns_observer_errors() {
     let doc = dom("<h1 style='bookmark-level: 1'>x</h1>");

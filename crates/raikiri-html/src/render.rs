@@ -170,6 +170,26 @@ fn parse_consumer_integer(raw: &str) -> Option<i32> {
         .ok()
 }
 
+fn parse_consumer_keyword(
+    raw: &str,
+    keywords: &'static [&'static str],
+) -> Option<ConsumerPropertyValue> {
+    let mut input = cssparser::ParserInput::new(raw);
+    let mut parser = cssparser::Parser::new(&mut input);
+    parser
+        .parse_entirely(
+            |parser| -> Result<ConsumerPropertyValue, cssparser::ParseError<'_, ()>> {
+                let ident = parser.expect_ident().cloned()?;
+                keywords
+                    .iter()
+                    .find(|keyword| keyword.eq_ignore_ascii_case(&ident))
+                    .map(|keyword| ConsumerPropertyValue::Keyword((*keyword).to_owned()))
+                    .ok_or_else(|| parser.new_custom_error(()))
+            },
+        )
+        .ok()
+}
+
 fn parse_consumer_integer_or_none(raw: &str) -> Option<ConsumerPropertyValue> {
     let mut input = cssparser::ParserInput::new(raw);
     let mut parser = cssparser::Parser::new(&mut input);
@@ -357,6 +377,7 @@ fn consumer_property_value(
         ConsumerPropertyGrammar::Text => {
             resolve_consumer_text(document, node_id, raw).map(ConsumerPropertyValue::Text)
         }
+        ConsumerPropertyGrammar::Keyword(keywords) => parse_consumer_keyword(raw, keywords),
         _ => None, // cov:ignore: non-exhaustive grammar variants are future-only
     }
 }
