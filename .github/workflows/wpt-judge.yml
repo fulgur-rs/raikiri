@@ -96,6 +96,13 @@ jobs:
             --tests judge-tests.txt \
             --output target/meta-assert-review
 
+      - name: Setup mise
+        # Installs the uv pinned in mise.toml; uv then installs the judge's
+        # dependencies from the script's inline metadata.
+        uses: jdx/mise-action@v2
+        with:
+          install_args: uv
+
       - name: Restore verdict cache
         # Verdicts are keyed by model, prompt, and PNG hash, so only changed
         # renderings cost anything on the next run.
@@ -116,7 +123,6 @@ jobs:
           LIMIT: ${{ inputs.limit }}
         run: |
           set -o pipefail
-          python3 -m pip install --quiet anthropic
           # GitHub OIDC tokens live about five minutes and each one can be
           # exchanged only once, while the SDK re-reads the file on every
           # refresh. Keep a fresh token in the file for the whole run.
@@ -130,7 +136,7 @@ jobs:
           ( while sleep 120; do fetch_token; done ) &
           refresher=$!
           trap 'kill "$refresher"' EXIT
-          python3 scripts/wpt/haiku-judge-meta-assert.py run \
+          uv run --script scripts/wpt/haiku-judge-meta-assert.py run \
             --review-dir target/meta-assert-review \
             --model "$MODEL" \
             --max-requests "$LIMIT" \

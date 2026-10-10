@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["anthropic>=1.13"]
+# ///
 """Judge prepared meta-assert review rows with a Claude model.
 
 This is the bulk path for the review produced by
@@ -9,15 +13,16 @@ still be re-judged by an agent.
 
 For each pending manifest row the model receives the rendered PNG, the
 `<meta name="assert">` text, and the human pass condition from the test body
-("Test passes if ..."). Verdicts are cached by a hash of the model, the prompt
-version, the instructions, and the PNG bytes, so an unchanged rendering is
-never judged twice.
+("Test passes if ..."). Verdicts are cached by a hash of the model, the
+system prompt and verdict schema, the instructions, and the PNG bytes, so an
+unchanged rendering is never judged twice.
 
 Usage:
 
-    # one request per row (`pip install anthropic`; credentials come from the
-    # environment: ANTHROPIC_API_KEY or the Workload Identity Federation variables)
-    scripts/wpt/haiku-judge-meta-assert.py run --review-dir target/meta-assert-review
+    # one request per row (uv installs the SDK from the inline script metadata;
+    # credentials come from the environment: ANTHROPIC_API_KEY or the Workload
+    # Identity Federation variables)
+    mise run wpt:judge -- run --review-dir target/meta-assert-review
 
     # Message Batches API (50% cheaper, results usually within an hour)
     scripts/wpt/haiku-judge-meta-assert.py batch-submit --review-dir target/meta-assert-review
@@ -32,6 +37,7 @@ from __future__ import annotations
 import argparse
 import base64
 import concurrent.futures
+import functools
 import hashlib
 import html
 import json
@@ -40,8 +46,6 @@ import sys
 from pathlib import Path
 
 DEFAULT_MODEL = "claude-haiku-5-5"
-PROMPT_VERSION = "2"
-
 SYSTEM_PROMPT = """\
 You judge screenshots of CSS conformance tests rendered by a layout engine.
 
@@ -162,9 +166,17 @@ def build_request(review_dir: Path, row: dict) -> tuple[str, str, bytes]:
     return row["test_id"], text, png
 
 
+@functools.cache
+def prompt_fingerprint() -> bytes:
+    """Hash of everything shared by all requests, so editing the system prompt
+    or the verdict schema invalidates cached verdicts without a manual bump."""
+    schema = json.dumps(verdict_model().model_json_schema(), sort_keys=True)
+    return hashlib.sha256(f"{SYSTEM_PROMPT}\0{schema}".encode()).digest()
+
+
 def cache_key(model: str, text: str, png: bytes) -> str:
     digest = hashlib.sha256()
-    for part in (model.encode(), PROMPT_VERSION.encode(), text.encode(), png):
+    for part in (model.encode(), prompt_fingerprint(), text.encode(), png):
         digest.update(len(part).to_bytes(8, "little"))
         digest.update(part)
     return digest.hexdigest()
@@ -245,7 +257,7 @@ def client():
     try:
         import anthropic
     except ImportError:
-        sys.exit("install the SDK first: python3 -m pip install anthropic")
+        sys.exit("anthropic SDK missing: run this script through uv (mise run wpt:judge -- ...)")
     return anthropic.Anthropic()
 
 

@@ -29,7 +29,8 @@ and use `--apply` only for accepted `pass` rows.
 
 `scripts/wpt/haiku-judge-meta-assert.py` writes the same `reviews.jsonl` rows
 with `claude-haiku-5-5`, so large sets can be offloaded while individual rows
-stay open to agent review. It needs `python3 -m pip install anthropic` and
+stay open to agent review. Run it as `mise run wpt:judge -- run`: mise pins uv,
+and uv installs the `anthropic` SDK from the script's inline metadata. It needs
 credentials in the environment (an API key locally; in CI the
 `WPT model judge` workflow uses Workload Identity Federation, so no key is
 stored). Verdicts are cached by model, prompt, and
