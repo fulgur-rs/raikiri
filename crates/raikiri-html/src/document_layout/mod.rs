@@ -3,10 +3,12 @@
 mod dom_view;
 mod navigation;
 mod page;
+mod running;
 
 pub use dom_view::DomView;
 pub use navigation::{Anchor, AnchorIndex, Link};
 pub use page::{InlineSvg, Page, PageGeometry, PageMode, RasterImage};
+pub use running::RunningElementLayout;
 // cov:ignore: public type re-exports have no executable mapping; API integration tests verify them.
 pub use raikiri_dom::{
     ClipKind, ColumnRule, DecorationKind, DecorationLine, DecorationStyle, FontBlob, FontId,
@@ -199,6 +201,7 @@ pub fn layout(
     }
     let rendered = navigation::build_rendered(&out);
     let anchors = navigation::build_anchors(DomView::new(&out.document), &out);
+    let running = build_running_index(&out);
     if signal.as_ref().is_some_and(|signal| signal.is_aborted()) {
         return Ok(LayoutStatus::Aborted);
     }
@@ -206,6 +209,7 @@ pub fn layout(
         out,
         anchors,
         rendered,
+        running,
     }))
 }
 
@@ -214,6 +218,35 @@ pub struct DocumentLayout {
     out: Box<PipelineOutput>,
     anchors: AnchorIndex,
     rendered: std::collections::HashSet<raikiri_traits::NodeId>,
+    running: running::RunningIndex,
+}
+
+/// Index the running elements by the pages the rendered content around them
+/// is on.
+fn build_running_index(out: &PipelineOutput) -> running::RunningIndex {
+    let has_running = out
+        .cascade
+        .computed
+        .iter()
+        .any(|computed| !computed.running_templates.is_empty());
+    if !has_running {
+        return running::RunningIndex::default();
+    }
+    let mut rendered_pages = std::collections::HashMap::<usize, (u32, u32)>::new();
+    for slice in &out.slices {
+        let (document, _) = out.layout_for_page(slice.page_index);
+        for fragment in document.page_fragments(slice.page_index) {
+            let page = slice.page_index;
+            rendered_pages
+                .entry(fragment.node().0 as usize)
+                .and_modify(|(first, last)| {
+                    *first = (*first).min(page);
+                    *last = (*last).max(page);
+                })
+                .or_insert((page, page));
+        }
+    }
+    running::RunningIndex::build(&out.document, &out.cascade, &rendered_pages)
 }
 
 impl DocumentLayout {
@@ -241,7 +274,27 @@ impl DocumentLayout {
             style: &self.out.page_styles[i],
             document,
             cascade,
+            running: Some(&self.running),
         }
+    }
+
+    /// Lay running element `node` (`position: running(<name>)`) out at
+    /// `width` CSS px, the content width of the page margin box that shows
+    /// it (CSS GCPM 3 §1.2).
+    ///
+    /// Use [`Page::running_element`] to find the element a margin box shows
+    /// on a page. Returns `None` when `node` is not a running element. The
+    /// element is laid out again on each call; a caller that shows the same
+    /// element at the same width on several pages can keep the result.
+    pub fn layout_running_element(
+        &self,
+        node: raikiri_traits::NodeId,
+        width: f32,
+    ) -> Result<Option<RunningElementLayout>, RenderError> {
+        if !self.running.contains(node) {
+            return Ok(None);
+        }
+        running::layout_running_element(&self.out.document, &self.out.cascade, node, width)
     }
 
     /// In-document link destinations. Positions are in layout space until

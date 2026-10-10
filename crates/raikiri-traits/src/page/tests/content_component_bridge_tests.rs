@@ -2,9 +2,8 @@
 //! (canonical taxonomy conversion; Image/Contents/Quote/Leader arms
 //! added as a 1:1 mirror of raikiri-style `ContentComponent`).
 //!
-//! Coverage: 13 of 14 [`ContentValueItem`] variants — [`Element`] is
-//! unreachable through the bridge because [`ContentComponent::Element`]
-//! is not yet implemented. Extend an arm when a variant is added.
+//! Coverage: all 14 [`ContentValueItem`] variants. Extend an arm when a
+//! variant is added.
 
 use super::super::*;
 
@@ -290,4 +289,21 @@ fn convert_error_display_and_source_chain() {
     let uv = ContentValueConvertError::UnsupportedVariant;
     assert!(uv.to_string().contains("unsupported ContentComponent"));
     assert!(uv.source().is_none());
+}
+
+#[test]
+fn element_bridge_keeps_the_running_name() {
+    // The page-relative keyword is applied by the margin-box resolver, which
+    // reads it from the style value; the bridge carries the name.
+    let cc = ContentComponent::Element {
+        name: SmolStr::new("header"),
+        fetch: StringFetchMode::Last,
+    };
+    let cvi = ContentValueItem::try_from(cc).expect("infallible for Element");
+    assert_eq!(
+        cvi,
+        ContentValueItem::Element {
+            name: Symbol::new("header"),
+        }
+    );
 }
