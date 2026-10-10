@@ -949,3 +949,90 @@ fn style_sheets_are_fetched_once_per_stream() {
     requests.sort();
     assert_eq!(requests, ["/main.css", "/nested.css"]);
 }
+
+#[test]
+fn late_absolute_elements_on_delivered_pages_are_skipped() {
+    let stamp = "<div style='position: absolute; top: 0'>stamp</div>";
+    let html = format!(
+        "<body style='position: relative'>{}{stamp}<p>end</p>",
+        paragraphs(60)
+    );
+    let (pages, early, summary) = stream_with_summary(&html, 1000, 1);
+    assert!(early > 0);
+    let ignored = ignored(&summary);
+    assert_eq!(ignored.len(), 1, "{ignored:?}");
+    assert!(ignored[0].1.contains("position: absolute"));
+    // Batch layout draws the element on the first page, which the stream
+    // delivered before the element arrived.
+    let stamp = ignored[0].0.expect("node");
+    assert!(pages.iter().all(|(_, nodes)| !nodes.contains(&stamp)));
+    assert!(batch_pages(&html)[0].1.contains(&stamp));
+}
+
+#[test]
+fn late_absolute_elements_on_later_pages_are_kept() {
+    let html = format!(
+        "{}<div style='position: absolute'>here</div><p>end</p>",
+        paragraphs(60)
+    );
+    let (pages, early, summary) = stream_with_summary(&html, 1000, 1);
+    assert!(early > 0);
+    assert!(ignored(&summary).is_empty());
+    assert_eq!(pages, batch_pages(&html));
+}
+
+/// Consumer property events a sink saw, shared with the test.
+#[derive(Clone, Default)]
+struct SharedEvents(std::rc::Rc<std::cell::RefCell<Vec<ConsumerPropertyEvent>>>);
+
+impl PageSink for SharedEvents {
+    type Output = ();
+
+    fn page(
+        &mut self,
+        _page: StreamPage<'_>,
+        events: Vec<ConsumerPropertyEvent>,
+    ) -> std::io::Result<()> {
+        self.0.borrow_mut().extend(events);
+        Ok(())
+    }
+
+    fn finish(self, _summary: StreamSummary) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn text_events_of_open_elements_wait_for_their_content() {
+    let open = format!(
+        "<section style='bookmark-label: content()'>{}",
+        paragraphs(60)
+    );
+    let html = format!("{open}<p>last words</p></section>");
+    let resources = RenderResources::new();
+    let registrations = [ConsumerPropertyRegistration::text("bookmark-label")];
+    let shared = SharedEvents::default();
+    let mut stream = StreamingLayout::new(
+        &resources,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        shared.clone(),
+    )
+    .consumer_properties(&registrations)
+    .checkpoint_bytes(open.len());
+    stream.feed(open.as_bytes()).expect("feed");
+    assert!(shared.0.borrow().is_empty(), "the section is still open");
+    stream.feed(&html.as_bytes()[open.len()..]).expect("feed");
+    assert!(matches!(
+        stream.finish().expect("finish"),
+        StreamStatus::Completed(())
+    ));
+    let events = shared.0.borrow();
+    let [event] = events.as_slice() else {
+        panic!("one event: {events:?}");
+    };
+    let ConsumerPropertyValue::Text(text) = &event.value else {
+        panic!("text value: {event:?}");
+    };
+    assert!(text.ends_with("last words"), "{text:?}");
+}

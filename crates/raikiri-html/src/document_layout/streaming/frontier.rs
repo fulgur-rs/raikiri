@@ -8,7 +8,9 @@
 //! - an open element whose layout depends on children that may not have
 //!   arrived yet: tables (auto layout measures every row), flex and grid
 //!   containers, multi-column containers (balancing measures all content)
-//!   and boxes with `break-inside: avoid*`;
+//!   boxes with `break-inside: avoid*`, and shrink-to-fit or
+//!   `min-content` wide boxes (floats and absolutely positioned boxes with
+//!   an auto width), whose width comes from their widest content;
 //! - an open element with auto directionality (`dir=auto`, or `<bdi>`
 //!   without a valid `dir`), whose direction comes from its first strong
 //!   character, which may not have arrived yet, and which `:dir()` exposes
@@ -31,7 +33,7 @@ use raikiri_style::computed::ComputedValues;
 use raikiri_style::property::{
     BreakBetween, BreakInside, ColumnCountValue, DisplayValue, FloatValue, PositionValue,
 };
-use raikiri_style::{CascadeResult, ComputedColumnWidth};
+use raikiri_style::{CascadeResult, ComputedColumnWidth, ComputedLengthPercentageOrAuto};
 use raikiri_traits::NodeKind;
 
 use crate::document_layout::DocumentLayout;
@@ -59,9 +61,8 @@ pub(crate) fn stable_frontier(
     if forward_dependent_selectors {
         return Frontier::At(document.root_index());
     }
-    let mut chain: Vec<(usize, usize)> = open_elements(document, traced)
+    let mut chain: Vec<(usize, usize)> = open_html_elements(document, traced)
         .into_iter()
-        .filter(|&id| is_html_element_in_document(document, id))
         .map(|id| (depth(document, id), id))
         .collect();
     chain.sort_unstable();
@@ -100,6 +101,15 @@ fn is_inclusive_ancestor(document: &Document, ancestor: usize, id: usize) -> boo
     std::iter::successors(Some(id), |&node| document.parent_of(node)).any(|node| node == ancestor)
 }
 
+/// The HTML elements of `document` that may still receive children, given
+/// the tree builder's handles `traced`.
+pub(crate) fn open_html_elements(document: &Document, traced: &[usize]) -> Vec<usize> {
+    open_elements(document, traced)
+        .into_iter()
+        .filter(|&id| is_html_element_in_document(document, id))
+        .collect()
+}
+
 /// Narrow the tree builder's handles to the elements that may still receive
 /// children.
 ///
@@ -131,14 +141,16 @@ fn open_elements(document: &Document, traced: &[usize]) -> Vec<usize> {
 ///
 /// Content before the frontier is final, and so is everything up to the
 /// last node, apart from one thing: content that arrives later can join the
-/// last node with an avoided break. The earliest page holding content at or
-/// after either point is not final, and neither is the page before it,
-/// whose end break depends on what that content does. Every earlier page
-/// lies wholly before both points.
+/// last node with an avoided break. Each node of `held` is not final either,
+/// nor anything after it. The earliest page holding content at or after any
+/// of these points is not final, and neither is the page before it, whose
+/// end break depends on what that content does. Every earlier page lies
+/// wholly before all of them.
 pub(crate) fn final_page_count(
     document: &Document,
     cascade: &CascadeResult,
     frontier: Frontier,
+    held: &[usize],
     laid_out: &DocumentLayout,
 ) -> u32 {
     let order = preorder(document);
@@ -152,6 +164,11 @@ pub(crate) fn final_page_count(
     let mut earliest_unstable = position[join_avoided_breaks(document, cascade, last)];
     if let Frontier::At(id) = frontier {
         earliest_unstable = earliest_unstable.min(position[id]);
+    }
+    for &id in held {
+        if let Some(&index) = position.get(join_avoided_breaks(document, cascade, id)) {
+            earliest_unstable = earliest_unstable.min(index);
+        }
     }
 
     let page_count = laid_out.page_count();
@@ -203,17 +220,38 @@ fn depth(document: &Document, id: usize) -> usize {
 /// Whether the box's layout, including the position of its first children,
 /// depends on children that come later.
 fn needs_all_children(values: &ComputedValues) -> bool {
-    matches!(
-        values.display,
-        DisplayValue::Table
-            | DisplayValue::InlineTable
-            | DisplayValue::Flex
-            | DisplayValue::InlineFlex
-            | DisplayValue::Grid
-            | DisplayValue::InlineGrid
-    ) || matches!(values.column_count, ColumnCountValue::Count(_))
+    has_intrinsic_width(values)
+        || matches!(
+            values.display,
+            DisplayValue::Table
+                | DisplayValue::InlineTable
+                | DisplayValue::Flex
+                | DisplayValue::InlineFlex
+                | DisplayValue::Grid
+                | DisplayValue::InlineGrid
+        )
+        || matches!(values.column_count, ColumnCountValue::Count(_))
         || matches!(values.column_width, ComputedColumnWidth::Px(_))
         || values.break_inside != BreakInside::Auto
+}
+
+/// Whether the box's width depends on the size of its content: a
+/// `min-content` width, or the shrink-to-fit width of a float
+/// or an absolutely positioned box (CSS 2 §10.3.5, §10.3.7). A later child
+/// with a wider unbreakable line can widen the box and reflow every earlier
+/// line in it.
+fn has_intrinsic_width(values: &ComputedValues) -> bool {
+    match values.width {
+        ComputedLengthPercentageOrAuto::MinContent => true,
+        ComputedLengthPercentageOrAuto::Auto => {
+            values.float != FloatValue::None
+                || matches!(
+                    values.position,
+                    PositionValue::Absolute | PositionValue::Fixed
+                )
+        }
+        _ => false,
+    }
 }
 
 /// Whether the element's directionality is resolved from its text (HTML

@@ -161,3 +161,23 @@ fn elements_closed_without_a_pop_notification_are_final() {
         "end"
     );
 }
+
+#[test]
+fn open_boxes_sized_by_their_content_hold_from_their_start() {
+    assert_eq!(
+        frontier_of("<p>a</p><div style='width:min-content'><p>x</p>"),
+        "<div>"
+    );
+    assert_eq!(
+        frontier_of("<p>a</p><div style='float:left'><p>x</p>"),
+        "<div>"
+    );
+    assert_eq!(
+        frontier_of("<p>a</p><div style='position:absolute'><p>x</p>"),
+        "<div>"
+    );
+    assert_eq!(
+        frontier_of("<p>a</p><div style='float:left; width:10em'><p>x</p>"),
+        "end"
+    );
+}
