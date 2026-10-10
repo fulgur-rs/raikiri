@@ -234,17 +234,32 @@ impl Document {
                             if let Some(cells) = self
                                 .anonymous_table_part_background_cells(node_id)
                                 .filter(|_| !paint_rules::is_visibility_hidden_table_part(cv))
+                                .filter(|_| paint_rules::paints_table_part_decoration(cv))
                             {
                                 let rect = fragment.paint_rect();
                                 let top = rect.y - item.rect.y + item.box_y;
+                                // The cells cover the whole part, but this
+                                // fragment paints only inside its own slice:
+                                // a cell outside it would clip away everything,
+                                // and on a long table most cells are outside.
+                                let in_slice = |clip: &PaintRect| {
+                                    clip.x < rect.x + rect.width
+                                        && clip.y < rect.y + rect.height
+                                        && clip.x + clip.width > rect.x
+                                        && clip.y + clip.height > rect.y
+                                };
                                 for cell in cells {
+                                    let clip = PaintRect::new(
+                                        rect.x + cell.x,
+                                        top + cell.y,
+                                        cell.width,
+                                        cell.height,
+                                    );
+                                    if !in_slice(&clip) {
+                                        continue;
+                                    }
                                     events.push(PaintEvent::PushClip(
-                                        PaintClip::new(PaintRect::new(
-                                            rect.x + cell.x,
-                                            top + cell.y,
-                                            cell.width,
-                                            cell.height,
-                                        )),
+                                        PaintClip::new(clip),
                                         ClipKind::TableCell,
                                     ));
                                     events.push(PaintEvent::Box(fragment));
