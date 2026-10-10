@@ -28,6 +28,9 @@ Usage:
     scripts/wpt/haiku-judge-meta-assert.py batch-submit --review-dir target/meta-assert-review
     scripts/wpt/haiku-judge-meta-assert.py batch-collect --review-dir target/meta-assert-review
 
+    # list the tests the judge can decide, for prepare-meta-assert-review --tests
+    scripts/wpt/haiku-judge-meta-assert.py list-tests --path-prefix css/CSS2 --output judge-tests.txt
+
     # write the exact prompt per row without calling the API
     scripts/wpt/haiku-judge-meta-assert.py dump-prompts --review-dir target/meta-assert-review
 """
@@ -300,11 +303,14 @@ def command_run(args) -> int:
             message = api.messages.parse(
                 **request_params(args.model, text, png), output_format=verdict_model()
             )
+            # A refusal or a max_tokens stop can leave no schema-valid verdict.
+            if message.parsed_output is None:
+                raise ValueError(f"no verdict (stop_reason={message.stop_reason})")
+            verdict = to_cache_entry(message.parsed_output, message.usage)
+            cache.put(key, verdict)
         except Exception as error:  # one failed request must not discard the others
             print(f"{test_id}: {error}", file=sys.stderr)
             return None
-        verdict = to_cache_entry(message.parsed_output, message.usage)
-        cache.put(key, verdict)
         return test_id, verdict, False
 
     failed = 0
@@ -374,17 +380,55 @@ def command_batch_collect(args) -> int:
     verdict_type = verdict_model()
     for result in api.messages.batches.results(batch.id):
         entry = state["requests"][result.custom_id]
-        if result.result.type == "succeeded":
-            message = result.result.message
-            text = next(block.text for block in message.content if block.type == "text")
-            verdict = verdict_type.model_validate_json(text)
-            cache.put(entry["key"], to_cache_entry(verdict, message.usage))
-        else:
+        if result.result.type != "succeeded":
             failed += 1
             print(f"{entry['test_id']}: {result.result.type}", file=sys.stderr)
+            continue
+        message = result.result.message
+        try:
+            text = next(block.text for block in message.content if block.type == "text")
+            verdict = verdict_type.model_validate_json(text)
+        except Exception as error:  # a refused or truncated reply has no verdict
+            failed += 1
+            print(f"{entry['test_id']}: {error}", file=sys.stderr)
+            continue
+        cache.put(entry["key"], to_cache_entry(verdict, message.usage))
     print(f"collected {batch.id}; {failed} requests did not succeed")
-    # Every succeeded verdict is now cached, so a cache-only run writes the reviews.
-    return command_run(args) if failed == 0 else 1
+    # Every succeeded verdict is now cached. Write the reviews from the cache
+    # alone, so failed rows are left out instead of being sent again here.
+    args.max_requests = 0
+    status = command_run(args)
+    return 1 if failed else status
+
+
+# Reftest links may leave the rel value unquoted.
+REFTEST_LINK_RE = re.compile(r"""rel\s*=\s*["']?(?:match|mismatch)\b""", re.I)
+NON_TEST_RE = re.compile(r"(^|/)(support|reference)/|-ref\b|-notref\b")
+TEST_SUFFIXES = (".xht", ".xhtml", ".html", ".htm")
+
+
+def is_judge_candidate(test_id: str, source: str) -> bool:
+    """A test the judge can decide: no reference, no script, and a pass condition
+    that `pass_condition` knows how to extract."""
+    if NON_TEST_RE.search(test_id):
+        return False
+    if REFTEST_LINK_RE.search(source) or "<script" in source.lower():
+        return False
+    return any(pattern.search(source) for pattern in CONDITION_RES)
+
+
+def command_list_tests(args) -> int:
+    root = args.wpt_root.resolve()
+    ids = []
+    for path in sorted((root / args.path_prefix.strip("/")).rglob("*")):
+        if path.suffix not in TEST_SUFFIXES or not path.is_file():
+            continue
+        test_id = path.relative_to(root).as_posix()
+        if is_judge_candidate(test_id, path.read_text(errors="replace")):
+            ids.append(test_id)
+    args.output.write_text("".join(f"{test_id}\n" for test_id in ids))
+    print(f"{len(ids)} candidates")
+    return 0
 
 
 def command_dump_prompts(args) -> int:
@@ -424,8 +468,13 @@ def main() -> int:
                 type=non_negative_int,
                 help="judge at most N uncached rows; the rest wait for a later run",
             )
+    listing = sub.add_parser("list-tests", help="list tests the judge can decide")
+    listing.add_argument("--wpt-root", type=Path, default=Path("target/wpt"))
+    listing.add_argument("--path-prefix", default="css")
+    listing.add_argument("--output", type=Path, default=Path("judge-tests.txt"))
     args = parser.parse_args()
     handlers = {
+        "list-tests": command_list_tests,
         "run": command_run,
         "batch-submit": command_batch_submit,
         "batch-collect": command_batch_collect,

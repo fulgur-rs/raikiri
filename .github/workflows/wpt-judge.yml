@@ -60,34 +60,21 @@ jobs:
       - name: Build the review renderer
         run: cargo build --release --locked -p raikiri-wpt --bin prepare-meta-assert-review
 
+      - name: Setup mise
+        # Installs the uv pinned in mise.toml; uv then installs the judge's
+        # dependencies from the script's inline metadata.
+        uses: jdx/mise-action@v2
+        with:
+          install_args: uv
+
       - name: List tests without a reference
         env:
           PATH_PREFIX: ${{ inputs.path_prefix }}
         run: |
-          python3 -I - <<'EOF'
-          import os, re
-          from pathlib import Path
-          root = Path("target/wpt").resolve()
-          prefix = os.environ["PATH_PREFIX"].strip("/")
-          # Reftest links may leave the rel value unquoted.
-          link = re.compile(r'rel\s*=\s*["\']?(?:match|mismatch)\b', re.I)
-          skip = re.compile(r"(^|/)(support|reference)/|-ref\b|-notref\b")
-          ids = []
-          for path in sorted((root / prefix).rglob("*")):
-              if path.suffix not in (".xht", ".xhtml", ".html", ".htm"):
-                  continue
-              test_id = path.relative_to(root).as_posix()
-              if skip.search(test_id):
-                  continue
-              source = path.read_text(errors="replace")
-              if link.search(source) or "<script" in source.lower():
-                  continue
-              if not re.search(r"passes? if|\bto pass,", source, re.I):
-                  continue
-              ids.append(test_id)
-          print(f"{len(ids)} candidates")
-          Path("judge-tests.txt").write_text("\n".join(ids) + "\n")
-          EOF
+          uv run --script scripts/wpt/haiku-judge-meta-assert.py list-tests \
+            --wpt-root target/wpt \
+            --path-prefix "$PATH_PREFIX" \
+            --output judge-tests.txt
 
       - name: Render
         run: |
@@ -96,20 +83,13 @@ jobs:
             --tests judge-tests.txt \
             --output target/meta-assert-review
 
-      - name: Setup mise
-        # Installs the uv pinned in mise.toml; uv then installs the judge's
-        # dependencies from the script's inline metadata.
-        uses: jdx/mise-action@v2
-        with:
-          install_args: uv
-
       - name: Restore verdict cache
         # Verdicts are keyed by model, prompt, and PNG hash, so only changed
         # renderings cost anything on the next run.
         uses: actions/cache/restore@v4
         with:
           path: target/meta-assert-review/judge-cache
-          key: wpt-judge-${{ inputs.model }}-${{ github.run_id }}
+          key: wpt-judge-${{ inputs.model }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: wpt-judge-${{ inputs.model }}-
 
       - name: Judge
@@ -148,7 +128,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: target/meta-assert-review/judge-cache
-          key: wpt-judge-${{ inputs.model }}-${{ github.run_id }}
+          key: wpt-judge-${{ inputs.model }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload review
         if: always()
