@@ -518,6 +518,7 @@ fn marker_runs<'a>(
 ///
 /// With `starts`, also push the UTF-8 byte offset in the shaped text at
 /// which each pushed run's [`PositionedGlyphRun::text`] begins.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn standalone_runs<'a>(
     text: &'a crate::StandaloneText,
     origin: (f32, f32),
