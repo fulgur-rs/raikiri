@@ -293,6 +293,7 @@ pub struct RunningElementLayout {
     geometry: ResolvedPageGeometry,
     style: PageCascadeResult,
     height: f32,
+    pub(super) svg_sources: super::page::InlineSvgCache,
 }
 
 impl std::fmt::Debug for RunningElementLayout {
@@ -355,6 +356,7 @@ impl RunningElementLayout {
             page_count_deferred: false,
             paired_style: None,
             running: None,
+            svg_sources: &self.svg_sources,
         }
     }
 }
@@ -497,6 +499,7 @@ pub(crate) fn layout_running_element(
         geometry,
         style,
         height,
+        svg_sources: super::page::InlineSvgCache::default(),
     }))
 }
 

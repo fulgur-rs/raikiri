@@ -209,6 +209,9 @@ pub fn layout(
     let anchors = navigation::build_anchors(DomView::new(&out.document), &out);
     let running = build_running_index(&out);
     let running_layouts = running::LayoutCache::new(&running);
+    let svg_sources = (0..=out.continuations.len())
+        .map(|_| page::InlineSvgCache::default())
+        .collect();
     if signal.as_ref().is_some_and(|signal| signal.is_aborted()) {
         return Ok(LayoutStatus::Aborted);
     }
@@ -218,6 +221,7 @@ pub fn layout(
         rendered,
         running,
         running_layouts,
+        svg_sources,
     }))
 }
 
@@ -228,6 +232,9 @@ pub struct DocumentLayout {
     rendered: std::collections::HashSet<raikiri_traits::NodeId>,
     running: running::RunningIndex,
     running_layouts: running::LayoutCache,
+    /// Prepared inline SVG sources, one cache per laid-out document in
+    /// [`crate::render::PipelineOutput::layout_slot_for_page`] order.
+    svg_sources: Vec<page::InlineSvgCache>,
 }
 
 /// Index the running elements by the pages the rendered content around them
@@ -276,7 +283,9 @@ impl DocumentLayout {
     }
 
     fn page_at(&self, i: usize) -> Page<'_> {
-        let (document, cascade) = self.out.layout_for_page(self.out.slices[i].page_index);
+        let page_index = self.out.slices[i].page_index;
+        let (document, cascade) = self.out.layout_for_page(page_index);
+        let svg_sources = &self.svg_sources[self.out.layout_slot_for_page(page_index)];
         // A right page pairs with the left page before it; the first page,
         // which has none, pairs with the one after it.
         let paired_style = if self.out.slices[i].page_index % 2 == 1 {
@@ -296,6 +305,7 @@ impl DocumentLayout {
             page_count_deferred: false,
             paired_style,
             running: Some(self.running_source()),
+            svg_sources,
         }
     }
 
