@@ -879,11 +879,15 @@ fn record_nested_ifc_box_fragments(
     };
     let subtree_has_float = multicol_subtree_has_float(tree, subtree_root);
     let mut existing_fragments = std::collections::HashMap::<(usize, usize), usize>::new();
-    let mut pending = vec![subtree_root];
-    while let Some(node_id) = pending.pop() {
-        let nested_row_flex_scope = nested_row_flex_float_scope(tree, node_id);
-        let nested_logical_minimum_scope =
-            nested_logical_min_block_size_scope(tree, node_id, subtree_root);
+    // Both scopes are properties of a node's ancestor chain. Carry them down
+    // the traversal instead of walking to the root again for every node.
+    let mut pending = vec![(
+        subtree_root,
+        FlexFloatChain::of_ancestors(tree, subtree_root),
+        tree.nodes[subtree_root].has_logical_min_block_size,
+    )];
+    while let Some((node_id, flex_float_chain, nested_logical_minimum_scope)) = pending.pop() {
+        let nested_row_flex_scope = flex_float_chain.is_scope();
         let lines = tree.nodes[node_id]
             .ifc
             .as_ref()
@@ -969,10 +973,26 @@ fn record_nested_ifc_box_fragments(
             }
         }
         if !placements.is_empty() || line_ranges.is_some() {
-            let mut columns = std::collections::BTreeSet::new();
-            columns.extend(placements.iter().map(|placement| placement.fragmentainer));
+            // Index ranges and placements by column once; scanning every
+            // range and placement again for each column is quadratic in the
+            // column count. A column takes its first range, as in source
+            // order, together with that range's ordinal.
+            let mut columns = std::collections::BTreeMap::<usize, ColumnEntries>::new();
+            for (index, placement) in placements.iter().enumerate() {
+                columns
+                    .entry(placement.fragmentainer)
+                    .or_default()
+                    .placements
+                    .push(index);
+            }
             if let Some(ranges) = &line_ranges {
-                columns.extend(ranges.iter().map(|range| range.fragmentainer));
+                for (index, range) in ranges.iter().enumerate() {
+                    columns
+                        .entry(range.fragmentainer)
+                        .or_default()
+                        .range
+                        .get_or_insert((index, *range));
+                }
             }
 
             let mut path = Vec::new();
@@ -998,13 +1018,10 @@ fn record_nested_ifc_box_fragments(
                 .map(|&ancestor| tree.nodes[ancestor].unrounded_layout.location.y)
                 .sum::<f32>();
 
-            for column in columns {
+            for (column, entries) in columns {
                 let column_x =
                     context.column_offset_x(column) - context.column_offset_x(context.column_index);
-                let line_range = line_ranges
-                    .as_ref()
-                    .and_then(|ranges| ranges.iter().find(|range| range.fragmentainer == column))
-                    .copied();
+                let line_range = entries.range.map(|(_, range)| range);
                 let line_bottom = line_range
                     .and_then(|range| {
                         lines
@@ -1032,15 +1049,7 @@ fn record_nested_ifc_box_fragments(
                     && tree.fragment_tree.fragments[parent_fragment].node_id == node_id
                 {
                     let base = tree.fragment_tree.fragments[parent_fragment];
-                    let fragment_index = line_ranges
-                        .as_ref()
-                        .and_then(|ranges| {
-                            ranges.iter().position(|candidate| {
-                                candidate.fragmentainer == column
-                                    && candidate.line_start == range.line_start
-                            })
-                        })
-                        .unwrap_or(0);
+                    let fragment_index = entries.range.map_or(0, |(index, _)| index);
                     let fragment_count = line_ranges.as_ref().map_or(1, Vec::len);
                     let used_line_height = lines
                         .as_ref()
@@ -1175,10 +1184,7 @@ fn record_nested_ifc_box_fragments(
                     };
                 }
 
-                for placement in placements
-                    .iter()
-                    .filter(|placement| placement.fragmentainer == column)
-                {
+                for placement in entries.placements.iter().map(|&index| &placements[index]) {
                     let fragment_id =
                         tree.fragment_tree
                             .try_push(crate::fragment::LayoutFragment {
@@ -1213,10 +1219,123 @@ fn record_nested_ifc_box_fragments(
                 .filter(|&child| {
                     tree.nodes[child].is_in_document()
                         && tree.nodes[child].style.display != Display::None
+                })
+                .map(|child| {
+                    (
+                        child,
+                        flex_float_chain.below(tree, child),
+                        nested_logical_minimum_scope
+                            || tree.nodes[child].has_logical_min_block_size,
+                    )
                 }),
         );
     }
     Some(())
+}
+
+/// The ranges and placements of one nested node that land in one column.
+#[derive(Default)]
+struct ColumnEntries {
+    /// The first line range in the column and its ordinal among all ranges.
+    range: Option<(usize, MulticolTextFragment)>,
+    /// Indices of the column's box placements, in source order.
+    placements: Vec<usize>,
+}
+
+/// What a node's ancestor chain, the node included, contributes to the
+/// row-flex float scope: walking up, the chain ends at the nearest vertical
+/// writing mode (no scope) or multicol container. Floats count up to and
+/// including that container; row flex boxes count only below it.
+#[derive(Clone, Copy)]
+enum FlexFloatChain {
+    /// Neither a multicol container nor a vertical writing mode above.
+    Open,
+    /// A vertical writing mode comes before any multicol container.
+    Vertical,
+    Multicol {
+        horizontal: bool,
+        row_flex: bool,
+        float: bool,
+    },
+}
+
+impl FlexFloatChain {
+    fn of_ancestors(tree: &Document, node_id: usize) -> Self {
+        let mut chain = Vec::new();
+        let mut current = Some(node_id);
+        while let Some(id) = current {
+            chain.push(id);
+            current = tree.parent_of(id);
+        }
+        chain
+            .into_iter()
+            .rev()
+            .fold(Self::Open, |above, id| above.below(tree, id))
+    }
+
+    /// The chain of `node_id`, whose parent's chain is `self`.
+    fn below(self, tree: &Document, node_id: usize) -> Self {
+        let node = &tree.nodes[node_id];
+        let float = node.style.float.is_floated()
+            || node
+                .ifc
+                .as_ref()
+                .and_then(|root| root.lines.as_ref())
+                .is_some_and(|lines| {
+                    lines
+                        .fragment_box_placements
+                        .iter()
+                        .any(|placement| tree.nodes[placement.node_id].style.float.is_floated())
+                });
+        if matches!(
+            node.authored_writing_mode,
+            Some(
+                raikiri_style::property::WritingMode::VerticalRl
+                    | raikiri_style::property::WritingMode::VerticalLr
+                    | raikiri_style::property::WritingMode::SidewaysRl
+                    | raikiri_style::property::WritingMode::SidewaysLr
+            )
+        ) {
+            return Self::Vertical;
+        }
+        if let Some(multicol) = node.multicol {
+            return Self::Multicol {
+                horizontal: multicol.horizontal,
+                row_flex: false,
+                float,
+            };
+        }
+        let row_flex = node.style.display == Display::Flex
+            && matches!(
+                node.style.flex_direction,
+                taffy::FlexDirection::Row | taffy::FlexDirection::RowReverse
+            );
+        match self {
+            Self::Multicol {
+                horizontal,
+                row_flex: above_row_flex,
+                float: above_float,
+            } => Self::Multicol {
+                horizontal,
+                row_flex: above_row_flex || row_flex,
+                float: above_float || float,
+            },
+            other => other,
+        }
+    }
+
+    /// Whether a row flex box and a float share the nearest horizontal
+    /// multicol container.
+    fn is_scope(self) -> bool {
+        matches!(
+            self,
+            Self::Multicol {
+                horizontal: true,
+                row_flex: true,
+                float: true,
+            }
+        )
+    }
 }
 
 fn extend_fragment_clip(fragment: &mut crate::fragment::LayoutFragment, height: f32) {
@@ -1236,24 +1355,6 @@ fn multicol_subtree_has_float(tree: &Document, subtree_root: usize) -> bool {
             return true;
         }
         pending.extend(node.children.iter().copied());
-    }
-    false
-}
-
-fn nested_logical_min_block_size_scope(
-    tree: &Document,
-    node_id: usize,
-    subtree_root: usize,
-) -> bool {
-    let mut current = Some(node_id);
-    while let Some(ancestor) = current {
-        if tree.nodes[ancestor].has_logical_min_block_size {
-            return true;
-        }
-        if ancestor == subtree_root {
-            return false;
-        }
-        current = tree.parent_of(ancestor);
     }
     false
 }
@@ -1408,8 +1509,6 @@ fn refresh_nested_text_fragments(
         } else {
             context
         };
-    let nested_row_flex_scope = nested_row_flex_float_scope(tree, node_id);
-    let is_floated = tree.nodes[node_id].style.float.is_floated();
     let float_fragmentainer = tree.parent_of(node_id).and_then(|parent| {
         let parent_root = tree.nodes[parent].ifc.as_ref()?;
         parent_root
@@ -1420,6 +1519,28 @@ fn refresh_nested_text_fragments(
             .find(|placement| placement.node_id == node_id)
             .map(|placement| placement.fragmentainer)
     });
+    refresh_nested_text_fragments_in(
+        tree,
+        node_id,
+        context,
+        FlexFloatChain::of_ancestors(tree, node_id),
+        float_fragmentainer,
+    );
+}
+
+/// `chain` is the row-flex float chain of `node_id`, and
+/// `float_fragmentainer` the column of its first placement in its parent's
+/// paragraph. Both are carried down so that the subtree walk does not search
+/// ancestors or sibling placements again for every node.
+fn refresh_nested_text_fragments_in(
+    tree: &mut Document,
+    node_id: usize,
+    context: FragmentationContext,
+    chain: FlexFloatChain,
+    float_fragmentainer: Option<usize>,
+) {
+    let nested_row_flex_scope = chain.is_scope();
+    let is_floated = tree.nodes[node_id].style.float.is_floated();
     // A paragraph laid out by the inline engine keeps its lines on its root:
     // its fragments go there, and only its boxes hold text of their own.
     if let Some(root) = tree.nodes[node_id].ifc.as_mut() {
@@ -1485,59 +1606,58 @@ fn refresh_nested_text_fragments(
                 })
             })
         };
+        let mut first_columns = HashMap::<usize, usize>::new();
+        if let Some(lines) = tree.nodes[node_id]
+            .ifc
+            .as_ref()
+            .and_then(|root| root.lines.as_ref())
+        {
+            for placement in &lines.fragment_box_placements {
+                first_columns
+                    .entry(placement.node_id)
+                    .or_insert(placement.fragmentainer);
+            }
+        }
         let boxes = tree.nodes[node_id].ifc_boxes();
         for child in boxes {
-            refresh_nested_text_fragments(tree, child, context);
+            // A box may sit inside inline elements of the paragraph; only
+            // those elements lie between it and this root.
+            let mut between = Vec::new();
+            let mut current = tree.parent_of(child);
+            while let Some(id) = current.filter(|&id| id != node_id) {
+                between.push(id);
+                current = tree.parent_of(id);
+            }
+            let child_chain = if current.is_some() {
+                between
+                    .into_iter()
+                    .rev()
+                    .fold(chain, |above, id| above.below(tree, id))
+                    .below(tree, child)
+            } else {
+                FlexFloatChain::of_ancestors(tree, child) // cov:ignore: paragraph boxes are descendants of their root.
+            };
+            let float_fragmentainer = (tree.parent_of(child) == Some(node_id))
+                .then(|| first_columns.get(&child).copied())
+                .flatten();
+            refresh_nested_text_fragments_in(
+                tree,
+                child,
+                context,
+                child_chain,
+                float_fragmentainer,
+            );
         }
         return;
     }
+    // This node has no paragraph, so no child has a placement in it.
     let children = tree.nodes[node_id].children.clone();
     for child in children {
         if tree.nodes[child].is_in_document() && tree.nodes[child].style.display != Display::None {
-            refresh_nested_text_fragments(tree, child, context);
+            let child_chain = chain.below(tree, child);
+            refresh_nested_text_fragments_in(tree, child, context, child_chain, None);
         }
     }
-}
-
-fn nested_row_flex_float_scope(tree: &Document, node_id: usize) -> bool {
-    let mut has_row_flex = false;
-    let mut has_float = false;
-    let mut ancestor = Some(node_id);
-    while let Some(current) = ancestor {
-        let node = &tree.nodes[current];
-        has_float |= node.style.float.is_floated()
-            || node
-                .ifc
-                .as_ref()
-                .and_then(|root| root.lines.as_ref())
-                .is_some_and(|lines| {
-                    lines
-                        .fragment_box_placements
-                        .iter()
-                        .any(|placement| tree.nodes[placement.node_id].style.float.is_floated())
-                });
-        if matches!(
-            node.authored_writing_mode,
-            Some(
-                raikiri_style::property::WritingMode::VerticalRl
-                    | raikiri_style::property::WritingMode::VerticalLr
-                    | raikiri_style::property::WritingMode::SidewaysRl
-                    | raikiri_style::property::WritingMode::SidewaysLr
-            )
-        ) {
-            return false;
-        }
-        if let Some(multicol) = node.multicol {
-            return has_row_flex && has_float && multicol.horizontal;
-        }
-        has_row_flex |= node.style.display == Display::Flex
-            && matches!(
-                node.style.flex_direction,
-                taffy::FlexDirection::Row | taffy::FlexDirection::RowReverse
-            );
-        ancestor = tree.parent_of(current);
-    }
-    false
 }
 
 // The foundational projection turns a block multicol container with inline
@@ -1612,8 +1732,21 @@ pub(crate) fn refresh_projected_multicol_text_fragments(tree: &mut Document) {
             continue;
         }
 
-        let mut pending = tree.nodes[container_id].children.clone();
-        while let Some(node_id) = pending.pop() {
+        // Carry each node's inline offset from the container down the walk
+        // instead of summing it over the ancestors of every paragraph.
+        let offset_below = |tree: &Document, parent: usize, parent_offset: Option<f32>, child| {
+            if tree.layout_parent_of(child) == Some(parent) {
+                parent_offset.map(|offset| offset + tree.nodes[child].unrounded_layout.location.x)
+            } else {
+                layout_offset_from_ancestor(tree, child, container_id) // cov:ignore: arena children share their layout parent.
+            }
+        };
+        let mut pending: Vec<_> = tree.nodes[container_id]
+            .children
+            .iter()
+            .map(|&child| (child, offset_below(tree, container_id, Some(0.0), child)))
+            .collect();
+        while let Some((node_id, inline_offset)) = pending.pop() {
             let node = &tree.nodes[node_id];
             if !node.is_in_document() || node.style.display == Display::None {
                 continue;
@@ -1641,8 +1774,7 @@ pub(crate) fn refresh_projected_multicol_text_fragments(tree: &mut Document) {
                     let ranges = if let Some(committed) = committed_ranges {
                         committed
                     } else if !extents.is_empty()
-                        && let Some(inline_offset) =
-                            layout_offset_from_ancestor(tree, node_id, container_id)
+                        && let Some(inline_offset) = inline_offset
                     {
                         let first_column = ((inline_offset.max(0.0) / column_step).floor()
                             as usize)
@@ -1671,7 +1803,12 @@ pub(crate) fn refresh_projected_multicol_text_fragments(tree: &mut Document) {
                     }
                 }
             }
-            pending.extend(tree.nodes[node_id].children.iter().copied());
+            pending.extend(
+                tree.nodes[node_id]
+                    .children
+                    .iter()
+                    .map(|&child| (child, offset_below(tree, node_id, inline_offset, child))),
+            );
         }
     }
 }
@@ -1694,47 +1831,6 @@ pub(crate) struct MulticolMetrics {
     column_count: usize,
     /// Used gap between adjacent columns.
     column_gap: f32,
-}
-
-// cov:ignore: exercised by the ignored foundation WPT run; default coverage skips ignored reftests.
-fn computed_content_width(
-    cascade: &CascadeResult,
-    parent_of: &[Option<usize>],
-    node_id: usize,
-    fallback: f32,
-) -> f32 {
-    let parent_width = parent_of[node_id]
-        .map(|parent| computed_content_width(cascade, parent_of, parent, fallback))
-        .unwrap_or(fallback);
-    match cascade.computed[node_id].width {
-        ComputedLengthPercentageOrAuto::Px(value) if value.is_finite() => value.max(0.0),
-        ComputedLengthPercentageOrAuto::Percent(value) if value.is_finite() => {
-            (parent_width * value / 100.0).max(0.0)
-        }
-        _ => parent_width.max(0.0),
-    }
-}
-
-// cov:ignore: exercised by the ignored foundation WPT run; default coverage skips ignored reftests.
-pub(crate) fn authored_containing_width(
-    cascade: &CascadeResult,
-    parent_of: &[Option<usize>],
-    node_id: usize,
-    fallback: f32,
-) -> Option<f32> {
-    let mut ancestor = parent_of.get(node_id).copied().flatten();
-    while let Some(id) = ancestor {
-        // A `min-content` width is intrinsic, not an authored containing
-        // width; keep searching like `auto`.
-        if !matches!(
-            cascade.computed[id].width,
-            ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::MinContent
-        ) {
-            return Some(computed_content_width(cascade, parent_of, id, fallback));
-        }
-        ancestor = parent_of.get(id).copied().flatten();
-    }
-    None
 }
 
 // Text shaping must use the same measured `ch` width that Taffy will use.
@@ -1805,66 +1901,71 @@ fn has_nonzero_horizontal_margin(cv: &ComputedValues) -> bool {
     !is_zero(cv.margin.left) || !is_zero(cv.margin.right)
 }
 
-// cov:ignore: exercised by ignored WPT regression and multicol reftests; default coverage skips ignored reftests.
-fn has_non_block_flow_ancestor(
-    cascade: &CascadeResult,
-    parent_of: &[Option<usize>],
-    node_id: usize,
-) -> bool {
-    let mut current = parent_of.get(node_id).copied().flatten();
-    while let Some(id) = current {
-        if matches!(
-            cascade.computed[id].display,
-            DisplayValue::Flex
-                | DisplayValue::InlineFlex
-                | DisplayValue::Grid
-                | DisplayValue::InlineGrid
-                | DisplayValue::Table
-                | DisplayValue::InlineTable
-                | DisplayValue::TableRowGroup
-                | DisplayValue::TableHeaderGroup
-                | DisplayValue::TableFooterGroup
-                | DisplayValue::TableRow
-                | DisplayValue::TableColumnGroup
-                | DisplayValue::TableColumn
-                | DisplayValue::TableCell
-                | DisplayValue::TableCaption
-        ) {
-            return true;
-        }
-        current = parent_of.get(id).copied().flatten();
-    }
-    false
+/// Ancestor-chain facts for every node of the arena, derived once with each
+/// parent resolved before its children. The multicol preparation pass asks
+/// these questions of every element; walking to the root for each one would
+/// cost the node count times the tree depth.
+struct AncestorFacts {
+    /// A strict ancestor is a multicol container.
+    multicol_ancestor: Vec<bool>,
+    /// The node or an ancestor has a vertical or sideways writing mode.
+    vertical: Vec<bool>,
+    /// A strict ancestor is absolutely or fixed positioned.
+    out_of_flow_ancestor: Vec<bool>,
+    /// A strict ancestor establishes a flex, grid, or table formatting context.
+    non_block_flow_ancestor: Vec<bool>,
+    /// The cascade-derived content width: a definite `px` or percentage
+    /// width resolved against the parent's, else the parent's own.
+    content_width: Vec<f32>,
+    /// The nearest strict ancestor whose authored width is neither `auto`
+    /// nor `min-content`; a `min-content` width is intrinsic, not an
+    /// authored containing width.
+    authored_ancestor: Vec<Option<usize>>,
 }
 
-// cov:ignore: exercised by ignored WPT regression and multicol reftests; default coverage skips ignored reftests.
-pub(crate) fn has_out_of_flow_ancestor(
-    cascade: &CascadeResult,
-    parent_of: &[Option<usize>],
-    node_id: usize,
-) -> bool {
-    let mut current = parent_of.get(node_id).copied().flatten();
-    while let Some(id) = current {
-        if matches!(
-            cascade.computed[id].position,
-            PositionValue::Absolute | PositionValue::Fixed
-        ) {
-            return true;
+impl AncestorFacts {
+    fn new(
+        doc: &Document,
+        cascade: &CascadeResult,
+        parent_of: &[Option<usize>],
+        fallback_width: f32,
+    ) -> Self {
+        let count = parent_of.len();
+        let mut facts = Self {
+            multicol_ancestor: vec![false; count],
+            vertical: vec![false; count],
+            out_of_flow_ancestor: vec![false; count],
+            non_block_flow_ancestor: vec![false; count],
+            content_width: vec![0.0; count],
+            authored_ancestor: vec![None; count],
+        };
+        let mut resolved = vec![false; count];
+        let mut chain = Vec::new();
+        for start in 0..count {
+            // Collect the unresolved part of this node's chain, then resolve
+            // it from the top down. Every node is resolved exactly once.
+            let mut current = Some(start);
+            while let Some(id) = current.filter(|&id| !resolved[id]) {
+                resolved[id] = true;
+                chain.push(id);
+                current = parent_of[id];
+            }
+            while let Some(id) = chain.pop() {
+                facts.resolve(doc, cascade, parent_of[id], id, fallback_width);
+            }
         }
-        current = parent_of.get(id).copied().flatten();
+        facts
     }
-    false
-}
 
-// cov:ignore: writing-mode fallback is covered by the ignored precision WPT run.
-pub(crate) fn has_vertical_writing_mode(
-    cascade: &CascadeResult,
-    parent_of: &[Option<usize>],
-    node_id: usize,
-) -> bool {
-    let mut current = Some(node_id);
-    while let Some(id) = current {
-        if matches!(
+    fn resolve(
+        &mut self,
+        doc: &Document,
+        cascade: &CascadeResult,
+        parent: Option<usize>,
+        id: usize,
+        fallback_width: f32,
+    ) {
+        let vertical_self = matches!(
             cascade
                 .authored_writing_modes
                 .get(id)
@@ -1875,32 +1976,68 @@ pub(crate) fn has_vertical_writing_mode(
                     | WritingMode::SidewaysRl
                     | WritingMode::SidewaysLr
             )
+        );
+        let parent_width = parent.map_or(fallback_width, |parent| self.content_width[parent]);
+        self.content_width[id] = match cascade.computed[id].width {
+            ComputedLengthPercentageOrAuto::Px(value) if value.is_finite() => value.max(0.0),
+            ComputedLengthPercentageOrAuto::Percent(value) if value.is_finite() => {
+                (parent_width * value / 100.0).max(0.0)
+            }
+            _ => parent_width.max(0.0),
+        };
+        let Some(parent) = parent else {
+            self.vertical[id] = vertical_self;
+            return;
+        };
+        let values = &cascade.computed[parent];
+        self.multicol_ancestor[id] =
+            self.multicol_ancestor[parent] || doc.nodes[parent].multicol.is_some();
+        self.vertical[id] = vertical_self || self.vertical[parent];
+        self.out_of_flow_ancestor[id] = self.out_of_flow_ancestor[parent]
+            || matches!(
+                values.position,
+                PositionValue::Absolute | PositionValue::Fixed
+            );
+        self.non_block_flow_ancestor[id] = self.non_block_flow_ancestor[parent]
+            || matches!(
+                values.display,
+                DisplayValue::Flex
+                    | DisplayValue::InlineFlex
+                    | DisplayValue::Grid
+                    | DisplayValue::InlineGrid
+                    | DisplayValue::Table
+                    | DisplayValue::InlineTable
+                    | DisplayValue::TableRowGroup
+                    | DisplayValue::TableHeaderGroup
+                    | DisplayValue::TableFooterGroup
+                    | DisplayValue::TableRow
+                    | DisplayValue::TableColumnGroup
+                    | DisplayValue::TableColumn
+                    | DisplayValue::TableCell
+                    | DisplayValue::TableCaption
+            );
+        self.authored_ancestor[id] = if matches!(
+            values.width,
+            ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::MinContent
         ) {
-            return true;
-        }
-        current = parent_of.get(id).copied().flatten();
+            self.authored_ancestor[parent]
+        } else {
+            Some(parent)
+        };
     }
-    false
-}
 
-// cov:ignore: nested recursion is exercised by the ignored nested WPT reftests.
-fn has_multicol_ancestor(doc: &Document, parent_of: &[Option<usize>], node_id: usize) -> bool {
-    let mut current = parent_of.get(node_id).copied().flatten();
-    while let Some(parent) = current {
-        if doc.nodes[parent].multicol.is_some() {
-            return true;
-        }
-        current = parent_of.get(parent).copied().flatten();
+    /// The content width of the nearest authored-width ancestor.
+    fn authored_containing_width(&self, id: usize) -> Option<f32> {
+        self.authored_ancestor[id].map(|ancestor| self.content_width[ancestor])
     }
-    false
 }
 
 // cov:ignore: exercised by the ignored foundation WPT run; default coverage skips ignored reftests.
-pub(crate) fn multicol_metrics_for_node(
+// `container_width` is the node's cascade-derived content width.
+fn multicol_metrics_with_width(
     cascade: &CascadeResult,
-    parent_of: &[Option<usize>],
     node_id: usize,
-    fallback_width: f32,
+    container_width: f32,
 ) -> Option<MulticolMetrics> {
     let cv = &cascade.computed[node_id];
     let declared_count = match cv.column_count {
@@ -1917,7 +2054,6 @@ pub(crate) fn multicol_metrics_for_node(
     if declared_count.is_none() && declared_width.is_none() {
         return None;
     }
-    let container_width = computed_content_width(cascade, parent_of, node_id, fallback_width);
     if !container_width.is_finite() || container_width <= 0.0 {
         return None;
     }
@@ -2038,6 +2174,7 @@ pub(crate) fn prepare_multicol_layout(
             }
         }
     }
+    let ancestors = AncestorFacts::new(doc, cascade, &parent_of, fallback_width);
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() != NodeKind::Element {
             continue;
@@ -2045,7 +2182,7 @@ pub(crate) fn prepare_multicol_layout(
         // Used widths for descendants of a multicol container are supplied by
         // the recursive Taffy seam. Do not pre-project them from cascade
         // fallback widths; that was the source of the nested-width bug.
-        if has_multicol_ancestor(doc, &parent_of, idx) {
+        if ancestors.multicol_ancestor[idx] {
             continue;
         }
         // A box of a paragraph laid out by the inline engine (a child of its
@@ -2059,7 +2196,7 @@ pub(crate) fn prepare_multicol_layout(
             || cv.overflow.y != OverflowValue::Visible;
         let engine_box = engine_sized
             && !doc.nodes[idx].in_ifc_subtree()
-            && parent_of[idx].is_some_and(|parent| {
+            && parent_of.get(idx).copied().flatten().is_some_and(|parent| {
                 doc.nodes[parent].is_ifc_root() || doc.nodes[parent].in_ifc_subtree()
             });
         if engine_box {
@@ -2071,12 +2208,12 @@ pub(crate) fn prepare_multicol_layout(
         ) && matches!(
             cascade.computed[idx].display,
             DisplayValue::Block | DisplayValue::InlineBlock
-        ) && !has_vertical_writing_mode(cascade, &parent_of, idx)
+        ) && !ancestors.vertical[idx]
             && matches!(cascade.computed[idx].position, PositionValue::Static)
             && !has_nonzero_horizontal_margin(&cascade.computed[idx])
-            && !has_out_of_flow_ancestor(cascade, &parent_of, idx)
-            && !has_non_block_flow_ancestor(cascade, &parent_of, idx)
-            && let Some(width) = authored_containing_width(cascade, &parent_of, idx, fallback_width)
+            && !ancestors.out_of_flow_ancestor[idx]
+            && !ancestors.non_block_flow_ancestor[idx]
+            && let Some(width) = ancestors.authored_containing_width(idx)
         {
             doc.nodes[idx].style.size.width = Dimension::length(width);
         }
@@ -2085,13 +2222,10 @@ pub(crate) fn prepare_multicol_layout(
         if doc.nodes[idx].kind() != NodeKind::Element {
             continue;
         }
-        if has_multicol_ancestor(doc, &parent_of, idx) {
+        if ancestors.multicol_ancestor[idx] || ancestors.vertical[idx] {
             continue;
         }
-        if has_vertical_writing_mode(cascade, &parent_of, idx) {
-            continue;
-        }
-        let Some(metrics) = multicol_metrics_for_node(cascade, &parent_of, idx, fallback_width)
+        let Some(metrics) = multicol_metrics_with_width(cascade, idx, ancestors.content_width[idx])
         else {
             continue;
         };
