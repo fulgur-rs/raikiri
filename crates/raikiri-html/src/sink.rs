@@ -45,8 +45,10 @@ pub struct RaikiriTreeSink {
     /// Document yet. The tokenizer splits a text run at
     /// every input chunk boundary, and merging each piece into the Document's
     /// immutable text storage would copy the whole run again per piece.
-    /// Every other tree mutation calls [`RaikiriTreeSink::flush_text`] first,
-    /// so the text lands at the same position it always did.
+    /// Every other tree mutation and every node creation calls
+    /// [`RaikiriTreeSink::flush_text`] first, so the text lands at the same
+    /// position and gets the same node id it always did, however the input
+    /// was split.
     pending_text: RefCell<Option<(TextTarget, String)>>,
 }
 
@@ -79,6 +81,7 @@ impl RaikiriTreeSink {
     /// Here, only register the tag and default Style in the Document and store
     /// full-fidelity metadata in the side tables.
     fn make_element(&self, name: QualName, attrs: Vec<Attribute>) -> usize {
+        self.flush_text();
         let tag: SmolStr = AsRef::<str>::as_ref(&name.local).into();
         let idx =
             self.document
@@ -302,6 +305,7 @@ impl TreeSink for RaikiriTreeSink {
         // (previously a "#comment" pseudo-tag Element stripped in sink.finish).
         // Allocate detached (parent=None); html5ever later attaches it with
         // append(parent, ...).
+        self.flush_text();
         self.document
             .borrow_mut()
             .append_comment(None, text.to_string())
@@ -310,6 +314,7 @@ impl TreeSink for RaikiriTreeSink {
     fn create_pi(&self, target: StrTendril, data: StrTendril) -> usize {
         // Persist as a NodeData::ProcessingInstruction variant
         // (previously a "#pi" pseudo-tag Element that was stripped).
+        self.flush_text();
         self.document.borrow_mut().append_processing_instruction(
             None,
             target.to_string(),

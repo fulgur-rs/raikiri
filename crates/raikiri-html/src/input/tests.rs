@@ -220,6 +220,28 @@ fn text_split_across_reads_stays_one_text_node() {
 }
 
 #[test]
+fn text_gets_its_node_id_before_the_next_element_is_created() {
+    let doc = parse("<p>lead<b>x</b></p>".as_bytes(), &options()).expect("parse");
+    let mut lead = None;
+    let mut bold = None;
+    for id in (0..doc.dom.node_count() as u64).map(raikiri_traits::NodeId) {
+        let Some(node) = doc.dom.node(id) else {
+            continue;
+        };
+        if node.text_content() == Some("lead") {
+            lead = Some(id.0);
+        }
+        if node.as_element().is_some_and(|el| el.tag_name() == "b") {
+            bold = Some(id.0);
+        }
+    }
+    assert!(
+        lead.expect("text") < bold.expect("element"),
+        "ids follow the tree builder's order"
+    );
+}
+
+#[test]
 fn foster_parented_text_merges_with_the_text_before_the_table() {
     let html = "<div>lead<table>a&amp;b<tr><td>c</td></tr></table></div>";
     let doc = parse(html.as_bytes(), &options()).expect("parse");
