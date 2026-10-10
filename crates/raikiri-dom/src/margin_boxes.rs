@@ -177,7 +177,7 @@ impl DeferredSlot {
 }
 
 /// A glyph of [`MarginBox::text_runs`] that shows part of a deferred slot.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct DeferredGlyph {
     /// Index into [`MarginBox::deferred`].
@@ -186,6 +186,11 @@ pub struct DeferredGlyph {
     pub run: usize,
     /// Index into that run's glyphs.
     pub glyph: usize,
+    /// UTF-8 byte range of [`MarginBox::content`] the glyph shows. A
+    /// ligature that joins the placeholder with neighboring text reaches
+    /// past [`DeferredSlot::range`]; whoever replaces the glyph also draws
+    /// the content outside the slot range in its place.
+    pub text_range: Range<usize>,
 }
 
 /// The `element(<name>, <fetch>)` a page-margin box shows, and where.
@@ -315,6 +320,7 @@ impl MarginBox {
                         slot,
                         run: run_index,
                         glyph: glyph_index,
+                        text_range: range.clone(),
                     });
                 }
             }
@@ -811,9 +817,13 @@ fn resolved_margin_content(
             // The placeholder is a large number. Styles such as `symbolic`
             // grow linearly with the value, so a placeholder far longer than
             // its decimal form is shown in decimal; the slot's final text
-            // still uses the requested style.
+            // still uses the requested style. An empty placeholder is shown
+            // in decimal too, so the slot keeps glyphs that mark where the
+            // final text goes.
             let decimal = value.to_string();
-            if formatted.chars().count() > MAX_PLACEHOLDER_WIDENING * decimal.len() {
+            if formatted.is_empty()
+                || formatted.chars().count() > MAX_PLACEHOLDER_WIDENING * decimal.len()
+            {
                 formatted = decimal;
             }
         }

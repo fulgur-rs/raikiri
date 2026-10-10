@@ -570,6 +570,16 @@ fn a_deferred_page_count_marks_its_placeholder() {
     for glyph in &glyphs {
         let run = &runs[glyph.run];
         let shown = &run.text[run.glyphs[glyph.glyph].text_range.clone()];
+        assert_eq!(
+            &head.content[glyph.text_range.clone()],
+            shown,
+            "glyph text range of slot {}",
+            glyph.slot
+        );
+        assert!(
+            head.deferred[glyph.slot].range.start <= glyph.text_range.start
+                && glyph.text_range.end <= head.deferred[glyph.slot].range.end
+        );
         let expected = if glyph.slot == 0 { "9" } else { "CMXIV" };
         assert!(
             expected.contains(shown),
@@ -599,6 +609,29 @@ fn a_deferred_page_count_in_a_linear_style_is_shown_in_decimal() {
     assert_eq!(head.content, "99999");
     assert_eq!(head.deferred[0].range, 0..5);
     assert_eq!(head.deferred[0].text(3), "xxx");
+}
+
+#[test]
+fn an_empty_deferred_placeholder_is_shown_in_decimal() {
+    let (doc, cascade) = page_cascade_fixture(
+        "@counter-style pair { system: cyclic; symbols: '' 'X' } \
+         @page { margin: 40px; \
+           @top-left { content: 'of ' counter(pages, pair); font-family: Ahem; font-size: 10px } }",
+    );
+    let boxes = page_margin_boxes(
+        &doc,
+        &cascade,
+        &cascade.page,
+        small_page(),
+        MarginBoxPageContext::new(0, 99_999, false).with_deferred_page_count(),
+    );
+    let [head] = boxes.as_slice() else {
+        panic!("one box: {boxes:?}");
+    };
+    assert_eq!(head.content, "of 99999");
+    assert_eq!(head.deferred[0].range, 3..8);
+    assert_eq!(head.deferred[0].text(2), "X");
+    assert_eq!(head.deferred_glyphs().len(), 5);
 }
 
 #[test]
