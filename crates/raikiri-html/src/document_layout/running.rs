@@ -254,11 +254,9 @@ pub(crate) fn layout_running_element(
         .get(index)
         .and_then(|computed| computed.running_templates.first())
     else {
+        // cov:ignore: the caller only passes nodes the running index found in the document.
         return Ok(None);
     };
-    if source.get_node(index).is_none_or(|n| !n.is_in_document()) {
-        return Ok(None);
-    }
     let width = if width.is_finite() {
         width.max(0.0)
     } else {

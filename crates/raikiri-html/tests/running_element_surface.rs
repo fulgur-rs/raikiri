@@ -208,3 +208,77 @@ fn only_running_elements_have_a_running_layout() {
             .is_none()
     );
 }
+
+#[test]
+fn a_running_element_after_all_content_is_assigned_on_the_last_page() {
+    let result = lay_out(
+        r#"<!-- note --><p>one</p><p style="break-before: page">two</p>
+           <div class="hdr" id="tail">Tail</div>"#,
+    );
+    assert_eq!(result.page_count(), 2);
+    let pick = |page: u32| {
+        result
+            .page(page)
+            .expect("page")
+            .running_element("hdr", StringFetchMode::First)
+            .and_then(|node| id_of(&result, node))
+    };
+    assert_eq!(pick(0), None);
+    assert_eq!(pick(1).as_deref(), Some("tail"));
+}
+
+#[test]
+fn margins_in_percent_and_auto_and_unusable_widths_are_handled() {
+    let result = lay_out(
+        r#"<div class="hdr" id="pct" style="margin-bottom: 10%">P</div>
+           <div class="hdr" id="auto" style="margin-bottom: auto">A</div><p>Body</p>"#,
+    );
+    let page = result.pages().next().expect("page");
+    let first = page
+        .running_element("hdr", StringFetchMode::First)
+        .expect("first");
+    let last = page
+        .running_element("hdr", StringFetchMode::Last)
+        .expect("last");
+    let pct = result
+        .layout_running_element(first, 100.0)
+        .expect("layout")
+        .expect("running");
+    // One 10px line and a 10% (of 100px) bottom margin.
+    assert_eq!(pct.height(), 20.0);
+    let auto = result
+        .layout_running_element(last, 100.0)
+        .expect("layout")
+        .expect("running");
+    assert_eq!(auto.height(), 10.0);
+    let unusable = result
+        .layout_running_element(first, f32::NAN)
+        .expect("layout")
+        .expect("running");
+    assert_eq!(unusable.width(), 0.0);
+}
+
+#[test]
+fn a_document_without_running_elements_selects_nothing() {
+    let html = br#"<!doctype html><style>@page { size: 300px 200px }</style><p id="p">Body</p>"#;
+    let resources = RenderResources::new();
+    let doc = parse_html_with_resources(&html[..], &resources).expect("parse");
+    let LayoutStatus::Completed(result) = layout(
+        &doc,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        LayoutOptions::new().resources(&resources),
+    )
+    .expect("layout") else {
+        panic!("expected a complete layout");
+    };
+    let page = result.pages().next().expect("page");
+    assert_eq!(page.running_element("hdr", StringFetchMode::First), None);
+    let node = page.fragments().next().expect("a fragment").node();
+    assert!(
+        result
+            .layout_running_element(node, 100.0)
+            .expect("layout")
+            .is_none()
+    );
+}
