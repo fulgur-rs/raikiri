@@ -147,3 +147,131 @@ fn include_parsing_adds_parser_candidates() {
     let manifest = fs::read_to_string(output.join("manifest.jsonl")).unwrap();
     assert!(manifest.contains("css/foo/parsing/parse.html"));
 }
+
+#[test]
+fn tests_list_renders_exactly_the_listed_files() {
+    let root = tempdir().unwrap();
+    let wpt = root.path().join("wpt");
+    let dir = wpt.join("css/CSS2");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("listed.xht"),
+        r#"<html><head><link rel="match" href="ref.xht"/></head><body><p>Test passes if green.</p></body></html>"#,
+    )
+    .unwrap();
+    fs::write(
+        dir.join("unlisted.html"),
+        "<meta name=assert content=x><body></body>",
+    )
+    .unwrap();
+    let list = root.path().join("tests.txt");
+    fs::write(&list, "css/CSS2/listed.xht\n").unwrap();
+    let output = root.path().join("review");
+
+    Command::cargo_bin("prepare-meta-assert-review")
+        .unwrap()
+        .arg("--wpt-root")
+        .arg(&wpt)
+        .arg("--tests")
+        .arg(&list)
+        .arg("--output")
+        .arg(&output)
+        .args(["--width", "8", "--height", "8"])
+        .assert()
+        .success();
+
+    let manifest = fs::read_to_string(output.join("manifest.jsonl")).unwrap();
+    let entries: Vec<serde_json::Value> = manifest
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["test_id"], "css/CSS2/listed.xht");
+    assert_eq!(entries[0]["status"], "pending");
+    assert!(
+        fs::read(output.join("screenshots/css/CSS2/listed.xht.png"))
+            .unwrap()
+            .starts_with(b"\x89PNG\r\n\x1a\n")
+    );
+
+    fs::write(&list, "css/CSS2/missing.xht\n").unwrap();
+    Command::cargo_bin("prepare-meta-assert-review")
+        .unwrap()
+        .arg("--wpt-root")
+        .arg(&wpt)
+        .arg("--tests")
+        .arg(&list)
+        .arg("--output")
+        .arg(&output)
+        .assert()
+        .failure();
+    Command::cargo_bin("prepare-meta-assert-review")
+        .unwrap()
+        .arg("--wpt-root")
+        .arg(&wpt)
+        .arg("--tests")
+        .arg(root.path().join("no-such-list.txt"))
+        .arg("--output")
+        .arg(&output)
+        .assert()
+        .failure();
+}
+
+#[test]
+fn discovery_reads_exclude_baseline_and_records_render_errors() {
+    let root = tempdir().unwrap();
+    let wpt = root.path().join("wpt");
+    let dir = wpt.join("css/foo");
+    fs::create_dir_all(&dir).unwrap();
+    for name in ["kept.html", "excluded.html"] {
+        fs::write(
+            dir.join(name),
+            "<meta name=assert content='a box'><body></body>",
+        )
+        .unwrap();
+    }
+    let baseline = root.path().join("baseline.txt");
+    fs::write(&baseline, "").unwrap();
+    let exclude = root.path().join("exclude.txt");
+    fs::write(&exclude, "css/foo/excluded.html\n").unwrap();
+    let output = root.path().join("review");
+    // A directory where the PNG should go makes the write fail, so the
+    // test is recorded as a render error instead of aborting the run.
+    fs::create_dir_all(output.join("screenshots/css/foo/kept.html.png")).unwrap();
+
+    Command::cargo_bin("prepare-meta-assert-review")
+        .unwrap()
+        .arg("--wpt-root")
+        .arg(&wpt)
+        .arg("--baseline")
+        .arg(&baseline)
+        .arg("--exclude-baseline")
+        .arg(&exclude)
+        .arg("--output")
+        .arg(&output)
+        .args(["--width", "8", "--height", "8"])
+        .assert()
+        .success();
+
+    let manifest = fs::read_to_string(output.join("manifest.jsonl")).unwrap();
+    let entries: Vec<serde_json::Value> = manifest
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["test_id"], "css/foo/kept.html");
+    assert_eq!(entries[0]["status"], "render-error");
+    let template = fs::read_to_string(output.join("reviews.template.jsonl")).unwrap();
+    assert!(template.is_empty());
+
+    Command::cargo_bin("prepare-meta-assert-review")
+        .unwrap()
+        .arg("--wpt-root")
+        .arg(root.path().join("no-such-wpt"))
+        .arg("--baseline")
+        .arg(&baseline)
+        .arg("--output")
+        .arg(&output)
+        .assert()
+        .failure();
+}

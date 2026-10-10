@@ -835,6 +835,24 @@ pub fn render_raikiri_pages(
     render_raikiri_pages_inner(html, width, height, None, None).map_err(map_raster_or_raikiri_error)
 }
 
+/// Render the file at `path` into one image per output page, resolving
+/// relative images, stylesheets, and fonts against the file's directory.
+///
+/// This is the single-document counterpart of the reftest pair runner, for
+/// callers that inspect a rendering without comparing it to a reference.
+pub fn render_raikiri_file_pages(
+    path: &Path,
+    width: u32,
+    height: u32,
+) -> Result<RenderedDocument, ReftestError> {
+    let html = std::fs::read_to_string(path).map_err(|source| ReftestError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    render_raikiri_pages_inner(&html, width, height, path.parent(), path.parent())
+        .map_err(map_raster_or_raikiri_error)
+}
+
 fn map_raster_or_raikiri_error(error: Box<dyn std::error::Error>) -> ReftestError {
     match error.downcast::<raikiri::RenderError>() {
         Ok(error) => ReftestError::Raster(*error),
