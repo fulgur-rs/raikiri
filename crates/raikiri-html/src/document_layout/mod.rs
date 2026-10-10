@@ -233,7 +233,7 @@ pub struct DocumentLayout {
     running: running::RunningIndex,
     running_layouts: running::LayoutCache,
     /// Prepared inline SVG sources, one cache per laid-out document in
-    /// `PipelineOutput::layout_slot_for_page` order.
+    /// [`crate::render::PipelineOutput::layout_slot_for_page`] order.
     svg_sources: Vec<page::InlineSvgCache>,
 }
 
