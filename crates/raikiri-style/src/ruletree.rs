@@ -296,6 +296,21 @@ struct DerivedViews {
 }
 
 impl RuleTree {
+    /// Whether a style rule's selector can stop or start matching an element
+    /// once more of the document after it is parsed.
+    ///
+    /// True for `:has()`, `:empty`, `:last-child`, `:only-child`,
+    /// `:last-of-type`, `:only-of-type` and `:nth-last-*()`, including inside
+    /// `:not()`, `:is()`, `:where()` and `:nth-*(of ...)`. Every other
+    /// supported selector depends only on an element's ancestors, earlier
+    /// siblings and attributes, so its result is final once the element is
+    /// parsed.
+    pub fn has_forward_dependent_selectors(&self) -> bool {
+        self.style_rules
+            .iter()
+            .any(|rule| rule.selectors.slice().iter().any(is_forward_dependent))
+    }
+
     pub(crate) fn layer_order(&self, context: &MediaContext) -> LayerOrder<'_> {
         self.layers.order(Some(context))
     }
@@ -2983,6 +2998,26 @@ pub(crate) fn is_supported_selector_list(list: &SelectorList<RaikiriSelectorImpl
 /// Calls with `allow_nth == false` still reject it recursively
 /// as defense in depth: we add a safety net even when upstream should
 /// prevent the component.
+/// See [`RuleTree::has_forward_dependent_selectors`].
+fn is_forward_dependent(selector: &Selector<RaikiriSelectorImpl>) -> bool {
+    use selectors::parser::{Component, NthType};
+
+    selector
+        .iter_raw_match_order()
+        .any(|component| match component {
+            Component::Has(_) | Component::Empty => true,
+            Component::Nth(data) => !matches!(data.ty, NthType::Child | NthType::OfType),
+            Component::NthOf(data) => {
+                !matches!(data.nth_data().ty, NthType::Child | NthType::OfType)
+                    || data.selectors().iter().any(is_forward_dependent)
+            }
+            Component::Negation(list) | Component::Is(list) | Component::Where(list) => {
+                list.slice().iter().any(is_forward_dependent)
+            }
+            _ => false,
+        })
+}
+
 fn is_supported_selector(selector: &Selector<RaikiriSelectorImpl>, allow_nth: bool) -> bool {
     is_supported_selector_with_relative_anchor(selector, allow_nth, false, false)
 }

@@ -38,6 +38,15 @@ impl<P: TendrilSink<html5ever::tendril::fmt::UTF8>> Utf8Feed<P> {
         }
     }
 
+    /// The parser behind this front end.
+    #[cfg_attr(
+        not(test),
+        allow(dead_code, reason = "the progressive driver is not wired in yet")
+    )]
+    pub(crate) fn parser(&self) -> &P {
+        &self.parser
+    }
+
     /// Validates `bytes` and passes every complete character to the parser.
     ///
     /// A trailing partial character is kept until the next call. Invalid
