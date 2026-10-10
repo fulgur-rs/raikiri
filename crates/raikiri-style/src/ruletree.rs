@@ -2983,22 +2983,9 @@ pub(crate) fn is_supported_selector_list(list: &SelectorList<RaikiriSelectorImpl
         .all(|selector| is_supported_selector(selector, true))
 }
 
-/// As the name suggests, `allow_nth` gates `Component::Nth`/`NthOf`.
-/// It also indicates whether this call checks the **outer** (top-level candidate)
-/// selector or the **inner** `S` of `:nth-child(An+B of S)`.
-/// The same flag gates `Component::PseudoElement`/`Combinator::PseudoElement`
-/// rather than adding a second parameter: CSS Selectors Level 4 also forbids
-/// pseudo-elements inside the `S` of `:nth-child(of S)`.
-/// The `selectors` crate already enforces this **in its grammar**.
-/// Empirically, `p:nth-child(2 of .x::before)` yields `InvalidState` from
-/// `selectors` v0.39.0, so a `SelectorList` containing
-/// `Component::PseudoElement` cannot be constructed as `S` (see the `lib.rs` test
-/// named
-/// `parse_pseudo_element_rejected_inside_nth_child_of_selector_list`).
-/// Calls with `allow_nth == false` still reject it recursively
-/// as defense in depth: we add a safety net even when upstream should
-/// prevent the component.
-/// See [`RuleTree::has_forward_dependent_selectors`].
+/// Whether `selector` can stop or start matching an element once more of the
+/// document after it is parsed. See
+/// [`RuleTree::has_forward_dependent_selectors`].
 fn is_forward_dependent(selector: &Selector<RaikiriSelectorImpl>) -> bool {
     use selectors::parser::{Component, NthType};
 
@@ -3018,6 +3005,21 @@ fn is_forward_dependent(selector: &Selector<RaikiriSelectorImpl>) -> bool {
         })
 }
 
+/// As the name suggests, `allow_nth` gates `Component::Nth`/`NthOf`.
+/// It also indicates whether this call checks the **outer** (top-level candidate)
+/// selector or the **inner** `S` of `:nth-child(An+B of S)`.
+/// The same flag gates `Component::PseudoElement`/`Combinator::PseudoElement`
+/// rather than adding a second parameter: CSS Selectors Level 4 also forbids
+/// pseudo-elements inside the `S` of `:nth-child(of S)`.
+/// The `selectors` crate already enforces this **in its grammar**.
+/// Empirically, `p:nth-child(2 of .x::before)` yields `InvalidState` from
+/// `selectors` v0.39.0, so a `SelectorList` containing
+/// `Component::PseudoElement` cannot be constructed as `S` (see the `lib.rs` test
+/// named
+/// `parse_pseudo_element_rejected_inside_nth_child_of_selector_list`).
+/// Calls with `allow_nth == false` still reject it recursively
+/// as defense in depth: we add a safety net even when upstream should
+/// prevent the component.
 fn is_supported_selector(selector: &Selector<RaikiriSelectorImpl>, allow_nth: bool) -> bool {
     is_supported_selector_with_relative_anchor(selector, allow_nth, false, false)
 }
