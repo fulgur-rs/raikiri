@@ -4567,6 +4567,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             Length::Vb(_) => Some("Length::Vb"),
             Length::Vmin(_) => Some("Length::Vmin"),
             Length::Vmax(_) => Some("Length::Vmax"),
+            Length::SizedViewport(..) => Some("Length::SizedViewport"),
         }
     }
     /// For positions where `%` **does not remain** at the computed layer:

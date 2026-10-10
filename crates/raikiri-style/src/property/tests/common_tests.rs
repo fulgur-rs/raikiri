@@ -310,11 +310,28 @@ fn parse_length_value_accepts_viewport_percentage_units() {
     assert_eq!(parse_length("2vb", false), Some(Length::Vb(2.0)));
     assert_eq!(parse_length("3vmin", false), Some(Length::Vmin(3.0)));
     assert_eq!(parse_length("4vmax", false), Some(Length::Vmax(4.0)));
-    // Paged media's one viewport makes the small, large and dynamic
-    // variants the plain unit.
-    assert_eq!(parse_length("5svh", false), Some(Length::Vh(5.0)));
-    assert_eq!(parse_length("6lvw", false), Some(Length::Vw(6.0)));
-    assert_eq!(parse_length("7dvmax", false), Some(Length::Vmax(7.0)));
+    // The small, large and dynamic variants keep their size so that they
+    // serialize as written, and resolve as the plain unit.
+    let svh = Length::SizedViewport(ViewportSize::Small, ViewportUnit::Vh, 5.0);
+    assert_eq!(parse_length("5svh", false), Some(svh));
+    assert_eq!(svh.default_viewport(), Length::Vh(5.0));
+    assert_eq!(crate::property::serialize_length(&svh), "5svh");
+    assert_eq!(
+        parse_length("6lvw", false),
+        Some(Length::SizedViewport(
+            ViewportSize::Large,
+            ViewportUnit::Vw,
+            6.0
+        ))
+    );
+    assert_eq!(
+        parse_length("7dvmax", false),
+        Some(Length::SizedViewport(
+            ViewportSize::Dynamic,
+            ViewportUnit::Vmax,
+            7.0
+        ))
+    );
     assert_eq!(parse_length("8xvh", false), None);
     assert_eq!(parse_length("9cqh", false), None);
 }

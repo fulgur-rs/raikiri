@@ -1624,10 +1624,12 @@ fn authored_document_page_viewport(
     fallback.width = width;
     fallback.height = height;
     let paper = page_box_or_fallback(&page, fallback);
+    // The page area sits inside the page border and padding, as in layout.
     let margins = raikiri_dom::page_margins_for_page(&page, paper);
+    let insets = raikiri_dom::page_content_insets_for_page(&page, paper);
     (
-        (paper.width - margins.left - margins.right).max(1.0),
-        (paper.height - margins.top - margins.bottom).max(1.0),
+        insets.page_area_width(margins, paper).max(1.0),
+        insets.page_area_height(margins, paper).max(1.0),
     )
 }
 

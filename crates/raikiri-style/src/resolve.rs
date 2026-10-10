@@ -1502,7 +1502,7 @@ impl ResolveContext {
     /// inline axis is always horizontal: `vi` is `vw` and `vb` is `vh`.
     pub(crate) fn viewport_length(&self, length: Length) -> Option<f32> {
         let (width, height) = (self.viewport_width, self.viewport_height);
-        let (basis, value) = match length {
+        let (basis, value) = match length.default_viewport() {
             Length::Vw(v) | Length::Vi(v) => (width, v),
             Length::Vh(v) | Length::Vb(v) => (height, v),
             Length::Vmin(v) => (width.min(height), v),
@@ -1893,7 +1893,10 @@ pub fn resolve_font_size(
         | Length::Vi(_)
         | Length::Vb(_)
         | Length::Vmin(_)
-        | Length::Vmax(_) => ComputedLength(ctx.viewport_length(specified).unwrap_or(0.0)),
+        | Length::Vmax(_)
+        | Length::SizedViewport(..) => {
+            ComputedLength(ctx.viewport_length(specified).unwrap_or(0.0))
+        }
     }
 }
 
@@ -2001,7 +2004,10 @@ pub(crate) fn resolve_length(
         | Length::Vi(_)
         | Length::Vb(_)
         | Length::Vmin(_)
-        | Length::Vmax(_) => ComputedLength(ctx.viewport_length(specified).unwrap_or(0.0)),
+        | Length::Vmax(_)
+        | Length::SizedViewport(..) => {
+            ComputedLength(ctx.viewport_length(specified).unwrap_or(0.0))
+        }
     }
 }
 
@@ -2419,7 +2425,8 @@ pub fn resolve_length_percentage(
         | Length::Vi(_)
         | Length::Vb(_)
         | Length::Vmin(_)
-        | Length::Vmax(_) => {
+        | Length::Vmax(_)
+        | Length::SizedViewport(..) => {
             ComputedLengthPercentage::Px(ctx.viewport_length(specified).unwrap_or(0.0))
         }
     }

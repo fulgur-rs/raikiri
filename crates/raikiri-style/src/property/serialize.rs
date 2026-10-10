@@ -650,6 +650,9 @@ pub(crate) fn serialize_length(length: &Length) -> String {
         Length::Vb(v) => serialize_dimension(v, "vb"),
         Length::Vmin(v) => serialize_dimension(v, "vmin"),
         Length::Vmax(v) => serialize_dimension(v, "vmax"),
+        Length::SizedViewport(size, unit, v) => {
+            serialize_dimension(v, &format!("{}{}", size.prefix(), unit.name()))
+        }
     }
 }
 

@@ -48,7 +48,7 @@ pub use property::{
     Outline, OutlineColor, OutlineStyle, PathShape, PolygonShape, PropertyKey, PropertyValue,
     ShapeRadius, Sides, TextDecorationSkipInk, TextDecorationSkipSpaces, TextOrientation,
     TextShadowColor, TextShadowItem, TextShadowLength, TextSpacingTrim, TextUnderlineOffset,
-    VisualBox, WordSpaceTransform, WordSpacingValue,
+    ViewportSize, ViewportUnit, VisualBox, WordSpaceTransform, WordSpacingValue,
 };
 
 mod layer;

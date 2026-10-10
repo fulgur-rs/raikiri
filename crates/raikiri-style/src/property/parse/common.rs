@@ -425,23 +425,28 @@ pub(crate) fn parse_length_value(
 /// <https://www.w3.org/TR/css-values-4/#viewport-relative-lengths>) of
 /// `value` in the lowercase `unit`, or `None` when `unit` is not one.
 ///
-/// Paged media has one fixed viewport, so the small (`s`), large (`l`) and
-/// dynamic (`d`) variants are the same size as the plain unit (see
-/// [`Length::Vw`]).
+/// The small (`s`), large (`l`) and dynamic (`d`) variants keep their size
+/// in [`Length::SizedViewport`].
 fn viewport_length(unit: &str, value: f32) -> Option<Length> {
-    let unit = match unit.as_bytes().first() {
-        Some(b's' | b'l' | b'd') => &unit[1..],
-        _ => unit,
+    let (size, unit) = match unit.as_bytes().first() {
+        Some(b's') => (Some(ViewportSize::Small), &unit[1..]),
+        Some(b'l') => (Some(ViewportSize::Large), &unit[1..]),
+        Some(b'd') => (Some(ViewportSize::Dynamic), &unit[1..]),
+        _ => (None, unit),
     };
-    match unit {
-        "vw" => Some(Length::Vw(value)),
-        "vh" => Some(Length::Vh(value)),
-        "vi" => Some(Length::Vi(value)),
-        "vb" => Some(Length::Vb(value)),
-        "vmin" => Some(Length::Vmin(value)),
-        "vmax" => Some(Length::Vmax(value)),
-        _ => None,
-    }
+    let unit = match unit {
+        "vw" => ViewportUnit::Vw,
+        "vh" => ViewportUnit::Vh,
+        "vi" => ViewportUnit::Vi,
+        "vb" => ViewportUnit::Vb,
+        "vmin" => ViewportUnit::Vmin,
+        "vmax" => ViewportUnit::Vmax,
+        _ => return None,
+    };
+    Some(match size {
+        Some(size) => Length::SizedViewport(size, unit, value),
+        None => unit.length(value),
+    })
 }
 
 /// Whether the rest of `input`, including any nested block or function,
