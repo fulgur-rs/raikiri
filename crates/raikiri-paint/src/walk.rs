@@ -3096,10 +3096,10 @@ pub(crate) fn paint_document_impl(
 
     let margins = raikiri_dom::page_margins(cascade, page_box);
     let insets = raikiri_dom::page_content_insets(cascade, page_box);
-    // Keep fixed-position sizing consistent with layout: page border/padding
-    // are applied through `page_offset_x`, not by shrinking the inline size.
-    let content_width = margins.content_width(page_box).max(0.0);
-    let content_height = (margins.content_height(page_box) - insets.top - insets.bottom).max(0.0);
+    // Keep fixed-position sizing consistent with layout: the page area inside
+    // the page border and padding.
+    let content_width = insets.page_area_width(margins, page_box);
+    let content_height = insets.page_area_height(margins, page_box);
     // Fixed-position containing blocks use the initial laid-out viewport even
     // when a later named page has a different paper width.
     let fixed_content_width = if fixed_page_width.is_finite() && fixed_page_width > 0.0 {
@@ -3189,10 +3189,10 @@ pub(crate) fn paint_document_impl(
             }
         }
     }
-    // The synthetic body root keeps the historical inline width, so normal
-    // element backgrounds can extend past the page content box when a page
-    // has border/padding. Clip those backgrounds to the physical content box
-    // without clipping text ink, which may legitimately overflow its box.
+    // Element backgrounds can extend past the page content box, for example
+    // through negative margins. Clip those backgrounds to the physical
+    // content box without clipping text ink, which may legitimately overflow
+    // its box.
     let page_content_clip = if margins.left > 0.0
         || margins.right > 0.0
         || margins.top > 0.0

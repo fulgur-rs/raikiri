@@ -114,8 +114,8 @@ impl Document {
                     PageFragmentRect::new(
                         margins.left + insets.left,
                         margins.top + insets.top,
-                        margins.content_width(page_box),
-                        (margins.content_height(page_box) - insets.top - insets.bottom).max(0.0),
+                        insets.page_area_width(margins, page_box),
+                        insets.page_area_height(margins, page_box),
                     ),
                     if page_box.width > page_box.height {
                         PageFragmentOrientation::Landscape

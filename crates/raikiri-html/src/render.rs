@@ -490,8 +490,8 @@ fn resolve_page_geometry(page: &PageCascadeResult, page_box: PageBox) -> Resolve
     let content_box = PaintRect::new(
         margins.left + content_insets.left,
         margins.top + content_insets.top,
-        margins.content_width(page_box),
-        (margins.content_height(page_box) - content_insets.top - content_insets.bottom).max(0.0),
+        content_insets.page_area_width(margins, page_box),
+        content_insets.page_area_height(margins, page_box),
     );
     ResolvedPageGeometry {
         page_box,
@@ -555,16 +555,12 @@ fn preload_page_background_images(
 /// the initial containing block of the document." The page area is the
 /// content area of the page box, inside its border and padding.
 fn page_area_size(page: &PageCascadeResult, defaults: &PageDefaults) -> (f32, f32) {
-    let geometry = resolve_page_geometry(page, page_box_for_page(page, defaults));
-    let insets = geometry.content_insets;
-    (
-        (content_width_for_geometry(geometry) - insets.left - insets.right).max(0.0),
-        geometry.content_box.height,
-    )
+    let content_box = resolve_page_geometry(page, page_box_for_page(page, defaults)).content_box;
+    (content_box.width, content_box.height)
 }
 
 fn content_width_for_geometry(geometry: ResolvedPageGeometry) -> f32 {
-    (geometry.page_box.width - geometry.margins.left - geometry.margins.right).max(0.0)
+    geometry.content_box.width
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -253,8 +253,9 @@ fn find_body_returns_first_body_in_document_order() {
 #[test]
 fn apply_page_content_box_sets_body_style_size_to_content_dimensions() {
     // The production Step 4 helper writes the page content box, not the full
-    // paper size: horizontal margins narrow the width, and vertical margins
-    // plus top/bottom content insets narrow the height.
+    // paper size: horizontal margins plus left/right content insets narrow
+    // the width, and vertical margins plus top/bottom content insets narrow
+    // the height.
     use raikiri_traits::PageBox;
     use taffy::{Dimension, Size};
 
@@ -279,7 +280,7 @@ fn apply_page_content_box_sets_body_style_size_to_content_dimensions() {
     let size: Size<Dimension> = doc.nodes[body].style.size;
     assert_eq!(
         size.width,
-        Dimension::length(PageBox::A4.width - 10.0 - 10.0)
+        Dimension::length(PageBox::A4.width - 10.0 - 10.0 - 4.0 - 2.0)
     );
     assert_eq!(
         size.height,
