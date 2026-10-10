@@ -18,9 +18,31 @@ impl NetworkProvider for RootedFiles {
             .url
             .to_file_path()
             .map_err(|()| NetworkError::Other(format!("not a local file: {}", request.url)))?;
-        // URL parsing has already resolved `..` segments, so the path stays
-        // under the root.
-        let path = self.root.join(path.strip_prefix("/").unwrap_or(&path));
+        // URL parsing resolves `..` segments, but decoding the path can make
+        // new ones, and separators, from escapes such as `%2e%2e%2f`. So the
+        // file is found from the path's names alone, and a `..` that is left
+        // is refused rather than followed out of the root.
+        let mut file = self.root.clone();
+        for component in path.components() {
+            match component {
+                Component::Normal(name) => file.push(name),
+                Component::RootDir | Component::CurDir => {}
+                Component::ParentDir | Component::Prefix(_) => {
+                    return Err(NetworkError::Other(format!(
+                        "outside the root: {}",
+                        request.url
+                    )));
+                }
+            }
+        }
+        // A symbolic link under the root may still lead out of it.
+        let path = std::fs::canonicalize(&file).map_err(NetworkError::Io)?;
+        if !path.starts_with(std::fs::canonicalize(&self.root).map_err(NetworkError::Io)?) {
+            return Err(NetworkError::Other(format!(
+                "outside the root: {}",
+                request.url
+            )));
+        }
         let bytes = std::fs::read(&path).map_err(NetworkError::Io)?;
         // Local files have no headers, so the type follows the extension. A
         // stylesheet import is only inlined from a CSS response, and any

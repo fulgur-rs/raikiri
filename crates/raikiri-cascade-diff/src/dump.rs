@@ -387,6 +387,12 @@ pub(crate) fn custom_property_names<'a>(sources: impl IntoIterator<Item = &'a st
         while position < chars.len() {
             let mut name = String::new();
             while let Some(&c) = chars.get(position) {
+                // CSS reads a NUL in its input as U+FFFD before it tokenizes.
+                let c = if c == '\0' {
+                    char::REPLACEMENT_CHARACTER
+                } else {
+                    c
+                };
                 if is_name(c) {
                     name.push(c);
                     position += 1;

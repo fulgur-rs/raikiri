@@ -54,6 +54,30 @@ fn rooted_files_serve_paths_under_the_root() {
     // `..` cannot leave the root: URL parsing resolves it first.
     let css = body(files.fetch_one_hop(request("file:///../../css/a.css")));
     assert_eq!(&css.bytes[..], b"p {}");
+    // Nor can a `..` that only decoding the path makes, and separators that
+    // decoding makes keep the path under the root.
+    std::fs::write(dir.0.join("outside.css"), "q {}").unwrap();
+    let inner = RootedFiles {
+        root: dir.0.join("css"),
+    };
+    assert!(matches!(
+        inner.fetch_one_hop(request("file:///%2e%2e%2foutside.css")),
+        Err(NetworkError::Other(_))
+    ));
+    let css = body(inner.fetch_one_hop(request("file:///%2f%2fa.css")));
+    assert_eq!(&css.bytes[..], b"p {}");
+    // A symbolic link is followed within the root, and refused out of it.
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink("a.css", dir.0.join("css/within.css")).unwrap();
+        std::os::unix::fs::symlink("../outside.css", dir.0.join("css/out.css")).unwrap();
+        let css = body(inner.fetch_one_hop(request("file:///within.css")));
+        assert_eq!(&css.bytes[..], b"p {}");
+        assert!(matches!(
+            inner.fetch_one_hop(request("file:///out.css")),
+            Err(NetworkError::Other(_))
+        ));
+    }
     // Any other file is not CSS, so a stylesheet import does not inline it.
     let text = body(files.fetch_one_hop(request("file:///css/a.txt")));
     assert_eq!(
