@@ -141,10 +141,11 @@ fn ifc_all_insets(style: &Style, parent_inline_size: Option<f32>) -> taffy::Rect
 /// `raikiri_traits::Dom::child_ids` returns raw children by contract;
 /// filter only on the taffy path rather than changing that contract.
 ///
-/// The children of a flex or grid container also replace each of its
+/// The children of a block, flex or grid container also replace each of its
 /// `display: contents` children that is not a paragraph root, recursively:
 /// such an element generates no box (CSS Display 3 §2.5), so its children
-/// are the container's items. Its own layout stays zero-sized at the
+/// are the container's children, sized and positioned against the
+/// container itself. Its own layout stays zero-sized at the
 /// container's origin, so positions summed along the DOM ancestors are
 /// unchanged. A `display: contents` element holding only inline content
 /// remains one node, standing in for the anonymous item of that text.
@@ -159,14 +160,16 @@ impl<'a> TaffyChildIter<'a> {
         let node = &doc.nodes[usize::from(parent)];
         Self {
             doc,
-            flatten: matches!(node.style.display, Display::Flex | Display::Grid)
-                && node.display != DisplayValue::Contents,
+            flatten: matches!(
+                node.style.display,
+                Display::Flex | Display::Grid | Display::Block | Display::FlowRoot
+            ) && node.display != DisplayValue::Contents,
             stack: vec![node.layout_children().iter()],
         }
     }
 
     /// Whether `child` is a `display: contents` element whose children take
-    /// its place among a flex or grid container's items.
+    /// its place among a container's children.
     fn is_flattened(doc: &Document, child: usize) -> bool {
         let node = &doc.nodes[child];
         node.kind() == raikiri_traits::NodeKind::Element
@@ -203,7 +206,7 @@ impl<'a> TaffyChildIter<'a> {
 
 impl Document {
     /// The node whose taffy children include `node`: its DOM parent, or the
-    /// flex or grid container its `display: contents` ancestors lift it into.
+    /// container its `display: contents` ancestors lift it into.
     pub(crate) fn taffy_parent_of(&self, node: usize) -> Option<usize> {
         let parent = self.parent_of(node)?;
         let mut top = parent;
@@ -212,7 +215,10 @@ impl Document {
         }
         let container = &self.nodes[top];
         let lifted = top != parent
-            && matches!(container.style.display, Display::Flex | Display::Grid)
+            && matches!(
+                container.style.display,
+                Display::Flex | Display::Grid | Display::Block | Display::FlowRoot
+            )
             && container.display != DisplayValue::Contents;
         Some(if lifted { top } else { parent })
     }

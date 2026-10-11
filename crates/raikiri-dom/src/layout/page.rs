@@ -879,16 +879,31 @@ pub(crate) fn refresh_order_modified_children(doc: &mut Document) {
     let mut projection_changed = false;
     let grid_details_stale = doc.layout_dirty;
     for parent_idx in 0..doc.nodes.len() {
-        let should_sort = {
-            let parent = &doc.nodes[parent_idx];
-            matches!(parent.style.display, Display::Flex | Display::Grid)
-                && parent.children.iter().any(|&child| {
-                    doc.nodes[child].style.position != TaffyPosition::Absolute
-                        && doc.nodes[child].order != 0
-                })
-        };
+        let parent = &doc.nodes[parent_idx];
+        // The items of a flex or grid container include the children of its
+        // `display: contents` children (see `TaffyChildIter`), so `order`
+        // sorts that flattened sequence. Taffy takes no `order` input, so the
+        // sorted items replace the DOM children here.
+        let mut children = Vec::new();
+        if matches!(parent.style.display, Display::Flex | Display::Grid) {
+            let mut pending: Vec<usize> = parent.children.iter().rev().copied().collect();
+            while let Some(child) = pending.pop() {
+                let node = &doc.nodes[child];
+                if node.kind() == NodeKind::Element
+                    && node.display == DisplayValue::Contents
+                    && !node.is_ifc_root()
+                {
+                    pending.extend(node.children.iter().rev().copied());
+                } else {
+                    children.push(child);
+                }
+            }
+        }
+        let should_sort = children.iter().any(|&child| {
+            doc.nodes[child].style.position != TaffyPosition::Absolute
+                && doc.nodes[child].order != 0
+        });
         let new_projection = if should_sort {
-            let children = doc.nodes[parent_idx].children.clone();
             let mut ordered_items: Vec<usize> = children
                 .iter()
                 .copied()

@@ -278,8 +278,8 @@ pub(crate) fn apply_computed_to_style(
                 ..taffy::Style::default()
             };
             // Taffy never lays out a contents element whose children it
-            // lifts into a flex or grid container; zero its layout so it
-            // adds nothing to its descendants' positions.
+            // lifts into their container; zero its layout so it adds
+            // nothing to its descendants' positions.
             doc.nodes[idx].unrounded_layout = taffy::Layout::default();
             doc.nodes[idx].multicol = None;
             doc.nodes[idx].column_span_all = false;
@@ -287,8 +287,10 @@ pub(crate) fn apply_computed_to_style(
             doc.nodes[idx].has_logical_min_block_size = false;
         }
     }
-    refresh_order_modified_children(doc);
+    // Paragraph roots are assigned first: a `display: contents` paragraph
+    // root stays one flex or grid item when `order` sorts the items.
     crate::layout::ifc::assign::assign_ifc_roots(doc, cascade)?;
+    refresh_order_modified_children(doc);
     // Mark table formatting roots for blitz-compat bit preservation.
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() != NodeKind::Element {

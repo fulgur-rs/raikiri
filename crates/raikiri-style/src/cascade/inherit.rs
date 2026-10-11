@@ -430,7 +430,8 @@ const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
 /// every element except a nested `svg` and the container-like `a`, `g`,
 /// `switch`, `tspan`, `textPath` and `use`, which unbox as usual. An
 /// outermost `svg` (one whose parent is not an SVG element) also computes
-/// to `none`.
+/// to `none`. MathML (§B.3 <https://drafts.csswg.org/css-display/#unbox-mathml>):
+/// every element.
 fn contents_computes_to_none<E: StyleElement>(element: &E, parent_is_svg: bool) -> bool {
     match element.namespace_uri() {
         None | Some("http://www.w3.org/1999/xhtml") => {
@@ -448,6 +449,7 @@ fn contents_computes_to_none<E: StyleElement>(element: &E, parent_is_svg: bool) 
             "a" | "g" | "switch" | "tspan" | "textPath" | "use" => false,
             _ => true,
         },
+        Some("http://www.w3.org/1998/Math/MathML") => true,
         _ => false,
     }
 }

@@ -7,7 +7,7 @@ use crate::{
     Document, Fragment, GeneratedKind, OverflowClip, PositionedGlyphRun, RunSource, TextLineId,
     paint_rules,
 };
-use raikiri_style::property::{ColumnCountValue, DisplayValue};
+use raikiri_style::property::{ColumnCountValue, DisplayValue, PositionValue};
 use raikiri_style::{CascadeResult, PseudoElem, StyleNodeId};
 use raikiri_traits::{NodeId, NodeKind, PaintClip, PaintRect};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -698,13 +698,12 @@ impl Document {
                         })
                         .unwrap_or(entries.len())
                 });
-                entries.insert(
-                    at,
-                    (
-                        paint_rules::STACKING_CONTEXT_PAINT_KEY,
-                        Frame::InlineGroup(root, group),
-                    ),
-                );
+                // A positioned group keeps its own z-index level.
+                let key = match cascade.computed.get(group).map(|cv| &cv.position) {
+                    Some(PositionValue::Static) | None => paint_rules::STACKING_CONTEXT_PAINT_KEY,
+                    Some(_) => paint_rules::paint_child_key(group, display, cascade),
+                };
+                entries.insert(at, (key, Frame::InlineGroup(root, group)));
             }
         }
         entries.sort_by_key(|(key, _)| *key);

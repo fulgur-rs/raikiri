@@ -104,18 +104,20 @@ fn unusual_elements_compute_contents_to_none() {
     let result = lay_out(
         "<div><img class=contents id=img><input class=contents id=input>\
          <textarea class=contents id=textarea></textarea>\
-         <svg class=contents id=svg width=50 height=50></svg></div>\
+         <svg class=contents id=svg width=50 height=50></svg>\
+         <math class=contents id=math><mi>M</mi></math></div>\
          <p id=after style='margin:0'>X</p>",
         "",
     );
     let page = result.page(0).unwrap();
-    for id in ["img", "input", "textarea", "svg"] {
+    for id in ["img", "input", "textarea", "svg", "math"] {
         assert!(
             page.fragments()
                 .all(|fragment| page.dom().attr(fragment.node(), "id") != Some(id)),
             "{id} must generate no box"
         );
     }
+    assert!(!page.text_runs().iter().any(|run| run.text.contains('M')));
     // Nothing of theirs takes up space before the following paragraph.
     assert_eq!(rect_of(&result, "after").y, 0.0);
 }
@@ -128,4 +130,28 @@ fn elements_sharing_style_with_an_unusual_sibling_still_unbox() {
     );
     let page = result.page(0).unwrap();
     assert!(page.text_runs().iter().any(|run| run.text.contains("PASS")));
+}
+
+#[test]
+fn order_sorts_flex_items_across_contents_wrappers() {
+    let result = lay_out(
+        "<div style='display:flex'><div class=contents>\
+         <i id=late style='order:2'></i><i id=early style='order:1'></i></div>\
+         <i id=first></i></div>",
+        "i {display:block;width:30px;height:10px}",
+    );
+    let x = |id| rect_of(&result, id).x;
+    assert_eq!((x("first"), x("early"), x("late")), (0.0, 30.0, 60.0));
+}
+
+#[test]
+fn percentages_resolve_against_the_real_containing_block() {
+    let result = lay_out(
+        "<div style='height:100px;position:relative'><div class=contents>\
+         <i id=half></i><b id=abs></b></div></div>",
+        "i {display:block;width:10px;height:50%} \
+         b {display:block;position:absolute;bottom:0;width:10px;height:10px}",
+    );
+    assert_eq!(rect_of(&result, "half").height, 50.0);
+    assert_eq!(rect_of(&result, "abs").y, 90.0);
 }

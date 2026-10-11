@@ -264,12 +264,41 @@ fn supplied_runs_cannot_reorder_intrinsic_text_lines() {
 
 #[test]
 fn inline_opacity_groups_paint_at_the_positioned_stack_level() {
+    assert_eq!(
+        box_order("#group {opacity:.5}"),
+        [
+            "p", "flow", "before", "push", "group", "pop", "after", "above"
+        ]
+    );
+}
+
+#[test]
+fn positioned_inline_opacity_groups_keep_their_z_index() {
+    assert_eq!(
+        box_order("#group {opacity:.5;position:relative;z-index:2}"),
+        [
+            "p", "flow", "before", "after", "above", "push", "group", "pop"
+        ]
+    );
+    assert_eq!(
+        box_order("#group {opacity:.5;position:relative;z-index:-1}"),
+        [
+            "p", "push", "group", "pop", "flow", "before", "after", "above"
+        ]
+    );
+}
+
+/// The boxes and opacity groups of a paragraph with in-flow, positioned and
+/// positive z-index inline-blocks around the `#group` span, in paint order.
+fn box_order(group_style: &str) -> Vec<String> {
     let result = lay_out_with_font(
         "<p id=p>A<i id=before></i><span id=group>B</span><i id=above></i>\
          <i id=after></i><i id=flow></i></p>",
-        "p {margin:0} i {display:inline-block;width:5px;height:5px;background:red} \
-         #group {opacity:.5;background:blue} #before, #after {position:relative} \
-         #above {position:relative;z-index:1}",
+        &format!(
+            "p {{margin:0}} i {{display:inline-block;width:5px;height:5px;background:red}} \
+             #group {{background:blue}} #before, #after {{position:relative}} \
+             #above {{position:relative;z-index:1}} {group_style}"
+        ),
     );
     let page = result.page(0).unwrap();
     let dom = page.dom();
@@ -287,14 +316,7 @@ fn inline_opacity_groups_paint_at_the_positioned_stack_level() {
             _ => {}
         }
     }
-    // In-flow atomic inlines first, then the group in tree order with the
-    // positioned boxes of z-index auto, then positive z-index.
-    assert_eq!(
-        order,
-        [
-            "p", "flow", "before", "push", "group", "pop", "after", "above"
-        ]
-    );
+    order
 }
 
 #[test]
