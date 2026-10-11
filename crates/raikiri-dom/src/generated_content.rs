@@ -189,6 +189,39 @@ pub fn is_in_flow_generated_text(
         })
 }
 
+/// Whether layout can place the images of the `::before` or `::after` of
+/// `element`: the pseudo-element is in-flow generated content (see
+/// [`is_in_flow_generated_text`]) and its element generates boxes, being in
+/// the document with neither itself nor an ancestor `display: none`
+/// (CSS Display 3 §2.5). Preparing or prefetching images that no box shows
+/// would only spend resources that visible images need.
+pub fn content_images_are_placed(
+    document: &Document,
+    cascade: &CascadeResult,
+    element: usize,
+    pseudo: PseudoElem,
+) -> bool {
+    if !is_in_flow_generated_text(cascade, element, pseudo)
+        || !document
+            .get_node(element)
+            .is_some_and(|node| node.is_in_document())
+    {
+        return false;
+    }
+    let mut current = Some(element);
+    while let Some(id) = current {
+        if cascade
+            .computed
+            .get(id)
+            .is_some_and(|cv| cv.display == DisplayValue::None)
+        {
+            return false;
+        }
+        current = document.parent_of(id);
+    }
+    true
+}
+
 /// One piece of the content of a `::before` or `::after`, in order: a run
 /// of text, or an image given by its index among the images of the `content`
 /// list.

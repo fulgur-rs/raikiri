@@ -2900,8 +2900,10 @@ impl Document {
         pseudos.sort_by_key(|&(element, after, _, _)| (element, after));
         for (element, after, pseudo, cv) in pseudos {
             // Floated and out-of-flow pseudo-elements are not laid out in
-            // lines, so their images are not prepared.
-            if !crate::generated_content::is_in_flow_generated_text(cascade, element, pseudo) {
+            // lines, and those of elements in `display: none` subtrees are
+            // not laid out at all, so their images are not prepared.
+            if !crate::generated_content::content_images_are_placed(self, cascade, element, pseudo)
+            {
                 continue;
             }
             let urls = cv.content.iter().filter_map(|component| match component {

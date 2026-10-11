@@ -172,13 +172,19 @@ where
             .map_err(RenderError::Resolver)?;
     }
     // `::before` and `::after` images are read from the same cache, so they
-    // are resolved first too, up to the number that layout can place.
+    // are resolved first too: those that layout can place, up to the number
+    // it places per pseudo-element.
     for ((owner, pseudo), computed) in &cascade.pseudo {
         if !matches!(
             pseudo,
             raikiri_style::PseudoElem::Before | raikiri_style::PseudoElem::After
         ) || !usize::try_from(owner.0).is_ok_and(|element| {
-            raikiri_dom::generated_content::is_in_flow_generated_text(&cascade, element, *pseudo)
+            raikiri_dom::generated_content::content_images_are_placed(
+                &uncascaded.dom,
+                &cascade,
+                element,
+                *pseudo,
+            )
         }) {
             continue;
         }

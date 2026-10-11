@@ -133,6 +133,15 @@ fn resolver_backed_png_render_prepares_inside_marker_images() {
             "<style>p::before{content:url(https://images.test/marker.png);float:left}</style><p>body</p>",
             false,
         ),
+        // Elements in a `display: none` subtree generate no boxes.
+        (
+            "<style>p::before{content:url(https://images.test/marker.png)}</style><p style='display:none'>body</p>",
+            false,
+        ),
+        (
+            "<style>p::before{content:url(https://images.test/marker.png)}</style><div style='display:none'><div><p>body</p></div></div>",
+            false,
+        ),
     ] {
         let marker = Marker(AtomicBool::new(false));
         html_to_png_with_resolver(html.as_bytes(), &marker, &marker).unwrap();

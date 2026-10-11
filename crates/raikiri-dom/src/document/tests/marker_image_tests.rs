@@ -743,3 +743,54 @@ fn prepared_replacing_content_images_use_the_pseudo_elements_max_width() {
         })
     );
 }
+
+#[test]
+fn content_images_of_unrendered_owners_are_not_decoded_or_charged() {
+    let mut doc = Document::new();
+    let style = doc.append_element(Some(0), "style", taffy::Style::default(), None::<&str>);
+    doc.append_text(style, "p::before{content:url(https://images.test/a.png)}");
+    let html = doc.append_element(Some(0), "html", taffy::Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", taffy::Style::default(), None::<&str>);
+    // Owners in a `display: none` subtree, and one that is itself
+    // `display: none`, come first in key order.
+    let hidden = doc.append_element(
+        Some(body),
+        "div",
+        taffy::Style::default(),
+        Some("display:none"),
+    );
+    let in_hidden = doc.append_element(Some(hidden), "p", taffy::Style::default(), None::<&str>);
+    let deep = doc.append_element(Some(hidden), "div", taffy::Style::default(), None::<&str>);
+    let in_deep = doc.append_element(Some(deep), "p", taffy::Style::default(), None::<&str>);
+    let itself = doc.append_element(
+        Some(body),
+        "p",
+        taffy::Style::default(),
+        Some("display:none"),
+    );
+    let visible = doc.append_element(Some(body), "p", taffy::Style::default(), None::<&str>);
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    // The 4x2 decode costs 32 bytes: the budget holds one image.
+    doc.prepare_list_marker_images_with_budget(
+        &cascade,
+        &VectorMarker {
+            intrinsic: ImageIntrinsicSize {
+                width: Some(4.0),
+                height: Some(2.0),
+                aspect_ratio: Some(2.0),
+            },
+        },
+        None,
+        32,
+    );
+    use raikiri_style::PseudoElem;
+    for owner in [in_hidden, in_deep, itself] {
+        assert!(
+            doc.content_image(owner, PseudoElem::Before, 0).is_none(),
+            "owner {owner}"
+        );
+    }
+    assert!(doc.content_image(visible, PseudoElem::Before, 0).is_some());
+}
