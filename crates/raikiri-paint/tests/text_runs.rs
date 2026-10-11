@@ -1023,7 +1023,6 @@ fn relatively_positioned_text_matches_paint() {
 
 #[test]
 fn translated_text_matches_paint() {
-    let words = vec!["word"; 40].join(" ");
     assert_cases_match_paint(&[
         (
             "<div style=\"transform: translate(10%, 3px); width: 100px\"><p>moved</p></div>",
@@ -1047,12 +1046,6 @@ fn translated_text_matches_paint() {
             &format!(
                 "<div style=\"transform: translateY(7px)\">{}</div>",
                 paragraphs(12, 6)
-            ),
-            "",
-        ),
-        (
-            &format!(
-                "<div style=\"columns: 2; height: 40px\"><p style=\"transform: translate(4px, 3px)\">{words}</p></div>"
             ),
             "",
         ),
@@ -1213,6 +1206,17 @@ fn text_under_a_moved_clip_has_no_runs_and_a_warning() {
         ),
         "",
         "c",
+    );
+    // The painter clips each column fragment of the paragraph where it
+    // draws that fragment.
+    assert_omitted(
+        &format!(
+            "<p>kept</p><div style=\"columns: 2; height: 40px\">\
+             <p id=\"f\" style=\"transform: translate(4px, 3px)\">{}</p></div>",
+            vec!["word"; 40].join(" ")
+        ),
+        "",
+        "f",
     );
 }
 

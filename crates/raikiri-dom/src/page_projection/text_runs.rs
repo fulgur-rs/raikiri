@@ -392,6 +392,9 @@ pub(super) struct RunContext {
     /// Elements laid out as column fragments, which the painter places from
     /// each fragment.
     fragmented: HashSet<usize>,
+    /// Elements with a column fragment the painter clips where it draws
+    /// that fragment.
+    fragment_clipped: HashSet<usize>,
     /// The body, where the painter starts.
     body: Option<usize>,
 }
@@ -433,14 +436,17 @@ impl RunContext {
                 overlapping.insert(root);
             }
         }
-        let fragmented = document
-            .layout_fragments()
+        let fragments = document.layout_fragments();
+        let fragmented = fragments.iter().map(|fragment| fragment.node_id).collect();
+        let fragment_clipped = fragments
             .iter()
+            .filter(|fragment| fragment.fragmentainer_clip.is_some())
             .map(|fragment| fragment.node_id)
             .collect();
         Self {
             overlapping,
             fragmented,
+            fragment_clipped,
             body: crate::paint_rules::find_paint_root(document),
         }
     }
@@ -657,7 +663,8 @@ pub(super) fn paint_shift(
         if let Some(reason) = fixed_omission(cv) {
             return Err(reason);
         }
-        clipped |= crate::paint_rules::clips_element_overflow(document, cascade, id)
+        clipped |= context.fragment_clipped.contains(&id)
+            || crate::paint_rules::clips_element_overflow(document, cascade, id)
             || matches!(cv.column_count, ColumnCountValue::Count(count) if count > 1)
             || used_columns(document, id) > 1;
         if clipped && (x, y) != (0.0, 0.0) {
