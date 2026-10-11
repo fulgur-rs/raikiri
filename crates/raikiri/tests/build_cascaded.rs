@@ -352,8 +352,9 @@ fn umbrella_re_exports_cover_computed_value_types_and_parse_options_fields() {
     // and Url (ParseOptions.base_url). Build ParseOptions and bind typed
     // ComputedValues fields without direct sub-crate dependencies.
     use raikiri::{
-        ComputedLength, CssColor, Document, FontFamilyKind, FontFamilyName, Length,
-        NetworkProvider, ParseOptions, PropertyValue, Url, build_cascaded, parse,
+        AbsoluteFontSize, ComputedLength, CssColor, Document, FontFamilyKind, FontFamilyName,
+        FontSizeKeywordInfo, Length, NetworkProvider, ParseOptions, PropertyValue, Url,
+        build_cascaded, parse,
     };
 
     // Compile-check that NetworkProvider can be named through dyn.
@@ -381,6 +382,15 @@ fn umbrella_re_exports_cover_computed_value_types_and_parse_options_fields() {
     // The specified-layer `Length` remains nameable by consumers as a
     // `PropertyValue` payload; that motivates its umbrella re-export.
     let _specified_font_size: PropertyValue = PropertyValue::FontSize(Length::Px(12.0));
+    // `<absolute-size>` keywords stay keywords in `PropertyValue`, and the
+    // computed size records which keyword it derives from.
+    let _keyword_font_size: PropertyValue = PropertyValue::FontSizeKeyword(AbsoluteFontSize::Small);
+    let font_size_keyword: Option<FontSizeKeywordInfo> = computed.font_size_keyword;
+    assert_eq!(font_size_keyword, Some(FontSizeKeywordInfo::MEDIUM));
+    assert_eq!(
+        font_size_keyword.map(|info| info.keyword),
+        Some(AbsoluteFontSize::Medium)
+    );
     // ComputedValues retains both each family's text and whether it is a
     // generic keyword or a named family.
     let font_family: &Vec<FontFamilyName> = &computed.font_family;
