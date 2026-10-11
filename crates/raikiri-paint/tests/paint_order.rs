@@ -168,6 +168,8 @@ fn api_steps(page: &Page<'_>) -> Vec<Step> {
             PaintEvent::PopClip => Step::PopClip,
             PaintEvent::PushOpacity(_) => Step::PushOpacity,
             PaintEvent::PopOpacity => Step::PopOpacity,
+            // The walker records no step for a transform.
+            PaintEvent::PushTransform(_) | PaintEvent::PopTransform => continue,
             PaintEvent::Box(fragment) => {
                 let node = node_index(fragment.node());
                 if table_background_clip && !table_background_nodes.insert(node) {

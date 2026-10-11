@@ -10,8 +10,9 @@ use kurbo::Point;
 use raikiri_dom::{CounterSnapshotBudget, PositionedLines};
 use raikiri_html::{
     DocumentLayout, FontCollectionBuilder, FragmentKind, GeneratedKind, LayoutConfig,
-    LayoutOptions, LayoutStatus, NodeId, NodeKind, Page, PageDefaults, PositionedGlyphRun,
-    RenderFonts, RenderResources, RunSource, WarningKind, layout, parse_html_with_resources,
+    LayoutOptions, LayoutStatus, NodeId, NodeKind, Page, PageDefaults, PaintTransform,
+    PositionedGlyphRun, RenderFonts, RenderResources, RunSource, WarningKind, layout,
+    parse_html_with_resources,
 };
 use raikiri_paint::paint_single_page_with_origin_and_page;
 use std::collections::{HashMap, HashSet};
@@ -87,20 +88,19 @@ fn drawn(page: &Page<'_>, page_count: u32) -> Vec<(u32, f64, f64)> {
     out
 }
 
-/// `(glyph id, x, y)` of the glyphs of `run`, from its origin, advances and
-/// offsets.
+/// `(glyph id, x, y)` of the glyphs of `run` on the page, from its origin,
+/// advances, offsets and transform.
 fn expanded(run: &PositionedGlyphRun<'_>) -> Vec<(u32, f64, f64)> {
-    let mut pen = f64::from(run.origin.0);
+    let mut pen = run.origin.0;
     run.glyphs
         .iter()
         .map(|glyph| {
-            let placed = (
-                glyph.id,
-                pen + f64::from(glyph.x_offset),
-                f64::from(run.origin.1) + f64::from(glyph.y_offset),
-            );
-            pen += f64::from(glyph.advance);
-            placed
+            let point = (pen + glyph.x_offset, run.origin.1 + glyph.y_offset);
+            let (x, y) = run
+                .transform
+                .map_or(point, |transform| transform.apply(point));
+            pen += glyph.advance;
+            (glyph.id, f64::from(x), f64::from(y))
         })
         .collect()
 }
@@ -607,9 +607,88 @@ fn multicol_paragraphs_match_native_glyph_placements() {
 }
 
 #[test]
-fn rotated_paragraphs_have_no_runs_and_a_warning() {
+fn transformed_text_matches_paint() {
+    assert_cases_match_paint(&[
+        (
+            "<p>kept</p><div style=\"transform: translateX(5px) rotate(10deg)\"><p>moved</p></div>",
+            "",
+        ),
+        (
+            "<div style=\"transform: scale(1.5, 0.5); transform-origin: 10px 20%\"><p>scaled</p></div>",
+            "",
+        ),
+        (
+            "<div style=\"transform: skewX(12deg) skewY(5deg)\"><p>a <span>skewed</span> b</p></div>",
+            "",
+        ),
+        (
+            "<div style=\"transform: matrix(0.8, 0.3, -0.2, 1.1, 7, 3)\"><p>matrix</p></div>",
+            "",
+        ),
+        // Transforms and offsets nest: the inner transform turns about the
+        // inner box after the outer offsets moved it.
+        (
+            "<div style=\"transform: translate(3.3px, 4px)\"><div style=\"position: relative; \
+             left: 2.5px; transform: rotate(-20deg)\"><div style=\"float: left; position: relative; \
+             top: 3px; transform: scale(0.75) rotate(30deg)\">turned</div></div></div>",
+            "",
+        ),
+        (
+            "<ul style=\"transform: rotate(5deg)\"><li>item</li></ul>",
+            "",
+        ),
+        // A repeated table header turns about its own copy on each page.
+        (
+            "<table><thead><tr><th style=\"transform: rotate(10deg)\">head</th></tr></thead>\
+             <tbody><tr><td style=\"height: 1500px\">body</td></tr></tbody></table>",
+            "",
+        ),
+        (
+            "<p>a <span style=\"display: inline-block; transform: rotate(45deg)\">box</span> b</p>",
+            "",
+        ),
+        // A box broken across pages turns about its box on each page.
+        (
+            &format!(
+                "<div style=\"transform: rotate(3deg)\">{}</div>",
+                paragraphs(12, 6)
+            ),
+            "",
+        ),
+        // The painter moves a multi-column container with its column clips.
+        (
+            &format!(
+                "<p>kept</p><div style=\"columns: 2; height: 40px; transform: rotate(4deg)\">\
+                 <p>{}</p></div>",
+                vec!["word"; 40].join(" ")
+            ),
+            "",
+        ),
+        (
+            "<p>kept</p><div style=\"overflow: hidden; height: 30px; transform: rotate(8deg)\">\
+             <p>a</p></div>",
+            "",
+        ),
+    ]);
+}
+
+#[test]
+fn singularly_transformed_paragraphs_have_no_runs_and_a_warning() {
     assert_omitted(
-        "<p>kept</p><div style=\"transform: translateX(5px) rotate(10deg)\"><p id=\"t\">moved</p></div>",
+        "<p>kept</p><div style=\"transform: scale(0)\"><p id=\"t\">gone</p></div>",
+        "",
+        "t",
+    );
+}
+
+#[test]
+fn turned_paragraphs_in_columns_have_no_runs_and_a_warning() {
+    assert_omitted(
+        &format!(
+            "<p>kept</p><div style=\"columns: 2; height: 40px\">\
+             <div style=\"transform: rotate(10deg)\"><p id=\"t\">{}</p></div></div>",
+            vec!["word"; 40].join(" ")
+        ),
         "",
         "t",
     );
@@ -1066,14 +1145,30 @@ fn generated_boxes_move_with_their_text_like_the_painter() {
         assert!(assert_runs_match_paint(&result) > 0, "{css}");
         let page = result.pages().next().expect("page");
         let runs = page.text_runs();
-        let rects: Vec<_> = page
-            .paint_order_for_text_runs(&runs)
-            .iter()
-            .filter_map(|event| match event {
-                raikiri_html::PaintEvent::GeneratedBox(piece) => Some(piece.rect),
-                _ => None,
-            })
-            .collect();
+        // The paint order moves the decoration with the transforms around it.
+        let mut transforms = vec![PaintTransform::IDENTITY];
+        let mut rects = Vec::new();
+        for event in page.paint_order_for_text_runs(&runs) {
+            match event {
+                raikiri_html::PaintEvent::PushTransform(transform) => {
+                    transforms.push(*transforms.last().unwrap() * transform);
+                }
+                raikiri_html::PaintEvent::PopTransform => {
+                    transforms.pop();
+                }
+                raikiri_html::PaintEvent::GeneratedBox(piece) => {
+                    let transform = transforms.last().unwrap();
+                    assert_eq!(
+                        (transform.a, transform.b, transform.c, transform.d),
+                        (1.0, 0.0, 0.0, 1.0)
+                    );
+                    let mut rect = piece.rect;
+                    (rect.x, rect.y) = transform.apply((rect.x, rect.y));
+                    rects.push(rect);
+                }
+                _ => {}
+            }
+        }
         assert_eq!(rects.len(), 1, "{css}");
         let rect = rects[0];
         let expected = (
@@ -1183,29 +1278,43 @@ fn percentage_translated_column_fragments_have_no_runs_and_a_warning() {
 }
 
 #[test]
-fn text_under_a_moved_clip_has_no_runs_and_a_warning() {
-    // The painter moves these clips with their box or its moved ancestor;
-    // the paint order keeps them at the layout location.
-    assert_omitted(
-        "<p>kept</p><div style=\"transform: translate(4px, 3px)\">\
-         <div style=\"overflow: hidden; height: 30px\"><p id=\"i\">a</p></div></div>",
-        "",
-        "i",
-    );
-    assert_omitted(
-        "<p>kept</p><div style=\"overflow: hidden; height: 30px; transform: translate(4px, 3px)\">\
-         <p id=\"o\">a</p></div>",
-        "",
-        "o",
-    );
+fn text_under_a_moved_clip_matches_paint() {
+    // The paint order moves these clips with their box or its moved
+    // ancestor, as the painter does.
+    assert_cases_match_paint(&[
+        (
+            "<p>kept</p><div style=\"transform: translate(4px, 3px)\">\
+             <div style=\"overflow: hidden; height: 30px\"><p>a</p></div></div>",
+            "",
+        ),
+        (
+            "<p>kept</p><div style=\"overflow: hidden; height: 30px; transform: translate(4px, 3px)\">\
+             <p>a</p></div>",
+            "",
+        ),
+        (
+            &format!(
+                "<p>kept</p><div style=\"columns: 2; height: 40px; transform: translate(4px, 3px)\">\
+                 <p>{}</p></div>",
+                vec!["word"; 40].join(" ")
+            ),
+            "",
+        ),
+    ]);
+}
+
+#[test]
+fn text_under_a_moved_clip_in_columns_has_no_runs_and_a_warning() {
+    // Inside columns, the paint order keeps the clips at their layout
+    // location, and the painter moves them with their box.
     assert_omitted(
         &format!(
-            "<p>kept</p><div style=\"columns: 2; height: 40px; transform: translate(4px, 3px)\">\
-             <p id=\"c\">{}</p></div>",
+            "<p>kept</p><div style=\"columns: 2; height: 40px\"><div style=\"transform: translate(4px, 3px)\">\
+             <div style=\"overflow: hidden; height: 30px\"><p id=\"i\">{}</p></div></div></div>",
             vec!["word"; 40].join(" ")
         ),
         "",
-        "c",
+        "i",
     );
     // The painter clips each column fragment of the paragraph where it
     // draws that fragment.

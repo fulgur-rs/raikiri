@@ -12,7 +12,7 @@ use raikiri_style::resolve::{
     ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedTransformFunction,
 };
 use raikiri_style::{CascadeResult, ComputedValues, PseudoElem};
-use raikiri_traits::{NodeId, NodeKind};
+use raikiri_traits::{NodeId, NodeKind, PaintTransform};
 use shodo::geometry::WritingMode;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
@@ -142,10 +142,12 @@ pub struct TextLineId {
 /// where the sums run over [`Self::glyphs`] in order. Glyphs are listed left to
 /// right, so a right-to-left run lists its last logical glyph first.
 ///
-/// Positions include the relative offsets and the translating transforms of
-/// the text's boxes, as the built-in painter draws them, unlike
-/// [`crate::Fragment::rect`]. A paragraph under any other transform has no
-/// runs.
+/// The built-in painter moves the text with the boxes around it, by
+/// relative offsets that layout leaves to paint and by `transform`. Inside
+/// columns, positions include those moves, unlike [`crate::Fragment::rect`],
+/// and a paragraph there under a transform that does more than translate
+/// has no runs. Elsewhere, positions are where layout put the text, like
+/// fragment rectangles, and [`Self::transform`] maps them to the page.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct PositionedGlyphRun<'a> {
@@ -178,6 +180,11 @@ pub struct PositionedGlyphRun<'a> {
     pub text: &'a str,
     /// The glyphs, left to right.
     pub glyphs: Vec<Glyph>,
+    /// Maps the run's positions, decorations and shadows to the page, where
+    /// the built-in painter draws them. `None` when they are already on the
+    /// page. In paint order, this is the product of the enclosing
+    /// [`crate::PaintEvent::PushTransform`] events.
+    pub transform: Option<PaintTransform>,
     /// Text color (used value).
     pub color: CssColor,
     /// Used decoration segments, including lines propagated from ancestors.
@@ -357,6 +364,7 @@ pub(crate) enum TextRunOmission {
     OverlappingColumnLines,
     UnrootedColumnFragments,
     Transform,
+    SingularTransform,
     FragmentedTransform,
     ShiftedClip,
     FixedPlacement,
@@ -370,12 +378,18 @@ impl TextRunOmission {
                 "the same paragraph line has overlapping column placements"
             }
             Self::UnrootedColumnFragments => "its column fragments have no rooted placement chain",
-            Self::Transform => "it or an ancestor has a transform that does more than translate",
+            Self::Transform => {
+                "it or an ancestor inside columns has a transform that does more than translate"
+            }
+            Self::SingularTransform => {
+                "it or an ancestor has a transform that cannot be inverted, so nothing of it is painted"
+            }
             Self::FragmentedTransform => {
                 "a box split into column fragments translates it by a percentage"
             }
             Self::ShiftedClip => {
-                "a relative offset or translation moves an overflow or column clip around it"
+                "inside columns, a relative offset or translation moves an overflow or column \
+                 clip around it"
             }
             Self::FixedPlacement => {
                 "it is inside a fixed box not placed by `top` and `left` lengths, \
@@ -391,12 +405,12 @@ pub(super) struct RunContext {
     overlapping: HashSet<usize>,
     /// Elements laid out as column fragments, which the painter places from
     /// each fragment.
-    fragmented: HashSet<usize>,
+    pub(super) fragmented: HashSet<usize>,
     /// Elements with a column fragment the painter clips where it draws
     /// that fragment.
-    fragment_clipped: HashSet<usize>,
+    pub(super) fragment_clipped: HashSet<usize>,
     /// The body, where the painter starts.
-    body: Option<usize>,
+    pub(super) body: Option<usize>,
 }
 
 impl RunContext {
@@ -495,20 +509,33 @@ fn has_relative_inset(cv: &ComputedValues) -> bool {
             })
 }
 
+/// How the built-in painter moves one element and its subtree from their
+/// layout location.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct BoxShift {
+    /// The relative offset that layout leaves to paint, plus the
+    /// translation of a `transform` that only translates.
+    pub(super) offset: (f32, f32),
+    /// The element's `transform` does more than translate.
+    pub(super) general: bool,
+}
+
 /// How far the built-in painter moves element `id` and its subtree from
 /// their layout location: by a relative offset that layout leaves to paint,
-/// and by a `transform` that only translates. `Err` when the element has a
-/// transform the runs cannot express as an offset.
-fn box_paint_shift(
+/// and by its `transform`.
+pub(super) fn box_paint_shift(
     document: &Document,
     cascade: &CascadeResult,
     body: Option<usize>,
     id: usize,
     cv: &ComputedValues,
     fragmented: bool,
-) -> Result<(f32, f32), TextRunOmission> {
+) -> Result<BoxShift, TextRunOmission> {
     let Some(node) = document.get_node(id) else {
-        return Ok((0.0, 0.0)); // cov:ignore: ancestors of a laid-out paragraph are arena nodes
+        return Ok(BoxShift {
+            offset: (0.0, 0.0),
+            general: false,
+        }); // cov:ignore: ancestors of a laid-out paragraph are arena nodes
     };
     // Layout already applies the relative offset of boxes in normal flow,
     // flex and grid, and of boxes on lines. The body, floats and table parts
@@ -543,8 +570,19 @@ fn box_paint_shift(
     } else {
         (0.0, 0.0)
     };
-    if !transformable(document, id, cv) {
-        return Ok((dx, dy));
+    if !transformable(document, id, cv) || cv.transform.is_empty() {
+        return Ok(BoxShift {
+            offset: (dx, dy),
+            general: false,
+        });
+    }
+    if !super::paint_transform::translation_only(cv) {
+        // The painter turns the box about its origin; see
+        // `paint_transform::element_transform`.
+        return Ok(BoxShift {
+            offset: (dx, dy),
+            general: true,
+        });
     }
     // Percentages resolve against the border box (CSS Transforms 1 §6).
     let size = node.unrounded_layout.size;
@@ -565,14 +603,17 @@ fn box_paint_shift(
             }
             ComputedTransformFunction::TranslateX(x) => dx += resolve(x, size.width)?,
             ComputedTransformFunction::TranslateY(y) => dy += resolve(y, size.height)?,
-            _ => return Err(TextRunOmission::Transform),
+            _ => {} // cov:ignore: a list that only translates has no other function
         }
     }
-    Ok((dx, dy))
+    Ok(BoxShift {
+        offset: (dx, dy),
+        general: false,
+    })
 }
 
 /// Whether the element's `transform` applies to it.
-fn transformable(document: &Document, id: usize, cv: &ComputedValues) -> bool {
+pub(super) fn transformable(document: &Document, id: usize, cv: &ComputedValues) -> bool {
     // spec: https://www.w3.org/TR/css-transforms-1/#terminology
     // Non-replaced inline and table-column boxes are not transformable.
     let Some(node) = document.get_node(id) else {
@@ -618,30 +659,77 @@ fn fixed_omission(cv: &ComputedValues) -> Option<TextRunOmission> {
         .then_some(TextRunOmission::FixedPlacement)
 }
 
+/// Whether a column of element `id` clips its content: the element is a
+/// multi-column container with more than one column, or a column fragment
+/// the painter clips where it draws it.
+pub(super) fn column_clip_owner(
+    document: &Document,
+    cascade: &CascadeResult,
+    context: &RunContext,
+    id: usize,
+) -> bool {
+    context.fragment_clipped.contains(&id)
+        || cascade.computed.get(id).is_some_and(
+            |cv| matches!(cv.column_count, ColumnCountValue::Count(count) if count > 1),
+        )
+        || used_columns(document, id) > 1
+}
+
+/// The boxes from the source of text root `root` up to the body, innermost
+/// first, each with whether a box above it clips it to a column.
+fn paint_chain(
+    document: &Document,
+    cascade: &CascadeResult,
+    context: &RunContext,
+    root: usize,
+) -> Vec<(usize, bool)> {
+    let root = generated_origin(root).map_or(root, |(owner, _)| owner);
+    let mut chain = Vec::new();
+    let mut current = Some(document.ifc_source_owner(root));
+    while let Some(id) = current {
+        chain.push((id, false));
+        // The painter starts at the body; the boxes above it do not move
+        // its content.
+        if Some(id) == context.body {
+            break;
+        }
+        current = document.parent_of(id);
+    }
+    let mut in_columns = false;
+    for (id, below) in chain.iter_mut().rev() {
+        *below = in_columns;
+        in_columns |= column_clip_owner(document, cascade, context, *id);
+    }
+    chain
+}
+
 /// How far the built-in painter moves the lines of text root `root` from
-/// their layout location, or what moves them that the runs do not model.
+/// their layout location inside columns, or what moves them that the runs
+/// do not model.
+///
+/// Outside columns, the paint order lists the moves of the boxes around the
+/// lines as transforms, and the runs carry them in
+/// [`PositionedGlyphRun::transform`] (see [`run_transform`]). Inside
+/// columns, the clips of the columns stay at their layout location, so the
+/// offsets of the boxes there move the lines themselves.
 pub(super) fn paint_shift(
     document: &Document,
     cascade: &CascadeResult,
     context: &RunContext,
     root: usize,
 ) -> Result<(f32, f32), TextRunOmission> {
-    let body = context.body;
-    let root = generated_origin(root).map_or(root, |(owner, _)| owner);
     let (mut dx, mut dy) = (0.0, 0.0);
-    // The shift of the boxes passed so far, when a clip was among them: the
-    // painter moves that clip with the boxes above it, and the clips of the
-    // paint order stay at their layout location.
+    // Whether a clip was among the boxes passed so far: the painter moves
+    // that clip with the boxes above it, and the clips of the paint order
+    // inside columns stay at their layout location.
     let mut clipped = false;
     let mut fixed = false;
-    let mut current = Some(document.ifc_source_owner(root));
-    while let Some(id) = current {
-        current = document.parent_of(id);
+    for (id, in_columns) in paint_chain(document, cascade, context, root) {
         let Some(cv) = cascade.computed.get(id) else {
             continue; // cov:ignore: the cascade has a value for every arena node
         };
         let fragmented = context.fragmented.contains(&id);
-        let (x, y) = box_paint_shift(document, cascade, body, id, cv, fragmented)?;
+        let shift = box_paint_shift(document, cascade, context.body, id, cv, fragmented)?;
         if fixed {
             // spec: https://www.w3.org/TR/css-transforms-1/#containing-block-for-all-descendants
             // A transformed or filtered ancestor makes the fixed box local
@@ -650,36 +738,77 @@ pub(super) fn paint_shift(
             // itself, with the fixed box's insets is not modeled either.
             if (transformable(document, id, cv) && !cv.transform.is_empty())
                 || !cv.filter.is_empty()
-                || (x, y) != (0.0, 0.0)
+                || shift.offset != (0.0, 0.0)
                 || has_relative_inset(cv)
             {
                 return Err(TextRunOmission::FixedPlacement);
-            }
-            if Some(id) == body {
-                break;
             }
             continue;
         }
         if let Some(reason) = fixed_omission(cv) {
             return Err(reason);
         }
-        clipped |= context.fragment_clipped.contains(&id)
-            || crate::paint_rules::clips_element_overflow(document, cascade, id)
-            || matches!(cv.column_count, ColumnCountValue::Count(count) if count > 1)
-            || used_columns(document, id) > 1;
-        if clipped && (x, y) != (0.0, 0.0) {
-            return Err(TextRunOmission::ShiftedClip);
+        if shift.general && super::paint_transform::is_singular(cv) {
+            return Err(TextRunOmission::SingularTransform);
         }
-        dx += x;
-        dy += y;
+        if in_columns {
+            if shift.general {
+                return Err(TextRunOmission::Transform);
+            }
+            clipped |= column_clip_owner(document, cascade, context, id)
+                || crate::paint_rules::clips_element_overflow(document, cascade, id);
+            if clipped && shift.offset != (0.0, 0.0) {
+                return Err(TextRunOmission::ShiftedClip);
+            }
+            dx += shift.offset.0;
+            dy += shift.offset.1;
+        }
         fixed = cv.position == PositionValue::Fixed;
-        // The painter starts at the body; the boxes above it do not move
-        // its content.
-        if Some(id) == body {
-            break;
-        }
     }
     Ok((dx, dy))
+}
+
+/// The transform from the coordinates the runs of text root `root` are
+/// placed in on `page` to the page: the moves of the boxes around them
+/// outside columns, outermost first, as the paint order lists them.
+pub(super) fn run_transform(
+    document: &Document,
+    cascade: &CascadeResult,
+    context: &RunContext,
+    page: &PageFragment,
+    root: usize,
+) -> Option<PaintTransform> {
+    let mut transform = PaintTransform::IDENTITY;
+    let mut ancestors = (0.0, 0.0);
+    for (id, in_columns) in paint_chain(document, cascade, context, root)
+        .into_iter()
+        .rev()
+    {
+        if in_columns {
+            break;
+        }
+        let Some(cv) = cascade.computed.get(id) else {
+            continue; // cov:ignore: the cascade has a value for every arena node
+        };
+        let fragmented = context.fragmented.contains(&id);
+        let Ok(shift) = box_paint_shift(document, cascade, context.body, id, cv, fragmented) else {
+            continue; // cov:ignore: the runs of a box the painter cannot place are omitted first
+        };
+        if let Some(own) = super::paint_transform::element_transform(
+            document,
+            cascade,
+            page,
+            id,
+            shift.offset,
+            shift.general,
+            ancestors,
+        ) {
+            transform = transform * own;
+        }
+        ancestors.0 += shift.offset.0;
+        ancestors.1 += shift.offset.1;
+    }
+    (transform != PaintTransform::IDENTITY).then_some(transform)
 }
 
 /// How far the painter moves the runs of `root` from their layout
@@ -857,6 +986,7 @@ pub(crate) fn standalone_runs<'a>(
                 color,
                 decorations: Vec::new(),
                 shadows: shadows.to_vec(),
+                transform: None,
             });
         }
     }
@@ -1026,6 +1156,7 @@ fn glyph_run<'a>(
         color,
         decorations: Vec::new(),
         shadows: text_shadows(positioned.style),
+        transform: None,
     })
 }
 
@@ -1045,6 +1176,7 @@ fn root_runs<'a>(
         Some(page.flow_range?)
     };
     let shift = placement(document, cascade, context, root.node).ok()?;
+    let transform = run_transform(document, cascade, context, page, root.node);
     let positioned = PositionedLines::new(document, cascade, root.node, root.fragmentainer)?;
     // A repeated paragraph sits at the same place on every page; any other
     // is placed in its page's slice of the flow. The paint shift moves the
@@ -1088,6 +1220,7 @@ fn root_runs<'a>(
                 if matches!(run.source, RunSource::Text(_)) {
                     run.decorations = lines;
                 }
+                run.transform = transform;
                 out.push(run);
             } // cov:ignore: current positioned body runs have a source, style, font and nonempty glyphs; future element-owned runs may be omitted.
         }
@@ -1228,7 +1361,12 @@ impl Document {
                 }
                 if let Some((owner, PseudoElem::Marker)) = generated_origin(root.node) {
                     if let Ok(shift) = placement(self, cascade, context, root.node) {
+                        let start = runs.len();
                         marker_runs(self, page, &root, owner, shift, &mut runs);
+                        let transform = run_transform(self, cascade, context, page, root.node);
+                        for run in &mut runs[start..] {
+                            run.transform = transform;
+                        }
                     }
                 } else {
                     root_runs(self, cascade, page, context, &root, &mut runs);

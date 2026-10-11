@@ -105,6 +105,9 @@ impl<'a> Fragment<'a> {
     }
 
     /// Border box in layout space (before translate and relative offsets).
+    ///
+    /// In paint order, the enclosing [`crate::PaintEvent::PushTransform`]
+    /// events move it where the painter draws it.
     pub fn rect(&self) -> PaintRect {
         let r = self.item.rect;
         PaintRect::new(r.x + self.origin.0, r.y + self.origin.1, r.width, r.height)

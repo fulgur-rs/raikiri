@@ -117,6 +117,8 @@ pub struct RasterImage {
     /// Shared straight RGBA8 pixels from the configured source.
     pub pixels: std::sync::Arc<raikiri_traits::DecodedImage>,
     /// Object rectangle after object-fit and object-position, or marker placement.
+    /// Like [`Fragment::paint_rect`], it is in layout coordinates, which the
+    /// enclosing [`PaintEvent::PushTransform`] events of its paint event move.
     pub rect: PaintRect,
     /// Whole content-edge clip or marker rectangle, before pagination cuts.
     pub clip: raikiri_traits::PaintClip,
@@ -471,15 +473,18 @@ impl<'a> Page<'a> {
     /// principal fragment and is not repeated on continuation pages. Missing
     /// image markers retain their text fallback; usable images have their own
     /// [`PaintEvent::MarkerImage`] event.
-    /// Relative offsets and transforms that only translate are included.
+    /// Relative offsets and transforms are included: inside columns they
+    /// move the positions, elsewhere [`PositionedGlyphRun::transform`] maps
+    /// the positions to the page.
     /// A paragraph whose text is placed by geometry the runs do not model
     /// has no runs here: a vertical writing mode, overlapping or unrooted
     /// column placements, a transform other than a translation on the
-    /// paragraph or an ancestor, a percentage translation of a box split
-    /// into column fragments, a relative offset or translation that moves an
-    /// overflow or column clip around the paragraph, or a fixed box not
-    /// placed by `top` and `left` lengths or inside a transformed, filtered
-    /// or moved box. Each such paragraph is reported
+    /// paragraph or an ancestor inside columns, a singular transform, a
+    /// percentage translation of a box split into column fragments, a
+    /// relative offset or translation inside columns that moves an overflow
+    /// or column clip around the paragraph, or a fixed box not placed by
+    /// `top` and `left` lengths or inside a transformed, filtered or moved
+    /// box. Each such paragraph is reported
     /// once in [`super::DocumentLayout::warnings`] with
     /// [`raikiri_traits::WarningKind::TextRunsOmitted`].
     pub fn text_runs(&self) -> Vec<PositionedGlyphRun<'a>> {
@@ -500,6 +505,13 @@ impl<'a> Page<'a> {
     /// Clip rectangles are in the same space as [`Fragment::paint_rect`]; an
     /// overflow clip is built from the element's whole box, so it runs past
     /// the page where a page break cuts the box.
+    /// An element that the built-in painter moves from its layout location,
+    /// by a relative offset that layout leaves to paint or by `transform`,
+    /// is enclosed with its subtree in a [`PaintEvent::PushTransform`] and
+    /// [`PaintEvent::PopTransform`] pair; inside it, events keep their
+    /// layout coordinates. Elements inside columns are not enclosed this
+    /// way, and an element with a singular transform is left out with its
+    /// subtree.
     /// Image markers are included. Generated text uses
     /// [`Self::paint_order_for_text_runs`]. Explicit column fragment clips are
     /// included. Legacy column-height clipping retains an approximation
