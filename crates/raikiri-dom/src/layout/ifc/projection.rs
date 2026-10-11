@@ -14,7 +14,10 @@ use super::error::IfcError;
 use super::first_letter::{FirstLetter, LetterStyle};
 use super::style;
 use crate::Document;
-use crate::generated_content::{generated_node_id, generated_text, is_in_flow_generated_text};
+use crate::generated_content::{
+    GeneratedPiece, generated_image_node_id, generated_node_id, generated_pieces, generated_text,
+    is_in_flow_generated_text,
+};
 use crate::target::{CounterSnapshot, CounterSnapshotLimitExceeded};
 use raikiri_style::property::{
     ClearValue, Direction, DisplayValue, FloatValue, PositionValue, TextWrapMode,
@@ -58,6 +61,8 @@ pub(crate) struct ProjectedIfc {
     pub(crate) boxes: Vec<IfcBox>,
     /// Fixed-size image marker inserted ahead of the root's ordinary content.
     pub(crate) marker_atomic: Option<(NodeId, shodo::AtomicSize)>,
+    /// Fixed-size images of `::before` and `::after` content.
+    pub(crate) generated_atomics: Vec<(NodeId, shodo::AtomicSize)>,
     /// The root's `direction` is `rtl`: its lines start at the right edge.
     pub(crate) rtl: bool,
     /// Paint offsets of the relatively positioned inline elements, by DOM
@@ -238,14 +243,36 @@ pub(crate) fn has_in_flow_generated_text(
     Ok(false)
 }
 
-/// Push the text of the `pseudo` of `element` into the paragraph, as an
+/// The images of `::before` and `::after` content of a paragraph: atomic
+/// inlines of a prepared size (CSS Content 3 §2.2).
+struct GeneratedImages {
+    atomics: Vec<(NodeId, shodo::AtomicSize)>,
+    writing_mode: WritingMode,
+}
+
+/// The atomic size of an image of `width` by `height` CSS pixels, its
+/// baseline at its bottom margin edge (CSS 2.1 10.8.1).
+fn image_atomic_size(
+    size: raikiri_traits::ImageRasterSize,
+    writing_mode: WritingMode,
+) -> shodo::AtomicSize {
+    let horizontal = writing_mode == WritingMode::HorizontalTb;
+    shodo::AtomicSize {
+        inline_size: if horizontal { size.width } else { size.height },
+        block_size: if horizontal { size.height } else { size.width },
+        ..shodo::AtomicSize::default()
+    }
+}
+
+/// Push the content of the `pseudo` of `element` into the paragraph, as an
 /// inline box of its own with the pseudo-element's style (CSS 2.1 12.1: the
 /// generated box is a child of its element, before or after its content).
-/// Only the text of `content` is laid out: images contribute nothing. A
-/// block-level pseudo-element is approximated by a line of its own: a forced
-/// break after `::before`, before `::after`. Floated and out-of-flow
-/// pseudo-elements are not part of the paragraph; the painter draws them as
-/// overlays.
+/// Text is laid out as text; each prepared image of `::before` and `::after`
+/// is an atomic inline in its place (CSS Content 3 §2.2), and an image that
+/// was not prepared represents nothing. A block-level pseudo-element is
+/// approximated by a line of its own: a forced break after `::before`,
+/// before `::after`. Floated and out-of-flow pseudo-elements are not part of
+/// the paragraph; the painter draws them as overlays.
 #[allow(clippy::too_many_arguments)]
 fn push_generated(
     builder: &mut ParagraphBuilder,
@@ -257,15 +284,58 @@ fn push_generated(
     counters: &GeneratedCounters,
     first_letter: &mut FirstLetter,
     text_nowrap: &mut HashMap<u64, bool>,
+    images: &mut GeneratedImages,
 ) -> Result<(), IfcError> {
     if !is_in_flow_generated_text(cascade, element, pseudo) {
         return Ok(());
     }
-    let Some((cv, text)) =
-        generated_text(doc, cascade, element, pseudo, counters.get(doc, cascade)?)
-    else {
-        return Ok(());
+    let (cv, text, pieces) = if pseudo == PseudoElem::Marker {
+        let Some((cv, text)) =
+            generated_text(doc, cascade, element, pseudo, counters.get(doc, cascade)?)
+        else {
+            return Ok(());
+        };
+        (cv, text, Vec::new())
+    } else {
+        let Some((cv, pieces)) =
+            generated_pieces(doc, cascade, element, pseudo, counters.get(doc, cascade)?)
+        else {
+            return Ok(());
+        };
+        // Only the images that were prepared take part; the others
+        // represent nothing. A kept image carries its node id from here on.
+        let mut kept = Vec::with_capacity(pieces.len());
+        for piece in pieces {
+            match piece {
+                GeneratedPiece::Text(text) => kept.push(GeneratedPiece::Text(text)),
+                GeneratedPiece::Image(index) => {
+                    let (Some(id), Some(size)) = (
+                        generated_image_node_id(element, pseudo, index),
+                        doc.content_image_size(element, pseudo, index),
+                    ) else {
+                        continue;
+                    };
+                    images.atomics.push((
+                        NodeId(id as u64),
+                        image_atomic_size(size, images.writing_mode),
+                    ));
+                    kept.push(GeneratedPiece::Image(id));
+                }
+            }
+        }
+        let pieces = kept;
+        let text: String = pieces
+            .iter()
+            .filter_map(|piece| match piece {
+                GeneratedPiece::Text(text) => Some(text.as_str()),
+                GeneratedPiece::Image(_) => None,
+            })
+            .collect();
+        (cv, text, pieces)
     };
+    let has_images = pieces
+        .iter()
+        .any(|piece| matches!(piece, GeneratedPiece::Image(_)));
     let atomic = pseudo != PseudoElem::Marker
         && matches!(
             cv.display,
@@ -274,7 +344,7 @@ fn push_generated(
                 | DisplayValue::InlineGrid
                 | DisplayValue::InlineTable
         );
-    if text.is_empty() {
+    if text.is_empty() && !has_images {
         if atomic {
             first_letter.stop();
         }
@@ -340,19 +410,36 @@ fn push_generated(
         } else {
             builder.push_text(TextSource::Generated { node: id }, &text);
         }
-    } else if atomic {
-        builder.push_text(TextSource::Generated { node: id }, &text);
     } else {
-        first_letter.push_with_counters(
-            builder,
-            doc,
-            cascade,
-            TextSource::Generated { node: id },
-            cv,
-            &text,
-            fonts,
-            counters,
-        )?;
+        for piece in &pieces {
+            match piece {
+                GeneratedPiece::Text(text) if atomic => {
+                    builder.push_text(TextSource::Generated { node: id }, text);
+                }
+                GeneratedPiece::Text(text) => {
+                    first_letter.push_with_counters(
+                        builder,
+                        doc,
+                        cascade,
+                        TextSource::Generated { node: id },
+                        cv,
+                        text,
+                        fonts,
+                        counters,
+                    )?;
+                }
+                GeneratedPiece::Image(image) => {
+                    // An image is in-flow content ahead of any later letter
+                    // (CSS Pseudo 4 §2.3), and its break opportunities come
+                    // from the pseudo-element around it.
+                    first_letter.stop();
+                    let image = NodeId(*image as u64);
+                    text_nowrap
+                        .insert(image.0, cv.effective_text_wrap_mode == TextWrapMode::Nowrap);
+                    builder.push_atomic(image, &inline_style, InlineEdges::default());
+                }
+            }
+        }
     }
     if !inline_level && pseudo == PseudoElem::Before {
         builder.push_forced_break(id);
@@ -461,6 +548,8 @@ pub(crate) struct ProjectedBuilder {
     pub(crate) boxes: Vec<IfcBox>,
     /// Fixed-size image marker inserted ahead of the root's ordinary content.
     pub(crate) marker_atomic: Option<(NodeId, shodo::AtomicSize)>,
+    /// Fixed-size images of `::before` and `::after` content.
+    pub(crate) generated_atomics: Vec<(NodeId, shodo::AtomicSize)>,
     /// The root's `direction` is `rtl`: its lines start at the right edge.
     pub(crate) rtl: bool,
     /// Paint offsets of the relatively positioned inline elements, by DOM
@@ -503,6 +592,7 @@ impl ProjectedBuilder {
             indent: self.indent,
             boxes: self.boxes,
             marker_atomic: self.marker_atomic,
+            generated_atomics: self.generated_atomics,
             rtl: self.rtl,
             offsets: self.offsets,
             cleared_breaks: self.cleared_breaks,
@@ -602,6 +692,7 @@ pub(crate) fn project_ifc_text_builder(
         indent,
         boxes: Vec::new(),
         marker_atomic: None,
+        generated_atomics: Vec::new(),
         rtl: cv.direction == Direction::Rtl,
         offsets: Vec::new(),
         cleared_breaks,
@@ -713,6 +804,10 @@ fn project_children_builder(
     let mut text_nowrap = HashMap::new();
     let mut first_letter =
         FirstLetter::new_with_predecessors(doc, cascade, root, limits, &counters.predecessors);
+    let mut generated_images = GeneratedImages {
+        atomics: Vec::new(),
+        writing_mode,
+    };
     let marker_atomic = if anonymous_children.is_some() {
         None
     } else if crate::generated_content::inside_marker_in_flow(cascade, root)
@@ -770,6 +865,7 @@ fn project_children_builder(
             counters,
             &mut first_letter,
             &mut text_nowrap,
+            &mut generated_images,
         )?;
         None
     };
@@ -784,6 +880,7 @@ fn project_children_builder(
             counters,
             &mut first_letter,
             &mut text_nowrap,
+            &mut generated_images,
         )?;
     }
 
@@ -821,6 +918,7 @@ fn project_children_builder(
                     counters,
                     &mut first_letter,
                     &mut text_nowrap,
+                    &mut generated_images,
                 )?;
                 continue;
             }
@@ -835,6 +933,7 @@ fn project_children_builder(
                     counters,
                     &mut first_letter,
                     &mut text_nowrap,
+                    &mut generated_images,
                 )?;
                 continue;
             }
@@ -936,6 +1035,7 @@ fn project_children_builder(
                         counters,
                         &mut first_letter,
                         &mut text_nowrap,
+                        &mut generated_images,
                     )?;
                     stack.push(Step::After(id));
                     stack.extend(node.children.iter().rev().map(|&child| Step::Enter(child)));
@@ -1053,6 +1153,7 @@ fn project_children_builder(
                         counters,
                         &mut first_letter,
                         &mut text_nowrap,
+                        &mut generated_images,
                     )?;
                     if tag == "wbr" {
                         builder.push_text(
@@ -1089,6 +1190,7 @@ fn project_children_builder(
             counters,
             &mut first_letter,
             &mut text_nowrap,
+            &mut generated_images,
         )?;
     }
     Ok(ProjectedBuilder {
@@ -1098,6 +1200,7 @@ fn project_children_builder(
         indent,
         boxes,
         marker_atomic,
+        generated_atomics: generated_images.atomics,
         rtl: root_cv.direction == Direction::Rtl,
         offsets,
         cleared_breaks,

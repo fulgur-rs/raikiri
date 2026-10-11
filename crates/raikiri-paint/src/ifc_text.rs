@@ -172,6 +172,44 @@ pub(crate) fn draw_ifc_lines_with_resources(
                 warnings,
             );
         }
+        // Images of `::before` and `::after` content are replaced content
+        // inside their pseudo-element's inline box: above its background,
+        // below the line's text. They move with the pseudo-element's
+        // relatively positioned inline ancestors.
+        for image in &positioned_line.content_images {
+            let Some(pixels) = document.content_image(image.owner, image.pseudo, image.index)
+            else {
+                continue;
+            };
+            let pseudo_node =
+                raikiri_dom::generated_content::generated_node_id(image.owner, image.pseudo);
+            let group = pieces_by_line[line_index]
+                .iter()
+                .find(|piece| piece.node == pseudo_node)
+                .and_then(|piece| paint.piece_group(piece));
+            let (dx, dy) = cumulative_offset(document, root_id, offsets, image.owner);
+            let rect = image.rect;
+            let brush = peniko::ImageBrush::new(peniko::ImageData {
+                data: peniko::Blob::from(pixels.rgba.clone()),
+                format: peniko::ImageFormat::Rgba8,
+                alpha_type: peniko::ImageAlphaType::Alpha,
+                width: pixels.width,
+                height: pixels.height,
+            });
+            paint.target(group).fill(
+                Fill::NonZero,
+                Affine::translate((
+                    f64::from(position.x + dx + rect.x),
+                    f64::from(position.y + position.shift_y + dy + rect.y),
+                )) * Affine::scale_non_uniform(
+                    f64::from(rect.width) / f64::from(pixels.width),
+                    f64::from(rect.height) / f64::from(pixels.height),
+                ),
+                brush.as_ref(),
+                None,
+                &Rect::new(0.0, 0.0, f64::from(pixels.width), f64::from(pixels.height)),
+            );
+        }
         if !vertical && let Some(hit_layout) = hit_layout.as_ref() {
             draw_custom_highlights(
                 paint.target(None),

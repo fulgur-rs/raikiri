@@ -5,7 +5,7 @@
 //! root's content-box origin; each consumer adds its own page origin.
 
 use crate::Document;
-use crate::generated_content::{computed_for_id, generated_origin};
+use crate::generated_content::{computed_for_id, generated_image_origin, generated_origin};
 use raikiri_style::CascadeResult;
 use raikiri_style::{PseudoElem, property::Visibility};
 use raikiri_traits::PaintRect;
@@ -57,6 +57,22 @@ pub struct PositionedMarker {
     pub rect: PaintRect,
 }
 
+/// One image of `::before` or `::after` content at its physical rectangle
+/// relative to the line origin.
+#[derive(Clone, Copy, Debug)]
+pub struct PositionedContentImage {
+    /// Element owning the pseudo-element.
+    pub owner: usize,
+    /// `::before` or `::after`.
+    pub pseudo: PseudoElem,
+    /// Index of the image among the images of the `content` list.
+    pub index: usize,
+    /// Image rectangle, including the line's block offset. Like the line's
+    /// glyphs, it leaves the relative offsets of the pseudo-element's inline
+    /// ancestors to the caller.
+    pub rect: PaintRect,
+}
+
 /// One line of an ifc root and the runs drawn on it.
 #[derive(Clone, Debug)]
 pub struct PositionedLine<'a> {
@@ -73,6 +89,9 @@ pub struct PositionedLine<'a> {
     pub runs: Vec<PositionedRun<'a>>,
     /// Prepared image markers drawn before the line's inline boxes and text.
     pub markers: Vec<PositionedMarker>,
+    /// Prepared images of visible `::before` and `::after` content, drawn
+    /// above the inline boxes that hold them.
+    pub content_images: Vec<PositionedContentImage>,
 }
 
 /// The lines of an ifc root, with what positions their glyphs.
@@ -212,8 +231,29 @@ impl<'a> PositionedLines<'a> {
         );
         let mut runs = Vec::new();
         let mut markers = Vec::new();
+        let mut content_images = Vec::new();
         for fragment in line.fragments() {
             if let Fragment::Atomic(atomic) = fragment {
+                if let Some((owner, pseudo, index)) = usize::try_from(atomic.node.0)
+                    .ok()
+                    .and_then(generated_image_origin)
+                {
+                    if self.document.content_image(owner, pseudo, index).is_some()
+                        && computed_for_id(self.cascade, atomic.node.0 as usize)
+                            .is_some_and(|style| style.visibility == Visibility::Visible)
+                    {
+                        let mut logical = atomic.border_rect;
+                        logical.block_start += line.block_offset();
+                        let rect = converter.rect(logical);
+                        content_images.push(PositionedContentImage {
+                            owner,
+                            pseudo,
+                            index,
+                            rect: PaintRect::new(rect.x, rect.y, rect.width, rect.height),
+                        });
+                    }
+                    continue;
+                }
                 if let Some((owner, PseudoElem::Marker)) = generated_origin(atomic.node.0 as usize)
                     && self.document.list_marker_image(owner).is_some()
                     && computed_for_id(self.cascade, atomic.node.0 as usize)
@@ -294,6 +334,7 @@ impl<'a> PositionedLines<'a> {
             converter,
             runs,
             markers,
+            content_images,
         }
     }
 }

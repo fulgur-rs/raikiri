@@ -282,8 +282,10 @@ impl Clone for CanvasBitmapByteCount {
     }
 }
 
+/// A decoded image retained before layout: an image marker or an image of
+/// generated content.
 #[derive(Debug, Clone)]
-struct ListMarkerImage {
+struct PreparedImage {
     url: url::Url,
     pixels: std::sync::Arc<raikiri_traits::DecodedImage>,
     size: raikiri_traits::ImageRasterSize,
@@ -302,7 +304,11 @@ pub struct Document {
     pub(crate) resolved_image_urls: std::collections::HashMap<usize, (String, url::Url)>,
     canvas_bitmap_bytes: CanvasBitmapByteCount,
     /// Decoded marker images retained for both sizing and painting.
-    list_marker_images: std::collections::HashMap<usize, ListMarkerImage>,
+    list_marker_images: std::collections::HashMap<usize, PreparedImage>,
+    /// Decoded images of `::before` and `::after` content, by element,
+    /// whether the pseudo-element is `::after`, and the index of the image
+    /// among the images of its `content` list.
+    content_images: std::collections::HashMap<(usize, bool, usize), PreparedImage>,
     /// Measured marker advances reserved by the current legacy layout pass.
     pub(crate) legacy_inside_marker_advances: std::collections::HashMap<usize, f32>,
     /// Arena index of the Document root (normally 0, stored explicitly to
@@ -512,6 +518,7 @@ impl Document {
             resolved_image_urls: Default::default(),
             canvas_bitmap_bytes: CanvasBitmapByteCount(Some(0)),
             list_marker_images: Default::default(),
+            content_images: Default::default(),
             legacy_inside_marker_advances: Default::default(),
             root: 0,
             layout_dirty: false,
@@ -1789,6 +1796,7 @@ impl Document {
             resolved_image_urls,
             canvas_bitmap_bytes: _,
             list_marker_images,
+            content_images,
             legacy_inside_marker_advances: _,
             root: _,
             layout_dirty: _,
@@ -1844,6 +1852,13 @@ impl Document {
         document.root = 0;
         document.resolved_image_urls = remap_keys(resolved_image_urls, nodes);
         document.list_marker_images = remap_keys(list_marker_images, nodes);
+        document.content_images = content_images
+            .iter()
+            .filter_map(|(&(element, after, index), image)| {
+                let element = *new_of_old.get(&element)?;
+                Some(((element, after, index), image.clone()))
+            })
+            .collect();
         document.canvas_bitmap_bytes = CanvasBitmapByteCount(None);
         document.ifc = ifc.clone();
         document.stylesheets = stylesheets.clone();
@@ -2761,9 +2776,11 @@ impl Default for Document {
 mod tests;
 
 impl Document {
-    /// Prepare image markers before layout from already resolved pixels.
-    /// A failed image keeps the text fallback; explicit `::marker` content wins.
-    /// Retained pixel allocations share a 128 MiB document budget.
+    /// Prepare image markers and the images of in-flow `::before` and
+    /// `::after` content before layout from already resolved pixels.
+    /// A failed marker image keeps the text fallback; explicit `::marker`
+    /// content wins. A failed content image represents nothing (CSS Content 3
+    /// §2.2). Retained pixel allocations share a 128 MiB document budget.
     pub fn prepare_list_marker_images(
         &mut self,
         cascade: &raikiri_style::CascadeResult,
@@ -2786,9 +2803,34 @@ impl Document {
         mut remaining: u64,
     ) {
         self.list_marker_images.clear();
+        self.content_images.clear();
         let mut variants =
             HashMap::<(url::Url, u32, u32), Arc<raikiri_traits::DecodedImage>>::new();
         let mut allocations = std::collections::HashSet::new();
+        // A variant is decoded once per URL and size; every distinct
+        // allocation is charged against the shared budget.
+        let mut decode = |url: &url::Url, size: raikiri_traits::ImageRasterSize| {
+            let key = (url.clone(), size.width.to_bits(), size.height.to_bits());
+            if let Some(image) = variants.get(&key) {
+                return Some(Arc::clone(image));
+            }
+            let image = source.get_decoded_at_size(url, size, Some(remaining))?;
+            if image.width == 0 || image.height == 0 {
+                return None;
+            }
+            let allocation = Arc::as_ptr(&image);
+            if !allocations.contains(&allocation) {
+                // Sources may ignore the requested limit or reserve extra capacity.
+                let bytes = image.rgba.capacity() as u64;
+                if bytes > remaining {
+                    return None;
+                }
+                remaining -= bytes;
+                allocations.insert(allocation);
+            }
+            variants.insert(key, Arc::clone(&image));
+            Some(image)
+        };
         for (element, cv) in cascade.computed.iter().enumerate() {
             if !crate::generated_content::marker_is_enabled(cascade, element)
                 || cascade
@@ -2823,39 +2865,132 @@ impl Document {
                 .font_size
                 .0;
             let size = marker_image_size(intrinsic, em);
-            let key = (url.clone(), size.width.to_bits(), size.height.to_bits());
-            let image = if let Some(image) = variants.get(&key) {
-                Arc::clone(image)
-            } else {
-                let Some(image) = source.get_decoded_at_size(&url, size, Some(remaining)) else {
-                    continue;
-                };
-                if image.width == 0 || image.height == 0 {
-                    continue;
-                }
-                let allocation = Arc::as_ptr(&image);
-                if !allocations.contains(&allocation) {
-                    // Sources may ignore the requested limit or reserve extra capacity.
-                    let bytes = image.rgba.capacity() as u64;
-                    if bytes > remaining {
-                        continue;
-                    }
-                    remaining -= bytes;
-                    allocations.insert(allocation);
-                }
-                variants.insert(key, Arc::clone(&image));
-                image
+            let Some(image) = decode(&url, size) else {
+                continue;
             };
             self.list_marker_images.insert(
                 element,
-                ListMarkerImage {
+                PreparedImage {
                     url,
                     pixels: image,
                     size,
                 },
             );
         }
+        // Content images in key order, so the budget is spent the same way on
+        // every run.
+        let mut pseudos: Vec<_> = cascade
+            .pseudo
+            .iter()
+            .filter(|((_, pseudo), _)| {
+                matches!(
+                    pseudo,
+                    raikiri_style::PseudoElem::Before | raikiri_style::PseudoElem::After
+                )
+            })
+            .filter_map(|(&(owner, pseudo), cv)| {
+                Some((
+                    usize::try_from(owner.0).ok()?,
+                    pseudo == raikiri_style::PseudoElem::After,
+                    pseudo,
+                    cv,
+                ))
+            })
+            .collect();
+        pseudos.sort_by_key(|&(element, after, _, _)| (element, after));
+        for (element, after, pseudo, cv) in pseudos {
+            // Floated and out-of-flow pseudo-elements are not laid out in
+            // lines, so their images are not prepared.
+            if !crate::generated_content::is_in_flow_generated_text(cascade, element, pseudo) {
+                continue;
+            }
+            let urls = cv.content.iter().filter_map(|component| match component {
+                raikiri_style::property::ContentComponent::Image { url } => Some(url),
+                _ => None,
+            });
+            let replacement = cv.content.len() == 1;
+            for (index, raw) in urls
+                .enumerate()
+                .take(crate::generated_content::MAX_GENERATED_IMAGES)
+            {
+                let Some(url) = url::Url::parse(raw)
+                    .ok()
+                    .or_else(|| base_url.and_then(|base| base.join(raw).ok()))
+                else {
+                    continue;
+                };
+                let Some(intrinsic) = source.intrinsic_size(&url) else {
+                    continue;
+                };
+                let size = content_image_size(intrinsic, replacement.then_some(cv));
+                if !(size.width > 0.0 && size.height > 0.0) {
+                    continue;
+                }
+                let Some(image) = decode(&url, size) else {
+                    continue;
+                };
+                self.content_images.insert(
+                    (element, after, index),
+                    PreparedImage {
+                        url,
+                        pixels: image,
+                        size,
+                    },
+                );
+            }
+        }
         self.layout_dirty = true;
+    }
+
+    /// Pixels of image `index` (counted among the images of the `content`
+    /// list) of the `::before` or `::after` of `element`, prepared by
+    /// [`Self::prepare_list_marker_images`]. `None` for an image that
+    /// represents nothing.
+    pub fn content_image(
+        &self,
+        element: usize,
+        pseudo: raikiri_style::PseudoElem,
+        index: usize,
+    ) -> Option<&raikiri_traits::DecodedImage> {
+        self.content_image_entry(element, pseudo, index)
+            .map(|image| image.pixels.as_ref())
+    }
+
+    /// Absolute source URL retained with a prepared content image.
+    pub fn content_image_url(
+        &self,
+        element: usize,
+        pseudo: raikiri_style::PseudoElem,
+        index: usize,
+    ) -> Option<&url::Url> {
+        self.content_image_entry(element, pseudo, index)
+            .map(|image| &image.url)
+    }
+
+    /// CSS dimensions of a prepared content image, independent of raster
+    /// rounding.
+    pub fn content_image_size(
+        &self,
+        element: usize,
+        pseudo: raikiri_style::PseudoElem,
+        index: usize,
+    ) -> Option<raikiri_traits::ImageRasterSize> {
+        self.content_image_entry(element, pseudo, index)
+            .map(|image| image.size)
+    }
+
+    fn content_image_entry(
+        &self,
+        element: usize,
+        pseudo: raikiri_style::PseudoElem,
+        index: usize,
+    ) -> Option<&PreparedImage> {
+        let after = match pseudo {
+            raikiri_style::PseudoElem::Before => false,
+            raikiri_style::PseudoElem::After => true,
+            _ => return None,
+        };
+        self.content_images.get(&(element, after, index))
     }
 
     /// Pixels of a marker prepared by [`Self::prepare_list_marker_images`].
@@ -2891,6 +3026,62 @@ impl Document {
             .get(&element)
             .map(|marker| marker.size)
     }
+}
+
+/// The used size of a content image. An image is an anonymous inline
+/// replaced element (CSS Content 3 §2.2) sized from its natural dimensions
+/// by the default sizing algorithm against the 300x150 default object size
+/// (CSS Images 3 §4.3, §5.2). When the image is the whole `content` value it
+/// replaces the pseudo-element itself, so `style`'s absolute `width` and
+/// `height` size it as CSS 2.1 §10.3.2 and §10.6.2 size an inline replaced
+/// element.
+fn content_image_size(
+    intrinsic: raikiri_traits::ImageIntrinsicSize,
+    style: Option<&raikiri_style::ComputedValues>,
+) -> raikiri_traits::ImageRasterSize {
+    use raikiri_style::ComputedLengthPercentageOrAuto as Length;
+    const DEFAULT: (f32, f32) = (300.0, 150.0);
+    let valid = |value: f32| value.is_finite() && value > 0.0;
+    let natural_width = intrinsic.width.filter(|value| valid(*value));
+    let natural_height = intrinsic.height.filter(|value| valid(*value));
+    let ratio = intrinsic
+        .aspect_ratio
+        .filter(|value| valid(*value))
+        .or_else(|| natural_width.zip(natural_height).map(|(w, h)| w / h));
+    let specified = |value: Option<&Length>| match value {
+        Some(Length::Px(px)) if px.is_finite() && *px >= 0.0 => Some(*px),
+        _ => None,
+    };
+    let width = specified(style.map(|style| &style.width));
+    let height = specified(style.map(|style| &style.height));
+    let (width, height) = match (width, height) {
+        (Some(width), Some(height)) => (width, height),
+        (Some(width), None) => (
+            width,
+            ratio.map_or(natural_height.unwrap_or(DEFAULT.1), |ratio| width / ratio),
+        ),
+        (None, Some(height)) => (
+            ratio.map_or(natural_width.unwrap_or(DEFAULT.0), |ratio| height * ratio),
+            height,
+        ),
+        (None, None) => match (natural_width, natural_height, ratio) {
+            (Some(width), Some(height), _) => (width, height),
+            (Some(width), None, Some(ratio)) => (width, width / ratio),
+            (None, Some(height), Some(ratio)) => (height * ratio, height),
+            (Some(width), None, None) => (width, DEFAULT.1),
+            (None, Some(height), None) => (DEFAULT.0, height),
+            // A contain constraint of the ratio against the default size.
+            (None, None, Some(ratio)) => {
+                if DEFAULT.0 / DEFAULT.1 > ratio {
+                    (DEFAULT.1 * ratio, DEFAULT.1)
+                } else {
+                    (DEFAULT.0, DEFAULT.0 / ratio)
+                }
+            }
+            (None, None, None) => DEFAULT,
+        },
+    };
+    raikiri_traits::ImageRasterSize { width, height }
 }
 
 fn marker_image_size(

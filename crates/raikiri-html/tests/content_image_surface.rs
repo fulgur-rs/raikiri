@@ -1,0 +1,210 @@
+//! Images of `::before` and `::after` content as replaced atomic inlines
+//! consumed by an independent painter.
+
+use raikiri_html::{
+    FontCollectionBuilder, GeneratedKind, LayoutOptions, LayoutStatus, PaintEvent, PaintRect,
+    PositionedGlyphRun, RasterImage, RenderResources, RunSource, layout, parse_html_with_resources,
+};
+use raikiri_traits::{DecodedImage, ImagePixelSource, LayoutConfig, PageDefaults};
+use std::sync::Arc;
+use url::Url;
+
+/// An 8x4 image at every URL but `missing.png`.
+struct Pixels(Arc<DecodedImage>);
+impl Pixels {
+    fn new() -> Self {
+        Self(Arc::new(DecodedImage {
+            width: 8,
+            height: 4,
+            rgba: [0, 0, 255, 255].repeat(32),
+        }))
+    }
+}
+impl ImagePixelSource for Pixels {
+    fn get_decoded(&self, url: &Url) -> Option<Arc<DecodedImage>> {
+        (!url.path().ends_with("missing.png")).then(|| Arc::clone(&self.0))
+    }
+}
+
+fn lay_out(body: &str, css: &str, pixels: &Pixels) -> raikiri_html::DocumentLayout {
+    let fonts = FontCollectionBuilder::new()
+        .font_bytes(
+            "Ahem",
+            include_bytes!("../../raikiri-dom/tests/data/text-autospace/Ahem.ttf").to_vec(),
+        )
+        .build()
+        .unwrap();
+    let resources = RenderResources::new()
+        .fonts(fonts)
+        .base_url(Url::parse("https://content.test/document.html").unwrap())
+        .image_pixel_source(pixels);
+    let html = format!(
+        "<!doctype html><style>@page{{size:200px 100px;margin:0}}\
+         body{{margin:0;font:20px/20px Ahem}}p{{margin:0}}{css}</style>{body}"
+    );
+    let parsed = parse_html_with_resources(html.as_bytes(), &resources).unwrap();
+    let LayoutStatus::Completed(result) = layout(
+        &parsed,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        LayoutOptions::new().resources(&resources),
+    )
+    .unwrap() else {
+        panic!("completed layout")
+    };
+    result
+}
+
+/// The content images of page 0 in paint order, with the page's text runs.
+fn images_and_runs<'a>(
+    document: &'a raikiri_html::DocumentLayout,
+    pixels: &Pixels,
+) -> (Vec<RasterImage>, Vec<PositionedGlyphRun<'a>>) {
+    let page = document.page(0).unwrap();
+    let runs = page.text_runs();
+    let images = page
+        .paint_order_for_text_runs(&runs)
+        .iter()
+        .filter_map(|event| match event {
+            PaintEvent::GeneratedImage(image) => {
+                Some(page.raster_generated_image(*image, pixels).unwrap())
+            }
+            _ => None,
+        })
+        .collect();
+    (images, runs)
+}
+
+fn run<'a, 'b>(runs: &'b [PositionedGlyphRun<'a>], text: &str) -> &'b PositionedGlyphRun<'a> {
+    runs.iter().find(|run| run.text == text).unwrap()
+}
+
+#[test]
+fn before_image_is_an_atomic_inline_at_its_natural_size_on_the_baseline() {
+    let pixels = Pixels::new();
+    let document = lay_out(
+        "<p id=p>AB</p>",
+        "p::before{content:url(icon.png)}",
+        &pixels,
+    );
+    let (images, runs) = images_and_runs(&document, &pixels);
+    assert_eq!(images.len(), 1);
+    let image = &images[0];
+    assert_eq!(image.url.as_str(), "https://content.test/icon.png");
+    // Ahem's ascent is 0.8em: the baseline of the 20px line is at 16px, where
+    // the image's bottom edge sits (CSS 2.1 10.8.1).
+    assert_eq!(image.rect, PaintRect::new(0.0, 12.0, 8.0, 4.0));
+    assert_eq!(image.clip.rect, image.rect);
+    assert_eq!(image.clip_owner, Some(image.node));
+    assert!(Arc::ptr_eq(&image.pixels, &pixels.0));
+    // The element's text follows the image's width.
+    assert_eq!(run(&runs, "AB").origin.0, 8.0);
+}
+
+#[test]
+fn paint_event_identifies_the_pseudo_element_and_image() {
+    let pixels = Pixels::new();
+    let document = lay_out(
+        "<p>A</p>",
+        "p::before{content:url(a.png) url(b.png)}p::after{content:url(c.png)}",
+        &pixels,
+    );
+    let page = document.page(0).unwrap();
+    let runs = page.text_runs();
+    let ids: Vec<_> = page
+        .paint_order_for_text_runs(&runs)
+        .iter()
+        .filter_map(|event| match event {
+            PaintEvent::GeneratedImage(image) => Some((image.kind, image.index)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            (GeneratedKind::Before, 0),
+            (GeneratedKind::Before, 1),
+            (GeneratedKind::After, 0)
+        ]
+    );
+    let (images, runs) = images_and_runs(&document, &pixels);
+    let xs: Vec<_> = images.iter().map(|image| image.rect.x).collect();
+    assert_eq!(xs, [0.0, 8.0, 36.0]);
+    assert_eq!(images[2].url.as_str(), "https://content.test/c.png");
+    assert_eq!(run(&runs, "A").origin.0, 16.0);
+}
+
+#[test]
+fn image_mixed_with_strings_keeps_content_order() {
+    let pixels = Pixels::new();
+    let document = lay_out(
+        "<p>A</p>",
+        "p::before{content:'X' url(icon.png) 'Y'}",
+        &pixels,
+    );
+    let (images, runs) = images_and_runs(&document, &pixels);
+    assert_eq!(images.len(), 1);
+    assert_eq!(images[0].rect.x, 20.0);
+    let generated: Vec<_> = runs
+        .iter()
+        .filter(|run| matches!(run.source, RunSource::Generated(_, GeneratedKind::Before)))
+        .map(|run| (run.text, run.origin.0))
+        .collect();
+    assert_eq!(generated, [("X", 0.0), ("Y", 28.0)]);
+    assert_eq!(run(&runs, "A").origin.0, 48.0);
+}
+
+#[test]
+fn width_and_height_size_a_replacing_image() {
+    let pixels = Pixels::new();
+    let document = lay_out(
+        "<p>A</p>",
+        "p::before{content:url(icon.png);width:16px}p::after{content:url(icon.png);width:30px;height:10px}",
+        &pixels,
+    );
+    let (images, runs) = images_and_runs(&document, &pixels);
+    assert_eq!(images.len(), 2);
+    // A width alone keeps the natural 2:1 ratio (CSS 2.1 10.6.2).
+    assert_eq!(images[0].rect, PaintRect::new(0.0, 8.0, 16.0, 8.0));
+    assert_eq!(images[1].rect, PaintRect::new(36.0, 6.0, 30.0, 10.0));
+    assert_eq!(run(&runs, "A").origin.0, 16.0);
+}
+
+#[test]
+fn an_image_that_fails_to_load_represents_nothing() {
+    let pixels = Pixels::new();
+    let document = lay_out(
+        "<p>A</p>",
+        "p::before{content:url(missing.png) 'X'}",
+        &pixels,
+    );
+    let (images, runs) = images_and_runs(&document, &pixels);
+    assert!(images.is_empty());
+    assert_eq!(run(&runs, "X").origin.0, 0.0);
+    assert_eq!(run(&runs, "A").origin.0, 20.0);
+}
+
+#[test]
+fn hidden_and_out_of_flow_pseudo_images_are_not_painted_in_lines() {
+    let pixels = Pixels::new();
+    let document = lay_out(
+        "<p>A</p><p>B</p>",
+        "p:first-child::before{content:url(icon.png);visibility:hidden}\
+         p:last-child::before{content:url(icon.png);position:absolute}",
+        &pixels,
+    );
+    let (images, runs) = images_and_runs(&document, &pixels);
+    assert!(images.is_empty());
+    // A hidden image still takes its place in the line.
+    assert_eq!(run(&runs, "A").origin.0, 8.0);
+    assert_eq!(run(&runs, "B").origin.0, 0.0);
+}
+
+#[test]
+fn image_alone_in_an_empty_element_makes_its_line() {
+    let pixels = Pixels::new();
+    let document = lay_out("<div></div>", "div::before{content:url(icon.png)}", &pixels);
+    let (images, _) = images_and_runs(&document, &pixels);
+    assert_eq!(images.len(), 1);
+    assert_eq!(images[0].rect, PaintRect::new(0.0, 12.0, 8.0, 4.0));
+}

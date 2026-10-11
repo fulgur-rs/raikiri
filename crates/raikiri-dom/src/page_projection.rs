@@ -3,6 +3,7 @@
 pub(crate) mod continuation;
 pub(crate) mod fragment;
 pub(crate) mod generated_boxes;
+pub(crate) mod generated_images;
 mod image_markers;
 pub(crate) mod paint_order;
 mod paint_transform;
@@ -36,6 +37,7 @@ pub(crate) struct PageProjection {
     /// Standalone marker text shaped once, shared by every page placement.
     markers: BTreeMap<usize, text_runs::MarkerText>,
     image_markers: BTreeMap<u32, BTreeMap<NodeId, PaintRect>>,
+    generated_images: generated_images::GeneratedImages,
     generated_boxes: generated_boxes::GeneratedBoxes,
     column_rules: crate::column_rules::PageColumnRules,
     /// Source clip geometry shared across pages rather than copied per page.
@@ -56,6 +58,7 @@ impl PageProjection {
         self.opacity_layers.clear();
         self.markers.clear();
         self.image_markers.clear();
+        self.generated_images.clear();
         self.generated_boxes.clear();
         self.column_rules.clear();
         self.overflow_clips.clear();
@@ -103,6 +106,26 @@ impl Document {
         Some((
             self.list_marker_image_url(usize::try_from(owner.0).ok()?)?,
             rect,
+        ))
+    }
+
+    /// Prepared URL and rectangle of one image of `::before` or `::after`
+    /// content placed on one page.
+    #[doc(hidden)]
+    pub fn page_generated_image(
+        &self,
+        page_index: u32,
+        image: generated_images::GeneratedImageId,
+    ) -> Option<(&url::Url, PaintRect)> {
+        let key = image.key()?;
+        let placement = self
+            .page_projection
+            .generated_images
+            .get(&page_index)?
+            .get(&key)?;
+        Some((
+            self.content_image_url(key.0, image.pseudo(), key.2)?,
+            placement.rect,
         ))
     }
 
@@ -180,6 +203,8 @@ impl Document {
         );
         let image_markers =
             image_markers::prepare(self, cascade, &text_roots, &pages, &paragraphs, &mut work)?;
+        let generated_images =
+            generated_images::prepare(self, cascade, &text_roots, &pages, &paragraphs, &mut work)?;
         let generated_boxes =
             generated_boxes::prepare(self, cascade, &text_roots, &pages, &paragraphs, &mut work)?;
         let column_rules = crate::column_rules::project(self, cascade, &pages, &mut work)?;
@@ -231,6 +256,7 @@ impl Document {
             opacity_layers,
             markers,
             image_markers,
+            generated_images,
             generated_boxes,
             column_rules,
             overflow_clips,

@@ -41,10 +41,10 @@ pub use document::HtmlDocument;
 pub use document_layout::{
     Anchor, AnchorIndex, ClipKind, ColumnRule, DecorationKind, DecorationLine, DecorationStyle,
     DeferredGlyph, DeferredSlot, DeferredValue, DocumentLayout, DomView, FontBlob, FontId, FontRef,
-    FontVariation, Fragment, FragmentKind, GeneratedBox, GeneratedKind, Glyph, InlineSvg,
-    LayoutOptions, LayoutStatus, Link, MarginBox, MarginBoxBackgroundImage, MarginBoxBorder,
-    MarginBoxRunning, MarginBoxText, OverflowClip, Page, PageGeometry, PageMode, PaintEvent,
-    PlacedRunningElement, PositionedGlyphRun, RasterImage, RepeatKind, RunSource,
+    FontVariation, Fragment, FragmentKind, GeneratedBox, GeneratedImageId, GeneratedKind, Glyph,
+    InlineSvg, LayoutOptions, LayoutStatus, Link, MarginBox, MarginBoxBackgroundImage,
+    MarginBoxBorder, MarginBoxRunning, MarginBoxText, OverflowClip, Page, PageGeometry, PageMode,
+    PaintEvent, PlacedRunningElement, PositionedGlyphRun, RasterImage, RepeatKind, RunSource,
     RunningElementLayout, Synthesis, Tag, TextLineId, TextShadow, layout,
 };
 pub use document_layout::{

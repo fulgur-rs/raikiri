@@ -6,7 +6,7 @@ use taffy::Style;
 
 #[test]
 fn generated_ids_round_trip_and_stay_above_document_ids() {
-    for element in [0, 1, 42, usize::MAX >> 3] {
+    for element in [0, 1, 42, usize::MAX >> 4] {
         for pseudo in [
             PseudoElem::Before,
             PseudoElem::After,
@@ -19,6 +19,39 @@ fn generated_ids_round_trip_and_stay_above_document_ids() {
         }
     }
     assert_eq!(generated_origin(usize::MAX >> 3), None);
+}
+
+#[test]
+fn generated_image_ids_round_trip_and_stay_apart_from_other_ids() {
+    let largest = (usize::MAX >> (4 + IMAGE_INDEX_BITS)) >> 1;
+    for element in [0, 1, 42, largest] {
+        for pseudo in [PseudoElem::Before, PseudoElem::After] {
+            for index in [0, 1, MAX_GENERATED_IMAGES - 1] {
+                let id = generated_image_node_id(element, pseudo, index).unwrap();
+                assert_eq!(generated_image_origin(id), Some((element, pseudo, index)));
+                assert_eq!(generated_origin(id), Some((element, pseudo)));
+                assert_ne!(id, generated_node_id(element, pseudo));
+            }
+            assert_eq!(
+                generated_image_origin(generated_node_id(element, pseudo)),
+                None
+            );
+        }
+    }
+    assert_eq!(
+        generated_image_node_id(1, PseudoElem::Before, MAX_GENERATED_IMAGES),
+        None
+    );
+    assert_eq!(generated_image_node_id(1, PseudoElem::Marker, 0), None);
+    assert_eq!(
+        generated_image_node_id(usize::MAX >> 4, PseudoElem::Before, 0),
+        None
+    );
+    assert_eq!(
+        generated_image_origin(generated_node_id(1, PseudoElem::Marker)),
+        None
+    );
+    assert_eq!(generated_image_origin(42), None);
 }
 
 #[test]

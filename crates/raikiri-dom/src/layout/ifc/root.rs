@@ -31,6 +31,9 @@ pub(crate) struct IfcRoot {
     pub(crate) boxes: Vec<IfcBox>,
     /// Fixed-size image marker independent of the DOM box arena.
     pub(crate) marker_atomic: Option<(shodo::node::NodeId, shodo::AtomicSize)>,
+    /// Fixed-size images of `::before` and `::after` content, independent of
+    /// the DOM box arena.
+    pub(crate) generated_atomics: Vec<(shodo::node::NodeId, shodo::AtomicSize)>,
     /// The root's `direction` is `rtl`: its lines start at the right edge.
     pub(crate) rtl: bool,
     /// Paint offsets of the relatively positioned inline elements of the
@@ -219,6 +222,7 @@ impl IfcRoot {
             lines: None,
             boxes: projected.boxes,
             marker_atomic: projected.marker_atomic,
+            generated_atomics: projected.generated_atomics,
             rtl: projected.rtl,
             offsets: projected.offsets,
             cleared_breaks: projected.cleared_breaks,
@@ -243,6 +247,7 @@ impl IfcRoot {
             lines: None,
             boxes: self.boxes.clone(),
             marker_atomic: self.marker_atomic,
+            generated_atomics: self.generated_atomics.clone(),
             rtl: self.rtl,
             offsets: self.offsets.clone(),
             cleared_breaks: self.cleared_breaks.clone(),

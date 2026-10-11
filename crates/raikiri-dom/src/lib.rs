@@ -82,8 +82,9 @@ pub use fragment::{FragmentRect, LayoutFragment};
 #[doc(hidden)]
 // cov:ignore: this attribute controls rustdoc metadata and has no runtime coverage.
 pub use layout::{
-    BoxRect, IfcBuildMode, IfcTextLine, IfcTextLines, InlineBoxPiece, LineGlyph, PositionedLine,
-    PositionedLines, PositionedMarker, PositionedRun, cumulative_offset, relative_offset,
+    BoxRect, IfcBuildMode, IfcTextLine, IfcTextLines, InlineBoxPiece, LineGlyph,
+    PositionedContentImage, PositionedLine, PositionedLines, PositionedMarker, PositionedRun,
+    cumulative_offset, relative_offset,
 };
 // cov:ignore: public re-exports have no runtime behavior to measure.
 pub use column_rules::ColumnRule;
@@ -111,6 +112,7 @@ pub use node::{CanvasBitmap, CanvasBitmapError, ElementData, Node, NodeData, Nod
 pub use page_projection::continuation::{PageStart, PageStartToken};
 pub use page_projection::fragment::{Fragment, FragmentKind, OverflowClip, RepeatKind};
 pub use page_projection::generated_boxes::GeneratedBox;
+pub use page_projection::generated_images::GeneratedImageId;
 pub use page_projection::paint_order::{ClipKind, PaintEvent};
 // cov:ignore: public type re-exports have no executable mapping; API integration tests verify them.
 pub use page_projection::text_runs::{

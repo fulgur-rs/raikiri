@@ -20,8 +20,22 @@ use raikiri_style::{
 /// lays the text of `::before` and `::after` out under ids of their own,
 /// outside the range of document node ids. The bit is the second highest of
 /// `usize`, so the ids round-trip through `usize` on every target (a document
-/// would need more than `usize::MAX / 8` nodes to reach it).
+/// would need more than `usize::MAX / 16` nodes to reach it).
 const GENERATED_ID_BIT: usize = 1 << (usize::BITS - 2);
+
+/// Marks, together with [`GENERATED_ID_BIT`], the id of one image of a
+/// `::before` or `::after` `content` list: the anonymous inline replaced
+/// element the image stands for (CSS Content 3 §2.2) is an atomic inline of
+/// its own in the paragraph.
+const IMAGE_ID_BIT: usize = 1 << (usize::BITS - 3);
+
+/// Low bits of an image id that hold the index of the image among the images
+/// of its `content` list, above the bit that tells `::after` from `::before`.
+const IMAGE_INDEX_BITS: u32 = 5;
+
+/// The number of images of one `content` list that are laid out; later ones
+/// represent nothing.
+pub const MAX_GENERATED_IMAGES: usize = 1 << IMAGE_INDEX_BITS;
 
 /// The node id the inline engine gives the `pseudo` of `element`.
 pub fn generated_node_id(element: usize, pseudo: PseudoElem) -> usize {
@@ -35,11 +49,54 @@ pub fn generated_node_id(element: usize, pseudo: PseudoElem) -> usize {
         }
 }
 
-/// The element and pseudo-element an id of [`generated_node_id`] stands for;
-/// `None` for a document node id.
+/// The node id the inline engine gives image `index` (counted among the
+/// images of the `content` list) of the `::before` or `::after` of
+/// `element`; `None` for another pseudo-element, an index of
+/// [`MAX_GENERATED_IMAGES`] or more, or an element too far into the arena to
+/// encode.
+pub fn generated_image_node_id(element: usize, pseudo: PseudoElem, index: usize) -> Option<usize> {
+    let after = match pseudo {
+        PseudoElem::Before => 0,
+        PseudoElem::After => 1,
+        _ => return None,
+    };
+    if index >= MAX_GENERATED_IMAGES || element >= 1 << (usize::BITS - 4 - IMAGE_INDEX_BITS) {
+        return None;
+    }
+    Some(
+        GENERATED_ID_BIT
+            | IMAGE_ID_BIT
+            | (element << (IMAGE_INDEX_BITS + 1))
+            | (index << 1)
+            | after,
+    )
+}
+
+/// The element, pseudo-element and image index an id of
+/// [`generated_image_node_id`] stands for; `None` for any other id.
+pub fn generated_image_origin(id: usize) -> Option<(usize, PseudoElem, usize)> {
+    let kind_bit = 1 << (usize::BITS - 1);
+    if id & (kind_bit | GENERATED_ID_BIT | IMAGE_ID_BIT) != GENERATED_ID_BIT | IMAGE_ID_BIT {
+        return None;
+    }
+    let raw = id & !(GENERATED_ID_BIT | IMAGE_ID_BIT);
+    let pseudo = if raw & 1 == 1 {
+        PseudoElem::After
+    } else {
+        PseudoElem::Before
+    };
+    let index = (raw >> 1) & (MAX_GENERATED_IMAGES - 1);
+    Some((raw >> (IMAGE_INDEX_BITS + 1), pseudo, index))
+}
+
+/// The element and pseudo-element an id of [`generated_node_id`] or
+/// [`generated_image_node_id`] stands for; `None` for a document node id.
 pub fn generated_origin(id: usize) -> Option<(usize, PseudoElem)> {
     if id & GENERATED_ID_BIT == 0 {
         return None;
+    }
+    if let Some((element, pseudo, _)) = generated_image_origin(id) {
+        return Some((element, pseudo));
     }
     let kind_bit = 1 << (usize::BITS - 1);
     let raw = id & !(GENERATED_ID_BIT | kind_bit);
@@ -74,10 +131,10 @@ pub fn computed_for_id(cascade: &CascadeResult, id: usize) -> Option<&ComputedVa
 }
 
 /// Whether the `pseudo` of `element` is a rendered, in-flow box whose content
-/// can produce text: its `display` is not `none`, it is neither floated nor
-/// out of flow, and its `content` is neither `none` nor `normal`. The inline
-/// engine lays such content out in the paragraph of its element; the painter
-/// draws every other generated content as an overlay.
+/// can produce text or images: its `display` is not `none`, it is neither
+/// floated nor out of flow, and its `content` is neither `none` nor `normal`.
+/// The inline engine lays such content out in the paragraph of its element;
+/// the painter draws every other generated content as an overlay.
 pub fn is_in_flow_generated_text(
     cascade: &CascadeResult,
     element: usize,
@@ -127,8 +184,61 @@ pub fn is_in_flow_generated_text(
                     | ContentComponent::Counter { .. }
                     | ContentComponent::Counters { .. }
                     | ContentComponent::Quote(_)
+                    | ContentComponent::Image { .. }
             )
         })
+}
+
+/// One piece of the content of a `::before` or `::after`, in order: a run
+/// of text, or an image given by its index among the images of the `content`
+/// list.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GeneratedPiece {
+    /// Text of literals, attributes, counters and quotes.
+    Text(String),
+    /// An `<image>` (CSS Content 3 §2.2): an anonymous inline replaced
+    /// element, counted among the images of the list.
+    Image(usize),
+}
+
+/// The computed values and the content of the `::before` or `::after` of
+/// `element` as text and images in order, with the counters resolved as in
+/// [`generated_text`]. Adjacent text is merged; empty text is dropped.
+pub fn generated_pieces<'a>(
+    document: &Document,
+    cascade: &'a CascadeResult,
+    element: usize,
+    pseudo: PseudoElem,
+    snapshots: &[CounterSnapshot],
+) -> Option<(&'a ComputedValues, Vec<GeneratedPiece>)> {
+    if !matches!(pseudo, PseudoElem::Before | PseudoElem::After) {
+        return None;
+    }
+    let computed = cascade
+        .pseudo
+        .get(&(StyleNodeId::new(element as u64), pseudo))?;
+    let base = snapshots.get(element).unwrap_or(&EMPTY_COUNTER_SNAPSHOT);
+    let counters = CounterSnapshotView::new(base, Some(computed));
+    let mut pieces = Vec::new();
+    let tail = content_components_visit(
+        document,
+        element,
+        &computed.content,
+        &computed.quotes,
+        computed.quotes_auto,
+        &counters,
+        &cascade.counter_styles,
+        &mut |text, index| {
+            if !text.is_empty() {
+                pieces.push(GeneratedPiece::Text(std::mem::take(text)));
+            }
+            pieces.push(GeneratedPiece::Image(index));
+        },
+    )?;
+    if !tail.is_empty() {
+        pieces.push(GeneratedPiece::Text(tail));
+    }
+    Some((computed, pieces))
 }
 
 /// The computed values and the text of the `pseudo` of `element`, with the
@@ -381,13 +491,45 @@ pub fn content_components_to_text_with_quotes<T: AsRef<str>, C: CounterSnapshotL
     counters: &C,
     registry: &CounterStyleRegistry,
 ) -> Option<String> {
+    content_components_visit(
+        document,
+        node_id,
+        components,
+        quotes,
+        quotes_auto,
+        counters,
+        registry,
+        &mut |_, _| {},
+    )
+}
+
+/// The text of a `content` value as [`content_components_to_text_with_quotes`]
+/// builds it, calling `image` at each image with the text built so far and
+/// the index of the image among the images of the list. The text left after
+/// the last call is returned.
+#[allow(clippy::too_many_arguments)]
+fn content_components_visit<T: AsRef<str>, C: CounterSnapshotLookup + ?Sized>(
+    document: &Document,
+    node_id: usize,
+    components: &[ContentComponent],
+    quotes: &[(T, T)],
+    quotes_auto: bool,
+    counters: &C,
+    registry: &CounterStyleRegistry,
+    image: &mut dyn FnMut(&mut String, usize),
+) -> Option<String> {
     if components.is_empty() {
         return None;
     }
     let mut text = String::new();
     let mut depth = 0_usize;
+    let mut images = 0_usize;
     for component in components {
         match component {
+            ContentComponent::Image { .. } => {
+                image(&mut text, images);
+                images += 1;
+            }
             ContentComponent::Literal(value) => text.push_str(value.as_str()),
             ContentComponent::Attr { name } => {
                 if let Some(node) = document.get_node(node_id) {

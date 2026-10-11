@@ -2,6 +2,7 @@
 //! built-in painter draws it.
 
 use super::generated_boxes::{GeneratedBox, PageGeneratedBoxes};
+use super::generated_images::{GeneratedImageId, PageGeneratedImages};
 use super::records::{PageFragmentItem, PageFragmentKind};
 use crate::{
     Document, Fragment, GeneratedKind, OverflowClip, PositionedGlyphRun, RunSource, TextLineId,
@@ -74,6 +75,10 @@ pub enum PaintEvent<'a> {
     MarkerImage(NodeId),
     /// One generated inline box decoration; its text follows in paragraph lines.
     GeneratedBox(GeneratedBox<'a>),
+    /// One image of `::before` or `::after` content placed on this page,
+    /// after the decoration of the pseudo-element that holds it. Its URL and
+    /// rectangle come from [`Document::page_generated_image`].
+    GeneratedImage(GeneratedImageId),
     /// A producer-computed column rule, above the owner's border and below content.
     ColumnRule(crate::ColumnRule),
 }
@@ -108,6 +113,7 @@ struct PageItems<'a> {
     content_box: super::records::PageFragmentRect,
     overflow_clips: BTreeMap<NodeId, OverflowClip>,
     generated_boxes: Option<&'a PageGeneratedBoxes>,
+    generated_images: Option<&'a PageGeneratedImages>,
     cascade: &'a CascadeResult,
     document: &'a Document,
     page: &'a super::records::PageFragment,
@@ -271,6 +277,7 @@ impl Document {
             content_box: page.content_box,
             overflow_clips: self.overflow_clips_on_page(page),
             generated_boxes: self.page_projection.generated_boxes.get(&page_index),
+            generated_images: self.page_projection.generated_images.get(&page_index),
             cascade,
             document: self,
             page,
@@ -569,6 +576,10 @@ impl Document {
             .filter_map(|event| match event {
                 PaintEvent::TextLine(line) | PaintEvent::GroupTextLine(line, _) => Some(line.root),
                 PaintEvent::GeneratedBox(fragment) => Some(fragment.line.root),
+                PaintEvent::GeneratedImage(image) => {
+                    let placement = items.generated_images?.get(&image.key()?)?;
+                    Some(NodeId::new(placement.root as u64))
+                }
                 _ => None,
             })
             .filter_map(|root| usize::try_from(root.0).ok())
@@ -645,6 +656,8 @@ impl Document {
                 PaintEvent::GeneratedBox(fragment) => {
                     line_overflow_chains.get(&fragment.line).copied()
                 }
+                PaintEvent::GeneratedImage(image) => generated_image_line(&items, image)
+                    .and_then(|line| line_overflow_chains.get(&line).copied()),
                 PaintEvent::ColumnRule(rule) => rule.overflow_chain,
                 PaintEvent::MarkerImage(owner) => {
                     items.of(owner.0 as usize).first().and_then(|item| {
@@ -676,6 +689,8 @@ impl Document {
                     line_clips.get(&line).copied()
                 }
                 PaintEvent::GeneratedBox(fragment) => line_clips.get(&fragment.line).copied(),
+                PaintEvent::GeneratedImage(image) => generated_image_line(&items, image)
+                    .and_then(|line| line_clips.get(&line).copied()),
                 PaintEvent::ColumnRule(rule) => rule.fragmentainer_clip,
                 PaintEvent::MarkerImage(owner) => items
                     .of(owner.0 as usize)
@@ -827,6 +842,13 @@ impl Document {
             .into_iter()
             .flat_map(BTreeMap::keys)
             .copied()));
+        sources.extend(
+            items
+                .generated_images
+                .into_iter()
+                .flat_map(BTreeMap::iter)
+                .flat_map(|(&(owner, _, _), placement)| [placement.root, owner]),
+        );
         sources.extend(ids(&mut projection
             .image_markers
             .get(&page_index)
@@ -1075,6 +1097,21 @@ fn push_paragraph<'a>(
                         has_end_edge: piece.has_end_edge,
                     }));
                 }
+                // The images are replaced content inside the pseudo-element's
+                // inline box, painted above its decoration (CSS 2.1 Appendix
+                // E, inline-level content in tree order).
+                events.extend(
+                    items
+                        .generated_images
+                        .into_iter()
+                        .flat_map(|images| {
+                            images.range((node_id, after, 0)..=(node_id, after, usize::MAX))
+                        })
+                        .filter(|(_, placement)| placement.root == root)
+                        .map(|(&(owner, after, index), _)| {
+                            PaintEvent::GeneratedImage(GeneratedImageId::new(owner, after, index))
+                        }),
+                );
             }
         }
     }
@@ -1086,6 +1123,15 @@ fn push_paragraph<'a>(
         }
     }
     nested
+}
+
+/// The paragraph line that holds a content image placed on the page.
+fn generated_image_line(items: &PageItems<'_>, image: GeneratedImageId) -> Option<TextLineId> {
+    let placement = items.generated_images?.get(&image.key()?)?;
+    Some(TextLineId {
+        root: NodeId::new(placement.root as u64),
+        index: placement.line,
+    })
 }
 
 /// Whether an element inside a paragraph composites its fragments on the

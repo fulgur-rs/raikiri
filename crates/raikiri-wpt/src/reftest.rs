@@ -2493,7 +2493,8 @@ fn render_raikiri_pages_inner_with_canvases(
     )
 }
 
-/// Prepare inside marker images before file-backed reftest layout.
+/// Prepare inside marker images and generated content images before
+/// file-backed reftest layout.
 struct FileCascadeImagePreparer<'a> {
     resolver: &'a raikiri_net::ImageResolver<raikiri_net::FileNetworkProvider>,
     base_url: &'a raikiri::Url,
@@ -2512,6 +2513,11 @@ impl CascadeImagePreparer for FileCascadeImagePreparer<'_> {
                 );
             }
         }
+        crate::http_resources::prefetch_generated_content_images(
+            cascade,
+            self.base_url,
+            self.resolver,
+        );
     }
     fn prepare_page(&self, _: &mut raikiri_style::PageCascadeResult) {}
 }
