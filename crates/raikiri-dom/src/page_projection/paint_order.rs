@@ -3,8 +3,11 @@
 
 use super::generated_boxes::{GeneratedBox, PageGeneratedBoxes};
 use super::records::{PageFragmentItem, PageFragmentKind};
-use crate::{Document, Fragment, OverflowClip, PositionedGlyphRun, TextLineId, paint_rules};
-use raikiri_style::property::ColumnCountValue;
+use crate::{
+    Document, Fragment, GeneratedKind, OverflowClip, PositionedGlyphRun, RunSource, TextLineId,
+    paint_rules,
+};
+use raikiri_style::property::{ColumnCountValue, DisplayValue};
 use raikiri_style::{CascadeResult, PseudoElem, StyleNodeId};
 use raikiri_traits::{NodeId, NodeKind, PaintClip, PaintRect};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -47,8 +50,14 @@ pub enum PaintEvent<'a> {
     /// The lines of a text node.
     Text(Fragment<'a>),
     /// One paragraph line from the supplied positioned glyph runs, including
-    /// generated content and ellipses. Emitted once for all runs of the line.
+    /// generated content and ellipses: the runs of the line that no inline
+    /// opacity group holds (see [`Document::text_run_opacity_group`]).
+    /// Emitted once per line.
     TextLine(TextLineId),
+    /// The runs of one paragraph line held by the inline opacity group of
+    /// this element, the innermost one around them. Emitted once per line
+    /// and group, inside that group's [`PaintEvent::PushOpacity`].
+    GroupTextLine(TextLineId, NodeId),
     /// The content of a replaced element (an image, an inline SVG or a
     /// canvas). Follows the element's [`PaintEvent::Box`].
     Replaced(Fragment<'a>),
@@ -67,8 +76,20 @@ const LEGACY_COLUMN_CLIPS: &str = "legacy column clipping may be incomplete";
 enum Frame {
     Visit(usize),
     Paragraph(usize),
+    /// An inline opacity group of a paragraph, by paragraph root and element.
+    InlineGroup(usize, usize),
     PopClip,
     PopOpacity,
+}
+
+/// The supplied lines of a page's paragraphs, split by the inline opacity
+/// group that holds their runs.
+#[derive(Default)]
+struct TextLines {
+    /// Lines with runs outside every inline opacity group, by paragraph root.
+    paragraphs: HashMap<NodeId, Vec<TextLineId>>,
+    /// Lines with runs in an inline opacity group, by the group's element.
+    groups: HashMap<NodeId, Vec<TextLineId>>,
 }
 
 /// The fragments of one page, grouped by source node.
@@ -133,17 +154,86 @@ impl Document {
         page_index: u32,
         runs: &[PositionedGlyphRun<'a>],
     ) -> Vec<PaintEvent<'a>> {
-        let mut lines: HashMap<NodeId, Vec<TextLineId>> = HashMap::new();
+        let mut lines = TextLines::default();
         let mut seen = HashSet::new();
         for run in runs {
-            if seen.insert(run.line) {
-                lines.entry(run.line.root).or_default().push(run.line);
+            let group = self.text_run_opacity_group(cascade, run);
+            if seen.insert((run.line, group)) {
+                match group {
+                    Some(group) => lines.groups.entry(group),
+                    None => lines.paragraphs.entry(run.line.root),
+                }
+                .or_default()
+                .push(run.line);
             }
         }
-        for paragraph in lines.values_mut() {
+        for paragraph in lines
+            .paragraphs
+            .values_mut()
+            .chain(lines.groups.values_mut())
+        {
             paragraph.sort_unstable_by_key(|line| line.index);
         }
         self.page_paint_order_impl(cascade, page_index, Some(&lines), true)
+    }
+
+    /// The element whose inline opacity group paints `run`, if any.
+    ///
+    /// Opacity below one makes an element a group that composites its
+    /// complete paint at once (CSS Color 4 §3.3). For a non-atomic inline
+    /// element, that paint is its fragments on the paragraph's lines; the
+    /// run belongs to the innermost such element around its text, inside
+    /// its paragraph. Runs of the paragraph root's own content, list markers
+    /// and ellipses belong to no inline group. Elements with
+    /// `display: contents` form no group.
+    #[doc(hidden)]
+    pub fn text_run_opacity_group(
+        &self,
+        cascade: &CascadeResult,
+        run: &PositionedGlyphRun<'_>,
+    ) -> Option<NodeId> {
+        let start = match run.source {
+            RunSource::Text(node) => self.parent_of(usize::try_from(node.0).ok()?)?,
+            RunSource::Generated(owner, GeneratedKind::Before | GeneratedKind::After) => {
+                usize::try_from(owner.0).ok()?
+            }
+            _ => return None,
+        };
+        let root = usize::try_from(run.line.root.0).ok()?;
+        self.inline_opacity_group(cascade, root, start)
+            .map(|group| NodeId::new(group as u64))
+    }
+
+    /// The innermost inline opacity group of paragraph `root` that contains
+    /// `start`, walking up from `start` itself to the paragraph root.
+    fn inline_opacity_group(
+        &self,
+        cascade: &CascadeResult,
+        root: usize,
+        start: usize,
+    ) -> Option<usize> {
+        let owner = self.ifc_source_owner(root);
+        let mut current = Some(start);
+        while let Some(id) = current {
+            if id == root || id == owner {
+                return None;
+            }
+            let node = self.get_node(id)?;
+            if node.kind() != NodeKind::Element {
+                return None;
+            }
+            let cv = cascade.computed.get(id)?;
+            if is_inline_opacity_group(cv) {
+                return Some(id);
+            }
+            // Anything but an inline element or a `display: contents` one is
+            // a block boundary: the walk has left the paragraph.
+            if !matches!(cv.display, DisplayValue::Inline | DisplayValue::Contents) {
+                return None;
+            }
+            current = self.parent_of(id);
+        }
+        None
     }
 
     /// The paint order of one page. With `skip_empty`, subtrees that list
@@ -152,7 +242,7 @@ impl Document {
         &'a self,
         cascade: &'a CascadeResult,
         page_index: u32,
-        lines: Option<&HashMap<NodeId, Vec<TextLineId>>>,
+        lines: Option<&TextLines>,
         skip_empty: bool,
     ) -> Vec<PaintEvent<'a>> {
         let Some(page) = self
@@ -192,7 +282,37 @@ impl Document {
         while let Some(frame) = stack.pop() {
             let node_id = match frame {
                 Frame::Paragraph(key) => {
-                    push_paragraph(self, &items, key, lines, &mut events);
+                    let groups = push_paragraph(self, &items, key, None, lines, &mut events);
+                    stack.extend(
+                        groups
+                            .into_iter()
+                            .rev()
+                            .map(|group| Frame::InlineGroup(key, group)),
+                    );
+                    continue;
+                }
+                Frame::InlineGroup(root, group) => {
+                    // The group composites after the paragraph's own content,
+                    // like other z-index: auto stacking contexts: its inline
+                    // boxes and text, then its atomic inlines and floats,
+                    // then the groups nested in it.
+                    let Some(alpha) = cascade
+                        .computed
+                        .get(group)
+                        .and_then(paint_rules::opacity_layer)
+                    else {
+                        continue; // cov:ignore: groups are found by their opacity
+                    };
+                    events.push(PaintEvent::PushOpacity(alpha));
+                    stack.push(Frame::PopOpacity);
+                    let nested =
+                        push_paragraph(self, &items, root, Some(group), lines, &mut events);
+                    let boxes = self.ifc_boxes_in_group(cascade, root, Some(group));
+                    stack.extend(
+                        self.paragraph_frames(cascade, root, boxes, nested)
+                            .into_iter()
+                            .rev(),
+                    );
                     continue;
                 }
                 Frame::PopClip => {
@@ -238,7 +358,8 @@ impl Document {
                         .copied()
                         .filter(|item| item.kind != PageFragmentKind::Text)
                         .collect();
-                    if !paint_rules::is_visibility_hidden_table(cv)
+                    if paint_rules::generates_box(cv)
+                        && !paint_rules::is_visibility_hidden_table(cv)
                         && !paint_rules::hides_empty_table_cell(self, cascade, node_id)
                     {
                         let replaced_content =
@@ -324,6 +445,7 @@ impl Document {
                         );
                         events.extend(
                             lines
+                                .paragraphs
                                 .get(&NodeId::new(marker as u64))
                                 .into_iter()
                                 .flatten()
@@ -344,40 +466,46 @@ impl Document {
                         events.push(PaintEvent::PushClip(entry.clip, ClipKind::Overflow));
                         stack.push(Frame::PopClip);
                     }
+                    let mut groups = Vec::new();
                     if node.is_ifc_root() {
                         if image_marker && inline_marker {
                             events.push(PaintEvent::MarkerImage(NodeId::new(node_id as u64)));
                         }
-                        push_paragraph(self, &items, node_id, lines, &mut events);
+                        groups = push_paragraph(self, &items, node_id, None, lines, &mut events);
                     }
-                    let mut children = if node.is_inline_svg_root()
+                    if node.is_inline_svg_root()
                         || self.anonymous_table_contents_paint_only(node_id)
                     {
-                        Vec::new()
-                    } else if node.is_ifc_root() {
+                        continue;
+                    }
+                    if node.is_ifc_root() {
                         // The paragraph's own text and inline elements were
                         // listed above; only the boxes laid out beside its
-                        // lines are visited like ordinary children.
-                        node.ifc_boxes()
-                    } else if let Some(children) = self.anonymous_table_paint_sequence(node_id) {
-                        children
-                    } else {
-                        node.children.clone()
-                    };
-                    paint_rules::sort_paint_children(&mut children, cv.display, cascade);
-                    stack.extend(children.into_iter().rev().map(|key| {
-                        if self.get_node(key).is_none() && self.ifc_layout_node(key).is_some() {
-                            Frame::Paragraph(key)
+                        // lines are visited like ordinary children. Those in
+                        // an inline opacity group are visited in the group.
+                        let boxes = self.ifc_boxes_in_group(cascade, node_id, None);
+                        stack.extend(
+                            self.paragraph_frames(cascade, node_id, boxes, groups)
+                                .into_iter()
+                                .rev(),
+                        );
+                        continue;
+                    }
+                    let mut children =
+                        if let Some(children) = self.anonymous_table_paint_sequence(node_id) {
+                            children
                         } else {
-                            Frame::Visit(key)
-                        }
-                    }));
+                            node.children.clone()
+                        };
+                    paint_rules::sort_paint_children(&mut children, cv.display, cascade);
+                    stack.extend(children.into_iter().rev().map(|key| self.child_frame(key)));
                 }
                 // A text node laid out as an anonymous flex or grid item is a
                 // paragraph of its own. Any other text node outside a
                 // paragraph has no lines to draw.
                 NodeKind::Text if node.is_ifc_root() => {
-                    push_paragraph(self, &items, node_id, lines, &mut events);
+                    // A lone text node has no inline elements, so no groups.
+                    push_paragraph(self, &items, node_id, None, lines, &mut events);
                 }
                 _ => {} // cov:ignore: comments and other node kinds are out of the document
             }
@@ -389,7 +517,7 @@ impl Document {
         let listed_roots: HashSet<usize> = events
             .iter()
             .filter_map(|event| match event {
-                PaintEvent::TextLine(line) => Some(line.root),
+                PaintEvent::TextLine(line) | PaintEvent::GroupTextLine(line, _) => Some(line.root),
                 PaintEvent::GeneratedBox(fragment) => Some(fragment.line.root),
                 _ => None,
             })
@@ -461,7 +589,9 @@ impl Document {
                 PaintEvent::Box(fragment)
                 | PaintEvent::Text(fragment)
                 | PaintEvent::Replaced(fragment) => fragment.overflow_chain(),
-                PaintEvent::TextLine(line) => line_overflow_chains.get(&line).copied(),
+                PaintEvent::TextLine(line) | PaintEvent::GroupTextLine(line, _) => {
+                    line_overflow_chains.get(&line).copied()
+                }
                 PaintEvent::GeneratedBox(fragment) => {
                     line_overflow_chains.get(&fragment.line).copied()
                 }
@@ -492,7 +622,9 @@ impl Document {
                 PaintEvent::Box(fragment)
                 | PaintEvent::Text(fragment)
                 | PaintEvent::Replaced(fragment) => fragment.fragmentainer_clip(),
-                PaintEvent::TextLine(line) => line_clips.get(&line).copied(),
+                PaintEvent::TextLine(line) | PaintEvent::GroupTextLine(line, _) => {
+                    line_clips.get(&line).copied()
+                }
                 PaintEvent::GeneratedBox(fragment) => line_clips.get(&fragment.line).copied(),
                 PaintEvent::ColumnRule(rule) => rule.fragmentainer_clip,
                 PaintEvent::MarkerImage(owner) => items
@@ -513,6 +645,103 @@ impl Document {
         clipped_events
     }
 
+    /// The boxes laid out beside the lines of paragraph `root` (floats and
+    /// atomic inlines) whose innermost inline opacity group is `group`.
+    /// The frame that visits paint child `key`: an anonymous paragraph key
+    /// stands for a paragraph laid out outside the source DOM arena.
+    fn child_frame(&self, key: usize) -> Frame {
+        if self.get_node(key).is_none() && self.ifc_layout_node(key).is_some() {
+            Frame::Paragraph(key)
+        } else {
+            Frame::Visit(key)
+        }
+    }
+
+    /// The frames of a paragraph's boxes laid out beside its lines and of its
+    /// inline opacity groups, in paint order. A group is a stacking context
+    /// painted at the level of positioned boxes with `z-index: auto` or `0`,
+    /// in tree order with them: after the floats and in-flow atomic inlines,
+    /// and before positive z-index boxes.
+    fn paragraph_frames(
+        &self,
+        cascade: &CascadeResult,
+        root: usize,
+        boxes: Vec<usize>,
+        groups: Vec<usize>,
+    ) -> Vec<Frame> {
+        let display = cascade
+            .computed
+            .get(root)
+            .map_or(DisplayValue::Block, |cv| cv.display);
+        let mut entries: Vec<(paint_rules::PaintChildKey, Frame)> = boxes
+            .into_iter()
+            .map(|key| {
+                (
+                    paint_rules::paint_child_key(key, display, cascade),
+                    self.child_frame(key),
+                )
+            })
+            .collect();
+        if !groups.is_empty() {
+            // Each group joins the boxes at its place in tree order before
+            // the stable sort, so equal keys keep tree order.
+            let position = self.preorder_positions(root);
+            for group in groups {
+                let at = position.get(&group).map_or(entries.len(), |&group_at| {
+                    entries
+                        .iter()
+                        .position(|(_, frame)| match *frame {
+                            Frame::Visit(id) | Frame::Paragraph(id) | Frame::InlineGroup(_, id) => {
+                                position.get(&id).is_some_and(|&at| at > group_at)
+                            }
+                            Frame::PopClip | Frame::PopOpacity => false, // cov:ignore: never listed here
+                        })
+                        .unwrap_or(entries.len())
+                });
+                entries.insert(
+                    at,
+                    (
+                        paint_rules::STACKING_CONTEXT_PAINT_KEY,
+                        Frame::InlineGroup(root, group),
+                    ),
+                );
+            }
+        }
+        entries.sort_by_key(|(key, _)| *key);
+        entries.into_iter().map(|(_, frame)| frame).collect()
+    }
+
+    /// The preorder index of each node in the subtree of `root`.
+    fn preorder_positions(&self, root: usize) -> HashMap<usize, usize> {
+        let mut positions = HashMap::new();
+        let mut pending = vec![root];
+        while let Some(id) = pending.pop() {
+            positions.insert(id, positions.len());
+            if let Some(node) = self.get_node(id) {
+                pending.extend(node.children.iter().rev().copied());
+            }
+        }
+        positions
+    }
+
+    fn ifc_boxes_in_group(
+        &self,
+        cascade: &CascadeResult,
+        root: usize,
+        group: Option<usize>,
+    ) -> Vec<usize> {
+        let Some(node) = self.get_node(root) else {
+            return Vec::new(); // cov:ignore: element paragraph roots are arena nodes
+        };
+        let mut boxes = node.ifc_boxes();
+        boxes.retain(|&id| {
+            self.parent_of(id)
+                .and_then(|parent| self.inline_opacity_group(cascade, root, parent))
+                == group
+        });
+        boxes
+    }
+
     /// The nodes the paint walk of one page has to enter: every node that can
     /// list an event on the page, and its ancestors. A node's paint parent
     /// (its DOM parent, the paragraph root beside whose lines it is laid out,
@@ -525,14 +754,17 @@ impl Document {
         &self,
         items: &PageItems<'_>,
         page_index: u32,
-        lines: Option<&HashMap<NodeId, Vec<TextLineId>>>,
+        lines: Option<&TextLines>,
     ) -> Option<HashSet<usize>> {
         let projection = &self.page_projection;
         let ids = |ids: &mut dyn Iterator<Item = NodeId>| -> Vec<usize> {
             ids.filter_map(|id| usize::try_from(id.0).ok()).collect()
         };
         let mut sources: Vec<usize> = items.by_node.keys().copied().collect();
-        sources.extend(ids(&mut lines.into_iter().flat_map(HashMap::keys).copied()));
+        sources.extend(ids(&mut lines
+            .into_iter()
+            .flat_map(|lines| lines.paragraphs.keys().chain(lines.groups.keys()))
+            .copied()));
         sources.extend(
             items
                 .generated_boxes
@@ -635,15 +867,22 @@ impl Document {
 /// elements first, then the text. Boxes laid out beside the lines (floats and
 /// atomic inlines) are visited as the paragraph root's children instead, so
 /// their subtrees are skipped here.
+///
+/// With `group`, only the content held by that inline opacity group is
+/// listed: the group element's own boxes and generated boxes, and its
+/// descendants'. Either way the subtree of each inline opacity group nested
+/// directly in the listed content is skipped, and those groups are returned
+/// in document order for the caller to list after this content.
 fn push_paragraph<'a>(
     document: &'a Document,
     items: &PageItems<'a>,
     root: usize,
-    lines: Option<&HashMap<NodeId, Vec<TextLineId>>>,
+    group: Option<usize>,
+    lines: Option<&TextLines>,
     events: &mut Vec<PaintEvent<'a>>,
-) {
+) -> Vec<usize> {
     let Some(root_node) = document.ifc_layout_node(root) else {
-        return; // cov:ignore: paragraph roots come from the arena
+        return Vec::new(); // cov:ignore: paragraph roots come from the arena
     };
     let push_kind = |events: &mut Vec<PaintEvent<'a>>, node_id: usize, kind| {
         for &item in items.of(node_id) {
@@ -657,15 +896,29 @@ fn push_paragraph<'a>(
         }
     };
     let push_lines = |events: &mut Vec<PaintEvent<'a>>| {
-        if let Some(lines) = lines {
-            events.extend(
+        let Some(lines) = lines else { return };
+        match group {
+            Some(group) => {
+                let owner = NodeId::new(group as u64);
+                events.extend(
+                    lines
+                        .groups
+                        .get(&owner)
+                        .into_iter()
+                        .flatten()
+                        .filter(|line| line.root.0 == root as u64)
+                        .map(|&line| PaintEvent::GroupTextLine(line, owner)),
+                );
+            }
+            None => events.extend(
                 lines
+                    .paragraphs
                     .get(&NodeId::new(root as u64))
                     .into_iter()
                     .flatten()
                     .copied()
                     .map(PaintEvent::TextLine),
-            );
+            ),
         }
     };
     if root_node.kind() == NodeKind::Text {
@@ -674,17 +927,28 @@ fn push_paragraph<'a>(
         } else {
             push_kind(events, root, PageFragmentKind::Text);
         }
-        return;
+        return Vec::new();
     }
     let beside_lines: HashSet<usize> = root_node.ifc_boxes().into_iter().collect();
-    let mut elements = vec![(root, Some(false))];
+    // The listed content starts at the group element itself, or inside the
+    // paragraph root around the root's own generated content.
+    let (first, children) = match group {
+        Some(group) => {
+            let Some(node) = document.get_node(group) else {
+                return Vec::new(); // cov:ignore: groups are arena elements
+            };
+            (group, node.children.as_slice())
+        }
+        None => (root, root_node.children.as_slice()),
+    };
+    let mut elements = Vec::new();
+    if group.is_some() {
+        elements.push((first, None));
+    }
+    elements.push((first, Some(false)));
+    let mut nested = Vec::new();
     let mut texts = Vec::new();
-    let mut stack: Vec<_> = root_node
-        .children
-        .iter()
-        .rev()
-        .map(|&id| (id, false))
-        .collect();
+    let mut stack: Vec<_> = children.iter().rev().map(|&id| (id, false)).collect();
     while let Some((node_id, after)) = stack.pop() {
         if after {
             elements.push((node_id, Some(true)));
@@ -701,6 +965,15 @@ fn push_paragraph<'a>(
         }
         match node.kind() {
             NodeKind::Element if !node.is_display_none() && !node.is_hidden_by_text_overflow() => {
+                if items
+                    .cascade
+                    .computed
+                    .get(node_id)
+                    .is_some_and(is_inline_opacity_group)
+                {
+                    nested.push(node_id);
+                    continue;
+                }
                 elements.push((node_id, None));
                 elements.push((node_id, Some(false)));
                 stack.push((node_id, true));
@@ -710,10 +983,18 @@ fn push_paragraph<'a>(
             _ => {}
         }
     }
-    elements.push((root, Some(true)));
+    elements.push((first, Some(true)));
     for (node_id, after) in elements {
         match after {
-            None => push_kind(events, node_id, PageFragmentKind::Box),
+            None if items
+                .cascade
+                .computed
+                .get(node_id)
+                .is_some_and(paint_rules::generates_box) =>
+            {
+                push_kind(events, node_id, PageFragmentKind::Box);
+            }
+            None => {}
             Some(after) => {
                 let pseudo = if after {
                     PseudoElem::After
@@ -755,6 +1036,13 @@ fn push_paragraph<'a>(
             push_kind(events, node_id, PageFragmentKind::Text);
         }
     }
+    nested
+}
+
+/// Whether an element inside a paragraph composites its fragments on the
+/// paragraph's lines as one opacity group.
+fn is_inline_opacity_group(cv: &raikiri_style::ComputedValues) -> bool {
+    cv.display == DisplayValue::Inline && paint_rules::opacity_layer(cv).is_some()
 }
 
 #[cfg(test)]

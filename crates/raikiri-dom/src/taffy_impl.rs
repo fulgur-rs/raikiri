@@ -140,14 +140,38 @@ fn ifc_all_insets(style: &Style, parent_inline_size: Option<f32>) -> taffy::Rect
 /// still let their layout sizes / positions shift sibling positions.
 /// `raikiri_traits::Dom::child_ids` returns raw children by contract;
 /// filter only on the taffy path rather than changing that contract.
+///
+/// The children of a flex or grid container also replace each of its
+/// `display: contents` children that is not a paragraph root, recursively:
+/// such an element generates no box (CSS Display 3 §2.5), so its children
+/// are the container's items. Its own layout stays zero-sized at the
+/// container's origin, so positions summed along the DOM ancestors are
+/// unchanged. A `display: contents` element holding only inline content
+/// remains one node, standing in for the anonymous item of that text.
 pub struct TaffyChildIter<'a> {
     doc: &'a Document,
-    inner: core::slice::Iter<'a, usize>,
+    flatten: bool,
+    stack: Vec<core::slice::Iter<'a, usize>>,
 }
 
-impl TaffyChildIter<'_> {
-    fn children(doc: &Document, parent: NodeId) -> &[usize] {
-        doc.nodes[usize::from(parent)].layout_children()
+impl<'a> TaffyChildIter<'a> {
+    fn new(doc: &'a Document, parent: NodeId) -> Self {
+        let node = &doc.nodes[usize::from(parent)];
+        Self {
+            doc,
+            flatten: matches!(node.style.display, Display::Flex | Display::Grid)
+                && node.display != DisplayValue::Contents,
+            stack: vec![node.layout_children().iter()],
+        }
+    }
+
+    /// Whether `child` is a `display: contents` element whose children take
+    /// its place among a flex or grid container's items.
+    fn is_flattened(doc: &Document, child: usize) -> bool {
+        let node = &doc.nodes[child];
+        node.kind() == raikiri_traits::NodeKind::Element
+            && node.display == DisplayValue::Contents
+            && !node.is_ifc_root()
     }
 
     fn includes(doc: &Document, child: usize) -> bool {
@@ -177,14 +201,40 @@ impl TaffyChildIter<'_> {
     }
 }
 
+impl Document {
+    /// The node whose taffy children include `node`: its DOM parent, or the
+    /// flex or grid container its `display: contents` ancestors lift it into.
+    pub(crate) fn taffy_parent_of(&self, node: usize) -> Option<usize> {
+        let parent = self.parent_of(node)?;
+        let mut top = parent;
+        while TaffyChildIter::is_flattened(self, top) {
+            top = self.parent_of(top)?;
+        }
+        let container = &self.nodes[top];
+        let lifted = top != parent
+            && matches!(container.style.display, Display::Flex | Display::Grid)
+            && container.display != DisplayValue::Contents;
+        Some(if lifted { top } else { parent })
+    }
+}
+
 impl Iterator for TaffyChildIter<'_> {
     type Item = NodeId;
     fn next(&mut self) -> Option<Self::Item> {
         let doc = self.doc;
-        for &child in self.inner.by_ref() {
-            if Self::includes(doc, child) {
-                return Some(NodeId::from(child));
+        while let Some(children) = self.stack.last_mut() {
+            let Some(&child) = children.next() else {
+                self.stack.pop();
+                continue;
+            };
+            if !Self::includes(doc, child) {
+                continue;
             }
+            if self.flatten && Self::is_flattened(doc, child) {
+                self.stack.push(doc.nodes[child].layout_children().iter());
+                continue;
+            }
+            return Some(NodeId::from(child));
         }
         None
     }
@@ -194,29 +244,19 @@ impl TraversePartialTree for Document {
     type ChildIter<'a> = TaffyChildIter<'a>;
 
     fn child_ids(&self, node_id: NodeId) -> Self::ChildIter<'_> {
-        TaffyChildIter {
-            doc: self,
-            inner: TaffyChildIter::children(self, node_id).iter(),
-        }
+        TaffyChildIter::new(self, node_id)
     }
 
     fn child_count(&self, node_id: NodeId) -> usize {
-        // Must match the filter: count only in-document children.
-        TaffyChildIter::children(self, node_id)
-            .iter()
-            .filter(|&&c| TaffyChildIter::includes(self, c))
-            .count()
+        // Must match the filter of `child_ids`.
+        TaffyChildIter::new(self, node_id).count()
     }
 
     fn get_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
         // Filtered index: return the nth child in the same view as child_ids.
-        let idx = TaffyChildIter::children(self, node_id)
-            .iter()
-            .copied()
-            .filter(|&c| TaffyChildIter::includes(self, c))
+        TaffyChildIter::new(self, node_id)
             .nth(index)
-            .expect("get_child_id: index out of range");
-        NodeId::from(idx)
+            .expect("get_child_id: index out of range")
     }
 }
 
@@ -1427,10 +1467,8 @@ impl LayoutGridContainer for Document {
         detailed_grid_info: DetailedGridInfo<Self::CustomIdent>,
     ) {
         let parent = usize::from(node_id);
-        let children = TaffyChildIter::children(self, node_id)
-            .iter()
-            .copied()
-            .filter(|&child| TaffyChildIter::includes(self, child))
+        let children = TaffyChildIter::new(self, node_id)
+            .map(usize::from)
             .filter(|&child| {
                 let style = &self.nodes[child].style;
                 style.box_generation_mode() != BoxGenerationMode::None

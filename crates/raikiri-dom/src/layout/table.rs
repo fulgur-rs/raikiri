@@ -451,7 +451,7 @@ fn compute_table_layout_checked(
         doc.nodes[table_idx].table_first_baseline = None;
     }
     let abspos_table = doc.nodes[table_idx].style.position == taffy::Position::Absolute;
-    let parent_is_flex_or_grid = doc.parent_of(table_idx).is_some_and(|parent| {
+    let parent_is_flex_or_grid = doc.taffy_parent_of(table_idx).is_some_and(|parent| {
         matches!(
             doc.nodes[parent].style.display,
             taffy::Display::Flex | taffy::Display::Grid

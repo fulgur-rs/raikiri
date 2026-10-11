@@ -415,6 +415,43 @@ pub(crate) fn walk<D: StyleDom>(
 /// the active rules or a node's candidates or the candidates kept in the
 /// result cannot be numbered (see [`Collector::collect`] and
 /// [`OwnedCandidates::copy`]).
+const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
+
+/// Whether `display: contents` computes to `display: none` on `element`.
+///
+/// CSS Display 3 Appendix B "Effects of display: contents on Unusual
+/// Elements" <https://drafts.csswg.org/css-display/#unbox>: removing the box
+/// of a replaced element, a form control or a similar element would leave
+/// content with nowhere to go, so for those `contents` computes to `none`.
+/// HTML (§B.1 <https://drafts.csswg.org/css-display/#unbox-html>): `br`,
+/// `wbr`, `meter`, `progress`, `canvas`, `embed`, `object`, `audio`,
+/// `iframe`, `img`, `video`, `frame`, `frameset`, `input`, `textarea` and
+/// `select`. SVG (§B.2 <https://drafts.csswg.org/css-display/#unbox-svg>):
+/// every element except a nested `svg` and the container-like `a`, `g`,
+/// `switch`, `tspan`, `textPath` and `use`, which unbox as usual. An
+/// outermost `svg` (one whose parent is not an SVG element) also computes
+/// to `none`.
+fn contents_computes_to_none<E: StyleElement>(element: &E, parent_is_svg: bool) -> bool {
+    match element.namespace_uri() {
+        None | Some("http://www.w3.org/1999/xhtml") => {
+            const UNUSUAL: [&str; 16] = [
+                "br", "wbr", "meter", "progress", "canvas", "embed", "object", "audio", "iframe",
+                "img", "video", "frame", "frameset", "input", "textarea", "select",
+            ];
+            let name = element.tag_name();
+            UNUSUAL
+                .iter()
+                .any(|unusual| name.eq_ignore_ascii_case(unusual))
+        }
+        Some(SVG_NAMESPACE) => match element.tag_name() {
+            "svg" => !parent_is_svg,
+            "a" | "g" | "switch" | "tspan" | "textPath" | "use" => false,
+            _ => true,
+        },
+        _ => false,
+    }
+}
+
 pub(crate) fn walk_from<D: StyleDom>(
     dom: &D,
     rule_tree: &RuleTree,
@@ -498,6 +535,19 @@ pub(crate) fn walk_from<D: StyleDom>(
         let is_svg = node
             .as_element()
             .is_some_and(|element| element.namespace_uri() == Some("http://www.w3.org/2000/svg"));
+        // Siblings share a parent, so whether it is an SVG element is the
+        // same for a sharing source and its target.
+        let parent_is_svg = parent
+            .and_then(|parent| dom.node(parent))
+            .and_then(|parent| {
+                parent
+                    .as_element()
+                    .map(|element| element.namespace_uri() == Some(SVG_NAMESPACE))
+            })
+            .unwrap_or(false);
+        let unboxes_to_none = node
+            .as_element()
+            .is_some_and(|element| contents_computes_to_none(&element, parent_is_svg));
         let mut node_svg_properties = Vec::new();
         let parent_computed =
             parent.map_or(parent_computed, |parent| &out.computed[parent.0 as usize]);
@@ -538,6 +588,12 @@ pub(crate) fn walk_from<D: StyleDom>(
                             && source_node.as_element().is_some_and(|element| {
                                 element.namespace_uri() == Some("http://www.w3.org/2000/svg")
                             }) == is_svg
+                            // A shared `display: none` computed from
+                            // `contents` must not reach an element that
+                            // unboxes, nor the reverse.
+                            && source_node.as_element().is_some_and(|element| {
+                                contents_computes_to_none(&element, parent_is_svg)
+                            }) == unboxes_to_none
                     }) && input.same_input(&source.input, shared)
                 })
                 .map(|source| source.id),
@@ -819,6 +875,11 @@ pub(crate) fn walk_from<D: StyleDom>(
                 bytes_of::<SvgStyleProperty>(node_svg_properties.len()),
             ))?;
             try_insert(&mut out.svg_properties, id, node_svg_properties)?;
+        }
+
+        let mut computed = computed;
+        if unboxes_to_none && computed.display == crate::property::DisplayValue::Contents {
+            computed.display = crate::property::DisplayValue::None;
         }
 
         // `computed` may be shorter than node_count(): only capacity was

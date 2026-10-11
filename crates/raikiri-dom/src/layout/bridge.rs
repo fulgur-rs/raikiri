@@ -267,6 +267,25 @@ pub(crate) fn apply_computed_to_style(
         bridge_alignment(style, cv);
         bridge_gap(style, cv, &mut doc.layout_warnings);
         bridge_grid(style, cv, &mut doc.layout_warnings);
+        if cv.display == DisplayValue::Contents {
+            // A `display: contents` element generates no box (CSS Display 3
+            // §2.5). Where layout still keeps a node for it, the node stands
+            // in for the anonymous box its contents would get, so none of
+            // the element's own box properties apply to it.
+            *style = taffy::Style {
+                display: Display::Block,
+                direction: style.direction,
+                ..taffy::Style::default()
+            };
+            // Taffy never lays out a contents element whose children it
+            // lifts into a flex or grid container; zero its layout so it
+            // adds nothing to its descendants' positions.
+            doc.nodes[idx].unrounded_layout = taffy::Layout::default();
+            doc.nodes[idx].multicol = None;
+            doc.nodes[idx].column_span_all = false;
+            doc.nodes[idx].multicol_auto_width = true;
+            doc.nodes[idx].has_logical_min_block_size = false;
+        }
     }
     refresh_order_modified_children(doc);
     crate::layout::ifc::assign::assign_ifc_roots(doc, cascade)?;

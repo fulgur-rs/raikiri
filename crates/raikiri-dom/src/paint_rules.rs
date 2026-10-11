@@ -209,9 +209,20 @@ impl OverflowClipGeometry {
     }
 }
 
+/// Whether the element has a box of its own to paint: its background,
+/// borders and outline. A `display: contents` element has none (CSS
+/// Display 3 §2.5), even where layout keeps a node for its contents.
+pub fn generates_box(cv: &ComputedValues) -> bool {
+    !matches!(cv.display, DisplayValue::Contents | DisplayValue::None)
+}
+
 /// The group opacity the element paints its subtree with, if any.
+///
+/// An element with `display: contents` generates no box (CSS Display 3
+/// §2.5), so its opacity has nothing to apply to: its children paint as if
+/// they were children of its parent.
 pub fn opacity_layer(cv: &ComputedValues) -> Option<f32> {
-    (cv.opacity < 1.0).then_some(cv.opacity)
+    (cv.opacity < 1.0 && cv.display != DisplayValue::Contents).then_some(cv.opacity)
 }
 
 /// A `visibility: hidden` table does not paint its own box.
@@ -255,6 +266,20 @@ pub fn sort_paint_children(
     parent_display: DisplayValue,
     cascade: &CascadeResult,
 ) {
+    // Stable sorting keeps DOM order for equal keys.
+    children.sort_by_key(|&child| paint_child_key(child, parent_display, cascade));
+}
+
+/// The key [`sort_paint_children`] sorts a child by: its stacking bucket and
+/// z-index, then floats after other boxes of the same level, then the flex or
+/// grid `order`. A stacking context that is neither positioned nor a flex or
+/// grid item, such as an element with `opacity` below 1, paints at
+/// [`STACKING_CONTEXT_PAINT_KEY`].
+pub(crate) fn paint_child_key(
+    child: usize,
+    parent_display: DisplayValue,
+    cascade: &CascadeResult,
+) -> PaintChildKey {
     let order_sensitive_container = matches!(
         parent_display,
         DisplayValue::Flex
@@ -262,54 +287,56 @@ pub fn sort_paint_children(
             | DisplayValue::Grid
             | DisplayValue::InlineGrid
     );
-    // Stable tuple sorting keeps DOM order for equal (stack, order) values.
     // Direct abspos/fixed children are not flex/grid items: paint them as if
     // their order were zero, while in-flow (including relative) items use the
     // computed `order` value. Stacking buckets stay primary.
-    children.sort_by_key(|&child| {
-        // Anonymous paragraph keys are outside the source DOM arena. Their
-        // non-inherited position, float and order use initial values.
-        let Some(computed) = cascade.computed.get(child) else {
-            return ((1, 0), 0, 0);
-        };
-        let stack =
-            if order_sensitive_container && matches!(computed.position, PositionValue::Static) {
-                // A flex/grid item can use integer z-index even when static.
-                // Match positioned items' stack levels so order only breaks
-                // ties within the same z-index level.
-                match computed.z_index {
-                    ZIndexValue::Auto => (1, 0),
-                    ZIndexValue::Integer(value) if value < 0 => (0, value),
-                    ZIndexValue::Integer(value) => (2, value),
-                    _ => paint_order_key(cascade, child), // cov:ignore: defensive fallback for future non-exhaustive z-index variants.
-                }
-            } else {
-                paint_order_key(cascade, child)
-            };
-        let order = if order_sensitive_container
-            && !matches!(
-                computed.position,
-                PositionValue::Absolute | PositionValue::Fixed
-            ) {
-            computed.order
-        } else {
-            0
-        };
-        let float_paint_order = if !order_sensitive_container
-            && matches!(
-                computed.float,
-                FloatValue::Left
-                    | FloatValue::Right
-                    | FloatValue::InlineStart
-                    | FloatValue::InlineEnd
-            ) {
-            1
-        } else {
-            0
-        };
-        (stack, float_paint_order, order)
-    });
+    // Anonymous paragraph keys are outside the source DOM arena. Their
+    // non-inherited position, float and order use initial values.
+    let Some(computed) = cascade.computed.get(child) else {
+        return ((1, 0), 0, 0);
+    };
+    let stack = if order_sensitive_container && matches!(computed.position, PositionValue::Static) {
+        // A flex/grid item can use integer z-index even when static.
+        // Match positioned items' stack levels so order only breaks
+        // ties within the same z-index level.
+        match computed.z_index {
+            ZIndexValue::Auto => (1, 0),
+            ZIndexValue::Integer(value) if value < 0 => (0, value),
+            ZIndexValue::Integer(value) => (2, value),
+            _ => paint_order_key(cascade, child), // cov:ignore: defensive fallback for future non-exhaustive z-index variants.
+        }
+    } else {
+        paint_order_key(cascade, child)
+    };
+    let order = if order_sensitive_container
+        && !matches!(
+            computed.position,
+            PositionValue::Absolute | PositionValue::Fixed
+        ) {
+        computed.order
+    } else {
+        0
+    };
+    let float_paint_order = if !order_sensitive_container
+        && matches!(
+            computed.float,
+            FloatValue::Left | FloatValue::Right | FloatValue::InlineStart | FloatValue::InlineEnd
+        ) {
+        1
+    } else {
+        0
+    };
+    (stack, float_paint_order, order)
 }
+
+/// See [`paint_child_key`].
+pub(crate) type PaintChildKey = ((u8, i32), u8, i32);
+
+/// The paint key of an element with `opacity` below 1 that is not
+/// positioned. CSS Color 4 §3.3 paints it on the same layer, within its
+/// parent stacking context, as positioned elements with stack level 0, and
+/// CSS 2.1 Appendix E step 8 paints that layer in tree order.
+pub(crate) const STACKING_CONTEXT_PAINT_KEY: PaintChildKey = ((2, 0), 0, 0);
 
 fn paint_order_key(cascade: &CascadeResult, node_id: usize) -> (u8, i32) {
     let computed = &cascade.computed[node_id];

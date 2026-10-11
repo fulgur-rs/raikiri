@@ -261,3 +261,184 @@ fn supplied_runs_cannot_reorder_intrinsic_text_lines() {
         .collect();
     assert_eq!(actual, expected);
 }
+
+#[test]
+fn inline_opacity_groups_paint_at_the_positioned_stack_level() {
+    let result = lay_out_with_font(
+        "<p id=p>A<i id=before></i><span id=group>B</span><i id=above></i>\
+         <i id=after></i><i id=flow></i></p>",
+        "p {margin:0} i {display:inline-block;width:5px;height:5px;background:red} \
+         #group {opacity:.5;background:blue} #before, #after {position:relative} \
+         #above {position:relative;z-index:1}",
+    );
+    let page = result.page(0).unwrap();
+    let dom = page.dom();
+    let runs = page.text_runs();
+    let mut order = Vec::new();
+    for event in page.paint_order_for_text_runs(&runs) {
+        match event {
+            PaintEvent::PushOpacity(_) => order.push("push".to_string()),
+            PaintEvent::PopOpacity => order.push("pop".into()),
+            PaintEvent::Box(fragment) => {
+                if let Some(name) = dom.attr(fragment.node(), "id") {
+                    order.push(name.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    // In-flow atomic inlines first, then the group in tree order with the
+    // positioned boxes of z-index auto, then positive z-index.
+    assert_eq!(
+        order,
+        [
+            "p", "flow", "before", "push", "group", "pop", "after", "above"
+        ]
+    );
+}
+
+#[test]
+fn inline_opacity_groups_list_their_content_after_the_paragraph() {
+    use std::collections::HashMap;
+    let result = lay_out_with_font(
+        "<p id=p>Aa <span id=outer>Bb <b id=inner>Cc</b> <i id=atomic></i> Dd</span> Ee</p>",
+        "p {margin:0;width:60px} #outer {opacity:.5;background:blue} \
+         #inner {opacity:.25;background:green} \
+         #atomic {display:inline-block;width:5px;height:5px;background:red}",
+    );
+    let page = result.page(0).unwrap();
+    let dom = page.dom();
+    let id = |node| dom.attr(node, "id");
+    let runs = page.text_runs();
+    let group_of = |text: &str| {
+        let run = runs
+            .iter()
+            .find(|run| run.text.contains(text))
+            .unwrap_or_else(|| panic!("no run for {text}"));
+        page.text_run_opacity_group(run).and_then(id)
+    };
+    assert_eq!(group_of("Aa"), None);
+    assert_eq!(group_of("Bb"), Some("outer"));
+    assert_eq!(group_of("Cc"), Some("inner"));
+    assert_eq!(group_of("Dd"), Some("outer"));
+    assert_eq!(group_of("Ee"), None);
+
+    // Every run is drawn by exactly one line event, in its own group.
+    let run_key = |run: &raikiri_html::PositionedGlyphRun<'_>| {
+        (run.line, run.origin.0.to_bits(), run.origin.1.to_bits())
+    };
+    let mut drawn: HashMap<_, usize> = HashMap::new();
+    let mut groups = Vec::new();
+    let mut order = Vec::new();
+    for event in page.paint_order_for_text_runs(&runs) {
+        match event {
+            PaintEvent::PushOpacity(alpha) => {
+                groups.push(alpha);
+                order.push(format!("push {alpha}"));
+            }
+            PaintEvent::PopOpacity => {
+                groups.pop().unwrap();
+                order.push("pop".into());
+            }
+            PaintEvent::Box(fragment) => {
+                if let Some(name) = id(fragment.node()) {
+                    order.push(format!("box {name}"));
+                }
+            }
+            PaintEvent::TextLine(line) => {
+                assert!(groups.is_empty(), "paragraph text inside a group");
+                for run in runs.iter().filter(|run| run.line == line) {
+                    if page.text_run_opacity_group(run).is_none() {
+                        *drawn.entry(run_key(run)).or_default() += 1;
+                    }
+                }
+                order.push("text".into());
+            }
+            PaintEvent::GroupTextLine(line, group) => {
+                let name = id(group).unwrap();
+                assert_eq!(
+                    groups.len(),
+                    if name == "inner" { 2 } else { 1 },
+                    "{name} text outside its group"
+                );
+                for run in runs.iter().filter(|run| run.line == line) {
+                    if page.text_run_opacity_group(run) == Some(group) {
+                        *drawn.entry(run_key(run)).or_default() += 1;
+                    }
+                }
+                order.push(format!("text {name}"));
+            }
+            PaintEvent::Text(_) => panic!("fragment text in supplied line stream"),
+            _ => {}
+        }
+    }
+    assert!(groups.is_empty());
+    assert!(drawn.values().all(|&count| count == 1), "{drawn:?}");
+    assert_eq!(drawn.len(), runs.len());
+    // One entry per text stream, however many lines it has.
+    order.dedup_by(|a, b| a == b && a.starts_with("text"));
+    assert_eq!(
+        order,
+        [
+            "box p",
+            "text",
+            "push 0.5",
+            "box outer",
+            "text outer",
+            "box atomic",
+            "push 0.25",
+            "box inner",
+            "text inner",
+            "pop",
+            "pop",
+        ],
+    );
+
+    // Without supplied runs, the text fragments go into their groups too.
+    let mut depth = 0;
+    let mut texts = Vec::new();
+    for event in page.paint_order() {
+        match event {
+            PaintEvent::PushOpacity(_) => depth += 1,
+            PaintEvent::PopOpacity => depth -= 1,
+            PaintEvent::Text(fragment) => {
+                texts.push((dom.parent(fragment.node()).and_then(id), depth));
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(
+        texts,
+        [
+            (Some("p"), 0),
+            (Some("p"), 0),
+            (Some("outer"), 1),
+            (Some("outer"), 1),
+            (Some("inner"), 2),
+        ],
+    );
+}
+
+#[test]
+fn display_contents_elements_form_no_opacity_group() {
+    let result = lay_out_with_font(
+        "<div style='display:contents;opacity:.5'><p>Block</p></div>\
+         <p>A<span style='display:contents;opacity:.5'>B</span>C</p>",
+        "p {margin:0}",
+    );
+    let page = result.page(0).unwrap();
+    let runs = page.text_runs();
+    assert!(!runs.is_empty());
+    assert!(
+        runs.iter()
+            .all(|run| page.text_run_opacity_group(run).is_none())
+    );
+    for events in [page.paint_order(), page.paint_order_for_text_runs(&runs)] {
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, PaintEvent::PushOpacity(_))),
+            "{events:?}"
+        );
+    }
+}
