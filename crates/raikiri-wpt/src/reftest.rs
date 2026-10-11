@@ -2648,11 +2648,6 @@ pub(crate) fn render_raikiri_pages_with_resources(
     let mut fallback_page_box = PageBox::new();
     fallback_page_box.width = width as f32;
     fallback_page_box.height = height as f32;
-    let fixed_page_width = if page_has_explicit_dimensions(&default_cascade.page) {
-        page_box_from_cascade(&default_cascade.page, fallback_page_box).width
-    } else {
-        width as f32
-    };
     // Recascade the page context after direction detection so RTL documents
     // use their first `:left` page cascade during the initial layout pass.
     // Keeping the provisional default page context would leave the first page
@@ -2680,6 +2675,13 @@ pub(crate) fn render_raikiri_pages_with_resources(
     .map_err(|error| format!("initial page context: {error:?}"))?;
     let first_cascade = initial_context.cascade;
     let first_page_box = initial_context.page_box;
+    // Fixed boxes are laid out against the first page's page area; later
+    // pages keep that containing block even when their size differs.
+    let fixed_page_width = raikiri_dom::page_content_insets(&first_cascade, first_page_box)
+        .page_area_width(
+            raikiri_dom::page_margins(&first_cascade, first_page_box),
+            first_page_box,
+        );
     let provisional_slices = if let Some(resolver) = image_resolver {
         layout_pages_with_resolver_and_base_url(
             &mut uncascaded.dom,

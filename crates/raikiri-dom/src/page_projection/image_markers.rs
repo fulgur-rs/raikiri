@@ -54,7 +54,7 @@ pub(super) fn prepare(
         return Ok(placements);
     }
     // The painter moves a marker with its item's text.
-    let context = super::text_runs::RunContext::new(document, roots);
+    let context = super::text_runs::RunContext::new(document, roots, pages);
     let mut roots = Vec::with_capacity(prepared.len());
     for (root, kind) in prepared {
         // The placement walks the marker owner's ancestors.

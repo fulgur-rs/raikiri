@@ -75,7 +75,7 @@ pub(super) fn prepare(
         })
         .collect();
     let mut prepared = Vec::new();
-    let context = RunContext::new(document, roots);
+    let context = RunContext::new(document, roots, pages);
     let mut eligible = HashMap::new();
     for root in roots {
         work.check()?;

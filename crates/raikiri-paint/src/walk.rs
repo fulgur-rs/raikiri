@@ -1600,8 +1600,13 @@ pub(crate) fn paint_document_impl(
     // the page border and padding.
     let content_width = insets.page_area_width(margins, page_box);
     let content_height = insets.page_area_height(margins, page_box);
-    // Fixed-position containing blocks use the initial laid-out viewport even
-    // when a later named page has a different paper width.
+    // Fixed-position containing blocks use the page area of the initial
+    // layout even when a later named page has a different paper width.
+    // The page area takes the root element's direction, which decides the
+    // inset that places an over-constrained fixed box.
+    let fixed_rtl = find_html(document)
+        .and_then(|html| cascade.computed.get(html))
+        .is_some_and(|cv| cv.direction == raikiri_style::property::Direction::Rtl);
     let fixed_content_width = if fixed_page_width.is_finite() && fixed_page_width > 0.0 {
         fixed_page_width
     } else {
@@ -2136,8 +2141,8 @@ pub(crate) fn paint_document_impl(
                 let (fixed_dx, fixed_dy) = if fixed_in_viewport {
                     fixed_position_px(
                         cv,
-                        layout.size.width,
-                        layout.size.height,
+                        &layout,
+                        fixed_rtl,
                         page_box.width,
                         content_origin_y,
                         fixed_content_width,
@@ -6090,8 +6095,8 @@ fn transform_translation(
 
 fn fixed_position_px(
     cv: &raikiri_style::ComputedValues,
-    width: f32,
-    height: f32,
+    layout: &taffy::Layout,
+    rtl: bool,
     page_width: f32,
     content_origin_y: f32,
     content_width: f32,
@@ -6110,10 +6115,21 @@ fn fixed_position_px(
     let right = to_px(cv.right);
     let top = to_px(cv.top);
     let bottom = to_px(cv.bottom);
-    let x = left.or_else(|| right.map(|value| content_width - value - width));
+    let (width, height, margin) = (layout.size.width, layout.size.height, layout.margin);
+    // Layout puts the margin box against the insets.
+    let from_right = |value: f32| content_width - value - width - margin.right;
+    // CSS 2.1 §10.3.7: with both insets set, a right-to-left containing
+    // block ignores `left`.
+    let x = match (left, right) {
+        (Some(_), Some(right)) if rtl => Some(from_right(right)),
+        (Some(left), _) => Some(left + margin.left),
+        (None, right) => right.map(from_right),
+    };
     let y = top
-        .map(|value| content_origin_y + value)
-        .or_else(|| bottom.map(|value| content_origin_y + content_height - value - height));
+        .map(|value| content_origin_y + value + margin.top)
+        .or_else(|| {
+            bottom.map(|value| content_origin_y + content_height - value - height - margin.bottom)
+        });
     Some((
         x.unwrap_or(0.0).clamp(-page_width, page_width),
         y.unwrap_or(content_origin_y).clamp(

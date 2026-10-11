@@ -185,7 +185,7 @@ impl Document {
         let column_rules = crate::column_rules::project(self, cascade, &pages, &mut work)?;
         let text_roots_by_page =
             text_runs::roots_by_page(self, cascade, &text_roots, &markers, &pages);
-        let run_context = text_runs::RunContext::new(self, &text_roots);
+        let run_context = text_runs::RunContext::new(self, &text_roots, &pages);
         let transform_boxes = paint_transform::transform_boxes(self, cascade, &pages);
         let opacity_layers = cascade
             .computed

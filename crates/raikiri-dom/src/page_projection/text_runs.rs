@@ -6,7 +6,7 @@ use crate::Document;
 use crate::generated_content::generated_origin;
 use crate::layout::{PositionedLine, PositionedLines, PositionedRun, line_center_on_page};
 use raikiri_style::property::{
-    ColumnCountValue, CssColor, DisplayValue, FloatValue, PositionValue, TextShadowColor,
+    ColumnCountValue, CssColor, Direction, DisplayValue, FloatValue, PositionValue, TextShadowColor,
 };
 use raikiri_style::resolve::{
     ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedTransformFunction,
@@ -411,10 +411,18 @@ pub(super) struct RunContext {
     pub(super) fragment_clipped: HashSet<usize>,
     /// The body, where the painter starts.
     pub(super) body: Option<usize>,
+    /// Whether the page areas differ between pages. Layout places fixed
+    /// boxes against the first page area, while the painter places them
+    /// from their `right` and `bottom` insets against each page's.
+    page_areas_vary: bool,
 }
 
 impl RunContext {
-    pub(super) fn new(document: &Document, roots: &[ProjectedTextRoot]) -> Self {
+    pub(super) fn new(
+        document: &Document,
+        roots: &[ProjectedTextRoot],
+        pages: &[PageFragment],
+    ) -> Self {
         let mut placements = HashMap::<usize, HashMap<Option<usize>, usize>>::new();
         for root in roots {
             *placements
@@ -450,6 +458,7 @@ impl RunContext {
                 overlapping.insert(root);
             }
         }
+        let body = crate::paint_rules::find_paint_root(document);
         let fragments = document.layout_fragments();
         let fragmented = fragments.iter().map(|fragment| fragment.node_id).collect();
         let fragment_clipped = fragments
@@ -461,7 +470,8 @@ impl RunContext {
             overlapping,
             fragmented,
             fragment_clipped,
-            body: crate::paint_rules::find_paint_root(document),
+            body,
+            page_areas_vary: page_areas_vary(document, pages),
         }
     }
 }
@@ -493,20 +503,6 @@ fn paint_relative_offset(cv: &ComputedValues) -> (f32, f32) {
     let dx = length(cv.left).or(length(cv.right).map(|right| -right));
     let dy = length(cv.top).or(length(cv.bottom).map(|bottom| -bottom));
     (dx.unwrap_or(0.0), dy.unwrap_or(0.0))
-}
-
-/// Whether `cv`'s box is relatively positioned by a nonzero inset of any
-/// kind, whether layout or the painter applies it.
-fn has_relative_inset(cv: &ComputedValues) -> bool {
-    cv.position == PositionValue::Relative
-        && [cv.left, cv.right, cv.top, cv.bottom]
-            .into_iter()
-            .any(|inset| {
-                !matches!(
-                    inset,
-                    ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::Px(0.0)
-                )
-            })
 }
 
 /// How the built-in painter moves one element and its subtree from their
@@ -649,14 +645,44 @@ fn used_columns(document: &Document, id: usize) -> usize {
         .map_or(1, |context| context.column_count)
 }
 
+/// Whether the page area of some page differs from the one layout placed
+/// fixed boxes against.
+fn page_areas_vary(document: &Document, pages: &[PageFragment]) -> bool {
+    let (laid_out_width, laid_out_height) = document.fixed_page_area;
+    pages.iter().any(|page| {
+        let (margins, insets) = (page.margins, page.content_insets);
+        let width = page.page_box.width - margins.left - margins.right - insets.left - insets.right;
+        let height =
+            page.page_box.height - margins.top - margins.bottom - insets.top - insets.bottom;
+        (width - laid_out_width).abs() > 1e-3 || (height - laid_out_height).abs() > 1e-3
+    })
+}
+
 /// Whether the painter places `cv`'s box on each page differently than
 /// layout does.
-fn fixed_omission(cv: &ComputedValues) -> Option<TextRunOmission> {
-    // The painter places a fixed box on each page from its `top` and `left`
-    // lengths, and from other insets differently than layout.
+fn fixed_omission(
+    cv: &ComputedValues,
+    page_areas_vary: bool,
+    rtl: bool,
+) -> Option<TextRunOmission> {
+    // The painter places a fixed box on each page from its `left` length, or
+    // its `right` length when `left` is auto, and likewise from `top` or
+    // `bottom`, as layout does against the page area. It places a box from
+    // other insets differently than layout, and one from `right` or
+    // `bottom` against each page's area, which layout cannot follow when
+    // the page areas differ. A right-to-left page area places a box with
+    // both horizontal insets from `right`.
     let length = |inset| matches!(inset, ComputedLengthPercentageOrAuto::Px(_));
-    (cv.position == PositionValue::Fixed && !(length(cv.left) && length(cv.top)))
-        .then_some(TextRunOmission::FixedPlacement)
+    let placed = |start, end, from_end: bool| {
+        (length(start) && !from_end)
+            || (!page_areas_vary
+                && (from_end || matches!(start, ComputedLengthPercentageOrAuto::Auto))
+                && length(end))
+    };
+    let horizontal_from_end = rtl && length(cv.left) && length(cv.right);
+    (cv.position == PositionValue::Fixed
+        && !(placed(cv.left, cv.right, horizontal_from_end) && placed(cv.top, cv.bottom, false)))
+    .then_some(TextRunOmission::FixedPlacement)
 }
 
 /// Whether a column of element `id` clips its content: the element is a
@@ -718,6 +744,12 @@ pub(super) fn paint_shift(
     context: &RunContext,
     root: usize,
 ) -> Result<(f32, f32), TextRunOmission> {
+    // The page area takes the direction of the root element.
+    let rtl = context
+        .body
+        .and_then(|body| document.parent_of(body))
+        .and_then(|html| cascade.computed.get(html))
+        .is_some_and(|cv| cv.direction == Direction::Rtl);
     let (mut dx, mut dy) = (0.0, 0.0);
     // Whether a clip was among the boxes passed so far: the painter moves
     // that clip with the boxes above it, and the clips of the paint order
@@ -728,26 +760,25 @@ pub(super) fn paint_shift(
         let Some(cv) = cascade.computed.get(id) else {
             continue; // cov:ignore: the cascade has a value for every arena node
         };
-        let fragmented = context.fragmented.contains(&id);
-        let shift = box_paint_shift(document, cascade, context.body, id, cv, fragmented)?;
         if fixed {
             // spec: https://www.w3.org/TR/css-transforms-1/#containing-block-for-all-descendants
             // A transformed or filtered ancestor makes the fixed box local
-            // to it, while the projection repeats it on every page. How the
-            // painter combines an ancestor's offset, applied by layout or by
-            // itself, with the fixed box's insets is not modeled either.
+            // to it, while the projection repeats it on every page. Any other
+            // ancestor neither moves the fixed box in layout, which places it
+            // against the page area, nor in the painter, which places it from
+            // its insets.
             if (transformable(document, id, cv) && !cv.transform.is_empty())
                 || !cv.filter.is_empty()
-                || shift.offset != (0.0, 0.0)
-                || has_relative_inset(cv)
             {
                 return Err(TextRunOmission::FixedPlacement);
             }
             continue;
         }
-        if let Some(reason) = fixed_omission(cv) {
+        if let Some(reason) = fixed_omission(cv, context.page_areas_vary, rtl) {
             return Err(reason);
         }
+        let fragmented = context.fragmented.contains(&id);
+        let shift = box_paint_shift(document, cascade, context.body, id, cv, fragmented)?;
         if shift.general && super::paint_transform::is_singular(cv) {
             return Err(TextRunOmission::SingularTransform);
         }
@@ -790,6 +821,13 @@ pub(super) fn run_transform(
         let Some(cv) = cascade.computed.get(id) else {
             continue; // cov:ignore: the cascade has a value for every arena node
         };
+        if cv.position == PositionValue::Fixed {
+            // The painter places a fixed box from its insets, whatever moves
+            // its ancestors; one that a transform or filter contains is
+            // omitted first.
+            transform = PaintTransform::IDENTITY;
+            ancestors = (0.0, 0.0);
+        }
         let fragmented = context.fragmented.contains(&id);
         let Ok(shift) = box_paint_shift(document, cascade, context.body, id, cv, fragmented) else {
             continue; // cov:ignore: the runs of a box the painter cannot place are omitted first
@@ -1380,7 +1418,7 @@ impl Document {
     /// with the reason.
     #[doc(hidden)]
     pub fn omitted_text_run_roots(&self, cascade: &CascadeResult) -> Vec<(NodeId, &'static str)> {
-        let context = RunContext::new(self, &self.page_projection.text_roots);
+        let context = self.page_projection.run_context.clone();
         let mut seen = HashSet::new();
         let placed: HashSet<_> = self
             .page_projection
