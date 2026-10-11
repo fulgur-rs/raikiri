@@ -1,7 +1,7 @@
 //! Page ownership of decorations from generated inline box pieces.
 
 use super::records::{PageFragment, ProjectedTextRoot};
-use super::text_runs::{RunContext, omission};
+use super::text_runs::{RunContext, placement};
 use crate::{Document, GeneratedKind};
 use raikiri_style::{CascadeResult, ComputedValues, PseudoElem};
 use raikiri_traits::{NodeId, PaintRect};
@@ -89,16 +89,16 @@ pub(super) fn prepare(
                 work.charge(1)?;
                 ancestor = document.parent_of(node);
             }
-            entry.insert(omission(document, cascade, &context, root.node).is_none());
+            entry.insert(placement(document, cascade, &context, root.node).ok());
         }
-        if !eligible[&root.node] {
+        let Some(paint_shift) = eligible[&root.node] else {
             continue;
-        }
+        };
         let pieces = paragraphs
             .get(&root.node)
             .map_or(&[][..], |paragraph| paragraph.generated(root.fragmentainer));
         work.charge(pieces.len().saturating_add(1))?;
-        prepared.push((*root, pieces));
+        prepared.push((*root, paint_shift, pieces));
     }
     // Pages with a flow range, ordered by their start, so a paragraph that
     // is not repeated on every page visits only the pages its lines can land on
@@ -110,8 +110,11 @@ pub(super) fn prepare(
     by_flow.sort_by(|left, right| left.0.total_cmp(&right.0));
     let ends_ordered = by_flow.windows(2).all(|pair| pair[0].1 <= pair[1].1);
     let mut result = GeneratedBoxes::new();
-    for (root, pieces) in &prepared {
+    for (root, paint_shift, pieces) in &prepared {
         let source = document.ifc_source_owner(root.node);
+        let offsets = document
+            .ifc_layout_node(root.node)
+            .map_or(&[][..], |node| node.ifc_relative_offsets());
         // Fixed-position roots and repeated table headers can land on any page.
         let repeated = root.is_repeat || document.table_objects.headers.owner(source).is_some();
         let candidates: Box<dyn Iterator<Item = &PageFragment>> = if repeated {
@@ -163,6 +166,9 @@ pub(super) fn prepare(
                     continue;
                 }
                 let rect = piece.border_box;
+                // A pseudo-element moves with its relatively positioned
+                // inline ancestors, as its text does.
+                let relative = crate::cumulative_offset(document, root.node, offsets, owner);
                 result
                     .entry(page.page_index)
                     .or_default()
@@ -171,8 +177,18 @@ pub(super) fn prepare(
                     .push(BoxPiece {
                         line: piece.line,
                         rect: PaintRect::new(
-                            page.content_box.x + root.x + offset.0 + rect.x,
-                            page.content_box.y + root.y + offset.1 + rect.y
+                            page.content_box.x
+                                + root.x
+                                + paint_shift.0
+                                + relative.0
+                                + offset.0
+                                + rect.x,
+                            page.content_box.y
+                                + root.y
+                                + paint_shift.1
+                                + relative.1
+                                + offset.1
+                                + rect.y
                                 - shift
                                 - if root.is_repeat { 0.0 } else { start },
                             rect.width,
