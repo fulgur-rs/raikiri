@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::ops::Range;
 
 use super::TableGrid;
 
@@ -9,6 +10,11 @@ struct Interval {
     cell: usize,
 }
 
+struct CellRegion {
+    rows: Range<usize>,
+    columns: Range<u16>,
+}
+
 /// Transient placement lookup shared by collapsed-border resolution and sizing.
 /// Row spans occupy segment-tree ranges; each range stores disjoint column
 /// intervals. Storage is O(rows + placements * log(rows)), independent of the
@@ -17,6 +23,8 @@ pub(super) struct CellIndex {
     leaf_count: usize,
     row_count: usize,
     column_count: u16,
+    first_cell: Option<CellRegion>,
+    single_cell: bool,
     nodes: Vec<Vec<Interval>>,
 }
 
@@ -28,6 +36,8 @@ impl CellIndex {
             leaf_count,
             row_count,
             column_count: grid.n_cols,
+            first_cell: None,
+            single_cell: grid.cells.len() <= 1,
             nodes: if row_count == 0 || grid.n_cols == 0 {
                 Vec::new()
             } else {
@@ -44,6 +54,12 @@ impl CellIndex {
             let mut row_end = (row_start + usize::from(placement.row_span)).min(row_count);
             if start >= end || row_start >= row_end {
                 continue;
+            }
+            if cell == 0 {
+                index.first_cell = Some(CellRegion {
+                    rows: row_start..row_end,
+                    columns: start as u16..end as u16,
+                });
             }
             let interval = Interval {
                 start: start as u16,
@@ -73,6 +89,17 @@ impl CellIndex {
 
     pub(super) fn at(&self, row: u16, col: u16) -> Option<usize> {
         if usize::from(row) >= self.row_count || col >= self.column_count {
+            return None;
+        }
+        // Nothing can precede placement zero. Keep its covered positions
+        // constant-time even when one cell spans a large, otherwise empty grid.
+        if let Some(region) = &self.first_cell {
+            lookup_step();
+            if region.rows.contains(&usize::from(row)) && region.columns.contains(&col) {
+                return Some(0);
+            }
+        }
+        if self.single_cell {
             return None;
         }
         let mut node = self.leaf_count + usize::from(row);

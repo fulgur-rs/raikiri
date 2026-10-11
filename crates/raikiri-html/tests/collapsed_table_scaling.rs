@@ -36,21 +36,23 @@ fn measure(mode: &str, side: usize) {
         panic!("completed layout")
     };
     let elapsed = started.elapsed();
-    let status = std::fs::read_to_string("/proc/self/status").unwrap();
-    let rss_kib: u64 = status
-        .lines()
-        .find_map(|line| line.strip_prefix("VmHWM:"))
-        .unwrap()
-        .split_whitespace()
-        .next()
-        .unwrap()
-        .parse()
-        .unwrap();
     assert_eq!(document.page_count(), 1);
+    let peak_rss = std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|status| {
+            status
+                .lines()
+                .find_map(|line| line.strip_prefix("VmHWM:"))?
+                .split_whitespace()
+                .next()?
+                .parse::<u64>()
+                .ok()
+        })
+        .map(|rss_kib| format!("{:.1} MiB", rss_kib as f64 / 1024.0))
+        .unwrap_or_else(|| "unavailable".to_owned());
     eprintln!(
-        "{mode} {side}x{side}: {:.2} ms, peak RSS {:.1} MiB, pages {}",
+        "{mode} {side}x{side}: {:.2} ms, peak RSS {peak_rss}, pages {}",
         elapsed.as_secs_f64() * 1e3,
-        rss_kib as f64 / 1024.0,
         document.page_count(),
     );
 }

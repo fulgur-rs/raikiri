@@ -123,6 +123,44 @@ fn highest_representable_row_can_own_a_cell() {
 }
 
 #[test]
+fn earliest_spanning_cell_has_constant_lookup_work() {
+    for rows in [8, 128, 4096, usize::from(u16::MAX)] {
+        let grid = grid(
+            rows,
+            u16::MAX,
+            vec![
+                placement(0, 0, rows as u16, u16::MAX),
+                placement(1, 1, 1, 1),
+            ],
+        );
+        let index = CellIndex::new(&grid);
+        TABLE_CELL_LOOKUP_STEPS.with(|steps| steps.set(0));
+        for (row, col) in [(0, 0), (1, 1), (rows as u16 - 1, u16::MAX - 1)] {
+            assert_eq!(index.at(row, col), Some(0));
+        }
+        let steps = TABLE_CELL_LOOKUP_STEPS.with(|steps| steps.get());
+        eprintln!("{rows} rows: {steps} earliest-span lookup steps");
+        assert!(steps <= 3);
+    }
+}
+
+#[test]
+fn single_spanning_cell_and_holes_have_constant_lookup_work() {
+    for rows in [8, 128, 4096, usize::from(u16::MAX)] {
+        let grid = grid(rows, 8, vec![placement(1, 1, rows as u16 - 2, 3)]);
+        let index = CellIndex::new(&grid);
+        TABLE_CELL_LOOKUP_STEPS.with(|steps| steps.set(0));
+        assert_eq!(index.at(1, 1), Some(0));
+        assert_eq!(index.at(0, 1), None);
+        assert_eq!(index.at(rows as u16 - 1, 1), None);
+        assert_eq!(index.at(2, 4), None);
+        let steps = TABLE_CELL_LOOKUP_STEPS.with(|steps| steps.get());
+        eprintln!("{rows} rows: {steps} single-cell/hole lookup steps");
+        assert!(steps <= 4);
+    }
+}
+
+#[test]
 fn empty_and_clipped_ranges_are_safe() {
     for grid in [grid(0, 3, vec![]), grid(3, 0, vec![])] {
         let index = CellIndex::new(&grid);
@@ -139,6 +177,11 @@ fn empty_and_clipped_ranges_are_safe() {
             placement(0, 9, 1, 1),
             placement(2, 3, u16::MAX, u16::MAX),
         ],
+    ));
+    assert_matches_linear_search(&grid(
+        4,
+        5,
+        vec![placement(2, 3, u16::MAX, u16::MAX), placement(0, 0, 4, 5)],
     ));
 }
 
