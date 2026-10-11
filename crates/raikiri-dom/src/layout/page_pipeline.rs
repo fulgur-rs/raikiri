@@ -2451,6 +2451,28 @@ pub fn layout_pages_with_page_geometry_and_control(
         y
     }
 
+    fn has_explicit_positioned_block_ancestor(
+        document: &Document,
+        cascade: &CascadeResult,
+        node_id: usize,
+        parent_of: &[Option<usize>],
+    ) -> bool {
+        let mut current = Some(document.ifc_source_owner(node_id));
+        while let Some(id) = current {
+            let computed = &cascade.computed[id];
+            let inset = &document.nodes[id].style.inset;
+            if matches!(
+                computed.position,
+                PositionValue::Absolute | PositionValue::Fixed
+            ) && (!inset.top.is_auto() || !inset.bottom.is_auto())
+            {
+                return true;
+            }
+            current = parent_of[id];
+        }
+        false
+    }
+
     // Page heights are known here, after source layout has established each
     // owner's position. Retain page-local column placements before collecting
     // paragraph and fragment projections, including the changed following flow.
@@ -3478,6 +3500,10 @@ pub fn layout_pages_with_page_geometry_and_control(
         }
         let participates_in_margin_adjacency = name_participates_in_flow
             && !is_floating_box_for_pagination(document, cascade, node_id);
+        // Explicit positioned insets follow their containing box, not margin
+        // changes in a parallel normal flow. Both-auto boxes keep static placement.
+        let uses_positioned_coordinates = candidate.is_out_of_flow_descendant
+            && has_explicit_positioned_block_ancestor(document, cascade, node_id, &parent_of);
         if candidate.is_text {
             // In-flow text between two blocks separates them: the next block's
             // gap is no longer a margin adjoining the previous block.
@@ -3506,7 +3532,25 @@ pub fn layout_pages_with_page_geometry_and_control(
             let raw_y = candidate.raw_y;
             let height = candidate.height;
             let candidate_page_name = candidate.page_name.clone();
-            let mut effective_y = raw_y + flow_shift;
+            let mut effective_y = if uses_positioned_coordinates {
+                if let Some((root, _)) = candidate.ifc_root {
+                    let layout = document
+                        .ifc_layout_node(root)
+                        .expect("valid paragraph root")
+                        .unrounded_layout;
+                    let first_top = positioned_text_line_bounds(document, node_id)
+                        .and_then(|lines| lines.first().map(|line| line.0))
+                        .unwrap_or(0.0);
+                    current_abs_y(document, root, &parent_of)
+                        + layout.border.top
+                        + layout.padding.top
+                        + first_top
+                } else {
+                    current_abs_y(document, node_id, &parent_of)
+                }
+            } else {
+                raw_y + flow_shift
+            };
             // A fixed-height direct block whose first line would straddle the
             // current fragmentainer is pushed as a unit. This matches normal
             // block fragmentation for monolithic content while leaving tall
@@ -3515,7 +3559,9 @@ pub fn layout_pages_with_page_geometry_and_control(
             // A block inside an inline element of an inline engine paragraph
             // is laid out from the paragraph's root, as a direct child is.
             let direct_block_parent = parent_of[node_id].and_then(|parent_id| {
-                (document.layout_parent_of(parent_id) == Some(body_id)).then_some(parent_id)
+                (!uses_positioned_coordinates
+                    && document.layout_parent_of(parent_id) == Some(body_id))
+                .then_some(parent_id)
             });
             if let Some(block_id) = direct_block_parent
                 && checked_block_text.insert(block_id)
@@ -3774,7 +3820,11 @@ pub fn layout_pages_with_page_geometry_and_control(
                 header.placements.insert(page, (page_origin(page), y));
             }
         }
-        let mut effective_y = raw_y + flow_shift;
+        let mut effective_y = if uses_positioned_coordinates {
+            current_abs_y(document, node_id, &parent_of)
+        } else {
+            raw_y + flow_shift
+        };
         materialize_y(document, node_id, effective_y, &parent_of);
         let forced_before = page_break_is_forced(document, node_id, computed.break_before)
             || candidate.inline_named_page;
@@ -4001,6 +4051,9 @@ pub fn layout_pages_with_page_geometry_and_control(
                     .filter(|gap| gap.is_finite() && *gap > 0.0);
                 if let Some(gap) = gap
                     && collapses_with_previous_block
+                    // A clearing box's gap may contain clearance. Its used
+                    // clearance is not recorded separately, so retain the gap.
+                    && matches!(computed.clear, raikiri_style::property::ClearValue::None)
                 {
                     let page_top = page_origin(natural_page);
                     let previous_bottom = effective_y - gap;

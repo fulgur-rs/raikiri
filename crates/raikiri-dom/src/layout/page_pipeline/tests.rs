@@ -9626,3 +9626,161 @@ fn a_root_margin_within_a_taller_first_page_is_kept() {
     let child_y = doc.get_node(child).unwrap().unrounded_layout.location.y;
     assert_eq!(body_y + child_y, 150.0, "body {body_y}, child {child_y}");
 }
+
+#[test]
+fn float_clearance_is_not_truncated_as_an_adjoining_margin() {
+    assert_eq!(
+        page_box_positions(&[
+            "height:80px",
+            "float:left;height:30px",
+            "clear:left;height:20px",
+            "height:10px",
+        ]),
+        (vec![0.0, 80.0, 110.0, 130.0], 2)
+    );
+}
+
+#[test]
+fn margin_truncation_does_not_shift_an_explicit_absolute_inset() {
+    assert_eq!(
+        page_box_positions(&[
+            "height:80px",
+            "margin-top:30px;height:20px",
+            "position:absolute;top:0;height:120px",
+            "height:10px",
+        ]),
+        (vec![0.0, 100.0, 0.0, 120.0], 2)
+    );
+}
+
+#[test]
+fn a_margin_after_a_cleared_block_is_still_truncated() {
+    assert_eq!(
+        page_box_positions(&[
+            "height:80px",
+            "float:left;height:30px",
+            "clear:left;height:90px",
+            "margin-top:30px;height:20px",
+            "height:10px",
+        ]),
+        (vec![0.0, 80.0, 110.0, 200.0, 220.0], 3)
+    );
+}
+
+#[test]
+fn positioned_block_insets_and_auto_static_positions_remain_distinct() {
+    for (position, expected_y, expected_pages) in [
+        ("top:20px", 20.0, 2),
+        ("bottom:0", -20.0, 2),
+        ("top:auto;bottom:auto", 120.0, 3),
+    ] {
+        assert_eq!(
+            page_box_positions(&[
+                "height:80px",
+                "margin-top:30px;height:20px",
+                &format!("position:absolute;{position};height:120px"),
+                "height:10px",
+            ]),
+            (vec![0.0, 100.0, expected_y, 120.0], expected_pages)
+        );
+    }
+}
+
+#[test]
+fn positioned_text_follows_its_moved_containing_block_once() {
+    let ys = paginated_ys(
+        |doc, body| {
+            let first = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;height:80px"),
+            );
+            let wrapper = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;margin-top:30px;height:20px"),
+            );
+            let relative = doc.append_element(
+                Some(wrapper),
+                "div",
+                Style::default(),
+                Some("display:block;position:relative;height:20px"),
+            );
+            let absolute = doc.append_element(
+                Some(relative),
+                "div",
+                Style::default(),
+                Some("position:absolute;top:5px;height:120px;width:100px;padding-top:3px"),
+            );
+            let span = doc.append_element(
+                Some(absolute),
+                "span",
+                Style::default(),
+                Some("display:inline"),
+            );
+            doc.append_text(span, "x");
+            vec![first, wrapper, relative, absolute]
+        },
+        &[],
+    );
+    assert_eq!(ys, [0.0, 100.0, 0.0, 5.0]);
+}
+
+#[test]
+fn positioned_inline_text_keeps_its_explicit_outer_anchor() {
+    for (nested_auto_box, display) in [
+        (false, "block"),
+        (true, "block"),
+        (false, "flex"),
+        (false, "grid"),
+    ] {
+        let positions = |margin: f32| {
+            paginated_ys(
+                |doc, body| {
+                    doc.append_element(
+                        Some(body),
+                        "div",
+                        Style::default(),
+                        Some("display:block;height:80px"),
+                    );
+                    doc.append_element(
+                        Some(body),
+                        "div",
+                        Style::default(),
+                        Some(&format!("display:block;margin-top:{margin}px;height:20px")),
+                    );
+                    let absolute = doc.append_element(
+                        Some(body),
+                        "div",
+                        Style::default(),
+                        Some(&format!("display:{display};position:absolute;top:5px;height:120px;width:100px;padding-top:3px")),
+                    );
+                    let text_parent = if nested_auto_box {
+                        doc.append_element(
+                            Some(absolute),
+                            "div",
+                            Style::default(),
+                            Some("position:absolute;top:auto;bottom:auto;height:120px;width:100px;padding-top:2px"),
+                        )
+                    } else {
+                        absolute
+                    };
+                    let span = doc.append_element(
+                        Some(text_parent),
+                        "span",
+                        Style::default(),
+                        Some("display:inline"),
+                    );
+                    doc.append_text(span, "x");
+                    vec![absolute, text_parent]
+                },
+                &[],
+            )
+        };
+        let original = positions(0.0);
+        assert_eq!(original[0], 5.0);
+        assert_eq!(positions(30.0), original);
+    }
+}
