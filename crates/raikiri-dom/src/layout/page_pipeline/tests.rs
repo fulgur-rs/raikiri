@@ -2,6 +2,7 @@ use super::*;
 use crate::layout::test_support::{ahem_paragraph_with, with_ahem};
 use taffy::Style;
 
+mod candidate_text_tests;
 mod paged_spanning_tests;
 
 fn committed_column_projection(style: &str) -> (Document, CascadeResult) {

@@ -5,6 +5,10 @@ use crate::layout::ifc::test_support::{Fixture, block_fixture};
 use raikiri_style::CascadeResult;
 use raikiri_traits::PageBox;
 
+thread_local! {
+    pub(crate) static TEXT_LINE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// A `<div>` of Ahem text under `html > body`, with a fixed 10px line height.
 ///
 /// A `\n` in `text` becomes a `<br>`. `css` is appended to the root's style.
