@@ -119,3 +119,13 @@ fn unusual_elements_compute_contents_to_none() {
     // Nothing of theirs takes up space before the following paragraph.
     assert_eq!(rect_of(&result, "after").y, 0.0);
 }
+
+#[test]
+fn elements_sharing_style_with_an_unusual_sibling_still_unbox() {
+    let result = lay_out(
+        "<div><br class=c><x-a class=c>PASS</x-a></div>",
+        ".c {display:contents}",
+    );
+    let page = result.page(0).unwrap();
+    assert!(page.text_runs().iter().any(|run| run.text.contains("PASS")));
+}

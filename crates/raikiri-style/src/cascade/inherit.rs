@@ -535,6 +535,19 @@ pub(crate) fn walk_from<D: StyleDom>(
         let is_svg = node
             .as_element()
             .is_some_and(|element| element.namespace_uri() == Some("http://www.w3.org/2000/svg"));
+        // Siblings share a parent, so whether it is an SVG element is the
+        // same for a sharing source and its target.
+        let parent_is_svg = parent
+            .and_then(|parent| dom.node(parent))
+            .and_then(|parent| {
+                parent
+                    .as_element()
+                    .map(|element| element.namespace_uri() == Some(SVG_NAMESPACE))
+            })
+            .unwrap_or(false);
+        let unboxes_to_none = node
+            .as_element()
+            .is_some_and(|element| contents_computes_to_none(&element, parent_is_svg));
         let mut node_svg_properties = Vec::new();
         let parent_computed =
             parent.map_or(parent_computed, |parent| &out.computed[parent.0 as usize]);
@@ -575,6 +588,12 @@ pub(crate) fn walk_from<D: StyleDom>(
                             && source_node.as_element().is_some_and(|element| {
                                 element.namespace_uri() == Some("http://www.w3.org/2000/svg")
                             }) == is_svg
+                            // A shared `display: none` computed from
+                            // `contents` must not reach an element that
+                            // unboxes, nor the reverse.
+                            && source_node.as_element().is_some_and(|element| {
+                                contents_computes_to_none(&element, parent_is_svg)
+                            }) == unboxes_to_none
                     }) && input.same_input(&source.input, shared)
                 })
                 .map(|source| source.id),
@@ -859,20 +878,8 @@ pub(crate) fn walk_from<D: StyleDom>(
         }
 
         let mut computed = computed;
-        if computed.display == crate::property::DisplayValue::Contents
-            && let Some(element) = node.as_element()
-        {
-            let parent_is_svg = parent
-                .and_then(|parent| dom.node(parent))
-                .and_then(|parent| {
-                    parent
-                        .as_element()
-                        .map(|element| element.namespace_uri() == Some(SVG_NAMESPACE))
-                })
-                .unwrap_or(false);
-            if contents_computes_to_none(&element, parent_is_svg) {
-                computed.display = crate::property::DisplayValue::None;
-            }
+        if unboxes_to_none && computed.display == crate::property::DisplayValue::Contents {
+            computed.display = crate::property::DisplayValue::None;
         }
 
         // `computed` may be shorter than node_count(): only capacity was
