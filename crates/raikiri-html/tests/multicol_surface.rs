@@ -1067,3 +1067,141 @@ fn nested_container_paragraphs_keep_their_own_column_placements() {
         ]
     );
 }
+
+#[test]
+fn a_nested_container_taller_than_its_outer_column_continues_in_the_next_one() {
+    let document = lay_out(
+        "<div class=mc><div class=inner><p>A<br>B<br>C<br>D<br>E<br>F<br>G<br>H</p></div></div>",
+        ".mc{width:160px;height:40px;column-fill:auto}.inner{columns:2;column-gap:10px}",
+    );
+    assert_eq!(omitted_text_runs(&document), 0);
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (0.0, 16.0)),
+            ("B".into(), (0.0, 36.0)),
+            ("C".into(), (40.0, 16.0)),
+            ("D".into(), (40.0, 36.0)),
+            ("E".into(), (90.0, 16.0)),
+            ("F".into(), (90.0, 36.0)),
+            ("G".into(), (130.0, 16.0)),
+            ("H".into(), (130.0, 36.0)),
+        ]
+    );
+}
+
+#[test]
+fn a_nested_container_starting_lower_continues_and_its_next_sibling_follows_it() {
+    let document = lay_out(
+        "<div class=mc><p>W</p><div class=inner><p>A<br>B<br>C<br>D</p></div><p>Z</p></div>",
+        ".mc{width:160px;height:40px;column-fill:auto}.inner{columns:2;column-gap:10px}",
+    );
+    assert_eq!(omitted_text_runs(&document), 0);
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("W".into(), (0.0, 16.0)),
+            ("A".into(), (0.0, 36.0)),
+            ("B".into(), (40.0, 36.0)),
+            ("C".into(), (90.0, 16.0)),
+            ("D".into(), (130.0, 16.0)),
+            ("Z".into(), (90.0, 36.0)),
+        ]
+    );
+}
+
+#[test]
+fn a_nested_container_with_no_room_left_starts_in_the_next_outer_column() {
+    let document = lay_out(
+        "<div class=mc><p style=height:30px>W</p><div class=inner><p>A<br>B<br>C<br>D<br>E<br>F</p></div></div>",
+        ".mc{width:250px;height:40px;column-count:3;column-fill:auto}.inner{columns:2;column-gap:10px}",
+    );
+    assert_eq!(omitted_text_runs(&document), 0);
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("W".into(), (0.0, 16.0)),
+            ("A".into(), (90.0, 16.0)),
+            ("B".into(), (90.0, 36.0)),
+            ("C".into(), (130.0, 16.0)),
+            ("D".into(), (130.0, 36.0)),
+            ("E".into(), (180.0, 16.0)),
+            ("F".into(), (220.0, 16.0)),
+        ]
+    );
+}
+
+#[test]
+fn a_continued_nested_container_paints_its_box_in_each_row() {
+    let document = lay_out(
+        "<div class=mc><p>W</p><div class=inner id=i><p>A<br>B<br>C<br>D<br>E<br>F</p></div></div>",
+        ".mc{width:160px;height:60px;column-fill:auto}.inner{columns:2;column-gap:10px;background:green;padding-bottom:5px}",
+    );
+    let page = document.page(0).unwrap();
+    let dom = page.dom();
+    let boxes: Vec<_> = page
+        .paint_order()
+        .iter()
+        .filter_map(|event| match event {
+            PaintEvent::Box(fragment) if dom.attr(fragment.node(), "id") == Some("i") => {
+                let rect = fragment.rect();
+                Some((rect.x, rect.y, rect.width, rect.height))
+            }
+            _ => None,
+        })
+        .collect();
+    // The first box reaches the end of the first outer column; the second
+    // starts at the top of the next one and ends with the bottom padding.
+    assert_eq!(boxes, [(0.0, 20.0, 70.0, 40.0), (90.0, 0.0, 70.0, 25.0)]);
+    assert_eq!(
+        text_origins(&document)[1..],
+        [
+            ("A".into(), (0.0, 36.0)),
+            ("B".into(), (0.0, 56.0)),
+            ("C".into(), (40.0, 36.0)),
+            ("D".into(), (40.0, 56.0)),
+            ("E".into(), (90.0, 16.0)),
+            ("F".into(), (130.0, 16.0)),
+        ]
+    );
+}
+
+#[test]
+fn a_nested_container_that_avoids_breaks_inside_moves_to_the_next_outer_column() {
+    let document = lay_out(
+        "<div class=mc><p>W</p><div class=inner><p>A<br>B<br>C<br>D</p></div></div>",
+        ".mc{width:160px;height:40px;column-fill:auto}.inner{columns:2;column-gap:10px;break-inside:avoid}",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("W".into(), (0.0, 16.0)),
+            ("A".into(), (90.0, 16.0)),
+            ("B".into(), (90.0, 36.0)),
+            ("C".into(), (130.0, 16.0)),
+            ("D".into(), (130.0, 36.0)),
+        ]
+    );
+}
+
+#[test]
+fn balance_all_balances_every_row_of_a_continued_nested_container() {
+    let document = lay_out(
+        "<div class=mc><div class=inner><p>A<br>B<br>C<br>D<br>E<br>F<br>G</p></div></div>",
+        ".mc{width:160px;height:60px;column-fill:auto}.inner{columns:2;column-gap:10px;column-fill:balance-all}",
+    );
+    // The first row keeps the three lines per column the outer column holds;
+    // the last row balances the one remaining line.
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (0.0, 16.0)),
+            ("B".into(), (0.0, 36.0)),
+            ("C".into(), (0.0, 56.0)),
+            ("D".into(), (40.0, 16.0)),
+            ("E".into(), (40.0, 36.0)),
+            ("F".into(), (40.0, 56.0)),
+            ("G".into(), (90.0, 16.0)),
+        ]
+    );
+}

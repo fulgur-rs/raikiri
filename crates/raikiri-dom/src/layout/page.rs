@@ -879,16 +879,31 @@ pub(crate) fn refresh_order_modified_children(doc: &mut Document) {
     let mut projection_changed = false;
     let grid_details_stale = doc.layout_dirty;
     for parent_idx in 0..doc.nodes.len() {
-        let should_sort = {
-            let parent = &doc.nodes[parent_idx];
-            matches!(parent.style.display, Display::Flex | Display::Grid)
-                && parent.children.iter().any(|&child| {
-                    doc.nodes[child].style.position != TaffyPosition::Absolute
-                        && doc.nodes[child].order != 0
-                })
-        };
+        let parent = &doc.nodes[parent_idx];
+        // The items of a flex or grid container include the children of its
+        // `display: contents` children (see `TaffyChildIter`), so `order`
+        // sorts that flattened sequence. Taffy takes no `order` input, so the
+        // sorted items replace the DOM children here.
+        let mut children = Vec::new();
+        if matches!(parent.style.display, Display::Flex | Display::Grid) {
+            let mut pending: Vec<usize> = parent.children.iter().rev().copied().collect();
+            while let Some(child) = pending.pop() {
+                let node = &doc.nodes[child];
+                if node.kind() == NodeKind::Element
+                    && node.display == DisplayValue::Contents
+                    && !node.is_ifc_root()
+                {
+                    pending.extend(node.children.iter().rev().copied());
+                } else {
+                    children.push(child);
+                }
+            }
+        }
+        let should_sort = children.iter().any(|&child| {
+            doc.nodes[child].style.position != TaffyPosition::Absolute
+                && doc.nodes[child].order != 0
+        });
         let new_projection = if should_sort {
-            let children = doc.nodes[parent_idx].children.clone();
             let mut ordered_items: Vec<usize> = children
                 .iter()
                 .copied()
@@ -1085,6 +1100,33 @@ fn is_in_flow_grid_item_for_pagination(
     }
 }
 
+/// A grid container's order-modified children with each `display: contents`
+/// child that is not a paragraph root replaced by its own children,
+/// recursively: those children are the grid items Taffy places (see
+/// `TaffyChildIter`), so their resolved rows and break candidates belong to
+/// the grid rather than to the wrapper.
+fn grid_pagination_children(document: &Document, parent_id: usize) -> Vec<usize> {
+    let mut pending: Vec<_> = document.nodes[parent_id]
+        .layout_children()
+        .iter()
+        .rev()
+        .copied()
+        .collect();
+    let mut children = Vec::new();
+    while let Some(child) = pending.pop() {
+        let node = &document.nodes[child];
+        if node.kind() == NodeKind::Element
+            && node.display == DisplayValue::Contents
+            && !node.is_ifc_root()
+        {
+            pending.extend(node.layout_children().iter().rev().copied());
+        } else {
+            children.push(child);
+        }
+    }
+    children
+}
+
 /// Child order shared by page-candidate collection and named-page propagation.
 pub(crate) fn pagination_child_order(
     document: &Document,
@@ -1110,12 +1152,12 @@ pub(crate) fn pagination_child_order(
             // Multi-column pagination is not implemented, but named-page
             // propagation and candidate traversal must retain Grid's
             // order-modified child sequence.
-            return document.nodes[parent_id].layout_children().to_vec();
+            return grid_pagination_children(document, parent_id);
         }
         return document.nodes[parent_id].children.clone();
     }
 
-    let mut children = document.nodes[parent_id].layout_children().to_vec();
+    let mut children = grid_pagination_children(document, parent_id);
     let mut in_flow_items: Vec<_> = document.nodes[parent_id]
         .grid_item_row_starts
         .iter()

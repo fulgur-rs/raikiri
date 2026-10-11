@@ -409,3 +409,34 @@ fn marker_payload_rejects_zero_em_and_overflowing_natural_rectangles() {
         assert!(page.raster_marker(owners[0], &source).is_none());
     }
 }
+
+#[test]
+fn translated_png_markers_move_with_their_item_text() {
+    let pixels = Pixels::new();
+    for (css, expected) in [
+        ("", PaintRect::new(13.0, 3.0, 8.0, 4.0)),
+        (
+            "li{list-style-position:inside}",
+            PaintRect::new(25.0, 15.0, 8.0, 4.0),
+        ),
+    ] {
+        let document = lay_out(
+            "<ul style='transform:translate(5px,3px)'><li>A</li></ul>",
+            css,
+            &pixels,
+        );
+        let page = document.page(0).unwrap();
+        let runs = page.text_runs();
+        assert!(runs.iter().any(|run| run.text == "A"), "{css}");
+        let rects: Vec<_> = page
+            .paint_order_for_text_runs(&runs)
+            .iter()
+            .filter_map(|event| match event {
+                PaintEvent::MarkerImage(owner) => page.raster_marker(*owner, &pixels),
+                _ => None,
+            })
+            .map(|image| image.rect)
+            .collect();
+        assert_eq!(rects, [expected], "{css}");
+    }
+}

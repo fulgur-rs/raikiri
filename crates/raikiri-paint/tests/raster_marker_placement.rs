@@ -106,3 +106,21 @@ fn inside_atomic_png_matches_literal_pixels() {
         ),
     );
 }
+
+#[test]
+fn translated_png_markers_match_literal_pixels() {
+    assert_same(
+        raster("<ul style='transform:translate(5px,3px)'><li>A</li></ul>"),
+        raster(
+            "<div style='position:absolute;left:13px;top:3px;width:8px;height:4px;background:red'></div>",
+        ),
+    );
+    assert_same(
+        raster(
+            "<ul style='transform:translate(5px,3px)'><li style='list-style-position:inside'>A</li></ul>",
+        ),
+        raster(
+            "<div style='position:absolute;left:25px;top:15px;width:8px;height:4px;background:red'></div>",
+        ),
+    );
+}

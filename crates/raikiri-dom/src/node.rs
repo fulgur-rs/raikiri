@@ -391,6 +391,10 @@ pub struct Node {
     pub(crate) column_span_all: bool,
     /// Column groups retained by layout, including their occupied slots.
     pub(crate) multicol_groups: Vec<MulticolGroup>,
+    /// The rows of columns of a nested column container that continues in
+    /// later columns of its outer container, one per outer column. Only
+    /// column rules read them.
+    pub(crate) multicol_rows: Vec<MulticolGroup>,
     /// Authored writing mode retained for layout features that need the logical axes.
     pub(crate) authored_writing_mode: Option<WritingMode>,
     /// Whether this node has an authored logical `min-block-size` constraint
@@ -509,6 +513,7 @@ impl Node {
             multicol: None,
             column_span_all: false,
             multicol_groups: Vec::new(),
+            multicol_rows: Vec::new(),
             authored_writing_mode: None,
             has_logical_min_block_size: false,
             needs_relative_block_paint_offset: false,
@@ -560,6 +565,7 @@ impl Node {
             multicol: None,
             column_span_all: false,
             multicol_groups: Vec::new(),
+            multicol_rows: Vec::new(),
             authored_writing_mode: None,
             has_logical_min_block_size: false,
             needs_relative_block_paint_offset: false,
@@ -615,6 +621,7 @@ impl Node {
             multicol: None,
             column_span_all: false,
             multicol_groups: Vec::new(),
+            multicol_rows: Vec::new(),
             authored_writing_mode: None,
             has_logical_min_block_size: false,
             needs_relative_block_paint_offset: false,
@@ -665,6 +672,7 @@ impl Node {
             multicol: None,
             column_span_all: false,
             multicol_groups: Vec::new(),
+            multicol_rows: Vec::new(),
             authored_writing_mode: None,
             has_logical_min_block_size: false,
             needs_relative_block_paint_offset: false,
@@ -712,6 +720,7 @@ impl Node {
             multicol: None,
             column_span_all: false,
             multicol_groups: Vec::new(),
+            multicol_rows: Vec::new(),
             authored_writing_mode: None,
             has_logical_min_block_size: false,
             needs_relative_block_paint_offset: false,
@@ -761,6 +770,7 @@ impl Node {
             multicol: None,
             column_span_all: false,
             multicol_groups: Vec::new(),
+            multicol_rows: Vec::new(),
             authored_writing_mode: None,
             has_logical_min_block_size: false,
             needs_relative_block_paint_offset: false,
