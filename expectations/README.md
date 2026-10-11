@@ -44,15 +44,16 @@ cases; they do not establish complete box-shadow conformance.
 `expected-failures.txt` uses one exact test id per row:
 
 ```text
-<test_id> | <reason> | <local_beads_issue_id> | <added_date> | <review_by>
+<test_id> | <reason> | <issue_id> | <added_date> | <review_by>
 ```
 
-Both dates use `YYYY-MM-DD`. The test id is a root-relative WPT path. To track
+`<issue_id>` is a Plane work item id (`RAIKIRI-<n>`) or a legacy local Beads
+id (`raikiri-spike-*`). Both dates use `YYYY-MM-DD`. The test id is a root-relative WPT path. To track
 a query variant, append its exact declared query string, preserving its order
 and spelling:
 
 ```text
-css/css-text/example-001.html?class=halt,vrl | Raikiri output differs from the pinned reference | <local-beads-issue-id> | 2026-10-04 | 2026-12-31
+css/css-text/example-001.html?class=halt,vrl | Raikiri output differs from the pinned reference | RAIKIRI-<n> | 2026-10-04 | 2026-12-31
 ```
 
 This row shows the field shape only; replace the placeholder with the issue
@@ -91,9 +92,9 @@ expected-failure row exists.
 1. Reproduce the exact test URL and confirm a stable assertion or pixel
    mismatch. Do not record a render, network, font-loading, or harness error as
    an expected failure.
-2. Track the cause in a local Raikiri Beads issue. Do not open an upstream
+2. Track the cause in a Raikiri Plane work item. Do not open an upstream
    issue for this workflow.
-3. Add one exact test id with a concise reason, local Beads id, added date, and
+3. Add one exact test id with a concise reason, issue id, added date, and
    review date. Do not add a directory-wide entry or move a whole failing
    suite here without case-by-case triage.
 4. Run the expectation validator and the affected test variant:

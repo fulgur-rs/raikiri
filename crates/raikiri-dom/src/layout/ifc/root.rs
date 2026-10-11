@@ -51,6 +51,12 @@ pub(crate) struct IfcRoot {
     /// The lines end in an ellipsis where they overflow the root
     /// (`text-overflow: ellipsis`).
     pub(crate) ellipsis: bool,
+    /// The root's text does not wrap (`text-wrap-mode: nowrap`).
+    pub(crate) nowrap: bool,
+    /// Whether each text source (a DOM text node or a generated
+    /// pseudo-element), atomic inline or inline box of the paragraph sits in
+    /// content that does not wrap, by node id.
+    pub(crate) text_nowrap: Arc<HashMap<u64, bool>>,
     pub(crate) letter_styles: Vec<super::first_letter::LetterStyle>,
     letter_style_index: Arc<LetterStyleIndex>,
 }
@@ -163,6 +169,46 @@ impl IfcRoot {
         self.lines.as_ref().and_then(super::flow::last_baseline)
     }
 
+    /// Whether `line` cannot wrap: its text and atomic inlines all sit in
+    /// `text-wrap-mode: nowrap` content. A line with neither, such as one
+    /// holding only an empty padded inline, is decided by its inline boxes,
+    /// and a line with no recorded content by the root.
+    pub(crate) fn line_is_nowrap(&self, line: &shodo::Line) -> bool {
+        let content = |fragment: shodo::Fragment<'_>| match fragment {
+            shodo::Fragment::GlyphRun(run) => run.node().map(|node| node.0),
+            shodo::Fragment::Atomic(atomic) => Some(atomic.node.0),
+            _ => None,
+        };
+        let inline_box = |fragment: shodo::Fragment<'_>| match fragment {
+            shodo::Fragment::InlineBox(inline) => Some(inline.node.0),
+            _ => None,
+        };
+        self.nodes_are_nowrap(line, content)
+            .or_else(|| self.nodes_are_nowrap(line, inline_box))
+            .unwrap_or(self.nowrap)
+    }
+
+    /// Whether every recorded node `pick` takes from `line`'s fragments does
+    /// not wrap; `None` when it takes no recorded node.
+    fn nodes_are_nowrap(
+        &self,
+        line: &shodo::Line,
+        pick: impl Fn(shodo::Fragment<'_>) -> Option<u64>,
+    ) -> Option<bool> {
+        let mut any = false;
+        for fragment in line.fragments() {
+            let Some(nowrap) = pick(fragment).and_then(|node| self.text_nowrap.get(&node).copied())
+            else {
+                continue;
+            };
+            if !nowrap {
+                return Some(false);
+            }
+            any = true;
+        }
+        any.then_some(true)
+    }
+
     pub(crate) fn new(projected: ProjectedIfc) -> Self {
         let letter_style_index = Arc::new(LetterStyleIndex::new(&projected.letter_styles));
         Self {
@@ -180,6 +226,8 @@ impl IfcRoot {
             multicol_fragments: None,
             multicol_fragment_origins_recorded: false,
             ellipsis: projected.ellipsis,
+            nowrap: projected.nowrap,
+            text_nowrap: projected.text_nowrap,
             letter_styles: projected.letter_styles,
             letter_style_index,
         }
@@ -202,6 +250,8 @@ impl IfcRoot {
             multicol_fragments: None,
             multicol_fragment_origins_recorded: false,
             ellipsis: self.ellipsis,
+            nowrap: self.nowrap,
+            text_nowrap: self.text_nowrap.clone(),
             letter_styles: self.letter_styles.clone(),
             letter_style_index: self.letter_style_index.clone(),
         }

@@ -16,7 +16,9 @@ use super::style;
 use crate::Document;
 use crate::generated_content::{generated_node_id, generated_text, is_in_flow_generated_text};
 use crate::target::{CounterSnapshot, CounterSnapshotLimitExceeded};
-use raikiri_style::property::{ClearValue, Direction, DisplayValue, FloatValue, PositionValue};
+use raikiri_style::property::{
+    ClearValue, Direction, DisplayValue, FloatValue, PositionValue, TextWrapMode,
+};
 use raikiri_style::{CascadeResult, ComputedTextIndent, ComputedValues, PseudoElem};
 use raikiri_traits::NodeKind;
 use shodo::font::FontCollection;
@@ -25,6 +27,8 @@ use shodo::limits::Limits;
 use shodo::node::{InlineEdges, NodeId, OutOfFlowKind, TextSource};
 use shodo::style::LineOptions;
 use shodo::{LayoutContext, Paragraph, ParagraphBuilder};
+use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Tags of replaced elements the inline engine sizes as atomic inlines.
 pub(crate) const ATOMIC_TAGS: &[&str] = &["img", "svg"];
@@ -66,6 +70,15 @@ pub(crate) struct ProjectedIfc {
     pub(crate) fixed: bool,
     /// The root's lines end in an ellipsis where they overflow it.
     pub(crate) ellipsis: bool,
+    /// The root's text does not wrap (`text-wrap-mode: nowrap`). It decides
+    /// for lines without recorded content.
+    pub(crate) nowrap: bool,
+    /// Whether each text source (a DOM text node or a generated
+    /// pseudo-element), atomic inline or inline box of the paragraph, by node
+    /// id, sits in content that does not wrap (`text-wrap-mode: nowrap`). A
+    /// line made only of such content stays beside floats even when it
+    /// overflows the space there.
+    pub(crate) text_nowrap: Arc<HashMap<u64, bool>>,
     pub(crate) letter_styles: Vec<LetterStyle>,
 }
 
@@ -243,6 +256,7 @@ fn push_generated(
     fonts: &FontCollection,
     counters: &GeneratedCounters,
     first_letter: &mut FirstLetter,
+    text_nowrap: &mut HashMap<u64, bool>,
 ) -> Result<(), IfcError> {
     if !is_in_flow_generated_text(cascade, element, pseudo) {
         return Ok(());
@@ -292,6 +306,7 @@ fn push_generated(
     } else {
         cv
     };
+    text_nowrap.insert(id.0, cv.effective_text_wrap_mode == TextWrapMode::Nowrap);
     let mut inline_style = styled(doc, cascade, cv, element, fonts)?;
     let marker_body_style = if pseudo == PseudoElem::Marker
         && inline_style.text_wrap_mode == shodo::style::TextWrapMode::NoWrap
@@ -458,6 +473,15 @@ pub(crate) struct ProjectedBuilder {
     pub(crate) fixed: bool,
     /// The root's lines end in an ellipsis where they overflow it.
     pub(crate) ellipsis: bool,
+    /// The root's text does not wrap (`text-wrap-mode: nowrap`). It decides
+    /// for lines without recorded content.
+    pub(crate) nowrap: bool,
+    /// Whether each text source (a DOM text node or a generated
+    /// pseudo-element), atomic inline or inline box of the paragraph, by node
+    /// id, sits in content that does not wrap (`text-wrap-mode: nowrap`). A
+    /// line made only of such content stays beside floats even when it
+    /// overflows the space there.
+    pub(crate) text_nowrap: Arc<HashMap<u64, bool>>,
     pub(crate) letter_styles: Vec<LetterStyle>,
 }
 
@@ -484,6 +508,8 @@ impl ProjectedBuilder {
             cleared_breaks: self.cleared_breaks,
             fixed: self.fixed,
             ellipsis: self.ellipsis,
+            nowrap: self.nowrap,
+            text_nowrap: self.text_nowrap,
             letter_styles: self.letter_styles,
         })
     }
@@ -582,6 +608,11 @@ pub(crate) fn project_ifc_text_builder(
         fixed: false,
         // An anonymous flex or grid item has no overflow of its own.
         ellipsis: false,
+        nowrap: cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
+        text_nowrap: Arc::new(HashMap::from([(
+            text as u64,
+            cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
+        )])),
         letter_styles: Vec::new(),
     })
 }
@@ -679,6 +710,7 @@ fn project_children_builder(
     let mut boxes = Vec::new();
     let mut offsets = Vec::new();
     let mut cleared_breaks = Vec::new();
+    let mut text_nowrap = HashMap::new();
     let mut first_letter =
         FirstLetter::new_with_predecessors(doc, cascade, root, limits, &counters.predecessors);
     let marker_atomic = if anonymous_children.is_some() {
@@ -699,6 +731,10 @@ fn project_children_builder(
             marker_fallback = raikiri_style::ComputedValues::inherit_marker_from(marker_cv);
             &marker_fallback
         };
+        text_nowrap.insert(
+            id.0,
+            marker_cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
+        );
         let mut marker_style = styled(doc, cascade, marker_cv, root, fonts)?;
         // The image is indivisible. Permit a break after its preserved suffix
         // space so the next word can move independently to the following line.
@@ -733,6 +769,7 @@ fn project_children_builder(
             fonts,
             counters,
             &mut first_letter,
+            &mut text_nowrap,
         )?;
         None
     };
@@ -746,6 +783,7 @@ fn project_children_builder(
             fonts,
             counters,
             &mut first_letter,
+            &mut text_nowrap,
         )?;
     }
 
@@ -782,6 +820,7 @@ fn project_children_builder(
                     fonts,
                     counters,
                     &mut first_letter,
+                    &mut text_nowrap,
                 )?;
                 continue;
             }
@@ -795,6 +834,7 @@ fn project_children_builder(
                     fonts,
                     counters,
                     &mut first_letter,
+                    &mut text_nowrap,
                 )?;
                 continue;
             }
@@ -808,6 +848,10 @@ fn project_children_builder(
             NodeKind::Text => {
                 let text = node.text_content().ok_or(IfcError::InvalidNode(id))?;
                 let parent_style = &cascade.computed[doc.parent_of(id).unwrap_or(id)];
+                text_nowrap.insert(
+                    id as u64,
+                    parent_style.effective_text_wrap_mode == TextWrapMode::Nowrap,
+                );
                 // A continuation break splits the text so the line after it
                 // starts at the requested byte, as it did on an earlier page.
                 let split = doc
@@ -891,6 +935,7 @@ fn project_children_builder(
                         fonts,
                         counters,
                         &mut first_letter,
+                        &mut text_nowrap,
                     )?;
                     stack.push(Step::After(id));
                     stack.extend(node.children.iter().rev().map(|&child| Step::Enter(child)));
@@ -924,6 +969,13 @@ fn project_children_builder(
                 if box_kind(cascade, doc, id) == Some(IfcBoxKind::Atomic) {
                     first_letter.stop();
                     let atomic_style = styled(doc, cascade, cv, id, fonts)?;
+                    // The break opportunities around an atomic come from its
+                    // parent's style, not its own.
+                    let parent_style = &cascade.computed[doc.parent_of(id).unwrap_or(id)];
+                    text_nowrap.insert(
+                        id as u64,
+                        parent_style.effective_text_wrap_mode == TextWrapMode::Nowrap,
+                    );
                     // shodo sizes an atomic from `AtomicSize` alone, margins
                     // included; the edges are not read for atomics.
                     builder.push_atomic(NodeId(id as u64), &atomic_style, InlineEdges::default());
@@ -986,6 +1038,10 @@ fn project_children_builder(
                         }
                     }
                 } else {
+                    text_nowrap.insert(
+                        id as u64,
+                        cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
+                    );
                     builder.open_inline(NodeId(id as u64), &inline_style, edges);
                     push_generated(
                         &mut builder,
@@ -996,6 +1052,7 @@ fn project_children_builder(
                         fonts,
                         counters,
                         &mut first_letter,
+                        &mut text_nowrap,
                     )?;
                     if tag == "wbr" {
                         builder.push_text(
@@ -1031,6 +1088,7 @@ fn project_children_builder(
             fonts,
             counters,
             &mut first_letter,
+            &mut text_nowrap,
         )?;
     }
     Ok(ProjectedBuilder {
@@ -1045,6 +1103,8 @@ fn project_children_builder(
         cleared_breaks,
         fixed: anonymous_children.is_none() && root_cv.position == PositionValue::Fixed,
         ellipsis: anonymous_children.is_none() && style::ends_in_ellipsis(root_cv),
+        nowrap: root_cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
+        text_nowrap: Arc::new(text_nowrap),
         letter_styles: first_letter.styles,
     })
 }

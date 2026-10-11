@@ -2878,7 +2878,7 @@ mod page_fragments_tests;
 use crate::layout::test_support::{
     ahem_paragraph, ahem_paragraph_beside_float, ahem_paragraph_beside_floats,
     ahem_paragraph_in_block_wrapper, ahem_paragraph_with_atomic, ahem_paragraph_with_float,
-    ifc_ahem_fonts, line_start_x, line_text, page_box_800x600,
+    ahem_span_beside_float, ifc_ahem_fonts, line_start_x, line_text, page_box_800x600,
 };
 
 fn lay_out(doc: &mut Document, cascade: &CascadeResult) {
@@ -3183,6 +3183,170 @@ fn a_paragraph_beside_a_right_float_keeps_its_start_and_loses_width() {
         lines.iter().map(line_start_x).collect::<Vec<_>>(),
         [Some(0.0); 3]
     );
+}
+
+#[test]
+fn a_line_too_wide_for_the_space_beside_a_float_moves_below_it() {
+    // "aaaaaaaa" is 80px of Ahem, wider than the 70px beside the float.
+    let (mut doc, cascade, _float, root) =
+        ahem_paragraph_beside_float("aaaaaaaa", "float:left;width:30px;height:20px", "");
+    lay_out(&mut doc, &cascade);
+    let lines = &stored_lines(&doc, root).lines;
+    assert_eq!(
+        lines.iter().map(line_start_x).collect::<Vec<_>>(),
+        [Some(0.0)]
+    );
+    assert_eq!(lines[0].block_offset(), 20.0);
+}
+
+#[test]
+fn a_nowrap_line_too_wide_for_the_space_beside_a_float_stays_beside_it() {
+    // Moving the line below the float would act as a soft wrap, which
+    // `white-space: pre` does not allow; the line overflows beside the float.
+    for css in ["white-space:pre", "white-space:nowrap"] {
+        let (mut doc, cascade, _float, root) =
+            ahem_paragraph_beside_float("aaaaaaaa", "float:left;width:30px;height:20px", css);
+        lay_out(&mut doc, &cascade);
+        let lines = &stored_lines(&doc, root).lines;
+        assert_eq!(
+            lines.iter().map(line_start_x).collect::<Vec<_>>(),
+            [Some(30.0)],
+            "{css}"
+        );
+        assert_eq!(lines[0].block_offset(), 0.0, "{css}");
+    }
+}
+
+#[test]
+fn the_wrap_mode_of_the_line_text_decides_whether_it_moves_below_a_float() {
+    // (root css, span css, line moves below the float). The text's own
+    // `white-space` decides, not the root's.
+    for (root_css, span_css, moves) in [
+        ("", "white-space:nowrap", false),
+        ("white-space:nowrap", "white-space:normal", true),
+        ("white-space:nowrap", "", false),
+    ] {
+        let (mut doc, cascade, root) = ahem_span_beside_float(
+            "aaaaaaaa",
+            "float:left;width:30px;height:20px",
+            root_css,
+            span_css,
+            "",
+        );
+        lay_out(&mut doc, &cascade);
+        let lines = &stored_lines(&doc, root).lines;
+        let expected = if moves { (0.0, 20.0) } else { (30.0, 0.0) };
+        assert_eq!(
+            (line_start_x(&lines[0]), lines[0].block_offset()),
+            (Some(expected.0), expected.1),
+            "root {root_css:?} / span {span_css:?}"
+        );
+    }
+}
+
+#[test]
+fn the_wrap_mode_of_generated_text_decides_whether_its_line_moves_below_a_float() {
+    // (root css, `::before` css, line moves below the float). The line holds
+    // only the span's generated text, so the pseudo-element's `white-space`
+    // decides, not the root's.
+    for (root_css, before_css, moves) in [
+        ("", "white-space:nowrap", false),
+        ("white-space:nowrap", "white-space:normal", true),
+    ] {
+        let sheet = format!(r#"span::before {{ content: "aaaaaaaa"; {before_css} }}"#);
+        let (mut doc, cascade, root) = ahem_span_beside_float(
+            "",
+            "float:left;width:30px;height:20px",
+            root_css,
+            "",
+            &sheet,
+        );
+        lay_out(&mut doc, &cascade);
+        let lines = &stored_lines(&doc, root).lines;
+        let expected = if moves { (0.0, 20.0) } else { (30.0, 0.0) };
+        assert_eq!(
+            (line_start_x(&lines[0]), lines[0].block_offset()),
+            (Some(expected.0), expected.1),
+            "root {root_css:?} / ::before {before_css:?}"
+        );
+    }
+}
+
+#[test]
+fn the_wrap_mode_around_an_atomic_inline_decides_whether_its_line_moves_below_a_float() {
+    // (root css, span css, line moves below the float). The line holds only
+    // an 80px inline-block in the span, wider than the 70px beside the float,
+    // so the span's `white-space` decides, not the root's.
+    for (root_css, span_css, moves) in [
+        ("", "white-space:nowrap", false),
+        ("white-space:nowrap", "white-space:normal", true),
+    ] {
+        let (mut doc, _, root) = ahem_span_beside_float(
+            "",
+            "float:left;width:30px;height:20px",
+            root_css,
+            span_css,
+            "",
+        );
+        let span = *doc.nodes[root].children.last().expect("span");
+        doc.append_element(
+            Some(span),
+            "div",
+            Style::default(),
+            Some("display:inline-block;width:80px;height:10px"),
+        );
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        lay_out(&mut doc, &cascade);
+        let lines = &stored_lines(&doc, root).lines;
+        let atomic_start = |line: &shodo::Line| {
+            line.fragments().find_map(|fragment| match fragment {
+                shodo::Fragment::Atomic(atomic) => Some(atomic.margin_rect.inline_start),
+                _ => None,
+            })
+        };
+        let expected = if moves { (0.0, 20.0) } else { (30.0, 0.0) };
+        assert_eq!(
+            (atomic_start(&lines[0]), lines[0].block_offset()),
+            (Some(expected.0), expected.1),
+            "root {root_css:?} / span {span_css:?}"
+        );
+    }
+}
+
+#[test]
+fn the_wrap_mode_of_an_empty_inline_decides_whether_its_line_moves_below_a_float() {
+    // (root css, span css, line moves below the float). The line holds only
+    // an empty span whose 80px of padding is wider than the 70px beside the
+    // float, so the span's `white-space` decides, not the root's.
+    for (root_css, span_css, moves) in [
+        ("", "white-space:nowrap", false),
+        ("white-space:nowrap", "white-space:normal", true),
+    ] {
+        let span_css = format!("padding:0 40px;{span_css}");
+        let (mut doc, cascade, root) = ahem_span_beside_float(
+            "",
+            "float:left;width:30px;height:20px",
+            root_css,
+            &span_css,
+            "",
+        );
+        lay_out(&mut doc, &cascade);
+        let lines = &stored_lines(&doc, root).lines;
+        let span_start = |line: &shodo::Line| {
+            line.fragments().find_map(|fragment| match fragment {
+                shodo::Fragment::InlineBox(inline) => Some(inline.rect.inline_start),
+                _ => None,
+            })
+        };
+        let expected = if moves { (0.0, 20.0) } else { (30.0, 0.0) };
+        assert_eq!(
+            (span_start(&lines[0]), lines[0].block_offset()),
+            (Some(expected.0), expected.1),
+            "root {root_css:?} / span {span_css:?}"
+        );
+    }
 }
 
 #[test]
