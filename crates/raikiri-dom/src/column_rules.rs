@@ -202,10 +202,17 @@ pub(crate) fn prepare(
     }
     let mut result = BTreeMap::new();
     for (owner, group) in groups {
-        if !document.nodes[owner].multicol_groups.is_empty() {
+        // A nested container that continues in later outer columns keeps one
+        // row of its columns per outer column; its rules follow those rows.
+        let retained_groups = if document.nodes[owner].multicol_groups.is_empty() {
+            &document.nodes[owner].multicol_rows
+        } else {
+            &document.nodes[owner].multicol_groups
+        };
+        if !retained_groups.is_empty() {
             let width = cascade.computed[owner].column_rule.width().px();
             let mut rules = Vec::new();
-            for retained in &document.nodes[owner].multicol_groups {
+            for retained in retained_groups {
                 charge(retained.occupied.len().saturating_add(1))?;
                 if retained.height <= 0.0 {
                     continue;

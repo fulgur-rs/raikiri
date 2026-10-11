@@ -1067,3 +1067,66 @@ fn nested_container_paragraphs_keep_their_own_column_placements() {
         ]
     );
 }
+
+#[test]
+fn a_nested_container_taller_than_its_outer_column_continues_in_the_next_one() {
+    let document = lay_out(
+        "<div class=mc><div class=inner><p>A<br>B<br>C<br>D<br>E<br>F<br>G<br>H</p></div></div>",
+        ".mc{width:160px;height:40px;column-fill:auto}.inner{columns:2;column-gap:10px}",
+    );
+    assert_eq!(omitted_text_runs(&document), 0);
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (0.0, 16.0)),
+            ("B".into(), (0.0, 36.0)),
+            ("C".into(), (40.0, 16.0)),
+            ("D".into(), (40.0, 36.0)),
+            ("E".into(), (90.0, 16.0)),
+            ("F".into(), (90.0, 36.0)),
+            ("G".into(), (130.0, 16.0)),
+            ("H".into(), (130.0, 36.0)),
+        ]
+    );
+}
+
+#[test]
+fn a_nested_container_starting_lower_continues_and_its_next_sibling_follows_it() {
+    let document = lay_out(
+        "<div class=mc><p>W</p><div class=inner><p>A<br>B<br>C<br>D</p></div><p>Z</p></div>",
+        ".mc{width:160px;height:40px;column-fill:auto}.inner{columns:2;column-gap:10px}",
+    );
+    assert_eq!(omitted_text_runs(&document), 0);
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("W".into(), (0.0, 16.0)),
+            ("A".into(), (0.0, 36.0)),
+            ("B".into(), (40.0, 36.0)),
+            ("C".into(), (90.0, 16.0)),
+            ("D".into(), (130.0, 16.0)),
+            ("Z".into(), (90.0, 36.0)),
+        ]
+    );
+}
+
+#[test]
+fn a_nested_container_with_no_room_left_starts_in_the_next_outer_column() {
+    let document = lay_out(
+        "<div class=mc><p style=height:30px>W</p><div class=inner><p>A<br>B<br>C<br>D<br>E<br>F</p></div></div>",
+        ".mc{width:250px;height:40px;column-count:3;column-fill:auto}.inner{columns:2;column-gap:10px}",
+    );
+    assert_eq!(omitted_text_runs(&document), 0);
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("W".into(), (0.0, 16.0)),
+            ("A".into(), (90.0, 16.0)),
+            ("B".into(), (90.0, 36.0)),
+            ("C".into(), (130.0, 16.0)),
+            ("D".into(), (130.0, 36.0)),
+            ("E".into(), (180.0, 16.0)),
+            ("F".into(), (220.0, 16.0)),
+        ]
+    );
+}

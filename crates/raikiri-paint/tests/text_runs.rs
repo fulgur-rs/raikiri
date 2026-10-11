@@ -662,6 +662,44 @@ fn nested_column_paragraphs_match_paint() {
 }
 
 #[test]
+fn a_nested_container_continued_in_later_outer_columns_matches_paint() {
+    let result = lay_out(
+        &format!(
+            "<div style=\"columns: 2; column-fill: auto; height: 50px\">\
+             <p>kept</p><div style=\"columns: 2\"><p id=\"n\">{}</p></div></div>",
+            vec!["word"; 15].join(" ")
+        ),
+        "p { margin: 0 }",
+    );
+    assert!(
+        !result
+            .warnings()
+            .iter()
+            .any(|warning| matches!(warning.kind, WarningKind::TextRunsOmitted))
+    );
+    // The paragraph's lines in the second outer column are reported where
+    // paint draws them.
+    assert!(assert_runs_match_paint(&result) > 0);
+    let page = result.pages().next().expect("page");
+    let nested = text_nodes(&page, "n");
+    let runs: Vec<_> = result
+        .pages()
+        .flat_map(|page| page.text_runs())
+        .filter(|run| matches!(run.source, RunSource::Text(node) if nested.contains(&node)))
+        .collect();
+    let words: usize = runs
+        .iter()
+        .map(|run| run.text.split_whitespace().count())
+        .sum();
+    assert_eq!(words, 15, "every word is reported once");
+    // Every baseline sits inside the 50px tall outer columns, which start
+    // below the 20px page margin and the 8px body margin, and the paragraph
+    // reaches the second outer column.
+    assert!(runs.iter().all(|run| run.origin.1 < 78.0));
+    assert!(runs.iter().any(|run| run.origin.0 > 150.0));
+}
+
+#[test]
 fn relatively_positioned_blocks_have_no_runs_and_a_warning() {
     assert_omitted(
         "<p>kept</p><div style=\"position: relative; top: 5px\"><p id=\"b\">moved</p></div>",

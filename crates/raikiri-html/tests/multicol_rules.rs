@@ -287,3 +287,17 @@ fn hidden_or_off_page_rules_do_not_emit_public_commands() {
         assert!(rules(&document).is_empty());
     }
 }
+
+#[test]
+fn a_nested_container_continued_in_the_next_outer_column_draws_rules_in_each_row() {
+    let document = lay_out(
+        "<div class=mc><p>W</p><div class=inner><p>A<br>B<br>C<br>D<br>E<br>F</p></div></div>",
+        ".mc{width:160px;height:60px;column-fill:auto}.inner{columns:2;column-gap:10px;column-rule:2px solid}",
+    );
+    // The first row is below W, the second at the top of the next outer
+    // column, each with a rule between its two columns.
+    assert_eq!(
+        rules(&document),
+        [(34.0, 20.0, 2.0, 40.0), (124.0, 0.0, 2.0, 20.0)]
+    );
+}
