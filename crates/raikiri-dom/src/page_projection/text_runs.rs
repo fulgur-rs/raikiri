@@ -535,6 +535,22 @@ fn paint_relative_offset(cv: &ComputedValues) -> (f32, f32) {
     (dx.unwrap_or(0.0), dy.unwrap_or(0.0))
 }
 
+/// The block offset that layout applies to a box in normal flow for its
+/// `position: relative` or `position: sticky` insets, which layout treats
+/// alike.
+fn layout_relative_offset_y(cv: &ComputedValues) -> f32 {
+    if cv.position != PositionValue::Sticky {
+        return paint_relative_offset(cv).1;
+    }
+    let length = |inset| match inset {
+        ComputedLengthPercentageOrAuto::Px(px) => Some(px),
+        _ => None,
+    };
+    length(cv.top)
+        .or(length(cv.bottom).map(|bottom| -bottom))
+        .unwrap_or(0.0)
+}
+
 /// How the built-in painter moves one element and its subtree from their
 /// layout location.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -990,7 +1006,7 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
         let relative = if document.nodes[child].needs_relative_block_paint_offset() {
             0.0
         } else {
-            paint_relative_offset(&cascade.computed[child]).1
+            layout_relative_offset_y(&cascade.computed[child])
         };
         y += document.nodes[child].unrounded_layout.location.y - relative;
         id = child;

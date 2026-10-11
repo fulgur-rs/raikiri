@@ -606,3 +606,15 @@ fn a_relative_offset_on_the_first_line_box_does_not_move_the_marker() {
         run_baseline(&still, 0, "C") + 20.0
     );
 }
+
+#[test]
+fn a_sticky_offset_on_the_first_line_box_does_not_move_the_marker() {
+    // Layout applies a sticky box's inset like a relative offset, which
+    // moves the box but not the item's marker.
+    let moved = lay_out(
+        "<ol><li><div style=\"position:sticky;top:20px\">C</div></li></ol>",
+        "",
+    );
+    let still = lay_out("<ol><li><div>C</div></li></ol>", "");
+    assert_eq!(run_baseline(&moved, 0, "1."), run_baseline(&still, 0, "1."));
+}
