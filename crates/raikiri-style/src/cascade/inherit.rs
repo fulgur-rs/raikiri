@@ -1443,6 +1443,14 @@ fn svg_property_expression(value: &PropertyValue) -> Option<String> {
         PropertyValue::FontSizeRelative(RelativeFontSize::Smaller) => Some("smaller".into()),
         PropertyValue::FontWeight(FontWeightValue::Bolder) => Some("bolder".into()),
         PropertyValue::FontWeight(FontWeightValue::Lighter) => Some("lighter".into()),
+        // `<absolute-size>` keywords keep their computed px size. SVG
+        // renderers such as usvg resolve these keywords as 1.2 steps from
+        // the parent's size (`medium` keeps it), not as absolute sizes, so
+        // exporting the keyword would follow the instance's size instead.
+        // usvg has no font-family dependent `medium` either, so a definition
+        // reused under a different generic family keeps the size of the
+        // family where it is defined.
+        PropertyValue::FontSizeKeyword(_) => None,
         _ => None,
     }
 }
