@@ -982,3 +982,34 @@ fn live_flush_prepares_marker_images_and_discards_stale_pixels() {
     host.flush().unwrap();
     assert!(host.document().list_marker_image(item).is_none());
 }
+
+#[test]
+fn live_flush_prepares_generated_content_images() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = std::fs::File::create(dir.path().join("icon.png")).unwrap();
+    let mut encoder = png::Encoder::new(file, 4, 2);
+    encoder.set_color(png::ColorType::Rgba);
+    let mut writer = encoder.write_header().unwrap();
+    writer
+        .write_image_data(&[0, 0, 255, 255].repeat(8))
+        .unwrap();
+    writer.finish().unwrap();
+    let setup = prepare_wpt_live_document(
+        "<style>#t::before{content:url(icon.png)}</style><p id=t>body</p>",
+        100,
+        100,
+        dir.path(),
+        dir.path(),
+    )
+    .unwrap();
+    let mut host = WptDocumentHost::new(setup, dir.path());
+    let p = find_by_id(host.document(), "t");
+    let before = raikiri_style::PseudoElem::Before;
+    host.flush().unwrap();
+    let image = host.document().content_image(p, before, 0).unwrap();
+    assert_eq!((image.width, image.height), (4, 2));
+    assert_eq!(image.rgba, [0, 0, 255, 255].repeat(8));
+    // A later flush prepares the image again rather than dropping it.
+    host.flush().unwrap();
+    assert!(host.document().content_image(p, before, 0).is_some());
+}

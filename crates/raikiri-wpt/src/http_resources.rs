@@ -114,16 +114,16 @@ pub(crate) fn prepare_cascade_images(
         prepare_background_image(&mut computed.background_image, base_url, resolver);
         prepare_background_image(&mut computed.list_style_image, base_url, resolver);
     }
-    prefetch_generated_content_images(cascade, base_url, resolver);
+    prefetch_generated_content_images(cascade, Some(base_url), resolver);
     prepare_page_images(&mut cascade.page, base_url, resolver);
 }
 
 /// Prefetch the images of `::before` and `::after` content, which layout
 /// sizes as atomic inlines. Their URLs stay as authored: layout resolves them
-/// against the same base URL.
+/// against the same base URL. Without one, only absolute URLs are fetched.
 pub(crate) fn prefetch_generated_content_images(
     cascade: &raikiri_style::CascadeResult,
-    base_url: &Url,
+    base_url: Option<&Url>,
     resolver: &dyn raikiri_traits::ReplacedResolver,
 ) {
     let urls = cascade
@@ -149,7 +149,7 @@ pub(crate) fn prefetch_generated_content_images(
     for source in urls {
         if let Some(absolute) = Url::parse(source)
             .ok()
-            .or_else(|| base_url.join(source).ok())
+            .or_else(|| base_url.and_then(|base| base.join(source).ok()))
         {
             let _ = resolver.resolve(ResolverRequest::new(&absolute));
         }

@@ -2515,7 +2515,7 @@ impl CascadeImagePreparer for FileCascadeImagePreparer<'_> {
         }
         crate::http_resources::prefetch_generated_content_images(
             cascade,
-            self.base_url,
+            Some(self.base_url),
             self.resolver,
         );
     }

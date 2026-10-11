@@ -155,6 +155,10 @@ fn generated_content_images_are_prefetched_against_the_base_url() {
             "https://images.test/after.png"
         ]
     );
+    // Without a base URL only absolute URLs are prefetched.
+    let resolver = Recording(Default::default());
+    prefetch_generated_content_images(&cascade, None, &resolver);
+    assert_eq!(resolver.0.into_inner(), ["https://images.test/after.png"]);
 }
 
 #[test]
