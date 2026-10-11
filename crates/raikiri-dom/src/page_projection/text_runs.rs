@@ -29,6 +29,9 @@ pub(super) struct MarkerText {
     color: CssColor,
     shadows: Vec<TextShadow>,
     first_page: Option<u32>,
+    /// The middle of the item's first line from its border edge, when the
+    /// marker is aligned with one.
+    line_center: Option<f32>,
 }
 
 impl MarkerText {
@@ -113,8 +116,8 @@ pub(super) fn prepare_markers(
             let marker_baseline = shaped.lines().first().map(|line| {
                 line.block_offset() + line.baseline(shodo::geometry::BaselineKind::Alphabetic)
             });
-            let item_baseline = first_line_baseline(document, owner);
-            let offset_y = match (item_baseline, marker_baseline) {
+            let item_line = first_line(document, owner);
+            let offset_y = match (item_line.map(|line| line.baseline), marker_baseline) {
                 (Some(item), Some(marker)) if (item - marker).is_finite() => item - marker,
                 // Otherwise the marker is shaped with `line-height: normal`.
                 // An item with another line height centres its first line's
@@ -137,6 +140,7 @@ pub(super) fn prepare_markers(
                     color: style.color,
                     shadows: text_shadows(style),
                     first_page: first_pages.get(&owner).copied(),
+                    line_center: item_line.map(|line| line.center),
                 },
             );
         }
@@ -908,15 +912,24 @@ pub(super) fn omission(
     placement(document, cascade, context, root).err()
 }
 
-/// The baseline of `owner`'s first formatted line, from its border edge,
-/// where pagination draws it.
+/// `owner`'s first formatted line, from its border edge, where pagination
+/// draws it.
+#[derive(Clone, Copy, Debug)]
+struct FirstLine {
+    baseline: f32,
+    /// The middle of the line box, which decides its page. A table row has
+    /// no line box of its own, so its baseline stands in.
+    center: f32,
+}
+
+/// Finds `owner`'s first formatted line.
 ///
 /// The first line may belong to the first in-flow block child, and so on
 /// down (CSS Pseudo 4 §2.1.1); if that child has no line, neither has the
 /// item. Floats, absolutely positioned boxes and the marker itself are
 /// passed over. A flex or grid container orders its items itself, so tree
 /// order does not find its first line, and it is left to the fallback.
-fn first_line_baseline(document: &Document, owner: usize) -> Option<f32> {
+fn first_line(document: &Document, owner: usize) -> Option<FirstLine> {
     let in_flow = |id: usize| {
         document.nodes.get(id).is_some_and(|node| {
             node.is_in_document()
@@ -936,7 +949,10 @@ fn first_line_baseline(document: &Document, owner: usize) -> Option<f32> {
                 | raikiri_style::property::DisplayValue::InlineTable
         ) && !node.is_ifc_root()
         {
-            return node.table_first_baseline.map(|baseline| y + baseline);
+            return node.table_first_baseline.map(|baseline| FirstLine {
+                baseline: y + baseline,
+                center: y + baseline,
+            });
         }
         if matches!(
             node.style.display,
@@ -957,24 +973,48 @@ fn first_line_baseline(document: &Document, owner: usize) -> Option<f32> {
                         // The lines start inside the border and padding,
                         // moved down by any pagination shift.
                         let layout = node.unrounded_layout;
-                        return crate::layout::ifc::flow::first_baseline(lines).map(|baseline| {
-                            y + layout.border.top
-                                + layout.padding.top
-                                + baseline
-                                + lines.shift_of(0)
+                        let top = y + layout.border.top + layout.padding.top + lines.shift_of(0);
+                        return lines.lines.first().map(|line| FirstLine {
+                            baseline: top
+                                + line.block_offset()
+                                + line.baseline(shodo::geometry::BaselineKind::Alphabetic),
+                            center: top + line.block_offset() + line.block_size() / 2.0,
                         });
                     }
                 }
             }
-            _ => node
-                .children
-                .iter()
-                .copied()
-                .find(|&child| in_flow(child))?,
+            _ => first_block_child(document, id, &in_flow)?,
         };
         y += document.nodes[child].unrounded_layout.location.y;
         id = child;
     }
+}
+
+/// The first in-flow block-level child of `id`, which has no line of its
+/// own. Inline-level children generated no line there, so they are passed
+/// over, and the children of a `display: contents` element count as its
+/// parent's.
+fn first_block_child(
+    document: &Document,
+    id: usize,
+    in_flow: &impl Fn(usize) -> bool,
+) -> Option<usize> {
+    document.nodes.get(id)?.children.iter().find_map(|&child| {
+        if !in_flow(child) {
+            return None;
+        }
+        match document.nodes[child].display {
+            raikiri_style::property::DisplayValue::Contents => {
+                first_block_child(document, child, in_flow)
+            }
+            raikiri_style::property::DisplayValue::Inline
+            | raikiri_style::property::DisplayValue::InlineBlock
+            | raikiri_style::property::DisplayValue::InlineFlex
+            | raikiri_style::property::DisplayValue::InlineGrid
+            | raikiri_style::property::DisplayValue::InlineTable => None,
+            _ => Some(child),
+        }
+    })
 }
 
 fn marker_runs<'a>(
@@ -1010,7 +1050,13 @@ fn marker_runs<'a>(
         .map_or(0.0, |line| line.block_size());
     let page_bottom = page.content_box.y + page.content_box.height;
     let aligned = top + marker.offset_y;
-    let y = if aligned >= page_bottom {
+    // The aligned line's page is decided by its middle, as it is for the
+    // line itself; without one, by the marker's top.
+    let next_page = match marker.line_center {
+        Some(center) => top + center >= page_bottom - 0.001,
+        None => aligned >= page_bottom,
+    };
+    let y = if next_page {
         (page_bottom - height).max(top)
     } else {
         aligned

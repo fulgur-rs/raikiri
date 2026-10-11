@@ -557,3 +557,37 @@ fn a_marker_beside_a_line_crossing_the_page_edge_stays_on_its_baseline() {
         run_baseline(&document, 0, "A")
     );
 }
+
+#[test]
+fn a_marker_stays_on_its_page_when_the_middle_of_its_line_moves_on() {
+    // The first line's middle falls past the page edge, so the line goes to
+    // the next page even though the marker's top is still on this one.
+    let document = lay_out("<ol><li style=\"padding-top:92px\">A</li></ol>", "");
+    assert!(run_baseline(&document, 0, "1.") <= 100.0);
+    assert!(
+        document
+            .page(0)
+            .unwrap()
+            .text_runs()
+            .iter()
+            .all(|run| run.text.trim_end() != "A")
+    );
+}
+
+#[test]
+fn empty_inline_and_contents_children_do_not_hide_the_first_block_child() {
+    // An empty inline generates no line, and a contents element's children
+    // count as the item's, so the block after them holds the first line.
+    for body in [
+        "<ol><li><span></span><div style=\"padding-top:20px\">C</div></li></ol>",
+        "<ol><li><div style=\"display:contents\"><div style=\"padding-top:20px\">C</div></div></li></ol>",
+        "<ol><li><div style=\"display:contents\"></div><div style=\"padding-top:20px\">C</div></li></ol>",
+    ] {
+        let document = lay_out(body, "");
+        assert_eq!(
+            run_baseline(&document, 0, "1."),
+            run_baseline(&document, 0, "C"),
+            "{body}"
+        );
+    }
+}
