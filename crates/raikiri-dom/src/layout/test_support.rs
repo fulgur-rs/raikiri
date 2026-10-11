@@ -7,6 +7,7 @@ use raikiri_traits::PageBox;
 
 thread_local! {
     pub(crate) static TEXT_LINE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static TABLE_CELL_LOOKUP_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// A `<div>` of Ahem text under `html > body`, with a fixed 10px line height.

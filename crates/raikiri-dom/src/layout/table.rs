@@ -49,8 +49,10 @@ use crate::document::Document;
 use taffy::util::{MaybeResolve, ResolveOrZero};
 
 pub(crate) mod anonymous;
+mod cell_index;
 pub(crate) mod headers;
 mod rowspan;
+use cell_index::CellIndex;
 
 // ---------------------------------------------------------------------------
 // Depth cap — fail-closed for nested tables.
@@ -460,9 +462,11 @@ fn compute_table_layout_checked(
     let mut grid = build_table_grid(doc, table_idx)?;
     let table_layout = doc.nodes[table_idx].table_layout;
     let collapse = doc.nodes[table_idx].border_collapse == BorderCollapseValue::Collapse;
-    if collapse && !grid.rows.is_empty() && grid.n_cols > 0 {
+    let cell_index =
+        (collapse && !grid.rows.is_empty() && grid.n_cols > 0).then(|| CellIndex::new(&grid));
+    if let Some(index) = cell_index.as_ref() {
         resolve_collapsed_row_borders(doc, &grid);
-        resolve_collapsed_cell_borders(doc, &grid);
+        resolve_collapsed_cell_borders(doc, &grid, index);
         resolve_collapsed_table_edges(doc, &grid, table_idx);
     }
     let vertical_writing = is_vertical_writing_mode(table_writing_mode(doc, table_idx));
@@ -499,8 +503,8 @@ fn compute_table_layout_checked(
 
     // Collapsed grid lines (collapse only; separate keeps zero overlaps so
     // the positioning path below is shared).
-    let collapsed = if collapse && !grid.rows.is_empty() && grid.n_cols > 0 {
-        compute_collapsed_lines(doc, &grid, &table_border, inputs.parent_size.width)
+    let collapsed = if let Some(index) = cell_index.as_ref() {
+        compute_collapsed_lines(doc, &grid, index, &table_border, inputs.parent_size.width)
     } else {
         CollapsedLines::separate(&table_border)
     };
@@ -2878,13 +2882,13 @@ fn cell_border_sides(doc: &Document, cell_id: usize, basis: Option<f32>) -> Rect
 }
 
 /// The cell covering grid position (`row`, `col`), following spans.
-fn cell_at(grid: &TableGrid, row: u16, col: u16) -> Option<&CellPlacement> {
-    grid.cells.iter().find(|c| {
-        row >= c.row
-            && row < c.row + c.row_span
-            && col >= c.col_start
-            && col < c.col_start + c.col_span
-    })
+fn cell_at<'a>(
+    grid: &'a TableGrid,
+    index: &CellIndex,
+    row: u16,
+    col: u16,
+) -> Option<(usize, &'a CellPlacement)> {
+    index.at(row, col).map(|cell| (cell, &grid.cells[cell]))
 }
 
 #[derive(Clone, Copy)]
@@ -3078,7 +3082,7 @@ fn resolve_collapsed_border_pair(
 /// cell spanning several neighbours does not carry one segment's winner into
 /// the next. A spanning cell paints the strongest winner along its side;
 /// each neighbour paints its own segment's winner.
-fn resolve_collapsed_cell_borders(doc: &mut Document, grid: &TableGrid) {
+fn resolve_collapsed_cell_borders(doc: &mut Document, grid: &TableGrid, index: &CellIndex) {
     const SIDES: [CellBorderSide; 4] = [
         CellBorderSide::Top,
         CellBorderSide::Right,
@@ -3118,11 +3122,11 @@ fn resolve_collapsed_cell_borders(doc: &mut Document, grid: &TableGrid) {
     for boundary in 1..column_count {
         for row in 0..grid.rows.len() {
             let row = row as u16;
-            let left = cell_at(grid, row, (boundary - 1) as u16)
-                .filter(|cell| cell.col_start + cell.col_span == boundary as u16);
-            let right = cell_at(grid, row, boundary as u16)
-                .filter(|cell| cell.col_start == boundary as u16);
-            if let (Some(left), Some(right)) = (left, right) {
+            let left = cell_at(grid, index, row, (boundary - 1) as u16)
+                .filter(|(_, cell)| cell.col_start + cell.col_span == boundary as u16);
+            let right = cell_at(grid, index, row, boundary as u16)
+                .filter(|(_, cell)| cell.col_start == boundary as u16);
+            if let (Some((_, left)), Some((_, right))) = (left, right) {
                 resolve(
                     doc,
                     left.node_id,
@@ -3138,10 +3142,11 @@ fn resolve_collapsed_cell_borders(doc: &mut Document, grid: &TableGrid) {
         for column in 0..column_count {
             let boundary = boundary as u16;
             let column = column as u16;
-            let above = cell_at(grid, boundary - 1, column)
-                .filter(|cell| cell.row.saturating_add(cell.row_span) == boundary);
-            let below = cell_at(grid, boundary, column).filter(|cell| cell.row == boundary);
-            if let (Some(above), Some(below)) = (above, below) {
+            let above = cell_at(grid, index, boundary - 1, column)
+                .filter(|(_, cell)| cell.row.saturating_add(cell.row_span) == boundary);
+            let below =
+                cell_at(grid, index, boundary, column).filter(|(_, cell)| cell.row == boundary);
+            if let (Some((_, above)), Some((_, below))) = (above, below) {
                 resolve(
                     doc,
                     above.node_id,
@@ -3288,6 +3293,7 @@ fn resolve_collapsed_table_edges(doc: &mut Document, grid: &TableGrid, table_idx
 fn compute_collapsed_lines(
     doc: &Document,
     grid: &TableGrid,
+    index: &CellIndex,
     table_border: &Rect<f32>,
     basis: Option<f32>,
 ) -> CollapsedLines {
@@ -3300,14 +3306,6 @@ fn compute_collapsed_lines(
         .iter()
         .map(|c| cell_border_sides(doc, c.node_id, basis))
         .collect();
-    let border_of = |cell: &CellPlacement| -> Rect<f32> {
-        let pos = grid
-            .cells
-            .iter()
-            .position(|c| c.node_id == cell.node_id)
-            .expect("cell must be in grid");
-        borders[pos]
-    };
 
     // Vertical boundaries 0..=n. Boundary i separates column i-1 and i;
     // the collapsed line is the max of adjoining borders, and the overlap
@@ -3318,28 +3316,29 @@ fn compute_collapsed_lines(
     for i in 0..=n {
         if i == 0 {
             for r in 0..m {
-                if let Some(c) = cell_at(grid, r as u16, 0)
+                if let Some((pos, c)) = cell_at(grid, index, r as u16, 0)
                     && c.col_start == 0
                 {
-                    outer_left = f32_max_compat(outer_left, border_of(c).left);
+                    outer_left = f32_max_compat(outer_left, borders[pos].left);
                 }
             }
         } else if i == n {
             for r in 0..m {
-                if let Some(c) = cell_at(grid, r as u16, (n as u16).saturating_sub(1))
+                if let Some((pos, c)) = cell_at(grid, index, r as u16, (n as u16).saturating_sub(1))
                     && c.col_start + c.col_span == n as u16
                 {
-                    outer_right = f32_max_compat(outer_right, border_of(c).right);
+                    outer_right = f32_max_compat(outer_right, borders[pos].right);
                 }
             }
         } else {
             let mut ov = 0.0f32;
             for r in 0..m {
-                let left = cell_at(grid, r as u16, (i as u16).saturating_sub(1))
-                    .filter(|c| c.col_start + c.col_span == i as u16);
-                let right = cell_at(grid, r as u16, i as u16).filter(|c| c.col_start == i as u16);
-                if let (Some(a), Some(b)) = (left, right) {
-                    let (ra, lb) = (border_of(a).right, border_of(b).left);
+                let left = cell_at(grid, index, r as u16, (i as u16).saturating_sub(1))
+                    .filter(|(_, c)| c.col_start + c.col_span == i as u16);
+                let right = cell_at(grid, index, r as u16, i as u16)
+                    .filter(|(_, c)| c.col_start == i as u16);
+                if let (Some((a, _)), Some((b, _))) = (left, right) {
+                    let (ra, lb) = (borders[a].right, borders[b].left);
                     ov = f32_max_compat(ov, ra.min(lb));
                 }
             }
@@ -3353,25 +3352,27 @@ fn compute_collapsed_lines(
     let mut outer_bottom = table_border.bottom;
     for j in 0..=m {
         if j == 0 {
-            for c in grid.cells.iter().filter(|c| c.row == 0) {
-                outer_top = f32_max_compat(outer_top, border_of(c).top);
+            for (pos, _) in grid.cells.iter().enumerate().filter(|(_, c)| c.row == 0) {
+                outer_top = f32_max_compat(outer_top, borders[pos].top);
             }
         } else if j == m {
-            for c in grid
+            for (pos, _) in grid
                 .cells
                 .iter()
-                .filter(|c| c.row as usize + c.row_span as usize == m)
+                .enumerate()
+                .filter(|(_, c)| c.row as usize + c.row_span as usize == m)
             {
-                outer_bottom = f32_max_compat(outer_bottom, border_of(c).bottom);
+                outer_bottom = f32_max_compat(outer_bottom, borders[pos].bottom);
             }
         } else {
             let mut ov = 0.0f32;
             for i in 0..n {
-                let above = cell_at(grid, (j as u16).saturating_sub(1), i as u16)
-                    .filter(|c| c.row as usize + c.row_span as usize == j);
-                let below = cell_at(grid, j as u16, i as u16).filter(|c| c.row as usize == j);
-                if let (Some(a), Some(b)) = (above, below) {
-                    let (ba, tb) = (border_of(a).bottom, border_of(b).top);
+                let above = cell_at(grid, index, (j as u16).saturating_sub(1), i as u16)
+                    .filter(|(_, c)| c.row as usize + c.row_span as usize == j);
+                let below =
+                    cell_at(grid, index, j as u16, i as u16).filter(|(_, c)| c.row as usize == j);
+                if let (Some((a, _)), Some((b, _))) = (above, below) {
+                    let (ba, tb) = (borders[a].bottom, borders[b].top);
                     ov = f32_max_compat(ov, ba.min(tb));
                 }
             }
