@@ -1462,6 +1462,99 @@ pub enum RelativeFontSize {
     Smaller,
 }
 
+/// `font-size: <absolute-size>` keywords. Payload of
+/// [`PropertyValue::FontSizeKeyword`].
+///
+/// CSS Fonts 4 §2.5.1 "Absolute Size Keyword Mapping Table"
+/// (<https://www.w3.org/TR/css-fonts-4/#absolute-size-mapping>). The keyword
+/// is kept through the cascade instead of being turned into pixels at parse
+/// time, because the size it maps to depends on the element's own
+/// `font-family`: browsers use a smaller `medium` (13px instead of 16px) when
+/// the family list is exactly the generic `monospace`. See
+/// [`crate::computed::FontSizeKeywordInfo`].
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum AbsoluteFontSize {
+    /// `xx-small` (3/5 of `medium`).
+    XxSmall,
+    /// `x-small` (3/4 of `medium`).
+    XSmall,
+    /// `small` (8/9 of `medium`).
+    Small,
+    /// `medium`.
+    Medium,
+    /// `large` (6/5 of `medium`).
+    Large,
+    /// `x-large` (3/2 of `medium`).
+    XLarge,
+    /// `xx-large` (2 times `medium`).
+    XxLarge,
+    /// `xxx-large` (3 times `medium`).
+    XxxLarge,
+}
+
+impl AbsoluteFontSize {
+    /// Parses an `<absolute-size>` identifier, ASCII case-insensitively.
+    pub fn from_ident(ident: &str) -> Option<Self> {
+        Some(match ident.to_ascii_lowercase().as_str() {
+            "xx-small" => Self::XxSmall,
+            "x-small" => Self::XSmall,
+            "small" => Self::Small,
+            "medium" => Self::Medium,
+            "large" => Self::Large,
+            "x-large" => Self::XLarge,
+            "xx-large" => Self::XxLarge,
+            "xxx-large" => Self::XxxLarge,
+            _ => return None,
+        })
+    }
+
+    /// The canonical CSS keyword.
+    pub fn as_css_str(self) -> &'static str {
+        match self {
+            Self::XxSmall => "xx-small",
+            Self::XSmall => "x-small",
+            Self::Small => "small",
+            Self::Medium => "medium",
+            Self::Large => "large",
+            Self::XLarge => "x-large",
+            Self::XxLarge => "xx-large",
+            Self::XxxLarge => "xxx-large",
+        }
+    }
+
+    /// The scaling factor relative to `medium`, from the CSS Fonts 4 §2.5.1
+    /// table. The fractions are written as in the table so rounding questions
+    /// can be checked against the specification directly.
+    ///
+    /// | keyword | xx-small | x-small | small | medium | large | x-large | xx-large | xxx-large |
+    /// |---|---|---|---|---|---|---|---|---|
+    /// | factor | 3/5 | 3/4 | 8/9 | 1 | 6/5 | 3/2 | 2/1 | 3/1 |
+    ///
+    /// The same section's guideline that a UA "should nevertheless avoid
+    /// creating font sizes of less than 9 device pixels per EM unit" is a
+    /// recommendation and is not applied as a clamp: with the 16px `medium`
+    /// every keyword stays above 9px, and the smaller 13px monospace `medium`
+    /// only goes below it for `xx-small` (7.8px).
+    pub fn scale(self) -> f32 {
+        match self {
+            Self::XxSmall => 3.0 / 5.0,
+            Self::XSmall => 3.0 / 4.0,
+            Self::Small => 8.0 / 9.0,
+            Self::Medium => 1.0,
+            Self::Large => 6.0 / 5.0,
+            Self::XLarge => 3.0 / 2.0,
+            Self::XxLarge => 2.0 / 1.0,
+            Self::XxxLarge => 3.0 / 1.0,
+        }
+    }
+
+    /// The size in CSS px for a given `medium` size.
+    pub fn px_for_medium(self, medium_px: f32) -> f32 {
+        medium_px * self.scale()
+    }
+}
+
 /// `font-kerning` property values from CSS Fonts Module Level 3.
 /// <https://www.w3.org/TR/css-fonts-3/#font-kerning-prop>
 ///
@@ -8824,10 +8917,9 @@ pub enum PropertyValue {
     /// initial: 16px (= `medium`). CSS Fonts 4 §2.5
     /// <https://www.w3.org/TR/css-fonts-4/#font-size-prop>.
     ///
-    /// `<absolute-size>` (`xx-small` … `xxx-large`, `medium`) does not depend on the
-    /// parent. [`parse_font_size`] fully resolves these fixed sizes to `Length::Px`
-    /// relative to `medium` (16px) at parse time, using the scaling-factor table in
-    /// §2.5.1 (<https://www.w3.org/TR/css-fonts-4/#absolute-size-mapping>).
+    /// `<absolute-size>` (`xx-small` … `xxx-large`, `medium`) has its own
+    /// variant ([`Self::FontSizeKeyword`]) because its pixel size depends on
+    /// the element's `font-family`.
     /// `<relative-size>` (`larger` / `smaller`) depends on the inherited size, so it
     /// has a separate variant ([`Self::FontSizeRelative`]); see that variant's docs
     /// for the reason. The `math` keyword is spec-valid but not implemented (the
@@ -8874,6 +8966,18 @@ pub enum PropertyValue {
     /// by the time a value reaches [`crate::page::PageCascadeResult::declarations`],
     /// it has likewise become [`Self::FontSize`] (`Length::Px`).
     FontSizeRelative(RelativeFontSize),
+    /// `font-size: <absolute-size>` (`xx-small` … `xxx-large`, `medium`) —
+    /// part of the same `font-size` property as [`Self::FontSize`]. CSS Fonts 4
+    /// §2.5 <https://www.w3.org/TR/css-fonts-4/#font-size-prop>.
+    ///
+    /// Kept as a keyword rather than resolved to pixels at parse time because
+    /// the pixel size depends on the element's computed `font-family` (a
+    /// family list of exactly the generic `monospace` uses a 13px `medium`,
+    /// as browsers do). [`crate::cascade::apply_value`] records it as the
+    /// node's keyword-derived font-size information; phase 2 resolves it
+    /// once `font-family` is known. Page contexts resolve it with the default
+    /// 16px `medium` in [`crate::cascade::resolve_against_inherited`].
+    FontSizeKeyword(AbsoluteFontSize),
     /// `font-weight: <font-weight-absolute> | bolder | lighter` — inherited,
     /// initial: `Absolute(400.0)`. CSS Fonts 4 §2.2
     /// <https://www.w3.org/TR/css-fonts-4/#font-weight-prop>.
@@ -11037,7 +11141,9 @@ impl PropertyValue {
             // Map them to the same `PropertyKey` so cascade winner selection
             // correctly makes `font-size: 12px` and `font-size: larger` compete.
             // Separate keys would let both win, which the spec does not allow.
-            PropertyValue::FontSizeRelative(_) => PropertyKey::FontSize,
+            PropertyValue::FontSizeRelative(_) | PropertyValue::FontSizeKeyword(_) => {
+                PropertyKey::FontSize
+            }
             PropertyValue::FontWeight(_) => PropertyKey::FontWeight,
             PropertyValue::LineHeight(_) => PropertyKey::LineHeight,
             PropertyValue::Display(_) => PropertyKey::Display,

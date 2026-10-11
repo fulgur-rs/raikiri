@@ -3117,7 +3117,10 @@ fn margin_block_and_inline_ua_rules_survive_real_parse_and_cascade() {
     // and cascade, not just literal text in `MINIMAL_UA_CSS` — same
     // "survives real parse+cascade" concern as the `hr` test above.
     // 1em resolves to 16px against the UA-default inherited 16px
-    // font-size; margin-inline's 40px is a plain absolute length with
+    // font-size, except for the four monospace elements
+    // (listing/plaintext/pre/xmp), whose `font-family: monospace` UA rule
+    // gives them the 13px monospace `medium`, so 1em is 13px as in
+    // browsers; margin-inline's 40px is a plain absolute length with
     // no such resolution step.
     //
     // margin-left/margin-right are asserted per tag: 40px for
@@ -3166,21 +3169,26 @@ fn margin_block_and_inline_ua_rules_survive_real_parse_and_cascade() {
             .unwrap_or_else(|| panic!("<{tag}> should exist"))
             .0 as usize;
         let margin = cascade.computed[id].margin;
+        let em = if matches!(tag, "listing" | "plaintext" | "pre" | "xmp") {
+            13.0
+        } else {
+            16.0
+        };
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
         assert_eq!(
             margin.top,
-            ComputedLengthPercentageOrAuto::Px(16.0),
-            "{tag}'s UA rule margin-block: 1em must reach computed.margin.top (16px at \
-                 default 16px font-size) through real parse+cascade"
+            ComputedLengthPercentageOrAuto::Px(em),
+            "{tag}'s UA rule margin-block: 1em must reach computed.margin.top (1em of the \
+                 default font-size) through real parse+cascade"
         );
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
         assert_eq!(
             margin.bottom,
-            ComputedLengthPercentageOrAuto::Px(16.0),
-            "{tag}'s UA rule margin-block: 1em must reach computed.margin.bottom (16px \
-                 at default 16px font-size) through real parse+cascade"
+            ComputedLengthPercentageOrAuto::Px(em),
+            "{tag}'s UA rule margin-block: 1em must reach computed.margin.bottom (1em \
+                 of the default font-size) through real parse+cascade"
         );
         // blockquote/figure additionally carry `margin-inline: 40px`;
         // the other five tags stay at CSS-initial 0 on the inline axis.

@@ -4112,6 +4112,7 @@ fn key_sharing_extras() -> Vec<PropertyValue> {
     };
     vec![
         PropertyValue::FontSizeRelative(RelativeFontSize::Larger),
+        PropertyValue::FontSizeKeyword(crate::property::AbsoluteFontSize::Small),
         PropertyValue::CounterResetInherit,
         PropertyValue::MarginTopInherit,
         PropertyValue::MarginRightInherit,
@@ -4252,6 +4253,7 @@ property_value_variant_registry! {
     FontFamily,
     FontSize,
     FontSizeRelative,
+    FontSizeKeyword,
     FontWeight,
     LineHeight,
     Display,
@@ -4848,6 +4850,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             // `Lighter`, always leave unresolved residue. The `page_corpus`
             // also uses this as its worst-case payload.
             PropertyValue::FontSizeRelative(_) => Some("font-size: larger/smaller"),
+            PropertyValue::FontSizeKeyword(_) => Some("font-size: <absolute-size>"),
             // `font` shorthand fall-through: `size` delegates as in the
             // `FontSize` / `FontSizeRelative` longhand arms
             // (`length_absolute_only` / always residue); `line-height`
@@ -4860,6 +4863,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                         length_absolute_only(l, "font-size: <percentage>")
                     }
                     FontShorthandSize::Relative(_) => Some("font-size: larger/smaller"),
+                    FontShorthandSize::Keyword(_) => Some("font-size: <absolute-size>"),
                 };
                 size_residue
                     .or_else(|| line_height(shorthand.line_height))
@@ -5889,8 +5893,8 @@ fn page_corpus_font_size_and_font_size_relative_share_one_key() {
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert_eq!(
-        font_size_key_count, 2,
-        "FontSize と FontSizeRelative の 2 entry が PropertyKey::FontSize を共有するはず",
+        font_size_key_count, 3,
+        "FontSize, FontSizeRelative and FontSizeKeyword should share PropertyKey::FontSize",
     );
 }
 

@@ -262,6 +262,7 @@ fn parent_fixture() -> ComputedValues {
         },
         font_family: Arc::new(vec![crate::property::FontFamilyName::generic("sans-serif")]),
         font_size: ComputedLength(24.0),
+        font_size_keyword: None,
         font_weight: 700.0,
         line_height: ComputedLineHeight::Number(1.5),
         display: DisplayValue::Block,

@@ -376,25 +376,12 @@ pub(crate) fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<PropertyValu
 /// Parses the identifier portion of `<absolute-size>`, `<relative-size>`, or `math`
 /// (a helper for [`parse_font_size`]).
 ///
-/// # `<absolute-size>` scaling-factor table
+/// # `<absolute-size>`
 ///
-/// CSS Fonts 4 §2.5.1 "Absolute Size Keyword Mapping Table"
-/// The table at <https://www.w3.org/TR/css-fonts-4/#absolute-size-mapping> is copied
-/// directly (for the same reason as the "do not use an arithmetic expression" policy
-/// in `resolve_relative_weight`: keeping fractions allows the rounding-error
-/// discussion to rely solely on the specification). `medium` reuses Raikiri's fixed
-/// baseline ([`crate::computed::INITIAL_FONT_SIZE_PX`] = 16px; see
-/// the documentation for [`crate::specified::SpecifiedValues::initial`]):
-///
-/// | keyword | xx-small | x-small | small | medium | large | x-large | xx-large | xxx-large |
-/// |---|---|---|---|---|---|---|---|---|
-/// | factor | 3/5 | 3/4 | 8/9 | 1 | 6/5 | 3/2 | 2/1 | 3/1 |
-///
-/// The guideline in that section, "an UA applying these guidelines should nevertheless avoid creating
-/// font sizes of less than 9 device pixels per EM unit," says "should" (an RFC 2119
-/// weak recommendation). The minimum in this table, `xx-small` = `16 * 3/5 = 9.6px`,
-/// exceeds 9px, so no clamp is needed. This is not an unsupported feature:
-/// a `medium` baseline of 16px already satisfies the guideline.
+/// Returned as [`PropertyValue::FontSizeKeyword`] rather than pixels: the
+/// pixel size depends on the element's computed `font-family` (see
+/// [`crate::computed::FontSizeKeywordInfo`]). The CSS Fonts 4 §2.5.1
+/// scaling-factor table lives in [`AbsoluteFontSize::scale`].
 ///
 /// # `<relative-size>`
 ///
@@ -404,23 +391,16 @@ pub(crate) fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<PropertyValu
 ///
 /// Not implemented (valid under the specification, but unsupported).
 fn parse_font_size_keyword(ident: &str) -> Option<PropertyValue> {
-    const MEDIUM_PX: f32 = crate::computed::INITIAL_FONT_SIZE_PX;
-    let px = match ident.to_ascii_lowercase().as_str() {
-        "xx-small" => MEDIUM_PX * (3.0 / 5.0),
-        "x-small" => MEDIUM_PX * (3.0 / 4.0),
-        "small" => MEDIUM_PX * (8.0 / 9.0),
-        "medium" => MEDIUM_PX,
-        "large" => MEDIUM_PX * (6.0 / 5.0),
-        "x-large" => MEDIUM_PX * (3.0 / 2.0),
-        "xx-large" => MEDIUM_PX * (2.0 / 1.0),
-        "xxx-large" => MEDIUM_PX * (3.0 / 1.0),
-        "larger" => return Some(PropertyValue::FontSizeRelative(RelativeFontSize::Larger)),
-        "smaller" => return Some(PropertyValue::FontSizeRelative(RelativeFontSize::Smaller)),
+    if let Some(keyword) = AbsoluteFontSize::from_ident(ident) {
+        return Some(PropertyValue::FontSizeKeyword(keyword));
+    }
+    match ident.to_ascii_lowercase().as_str() {
+        "larger" => Some(PropertyValue::FontSizeRelative(RelativeFontSize::Larger)),
+        "smaller" => Some(PropertyValue::FontSizeRelative(RelativeFontSize::Smaller)),
         // `math` ends up here (valid under the specification, but unsupported).
         // Unknown identifiers are also dropped here.
-        _ => return None,
-    };
-    Some(PropertyValue::FontSize(Length::Px(px)))
+        _ => None,
+    }
 }
 
 /// Parses `line-height: normal | <number> | <length-percentage>`.
@@ -2345,7 +2325,7 @@ pub(super) fn parse_text_shadow(input: &mut Parser<'_, '_>) -> Option<Vec<TextSh
 }
 
 /// The `font-size` component of the `font` shorthand. [`parse_font_size`] returns
-/// two forms ([`PropertyValue::FontSize`] / [`PropertyValue::FontSizeRelative`]); carry them
+/// three forms (`FontSize` / `FontSizeRelative` / `FontSizeKeyword`); carry them
 /// unchanged in a small enum. This is private to the [`FontShorthand`] payload and
 /// never enters [`ComputedValues`] / [`SpecifiedValues`] or gets re-exported by
 /// the umbrella crate (as with [`BackgroundShorthand`]).
@@ -2354,13 +2334,17 @@ pub(super) fn parse_text_shadow(input: &mut Parser<'_, '_>) -> Option<Vec<TextSh
 /// [`SpecifiedValues`]: crate::specified::SpecifiedValues
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FontShorthandSize {
-    /// `<length-percentage>` / absolute-size keyword: [`parse_font_size`] returns the
+    /// `<length-percentage>`: [`parse_font_size`] returns the
     /// [`PropertyValue::FontSize`] variant, into which this component expands.
     Absolute(Length),
     /// `larger` / `smaller`: [`parse_font_size`] returns the
     /// [`PropertyValue::FontSizeRelative`] variant, into which this component expands
     /// (both use [`PropertyKey::FontSize`] as their key).
     Relative(RelativeFontSize),
+    /// `<absolute-size>`: [`parse_font_size`] returns the
+    /// [`PropertyValue::FontSizeKeyword`] variant, into which this component
+    /// expands.
+    Keyword(AbsoluteFontSize),
 }
 
 /// Specified-value carrier for the `font` shorthand: CSS Fonts 4 §2.1, "Font
@@ -2546,7 +2530,8 @@ pub(super) fn parse_font_shorthand(input: &mut Parser<'_, '_>) -> Option<FontSho
     let size = match parse_font_size(input)? {
         PropertyValue::FontSize(length) => FontShorthandSize::Absolute(length),
         PropertyValue::FontSizeRelative(relative) => FontShorthandSize::Relative(relative),
-        // cov:ignore: `parse_font_size` returns only the two variants above;
+        PropertyValue::FontSizeKeyword(keyword) => FontShorthandSize::Keyword(keyword),
+        // cov:ignore: `parse_font_size` returns only the three variants above;
         // its two return paths are canonical. This branch is unreachable.
         _ => return None,
     };

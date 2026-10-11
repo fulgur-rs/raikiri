@@ -1009,6 +1009,173 @@ fn larger_on_root_element_resolves_against_initial_font_size() {
     assert_eq!(cv.font_size, ComputedLength(19.2));
 }
 
+// ── keyword font sizes under the generic `monospace` family ──
+//
+// Browsers use a 13px `medium` when the family list is exactly the generic
+// `monospace`, and keep that keyword dependence through `em`, `%`,
+// `larger` / `smaller` and inheritance (see `FontSizeKeywordInfo`).
+
+/// Cascade a chain of elements, each a child of the previous one, and return
+/// their computed values in order.
+fn cascade_chain(styles: &[&str]) -> Vec<ComputedValues> {
+    let mut doc = TestDoc::new();
+    let mut parent = 0;
+    let mut ids = Vec::new();
+    for style in styles {
+        parent = doc.push_element(parent, "div", Some(style));
+        ids.push(parent);
+    }
+    let tree = build_rule_tree(&doc);
+    let r = cascade(&doc, &tree).expect("cascade Ok");
+    ids.into_iter().map(|id| r.computed[id].clone()).collect()
+}
+
+#[test]
+fn monospace_family_uses_13px_medium_for_keyword_sizes() {
+    use crate::computed::FontSizeKeywordInfo;
+    use crate::property::AbsoluteFontSize;
+    let c = cascade_chain(&[
+        // Inherited initial `medium` under a monospace family.
+        "font-family: monospace",
+        // A keyword declared under an inherited monospace family.
+        "font-size: small",
+        // A keyword declared together with the family.
+        "font-family: monospace; font-size: x-large",
+    ]);
+    assert_eq!(c[0].font_size, ComputedLength(13.0));
+    assert_eq!(c[0].font_size_keyword, Some(FontSizeKeywordInfo::MEDIUM));
+    assert_eq!(c[1].font_size, ComputedLength(13.0 * (8.0 / 9.0)));
+    assert_eq!(
+        c[1].font_size_keyword,
+        Some(FontSizeKeywordInfo::new(AbsoluteFontSize::Small))
+    );
+    assert_eq!(c[2].font_size, ComputedLength(13.0 * (3.0 / 2.0)));
+
+    // `font-size: medium` declared on an element whose monospace family is
+    // inherited also takes the 13px `medium`.
+    let c = cascade_chain(&["font-family: monospace", "font-size: medium"]);
+    assert_eq!(c[1].font_size, ComputedLength(13.0));
+}
+
+#[test]
+fn monospace_keyword_size_is_inherited_and_scaled_by_em_and_percent() {
+    let c = cascade_chain(&[
+        "font-family: monospace",
+        "font-size: 2em",
+        "font-size: 50%",
+        "",
+    ]);
+    assert_eq!(c[0].font_size, ComputedLength(13.0));
+    assert_eq!(c[1].font_size, ComputedLength(26.0));
+    assert_eq!(c[1].font_size_keyword.map(|info| info.factor), Some(2.0));
+    assert_eq!(c[2].font_size, ComputedLength(13.0));
+    assert_eq!(c[2].font_size_keyword.map(|info| info.factor), Some(1.0));
+    // Plain inheritance keeps both the size and the keyword information.
+    assert_eq!(c[3].font_size, ComputedLength(13.0));
+    assert_eq!(c[3].font_size_keyword, c[2].font_size_keyword);
+
+    // An `em` size of a keyword-derived parent follows a later family
+    // change as a whole: 2em of `medium` is 32px under a non-monospace
+    // family, as browsers compute it.
+    let c = cascade_chain(&[
+        "font-family: monospace",
+        "font-size: 2em",
+        "font-family: serif",
+    ]);
+    assert_eq!(c[2].font_size, ComputedLength(32.0));
+}
+
+#[test]
+fn monospace_does_not_change_explicit_lengths() {
+    let c = cascade_chain(&[
+        "font-family: monospace; font-size: 20px",
+        "font-size: 1.5em",
+        "font-family: sans-serif",
+        "font-family: monospace; font-size: 2rem",
+    ]);
+    assert_eq!(c[0].font_size, ComputedLength(20.0));
+    assert_eq!(c[0].font_size_keyword, None);
+    // `em` of a parent without keyword information stays plain.
+    assert_eq!(c[1].font_size, ComputedLength(30.0));
+    assert_eq!(c[1].font_size_keyword, None);
+    // Leaving monospace does not bring back a 16px-based size either.
+    assert_eq!(c[2].font_size, ComputedLength(30.0));
+    // `rem` refers to the root element (the 20px first element) and drops
+    // the keyword information.
+    assert_eq!(c[3].font_size, ComputedLength(40.0));
+    assert_eq!(c[3].font_size_keyword, None);
+}
+
+#[test]
+fn switching_from_monospace_back_to_sans_serif_restores_16px_medium() {
+    let c = cascade_chain(&[
+        "font-family: monospace",
+        "font-family: sans-serif",
+        "font-family: monospace; font-size: large",
+        "font-family: sans-serif",
+    ]);
+    assert_eq!(c[0].font_size, ComputedLength(13.0));
+    assert_eq!(c[1].font_size, ComputedLength(16.0));
+    assert_eq!(c[2].font_size, ComputedLength(13.0 * (6.0 / 5.0)));
+    assert_eq!(c[3].font_size, ComputedLength(16.0 * (6.0 / 5.0)));
+}
+
+#[test]
+fn only_a_lone_generic_monospace_uses_13px_medium() {
+    for family in [
+        "monospace, monospace",
+        "\"Courier New\", monospace",
+        "\"monospace\"",
+        "monospace, serif",
+    ] {
+        let c = cascade_chain(&[&format!("font-family: {family}")]);
+        assert_eq!(
+            c[0].font_size,
+            ComputedLength(16.0),
+            "font-family: {family}"
+        );
+    }
+    let c = cascade_chain(&["font-family: MONOSPACE"]);
+    assert_eq!(c[0].font_size, ComputedLength(13.0));
+}
+
+#[test]
+fn larger_and_smaller_keep_monospace_keyword_information() {
+    let c = cascade_chain(&[
+        "font-family: monospace",
+        "font-size: larger",
+        "font-family: serif",
+    ]);
+    assert_eq!(c[1].font_size, ComputedLength(13.0 * 1.2));
+    assert_eq!(c[2].font_size, ComputedLength(16.0 * 1.2));
+    let c = cascade_chain(&["font-family: monospace", "font-size: smaller"]);
+    assert_eq!(c[1].font_size, ComputedLength(13.0 / 1.2));
+}
+
+#[test]
+fn css_wide_keywords_keep_monospace_keyword_information() {
+    let c = cascade_chain(&[
+        "font-family: monospace",
+        "font-size: 20px",
+        "font-size: initial",
+        "font-size: inherit; font-family: serif",
+    ]);
+    assert_eq!(c[1].font_size, ComputedLength(20.0));
+    // `initial` is `medium` under this element's (monospace) family.
+    assert_eq!(c[2].font_size, ComputedLength(13.0));
+    // `inherit` takes the parent's keyword information too, so it follows
+    // the family change to serif.
+    assert_eq!(c[3].font_size, ComputedLength(16.0));
+}
+
+#[test]
+fn monospace_root_element_uses_13px_medium() {
+    let cv = cascade_doc("", "html", Some("font-family: monospace"));
+    assert_eq!(cv.font_size, ComputedLength(13.0));
+    let cv = cascade_doc("", "html", Some("font-family: monospace; font-size: 150%"));
+    assert_eq!(cv.font_size, ComputedLength(19.5));
+}
+
 #[test]
 fn pt_is_absolutized_at_cascade() {
     let cv = cascade_doc("", "div", Some("font-size: 15pt; padding-top: 9pt"));

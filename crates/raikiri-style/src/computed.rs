@@ -13,27 +13,28 @@ use std::sync::{Arc, OnceLock};
 use smol_str::SmolStr;
 
 use crate::property::{
-    AlignSelfValue, BackgroundAttachment, BackgroundImage, BackgroundRepeat,
+    AbsoluteFontSize, AlignSelfValue, BackgroundAttachment, BackgroundImage, BackgroundRepeat,
     BackgroundRepeatKeyword, BorderCollapseValue, BorderColor, BorderImageOutsetSide,
     BorderImageRepeat, BorderImageSlice, BorderImageWidthSide, BorderStyle, BoxSizing,
     BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
     ColumnFillValue, ColumnSpanValue, ContentAlignmentValue, ContentComponent, CssColor, Direction,
     DisplayValue, EmptyCellsValue, FilterFunction, FlexDirectionValue, FlexWrapValue, FloatValue,
-    FontFamilyName, FontFeatureSettings, FontKerning, FontLanguageOverride, FontOpticalSizing,
-    FontPaletteValue, FontStyle, FontSynthesisValue, FontVariantCaps, FontVariantEastAsian,
-    FontVariantEmoji, FontVariantLigatures, FontVariantNumeric, FontVariantPosition,
-    FontVariationSettings, GridAutoFlowValue, GridLineValue, GridTemplateAreasValue,
-    HangingPunctuation, HyphenateCharacter, HyphenateLimitChars, Hyphens, Isolation, LineBreak,
-    ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit, OutlineColor,
-    OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PositionValue, RubyPosition,
-    SelfAlignmentValue, Sides, TableLayoutValue, TextAlign, TextAlignLast, TextAutospace,
-    TextCombineUpright, TextDecorationColor, TextDecorationLine, TextDecorationSkipInk,
-    TextDecorationSkipSpaces, TextDecorationStyle, TextEmphasisHEdge, TextEmphasisPosition,
-    TextEmphasisStyle, TextEmphasisVEdge, TextJustify, TextOrientation, TextOverflowValue,
-    TextSpacingTrim, TextTransform, TextUnderlinePosition, TextWrapMode, TextWrapStyle,
-    UnicodeBidi, VerticalAlign, Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse, WordBreak,
-    WordSpaceTransform, WritingMode, ZIndexValue, empty_content_list, empty_counter_entries,
-    empty_filter_list, empty_quotes_entries, empty_string_set_entries, initial_font_family,
+    FontFamilyKind, FontFamilyName, FontFeatureSettings, FontKerning, FontLanguageOverride,
+    FontOpticalSizing, FontPaletteValue, FontStyle, FontSynthesisValue, FontVariantCaps,
+    FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures, FontVariantNumeric,
+    FontVariantPosition, FontVariationSettings, GridAutoFlowValue, GridLineValue,
+    GridTemplateAreasValue, HangingPunctuation, HyphenateCharacter, HyphenateLimitChars, Hyphens,
+    Isolation, LineBreak, ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit,
+    OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PositionValue,
+    RubyPosition, SelfAlignmentValue, Sides, TableLayoutValue, TextAlign, TextAlignLast,
+    TextAutospace, TextCombineUpright, TextDecorationColor, TextDecorationLine,
+    TextDecorationSkipInk, TextDecorationSkipSpaces, TextDecorationStyle, TextEmphasisHEdge,
+    TextEmphasisPosition, TextEmphasisStyle, TextEmphasisVEdge, TextJustify, TextOrientation,
+    TextOverflowValue, TextSpacingTrim, TextTransform, TextUnderlinePosition, TextWrapMode,
+    TextWrapStyle, UnicodeBidi, VerticalAlign, Visibility, VisualBox, WhiteSpace,
+    WhiteSpaceCollapse, WordBreak, WordSpaceTransform, WritingMode, ZIndexValue,
+    empty_content_list, empty_counter_entries, empty_filter_list, empty_quotes_entries,
+    empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
     ComputedBackgroundSize, ComputedBorder, ComputedBorderRadius, ComputedBorderSpacing,
@@ -55,6 +56,95 @@ use crate::resolve::{
 /// This implementation uses the browser default of 16px.
 ///
 pub(crate) const INITIAL_FONT_SIZE_PX: f32 = 16.0;
+
+/// Pixel size of `medium` when the element's `font-family` list is exactly
+/// the generic `monospace` family.
+///
+/// CSS leaves the size of `medium` to the user agent. Browsers (Chrome,
+/// Firefox, Safari) default to a 13px `medium` for the `monospace` generic
+/// and 16px for every other family, so that `<pre>` and `<code>` under
+/// default styles render at 13px. See [`FontSizeKeywordInfo`].
+pub(crate) const MONOSPACE_MEDIUM_FONT_SIZE_PX: f32 = 13.0;
+
+/// Records that a computed `font-size` derives from an `<absolute-size>`
+/// keyword, so that it can be recomputed when the generic font family changes.
+///
+/// The size of `medium` depends on the element's own `font-family` (see
+/// [`MONOSPACE_MEDIUM_FONT_SIZE_PX`]). A keyword-derived size therefore keeps
+/// track of its keyword and of the factor applied to it since:
+///
+/// - `font-size: <absolute-size>` sets `keyword` with `factor` 1.
+/// - `font-size: <n>em` and `<n>%` keep the parent's information, with the
+///   factor multiplied by `n` (or `n / 100`). Other units, including `rem`,
+///   `ex`, `ch`, absolute lengths and `calc()`, drop it.
+/// - `larger` / `smaller` keep the parent's information, with the factor
+///   multiplied or divided by the same 1.2 ratio
+///   [`crate::cascade::resolve_relative_font_size`] uses.
+/// - Inheritance (no declaration, or `inherit`) keeps the parent's
+///   information unchanged; the initial value is `medium`.
+///
+/// The computed font-size of an element carrying this information is
+/// `medium(own font-family) * keyword scale * factor`. That is the parent's
+/// size scaled as usual when the family does not change, and picks up the
+/// other `medium` when it does: `<pre>` (whose UA style sets only
+/// `font-family: monospace`) under a default `<body>` computes to 13px, and a
+/// `font-family: sans-serif` descendant of it goes back to 16px. An explicit
+/// `font-size: 20px` has no keyword information and stays 20px under any
+/// family.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FontSizeKeywordInfo {
+    /// The `<absolute-size>` keyword the size derives from.
+    pub keyword: AbsoluteFontSize,
+    /// Factor applied to the keyword's size by `em`, `%`, `larger` and
+    /// `smaller` on the way down the tree.
+    pub factor: f32,
+}
+
+impl FontSizeKeywordInfo {
+    /// The information for `font-size: medium`, the initial value.
+    pub const MEDIUM: Self = Self::new(AbsoluteFontSize::Medium);
+
+    /// The information for a declared `<absolute-size>` keyword.
+    pub const fn new(keyword: AbsoluteFontSize) -> Self {
+        Self {
+            keyword,
+            factor: 1.0,
+        }
+    }
+
+    /// The information after scaling the size by `factor`.
+    #[must_use]
+    pub fn scaled(self, factor: f32) -> Self {
+        Self {
+            keyword: self.keyword,
+            factor: self.factor * factor,
+        }
+    }
+
+    /// The computed size in CSS px for an element whose `font-family` list is
+    /// `family`.
+    pub fn resolve(self, family: &[FontFamilyName]) -> ComputedLength {
+        ComputedLength(self.keyword.px_for_medium(medium_font_size_px(family)) * self.factor)
+    }
+}
+
+/// The pixel size of `medium` for a computed `font-family` list: 13px when
+/// the list is exactly the generic `monospace` family, otherwise 16px.
+///
+/// Only a single-entry list counts. `font-family: monospace, monospace` and
+/// `font-family: "Courier New", monospace` keep the 16px `medium`, as in
+/// browsers, and a quoted `"monospace"` is a named family, not the generic.
+pub(crate) fn medium_font_size_px(family: &[FontFamilyName]) -> f32 {
+    match family {
+        [family]
+            if family.1 == FontFamilyKind::Generic
+                && family.as_str().eq_ignore_ascii_case("monospace") =>
+        {
+            MONOSPACE_MEDIUM_FONT_SIZE_PX
+        }
+        _ => INITIAL_FONT_SIZE_PX,
+    }
+}
 
 /// Persistent custom-property environment used by computed values.
 ///
@@ -399,6 +489,10 @@ pub struct ComputedValues {
     /// parent), and `pt` are converted in cascade phase 2 by
     /// [`crate::resolve::resolve_font_size`].
     pub font_size: ComputedLength,
+    /// Whether [`Self::font_size`] derives from an `<absolute-size>` keyword,
+    /// and with which factor. Inherited together with `font_size`; initial:
+    /// `Some(FontSizeKeywordInfo::MEDIUM)`. See [`FontSizeKeywordInfo`].
+    pub font_size_keyword: Option<FontSizeKeywordInfo>,
     /// `font-weight`. Inherited; initial: 400.0 (normal).
     ///
     /// **Always a resolved absolute weight** in `[1, 1000]`. The specified-value
@@ -1896,6 +1990,7 @@ impl ComputedValues {
             // documentation for `initial_font_family`).
             font_family: initial_font_family(),
             font_size: ComputedLength(INITIAL_FONT_SIZE_PX),
+            font_size_keyword: Some(FontSizeKeywordInfo::MEDIUM),
             font_weight: 400.0,
             // CSS Inline 3 §5.1: initial line-height is `normal`; paint resolves
             // it using font metrics equivalent to ascent + descent.

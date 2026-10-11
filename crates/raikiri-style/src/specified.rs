@@ -27,8 +27,8 @@ use std::sync::Arc;
 use smol_str::SmolStr;
 
 use crate::computed::{
-    ChFontKey, ChLengthProvenance, ComputedBorderImage, ComputedValues, RunningTemplate,
-    VerticalLogicalSize,
+    ChFontKey, ChLengthProvenance, ComputedBorderImage, ComputedValues, FontSizeKeywordInfo,
+    RunningTemplate, VerticalLogicalSize,
 };
 use crate::property::{
     AlignSelfValue, BORDER_IMAGE_OUTSET_INITIAL, BORDER_IMAGE_WIDTH_INITIAL,
@@ -182,6 +182,16 @@ pub struct SpecifiedValues {
     /// **Specified** `font-size`; phase 2 ([`resolve_font_size`]) absolutizes it
     /// against the **parent's** computed font size.
     pub font_size: Length,
+    /// Staging value for [`ComputedValues::font_size_keyword`]. Seeded from
+    /// the parent's computed value and updated by
+    /// [`crate::cascade::apply_value`]; see
+    /// [`crate::computed::FontSizeKeywordInfo`].
+    pub(crate) font_size_keyword: Option<FontSizeKeywordInfo>,
+    /// Whether this node declares an `<absolute-size>` keyword itself.
+    /// Phase 2 then computes the size from [`Self::font_size_keyword`] and
+    /// this node's own `font_family` rather than from [`Self::font_size`],
+    /// which only holds a 16px-`medium` placeholder.
+    pub(crate) font_size_keyword_declared: bool,
     /// Staging value for [`ComputedValues::font_weight`]; **already
     /// computed-equivalent** (see the D5 invariant above). The `f32` type
     /// replaces `u16` to retain fractional weights.
@@ -772,6 +782,8 @@ impl SpecifiedValues {
             font_family: initial_font_family(),
             // CSS Fonts 4 §2.5: the initial value is `medium` (16px here).
             font_size: Length::Px(crate::computed::INITIAL_FONT_SIZE_PX),
+            font_size_keyword: Some(FontSizeKeywordInfo::MEDIUM),
+            font_size_keyword_declared: false,
             font_weight: 400.0,
             line_height: LineHeight::Normal,
             display: DisplayValue::Inline,
@@ -1132,6 +1144,8 @@ impl SpecifiedValues {
             font_family: parent.font_family.clone(),
             // Losslessly lift a computed `<length>` to specified `Px`, a fixed point.
             font_size: lift_font_size(parent.font_size),
+            font_size_keyword: parent.font_size_keyword,
+            font_size_keyword_declared: false,
             // D5: `bolder` and `lighter` resolve against this value.
             font_weight: parent.font_weight,
             line_height: lift_line_height(parent.line_height),
@@ -1491,12 +1505,15 @@ impl SpecifiedValues {
         // Values 4 §6.1.1). `lh` uses `parent_line_height_basis`; `rlh` uses the tree-global
         // `ctx.root_line_height`. See the self-reference section for `lh` / `rlh` in the
         // `resolve_font_size` docs.
-        let font_size = resolve_font_size(
-            self.font_size,
-            parent.font_size,
-            parent_line_height_basis,
-            ctx,
-        );
+        let font_size = match self.keyword_font_size(&parent.font_family) {
+            Some(size) => size,
+            None => resolve_font_size(
+                self.font_size,
+                parent.font_size,
+                parent_line_height_basis,
+                ctx,
+            ),
+        };
         // Resolve text-align: match-parent (CSS Text 3 §6.1) for a node with a parent. The root's
         // "computes to start" branch is in `finalize_as_root`.
         let text_align = resolve_text_align_internal_center(
@@ -1512,6 +1529,25 @@ impl SpecifiedValues {
             resolve_line_height(self.line_height, font_size, parent_line_height_basis, ctx);
         // Phase 3: absolutize everything else against **this node's** font size and line height.
         self.absolutize_with(font_size, line_height, text_align, ctx)
+    }
+
+    /// The phase 2 font size of a keyword-derived `font-size`, or `None` when
+    /// the ordinary resolution of [`Self::font_size`] against the parent
+    /// applies.
+    ///
+    /// A keyword-derived size depends on the `medium` of this node's own
+    /// `font-family` (see [`crate::computed::FontSizeKeywordInfo`]). It is
+    /// computed from the keyword information when this node declares the
+    /// keyword itself, or when its family selects a different `medium` than
+    /// the parent's family did. Otherwise the keyword information and the
+    /// parent's size agree, and `em` / `%` / `larger` / `smaller` / inheritance
+    /// keep scaling the parent's computed size as for any other parent.
+    fn keyword_font_size(&self, parent_family: &[FontFamilyName]) -> Option<ComputedLength> {
+        let info = self.font_size_keyword?;
+        let medium = crate::computed::medium_font_size_px(&self.font_family);
+        (self.font_size_keyword_declared
+            || medium != crate::computed::medium_font_size_px(parent_family))
+        .then(|| info.resolve(&self.font_family))
     }
 
     /// Absolutize a node **without a parent** (the root element).
@@ -1626,12 +1662,17 @@ impl SpecifiedValues {
         let initial = ResolveContext::initial()
             .with_viewport(width, height)
             .with_vertical_root(self.writing_mode != WritingMode::HorizontalTb);
-        let font_size = resolve_font_size(
-            self.font_size,
-            ComputedLength(crate::computed::INITIAL_FONT_SIZE_PX),
-            None,
-            &initial,
-        );
+        // The root's parent is the initial style, whose `font-family` is
+        // `initial_font_family()`.
+        let font_size = match self.keyword_font_size(&initial_font_family()) {
+            Some(size) => size,
+            None => resolve_font_size(
+                self.font_size,
+                ComputedLength(crate::computed::INITIAL_FONT_SIZE_PX),
+                None,
+                &initial,
+            ),
+        };
         // CSS Text 3 §6.1: "Computes to start when specified on the root element." This special
         // case does not consult any parent text_align or direction and stays local to this
         // function (see the docs above).
@@ -1941,6 +1982,7 @@ impl SpecifiedValues {
             background_color_expression: self.background_color_expression,
             font_family: self.font_family,
             font_size,
+            font_size_keyword: self.font_size_keyword,
             font_weight: self.font_weight,
             line_height,
             display: running_display(&mut running_templates, display),

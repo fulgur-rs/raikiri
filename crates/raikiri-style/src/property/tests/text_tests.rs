@@ -58,24 +58,31 @@ fn font_size_rejects_math_keyword() {
 /// expressions instead of decimal literals to avoid a separate rounding issue.
 #[test]
 fn font_size_accepts_absolute_size_keywords() {
+    use crate::property::AbsoluteFontSize as K;
     const MEDIUM: f32 = 16.0;
-    let cases: &[(&str, f32)] = &[
-        ("xx-small", MEDIUM * (3.0 / 5.0)),
-        ("x-small", MEDIUM * (3.0 / 4.0)),
-        ("small", MEDIUM * (8.0 / 9.0)),
-        ("medium", MEDIUM),
-        ("large", MEDIUM * (6.0 / 5.0)),
-        ("x-large", MEDIUM * (3.0 / 2.0)),
-        ("xx-large", MEDIUM * (2.0 / 1.0)),
-        ("xxx-large", MEDIUM * (3.0 / 1.0)),
+    let cases: &[(&str, K, f32)] = &[
+        ("xx-small", K::XxSmall, MEDIUM * (3.0 / 5.0)),
+        ("x-small", K::XSmall, MEDIUM * (3.0 / 4.0)),
+        ("small", K::Small, MEDIUM * (8.0 / 9.0)),
+        ("medium", K::Medium, MEDIUM),
+        ("large", K::Large, MEDIUM * (6.0 / 5.0)),
+        ("x-large", K::XLarge, MEDIUM * (3.0 / 2.0)),
+        ("xx-large", K::XxLarge, MEDIUM * (2.0 / 1.0)),
+        ("xxx-large", K::XxxLarge, MEDIUM * (3.0 / 1.0)),
     ];
-    for (keyword, px) in cases {
+    for (keyword, expected, px) in cases {
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
         assert_eq!(
             parse(keyword, "font-size"),
-            Some(PropertyValue::FontSize(Length::Px(*px))),
+            Some(PropertyValue::FontSizeKeyword(*expected)),
             "keyword = {keyword}"
+        );
+        assert_eq!(expected.px_for_medium(MEDIUM), *px, "keyword = {keyword}");
+        assert_eq!(expected.as_css_str(), *keyword);
+        assert_eq!(
+            crate::property::serialize_value(&PropertyValue::FontSizeKeyword(*expected)).as_deref(),
+            Some(*keyword)
         );
     }
 }
@@ -86,11 +93,15 @@ fn font_size_accepts_absolute_size_keywords() {
 fn font_size_absolute_size_keyword_case_insensitive() {
     assert_eq!(
         parse("MEDIUM", "font-size"),
-        Some(PropertyValue::FontSize(Length::Px(16.0)))
+        Some(PropertyValue::FontSizeKeyword(
+            crate::property::AbsoluteFontSize::Medium
+        ))
     );
     assert_eq!(
         parse("Large", "font-size"),
-        Some(PropertyValue::FontSize(Length::Px(16.0 * (6.0 / 5.0))))
+        Some(PropertyValue::FontSizeKeyword(
+            crate::property::AbsoluteFontSize::Large
+        ))
     );
 }
 
@@ -5154,7 +5165,7 @@ fn font_shorthand_relative_size_keywords() {
 fn font_shorthand_absolute_size_keyword() {
     assert_eq!(
         expect_font(parse_entire("x-large serif", "font")).size,
-        FontShorthandSize::Absolute(Length::Px(24.0))
+        FontShorthandSize::Keyword(crate::property::AbsoluteFontSize::XLarge)
     );
 }
 
