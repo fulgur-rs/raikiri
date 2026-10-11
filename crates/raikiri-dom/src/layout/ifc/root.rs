@@ -54,8 +54,8 @@ pub(crate) struct IfcRoot {
     /// The root's text does not wrap (`text-wrap-mode: nowrap`).
     pub(crate) nowrap: bool,
     /// Whether each text source (a DOM text node or a generated
-    /// pseudo-element) or atomic inline of the paragraph sits in content
-    /// that does not wrap, by node id.
+    /// pseudo-element), atomic inline or inline box of the paragraph sits in
+    /// content that does not wrap, by node id.
     pub(crate) text_nowrap: Arc<HashMap<u64, bool>>,
     pub(crate) letter_styles: Vec<super::first_letter::LetterStyle>,
     letter_style_index: Arc<LetterStyleIndex>,
@@ -170,25 +170,43 @@ impl IfcRoot {
     }
 
     /// Whether `line` cannot wrap: its text and atomic inlines all sit in
-    /// `text-wrap-mode: nowrap` content, or it has no recorded content and
-    /// the root does not wrap.
+    /// `text-wrap-mode: nowrap` content. A line with neither, such as one
+    /// holding only an empty padded inline, is decided by its inline boxes,
+    /// and a line with no recorded content by the root.
     pub(crate) fn line_is_nowrap(&self, line: &shodo::Line) -> bool {
-        let mut any_content = false;
+        let content = |fragment: shodo::Fragment<'_>| match fragment {
+            shodo::Fragment::GlyphRun(run) => run.node().map(|node| node.0),
+            shodo::Fragment::Atomic(atomic) => Some(atomic.node.0),
+            _ => None,
+        };
+        let inline_box = |fragment: shodo::Fragment<'_>| match fragment {
+            shodo::Fragment::InlineBox(inline) => Some(inline.node.0),
+            _ => None,
+        };
+        self.nodes_are_nowrap(line, content)
+            .or_else(|| self.nodes_are_nowrap(line, inline_box))
+            .unwrap_or(self.nowrap)
+    }
+
+    /// Whether every recorded node `pick` takes from `line`'s fragments does
+    /// not wrap; `None` when it takes no recorded node.
+    fn nodes_are_nowrap(
+        &self,
+        line: &shodo::Line,
+        pick: impl Fn(shodo::Fragment<'_>) -> Option<u64>,
+    ) -> Option<bool> {
+        let mut any = false;
         for fragment in line.fragments() {
-            let node = match fragment {
-                shodo::Fragment::GlyphRun(run) => run.node(),
-                shodo::Fragment::Atomic(atomic) => Some(atomic.node),
-                _ => None,
-            };
-            let Some(nowrap) = node.and_then(|node| self.text_nowrap.get(&node.0).copied()) else {
+            let Some(nowrap) = pick(fragment).and_then(|node| self.text_nowrap.get(&node).copied())
+            else {
                 continue;
             };
             if !nowrap {
-                return false;
+                return Some(false);
             }
-            any_content = true;
+            any = true;
         }
-        any_content || self.nowrap
+        any.then_some(true)
     }
 
     pub(crate) fn new(projected: ProjectedIfc) -> Self {

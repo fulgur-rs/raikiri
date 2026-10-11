@@ -71,12 +71,13 @@ pub(crate) struct ProjectedIfc {
     /// The root's lines end in an ellipsis where they overflow it.
     pub(crate) ellipsis: bool,
     /// The root's text does not wrap (`text-wrap-mode: nowrap`). It decides
-    /// for lines without recorded content, such as an image marker alone.
+    /// for lines without recorded content.
     pub(crate) nowrap: bool,
     /// Whether each text source (a DOM text node or a generated
-    /// pseudo-element) or atomic inline of the paragraph, by node id, sits
-    /// in content that does not wrap (`text-wrap-mode: nowrap`). A line made only of such text stays
-    /// beside floats even when it overflows the space there.
+    /// pseudo-element), atomic inline or inline box of the paragraph, by node
+    /// id, sits in content that does not wrap (`text-wrap-mode: nowrap`). A
+    /// line made only of such content stays beside floats even when it
+    /// overflows the space there.
     pub(crate) text_nowrap: Arc<HashMap<u64, bool>>,
     pub(crate) letter_styles: Vec<LetterStyle>,
 }
@@ -473,12 +474,13 @@ pub(crate) struct ProjectedBuilder {
     /// The root's lines end in an ellipsis where they overflow it.
     pub(crate) ellipsis: bool,
     /// The root's text does not wrap (`text-wrap-mode: nowrap`). It decides
-    /// for lines without recorded content, such as an image marker alone.
+    /// for lines without recorded content.
     pub(crate) nowrap: bool,
     /// Whether each text source (a DOM text node or a generated
-    /// pseudo-element) or atomic inline of the paragraph, by node id, sits
-    /// in content that does not wrap (`text-wrap-mode: nowrap`). A line made only of such text stays
-    /// beside floats even when it overflows the space there.
+    /// pseudo-element), atomic inline or inline box of the paragraph, by node
+    /// id, sits in content that does not wrap (`text-wrap-mode: nowrap`). A
+    /// line made only of such content stays beside floats even when it
+    /// overflows the space there.
     pub(crate) text_nowrap: Arc<HashMap<u64, bool>>,
     pub(crate) letter_styles: Vec<LetterStyle>,
 }
@@ -729,6 +731,10 @@ fn project_children_builder(
             marker_fallback = raikiri_style::ComputedValues::inherit_marker_from(marker_cv);
             &marker_fallback
         };
+        text_nowrap.insert(
+            id.0,
+            marker_cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
+        );
         let mut marker_style = styled(doc, cascade, marker_cv, root, fonts)?;
         // The image is indivisible. Permit a break after its preserved suffix
         // space so the next word can move independently to the following line.
@@ -1032,6 +1038,10 @@ fn project_children_builder(
                         }
                     }
                 } else {
+                    text_nowrap.insert(
+                        id as u64,
+                        cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
+                    );
                     builder.open_inline(NodeId(id as u64), &inline_style, edges);
                     push_generated(
                         &mut builder,
