@@ -2385,10 +2385,19 @@ pub fn layout_pages_with_page_geometry_and_control(
     let page_index_for_end = |end: f32| page_origins.page_index_for_end(end);
     // A root margin that reaches into a later fragmentainer consumes whole
     // leading pages.  Do not leave the first content run stranded halfway
-    // down the first nonblank page.
+    // down the first nonblank page: the margin that adjoins the unforced
+    // break is truncated (CSS Fragmentation 3 §5.2).
     // The body's part of that margin is already in the layout coordinates,
     // so only the rest is added to the content.
-    let root_flow_offset = if root_margin_top >= fixed_page_step {
+    let root_flow_offset = if html_margin_top >= fixed_page_step {
+        // The root's own margin crosses the break. The root's margins do not
+        // collapse with the body's, so the body's margin starts after the
+        // truncated one and stays on the new page.
+        let page_index = page_index_for_y(html_margin_top);
+        control.check_discovery_page_index(page_index)?;
+        page_origin(page_index)
+    } else if root_margin_top >= fixed_page_step {
+        // The body's margin crosses the break: both are truncated.
         let page_index = page_index_for_y(root_margin_top);
         control.check_discovery_page_index(page_index)?;
         page_origin(page_index) - body_margin_top
@@ -3311,9 +3320,10 @@ pub fn layout_pages_with_page_geometry_and_control(
     // When a forced-break box underflows into the preceding page, descendants
     // follow the box while later siblings still begin after the break boundary.
     let mut pending_underflow: Option<(usize, f32)> = None;
-    // A positive margin on a box after a forced break moves its descendants
-    // with the box, but does not move later siblings a second time.
-    let mut pending_descendant_margin: Option<(usize, f32)> = None;
+    // Unpaginated border-box bottom of the last in-flow block-level child
+    // seen for each parent, while no other content followed it. The gap to
+    // the next such sibling is their collapsed margin.
+    let mut previous_block_bottoms: HashMap<usize, f32> = HashMap::new();
     // Named class-A boxes at one source coordinate form one page transition.
     // This coalesces zero-height named runs such as a/b/c/d/e without creating
     // one blank page per zero-height box.
@@ -3461,16 +3471,6 @@ pub fn layout_pages_with_page_geometry_and_control(
         if document.get_node(node_id).is_none() {
             continue;
         }
-        let descendant_margin = if let Some((ancestor_id, margin)) = pending_descendant_margin {
-            if is_descendant_or_self(document, node_id, ancestor_id, &parent_of) {
-                margin
-            } else {
-                pending_descendant_margin = None;
-                0.0
-            }
-        } else {
-            0.0
-        };
         if candidate.is_text {
             // A footnote's descendants follow the moved footnote box. They are
             // deliberately not paginated independently, otherwise the stale
@@ -3489,7 +3489,7 @@ pub fn layout_pages_with_page_geometry_and_control(
             let raw_y = candidate.raw_y;
             let height = candidate.height;
             let candidate_page_name = candidate.page_name.clone();
-            let mut effective_y = raw_y + flow_shift + descendant_margin;
+            let mut effective_y = raw_y + flow_shift;
             // A fixed-height direct block whose first line would straddle the
             // current fragmentainer is pushed as a unit. This matches normal
             // block fragmentation for monolithic content while leaving tall
@@ -3722,7 +3722,7 @@ pub fn layout_pages_with_page_geometry_and_control(
         if matches!(computed.float, FloatValue::Footnote) {
             let raw_y = candidate.raw_y;
             let height = candidate.height;
-            let effective_y = raw_y + flow_shift + descendant_margin;
+            let effective_y = raw_y + flow_shift;
             let anchor_page = if effective_y.is_finite() && effective_y >= 0.0 {
                 page_index_for_y(effective_y)
             } else {
@@ -3757,7 +3757,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                 header.placements.insert(page, (page_origin(page), y));
             }
         }
-        let mut effective_y = raw_y + flow_shift + descendant_margin;
+        let mut effective_y = raw_y + flow_shift;
         materialize_y(document, node_id, effective_y, &parent_of);
         let forced_before = page_break_is_forced(document, node_id, computed.break_before)
             || candidate.inline_named_page;
@@ -3863,6 +3863,13 @@ pub fn layout_pages_with_page_geometry_and_control(
             && effective_y < page_origin(current_page) + page_step_at(current_page)
             && effective_y + height > page_origin(current_page) + page_step_at(current_page);
 
+        let collapses_with_previous_block = is_block_level_flow_box(computed.display)
+            && !candidate.is_text
+            && !candidate.is_table_row
+            && !candidate.is_flex_item
+            && !candidate.is_grid_item
+            && !candidate.is_float_descendant
+            && !candidate.is_out_of_flow_descendant;
         let pending_break_applies = pending_break_source
             .is_some_and(|source| !is_descendant_or_self(document, node_id, source, &parent_of));
         let page_transition = saw_child
@@ -3893,12 +3900,20 @@ pub fn layout_pages_with_page_geometry_and_control(
                 // this box at the underflowed coordinate.  This is the
                 // `underflow-from-next-page` case from CSS Break.
                 let underflow_y = target_y + margin_top;
+                // CSS Fragmentation 3 §5.2: margins adjoining an unforced
+                // break are truncated, while a forced break keeps the
+                // block-start margin of the box after it.
+                let forced_transition = pending_break_applies
+                    || (forced_before && !forced_break_at_page_start)
+                    || named_page_change;
                 let node_target_y = if margin_top < 0.0 && underflow_y < target_y {
                     underflow_y
-                } else {
+                } else if forced_transition {
                     // The forced break is before the box's margin box, so a
                     // positive block-start margin remains on the new page.
                     target_y + margin_top.max(0.0)
+                } else {
+                    target_y
                 };
                 // The candidate was materialized to `effective_y` above,
                 // so this is the additional movement for this boundary.
@@ -3943,7 +3958,9 @@ pub fn layout_pages_with_page_geometry_and_control(
                         flow_shift += node_delta;
                         pending_underflow = Some((node_id, shift_delta - node_delta));
                     } else {
-                        flow_shift += shift_delta;
+                        // A kept margin moves the box's descendants and its
+                        // later siblings along with the box.
+                        flow_shift += node_delta;
                     }
                     effective_y += node_delta;
                 }
@@ -3952,12 +3969,36 @@ pub fn layout_pages_with_page_geometry_and_control(
                     pending_break_source = None;
                 }
             } else if effective_y.is_finite() && effective_y >= 0.0 {
-                let natural_page = page_index_for_y(effective_y);
+                let mut natural_page = page_index_for_y(effective_y);
+                // An unforced break that falls inside the collapsed margin
+                // between this box and its preceding sibling truncates that
+                // margin (CSS Fragmentation 3 §5.2): the box starts at the
+                // top of the page instead of keeping the part of the margin
+                // that crossed the page edge.
+                let gap = parent_of[node_id]
+                    .and_then(|parent_id| previous_block_bottoms.get(&parent_id))
+                    .map(|bottom| raw_y - bottom)
+                    .filter(|gap| gap.is_finite() && *gap > 0.0);
+                if let Some(gap) = gap
+                    && collapses_with_previous_block
+                {
+                    let page_top = page_origin(natural_page);
+                    let previous_bottom = effective_y - gap;
+                    if natural_page > 0
+                        && effective_y > page_top + 0.001
+                        && page_index_for_y(previous_bottom.max(0.0)) < natural_page
+                        && previous_bottom <= page_top + 0.001
+                    {
+                        let delta = page_top - effective_y;
+                        document.nodes[node_id].unrounded_layout.location.y += delta;
+                        follow_moved_ifc_block(document, node_id, delta);
+                        flow_shift += delta;
+                        effective_y += delta;
+                        natural_page = page_index_for_y(effective_y);
+                    }
+                }
                 check_candidate_page!('candidate_loop, natural_page);
                 current_page = current_page.max(natural_page);
-            }
-            if page_transition && margin_top > 0.0 {
-                pending_descendant_margin = Some((node_id, margin_top));
             }
             // An inline direct child keeps its source-order inline x position
             // in taffy's single pre-pagination layout. A forced page boundary
@@ -3974,6 +4015,13 @@ pub fn layout_pages_with_page_geometry_and_control(
             // a leading blank page.
             saw_child = true;
             current_page = 0;
+        }
+        if let Some(parent_id) = parent_of[node_id] {
+            if collapses_with_previous_block {
+                previous_block_bottoms.insert(parent_id, raw_y + height);
+            } else {
+                previous_block_bottoms.remove(&parent_id);
+            }
         }
 
         if let Some(&header_id) = table_headers.rows.get(&node_id) {
@@ -4203,3 +4251,17 @@ pub fn layout_single_page_with_resolver_and_base_url(
 
 #[cfg(test)]
 mod tests;
+
+/// Whether `display` makes a block-level box in the normal flow, whose
+/// block-start margin can adjoin a page break between siblings.
+fn is_block_level_flow_box(display: DisplayValue) -> bool {
+    matches!(
+        display,
+        DisplayValue::Block
+            | DisplayValue::FlowRoot
+            | DisplayValue::ListItem
+            | DisplayValue::Flex
+            | DisplayValue::Grid
+            | DisplayValue::Table
+    )
+}

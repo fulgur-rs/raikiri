@@ -9233,3 +9233,122 @@ fn repeated_header_copies_are_charged_to_the_projection_budget() {
         before
     );
 }
+
+/// Lays out one `div` per entry of `styles` in a zero-margin body on 100px
+/// tall pages and returns each box's block position with the page count.
+fn page_box_positions(styles: &[&str]) -> (Vec<f32>, usize) {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let boxes: Vec<_> = styles
+        .iter()
+        .map(|style| {
+            doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some(&format!("display:block;width:100px;{style}")),
+            )
+        })
+        .collect();
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let pages = layout_pages(&mut doc, &cascade, page).unwrap();
+    (
+        boxes
+            .into_iter()
+            .map(|id| doc.get_node(id).unwrap().unrounded_layout.location.y)
+            .collect(),
+        pages.len(),
+    )
+}
+
+#[test]
+fn a_margin_straddling_an_unforced_break_is_truncated() {
+    // CSS Fragmentation 3 §5.2: the 30px margin before the second box
+    // straddles the page edge at 100, so the box starts at the page top.
+    assert_eq!(
+        page_box_positions(&[
+            "height:80px",
+            "margin-top:30px;height:20px",
+            "margin-top:10px;height:10px",
+        ]),
+        (vec![0.0, 100.0, 130.0], 2)
+    );
+}
+
+#[test]
+fn a_block_pushed_by_break_inside_avoid_drops_its_top_margin() {
+    assert_eq!(
+        page_box_positions(&[
+            "height:60px",
+            "margin-top:30px;height:30px;break-inside:avoid",
+            "height:10px",
+        ]),
+        (vec![0.0, 100.0, 130.0], 2)
+    );
+}
+
+#[test]
+fn a_forced_break_keeps_the_top_margin() {
+    assert_eq!(
+        page_box_positions(&[
+            "height:60px",
+            "margin-top:30px;height:20px;break-before:page",
+            "height:10px",
+        ]),
+        (vec![0.0, 130.0, 150.0], 2)
+    );
+}
+
+#[test]
+fn a_root_margin_crossing_pages_keeps_the_body_margin() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        Style::default(),
+        Some("display:block;margin-top:250px"),
+    );
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:8px"),
+    );
+    let child = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:10px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let pages = layout_pages(&mut doc, &cascade, page).unwrap();
+    // The root's margin is truncated at the break into the third page; the
+    // body's margin does not collapse with it and stays below the page top.
+    assert_eq!(pages.len(), 3);
+    assert_eq!(
+        doc.get_node(child).unwrap().unrounded_layout.location.y,
+        208.0
+    );
+}
