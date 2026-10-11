@@ -4506,15 +4506,30 @@ pub(crate) fn paint_element_border_image(
             let Some(color) = gradient_first_color(gradient, cv.color) else {
                 return true;
             };
+            // Fill each tile, so `space` keeps its gaps transparent.
             for part in &geometry.parts {
                 let (area_x, area_y, area_w, area_h) = part.area;
-                scene.fill(
-                    Fill::NonZero,
+                scene.push_clip_layer(
                     Affine::IDENTITY,
-                    css_color(color),
-                    None,
                     &Rect::new(area_x, area_y, area_x + area_w, area_y + area_h),
                 );
+                for tile_y in &part.y {
+                    for tile_x in &part.x {
+                        scene.fill(
+                            Fill::NonZero,
+                            Affine::IDENTITY,
+                            css_color(color),
+                            None,
+                            &Rect::new(
+                                *tile_x,
+                                *tile_y,
+                                tile_x + part.tile_width,
+                                tile_y + part.tile_height,
+                            ),
+                        );
+                    }
+                }
+                scene.pop_layer();
             }
             true
         }

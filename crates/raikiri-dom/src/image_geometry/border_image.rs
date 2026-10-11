@@ -57,6 +57,9 @@ pub struct BorderImageGeometry {
     pub parts: Vec<BorderImagePart>,
 }
 
+/// The largest side width kept before overlapping widths are reduced.
+const MAX_SIDE_WIDTH: f64 = 1.0e30;
+
 /// Compute the parts of the border image of a box (CSS Backgrounds 3 §6.6).
 ///
 /// `border_box` is the box's border box and `border_widths` its computed
@@ -132,7 +135,7 @@ pub fn border_image_geometry(
                       border: f64,
                       slice,
                       has_natural: bool| {
-        match side {
+        let width = match side {
             BorderImageWidthSide::LengthPercentage(ComputedLengthPercentage::Px(px)) => {
                 f64::from(px)
             }
@@ -142,8 +145,16 @@ pub fn border_image_geometry(
             BorderImageWidthSide::Number(number) => f64::from(number) * border,
             _ if has_natural => slice,
             _ => border,
+        };
+        // An overflowing value such as `1e40` arrives as infinity; clamp it
+        // so the proportional reduction below stays finite (CSS Values 4
+        // §5.1 lets implementations clamp unsupported magnitudes). An
+        // infinite multiple of a zero border width is NaN and draws nothing.
+        if width.is_nan() {
+            0.0
+        } else {
+            width.clamp(0.0, MAX_SIDE_WIDTH)
         }
-        .max(0.0)
     };
     let mut widths = Sides {
         top: side_width(

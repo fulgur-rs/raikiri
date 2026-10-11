@@ -137,3 +137,18 @@ fn a_split_first_letter_keeps_its_border_image_outset() {
         .collect();
     assert!(!outset_rows.is_empty());
 }
+
+#[test]
+fn spaced_gradient_tiles_leave_their_gaps_empty() {
+    // The top edge's tiles are 6px wide in a 22px edge: three tiles with
+    // 1px gaps between them.
+    let pixels = raster(
+        "body{margin:0}div{width:22px;height:0;border:5px solid blue;\
+         border-image:linear-gradient(lime,lime) 10 space}",
+        "<div></div>",
+    );
+    let row: Vec<_> = (5..27).map(|x| pixel(&pixels, x, 2)).collect();
+    assert!(row.contains(&LIME));
+    assert!(row.iter().any(|&color| color != LIME));
+    assert!(!row.contains(&BLUE));
+}

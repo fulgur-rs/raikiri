@@ -593,7 +593,7 @@ pub(super) fn parse_border_color_shorthand(
 ///
 /// Section 3.4 also requires the border shorthand to reset `border-image-*` properties (verbatim:
 /// "The border shorthand also resets border-image to its initial value."). That reset happens when
-/// the shorthand is expanded (`crate::rule::expand_border`).
+/// the shorthand is expanded ([`crate::rule::expand_border`]).
 ///
 /// # Sibling pattern
 ///

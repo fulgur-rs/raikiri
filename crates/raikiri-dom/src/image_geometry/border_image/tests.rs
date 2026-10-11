@@ -331,3 +331,23 @@ fn missing_natural_dimensions_fall_back_on_the_area() {
     assert_eq!(size(None, None, Some(1.0)), Some((100.0, 100.0)));
     assert_eq!(size(None, None, Some(4.0)), Some((200.0, 50.0)));
 }
+
+#[test]
+fn an_infinite_width_is_reduced_to_the_area() {
+    let mut image = image(27.0, BorderImageRepeatKeyword::Stretch);
+    image.width.top = BorderImageWidthSide::Number(f32::INFINITY);
+    let geometry = border_image_geometry(
+        (0.0, 0.0, 90.0, 90.0),
+        Sides::all(10.0),
+        &image,
+        natural(81.0, 81.0),
+    )
+    .expect("geometry");
+    let top_left = &geometry.parts[0];
+    assert_eq!(top_left.area.1, 0.0);
+    assert!(top_left.area.3 > 89.0 && top_left.area.3 <= 90.0);
+    assert!(geometry.parts.iter().all(|part| {
+        let (x, y, w, h) = part.area;
+        [x, y, w, h].iter().all(|value| value.is_finite())
+    }));
+}

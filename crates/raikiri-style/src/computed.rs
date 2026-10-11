@@ -311,27 +311,6 @@ pub struct ChLengthProvenance {
     pub font: ChFontKey,
 }
 
-/// Per-node computed style. See the field documentation below for supported
-/// properties and their inheritance behavior (inherited: color / font-family / font-size / font-weight / text_align / hanging_punctuation / direction / writing_mode / cssom_writing_mode / line_height / font_style / font_kerning / font_optical_sizing / font_variant_emoji / font_language_override / font_variant_ligatures / font_synthesis / font_variant_position / font_palette / font_variant_numeric / font_variant_east_asian / font_variation_settings / font_feature_settings / font_variant_caps / text_transform / text_combine_upright / text_orientation / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / white_space_collapse / text_wrap_style / hyphens / hyphenate_character / hyphenate_limit_chars / tab_size / quotes / text_shadow / orphans / widows / list_style_type / list_style_position;
-/// non-inherited: background-color / display / counter-* / content / string-set /
-/// running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing /
-/// overflow / text_decoration / unicode_bidi / vertical_align / z_index / float / clear).
-///
-/// # Layers
-///
-/// This struct stores only **computed values**. Fields carrying lengths use
-/// `Computed*` types from [`crate::resolve`]; `em`, `rem`, and `pt` have already
-/// been converted to absolute px. CSS Cascade 5 §7.2
-/// <https://www.w3.org/TR/css-cascade-5/#inheriting> specifies that inheritance
-/// carries computed values, so conversion must precede inheritance. Treatment
-/// of `<percentage>` varies by property; see each field's documentation.
-///
-/// The staging representation before conversion is
-/// [`crate::specified::SpecifiedValues`]. Cascade winners are applied there;
-/// [`SpecifiedValues::finalize`] produces this struct.
-///
-/// [`SpecifiedValues::finalize`]: crate::specified::SpecifiedValues::finalize
-///
 /// Computed `border-image-*` longhands (CSS Backgrounds 3 §6
 /// <https://www.w3.org/TR/css-backgrounds-3/#border-images>).
 ///
@@ -368,6 +347,27 @@ impl ComputedBorderImage {
     }
 }
 
+/// Per-node computed style. See the field documentation below for supported
+/// properties and their inheritance behavior (inherited: color / font-family / font-size / font-weight / text_align / hanging_punctuation / direction / writing_mode / cssom_writing_mode / line_height / font_style / font_kerning / font_optical_sizing / font_variant_emoji / font_language_override / font_variant_ligatures / font_synthesis / font_variant_position / font_palette / font_variant_numeric / font_variant_east_asian / font_variation_settings / font_feature_settings / font_variant_caps / text_transform / text_combine_upright / text_orientation / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / white_space_collapse / text_wrap_style / hyphens / hyphenate_character / hyphenate_limit_chars / tab_size / quotes / text_shadow / orphans / widows / list_style_type / list_style_position;
+/// non-inherited: background-color / display / counter-* / content / string-set /
+/// running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing /
+/// overflow / text_decoration / unicode_bidi / vertical_align / z_index / float / clear).
+///
+/// # Layers
+///
+/// This struct stores only **computed values**. Fields carrying lengths use
+/// `Computed*` types from [`crate::resolve`]; `em`, `rem`, and `pt` have already
+/// been converted to absolute px. CSS Cascade 5 §7.2
+/// <https://www.w3.org/TR/css-cascade-5/#inheriting> specifies that inheritance
+/// carries computed values, so conversion must precede inheritance. Treatment
+/// of `<percentage>` varies by property; see each field's documentation.
+///
+/// The staging representation before conversion is
+/// [`crate::specified::SpecifiedValues`]. Cascade winners are applied there;
+/// [`SpecifiedValues::finalize`] produces this struct.
+///
+/// [`SpecifiedValues::finalize`]: crate::specified::SpecifiedValues::finalize
+///
 /// `#[non_exhaustive]` allows new properties without breaking callers.
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
