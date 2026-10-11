@@ -110,6 +110,21 @@ fn maximum_sparse_span_storage_depends_on_rows_and_placements() {
 }
 
 #[test]
+fn indexed_search_preserves_overlaps_and_holes_after_a_large_prefix() {
+    let mut cells: Vec<_> = (0..128).map(|column| placement(0, column, 1, 1)).collect();
+    cells.push(placement(3, 129, 1, 2));
+    cells.push(placement(0, 128, 8, 4));
+    let grid = grid(8, 132, cells);
+    let index = CellIndex::new(&grid);
+    assert_eq!(index.at(3, 129), Some(128));
+    assert_eq!(index.at(3, 128), Some(129));
+    assert_eq!(index.at(4, 129), Some(129));
+    assert_eq!(index.at(3, 131), Some(129));
+    assert_eq!(index.at(3, 127), None);
+    assert_matches_linear_search(&grid);
+}
+
+#[test]
 fn highest_representable_row_can_own_a_cell() {
     let grid = grid(
         usize::from(u16::MAX) + 1,
@@ -141,6 +156,28 @@ fn earliest_spanning_cell_has_constant_lookup_work() {
         let steps = TABLE_CELL_LOOKUP_STEPS.with(|steps| steps.get());
         eprintln!("{rows} rows: {steps} earliest-span lookup steps");
         assert!(steps <= 3);
+    }
+}
+
+#[test]
+fn later_spanning_cells_keep_lookup_work_bounded_by_their_position() {
+    for rows in [8, 128, 4096, usize::from(u16::MAX)] {
+        for earlier in [1, 2, 8, 32, 128] {
+            let mut cells: Vec<_> = (0..earlier)
+                .map(|column| placement(0, column as u16, 1, 1))
+                .collect();
+            cells.push(placement(1, 1, rows as u16 - 2, u16::MAX - 1));
+            cells.push(placement(1, 1, 1, 1));
+            let grid = grid(rows, u16::MAX, cells);
+            let index = CellIndex::new(&grid);
+            TABLE_CELL_LOOKUP_STEPS.with(|steps| steps.set(0));
+            for (row, col) in [(1, 1), (rows as u16 - 2, u16::MAX - 1), (1, 2)] {
+                assert_eq!(index.at(row, col), Some(earlier));
+            }
+            let steps = TABLE_CELL_LOOKUP_STEPS.with(|steps| steps.get());
+            eprintln!("{rows} rows, {earlier} earlier cells: {steps} lookup steps");
+            assert!(steps <= 6 * (earlier + 1));
+        }
     }
 }
 
@@ -342,6 +379,7 @@ fn collapsed_boundary_search_work_grows_with_grid_area() {
         assert_eq!(lines.outer_right, 2.0);
         assert_eq!(lines.outer_top, 2.0);
         assert_eq!(lines.outer_bottom, 2.0);
-        assert!(visits <= area * (2 * side.ilog2() as usize + 4) * 12);
+        // Count both the linear and indexed work in the adaptive search.
+        assert!(visits <= area * (2 * side.ilog2() as usize + 4) * 24);
     }
 }

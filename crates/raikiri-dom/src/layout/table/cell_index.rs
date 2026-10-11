@@ -1,7 +1,6 @@
 use std::collections::BTreeSet;
-use std::ops::Range;
 
-use super::TableGrid;
+use super::{CellPlacement, TableGrid};
 
 #[derive(Clone, Copy)]
 struct Interval {
@@ -10,34 +9,27 @@ struct Interval {
     cell: usize,
 }
 
-struct CellRegion {
-    rows: Range<usize>,
-    columns: Range<u16>,
-}
-
 /// Transient placement lookup shared by collapsed-border resolution and sizing.
 /// Row spans occupy segment-tree ranges; each range stores disjoint column
 /// intervals. Storage is O(rows + placements * log(rows)), independent of the
 /// spanned grid area. Overlaps retain the first placement in grid order.
-pub(super) struct CellIndex {
+pub(super) struct CellIndex<'a> {
     leaf_count: usize,
     row_count: usize,
     column_count: u16,
-    first_cell: Option<CellRegion>,
-    single_cell: bool,
+    placements: &'a [CellPlacement],
     nodes: Vec<Vec<Interval>>,
 }
 
-impl CellIndex {
-    pub(super) fn new(grid: &TableGrid) -> Self {
+impl<'a> CellIndex<'a> {
+    pub(super) fn new(grid: &'a TableGrid) -> Self {
         let row_count = grid.rows.len();
         let leaf_count = row_count.max(1).next_power_of_two();
         let mut index = Self {
             leaf_count,
             row_count,
             column_count: grid.n_cols,
-            first_cell: None,
-            single_cell: grid.cells.len() <= 1,
+            placements: &grid.cells,
             nodes: if row_count == 0 || grid.n_cols == 0 {
                 Vec::new()
             } else {
@@ -54,12 +46,6 @@ impl CellIndex {
             let mut row_end = (row_start + usize::from(placement.row_span)).min(row_count);
             if start >= end || row_start >= row_end {
                 continue;
-            }
-            if cell == 0 {
-                index.first_cell = Some(CellRegion {
-                    rows: row_start..row_end,
-                    columns: start as u16..end as u16,
-                });
             }
             let interval = Interval {
                 start: start as u16,
@@ -91,22 +77,35 @@ impl CellIndex {
         if usize::from(row) >= self.row_count || col >= self.column_count {
             return None;
         }
-        // Nothing can precede placement zero. Keep its covered positions
-        // constant-time even when one cell spans a large, otherwise empty grid.
-        if let Some(region) = &self.first_cell {
-            lookup_step();
-            if region.rows.contains(&usize::from(row)) && region.columns.contains(&col) {
-                return Some(0);
-            }
-        }
-        if self.single_cell {
-            return None;
-        }
         let mut node = self.leaf_count + usize::from(row);
         let mut first = None;
+        let mut placements = self.placements.iter().enumerate();
         while node > 0 {
-            lookup_step();
             let intervals = &self.nodes[node];
+            // Race a linear prefix against indexed work. Each node advances
+            // at most its visit plus a binary-search comparison bound, so an
+            // early placement stays O(its position) without a fixed cutoff.
+            let budget = 1 + intervals
+                .len()
+                .checked_ilog2()
+                .map_or(0, |bits| bits as usize + 2);
+            for _ in 0..budget {
+                let (cell, placement) = placements.next()?;
+                lookup_step();
+                if usize::from(row) >= usize::from(placement.row)
+                    && usize::from(row)
+                        < usize::from(placement.row) + usize::from(placement.row_span)
+                    && usize::from(col) >= usize::from(placement.col_start)
+                    && usize::from(col)
+                        < usize::from(placement.col_start) + usize::from(placement.col_span)
+                {
+                    return Some(cell);
+                }
+            }
+            if placements.len() == 0 {
+                return None;
+            }
+            lookup_step();
             let end = intervals.partition_point(|interval| {
                 lookup_step();
                 interval.start <= col
