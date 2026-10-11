@@ -2,6 +2,31 @@ use super::*;
 use crate::layout::test_support::TEXT_LINE_VISITS;
 
 #[test]
+fn nodes_without_shaped_paragraphs_do_not_publish_owners() {
+    let (mut doc, _, root) = crate::layout::test_support::ahem_paragraph("A", "");
+    let source = doc.nodes[root].children[0];
+    let mut index = TextLineIndex::default();
+    for node in [doc.nodes.len(), root, source] {
+        index
+            .prepare_for(&doc, node, || {
+                panic!("unshaped nodes have no lines to scan")
+            })
+            .unwrap();
+        assert!(index.get(node).is_none());
+    }
+
+    // A text node can have no paragraph root before shaping is complete.
+    doc.nodes[source].flags.insert(NodeFlags::IN_IFC_SUBTREE);
+    index
+        .prepare_for(&doc, source, || {
+            panic!("a missing root has no lines to scan")
+        })
+        .unwrap();
+    assert!(index.get(source).is_none());
+    assert!(doc.ifc_text_lines_by_node(root).is_empty());
+}
+
+#[test]
 fn candidate_text_line_scans_grow_with_lines_instead_of_text_owners() {
     for count in [32, 64, 128] {
         let (mut doc, cascade, _) = ahem_paragraph_with("width:40px", |doc, root| {
