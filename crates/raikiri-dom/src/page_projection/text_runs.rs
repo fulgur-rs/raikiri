@@ -2,11 +2,13 @@
 //! draws text itself.
 
 use super::records::{PageFragment, ProjectedTextRoot};
+use crate::Document;
 use crate::generated_content::generated_origin;
 use crate::layout::{PositionedLine, PositionedLines, PositionedRun, line_center_on_page};
-use crate::{Document, relative_offset};
-use raikiri_style::property::{CssColor, DisplayValue, PositionValue, TextShadowColor};
-use raikiri_style::resolve::ComputedLengthPercentageOrAuto;
+use raikiri_style::property::{CssColor, DisplayValue, FloatValue, PositionValue, TextShadowColor};
+use raikiri_style::resolve::{
+    ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedTransformFunction,
+};
 use raikiri_style::{CascadeResult, ComputedValues, PseudoElem};
 use raikiri_traits::{NodeId, NodeKind};
 use shodo::geometry::WritingMode;
@@ -137,6 +139,11 @@ pub struct TextLineId {
 /// `origin + (advance[0] + … + advance[i - 1], 0) + (x_offset[i], y_offset[i])`,
 /// where the sums run over [`Self::glyphs`] in order. Glyphs are listed left to
 /// right, so a right-to-left run lists its last logical glyph first.
+///
+/// Positions include the relative offsets and the translating transforms of
+/// the text's boxes, as the built-in painter draws them, unlike
+/// [`crate::Fragment::rect`]. A paragraph under any other transform has no
+/// runs.
 #[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct PositionedGlyphRun<'a> {
@@ -347,8 +354,7 @@ pub(crate) enum TextRunOmission {
     VerticalWritingMode,
     OverlappingColumnLines,
     UnrootedColumnFragments,
-    RelativeInlineOffset,
-    AncestorOffset,
+    Transform,
     FixedPlacement,
 }
 
@@ -360,10 +366,7 @@ impl TextRunOmission {
                 "the same paragraph line has overlapping column placements"
             }
             Self::UnrootedColumnFragments => "its column fragments have no rooted placement chain",
-            Self::RelativeInlineOffset => "it has relatively positioned inline elements",
-            Self::AncestorOffset => {
-                "it or an ancestor is moved by a transform or relative positioning"
-            }
+            Self::Transform => "it or an ancestor has a transform that does more than translate",
             Self::FixedPlacement => {
                 "it is inside a fixed box not placed by `top` and `left` lengths"
             }
@@ -418,25 +421,118 @@ impl RunContext {
     }
 }
 
-/// What about `cv`'s box moves the paragraphs inside it at paint time, if
-/// anything does.
-fn box_omission(cv: &ComputedValues) -> Option<TextRunOmission> {
-    // An inline-level box's relative offset is already part of its layout
-    // location.
-    let inline_level = matches!(
+/// Whether `cv`'s box sits on an inline formatting context line, where its
+/// relative offset is already part of its layout location.
+fn inline_level(cv: &ComputedValues) -> bool {
+    matches!(
         cv.display,
         DisplayValue::Inline
             | DisplayValue::InlineBlock
             | DisplayValue::InlineFlex
             | DisplayValue::InlineGrid
             | DisplayValue::InlineTable
-    );
-    let relative = cv.position == PositionValue::Relative
-        && !inline_level
-        && relative_offset(cv) != Some((0.0, 0.0));
-    if !cv.transform.is_empty() || relative {
-        return Some(TextRunOmission::AncestorOffset);
+    )
+}
+
+/// The offset of a `position: relative` box as the built-in painter applies
+/// it: `left` over `-right` and `top` over `-bottom` (CSS 2.1 §9.4.3), where
+/// an inset that is not a length counts as `auto`.
+fn paint_relative_offset(cv: &ComputedValues) -> (f32, f32) {
+    if cv.position != PositionValue::Relative {
+        return (0.0, 0.0);
     }
+    let length = |inset| match inset {
+        ComputedLengthPercentageOrAuto::Px(px) => Some(px),
+        _ => None,
+    };
+    let dx = length(cv.left).or(length(cv.right).map(|right| -right));
+    let dy = length(cv.top).or(length(cv.bottom).map(|bottom| -bottom));
+    (dx.unwrap_or(0.0), dy.unwrap_or(0.0))
+}
+
+/// How far the built-in painter moves element `id` and its subtree from
+/// their layout location: by a relative offset that layout leaves to paint,
+/// and by a `transform` that only translates. `Err` when the element has a
+/// transform the runs cannot express as an offset.
+fn box_paint_shift(
+    document: &Document,
+    cascade: &CascadeResult,
+    body: Option<usize>,
+    id: usize,
+    cv: &ComputedValues,
+) -> Result<(f32, f32), TextRunOmission> {
+    let Some(node) = document.get_node(id) else {
+        return Ok((0.0, 0.0)); // cov:ignore: ancestors of a laid-out paragraph are arena nodes
+    };
+    // Layout already applies the relative offset of boxes in normal flow,
+    // flex and grid, and of boxes on lines. The body, floats and table parts
+    // are placed without it, and the painter adds it, as it adds the block
+    // offset that manual column placement leaves out.
+    let float = matches!(cv.float, FloatValue::Left | FloatValue::Right)
+        && document.layout_parent_of(id).is_none_or(|parent| {
+            !matches!(
+                cascade.computed[parent].display,
+                DisplayValue::Flex
+                    | DisplayValue::InlineFlex
+                    | DisplayValue::Grid
+                    | DisplayValue::InlineGrid
+            )
+        });
+    let painted_inset = Some(id) == body
+        || float
+        || matches!(
+            cv.display,
+            DisplayValue::TableCaption
+                | DisplayValue::TableCell
+                | DisplayValue::TableRow
+                | DisplayValue::TableRowGroup
+                | DisplayValue::TableHeaderGroup
+                | DisplayValue::TableFooterGroup
+        );
+    let (mut dx, mut dy) = if painted_inset && !inline_level(cv) {
+        paint_relative_offset(cv)
+    } else if node.needs_relative_block_paint_offset() {
+        (0.0, paint_relative_offset(cv).1)
+    } else {
+        (0.0, 0.0)
+    };
+    // spec: https://www.w3.org/TR/css-transforms-1/#terminology
+    // Non-replaced inline and table-column boxes are not transformable.
+    let transformable = !matches!(
+        cv.display,
+        DisplayValue::TableColumn | DisplayValue::TableColumnGroup
+    ) && (cv.display != DisplayValue::Inline
+        || node.is_inline_svg_root()
+        || matches!(
+            node.tag_name(),
+            Some("img" | "canvas" | "video" | "iframe" | "object" | "embed")
+        ));
+    if !transformable {
+        return Ok((dx, dy));
+    }
+    // Percentages resolve against the border box (CSS Transforms 1 §6).
+    let size = node.unrounded_layout.size;
+    let resolve = |value, basis: f32| match value {
+        ComputedLengthPercentage::Px(px) => px,
+        ComputedLengthPercentage::Percent(percent) => basis * percent / 100.0,
+    };
+    for function in cv.transform.iter() {
+        match *function {
+            ComputedTransformFunction::Translate(x, y) => {
+                dx += resolve(x, size.width);
+                dy += resolve(y, size.height);
+            }
+            ComputedTransformFunction::TranslateX(x) => dx += resolve(x, size.width),
+            ComputedTransformFunction::TranslateY(y) => dy += resolve(y, size.height),
+            _ => return Err(TextRunOmission::Transform),
+        }
+    }
+    Ok((dx, dy))
+}
+
+/// Whether the painter places `cv`'s box on each page differently than
+/// layout does.
+fn fixed_omission(cv: &ComputedValues) -> Option<TextRunOmission> {
     // The painter places a fixed box on each page from its `top` and `left`
     // lengths, and from other insets differently than layout.
     let length = |inset| matches!(inset, ComputedLengthPercentageOrAuto::Px(_));
@@ -444,40 +540,62 @@ fn box_omission(cv: &ComputedValues) -> Option<TextRunOmission> {
         .then_some(TextRunOmission::FixedPlacement)
 }
 
-/// Whether the runs of `root` can be positioned from its layout alone, or
-/// what moves them at paint time that the runs do not model yet.
+/// How far the built-in painter moves the lines of text root `root` from
+/// their layout location, or what moves them that the runs do not model.
+pub(super) fn paint_shift(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+) -> Result<(f32, f32), TextRunOmission> {
+    let body = crate::paint_rules::find_paint_root(document);
+    let root = generated_origin(root).map_or(root, |(owner, _)| owner);
+    let (mut dx, mut dy) = (0.0, 0.0);
+    let mut current = Some(document.ifc_source_owner(root));
+    while let Some(id) = current {
+        if let Some(cv) = cascade.computed.get(id) {
+            if let Some(reason) = fixed_omission(cv) {
+                return Err(reason);
+            }
+            let (x, y) = box_paint_shift(document, cascade, body, id, cv)?;
+            dx += x;
+            dy += y;
+        }
+        current = document.parent_of(id);
+    }
+    Ok((dx, dy))
+}
+
+/// How far the painter moves the runs of `root` from their layout
+/// location, or why the runs cannot be positioned.
+pub(super) fn placement(
+    document: &Document,
+    cascade: &CascadeResult,
+    context: &RunContext,
+    root: usize,
+) -> Result<(f32, f32), TextRunOmission> {
+    let root = generated_origin(root).map_or(root, |(owner, _)| owner);
+    if let Some(node) = document.ifc_layout_node(root) {
+        if context.overlapping.contains(&root) {
+            return Err(TextRunOmission::OverlappingColumnLines);
+        }
+        if node
+            .ifc_writing_mode()
+            .is_some_and(|mode| mode != WritingMode::HorizontalTb)
+        {
+            return Err(TextRunOmission::VerticalWritingMode);
+        }
+    }
+    paint_shift(document, cascade, root)
+}
+
+/// Why the runs of `root` cannot be positioned, if they cannot.
 pub(super) fn omission(
     document: &Document,
     cascade: &CascadeResult,
     context: &RunContext,
     root: usize,
 ) -> Option<TextRunOmission> {
-    let root = generated_origin(root).map_or(root, |(owner, _)| owner);
-    let node = document.ifc_layout_node(root)?;
-    if context.overlapping.contains(&root) {
-        return Some(TextRunOmission::OverlappingColumnLines);
-    }
-    if node
-        .ifc_writing_mode()
-        .is_some_and(|mode| mode != WritingMode::HorizontalTb)
-    {
-        return Some(TextRunOmission::VerticalWritingMode);
-    }
-    if node
-        .ifc_relative_offsets()
-        .iter()
-        .any(|(_, offset)| *offset != (0.0, 0.0))
-    {
-        return Some(TextRunOmission::RelativeInlineOffset);
-    }
-    let mut current = Some(document.ifc_source_owner(root));
-    while let Some(id) = current {
-        if let Some(reason) = cascade.computed.get(id).and_then(box_omission) {
-            return Some(reason);
-        }
-        current = document.parent_of(id);
-    }
-    None
+    placement(document, cascade, context, root).err()
 }
 
 fn marker_runs<'a>(
@@ -485,6 +603,7 @@ fn marker_runs<'a>(
     page: &PageFragment,
     root: &ProjectedTextRoot,
     owner: usize,
+    shift: (f32, f32),
     out: &mut Vec<PositionedGlyphRun<'a>>,
 ) {
     let Some(marker) = document.page_projection.markers.get(&owner) else {
@@ -495,8 +614,8 @@ fn marker_runs<'a>(
     if !root.is_repeat && marker.first_page != Some(page.page_index) {
         return;
     }
-    let x = page.content_box.x + root.x + marker.offset_x;
-    let y = page.content_box.y + root.y
+    let x = page.content_box.x + root.x + shift.0 + marker.offset_x;
+    let y = page.content_box.y + root.y + shift.1
         - if root.is_repeat {
             0.0
         } else {
@@ -808,14 +927,13 @@ fn root_runs<'a>(
     } else {
         Some(page.flow_range?)
     };
-    if omission(document, cascade, context, root.node).is_some() {
-        return None;
-    }
+    let shift = placement(document, cascade, context, root.node).ok()?;
     let positioned = PositionedLines::new(document, cascade, root.node, root.fragmentainer)?;
     // A repeated paragraph sits at the same place on every page; any other
-    // is placed in its page's slice of the flow.
-    let x = page.content_box.x + root.x;
-    let y = page.content_box.y + root.y - flow_range.map_or(0.0, |(start, _)| start);
+    // is placed in its page's slice of the flow. The paint shift moves the
+    // lines, not the page they belong to.
+    let x = page.content_box.x + root.x + shift.0;
+    let y = page.content_box.y + root.y + shift.1 - flow_range.map_or(0.0, |(start, _)| start);
     let decoration_context = crate::text_decoration::context_for_root(document, cascade, root.node);
     for (index, line) in positioned.all_lines().iter().enumerate() {
         let Some(offset) = positioned.line_offset(index) else {
@@ -992,8 +1110,8 @@ impl Document {
                     root.is_repeat = true;
                 }
                 if let Some((owner, PseudoElem::Marker)) = generated_origin(root.node) {
-                    if omission(self, cascade, context, root.node).is_none() {
-                        marker_runs(self, page, &root, owner, &mut runs);
+                    if let Ok(shift) = placement(self, cascade, context, root.node) {
+                        marker_runs(self, page, &root, owner, shift, &mut runs);
                     }
                 } else {
                     root_runs(self, cascade, page, context, &root, &mut runs);

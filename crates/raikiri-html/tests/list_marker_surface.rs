@@ -294,7 +294,7 @@ fn empty_item_at_the_last_page_boundary_keeps_its_marker() {
 
 #[test]
 fn transformed_item_reports_one_omission_for_body_and_marker() {
-    let document = lay_out("<ol><li>A</li></ol>", "li{transform:translateX(10px)}");
+    let document = lay_out("<ol><li>A</li></ol>", "li{transform:rotate(10deg)}");
     assert!(
         !document
             .pages()

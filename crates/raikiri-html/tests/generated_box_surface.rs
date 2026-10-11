@@ -232,10 +232,10 @@ fn header_pseudo_boxes_repeat_only_on_the_tables_pages() {
 }
 
 #[test]
-fn unmodeled_inline_offsets_follow_the_existing_text_omission_policy() {
+fn transformed_inline_offsets_follow_the_text_omission_policy() {
     let document = lay_out(
         "<div><span>A</span></div>",
-        "span{position:relative;left:5px}span::before{content:'X';background:red}",
+        "div{transform:rotate(5deg)}span::before{content:'X';background:red}",
     );
     let page = document.page(0).unwrap();
     assert!(page.text_runs().is_empty());

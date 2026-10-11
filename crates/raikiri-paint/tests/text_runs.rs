@@ -607,18 +607,9 @@ fn multicol_paragraphs_match_native_glyph_placements() {
 }
 
 #[test]
-fn relatively_positioned_inline_elements_have_no_runs_and_a_warning() {
+fn rotated_paragraphs_have_no_runs_and_a_warning() {
     assert_omitted(
-        "<p>kept</p><p id=\"r\">a <span style=\"position: relative; left: 5px\">moved</span></p>",
-        "",
-        "r",
-    );
-}
-
-#[test]
-fn transformed_paragraphs_have_no_runs_and_a_warning() {
-    assert_omitted(
-        "<p>kept</p><div style=\"transform: translateX(5px)\"><p id=\"t\">moved</p></div>",
+        "<p>kept</p><div style=\"transform: translateX(5px) rotate(10deg)\"><p id=\"t\">moved</p></div>",
         "",
         "t",
     );
@@ -659,15 +650,6 @@ fn nested_column_paragraphs_match_paint() {
         .map(|run| run.text.split_whitespace().count())
         .sum();
     assert_eq!(words, 30, "every word is reported once");
-}
-
-#[test]
-fn relatively_positioned_blocks_have_no_runs_and_a_warning() {
-    assert_omitted(
-        "<p>kept</p><div style=\"position: relative; top: 5px\"><p id=\"b\">moved</p></div>",
-        "",
-        "b",
-    );
 }
 
 #[test]
@@ -916,4 +898,164 @@ fn line_identity_groups_split_runs_but_distinguishes_coincident_lines_and_paragr
     assert_eq!(cd.line.index, a.line.index + 1);
     assert_ne!(a.line.root, ef.line.root);
     assert_eq!(a.origin.1, cd.origin.1);
+}
+
+/// Lays out each `(body, css)` case and checks that its runs are where the
+/// painter draws them, with no paragraph omitted.
+fn assert_cases_match_paint(cases: &[(&str, &str)]) {
+    for (body, css) in cases {
+        let result = lay_out(body, css);
+        let omitted: Vec<_> = result
+            .warnings()
+            .iter()
+            .filter(|warning| matches!(warning.kind, WarningKind::TextRunsOmitted))
+            .collect();
+        assert!(omitted.is_empty(), "{body}: {omitted:?}");
+        assert!(assert_runs_match_paint(&result) > 0, "{body}");
+    }
+}
+
+#[test]
+fn relatively_positioned_text_matches_paint() {
+    let words = vec!["word"; 40].join(" ");
+    assert_cases_match_paint(&[
+        // Offsets that layout applies: inline elements, blocks in flow,
+        // flex items and boxes on lines.
+        (
+            "<p>a <span style=\"position: relative; left: 5px; top: 3px\">x \
+             <b style=\"position: relative; top: 2px\">y</b></span> b</p>",
+            "",
+        ),
+        (
+            "<p>a <span style=\"position: relative; left: 5px\">x \
+             <span style=\"display: inline-block; position: relative; top: 2px\">in</span></span></p>",
+            "",
+        ),
+        (
+            "<div style=\"position: relative; bottom: 5px; right: 7px\"><p>moved</p></div>",
+            "",
+        ),
+        (
+            "<div style=\"display: flex\"><div style=\"position: relative; left: 9px\">moved</div></div>",
+            "",
+        ),
+        // Offsets that the painter applies: the body, floats and table parts.
+        (
+            "<p>moved</p>",
+            "body { position: relative; left: 6px; top: 4px }",
+        ),
+        (
+            "<div style=\"float: left; width: 100px; position: relative; left: 9px; top: 4px\">moved</div><p>after</p>",
+            "",
+        ),
+        (
+            "<table><tr><td style=\"position: relative; left: 10%; top: 4px\">moved</td></tr></table>",
+            "",
+        ),
+        (
+            "<ul style=\"float: left; position: relative; left: 6px; top: 3px\"><li>item</li></ul>",
+            "",
+        ),
+        (
+            &format!(
+                "<div style=\"float: left; position: relative; top: 7px\">{}</div>",
+                paragraphs(12, 6)
+            ),
+            "",
+        ),
+        (
+            &format!(
+                "<div style=\"columns: 2; height: 40px\"><div style=\"float: left; width: 60px; \
+                 position: relative; left: 4px; top: 3px\">{words}</div></div>"
+            ),
+            "",
+        ),
+    ]);
+}
+
+#[test]
+fn translated_text_matches_paint() {
+    let words = vec!["word"; 40].join(" ");
+    assert_cases_match_paint(&[
+        (
+            "<div style=\"transform: translate(10%, 3px); width: 100px\"><p>moved</p></div>",
+            "",
+        ),
+        (
+            "<div style=\"transform: translateY(5px)\"><div style=\"position: relative; left: 3px; \
+             transform: translateX(2px)\"><p>moved</p></div></div>",
+            "",
+        ),
+        (
+            "<div style=\"transform: translate(3px, 4px)\"><div style=\"float: left; position: relative; \
+             left: 2px\">moved</div></div>",
+            "",
+        ),
+        (
+            "<ul style=\"transform: translateX(6px)\"><li>item</li></ul>",
+            "",
+        ),
+        (
+            &format!(
+                "<div style=\"transform: translateY(7px)\">{}</div>",
+                paragraphs(12, 6)
+            ),
+            "",
+        ),
+        (
+            &format!(
+                "<div style=\"columns: 2; height: 40px; transform: translate(4px, 3px)\">{words}</div>"
+            ),
+            "",
+        ),
+        (
+            &format!(
+                "<div style=\"columns: 2; height: 40px\"><p style=\"transform: translate(4px, 3px)\">{words}</p></div>"
+            ),
+            "",
+        ),
+    ]);
+}
+
+#[test]
+fn generated_boxes_move_with_their_text_like_the_painter() {
+    for css in [
+        "span { position: relative; left: 5px; top: 2px }",
+        "div { float: left; position: relative; left: 5px; top: 2px }",
+        "div { transform: translate(5px, 2px) }",
+    ] {
+        let result = lay_out(
+            "<div><span>A</span></div>",
+            &format!("{css} span::before {{ content: 'X'; background: red }}"),
+        );
+        assert!(assert_runs_match_paint(&result) > 0, "{css}");
+        let page = result.pages().next().expect("page");
+        let runs = page.text_runs();
+        let rects: Vec<_> = page
+            .paint_order_for_text_runs(&runs)
+            .iter()
+            .filter_map(|event| match event {
+                raikiri_html::PaintEvent::GeneratedBox(piece) => Some(piece.rect),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(rects.len(), 1, "{css}");
+        let rect = rects[0];
+        let expected = (
+            f64::from(rect.x),
+            f64::from(rect.y),
+            f64::from(rect.width),
+            f64::from(rect.height),
+        );
+        let fills = filled(&page, result.page_count());
+        assert!(
+            fills.iter().any(|fill| {
+                (fill.0 - expected.0).abs() < TOLERANCE
+                    && (fill.1 - expected.1).abs() < TOLERANCE
+                    && (fill.2 - expected.2).abs() < TOLERANCE
+                    && (fill.3 - expected.3).abs() < TOLERANCE
+            }),
+            "{css}: {expected:?} is not filled; fills: {fills:?}"
+        );
+    }
 }
