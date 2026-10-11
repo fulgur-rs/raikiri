@@ -210,8 +210,12 @@ impl OverflowClipGeometry {
 }
 
 /// The group opacity the element paints its subtree with, if any.
+///
+/// An element with `display: contents` generates no box (CSS Display 3
+/// §2.5), so its opacity has nothing to apply to: its children paint as if
+/// they were children of its parent.
 pub fn opacity_layer(cv: &ComputedValues) -> Option<f32> {
-    (cv.opacity < 1.0).then_some(cv.opacity)
+    (cv.opacity < 1.0 && cv.display != DisplayValue::Contents).then_some(cv.opacity)
 }
 
 /// A `visibility: hidden` table does not paint its own box.

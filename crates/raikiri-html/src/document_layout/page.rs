@@ -517,22 +517,42 @@ impl<'a> Page<'a> {
     }
 
     /// Body paint order using the supplied [`Self::text_runs`] instead of
-    /// DOM text fragments. Each [`PaintEvent::TextLine`] identifies all runs
+    /// DOM text fragments. Each [`PaintEvent::TextLine`] identifies the runs
     /// of one paragraph line, including generated text and ellipses, inside
     /// the paragraph's ancestor clips and opacity groups.
     /// Standalone list markers have their own line events, before the list
     /// item's overflow clip and inside its opacity group.
     ///
+    /// A non-atomic inline element with opacity below one is its own opacity
+    /// group, listed after the rest of its paragraph like other stacking
+    /// contexts with `z-index: auto`: a [`PaintEvent::PushOpacity`], the
+    /// element's inline boxes and generated boxes and those of its
+    /// descendants, one [`PaintEvent::GroupTextLine`] per line with runs in
+    /// the group, its floats and atomic inlines, the groups nested in it, and
+    /// the [`PaintEvent::PopOpacity`]. [`Self::text_run_opacity_group`] tells
+    /// which line event draws a run: a run of no group belongs to the
+    /// `TextLine` event of its line, and any other run to the `GroupTextLine`
+    /// event of its line and group.
+    ///
     /// Pass the runs from this page. No text is extracted or shaped again.
     /// Boxes, replaced content and the approximations of [`Self::paint_order`]
     /// retain their existing order; paragraphs omitted by [`Self::text_runs`]
-    /// have no text events here. Inline element opacity is not represented.
+    /// have no text events here.
     pub fn paint_order_for_text_runs(
         &self,
         runs: &[PositionedGlyphRun<'a>],
     ) -> Vec<PaintEvent<'a>> {
         self.document
             .page_paint_order_for_text_runs(self.cascade, self.slice.page_index, runs)
+    }
+
+    /// The element whose inline opacity group draws `run`, a run of
+    /// [`Self::text_runs`]: the innermost non-atomic inline element with
+    /// opacity below one around the run's text inside its paragraph.
+    /// `None` when the run is drawn with the rest of its paragraph. Elements
+    /// with `display: contents` generate no box and form no group.
+    pub fn text_run_opacity_group(&self, run: &PositionedGlyphRun<'_>) -> Option<NodeId> {
+        self.document.text_run_opacity_group(self.cascade, run)
     }
 
     /// Page-margin boxes of this page (CSS Paged Media 3 §4.2) in drawing
