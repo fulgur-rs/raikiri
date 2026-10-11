@@ -474,3 +474,86 @@ fn an_outside_marker_follows_the_first_line_of_a_block_child() {
     };
     assert_eq!(baseline("1."), baseline("C"));
 }
+
+/// The baseline of the first run on page `index` whose text is `text`.
+fn run_baseline(document: &DocumentLayout, index: u32, text: &str) -> f32 {
+    document
+        .page(index)
+        .unwrap()
+        .text_runs()
+        .iter()
+        .find(|run| run.text.trim_end() == text)
+        .unwrap_or_else(|| panic!("{text}"))
+        .origin
+        .1
+}
+
+#[test]
+fn an_empty_first_block_child_gives_the_item_no_first_line() {
+    // CSS Pseudo 4 §2.1.1: the first formatted line comes from the first
+    // in-flow block child only, so the later block does not supply it.
+    let document = lay_out(
+        "<ol><li><div></div><div style=\"padding-top:20px\">C</div></li></ol>",
+        "",
+    );
+    assert!(run_baseline(&document, 0, "1.") < run_baseline(&document, 0, "C"));
+}
+
+#[test]
+fn a_flex_first_child_leaves_the_marker_at_the_fallback() {
+    // Tree order does not find a flex container's first line, so the marker
+    // does not follow the item that comes first in the source.
+    let document = lay_out(
+        "<ol><li><div style=\"display:flex\">\
+         <span style=\"order:2;padding-top:20px\">A</span><span style=\"order:1\">B</span>\
+         </div></li></ol>",
+        "",
+    );
+    assert!(run_baseline(&document, 0, "1.") < run_baseline(&document, 0, "A"));
+}
+
+#[test]
+fn an_outside_marker_follows_the_first_row_of_a_table_child() {
+    // The table's first row supplies the item's first line, so padding in
+    // that row moves the marker down with it.
+    let marker = |padding: u32| {
+        let document = lay_out(
+            &format!(
+                "<ol><li><table style=\"border-spacing:0\"><tr>\
+                 <td style=\"padding:0;padding-top:{padding}px\">T</td></tr></table></li></ol>"
+            ),
+            "",
+        );
+        run_baseline(&document, 0, "1.")
+    };
+    assert_eq!(marker(9) - marker(0), 9.0);
+}
+
+#[test]
+fn floated_and_positioned_children_do_not_supply_the_first_line() {
+    let document = lay_out(
+        "<ol><li><div style=\"float:left;padding-top:30px\">F</div>\
+         <div style=\"position:absolute;top:60px\">P</div>\
+         <div style=\"padding-top:7px\">C</div></li></ol>",
+        "",
+    );
+    assert_eq!(
+        run_baseline(&document, 0, "1."),
+        run_baseline(&document, 0, "C")
+    );
+}
+
+#[test]
+fn a_marker_beside_a_line_crossing_the_page_edge_stays_on_its_baseline() {
+    // The line starts on this page, so the marker keeps its baseline even
+    // though the line box reaches past the page edge.
+    let document = lay_out(
+        "<div style=\"height:25px\"></div>\
+         <ol><li style=\"font:80px/80px Ahem\">A</li></ol>",
+        "li::marker{font-size:70px}",
+    );
+    assert_eq!(
+        run_baseline(&document, 0, "1."),
+        run_baseline(&document, 0, "A")
+    );
+}

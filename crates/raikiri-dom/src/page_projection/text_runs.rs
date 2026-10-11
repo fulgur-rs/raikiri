@@ -911,66 +911,70 @@ pub(super) fn omission(
 /// The baseline of `owner`'s first formatted line, from its border edge,
 /// where pagination draws it.
 ///
-/// The first line may belong to an in-flow block descendant (CSS Inline 3
-/// §4.2.1); floats, absolutely positioned boxes and the marker itself are
-/// passed over. An explicit stack keeps a deep DOM off the call stack.
+/// The first line may belong to the first in-flow block child, and so on
+/// down (CSS Pseudo 4 §2.1.1); if that child has no line, neither has the
+/// item. Floats, absolutely positioned boxes and the marker itself are
+/// passed over. A flex or grid container orders its items itself, so tree
+/// order does not find its first line, and it is left to the fallback.
 fn first_line_baseline(document: &Document, owner: usize) -> Option<f32> {
-    enum Frame {
-        Visit(usize, f32),
-        Baseline(f32),
-    }
-    let mut stack = vec![Frame::Visit(owner, 0.0)];
-    while let Some(frame) = stack.pop() {
-        let (id, y) = match frame {
-            Frame::Visit(id, y) => (id, y),
-            Frame::Baseline(baseline) => return Some(baseline),
-        };
-        let Some(node) = document.nodes.get(id) else {
-            continue; // cov:ignore: layout children are arena nodes
-        };
-        if id != owner
-            && (!node.is_in_document()
-                || node.style.display == taffy::Display::None
-                || node.style.position == taffy::Position::Absolute
-                || node.style.float != taffy::Float::None
-                || generated_origin(id).is_some_and(|(_, pseudo)| pseudo == PseudoElem::Marker))
-        {
-            continue;
-        }
+    let in_flow = |id: usize| {
+        document.nodes.get(id).is_some_and(|node| {
+            node.is_in_document()
+                && node.kind() != NodeKind::Text
+                && node.style.display != taffy::Display::None
+                && node.style.position != taffy::Position::Absolute
+                && node.style.float == taffy::Float::None
+                && !generated_origin(id).is_some_and(|(_, pseudo)| pseudo == PseudoElem::Marker)
+        })
+    };
+    let (mut id, mut y) = (owner, 0.0);
+    loop {
+        let node = document.nodes.get(id)?;
         if matches!(
             node.display,
             raikiri_style::property::DisplayValue::Table
                 | raikiri_style::property::DisplayValue::InlineTable
         ) && !node.is_ifc_root()
         {
-            if let Some(baseline) = node.table_first_baseline {
-                return Some(y + baseline);
-            }
-            continue;
+            return node.table_first_baseline.map(|baseline| y + baseline);
         }
-        let child_y = |child: usize| y + document.nodes[child].unrounded_layout.location.y;
-        if let Some(lines) = node.ifc.as_ref().and_then(|root| root.lines.as_ref())
-            && let Some(baseline) = crate::layout::ifc::flow::first_baseline(lines)
-        {
-            // The lines start inside the border and padding, moved down by
-            // any pagination shift; a block placed before line zero comes
-            // first.
-            let layout = node.unrounded_layout;
-            stack.push(Frame::Baseline(
-                y + layout.border.top + layout.padding.top + baseline + lines.shift_of(0),
-            ));
-            for &(child, line) in lines.block_line_starts.iter().rev() {
-                if line == 0 {
-                    stack.push(Frame::Visit(child, child_y(child)));
+        if matches!(
+            node.style.display,
+            taffy::Display::Flex | taffy::Display::Grid
+        ) {
+            return None;
+        }
+        let child = match node.ifc.as_ref().and_then(|root| root.lines.as_ref()) {
+            Some(lines) if !lines.lines.is_empty() => {
+                // A block placed before line zero holds the first line.
+                let before = lines
+                    .block_line_starts
+                    .iter()
+                    .find(|&&(child, line)| line == 0 && in_flow(child));
+                match before {
+                    Some(&(child, _)) => child,
+                    None => {
+                        // The lines start inside the border and padding,
+                        // moved down by any pagination shift.
+                        let layout = node.unrounded_layout;
+                        return crate::layout::ifc::flow::first_baseline(lines).map(|baseline| {
+                            y + layout.border.top
+                                + layout.padding.top
+                                + baseline
+                                + lines.shift_of(0)
+                        });
+                    }
                 }
             }
-            continue;
-        }
-        for &child in node.children.iter().rev() {
-            stack.push(Frame::Visit(child, child_y(child)));
-        }
+            _ => node
+                .children
+                .iter()
+                .copied()
+                .find(|&child| in_flow(child))?,
+        };
+        y += document.nodes[child].unrounded_layout.location.y;
+        id = child;
     }
-    None
 }
 
 fn marker_runs<'a>(
@@ -997,15 +1001,20 @@ fn marker_runs<'a>(
             page.content_origin_y
         };
     // The marker is drawn only on its item's first page. When the line it
-    // aligns with falls on a later page, keep the marker at the bottom of
+    // aligns with starts on a later page, keep the marker at the bottom of
     // this one rather than past its edge.
     let height = marker
         .shaped
         .lines()
         .first()
         .map_or(0.0, |line| line.block_size());
-    let bottom = page.content_box.y + page.content_box.height - height;
-    let y = (top + marker.offset_y).min(bottom.max(top));
+    let page_bottom = page.content_box.y + page.content_box.height;
+    let aligned = top + marker.offset_y;
+    let y = if aligned >= page_bottom {
+        (page_bottom - height).max(top)
+    } else {
+        aligned
+    };
     standalone_runs(
         &marker.shaped,
         (x, y),
