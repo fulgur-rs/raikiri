@@ -978,6 +978,51 @@ fn pagination_child_order_falls_back_when_grid_row_details_are_incomplete() {
 }
 
 #[test]
+fn pagination_child_order_orders_grid_items_inside_contents_wrappers_by_row() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let grid = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:grid;grid-template-columns:100px"),
+    );
+    let wrapper = doc.append_element(
+        Some(grid),
+        "div",
+        Style::default(),
+        Some("display:contents"),
+    );
+    let second = doc.append_element(
+        Some(wrapper),
+        "div",
+        Style::default(),
+        Some("grid-row:2;height:10px"),
+    );
+    let first = doc.append_element(
+        Some(wrapper),
+        "div",
+        Style::default(),
+        Some("grid-row:1;height:10px"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout Ok");
+    assert_eq!(doc.nodes[grid].grid_column_count, 1);
+
+    // The wrapper generates no box: its children are the grid items, in
+    // resolved row order.
+    assert_eq!(
+        pagination_child_order(&doc, &cascade, grid),
+        vec![first, second]
+    );
+}
+
+#[test]
 fn stretched_column_flex_image_keeps_the_known_cross_size() {
     use raikiri_style::{build_rule_tree, cascade};
     let mut doc = Document::new();

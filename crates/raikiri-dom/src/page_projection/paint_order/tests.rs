@@ -81,9 +81,9 @@ fn skipping_subtrees_without_events_keeps_every_page_order() {
     for slice in &slices {
         let page = slice.page_index;
         let runs = document.page_text_runs(&cascade, page);
-        let mut lines: HashMap<NodeId, Vec<TextLineId>> = HashMap::new();
+        let mut lines = TextLines::default();
         for run in &runs {
-            let paragraph = lines.entry(run.line.root).or_default();
+            let paragraph = lines.paragraphs.entry(run.line.root).or_default();
             if !paragraph.contains(&run.line) {
                 paragraph.push(run.line);
             }

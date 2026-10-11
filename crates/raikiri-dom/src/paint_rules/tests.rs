@@ -140,12 +140,20 @@ fn overflow_and_opacity_predicates() {
         Some("overflow:hidden;opacity:0.5"),
     );
     let b = doc.append_element(Some(body), "div", Style::default(), None::<&str>);
+    let contents = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:contents;opacity:0.5"),
+    );
     doc.mark_in_document_flags();
     let cr = cascaded(&doc);
     assert!(clips_overflow(&cr.computed[a]));
     assert_eq!(opacity_layer(&cr.computed[a]), Some(0.5));
     assert!(!clips_overflow(&cr.computed[b]));
     assert_eq!(opacity_layer(&cr.computed[b]), None);
+    // No box, so nothing for the opacity to apply to.
+    assert_eq!(opacity_layer(&cr.computed[contents]), None);
     assert!(!is_visibility_hidden_table(&cr.computed[a]));
 }
 
