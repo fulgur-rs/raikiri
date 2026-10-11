@@ -121,6 +121,7 @@ pub(crate) fn paint_root_element_border(
     cascade: &CascadeResult,
     page_box: PageBox,
     pixel_source: Option<&dyn ImagePixelSource>,
+    warnings: &mut Vec<RenderWarning>,
 ) {
     let Some(html_id) = find_html(document) else {
         return;
@@ -139,6 +140,7 @@ pub(crate) fn paint_root_element_border(
         computed,
         &computed.border,
         pixel_source,
+        warnings,
     ) {
         return;
     }
@@ -2567,6 +2569,7 @@ pub(crate) fn paint_document_impl(
                             cv,
                             painted_border,
                             pixel_source,
+                            warnings,
                         );
                     let border_covered_by_background =
                         border_covered_by_background || border_image_drawn;
@@ -4367,6 +4370,7 @@ pub(crate) fn paint_element_border_image(
     cv: &ComputedValues,
     border: &Sides<raikiri_style::resolve::ComputedBorder>,
     pixel_source: Option<&dyn ImagePixelSource>,
+    warnings: &mut Vec<RenderWarning>,
 ) -> bool {
     let image = &cv.border_image;
     let border_box = (
@@ -4400,33 +4404,78 @@ pub(crate) fn paint_element_border_image(
                 width: image_w as f32,
                 height: image_h as f32,
             };
-            let Some(decoded) = pixel_source.get_decoded_at_size(&url, size, None) else {
+            let decoded = pixel_source
+                .get_decoded_at_size(&url, size, None)
+                .filter(|decoded| decoded.width > 0 && decoded.height > 0);
+            let Some(decoded) = decoded else {
+                warnings.push(RenderWarning {
+                    kind: WarningKind::ResourceFallback {
+                        kind: raikiri_traits::ResourceKind::Image,
+                        url: Some(redacted_image_url(&url)),
+                    },
+                    node_id: None,
+                    details:
+                        "CSS border image could not be rasterized; the border styles were painted instead"
+                            .into(),
+                });
                 return false;
             };
-            if decoded.width == 0 || decoded.height == 0 {
-                return false;
-            }
             // Decoded pixels per image unit.
             let scale_x = f64::from(decoded.width) / image_w;
             let scale_y = f64::from(decoded.height) / image_h;
-            for part in &geometry.parts {
+            let crops: Vec<_> = geometry
+                .parts
+                .iter()
+                .map(|part| {
+                    let (src_x, src_y, src_w, src_h) = part.source;
+                    pixel_crop(
+                        &decoded,
+                        (src_x * scale_x, src_y * scale_y),
+                        ((src_x + src_w) * scale_x, (src_y + src_h) * scale_y),
+                    )
+                })
+                .collect();
+            let mut unique: Vec<PixelCrop> = crops.iter().flatten().copied().collect();
+            unique.sort_unstable();
+            unique.dedup();
+            let cropped_pixels: u64 = unique.iter().map(|crop| crop.pixels()).sum();
+            // Each part normally samples its own pixels, so filtering at the
+            // slice lines does not bleed in the neighbouring slice. When the
+            // slices overlap, the copies would hold more pixels than the
+            // image, so every part samples one shared copy instead.
+            let shared = (cropped_pixels > u64::from(decoded.width) * u64::from(decoded.height))
+                .then(|| PixelCrop::whole(&decoded).brush(&decoded))
+                .flatten();
+            let mut brushes: Vec<(PixelCrop, peniko::ImageBrush)> = Vec::new();
+            for (part, crop) in geometry.parts.iter().zip(crops) {
                 let (src_x, src_y, src_w, src_h) = part.source;
                 let (area_x, area_y, area_w, area_h) = part.area;
-                // Each part samples its own pixels, so filtering at the
-                // slice lines does not bleed in the neighbouring slice.
-                let Some(brush) = cropped_image_brush(
-                    &decoded,
-                    (src_x * scale_x, src_y * scale_y),
-                    ((src_x + src_w) * scale_x, (src_y + src_h) * scale_y),
-                ) else {
+                let Some(crop) = crop else {
                     continue;
                 };
-                // Cropped pixels to image coordinates.
-                let pixels = Affine::translate((src_x, src_y))
-                    * Affine::scale_non_uniform(
-                        src_w / f64::from(brush.image.width),
-                        src_h / f64::from(brush.image.height),
-                    );
+                let (brush, pixels) = if let Some(brush) = &shared {
+                    // Whole decoded pixels to image coordinates.
+                    let pixels = Affine::scale_non_uniform(1.0 / scale_x, 1.0 / scale_y);
+                    (brush.clone(), pixels)
+                } else {
+                    let brush = match brushes.iter().find(|(seen, _)| *seen == crop) {
+                        Some((_, brush)) => brush.clone(),
+                        None => {
+                            let Some(brush) = crop.brush(&decoded) else {
+                                continue;
+                            };
+                            brushes.push((crop, brush.clone()));
+                            brush
+                        }
+                    };
+                    // Cropped pixels to image coordinates.
+                    let pixels = Affine::translate((src_x, src_y))
+                        * Affine::scale_non_uniform(
+                            src_w / f64::from(crop.width()),
+                            src_h / f64::from(crop.height()),
+                        );
+                    (brush, pixels)
+                };
                 let source = Rect::new(src_x, src_y, src_x + src_w, src_y + src_h);
                 scene.push_clip_layer(
                     Affine::IDENTITY,
@@ -4473,14 +4522,65 @@ pub(crate) fn paint_element_border_image(
     }
 }
 
-/// An image brush over the pixels of `decoded` between the corners `start`
-/// and `end` (in pixels, rounded to whole pixels), or `None` when the
-/// rectangle holds no pixel.
-fn cropped_image_brush(
+/// A rectangle of whole decoded pixels, as `[x0, x1) × [y0, y1)`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct PixelCrop {
+    x0: u32,
+    y0: u32,
+    x1: u32,
+    y1: u32,
+}
+
+impl PixelCrop {
+    fn whole(decoded: &raikiri_traits::DecodedImage) -> Self {
+        Self {
+            x0: 0,
+            y0: 0,
+            x1: decoded.width,
+            y1: decoded.height,
+        }
+    }
+
+    fn width(self) -> u32 {
+        self.x1 - self.x0
+    }
+
+    fn height(self) -> u32 {
+        self.y1 - self.y0
+    }
+
+    fn pixels(self) -> u64 {
+        u64::from(self.width()) * u64::from(self.height())
+    }
+
+    /// An image brush over a copy of these pixels of `decoded`, or `None`
+    /// when `decoded` holds fewer pixels than its size says.
+    fn brush(self, decoded: &raikiri_traits::DecodedImage) -> Option<peniko::ImageBrush> {
+        let stride = decoded.width as usize * 4;
+        let row_len = self.width() as usize * 4;
+        let mut rgba = Vec::with_capacity(row_len * self.height() as usize);
+        for row in self.y0..self.y1 {
+            let offset = row as usize * stride + self.x0 as usize * 4;
+            rgba.extend_from_slice(decoded.rgba.get(offset..offset + row_len)?);
+        }
+        Some(peniko::ImageBrush::new(peniko::ImageData {
+            data: peniko::Blob::from(rgba),
+            format: peniko::ImageFormat::Rgba8,
+            alpha_type: peniko::ImageAlphaType::Alpha,
+            width: self.width(),
+            height: self.height(),
+        }))
+    }
+}
+
+/// The pixels of `decoded` between the corners `start` and `end` (in
+/// pixels, rounded to whole pixels), or `None` when the rectangle holds no
+/// pixel.
+fn pixel_crop(
     decoded: &raikiri_traits::DecodedImage,
     start: (f64, f64),
     end: (f64, f64),
-) -> Option<peniko::ImageBrush> {
+) -> Option<PixelCrop> {
     let clamp = |value: f64, limit: u32| value.round().clamp(0.0, f64::from(limit)) as u32;
     let (x0, y0) = (
         clamp(start.0, decoded.width),
@@ -4494,23 +4594,7 @@ fn cropped_image_brush(
     if y1 == y0 && y0 < decoded.height {
         y1 = y0 + 1;
     }
-    let (width, height) = (x1.checked_sub(x0)?, y1.checked_sub(y0)?);
-    if width == 0 || height == 0 {
-        return None;
-    }
-    let stride = decoded.width as usize * 4;
-    let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
-    for row in y0..y1 {
-        let offset = row as usize * stride + x0 as usize * 4;
-        rgba.extend_from_slice(decoded.rgba.get(offset..offset + width as usize * 4)?);
-    }
-    Some(peniko::ImageBrush::new(peniko::ImageData {
-        data: peniko::Blob::from(rgba),
-        format: peniko::ImageFormat::Rgba8,
-        alpha_type: peniko::ImageAlphaType::Alpha,
-        width,
-        height,
-    }))
+    (x1 > x0 && y1 > y0).then_some(PixelCrop { x0, y0, x1, y1 })
 }
 
 fn used_border_radii(radius: &ComputedBorderRadius, width: f64, height: f64) -> [[f64; 2]; 4] {
@@ -4935,6 +5019,7 @@ pub(crate) fn paint_inline_box(
             cv,
             &cv.border,
             pixel_source,
+            warnings,
         );
         scene.pop_layer();
         drawn
@@ -4948,6 +5033,7 @@ pub(crate) fn paint_inline_box(
             cv,
             &border,
             pixel_source,
+            warnings,
         )
     };
     if !border_image_drawn {

@@ -289,3 +289,45 @@ fn auto_widths_use_each_natural_dimension_on_its_own() {
     // 4px border.
     part(&geometry, (0.0, 0.0, 10.0, 4.0));
 }
+
+#[test]
+fn degenerate_boxes_and_tiles_have_no_geometry() {
+    let image = image(27.0, BorderImageRepeatKeyword::Stretch);
+    let natural = natural(81.0, 81.0);
+    assert!(
+        border_image_geometry(
+            (f64::NAN, 0.0, 90.0, 90.0),
+            Sides::all(27.0),
+            &image,
+            natural
+        )
+        .is_none()
+    );
+    assert!(
+        border_image_geometry((0.0, 0.0, 0.0, 90.0), Sides::all(27.0), &image, natural).is_none()
+    );
+    assert_eq!(
+        tile_axis(0.0, 10.0, 0.0, BorderImageRepeatKeyword::Repeat),
+        None
+    );
+}
+
+#[test]
+fn missing_natural_dimensions_fall_back_on_the_area() {
+    let size = |width: Option<f32>, height: Option<f32>, aspect_ratio: Option<f32>| {
+        default_sized(
+            Some(ImageIntrinsicSize {
+                width,
+                height,
+                aspect_ratio,
+            }),
+            200.0,
+            100.0,
+        )
+    };
+    assert_eq!(size(Some(50.0), None, None), Some((50.0, 100.0)));
+    assert_eq!(size(None, Some(50.0), None), Some((200.0, 50.0)));
+    // The ratio is contained in the area.
+    assert_eq!(size(None, None, Some(1.0)), Some((100.0, 100.0)));
+    assert_eq!(size(None, None, Some(4.0)), Some((200.0, 50.0)));
+}

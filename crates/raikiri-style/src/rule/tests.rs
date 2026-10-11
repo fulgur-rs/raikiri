@@ -1453,3 +1453,14 @@ fn border_expansion_keeps_each_side_apart() {
         ]
     );
 }
+
+#[test]
+fn invalid_border_image_declarations_are_dropped() {
+    for source in [
+        "border-image-width: -1;",
+        "border-image: url(a.png) 1 / round;",
+        "border-image: 1px;",
+    ] {
+        assert!(parse_block(source).is_empty(), "{source}");
+    }
+}
