@@ -3034,7 +3034,8 @@ impl Document {
 /// (CSS Images 3 §4.3, §5.2). When the image is the whole `content` value it
 /// replaces the pseudo-element itself, so `style`'s absolute `width` and
 /// `height` size it as CSS 2.1 §10.3.2 and §10.6.2 size an inline replaced
-/// element.
+/// element, and its absolute `min-*` and `max-*` sizes constrain it as
+/// CSS 2.1 §10.4 and §10.7 constrain one.
 fn content_image_size(
     intrinsic: raikiri_traits::ImageIntrinsicSize,
     style: Option<&raikiri_style::ComputedValues>,
@@ -3054,34 +3055,113 @@ fn content_image_size(
     };
     let width = specified(style.map(|style| &style.width));
     let height = specified(style.map(|style| &style.height));
+    // A missing or non-absolute min is 0 and a missing max is none; a max
+    // below its min is raised to the min.
+    let min_width = specified(style.map(|style| &style.min_width)).unwrap_or(0.0);
+    let min_height = specified(style.map(|style| &style.min_height)).unwrap_or(0.0);
+    let max_width = specified(style.map(|style| &style.max_width))
+        .unwrap_or(f32::INFINITY)
+        .max(min_width);
+    let max_height = specified(style.map(|style| &style.max_height))
+        .unwrap_or(f32::INFINITY)
+        .max(min_height);
+    let clamp_width = |width: f32| width.min(max_width).max(min_width);
+    let clamp_height = |height: f32| height.min(max_height).max(min_height);
     let (width, height) = match (width, height) {
-        (Some(width), Some(height)) => (width, height),
-        (Some(width), None) => (
-            width,
-            ratio.map_or(natural_height.unwrap_or(DEFAULT.1), |ratio| width / ratio),
-        ),
-        (None, Some(height)) => (
-            ratio.map_or(natural_width.unwrap_or(DEFAULT.0), |ratio| height * ratio),
-            height,
-        ),
-        (None, None) => match (natural_width, natural_height, ratio) {
-            (Some(width), Some(height), _) => (width, height),
-            (Some(width), None, Some(ratio)) => (width, width / ratio),
-            (None, Some(height), Some(ratio)) => (height * ratio, height),
-            (Some(width), None, None) => (width, DEFAULT.1),
-            (None, Some(height), None) => (DEFAULT.0, height),
-            // A contain constraint of the ratio against the default size.
-            (None, None, Some(ratio)) => {
-                if DEFAULT.0 / DEFAULT.1 > ratio {
-                    (DEFAULT.1 * ratio, DEFAULT.1)
-                } else {
-                    (DEFAULT.0, DEFAULT.0 / ratio)
-                }
+        (Some(width), Some(height)) => (clamp_width(width), clamp_height(height)),
+        (Some(width), None) => {
+            let width = clamp_width(width);
+            (
+                width,
+                clamp_height(
+                    ratio.map_or(natural_height.unwrap_or(DEFAULT.1), |ratio| width / ratio),
+                ),
+            )
+        }
+        (None, Some(height)) => {
+            let height = clamp_height(height);
+            (
+                clamp_width(
+                    ratio.map_or(natural_width.unwrap_or(DEFAULT.0), |ratio| height * ratio),
+                ),
+                height,
+            )
+        }
+        (None, None) => {
+            let (width, height) = default_object_size(natural_width, natural_height, ratio);
+            if ratio.is_some() && width > 0.0 && height > 0.0 {
+                constrain_with_ratio(
+                    (width, height),
+                    (min_width, max_width),
+                    (min_height, max_height),
+                )
+            } else {
+                (clamp_width(width), clamp_height(height))
             }
-            (None, None, None) => DEFAULT,
-        },
+        }
     };
     raikiri_traits::ImageRasterSize { width, height }
+}
+
+/// The size of an image with neither `width` nor `height` from its natural
+/// dimensions and ratio against the 300x150 default object size (CSS Images 3
+/// §5.2).
+fn default_object_size(
+    natural_width: Option<f32>,
+    natural_height: Option<f32>,
+    ratio: Option<f32>,
+) -> (f32, f32) {
+    const DEFAULT: (f32, f32) = (300.0, 150.0);
+    match (natural_width, natural_height, ratio) {
+        (Some(width), Some(height), _) => (width, height),
+        (Some(width), None, Some(ratio)) => (width, width / ratio),
+        (None, Some(height), Some(ratio)) => (height * ratio, height),
+        (Some(width), None, None) => (width, DEFAULT.1),
+        (None, Some(height), None) => (DEFAULT.0, height),
+        // A contain constraint of the ratio against the default size.
+        (None, None, Some(ratio)) => {
+            if DEFAULT.0 / DEFAULT.1 > ratio {
+                (DEFAULT.1 * ratio, DEFAULT.1)
+            } else {
+                (DEFAULT.0, DEFAULT.0 / ratio)
+            }
+        }
+        (None, None, None) => DEFAULT,
+    }
+}
+
+/// The constraint table of CSS 2.1 §10.4 for a replaced element whose
+/// `width` and `height` are both `auto`: a tentative `size` with a ratio
+/// is brought within `width` and `height`'s `(min, max)` bounds, keeping
+/// the ratio wherever the bounds allow. Each max is at least its min.
+fn constrain_with_ratio(
+    (w, h): (f32, f32),
+    (min_w, max_w): (f32, f32),
+    (min_h, max_h): (f32, f32),
+) -> (f32, f32) {
+    match (w > max_w, w < min_w, h > max_h, h < min_h) {
+        (true, _, true, _) => {
+            if max_w / w <= max_h / h {
+                (max_w, min_h.max(max_w * h / w))
+            } else {
+                (min_w.max(max_h * w / h), max_h)
+            }
+        }
+        (_, true, _, true) => {
+            if min_w / w <= min_h / h {
+                (max_w.min(min_h * w / h), min_h)
+            } else {
+                (min_w, max_h.min(min_w * h / w))
+            }
+        }
+        (_, true, true, _) => (min_w, max_h),
+        (true, _, _, true) => (max_w, min_h),
+        (true, _, _, _) => (max_w, (max_w * h / w).max(min_h)),
+        (_, true, _, _) => (min_w, (min_w * h / w).min(max_h)),
+        (_, _, true, _) => ((max_h * w / h).max(min_w), max_h),
+        (_, _, _, true) => ((min_h * w / h).min(max_w), min_h),
+        _ => (w, h),
+    }
 }
 
 fn marker_image_size(

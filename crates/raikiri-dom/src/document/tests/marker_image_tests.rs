@@ -573,3 +573,173 @@ fn extracted_documents_keep_the_content_images_of_listed_elements() {
     let without = doc.extract_nodes(&[0, html, body]);
     assert!(without.content_images.is_empty());
 }
+
+#[test]
+fn replacing_content_images_obey_min_and_max_sizes() {
+    use raikiri_style::ComputedLengthPercentageOrAuto as Length;
+    let natural =
+        |width: Option<f32>, height: Option<f32>, ratio: Option<f32>| ImageIntrinsicSize {
+            width,
+            height,
+            aspect_ratio: ratio,
+        };
+    let wide = natural(Some(100.0), Some(50.0), None);
+    let px = Length::Px;
+    let auto = Length::Auto;
+    // (width, height, min-width, max-width, min-height, max-height)
+    for (intrinsic, [width, height, min_width, max_width, min_height, max_height], expected) in [
+        // Both dimensions auto: the CSS 2.1 §10.4 table keeps the ratio.
+        (wide, [auto, auto, auto, px(20.0), auto, auto], (20.0, 10.0)),
+        (
+            wide,
+            [auto, auto, auto, auto, px(100.0), auto],
+            (200.0, 100.0),
+        ),
+        (
+            wide,
+            [auto, auto, px(150.0), auto, auto, auto],
+            (150.0, 75.0),
+        ),
+        (wide, [auto, auto, auto, auto, auto, px(10.0)], (20.0, 10.0)),
+        (
+            wide,
+            [auto, auto, auto, px(20.0), px(40.0), auto],
+            (20.0, 40.0),
+        ),
+        (
+            wide,
+            [auto, auto, px(150.0), auto, auto, px(40.0)],
+            (150.0, 40.0),
+        ),
+        (
+            wide,
+            [auto, auto, auto, px(20.0), auto, px(5.0)],
+            (10.0, 5.0),
+        ),
+        (
+            wide,
+            [auto, auto, auto, px(40.0), auto, px(5.0)],
+            (10.0, 5.0),
+        ),
+        (
+            wide,
+            [auto, auto, auto, px(20.0), auto, px(30.0)],
+            (20.0, 10.0),
+        ),
+        (
+            wide,
+            [auto, auto, px(200.0), auto, px(200.0), auto],
+            (400.0, 200.0),
+        ),
+        (
+            wide,
+            [auto, auto, px(400.0), auto, px(150.0), auto],
+            (400.0, 200.0),
+        ),
+        (
+            wide,
+            [auto, auto, px(400.0), auto, px(150.0), px(160.0)],
+            (400.0, 160.0),
+        ),
+        (
+            wide,
+            [auto, auto, auto, auto, px(60.0), px(5.0)],
+            (120.0, 60.0),
+        ),
+        // A max below the min is raised to the min.
+        (
+            wide,
+            [auto, auto, px(30.0), px(10.0), auto, auto],
+            (30.0, 15.0),
+        ),
+        // Without a ratio each dimension is clamped on its own.
+        (
+            natural(Some(100.0), None, None),
+            [auto, auto, auto, auto, auto, px(50.0)],
+            (100.0, 50.0),
+        ),
+        // A used width clamps before the height follows the ratio.
+        (
+            wide,
+            [px(30.0), auto, auto, px(20.0), auto, auto],
+            (20.0, 10.0),
+        ),
+        (
+            wide,
+            [auto, px(30.0), auto, auto, px(40.0), auto],
+            (80.0, 40.0),
+        ),
+        (
+            wide,
+            [px(30.0), auto, auto, auto, auto, px(5.0)],
+            (30.0, 5.0),
+        ),
+        (
+            wide,
+            [px(30.0), px(30.0), px(40.0), auto, auto, px(20.0)],
+            (40.0, 20.0),
+        ),
+        // Percentages do not constrain the image.
+        (
+            wide,
+            [
+                auto,
+                auto,
+                Length::Percent(10.0),
+                Length::Percent(10.0),
+                auto,
+                auto,
+            ],
+            (100.0, 50.0),
+        ),
+    ] {
+        let mut style = raikiri_style::ComputedValues::initial();
+        style.width = width;
+        style.height = height;
+        style.min_width = min_width;
+        style.max_width = max_width;
+        style.min_height = min_height;
+        style.max_height = max_height;
+        let size = content_image_size(intrinsic, Some(&style));
+        assert_eq!(
+            (size.width, size.height),
+            expected,
+            "{width:?} {height:?} {min_width:?} {max_width:?} {min_height:?} {max_height:?}"
+        );
+    }
+}
+
+#[test]
+fn prepared_replacing_content_images_use_the_pseudo_elements_max_width() {
+    let (mut doc, cascade, p) = content_image_document(
+        "p::before{content:url(https://images.test/a.png);max-width:2px}\
+         p::after{content:'x' url(https://images.test/a.png);max-width:2px}",
+    );
+    doc.prepare_list_marker_images(
+        &cascade,
+        &VectorMarker {
+            intrinsic: ImageIntrinsicSize {
+                width: Some(4.0),
+                height: Some(2.0),
+                aspect_ratio: Some(2.0),
+            },
+        },
+        None,
+    );
+    use raikiri_style::PseudoElem;
+    assert_eq!(
+        doc.content_image_size(p, PseudoElem::Before, 0),
+        Some(ImageRasterSize {
+            width: 2.0,
+            height: 1.0
+        })
+    );
+    // An image among other content does not replace the pseudo-element.
+    assert_eq!(
+        doc.content_image_size(p, PseudoElem::After, 0),
+        Some(ImageRasterSize {
+            width: 4.0,
+            height: 2.0
+        })
+    );
+}
