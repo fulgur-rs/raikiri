@@ -135,10 +135,16 @@ pub(crate) fn prefetch_generated_content_images(
                 raikiri_style::PseudoElem::Before | raikiri_style::PseudoElem::After
             )
         })
-        .flat_map(|(_, computed)| computed.content.iter())
-        .filter_map(|component| match component {
-            raikiri_style::property::ContentComponent::Image { url } => Some(url),
-            _ => None,
+        .flat_map(|(_, computed)| {
+            // Layout places no more images per pseudo-element than this.
+            computed
+                .content
+                .iter()
+                .filter_map(|component| match component {
+                    raikiri_style::property::ContentComponent::Image { url } => Some(url),
+                    _ => None,
+                })
+                .take(raikiri_dom::generated_content::MAX_GENERATED_IMAGES)
         });
     for source in urls {
         if let Some(absolute) = Url::parse(source)

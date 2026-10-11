@@ -117,6 +117,22 @@ fn resolver_backed_png_render_prepares_inside_marker_images() {
             "<style>li::marker{content:'custom'}</style><li style='list-style:inside url(https://images.test/marker.png)'>body</li>",
             false,
         ),
+        (
+            "<style>p::before{content:url(https://images.test/marker.png)}</style><p>body</p>",
+            true,
+        ),
+        (
+            "<base href='https://images.test/'><style>p::after{content:'a' url(marker.png)}</style><p>body</p>",
+            true,
+        ),
+        (
+            "<style>p::before{content:url(marker.png)}</style><p>body</p>",
+            false,
+        ),
+        (
+            "<style>p::before{content:url(https://images.test/marker.png);float:left}</style><p>body</p>",
+            false,
+        ),
     ] {
         let marker = Marker(AtomicBool::new(false));
         html_to_png_with_resolver(html.as_bytes(), &marker, &marker).unwrap();
@@ -198,6 +214,7 @@ fn html_to_png_with_resolver_propagates_a_terminal_resolver_error() {
     for html in [
         r#"<html><body><img src="file:///nonexistent-fixture.png"></body></html>"#,
         r#"<li style="list-style:inside url(file:///nonexistent-fixture.png)">body</li>"#,
+        r#"<style>p::before{content:url(file:///nonexistent-fixture.png)}</style><p>body</p>"#,
     ] {
         let err = html_to_png_with_resolver(html.as_bytes(), &resolver, &resolver)
             .expect_err("a resolver Err must fail the render");

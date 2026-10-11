@@ -171,6 +171,37 @@ where
             .resolve(raikiri_traits::ResolverRequest::new(&url))
             .map_err(RenderError::Resolver)?;
     }
+    // `::before` and `::after` images are read from the same cache, so they
+    // are resolved first too, up to the number that layout can place.
+    for ((owner, pseudo), computed) in &cascade.pseudo {
+        if !matches!(
+            pseudo,
+            raikiri_style::PseudoElem::Before | raikiri_style::PseudoElem::After
+        ) || !usize::try_from(owner.0).is_ok_and(|element| {
+            raikiri_dom::generated_content::is_in_flow_generated_text(&cascade, element, *pseudo)
+        }) {
+            continue;
+        }
+        let urls = computed
+            .content
+            .iter()
+            .filter_map(|component| match component {
+                raikiri_style::property::ContentComponent::Image { url } => Some(url),
+                _ => None,
+            })
+            .take(raikiri_dom::generated_content::MAX_GENERATED_IMAGES);
+        for raw in urls {
+            let Some(url) = url::Url::parse(raw)
+                .ok()
+                .or_else(|| base_url.as_ref().and_then(|base| base.join(raw).ok()))
+            else {
+                continue;
+            };
+            resolver
+                .resolve(raikiri_traits::ResolverRequest::new(&url))
+                .map_err(RenderError::Resolver)?;
+        }
+    }
     uncascaded
         .dom
         .prepare_list_marker_images(&cascade, pixel_source, base_url.as_ref());

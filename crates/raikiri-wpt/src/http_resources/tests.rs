@@ -156,3 +156,32 @@ fn generated_content_images_are_prefetched_against_the_base_url() {
         ]
     );
 }
+
+#[test]
+fn generated_content_prefetch_stops_at_the_layout_image_limit() {
+    struct Counting(std::cell::Cell<usize>);
+    impl raikiri_traits::ReplacedResolver for Counting {
+        fn resolve(
+            &self,
+            _: ResolverRequest<'_>,
+        ) -> Result<raikiri_traits::ResolvedIntrinsic, raikiri_traits::ResolverError> {
+            self.0.set(self.0.get() + 1);
+            Err(raikiri_traits::ResolverError::Decode("not an image".into()))
+        }
+    }
+    let limit = raikiri_dom::generated_content::MAX_GENERATED_IMAGES;
+    let content: String = (0..limit + 8)
+        .map(|index| format!(" url(i{index}.png)"))
+        .collect();
+    let mut doc = raikiri_dom::Document::new();
+    let style = doc.append_element(Some(0), "style", Default::default(), None::<&str>);
+    doc.append_text(style, &format!("div::before{{content:{content}}}"));
+    doc.append_element(Some(0), "div", Default::default(), None::<&str>);
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let mut cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    let resolver = Counting(Default::default());
+    let base = Url::parse("http://web-platform.test/css/test.html").unwrap();
+    prepare_cascade_images(&mut cascade, &base, &resolver);
+    assert_eq!(resolver.0.get(), limit);
+}
