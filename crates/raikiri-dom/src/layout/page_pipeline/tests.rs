@@ -3231,6 +3231,7 @@ fn the_wrap_mode_of_the_line_text_decides_whether_it_moves_below_a_float() {
             "float:left;width:30px;height:20px",
             root_css,
             span_css,
+            "",
         );
         lay_out(&mut doc, &cascade);
         let lines = &stored_lines(&doc, root).lines;
@@ -3239,6 +3240,34 @@ fn the_wrap_mode_of_the_line_text_decides_whether_it_moves_below_a_float() {
             (line_start_x(&lines[0]), lines[0].block_offset()),
             (Some(expected.0), expected.1),
             "root {root_css:?} / span {span_css:?}"
+        );
+    }
+}
+
+#[test]
+fn the_wrap_mode_of_generated_text_decides_whether_its_line_moves_below_a_float() {
+    // (root css, `::before` css, line moves below the float). The line holds
+    // only the span's generated text, so the pseudo-element's `white-space`
+    // decides, not the root's.
+    for (root_css, before_css, moves) in [
+        ("", "white-space:nowrap", false),
+        ("white-space:nowrap", "white-space:normal", true),
+    ] {
+        let sheet = format!(r#"span::before {{ content: "aaaaaaaa"; {before_css} }}"#);
+        let (mut doc, cascade, root) = ahem_span_beside_float(
+            "",
+            "float:left;width:30px;height:20px",
+            root_css,
+            "",
+            &sheet,
+        );
+        lay_out(&mut doc, &cascade);
+        let lines = &stored_lines(&doc, root).lines;
+        let expected = if moves { (0.0, 20.0) } else { (30.0, 0.0) };
+        assert_eq!(
+            (line_start_x(&lines[0]), lines[0].block_offset()),
+            (Some(expected.0), expected.1),
+            "root {root_css:?} / ::before {before_css:?}"
         );
     }
 }

@@ -174,15 +174,24 @@ pub(crate) fn ahem_paragraph_beside_floats(
     (doc, cascade, floats, root)
 }
 
-/// [`ahem_paragraph_beside_float`] with the text inside a `span` styled by
-/// `span_css`. Returns `(doc, cascade, root)`.
+/// `ahem_paragraph_beside_float` with the text inside a `span` styled by
+/// `span_css`, and the author style sheet `sheet`. Returns
+/// `(doc, cascade, root)`.
 pub(crate) fn ahem_span_beside_float(
     text: &str,
     float_css: &str,
     root_css: &str,
     span_css: &str,
+    sheet: &str,
 ) -> (Document, CascadeResult, usize) {
     let (mut doc, _, _, root) = ahem_paragraph_beside_floats("", &[float_css], root_css);
+    let style_element = doc.append_element(
+        Some(root),
+        "style",
+        taffy::Style::default(),
+        Some("display:none"),
+    );
+    doc.append_text(style_element, sheet);
     let span = doc.append_element(
         Some(root),
         "span",

@@ -71,10 +71,11 @@ pub(crate) struct ProjectedIfc {
     /// The root's lines end in an ellipsis where they overflow it.
     pub(crate) ellipsis: bool,
     /// The root's text does not wrap (`text-wrap-mode: nowrap`). It decides
-    /// for lines without DOM text, such as lines of generated content only.
+    /// for lines without recorded text, such as an image marker alone.
     pub(crate) nowrap: bool,
-    /// Whether each DOM text node of the paragraph, by node id, does not
-    /// wrap (`text-wrap-mode: nowrap`). A line made only of such text stays
+    /// Whether each text source of the paragraph (a DOM text node or a
+    /// generated pseudo-element), by node id, does not wrap
+    /// (`text-wrap-mode: nowrap`). A line made only of such text stays
     /// beside floats even when it overflows the space there.
     pub(crate) text_nowrap: Arc<HashMap<u64, bool>>,
     pub(crate) letter_styles: Vec<LetterStyle>,
@@ -254,6 +255,7 @@ fn push_generated(
     fonts: &FontCollection,
     counters: &GeneratedCounters,
     first_letter: &mut FirstLetter,
+    text_nowrap: &mut HashMap<u64, bool>,
 ) -> Result<(), IfcError> {
     if !is_in_flow_generated_text(cascade, element, pseudo) {
         return Ok(());
@@ -303,6 +305,7 @@ fn push_generated(
     } else {
         cv
     };
+    text_nowrap.insert(id.0, cv.effective_text_wrap_mode == TextWrapMode::Nowrap);
     let mut inline_style = styled(doc, cascade, cv, element, fonts)?;
     let marker_body_style = if pseudo == PseudoElem::Marker
         && inline_style.text_wrap_mode == shodo::style::TextWrapMode::NoWrap
@@ -470,10 +473,11 @@ pub(crate) struct ProjectedBuilder {
     /// The root's lines end in an ellipsis where they overflow it.
     pub(crate) ellipsis: bool,
     /// The root's text does not wrap (`text-wrap-mode: nowrap`). It decides
-    /// for lines without DOM text, such as lines of generated content only.
+    /// for lines without recorded text, such as an image marker alone.
     pub(crate) nowrap: bool,
-    /// Whether each DOM text node of the paragraph, by node id, does not
-    /// wrap (`text-wrap-mode: nowrap`). A line made only of such text stays
+    /// Whether each text source of the paragraph (a DOM text node or a
+    /// generated pseudo-element), by node id, does not wrap
+    /// (`text-wrap-mode: nowrap`). A line made only of such text stays
     /// beside floats even when it overflows the space there.
     pub(crate) text_nowrap: Arc<HashMap<u64, bool>>,
     pub(crate) letter_styles: Vec<LetterStyle>,
@@ -759,6 +763,7 @@ fn project_children_builder(
             fonts,
             counters,
             &mut first_letter,
+            &mut text_nowrap,
         )?;
         None
     };
@@ -772,6 +777,7 @@ fn project_children_builder(
             fonts,
             counters,
             &mut first_letter,
+            &mut text_nowrap,
         )?;
     }
 
@@ -808,6 +814,7 @@ fn project_children_builder(
                     fonts,
                     counters,
                     &mut first_letter,
+                    &mut text_nowrap,
                 )?;
                 continue;
             }
@@ -821,6 +828,7 @@ fn project_children_builder(
                     fonts,
                     counters,
                     &mut first_letter,
+                    &mut text_nowrap,
                 )?;
                 continue;
             }
@@ -921,6 +929,7 @@ fn project_children_builder(
                         fonts,
                         counters,
                         &mut first_letter,
+                        &mut text_nowrap,
                     )?;
                     stack.push(Step::After(id));
                     stack.extend(node.children.iter().rev().map(|&child| Step::Enter(child)));
@@ -1026,6 +1035,7 @@ fn project_children_builder(
                         fonts,
                         counters,
                         &mut first_letter,
+                        &mut text_nowrap,
                     )?;
                     if tag == "wbr" {
                         builder.push_text(
@@ -1061,6 +1071,7 @@ fn project_children_builder(
             fonts,
             counters,
             &mut first_letter,
+            &mut text_nowrap,
         )?;
     }
     Ok(ProjectedBuilder {

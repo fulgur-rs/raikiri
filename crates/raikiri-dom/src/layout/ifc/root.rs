@@ -53,7 +53,8 @@ pub(crate) struct IfcRoot {
     pub(crate) ellipsis: bool,
     /// The root's text does not wrap (`text-wrap-mode: nowrap`).
     pub(crate) nowrap: bool,
-    /// Whether each DOM text node of the paragraph does not wrap, by node id.
+    /// Whether each text source of the paragraph (a DOM text node or a
+    /// generated pseudo-element) does not wrap, by node id.
     pub(crate) text_nowrap: Arc<HashMap<u64, bool>>,
     pub(crate) letter_styles: Vec<super::first_letter::LetterStyle>,
     letter_style_index: Arc<LetterStyleIndex>,
@@ -167,8 +168,8 @@ impl IfcRoot {
         self.lines.as_ref().and_then(super::flow::last_baseline)
     }
 
-    /// Whether `line` cannot wrap: its DOM text is all `text-wrap-mode:
-    /// nowrap`, or it has no DOM text and the root does not wrap.
+    /// Whether `line` cannot wrap: its text is all `text-wrap-mode: nowrap`,
+    /// or it has no recorded text and the root does not wrap.
     pub(crate) fn line_is_nowrap(&self, line: &shodo::Line) -> bool {
         let mut any_text = false;
         for fragment in line.fragments() {
