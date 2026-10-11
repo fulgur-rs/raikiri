@@ -394,3 +394,227 @@ fn marker_of_a_principal_box_wholly_above_the_page_is_not_projected() {
             .any(|run| run.is_standalone_marker())
     );
 }
+
+#[test]
+fn outside_markers_share_the_baseline_of_the_first_line() {
+    // CSS Lists 3 §3.1: an outside marker is aligned with the first line
+    // box of its item. The item's 20px line height adds half-leading above
+    // the text, so the marker moves down with it.
+    for extra in [
+        "",
+        "li{line-height:normal}",
+        "li{line-height:3}",
+        "li::marker{font-size:30px}",
+        "li{padding-top:7px}",
+    ] {
+        let document = lay_out("<ol><li>A</li><li>B</li></ol>", extra);
+        let page = document.page(0).unwrap();
+        let runs = page.text_runs();
+        let baseline = |text: &str| {
+            runs.iter()
+                .find(|run| run.text.trim_end() == text)
+                .unwrap_or_else(|| panic!("{text} with {extra:?}"))
+                .origin
+                .1
+        };
+        assert_eq!(baseline("1."), baseline("A"), "{extra:?}");
+        assert_eq!(baseline("2."), baseline("B"), "{extra:?}");
+    }
+}
+
+#[test]
+fn an_outside_marker_follows_a_taller_first_line() {
+    // A larger inline child sets the first line's baseline.
+    let document = lay_out(
+        "<ol><li>A<span style=\"font-size:40px\">C</span></li></ol>",
+        "",
+    );
+    let page = document.page(0).unwrap();
+    let runs = page.text_runs();
+    let baseline = |text: &str| {
+        runs.iter()
+            .find(|run| run.text.trim_end() == text)
+            .unwrap_or_else(|| panic!("{text}"))
+            .origin
+            .1
+    };
+    assert_eq!(baseline("1."), baseline("A"));
+}
+
+#[test]
+fn a_marker_stays_on_its_first_page_when_the_first_line_moves_on() {
+    // The item's top padding pushes its first line onto the second page.
+    // The marker still belongs to the first page and stays inside it.
+    let document = lay_out("<ol><li style=\"padding-top:95px\">A</li></ol>", "");
+    let page = document.page(0).unwrap();
+    let marker = page
+        .text_runs()
+        .into_iter()
+        .find(|run| run.text.trim_end() == "1.")
+        .expect("the marker on the first page");
+    assert!(marker.origin.1 <= 100.0, "{:?}", marker.origin);
+}
+
+#[test]
+fn an_outside_marker_follows_the_first_line_of_a_block_child() {
+    // The item's first line belongs to its block child, with the child's
+    // font and box offsets.
+    let document = lay_out(
+        "<ol><li><div style=\"font-size:40px; padding-top:7px\">C</div>A</li></ol>",
+        "",
+    );
+    let page = document.page(0).unwrap();
+    let runs = page.text_runs();
+    let baseline = |text: &str| {
+        runs.iter()
+            .find(|run| run.text.trim_end() == text)
+            .unwrap_or_else(|| panic!("{text}"))
+            .origin
+            .1
+    };
+    assert_eq!(baseline("1."), baseline("C"));
+}
+
+/// The baseline of the first run on page `index` whose text is `text`.
+fn run_baseline(document: &DocumentLayout, index: u32, text: &str) -> f32 {
+    document
+        .page(index)
+        .unwrap()
+        .text_runs()
+        .iter()
+        .find(|run| run.text.trim_end() == text)
+        .unwrap_or_else(|| panic!("{text}"))
+        .origin
+        .1
+}
+
+#[test]
+fn an_empty_first_block_child_gives_the_item_no_first_line() {
+    // CSS Pseudo 4 §2.1.1: the first formatted line comes from the first
+    // in-flow block child only, so the later block does not supply it.
+    let document = lay_out(
+        "<ol><li><div></div><div style=\"padding-top:20px\">C</div></li></ol>",
+        "",
+    );
+    assert!(run_baseline(&document, 0, "1.") < run_baseline(&document, 0, "C"));
+}
+
+#[test]
+fn a_flex_first_child_leaves_the_marker_at_the_fallback() {
+    // Tree order does not find a flex container's first line, so the marker
+    // does not follow the item that comes first in the source.
+    let document = lay_out(
+        "<ol><li><div style=\"display:flex\">\
+         <span style=\"order:2;padding-top:20px\">A</span><span style=\"order:1\">B</span>\
+         </div></li></ol>",
+        "",
+    );
+    assert!(run_baseline(&document, 0, "1.") < run_baseline(&document, 0, "A"));
+}
+
+#[test]
+fn an_outside_marker_follows_the_first_row_of_a_table_child() {
+    // The table's first row supplies the item's first line, so padding in
+    // that row moves the marker down with it.
+    let marker = |padding: u32| {
+        let document = lay_out(
+            &format!(
+                "<ol><li><table style=\"border-spacing:0\"><tr>\
+                 <td style=\"padding:0;padding-top:{padding}px\">T</td></tr></table></li></ol>"
+            ),
+            "",
+        );
+        run_baseline(&document, 0, "1.")
+    };
+    assert_eq!(marker(9) - marker(0), 9.0);
+}
+
+#[test]
+fn floated_and_positioned_children_do_not_supply_the_first_line() {
+    let document = lay_out(
+        "<ol><li><div style=\"float:left;padding-top:30px\">F</div>\
+         <div style=\"position:absolute;top:60px\">P</div>\
+         <div style=\"padding-top:7px\">C</div></li></ol>",
+        "",
+    );
+    assert_eq!(
+        run_baseline(&document, 0, "1."),
+        run_baseline(&document, 0, "C")
+    );
+}
+
+#[test]
+fn a_marker_beside_a_line_crossing_the_page_edge_stays_on_its_baseline() {
+    // The line starts on this page, so the marker keeps its baseline even
+    // though the line box reaches past the page edge.
+    let document = lay_out(
+        "<div style=\"height:25px\"></div>\
+         <ol><li style=\"font:80px/80px Ahem\">A</li></ol>",
+        "li::marker{font-size:70px}",
+    );
+    assert_eq!(
+        run_baseline(&document, 0, "1."),
+        run_baseline(&document, 0, "A")
+    );
+}
+
+#[test]
+fn a_marker_stays_on_its_page_when_the_middle_of_its_line_moves_on() {
+    // The first line's middle falls past the page edge, so the line goes to
+    // the next page even though the marker's top is still on this one.
+    let document = lay_out("<ol><li style=\"padding-top:92px\">A</li></ol>", "");
+    assert!(run_baseline(&document, 0, "1.") <= 100.0);
+    assert!(
+        document
+            .page(0)
+            .unwrap()
+            .text_runs()
+            .iter()
+            .all(|run| run.text.trim_end() != "A")
+    );
+}
+
+#[test]
+fn empty_inline_and_contents_children_do_not_hide_the_first_block_child() {
+    // An empty inline generates no line, and a contents element's children
+    // count as the item's, so the block after them holds the first line.
+    for body in [
+        "<ol><li><span></span><div style=\"padding-top:20px\">C</div></li></ol>",
+        "<ol><li><div style=\"display:contents\"><div style=\"padding-top:20px\">C</div></div></li></ol>",
+        "<ol><li><div style=\"display:contents\"></div><div style=\"padding-top:20px\">C</div></li></ol>",
+    ] {
+        let document = lay_out(body, "");
+        assert_eq!(
+            run_baseline(&document, 0, "1."),
+            run_baseline(&document, 0, "C"),
+            "{body}"
+        );
+    }
+}
+
+#[test]
+fn a_relative_offset_on_the_first_line_box_does_not_move_the_marker() {
+    // Relative positioning moves the child's line, not the item's marker.
+    let moved = lay_out(
+        "<ol><li><div style=\"position:relative;top:20px\">C</div></li></ol>",
+        "",
+    );
+    let still = lay_out("<ol><li><div>C</div></li></ol>", "");
+    assert_eq!(run_baseline(&moved, 0, "1."), run_baseline(&still, 0, "1."));
+    assert_eq!(
+        run_baseline(&moved, 0, "C"),
+        run_baseline(&still, 0, "C") + 20.0
+    );
+}
+
+#[test]
+fn a_sticky_offset_on_the_first_line_box_does_not_move_the_marker() {
+    // Layout applies a sticky box's inset like a relative offset, which
+    // moves the box but not the item's marker.
+    let moved = lay_out(
+        "<ol><li><div style=\"position:sticky;top:20px\">C</div></li></ol>",
+        "",
+    );
+    let still = lay_out("<ol><li><div>C</div></li></ol>", "");
+    assert_eq!(run_baseline(&moved, 0, "1."), run_baseline(&still, 0, "1."));
+}

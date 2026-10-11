@@ -23,9 +23,15 @@ use std::sync::Arc;
 pub(super) struct MarkerText {
     shaped: Arc<crate::StandaloneText>,
     offset_x: f32,
+    /// Moves the marker's line down to the half-leading of the item's
+    /// line height, so its baseline meets the item's first line.
+    offset_y: f32,
     color: CssColor,
     shadows: Vec<TextShadow>,
     first_page: Option<u32>,
+    /// The middle of the item's first line from its border edge, when the
+    /// marker is aligned with one.
+    line_center: Option<f32>,
 }
 
 impl MarkerText {
@@ -103,14 +109,38 @@ pub(super) fn prepare_markers(
         if let Some((shaped, offset_x)) =
             document.shape_list_marker_text(&content, style, owner, layout.padding.left)
         {
+            // CSS Lists 3 §3.1: an outside marker sits on the baseline of
+            // its item's first line. When the item lays out its own first
+            // line, the two baselines are matched directly, which covers a
+            // marker or a first line with other font metrics.
+            let marker_baseline = shaped.lines().first().map(|line| {
+                line.block_offset() + line.baseline(shodo::geometry::BaselineKind::Alphabetic)
+            });
+            let item_line = first_line(document, cascade, owner);
+            let offset_y = match (item_line.map(|line| line.baseline), marker_baseline) {
+                (Some(item), Some(marker)) if (item - marker).is_finite() => item - marker,
+                // Otherwise the marker is shaped with `line-height: normal`.
+                // An item with another line height centres its first line's
+                // content area in that height (CSS Inline 3 §5.1
+                // half-leading), so the marker's line moves by half the
+                // difference.
+                _ => match style.line_height {
+                    raikiri_style::ComputedLineHeight::Normal => 0.0,
+                    _ => shaped.lines().first().map_or(0.0, |line| {
+                        (crate::layout::multicol::line_height_px(style) - line.block_size()) / 2.0
+                    }),
+                },
+            };
             markers.insert(
                 owner,
                 MarkerText {
                     shaped: Arc::new(shaped),
                     offset_x,
+                    offset_y,
                     color: style.color,
                     shadows: text_shadows(style),
                     first_page: first_pages.get(&owner).copied(),
+                    line_center: item_line.map(|line| line.center),
                 },
             );
         }
@@ -505,6 +535,22 @@ fn paint_relative_offset(cv: &ComputedValues) -> (f32, f32) {
     (dx.unwrap_or(0.0), dy.unwrap_or(0.0))
 }
 
+/// The block offset that layout applies to a box in normal flow for its
+/// `position: relative` or `position: sticky` insets, which layout treats
+/// alike.
+fn layout_relative_offset_y(cv: &ComputedValues) -> f32 {
+    if cv.position != PositionValue::Sticky {
+        return paint_relative_offset(cv).1;
+    }
+    let length = |inset| match inset {
+        ComputedLengthPercentageOrAuto::Px(px) => Some(px),
+        _ => None,
+    };
+    length(cv.top)
+        .or(length(cv.bottom).map(|bottom| -bottom))
+        .unwrap_or(0.0)
+}
+
 /// How the built-in painter moves one element and its subtree from their
 /// layout location.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -882,6 +928,118 @@ pub(super) fn omission(
     placement(document, cascade, context, root).err()
 }
 
+/// `owner`'s first formatted line, from its border edge, where pagination
+/// draws it.
+#[derive(Clone, Copy, Debug)]
+struct FirstLine {
+    baseline: f32,
+    /// The middle of the line box, which decides its page. A table row has
+    /// no line box of its own, so its baseline stands in.
+    center: f32,
+}
+
+/// Finds `owner`'s first formatted line.
+///
+/// The first line may belong to the first in-flow block child, and so on
+/// down (CSS Pseudo 4 §2.1.1); if that child has no line, neither has the
+/// item. Floats, absolutely positioned boxes and the marker itself are
+/// passed over, and a relative offset moves only the box it applies to. A flex or grid container orders its items itself, so tree
+/// order does not find its first line, and it is left to the fallback.
+fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Option<FirstLine> {
+    let in_flow = |id: usize| {
+        document.nodes.get(id).is_some_and(|node| {
+            node.is_in_document()
+                && node.kind() != NodeKind::Text
+                && node.style.display != taffy::Display::None
+                && node.style.position != taffy::Position::Absolute
+                && node.style.float == taffy::Float::None
+                && !generated_origin(id).is_some_and(|(_, pseudo)| pseudo == PseudoElem::Marker)
+        })
+    };
+    let (mut id, mut y) = (owner, 0.0);
+    loop {
+        let node = document.nodes.get(id)?;
+        if matches!(
+            node.display,
+            raikiri_style::property::DisplayValue::Table
+                | raikiri_style::property::DisplayValue::InlineTable
+        ) && !node.is_ifc_root()
+        {
+            return node.table_first_baseline.map(|baseline| FirstLine {
+                baseline: y + baseline,
+                center: y + baseline,
+            });
+        }
+        if matches!(
+            node.style.display,
+            taffy::Display::Flex | taffy::Display::Grid
+        ) {
+            return None;
+        }
+        let child = match node.ifc.as_ref().and_then(|root| root.lines.as_ref()) {
+            Some(lines) if !lines.lines.is_empty() => {
+                // A block placed before line zero holds the first line.
+                let before = lines
+                    .block_line_starts
+                    .iter()
+                    .find(|&&(child, line)| line == 0 && in_flow(child));
+                match before {
+                    Some(&(child, _)) => child,
+                    None => {
+                        // The lines start inside the border and padding,
+                        // moved down by any pagination shift.
+                        let layout = node.unrounded_layout;
+                        let top = y + layout.border.top + layout.padding.top + lines.shift_of(0);
+                        return lines.lines.first().map(|line| FirstLine {
+                            baseline: top
+                                + line.block_offset()
+                                + line.baseline(shodo::geometry::BaselineKind::Alphabetic),
+                            center: top + line.block_offset() + line.block_size() / 2.0,
+                        });
+                    }
+                }
+            }
+            _ => first_block_child(document, id, &in_flow)?,
+        };
+        // A relative offset moves the child, not the item's marker, so the
+        // offset that layout already applied is taken back out.
+        let relative = if document.nodes[child].needs_relative_block_paint_offset() {
+            0.0
+        } else {
+            layout_relative_offset_y(&cascade.computed[child])
+        };
+        y += document.nodes[child].unrounded_layout.location.y - relative;
+        id = child;
+    }
+}
+
+/// The first in-flow block-level child of `id`, which has no line of its
+/// own. Inline-level children generated no line there, so they are passed
+/// over, and the children of a `display: contents` element count as its
+/// parent's.
+fn first_block_child(
+    document: &Document,
+    id: usize,
+    in_flow: &impl Fn(usize) -> bool,
+) -> Option<usize> {
+    document.nodes.get(id)?.children.iter().find_map(|&child| {
+        if !in_flow(child) {
+            return None;
+        }
+        match document.nodes[child].display {
+            raikiri_style::property::DisplayValue::Contents => {
+                first_block_child(document, child, in_flow)
+            }
+            raikiri_style::property::DisplayValue::Inline
+            | raikiri_style::property::DisplayValue::InlineBlock
+            | raikiri_style::property::DisplayValue::InlineFlex
+            | raikiri_style::property::DisplayValue::InlineGrid
+            | raikiri_style::property::DisplayValue::InlineTable => None,
+            _ => Some(child),
+        }
+    })
+}
+
 fn marker_runs<'a>(
     document: &'a Document,
     page: &PageFragment,
@@ -899,12 +1057,33 @@ fn marker_runs<'a>(
         return;
     }
     let x = page.content_box.x + root.x + shift.0 + marker.offset_x;
-    let y = page.content_box.y + root.y + shift.1
+    let top = page.content_box.y + root.y + shift.1
         - if root.is_repeat {
             0.0
         } else {
             page.content_origin_y
         };
+    // The marker is drawn only on its item's first page. When the line it
+    // aligns with starts on a later page, keep the marker at the bottom of
+    // this one rather than past its edge.
+    let height = marker
+        .shaped
+        .lines()
+        .first()
+        .map_or(0.0, |line| line.block_size());
+    let page_bottom = page.content_box.y + page.content_box.height;
+    let aligned = top + marker.offset_y;
+    // The aligned line's page is decided by its middle, as it is for the
+    // line itself; without one, by the marker's top.
+    let next_page = match marker.line_center {
+        Some(center) => top + center >= page_bottom - 0.001,
+        None => aligned >= page_bottom,
+    };
+    let y = if next_page {
+        (page_bottom - height).max(top)
+    } else {
+        aligned
+    };
     standalone_runs(
         &marker.shaped,
         (x, y),
