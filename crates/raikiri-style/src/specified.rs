@@ -1144,7 +1144,7 @@ impl SpecifiedValues {
             font_family: parent.font_family.clone(),
             // Losslessly lift a computed `<length>` to specified `Px`, a fixed point.
             font_size: lift_font_size(parent.font_size),
-            font_size_keyword: parent.font_size_keyword,
+            font_size_keyword: parent.inherited_font_size_keyword(),
             font_size_keyword_declared: false,
             // D5: `bolder` and `lighter` resolve against this value.
             font_weight: parent.font_weight,
@@ -1983,6 +1983,7 @@ impl SpecifiedValues {
             font_family: self.font_family,
             font_size,
             font_size_keyword: self.font_size_keyword,
+            font_size_keyword_basis: font_size,
             font_weight: self.font_weight,
             line_height,
             display: running_display(&mut running_templates, display),

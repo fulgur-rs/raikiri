@@ -492,7 +492,15 @@ pub struct ComputedValues {
     /// Whether [`Self::font_size`] derives from an `<absolute-size>` keyword,
     /// and with which factor. Inherited together with `font_size`; initial:
     /// `Some(FontSizeKeywordInfo::MEDIUM)`. See [`FontSizeKeywordInfo`].
+    ///
+    /// Children inherit this information only while [`Self::font_size`] still
+    /// holds the size computed together with it: a caller that overwrites
+    /// `font_size` with an explicit length makes children treat it as such,
+    /// without having to clear this field as well.
     pub font_size_keyword: Option<FontSizeKeywordInfo>,
+    /// The [`Self::font_size`] that was computed together with
+    /// [`Self::font_size_keyword`]. See [`Self::inherited_font_size_keyword`].
+    pub(crate) font_size_keyword_basis: ComputedLength,
     /// `font-weight`. Inherited; initial: 400.0 (normal).
     ///
     /// **Always a resolved absolute weight** in `[1, 1000]`. The specified-value
@@ -1978,6 +1986,15 @@ impl ComputedValues {
             .map(|value| value.to_string())
     }
 
+    /// The keyword information children inherit: [`Self::font_size_keyword`]
+    /// while [`Self::font_size`] is still the size computed together with it,
+    /// and `None` once a caller has overwritten `font_size`, since the
+    /// information no longer describes it.
+    pub(crate) fn inherited_font_size_keyword(&self) -> Option<FontSizeKeywordInfo> {
+        self.font_size_keyword
+            .filter(|_| self.font_size == self.font_size_keyword_basis)
+    }
+
     /// Initial values according to the CSS spec. Used for a root node with no
     /// matching cascade declarations and to terminate the inheritance chain.
     pub fn initial() -> Self {
@@ -1991,6 +2008,7 @@ impl ComputedValues {
             font_family: initial_font_family(),
             font_size: ComputedLength(INITIAL_FONT_SIZE_PX),
             font_size_keyword: Some(FontSizeKeywordInfo::MEDIUM),
+            font_size_keyword_basis: ComputedLength(INITIAL_FONT_SIZE_PX),
             font_weight: 400.0,
             // CSS Inline 3 §5.1: initial line-height is `normal`; paint resolves
             // it using font metrics equivalent to ascent + descent.

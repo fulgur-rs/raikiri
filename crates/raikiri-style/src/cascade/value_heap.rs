@@ -40,6 +40,7 @@ pub(crate) fn own_heap_bytes(values: &ComputedValues, parent: &ComputedValues) -
         font_family,
         font_size: _,
         font_size_keyword: _,
+        font_size_keyword_basis: _,
         font_weight: _,
         line_height: _,
         display: _,

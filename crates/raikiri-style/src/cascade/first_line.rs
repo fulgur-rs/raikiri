@@ -298,6 +298,7 @@ pub(super) fn first_line_parent(normal: &ComputedValues, first: &ComputedValues)
     parent.font_palette = first.font_palette.clone();
     parent.font_size = first.font_size;
     parent.font_size_keyword = first.font_size_keyword;
+    parent.font_size_keyword_basis = first.font_size_keyword_basis;
     parent.font_style = first.font_style;
     parent.font_synthesis = first.font_synthesis;
     parent.font_variant_caps = first.font_variant_caps;

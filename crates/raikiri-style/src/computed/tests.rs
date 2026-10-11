@@ -252,6 +252,7 @@ fn non_initial_parent() -> ComputedValues {
         font_family: Arc::new(vec![crate::property::FontFamilyName::generic("sans-serif")]),
         font_size: ComputedLength(24.0),
         font_size_keyword: None,
+        font_size_keyword_basis: ComputedLength(24.0),
         font_weight: 700.0,
         line_height: ComputedLineHeight::Length(ComputedLength(30.0)),
         display: DisplayValue::Block,
