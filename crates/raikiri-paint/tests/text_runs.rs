@@ -637,6 +637,12 @@ fn transformed_text_matches_paint() {
             "<ul style=\"transform: rotate(5deg)\"><li>item</li></ul>",
             "",
         ),
+        // A repeated table header turns about its own copy on each page.
+        (
+            "<table><thead><tr><th style=\"transform: rotate(10deg)\">head</th></tr></thead>\
+             <tbody><tr><td style=\"height: 1500px\">body</td></tr></tbody></table>",
+            "",
+        ),
         (
             "<p>a <span style=\"display: inline-block; transform: rotate(45deg)\">box</span> b</p>",
             "",

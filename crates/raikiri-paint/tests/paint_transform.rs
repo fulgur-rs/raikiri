@@ -192,6 +192,9 @@ fn transformed_boxes_match_paint() {
         "<table><tr><td class=\"b\" style=\"position: relative; left: 6px; top: 2px\">cell</td></tr></table>",
         // A box broken across pages turns about its box on each page.
         "<div class=\"b\" style=\"height: 300px; transform: rotate(2deg)\"></div>",
+        // A table header turns about its own copy on each page.
+        "<table><thead><tr><th class=\"b\" style=\"transform: rotate(10deg)\">head</th></tr></thead>\
+         <tbody><tr><td style=\"height: 250px\">body</td></tr></tbody></table>",
     ] {
         assert!(assert_matches_paint(body, "") > 0, "{body}");
     }

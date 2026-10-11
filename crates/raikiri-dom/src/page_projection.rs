@@ -43,7 +43,7 @@ pub(crate) struct PageProjection {
     /// Geometry shared by column placements, independently of the page count.
     placement_overflow_clips: Vec<PlacementOverflowClipSource>,
     /// Layout boxes of the elements whose transforms do more than translate.
-    transform_boxes: std::collections::HashMap<usize, paint_transform::TransformBox>,
+    transform_boxes: paint_transform::TransformBoxes,
 }
 
 impl PageProjection {

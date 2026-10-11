@@ -15,31 +15,53 @@ use raikiri_traits::PaintTransform;
 use std::collections::HashMap;
 
 /// Where the border box of an element with a transform that does more than
-/// translate is laid out, in shared flow coordinates without page cuts.
+/// translate is laid out.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct TransformBox {
     x: f32,
     y: f32,
-    /// The box repeats at the same place on every page.
+    /// `y` is relative to the page's content box rather than in shared flow
+    /// coordinates without page cuts.
     repeat: bool,
 }
 
+/// The layout boxes of the elements whose transforms do more than translate.
+#[derive(Debug, Default, Clone)]
+pub(super) struct TransformBoxes {
+    /// Boxes in the flow, from their placement on any page.
+    flow: HashMap<usize, TransformBox>,
+    /// Repeated boxes, such as table headers, which may sit at a different
+    /// place on each page, by page index.
+    repeats: HashMap<(u32, usize), TransformBox>,
+}
+
+impl TransformBoxes {
+    pub(super) fn clear(&mut self) {
+        self.flow.clear();
+        self.repeats.clear();
+    }
+
+    fn get(&self, page: &PageFragment, id: usize) -> Option<&TransformBox> {
+        self.repeats
+            .get(&(page.page_index, id))
+            .or_else(|| self.flow.get(&id))
+    }
+}
+
 /// The layout boxes of the elements whose transforms do more than translate,
-/// from their placements on any page.
+/// from their placements.
 pub(super) fn transform_boxes(
     document: &Document,
     cascade: &CascadeResult,
     pages: &[PageFragment],
-) -> HashMap<usize, TransformBox> {
-    let mut boxes = HashMap::new();
+) -> TransformBoxes {
+    let mut boxes = TransformBoxes::default();
     for page in pages {
         for item in &page.items {
             let Ok(id) = usize::try_from(item.node_id.0) else {
                 continue; // cov:ignore: placement node ids are arena indices
             };
             if item.kind == super::records::PageFragmentKind::Text
-                || item.is_table_header_repeat
-                || boxes.contains_key(&id)
                 || cascade.computed.get(id).is_none_or(translation_only)
             {
                 continue;
@@ -50,19 +72,23 @@ pub(super) fn transform_boxes(
                 .get_node(id)
                 .and_then(|node| node.table_grid_box)
                 .map_or((0.0, 0.0), |rect| (rect.x, rect.y));
-            boxes.insert(
-                id,
-                TransformBox {
-                    x: item.rect.x - grid.0,
-                    y: item.box_y - grid.1
-                        + if item.is_repeat {
-                            0.0
-                        } else {
-                            page.content_origin_y
-                        },
-                    repeat: item.is_repeat,
-                },
-            );
+            let x = item.rect.x - grid.0;
+            if item.is_repeat {
+                boxes
+                    .repeats
+                    .entry((page.page_index, id))
+                    .or_insert(TransformBox {
+                        x,
+                        y: item.box_y - grid.1,
+                        repeat: true,
+                    });
+            } else {
+                boxes.flow.entry(id).or_insert(TransformBox {
+                    x,
+                    y: item.box_y - grid.1 + page.content_origin_y,
+                    repeat: false,
+                });
+            }
         }
     }
     boxes
@@ -181,7 +207,7 @@ pub(super) fn element_transform(
     }
     let cv = cascade.computed.get(id)?;
     let node = document.get_node(id)?;
-    let Some(placed) = document.page_projection.transform_boxes.get(&id) else {
+    let Some(placed) = document.page_projection.transform_boxes.get(page, id) else {
         return (offset != (0.0, 0.0)).then_some(shift); // cov:ignore: every laid-out transformed element has a placement
     };
     // spec: https://www.w3.org/TR/css-transforms-1/#transform-rendering
