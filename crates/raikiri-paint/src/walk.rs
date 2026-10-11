@@ -5001,14 +5001,23 @@ pub(crate) fn paint_inline_box(
     let joined = background_slice
         .filter(|slice| slice.outer.x != outer.x || slice.outer.width != outer.width);
     let border_image_drawn = if let Some(joined) = joined {
+        // Only the cuts between fragments clip the image; the outset beyond
+        // the box's own edges stays visible (CSS Backgrounds 3 §6.4). The
+        // image itself bounds what is drawn past those edges.
+        const UNBOUNDED: f64 = 1.0e7;
+        let left = if left_edge {
+            -UNBOUNDED
+        } else {
+            f64::from(abs_x)
+        };
+        let right = if right_edge {
+            UNBOUNDED
+        } else {
+            f64::from(abs_x + outer.width)
+        };
         scene.push_clip_layer(
             Affine::IDENTITY,
-            &Rect::new(
-                f64::from(abs_x),
-                f64::from(abs_y),
-                f64::from(abs_x + outer.width),
-                f64::from(abs_y + outer.height),
-            ),
+            &Rect::new(left, -UNBOUNDED, right, UNBOUNDED),
         );
         let drawn = paint_element_border_image(
             scene,

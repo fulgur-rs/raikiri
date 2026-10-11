@@ -55,6 +55,12 @@ fn property_applies(key: crate::property::PropertyKey) -> bool {
                 | BorderRightColor
                 | BorderBottomColor
                 | BorderLeftColor
+                | BorderImage
+                | BorderImageSource
+                | BorderImageSlice
+                | BorderImageWidth
+                | BorderImageOutset
+                | BorderImageRepeat
                 | BorderRadius
                 | BorderRadiusTopLeft
                 | BorderRadiusTopRight

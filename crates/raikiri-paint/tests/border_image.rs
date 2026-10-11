@@ -114,3 +114,26 @@ fn the_body_border_image_replaces_its_border() {
     );
     assert_eq!(pixel(&pixels, 2, 15), LIME);
 }
+
+#[test]
+fn a_split_first_letter_keeps_its_border_image_outset() {
+    // The first letter spans the `<b>` boundary, so it paints as two
+    // fragments of one joined box; the outset above the box stays visible.
+    let pixels = raster(
+        "p{margin:20px 10px;font:10px/10px Ahem}\
+         p::first-letter{border:5px solid blue;\
+         border-image:linear-gradient(lime,lime) 1 / 5px / 3px}",
+        "<p><b>\u{201c}</b>A</p>",
+    );
+    let all: Vec<_> = (0..50)
+        .flat_map(|y| (0..50).map(move |x| (x, y)))
+        .map(|(x, y)| pixel(&pixels, x, y))
+        .collect();
+    assert!(!all.contains(&BLUE));
+    // Rows above the border box (y < 15) show the outset.
+    let outset_rows: Vec<_> = (0..15)
+        .flat_map(|y| (0..50).map(move |x| (x, y)))
+        .filter(|&(x, y)| pixel(&pixels, x, y) == LIME)
+        .collect();
+    assert!(!outset_rows.is_empty());
+}
