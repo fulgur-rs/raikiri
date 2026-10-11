@@ -71,11 +71,11 @@ pub(crate) struct ProjectedIfc {
     /// The root's lines end in an ellipsis where they overflow it.
     pub(crate) ellipsis: bool,
     /// The root's text does not wrap (`text-wrap-mode: nowrap`). It decides
-    /// for lines without recorded text, such as an image marker alone.
+    /// for lines without recorded content, such as an image marker alone.
     pub(crate) nowrap: bool,
-    /// Whether each text source of the paragraph (a DOM text node or a
-    /// generated pseudo-element), by node id, does not wrap
-    /// (`text-wrap-mode: nowrap`). A line made only of such text stays
+    /// Whether each text source (a DOM text node or a generated
+    /// pseudo-element) or atomic inline of the paragraph, by node id, sits
+    /// in content that does not wrap (`text-wrap-mode: nowrap`). A line made only of such text stays
     /// beside floats even when it overflows the space there.
     pub(crate) text_nowrap: Arc<HashMap<u64, bool>>,
     pub(crate) letter_styles: Vec<LetterStyle>,
@@ -473,11 +473,11 @@ pub(crate) struct ProjectedBuilder {
     /// The root's lines end in an ellipsis where they overflow it.
     pub(crate) ellipsis: bool,
     /// The root's text does not wrap (`text-wrap-mode: nowrap`). It decides
-    /// for lines without recorded text, such as an image marker alone.
+    /// for lines without recorded content, such as an image marker alone.
     pub(crate) nowrap: bool,
-    /// Whether each text source of the paragraph (a DOM text node or a
-    /// generated pseudo-element), by node id, does not wrap
-    /// (`text-wrap-mode: nowrap`). A line made only of such text stays
+    /// Whether each text source (a DOM text node or a generated
+    /// pseudo-element) or atomic inline of the paragraph, by node id, sits
+    /// in content that does not wrap (`text-wrap-mode: nowrap`). A line made only of such text stays
     /// beside floats even when it overflows the space there.
     pub(crate) text_nowrap: Arc<HashMap<u64, bool>>,
     pub(crate) letter_styles: Vec<LetterStyle>,
@@ -963,6 +963,13 @@ fn project_children_builder(
                 if box_kind(cascade, doc, id) == Some(IfcBoxKind::Atomic) {
                     first_letter.stop();
                     let atomic_style = styled(doc, cascade, cv, id, fonts)?;
+                    // The break opportunities around an atomic come from its
+                    // parent's style, not its own.
+                    let parent_style = &cascade.computed[doc.parent_of(id).unwrap_or(id)];
+                    text_nowrap.insert(
+                        id as u64,
+                        parent_style.effective_text_wrap_mode == TextWrapMode::Nowrap,
+                    );
                     // shodo sizes an atomic from `AtomicSize` alone, margins
                     // included; the edges are not read for atomics.
                     builder.push_atomic(NodeId(id as u64), &atomic_style, InlineEdges::default());

@@ -53,8 +53,9 @@ pub(crate) struct IfcRoot {
     pub(crate) ellipsis: bool,
     /// The root's text does not wrap (`text-wrap-mode: nowrap`).
     pub(crate) nowrap: bool,
-    /// Whether each text source of the paragraph (a DOM text node or a
-    /// generated pseudo-element) does not wrap, by node id.
+    /// Whether each text source (a DOM text node or a generated
+    /// pseudo-element) or atomic inline of the paragraph sits in content
+    /// that does not wrap, by node id.
     pub(crate) text_nowrap: Arc<HashMap<u64, bool>>,
     pub(crate) letter_styles: Vec<super::first_letter::LetterStyle>,
     letter_style_index: Arc<LetterStyleIndex>,
@@ -168,26 +169,26 @@ impl IfcRoot {
         self.lines.as_ref().and_then(super::flow::last_baseline)
     }
 
-    /// Whether `line` cannot wrap: its text is all `text-wrap-mode: nowrap`,
-    /// or it has no recorded text and the root does not wrap.
+    /// Whether `line` cannot wrap: its text and atomic inlines all sit in
+    /// `text-wrap-mode: nowrap` content, or it has no recorded content and
+    /// the root does not wrap.
     pub(crate) fn line_is_nowrap(&self, line: &shodo::Line) -> bool {
-        let mut any_text = false;
+        let mut any_content = false;
         for fragment in line.fragments() {
-            let shodo::Fragment::GlyphRun(run) = fragment else {
-                continue;
+            let node = match fragment {
+                shodo::Fragment::GlyphRun(run) => run.node(),
+                shodo::Fragment::Atomic(atomic) => Some(atomic.node),
+                _ => None,
             };
-            let Some(nowrap) = run
-                .node()
-                .and_then(|node| self.text_nowrap.get(&node.0).copied())
-            else {
+            let Some(nowrap) = node.and_then(|node| self.text_nowrap.get(&node.0).copied()) else {
                 continue;
             };
             if !nowrap {
                 return false;
             }
-            any_text = true;
+            any_content = true;
         }
-        any_text || self.nowrap
+        any_content || self.nowrap
     }
 
     pub(crate) fn new(projected: ProjectedIfc) -> Self {

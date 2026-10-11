@@ -3273,6 +3273,49 @@ fn the_wrap_mode_of_generated_text_decides_whether_its_line_moves_below_a_float(
 }
 
 #[test]
+fn the_wrap_mode_around_an_atomic_inline_decides_whether_its_line_moves_below_a_float() {
+    // (root css, span css, line moves below the float). The line holds only
+    // an 80px inline-block in the span, wider than the 70px beside the float,
+    // so the span's `white-space` decides, not the root's.
+    for (root_css, span_css, moves) in [
+        ("", "white-space:nowrap", false),
+        ("white-space:nowrap", "white-space:normal", true),
+    ] {
+        let (mut doc, _, root) = ahem_span_beside_float(
+            "",
+            "float:left;width:30px;height:20px",
+            root_css,
+            span_css,
+            "",
+        );
+        let span = *doc.nodes[root].children.last().expect("span");
+        doc.append_element(
+            Some(span),
+            "div",
+            Style::default(),
+            Some("display:inline-block;width:80px;height:10px"),
+        );
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        lay_out(&mut doc, &cascade);
+        let lines = &stored_lines(&doc, root).lines;
+        let atomic_start = |line: &shodo::Line| {
+            line.fragments().find_map(|fragment| match fragment {
+                shodo::Fragment::Atomic(atomic) => Some(atomic.margin_rect.inline_start),
+                _ => None,
+            })
+        };
+        let expected = if moves { (0.0, 20.0) } else { (30.0, 0.0) };
+        assert_eq!(
+            (atomic_start(&lines[0]), lines[0].block_offset()),
+            (Some(expected.0), expected.1),
+            "root {root_css:?} / span {span_css:?}"
+        );
+    }
+}
+
+#[test]
 fn a_line_that_reaches_a_later_float_segment_is_narrowed_by_it() {
     // Two floats: a 30x10 one on the left at the top, then a 30x30 one on the
     // right that clears it, so it starts at y=10. The root has a 20px line
