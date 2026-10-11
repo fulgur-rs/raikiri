@@ -4437,9 +4437,18 @@ pub(crate) fn paint_element_border_image(
                 width: image_w as f32,
                 height: image_h as f32,
             };
+            // A buffer shorter than its size says draws nothing, so it
+            // falls back like an image that could not be rasterized.
             let decoded = pixel_source
                 .get_decoded_at_size(&url, size, None)
-                .filter(|decoded| decoded.width > 0 && decoded.height > 0);
+                .filter(|decoded| {
+                    decoded.width > 0
+                        && decoded.height > 0
+                        && (decoded.width as usize)
+                            .checked_mul(decoded.height as usize)
+                            .and_then(|pixels| pixels.checked_mul(4))
+                            .is_some_and(|len| decoded.rgba.len() >= len)
+                });
             let Some(decoded) = decoded else {
                 warnings.push(RenderWarning {
                     kind: WarningKind::ResourceFallback {

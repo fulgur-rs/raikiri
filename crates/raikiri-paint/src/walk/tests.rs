@@ -5286,7 +5286,16 @@ fn a_border_image_that_cannot_be_rasterized_warns_and_leaves_the_border() {
         }),
         ..BorderImagePixels::opaque()
     };
-    for source in [&no_pixels, &empty_pixels] {
+    // Nonzero dimensions over a buffer too short to hold them.
+    let short_pixels = BorderImagePixels {
+        decoded: Some(raikiri_traits::DecodedImage {
+            width: 3,
+            height: 3,
+            rgba: vec![255; 8],
+        }),
+        ..BorderImagePixels::opaque()
+    };
+    for source in [&no_pixels, &empty_pixels, &short_pixels] {
         assert_eq!(root_border_fills(URL_BORDER_IMAGE, Some(source)), (4, 1));
     }
 }
