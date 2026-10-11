@@ -179,7 +179,7 @@ pub(crate) fn draw_ifc_lines_with_resources(
         for image in &positioned_line.content_images {
             let Some(pixels) = document.content_image(image.owner, image.pseudo, image.index)
             else {
-                continue;
+                continue; // cov:ignore: positioned lines list only the content images whose pixels the document holds
             };
             let pseudo_node =
                 raikiri_dom::generated_content::generated_node_id(image.owner, image.pseudo);

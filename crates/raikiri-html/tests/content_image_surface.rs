@@ -26,7 +26,11 @@ impl ImagePixelSource for Pixels {
     }
 }
 
-fn lay_out(body: &str, css: &str, pixels: &Pixels) -> raikiri_html::DocumentLayout {
+fn lay_out<P: ImagePixelSource + Send + Sync>(
+    body: &str,
+    css: &str,
+    pixels: &P,
+) -> raikiri_html::DocumentLayout {
     let fonts = FontCollectionBuilder::new()
         .font_bytes(
             "Ahem",
@@ -207,4 +211,137 @@ fn image_alone_in_an_empty_element_makes_its_line() {
     let (images, _) = images_and_runs(&document, &pixels);
     assert_eq!(images.len(), 1);
     assert_eq!(images[0].rect, PaintRect::new(0.0, 12.0, 8.0, 4.0));
+}
+
+#[test]
+fn an_image_belongs_only_to_the_page_of_its_line() {
+    let pixels = Pixels::new();
+    let document = lay_out(
+        "<p>A<br>B<br>C<br>D<br>E<br>F<br>G</p>",
+        "p::before{content:url(icon.png)}",
+        &pixels,
+    );
+    assert!(document.page_count() > 1);
+    let (images, _) = images_and_runs(&document, &pixels);
+    assert_eq!(images.len(), 1);
+    let page = document.page(1).unwrap();
+    let runs = page.text_runs();
+    assert!(runs.iter().any(|run| run.text == "F"));
+    assert!(
+        !page
+            .paint_order_for_text_runs(&runs)
+            .iter()
+            .any(|event| matches!(event, PaintEvent::GeneratedImage(_)))
+    );
+}
+
+#[test]
+fn an_image_in_a_repeated_table_header_stops_after_the_table() {
+    let pixels = Pixels::new();
+    // The 10px header fits the quarter-page repeat limit.
+    let document = lay_out(
+        "<table><thead><tr><th>H</th></tr></thead><tbody><tr><td>B</td></tr><tr><td>C</td></tr></tbody></table><div style='height:70px'></div>",
+        "table{border-spacing:0}th,td{padding:0;font-weight:normal}\
+         th{text-align:left;font:10px/10px Ahem}td{height:50px}\
+         th::before{content:url(icon.png)}",
+        &pixels,
+    );
+    assert!(document.page_count() > 2);
+    for page in document.pages() {
+        let runs = page.text_runs();
+        let images: Vec<_> = page
+            .paint_order_for_text_runs(&runs)
+            .iter()
+            .filter_map(|event| match event {
+                PaintEvent::GeneratedImage(image) => page.raster_generated_image(*image, &pixels),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            images.len(),
+            usize::from(page.index() < 2),
+            "page {}",
+            page.index()
+        );
+        // The header sits at the top of each page of the table, with its
+        // image on the header's 8px baseline.
+        if let Some(image) = images.first() {
+            assert_eq!(image.rect, PaintRect::new(0.0, 4.0, 8.0, 4.0));
+        }
+    }
+}
+
+#[test]
+fn rastering_fails_for_sources_without_valid_pixels_at_the_used_size() {
+    struct Failing;
+    impl ImagePixelSource for Failing {
+        fn get_decoded(&self, url: &Url) -> Option<Arc<DecodedImage>> {
+            match url.path() {
+                "/short.png" => Some(Arc::new(DecodedImage {
+                    width: 8,
+                    height: 4,
+                    rgba: vec![0; 4],
+                })),
+                "/empty.png" => Some(Arc::new(DecodedImage {
+                    width: 0,
+                    height: 4,
+                    rgba: Vec::new(),
+                })),
+                _ => None,
+            }
+        }
+    }
+    let pixels = Pixels::new();
+    let document = lay_out(
+        "<p>A</p>",
+        "p::before{content:url(none.png) url(short.png) url(empty.png)}",
+        &pixels,
+    );
+    let page = document.page(0).unwrap();
+    let runs = page.text_runs();
+    let ids: Vec<_> = page
+        .paint_order_for_text_runs(&runs)
+        .iter()
+        .filter_map(|event| match event {
+            PaintEvent::GeneratedImage(image) => Some(*image),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ids.len(), 3);
+    for id in ids {
+        assert!(page.raster_generated_image(id, &pixels).is_some());
+        assert!(page.raster_generated_image(id, &Failing).is_none());
+    }
+}
+
+#[test]
+fn rastering_rejects_a_rectangle_that_overflows_css_pixels() {
+    struct Overflowing(Pixels);
+    impl ImagePixelSource for Overflowing {
+        fn get_decoded(&self, url: &Url) -> Option<Arc<DecodedImage>> {
+            self.0.get_decoded(url)
+        }
+        fn intrinsic_size(&self, _: &Url) -> Option<raikiri_traits::ImageIntrinsicSize> {
+            Some(raikiri_traits::ImageIntrinsicSize {
+                width: Some(f32::MAX),
+                height: None,
+                aspect_ratio: Some(1e-20),
+            })
+        }
+    }
+    let source = Overflowing(Pixels::new());
+    let document = lay_out("<p>A</p>", "p::before{content:url(icon.png)}", &source);
+    let page = document.page(0).unwrap();
+    let runs = page.text_runs();
+    let ids: Vec<_> = page
+        .paint_order_for_text_runs(&runs)
+        .iter()
+        .filter_map(|event| match event {
+            PaintEvent::GeneratedImage(image) => Some(*image),
+            _ => None,
+        })
+        .collect();
+    // The image keeps its place in the paint order but has no raster.
+    assert_eq!(ids.len(), 1);
+    assert!(page.raster_generated_image(ids[0], &source).is_none());
 }

@@ -300,7 +300,7 @@ fn push_generated(
         let Some((cv, pieces)) =
             generated_pieces(doc, cascade, element, pseudo, counters.get(doc, cascade)?)
         else {
-            return Ok(());
+            return Ok(()); // cov:ignore: an in-flow `::before` or `::after` has a computed style with non-empty content, so its pieces always exist
         };
         // Only the images that were prepared take part; the others
         // represent nothing. A kept image carries its node id from here on.

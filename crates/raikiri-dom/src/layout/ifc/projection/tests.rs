@@ -340,6 +340,22 @@ fn generated_text_of_the_root_is_projected_before_its_content() {
 }
 
 #[test]
+fn an_image_marker_without_text_or_pixels_projects_nothing() {
+    // An image marker contributes its image only once the image is
+    // prepared; `list-style-type: none` leaves no text fallback.
+    let fixture = crate::layout::ifc::test_support::sheet_fixture(
+        "",
+        "display:list-item;list-style:inside none url(https://images.test/marker.png)",
+        |doc, root| {
+            doc.append_text(root, "aa");
+        },
+    );
+    let projected = project(&fixture).expect("projection");
+    assert_eq!(projected.paragraph.text(), "aa");
+    assert!(projected.marker_atomic.is_none());
+}
+
+#[test]
 fn text_align_is_inherited_from_ancestors() {
     // `text-align:center` on <body>: the block inherits it.
     let mut doc = crate::Document::new();

@@ -115,3 +115,44 @@ fn invalid_background_url_is_left_unchanged_without_a_fetch() {
     prepare_background_image(&mut image, &base, &resolver);
     assert_eq!(image, BackgroundImage::Url("http://[".into()));
 }
+
+#[test]
+fn generated_content_images_are_prefetched_against_the_base_url() {
+    struct Recording(std::cell::RefCell<Vec<String>>);
+    impl raikiri_traits::ReplacedResolver for Recording {
+        fn resolve(
+            &self,
+            req: ResolverRequest<'_>,
+        ) -> Result<raikiri_traits::ResolvedIntrinsic, raikiri_traits::ResolverError> {
+            self.0.borrow_mut().push(req.url().to_string());
+            Err(raikiri_traits::ResolverError::Decode("not an image".into()))
+        }
+    }
+    let mut doc = raikiri_dom::Document::new();
+    let style = doc.append_element(Some(0), "style", Default::default(), None::<&str>);
+    doc.append_text(
+        style,
+        "div::before{content:'a' url(icon.png) url(http://[)}\
+         div::after{content:url(https://images.test/after.png)}\
+         li::marker{content:url(marker.png)}",
+    );
+    doc.append_element(Some(0), "div", Default::default(), None::<&str>);
+    doc.append_element(Some(0), "li", Default::default(), None::<&str>);
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let mut cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    let resolver = Recording(Default::default());
+    let base = Url::parse("http://web-platform.test/css/test.html").unwrap();
+    prepare_cascade_images(&mut cascade, &base, &resolver);
+    let mut requested = resolver.0.into_inner();
+    requested.sort();
+    // `::marker` images are not prefetched here, and an unparsable URL is
+    // skipped.
+    assert_eq!(
+        requested,
+        [
+            "http://web-platform.test/css/icon.png",
+            "https://images.test/after.png"
+        ]
+    );
+}

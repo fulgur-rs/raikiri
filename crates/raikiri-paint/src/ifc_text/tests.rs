@@ -149,6 +149,101 @@ fn inside_image_marker_scales_raster_pixels_to_css_dimensions() {
     assert!(!missing.commands.iter().any(|command| matches!(command,RenderCommand::Fill(fill) if matches!(fill.brush,anyrender::Paint::Image(_)))));
 }
 
+/// Image fills recorded in `scene`.
+fn image_fills(scene: &Scene) -> Vec<&anyrender::recording::FillCommand> {
+    scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::Fill(fill) if matches!(fill.brush, anyrender::Paint::Image(_)) => {
+                Some(fill)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn before_content_image_scales_raster_pixels_into_its_line_rect() {
+    struct ContentPixels;
+    impl raikiri_traits::ImagePixelSource for ContentPixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
+                width: 32,
+                height: 16,
+                rgba: [0, 0, 255, 255].repeat(32 * 16),
+            }))
+        }
+        fn intrinsic_size(&self, _: &url::Url) -> Option<raikiri_traits::ImageIntrinsicSize> {
+            Some(raikiri_traits::ImageIntrinsicSize {
+                width: Some(16.0),
+                height: Some(8.0),
+                aspect_ratio: Some(2.0),
+            })
+        }
+    }
+    let (mut doc, cascade, root) = paragraph("", |doc, root| {
+        let style = doc.append_element(Some(0), "style", Style::default(), None::<&str>);
+        doc.append_text(style, "div::before{content:url(https://images.test/a.png)}");
+        doc.append_text(root, "a");
+    });
+    doc.prepare_list_marker_images(&cascade, &ContentPixels, None);
+    lay_out(&mut doc, &cascade);
+    let position = IfcPosition {
+        x: 3.0,
+        y: 5.0,
+        shift_y: 0.0,
+    };
+    let mut scene = Scene::new();
+    draw_ifc_lines(
+        &mut scene,
+        &doc,
+        &cascade,
+        root,
+        position,
+        &crate::text::DecorationContext::default(),
+        None,
+        &[],
+    );
+    let fills = image_fills(&scene);
+    assert_eq!(fills.len(), 1);
+    // The 32x16 raster is drawn into the 16x8 CSS rectangle at the line start.
+    let coeffs = fills[0].transform.as_coeffs();
+    assert_eq!(&coeffs[..4], &[0.5, 0.0, 0.0, 0.5]);
+    assert_eq!(coeffs[4], 3.0);
+    assert_eq!(
+        kurbo::Shape::bounding_box(&fills[0].shape),
+        Rect::new(0.0, 0.0, 32.0, 16.0)
+    );
+
+    // Pixels dropped after layout leave the image's place empty.
+    struct NoPixels;
+    impl raikiri_traits::ImagePixelSource for NoPixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            None
+        }
+    }
+    doc.prepare_list_marker_images(&cascade, &NoPixels, None);
+    let mut missing = Scene::new();
+    draw_ifc_lines(
+        &mut missing,
+        &doc,
+        &cascade,
+        root,
+        position,
+        &crate::text::DecorationContext::default(),
+        None,
+        &[],
+    );
+    assert!(image_fills(&missing).is_empty());
+}
+
 #[test]
 fn many_inline_pieces_on_separate_lines_paint_within_three_seconds() {
     use std::time::{Duration, Instant};
