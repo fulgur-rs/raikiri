@@ -22,15 +22,16 @@ use raikiri_dom::image_geometry::{
 };
 use raikiri_dom::{CounterSnapshot, Document, FragmentRect, StandaloneAlign};
 use raikiri_style::property::{
-    AnglePercentage, BackgroundImage, Border, BorderColor, BorderStyle, ColumnCountValue,
-    ConicGradient, CssColor, CssPosition, CssPositionOffset, DisplayValue, FloatValue, Gradient,
-    GradientStopColor, HueInterpolationMethod, Length, MixColorSpace, ObjectFit, OutlineColor,
-    OutlineStyle, OverflowValue, PositionValue, PropertyKey, PropertyValue, Sides, TextShadowColor,
+    AnglePercentage, BackgroundImage, Border, BorderColor, BorderImageOutsetSide,
+    BorderImageWidthSide, BorderStyle, ColumnCountValue, ConicGradient, CssColor, CssPosition,
+    CssPositionOffset, DisplayValue, FloatValue, Gradient, GradientStopColor,
+    HueInterpolationMethod, Length, MixColorSpace, ObjectFit, OutlineColor, OutlineStyle,
+    OverflowValue, PositionValue, PropertyKey, PropertyValue, Sides, TextShadowColor,
     VerticalAlign, Visibility, VisualBox, WritingMode,
 };
 use raikiri_style::{
-    CascadeResult, ComputedBackgroundSize, ComputedBorderRadius, ComputedCssPosition,
-    ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
+    CascadeResult, ComputedBackgroundSize, ComputedBorderImage, ComputedBorderRadius,
+    ComputedCssPosition, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
     ComputedTransformFunction, ComputedValues, ResolveContext, resolve_background_size,
     resolve_border, resolve_css_position,
 };
@@ -138,6 +139,7 @@ pub(crate) fn paint_root_element_border(
         0.0,
         0.0,
         computed,
+        &computed.border_image,
         &computed.border,
         pixel_source,
         warnings,
@@ -2588,6 +2590,7 @@ pub(crate) fn paint_document_impl(
                                 own_paint_x,
                                 unfragmented_top,
                                 cv,
+                                &cv.border_image,
                                 painted_border,
                                 pixel_source,
                                 warnings,
@@ -2602,6 +2605,7 @@ pub(crate) fn paint_document_impl(
                                 own_paint_x,
                                 own_paint_y,
                                 cv,
+                                &cv.border_image,
                                 painted_border,
                                 pixel_source,
                                 warnings,
@@ -4404,11 +4408,11 @@ pub(crate) fn paint_element_border_image(
     abs_x: f32,
     abs_y: f32,
     cv: &ComputedValues,
+    image: &ComputedBorderImage,
     border: &Sides<raikiri_style::resolve::ComputedBorder>,
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
 ) -> bool {
-    let image = &cv.border_image;
     let border_box = (
         f64::from(abs_x),
         f64::from(abs_y),
@@ -5122,6 +5126,7 @@ pub(crate) fn paint_inline_box(
             x + joined.outer.x,
             abs_y,
             cv,
+            &cv.border_image,
             &cv.border,
             pixel_source,
             warnings,
@@ -5129,6 +5134,26 @@ pub(crate) fn paint_inline_box(
         scene.pop_layer();
         drawn
     } else {
+        // A cut between line fragments shows no image: its widths and outset
+        // are taken as zero there, whatever form `border-image-width` takes.
+        let cut;
+        let image = if (left_edge && right_edge)
+            || matches!(cv.border_image.source, BackgroundImage::None)
+        {
+            &cv.border_image
+        } else {
+            let mut image = cv.border_image.clone();
+            if !left_edge {
+                image.width.left = BorderImageWidthSide::Number(0.0);
+                image.outset.left = BorderImageOutsetSide::Number(0.0);
+            }
+            if !right_edge {
+                image.width.right = BorderImageWidthSide::Number(0.0);
+                image.outset.right = BorderImageOutsetSide::Number(0.0);
+            }
+            cut = image;
+            &cut
+        };
         paint_element_border_image(
             scene,
             outer.width,
@@ -5136,6 +5161,7 @@ pub(crate) fn paint_inline_box(
             abs_x,
             abs_y,
             cv,
+            image,
             &border,
             pixel_source,
             warnings,

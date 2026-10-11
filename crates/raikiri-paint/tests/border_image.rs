@@ -152,3 +152,17 @@ fn spaced_gradient_tiles_leave_their_gaps_empty() {
     assert!(row.iter().any(|&color| color != LIME));
     assert!(!row.contains(&BLUE));
 }
+
+#[test]
+fn a_line_break_cut_shows_no_border_image_side() {
+    // The first line's fragment ends at x = 25 with no right edge. A length
+    // width would put a 5px image strip at 20..25 if the cut kept it.
+    let pixels = raster(
+        "div{width:30px;font:10px/20px Ahem;color:transparent}\
+         span{border:5px solid blue;\
+         border-image:linear-gradient(lime,lime) 1 / 5px}",
+        "<div><span>XX XX</span></div>",
+    );
+    assert_eq!(pixel(&pixels, 2, 10), LIME);
+    assert_ne!(pixel(&pixels, 22, 10), LIME);
+}
