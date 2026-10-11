@@ -929,9 +929,22 @@ fn measure_ifc_root(
     } else {
         crate::layout::ifc::boxes::BoxIntrinsics::EMPTY
     };
-    let Some((min_content, max_content)) = with_state(tree, |state| {
-        flow::intrinsic_widths_with(&probe, &mut state.layout_cx, &box_intrinsics.engine)
-    }) else {
+    // A horizontal paragraph that is stretched to a definite width breaks at
+    // that width, so its min- and max-content widths decide nothing and the
+    // paragraph is not scanned for them. A vertical one still needs them for
+    // its block extent below.
+    let intrinsics = if !vertical && !needs_intrinsics {
+        tree.ifc.is_some().then_some((0.0, 0.0))
+    } else {
+        with_state(tree, |state| {
+            #[cfg(test)]
+            {
+                state.intrinsic_measurements += 1;
+            }
+            flow::intrinsic_widths_with(&probe, &mut state.layout_cx, &box_intrinsics.engine)
+        })
+    };
+    let Some((min_content, max_content)) = intrinsics else {
         return (Size::ZERO, None, CollapsibleMarginSet::ZERO);
     };
     let (min_content, max_content) = (

@@ -338,6 +338,10 @@ pub(crate) struct IfcState {
     /// Results produced by `Document::shape_standalone_text` for this
     /// document. Atomic because shaping takes `&Document`.
     pub(crate) standalone_calls: AtomicUsize,
+    /// How many times a paragraph was scanned for its min- and max-content
+    /// widths.
+    #[cfg(test)]
+    pub(crate) intrinsic_measurements: usize,
     /// Paragraphs are built on several threads when there are at least this
     /// many roots and `parallel_build` is set.
     pub(crate) parallel_threshold: usize,
@@ -373,6 +377,8 @@ impl IfcState {
             limits,
             layout_cx: LayoutContext::new(),
             standalone_calls: AtomicUsize::new(0),
+            #[cfg(test)]
+            intrinsic_measurements: 0,
             parallel_threshold: DEFAULT_PARALLEL_THRESHOLD,
             parallel_build: true,
             last_build: None,
