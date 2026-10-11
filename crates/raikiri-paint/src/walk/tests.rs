@@ -870,7 +870,7 @@ fn paint_root_element_border_without_html_is_noop() {
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
     let mut scene = Scene::new();
-    paint_root_element_border(&mut scene, &document, &cascade, PageBox::A4);
+    paint_root_element_border(&mut scene, &document, &cascade, PageBox::A4, None);
     assert!(scene.commands.is_empty());
 }
 
@@ -886,7 +886,7 @@ fn paint_root_element_border_paints_html_border_sides() {
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
     let mut scene = Scene::new();
-    paint_root_element_border(&mut scene, &document, &cascade, PageBox::A4);
+    paint_root_element_border(&mut scene, &document, &cascade, PageBox::A4, None);
     let fills = scene
         .commands
         .iter()

@@ -9,7 +9,7 @@ use std::time::Instant;
 use image::{DynamicImage, ImageDecoder, ImageReader, Limits};
 use raikiri_dom::FontFaceLoader;
 use raikiri_style::{
-    ComputedValues, PageCascadeResult,
+    PageCascadeResult,
     property::{BackgroundImage, DisplayValue, PropertyKey, PropertyValue, Visibility},
 };
 use raikiri_svg::{SvgDocument, SvgRootStyle, SvgViewport};
@@ -803,14 +803,7 @@ impl<'a> RenderResources<'a> {
         attempts: &mut usize,
         signal: Option<&AbortSignal>,
     ) {
-        self.preload_element_background_images(
-            &cascade.computed,
-            None,
-            warnings,
-            seen,
-            attempts,
-            signal,
-        );
+        self.preload_element_background_images(cascade, None, warnings, seen, attempts, signal);
         self.preload_page_context_background_images(
             &cascade.page,
             None,
@@ -821,7 +814,8 @@ impl<'a> RenderResources<'a> {
         );
     }
 
-    /// Preload the CSS background and border images of rendered elements.
+    /// Preload the CSS background and border images of rendered elements and
+    /// their generated pseudo-elements.
     ///
     /// Element computed values do not depend on the page query, so a paged
     /// caller scans them once and then calls
@@ -830,15 +824,21 @@ impl<'a> RenderResources<'a> {
     /// request limit span the whole document.
     pub(crate) fn preload_element_background_images(
         &self,
-        computed: &[ComputedValues],
+        cascade: &raikiri_style::CascadeResult,
         base_url: Option<&Url>,
         warnings: &SharedRenderWarnings,
         seen: &mut std::collections::HashSet<Url>,
         attempts: &mut usize,
         signal: Option<&AbortSignal>,
     ) {
-        let raw_urls = computed
+        // Generated pseudo-elements carry their own styles; visit them by
+        // owner node and pseudo name so attempt order stays deterministic.
+        let mut pseudo: Vec<_> = cascade.pseudo.iter().collect();
+        pseudo.sort_by_cached_key(|((node, pseudo), _)| (*node, format!("{pseudo:?}")));
+        let raw_urls = cascade
+            .computed
             .iter()
+            .chain(pseudo.into_iter().map(|(_, computed)| computed))
             .filter(|computed| {
                 !matches!(
                     computed.display,

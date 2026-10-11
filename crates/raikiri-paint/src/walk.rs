@@ -120,6 +120,7 @@ pub(crate) fn paint_root_element_border(
     document: &Document,
     cascade: &CascadeResult,
     page_box: PageBox,
+    pixel_source: Option<&dyn ImagePixelSource>,
 ) {
     let Some(html_id) = find_html(document) else {
         return;
@@ -127,6 +128,20 @@ pub(crate) fn paint_root_element_border(
     let Some(computed) = cascade.computed.get(html_id) else {
         return;
     };
+    // The root element's border image replaces its border styles like any
+    // other box's (CSS Backgrounds 3 §6.1).
+    if paint_element_border_image(
+        scene,
+        page_box.width,
+        page_box.height,
+        0.0,
+        0.0,
+        computed,
+        &computed.border,
+        pixel_source,
+    ) {
+        return;
+    }
     paint_element_border(
         scene,
         page_box.width,
@@ -2526,7 +2541,23 @@ pub(crate) fn paint_document_impl(
                         });
                     // A border image replaces the border styles (CSS
                     // Backgrounds 3 §6).
+                    // In the collapsing border model, border images do not
+                    // apply to internal table boxes (CSS Backgrounds 3 §6.1).
+                    let collapsed_internal_table_box = matches!(
+                        cv.border_collapse,
+                        raikiri_style::property::BorderCollapseValue::Collapse
+                    ) && matches!(
+                        cv.display,
+                        DisplayValue::TableRowGroup
+                            | DisplayValue::TableHeaderGroup
+                            | DisplayValue::TableFooterGroup
+                            | DisplayValue::TableRow
+                            | DisplayValue::TableColumnGroup
+                            | DisplayValue::TableColumn
+                            | DisplayValue::TableCell
+                    );
                     let border_image_drawn = paints_table_part
+                        && !collapsed_internal_table_box
                         && paint_element_border_image(
                             scene,
                             own_paint_width,
@@ -4879,17 +4910,47 @@ pub(crate) fn paint_inline_box(
     if slice.is_some() {
         scene.pop_layer();
     }
-    // Each fragment shows the border image on the edges it keeps.
-    if !paint_element_border_image(
-        scene,
-        outer.width,
-        outer.height,
-        abs_x,
-        abs_y,
-        cv,
-        &border,
-        pixel_source,
-    ) {
+    // With `box-decoration-break: slice` the border image is laid out once
+    // over the joined box and clipped to this fragment (CSS Fragmentation 3
+    // §5.4). Without a joined box, the fragment shows it on the edges it
+    // keeps.
+    let joined = background_slice
+        .filter(|slice| slice.outer.x != outer.x || slice.outer.width != outer.width);
+    let border_image_drawn = if let Some(joined) = joined {
+        scene.push_clip_layer(
+            Affine::IDENTITY,
+            &Rect::new(
+                f64::from(abs_x),
+                f64::from(abs_y),
+                f64::from(abs_x + outer.width),
+                f64::from(abs_y + outer.height),
+            ),
+        );
+        let drawn = paint_element_border_image(
+            scene,
+            joined.outer.width,
+            outer.height,
+            x + joined.outer.x,
+            abs_y,
+            cv,
+            &cv.border,
+            pixel_source,
+        );
+        scene.pop_layer();
+        drawn
+    } else {
+        paint_element_border_image(
+            scene,
+            outer.width,
+            outer.height,
+            abs_x,
+            abs_y,
+            cv,
+            &border,
+            pixel_source,
+        )
+    };
+    if !border_image_drawn {
         paint_element_border_rounded(
             scene,
             outer.width,

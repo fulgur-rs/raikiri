@@ -246,3 +246,46 @@ fn tiny_tiles_are_stretched_instead() {
     .expect("geometry");
     assert!(geometry.parts.iter().all(|part| part.x.len() == 1));
 }
+
+#[test]
+fn a_dense_filled_middle_is_stretched_instead() {
+    // 27px slices drawn 0.25px wide make 0.25px middle tiles: about 4000
+    // per axis, each within the per-axis bound.
+    let mut image = image(27.0, BorderImageRepeatKeyword::Repeat);
+    image.slice.fill = true;
+    image.width = Sides::all(BorderImageWidthSide::LengthPercentage(
+        ComputedLengthPercentage::Px(0.25),
+    ));
+    let geometry = border_image_geometry(
+        (0.0, 0.0, 1000.0, 1000.0),
+        Sides::all(1.0),
+        &image,
+        natural(81.0, 81.0),
+    )
+    .expect("geometry");
+    let middle = part(&geometry, (0.25, 0.25, 999.5, 999.5));
+    assert_eq!((middle.x.len(), middle.y.len()), (1, 1));
+    assert!(
+        geometry
+            .parts
+            .iter()
+            .all(|part| part.x.len() * part.y.len() <= 65_536)
+    );
+}
+
+#[test]
+fn auto_widths_use_each_natural_dimension_on_its_own() {
+    let mut image = image(10.0, BorderImageRepeatKeyword::Stretch);
+    image.width = Sides::all(BorderImageWidthSide::Auto);
+    // A natural width but no natural height, as some SVG images have.
+    let natural = Some(ImageIntrinsicSize {
+        width: Some(40.0),
+        height: None,
+        aspect_ratio: None,
+    });
+    let geometry = border_image_geometry((0.0, 0.0, 100.0, 80.0), Sides::all(4.0), &image, natural)
+        .expect("geometry");
+    // Left and right use the 10px slice; top and bottom fall back to the
+    // 4px border.
+    part(&geometry, (0.0, 0.0, 10.0, 4.0));
+}

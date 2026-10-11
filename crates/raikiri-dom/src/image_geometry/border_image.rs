@@ -23,6 +23,9 @@ pub type Rect = (f64, f64, f64, f64);
 /// more is drawn stretched, which looks the same at that density.
 const MAX_TILES: usize = 4096;
 
+/// Upper bound of tiles in one part, both axes together.
+const MAX_PART_TILES: usize = 65_536;
+
 /// One of the nine parts of a border image.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BorderImagePart {
@@ -117,36 +120,60 @@ pub fn border_image_geometry(
     };
 
     // §6.3: widths of the border image area's edges.
-    let has_natural_size = natural.is_some_and(|natural| {
-        natural.width.is_some_and(|width| width > 0.0)
-            && natural.height.is_some_and(|height| height > 0.0)
-    });
-    let side_width =
-        |side: BorderImageWidthSide<ComputedLengthPercentage>, basis: f64, border: f64, slice| {
-            match side {
-                BorderImageWidthSide::LengthPercentage(ComputedLengthPercentage::Px(px)) => {
-                    f64::from(px)
-                }
-                BorderImageWidthSide::LengthPercentage(ComputedLengthPercentage::Percent(p)) => {
-                    basis * f64::from(p) / 100.0
-                }
-                BorderImageWidthSide::Number(number) => f64::from(number) * border,
-                // `auto`: the natural size of the slice, else the border width.
-                _ if has_natural_size => slice,
-                _ => border,
+    // `auto` uses the natural height of the top and bottom slices and the
+    // natural width of the left and right ones, falling back to the border
+    // width when the image lacks that dimension.
+    let natural_dimension =
+        |dimension: Option<f32>| dimension.is_some_and(|dimension| dimension > 0.0);
+    let has_natural_width = natural.is_some_and(|natural| natural_dimension(natural.width));
+    let has_natural_height = natural.is_some_and(|natural| natural_dimension(natural.height));
+    let side_width = |side: BorderImageWidthSide<ComputedLengthPercentage>,
+                      basis: f64,
+                      border: f64,
+                      slice,
+                      has_natural: bool| {
+        match side {
+            BorderImageWidthSide::LengthPercentage(ComputedLengthPercentage::Px(px)) => {
+                f64::from(px)
             }
-            .max(0.0)
-        };
+            BorderImageWidthSide::LengthPercentage(ComputedLengthPercentage::Percent(p)) => {
+                basis * f64::from(p) / 100.0
+            }
+            BorderImageWidthSide::Number(number) => f64::from(number) * border,
+            _ if has_natural => slice,
+            _ => border,
+        }
+        .max(0.0)
+    };
     let mut widths = Sides {
-        top: side_width(image.width.top, area_h, border_widths.top, slices.top),
-        right: side_width(image.width.right, area_w, border_widths.right, slices.right),
+        top: side_width(
+            image.width.top,
+            area_h,
+            border_widths.top,
+            slices.top,
+            has_natural_height,
+        ),
+        right: side_width(
+            image.width.right,
+            area_w,
+            border_widths.right,
+            slices.right,
+            has_natural_width,
+        ),
         bottom: side_width(
             image.width.bottom,
             area_h,
             border_widths.bottom,
             slices.bottom,
+            has_natural_height,
         ),
-        left: side_width(image.width.left, area_w, border_widths.left, slices.left),
+        left: side_width(
+            image.width.left,
+            area_w,
+            border_widths.left,
+            slices.left,
+            has_natural_width,
+        ),
     };
     // Opposite widths that overlap are scaled down together.
     let factor = (area_w / (widths.left + widths.right))
@@ -240,6 +267,14 @@ pub fn border_image_geometry(
             let Some((tile_height, y)) = tile_axis(dest_y, dest_h, tile_h, vertical) else {
                 continue;
             };
+            // A dense filled middle multiplies both axes; past the bound the
+            // part is drawn stretched instead.
+            let (tile_width, x, tile_height, y) =
+                if x.len().saturating_mul(y.len()) > MAX_PART_TILES {
+                    (dest_w, vec![dest_x], dest_h, vec![dest_y])
+                } else {
+                    (tile_width, x, tile_height, y)
+                };
             parts.push(BorderImagePart {
                 source,
                 area: dest,

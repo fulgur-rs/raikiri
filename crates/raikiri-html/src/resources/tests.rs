@@ -1984,3 +1984,31 @@ fn a_font_set_is_the_layer_of_the_inline_engine() {
         Some(expected)
     );
 }
+
+#[test]
+fn border_images_of_elements_and_pseudo_elements_are_preloaded() {
+    let provider = SvgNetworkProvider::default();
+    let resources = RenderResources::new().network_provider(&provider);
+    let html = br#"<!doctype html><style>
+        div { border-image:url(https://images.test/element.svg) 1 }
+        div::before { content:''; border-image-source:url(https://images.test/before.svg) }
+        </style><div></div>"#;
+    let options = ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let uncascaded = crate::parse(html.as_slice(), &options).unwrap();
+    let cascade = crate::build_cascaded(&uncascaded).expect("the cascade succeeds");
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    let mut seen = Default::default();
+    let mut attempts = 0;
+    resources.preload_background_images(&cascade, &warnings, &mut seen, &mut attempts, None);
+    assert_eq!(
+        *provider.requests.lock().unwrap(),
+        ["element.svg", "before.svg"].map(|name| (
+            Url::parse(&format!("https://images.test/{name}")).unwrap(),
+            ResourceKind::Image
+        ))
+    );
+}
