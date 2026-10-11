@@ -199,6 +199,7 @@ pub(crate) fn own_heap_bytes(values: &ComputedValues, parent: &ComputedValues) -
         background_size: _,
         background_position: _,
         background_image,
+        border_image,
         object_fit: _,
         object_position: _,
         opacity: _,
@@ -265,6 +266,7 @@ pub(crate) fn own_heap_bytes(values: &ComputedValues, parent: &ComputedValues) -
         + str_of(line_str(grid_column_start), line_str(&parent.grid_column_start))
         + str_of(line_str(grid_column_end), line_str(&parent.grid_column_end))
         + image(background_image, &parent.background_image)
+        + image(&border_image.source, &parent.border_image.source)
         + image(mask_image, &parent.mask_image)
         + clip_path_heap(clip_path)
         + list(transform, &parent.transform, |_| 0)

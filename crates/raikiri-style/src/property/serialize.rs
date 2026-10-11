@@ -69,6 +69,38 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::OutlineWidth(l)
         | PropertyValue::OutlineOffset(l) => Some(serialize_length(l)),
 
+        PropertyValue::BorderImageSlice(slice) => {
+            let sides = serialize_sides(&slice.offsets, |offset| match *offset {
+                BorderImageSliceOffset::Number(value) => serialize_number(value),
+                BorderImageSliceOffset::Percent(value) => serialize_percentage(value),
+            });
+            Some(if slice.fill {
+                format!("{sides} fill")
+            } else {
+                sides
+            })
+        }
+        PropertyValue::BorderImageWidth(sides) => Some(serialize_sides(sides, |side| match side {
+            BorderImageWidthSide::LengthPercentage(length) => serialize_length(length),
+            BorderImageWidthSide::Number(value) => serialize_number(*value),
+            BorderImageWidthSide::Auto => "auto".to_owned(),
+        })),
+        PropertyValue::BorderImageOutset(sides) => {
+            Some(serialize_sides(sides, |side| match side {
+                BorderImageOutsetSide::Length(length) => serialize_length(length),
+                BorderImageOutsetSide::Number(value) => serialize_number(*value),
+            }))
+        }
+        PropertyValue::BorderImageRepeat(repeat) => Some(if repeat.horizontal == repeat.vertical {
+            repeat.horizontal.as_css_str().to_owned()
+        } else {
+            format!(
+                "{} {}",
+                repeat.horizontal.as_css_str(),
+                repeat.vertical.as_css_str()
+            )
+        }),
+
         PropertyValue::BorderRadiusTopLeft(corner)
         | PropertyValue::BorderRadiusTopRight(corner)
         | PropertyValue::BorderRadiusBottomRight(corner)
@@ -575,6 +607,8 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::BackgroundPosition(..)
         | PropertyValue::BackgroundImage(..)
         | PropertyValue::Background(..)
+        | PropertyValue::BorderImageSource(..)
+        | PropertyValue::BorderImage(..)
         | PropertyValue::ObjectFit(..)
         | PropertyValue::ObjectPosition(..)
         | PropertyValue::TransformOrigin(..)

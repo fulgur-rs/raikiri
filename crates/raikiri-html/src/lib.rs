@@ -91,7 +91,8 @@ pub use shodo::font::FontCollection;
 /// draw background images themselves.
 pub mod image_geometry {
     pub use raikiri_dom::image_geometry::{
-        BackgroundTiles, background_image_dimensions, background_tiles,
+        BackgroundTiles, BorderImageGeometry, BorderImagePart, background_image_dimensions,
+        background_tiles, border_image_geometry,
     };
 }
 

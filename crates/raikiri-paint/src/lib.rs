@@ -438,7 +438,14 @@ fn paint_single_page_with_origin_and_page_context_impl(
     );
     walk::paint_page_border(scene, cascade, page_box);
     walk::paint_page_outline(scene, cascade, page_box);
-    walk::paint_root_element_border(scene, document, cascade, page_box);
+    walk::paint_root_element_border(
+        scene,
+        document,
+        cascade,
+        page_box,
+        pixel_source,
+        &mut warnings,
+    );
     walk::paint_page_margin_boxes(
         scene,
         document,
@@ -603,7 +610,14 @@ pub fn paint_single_page_with_images_and_warnings(
     );
     walk::paint_page_border(scene, cascade, page_box);
     walk::paint_page_outline(scene, cascade, page_box);
-    walk::paint_root_element_border(scene, document, cascade, page_box);
+    walk::paint_root_element_border(
+        scene,
+        document,
+        cascade,
+        page_box,
+        Some(pixel_source),
+        &mut warnings,
+    );
     walk::paint_page_margin_boxes(
         scene,
         document,

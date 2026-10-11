@@ -4,6 +4,7 @@ use cssparser::{ParseError, Parser, ParserInput, Token};
 
 use super::types::*;
 
+mod border_image;
 mod box_model;
 mod color;
 mod common;
@@ -12,6 +13,7 @@ mod layout;
 mod text;
 mod visual;
 
+pub(crate) use border_image::*;
 pub(crate) use box_model::*;
 pub use color::*;
 pub(crate) use common::*;
@@ -74,6 +76,12 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
                 | PropertyKey::ColumnRuleStyle
                 | PropertyKey::ColumnRuleColor
                 | PropertyKey::ColumnSpan
+                | PropertyKey::BorderImage
+                | PropertyKey::BorderImageSource
+                | PropertyKey::BorderImageSlice
+                | PropertyKey::BorderImageWidth
+                | PropertyKey::BorderImageOutset
+                | PropertyKey::BorderImageRepeat
         )
     ) && let Ok(keyword) = input.try_parse(|parser| {
         let keyword = parse_css_wide_keyword_res(parser)?;
@@ -1185,6 +1193,26 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         // (`BackgroundShorthand` doc's Non-goal section).
         "background" => {
             parse_background_shorthand(input).map(|v| PropertyValue::Background(Box::new(v)))
+        }
+        // CSS Backgrounds and Borders 3 §6
+        // <https://www.w3.org/TR/css-backgrounds-3/#border-images>.
+        "border-image-source" => {
+            parse_border_image_source(input).map(PropertyValue::BorderImageSource)
+        }
+        "border-image-slice" => {
+            parse_border_image_slice(input).map(PropertyValue::BorderImageSlice)
+        }
+        "border-image-width" => {
+            parse_border_image_width(input).map(PropertyValue::BorderImageWidth)
+        }
+        "border-image-outset" => {
+            parse_border_image_outset(input).map(PropertyValue::BorderImageOutset)
+        }
+        "border-image-repeat" => {
+            parse_border_image_repeat(input).map(PropertyValue::BorderImageRepeat)
+        }
+        "border-image" => {
+            parse_border_image_shorthand(input).map(|v| PropertyValue::BorderImage(Box::new(v)))
         }
         // CSS Images Module Level 3 §5.1
         // <https://www.w3.org/TR/css-images-3/#the-object-fit>.

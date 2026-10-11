@@ -92,7 +92,8 @@ pub use ruletree::{
 
 pub mod computed;
 pub use computed::{
-    ChFontKey, ChLengthProvenance, ComputedProperty, ComputedValues, VerticalLogicalSize,
+    ChFontKey, ChLengthProvenance, ComputedBorderImage, ComputedProperty, ComputedValues,
+    VerticalLogicalSize,
 };
 pub mod computed_api;
 

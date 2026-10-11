@@ -7010,6 +7010,12 @@ impl DeferredValue {
                 | PropertyKey::ColumnRuleStyle
                 | PropertyKey::ColumnRuleColor
                 | PropertyKey::ColumnSpan
+                | PropertyKey::BorderImage
+                | PropertyKey::BorderImageSource
+                | PropertyKey::BorderImageSlice
+                | PropertyKey::BorderImageWidth
+                | PropertyKey::BorderImageOutset
+                | PropertyKey::BorderImageRepeat
         ) {
             return None;
         }
@@ -7721,6 +7727,172 @@ pub struct BackgroundRepeat {
     pub x: BackgroundRepeatKeyword,
     /// Repeat mode on the vertical axis.
     pub y: BackgroundRepeatKeyword,
+}
+
+/// One `border-image-slice` offset (CSS Backgrounds 3 §6.2
+/// <https://www.w3.org/TR/css-backgrounds-3/#border-image-slice>).
+///
+/// The computed value is as specified, so the same type serves both layers.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum BorderImageSliceOffset {
+    /// `<number [0,∞]>`: pixels of a raster image, or coordinates of a
+    /// vector image.
+    Number(f32),
+    /// `<percentage [0,∞]>` of the image's width (left and right offsets)
+    /// or height (top and bottom offsets), as authored (`50%` → `50.0`).
+    Percent(f32),
+}
+
+/// Specified and computed value of `border-image-slice`:
+/// `[<number [0,∞]> | <percentage [0,∞]>]{1,4} && fill?` (CSS Backgrounds 3
+/// §6.2). Initial: `100%` on every side, without `fill`.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BorderImageSlice {
+    /// Inward offsets from the top, right, bottom and left image edges.
+    pub offsets: Sides<BorderImageSliceOffset>,
+    /// `fill`: keep the middle part of the image.
+    pub fill: bool,
+}
+
+impl BorderImageSlice {
+    /// The initial value, `100%`.
+    pub const INITIAL: Self = Self {
+        offsets: Sides {
+            top: BorderImageSliceOffset::Percent(100.0),
+            right: BorderImageSliceOffset::Percent(100.0),
+            bottom: BorderImageSliceOffset::Percent(100.0),
+            left: BorderImageSliceOffset::Percent(100.0),
+        },
+        fill: false,
+    };
+}
+
+/// One side of `border-image-width`:
+/// `<length-percentage [0,∞]> | <number [0,∞]> | auto` (CSS Backgrounds 3
+/// §6.3 <https://www.w3.org/TR/css-backgrounds-3/#border-image-width>).
+///
+/// `L` is [`Length`] in the specified layer (which also carries
+/// percentages) and `ComputedLengthPercentage` in the computed layer.
+/// Percentages refer to the border image area: its width for the left and
+/// right sides, its height for the top and bottom sides.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum BorderImageWidthSide<L> {
+    /// `<length-percentage [0,∞]>`.
+    LengthPercentage(L),
+    /// `<number [0,∞]>`: a multiple of the computed `border-*-width`.
+    Number(f32),
+    /// `auto`: the natural size of the matching image slice, falling back
+    /// to the computed `border-*-width` when the image has none.
+    Auto,
+}
+
+/// One side of `border-image-outset`: `<length [0,∞]> | <number [0,∞]>`
+/// (CSS Backgrounds 3 §6.4
+/// <https://www.w3.org/TR/css-backgrounds-3/#border-image-outset>).
+///
+/// `L` is [`Length`] in the specified layer and a CSS px `f32` in the
+/// computed layer.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum BorderImageOutsetSide<L> {
+    /// `<length [0,∞]>`.
+    Length(L),
+    /// `<number [0,∞]>`: a multiple of the computed `border-*-width`.
+    Number(f32),
+}
+
+/// One axis of `border-image-repeat` (CSS Backgrounds 3 §6.5
+/// <https://www.w3.org/TR/css-backgrounds-3/#border-image-repeat>).
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BorderImageRepeatKeyword {
+    /// `stretch` — the initial value. Stretch the image to fill the area.
+    Stretch,
+    /// `repeat` — tile the image, centered in the area.
+    Repeat,
+    /// `round` — tile the image, rescaled so a whole number of tiles fits.
+    Round,
+    /// `space` — tile the image, distributing leftover space between tiles.
+    Space,
+}
+
+css_keywords!(BorderImageRepeatKeyword {
+    Stretch => "stretch",
+    Repeat => "repeat",
+    Round => "round",
+    Space => "space",
+});
+
+/// Specified and computed value of `border-image-repeat`:
+/// `[stretch | repeat | round | space]{1,2}`. A single keyword applies to
+/// both axes.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BorderImageRepeat {
+    /// Applies to the top and bottom edges and the middle part.
+    pub horizontal: BorderImageRepeatKeyword,
+    /// Applies to the left and right edges and the middle part.
+    pub vertical: BorderImageRepeatKeyword,
+}
+
+impl BorderImageRepeat {
+    /// The initial value, `stretch`.
+    pub const INITIAL: Self = Self {
+        horizontal: BorderImageRepeatKeyword::Stretch,
+        vertical: BorderImageRepeatKeyword::Stretch,
+    };
+}
+
+/// Initial `border-image-width`: `1` on every side.
+pub const BORDER_IMAGE_WIDTH_INITIAL: Sides<BorderImageWidthSide<Length>> = Sides {
+    top: BorderImageWidthSide::Number(1.0),
+    right: BorderImageWidthSide::Number(1.0),
+    bottom: BorderImageWidthSide::Number(1.0),
+    left: BorderImageWidthSide::Number(1.0),
+};
+
+/// Initial `border-image-outset`: `0` on every side.
+pub const BORDER_IMAGE_OUTSET_INITIAL: Sides<BorderImageOutsetSide<Length>> = Sides {
+    top: BorderImageOutsetSide::Number(0.0),
+    right: BorderImageOutsetSide::Number(0.0),
+    bottom: BorderImageOutsetSide::Number(0.0),
+    left: BorderImageOutsetSide::Number(0.0),
+};
+
+/// The `border-image` shorthand (CSS Backgrounds 3 §6.7
+/// <https://www.w3.org/TR/css-backgrounds-3/#border-image>): every
+/// longhand, with omitted ones at their initial values. It is expanded into
+/// the five longhands when parsed.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq)]
+pub struct BorderImageShorthand {
+    /// `border-image-source`.
+    pub source: BackgroundImage,
+    /// `border-image-slice`.
+    pub slice: BorderImageSlice,
+    /// `border-image-width`.
+    pub width: Sides<BorderImageWidthSide<Length>>,
+    /// `border-image-outset`.
+    pub outset: Sides<BorderImageOutsetSide<Length>>,
+    /// `border-image-repeat`.
+    pub repeat: BorderImageRepeat,
+}
+
+impl BorderImageShorthand {
+    /// Every longhand at its initial value, which the `border` shorthand
+    /// also resets to (CSS Backgrounds 3 §3.4).
+    pub fn initial() -> Self {
+        Self {
+            source: BackgroundImage::None,
+            slice: BorderImageSlice::INITIAL,
+            width: BORDER_IMAGE_WIDTH_INITIAL,
+            outset: BORDER_IMAGE_OUTSET_INITIAL,
+            repeat: BorderImageRepeat::INITIAL,
+        }
+    }
 }
 
 /// Specified value of `background-attachment`.
@@ -9154,20 +9326,11 @@ pub enum PropertyValue {
     /// gracefully. See the canonical descriptions in the docs for
     /// [`crate::cascade::apply_value`] and [`crate::rule::expand_shorthand_into`].
     ///
-    /// ⚠️ The spec's "all of its longhand sub-properties" includes the five
+    /// The spec's "all of its longhand sub-properties" includes the five
     /// reset-only `border-image-*` properties (CSS Backgrounds 3 §3.4: the
-    /// `border` shorthand also resets `border-image` to its initial value).
-    /// They are not implemented, so expansion covers only twelve longhands;
-    /// see "Non-goals" below.
-    ///
-    /// # Non-goals (explicit spec deviation)
-    ///
-    /// Spec §3.4 <https://www.w3.org/TR/css-backgrounds-3/#border-shorthands>
-    /// says the border shorthand **also resets border-image-*** (the spec's
-    /// verbatim wording occurs only in the `parse_border_shorthand` docs).
-    /// This crate does not implement border-image, so the reset is unsupported
-    /// (spec-valid but outside this crate's scope). A future integration task
-    /// must handle it alongside the border-image longhands.
+    /// `border` shorthand also resets `border-image` to its initial value),
+    /// so expansion pushes those five initial values after the twelve
+    /// border longhands.
     Border(Sides<Border>),
     /// `border-style: <line-style>{1,4}` — non-inherited (CSS Backgrounds 3
     /// §3.2 `<line-style>` × §3.4 shorthands
@@ -10230,6 +10393,26 @@ pub enum PropertyValue {
     ColumnRuleStyle(BorderStyle),
     /// Non-inherited `column-rule-color`; initially `currentcolor`.
     ColumnRuleColor(BorderColor),
+    /// `border-image-source: none | <image>` — non-inherited, initial
+    /// `none` (CSS Backgrounds 3 §6.1). Shares [`BackgroundImage`] with
+    /// `background-image`. Appended to preserve existing variant
+    /// discriminants, like the other `border-image-*` variants below.
+    BorderImageSource(BackgroundImage),
+    /// `border-image-slice` — non-inherited, initial `100%` (§6.2).
+    BorderImageSlice(BorderImageSlice),
+    /// `border-image-width` — non-inherited, initial `1` (§6.3). Lengths are
+    /// absolutized in phase 3.
+    BorderImageWidth(Sides<BorderImageWidthSide<Length>>),
+    /// `border-image-outset` — non-inherited, initial `0` (§6.4). Lengths
+    /// are absolutized in phase 3.
+    BorderImageOutset(Sides<BorderImageOutsetSide<Length>>),
+    /// `border-image-repeat` — non-inherited, initial `stretch` (§6.5).
+    BorderImageRepeat(BorderImageRepeat),
+    /// `border-image` shorthand (§6.7). [`crate::rule::expand_shorthand_into`]
+    /// expands it into the five longhands above, so it never reaches the
+    /// cascade. Boxed so that it does not set the size of every
+    /// `PropertyValue`.
+    BorderImage(Box<BorderImageShorthand>),
 }
 
 // Every declaration a rule tree holds carries one `PropertyValue`, and the
@@ -10823,6 +11006,14 @@ pub enum PropertyKey {
     ColumnRuleColor,
     // Appended to preserve existing property key slots.
     ColumnSpan,
+    // CSS Backgrounds 3 border-image longhands and shorthand; appended to
+    // preserve existing key slots.
+    BorderImageSource,
+    BorderImageSlice,
+    BorderImageWidth,
+    BorderImageOutset,
+    BorderImageRepeat,
+    BorderImage,
 }
 
 impl PropertyValue {
@@ -11047,6 +11238,12 @@ impl PropertyValue {
             PropertyValue::BackgroundPosition(_) => PropertyKey::BackgroundPosition,
             PropertyValue::BackgroundImage(_) => PropertyKey::BackgroundImage,
             PropertyValue::Background(_) => PropertyKey::Background,
+            PropertyValue::BorderImageSource(_) => PropertyKey::BorderImageSource,
+            PropertyValue::BorderImageSlice(_) => PropertyKey::BorderImageSlice,
+            PropertyValue::BorderImageWidth(_) => PropertyKey::BorderImageWidth,
+            PropertyValue::BorderImageOutset(_) => PropertyKey::BorderImageOutset,
+            PropertyValue::BorderImageRepeat(_) => PropertyKey::BorderImageRepeat,
+            PropertyValue::BorderImage(_) => PropertyKey::BorderImage,
             PropertyValue::ObjectFit(_) => PropertyKey::ObjectFit,
             PropertyValue::ObjectPosition(_) => PropertyKey::ObjectPosition,
             PropertyValue::Opacity(_) => PropertyKey::Opacity,
@@ -12304,6 +12501,12 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "background-position" => PropertyKey::BackgroundPosition,
         "background-image" => PropertyKey::BackgroundImage,
         "background" => PropertyKey::Background,
+        "border-image-source" => PropertyKey::BorderImageSource,
+        "border-image-slice" => PropertyKey::BorderImageSlice,
+        "border-image-width" => PropertyKey::BorderImageWidth,
+        "border-image-outset" => PropertyKey::BorderImageOutset,
+        "border-image-repeat" => PropertyKey::BorderImageRepeat,
+        "border-image" => PropertyKey::BorderImage,
         "object-fit" => PropertyKey::ObjectFit,
         "object-position" => PropertyKey::ObjectPosition,
         "opacity" => PropertyKey::Opacity,

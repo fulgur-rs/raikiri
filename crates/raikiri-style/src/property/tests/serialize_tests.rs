@@ -677,3 +677,59 @@ fn negative_zero_serializes_without_a_sign() {
     assert_eq!(serialize_length(&Length::Percent(-0.0)), "0%");
     assert_eq!(crate::ComputedLength(-0.0).to_css_string(), "0px");
 }
+
+#[test]
+fn serialize_value_writes_border_image_longhands() {
+    let slice = BorderImageSlice {
+        offsets: Sides {
+            top: BorderImageSliceOffset::Number(10.0),
+            right: BorderImageSliceOffset::Percent(20.0),
+            bottom: BorderImageSliceOffset::Number(10.0),
+            left: BorderImageSliceOffset::Percent(20.0),
+        },
+        fill: true,
+    };
+    assert_eq!(
+        serialize_value(&PropertyValue::BorderImageSlice(slice)),
+        Some("10 20% fill".to_owned())
+    );
+    assert_eq!(
+        serialize_value(&PropertyValue::BorderImageSlice(BorderImageSlice::INITIAL)),
+        Some("100%".to_owned())
+    );
+    assert_eq!(
+        serialize_value(&PropertyValue::BorderImageWidth(Sides {
+            top: BorderImageWidthSide::LengthPercentage(Length::Px(1.0)),
+            right: BorderImageWidthSide::Number(2.0),
+            bottom: BorderImageWidthSide::Auto,
+            left: BorderImageWidthSide::Number(2.0),
+        })),
+        Some("1px 2 auto".to_owned())
+    );
+    assert_eq!(
+        serialize_value(&PropertyValue::BorderImageOutset(Sides {
+            top: BorderImageOutsetSide::Length(Length::Em(1.0)),
+            right: BorderImageOutsetSide::Number(0.5),
+            bottom: BorderImageOutsetSide::Length(Length::Em(1.0)),
+            left: BorderImageOutsetSide::Number(0.5),
+        })),
+        Some("1em 0.5".to_owned())
+    );
+    assert_eq!(
+        serialize_value(&PropertyValue::BorderImageRepeat(
+            BorderImageRepeat::INITIAL
+        )),
+        Some("stretch".to_owned())
+    );
+    assert_eq!(
+        serialize_value(&PropertyValue::BorderImageRepeat(BorderImageRepeat {
+            horizontal: BorderImageRepeatKeyword::Round,
+            vertical: BorderImageRepeatKeyword::Space,
+        })),
+        Some("round space".to_owned())
+    );
+    assert_eq!(
+        serialize_value(&PropertyValue::BorderImageSource(BackgroundImage::None)),
+        None
+    );
+}

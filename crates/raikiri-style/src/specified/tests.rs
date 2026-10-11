@@ -545,6 +545,12 @@ fn parent_fixture() -> ComputedValues {
         // CSS Backgrounds and Borders 3 §2.3: non-inherited; use a non-initial value as required
         // by this fixture.
         background_image: BackgroundImage::Url("fixture.png".into()),
+        // CSS Backgrounds 3 §6: non-inherited; use a non-initial value.
+        border_image: {
+            let mut image = crate::computed::ComputedBorderImage::initial();
+            image.source = BackgroundImage::Url("frame.png".into());
+            image
+        },
         // CSS Images Module Level 3 §5.1/§5.2: both are non-inherited; set values other than the
         // initial `fill` / `50% 50%`.
         object_fit: ObjectFit::Cover,
@@ -973,6 +979,7 @@ fn inherit_from_leaves_non_inherited_fields_at_initial() {
     assert_eq!(child.background_size, initial.background_size);
     assert_eq!(child.background_position, initial.background_position);
     assert_eq!(child.background_image, initial.background_image);
+    assert_eq!(child.border_image_source, initial.border_image_source);
     // CSS Images Module Level 3 §5.1/§5.2: both are non-inherited.
     assert_eq!(child.object_fit, initial.object_fit);
     assert_eq!(child.object_position, initial.object_position);

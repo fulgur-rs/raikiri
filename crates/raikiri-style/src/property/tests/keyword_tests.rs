@@ -21,6 +21,7 @@ fn keyword_tables_round_trip_through_their_parsers() {
         BackgroundAttachment,
         BackgroundRepeatKeyword,
         BorderCollapseValue,
+        BorderImageRepeatKeyword,
         BorderStyle,
         BoxSizing,
         BreakBetween,

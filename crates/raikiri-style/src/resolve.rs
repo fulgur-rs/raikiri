@@ -3234,9 +3234,9 @@ pub fn resolve_line_height(
 /// "No border. Color and width are ignored (i.e., the border has width 0). Note
 /// this means that the initial value of `border-image-width` will also resolve to
 /// zero." This agrees with the §3.3 Computed value row, without a border-image
-/// exception. `border-image-*` is not yet implemented (see the Non-goals in
-/// `ComputedValues::border`). No reassessment of this gate is needed now, but
-/// reread both sections when implementing border-image.
+/// exception: a `<number>` `border-image-width` multiplies this gated width,
+/// so a border image with `border-style: none` is drawn only with explicit
+/// lengths.
 /// `own_line_height` is the basis of this border's element, already absolutized
 /// by the caller through [`used_line_height_length`]. It resolves
 /// `border-*-width: 1lh` (same contract as [`resolve_length`]). If it is `None`

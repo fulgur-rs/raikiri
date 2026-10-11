@@ -799,9 +799,10 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS2 table baseline, bottom caption and empty-cell exact slice (+18).
     // + CSS Color contextual background and color-mix exact references (+5).
     // + CSS Page page area inside page padding and border (+2).
+    // + CSS Backgrounds border-image reftests (+37).
     // + CSS Display display: contents block, flex and text-only slice (+6).
     // + CSS Display display: contents on unusual and SVG elements (+3).
-    assert_eq!(set.baseline.entries.len(), 1494);
+    assert_eq!(set.baseline.entries.len(), 1531);
     for id in [
         "css/css-pseudo/first-letter-004.html",
         "css/css-pseudo/first-letter-005.html",

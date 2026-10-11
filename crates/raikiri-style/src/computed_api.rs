@@ -25,7 +25,7 @@
 //! lengths), a later release may replace the alias with a dedicated computed
 //! type; that is a breaking change for code that names the variant payloads.
 
-pub use crate::computed::ComputedValues;
+pub use crate::computed::{ComputedBorderImage, ComputedValues};
 pub use crate::property::{CornerRadius, CssColor, Sides};
 pub use crate::resolve::{
     ComputedBackgroundSize, ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem,
@@ -36,11 +36,13 @@ pub use crate::resolve::{
 
 // Payload types that appear inside the computed field types above and below.
 pub use crate::property::{
-    Angle, AnglePercentage, AngularColorStop, BorderColor, BorderStyle, CalcLengthPercentage,
-    ConicGradient, CssPosition, CssPositionOffset, GradientColorInterpolation, GradientColorStop,
-    GradientStopColor, HorizontalSide, Length, LinearGradient, LinearGradientDirection,
-    OutlineColor, OutlineStyle, OverflowValue, RadialExtent, RadialGradient, RadialShape,
-    RadialSize, SideOrCorner, TextShadowColor, TextShadowItem, TextShadowLength, VerticalSide,
+    Angle, AnglePercentage, AngularColorStop, BorderColor, BorderImageOutsetSide,
+    BorderImageRepeat, BorderImageRepeatKeyword, BorderImageSlice, BorderImageSliceOffset,
+    BorderImageWidthSide, BorderStyle, CalcLengthPercentage, ConicGradient, CssPosition,
+    CssPositionOffset, GradientColorInterpolation, GradientColorStop, GradientStopColor,
+    HorizontalSide, Length, LinearGradient, LinearGradientDirection, OutlineColor, OutlineStyle,
+    OverflowValue, RadialExtent, RadialGradient, RadialShape, RadialSize, SideOrCorner,
+    TextShadowColor, TextShadowItem, TextShadowLength, VerticalSide,
 };
 
 use crate::property;

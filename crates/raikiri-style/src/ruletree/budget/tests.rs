@@ -386,18 +386,19 @@ fn a_huge_rule_stops_at_the_first_declaration_past_the_limit() {
         max_declarations: Some(30),
         ..unlimited()
     };
-    // Each `border` expands to twelve longhands; parsing stops at the
-    // third, as soon as the count passes the limit. Page bodies and their
-    // margin boxes stop the same way.
+    // Each `border` expands to twelve longhands plus the five border-image
+    // longhands it resets; parsing stops at the second, as soon as the
+    // count passes the limit. Page bodies and their margin boxes stop the
+    // same way.
     for (css, actual) in [
-        (format!("a {{ {borders} }}"), 36),
-        (format!("@page {{ {borders} }}"), 36),
-        (format!("@media print {{ @page {{ {borders} }} }}"), 36),
-        (format!("@page {{ @top-left {{ {borders} }} }}"), 36),
+        (format!("a {{ {borders} }}"), 34),
+        (format!("@page {{ {borders} }}"), 34),
+        (format!("@media print {{ @page {{ {borders} }} }}"), 34),
+        (format!("@page {{ @top-left {{ {borders} }} }}"), 34),
         // The four `margin` longhands come first.
         (
             format!("@page {{ margin: 0; @top-left {{ {borders} }} }}"),
-            40,
+            38,
         ),
     ] {
         assert_eq!(
