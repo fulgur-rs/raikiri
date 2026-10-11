@@ -723,6 +723,9 @@ pub(crate) fn project_deferred_value(
                 crate::property::FontShorthandSize::Relative(relative) => {
                     PropertyValue::FontSizeRelative(relative)
                 }
+                crate::property::FontShorthandSize::Keyword(keyword) => {
+                    PropertyValue::FontSizeKeyword(keyword)
+                }
             },
             crate::property::PropertyKey::LineHeight => {
                 PropertyValue::LineHeight(shorthand.line_height)

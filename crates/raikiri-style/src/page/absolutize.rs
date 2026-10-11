@@ -684,6 +684,12 @@ pub(super) fn absolutize_in_page_context(
         PropertyValue::FontSizeRelative(rel) => {
             PropertyValue::FontSize(Length::Px(resolve_relative_font_size(rel, font_size.px())))
         }
+        // ── font-size: <absolute-size> ───────────────────────────────────
+        // Also resolved in phase 2 for `cascade_page`; the page context uses
+        // the default `medium` (see `resolve_against_inherited`).
+        PropertyValue::FontSizeKeyword(keyword) => PropertyValue::FontSize(Length::Px(
+            keyword.px_for_medium(crate::computed::INITIAL_FONT_SIZE_PX),
+        )),
         // ── line-height ───────────────────────────────────────────────────
         // `lh`/`rlh` self-references resolve against the root, hence
         // `ctx.root_line_height` rather than `own_line_height`.
@@ -902,6 +908,9 @@ pub(super) fn absolutize_in_page_context(
                 )),
                 FontShorthandSize::Relative(relative) => FontShorthandSize::Absolute(Length::Px(
                     resolve_relative_font_size(relative, font_size.px()),
+                )),
+                FontShorthandSize::Keyword(keyword) => FontShorthandSize::Absolute(Length::Px(
+                    keyword.px_for_medium(crate::computed::INITIAL_FONT_SIZE_PX),
                 )),
             },
             line_height: lift_line_height(resolve_line_height(

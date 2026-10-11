@@ -359,3 +359,42 @@ fn first_letter_across_generated_sources_preserves_each_owner_kind_and_remainder
     };
     assert_eq!(page.dom().text(owner), Some("Z"));
 }
+
+/// Browsers give `font-family: monospace` a 13px `medium`, so `<pre>` (whose
+/// UA style sets only `font-family: monospace`) renders at 13px under a
+/// default body, while an explicit length stays as written and a
+/// non-monospace family goes back to the 16px `medium`.
+#[test]
+fn pre_text_run_uses_monospace_medium_font_size() {
+    let html = br#"<!doctype html><style>
+      @page { size: 400px 300px; margin: 0 }
+      body { margin: 0 }
+    </style><p>body</p><pre>pre</pre><pre style="font-size: 20px">px</pre><pre><span style="font-family: sans-serif">sans</span></pre>"#;
+    let fonts = FontCollectionBuilder::new()
+        .font_bytes("Ahem", AHEM.to_vec())
+        .build()
+        .expect("fonts");
+    let resources = RenderResources::new().fonts(fonts);
+    let doc = parse_html_with_resources(&html[..], &resources).expect("parse");
+    let LayoutStatus::Completed(result) = layout(
+        &doc,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        LayoutOptions::new().resources(&resources),
+    )
+    .expect("layout") else {
+        panic!("expected a complete layout");
+    };
+    let page = result.pages().next().expect("one page");
+    let runs = page.text_runs();
+    let size_of = |text: &str| {
+        runs.iter()
+            .find(|run| run.text == text)
+            .unwrap_or_else(|| panic!("no run for {text:?}"))
+            .font_size
+    };
+    assert_eq!(size_of("body"), 16.0);
+    assert_eq!(size_of("pre"), 13.0);
+    assert_eq!(size_of("px"), 20.0);
+    assert_eq!(size_of("sans"), 16.0);
+}

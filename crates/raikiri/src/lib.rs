@@ -255,19 +255,21 @@ pub use raikiri_style::{
     AtRuleBody, AtRuleRecord, Atom, CascadeLimitKind, CascadeLimits, CascadeOptions, CascadeResult,
     ComputedBorder, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
     ComputedLineHeight, ComputedValues, CssColor, CssRule, CssRuleKind, DisplayValue,
-    FontFamilyKind, FontFamilyName, Length, LengthOrAuto, MediaContext, MediaType, Origin,
-    PageBleed, PageCascadeResult, PageContextQuery, PageInheritance, PageMarginBoxCascadeResult,
-    PageMarginBoxSlot, PageMarks, PageOrientation, PageSize, PageSizeKeyword, PropertyValue,
-    QualifiedRuleRecord, RuleNode, RuleTree, RuleTreeLimits, Sides, cascade_with_media_context,
-    cascade_with_media_context_for_page, cascade_with_options,
+    FontFamilyKind, FontFamilyName, FontSizeKeywordInfo, Length, LengthOrAuto, MediaContext,
+    MediaType, Origin, PageBleed, PageCascadeResult, PageContextQuery, PageInheritance,
+    PageMarginBoxCascadeResult, PageMarginBoxSlot, PageMarks, PageOrientation, PageSize,
+    PageSizeKeyword, PropertyValue, QualifiedRuleRecord, RuleNode, RuleTree, RuleTreeLimits, Sides,
+    cascade_with_media_context, cascade_with_media_context_for_page, cascade_with_options,
 };
-// `Border`, `BorderColor`, `BorderStyle`, and `LineHeight` are not exported
-// from the raikiri-style crate root. They are public only through
-// `raikiri_style::property::{Border, BorderColor, BorderStyle, LineHeight}`,
-// so import them separately, rather than in the block above. `BorderColor`
-// and `BorderStyle` let consumers read the other two Border fields with
-// explicit types.
-pub use raikiri_style::property::{Border, BorderColor, BorderStyle, LineHeight};
+// `AbsoluteFontSize`, `Border`, `BorderColor`, `BorderStyle`, and
+// `LineHeight` are not exported from the raikiri-style crate root. They are
+// public only through `raikiri_style::property`, so import them separately,
+// rather than in the block above. `BorderColor` and `BorderStyle` let
+// consumers read the other two Border fields with explicit types.
+// `AbsoluteFontSize` is the payload of `PropertyValue::FontSizeKeyword` and
+// the keyword of `ComputedValues.font_size_keyword`
+// (`FontSizeKeywordInfo`, re-exported above).
+pub use raikiri_style::property::{AbsoluteFontSize, Border, BorderColor, BorderStyle, LineHeight};
 pub use raikiri_style::{ConsumerPropertyGrammar, ConsumerPropertyRegistration};
 
 // ── url: concrete type for `ParseOptions.base_url: Option<Url>` ────────

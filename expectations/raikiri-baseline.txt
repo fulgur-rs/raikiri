@@ -1240,10 +1240,8 @@ css/css-flexbox/abspos/flex-abspos-staticpos-align-self-safe-003.html
 
 # --- css-text WPT PASS-only pins 2026-09-16 ---
 # white-space/text-wrap, word-break/overflow-wrap, text-indent, and tab-size sweeps
-css/css-text/overflow-wrap/overflow-wrap-anywhere-002.html
 css/css-text/overflow-wrap/overflow-wrap-anywhere-011.html
 css/css-text/overflow-wrap/overflow-wrap-anywhere-span-001.html
-css/css-text/overflow-wrap/overflow-wrap-break-word-002.html
 css/css-text/overflow-wrap/overflow-wrap-break-word-span-001.html
 css/css-text/overflow-wrap/overflow-wrap-min-content-size-001.html
 css/css-text/overflow-wrap/overflow-wrap-min-content-size-004.html
@@ -1570,7 +1568,6 @@ css/css-page/page-name-canvas-002-print.html
 css/css-page/page-name-propagated-001-print.html
 css/css-page/page-name-propagated-002-print.html
 # --- CSS Text line-break:anywhere first-stage exact 800x600 PASS-only (+21) ---
-css/css-text/line-break/line-break-anywhere-002.html
 css/css-text/line-break/line-break-anywhere-004.html
 css/css-text/line-break/line-break-anywhere-006.html
 css/css-text/line-break/line-break-anywhere-007.html
@@ -1676,8 +1673,6 @@ css/css-ui/text-overflow-014.html
 css/css-ui/text-overflow-020.html
 css/css-ui/text-overflow-022.html
 css/css-ui/text-overflow-025.html
-css/css-ui/text-overflow-027.html
-css/css-ui/text-overflow-028.html
 css/css-ui/text-overflow-029.html
 css/css-ui/text-overflow-030.html
 css/css-ui/text-overflow-change-color.html

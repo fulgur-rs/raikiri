@@ -178,6 +178,32 @@ fn var_in_font_shorthand_resets_font_feature_settings() {
 }
 
 #[test]
+fn var_in_font_shorthand_keeps_absolute_size_keywords() {
+    // A keyword size substituted through `var()` stays a keyword, so it
+    // follows the element's own `font-family`: `small` is 8/9 of the 13px
+    // `medium` under a lone `monospace`, and of 16px otherwise.
+    use crate::computed::FontSizeKeywordInfo;
+    use crate::property::AbsoluteFontSize;
+    for (family, medium) in [("monospace", 13.0), ("serif", 16.0)] {
+        let cv = cascade_doc(
+            "",
+            "div",
+            Some(&format!("--f: small {family}; font: var(--f)")),
+        );
+        assert_eq!(
+            cv.font_size,
+            ComputedLength(AbsoluteFontSize::Small.px_for_medium(medium)),
+            "{family}"
+        );
+        assert_eq!(
+            cv.font_size_keyword,
+            Some(FontSizeKeywordInfo::new(AbsoluteFontSize::Small)),
+            "{family}"
+        );
+    }
+}
+
+#[test]
 fn var_in_font_shorthand_projects_each_deferred_longhand() {
     // Sibling of `var_in_background_shorthand_projects_each_deferred_longhand`:
     // sibling — `font: var(--f)` expands 6 grammar longhands plus 10

@@ -1363,6 +1363,42 @@ fn inline_svg_descendant_font_hints_and_relative_keywords_survive_export() {
     }
 }
 
+#[test]
+fn inline_svg_definitions_export_absolute_size_keywords_as_computed_px() {
+    // SVG renderers such as usvg treat `<absolute-size>` keywords as steps
+    // from the parent's size (`medium` keeps it, `small` divides it by 1.2),
+    // so a keyword must not reach the renderer as written: `small` under the
+    // 4px use instance would draw a 3.3px square instead of 14.2px (8/9 of 16px).
+    let result = laid_out(
+        "<style>body{font-size:16px}svg{display:block}</style><svg width='20' height='20'><defs><rect id='box' style='font-size:small' width='1em' height='1em'/></defs><use href='#box' style='font-size:4px'/></svg>",
+    );
+    let page = result.page(0).unwrap();
+    let fragment = page
+        .fragments()
+        .find(|fragment| page.dom().local_name(fragment.node()) == Some("svg"))
+        .unwrap();
+    let svg = page.inline_svg(&fragment).unwrap().unwrap();
+    assert!(
+        svg.source.contains("font-size:14.222222px"),
+        "{}",
+        svg.source
+    );
+    let image = raikiri_svg::SvgDocument::parse(svg.source.as_bytes())
+        .unwrap()
+        .rasterize(
+            raikiri_svg::SvgViewport {
+                width: 20.0,
+                height: 20.0,
+            },
+            raikiri_svg::SvgRootStyle::default(),
+            None,
+        )
+        .unwrap();
+    let alpha = |offset: usize| image.rgba[(offset * 20 + offset) * 4 + 3];
+    assert_eq!(alpha(13), 255, "{}", svg.source);
+    assert_eq!(alpha(15), 0, "{}", svg.source);
+}
+
 fn svg_document_ink(html: &str) -> Vec<u8> {
     let result = laid_out(html);
     let page = result.page(0).unwrap();

@@ -1443,6 +1443,14 @@ fn svg_property_expression(value: &PropertyValue) -> Option<String> {
         PropertyValue::FontSizeRelative(RelativeFontSize::Smaller) => Some("smaller".into()),
         PropertyValue::FontWeight(FontWeightValue::Bolder) => Some("bolder".into()),
         PropertyValue::FontWeight(FontWeightValue::Lighter) => Some("lighter".into()),
+        // `<absolute-size>` keywords keep their computed px size. SVG
+        // renderers such as usvg resolve these keywords as 1.2 steps from
+        // the parent's size (`medium` keeps it), not as absolute sizes, so
+        // exporting the keyword would follow the instance's size instead.
+        // usvg has no font-family dependent `medium` either, so a definition
+        // reused under a different generic family keeps the size of the
+        // family where it is defined.
+        PropertyValue::FontSizeKeyword(_) => None,
         _ => None,
     }
 }
@@ -2086,6 +2094,18 @@ fn resolve_defaulting_value(value: PropertyValue, inherited: &ComputedValues) ->
                     crate::property::initial_font_family()
                 });
             }
+            // `font-size` carries keyword information (see
+            // `FontSizeKeywordInfo`). `initial` is the `medium` keyword, so it
+            // follows this element's own `font-family`; `inherit` and `unset`
+            // (font-size is inherited) take the parent's size and keyword
+            // information unchanged, which `1em` expresses exactly.
+            crate::property::PropertyKey::FontSize => {
+                return if initial {
+                    PropertyValue::FontSizeKeyword(crate::property::AbsoluteFontSize::Medium)
+                } else {
+                    PropertyValue::FontSize(Length::Em(1.0))
+                };
+            }
             crate::property::PropertyKey::FontWeight => {
                 return PropertyValue::FontWeight(FontWeightValue::Absolute(if inherit_svg {
                     inherited.font_weight
@@ -2407,6 +2427,11 @@ pub(crate) fn resolve_against_inherited(
         // the public result (`crate::page::PageCascadeResult::declarations`).
         PropertyValue::FontSizeRelative(rel) => PropertyValue::FontSize(Length::Px(
             resolve_relative_font_size(rel, inherited.font_size.px()),
+        )),
+        // `<absolute-size>`: the page context resolves keywords with the
+        // default `medium`, as it did before keywords were kept symbolic.
+        PropertyValue::FontSizeKeyword(keyword) => PropertyValue::FontSize(Length::Px(
+            keyword.px_for_medium(crate::computed::INITIAL_FONT_SIZE_PX),
         )),
         // Pass through properties not resolved here. The "Pass-through here
         // does not mean resolved (phase 3 is still required)" section above
@@ -2949,12 +2974,37 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             }
         }
         PropertyValue::FontFamily(f) => target.font_family = f,
-        PropertyValue::FontSize(s) => target.font_size = s,
+        // `target.font_size_keyword` still holds the parent's keyword
+        // information here, for the same single-winner reason as the
+        // `FontSizeRelative` arm below. `em` and `%` scale the parent's size,
+        // so a keyword-derived parent size stays keyword-derived; every other
+        // length is independent of the parent's keyword.
+        PropertyValue::FontSize(s) => {
+            target.font_size_keyword = match s {
+                Length::Em(v) => target.font_size_keyword.map(|info| info.scaled(v)),
+                Length::Percent(p) => target.font_size_keyword.map(|info| info.scaled(p / 100.0)),
+                _ => None,
+            };
+            target.font_size = s;
+            target.font_size_keyword_declared = false;
+        }
         PropertyValue::FontSizeRelative(rel) => {
             // Always the `Length::Px` parent seed: `FontSize` shares this
             // key's single winner slot, so it has not overwritten the seed.
             let inherited_px = target.font_size.payload();
             target.font_size = Length::Px(resolve_relative_font_size(rel, inherited_px));
+            target.font_size_keyword = target
+                .font_size_keyword
+                .map(|info| info.scaled(resolve_relative_font_size(rel, 1.0)));
+            target.font_size_keyword_declared = false;
+        }
+        PropertyValue::FontSizeKeyword(keyword) => {
+            // The pixel value is a placeholder; phase 2 computes the size from
+            // the keyword information and the final `font-family`.
+            target.font_size =
+                Length::Px(keyword.px_for_medium(crate::computed::INITIAL_FONT_SIZE_PX));
+            target.font_size_keyword = Some(crate::computed::FontSizeKeywordInfo::new(keyword));
+            target.font_size_keyword_declared = true;
         }
         PropertyValue::FontWeight(fw) => {
             let inherited = target.font_weight;

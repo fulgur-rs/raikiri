@@ -733,6 +733,7 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
         | PropertyValue::FontFamily(_)
         | PropertyValue::FontSize(_)
         | PropertyValue::FontSizeRelative(_)
+        | PropertyValue::FontSizeKeyword(_)
         | PropertyValue::FontWeight(_)
         | PropertyValue::LineHeight(_)
         | PropertyValue::Display(_)
@@ -1475,6 +1476,7 @@ pub(crate) fn expand_font(shorthand: &FontShorthand, mut push: impl FnMut(Proper
     push(match shorthand.size {
         FontShorthandSize::Absolute(length) => PropertyValue::FontSize(length),
         FontShorthandSize::Relative(relative) => PropertyValue::FontSizeRelative(relative),
+        FontShorthandSize::Keyword(keyword) => PropertyValue::FontSizeKeyword(keyword),
     });
     push(PropertyValue::LineHeight(shorthand.line_height));
     push(PropertyValue::FontFamily(shorthand.family.clone()));

@@ -95,6 +95,46 @@ fn inherited_margin_box_font_uses_root_computed_family() {
     );
 }
 
+#[test]
+fn inherited_margin_box_font_resolves_absolute_size_keywords() {
+    // `@page` and margin-box `<absolute-size>` keywords resolve against the
+    // default 16px `medium`; a margin-box keyword does not scale the page's.
+    // The page cascade has already computed the page keyword to px, while
+    // the margin-box declaration still carries the keyword.
+    use raikiri_style::property::AbsoluteFontSize;
+    for (css, expected) in [
+        (
+            "@page { font-size: x-large; @top-left { content: 'x'; } }",
+            AbsoluteFontSize::XLarge.px_for_medium(16.0),
+        ),
+        (
+            "@page { font-size: x-large; @top-left { content: 'x'; font-size: small; } }",
+            AbsoluteFontSize::Small.px_for_medium(16.0),
+        ),
+    ] {
+        let mut document = Document::new();
+        let style = document.append_element(
+            Some(document.root_index()),
+            "style",
+            Style::default(),
+            None::<&str>,
+        );
+        document.append_text(style, css);
+        let rules = build_rule_tree(&document);
+        let cascade = cascade(&document, &rules).expect("cascade Ok");
+        let rule = cascade
+            .page
+            .margin_boxes()
+            .first()
+            .expect("the @page fixture has a margin box");
+        assert_eq!(
+            inherited_margin_box_font(&document, &cascade, &cascade.page, rule),
+            (expected, "serif".to_owned()),
+            "{css}"
+        );
+    }
+}
+
 fn margin_row_margins(top: f32) -> PageMargins {
     PageMargins {
         top,

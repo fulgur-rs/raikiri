@@ -2493,6 +2493,45 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             ..font.clone()
         }),
     );
+    // `<absolute-size>` keywords, as shorthand size and as longhand, converge
+    // to px with the default 16px `medium` (`small` is 8/9 of it), whatever
+    // the context font size.
+    let keyword_font = FontShorthand {
+        size: FontShorthandSize::Keyword(crate::property::AbsoluteFontSize::Small),
+        ..font.clone()
+    };
+    assert_eq!(
+        absolutize_in_page_context(
+            ResolvedAgainstInherited::for_test(PropertyValue::Font(keyword_font)),
+            fs,
+            None,
+            &ctx,
+            styles,
+            OutlineStyle::None,
+            OverflowXY::both(OverflowValue::Visible),
+        ),
+        PropertyValue::Font(FontShorthand {
+            size: FontShorthandSize::Absolute(Length::Px(
+                crate::property::AbsoluteFontSize::Small.px_for_medium(16.0),
+            )),
+            line_height: LineHeight::Length(Length::Px(32.0)),
+            ..font.clone()
+        }),
+    );
+    assert_eq!(
+        absolutize_in_page_context(
+            ResolvedAgainstInherited::for_test(PropertyValue::FontSizeKeyword(
+                crate::property::AbsoluteFontSize::XLarge
+            )),
+            fs,
+            None,
+            &ctx,
+            styles,
+            OutlineStyle::None,
+            OverflowXY::both(OverflowValue::Visible),
+        ),
+        PropertyValue::FontSize(Length::Px(24.0)),
+    );
     // `Relative` size converges to the same `Absolute(Px(_))` shape the
     // `FontSizeRelative` longhand arm produces (same basis).
     let relative_font = FontShorthand {
@@ -4112,6 +4151,7 @@ fn key_sharing_extras() -> Vec<PropertyValue> {
     };
     vec![
         PropertyValue::FontSizeRelative(RelativeFontSize::Larger),
+        PropertyValue::FontSizeKeyword(crate::property::AbsoluteFontSize::Small),
         PropertyValue::CounterResetInherit,
         PropertyValue::MarginTopInherit,
         PropertyValue::MarginRightInherit,
@@ -4252,6 +4292,7 @@ property_value_variant_registry! {
     FontFamily,
     FontSize,
     FontSizeRelative,
+    FontSizeKeyword,
     FontWeight,
     LineHeight,
     Display,
@@ -4848,6 +4889,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             // `Lighter`, always leave unresolved residue. The `page_corpus`
             // also uses this as its worst-case payload.
             PropertyValue::FontSizeRelative(_) => Some("font-size: larger/smaller"),
+            PropertyValue::FontSizeKeyword(_) => Some("font-size: <absolute-size>"),
             // `font` shorthand fall-through: `size` delegates as in the
             // `FontSize` / `FontSizeRelative` longhand arms
             // (`length_absolute_only` / always residue); `line-height`
@@ -4860,6 +4902,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                         length_absolute_only(l, "font-size: <percentage>")
                     }
                     FontShorthandSize::Relative(_) => Some("font-size: larger/smaller"),
+                    FontShorthandSize::Keyword(_) => Some("font-size: <absolute-size>"),
                 };
                 size_residue
                     .or_else(|| line_height(shorthand.line_height))
@@ -5889,8 +5932,8 @@ fn page_corpus_font_size_and_font_size_relative_share_one_key() {
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert_eq!(
-        font_size_key_count, 2,
-        "FontSize と FontSizeRelative の 2 entry が PropertyKey::FontSize を共有するはず",
+        font_size_key_count, 3,
+        "FontSize, FontSizeRelative and FontSizeKeyword should share PropertyKey::FontSize",
     );
 }
 

@@ -262,6 +262,8 @@ fn parent_fixture() -> ComputedValues {
         },
         font_family: Arc::new(vec![crate::property::FontFamilyName::generic("sans-serif")]),
         font_size: ComputedLength(24.0),
+        font_size_keyword: None,
+        font_size_keyword_basis: ComputedLength(24.0),
         font_weight: 700.0,
         line_height: ComputedLineHeight::Number(1.5),
         display: DisplayValue::Block,
@@ -1466,4 +1468,32 @@ fn finalize_empty_text_shadow_list_reuses_shared_computed_empty_arc() {
         &cv.text_shadow,
         &ComputedValues::initial().text_shadow
     ));
+}
+
+/// A caller that overwrites a parent's computed `font_size` with an explicit
+/// length (here through `parent_with_font_size`, which keeps the initial
+/// `medium` keyword information) makes children treat that size as an
+/// explicit length: switching to the `monospace` generic keeps the parent's
+/// 20px instead of recomputing the 13px `medium`.
+#[test]
+fn overwritten_parent_font_size_drops_stale_keyword_information() {
+    let parent = parent_with_font_size(20.0);
+    assert_eq!(
+        parent.font_size_keyword,
+        Some(crate::computed::FontSizeKeywordInfo::MEDIUM)
+    );
+    let mut child = SpecifiedValues::inherit_from(&parent);
+    child.font_family = Arc::new(vec![crate::property::FontFamilyName::generic("monospace")]);
+    let computed = child.finalize(&parent, &CTX);
+    assert_eq!(computed.font_size, ComputedLength(20.0));
+    assert_eq!(computed.font_size_keyword, None);
+
+    // An untouched parent still lets the child pick up the monospace medium.
+    let parent = ComputedValues::initial();
+    let mut child = SpecifiedValues::inherit_from(&parent);
+    child.font_family = Arc::new(vec![crate::property::FontFamilyName::generic("monospace")]);
+    assert_eq!(
+        child.finalize(&parent, &CTX).font_size,
+        ComputedLength(crate::computed::MONOSPACE_MEDIUM_FONT_SIZE_PX)
+    );
 }
