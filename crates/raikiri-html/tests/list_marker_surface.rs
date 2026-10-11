@@ -394,3 +394,24 @@ fn marker_of_a_principal_box_wholly_above_the_page_is_not_projected() {
             .any(|run| run.is_standalone_marker())
     );
 }
+
+#[test]
+fn outside_markers_share_the_baseline_of_the_first_line() {
+    // CSS Lists 3 §3.1: an outside marker is aligned with the first line
+    // box of its item. The item's 20px line height adds half-leading above
+    // the text, so the marker moves down with it.
+    for extra in ["", "li{line-height:normal}", "li{line-height:3}"] {
+        let document = lay_out("<ol><li>A</li><li>B</li></ol>", extra);
+        let page = document.page(0).unwrap();
+        let runs = page.text_runs();
+        let baseline = |text: &str| {
+            runs.iter()
+                .find(|run| run.text.trim_end() == text)
+                .unwrap_or_else(|| panic!("{text} with {extra:?}"))
+                .origin
+                .1
+        };
+        assert_eq!(baseline("1."), baseline("A"), "{extra:?}");
+        assert_eq!(baseline("2."), baseline("B"), "{extra:?}");
+    }
+}

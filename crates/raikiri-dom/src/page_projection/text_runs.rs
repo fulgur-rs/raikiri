@@ -23,6 +23,9 @@ use std::sync::Arc;
 pub(super) struct MarkerText {
     shaped: Arc<crate::StandaloneText>,
     offset_x: f32,
+    /// Moves the marker's line down to the half-leading of the item's
+    /// line height, so its baseline meets the item's first line.
+    offset_y: f32,
     color: CssColor,
     shadows: Vec<TextShadow>,
     first_page: Option<u32>,
@@ -103,11 +106,22 @@ pub(super) fn prepare_markers(
         if let Some((shaped, offset_x)) =
             document.shape_list_marker_text(&content, style, owner, layout.padding.left)
         {
+            // The marker is shaped with `line-height: normal`. An item with
+            // another line height centres its first line's content area in
+            // that height (CSS Inline 3 §5.1 half-leading), so the marker's
+            // line moves by half the difference.
+            let offset_y = match style.line_height {
+                raikiri_style::ComputedLineHeight::Normal => 0.0,
+                _ => shaped.lines().first().map_or(0.0, |line| {
+                    (crate::layout::multicol::line_height_px(style) - line.block_size()) / 2.0
+                }),
+            };
             markers.insert(
                 owner,
                 MarkerText {
                     shaped: Arc::new(shaped),
                     offset_x,
+                    offset_y,
                     color: style.color,
                     shadows: text_shadows(style),
                     first_page: first_pages.get(&owner).copied(),
@@ -899,7 +913,7 @@ fn marker_runs<'a>(
         return;
     }
     let x = page.content_box.x + root.x + shift.0 + marker.offset_x;
-    let y = page.content_box.y + root.y + shift.1
+    let y = page.content_box.y + root.y + shift.1 + marker.offset_y
         - if root.is_repeat {
             0.0
         } else {

@@ -58,7 +58,7 @@ mod bridge;
 mod depth;
 mod fixed;
 pub(crate) mod ifc;
-mod multicol;
+pub(crate) mod multicol;
 mod page;
 mod page_pipeline;
 pub(crate) mod sanitize;
