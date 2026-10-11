@@ -1,4 +1,6 @@
-use super::{DomView, Fragment, MarginBox, OverflowClip, PaintEvent, PositionedGlyphRun};
+use super::{
+    DomView, Fragment, GeneratedImageId, MarginBox, OverflowClip, PaintEvent, PositionedGlyphRun,
+};
 use crate::RenderError;
 use raikiri_style::property::StringFetchMode;
 use raikiri_style::{ComputedValues, PageCascadeResult};
@@ -116,7 +118,8 @@ pub struct RasterImage {
     pub url: url::Url,
     /// Shared straight RGBA8 pixels from the configured source.
     pub pixels: std::sync::Arc<raikiri_traits::DecodedImage>,
-    /// Object rectangle after object-fit and object-position, or marker placement.
+    /// Object rectangle after object-fit and object-position, or the placement
+    /// of a marker or a generated-content image.
     /// Like [`Fragment::paint_rect`], it is in layout coordinates, which the
     /// enclosing [`PaintEvent::PushTransform`] events of its paint event move.
     pub rect: PaintRect,
@@ -286,6 +289,51 @@ impl<'a> Page<'a> {
             rect,
             clip: raikiri_traits::PaintClip::new(rect),
             clip_owner,
+        })
+    }
+
+    /// Cached raster pixels of an image of `::before` or `::after` content
+    /// from [`PaintEvent::GeneratedImage`].
+    ///
+    /// Like [`Self::raster_marker`], this uses the absolute URL and the
+    /// rectangle retained by layout, and does not fetch or place content in
+    /// the consumer. The image is clipped by its element's overflow clip, as
+    /// the pseudo-element is a child of the element.
+    pub fn raster_generated_image(
+        &self,
+        image: GeneratedImageId,
+        source: &dyn raikiri_traits::ImagePixelSource,
+    ) -> Option<RasterImage> {
+        let (url, rect) = self.document.page_generated_image(self.index(), image)?;
+        if ![rect.x, rect.y, rect.width, rect.height]
+            .into_iter()
+            .all(f32::is_finite)
+            || rect.width <= 0.0
+            || rect.height <= 0.0
+        {
+            return None;
+        }
+        let pixels = source.get_decoded_at_size(
+            url,
+            raikiri_traits::ImageRasterSize {
+                width: rect.width,
+                height: rect.height,
+            },
+            None,
+        )?;
+        let bytes = (pixels.width as usize)
+            .checked_mul(pixels.height as usize)?
+            .checked_mul(4)?;
+        if pixels.width == 0 || pixels.height == 0 || pixels.rgba.len() != bytes {
+            return None;
+        }
+        Some(RasterImage {
+            node: image.owner,
+            url: url.clone(),
+            pixels,
+            rect,
+            clip: raikiri_traits::PaintClip::new(rect),
+            clip_owner: Some(image.owner),
         })
     }
 

@@ -109,8 +109,13 @@ pub(crate) struct AnimationStyleSidecar {
 
 /// Embedder hook that resolves the image URLs carried by cascade results.
 pub(crate) trait CascadeImagePreparer {
-    /// Prepare the element and page-context images of a full cascade.
-    fn prepare_cascade(&self, cascade: &mut raikiri_style::CascadeResult);
+    /// Prepare the element and page-context images of a full cascade of
+    /// `document`.
+    fn prepare_cascade(
+        &self,
+        document: &raikiri_dom::Document,
+        cascade: &mut raikiri_style::CascadeResult,
+    );
 
     /// Prepare the page-context images of a page cascade that replaces the
     /// one of a result already passed to [`Self::prepare_cascade`].
@@ -2493,14 +2498,19 @@ fn render_raikiri_pages_inner_with_canvases(
     )
 }
 
-/// Prepare inside marker images before file-backed reftest layout.
+/// Prepare inside marker images and generated content images before
+/// file-backed reftest layout.
 struct FileCascadeImagePreparer<'a> {
     resolver: &'a raikiri_net::ImageResolver<raikiri_net::FileNetworkProvider>,
     base_url: &'a raikiri::Url,
 }
 
 impl CascadeImagePreparer for FileCascadeImagePreparer<'_> {
-    fn prepare_cascade(&self, cascade: &mut raikiri_style::CascadeResult) {
+    fn prepare_cascade(
+        &self,
+        document: &raikiri_dom::Document,
+        cascade: &mut raikiri_style::CascadeResult,
+    ) {
         for computed in &mut cascade.computed {
             if computed.display == raikiri_style::DisplayValue::ListItem
                 && computed.list_style_position == raikiri_style::ListStylePosition::Inside
@@ -2512,6 +2522,12 @@ impl CascadeImagePreparer for FileCascadeImagePreparer<'_> {
                 );
             }
         }
+        crate::http_resources::prefetch_generated_content_images(
+            document,
+            cascade,
+            Some(self.base_url),
+            self.resolver,
+        );
     }
     fn prepare_page(&self, _: &mut raikiri_style::PageCascadeResult) {}
 }
@@ -2593,7 +2609,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
     let mut default_cascade =
         build_cascaded_with_media_context_for_page(&uncascaded, &media_context, &first_query)?;
     if let Some(prepare) = prepare_cascade_images {
-        prepare.prepare_cascade(&mut default_cascade);
+        prepare.prepare_cascade(&uncascaded.dom, &mut default_cascade);
     }
     if let Some(source) = image_pixel_source {
         uncascaded
@@ -2763,7 +2779,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
             &first_query,
         )?; // cov:ignore: the first cascade of the same document, above, already returns a limit error
         if let Some(prepare) = prepare_cascade_images {
-            prepare.prepare_cascade(&mut fresh_cascade);
+            prepare.prepare_cascade(&fresh.dom, &mut fresh_cascade);
         }
         if let Some(source) = image_pixel_source {
             fresh

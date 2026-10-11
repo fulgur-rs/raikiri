@@ -376,3 +376,421 @@ fn invalid_marker_rasters_do_not_consume_the_document_budget() {
     assert_eq!(doc.list_marker_images.len(), 1);
     assert!(doc.list_marker_image(items[2]).is_some());
 }
+
+#[test]
+fn content_image_size_follows_the_default_sizing_algorithm() {
+    use raikiri_style::ComputedLengthPercentageOrAuto as Length;
+    let natural =
+        |width: Option<f32>, height: Option<f32>, ratio: Option<f32>| ImageIntrinsicSize {
+            width,
+            height,
+            aspect_ratio: ratio,
+        };
+    let sized = |width: Length, height: Length| {
+        let mut style = raikiri_style::ComputedValues::initial();
+        style.width = width;
+        style.height = height;
+        style
+    };
+    let size = |intrinsic, style: Option<&raikiri_style::ComputedValues>| {
+        let size = content_image_size(intrinsic, style);
+        (size.width, size.height)
+    };
+    // Natural dimensions, with the 300x150 default object size filling in.
+    for (intrinsic, expected) in [
+        (natural(Some(12.0), Some(10.0), Some(2.0)), (12.0, 10.0)),
+        (natural(Some(12.0), None, Some(2.0)), (12.0, 6.0)),
+        (natural(None, Some(12.0), Some(2.0)), (24.0, 12.0)),
+        (natural(Some(12.0), None, None), (12.0, 150.0)),
+        (natural(None, Some(12.0), None), (300.0, 12.0)),
+        // A ratio alone is contained in the default object size.
+        (natural(None, None, Some(4.0)), (300.0, 75.0)),
+        (natural(None, None, Some(0.5)), (75.0, 150.0)),
+        (natural(None, None, None), (300.0, 150.0)),
+        // Invalid natural dimensions are ignored.
+        (
+            natural(Some(f32::NAN), Some(-1.0), Some(0.0)),
+            (300.0, 150.0),
+        ),
+    ] {
+        assert_eq!(size(intrinsic, None), expected, "{intrinsic:?}");
+    }
+    // Absolute `width` and `height` of a replacing image.
+    let auto = Length::Auto;
+    for (intrinsic, style, expected) in [
+        (
+            natural(Some(8.0), Some(4.0), None),
+            sized(Length::Px(30.0), Length::Px(10.0)),
+            (30.0, 10.0),
+        ),
+        (
+            natural(Some(8.0), Some(4.0), None),
+            sized(Length::Px(16.0), auto),
+            (16.0, 8.0),
+        ),
+        (
+            natural(None, Some(4.0), None),
+            sized(Length::Px(16.0), auto),
+            (16.0, 4.0),
+        ),
+        (
+            natural(None, None, None),
+            sized(Length::Px(16.0), auto),
+            (16.0, 150.0),
+        ),
+        (
+            natural(Some(8.0), Some(4.0), None),
+            sized(auto, Length::Px(10.0)),
+            (20.0, 10.0),
+        ),
+        (
+            natural(Some(8.0), None, None),
+            sized(auto, Length::Px(10.0)),
+            (8.0, 10.0),
+        ),
+        (
+            natural(None, None, None),
+            sized(auto, Length::Px(10.0)),
+            (300.0, 10.0),
+        ),
+        // Percentages and negative lengths do not size the image.
+        (
+            natural(Some(8.0), Some(4.0), None),
+            sized(Length::Percent(50.0), Length::Px(-1.0)),
+            (8.0, 4.0),
+        ),
+    ] {
+        assert_eq!(size(intrinsic, Some(&style)), expected, "{intrinsic:?}");
+    }
+}
+
+/// `html > body > p` with `css` as the author stylesheet.
+fn content_image_document(css: &str) -> (Document, raikiri_style::CascadeResult, usize) {
+    let mut doc = Document::new();
+    let style = doc.append_element(Some(0), "style", taffy::Style::default(), None::<&str>);
+    doc.append_text(style, css);
+    let html = doc.append_element(Some(0), "html", taffy::Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", taffy::Style::default(), None::<&str>);
+    let p = doc.append_element(Some(body), "p", taffy::Style::default(), None::<&str>);
+    doc.append_text(p, "a");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    (doc, cascade, p)
+}
+
+#[test]
+fn content_images_that_cannot_be_sized_represent_nothing() {
+    struct PartialSizes;
+    impl ImagePixelSource for PartialSizes {
+        fn get_decoded(&self, url: &url::Url) -> Option<Arc<DecodedImage>> {
+            (!url.path().ends_with("broken.png")).then(|| {
+                Arc::new(DecodedImage {
+                    width: 2,
+                    height: 2,
+                    rgba: vec![0; 16],
+                })
+            })
+        }
+        fn intrinsic_size(&self, url: &url::Url) -> Option<ImageIntrinsicSize> {
+            (!url.path().ends_with("unsized.png")).then_some(ImageIntrinsicSize {
+                width: Some(2.0),
+                height: Some(2.0),
+                aspect_ratio: Some(1.0),
+            })
+        }
+    }
+    let (mut doc, cascade, p) = content_image_document(
+        "p::before{content:url(relative.png) url(https://images.test/unsized.png) \
+         url(https://images.test/ok.png) url(https://images.test/broken.png)}\
+         p::after{content:url(https://images.test/ok.png);width:0px}",
+    );
+    // Without a base URL a relative URL cannot be resolved.
+    doc.prepare_list_marker_images(&cascade, &PartialSizes, None);
+    use raikiri_style::PseudoElem;
+    assert!(doc.content_image(p, PseudoElem::Before, 0).is_none());
+    assert!(doc.content_image(p, PseudoElem::Before, 1).is_none());
+    assert_eq!(
+        doc.content_image_url(p, PseudoElem::Before, 2)
+            .map(url::Url::as_str),
+        Some("https://images.test/ok.png")
+    );
+    assert_eq!(
+        doc.content_image_size(p, PseudoElem::Before, 2),
+        Some(ImageRasterSize {
+            width: 2.0,
+            height: 2.0
+        })
+    );
+    // An image without pixels is not prepared.
+    assert!(doc.content_image(p, PseudoElem::Before, 3).is_none());
+    // A replacing image sized to zero is not prepared.
+    assert!(doc.content_image(p, PseudoElem::After, 0).is_none());
+    // `::marker` has no content images.
+    assert!(doc.content_image(p, PseudoElem::Marker, 0).is_none());
+    // A base URL resolves the relative image.
+    doc.prepare_list_marker_images(
+        &cascade,
+        &PartialSizes,
+        Some(&url::Url::parse("https://images.test/doc.html").unwrap()),
+    );
+    assert_eq!(
+        doc.content_image_url(p, PseudoElem::Before, 0)
+            .map(url::Url::as_str),
+        Some("https://images.test/relative.png")
+    );
+}
+
+#[test]
+fn extracted_documents_keep_the_content_images_of_listed_elements() {
+    let (mut doc, cascade, p) =
+        content_image_document("p::before{content:url(https://images.test/a.png)}");
+    doc.prepare_list_marker_images(
+        &cascade,
+        &VectorMarker {
+            intrinsic: ImageIntrinsicSize {
+                width: Some(4.0),
+                height: Some(2.0),
+                aspect_ratio: Some(2.0),
+            },
+        },
+        None,
+    );
+    let body = doc.parent_of(p).unwrap();
+    let html = doc.parent_of(body).unwrap();
+    let text = doc.get_node(p).unwrap().children[0];
+    let before = raikiri_style::PseudoElem::Before;
+    let copy = doc.extract_nodes(&[0, html, body, p, text]);
+    let image = copy
+        .content_image(3, before, 0)
+        .expect("content image follows p");
+    assert_eq!((image.width, image.height), (4, 2));
+    assert!(std::ptr::eq(
+        image,
+        doc.content_image(p, before, 0).unwrap()
+    ));
+    // The image of an element left out is not carried over.
+    let without = doc.extract_nodes(&[0, html, body]);
+    assert!(without.content_images.is_empty());
+}
+
+#[test]
+fn replacing_content_images_obey_min_and_max_sizes() {
+    use raikiri_style::ComputedLengthPercentageOrAuto as Length;
+    let natural =
+        |width: Option<f32>, height: Option<f32>, ratio: Option<f32>| ImageIntrinsicSize {
+            width,
+            height,
+            aspect_ratio: ratio,
+        };
+    let wide = natural(Some(100.0), Some(50.0), None);
+    let px = Length::Px;
+    let auto = Length::Auto;
+    // (width, height, min-width, max-width, min-height, max-height)
+    for (intrinsic, [width, height, min_width, max_width, min_height, max_height], expected) in [
+        // Both dimensions auto: the CSS 2.1 §10.4 table keeps the ratio.
+        (wide, [auto, auto, auto, px(20.0), auto, auto], (20.0, 10.0)),
+        (
+            wide,
+            [auto, auto, auto, auto, px(100.0), auto],
+            (200.0, 100.0),
+        ),
+        (
+            wide,
+            [auto, auto, px(150.0), auto, auto, auto],
+            (150.0, 75.0),
+        ),
+        (wide, [auto, auto, auto, auto, auto, px(10.0)], (20.0, 10.0)),
+        (
+            wide,
+            [auto, auto, auto, px(20.0), px(40.0), auto],
+            (20.0, 40.0),
+        ),
+        (
+            wide,
+            [auto, auto, px(150.0), auto, auto, px(40.0)],
+            (150.0, 40.0),
+        ),
+        (
+            wide,
+            [auto, auto, auto, px(20.0), auto, px(5.0)],
+            (10.0, 5.0),
+        ),
+        (
+            wide,
+            [auto, auto, auto, px(40.0), auto, px(5.0)],
+            (10.0, 5.0),
+        ),
+        (
+            wide,
+            [auto, auto, auto, px(20.0), auto, px(30.0)],
+            (20.0, 10.0),
+        ),
+        (
+            wide,
+            [auto, auto, px(200.0), auto, px(200.0), auto],
+            (400.0, 200.0),
+        ),
+        (
+            wide,
+            [auto, auto, px(400.0), auto, px(150.0), auto],
+            (400.0, 200.0),
+        ),
+        (
+            wide,
+            [auto, auto, px(400.0), auto, px(150.0), px(160.0)],
+            (400.0, 160.0),
+        ),
+        (
+            wide,
+            [auto, auto, auto, auto, px(60.0), px(5.0)],
+            (120.0, 60.0),
+        ),
+        // A max below the min is raised to the min.
+        (
+            wide,
+            [auto, auto, px(30.0), px(10.0), auto, auto],
+            (30.0, 15.0),
+        ),
+        // Without a ratio each dimension is clamped on its own.
+        (
+            natural(Some(100.0), None, None),
+            [auto, auto, auto, auto, auto, px(50.0)],
+            (100.0, 50.0),
+        ),
+        // A used width clamps before the height follows the ratio.
+        (
+            wide,
+            [px(30.0), auto, auto, px(20.0), auto, auto],
+            (20.0, 10.0),
+        ),
+        (
+            wide,
+            [auto, px(30.0), auto, auto, px(40.0), auto],
+            (80.0, 40.0),
+        ),
+        (
+            wide,
+            [px(30.0), auto, auto, auto, auto, px(5.0)],
+            (30.0, 5.0),
+        ),
+        (
+            wide,
+            [px(30.0), px(30.0), px(40.0), auto, auto, px(20.0)],
+            (40.0, 20.0),
+        ),
+        // Percentages do not constrain the image.
+        (
+            wide,
+            [
+                auto,
+                auto,
+                Length::Percent(10.0),
+                Length::Percent(10.0),
+                auto,
+                auto,
+            ],
+            (100.0, 50.0),
+        ),
+    ] {
+        let mut style = raikiri_style::ComputedValues::initial();
+        style.width = width;
+        style.height = height;
+        style.min_width = min_width;
+        style.max_width = max_width;
+        style.min_height = min_height;
+        style.max_height = max_height;
+        let size = content_image_size(intrinsic, Some(&style));
+        assert_eq!(
+            (size.width, size.height),
+            expected,
+            "{width:?} {height:?} {min_width:?} {max_width:?} {min_height:?} {max_height:?}"
+        );
+    }
+}
+
+#[test]
+fn prepared_replacing_content_images_use_the_pseudo_elements_max_width() {
+    let (mut doc, cascade, p) = content_image_document(
+        "p::before{content:url(https://images.test/a.png);max-width:2px}\
+         p::after{content:'x' url(https://images.test/a.png);max-width:2px}",
+    );
+    doc.prepare_list_marker_images(
+        &cascade,
+        &VectorMarker {
+            intrinsic: ImageIntrinsicSize {
+                width: Some(4.0),
+                height: Some(2.0),
+                aspect_ratio: Some(2.0),
+            },
+        },
+        None,
+    );
+    use raikiri_style::PseudoElem;
+    assert_eq!(
+        doc.content_image_size(p, PseudoElem::Before, 0),
+        Some(ImageRasterSize {
+            width: 2.0,
+            height: 1.0
+        })
+    );
+    // An image among other content does not replace the pseudo-element.
+    assert_eq!(
+        doc.content_image_size(p, PseudoElem::After, 0),
+        Some(ImageRasterSize {
+            width: 4.0,
+            height: 2.0
+        })
+    );
+}
+
+#[test]
+fn content_images_of_unrendered_owners_are_not_decoded_or_charged() {
+    let mut doc = Document::new();
+    let style = doc.append_element(Some(0), "style", taffy::Style::default(), None::<&str>);
+    doc.append_text(style, "p::before{content:url(https://images.test/a.png)}");
+    let html = doc.append_element(Some(0), "html", taffy::Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", taffy::Style::default(), None::<&str>);
+    // Owners in a `display: none` subtree, and one that is itself
+    // `display: none`, come first in key order.
+    let hidden = doc.append_element(
+        Some(body),
+        "div",
+        taffy::Style::default(),
+        Some("display:none"),
+    );
+    let in_hidden = doc.append_element(Some(hidden), "p", taffy::Style::default(), None::<&str>);
+    let deep = doc.append_element(Some(hidden), "div", taffy::Style::default(), None::<&str>);
+    let in_deep = doc.append_element(Some(deep), "p", taffy::Style::default(), None::<&str>);
+    let itself = doc.append_element(
+        Some(body),
+        "p",
+        taffy::Style::default(),
+        Some("display:none"),
+    );
+    let visible = doc.append_element(Some(body), "p", taffy::Style::default(), None::<&str>);
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    // The 4x2 decode costs 32 bytes: the budget holds one image.
+    doc.prepare_list_marker_images_with_budget(
+        &cascade,
+        &VectorMarker {
+            intrinsic: ImageIntrinsicSize {
+                width: Some(4.0),
+                height: Some(2.0),
+                aspect_ratio: Some(2.0),
+            },
+        },
+        None,
+        32,
+    );
+    use raikiri_style::PseudoElem;
+    for owner in [in_hidden, in_deep, itself] {
+        assert!(
+            doc.content_image(owner, PseudoElem::Before, 0).is_none(),
+            "owner {owner}"
+        );
+    }
+    assert!(doc.content_image(visible, PseudoElem::Before, 0).is_some());
+}

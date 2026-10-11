@@ -115,3 +115,122 @@ fn invalid_background_url_is_left_unchanged_without_a_fetch() {
     prepare_background_image(&mut image, &base, &resolver);
     assert_eq!(image, BackgroundImage::Url("http://[".into()));
 }
+
+#[test]
+fn generated_content_images_are_prefetched_against_the_base_url() {
+    struct Recording(std::cell::RefCell<Vec<String>>);
+    impl raikiri_traits::ReplacedResolver for Recording {
+        fn resolve(
+            &self,
+            req: ResolverRequest<'_>,
+        ) -> Result<raikiri_traits::ResolvedIntrinsic, raikiri_traits::ResolverError> {
+            self.0.borrow_mut().push(req.url().to_string());
+            Err(raikiri_traits::ResolverError::Decode("not an image".into()))
+        }
+    }
+    let mut doc = raikiri_dom::Document::new();
+    let style = doc.append_element(Some(0), "style", Default::default(), None::<&str>);
+    doc.append_text(
+        style,
+        "div::before{content:'a' url(icon.png) url(http://[)}\
+         div::after{content:url(https://images.test/after.png)}\
+         li::marker{content:url(marker.png)}",
+    );
+    doc.append_element(Some(0), "div", Default::default(), None::<&str>);
+    doc.append_element(Some(0), "li", Default::default(), None::<&str>);
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let mut cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    let resolver = Recording(Default::default());
+    let base = Url::parse("http://web-platform.test/css/test.html").unwrap();
+    prepare_cascade_images(&doc, &mut cascade, &base, &resolver);
+    let mut requested = resolver.0.into_inner();
+    requested.sort();
+    // `::marker` images are not prefetched here, and an unparsable URL is
+    // skipped.
+    assert_eq!(
+        requested,
+        [
+            "http://web-platform.test/css/icon.png",
+            "https://images.test/after.png"
+        ]
+    );
+    // Without a base URL only absolute URLs are prefetched.
+    let resolver = Recording(Default::default());
+    prefetch_generated_content_images(&doc, &cascade, None, &resolver);
+    assert_eq!(resolver.0.into_inner(), ["https://images.test/after.png"]);
+}
+
+#[test]
+fn generated_content_prefetch_stops_at_the_layout_image_limit() {
+    struct Counting(std::cell::Cell<usize>);
+    impl raikiri_traits::ReplacedResolver for Counting {
+        fn resolve(
+            &self,
+            _: ResolverRequest<'_>,
+        ) -> Result<raikiri_traits::ResolvedIntrinsic, raikiri_traits::ResolverError> {
+            self.0.set(self.0.get() + 1);
+            Err(raikiri_traits::ResolverError::Decode("not an image".into()))
+        }
+    }
+    let limit = raikiri_dom::generated_content::MAX_GENERATED_IMAGES;
+    let content: String = (0..limit + 8)
+        .map(|index| format!(" url(i{index}.png)"))
+        .collect();
+    let mut doc = raikiri_dom::Document::new();
+    let style = doc.append_element(Some(0), "style", Default::default(), None::<&str>);
+    doc.append_text(style, format!("div::before{{content:{content}}}"));
+    doc.append_element(Some(0), "div", Default::default(), None::<&str>);
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let mut cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    let resolver = Counting(Default::default());
+    let base = Url::parse("http://web-platform.test/css/test.html").unwrap();
+    prepare_cascade_images(&doc, &mut cascade, &base, &resolver);
+    assert_eq!(resolver.0.get(), limit);
+}
+
+#[test]
+fn generated_content_images_that_layout_cannot_place_are_not_prefetched() {
+    struct Recording(std::cell::RefCell<Vec<String>>);
+    impl raikiri_traits::ReplacedResolver for Recording {
+        fn resolve(
+            &self,
+            req: ResolverRequest<'_>,
+        ) -> Result<raikiri_traits::ResolvedIntrinsic, raikiri_traits::ResolverError> {
+            self.0.borrow_mut().push(req.url().to_string());
+            Err(raikiri_traits::ResolverError::Decode("not an image".into()))
+        }
+    }
+    let mut doc = raikiri_dom::Document::new();
+    let style = doc.append_element(Some(0), "style", Default::default(), None::<&str>);
+    doc.append_text(
+        style,
+        "p::before{content:url(shown.png)}\
+         .gone::before{content:url(gone.png)}\
+         .hidden::before{content:url(hidden.png)}\
+         .floated::before{content:url(floated.png);float:left}",
+    );
+    let hidden = doc.append_element(Some(0), "div", Default::default(), Some("display:none"));
+    let inner = doc.append_element(Some(hidden), "div", Default::default(), None::<&str>);
+    let in_hidden = doc.append_element(Some(inner), "p", Default::default(), None::<&str>);
+    doc.set_element_attribute(in_hidden, "class", "hidden".to_string())
+        .unwrap();
+    let gone = doc.append_element(Some(0), "p", Default::default(), Some("display:none"));
+    doc.set_element_attribute(gone, "class", "gone".to_string())
+        .unwrap();
+    let floated = doc.append_element(Some(0), "p", Default::default(), None::<&str>);
+    doc.set_element_attribute(floated, "class", "floated".to_string())
+        .unwrap();
+    doc.append_element(Some(0), "p", Default::default(), None::<&str>);
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let mut cascade = raikiri_style::cascade(&doc, &rules).unwrap();
+    let resolver = Recording(Default::default());
+    let base = Url::parse("http://web-platform.test/css/test.html").unwrap();
+    prepare_cascade_images(&doc, &mut cascade, &base, &resolver);
+    assert_eq!(
+        resolver.0.into_inner(),
+        ["http://web-platform.test/css/shown.png"]
+    );
+}

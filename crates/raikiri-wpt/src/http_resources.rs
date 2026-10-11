@@ -106,6 +106,7 @@ pub(crate) fn prepare_background_image(
 }
 
 pub(crate) fn prepare_cascade_images(
+    document: &raikiri_dom::Document,
     cascade: &mut raikiri_style::CascadeResult,
     base_url: &Url,
     resolver: &dyn raikiri_traits::ReplacedResolver,
@@ -114,7 +115,52 @@ pub(crate) fn prepare_cascade_images(
         prepare_background_image(&mut computed.background_image, base_url, resolver);
         prepare_background_image(&mut computed.list_style_image, base_url, resolver);
     }
+    prefetch_generated_content_images(document, cascade, Some(base_url), resolver);
     prepare_page_images(&mut cascade.page, base_url, resolver);
+}
+
+/// Prefetch the images of `::before` and `::after` content of `document`
+/// that layout places, which it sizes as atomic inlines. Their URLs stay as
+/// authored: layout resolves them against the same base URL. Without one,
+/// only absolute URLs are fetched.
+pub(crate) fn prefetch_generated_content_images(
+    document: &raikiri_dom::Document,
+    cascade: &raikiri_style::CascadeResult,
+    base_url: Option<&Url>,
+    resolver: &dyn raikiri_traits::ReplacedResolver,
+) {
+    let urls = cascade
+        .pseudo
+        .iter()
+        .filter(|((owner, pseudo), _)| {
+            matches!(
+                pseudo,
+                raikiri_style::PseudoElem::Before | raikiri_style::PseudoElem::After
+            ) && usize::try_from(owner.0).is_ok_and(|element| {
+                raikiri_dom::generated_content::content_images_are_placed(
+                    document, cascade, element, *pseudo,
+                )
+            })
+        })
+        .flat_map(|(_, computed)| {
+            // Layout places no more images per pseudo-element than this.
+            computed
+                .content
+                .iter()
+                .filter_map(|component| match component {
+                    raikiri_style::property::ContentComponent::Image { url } => Some(url),
+                    _ => None,
+                })
+                .take(raikiri_dom::generated_content::MAX_GENERATED_IMAGES)
+        });
+    for source in urls {
+        if let Some(absolute) = Url::parse(source)
+            .ok()
+            .or_else(|| base_url.and_then(|base| base.join(source).ok()))
+        {
+            let _ = resolver.resolve(ResolverRequest::new(&absolute));
+        }
+    }
 }
 
 /// The page-context half of [`prepare_cascade_images`], for a page cascade
@@ -135,8 +181,12 @@ pub(crate) struct HttpCascadeImages<'a> {
 }
 
 impl CascadeImagePreparer for HttpCascadeImages<'_> {
-    fn prepare_cascade(&self, cascade: &mut raikiri_style::CascadeResult) {
-        prepare_cascade_images(cascade, self.base_url, self.resolver);
+    fn prepare_cascade(
+        &self,
+        document: &raikiri_dom::Document,
+        cascade: &mut raikiri_style::CascadeResult,
+    ) {
+        prepare_cascade_images(document, cascade, self.base_url, self.resolver);
     }
 
     fn prepare_page(&self, page: &mut raikiri_style::PageCascadeResult) {

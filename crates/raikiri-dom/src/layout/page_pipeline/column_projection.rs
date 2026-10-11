@@ -63,6 +63,10 @@ pub(crate) type PreparedGeneratedPiece = (
     f32,
 );
 
+/// A content image with the top and height of its line, its line index, and
+/// its rectangle from the root's content-box origin.
+pub(crate) type PreparedContentImage = (f32, f32, usize, crate::PositionedContentImage);
+
 type TextGroups = Vec<(f32, usize, u32, IfcTextLines)>;
 
 #[derive(Clone, Default)]
@@ -82,6 +86,8 @@ pub(crate) struct ParagraphProjection {
     generated_columns: HashMap<usize, Vec<PreparedGeneratedPiece>>,
     markers: Vec<(f32, f32, crate::PositionedMarker)>,
     marker_columns: HashMap<usize, Vec<(f32, f32, crate::PositionedMarker)>>,
+    content_images: Vec<PreparedContentImage>,
+    content_image_columns: HashMap<usize, Vec<PreparedContentImage>>,
 }
 
 fn add_bounds(data: &mut ColumnProjection, node: usize, rect: BoxRect, column: u32, split: bool) {
@@ -156,6 +162,17 @@ impl ParagraphProjection {
             &self.markers
         }
     }
+    pub(crate) fn content_images(&self, column: Option<usize>) -> &[PreparedContentImage] {
+        if self.multicol
+            && let Some(column) = column
+        {
+            self.content_image_columns
+                .get(&column)
+                .map_or(&[], Vec::as_slice)
+        } else {
+            &self.content_images
+        }
+    }
 
     pub(crate) fn prepare(
         document: &Document,
@@ -214,6 +231,8 @@ impl ParagraphProjection {
             generated_columns: HashMap::new(),
             markers: Vec::new(),
             marker_columns: HashMap::new(),
+            content_images: Vec::new(),
+            content_image_columns: HashMap::new(),
         };
         for piece in node.ifc_inline_boxes().unwrap_or_default() {
             work.check()?;
@@ -384,6 +403,51 @@ impl ParagraphProjection {
                         .entry(line_columns[line.index])
                         .or_default()
                         .push((top - column_origins[line.index], height, local));
+                }
+            }
+        }
+        if node
+            .ifc
+            .as_ref()
+            .is_some_and(|ifc| !ifc.generated_atomics.is_empty())
+            && let Some(positioned) = &positioned
+        {
+            for line in positioned.lines() {
+                work.charge(
+                    line.runs
+                        .len()
+                        .saturating_add(line.content_images.len())
+                        .saturating_add(1),
+                )?;
+                let top = line.offset.1 + line.line.block_offset();
+                let height = line.line.block_size();
+                for image in line.content_images {
+                    let global = crate::PositionedContentImage {
+                        rect: raikiri_traits::PaintRect::new(
+                            line.offset.0 + image.rect.x,
+                            line.offset.1 + image.rect.y,
+                            image.rect.width,
+                            image.rect.height,
+                        ),
+                        ..image
+                    };
+                    let local = crate::PositionedContentImage {
+                        rect: raikiri_traits::PaintRect::new(
+                            image.rect.x,
+                            global.rect.y - column_origins[line.index],
+                            global.rect.width,
+                            global.rect.height,
+                        ),
+                        ..global
+                    };
+                    result
+                        .content_images
+                        .push((top, height, line.index, global));
+                    result
+                        .content_image_columns
+                        .entry(line_columns[line.index])
+                        .or_default()
+                        .push((top - column_origins[line.index], height, line.index, local));
                 }
             }
         }

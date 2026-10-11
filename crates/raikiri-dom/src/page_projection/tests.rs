@@ -24,16 +24,16 @@ fn decoration_preparation_checks_budget_and_cancellation_before_publication() {
             }))
         }
     }
-    for kind in ["before", "inside", "outside"] {
+    for kind in ["before", "inside", "outside", "image"] {
         let crate::layout::ifc::test_support::Fixture {
             mut doc, cascade, ..
         } = crate::layout::ifc::test_support::sheet_fixture(
-            if kind == "before" {
-                "div::before{content:'X';background:red}"
-            } else {
-                ""
+            match kind {
+                "before" => "div::before{content:'X';background:red}",
+                "image" => "div::before{content:url(https://images.test/a.png)}",
+                _ => "",
             },
-            &if kind == "before" {
+            &if kind == "before" || kind == "image" {
                 "width:40px;line-height:10px".to_owned()
             } else {
                 format!(
@@ -72,7 +72,17 @@ fn decoration_preparation_checks_budget_and_cancellation_before_publication() {
             for budget in 0..=32 {
                 checks.set(0);
                 let mut work = ProjectionWork::new(&control, budget);
-                let result = if kind == "before" {
+                let result = if kind == "image" {
+                    super::generated_images::prepare(
+                        &doc, &cascade, &roots, &pages, &cache, &mut work,
+                    )
+                    .map(|images| {
+                        images
+                            .values()
+                            .map(std::collections::BTreeMap::len)
+                            .sum::<usize>()
+                    })
+                } else if kind == "before" {
                     super::generated_boxes::prepare(
                         &doc, &cascade, &roots, &pages, &cache, &mut work,
                     )
@@ -111,6 +121,20 @@ fn decoration_preparation_checks_budget_and_cancellation_before_publication() {
             }
         }
     }
+}
+
+#[test]
+fn generated_image_ids_name_only_before_and_after_images() {
+    use super::generated_images::GeneratedImageId;
+    let after = GeneratedImageId::new(3, true, 2);
+    assert_eq!(after.key(), Some((3, true, 2)));
+    assert_eq!(after.pseudo(), raikiri_style::PseudoElem::After);
+    let marker = GeneratedImageId {
+        kind: crate::GeneratedKind::Marker,
+        ..after
+    };
+    assert_eq!(marker.key(), None);
+    assert_eq!(Document::new().page_generated_image(0, marker), None);
 }
 
 #[test]

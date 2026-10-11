@@ -9151,6 +9151,85 @@ fn marker_cache_preparation_obeys_each_work_budget_boundary() {
     }
 }
 
+/// [`projected_decoration_fixture`] with an image of `::before` content
+/// ahead of the first line instead of a decoration.
+fn projected_content_image_fixture() -> (Document, CascadeResult) {
+    use raikiri_traits::{DecodedImage, ImagePixelSource};
+    use std::sync::Arc;
+    struct Pixels;
+    impl ImagePixelSource for Pixels {
+        fn get_decoded(&self, _: &url::Url) -> Option<Arc<DecodedImage>> {
+            Some(Arc::new(DecodedImage {
+                width: 4,
+                height: 4,
+                rgba: [255, 0, 0, 255].repeat(16),
+            }))
+        }
+    }
+    let crate::layout::ifc::test_support::Fixture {
+        mut doc,
+        cascade,
+        root,
+    } = crate::layout::ifc::test_support::sheet_fixture(
+        "div::before{content:url(https://images.test/a.png)}",
+        "width:40px;line-height:10px",
+        |doc, root| {
+            for (index, text) in ["A", "B", "C", "D"].into_iter().enumerate() {
+                if index > 0 {
+                    doc.append_element(Some(root), "br", Style::default(), Some("display:inline"));
+                }
+                doc.append_text(root, text);
+            }
+        },
+    );
+    doc.prepare_list_marker_images(&cascade, &Pixels, None);
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+    set_committed_column_fragments(&mut doc, root);
+    doc.project_pages(
+        &cascade,
+        page_box_800x600(),
+        &[PageSlice {
+            page_index: 0,
+            content_origin_y: 0.0,
+            page_name: None,
+        }],
+        &[],
+    )
+    .unwrap();
+    (doc, cascade)
+}
+
+#[test]
+fn content_image_cache_preparation_obeys_each_work_budget_boundary() {
+    for limit in 0..=64 {
+        let (doc, cascade) = projected_content_image_fixture();
+        let root = doc.page_text_runs(&cascade, 0)[0].line.root.0 as usize;
+        let control = PageLayoutControl::default();
+        let mut work = column_projection::ProjectionWork::new(&control, limit);
+        let result =
+            column_projection::ParagraphProjection::prepare(&doc, &cascade, root, 0, &mut work);
+        if limit == 0 {
+            assert!(matches!(
+                result,
+                Err(LayoutError::FragmentLimitExceeded { limit: 0 })
+            ));
+        } else if limit == 64 {
+            assert!(result.is_ok());
+        }
+        match result {
+            Err(LayoutError::FragmentLimitExceeded { limit: actual }) => assert_eq!(actual, limit),
+            Ok(cache) => {
+                // The image is on the first line, in the first column.
+                assert_eq!(cache.content_images(Some(0)).len(), 1);
+                assert!(cache.content_images(Some(1)).is_empty());
+                assert!(cache.content_images(Some(7)).is_empty());
+                assert_eq!(cache.content_images(None).len(), 1);
+            }
+            Err(error) => panic!("unexpected content image cache error: {error:?}"),
+        }
+    }
+}
+
 #[test]
 fn repeated_header_copies_are_charged_to_the_projection_budget() {
     let (mut doc, _, root) = crate::layout::test_support::ahem_paragraph("A", "");

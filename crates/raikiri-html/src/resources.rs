@@ -854,7 +854,8 @@ impl<'a> RenderResources<'a> {
         self.preload_background_urls(raw_urls, base_url, warnings, seen, attempts, signal);
     }
 
-    /// Fetch image markers before layout because their dimensions affect lines.
+    /// Fetch image markers and the images of in-flow `::before` and `::after`
+    /// content before layout because their dimensions affect lines.
     pub(crate) fn preload_list_marker_images(
         &self,
         cascade: &raikiri_style::CascadeResult,
@@ -886,8 +887,37 @@ impl<'a> RenderResources<'a> {
                 _ => None,
             })
             .collect();
+        // Generated content in owner and pseudo order, so attempt order stays
+        // deterministic.
+        let mut pseudos: Vec<_> = cascade
+            .pseudo
+            .iter()
+            .filter(|((node, pseudo), _)| {
+                matches!(
+                    pseudo,
+                    raikiri_style::PseudoElem::Before | raikiri_style::PseudoElem::After
+                ) && usize::try_from(node.0).is_ok_and(|element| {
+                    raikiri_dom::generated_content::is_in_flow_generated_text(
+                        cascade, element, *pseudo,
+                    )
+                })
+            })
+            .collect();
+        pseudos.sort_by_key(|((node, pseudo), _)| {
+            (*node, *pseudo == raikiri_style::PseudoElem::After)
+        });
+        let content_urls = pseudos.into_iter().flat_map(|(_, computed)| {
+            computed
+                .content
+                .iter()
+                .filter_map(|component| match component {
+                    raikiri_style::property::ContentComponent::Image { url } => Some(url.as_str()),
+                    _ => None,
+                })
+                .take(raikiri_dom::generated_content::MAX_GENERATED_IMAGES)
+        });
         self.preload_background_urls(
-            urls.iter().map(String::as_str),
+            urls.iter().map(String::as_str).chain(content_urls),
             base_url,
             warnings,
             seen,

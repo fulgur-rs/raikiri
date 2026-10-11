@@ -305,6 +305,12 @@ impl DocumentHost for WptDocumentHost {
                 );
             }
         }
+        crate::http_resources::prefetch_generated_content_images(
+            &self.setup.uncascaded.dom,
+            &cascade,
+            self.setup.document_base_url.as_ref(),
+            &image_resolver,
+        );
         self.setup.uncascaded.dom.prepare_list_marker_images(
             &cascade,
             &image_resolver,
