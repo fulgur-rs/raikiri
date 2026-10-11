@@ -400,7 +400,13 @@ fn outside_markers_share_the_baseline_of_the_first_line() {
     // CSS Lists 3 §3.1: an outside marker is aligned with the first line
     // box of its item. The item's 20px line height adds half-leading above
     // the text, so the marker moves down with it.
-    for extra in ["", "li{line-height:normal}", "li{line-height:3}"] {
+    for extra in [
+        "",
+        "li{line-height:normal}",
+        "li{line-height:3}",
+        "li::marker{font-size:30px}",
+        "li{padding-top:7px}",
+    ] {
         let document = lay_out("<ol><li>A</li><li>B</li></ol>", extra);
         let page = document.page(0).unwrap();
         let runs = page.text_runs();
@@ -414,4 +420,23 @@ fn outside_markers_share_the_baseline_of_the_first_line() {
         assert_eq!(baseline("1."), baseline("A"), "{extra:?}");
         assert_eq!(baseline("2."), baseline("B"), "{extra:?}");
     }
+}
+
+#[test]
+fn an_outside_marker_follows_a_taller_first_line() {
+    // A larger inline child sets the first line's baseline.
+    let document = lay_out(
+        "<ol><li>A<span style=\"font-size:40px\">C</span></li></ol>",
+        "",
+    );
+    let page = document.page(0).unwrap();
+    let runs = page.text_runs();
+    let baseline = |text: &str| {
+        runs.iter()
+            .find(|run| run.text.trim_end() == text)
+            .unwrap_or_else(|| panic!("{text}"))
+            .origin
+            .1
+    };
+    assert_eq!(baseline("1."), baseline("A"));
 }

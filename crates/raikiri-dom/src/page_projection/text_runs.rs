@@ -106,15 +106,33 @@ pub(super) fn prepare_markers(
         if let Some((shaped, offset_x)) =
             document.shape_list_marker_text(&content, style, owner, layout.padding.left)
         {
-            // The marker is shaped with `line-height: normal`. An item with
-            // another line height centres its first line's content area in
-            // that height (CSS Inline 3 §5.1 half-leading), so the marker's
-            // line moves by half the difference.
-            let offset_y = match style.line_height {
-                raikiri_style::ComputedLineHeight::Normal => 0.0,
-                _ => shaped.lines().first().map_or(0.0, |line| {
-                    (crate::layout::multicol::line_height_px(style) - line.block_size()) / 2.0
-                }),
+            // CSS Lists 3 §3.1: an outside marker sits on the baseline of
+            // its item's first line. When the item lays out its own first
+            // line, the two baselines are matched directly, which covers a
+            // marker or a first line with other font metrics.
+            let marker_baseline = shaped.lines().first().map(|line| {
+                line.block_offset() + line.baseline(shodo::geometry::BaselineKind::Alphabetic)
+            });
+            let item_baseline = node
+                .ifc
+                .as_ref()
+                .and_then(|root| root.lines.as_ref())
+                .and_then(crate::layout::ifc::flow::first_baseline)
+                // The item's lines start inside its border and padding.
+                .map(|baseline| baseline + layout.border.top + layout.padding.top);
+            let offset_y = match (item_baseline, marker_baseline) {
+                (Some(item), Some(marker)) if (item - marker).is_finite() => item - marker,
+                // Otherwise the marker is shaped with `line-height: normal`.
+                // An item with another line height centres its first line's
+                // content area in that height (CSS Inline 3 §5.1
+                // half-leading), so the marker's line moves by half the
+                // difference.
+                _ => match style.line_height {
+                    raikiri_style::ComputedLineHeight::Normal => 0.0,
+                    _ => shaped.lines().first().map_or(0.0, |line| {
+                        (crate::layout::multicol::line_height_px(style) - line.block_size()) / 2.0
+                    }),
+                },
             };
             markers.insert(
                 owner,
