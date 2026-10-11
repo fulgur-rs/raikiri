@@ -931,12 +931,18 @@ fn marker_runs<'a>(
         return;
     }
     let x = page.content_box.x + root.x + shift.0 + marker.offset_x;
-    let y = page.content_box.y + root.y + shift.1 + marker.offset_y
+    let top = page.content_box.y + root.y + shift.1
         - if root.is_repeat {
             0.0
         } else {
             page.content_origin_y
         };
+    // The marker is drawn only on its item's first page. When the line it
+    // aligns with falls on a later page, keep the marker at the bottom of
+    // this one rather than past its edge.
+    let height = marker.shaped.lines().first().map_or(0.0, |line| line.block_size());
+    let bottom = page.content_box.y + page.content_box.height - height;
+    let y = (top + marker.offset_y).min(bottom.max(top));
     standalone_runs(
         &marker.shaped,
         (x, y),

@@ -440,3 +440,17 @@ fn an_outside_marker_follows_a_taller_first_line() {
     };
     assert_eq!(baseline("1."), baseline("A"));
 }
+
+#[test]
+fn a_marker_stays_on_its_first_page_when_the_first_line_moves_on() {
+    // The item's top padding pushes its first line onto the second page.
+    // The marker still belongs to the first page and stays inside it.
+    let document = lay_out("<ol><li style=\"padding-top:95px\">A</li></ol>", "");
+    let page = document.page(0).unwrap();
+    let marker = page
+        .text_runs()
+        .into_iter()
+        .find(|run| run.text.trim_end() == "1.")
+        .expect("the marker on the first page");
+    assert!(marker.origin.1 <= 100.0, "{:?}", marker.origin);
+}
