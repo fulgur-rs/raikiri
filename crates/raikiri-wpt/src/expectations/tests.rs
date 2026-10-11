@@ -41,6 +41,16 @@ fn expected_failure_parses_exact_query_ids_and_lookup_does_not_normalize() {
 }
 
 #[test]
+fn expected_failure_accepts_a_plane_work_item_id() {
+    let (expected, errors) = ExpectedFailures::parse(
+        "css/foo.html | tracked in Plane | RAIKIRI-21 | 2026-10-11 | 2026-11-11\n",
+        "expected-failures.txt",
+    );
+    assert!(errors.is_empty(), "unexpected parser errors: {errors:?}");
+    assert_eq!(expected.entries[0].issue_id, "RAIKIRI-21");
+}
+
+#[test]
 fn expected_failure_rejects_non_exact_ids_and_invalid_review_metadata() {
     let invalid_rows = [
         "css/foo/* | wildcard | raikiri-spike-1 | 2026-10-04 | 2026-11-04",
@@ -48,6 +58,8 @@ fn expected_failure_rejects_non_exact_ids_and_invalid_review_metadata() {
         "css/foo.html? | empty query | raikiri-spike-1 | 2026-10-04 | 2026-11-04",
         "css/foo.html#fragment | fragment | raikiri-spike-1 | 2026-10-04 | 2026-11-04",
         "css/foo.html | no local issue | fulgur-1 | 2026-10-04 | 2026-11-04",
+        "css/foo.html | Plane id without a number | RAIKIRI- | 2026-10-04 | 2026-11-04",
+        "css/foo.html | lowercase Plane id | raikiri-21 | 2026-10-04 | 2026-11-04",
         "css/foo.html | bad date | raikiri-spike-1 | 2026-02-30 | 2026-11-04",
         "css/foo.html | review must follow add | raikiri-spike-1 | 2026-10-04 | 2026-10-04",
     ];
@@ -802,7 +814,9 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS Backgrounds border-image reftests (+37).
     // + CSS Display display: contents block, flex and text-only slice (+6).
     // + CSS Display display: contents on unusual and SVG elements (+3).
-    assert_eq!(set.baseline.entries.len(), 1531);
+    // - Fourteen pins whose PASS predated the WPT fonts, now expected failures (-14).
+    // + text-spacing-trim-feature-001 pinned by its declared variants (-1, +8).
+    assert_eq!(set.baseline.entries.len(), 1524);
     for id in [
         "css/css-pseudo/first-letter-004.html",
         "css/css-pseudo/first-letter-005.html",

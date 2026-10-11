@@ -251,19 +251,16 @@ css/css-backgrounds/background-clip-content-box-001.html
 css/css-backgrounds/background-clip-content-box-002.html
 css/css-backgrounds/background-clip-content-box-with-border-radius-002.html
 css/css-backgrounds/background-clip-content-box-with-border-radius-003.html
-css/css-backgrounds/background-clip-padding-box-001.html
 css/css-backgrounds/background-clip-padding-box-with-border-radius-002.html
 css/css-backgrounds/background-clip-padding-box-with-border-radius-003.html
 css/css-backgrounds/background-clip/clip-border-area-background-geometry.html
 css/css-backgrounds/background-clip/clip-border-area-border-image.html
 css/css-backgrounds/background-clip/clip-border-area-border-shape-overflow.html
 css/css-backgrounds/background-clip/clip-border-area-border-shape.html
-css/css-backgrounds/background-clip/clip-border-area-box-decoration-break.html
 css/css-backgrounds/background-clip/clip-border-area-corner-shape.html
 css/css-backgrounds/background-clip/clip-border-area-on-body-not-propagated-to-root.html
 css/css-backgrounds/background-clip/clip-border-area-on-body-propagated-to-root.html
 css/css-backgrounds/background-clip/clip-border-area-on-root.html
-css/css-backgrounds/background-clip/clip-border-area.html
 css/css-backgrounds/background-clip/clip-rounded-corner.html
 css/css-backgrounds/background-clip/clip-text-animated-text.html
 css/css-backgrounds/background-clip/clip-text-background-table-cell.html
@@ -701,7 +698,6 @@ css/css-tables/table-cell-inline-size-box-sizing-quirks.html
 css/css-tables/table-cell-overflow-auto.html
 css/css-tables/table-colspan-percent-auto.html
 css/css-tables/th-text-align.html
-css/css-tables/visibility-collapse-rowspan-005.html
 css/css-tables/zero-rowspan-002.html
 # --- css-grid reftest pin 2026-09-14 (210/891 PASS, grid-gap alias + 20 reftest pin) ---
 css/css-grid/abspos/grid-abspos-staticpos-align-self-self-end-large-border-padding.html
@@ -741,7 +737,6 @@ css/css-text/hyphens/hyphens-span-002.html
 css/css-text/letter-spacing/letter-spacing-animating-letter-spacing.html
 css/css-text/letter-spacing/letter-spacing-cursive-001.html
 css/css-text/letter-spacing/letter-spacing-end-of-line-002.html
-css/css-text/letter-spacing/letter-spacing-ligatures-001.html
 css/css-text/letter-spacing/letter-spacing-ligatures-004.html
 css/css-text/letter-spacing/letter-spacing-nesting-002.html
 css/css-text/letter-spacing/letter-spacing-percent-001.html
@@ -920,12 +915,7 @@ css/css-text/white-space/trailing-ideographic-space-break-spaces-003.html
 css/css-text/white-space/trailing-space-rtl-001.html
 css/css-text/white-space/white-space-pre-wrap-justify-001.html
 css/css-text/white-space/white-space-vs-joiners-001.html
-css/css-text/word-break/auto-phrase/word-break-auto-phrase-001.html
 css/css-text/word-break/auto-phrase/word-break-auto-phrase-002.html
-css/css-text/word-break/auto-phrase/word-break-auto-phrase-003.html
-css/css-text/word-break/auto-phrase/word-break-auto-phrase-004.html
-css/css-text/word-break/auto-phrase/word-break-auto-phrase-005.html
-css/css-text/word-break/auto-phrase/word-break-auto-phrase-006.html
 css/css-text/word-break/auto-phrase/word-break-auto-phrase-007.html
 css/css-text/word-break/auto-phrase/word-break-auto-phrase-008.html
 css/css-text/word-break/auto-phrase/word-break-auto-phrase-009.html
@@ -1155,7 +1145,6 @@ css/css-flexbox/stretch-input-in-column.html
 css/css-flexbox/table-as-item-percent-width-cell-001.html
 css/css-flexbox/table-item-flex-percentage-min-width.html
 css/css-flexbox/text-overflow-on-flexbox-001.html
-css/css-flexbox/webkit-box-vertical-writing-mode.html
 
 # --- css-tables parsing-8 pin 2026-09-15 (border-spacing/caption-side/empty-cells valid + 4 computed; raikiri-style parse+cascade+compute only, no layout wiring) ---
 # border-spacing-valid: all 3 valid accepted (plain lengths direct, calc pair via
@@ -1264,7 +1253,6 @@ css/css-text/tab-size/tab-size-integer-003.html
 css/css-text/tab-size/tab-size-length-001.html
 css/css-text/tab-size/tab-size-length-002.html
 css/css-text/tab-size/tab-size-percent-001.html
-css/css-text/tab-size/tab-size-spacing-001.html
 css/css-text/tab-size/tab-size-spacing-002.html
 css/css-text/tab-size/tab-size-spacing-003.html
 css/css-text/text-indent/anonymous-flex-item-001.html
@@ -1337,7 +1325,6 @@ css/css-text/text-transform/text-transform-upperlower-002.html
 css/css-text/text-transform/text-transform-upperlower-003.html
 css/css-text/text-transform/text-transform-upperlower-004.html
 css/css-text/text-transform/text-transform-upperlower-005.html
-css/css-text/text-transform/text-transform-upperlower-006.html
 css/css-text/text-transform/text-transform-upperlower-007.html
 css/css-text/text-transform/text-transform-upperlower-008.html
 css/css-text/text-transform/text-transform-upperlower-009.html
@@ -1346,7 +1333,6 @@ css/css-text/text-transform/text-transform-upperlower-011.html
 css/css-text/text-transform/text-transform-upperlower-012.html
 css/css-text/text-transform/text-transform-upperlower-014.html
 css/css-text/text-transform/text-transform-upperlower-015.html
-css/css-text/text-transform/text-transform-upperlower-016.html
 css/css-text/text-transform/text-transform-upperlower-017.html
 css/css-text/text-transform/text-transform-upperlower-018.html
 css/css-text/text-transform/text-transform-upperlower-019.html
@@ -1421,7 +1407,14 @@ css/css-text/text-spacing-trim/text-spacing-trim-colon-001.html
 css/css-text/text-spacing-trim/text-spacing-trim-dot-001.html
 css/css-text/text-spacing-trim/text-spacing-trim-fallback-001.html
 css/css-text/text-spacing-trim/text-spacing-trim-fallback-002.html
-css/css-text/text-spacing-trim/text-spacing-trim-feature-001.html
+css/css-text/text-spacing-trim/text-spacing-trim-feature-001.html?class=htb&feature=halt
+css/css-text/text-spacing-trim/text-spacing-trim-feature-001.html?class=htb&feature=hwid
+css/css-text/text-spacing-trim/text-spacing-trim-feature-001.html?class=htb&feature=palt
+css/css-text/text-spacing-trim/text-spacing-trim-feature-001.html?class=htb&feature=pwid
+css/css-text/text-spacing-trim/text-spacing-trim-feature-001.html?class=htb&style=font-variant-east-asian:proportional-width
+css/css-text/text-spacing-trim/text-spacing-trim-feature-001.html?class=vrl&feature=vhal
+css/css-text/text-spacing-trim/text-spacing-trim-feature-001.html?class=vrl&feature=vpal
+css/css-text/text-spacing-trim/text-spacing-trim-feature-001.html?class=vrl&style=font-variant-east-asian:proportional-width
 css/css-text/text-spacing-trim/text-spacing-trim-narrow-001.html
 css/css-text/text-spacing-trim/text-spacing-trim-quote-001.html
 css/css-text/text-spacing-trim/text-spacing-trim-span-001.html

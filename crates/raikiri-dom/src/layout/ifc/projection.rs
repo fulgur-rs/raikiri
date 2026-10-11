@@ -16,7 +16,9 @@ use super::style;
 use crate::Document;
 use crate::generated_content::{generated_node_id, generated_text, is_in_flow_generated_text};
 use crate::target::{CounterSnapshot, CounterSnapshotLimitExceeded};
-use raikiri_style::property::{ClearValue, Direction, DisplayValue, FloatValue, PositionValue};
+use raikiri_style::property::{
+    ClearValue, Direction, DisplayValue, FloatValue, PositionValue, TextWrapMode,
+};
 use raikiri_style::{CascadeResult, ComputedTextIndent, ComputedValues, PseudoElem};
 use raikiri_traits::NodeKind;
 use shodo::font::FontCollection;
@@ -66,6 +68,9 @@ pub(crate) struct ProjectedIfc {
     pub(crate) fixed: bool,
     /// The root's lines end in an ellipsis where they overflow it.
     pub(crate) ellipsis: bool,
+    /// The root's text does not wrap (`text-wrap-mode: nowrap`): its lines
+    /// stay beside floats even when they overflow the space there.
+    pub(crate) nowrap: bool,
     pub(crate) letter_styles: Vec<LetterStyle>,
 }
 
@@ -458,6 +463,9 @@ pub(crate) struct ProjectedBuilder {
     pub(crate) fixed: bool,
     /// The root's lines end in an ellipsis where they overflow it.
     pub(crate) ellipsis: bool,
+    /// The root's text does not wrap (`text-wrap-mode: nowrap`): its lines
+    /// stay beside floats even when they overflow the space there.
+    pub(crate) nowrap: bool,
     pub(crate) letter_styles: Vec<LetterStyle>,
 }
 
@@ -484,6 +492,7 @@ impl ProjectedBuilder {
             cleared_breaks: self.cleared_breaks,
             fixed: self.fixed,
             ellipsis: self.ellipsis,
+            nowrap: self.nowrap,
             letter_styles: self.letter_styles,
         })
     }
@@ -582,6 +591,7 @@ pub(crate) fn project_ifc_text_builder(
         fixed: false,
         // An anonymous flex or grid item has no overflow of its own.
         ellipsis: false,
+        nowrap: cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
         letter_styles: Vec::new(),
     })
 }
@@ -1045,6 +1055,7 @@ fn project_children_builder(
         cleared_breaks,
         fixed: anonymous_children.is_none() && root_cv.position == PositionValue::Fixed,
         ellipsis: anonymous_children.is_none() && style::ends_in_ellipsis(root_cv),
+        nowrap: root_cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
         letter_styles: first_letter.styles,
     })
 }

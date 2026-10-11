@@ -51,6 +51,8 @@ pub(crate) struct IfcRoot {
     /// The lines end in an ellipsis where they overflow the root
     /// (`text-overflow: ellipsis`).
     pub(crate) ellipsis: bool,
+    /// The root's text does not wrap (`text-wrap-mode: nowrap`).
+    pub(crate) nowrap: bool,
     pub(crate) letter_styles: Vec<super::first_letter::LetterStyle>,
     letter_style_index: Arc<LetterStyleIndex>,
 }
@@ -180,6 +182,7 @@ impl IfcRoot {
             multicol_fragments: None,
             multicol_fragment_origins_recorded: false,
             ellipsis: projected.ellipsis,
+            nowrap: projected.nowrap,
             letter_styles: projected.letter_styles,
             letter_style_index,
         }
@@ -202,6 +205,7 @@ impl IfcRoot {
             multicol_fragments: None,
             multicol_fragment_origins_recorded: false,
             ellipsis: self.ellipsis,
+            nowrap: self.nowrap,
             letter_styles: self.letter_styles.clone(),
             letter_style_index: self.letter_style_index.clone(),
         }

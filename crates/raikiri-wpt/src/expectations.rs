@@ -217,7 +217,7 @@ impl KnownIssues {
 // ── ExpectedFailures ──────────────────────────────────────────────────────
 
 /// Parsed `expected-failures.txt`: exact tests whose deterministic failures
-/// remain visible as XFAIL until their local Beads issue is resolved.
+/// remain visible as XFAIL until their tracking issue is resolved.
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct ExpectedFailures {
@@ -233,7 +233,8 @@ pub struct ExpectedFailure {
     pub test_id: String,
     /// Why this deterministic failure is currently accepted.
     pub reason: String,
-    /// Local Beads issue tracking the implementation or fixture follow-up.
+    /// Issue tracking the implementation or fixture follow-up: a local
+    /// `raikiri-spike-*` Beads id or a `RAIKIRI-<n>` Plane work item id.
     pub issue_id: String,
     /// Date this record was added.
     pub added_date: Date,
@@ -298,11 +299,13 @@ impl ExpectedFailures {
                 });
                 continue;
             }
-            if !is_local_beads_id(issue_id) {
+            if !is_tracking_issue_id(issue_id) {
                 errors.push(ExpectError::MalformedLine {
                     file: file_name.to_owned(),
                     line_no,
-                    reason: format!("expected a local raikiri-spike Beads id, got {issue_id:?}"),
+                    reason: format!(
+                        "expected a raikiri-spike Beads id or a RAIKIRI-<n> Plane id, got {issue_id:?}"
+                    ),
                 });
                 continue;
             }
@@ -389,6 +392,14 @@ fn is_exact_test_id(test_id: &str) -> bool {
         return false;
     }
     query.is_none_or(|query| !query.is_empty() && !query.contains('?'))
+}
+
+/// A local `raikiri-spike-*` Beads id or a `RAIKIRI-<n>` Plane work item id.
+fn is_tracking_issue_id(issue_id: &str) -> bool {
+    let plane = issue_id
+        .strip_prefix("RAIKIRI-")
+        .is_some_and(|number| !number.is_empty() && number.bytes().all(|b| b.is_ascii_digit()));
+    plane || is_local_beads_id(issue_id)
 }
 
 fn is_local_beads_id(issue_id: &str) -> bool {

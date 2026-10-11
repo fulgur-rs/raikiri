@@ -3186,6 +3186,38 @@ fn a_paragraph_beside_a_right_float_keeps_its_start_and_loses_width() {
 }
 
 #[test]
+fn a_line_too_wide_for_the_space_beside_a_float_moves_below_it() {
+    // "aaaaaaaa" is 80px of Ahem, wider than the 70px beside the float.
+    let (mut doc, cascade, _float, root) =
+        ahem_paragraph_beside_float("aaaaaaaa", "float:left;width:30px;height:20px", "");
+    lay_out(&mut doc, &cascade);
+    let lines = &stored_lines(&doc, root).lines;
+    assert_eq!(
+        lines.iter().map(line_start_x).collect::<Vec<_>>(),
+        [Some(0.0)]
+    );
+    assert_eq!(lines[0].block_offset(), 20.0);
+}
+
+#[test]
+fn a_nowrap_line_too_wide_for_the_space_beside_a_float_stays_beside_it() {
+    // Moving the line below the float would act as a soft wrap, which
+    // `white-space: pre` does not allow; the line overflows beside the float.
+    for css in ["white-space:pre", "white-space:nowrap"] {
+        let (mut doc, cascade, _float, root) =
+            ahem_paragraph_beside_float("aaaaaaaa", "float:left;width:30px;height:20px", css);
+        lay_out(&mut doc, &cascade);
+        let lines = &stored_lines(&doc, root).lines;
+        assert_eq!(
+            lines.iter().map(line_start_x).collect::<Vec<_>>(),
+            [Some(30.0)],
+            "{css}"
+        );
+        assert_eq!(lines[0].block_offset(), 0.0, "{css}");
+    }
+}
+
+#[test]
 fn a_line_that_reaches_a_later_float_segment_is_narrowed_by_it() {
     // Two floats: a 30x10 one on the left at the top, then a 30x30 one on the
     // right that clears it, so it starts at y=10. The root has a 20px line
