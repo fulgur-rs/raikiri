@@ -944,6 +944,16 @@ fn relatively_positioned_text_matches_paint() {
             "<p>moved</p>",
             "body { position: relative; left: 6px; top: 4px }",
         ),
+        // The painter starts at the body and ignores the root's transform,
+        // also for a fixed box.
+        ("<p>moved</p>", "html { transform: translateX(20px) }"),
+        (
+            &format!(
+                "<div style=\"position: fixed; top: 5px; left: 5px\">fixed</div>{}",
+                paragraphs(12, 6)
+            ),
+            "html { transform: translateX(20px) }",
+        ),
         (
             "<div style=\"float: left; width: 100px; position: relative; left: 9px; top: 4px\">moved</div><p>after</p>",
             "",

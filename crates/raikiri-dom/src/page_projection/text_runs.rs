@@ -393,6 +393,8 @@ pub(super) struct RunContext {
     /// Elements laid out as column fragments, which the painter places from
     /// each fragment.
     fragmented: HashSet<usize>,
+    /// The body, where the painter starts.
+    body: Option<usize>,
 }
 
 impl RunContext {
@@ -440,6 +442,7 @@ impl RunContext {
         Self {
             overlapping,
             fragmented,
+            body: crate::paint_rules::find_paint_root(document),
         }
     }
 }
@@ -471,6 +474,20 @@ fn paint_relative_offset(cv: &ComputedValues) -> (f32, f32) {
     let dx = length(cv.left).or(length(cv.right).map(|right| -right));
     let dy = length(cv.top).or(length(cv.bottom).map(|bottom| -bottom));
     (dx.unwrap_or(0.0), dy.unwrap_or(0.0))
+}
+
+/// Whether `cv`'s box is relatively positioned by a nonzero inset of any
+/// kind, whether layout or the painter applies it.
+fn has_relative_inset(cv: &ComputedValues) -> bool {
+    cv.position == PositionValue::Relative
+        && [cv.left, cv.right, cv.top, cv.bottom]
+            .into_iter()
+            .any(|inset| {
+                !matches!(
+                    inset,
+                    ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::Px(0.0)
+                )
+            })
 }
 
 /// How far the built-in painter moves element `id` and its subtree from
@@ -578,7 +595,7 @@ pub(super) fn paint_shift(
     context: &RunContext,
     root: usize,
 ) -> Result<(f32, f32), TextRunOmission> {
-    let body = crate::paint_rules::find_paint_root(document);
+    let body = context.body;
     let root = generated_origin(root).map_or(root, |(owner, _)| owner);
     let (mut dx, mut dy) = (0.0, 0.0);
     // The shift of the boxes passed so far, when a clip was among them: the
@@ -603,9 +620,12 @@ pub(super) fn paint_shift(
             if !cv.transform.is_empty()
                 || !cv.filter.is_empty()
                 || (x, y) != (0.0, 0.0)
-                || paint_relative_offset(cv) != (0.0, 0.0)
+                || has_relative_inset(cv)
             {
                 return Err(TextRunOmission::FixedPlacement);
+            }
+            if Some(id) == body {
+                break;
             }
             continue;
         }

@@ -55,14 +55,21 @@ pub(super) fn prepare(
     }
     // The painter moves a marker with its item's text.
     let context = super::text_runs::RunContext::new(document, roots);
-    let roots: Vec<_> = prepared
-        .into_iter()
-        .map(|(root, kind)| {
-            let shift = super::text_runs::placement(document, cascade, &context, root.node)
-                .unwrap_or((0.0, 0.0));
-            (root, shift, kind)
-        })
-        .collect();
+    let mut roots = Vec::with_capacity(prepared.len());
+    for (root, kind) in prepared {
+        // The placement walks the marker owner's ancestors.
+        let mut ancestor = Some(
+            generated_origin(root.node)
+                .map_or_else(|| document.ifc_source_owner(root.node), |(owner, _)| owner),
+        );
+        while let Some(node) = ancestor {
+            work.charge(1)?;
+            ancestor = document.parent_of(node);
+        }
+        let shift = super::text_runs::placement(document, cascade, &context, root.node)
+            .unwrap_or((0.0, 0.0));
+        roots.push((root, shift, kind));
+    }
     let mut first_pages = BTreeMap::new();
     for page in pages {
         for item in &page.items {
