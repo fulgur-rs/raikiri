@@ -89,20 +89,6 @@ listener を bind する。network 制限付き sandbox 内では `PermissionDen
 `/tmp` の下にも `$HOME` 直下にも作らない**。
 規則の正典は **AGENTS.md の同名節**を参照。
 
-## Build & Test
-
-_Add your build and test commands here_
-
-```bash
-# Example:
-# npm install
-# npm test
-```
-
-## Architecture Overview
-
-_Add a brief overview of your project architecture_
-
 ## Conventions & Patterns
 
 Topic-scoped guides under `.claude/rules/` (read on demand, not loaded into context by default):
