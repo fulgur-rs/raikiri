@@ -607,18 +607,9 @@ fn multicol_paragraphs_match_native_glyph_placements() {
 }
 
 #[test]
-fn relatively_positioned_inline_elements_have_no_runs_and_a_warning() {
+fn rotated_paragraphs_have_no_runs_and_a_warning() {
     assert_omitted(
-        "<p>kept</p><p id=\"r\">a <span style=\"position: relative; left: 5px\">moved</span></p>",
-        "",
-        "r",
-    );
-}
-
-#[test]
-fn transformed_paragraphs_have_no_runs_and_a_warning() {
-    assert_omitted(
-        "<p>kept</p><div style=\"transform: translateX(5px)\"><p id=\"t\">moved</p></div>",
+        "<p>kept</p><div style=\"transform: translateX(5px) rotate(10deg)\"><p id=\"t\">moved</p></div>",
         "",
         "t",
     );
@@ -697,15 +688,6 @@ fn a_nested_container_continued_in_later_outer_columns_matches_paint() {
     // reaches the second outer column.
     assert!(runs.iter().all(|run| run.origin.1 < 78.0));
     assert!(runs.iter().any(|run| run.origin.0 > 150.0));
-}
-
-#[test]
-fn relatively_positioned_blocks_have_no_runs_and_a_warning() {
-    assert_omitted(
-        "<p>kept</p><div style=\"position: relative; top: 5px\"><p id=\"b\">moved</p></div>",
-        "",
-        "b",
-    );
 }
 
 #[test]
@@ -954,4 +936,338 @@ fn line_identity_groups_split_runs_but_distinguishes_coincident_lines_and_paragr
     assert_eq!(cd.line.index, a.line.index + 1);
     assert_ne!(a.line.root, ef.line.root);
     assert_eq!(a.origin.1, cd.origin.1);
+}
+
+/// Lays out each `(body, css)` case and checks that its runs are where the
+/// painter draws them, with no paragraph omitted.
+fn assert_cases_match_paint(cases: &[(&str, &str)]) {
+    for (body, css) in cases {
+        let result = lay_out(body, css);
+        let omitted: Vec<_> = result
+            .warnings()
+            .iter()
+            .filter(|warning| matches!(warning.kind, WarningKind::TextRunsOmitted))
+            .collect();
+        assert!(omitted.is_empty(), "{body}: {omitted:?}");
+        assert!(assert_runs_match_paint(&result) > 0, "{body}");
+    }
+}
+
+#[test]
+fn relatively_positioned_text_matches_paint() {
+    let words = vec!["word"; 40].join(" ");
+    assert_cases_match_paint(&[
+        // Offsets that layout applies: inline elements, blocks in flow,
+        // flex items and boxes on lines.
+        (
+            "<p>a <span style=\"position: relative; left: 5px; top: 3px\">x \
+             <b style=\"position: relative; top: 2px\">y</b></span> b</p>",
+            "",
+        ),
+        (
+            "<p>a <span style=\"position: relative; left: 5px\">x \
+             <span style=\"display: inline-block; position: relative; top: 2px\">in</span></span></p>",
+            "",
+        ),
+        (
+            "<div style=\"position: relative; bottom: 5px; right: 7px\"><p>moved</p></div>",
+            "",
+        ),
+        (
+            "<div style=\"display: flex\"><div style=\"position: relative; left: 9px\">moved</div></div>",
+            "",
+        ),
+        // Offsets that the painter applies: the body, floats and table parts.
+        (
+            "<p>moved</p>",
+            "body { position: relative; left: 6px; top: 4px }",
+        ),
+        // The painter starts at the body and ignores the root's transform,
+        // also for a fixed box.
+        ("<p>moved</p>", "html { transform: translateX(20px) }"),
+        (
+            &format!(
+                "<div style=\"position: fixed; top: 5px; left: 5px\">fixed</div>{}",
+                paragraphs(12, 6)
+            ),
+            "html { transform: translateX(20px) }",
+        ),
+        (
+            "<div style=\"float: left; width: 100px; position: relative; left: 9px; top: 4px\">moved</div><p>after</p>",
+            "",
+        ),
+        (
+            "<table><tr><td style=\"position: relative; left: 10%; top: 4px\">moved</td></tr></table>",
+            "",
+        ),
+        (
+            "<ul style=\"float: left; position: relative; left: 6px; top: 3px\"><li>item</li></ul>",
+            "",
+        ),
+        (
+            &format!(
+                "<div style=\"float: left; position: relative; top: 7px\">{}</div>",
+                paragraphs(12, 6)
+            ),
+            "",
+        ),
+        (
+            &format!(
+                "<div style=\"columns: 2; height: 40px\"><div style=\"float: left; width: 60px; \
+                 position: relative; left: 4px; top: 3px\">{words}</div></div>"
+            ),
+            "",
+        ),
+    ]);
+}
+
+#[test]
+fn translated_text_matches_paint() {
+    let words = vec!["word"; 40].join(" ");
+    assert_cases_match_paint(&[
+        (
+            "<div style=\"transform: translate(10%, 3px); width: 100px\"><p>moved</p></div>",
+            "",
+        ),
+        (
+            "<div style=\"transform: translateY(5px)\"><div style=\"position: relative; left: 3px; \
+             transform: translateX(2px)\"><p>moved</p></div></div>",
+            "",
+        ),
+        (
+            "<div style=\"transform: translate(3px, 4px)\"><div style=\"float: left; position: relative; \
+             left: 2px\">moved</div></div>",
+            "",
+        ),
+        (
+            "<ul style=\"transform: translateX(6px)\"><li>item</li></ul>",
+            "",
+        ),
+        (
+            &format!(
+                "<div style=\"transform: translateY(7px)\">{}</div>",
+                paragraphs(12, 6)
+            ),
+            "",
+        ),
+        (
+            &format!(
+                "<div style=\"columns: 2; height: 40px\"><p style=\"transform: translate(4px, 3px)\">{words}</p></div>"
+            ),
+            "",
+        ),
+    ]);
+}
+
+#[test]
+fn generated_boxes_move_with_their_text_like_the_painter() {
+    for css in [
+        "span { position: relative; left: 5px; top: 2px }",
+        "div { float: left; position: relative; left: 5px; top: 2px }",
+        "div { transform: translate(5px, 2px) }",
+    ] {
+        let result = lay_out(
+            "<div><span>A</span></div>",
+            &format!("{css} span::before {{ content: 'X'; background: red }}"),
+        );
+        assert!(assert_runs_match_paint(&result) > 0, "{css}");
+        let page = result.pages().next().expect("page");
+        let runs = page.text_runs();
+        let rects: Vec<_> = page
+            .paint_order_for_text_runs(&runs)
+            .iter()
+            .filter_map(|event| match event {
+                raikiri_html::PaintEvent::GeneratedBox(piece) => Some(piece.rect),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(rects.len(), 1, "{css}");
+        let rect = rects[0];
+        let expected = (
+            f64::from(rect.x),
+            f64::from(rect.y),
+            f64::from(rect.width),
+            f64::from(rect.height),
+        );
+        let fills = filled(&page, result.page_count());
+        assert!(
+            fills.iter().any(|fill| {
+                (fill.0 - expected.0).abs() < TOLERANCE
+                    && (fill.1 - expected.1).abs() < TOLERANCE
+                    && (fill.2 - expected.2).abs() < TOLERANCE
+                    && (fill.3 - expected.3).abs() < TOLERANCE
+            }),
+            "{css}: {expected:?} is not filled; fills: {fills:?}"
+        );
+    }
+}
+
+/// `count` short paragraphs.
+fn short_paragraphs(count: usize) -> String {
+    (0..count).map(|i| format!("<p>para {i}</p>")).collect()
+}
+
+#[test]
+fn relatively_positioned_fragments_and_moved_boxes_in_clips_match_paint() {
+    let inset = "position: relative; left: 4px; top: 3px";
+    assert_cases_match_paint(&[
+        (
+            &format!(
+                "<div style=\"columns: 2\"><div style=\"{inset}\"><p>a</p>\
+                 <p style=\"break-before: column\">b</p></div></div>"
+            ),
+            "",
+        ),
+        (
+            &format!(
+                "<div style=\"columns: 2\"><div style=\"{inset}\">{}\
+                 <h1 style=\"column-span: all\">s</h1>{}</div></div>",
+                short_paragraphs(4),
+                short_paragraphs(4)
+            ),
+            "",
+        ),
+        (
+            &format!(
+                "<div style=\"columns: 2\"><div style=\"{inset}\">{}</div></div>",
+                short_paragraphs(40)
+            ),
+            "",
+        ),
+        // A box moved inside a clip leaves the clip in place.
+        (
+            &format!(
+                "<div style=\"overflow: hidden; height: 30px\">\
+                 <div style=\"transform: translate(4px, 3px)\">{}</div></div>",
+                short_paragraphs(3)
+            ),
+            "",
+        ),
+        // A single column has no column clip to move.
+        (
+            &format!(
+                "<div style=\"column-count: 1; transform: translate(4px, 3px)\">{}</div>",
+                short_paragraphs(3)
+            ),
+            "",
+        ),
+        (
+            &format!(
+                "<div style=\"column-width: 1000px; transform: translate(4px, 3px)\">{}</div>",
+                short_paragraphs(3)
+            ),
+            "",
+        ),
+    ]);
+}
+
+#[test]
+fn percentage_translated_column_fragments_have_no_runs_and_a_warning() {
+    // The painter resolves the percentages against each column fragment.
+    let result = lay_out(
+        "<p>kept</p><div style=\"columns: 2\"><div style=\"transform: translate(10%, 10%)\">\
+         <p>a</p><h1 style=\"column-span: all\">s</h1><p>b</p></div></div>",
+        "",
+    );
+    let texts: Vec<_> = result
+        .pages()
+        .flat_map(|page| page.text_runs())
+        .map(|run| run.text.to_owned())
+        .collect();
+    assert_eq!(texts, ["kept"]);
+    let warnings: Vec<_> = result
+        .warnings()
+        .iter()
+        .filter(|warning| matches!(warning.kind, WarningKind::TextRunsOmitted))
+        .collect();
+    assert_eq!(warnings.len(), 3, "{warnings:?}");
+    assert!(
+        warnings
+            .iter()
+            .all(|warning| warning.details.contains("column fragments")),
+        "{warnings:?}"
+    );
+}
+
+#[test]
+fn text_under_a_moved_clip_has_no_runs_and_a_warning() {
+    // The painter moves these clips with their box or its moved ancestor;
+    // the paint order keeps them at the layout location.
+    assert_omitted(
+        "<p>kept</p><div style=\"transform: translate(4px, 3px)\">\
+         <div style=\"overflow: hidden; height: 30px\"><p id=\"i\">a</p></div></div>",
+        "",
+        "i",
+    );
+    assert_omitted(
+        "<p>kept</p><div style=\"overflow: hidden; height: 30px; transform: translate(4px, 3px)\">\
+         <p id=\"o\">a</p></div>",
+        "",
+        "o",
+    );
+    assert_omitted(
+        &format!(
+            "<p>kept</p><div style=\"columns: 2; height: 40px; transform: translate(4px, 3px)\">\
+             <p id=\"c\">{}</p></div>",
+            vec!["word"; 40].join(" ")
+        ),
+        "",
+        "c",
+    );
+}
+
+#[test]
+fn fixed_boxes_in_moved_boxes_have_no_runs_and_a_warning() {
+    // Layout applies this ancestor's offset; the painter places the fixed
+    // box from its insets alone.
+    assert_omitted(
+        &format!(
+            "<p>kept</p><div style=\"position: relative; left: 4px; top: 3px\">\
+             <div id=\"x\" style=\"position: fixed; top: 5px; left: 5px\">fixed</div></div>{}",
+            paragraphs(12, 6)
+        ),
+        "",
+        "x",
+    );
+    assert_omitted(
+        &format!(
+            "<p>kept</p><div style=\"float: left; position: relative; left: 4px\">\
+             <div id=\"x\" style=\"position: fixed; top: 5px; left: 5px\">fixed</div></div>{}",
+            paragraphs(12, 6)
+        ),
+        "",
+        "x",
+    );
+    // The transformed box is the fixed box's containing block, so the
+    // painter does not repeat it on every page.
+    assert_omitted(
+        &format!(
+            "<p>kept</p><div style=\"transform: translateX(3px)\">\
+             <div id=\"x\" style=\"position: fixed; top: 5px; left: 5px\">fixed</div></div>{}",
+            paragraphs(12, 6)
+        ),
+        "",
+        "x",
+    );
+}
+
+#[test]
+fn transforms_of_inline_boxes_do_not_omit_fixed_text() {
+    // A non-replaced inline box is not transformable, so its transform
+    // neither moves the fixed box nor becomes its containing block.
+    let result = lay_out(
+        "<span style=\"transform: translate(4px, 3px)\">\
+         <span style=\"position: fixed; left: 5px; top: 6px\">fixed</span></span>",
+        "",
+    );
+    assert!(
+        result
+            .warnings()
+            .iter()
+            .all(|warning| !matches!(warning.kind, WarningKind::TextRunsOmitted)),
+        "{:?}",
+        result.warnings()
+    );
+    let page = result.pages().next().expect("page");
+    assert!(page.text_runs().iter().any(|run| run.text == "fixed"));
 }
