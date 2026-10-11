@@ -1,10 +1,11 @@
 //! The lines a text node of an ifc paragraph shows up on.
 
 use crate::Document;
+use crate::layout::LayoutError;
 use crate::node::NodeFlags;
 use raikiri_traits::NodeKind;
 use shodo::Fragment;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// One line of a text node of an ifc paragraph, in the root's content box.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -70,6 +71,9 @@ pub(crate) fn lines_of(doc: &Document, node: usize) -> Option<IfcTextLines> {
         .iter()
         .enumerate()
         .filter(|(_, line)| {
+            #[cfg(test)]
+            crate::layout::test_support::TEXT_LINE_VISITS
+                .with(|visits| visits.set(visits.get() + 1));
             line.fragments().any(|fragment| match fragment {
                 Fragment::GlyphRun(run) => run.node().is_some_and(|owner| owner.0 as usize == node),
                 _ => false,
@@ -96,15 +100,28 @@ impl Document {
     /// Each text node owns a line once even if it has multiple glyph runs on it.
     #[doc(hidden)]
     pub fn ifc_text_lines_by_node(&self, root: usize) -> HashMap<usize, IfcTextLines> {
+        self.checked_ifc_text_lines_by_node(root, || Ok(()))
+            .expect("uncontrolled line ownership collection cannot fail")
+    }
+
+    fn checked_ifc_text_lines_by_node(
+        &self,
+        root: usize,
+        mut check: impl FnMut() -> Result<(), LayoutError>,
+    ) -> Result<HashMap<usize, IfcTextLines>, LayoutError> {
         let mut by_node = HashMap::new();
         let Some(lines) = self
             .ifc_layout_node(root)
             .and_then(|node| node.ifc.as_ref())
             .and_then(|ifc| ifc.lines.as_ref())
         else {
-            return by_node;
+            return Ok(by_node);
         };
         for (index, line) in lines.lines.iter().enumerate() {
+            check()?;
+            #[cfg(test)]
+            crate::layout::test_support::TEXT_LINE_VISITS
+                .with(|visits| visits.set(visits.get() + 1));
             let top = lines.line_top(index);
             let owned = IfcTextLine {
                 line: index,
@@ -112,6 +129,7 @@ impl Document {
                 bottom: top + line.block_size(),
             };
             for fragment in line.fragments() {
+                check()?;
                 let Fragment::GlyphRun(run) = fragment else {
                     continue;
                 };
@@ -138,7 +156,49 @@ impl Document {
                 }
             }
         }
-        by_node
+        Ok(by_node)
+    }
+}
+
+/// Text ownership for one pagination pass, prepared once per paragraph.
+/// Coordinates are read from the current layout when consuming these line
+/// indices, since pagination can move lines after candidate collection.
+#[derive(Default)]
+pub(crate) struct TextLineIndex {
+    roots: HashSet<usize>,
+    owners: HashMap<usize, IfcTextLines>,
+}
+
+impl TextLineIndex {
+    pub(crate) fn prepare_for(
+        &mut self,
+        doc: &Document,
+        node: usize,
+        check: impl FnMut() -> Result<(), LayoutError>,
+    ) -> Result<(), LayoutError> {
+        let Some(candidate) = doc.nodes.get(node) else {
+            return Ok(());
+        };
+        if candidate.kind() != NodeKind::Text
+            || !candidate
+                .flags
+                .intersects(NodeFlags::IN_IFC_SUBTREE | NodeFlags::IS_IFC_ROOT)
+        {
+            return Ok(());
+        }
+        let Some(root) = root_of(doc, node) else {
+            return Ok(());
+        };
+        if !self.roots.contains(&root) {
+            let owners = doc.checked_ifc_text_lines_by_node(root, check)?;
+            self.owners.extend(owners);
+            self.roots.insert(root);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn get(&self, node: usize) -> Option<&IfcTextLines> {
+        self.owners.get(&node)
     }
 }
 

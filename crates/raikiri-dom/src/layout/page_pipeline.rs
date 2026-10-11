@@ -1,6 +1,7 @@
 pub(crate) mod column_projection;
 use column_projection::{ParagraphCache, ParagraphProjection, ProjectionWork};
 
+use super::ifc::text_lines::TextLineIndex;
 use super::*;
 use crate::page_projection::records::OverflowClipSource;
 use raikiri_traits::{PaintInsets, PaintRect};
@@ -971,8 +972,12 @@ pub(crate) fn resolve_page_fragment_geometry(
 /// block-start. A text node of an ifc paragraph has no layout of its own, so
 /// its lines come from the paragraph root, measured from its first line; any
 /// other text node has none.
-fn text_line_bounds(document: &Document, node_id: usize) -> Option<Vec<(f32, f32)>> {
-    let lines = positioned_text_line_bounds(document, node_id)?;
+fn text_line_bounds(
+    document: &Document,
+    node_id: usize,
+    text_lines: &TextLineIndex,
+) -> Option<Vec<(f32, f32)>> {
+    let lines = positioned_owned_text_line_bounds(document, text_lines.get(node_id)?)?;
     let first_top = lines.first().map_or(0.0, |line| line.0);
     Some(
         lines
@@ -984,8 +989,16 @@ fn text_line_bounds(document: &Document, node_id: usize) -> Option<Vec<(f32, f32
 
 /// Block edges of a text node's lines after the paragraph's column ranges
 /// have moved them from their unfragmented shaping offsets.
+#[cfg(test)]
 fn positioned_text_line_bounds(document: &Document, node_id: usize) -> Option<Vec<(f32, f32)>> {
     let owned = document.ifc_text_lines(node_id)?;
+    positioned_owned_text_line_bounds(document, &owned)
+}
+
+fn positioned_owned_text_line_bounds(
+    document: &Document,
+    owned: &IfcTextLines,
+) -> Option<Vec<(f32, f32)>> {
     let root = document.ifc_layout_node(owned.root)?.ifc.as_ref()?;
     let root_lines = root.lines.as_ref()?;
     let fragments = root.multicol_fragments.as_deref();
@@ -1015,7 +1028,9 @@ fn positioned_text_line_bounds(document: &Document, node_id: usize) -> Option<Ve
                             .map(|first| fragment.y - first.block_offset())
                     })
                     .unwrap_or(0.0);
-                (line.top + offset, line.bottom + offset)
+                let top = root_lines.line_top(line.line);
+                let height = root_lines.lines[line.line].block_size();
+                (top + offset, top + height + offset)
             })
             .collect(),
     )
@@ -2606,19 +2621,30 @@ pub fn layout_pages_with_page_geometry_and_control(
     /// The lines of the text `text` of the paragraph `root` start a later
     /// page: they, the lines after them and the paragraph's boxes below their
     /// top move down by `delta`.
-    fn follow_moved_ifc_text(document: &mut Document, root: usize, text: usize, delta: f32) {
+    fn follow_moved_ifc_text(
+        document: &mut Document,
+        root: usize,
+        text: usize,
+        delta: f32,
+        text_lines: &TextLineIndex,
+    ) {
         if delta == 0.0 || !delta.is_finite() {
             return;
         }
-        let Some(first) = document
-            .ifc_text_lines(text)
+        let Some(first) = text_lines
+            .get(text)
             .and_then(|owned| owned.lines.first().copied())
         else {
             return;
         };
-        let first_top = positioned_text_line_bounds(document, text)
-            .and_then(|lines| lines.first().map(|line| line.0))
-            .unwrap_or(first.top);
+        let first_top = positioned_owned_text_line_bounds(
+            document,
+            text_lines
+                .get(text)
+                .expect("indexed first text line has an owner"),
+        )
+        .and_then(|lines| lines.first().map(|line| line.0))
+        .unwrap_or(first.top);
         let layout = document
             .ifc_layout_node(root)
             .expect("valid paragraph root")
@@ -2841,6 +2867,7 @@ pub fn layout_pages_with_page_geometry_and_control(
         inside_float: bool,
         inside_out_of_flow: bool,
         out: &mut Vec<PageCandidate>,
+        text_lines: &mut TextLineIndex,
         control: &PageLayoutControl<'_>,
     ) -> Result<(), LayoutError> {
         stacker::maybe_grow(128 * 1024, 1024 * 1024, || {
@@ -2862,6 +2889,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                 inside_float,
                 inside_out_of_flow,
                 out,
+                text_lines,
                 control,
             )
         })
@@ -2887,6 +2915,7 @@ pub fn layout_pages_with_page_geometry_and_control(
         inside_float: bool,
         inside_out_of_flow: bool,
         out: &mut Vec<PageCandidate>,
+        text_lines: &mut TextLineIndex,
         control: &PageLayoutControl<'_>,
     ) -> Result<(), LayoutError> {
         control.check_aborted()?;
@@ -2911,7 +2940,8 @@ pub fn layout_pages_with_page_geometry_and_control(
                     // `parent_abs_y` is the root's. A text node that is a root
                     // itself (an anonymous flex or grid item) has a box of its
                     // own, located like any other.
-                    let (raw_y, height, ifc_root) = match document.ifc_text_lines(node_id) {
+                    text_lines.prepare_for(document, node_id, || control.check_aborted())?;
+                    let (raw_y, height, ifc_root) = match text_lines.get(node_id) {
                         Some(owned) if owned.root != node_id => {
                             let root_layout = document
                                 .ifc_layout_node(owned.root)
@@ -2922,7 +2952,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                             } else {
                                 0.0
                             };
-                            let positioned = positioned_text_line_bounds(document, node_id)
+                            let positioned = positioned_owned_text_line_bounds(document, owned)
                                 // cov:ignore: ifc_text_lines returns Some only when these root line records exist.
                                 .unwrap_or_else(|| {
                                     owned
@@ -3006,6 +3036,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                                 inside_float,
                                 inside_out_of_flow,
                                 out,
+                                text_lines,
                                 control,
                             )?; // cov:ignore: LLVM coverage maps this multiline call to its first expression line.
                         }
@@ -3238,6 +3269,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                         float_subtree,
                         out_of_flow_subtree,
                         out,
+                        text_lines,
                         control,
                     )?;
                 }
@@ -3248,6 +3280,7 @@ pub fn layout_pages_with_page_geometry_and_control(
     }
 
     let mut candidates = Vec::new();
+    let mut text_lines = TextLineIndex::default();
     collect_candidates(
         document,
         cascade,
@@ -3266,6 +3299,7 @@ pub fn layout_pages_with_page_geometry_and_control(
         false,
         false,
         &mut candidates,
+        &mut text_lines,
         control,
     )?;
     let mut table_headers = super::table::headers::HeaderRepeats::prepare(
@@ -3538,9 +3572,14 @@ pub fn layout_pages_with_page_geometry_and_control(
                         .ifc_layout_node(root)
                         .expect("valid paragraph root")
                         .unrounded_layout;
-                    let first_top = positioned_text_line_bounds(document, node_id)
-                        .and_then(|lines| lines.first().map(|line| line.0))
-                        .unwrap_or(0.0);
+                    let first_top = positioned_owned_text_line_bounds(
+                        document,
+                        text_lines
+                            .get(node_id)
+                            .expect("text candidate has indexed ownership"),
+                    )
+                    .and_then(|lines| lines.first().map(|line| line.0))
+                    .unwrap_or(0.0);
                     current_abs_y(document, root, &parent_of)
                         + layout.border.top
                         + layout.padding.top
@@ -3605,7 +3644,7 @@ pub fn layout_pages_with_page_geometry_and_control(
             // separate concern.
             if let Some(block_id) = direct_block_parent
                 && checked_orphans_widows.insert(block_id)
-                && let Some(line_metrics) = text_line_bounds(document, node_id)
+                && let Some(line_metrics) = text_line_bounds(document, node_id, &text_lines)
             {
                 let page_start = page_origin(current_page);
                 let page_end = page_start + page_step_at(current_page);
@@ -3647,8 +3686,8 @@ pub fn layout_pages_with_page_geometry_and_control(
             if let Some((ifc_root, offset)) = ifc_root {
                 materialize_y(document, ifc_root, effective_y - offset, &parent_of);
             } else if let Some((root, _)) = candidate.ifc_root
-                && let Some(first) = document
-                    .ifc_text_lines(node_id)
+                && let Some(first) = text_lines
+                    .get(node_id)
                     .and_then(|owned| owned.lines.first().copied())
             {
                 // A later text of a paragraph whose root already moved: its
@@ -3658,14 +3697,19 @@ pub fn layout_pages_with_page_geometry_and_control(
                     .ifc_layout_node(root)
                     .expect("valid paragraph root")
                     .unrounded_layout;
-                let first_top = positioned_text_line_bounds(document, node_id)
-                    .and_then(|lines| lines.first().map(|line| line.0))
-                    .unwrap_or(first.top);
+                let first_top = positioned_owned_text_line_bounds(
+                    document,
+                    text_lines
+                        .get(node_id)
+                        .expect("text candidate has indexed ownership"),
+                )
+                .and_then(|lines| lines.first().map(|line| line.0))
+                .unwrap_or(first.top);
                 let current = current_abs_y(document, root, &parent_of)
                     + layout.border.top
                     + layout.padding.top
                     + first_top;
-                follow_moved_ifc_text(document, root, node_id, effective_y - current);
+                follow_moved_ifc_text(document, root, node_id, effective_y - current, &text_lines);
             }
             materialize_y(document, node_id, effective_y, &parent_of);
             let named_page_change = name_context_seen
@@ -3706,7 +3750,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                         if ifc_root.is_none()
                             && let Some((root, _)) = candidate.ifc_root
                         {
-                            follow_moved_ifc_text(document, root, node_id, node_delta);
+                            follow_moved_ifc_text(document, root, node_id, node_delta, &text_lines);
                         }
                         flow_shift += shift_delta;
                         effective_y += shift_delta;
