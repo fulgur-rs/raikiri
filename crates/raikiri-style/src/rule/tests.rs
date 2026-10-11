@@ -1075,6 +1075,22 @@ fn font_shorthand_relative_size_expands_to_font_size_relative_longhand() {
 }
 
 #[test]
+fn font_shorthand_absolute_size_expands_to_font_size_keyword_longhand() {
+    // `<absolute-size>` keeps its `FontSizeKeyword` carrier, so the computed
+    // size can follow the element's own `font-family`.
+    let decls = parse_block("font: italic xx-small monospace;");
+    assert_eq!(decls.len(), 16);
+    assert_eq!(
+        decls[3].value,
+        PropertyValue::FontSizeKeyword(crate::property::AbsoluteFontSize::XxSmall)
+    );
+    assert_eq!(
+        decls[3].value.key(),
+        PropertyValue::FontSize(Length::Px(16.0)).key()
+    );
+}
+
+#[test]
 fn font_shorthand_important_flag_propagates_to_all_longhand() {
     // CSS Cascading 4 §3: a shorthand's `!important` is copied to all longhands,
     // as in the outline / overflow important extensions.

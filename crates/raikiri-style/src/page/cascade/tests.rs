@@ -2493,6 +2493,45 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             ..font.clone()
         }),
     );
+    // `<absolute-size>` keywords, as shorthand size and as longhand, converge
+    // to px with the default 16px `medium` (`small` is 8/9 of it), whatever
+    // the context font size.
+    let keyword_font = FontShorthand {
+        size: FontShorthandSize::Keyword(crate::property::AbsoluteFontSize::Small),
+        ..font.clone()
+    };
+    assert_eq!(
+        absolutize_in_page_context(
+            ResolvedAgainstInherited::for_test(PropertyValue::Font(keyword_font)),
+            fs,
+            None,
+            &ctx,
+            styles,
+            OutlineStyle::None,
+            OverflowXY::both(OverflowValue::Visible),
+        ),
+        PropertyValue::Font(FontShorthand {
+            size: FontShorthandSize::Absolute(Length::Px(
+                crate::property::AbsoluteFontSize::Small.px_for_medium(16.0),
+            )),
+            line_height: LineHeight::Length(Length::Px(32.0)),
+            ..font.clone()
+        }),
+    );
+    assert_eq!(
+        absolutize_in_page_context(
+            ResolvedAgainstInherited::for_test(PropertyValue::FontSizeKeyword(
+                crate::property::AbsoluteFontSize::XLarge
+            )),
+            fs,
+            None,
+            &ctx,
+            styles,
+            OutlineStyle::None,
+            OverflowXY::both(OverflowValue::Visible),
+        ),
+        PropertyValue::FontSize(Length::Px(24.0)),
+    );
     // `Relative` size converges to the same `Absolute(Px(_))` shape the
     // `FontSizeRelative` longhand arm produces (same basis).
     let relative_font = FontShorthand {

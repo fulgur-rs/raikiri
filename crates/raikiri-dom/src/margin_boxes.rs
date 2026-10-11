@@ -555,8 +555,9 @@ fn inherited_margin_box_font(
     let root = root_computed(document, cascade);
     let root_size = root.map_or(16.0, |computed| computed.font_size.px());
     let page_size = match page_property(page, PropertyKey::FontSize) {
+        // `cascade_page` computes page-context font sizes, keywords included,
+        // to `Length::Px` (see `PageCascadeResult::declarations`).
         Some(PropertyValue::FontSize(value)) => length_to_px(*value, root_size, root_size),
-        Some(PropertyValue::FontSizeKeyword(keyword)) => keyword.px_for_medium(16.0),
         _ => root_size,
     };
     let font_size = match margin_box_property(rule, PropertyKey::FontSize) {
