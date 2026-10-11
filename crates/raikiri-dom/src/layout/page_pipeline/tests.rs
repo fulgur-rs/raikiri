@@ -9730,11 +9730,13 @@ fn positioned_text_follows_its_moved_containing_block_once() {
 
 #[test]
 fn positioned_inline_text_keeps_its_explicit_outer_anchor() {
-    for (nested_auto_box, display) in [
-        (false, "block"),
-        (true, "block"),
-        (false, "flex"),
-        (false, "grid"),
+    for (nested_auto_box, display, anonymous_text) in [
+        (false, "block", false),
+        (true, "block", false),
+        (false, "flex", false),
+        (false, "grid", false),
+        (false, "flex", true),
+        (false, "grid", true),
     ] {
         let positions = |margin: f32| {
             paginated_ys(
@@ -9767,14 +9769,18 @@ fn positioned_inline_text_keeps_its_explicit_outer_anchor() {
                     } else {
                         absolute
                     };
-                    let span = doc.append_element(
-                        Some(text_parent),
-                        "span",
-                        Style::default(),
-                        Some("display:inline"),
-                    );
-                    doc.append_text(span, "x");
-                    vec![absolute, text_parent]
+                    let text_container = if anonymous_text {
+                        text_parent
+                    } else {
+                        doc.append_element(
+                            Some(text_parent),
+                            "span",
+                            Style::default(),
+                            Some("display:inline"),
+                        )
+                    };
+                    let text = doc.append_text(text_container, "x");
+                    vec![absolute, text_parent, text]
                 },
                 &[],
             )
