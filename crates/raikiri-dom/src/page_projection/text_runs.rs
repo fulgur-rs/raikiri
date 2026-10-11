@@ -116,7 +116,7 @@ pub(super) fn prepare_markers(
             let marker_baseline = shaped.lines().first().map(|line| {
                 line.block_offset() + line.baseline(shodo::geometry::BaselineKind::Alphabetic)
             });
-            let item_line = first_line(document, owner);
+            let item_line = first_line(document, cascade, owner);
             let offset_y = match (item_line.map(|line| line.baseline), marker_baseline) {
                 (Some(item), Some(marker)) if (item - marker).is_finite() => item - marker,
                 // Otherwise the marker is shaped with `line-height: normal`.
@@ -927,9 +927,9 @@ struct FirstLine {
 /// The first line may belong to the first in-flow block child, and so on
 /// down (CSS Pseudo 4 §2.1.1); if that child has no line, neither has the
 /// item. Floats, absolutely positioned boxes and the marker itself are
-/// passed over. A flex or grid container orders its items itself, so tree
+/// passed over, and a relative offset moves only the box it applies to. A flex or grid container orders its items itself, so tree
 /// order does not find its first line, and it is left to the fallback.
-fn first_line(document: &Document, owner: usize) -> Option<FirstLine> {
+fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Option<FirstLine> {
     let in_flow = |id: usize| {
         document.nodes.get(id).is_some_and(|node| {
             node.is_in_document()
@@ -985,7 +985,14 @@ fn first_line(document: &Document, owner: usize) -> Option<FirstLine> {
             }
             _ => first_block_child(document, id, &in_flow)?,
         };
-        y += document.nodes[child].unrounded_layout.location.y;
+        // A relative offset moves the child, not the item's marker, so the
+        // offset that layout already applied is taken back out.
+        let relative = if document.nodes[child].needs_relative_block_paint_offset() {
+            0.0
+        } else {
+            paint_relative_offset(&cascade.computed[child]).1
+        };
+        y += document.nodes[child].unrounded_layout.location.y - relative;
         id = child;
     }
 }

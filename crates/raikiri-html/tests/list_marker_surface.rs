@@ -591,3 +591,18 @@ fn empty_inline_and_contents_children_do_not_hide_the_first_block_child() {
         );
     }
 }
+
+#[test]
+fn a_relative_offset_on_the_first_line_box_does_not_move_the_marker() {
+    // Relative positioning moves the child's line, not the item's marker.
+    let moved = lay_out(
+        "<ol><li><div style=\"position:relative;top:20px\">C</div></li></ol>",
+        "",
+    );
+    let still = lay_out("<ol><li><div>C</div></li></ol>", "");
+    assert_eq!(run_baseline(&moved, 0, "1."), run_baseline(&still, 0, "1."));
+    assert_eq!(
+        run_baseline(&moved, 0, "C"),
+        run_baseline(&still, 0, "C") + 20.0
+    );
+}
