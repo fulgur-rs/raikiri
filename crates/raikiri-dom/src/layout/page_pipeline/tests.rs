@@ -9417,3 +9417,139 @@ fn a_body_margin_crossing_a_later_break_is_truncated() {
     let child_y = doc.get_node(child).unwrap().unrounded_layout.location.y;
     assert_eq!(body_y + child_y, 300.0, "body {body_y}, child {child_y}");
 }
+
+#[test]
+fn an_unforced_break_truncates_a_negative_top_margin() {
+    // The box cannot fit beside the break, so it moves to the next page;
+    // its negative margin adjoins an unforced break and is truncated too.
+    assert_eq!(
+        page_box_positions(&[
+            "height:80px",
+            "margin-top:-10px;height:40px;break-inside:avoid",
+        ]),
+        (vec![0.0, 100.0], 2)
+    );
+}
+
+/// The y positions of `body`'s descendants listed in `ids` after paginating
+/// on 100px pages, with Ahem as the text font.
+fn paginated_ys(
+    build: impl FnOnce(&mut Document, usize) -> Vec<usize>,
+    page_steps: &[f32],
+) -> Vec<f32> {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0;font:20px/30px Ahem"),
+    );
+    let ids = build(&mut doc, body);
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages_with_page_steps(with_ahem(&mut doc), &cascade, page, page_steps).unwrap();
+    ids.into_iter()
+        .map(|id| doc.get_node(id).unwrap().unrounded_layout.location.y)
+        .collect()
+}
+
+#[test]
+fn a_margin_after_a_contents_wrapper_is_truncated() {
+    let ys = paginated_ys(
+        |doc, body| {
+            let first = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;height:80px"),
+            );
+            let wrapper = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:contents"),
+            );
+            let wrapped = doc.append_element(
+                Some(wrapper),
+                "div",
+                Style::default(),
+                Some("display:block;margin-top:30px;height:20px"),
+            );
+            vec![first, wrapped]
+        },
+        &[],
+    );
+    assert_eq!(ys, [0.0, 100.0]);
+}
+
+#[test]
+fn text_between_blocks_is_not_a_margin() {
+    // The anonymous line sits between the blocks, so the last block's gap
+    // to the first one is not a margin crossing the break.
+    let ys = paginated_ys(
+        |doc, body| {
+            let first = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;height:60px"),
+            );
+            doc.append_text(body, "x");
+            let last = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;margin-top:20px;height:10px"),
+            );
+            vec![first, last]
+        },
+        &[],
+    );
+    assert_eq!(ys, [0.0, 110.0]);
+}
+
+#[test]
+fn a_root_margin_within_a_taller_first_page_is_kept() {
+    // The first page is 150px tall, so the root's 120px margin stays on it
+    // and only the body's margin crosses the break.
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        Style::default(),
+        Some("display:block;margin-top:120px"),
+    );
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:40px 0 0"),
+    );
+    let child = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:10px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages_with_page_steps(&mut doc, &cascade, page, &[150.0]).unwrap();
+    let body_y = doc.get_node(body).unwrap().unrounded_layout.location.y;
+    let child_y = doc.get_node(child).unwrap().unrounded_layout.location.y;
+    assert_eq!(body_y + child_y, 150.0, "body {body_y}, child {child_y}");
+}

@@ -2388,7 +2388,7 @@ pub fn layout_pages_with_page_geometry_and_control(
     // break is truncated (CSS Fragmentation 3 §5.2).
     // The body's part of that margin is already in the layout coordinates,
     // so only the rest is added to the content.
-    let root_flow_start = if html_margin_top >= fixed_page_step {
+    let root_flow_start = if page_index_for_y(html_margin_top) > 0 {
         // The root's own margin crosses the break. The root's margins do not
         // collapse with the body's, so the body's margin starts after the
         // truncated one.
@@ -3476,6 +3476,11 @@ pub fn layout_pages_with_page_geometry_and_control(
             continue;
         }
         if candidate.is_text {
+            // In-flow text between two blocks separates them: the next block's
+            // gap is no longer a margin adjoining the previous block.
+            if let Some(parent_id) = pagination_box_parent(document, cascade, node_id) {
+                previous_block_bottoms.remove(&parent_id);
+            }
             // A footnote's descendants follow the moved footnote box. They are
             // deliberately not paginated independently, otherwise the stale
             // pre-pagination coordinates would move them back into normal flow.
@@ -3913,15 +3918,16 @@ pub fn layout_pages_with_page_geometry_and_control(
                 let forced_transition = pending_break_applies
                     || (forced_before && !forced_break_at_page_start)
                     || named_page_change;
-                let node_target_y = if margin_top < 0.0 && underflow_y < target_y {
-                    underflow_y
-                } else if forced_transition {
-                    // The forced break is before the box's margin box, so a
-                    // positive block-start margin remains on the new page.
-                    target_y + margin_top.max(0.0)
-                } else {
-                    target_y
-                };
+                let node_target_y =
+                    if forced_transition && margin_top < 0.0 && underflow_y < target_y {
+                        underflow_y
+                    } else if forced_transition {
+                        // The forced break is before the box's margin box, so a
+                        // positive block-start margin remains on the new page.
+                        target_y + margin_top.max(0.0)
+                    } else {
+                        target_y
+                    };
                 // The candidate was materialized to `effective_y` above,
                 // so this is the additional movement for this boundary.
                 // Keep `flow_shift` at the page boundary even when the
@@ -3982,7 +3988,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                 // margin (CSS Fragmentation 3 §5.2): the box starts at the
                 // top of the page instead of keeping the part of the margin
                 // that crossed the page edge.
-                let gap = parent_of[node_id]
+                let gap = pagination_box_parent(document, cascade, node_id)
                     .and_then(|parent_id| previous_block_bottoms.get(&parent_id))
                     .map(|bottom| raw_y - bottom)
                     .filter(|gap| gap.is_finite() && *gap > 0.0);
@@ -4031,7 +4037,7 @@ pub fn layout_pages_with_page_geometry_and_control(
             saw_child = true;
             current_page = 0;
         }
-        if let Some(parent_id) = parent_of[node_id] {
+        if let Some(parent_id) = pagination_box_parent(document, cascade, node_id) {
             if collapses_with_previous_block {
                 previous_block_bottoms.insert(parent_id, raw_y + height);
             } else {
