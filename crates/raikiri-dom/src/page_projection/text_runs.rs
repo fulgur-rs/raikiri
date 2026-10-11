@@ -5,9 +5,12 @@ use super::records::{PageFragment, ProjectedTextRoot};
 use crate::Document;
 use crate::generated_content::generated_origin;
 use crate::layout::{PositionedLine, PositionedLines, PositionedRun, line_center_on_page};
-use raikiri_style::property::{CssColor, DisplayValue, FloatValue, PositionValue, TextShadowColor};
+use raikiri_style::property::{
+    ColumnCountValue, CssColor, DisplayValue, FloatValue, PositionValue, TextShadowColor,
+};
 use raikiri_style::resolve::{
-    ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedTransformFunction,
+    ComputedColumnWidth, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
+    ComputedTransformFunction,
 };
 use raikiri_style::{CascadeResult, ComputedValues, PseudoElem};
 use raikiri_traits::{NodeId, NodeKind};
@@ -355,6 +358,8 @@ pub(crate) enum TextRunOmission {
     OverlappingColumnLines,
     UnrootedColumnFragments,
     Transform,
+    FragmentedTransform,
+    ShiftedClip,
     FixedPlacement,
 }
 
@@ -367,8 +372,15 @@ impl TextRunOmission {
             }
             Self::UnrootedColumnFragments => "its column fragments have no rooted placement chain",
             Self::Transform => "it or an ancestor has a transform that does more than translate",
+            Self::FragmentedTransform => {
+                "a box split into column fragments translates it by a percentage"
+            }
+            Self::ShiftedClip => {
+                "a relative offset or translation moves an overflow or column clip around it"
+            }
             Self::FixedPlacement => {
-                "it is inside a fixed box not placed by `top` and `left` lengths"
+                "it is inside a fixed box not placed by `top` and `left` lengths, \
+                 or inside a box that is transformed, filtered or moved"
             }
         }
     }
@@ -378,6 +390,9 @@ impl TextRunOmission {
 #[derive(Debug, Default, Clone)]
 pub(super) struct RunContext {
     overlapping: HashSet<usize>,
+    /// Elements laid out as column fragments, which the painter places from
+    /// each fragment.
+    fragmented: HashSet<usize>,
 }
 
 impl RunContext {
@@ -417,7 +432,15 @@ impl RunContext {
                 overlapping.insert(root);
             }
         }
-        Self { overlapping }
+        let fragmented = document
+            .layout_fragments()
+            .iter()
+            .map(|fragment| fragment.node_id)
+            .collect();
+        Self {
+            overlapping,
+            fragmented,
+        }
     }
 }
 
@@ -460,14 +483,15 @@ fn box_paint_shift(
     body: Option<usize>,
     id: usize,
     cv: &ComputedValues,
+    fragmented: bool,
 ) -> Result<(f32, f32), TextRunOmission> {
     let Some(node) = document.get_node(id) else {
         return Ok((0.0, 0.0)); // cov:ignore: ancestors of a laid-out paragraph are arena nodes
     };
     // Layout already applies the relative offset of boxes in normal flow,
     // flex and grid, and of boxes on lines. The body, floats and table parts
-    // are placed without it, and the painter adds it, as it adds the block
-    // offset that manual column placement leaves out.
+    // and column fragments are placed without it, and the painter adds it, as
+    // it adds the block offset that manual column placement leaves out.
     let float = matches!(cv.float, FloatValue::Left | FloatValue::Right)
         && document.layout_parent_of(id).is_none_or(|parent| {
             !matches!(
@@ -480,6 +504,7 @@ fn box_paint_shift(
         });
     let painted_inset = Some(id) == body
         || float
+        || fragmented
         || matches!(
             cv.display,
             DisplayValue::TableCaption
@@ -512,18 +537,23 @@ fn box_paint_shift(
     }
     // Percentages resolve against the border box (CSS Transforms 1 §6).
     let size = node.unrounded_layout.size;
+    // A fragment's percentages resolve against that fragment, which the
+    // runs of a paragraph do not know.
     let resolve = |value, basis: f32| match value {
-        ComputedLengthPercentage::Px(px) => px,
-        ComputedLengthPercentage::Percent(percent) => basis * percent / 100.0,
+        ComputedLengthPercentage::Px(px) => Ok(px),
+        ComputedLengthPercentage::Percent(_) if fragmented => {
+            Err(TextRunOmission::FragmentedTransform)
+        }
+        ComputedLengthPercentage::Percent(percent) => Ok(basis * percent / 100.0),
     };
     for function in cv.transform.iter() {
         match *function {
             ComputedTransformFunction::Translate(x, y) => {
-                dx += resolve(x, size.width);
-                dy += resolve(y, size.height);
+                dx += resolve(x, size.width)?;
+                dy += resolve(y, size.height)?;
             }
-            ComputedTransformFunction::TranslateX(x) => dx += resolve(x, size.width),
-            ComputedTransformFunction::TranslateY(y) => dy += resolve(y, size.height),
+            ComputedTransformFunction::TranslateX(x) => dx += resolve(x, size.width)?,
+            ComputedTransformFunction::TranslateY(y) => dy += resolve(y, size.height)?,
             _ => return Err(TextRunOmission::Transform),
         }
     }
@@ -545,22 +575,48 @@ fn fixed_omission(cv: &ComputedValues) -> Option<TextRunOmission> {
 pub(super) fn paint_shift(
     document: &Document,
     cascade: &CascadeResult,
+    context: &RunContext,
     root: usize,
 ) -> Result<(f32, f32), TextRunOmission> {
     let body = crate::paint_rules::find_paint_root(document);
     let root = generated_origin(root).map_or(root, |(owner, _)| owner);
     let (mut dx, mut dy) = (0.0, 0.0);
+    // The shift of the boxes passed so far, when a clip was among them: the
+    // painter moves that clip with the boxes above it, and the clips of the
+    // paint order stay at their layout location.
+    let mut clipped = false;
+    let mut fixed = false;
     let mut current = Some(document.ifc_source_owner(root));
     while let Some(id) = current {
-        if let Some(cv) = cascade.computed.get(id) {
-            if let Some(reason) = fixed_omission(cv) {
-                return Err(reason);
-            }
-            let (x, y) = box_paint_shift(document, cascade, body, id, cv)?;
-            dx += x;
-            dy += y;
-        }
         current = document.parent_of(id);
+        let Some(cv) = cascade.computed.get(id) else {
+            continue; // cov:ignore: the cascade has a value for every arena node
+        };
+        let fragmented = context.fragmented.contains(&id);
+        let (x, y) = box_paint_shift(document, cascade, body, id, cv, fragmented)?;
+        if fixed {
+            // spec: https://www.w3.org/TR/css-transforms-1/#containing-block-for-all-descendants
+            // A transformed or filtered ancestor makes the fixed box local
+            // to it, while the projection repeats it on every page. How the
+            // painter combines an ancestor's offset with the fixed box's
+            // insets is not modeled either.
+            if !cv.transform.is_empty() || !cv.filter.is_empty() || (x, y) != (0.0, 0.0) {
+                return Err(TextRunOmission::FixedPlacement);
+            }
+            continue;
+        }
+        if let Some(reason) = fixed_omission(cv) {
+            return Err(reason);
+        }
+        clipped |= crate::paint_rules::clips_element_overflow(document, cascade, id)
+            || matches!(cv.column_count, ColumnCountValue::Count(_))
+            || cv.column_width != ComputedColumnWidth::Auto;
+        if clipped && (x, y) != (0.0, 0.0) {
+            return Err(TextRunOmission::ShiftedClip);
+        }
+        dx += x;
+        dy += y;
+        fixed = cv.position == PositionValue::Fixed;
     }
     Ok((dx, dy))
 }
@@ -585,7 +641,7 @@ pub(super) fn placement(
             return Err(TextRunOmission::VerticalWritingMode);
         }
     }
-    paint_shift(document, cascade, root)
+    paint_shift(document, cascade, context, root)
 }
 
 /// Why the runs of `root` cannot be positioned, if they cannot.

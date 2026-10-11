@@ -471,11 +471,15 @@ impl<'a> Page<'a> {
     /// principal fragment and is not repeated on continuation pages. Missing
     /// image markers retain their text fallback; usable images have their own
     /// [`PaintEvent::MarkerImage`] event.
+    /// Relative offsets and transforms that only translate are included.
     /// A paragraph whose text is placed by geometry the runs do not model
-    /// has no runs here: a vertical writing mode, a multicol container's
-    /// columns, relatively positioned inline elements, a transform or
-    /// relative offset on the paragraph or an ancestor, or a fixed box not
-    /// placed by `top` and `left` lengths. Each such paragraph is reported
+    /// has no runs here: a vertical writing mode, overlapping or unrooted
+    /// column placements, a transform other than a translation on the
+    /// paragraph or an ancestor, a percentage translation of a box split
+    /// into column fragments, a relative offset or translation that moves an
+    /// overflow or column clip around the paragraph, or a fixed box not
+    /// placed by `top` and `left` lengths or inside a transformed, filtered
+    /// or moved box. Each such paragraph is reported
     /// once in [`super::DocumentLayout::warnings`] with
     /// [`raikiri_traits::WarningKind::TextRunsOmitted`].
     pub fn text_runs(&self) -> Vec<PositionedGlyphRun<'a>> {

@@ -1004,12 +1004,6 @@ fn translated_text_matches_paint() {
         ),
         (
             &format!(
-                "<div style=\"columns: 2; height: 40px; transform: translate(4px, 3px)\">{words}</div>"
-            ),
-            "",
-        ),
-        (
-            &format!(
                 "<div style=\"columns: 2; height: 40px\"><p style=\"transform: translate(4px, 3px)\">{words}</p></div>"
             ),
             "",
@@ -1058,4 +1052,127 @@ fn generated_boxes_move_with_their_text_like_the_painter() {
             "{css}: {expected:?} is not filled; fills: {fills:?}"
         );
     }
+}
+
+/// `count` short paragraphs.
+fn short_paragraphs(count: usize) -> String {
+    (0..count).map(|i| format!("<p>para {i}</p>")).collect()
+}
+
+#[test]
+fn relatively_positioned_fragments_and_moved_boxes_in_clips_match_paint() {
+    let inset = "position: relative; left: 4px; top: 3px";
+    assert_cases_match_paint(&[
+        (
+            &format!(
+                "<div style=\"columns: 2\"><div style=\"{inset}\"><p>a</p>\
+                 <p style=\"break-before: column\">b</p></div></div>"
+            ),
+            "",
+        ),
+        (
+            &format!(
+                "<div style=\"columns: 2\"><div style=\"{inset}\">{}\
+                 <h1 style=\"column-span: all\">s</h1>{}</div></div>",
+                short_paragraphs(4),
+                short_paragraphs(4)
+            ),
+            "",
+        ),
+        (
+            &format!(
+                "<div style=\"columns: 2\"><div style=\"{inset}\">{}</div></div>",
+                short_paragraphs(40)
+            ),
+            "",
+        ),
+        // A box moved inside a clip leaves the clip in place.
+        (
+            &format!(
+                "<div style=\"overflow: hidden; height: 30px\">\
+                 <div style=\"transform: translate(4px, 3px)\">{}</div></div>",
+                short_paragraphs(3)
+            ),
+            "",
+        ),
+    ]);
+}
+
+#[test]
+fn percentage_translated_column_fragments_have_no_runs_and_a_warning() {
+    // The painter resolves the percentages against each column fragment.
+    let result = lay_out(
+        "<p>kept</p><div style=\"columns: 2\"><div style=\"transform: translate(10%, 10%)\">\
+         <p>a</p><h1 style=\"column-span: all\">s</h1><p>b</p></div></div>",
+        "",
+    );
+    let texts: Vec<_> = result
+        .pages()
+        .flat_map(|page| page.text_runs())
+        .map(|run| run.text.to_owned())
+        .collect();
+    assert_eq!(texts, ["kept"]);
+    let warnings: Vec<_> = result
+        .warnings()
+        .iter()
+        .filter(|warning| matches!(warning.kind, WarningKind::TextRunsOmitted))
+        .collect();
+    assert_eq!(warnings.len(), 3, "{warnings:?}");
+    assert!(
+        warnings
+            .iter()
+            .all(|warning| warning.details.contains("column fragments")),
+        "{warnings:?}"
+    );
+}
+
+#[test]
+fn text_under_a_moved_clip_has_no_runs_and_a_warning() {
+    // The painter moves these clips with their box or its moved ancestor;
+    // the paint order keeps them at the layout location.
+    assert_omitted(
+        "<p>kept</p><div style=\"transform: translate(4px, 3px)\">\
+         <div style=\"overflow: hidden; height: 30px\"><p id=\"i\">a</p></div></div>",
+        "",
+        "i",
+    );
+    assert_omitted(
+        "<p>kept</p><div style=\"overflow: hidden; height: 30px; transform: translate(4px, 3px)\">\
+         <p id=\"o\">a</p></div>",
+        "",
+        "o",
+    );
+    assert_omitted(
+        &format!(
+            "<p>kept</p><div style=\"columns: 2; height: 40px; transform: translate(4px, 3px)\">\
+             <p id=\"c\">{}</p></div>",
+            vec!["word"; 40].join(" ")
+        ),
+        "",
+        "c",
+    );
+}
+
+#[test]
+fn fixed_boxes_in_moved_boxes_have_no_runs_and_a_warning() {
+    assert_omitted(
+        &format!(
+            "<p>kept</p><div style=\"float: left; position: relative; left: 4px\">\
+             <div id=\"x\" style=\"position: fixed; top: 5px; left: 5px\">fixed</div></div>{}",
+            paragraphs(12, 6)
+        ),
+        "",
+        "x",
+    );
+    // The transformed box is the fixed box's containing block, so the
+    // painter does not repeat it on every page.
+    assert_omitted(
+        &format!(
+            "<p>kept</p><div style=\"transform: translateX(3px)\">\
+             <div id=\"x\" style=\"position: fixed; top: 5px; left: 5px\">fixed</div></div>{}",
+            paragraphs(12, 6)
+        ),
+        "",
+        "x",
+    );
 }
