@@ -9,8 +9,7 @@ use raikiri_style::property::{
     ColumnCountValue, CssColor, DisplayValue, FloatValue, PositionValue, TextShadowColor,
 };
 use raikiri_style::resolve::{
-    ComputedColumnWidth, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
-    ComputedTransformFunction,
+    ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedTransformFunction,
 };
 use raikiri_style::{CascadeResult, ComputedValues, PseudoElem};
 use raikiri_traits::{NodeId, NodeKind};
@@ -584,6 +583,25 @@ fn transformable(document: &Document, id: usize, cv: &ComputedValues) -> bool {
         ))
 }
 
+/// How many columns a multicol container lays its content out in; 1 for
+/// any other box.
+fn used_columns(document: &Document, id: usize) -> usize {
+    let Some(node) = document.get_node(id) else {
+        return 1; // cov:ignore: ancestors of a laid-out paragraph are arena nodes
+    };
+    let Some(style) = node.multicol else {
+        return 1;
+    };
+    let layout = node.unrounded_layout;
+    let content_width = layout.size.width
+        - layout.border.left
+        - layout.border.right
+        - layout.padding.left
+        - layout.padding.right;
+    crate::fragment::FragmentationContext::resolve(content_width, None, style)
+        .map_or(1, |context| context.column_count)
+}
+
 /// Whether the painter places `cv`'s box on each page differently than
 /// layout does.
 fn fixed_omission(cv: &ComputedValues) -> Option<TextRunOmission> {
@@ -641,7 +659,7 @@ pub(super) fn paint_shift(
         }
         clipped |= crate::paint_rules::clips_element_overflow(document, cascade, id)
             || matches!(cv.column_count, ColumnCountValue::Count(count) if count > 1)
-            || cv.column_width != ComputedColumnWidth::Auto;
+            || used_columns(document, id) > 1;
         if clipped && (x, y) != (0.0, 0.0) {
             return Err(TextRunOmission::ShiftedClip);
         }

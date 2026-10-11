@@ -1113,6 +1113,13 @@ fn relatively_positioned_fragments_and_moved_boxes_in_clips_match_paint() {
             ),
             "",
         ),
+        (
+            &format!(
+                "<div style=\"column-width: 1000px; transform: translate(4px, 3px)\">{}</div>",
+                short_paragraphs(3)
+            ),
+            "",
+        ),
     ]);
 }
 
