@@ -209,6 +209,13 @@ impl OverflowClipGeometry {
     }
 }
 
+/// Whether the element has a box of its own to paint: its background,
+/// borders and outline. A `display: contents` element has none (CSS
+/// Display 3 §2.5), even where layout keeps a node for its contents.
+pub fn generates_box(cv: &ComputedValues) -> bool {
+    !matches!(cv.display, DisplayValue::Contents | DisplayValue::None)
+}
+
 /// The group opacity the element paints its subtree with, if any.
 ///
 /// An element with `display: contents` generates no box (CSS Display 3

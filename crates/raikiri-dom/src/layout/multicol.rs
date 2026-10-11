@@ -1890,10 +1890,12 @@ pub(crate) fn authored_containing_width_with_resolved_ch(
     while let Some(id) = ancestor {
         // A `min-content` width is intrinsic, not an authored containing
         // width; keep searching like `auto`.
-        if !matches!(
-            cascade.computed[id].width,
-            ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::MinContent
-        ) {
+        if cascade.computed[id].display != DisplayValue::Contents
+            && !matches!(
+                cascade.computed[id].width,
+                ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::MinContent
+            )
+        {
             return Some(computed_content_width_with_resolved_ch(
                 doc, cascade, parent_of, id, fallback,
             ));
@@ -1992,6 +1994,8 @@ impl AncestorFacts {
         );
         let parent_width = parent.map_or(fallback_width, |parent| self.content_width[parent]);
         self.content_width[id] = match cascade.computed[id].width {
+            // A `display: contents` element has no box, so no width of its own.
+            _ if cascade.computed[id].display == DisplayValue::Contents => parent_width.max(0.0),
             ComputedLengthPercentageOrAuto::Px(value) if value.is_finite() => value.max(0.0),
             ComputedLengthPercentageOrAuto::Percent(value) if value.is_finite() => {
                 (parent_width * value / 100.0).max(0.0)
@@ -2029,10 +2033,11 @@ impl AncestorFacts {
                     | DisplayValue::TableCell
                     | DisplayValue::TableCaption
             );
-        self.authored_ancestor[id] = if matches!(
-            values.width,
-            ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::MinContent
-        ) {
+        self.authored_ancestor[id] = if values.display == DisplayValue::Contents
+            || matches!(
+                values.width,
+                ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::MinContent
+            ) {
             self.authored_ancestor[parent]
         } else {
             Some(parent)

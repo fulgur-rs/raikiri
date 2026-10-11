@@ -363,7 +363,8 @@ impl Document {
                         .copied()
                         .filter(|item| item.kind != PageFragmentKind::Text)
                         .collect();
-                    if !paint_rules::is_visibility_hidden_table(cv)
+                    if paint_rules::generates_box(cv)
+                        && !paint_rules::is_visibility_hidden_table(cv)
                         && !paint_rules::hides_empty_table_cell(self, cascade, node_id)
                     {
                         let replaced_content =
@@ -916,7 +917,15 @@ fn push_paragraph<'a>(
     elements.push((first, Some(true)));
     for (node_id, after) in elements {
         match after {
-            None => push_kind(events, node_id, PageFragmentKind::Box),
+            None if items
+                .cascade
+                .computed
+                .get(node_id)
+                .is_some_and(paint_rules::generates_box) =>
+            {
+                push_kind(events, node_id, PageFragmentKind::Box);
+            }
+            None => {}
             Some(after) => {
                 let pseudo = if after {
                     PseudoElem::After

@@ -2419,8 +2419,11 @@ pub(crate) fn paint_document_impl(
                     let own_paint_height = grid.map_or(paint_height, |rect| rect.height);
                     let own_background_height =
                         grid.map_or(paint_background_height, |rect| rect.height);
-                    let paints_table_part =
-                        !raikiri_dom::paint_rules::is_visibility_hidden_table_part(cv);
+                    // A `display: contents` element has no box whose
+                    // background, borders or outline could paint; its
+                    // generated content still does.
+                    let paints_table_part = raikiri_dom::paint_rules::generates_box(cv)
+                        && !raikiri_dom::paint_rules::is_visibility_hidden_table_part(cv);
                     if node_id != body_id && paints_table_part {
                         // The body canvas background was already propagated by
                         // `paint_canvas_background`; do not paint it a second

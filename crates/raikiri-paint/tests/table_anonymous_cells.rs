@@ -284,9 +284,9 @@ fn review_inline_table_flex_item_keeps_its_flexed_width_and_contents_boundary() 
         );
         doc.append_text(table, "A");
         let computed = layout(&mut doc);
-        // The existing contents layout path does not forward the flexed width.
-        // Restoring the previous inline-table IFC route also produces 10px here.
-        let expected_width = if contents { 10.0 } else { 100.0 };
+        // The contents element generates no box, so the table is the flex
+        // item either way.
+        let expected_width = 100.0;
         assert_eq!(
             doc.get_node(table).unwrap().unrounded_layout.size.width,
             expected_width,
