@@ -127,6 +127,15 @@ struct HasScratch {
 }
 
 impl MatchCaches {
+    /// One-shot queries cannot reuse filtered ranks. Skip rank construction
+    /// while retaining the other matching memos.
+    pub(super) fn for_single_match() -> Self {
+        Self {
+            filtered_nth: RefCell::new(FilteredNthCache::with_limits(0, 0)),
+            ..Self::default()
+        }
+    }
+
     /// Takes a cleared [`HasScratch`] from the pool (or a new one).
     fn take_has_scratch(&self) -> HasScratch {
         let mut scratch = self.has_scratch.borrow_mut().pop().unwrap_or_default();

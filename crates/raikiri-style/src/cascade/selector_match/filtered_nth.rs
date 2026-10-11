@@ -1,6 +1,6 @@
 use super::*;
 
-/// Limits retained filter entries and the aggregate number of child slots
+/// Limits filter entries plus rejected parents, and the aggregate child slots
 /// charged to them. Charging all node kinds is conservative: rank maps store
 /// only matching elements. An oversized filter uses the direct scan without
 /// evicting useful entries or repeatedly rebuilding an evicted filter.
@@ -36,6 +36,9 @@ impl FilterRanks {
 /// Each key retains its filter allocation and every matching condition.
 pub(super) struct FilteredNthCache {
     entries: HashMap<FilterKey, FilterRanks>,
+    // The remaining budget only decreases. A parent rejected on its raw
+    // child count remains oversized for any future uncached filter.
+    over_budget_parents: HashSet<StyleNodeId>,
     charged_children: usize,
     max_entries: usize,
     max_children: usize,
@@ -55,6 +58,7 @@ impl FilteredNthCache {
     pub(super) fn with_limits(max_entries: usize, max_children: usize) -> Self {
         Self {
             entries: HashMap::new(),
+            over_budget_parents: HashSet::new(),
             charged_children: 0,
             max_entries,
             max_children,
@@ -86,7 +90,9 @@ pub(super) fn position<D: StyleDom>(
         if let Some(ranks) = cache.entries.get(&key) {
             return Some(ranks.position(elem));
         }
-        if cache.entries.len() >= cache.max_entries {
+        if cache.over_budget_parents.contains(&parent)
+            || cache.entries.len() + cache.over_budget_parents.len() >= cache.max_entries
+        {
             return None;
         }
         cache.max_children - cache.charged_children
@@ -98,6 +104,11 @@ pub(super) fn position<D: StyleDom>(
         .take(remaining.saturating_add(1))
         .count();
     if children > remaining {
+        ctx.caches
+            .filtered_nth
+            .borrow_mut()
+            .over_budget_parents
+            .insert(parent);
         return None;
     }
     if children < SIBLING_CACHE_MIN_CHILDREN {
@@ -126,7 +137,7 @@ pub(super) fn position<D: StyleDom>(
     // Recursive filters may consume budget while building. Recheck without
     // holding any cache borrow across the recursive matcher above.
     let mut cache = ctx.caches.filtered_nth.borrow_mut();
-    if cache.entries.len() < cache.max_entries
+    if cache.entries.len() + cache.over_budget_parents.len() < cache.max_entries
         && children <= cache.max_children - cache.charged_children
     {
         cache.charged_children += children;

@@ -17,6 +17,57 @@ struct CountingElement<'a> {
     reads: &'a Cell<usize>,
 }
 
+struct ChildCountingDoc<'a> {
+    doc: &'a CountingDoc,
+    child_reads: Cell<usize>,
+}
+
+struct CountingChildren<'a> {
+    inner: <CountingDoc as StyleDom>::ChildIter<'a>,
+    reads: &'a Cell<usize>,
+}
+
+impl Iterator for CountingChildren<'_> {
+    type Item = StyleNodeId;
+    fn next(&mut self) -> Option<StyleNodeId> {
+        let child = self.inner.next()?;
+        self.reads.set(self.reads.get() + 1);
+        Some(child)
+    }
+}
+
+impl StyleDom for ChildCountingDoc<'_> {
+    type NodeRef<'a>
+        = CountingNode<'a>
+    where
+        Self: 'a;
+    type ChildIter<'a>
+        = CountingChildren<'a>
+    where
+        Self: 'a;
+    fn root_id(&self) -> StyleNodeId {
+        self.doc.root_id()
+    }
+    fn node(&self, id: StyleNodeId) -> Option<Self::NodeRef<'_>> {
+        self.doc.node(id)
+    }
+    fn child_ids(&self, id: StyleNodeId) -> Self::ChildIter<'_> {
+        CountingChildren {
+            inner: self.doc.child_ids(id),
+            reads: &self.child_reads,
+        }
+    }
+    fn node_count(&self) -> usize {
+        self.doc.node_count()
+    }
+    fn quirks_mode(&self) -> StyleQuirksMode {
+        self.doc.quirks_mode()
+    }
+    fn parent_id(&self, id: StyleNodeId) -> Option<StyleNodeId> {
+        self.doc.parent_id(id)
+    }
+}
+
 impl StyleDom for CountingDoc {
     type NodeRef<'a> = CountingNode<'a>;
     type ChildIter<'a> = <TestDoc as StyleDom>::ChildIter<'a>;
@@ -120,6 +171,48 @@ fn filtered_nth_matching_evaluates_each_sibling_once_per_filter() {
         }
         assert_eq!(doc.class_reads.get(), n, "n={n}");
     }
+}
+
+#[test]
+fn one_shot_filtered_query_scans_siblings_only_once() {
+    for n in [8, 128, 1024] {
+        let (doc, parent, children) = fixture(n);
+        let counted = ChildCountingDoc {
+            doc: &doc,
+            child_reads: Cell::new(0),
+        };
+        let query = crate::SelectorQuery::parse(":nth-child(1 of :scope > .visible)").unwrap();
+        assert!(query.matches_scoped(&counted, children[0], &[parent], Some(parent)));
+        assert_eq!(counted.child_reads.get(), n);
+        assert_eq!(doc.class_reads.get(), n);
+    }
+}
+
+#[test]
+fn over_budget_parents_skip_repeated_admission_counts() {
+    let (doc, parent, children) = fixture(16);
+    let counted = ChildCountingDoc {
+        doc: &doc,
+        child_reads: Cell::new(0),
+    };
+    let caches = MatchCaches::default();
+    *caches.filtered_nth.borrow_mut() = FilteredNthCache::with_limits(4, 7);
+    let ctx = MatchContext::new(&counted, StyleQuirksMode::NoQuirks, None, false, &caches);
+    let lists = [
+        crate::parse_selector_list(":nth-child(n of .visible)").unwrap(),
+        crate::parse_selector_list(":nth-last-child(n of .visible)").unwrap(),
+    ];
+    for list in &lists {
+        for (i, &child) in children.iter().enumerate() {
+            let node = counted.node(child).unwrap();
+            let element = node.as_element().unwrap();
+            assert_eq!(
+                match_complex_selector_list(list, ctx, &element, child, &[parent]).is_some(),
+                i % 3 == 0
+            );
+        }
+    }
+    assert_eq!(counted.child_reads.get(), 8 + 2 * 16 * 16);
 }
 
 #[test]
@@ -343,6 +436,53 @@ fn filtered_nth_scaling_probe() {
     assert_eq!(hits, n.div_ceil(3) * repeats);
     eprintln!(
         "FILTERED_NTH n={n} filters={filters} repeats={repeats} elapsed_ns={} class_reads={} hits={hits}",
+        elapsed.as_nanos(),
+        doc.class_reads.get()
+    );
+}
+
+#[test]
+#[ignore = "manual filtered nth edge-path performance probe"]
+fn filtered_nth_edge_scaling_probe() {
+    let n: usize = std::env::var("FILTERED_NTH_N")
+        .ok()
+        .map(|v| v.parse().unwrap())
+        .unwrap_or(1024);
+    let queries: usize = std::env::var("FILTERED_NTH_QUERIES")
+        .ok()
+        .map(|v| v.parse().unwrap())
+        .unwrap_or(1);
+    let repeats: usize = std::env::var("FILTERED_NTH_REPEATS")
+        .ok()
+        .map(|v| v.parse().unwrap())
+        .unwrap_or(1);
+    let mode = std::env::var("FILTERED_NTH_MODE").unwrap_or_else(|_| "single".into());
+    assert!(mode == "single" || mode == "over-budget");
+    let (doc, parent, children) = fixture(n);
+    let query = crate::SelectorQuery::parse(":nth-child(n of .visible)").unwrap();
+    let expected: usize = (0..queries)
+        .filter(|&q| (q * n / queries).is_multiple_of(3))
+        .count();
+    let start = Instant::now();
+    let mut hits = 0;
+    for _ in 0..repeats {
+        if mode == "single" {
+            for q in 0..queries {
+                hits +=
+                    query.matches_scoped(&doc, children[q * n / queries], &[parent], Some(parent))
+                        as usize;
+            }
+        } else {
+            let matcher = query.matcher(&doc, None);
+            for q in 0..queries {
+                hits += matcher.matches(children[q * n / queries], &[parent]) as usize;
+            }
+        }
+    }
+    let elapsed = start.elapsed();
+    assert_eq!(hits, expected * repeats);
+    eprintln!(
+        "FILTERED_NTH_EDGE mode={mode} n={n} queries={queries} repeats={repeats} elapsed_ns={} class_reads={} hits={hits}",
         elapsed.as_nanos(),
         doc.class_reads.get()
     );

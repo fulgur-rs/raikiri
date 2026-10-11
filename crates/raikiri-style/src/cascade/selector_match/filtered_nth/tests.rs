@@ -73,3 +73,41 @@ fn recursive_construction_rechecks_both_budget_limits() {
         assert!(cache.charged_children <= cache.max_children);
     }
 }
+
+#[test]
+fn negative_parent_entries_are_bounded_and_do_not_disable_smaller_parents() {
+    let (mut doc, parent, child) = fixture();
+    let large = doc.push_element(0, "div", None);
+    for _ in 0..32 {
+        doc.push_element(large, "p", None);
+    }
+    let data = filter(":nth-child(n of .visible)");
+    let caches = MatchCaches::default();
+    *caches.filtered_nth.borrow_mut() = FilteredNthCache::with_limits(4, 16);
+    let ctx = MatchContext::new(&doc, StyleQuirksMode::NoQuirks, None, false, &caches);
+    let large = StyleNodeId::new(large as u64);
+    assert_eq!(position(ctx, large, child, &data, &[large]), None);
+    assert_eq!(
+        position(ctx, parent, child, &data, &[parent]),
+        Some((1, 16, 16))
+    );
+    let other = filter(":nth-child(n of .absent)");
+    assert_eq!(position(ctx, parent, child, &other, &[parent]), None);
+    assert_eq!(
+        position(ctx, parent, child, &data, &[parent]),
+        Some((1, 16, 16))
+    );
+    let cache = caches.filtered_nth.borrow();
+    assert_eq!(cache.over_budget_parents.len(), 2);
+    assert_eq!(cache.entries.len(), 1);
+    assert!(cache.entries.len() + cache.over_budget_parents.len() <= cache.max_entries);
+    drop(cache);
+
+    let limited = MatchCaches::default();
+    *limited.filtered_nth.borrow_mut() = FilteredNthCache::with_limits(1, 7);
+    let ctx = MatchContext::new(&doc, StyleQuirksMode::NoQuirks, None, false, &limited);
+    for id in [parent, large, StyleNodeId::new(0)] {
+        assert_eq!(position(ctx, id, child, &data, &[id]), None);
+    }
+    assert_eq!(limited.filtered_nth.borrow().over_budget_parents.len(), 1);
+}
