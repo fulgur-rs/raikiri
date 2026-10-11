@@ -7,6 +7,8 @@ use raikiri_traits::PageBox;
 use taffy::style::{Dimension, LengthPercentage, LengthPercentageAuto};
 use taffy::{AvailableSpace, LayoutInput, Rect, Size, Style};
 
+mod cell_index_tests;
+
 fn append_grid_part(
     doc: &mut Document,
     parent: usize,
@@ -702,7 +704,7 @@ fn resolve_collapsed_cell_borders_harmonizes_both_grid_directions() {
         col_widths: vec![],
     };
 
-    super::resolve_collapsed_cell_borders(&mut doc, &grid);
+    super::resolve_collapsed_cell_borders(&mut doc, &grid, &super::CellIndex::new(&grid));
 
     assert_eq!(
         doc.nodes[cells[0]].style.border.right,
@@ -940,7 +942,7 @@ fn a_spanning_cell_does_not_carry_one_segment_winner_into_the_next() {
         col_widths: vec![],
     };
 
-    super::resolve_collapsed_cell_borders(&mut doc, &grid);
+    super::resolve_collapsed_cell_borders(&mut doc, &grid, &super::CellIndex::new(&grid));
 
     // The spanning cell paints the strongest winner along its bottom.
     let bottom = doc.nodes[spanning]
@@ -984,7 +986,7 @@ fn a_cell_paints_the_earlier_cell_border_it_ties_with() {
         col_widths: vec![],
     };
 
-    super::resolve_collapsed_cell_borders(&mut doc, &grid);
+    super::resolve_collapsed_cell_borders(&mut doc, &grid, &super::CellIndex::new(&grid));
 
     // CSS 2.1 §17.6.2.1: on an exact tie the cell further up wins.
     let top = doc.nodes[below].collapsed_border().expect("resolved").top;
@@ -1018,7 +1020,7 @@ fn an_anonymous_row_does_not_turn_its_first_cell_into_a_row() {
     };
 
     super::resolve_collapsed_row_borders(&mut doc, &grid);
-    super::resolve_collapsed_cell_borders(&mut doc, &grid);
+    super::resolve_collapsed_cell_borders(&mut doc, &grid, &super::CellIndex::new(&grid));
 
     let first_sides = doc.nodes[first].collapsed_border().expect("resolved");
     assert_eq!(first_sides.top.color, BorderColor::Resolved(red));
@@ -1059,7 +1061,7 @@ fn collapsed_resolution_skips_boxes_without_computed_borders() {
         ],
         col_widths: vec![],
     };
-    super::resolve_collapsed_cell_borders(&mut doc, &pair);
+    super::resolve_collapsed_cell_borders(&mut doc, &pair, &super::CellIndex::new(&pair));
 
     assert!(doc.nodes[cell].collapsed_border().is_none());
     assert!(doc.nodes[bare_cell].collapsed_border().is_none());
@@ -2756,7 +2758,13 @@ fn compute_collapsed_lines_resolves_2x2_grid_overlaps_and_outers() {
         top: 1.0,
         bottom: 1.0,
     };
-    let lines = super::compute_collapsed_lines(&doc, &grid, &table_border, None);
+    let lines = super::compute_collapsed_lines(
+        &doc,
+        &grid,
+        &super::CellIndex::new(&grid),
+        &table_border,
+        None,
+    );
 
     assert_eq!(
         lines.col_overlaps,
@@ -2800,7 +2808,13 @@ fn compute_collapsed_lines_colspan_cell_only_absorbs_from_its_own_row() {
         ],
         col_widths: vec![],
     };
-    let lines = super::compute_collapsed_lines(&doc, &grid, &Rect::ZERO, None);
+    let lines = super::compute_collapsed_lines(
+        &doc,
+        &grid,
+        &super::CellIndex::new(&grid),
+        &Rect::ZERO,
+        None,
+    );
 
     assert_eq!(
         lines.col_overlaps,
