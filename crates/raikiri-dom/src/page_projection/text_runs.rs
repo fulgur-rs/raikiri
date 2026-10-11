@@ -613,7 +613,7 @@ pub(super) fn box_paint_shift(
 }
 
 /// Whether the element's `transform` applies to it.
-fn transformable(document: &Document, id: usize, cv: &ComputedValues) -> bool {
+pub(super) fn transformable(document: &Document, id: usize, cv: &ComputedValues) -> bool {
     // spec: https://www.w3.org/TR/css-transforms-1/#terminology
     // Non-replaced inline and table-column boxes are not transformable.
     let Some(node) = document.get_node(id) else {

@@ -6,7 +6,7 @@
 //! events, and the text runs carry the same transforms, composed.
 
 use super::records::PageFragment;
-use super::text_runs::{RunContext, box_paint_shift, column_clip_owner};
+use super::text_runs::{RunContext, box_paint_shift, column_clip_owner, transformable};
 use crate::Document;
 use crate::image_geometry::position_offset;
 use raikiri_style::resolve::{ComputedLengthPercentage, ComputedTransformFunction};
@@ -207,9 +207,21 @@ pub(super) fn element_transform(
     }
     let cv = cascade.computed.get(id)?;
     let node = document.get_node(id)?;
-    let Some(placed) = document.page_projection.transform_boxes.get(page, id) else {
-        return (offset != (0.0, 0.0)).then_some(shift); // cov:ignore: every laid-out transformed element has a placement
-    };
+    // An element without a placement of its own, such as a box above the
+    // page whose descendants reach it, is where layout put it.
+    let placed = document
+        .page_projection
+        .transform_boxes
+        .get(page, id)
+        .copied()
+        .unwrap_or_else(|| {
+            let (x, y) = layout_position(document, id);
+            TransformBox {
+                x,
+                y,
+                repeat: false,
+            }
+        });
     // spec: https://www.w3.org/TR/css-transforms-1/#transform-rendering
     // The painter turns the box about its transform origin, on the box it
     // paints: the layout box moved by every offset, in page coordinates and
@@ -256,6 +268,155 @@ pub(super) enum Motion {
     Hidden,
 }
 
+/// The location of element `id` from the layout locations of its layout
+/// ancestors, in shared flow coordinates without page cuts.
+fn layout_position(document: &Document, id: usize) -> (f32, f32) {
+    let mut position = (0.0, 0.0);
+    let mut current = Some(id);
+    while let Some(node) = current.and_then(|id| document.get_node(id)) {
+        position.0 += node.unrounded_layout.location.x;
+        position.1 += node.unrounded_layout.location.y;
+        current = current.and_then(|id| document.layout_parent_of(id));
+    }
+    position
+}
+
+/// What [`element_motion`] derives from the ancestors of the elements of
+/// one page, kept so that each ancestor is looked at once.
+#[derive(Debug, Default)]
+pub(super) struct MotionCache {
+    /// The summed offsets the painter applies around each element's box.
+    ancestors: HashMap<usize, (f32, f32)>,
+    /// Whether the element or one of its ancestors makes fixed boxes local
+    /// to it.
+    fixed_container: HashMap<usize, bool>,
+    /// Whether a box above the element, up to the body, clips it to a
+    /// column.
+    in_columns: HashMap<usize, bool>,
+}
+
+impl MotionCache {
+    /// Whether element `id` is placed in the page area, as a fixed box no
+    /// ancestor contains.
+    pub(super) fn viewport_fixed(
+        &mut self,
+        document: &Document,
+        cascade: &CascadeResult,
+        id: usize,
+    ) -> bool {
+        cascade
+            .computed
+            .get(id)
+            .is_some_and(|cv| cv.position == raikiri_style::property::PositionValue::Fixed)
+            && !document
+                .parent_of(id)
+                .is_some_and(|parent| self.fixed_container(document, cascade, parent))
+    }
+
+    /// Whether element `id` or one of its ancestors establishes a containing
+    /// block for fixed boxes.
+    fn fixed_container(&mut self, document: &Document, cascade: &CascadeResult, id: usize) -> bool {
+        // spec: https://www.w3.org/TR/css-transforms-1/#containing-block-for-all-descendants
+        let mut path = Vec::new();
+        let mut current = Some(id);
+        let mut contains = false;
+        while let Some(node) = current {
+            if let Some(&known) = self.fixed_container.get(&node) {
+                contains = known;
+                break;
+            }
+            path.push(node);
+            current = document.parent_of(node);
+        }
+        for &node in path.iter().rev() {
+            contains |= cascade.computed.get(node).is_some_and(|cv| {
+                (transformable(document, node, cv) && !cv.transform.is_empty())
+                    || !cv.filter.is_empty()
+            });
+            self.fixed_container.insert(node, contains);
+        }
+        contains
+    }
+
+    /// Whether a box above element `id`, up to the body, clips it to a
+    /// column.
+    fn in_columns(
+        &mut self,
+        document: &Document,
+        cascade: &CascadeResult,
+        context: &RunContext,
+        id: usize,
+    ) -> bool {
+        let mut path = Vec::new();
+        let mut current = id;
+        let mut inside = loop {
+            if let Some(&known) = self.in_columns.get(&current) {
+                break known;
+            }
+            let parent = (Some(current) != context.body)
+                .then(|| document.parent_of(current))
+                .flatten();
+            let Some(parent) = parent else {
+                self.in_columns.insert(current, false);
+                break false;
+            };
+            path.push(current);
+            current = parent;
+        };
+        for &child in path.iter().rev() {
+            inside |= column_clip_owner(document, cascade, context, current);
+            self.in_columns.insert(child, inside);
+            current = child;
+        }
+        inside
+    }
+
+    /// The summed offsets the painter applies to the boxes around element
+    /// `id`, up to the body: a fixed box in the page area starts over.
+    fn ancestors(
+        &mut self,
+        document: &Document,
+        cascade: &CascadeResult,
+        context: &RunContext,
+        id: usize,
+    ) -> (f32, f32) {
+        let mut path = Vec::new();
+        let mut current = id;
+        let mut sum = loop {
+            if let Some(&known) = self.ancestors.get(&current) {
+                break known;
+            }
+            let parent = (Some(current) != context.body)
+                .then(|| document.parent_of(current))
+                .flatten();
+            let Some(parent) = parent else {
+                self.ancestors.insert(current, (0.0, 0.0));
+                break (0.0, 0.0);
+            };
+            path.push(current);
+            current = parent;
+        };
+        for &child in path.iter().rev() {
+            let offset = cascade
+                .computed
+                .get(current)
+                .and_then(|cv| {
+                    let fragmented = context.fragmented.contains(&current);
+                    box_paint_shift(document, cascade, context.body, current, cv, fragmented).ok()
+                })
+                .map_or((0.0, 0.0), |shift| shift.offset);
+            sum = if self.viewport_fixed(document, cascade, current) {
+                offset
+            } else {
+                (sum.0 + offset.0, sum.1 + offset.1)
+            };
+            self.ancestors.insert(child, sum);
+            current = child;
+        }
+        sum
+    }
+}
+
 /// How the painter moves element `id` on `page`, as the paint order lists it.
 ///
 /// Inside columns, the column clips are listed at the content they clip,
@@ -266,6 +427,7 @@ pub(super) fn element_motion(
     document: &Document,
     cascade: &CascadeResult,
     context: &RunContext,
+    cache: &mut MotionCache,
     page: &PageFragment,
     id: usize,
     cv: &ComputedValues,
@@ -280,35 +442,16 @@ pub(super) fn element_motion(
     if shift.general && is_singular(cv) {
         return Motion::Hidden;
     }
-    if (shift.offset == (0.0, 0.0) && !shift.general) || in_columns(document, cascade, context, id)
+    if (shift.offset == (0.0, 0.0) && !shift.general)
+        || cache.in_columns(document, cascade, context, id)
     {
         return Motion::Still;
     }
-    let mut ancestors = (0.0, 0.0);
-    if shift.general {
-        let mut current = (Some(id) != context.body)
-            .then(|| document.parent_of(id))
-            .flatten();
-        while let Some(ancestor) = current {
-            if let Some(cv) = cascade.computed.get(ancestor)
-                && let Ok(shift) = box_paint_shift(
-                    document,
-                    cascade,
-                    context.body,
-                    ancestor,
-                    cv,
-                    context.fragmented.contains(&ancestor),
-                )
-            {
-                ancestors.0 += shift.offset.0;
-                ancestors.1 += shift.offset.1;
-            }
-            if Some(ancestor) == context.body {
-                break;
-            }
-            current = document.parent_of(ancestor);
-        }
-    }
+    let ancestors = if shift.general && !cache.viewport_fixed(document, cascade, id) {
+        cache.ancestors(document, cascade, context, id)
+    } else {
+        (0.0, 0.0)
+    };
     element_transform(
         document,
         cascade,
@@ -319,27 +462,4 @@ pub(super) fn element_motion(
         ancestors,
     )
     .map_or(Motion::Still, Motion::Moved)
-}
-
-/// Whether a box above element `id`, up to the body, clips it to a column.
-pub(super) fn in_columns(
-    document: &Document,
-    cascade: &CascadeResult,
-    context: &RunContext,
-    id: usize,
-) -> bool {
-    if Some(id) == context.body {
-        return false;
-    }
-    let mut current = document.parent_of(id);
-    while let Some(ancestor) = current {
-        if column_clip_owner(document, cascade, context, ancestor) {
-            return true;
-        }
-        if Some(ancestor) == context.body {
-            break;
-        }
-        current = document.parent_of(ancestor);
-    }
-    false
 }

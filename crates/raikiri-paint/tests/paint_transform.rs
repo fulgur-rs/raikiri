@@ -192,6 +192,13 @@ fn transformed_boxes_match_paint() {
         "<table><tr><td class=\"b\" style=\"position: relative; left: 6px; top: 2px\">cell</td></tr></table>",
         // A box broken across pages turns about its box on each page.
         "<div class=\"b\" style=\"height: 300px; transform: rotate(2deg)\"></div>",
+        // Percentages resolve against the box, in any function of the list.
+        "<div class=\"b\" style=\"height: 20px; transform: translate(10%, 5px) rotate(10deg) \
+         translateX(3px) translateY(25%) scaleX(0.9) scaleY(1.1)\"></div>",
+        // A box above the page still turns the descendants that reach it.
+        "<div style=\"position: absolute; top: -100px; left: 20px; width: 60px; height: 50px; \
+         transform: rotate(30deg)\"><div class=\"b\" style=\"position: absolute; top: 120px; \
+         width: 20px; height: 20px\"></div></div>",
         // A table header turns about its own copy on each page.
         "<table><thead><tr><th class=\"b\" style=\"transform: rotate(10deg)\">head</th></tr></thead>\
          <tbody><tr><td style=\"height: 250px\">body</td></tr></tbody></table>",
@@ -208,6 +215,19 @@ fn clips_inside_transforms_match_paint() {
          transform: scale(1.5)\"><p>clipped</p></div></div>",
     ] {
         assert!(assert_matches_paint(body, "") > 0, "{body}");
+    }
+}
+
+#[test]
+fn transformed_bodies_match_paint() {
+    for css in [
+        "body { transform: rotate(3deg) }",
+        "body { transform: translate(4px, 2px) scale(0.9) }",
+    ] {
+        assert!(
+            assert_matches_paint("<div class=\"b\" style=\"height: 20px\"></div>", css) > 0,
+            "{css}"
+        );
     }
 }
 
@@ -243,4 +263,57 @@ fn boxes_inside_columns_keep_their_layout_location() {
             .iter()
             .any(|event| matches!(event, PaintEvent::PushTransform(_)))
     );
+}
+
+#[test]
+fn boxes_broken_across_columns_keep_their_layout_location() {
+    // Each column fragment resolves a percentage against itself, which the
+    // paint order does not express.
+    let result = lay_out(
+        "<div style=\"columns: 2\"><div class=\"b\" style=\"transform: translateY(10%)\">\
+         <p>a</p><p>b</p><p>c</p><p>d</p></div></div>",
+        "",
+    );
+    let page = result.pages().next().expect("page");
+    assert!(
+        !page
+            .paint_order()
+            .iter()
+            .any(|event| matches!(event, PaintEvent::PushTransform(_)))
+    );
+}
+
+#[test]
+fn fixed_boxes_leave_the_relative_offsets_around_them() {
+    // The painter places a fixed box in the page area, apart from the
+    // relative offset the float around it is painted with.
+    let result = lay_out(
+        "<div class=\"b\" style=\"float: left; position: relative; left: 5px; top: 4px; \
+         width: 40px; height: 20px\"><div id=\"fixed\" style=\"position: fixed; left: 5px; \
+         top: 5px; width: 10px; height: 10px; background: blue\"></div></div>",
+        "",
+    );
+    let page = result.pages().next().expect("page");
+    let dom = page.dom();
+    let mut transforms = vec![PaintTransform::IDENTITY];
+    let mut seen = 0;
+    for event in page.paint_order() {
+        let transform = *transforms.last().unwrap();
+        match event {
+            PaintEvent::PushTransform(own) => transforms.push(transform * own),
+            PaintEvent::PopTransform => {
+                transforms.pop().expect("an open transform");
+            }
+            PaintEvent::Box(fragment) if dom.attr(fragment.node(), "class") == Some("b") => {
+                assert_eq!(transform, PaintTransform::translate(5.0, 4.0));
+                seen += 1;
+            }
+            PaintEvent::Box(fragment) if dom.attr(fragment.node(), "id") == Some("fixed") => {
+                assert_eq!(transform, PaintTransform::IDENTITY);
+                seen += 1;
+            }
+            _ => {}
+        }
+    }
+    assert_eq!(seen, 2);
 }

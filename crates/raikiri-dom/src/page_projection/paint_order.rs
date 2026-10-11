@@ -289,6 +289,9 @@ impl Document {
         // An explicit stack, like the painter's, so a deep DOM cannot
         // overflow the call stack.
         let mut stack = vec![Frame::Visit(root)];
+        let mut motion = super::paint_transform::MotionCache::default();
+        // The transforms open around the current event, composed.
+        let mut spaces = vec![PaintTransform::IDENTITY];
         while let Some(frame) = stack.pop() {
             let node_id = match frame {
                 Frame::Paragraph(key) => {
@@ -335,6 +338,7 @@ impl Document {
                 }
                 Frame::PopTransform => {
                     events.push(PaintEvent::PopTransform);
+                    spaces.pop();
                     continue;
                 }
                 Frame::Visit(node_id) => node_id,
@@ -362,18 +366,33 @@ impl Document {
                     };
                     // The transform stays in effect, like the group, until
                     // the element's whole subtree has been listed.
+                    let space = *spaces.last().unwrap_or(&PaintTransform::IDENTITY);
+                    // The painter places a fixed box in the page area apart
+                    // from the relative offsets around it; any transform
+                    // around it would contain it instead.
+                    if space != PaintTransform::IDENTITY
+                        && motion.viewport_fixed(self, cascade, node_id)
+                    {
+                        let back = PaintTransform::translate(-space.e, -space.f);
+                        events.push(PaintEvent::PushTransform(back));
+                        stack.push(Frame::PopTransform);
+                        spaces.push(space * back);
+                    }
                     match super::paint_transform::element_motion(
                         self,
                         cascade,
                         &self.page_projection.run_context,
+                        &mut motion,
                         page,
                         node_id,
                         cv,
                     ) {
                         super::paint_transform::Motion::Still => {}
                         super::paint_transform::Motion::Moved(transform) => {
+                            let space = *spaces.last().unwrap_or(&PaintTransform::IDENTITY);
                             events.push(PaintEvent::PushTransform(transform));
                             stack.push(Frame::PopTransform);
+                            spaces.push(space * transform);
                         }
                         super::paint_transform::Motion::Hidden => continue,
                     }
