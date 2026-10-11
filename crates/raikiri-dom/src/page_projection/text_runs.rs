@@ -940,7 +940,11 @@ fn marker_runs<'a>(
     // The marker is drawn only on its item's first page. When the line it
     // aligns with falls on a later page, keep the marker at the bottom of
     // this one rather than past its edge.
-    let height = marker.shaped.lines().first().map_or(0.0, |line| line.block_size());
+    let height = marker
+        .shaped
+        .lines()
+        .first()
+        .map_or(0.0, |line| line.block_size());
     let bottom = page.content_box.y + page.content_box.height - height;
     let y = (top + marker.offset_y).min(bottom.max(top));
     standalone_runs(
