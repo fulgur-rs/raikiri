@@ -9290,6 +9290,53 @@ fn a_margin_straddling_an_unforced_break_is_truncated() {
 }
 
 #[test]
+fn a_margin_after_a_block_ending_at_the_page_edge_is_truncated() {
+    assert_eq!(
+        page_box_positions(&["height:100px", "margin-top:30px;height:20px", "height:10px",]),
+        (vec![0.0, 100.0, 120.0], 2)
+    );
+}
+
+#[test]
+fn an_absolute_box_does_not_interrupt_adjoining_block_margins() {
+    // A tall absolute box becomes a pagination candidate but stays outside
+    // the normal flow, so the two surrounding blocks still adjoin.
+    let (ys, _) = page_box_positions(&[
+        "height:80px",
+        "position:absolute;top:0;height:120px",
+        "margin-top:30px;height:20px",
+        "height:10px",
+    ]);
+    assert_eq!([ys[0], ys[2], ys[3]], [0.0, 100.0, 120.0]);
+}
+
+#[test]
+fn a_float_does_not_interrupt_adjoining_block_margins() {
+    let (ys, _) = page_box_positions(&[
+        "height:80px",
+        "float:left;height:120px",
+        "margin-top:30px;height:20px",
+        "height:10px",
+    ]);
+    assert_eq!([ys[0], ys[2], ys[3]], [0.0, 100.0, 120.0]);
+}
+
+#[test]
+fn a_forced_break_at_a_page_edge_keeps_a_negative_top_margin() {
+    for first in ["height:80px", "height:80px;margin-bottom:50px"] {
+        assert_eq!(
+            page_box_positions(&[
+                first,
+                "margin-top:-10px;height:20px;break-before:page",
+                "height:10px",
+            ]),
+            (vec![0.0, 90.0, 120.0], 2),
+            "{first}"
+        );
+    }
+}
+
+#[test]
 fn a_block_pushed_by_break_inside_avoid_drops_its_top_margin() {
     assert_eq!(
         page_box_positions(&[
@@ -9503,6 +9550,32 @@ fn text_between_blocks_is_not_a_margin() {
                 Some("display:block;height:60px"),
             );
             doc.append_text(body, "x");
+            let last = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;margin-top:20px;height:10px"),
+            );
+            vec![first, last]
+        },
+        &[],
+    );
+    assert_eq!(ys, [0.0, 110.0]);
+}
+
+#[test]
+fn inline_wrapped_text_between_blocks_is_not_a_margin() {
+    let ys = paginated_ys(
+        |doc, body| {
+            let first = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;height:60px"),
+            );
+            let span =
+                doc.append_element(Some(body), "span", Style::default(), Some("display:inline"));
+            doc.append_text(span, "x");
             let last = doc.append_element(
                 Some(body),
                 "div",

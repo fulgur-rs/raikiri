@@ -3328,6 +3328,7 @@ pub fn layout_pages_with_page_geometry_and_control(
     // seen for each parent, while no other content followed it. The gap to
     // the next such sibling is their collapsed margin.
     let mut previous_block_bottoms: HashMap<usize, f32> = HashMap::new();
+    let mut margins_moved_boxes = false;
     // Named class-A boxes at one source coordinate form one page transition.
     // This coalesces zero-height named runs such as a/b/c/d/e without creating
     // one blank page per zero-height box.
@@ -3475,10 +3476,17 @@ pub fn layout_pages_with_page_geometry_and_control(
         if document.get_node(node_id).is_none() {
             continue;
         }
+        let participates_in_margin_adjacency = name_participates_in_flow
+            && !is_floating_box_for_pagination(document, cascade, node_id);
         if candidate.is_text {
             // In-flow text between two blocks separates them: the next block's
             // gap is no longer a margin adjoining the previous block.
-            if let Some(parent_id) = pagination_box_parent(document, cascade, node_id) {
+            if participates_in_margin_adjacency
+                && let Some(parent_id) = candidate
+                    .ifc_root
+                    .map(|(root, _)| root)
+                    .or_else(|| pagination_box_parent(document, cascade, node_id))
+            {
                 previous_block_bottoms.remove(&parent_id);
             }
             // A footnote's descendants follow the moved footnote box. They are
@@ -3880,8 +3888,7 @@ pub fn layout_pages_with_page_geometry_and_control(
             && !candidate.is_table_row
             && !candidate.is_flex_item
             && !candidate.is_grid_item
-            && !candidate.is_float_descendant
-            && !candidate.is_out_of_flow_descendant;
+            && participates_in_margin_adjacency;
         let pending_break_applies = pending_break_source
             .is_some_and(|source| !is_descendant_or_self(document, node_id, source, &parent_of));
         let page_transition = saw_child
@@ -3997,25 +4004,33 @@ pub fn layout_pages_with_page_geometry_and_control(
                 {
                     let page_top = page_origin(natural_page);
                     let previous_bottom = effective_y - gap;
+                    // A border box ending exactly at the break still has
+                    // an adjoining margin on the following page.
                     if natural_page > 0
                         && effective_y > page_top + 0.001
-                        && page_index_for_y(previous_bottom.max(0.0)) < natural_page
                         && previous_bottom <= page_top + 0.001
                     {
                         // A forced break that already coincides with this
                         // page edge sits before the margin, which therefore
                         // stays on the new page.
                         let target_y = if forced_before {
-                            page_top + margin_top.max(0.0)
+                            page_top + margin_top
                         } else {
                             page_top
                         };
                         let delta = target_y - effective_y;
+                        margins_moved_boxes |= delta != 0.0;
                         document.nodes[node_id].unrounded_layout.location.y += delta;
                         follow_moved_ifc_block(document, node_id, delta);
                         flow_shift += delta;
                         effective_y += delta;
-                        natural_page = page_index_for_y(effective_y);
+                        if target_y < page_top {
+                            // Descendants follow the negative margin; later
+                            // siblings still follow the forced break boundary.
+                            pending_underflow = Some((node_id, page_top - target_y));
+                        } else {
+                            natural_page = page_index_for_y(effective_y);
+                        }
                     }
                 }
                 check_candidate_page!('candidate_loop, natural_page);
@@ -4037,7 +4052,10 @@ pub fn layout_pages_with_page_geometry_and_control(
             saw_child = true;
             current_page = 0;
         }
-        if let Some(parent_id) = pagination_box_parent(document, cascade, node_id) {
+        // Parallel flows do not interrupt adjoining normal-flow siblings.
+        if participates_in_margin_adjacency
+            && let Some(parent_id) = pagination_box_parent(document, cascade, node_id)
+        {
             if collapses_with_previous_block {
                 previous_block_bottoms.insert(parent_id, raw_y + height);
             } else {
@@ -4171,6 +4189,12 @@ pub fn layout_pages_with_page_geometry_and_control(
     super::table::headers::finish_boxes(document, &table_headers);
     table_headers.index();
     document.table_objects.headers = table_headers;
+
+    // Truncating margins can move an ancestor of a fixed box. Restore only
+    // its block position, preserving the already-corrected subtree layout.
+    if margins_moved_boxes {
+        super::fixed::restore_fixed_box_block_positions(document, cascade, body_id, content_height);
+    }
 
     if !page_widths.is_empty() {
         let base_width = page_widths

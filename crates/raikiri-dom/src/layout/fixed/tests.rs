@@ -341,6 +341,75 @@ fn grid_abspos_static_positions_survive_the_fixed_relayout() {
 }
 
 #[test]
+fn paginated_margin_truncation_preserves_fixed_boxes_and_their_grid_children() {
+    for (wrapper_css, fixed_css, expected_y) in [
+        ("", "top:5px", 5.0),
+        ("", "bottom:5px", 75.0),
+        ("", "", 100.0),
+        ("transform:translateY(1px)", "top:5px", 105.0),
+    ] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            Some("display:block;margin:0"),
+        );
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:100px"),
+        );
+        let wrapper = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(&format!(
+                "display:block;margin-top:30px;height:20px;{wrapper_css}"
+            )),
+        );
+        let fixed = doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some(&format!(
+                "display:block;position:fixed;left:5px;width:50px;height:20px;{fixed_css}"
+            )),
+        );
+        let grid = doc.append_element(
+            Some(fixed),
+            "div",
+            Style::default(),
+            Some("display:grid;width:50%;padding:10px"),
+        );
+        let item = doc.append_element(
+            Some(grid),
+            "div",
+            Style::default(),
+            Some("display:block;position:absolute;width:5px;height:5px"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade");
+        let mut page = page_box_800x600();
+        page.height = 100.0;
+        layout_pages(with_ahem(&mut doc), &cascade, page).expect("layout");
+        assert_eq!(absolute_rect(&doc, wrapper).1, 100.0);
+        let (_, y, width, height) = absolute_rect(&doc, fixed);
+        assert_eq!(
+            (y, width, height),
+            (expected_y, 50.0, 20.0),
+            "{wrapper_css};{fixed_css}"
+        );
+        let (gx, gy, gw, _) = absolute_rect(&doc, grid);
+        assert_eq!(gw, 45.0);
+        let (x, y, _, _) = absolute_rect(&doc, item);
+        assert_eq!((x - gx, y - gy), (10.0, 10.0));
+    }
+}
+
+#[test]
 fn keyword_sized_fixed_boxes_take_padding_resolved_against_the_page_area() {
     let (mut doc, fixed) = laid_out(
         "margin-left:30px;width:200px",
