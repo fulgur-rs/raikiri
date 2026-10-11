@@ -307,17 +307,12 @@ impl Document {
                     stack.push(Frame::PopOpacity);
                     let nested =
                         push_paragraph(self, &items, root, Some(group), lines, &mut events);
+                    let boxes = self.ifc_boxes_in_group(cascade, root, Some(group));
                     stack.extend(
-                        nested
+                        self.paragraph_frames(cascade, root, boxes, nested)
                             .into_iter()
-                            .rev()
-                            .map(|nested| Frame::InlineGroup(root, nested)),
+                            .rev(),
                     );
-                    let mut boxes = self.ifc_boxes_in_group(cascade, root, Some(group));
-                    if let Some(cv) = cascade.computed.get(root) {
-                        paint_rules::sort_paint_children(&mut boxes, cv.display, cascade);
-                    }
-                    stack.extend(boxes.into_iter().rev().map(Frame::Visit));
                     continue;
                 }
                 Frame::PopClip => {
@@ -478,35 +473,32 @@ impl Document {
                         }
                         groups = push_paragraph(self, &items, node_id, None, lines, &mut events);
                     }
-                    let mut children = if node.is_inline_svg_root()
+                    if node.is_inline_svg_root()
                         || self.anonymous_table_contents_paint_only(node_id)
                     {
-                        Vec::new()
-                    } else if node.is_ifc_root() {
+                        continue;
+                    }
+                    if node.is_ifc_root() {
                         // The paragraph's own text and inline elements were
                         // listed above; only the boxes laid out beside its
                         // lines are visited like ordinary children. Those in
                         // an inline opacity group are visited in the group.
-                        self.ifc_boxes_in_group(cascade, node_id, None)
-                    } else if let Some(children) = self.anonymous_table_paint_sequence(node_id) {
-                        children
-                    } else {
-                        node.children.clone()
-                    };
-                    paint_rules::sort_paint_children(&mut children, cv.display, cascade);
-                    stack.extend(
-                        groups
-                            .into_iter()
-                            .rev()
-                            .map(|group| Frame::InlineGroup(node_id, group)),
-                    );
-                    stack.extend(children.into_iter().rev().map(|key| {
-                        if self.get_node(key).is_none() && self.ifc_layout_node(key).is_some() {
-                            Frame::Paragraph(key)
+                        let boxes = self.ifc_boxes_in_group(cascade, node_id, None);
+                        stack.extend(
+                            self.paragraph_frames(cascade, node_id, boxes, groups)
+                                .into_iter()
+                                .rev(),
+                        );
+                        continue;
+                    }
+                    let mut children =
+                        if let Some(children) = self.anonymous_table_paint_sequence(node_id) {
+                            children
                         } else {
-                            Frame::Visit(key)
-                        }
-                    }));
+                            node.children.clone()
+                        };
+                    paint_rules::sort_paint_children(&mut children, cv.display, cascade);
+                    stack.extend(children.into_iter().rev().map(|key| self.child_frame(key)));
                 }
                 // A text node laid out as an anonymous flex or grid item is a
                 // paragraph of its own. Any other text node outside a
@@ -655,6 +647,83 @@ impl Document {
 
     /// The boxes laid out beside the lines of paragraph `root` (floats and
     /// atomic inlines) whose innermost inline opacity group is `group`.
+    /// The frame that visits paint child `key`: an anonymous paragraph key
+    /// stands for a paragraph laid out outside the source DOM arena.
+    fn child_frame(&self, key: usize) -> Frame {
+        if self.get_node(key).is_none() && self.ifc_layout_node(key).is_some() {
+            Frame::Paragraph(key)
+        } else {
+            Frame::Visit(key)
+        }
+    }
+
+    /// The frames of a paragraph's boxes laid out beside its lines and of its
+    /// inline opacity groups, in paint order. A group is a stacking context
+    /// painted at the level of positioned boxes with `z-index: auto` or `0`,
+    /// in tree order with them: after the floats and in-flow atomic inlines,
+    /// and before positive z-index boxes.
+    fn paragraph_frames(
+        &self,
+        cascade: &CascadeResult,
+        root: usize,
+        boxes: Vec<usize>,
+        groups: Vec<usize>,
+    ) -> Vec<Frame> {
+        let display = cascade
+            .computed
+            .get(root)
+            .map_or(DisplayValue::Block, |cv| cv.display);
+        let mut entries: Vec<(paint_rules::PaintChildKey, Frame)> = boxes
+            .into_iter()
+            .map(|key| {
+                (
+                    paint_rules::paint_child_key(key, display, cascade),
+                    self.child_frame(key),
+                )
+            })
+            .collect();
+        if !groups.is_empty() {
+            // Each group joins the boxes at its place in tree order before
+            // the stable sort, so equal keys keep tree order.
+            let position = self.preorder_positions(root);
+            for group in groups {
+                let at = position.get(&group).map_or(entries.len(), |&group_at| {
+                    entries
+                        .iter()
+                        .position(|(_, frame)| match *frame {
+                            Frame::Visit(id) | Frame::Paragraph(id) | Frame::InlineGroup(_, id) => {
+                                position.get(&id).is_some_and(|&at| at > group_at)
+                            }
+                            Frame::PopClip | Frame::PopOpacity => false, // cov:ignore: never listed here
+                        })
+                        .unwrap_or(entries.len())
+                });
+                entries.insert(
+                    at,
+                    (
+                        paint_rules::STACKING_CONTEXT_PAINT_KEY,
+                        Frame::InlineGroup(root, group),
+                    ),
+                );
+            }
+        }
+        entries.sort_by_key(|(key, _)| *key);
+        entries.into_iter().map(|(_, frame)| frame).collect()
+    }
+
+    /// The preorder index of each node in the subtree of `root`.
+    fn preorder_positions(&self, root: usize) -> HashMap<usize, usize> {
+        let mut positions = HashMap::new();
+        let mut pending = vec![root];
+        while let Some(id) = pending.pop() {
+            positions.insert(id, positions.len());
+            if let Some(node) = self.get_node(id) {
+                pending.extend(node.children.iter().rev().copied());
+            }
+        }
+        positions
+    }
+
     fn ifc_boxes_in_group(
         &self,
         cascade: &CascadeResult,

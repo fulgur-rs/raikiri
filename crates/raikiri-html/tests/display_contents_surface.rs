@@ -98,3 +98,24 @@ fn contents_elements_paint_no_box() {
         }
     }
 }
+
+#[test]
+fn unusual_elements_compute_contents_to_none() {
+    let result = lay_out(
+        "<div><img class=contents id=img><input class=contents id=input>\
+         <textarea class=contents id=textarea></textarea>\
+         <svg class=contents id=svg width=50 height=50></svg></div>\
+         <p id=after style='margin:0'>X</p>",
+        "",
+    );
+    let page = result.page(0).unwrap();
+    for id in ["img", "input", "textarea", "svg"] {
+        assert!(
+            page.fragments()
+                .all(|fragment| page.dom().attr(fragment.node(), "id") != Some(id)),
+            "{id} must generate no box"
+        );
+    }
+    // Nothing of theirs takes up space before the following paragraph.
+    assert_eq!(rect_of(&result, "after").y, 0.0);
+}
