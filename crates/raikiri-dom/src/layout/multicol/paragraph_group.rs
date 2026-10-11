@@ -357,7 +357,8 @@ pub(super) struct Rows {
 /// Fill the paragraphs of a nested column container into rows of its
 /// columns: the first row holds `first` of block size, every later row
 /// `later`, and at most `rows` rows exist. The last row is balanced unless
-/// the container fills its columns sequentially. `None` when the entries are
+/// the container fills its columns sequentially, and every row with
+/// `column-fill: balance-all`. `None` when the entries are
 /// not plain paragraphs or do not fit.
 pub(super) fn fill_rows(
     tree: &Document,
@@ -383,7 +384,12 @@ pub(super) fn fill_rows(
             return None;
         }
         let mut chunk = fill_chunk(&paragraphs, context, capacity, resume)?;
-        if chunk.next.is_none() && context.column_fill != ColumnFillValue::Auto {
+        // `balance` balances the last row only, `balance-all` every row; a
+        // balanced row keeps the content the full row would hold.
+        let balance = context.column_fill == ColumnFillValue::BalanceAll
+            || (context.column_fill != ColumnFillValue::Auto && chunk.next.is_none());
+        if balance {
+            let next = chunk.next;
             let mut low = 0.0;
             let mut high = capacity;
             for _ in 0..32 {
@@ -392,7 +398,7 @@ pub(super) fn fill_rows(
                 }
                 let trial = (low + high) * 0.5;
                 if let Some(candidate) = fill_chunk(&paragraphs, context, trial, resume)
-                    && candidate.next.is_none()
+                    && candidate.next == next
                 {
                     high = trial;
                     chunk = candidate;
@@ -401,7 +407,7 @@ pub(super) fn fill_rows(
                 }
             }
         }
-        let height = if chunk.next.is_some() {
+        let height = if chunk.next.is_some() && !balance {
             capacity
         } else {
             chunk.group.height
