@@ -1471,7 +1471,7 @@ fn finalize_empty_text_shadow_list_reuses_shared_computed_empty_arc() {
 }
 
 /// A caller that overwrites a parent's computed `font_size` with an explicit
-/// length (here through [`parent_with_font_size`], which keeps the initial
+/// length (here through `parent_with_font_size`, which keeps the initial
 /// `medium` keyword information) makes children treat that size as an
 /// explicit length: switching to the `monospace` generic keeps the parent's
 /// 20px instead of recomputing the 13px `medium`.
