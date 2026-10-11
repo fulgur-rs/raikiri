@@ -17,7 +17,9 @@ use anyrender::PaintScene;
 use kurbo::{Affine, Arc, BezPath, Point, Rect, Vec2};
 use peniko::color::{AlphaColor, ColorSpaceTag, DynamicColor, HueDirection, Srgb};
 use peniko::{Color, Extend as PenikoExtend, Fill, Gradient as PenikoGradient, Mix};
-use raikiri_dom::image_geometry::{background_image_dimensions, background_tiles, position_offset};
+use raikiri_dom::image_geometry::{
+    background_image_dimensions, background_tiles, border_image_geometry, position_offset,
+};
 use raikiri_dom::{CounterSnapshot, Document, FragmentRect, StandaloneAlign};
 use raikiri_style::property::{
     AnglePercentage, BackgroundImage, Border, BorderColor, BorderStyle, ColumnCountValue,
@@ -2522,6 +2524,21 @@ pub(crate) fn paint_document_impl(
                                 && side.width().px() > 0.0
                                 && matches!(side.color, BorderColor::Resolved(c) if c == cv.background_color)
                         });
+                    // A border image replaces the border styles (CSS
+                    // Backgrounds 3 §6).
+                    let border_image_drawn = paints_table_part
+                        && paint_element_border_image(
+                            scene,
+                            own_paint_width,
+                            own_paint_height,
+                            own_paint_x,
+                            own_paint_y,
+                            cv,
+                            painted_border,
+                            pixel_source,
+                        );
+                    let border_covered_by_background =
+                        border_covered_by_background || border_image_drawn;
                     // Paint border on top of background (CSS Backgrounds 3 §5).
                     let paints_continuation_border =
                         paints_table_part && paints_as_absolute_continuation;
@@ -4301,6 +4318,170 @@ fn paint_background_image(
     scene.pop_layer();
 }
 
+/// Paint the border image of a box whose border box is `width` × `height`
+/// at (`abs_x`, `abs_y`) (CSS Backgrounds 3 §6).
+///
+/// Returns whether a border image was drawn. When it was, it replaces the
+/// box's border styles; when the source is `none` or cannot be displayed,
+/// the caller paints the borders as usual (§6.1). Border radii do not clip
+/// a border image. A gradient source paints its first color stop, like
+/// gradient backgrounds in this painter.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn paint_element_border_image(
+    scene: &mut impl PaintScene,
+    width: f32,
+    height: f32,
+    abs_x: f32,
+    abs_y: f32,
+    cv: &ComputedValues,
+    border: &Sides<raikiri_style::resolve::ComputedBorder>,
+    pixel_source: Option<&dyn ImagePixelSource>,
+) -> bool {
+    let image = &cv.border_image;
+    let border_box = (
+        f64::from(abs_x),
+        f64::from(abs_y),
+        f64::from(width),
+        f64::from(height),
+    );
+    let widths = Sides {
+        top: f64::from(border.top.width().px()),
+        right: f64::from(border.right.width().px()),
+        bottom: f64::from(border.bottom.width().px()),
+        left: f64::from(border.left.width().px()),
+    };
+    match &image.source {
+        BackgroundImage::Url(raw_url) => {
+            let Some((url, pixel_source)) = background_image_url(raw_url).zip(pixel_source) else {
+                return false;
+            };
+            let Some(natural) = pixel_source.intrinsic_size(&url) else {
+                return false;
+            };
+            let Some(geometry) = border_image_geometry(border_box, widths, image, Some(natural))
+            else {
+                // A displayable image that draws nothing still replaces the
+                // border styles.
+                return true;
+            };
+            let (image_w, image_h) = geometry.image_size;
+            let size = ImageRasterSize {
+                width: image_w as f32,
+                height: image_h as f32,
+            };
+            let Some(decoded) = pixel_source.get_decoded_at_size(&url, size, None) else {
+                return false;
+            };
+            if decoded.width == 0 || decoded.height == 0 {
+                return false;
+            }
+            // Decoded pixels per image unit.
+            let scale_x = f64::from(decoded.width) / image_w;
+            let scale_y = f64::from(decoded.height) / image_h;
+            for part in &geometry.parts {
+                let (src_x, src_y, src_w, src_h) = part.source;
+                let (area_x, area_y, area_w, area_h) = part.area;
+                // Each part samples its own pixels, so filtering at the
+                // slice lines does not bleed in the neighbouring slice.
+                let Some(brush) = cropped_image_brush(
+                    &decoded,
+                    (src_x * scale_x, src_y * scale_y),
+                    ((src_x + src_w) * scale_x, (src_y + src_h) * scale_y),
+                ) else {
+                    continue;
+                };
+                // Cropped pixels to image coordinates.
+                let pixels = Affine::translate((src_x, src_y))
+                    * Affine::scale_non_uniform(
+                        src_w / f64::from(brush.image.width),
+                        src_h / f64::from(brush.image.height),
+                    );
+                let source = Rect::new(src_x, src_y, src_x + src_w, src_y + src_h);
+                scene.push_clip_layer(
+                    Affine::IDENTITY,
+                    &Rect::new(area_x, area_y, area_x + area_w, area_y + area_h),
+                );
+                let scale =
+                    Affine::scale_non_uniform(part.tile_width / src_w, part.tile_height / src_h)
+                        * Affine::translate((-src_x, -src_y));
+                for tile_y in &part.y {
+                    for tile_x in &part.x {
+                        scene.fill(
+                            Fill::NonZero,
+                            Affine::translate((*tile_x, *tile_y)) * scale,
+                            brush.as_ref(),
+                            Some(pixels),
+                            &source,
+                        );
+                    }
+                }
+                scene.pop_layer();
+            }
+            true
+        }
+        BackgroundImage::Gradient(gradient) => {
+            let Some(geometry) = border_image_geometry(border_box, widths, image, None) else {
+                return true;
+            };
+            let Some(color) = gradient_first_color(gradient, cv.color) else {
+                return true;
+            };
+            for part in &geometry.parts {
+                let (area_x, area_y, area_w, area_h) = part.area;
+                scene.fill(
+                    Fill::NonZero,
+                    Affine::IDENTITY,
+                    css_color(color),
+                    None,
+                    &Rect::new(area_x, area_y, area_x + area_w, area_y + area_h),
+                );
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+/// An image brush over the pixels of `decoded` between the corners `start`
+/// and `end` (in pixels, rounded to whole pixels), or `None` when the
+/// rectangle holds no pixel.
+fn cropped_image_brush(
+    decoded: &raikiri_traits::DecodedImage,
+    start: (f64, f64),
+    end: (f64, f64),
+) -> Option<peniko::ImageBrush> {
+    let clamp = |value: f64, limit: u32| value.round().clamp(0.0, f64::from(limit)) as u32;
+    let (x0, y0) = (
+        clamp(start.0, decoded.width),
+        clamp(start.1, decoded.height),
+    );
+    let (mut x1, mut y1) = (clamp(end.0, decoded.width), clamp(end.1, decoded.height));
+    // A slice thinner than a pixel still shows the pixel it starts in.
+    if x1 == x0 && x0 < decoded.width {
+        x1 = x0 + 1;
+    }
+    if y1 == y0 && y0 < decoded.height {
+        y1 = y0 + 1;
+    }
+    let (width, height) = (x1.checked_sub(x0)?, y1.checked_sub(y0)?);
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let stride = decoded.width as usize * 4;
+    let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
+    for row in y0..y1 {
+        let offset = row as usize * stride + x0 as usize * 4;
+        rgba.extend_from_slice(decoded.rgba.get(offset..offset + width as usize * 4)?);
+    }
+    Some(peniko::ImageBrush::new(peniko::ImageData {
+        data: peniko::Blob::from(rgba),
+        format: peniko::ImageFormat::Rgba8,
+        alpha_type: peniko::ImageAlphaType::Alpha,
+        width,
+        height,
+    }))
+}
+
 fn used_border_radii(radius: &ComputedBorderRadius, width: f64, height: f64) -> [[f64; 2]; 4] {
     radius
         .used(width as f32, height as f32)
@@ -4698,16 +4879,28 @@ pub(crate) fn paint_inline_box(
     if slice.is_some() {
         scene.pop_layer();
     }
-    paint_element_border_rounded(
+    // Each fragment shows the border image on the edges it keeps.
+    if !paint_element_border_image(
         scene,
         outer.width,
         outer.height,
         abs_x,
         abs_y,
+        cv,
         &border,
-        cv.color,
-        &radius,
-    );
+        pixel_source,
+    ) {
+        paint_element_border_rounded(
+            scene,
+            outer.width,
+            outer.height,
+            abs_x,
+            abs_y,
+            &border,
+            cv.color,
+            &radius,
+        );
+    }
     paint_element_outline(
         scene,
         outer.width,

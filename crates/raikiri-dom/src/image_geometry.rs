@@ -8,6 +8,9 @@ use raikiri_style::resolve::{
 };
 use raikiri_traits::ImageIntrinsicSize;
 
+mod border_image;
+pub use border_image::{BorderImageGeometry, BorderImagePart, border_image_geometry};
+
 /// The object rectangle inside a used content box, in CSS pixels.
 ///
 /// Input and output tuples contain x, y, width, and height. Double precision

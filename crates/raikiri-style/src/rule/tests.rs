@@ -2,8 +2,10 @@ use std::sync::Arc;
 
 use super::*;
 use crate::property::{
-    BorderColor, BorderStyle, CssColor, FontStyle, FontVariantCaps, FontWeightValue, Length,
-    LengthOrAuto, LineHeight, OutlineColor, OutlineStyle, OverflowValue, RelativeFontSize,
+    BORDER_IMAGE_OUTSET_INITIAL, BORDER_IMAGE_WIDTH_INITIAL, BackgroundImage, BorderColor,
+    BorderImageRepeat, BorderImageSlice, BorderStyle, CssColor, FontStyle, FontVariantCaps,
+    FontWeightValue, Length, LengthOrAuto, LineHeight, OutlineColor, OutlineStyle, OverflowValue,
+    RelativeFontSize,
 };
 use cssparser::ParserInput;
 
@@ -100,6 +102,21 @@ fn deferred_shorthand_expands_to_each_longhand_key() {
                 PropertyKey::BorderLeftWidth,
                 PropertyKey::BorderLeftStyle,
                 PropertyKey::BorderLeftColor,
+                PropertyKey::BorderImageSource,
+                PropertyKey::BorderImageSlice,
+                PropertyKey::BorderImageWidth,
+                PropertyKey::BorderImageOutset,
+                PropertyKey::BorderImageRepeat,
+            ],
+        ),
+        (
+            PropertyKey::BorderImage,
+            &[
+                PropertyKey::BorderImageSource,
+                PropertyKey::BorderImageSlice,
+                PropertyKey::BorderImageWidth,
+                PropertyKey::BorderImageOutset,
+                PropertyKey::BorderImageRepeat,
             ],
         ),
         (
@@ -733,7 +750,8 @@ fn padding_longhand_declaration_not_expanded() {
 // ── border shorthand expansion (CSS Cascading L4 §3) ──
 //
 // `parse_declaration_block` expands the `border` shorthand into 12 longhands
-// (four sides × three sub-properties: width / style / color).
+// (four sides × three sub-properties: width / style / color), followed by the
+// five border-image longhands it resets (CSS Backgrounds 3 §3.4).
 // Under spec §3 "Shorthand Properties", which "sets all of its longhand sub-properties,
 // exactly as if expanded in place", parse-time expansion prevents shorthand
 // keys from reaching the cascade. Extends the margin / padding
@@ -748,8 +766,8 @@ fn border_shorthand_expands_into_twelve_longhand_declarations() {
     let decls = parse_block("border: 1px solid red;");
     assert_eq!(
         decls.len(),
-        12,
-        "border shorthand must expand to 12 longhand decls"
+        17,
+        "border shorthand must expand to 12 border and 5 border-image longhand decls"
     );
     let red = CssColor {
         r: 255,
@@ -797,6 +815,10 @@ fn border_shorthand_expands_into_twelve_longhand_declarations() {
         PropertyValue::BorderLeftStyle(BorderStyle::Solid)
     );
     assert_eq!(decls[11].value, PropertyValue::BorderLeftColor(red_bc));
+    assert_eq!(
+        decls[12].value,
+        PropertyValue::BorderImageSource(BackgroundImage::None)
+    );
 }
 
 #[test]
@@ -805,7 +827,7 @@ fn border_shorthand_important_flag_propagates_to_all_longhand() {
     // as in the margin / padding important extensions; check all 12 longhands.
     // as a regression check.
     let decls = parse_block("border: 5px dashed blue !important;");
-    assert_eq!(decls.len(), 12);
+    assert_eq!(decls.len(), 17);
     for d in &decls {
         assert!(d.important, "important must propagate to every longhand");
     }
@@ -1423,6 +1445,11 @@ fn border_expansion_keeps_each_side_apart() {
             PropertyValue::BorderLeftWidth(Length::Px(4.0)),
             PropertyValue::BorderLeftStyle(BorderStyle::Double),
             PropertyValue::BorderLeftColor(BorderColor::CurrentColor),
+            PropertyValue::BorderImageSource(BackgroundImage::None),
+            PropertyValue::BorderImageSlice(BorderImageSlice::INITIAL),
+            PropertyValue::BorderImageWidth(BORDER_IMAGE_WIDTH_INITIAL),
+            PropertyValue::BorderImageOutset(BORDER_IMAGE_OUTSET_INITIAL),
+            PropertyValue::BorderImageRepeat(BorderImageRepeat::INITIAL),
         ]
     );
 }

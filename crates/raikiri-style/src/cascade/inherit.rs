@@ -1951,6 +1951,40 @@ fn inherited_margin_length(value: ComputedLengthPercentageOrAuto) -> LengthOrAut
     }
 }
 
+/// The `key` border-image longhand of `inherited`, mapped back to the
+/// specified layer, or its initial value without one.
+fn border_image_defaulting_value(
+    key: crate::property::PropertyKey,
+    inherited: Option<&crate::computed::ComputedBorderImage>,
+) -> PropertyValue {
+    use crate::property::{BorderImageOutsetSide, BorderImageWidthSide, PropertyKey};
+    let initial = crate::computed::ComputedBorderImage::initial();
+    let image = inherited.unwrap_or(&initial);
+    match key {
+        PropertyKey::BorderImageSource => PropertyValue::BorderImageSource(image.source.clone()),
+        PropertyKey::BorderImageSlice => PropertyValue::BorderImageSlice(image.slice),
+        PropertyKey::BorderImageWidth => {
+            PropertyValue::BorderImageWidth(image.width.map(|side| match side {
+                BorderImageWidthSide::LengthPercentage(ComputedLengthPercentage::Px(px)) => {
+                    BorderImageWidthSide::LengthPercentage(Length::Px(px))
+                }
+                BorderImageWidthSide::LengthPercentage(ComputedLengthPercentage::Percent(p)) => {
+                    BorderImageWidthSide::LengthPercentage(Length::Percent(p))
+                }
+                BorderImageWidthSide::Number(number) => BorderImageWidthSide::Number(number),
+                _ => BorderImageWidthSide::Auto,
+            }))
+        }
+        PropertyKey::BorderImageOutset => {
+            PropertyValue::BorderImageOutset(image.outset.map(|side| match side {
+                BorderImageOutsetSide::Length(px) => BorderImageOutsetSide::Length(Length::Px(px)),
+                BorderImageOutsetSide::Number(number) => BorderImageOutsetSide::Number(number),
+            }))
+        }
+        _ => PropertyValue::BorderImageRepeat(image.repeat),
+    }
+}
+
 /// Resolve defaulting markers shared by the element and page inheritance paths.
 fn resolve_defaulting_value(value: PropertyValue, inherited: &ComputedValues) -> PropertyValue {
     if let PropertyValue::Deferred(marker) = &value
@@ -2063,6 +2097,17 @@ fn resolve_defaulting_value(value: PropertyValue, inherited: &ComputedValues) ->
                 } else {
                     inherited.list_style_position
                 });
+            }
+            key @ (crate::property::PropertyKey::BorderImageSource
+            | crate::property::PropertyKey::BorderImageSlice
+            | crate::property::PropertyKey::BorderImageWidth
+            | crate::property::PropertyKey::BorderImageOutset
+            | crate::property::PropertyKey::BorderImageRepeat) => {
+                // Non-inherited: only `inherit` takes the parent's value.
+                return border_image_defaulting_value(
+                    key,
+                    (keyword == CssWideKeyword::Inherit).then_some(&inherited.border_image),
+                );
             }
             crate::property::PropertyKey::ListStyleImage => {
                 return PropertyValue::ListStyleImage(if initial {
@@ -2657,6 +2702,14 @@ pub(crate) fn resolve_against_inherited(
         // parent's, and it is structurally unreachable here regardless
         // (`expand_shorthand_into` expands it before this function runs).
         | PropertyValue::Background(_)
+        // border-image-* (CSS Backgrounds 3 §6) — non-inherited; lengths
+        // are absolutized in phase 3, like `background-size`.
+        | PropertyValue::BorderImageSource(_)
+        | PropertyValue::BorderImageSlice(_)
+        | PropertyValue::BorderImageWidth(_)
+        | PropertyValue::BorderImageOutset(_)
+        | PropertyValue::BorderImageRepeat(_)
+        | PropertyValue::BorderImage(_)
         // `font` shorthand — same "nothing for phase 2 to resolve" shape as
         // `Padding`/`Margin`/`Border`/`Flex`/`Gap`/`Background` above: its
         // length-bearing components (`size` as <length-percentage>,
@@ -3169,6 +3222,14 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::Background(shorthand) => {
             expand_background(&shorthand, |v| apply_value(v, target))
         }
+        PropertyValue::BorderImage(shorthand) => {
+            crate::rule::expand_border_image(&shorthand, |v| apply_value(v, target))
+        }
+        PropertyValue::BorderImageSource(v) => target.border_image_source = v,
+        PropertyValue::BorderImageSlice(v) => target.border_image_slice = v,
+        PropertyValue::BorderImageWidth(v) => target.border_image_width = v,
+        PropertyValue::BorderImageOutset(v) => target.border_image_outset = v,
+        PropertyValue::BorderImageRepeat(v) => target.border_image_repeat = v,
         PropertyValue::BorderStyle(sides) => expand_border_style(sides, |v| apply_value(v, target)),
         PropertyValue::BorderWidth(sides) => expand_border_width(sides, |v| apply_value(v, target)),
         PropertyValue::BorderColor(sides) => expand_border_color(sides, |v| apply_value(v, target)),

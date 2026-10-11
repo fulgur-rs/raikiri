@@ -821,7 +821,7 @@ impl<'a> RenderResources<'a> {
         );
     }
 
-    /// Preload the CSS background images of rendered elements.
+    /// Preload the CSS background and border images of rendered elements.
     ///
     /// Element computed values do not depend on the page query, so a paged
     /// caller scans them once and then calls
@@ -846,7 +846,8 @@ impl<'a> RenderResources<'a> {
                 ) && computed.visibility == Visibility::Visible
                     && computed.opacity > 0.0
             })
-            .filter_map(|computed| match &computed.background_image {
+            .flat_map(|computed| [&computed.background_image, &computed.border_image.source])
+            .filter_map(|image| match image {
                 BackgroundImage::Url(raw_url) => Some(raw_url.as_str()),
                 _ => None,
             });

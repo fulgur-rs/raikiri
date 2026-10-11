@@ -3320,7 +3320,7 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
 // Includes page-only inherit markers, which are resolved before this
 // phase and therefore remain unchanged here. ContextualColor is also a
 // computed expression; it requires no page-context length conversion.
-const PHASE_3_PASS_THROUGH_VARIANTS: usize = 171;
+const PHASE_3_PASS_THROUGH_VARIANTS: usize = 175;
 /// Number of corpus variants transformed by page-context resolution.
 /// This is derived from the corpus size and the pass-through count.
 fn phase_3_transformed_variants() -> usize {
@@ -4017,6 +4017,16 @@ property_key_samples! {
     ColumnRuleColor => PropertyValue::ColumnRuleColor(BorderColor::Resolved(RED)),
     ColumnFill => PropertyValue::ColumnFill(ColumnFillValue::BalanceAll),
     ColumnSpan => PropertyValue::ColumnSpan(crate::property::ColumnSpanValue::All),
+    BorderImageSource => PropertyValue::BorderImageSource(BackgroundImage::Url("frame.png".into())),
+    BorderImageSlice => PropertyValue::BorderImageSlice(crate::property::BorderImageSlice::INITIAL),
+    BorderImageWidth => PropertyValue::BorderImageWidth(Sides::all(
+        crate::property::BorderImageWidthSide::LengthPercentage(Length::Em(2.0)),
+    )),
+    BorderImageOutset => PropertyValue::BorderImageOutset(Sides::all(
+        crate::property::BorderImageOutsetSide::Length(Length::Em(2.0)),
+    )),
+    BorderImageRepeat => PropertyValue::BorderImageRepeat(crate::property::BorderImageRepeat::INITIAL),
+    BorderImage => PropertyValue::BorderImage(Box::new(crate::property::BorderImageShorthand::initial())),
     ColumnWidth => PropertyValue::ColumnWidth(ColumnWidthValue::Length(Length::Em(2.0))),
     Columns => PropertyValue::Columns(ColumnsShorthand {
         width: ColumnWidthValue::Length(Length::Em(2.0)),
@@ -4449,6 +4459,12 @@ property_value_variant_registry! {
     ColumnRuleColor,
     ColumnFill,
     ColumnSpan,
+    BorderImageSource,
+    BorderImageSlice,
+    BorderImageWidth,
+    BorderImageOutset,
+    BorderImageRepeat,
+    BorderImage,
     ColumnWidth,
     Columns,
     HyphenateCharacter,
@@ -4794,7 +4810,25 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | PropertyValue::ColumnFill(_)
             | PropertyValue::ColumnSpan(_)
             | PropertyValue::ColumnRuleStyle(_)
-            | PropertyValue::ColumnRuleColor(_) => None,
+            | PropertyValue::ColumnRuleColor(_)
+            // Border image slices and repeats carry no length; a source
+            // gradient keeps only percentages after absolutization.
+            | PropertyValue::BorderImageSource(_)
+            | PropertyValue::BorderImageSlice(_)
+            | PropertyValue::BorderImageRepeat(_)
+            | PropertyValue::BorderImage(_) => None,
+            PropertyValue::BorderImageWidth(sides) => [sides.top, sides.right, sides.bottom, sides.left]
+                .into_iter()
+                .find_map(|side| match side {
+                    crate::property::BorderImageWidthSide::LengthPercentage(width) => length(width),
+                    _ => None,
+                }),
+            PropertyValue::BorderImageOutset(sides) => [sides.top, sides.right, sides.bottom, sides.left]
+                .into_iter()
+                .find_map(|side| match side {
+                    crate::property::BorderImageOutsetSide::Length(outset) => length(outset),
+                    _ => None,
+                }),
             PropertyValue::ColumnRule(rule) => length(rule.width),
             PropertyValue::ColumnRuleWidth(width) => length(*width),
             // cov:ignore: auto width has no length residue to report.
@@ -5989,16 +6023,17 @@ fn cascade_page_output_carries_no_specified_layer_residue() {
     // others to pass the threshold. Dropped values also contribute zero
     // residues, so the residue check would miss them.
     //
-    // 27 = seven from font-size / font-weight / line-height / text-align /
-    // width / height / direction + four padding + four margin + 12 expanded
-    // from the `border` shorthand (four sides × width / style / color). If
+    // 32 = seven from font-size / font-weight / line-height / text-align /
+    // width / height / direction + four padding + four margin + 17 expanded
+    // from the `border` shorthand (four sides × width / style / color, plus
+    // the five border-image longhands it resets). If
     // `@page` shorthand expansion changes, this check fails first, indicating
     // that the corpus stylesheet was not parsed/expanded as expected.
     //
     // Put this diagnostic in the comment, not in a custom message:
     // `assert_eq!` evaluates its custom message only on failure. That cold
     // path is reported as uncovered while the test passes.
-    assert_eq!(result.declarations().len(), 27);
+    assert_eq!(result.declarations().len(), 32);
 
     // Sort `declarations` for comparison: HashMap iteration order is random.
     let mut residues: Vec<String> = result

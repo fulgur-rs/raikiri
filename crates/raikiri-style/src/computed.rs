@@ -14,7 +14,8 @@ use smol_str::SmolStr;
 
 use crate::property::{
     AlignSelfValue, BackgroundAttachment, BackgroundImage, BackgroundRepeat,
-    BackgroundRepeatKeyword, BorderCollapseValue, BorderColor, BorderStyle, BoxSizing,
+    BackgroundRepeatKeyword, BorderCollapseValue, BorderColor, BorderImageOutsetSide,
+    BorderImageRepeat, BorderImageSlice, BorderImageWidthSide, BorderStyle, BoxSizing,
     BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
     ColumnFillValue, ColumnSpanValue, ContentAlignmentValue, ContentComponent, CssColor, Direction,
     DisplayValue, EmptyCellsValue, FilterFunction, FlexDirectionValue, FlexWrapValue, FloatValue,
@@ -331,6 +332,42 @@ pub struct ChLengthProvenance {
 ///
 /// [`SpecifiedValues::finalize`]: crate::specified::SpecifiedValues::finalize
 ///
+/// Computed `border-image-*` longhands (CSS Backgrounds 3 §6
+/// <https://www.w3.org/TR/css-backgrounds-3/#border-images>).
+///
+/// Lengths are absolutized to CSS px. Percentages of `width` and gradient
+/// lengths stay relative to the border image area, and numbers stay
+/// multiples of the computed border widths: both are resolved when the
+/// image is drawn.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ComputedBorderImage {
+    /// `border-image-source`. Gradients are absolutized like
+    /// [`ComputedValues::background_image`].
+    pub source: BackgroundImage,
+    /// `border-image-slice`, as specified.
+    pub slice: BorderImageSlice,
+    /// `border-image-width`.
+    pub width: Sides<BorderImageWidthSide<ComputedLengthPercentage>>,
+    /// `border-image-outset`, lengths in CSS px.
+    pub outset: Sides<BorderImageOutsetSide<f32>>,
+    /// `border-image-repeat`, as specified.
+    pub repeat: BorderImageRepeat,
+}
+
+impl ComputedBorderImage {
+    /// Every longhand at its initial value.
+    pub fn initial() -> Self {
+        Self {
+            source: BackgroundImage::None,
+            slice: BorderImageSlice::INITIAL,
+            width: Sides::all(BorderImageWidthSide::Number(1.0)),
+            outset: Sides::all(BorderImageOutsetSide::Number(0.0)),
+            repeat: BorderImageRepeat::INITIAL,
+        }
+    }
+}
+
 /// `#[non_exhaustive]` allows new properties without breaking callers.
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
@@ -727,9 +764,6 @@ pub struct ComputedValues {
     ///
     /// # Non-goals
     ///
-    /// - `border-image-*` subproperties (source/slice/width/outset/repeat)
-    ///   are not implemented; `border:` does not reset border-image either
-    ///   (an explicit spec deviation to address in future integration work).
     /// - The four single-side `border-{top,right,bottom,left}` shorthands (for
     ///   example, `border-top: 1px solid red`) are not supported yet.
     /// - Retaining `currentcolor` as an enum in the cascade is complete;
@@ -1620,6 +1654,10 @@ pub struct ComputedValues {
     /// own dimensions (paint/used-value layer, see
     /// [`crate::specified::SpecifiedValues::background_image`] doc).
     pub background_image: BackgroundImage,
+    /// `border-image-source`, `-slice`, `-width`, `-outset` and `-repeat`
+    /// (CSS Backgrounds 3 §6). **non-inherited**; see
+    /// [`ComputedBorderImage`].
+    pub border_image: ComputedBorderImage,
     /// `object-fit`. **non-inherited**, initial: [`ObjectFit::Fill`] (CSS
     /// Images Module Level 3 §5.1 "Sizing the replaced element: the
     /// object-fit property"
@@ -2160,6 +2198,7 @@ impl ComputedValues {
             // CSS Backgrounds and Borders 3 §2.3: initial background-image
             // is `none`.
             background_image: BackgroundImage::None,
+            border_image: ComputedBorderImage::initial(),
             // CSS Images 3 §5.1: initial object-fit is `fill`.
             object_fit: ObjectFit::Fill,
             // CSS Images 3 §5.2: initial object-position is `50% 50%`,
