@@ -5397,3 +5397,41 @@ fn pixel_crops_keep_at_least_one_pixel() {
     };
     assert!(PixelCrop::whole(&short).brush(&short).is_none());
 }
+
+/// Records the raster size each decode asks for.
+struct RasterSizeRecorder {
+    pixels: BorderImagePixels,
+    sizes: std::cell::RefCell<Vec<(f32, f32)>>,
+}
+
+impl ImagePixelSource for RasterSizeRecorder {
+    fn get_decoded(&self, url: &url::Url) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+        self.pixels.get_decoded(url)
+    }
+    fn get_decoded_at_size(
+        &self,
+        url: &url::Url,
+        size: raikiri_traits::ImageRasterSize,
+        _: Option<u64>,
+    ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+        self.sizes.borrow_mut().push((size.width, size.height));
+        self.pixels.get_decoded(url)
+    }
+    fn intrinsic_size(&self, url: &url::Url) -> Option<raikiri_traits::ImageIntrinsicSize> {
+        self.pixels.intrinsic_size(url)
+    }
+}
+
+#[test]
+fn a_border_image_is_rasterized_at_the_scale_its_parts_are_drawn() {
+    let recorder = RasterSizeRecorder {
+        pixels: BorderImagePixels::opaque(),
+        sizes: Default::default(),
+    };
+    // One-unit slices of the 3×3 image drawn into 30px borders: ×30.
+    root_border_fills(
+        "border: 30px solid red; border-image: url(https://images.test/border.png) 1",
+        Some(&recorder),
+    );
+    assert_eq!(recorder.sizes.borrow().as_slice(), [(90.0, 90.0)]);
+}

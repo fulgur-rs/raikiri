@@ -88,3 +88,15 @@ fn direct_border_image_values_reach_the_specified_longhands() {
     );
     assert_eq!(values.border_image_source, BackgroundImage::None);
 }
+
+#[test]
+fn variable_css_wide_borders_carry_the_keyword_to_the_border_image() {
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "div", Some(&format!("border-image:{BORDER_IMAGE}")));
+    let inherited = doc.push_element(parent, "div", Some("--k:inherit;border:var(--k)"));
+    let result = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    assert_eq!(
+        result.computed[inherited].border_image,
+        result.computed[parent].border_image
+    );
+}

@@ -4433,9 +4433,27 @@ pub(crate) fn paint_element_border_image(
                 return true;
             };
             let (image_w, image_h) = geometry.image_size;
+            // Rasterize a vector image at the scale its parts are drawn at,
+            // as backgrounds rasterize at their used size. Each part counts
+            // with its smaller axis scale, the one across a stretched edge,
+            // so stretching a thin slice along a long edge does not ask for
+            // a raster of the whole page. A raster image keeps its natural
+            // pixels whatever size is asked for.
+            let scale = geometry
+                .parts
+                .iter()
+                .map(|part| {
+                    let (_, _, src_w, src_h) = part.source;
+                    (part.tile_width / src_w).min(part.tile_height / src_h)
+                })
+                .filter(|scale| scale.is_finite() && *scale > 0.0)
+                .fold(None, |max: Option<f64>, scale| {
+                    Some(max.map_or(scale, |max| max.max(scale)))
+                })
+                .unwrap_or(1.0);
             let size = ImageRasterSize {
-                width: image_w as f32,
-                height: image_h as f32,
+                width: (image_w * scale) as f32,
+                height: (image_h * scale) as f32,
             };
             // A buffer shorter than its size says draws nothing, so it
             // falls back like an image that could not be rasterized.

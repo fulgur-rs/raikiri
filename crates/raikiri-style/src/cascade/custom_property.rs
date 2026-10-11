@@ -523,6 +523,26 @@ pub(crate) fn project_deferred_value(
             crate::property::PropertyKey::BorderLeftColor => {
                 PropertyValue::BorderLeftColorCssWide(kw)
             }
+            // The border shorthand also sets the reset-only border-image
+            // longhands, which take the keyword as a deferred marker.
+            crate::property::PropertyKey::BorderImageSource
+            | crate::property::PropertyKey::BorderImageSlice
+            | crate::property::PropertyKey::BorderImageWidth
+            | crate::property::PropertyKey::BorderImageOutset
+            | crate::property::PropertyKey::BorderImageRepeat => {
+                let property = match key {
+                    crate::property::PropertyKey::BorderImageSource => "border-image-source",
+                    crate::property::PropertyKey::BorderImageSlice => "border-image-slice",
+                    crate::property::PropertyKey::BorderImageWidth => "border-image-width",
+                    crate::property::PropertyKey::BorderImageOutset => "border-image-outset",
+                    _ => "border-image-repeat",
+                };
+                PropertyValue::Deferred(DeferredValue {
+                    key,
+                    property: property.into(),
+                    value: kw.as_css_str().into(),
+                })
+            }
             _ => return None,
         },
         // cov:ignore: shorthand projection is defensive; normal rule expansion covers this path.
