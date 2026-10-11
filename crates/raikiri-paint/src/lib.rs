@@ -191,7 +191,9 @@ pub fn paint_single_page_with_origin_and_page_context(
         page_is_left,
         paired_page_increment,
         None,
-        page_box.width,
+        // No explicit width: fixed boxes resolve against this page's
+        // page area, the containing block layout uses.
+        f32::NAN,
         None,
         &[],
         budget,
@@ -229,17 +231,22 @@ pub fn paint_single_page_with_origin_and_page_context_named(
         page_is_left,
         paired_page_increment,
         Some(active_page_name),
-        page_box.width,
+        // No explicit width: fixed boxes resolve against this page's
+        // page area, the containing block layout uses.
+        f32::NAN,
         None,
         &[],
         budget,
     )
 }
 
-/// Paint a named-page slice while using an explicit initial viewport width for
-/// `position: fixed` containing-block resolution.
+/// Paint a named-page slice while using an explicit width for the
+/// `position: fixed` containing block.
 ///
-/// Named pages may change the paper width after a fixed box has been laid out.
+/// `fixed_page_width` is the width of the page area layout placed fixed boxes
+/// against: the first page's paper width minus its margins, border and
+/// padding. A non-finite or non-positive value falls back to this page's page
+/// area. Named pages may change the paper width after a fixed box has been laid out.
 /// This entry point keeps that fixed containing block stable. Reuse `budget`
 /// for every page slice in one document render operation.
 #[allow(clippy::too_many_arguments)]
@@ -638,7 +645,9 @@ pub fn paint_single_page_with_images_and_warnings(
         page_box,
         0.0,
         None,
-        page_box.width,
+        // No explicit width: fixed boxes resolve against this page's
+        // page area, the containing block layout uses.
+        f32::NAN,
         pixel_source,
         &mut warnings,
         &[],

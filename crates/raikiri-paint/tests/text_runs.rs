@@ -696,11 +696,40 @@ fn turned_paragraphs_in_columns_have_no_runs_and_a_warning() {
 
 #[test]
 fn fixed_boxes_placed_by_other_insets_have_no_runs_and_a_warning() {
+    // The painter does not resolve percentage insets.
     assert_omitted(
-        "<p>kept</p><div id=\"f\" style=\"position: fixed; bottom: 5px; right: 7px\">moved</div>",
+        "<p>kept</p><div id=\"f\" style=\"position: fixed; bottom: 5%; right: 7px\">moved</div>",
         "",
         "f",
     );
+    // Nor auto insets: it pins the box to the page area's corner instead of
+    // the static position.
+    assert_omitted(
+        "<p>kept</p><div id=\"f\" style=\"position: fixed; left: 5px\">moved</div>",
+        "",
+        "f",
+    );
+}
+
+#[test]
+fn fixed_boxes_placed_by_right_and_bottom_match_paint() {
+    assert_cases_match_paint(&[
+        (
+            &format!(
+                "<p>kept</p><div style=\"position: fixed; bottom: 5px; right: 7px\">moved</div>{}",
+                paragraphs(12, 6)
+            ),
+            "",
+        ),
+        (
+            &format!(
+                "<div style=\"margin-left: 30px\"><div>\
+                 <div style=\"position: fixed; bottom: 5px; right: 7px\">moved</div></div></div>{}",
+                paragraphs(12, 6)
+            ),
+            "",
+        ),
+    ]);
 }
 
 #[test]
@@ -1330,27 +1359,125 @@ fn text_under_a_moved_clip_in_columns_has_no_runs_and_a_warning() {
 }
 
 #[test]
-fn fixed_boxes_in_moved_boxes_have_no_runs_and_a_warning() {
-    // Layout applies this ancestor's offset; the painter places the fixed
-    // box from its insets alone.
+fn fixed_boxes_in_nested_and_moved_boxes_match_paint() {
+    // Layout places a fixed box against the page area, wherever it sits in
+    // the tree, and the painter places it from its insets.
+    assert_cases_match_paint(&[
+        (
+            &format!(
+                "<p>kept</p><div style=\"margin: 15px 0 0 30px; padding: 4px\">\
+                 <div style=\"position: fixed; top: 5px; left: 5px\">fixed</div></div>{}",
+                paragraphs(12, 6)
+            ),
+            "",
+        ),
+        (
+            &format!(
+                "<p>kept</p><div style=\"position: relative; left: 4px; top: 3px\">\
+                 <div style=\"position: fixed; top: 5px; left: 5px\">fixed</div></div>{}",
+                paragraphs(12, 6)
+            ),
+            "",
+        ),
+        (
+            &format!(
+                "<p>kept</p><div style=\"float: left; position: relative; left: 4px\">\
+                 <div style=\"position: fixed; top: 5px; left: 5px\">fixed</div></div>{}",
+                paragraphs(12, 6)
+            ),
+            "",
+        ),
+        (
+            &format!(
+                "{}<div style=\"margin-left: 20px\">\
+                 <div style=\"position: fixed; top: 5px; left: 5px; width: 50%\">fixed</div></div>",
+                paragraphs(12, 6)
+            ),
+            "",
+        ),
+        // Fixed boxes inside paragraphs, which the inline engine lays out.
+        (
+            &format!(
+                "<div style=\"margin-left: 30px\"><p>text \
+                 <span style=\"position: fixed; left: 5px; top: 6px\">fx</span> more</p></div>{}",
+                paragraphs(12, 6)
+            ),
+            "",
+        ),
+        (
+            &format!(
+                "<div style=\"margin-left: 30px\"><p>text <b>bold \
+                 <span style=\"position: fixed; right: 5px; bottom: 6px\">fx</span></b> more</p></div>{}",
+                paragraphs(12, 6)
+            ),
+            "",
+        ),
+        (
+            "text <span style=\"position: fixed; right: 5px; bottom: 6px\">fx</span> more",
+            "",
+        ),
+        // A right-to-left page area places an over-constrained box from
+        // `right`.
+        (
+            &format!(
+                "<div style=\"margin-right: 30px\">\
+                 <div style=\"position: fixed; left: 10px; right: 20px; top: 5px; width: 100px\">fixed</div></div>{}",
+                paragraphs(12, 6)
+            ),
+            "html { direction: rtl }",
+        ),
+        // Margins move a fixed box away from its insets in layout and paint.
+        (
+            &format!(
+                "<div style=\"margin-left: 30px\">\
+                 <div style=\"position: fixed; left: 5px; top: 6px; margin: 7px 0 0 9px\">fixed</div></div>{}",
+                paragraphs(12, 6)
+            ),
+            "",
+        ),
+        (
+            &format!(
+                "<div style=\"margin-left: 30px\">\
+                 <div style=\"position: fixed; right: 5px; bottom: 6px; width: 80px; \
+                 margin: 0 10px 10px 0\">fixed</div></div>{}",
+                paragraphs(12, 6)
+            ),
+            "",
+        ),
+    ]);
+}
+
+#[test]
+fn end_inset_fixed_boxes_have_no_runs_when_page_areas_differ() {
+    // Layout places the box against the first page area, while the painter
+    // places it from its `bottom` inset against each page's.
     assert_omitted(
         &format!(
-            "<p>kept</p><div style=\"position: relative; left: 4px; top: 3px\">\
-             <div id=\"x\" style=\"position: fixed; top: 5px; left: 5px\">fixed</div></div>{}",
+            "<p>kept</p><div id=\"x\" style=\"position: fixed; bottom: 5px; left: 5px\">fixed</div>{}",
             paragraphs(12, 6)
         ),
-        "",
+        "@page :first { margin-bottom: 40px }",
         "x",
     );
+}
+
+#[test]
+fn over_constrained_rtl_fixed_boxes_have_no_runs_when_page_areas_differ() {
+    // A right-to-left page area places the box from `right`, against each
+    // page's area.
     assert_omitted(
         &format!(
-            "<p>kept</p><div style=\"float: left; position: relative; left: 4px\">\
-             <div id=\"x\" style=\"position: fixed; top: 5px; left: 5px\">fixed</div></div>{}",
+            "<p>kept</p><div id=\"x\" style=\"position: fixed; left: 5px; right: 5px; \
+             top: 5px; width: 50px\">fixed</div>{}",
             paragraphs(12, 6)
         ),
-        "",
+        "html { direction: rtl } @page :first { margin-bottom: 40px }",
         "x",
     );
+}
+
+#[test]
+fn fixed_boxes_in_transformed_boxes_have_no_runs_and_a_warning() {
     // The transformed box is the fixed box's containing block, so the
     // painter does not repeat it on every page.
     assert_omitted(

@@ -325,6 +325,9 @@ pub struct Document {
     /// Used block-start margin of `<body>` that the most recent layout placed
     /// inside the synthetic body root.
     pub(crate) body_block_start_margin: f32,
+    /// Width and height of the page area the most recent layout placed fixed
+    /// boxes against.
+    pub(crate) fixed_page_area: (f32, f32),
     /// A forced line break the inline engine inserts before byte `offset`
     /// of text node `text`, so a relayout at another width starts a line
     /// exactly where a page began in an earlier layout.
@@ -516,6 +519,7 @@ impl Document {
             layout_cascade_generation: None,
             body_inline_margins: (0.0, 0.0),
             body_block_start_margin: 0.0,
+            fixed_page_area: (0.0, 0.0),
             continuation_break: None,
             // Node::new_document() sets IS_IN_DOCUMENT=true on the initial root,
             // consistent with an attached root. There are no templates or
@@ -1792,6 +1796,7 @@ impl Document {
             layout_cascade_generation: _,
             body_inline_margins: _,
             body_block_start_margin: _,
+            fixed_page_area: _,
             continuation_break: _,
             flags_dirty: _,
             stylesheets,

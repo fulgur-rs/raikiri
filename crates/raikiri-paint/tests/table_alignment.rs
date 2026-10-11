@@ -2903,7 +2903,14 @@ fn positioned_captions_do_not_expand_or_shift_the_table_flow_box() {
                     caption_box.size.width,
                     caption_box.size.height
                 ),
-                (0.0, 0.0, 100.0, 10.0)
+                // A fixed caption is placed against the page area: its insets
+                // less the table's offset.
+                if position == "fixed" {
+                    (52.0, -6.0, 100.0, 10.0)
+                } else {
+                    (0.0, 0.0, 100.0, 10.0)
+                },
+                "{position}/{side}"
             );
             assert_eq!((after_box.location.x, after_box.location.y), (0.0, 20.0));
             let actual = raster(scene(&doc, &computed));

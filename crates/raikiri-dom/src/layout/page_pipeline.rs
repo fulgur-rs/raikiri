@@ -236,6 +236,22 @@ pub fn layout_single_page(
     layout_single_page_with_table_projection(document, cascade, page_box, false)
 }
 
+/// The error a layout pass recorded on `document` while taffy ran: a
+/// rejected table or an exhausted fragment budget.
+fn take_layout_failure(document: &mut Document) -> Result<(), LayoutError> {
+    if let Some(message) = document.table_layout_error.take() {
+        // A rejected pass must not cache its temporary zero-sized fallback.
+        document.layout_dirty = true;
+        return Err(LayoutError::Internal { message });
+    }
+    if document.fragment_tree.limit_exceeded {
+        return Err(LayoutError::FragmentLimitExceeded {
+            limit: document.fragment_tree.limit,
+        });
+    }
+    Ok(())
+}
+
 fn layout_single_page_with_table_projection(
     document: &mut Document,
     cascade: &CascadeResult,
@@ -394,19 +410,25 @@ fn layout_single_page_with_table_projection(
         shift_body_content(document, body_id, collapsed);
         collapsed
     };
-    if let Some(message) = document.table_layout_error.take() {
-        // A rejected pass must not cache its temporary zero-sized fallback.
-        document.layout_dirty = true;
-        return Err(LayoutError::Internal { message });
-    }
-    if document.fragment_tree.limit_exceeded {
-        return Err(LayoutError::FragmentLimitExceeded {
-            limit: document.fragment_tree.limit,
-        });
-    }
+    take_layout_failure(document)?;
     // Step 5a: post-layout corrections taffy does not make: the static
-    // position of auto-placed grid abspos items, and auto-height ancestors of
-    // floats.
+    // position of auto-placed grid abspos items, the containing block of
+    // nested fixed boxes, and auto-height ancestors of floats.
+    // Taffy places fixed boxes against their parents, not the page area,
+    // their containing block.
+    // The body is sized to the page area, but a content-box body with
+    // borders or padding outgrows it.
+    let page_area = taffy::Size {
+        width: content_width,
+        height: content_height,
+    };
+    document.fixed_page_area = (content_width, content_height);
+    place_fixed_boxes_in_page_area(document, cascade, body_id, page_area);
+    // Laying those boxes out again can fail a table or exhaust the
+    // fragment budget like the root layout above.
+    take_layout_failure(document)?;
+    // After the fixed boxes, whose relayout lays out the grids inside them
+    // again with taffy's static positions.
     realign_grid_abspos_static_positions(document, cascade);
     propagate_float_bottoms_to_auto_height_ancestors(document, cascade);
     refresh_projected_multicol_text_fragments(document);
