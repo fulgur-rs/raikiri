@@ -634,16 +634,31 @@ fn fixed_boxes_placed_by_other_insets_have_no_runs_and_a_warning() {
 }
 
 #[test]
-fn unrooted_nested_column_fragments_keep_an_omission_warning() {
-    assert_omitted(
+fn nested_column_paragraphs_match_paint() {
+    let result = lay_out(
         &format!(
             "<p>kept</p><div style=\"columns: 2\"><div style=\"columns: 2\">\
              <p id=\"n\">{}</p></div></div>",
             vec!["word"; 30].join(" ")
         ),
         "",
-        "n",
     );
+    assert!(
+        !result
+            .warnings()
+            .iter()
+            .any(|warning| matches!(warning.kind, WarningKind::TextRunsOmitted))
+    );
+    // Both inner columns of the paragraph are reported, where paint draws them.
+    assert!(assert_runs_match_paint(&result) > 0);
+    let nested = text_nodes(&result.pages().next().expect("page"), "n");
+    let words: usize = result
+        .pages()
+        .flat_map(|page| page.text_runs())
+        .filter(|run| matches!(run.source, RunSource::Text(node) if nested.contains(&node)))
+        .map(|run| run.text.split_whitespace().count())
+        .sum();
+    assert_eq!(words, 30, "every word is reported once");
 }
 
 #[test]

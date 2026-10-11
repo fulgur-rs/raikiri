@@ -200,6 +200,9 @@ pub(crate) struct FragmentTree {
     pub(crate) fragments: Vec<LayoutFragment>,
     /// Preliminary records retired after recursive source layout finishes.
     retired: std::collections::HashSet<usize>,
+    /// Indices of the records pushed without a parent, by source node, so a
+    /// container's first layout finds its earlier roots without a scan.
+    roots_by_node: std::collections::HashMap<usize, Vec<usize>>,
     /// Break points retained for a later incremental/reflow consumer.
     pub(crate) break_tokens: Vec<BreakToken>,
     /// Separate caps for fragments and estimated break-flow measurement work.
@@ -215,6 +218,7 @@ impl Default for FragmentTree {
         Self {
             fragments: Vec::new(),
             retired: std::collections::HashSet::new(),
+            roots_by_node: std::collections::HashMap::new(),
             break_tokens: Vec::new(),
             limit: MAX_LAYOUT_FRAGMENTS,
             break_flow_work_used: 0,
@@ -227,6 +231,7 @@ impl FragmentTree {
     pub(crate) fn clear(&mut self) {
         self.fragments.clear();
         self.retired.clear();
+        self.roots_by_node.clear();
         self.break_tokens.clear();
         self.break_flow_work_used = 0;
         self.limit_exceeded = false;
@@ -238,6 +243,12 @@ impl FragmentTree {
             return None;
         }
         let id = self.fragments.len();
+        if fragment.parent.is_none() {
+            self.roots_by_node
+                .entry(fragment.node_id)
+                .or_default()
+                .push(id);
+        }
         self.fragments.push(fragment);
         Some(id)
     }
@@ -257,6 +268,44 @@ impl FragmentTree {
         );
     }
 
+    /// Retire the container roots that an earlier layout of `node_id` left,
+    /// together with every record placed under them.
+    ///
+    /// A column container is laid out again whenever its parent measures it
+    /// before placing it, such as a nested container that is first sized at
+    /// the outer container's width and then at the outer column width. Only
+    /// the latest layout describes where its content is painted.
+    pub(crate) fn retire_previous_roots(&mut self, node_id: usize) {
+        // Entries are checked again: a root may have been reparented since.
+        let mut pending: Vec<usize> = self
+            .roots_by_node
+            .remove(&node_id)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|&index| {
+                self.fragments.get(index).is_some_and(|fragment| {
+                    fragment.node_id == node_id && fragment.parent.is_none()
+                }) && !self.retired.contains(&index)
+            })
+            .collect();
+        if pending.is_empty() {
+            return;
+        }
+        // Reparenting can point a record at a later index, so collect the
+        // subtrees through an explicit child list.
+        let mut children = std::collections::HashMap::<usize, Vec<usize>>::new();
+        for (index, fragment) in self.fragments.iter().enumerate() {
+            if let Some(parent) = fragment.parent {
+                children.entry(parent).or_default().push(index);
+            }
+        }
+        while let Some(index) = pending.pop() {
+            if self.retired.insert(index) {
+                pending.extend(children.get(&index).into_iter().flatten().copied());
+            }
+        }
+    }
+
     /// Assign stable source-node order and total counts after layout finishes.
     pub(crate) fn finalize(&mut self) {
         if !self.retired.is_empty() {
@@ -272,6 +321,15 @@ impl FragmentTree {
                 fragment.parent = fragment.parent.and_then(|parent| remap[parent]);
             }
             self.retired.clear();
+        }
+        self.roots_by_node.clear();
+        for (index, fragment) in self.fragments.iter().enumerate() {
+            if fragment.parent.is_none() {
+                self.roots_by_node
+                    .entry(fragment.node_id)
+                    .or_default()
+                    .push(index);
+            }
         }
         let mut counts = std::collections::HashMap::<usize, usize>::new();
         for fragment in &self.fragments {

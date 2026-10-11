@@ -2,7 +2,7 @@
 
 use raikiri_html::{
     ClipKind, DocumentLayout, FontCollectionBuilder, LayoutOptions, LayoutStatus, PaintEvent,
-    RenderResources, layout, parse_html_with_resources,
+    RenderResources, WarningKind, layout, parse_html_with_resources,
 };
 use raikiri_traits::{LayoutConfig, PageDefaults};
 
@@ -1018,6 +1018,52 @@ fn nonfinal_paragraph_boxes_fill_the_remaining_column_extent() {
         [
             raikiri_traits::PaintRect::new(0.0, 0.0, 40.0, 100.0),
             raikiri_traits::PaintRect::new(60.0, 0.0, 40.0, 60.0)
+        ]
+    );
+}
+
+fn omitted_text_runs(document: &DocumentLayout) -> usize {
+    document
+        .warnings()
+        .iter()
+        .filter(|warning| matches!(warning.kind, WarningKind::TextRunsOmitted))
+        .count()
+}
+
+#[test]
+fn a_nested_container_balances_its_paragraph_into_its_own_columns() {
+    // The outer container measures the inner one at its own width before
+    // placing it in a 70px column; only the final layout is reported.
+    let document = lay_out(
+        "<div class=mc><div class=inner><p>A<br>B<br>C<br>D</p></div></div><p>E</p>",
+        ".mc{width:160px}.inner{columns:2;column-gap:10px}",
+    );
+    assert_eq!(omitted_text_runs(&document), 0);
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (0.0, 16.0)),
+            ("B".into(), (0.0, 36.0)),
+            ("C".into(), (40.0, 16.0)),
+            ("D".into(), (40.0, 36.0)),
+            ("E".into(), (0.0, 56.0)),
+        ]
+    );
+}
+
+#[test]
+fn nested_container_paragraphs_keep_their_own_column_placements() {
+    let document = lay_out(
+        "<div class=mc><p>W</p><div class=inner><p>I</p><p>N</p></div></div>",
+        ".mc{width:160px;height:40px;column-fill:auto}.inner{columns:2;column-gap:10px}",
+    );
+    assert_eq!(omitted_text_runs(&document), 0);
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("W".into(), (0.0, 16.0)),
+            ("I".into(), (0.0, 36.0)),
+            ("N".into(), (40.0, 36.0)),
         ]
     );
 }
