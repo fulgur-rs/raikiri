@@ -113,13 +113,7 @@ pub(super) fn prepare_markers(
             let marker_baseline = shaped.lines().first().map(|line| {
                 line.block_offset() + line.baseline(shodo::geometry::BaselineKind::Alphabetic)
             });
-            let item_baseline = node
-                .ifc
-                .as_ref()
-                .and_then(|root| root.lines.as_ref())
-                .and_then(crate::layout::ifc::flow::first_baseline)
-                // The item's lines start inside its border and padding.
-                .map(|baseline| baseline + layout.border.top + layout.padding.top);
+            let item_baseline = first_line_baseline(document, owner);
             let offset_y = match (item_baseline, marker_baseline) {
                 (Some(item), Some(marker)) if (item - marker).is_finite() => item - marker,
                 // Otherwise the marker is shaped with `line-height: normal`.
@@ -912,6 +906,71 @@ pub(super) fn omission(
     root: usize,
 ) -> Option<TextRunOmission> {
     placement(document, cascade, context, root).err()
+}
+
+/// The baseline of `owner`'s first formatted line, from its border edge,
+/// where pagination draws it.
+///
+/// The first line may belong to an in-flow block descendant (CSS Inline 3
+/// §4.2.1); floats, absolutely positioned boxes and the marker itself are
+/// passed over. An explicit stack keeps a deep DOM off the call stack.
+fn first_line_baseline(document: &Document, owner: usize) -> Option<f32> {
+    enum Frame {
+        Visit(usize, f32),
+        Baseline(f32),
+    }
+    let mut stack = vec![Frame::Visit(owner, 0.0)];
+    while let Some(frame) = stack.pop() {
+        let (id, y) = match frame {
+            Frame::Visit(id, y) => (id, y),
+            Frame::Baseline(baseline) => return Some(baseline),
+        };
+        let Some(node) = document.nodes.get(id) else {
+            continue; // cov:ignore: layout children are arena nodes
+        };
+        if id != owner
+            && (!node.is_in_document()
+                || node.style.display == taffy::Display::None
+                || node.style.position == taffy::Position::Absolute
+                || node.style.float != taffy::Float::None
+                || generated_origin(id).is_some_and(|(_, pseudo)| pseudo == PseudoElem::Marker))
+        {
+            continue;
+        }
+        if matches!(
+            node.display,
+            raikiri_style::property::DisplayValue::Table
+                | raikiri_style::property::DisplayValue::InlineTable
+        ) && !node.is_ifc_root()
+        {
+            if let Some(baseline) = node.table_first_baseline {
+                return Some(y + baseline);
+            }
+            continue;
+        }
+        let child_y = |child: usize| y + document.nodes[child].unrounded_layout.location.y;
+        if let Some(lines) = node.ifc.as_ref().and_then(|root| root.lines.as_ref())
+            && let Some(baseline) = crate::layout::ifc::flow::first_baseline(lines)
+        {
+            // The lines start inside the border and padding, moved down by
+            // any pagination shift; a block placed before line zero comes
+            // first.
+            let layout = node.unrounded_layout;
+            stack.push(Frame::Baseline(
+                y + layout.border.top + layout.padding.top + baseline + lines.shift_of(0),
+            ));
+            for &(child, line) in lines.block_line_starts.iter().rev() {
+                if line == 0 {
+                    stack.push(Frame::Visit(child, child_y(child)));
+                }
+            }
+            continue;
+        }
+        for &child in node.children.iter().rev() {
+            stack.push(Frame::Visit(child, child_y(child)));
+        }
+    }
+    None
 }
 
 fn marker_runs<'a>(

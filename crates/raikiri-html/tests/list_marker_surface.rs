@@ -454,3 +454,23 @@ fn a_marker_stays_on_its_first_page_when_the_first_line_moves_on() {
         .expect("the marker on the first page");
     assert!(marker.origin.1 <= 100.0, "{:?}", marker.origin);
 }
+
+#[test]
+fn an_outside_marker_follows_the_first_line_of_a_block_child() {
+    // The item's first line belongs to its block child, with the child's
+    // font and box offsets.
+    let document = lay_out(
+        "<ol><li><div style=\"font-size:40px; padding-top:7px\">C</div>A</li></ol>",
+        "",
+    );
+    let page = document.page(0).unwrap();
+    let runs = page.text_runs();
+    let baseline = |text: &str| {
+        runs.iter()
+            .find(|run| run.text.trim_end() == text)
+            .unwrap_or_else(|| panic!("{text}"))
+            .origin
+            .1
+    };
+    assert_eq!(baseline("1."), baseline("C"));
+}
