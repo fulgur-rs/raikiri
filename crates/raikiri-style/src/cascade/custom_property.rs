@@ -185,6 +185,35 @@ fn radius_corner_property(key: PropertyKey) -> Option<&'static str> {
     })
 }
 
+/// The property name of a border-image longhand key.
+fn border_image_longhand_name(key: PropertyKey) -> Option<&'static str> {
+    Some(match key {
+        PropertyKey::BorderImageSource => "border-image-source",
+        PropertyKey::BorderImageSlice => "border-image-slice",
+        PropertyKey::BorderImageWidth => "border-image-width",
+        PropertyKey::BorderImageOutset => "border-image-outset",
+        PropertyKey::BorderImageRepeat => "border-image-repeat",
+        _ => return None,
+    })
+}
+
+/// The `key` longhand of a `border-image` shorthand value.
+fn border_image_longhand(
+    key: PropertyKey,
+    shorthand: &crate::property::BorderImageShorthand,
+) -> Option<PropertyValue> {
+    Some(match key {
+        PropertyKey::BorderImageSource => {
+            PropertyValue::BorderImageSource(shorthand.source.clone())
+        }
+        PropertyKey::BorderImageSlice => PropertyValue::BorderImageSlice(shorthand.slice),
+        PropertyKey::BorderImageWidth => PropertyValue::BorderImageWidth(shorthand.width),
+        PropertyKey::BorderImageOutset => PropertyValue::BorderImageOutset(shorthand.outset),
+        PropertyKey::BorderImageRepeat => PropertyValue::BorderImageRepeat(shorthand.repeat),
+        _ => return None,
+    })
+}
+
 pub(crate) fn project_deferred_value(
     value: PropertyValue,
     key: crate::property::PropertyKey,
@@ -227,6 +256,16 @@ pub(crate) fn project_deferred_value(
             _ => "column-rule-color",
         }
         .into();
+        return Some(PropertyValue::Deferred(marker));
+    }
+    if let PropertyValue::Deferred(marker) = &value
+        && marker.property.as_str() == "border-image"
+        && marker.css_wide_keyword().is_some()
+        && let Some(property) = border_image_longhand_name(key)
+    {
+        let mut marker = marker.clone();
+        marker.key = key;
+        marker.property = property.into();
         return Some(PropertyValue::Deferred(marker));
     }
     if value.key() == key {
@@ -337,8 +376,11 @@ pub(crate) fn project_deferred_value(
             crate::property::PropertyKey::BorderLeftColor => {
                 PropertyValue::BorderLeftColor(sides.left.color)
             }
-            _ => return None,
+            // `border` also resets every border-image longhand (CSS
+            // Backgrounds 3 §3.4).
+            key => border_image_longhand(key, &crate::property::BorderImageShorthand::initial())?,
         },
+        PropertyValue::BorderImage(shorthand) => border_image_longhand(key, &shorthand)?,
         // `border-style` / `border-width` / `border-color` shorthands fan
         // out to their 4 side longhands by key (same shape as `Border`
         // above; reached via `var()`/re-cascade paths that bypass rule.rs

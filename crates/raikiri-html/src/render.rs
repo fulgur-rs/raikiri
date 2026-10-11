@@ -586,7 +586,7 @@ fn preload_page_background_images(
         return; // cov:ignore: a successful document with a body always emits a page slice.
     }
     resources.preload_element_background_images(
-        &cascader.base.computed,
+        cascader.base,
         base_url,
         warnings,
         seen,

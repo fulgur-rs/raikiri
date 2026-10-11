@@ -591,11 +591,9 @@ pub(super) fn parse_border_color_shorthand(
 /// - color omitted → [`BorderColor::CurrentColor`] (spec §3.1 initial; used-value resolution is the
 ///   paint layer's responsibility).
 ///
-/// # Non-goals (spec deviation explicit)
-///
 /// Section 3.4 also requires the border shorthand to reset `border-image-*` properties (verbatim:
-/// "The border shorthand also resets border-image to its initial value."). This crate does not yet
-/// implement border-image, so it omits that reset. Add it when border-image longhands are implemented.
+/// "The border shorthand also resets border-image to its initial value."). That reset happens when
+/// the shorthand is expanded (`crate::rule::expand_border`).
 ///
 /// # Sibling pattern
 ///

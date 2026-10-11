@@ -604,6 +604,12 @@ fn non_initial_parent() -> ComputedValues {
         // CSS Backgrounds and Borders 3 §2.3: non-inherited, so use a value
         // different from the initial `None` (as required for non_initial_parent).
         background_image: BackgroundImage::Url("fixture.png".into()),
+        // CSS Backgrounds 3 §6: non-inherited; use a non-initial value.
+        border_image: {
+            let mut image = crate::computed::ComputedBorderImage::initial();
+            image.source = BackgroundImage::Url("frame.png".into());
+            image
+        },
         // CSS Images Module Level 3 §5.1/§5.2: all are non-inherited,
         // so give them values different from the initial `fill` / `50% 50%`
         // (as required for non_initial_parent).
@@ -897,6 +903,7 @@ fn inherit_from_copies_inherited_and_resets_non_inherited() {
     assert_eq!(child.background_size, initial.background_size);
     assert_eq!(child.background_position, initial.background_position);
     assert_eq!(child.background_image, initial.background_image);
+    assert_eq!(child.border_image, initial.border_image);
     // CSS Images Module Level 3 §5.1/§5.2: all are non-inherited.
     assert_eq!(child.object_fit, initial.object_fit);
     assert_eq!(child.object_position, initial.object_position);

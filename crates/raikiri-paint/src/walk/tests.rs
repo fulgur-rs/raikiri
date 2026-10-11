@@ -870,7 +870,14 @@ fn paint_root_element_border_without_html_is_noop() {
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
     let mut scene = Scene::new();
-    paint_root_element_border(&mut scene, &document, &cascade, PageBox::A4);
+    paint_root_element_border(
+        &mut scene,
+        &document,
+        &cascade,
+        PageBox::A4,
+        None,
+        &mut Vec::new(),
+    );
     assert!(scene.commands.is_empty());
 }
 
@@ -886,7 +893,14 @@ fn paint_root_element_border_paints_html_border_sides() {
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
     let mut scene = Scene::new();
-    paint_root_element_border(&mut scene, &document, &cascade, PageBox::A4);
+    paint_root_element_border(
+        &mut scene,
+        &document,
+        &cascade,
+        PageBox::A4,
+        None,
+        &mut Vec::new(),
+    );
     let fills = scene
         .commands
         .iter()
@@ -5170,4 +5184,204 @@ fn review_plain_child_page_edge_keeps_both_parent_colors_together() {
             ),
         );
     }
+}
+
+/// A pixel source whose natural size and decoded pixels are set per test.
+struct BorderImagePixels {
+    natural: Option<raikiri_traits::ImageIntrinsicSize>,
+    decoded: Option<raikiri_traits::DecodedImage>,
+}
+
+impl BorderImagePixels {
+    /// A 3×3 opaque image with natural size 3×3.
+    fn opaque() -> Self {
+        Self {
+            natural: Some(raikiri_traits::ImageIntrinsicSize {
+                width: Some(3.0),
+                height: Some(3.0),
+                aspect_ratio: Some(1.0),
+            }),
+            decoded: Some(raikiri_traits::DecodedImage {
+                width: 3,
+                height: 3,
+                rgba: [0, 255, 0, 255].repeat(9),
+            }),
+        }
+    }
+}
+
+impl ImagePixelSource for BorderImagePixels {
+    fn get_decoded(&self, _: &url::Url) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+        self.decoded.clone().map(std::sync::Arc::new)
+    }
+    fn intrinsic_size(&self, _: &url::Url) -> Option<raikiri_traits::ImageIntrinsicSize> {
+        self.natural
+    }
+}
+
+/// The fills that painting the root element's border with `style` records,
+/// and the number of warnings it reports.
+fn root_border_fills(style: &str, pixel_source: Option<&dyn ImagePixelSource>) -> (usize, usize) {
+    let mut document = Document::new();
+    document.append_element(
+        Some(document.root_index()),
+        "html",
+        Style::default(),
+        Some(style),
+    );
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade Ok");
+    let mut scene = Scene::new();
+    let mut warnings = Vec::new();
+    paint_root_element_border(
+        &mut scene,
+        &document,
+        &cascade,
+        PageBox::A4,
+        pixel_source,
+        &mut warnings,
+    );
+    let fills = scene
+        .commands
+        .iter()
+        .filter(|command| matches!(command, RenderCommand::Fill(_)))
+        .count();
+    (fills, warnings.len())
+}
+
+const URL_BORDER_IMAGE: &str =
+    "border: 5px solid red; border-image: url(https://images.test/border.png) 1 fill";
+
+#[test]
+fn a_url_border_image_draws_each_part_instead_of_the_border() {
+    let pixels = BorderImagePixels::opaque();
+    // Nine parts of one stretched tile each.
+    assert_eq!(root_border_fills(URL_BORDER_IMAGE, Some(&pixels)), (9, 0));
+}
+
+#[test]
+fn a_url_border_image_that_cannot_be_displayed_leaves_the_border() {
+    let no_natural_size = BorderImagePixels {
+        natural: None,
+        ..BorderImagePixels::opaque()
+    };
+    assert_eq!(root_border_fills(URL_BORDER_IMAGE, None), (4, 0));
+    assert_eq!(
+        root_border_fills(URL_BORDER_IMAGE, Some(&no_natural_size)),
+        (4, 0)
+    );
+}
+
+#[test]
+fn a_border_image_that_cannot_be_rasterized_warns_and_leaves_the_border() {
+    let no_pixels = BorderImagePixels {
+        decoded: None,
+        ..BorderImagePixels::opaque()
+    };
+    let empty_pixels = BorderImagePixels {
+        decoded: Some(raikiri_traits::DecodedImage {
+            width: 0,
+            height: 0,
+            rgba: Vec::new(),
+        }),
+        ..BorderImagePixels::opaque()
+    };
+    for source in [&no_pixels, &empty_pixels] {
+        assert_eq!(root_border_fills(URL_BORDER_IMAGE, Some(source)), (4, 1));
+    }
+}
+
+#[test]
+fn a_border_image_with_nothing_to_draw_still_hides_the_border() {
+    let pixels = BorderImagePixels::opaque();
+    // Zero image widths leave no part to draw.
+    for style in [
+        "border: 5px solid red; border-image: url(https://images.test/border.png) 1 / 0",
+        "border: 5px solid red; border-image: linear-gradient(red, red) 1 / 0",
+    ] {
+        assert_eq!(root_border_fills(style, Some(&pixels)), (0, 0), "{style}");
+    }
+}
+
+#[test]
+fn a_gradient_border_image_fills_each_part_with_its_first_color() {
+    assert_eq!(
+        root_border_fills(
+            "border: 5px solid red; border-image: linear-gradient(lime, blue) 1 fill",
+            None,
+        ),
+        (9, 0)
+    );
+}
+
+/// The image brushes of the fills that painting the root element's border
+/// with `style` records over a 3×3 image.
+fn root_border_brush_sizes(style: &str) -> Vec<(u32, u32)> {
+    let mut document = Document::new();
+    document.append_element(
+        Some(document.root_index()),
+        "html",
+        Style::default(),
+        Some(style),
+    );
+    let cascade = cascade(&document, &build_rule_tree(&document)).expect("cascade Ok");
+    let mut scene = Scene::new();
+    paint_root_element_border(
+        &mut scene,
+        &document,
+        &cascade,
+        PageBox::A4,
+        Some(&BorderImagePixels::opaque()),
+        &mut Vec::new(),
+    );
+    scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::Fill(fill) => match &fill.brush {
+                anyrender::Paint::Image(image) => Some((image.image.width, image.image.height)),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn separate_slices_crop_their_own_pixels() {
+    let sizes = root_border_brush_sizes(
+        "border: 5px solid red; border-image: url(https://images.test/border.png) 1 fill",
+    );
+    assert_eq!(sizes, [(1, 1); 9]);
+}
+
+#[test]
+fn overlapping_slices_share_the_whole_image() {
+    // Slices of 2 of 3 pixels make the corners overlap.
+    let sizes = root_border_brush_sizes(
+        "border: 5px solid red; border-image: url(https://images.test/border.png) 2",
+    );
+    assert_eq!(sizes, [(3, 3); 4]);
+}
+
+#[test]
+fn pixel_crops_keep_at_least_one_pixel() {
+    let decoded = raikiri_traits::DecodedImage {
+        width: 4,
+        height: 2,
+        rgba: (0..32).collect(),
+    };
+    let crop = pixel_crop(&decoded, (1.2, 0.0), (1.4, 2.0)).unwrap();
+    assert_eq!((crop.width(), crop.height()), (1, 2));
+    let brush = crop.brush(&decoded).unwrap();
+    assert_eq!(brush.image.data.data(), &[4, 5, 6, 7, 20, 21, 22, 23]);
+    // A rectangle past the last pixel holds none.
+    assert!(pixel_crop(&decoded, (4.0, 0.0), (5.0, 2.0)).is_none());
+    // Pixels missing from the buffer give no brush.
+    let short = raikiri_traits::DecodedImage {
+        width: 4,
+        height: 2,
+        rgba: vec![0; 8],
+    };
+    assert!(PixelCrop::whole(&short).brush(&short).is_none());
 }

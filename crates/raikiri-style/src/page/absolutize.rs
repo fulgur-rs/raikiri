@@ -5,14 +5,15 @@ use std::sync::Arc;
 
 use crate::cascade::{ResolvedAgainstInherited, resolve_relative_font_size};
 use crate::property::{
-    BackgroundSize, Border, BorderColor, BorderRadius, BorderStyle, BoxShadowItem,
-    ColumnWidthValue, ColumnsShorthand, CssPosition, CssPositionOffset, FlexBasisValue,
-    FlexShorthand, FontShorthand, FontShorthandSize, GapShorthand, GridInflexibleBreadth,
-    GridTemplateTracks, GridTrackBreadth, GridTrackList, GridTrackListComponent, GridTrackRepeat,
-    GridTrackSize, Length, LengthOrAuto, LengthOrNormal, LengthPercentageCalc, Outline,
-    OutlineColor, OutlineStyle, OverflowXY, PropertyValue, Sides, TextDecorationInset,
-    TextDecorationShorthand, TextDecorationThickness, TextIndentLength, TextIndentValue,
-    TextShadowItem, TextShadowLength, TextUnderlineOffset, TransformFunction, resolve_overflow,
+    BackgroundSize, Border, BorderColor, BorderImageOutsetSide, BorderImageWidthSide, BorderRadius,
+    BorderStyle, BoxShadowItem, ColumnWidthValue, ColumnsShorthand, CssPosition, CssPositionOffset,
+    FlexBasisValue, FlexShorthand, FontShorthand, FontShorthandSize, GapShorthand,
+    GridInflexibleBreadth, GridTemplateTracks, GridTrackBreadth, GridTrackList,
+    GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto, LengthOrNormal,
+    LengthPercentageCalc, Outline, OutlineColor, OutlineStyle, OverflowXY, PropertyValue, Sides,
+    TextDecorationInset, TextDecorationShorthand, TextDecorationThickness, TextIndentLength,
+    TextIndentValue, TextShadowItem, TextShadowLength, TextUnderlineOffset, TransformFunction,
+    resolve_overflow,
 };
 use crate::resolve::{
     ComputedBackgroundSize, ComputedCssPositionOffset, ComputedFlexBasis,
@@ -654,6 +655,29 @@ pub(super) fn absolutize_in_page_context(
         PropertyValue::MaskImage(img) => PropertyValue::MaskImage(
             crate::resolve::resolve_background_image(img, font_size, own_line_height, ctx),
         ),
+        // ── border-image ─────────────────────────────────────────────────
+        PropertyValue::BorderImageSource(img) => PropertyValue::BorderImageSource(
+            crate::resolve::resolve_background_image(img, font_size, own_line_height, ctx),
+        ),
+        PropertyValue::BorderImageWidth(sides) => {
+            PropertyValue::BorderImageWidth(sides.map(|side| match side {
+                BorderImageWidthSide::LengthPercentage(length) => {
+                    BorderImageWidthSide::LengthPercentage(basis.lp(length))
+                }
+                other => other,
+            }))
+        }
+        PropertyValue::BorderImageOutset(sides) => {
+            PropertyValue::BorderImageOutset(sides.map(|side| match side {
+                BorderImageOutsetSide::Length(length) => BorderImageOutsetSide::Length(Length::Px(
+                    resolve_length(length, font_size, own_line_height, ctx).px(),
+                )),
+                other => other,
+            }))
+        }
+        v @ (PropertyValue::BorderImageSlice(_)
+        | PropertyValue::BorderImageRepeat(_)
+        | PropertyValue::BorderImage(_)) => v,
         // ── font-size: larger / smaller ──────────────────────────────────
         // Unreachable through `cascade_page` (phase 2 resolves it); kept panic-free
         // for direct callers, converging to the same `FontSize(Px(_))` shape.

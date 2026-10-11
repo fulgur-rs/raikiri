@@ -27,18 +27,21 @@ use std::sync::Arc;
 use smol_str::SmolStr;
 
 use crate::computed::{
-    ChFontKey, ChLengthProvenance, ComputedValues, RunningTemplate, VerticalLogicalSize,
+    ChFontKey, ChLengthProvenance, ComputedBorderImage, ComputedValues, RunningTemplate,
+    VerticalLogicalSize,
 };
 use crate::property::{
-    AlignSelfValue, BORDER_WIDTH_MEDIUM_PX, BackgroundAttachment, BackgroundImage,
-    BackgroundRepeat, BackgroundRepeatKeyword, BackgroundSize, Border, BorderCollapseValue,
-    BorderColor, BorderRadius, BorderSpacingValue, BorderStyle, BoxShadowItem, BoxSizing,
-    BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
-    ColumnFillValue, ColumnSpanValue, ColumnWidthValue, ContentAlignmentValue, ContentComponent,
-    CssColor, CssPosition, CssPositionOffset, Direction, DisplayValue, EmptyCellsValue,
-    FilterFunction, FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyName,
-    FontFeatureSettings, FontKerning, FontLanguageOverride, FontOpticalSizing, FontPaletteValue,
-    FontStyle, FontSynthesisValue, FontVariantCaps, FontVariantEastAsian, FontVariantEmoji,
+    AlignSelfValue, BORDER_IMAGE_OUTSET_INITIAL, BORDER_IMAGE_WIDTH_INITIAL,
+    BORDER_WIDTH_MEDIUM_PX, BackgroundAttachment, BackgroundImage, BackgroundRepeat,
+    BackgroundRepeatKeyword, BackgroundSize, Border, BorderCollapseValue, BorderColor,
+    BorderImageOutsetSide, BorderImageRepeat, BorderImageSlice, BorderImageWidthSide, BorderRadius,
+    BorderSpacingValue, BorderStyle, BoxShadowItem, BoxSizing, BreakBetween, BreakInside,
+    CaptionSideValue, ClearValue, ClipPath, ColumnCountValue, ColumnFillValue, ColumnSpanValue,
+    ColumnWidthValue, ContentAlignmentValue, ContentComponent, CssColor, CssPosition,
+    CssPositionOffset, Direction, DisplayValue, EmptyCellsValue, FilterFunction, FlexBasisValue,
+    FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyName, FontFeatureSettings,
+    FontKerning, FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontStyle,
+    FontSynthesisValue, FontVariantCaps, FontVariantEastAsian, FontVariantEmoji,
     FontVariantLigatures, FontVariantNumeric, FontVariantPosition, FontVariationSettings,
     GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, GridTemplateTracks, GridTrackSize,
     HangingPunctuation, HyphenateCharacter, HyphenateLimitChars, Hyphens, Isolation, Length,
@@ -617,6 +620,17 @@ pub struct SpecifiedValues {
     /// Percentages pass through because they need the gradient box dimensions at paint /
     /// used-value time (see the `resolve_background_image` docs). Angles always pass through.
     pub background_image: BackgroundImage,
+    /// Staging value for [`ComputedBorderImage::source`]; gradients are
+    /// absolutized in phase 3 like [`Self::background_image`].
+    pub border_image_source: BackgroundImage,
+    /// Staging value for [`ComputedBorderImage::slice`]; computed-equivalent.
+    pub border_image_slice: BorderImageSlice,
+    /// **Specified** `border-image-width`; phase 3 absolutizes its lengths.
+    pub border_image_width: Sides<BorderImageWidthSide<Length>>,
+    /// **Specified** `border-image-outset`; phase 3 absolutizes its lengths.
+    pub border_image_outset: Sides<BorderImageOutsetSide<Length>>,
+    /// Staging value for [`ComputedBorderImage::repeat`]; computed-equivalent.
+    pub border_image_repeat: BorderImageRepeat,
     /// Staging value for [`ComputedValues::object_fit`]; computed-equivalent because `ObjectFit`
     /// carries no lengths.
     pub object_fit: ObjectFit,
@@ -1014,6 +1028,11 @@ impl SpecifiedValues {
             },
             // CSS Backgrounds and Borders 3 §2.3: background-image is initially `none`.
             background_image: BackgroundImage::None,
+            border_image_source: BackgroundImage::None,
+            border_image_slice: BorderImageSlice::INITIAL,
+            border_image_width: BORDER_IMAGE_WIDTH_INITIAL,
+            border_image_outset: BORDER_IMAGE_OUTSET_INITIAL,
+            border_image_repeat: BorderImageRepeat::INITIAL,
             // CSS Images Module Level 3 §5.1: object-fit is initially `fill`.
             object_fit: ObjectFit::Fill,
             // CSS Images Module Level 3 §5.2: object-position is initially `50% 50%`, unlike
@@ -1396,6 +1415,11 @@ impl SpecifiedValues {
                 vertical: CssPositionOffset::Start(Length::Percent(0.0)),
             },
             background_image: BackgroundImage::None,
+            border_image_source: BackgroundImage::None,
+            border_image_slice: BorderImageSlice::INITIAL,
+            border_image_width: BORDER_IMAGE_WIDTH_INITIAL,
+            border_image_outset: BORDER_IMAGE_OUTSET_INITIAL,
+            border_image_repeat: BorderImageRepeat::INITIAL,
             // non-inherited (CSS Images Module Level 3 §5.1/§5.2, both
             // "Inherited: no") — child starts from spec initial, same as
             // `background_repeat` above.
@@ -2062,6 +2086,34 @@ impl SpecifiedValues {
                 own_line_height,
                 ctx,
             ),
+            border_image: ComputedBorderImage {
+                source: resolve_background_image(
+                    self.border_image_source,
+                    font_size,
+                    own_line_height,
+                    ctx,
+                ),
+                slice: self.border_image_slice,
+                width: self.border_image_width.map(|side| match side {
+                    BorderImageWidthSide::LengthPercentage(length) => {
+                        BorderImageWidthSide::LengthPercentage(resolve_length_percentage(
+                            length,
+                            font_size,
+                            own_line_height,
+                            ctx,
+                        ))
+                    }
+                    BorderImageWidthSide::Number(number) => BorderImageWidthSide::Number(number),
+                    BorderImageWidthSide::Auto => BorderImageWidthSide::Auto,
+                }),
+                outset: self.border_image_outset.map(|side| match side {
+                    BorderImageOutsetSide::Length(length) => BorderImageOutsetSide::Length(
+                        resolve_length(length, font_size, own_line_height, ctx).px(),
+                    ),
+                    BorderImageOutsetSide::Number(number) => BorderImageOutsetSide::Number(number),
+                }),
+                repeat: self.border_image_repeat,
+            },
             // CSS Images Module Level 3 §5.1: the computed value is the specified keyword with no
             // lengths, like background_repeat.
             object_fit: self.object_fit,

@@ -13,13 +13,13 @@ use crate::RaikiriSelectorImpl;
 use crate::cascade::rollback::{Rollback, rollback_kind};
 use crate::consumer::{ConsumerPropertyGrammar, ConsumerPropertyRegistration};
 use crate::property::{
-    BackgroundShorthand, Border, BorderColor, BorderStyle, CustomProperty, DeferredValue, FlexFlow,
-    FlexShorthand, FontFeatureSettings, FontKerning, FontLanguageOverride, FontOpticalSizing,
-    FontShorthand, FontShorthandSize, FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures,
-    FontVariantNumeric, FontVariantPosition, FontVariationSettings, GapShorthand,
-    GridLineShorthand, Length, LengthOrAuto, Outline, OverflowXY, PlaceContentShorthand,
-    PlaceItemsShorthand, PlaceSelfShorthand, PropertyKey, PropertyValue, Sides, StartEnd,
-    TextDecorationShorthand, TextEmphasisShorthand, consume_deferred_value,
+    BackgroundShorthand, Border, BorderColor, BorderImageShorthand, BorderStyle, CustomProperty,
+    DeferredValue, FlexFlow, FlexShorthand, FontFeatureSettings, FontKerning, FontLanguageOverride,
+    FontOpticalSizing, FontShorthand, FontShorthandSize, FontVariantEastAsian, FontVariantEmoji,
+    FontVariantLigatures, FontVariantNumeric, FontVariantPosition, FontVariationSettings,
+    GapShorthand, GridLineShorthand, Length, LengthOrAuto, Outline, OverflowXY,
+    PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand, PropertyKey, PropertyValue,
+    Sides, StartEnd, TextDecorationShorthand, TextEmphasisShorthand, consume_deferred_value,
     parse_consumer_text_value, parse_value,
 };
 
@@ -223,6 +223,18 @@ pub(crate) const fn classify(key: PropertyKey) -> KeyClass {
             BorderLeftWidth,
             BorderLeftStyle,
             BorderLeftColor,
+            BorderImageSource,
+            BorderImageSlice,
+            BorderImageWidth,
+            BorderImageOutset,
+            BorderImageRepeat,
+        ],
+        BorderImage => &[
+            BorderImageSource,
+            BorderImageSlice,
+            BorderImageWidth,
+            BorderImageOutset,
+            BorderImageRepeat,
         ],
         BorderTop => &[BorderTopWidth, BorderTopStyle, BorderTopColor],
         BorderRight => &[BorderRightWidth, BorderRightStyle, BorderRightColor],
@@ -437,6 +449,11 @@ pub(crate) const fn classify(key: PropertyKey) -> KeyClass {
         | BorderCollapse
         | BorderSpacing
         | CaptionSide
+        | BorderImageSource
+        | BorderImageSlice
+        | BorderImageWidth
+        | BorderImageOutset
+        | BorderImageRepeat
         | EmptyCells
         | TextDecorationSkipInk
         | TextDecorationSkipSpaces
@@ -668,6 +685,7 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
         PropertyValue::PaddingBlock(pair) => expand_padding_block(pair, push_longhand),
         PropertyValue::Border(sides) => expand_border(sides, push_longhand),
         PropertyValue::BorderCssWide(kw) => expand_border_css_wide(kw, push_longhand),
+        PropertyValue::BorderImage(ref shorthand) => expand_border_image(shorthand, push_longhand),
         PropertyValue::BorderTop(sides) => expand_border_top(sides, push_longhand),
         PropertyValue::BorderTopCssWide(kw) => expand_border_top_css_wide(kw, push_longhand),
         PropertyValue::BorderRight(sides) => expand_border_right(sides, push_longhand),
@@ -746,6 +764,11 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
         | PropertyValue::MarginBottomInherit
         | PropertyValue::MarginLeft(_)
         | PropertyValue::MarginLeftInherit
+        | PropertyValue::BorderImageSource(_)
+        | PropertyValue::BorderImageSlice(_)
+        | PropertyValue::BorderImageWidth(_)
+        | PropertyValue::BorderImageOutset(_)
+        | PropertyValue::BorderImageRepeat(_)
         | PropertyValue::BorderTopWidth(_)
         | PropertyValue::BorderTopWidthCssWide(_)
         | PropertyValue::BorderRightWidth(_)
@@ -1100,6 +1123,22 @@ pub(crate) fn expand_border(sides: Sides<Border>, mut push: impl FnMut(PropertyV
     push(PropertyValue::BorderLeftWidth(sides.left.width));
     push(PropertyValue::BorderLeftStyle(sides.left.style));
     push(PropertyValue::BorderLeftColor(sides.left.color));
+    // CSS Backgrounds 3 §3.4: "The border shorthand also resets border-image
+    // to its initial value."
+    expand_border_image(&BorderImageShorthand::initial(), push);
+}
+
+/// Expand `border-image` into its five longhands (CSS Backgrounds 3 §6.7).
+#[inline(never)]
+pub(crate) fn expand_border_image(
+    shorthand: &BorderImageShorthand,
+    mut push: impl FnMut(PropertyValue),
+) {
+    push(PropertyValue::BorderImageSource(shorthand.source.clone()));
+    push(PropertyValue::BorderImageSlice(shorthand.slice));
+    push(PropertyValue::BorderImageWidth(shorthand.width));
+    push(PropertyValue::BorderImageOutset(shorthand.outset));
+    push(PropertyValue::BorderImageRepeat(shorthand.repeat));
 }
 
 /// Expand `border-top: <line-width> || <line-style> || <color>` into three
@@ -1184,6 +1223,20 @@ pub(crate) fn expand_border_css_wide(
     push(PropertyValue::BorderLeftWidthCssWide(kw));
     push(PropertyValue::BorderLeftStyleCssWide(kw));
     push(PropertyValue::BorderLeftColorCssWide(kw));
+    // The reset-only border-image longhands take the same keyword.
+    for (key, property) in [
+        (PropertyKey::BorderImageSource, "border-image-source"),
+        (PropertyKey::BorderImageSlice, "border-image-slice"),
+        (PropertyKey::BorderImageWidth, "border-image-width"),
+        (PropertyKey::BorderImageOutset, "border-image-outset"),
+        (PropertyKey::BorderImageRepeat, "border-image-repeat"),
+    ] {
+        push(PropertyValue::Deferred(DeferredValue {
+            key,
+            property: property.into(),
+            value: kw.as_css_str().into(),
+        }));
+    }
 }
 
 /// Expand `border-top: <css-wide-keyword>` into three top-side longhand CSS-wide
