@@ -816,7 +816,8 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + CSS Display display: contents on unusual and SVG elements (+3).
     // - Fourteen pins whose PASS predated the WPT fonts, now expected failures (-14).
     // + text-spacing-trim-feature-001 pinned by its declared variants (-1, +8).
-    assert_eq!(set.baseline.entries.len(), 1524);
+    // - Five Ahem reftests whose monospace text hints past a 13px line (-5).
+    assert_eq!(set.baseline.entries.len(), 1519);
     for id in [
         "css/css-pseudo/first-letter-004.html",
         "css/css-pseudo/first-letter-005.html",
