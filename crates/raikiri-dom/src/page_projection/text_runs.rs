@@ -538,18 +538,7 @@ fn box_paint_shift(
     } else {
         (0.0, 0.0)
     };
-    // spec: https://www.w3.org/TR/css-transforms-1/#terminology
-    // Non-replaced inline and table-column boxes are not transformable.
-    let transformable = !matches!(
-        cv.display,
-        DisplayValue::TableColumn | DisplayValue::TableColumnGroup
-    ) && (cv.display != DisplayValue::Inline
-        || node.is_inline_svg_root()
-        || matches!(
-            node.tag_name(),
-            Some("img" | "canvas" | "video" | "iframe" | "object" | "embed")
-        ));
-    if !transformable {
+    if !transformable(document, id, cv) {
         return Ok((dx, dy));
     }
     // Percentages resolve against the border box (CSS Transforms 1 §6).
@@ -575,6 +564,24 @@ fn box_paint_shift(
         }
     }
     Ok((dx, dy))
+}
+
+/// Whether the element's `transform` applies to it.
+fn transformable(document: &Document, id: usize, cv: &ComputedValues) -> bool {
+    // spec: https://www.w3.org/TR/css-transforms-1/#terminology
+    // Non-replaced inline and table-column boxes are not transformable.
+    let Some(node) = document.get_node(id) else {
+        return false; // cov:ignore: ancestors of a laid-out paragraph are arena nodes
+    };
+    !matches!(
+        cv.display,
+        DisplayValue::TableColumn | DisplayValue::TableColumnGroup
+    ) && (cv.display != DisplayValue::Inline
+        || node.is_inline_svg_root()
+        || matches!(
+            node.tag_name(),
+            Some("img" | "canvas" | "video" | "iframe" | "object" | "embed")
+        ))
 }
 
 /// Whether the painter places `cv`'s box on each page differently than
@@ -617,7 +624,7 @@ pub(super) fn paint_shift(
             // to it, while the projection repeats it on every page. How the
             // painter combines an ancestor's offset, applied by layout or by
             // itself, with the fixed box's insets is not modeled either.
-            if !cv.transform.is_empty()
+            if (transformable(document, id, cv) && !cv.transform.is_empty())
                 || !cv.filter.is_empty()
                 || (x, y) != (0.0, 0.0)
                 || has_relative_inset(cv)
@@ -633,7 +640,7 @@ pub(super) fn paint_shift(
             return Err(reason);
         }
         clipped |= crate::paint_rules::clips_element_overflow(document, cascade, id)
-            || matches!(cv.column_count, ColumnCountValue::Count(_))
+            || matches!(cv.column_count, ColumnCountValue::Count(count) if count > 1)
             || cv.column_width != ComputedColumnWidth::Auto;
         if clipped && (x, y) != (0.0, 0.0) {
             return Err(TextRunOmission::ShiftedClip);

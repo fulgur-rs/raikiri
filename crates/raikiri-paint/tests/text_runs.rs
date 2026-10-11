@@ -1105,6 +1105,14 @@ fn relatively_positioned_fragments_and_moved_boxes_in_clips_match_paint() {
             ),
             "",
         ),
+        // A single column has no column clip to move.
+        (
+            &format!(
+                "<div style=\"column-count: 1; transform: translate(4px, 3px)\">{}</div>",
+                short_paragraphs(3)
+            ),
+            "",
+        ),
     ]);
 }
 
@@ -1196,4 +1204,25 @@ fn fixed_boxes_in_moved_boxes_have_no_runs_and_a_warning() {
         "",
         "x",
     );
+}
+
+#[test]
+fn transforms_of_inline_boxes_do_not_omit_fixed_text() {
+    // A non-replaced inline box is not transformable, so its transform
+    // neither moves the fixed box nor becomes its containing block.
+    let result = lay_out(
+        "<span style=\"transform: translate(4px, 3px)\">\
+         <span style=\"position: fixed; left: 5px; top: 6px\">fixed</span></span>",
+        "",
+    );
+    assert!(
+        result
+            .warnings()
+            .iter()
+            .all(|warning| !matches!(warning.kind, WarningKind::TextRunsOmitted)),
+        "{:?}",
+        result.warnings()
+    );
+    let page = result.pages().next().expect("page");
+    assert!(page.text_runs().iter().any(|run| run.text == "fixed"));
 }
