@@ -204,3 +204,49 @@ fn fragment_tree_budget_is_shared_across_nodes_and_resets_on_clear() {
     assert!(!tree.limit_exceeded);
     assert_eq!(tree.try_push(fragment), Some(0));
 }
+
+#[test]
+fn a_new_layout_of_a_container_retires_its_earlier_root_subtree() {
+    let mut tree = FragmentTree::default();
+    let fragment = |node_id, parent| LayoutFragment {
+        node_id,
+        parent,
+        fragmentainer: 0,
+        rect: FragmentRect {
+            x: 0.0,
+            y: 0.0,
+            width: 1.0,
+            height: 1.0,
+        },
+        fragmentainer_clip: None,
+        fragment_index: 0,
+        fragment_count: 1,
+        line_start: None,
+        line_end: None,
+    };
+    // An earlier layout of container 7 with a paragraph 8 placed in it, and
+    // a grandchild whose parent link points forward after reparenting.
+    let old_root = tree.try_push(fragment(7, None)).unwrap();
+    let grandchild = tree.try_push(fragment(9, None)).unwrap();
+    let old_child = tree.try_push(fragment(8, Some(old_root))).unwrap();
+    tree.fragments[grandchild].parent = Some(old_child);
+    // An unrelated record survives.
+    tree.try_push(fragment(3, None)).unwrap();
+    tree.retire_previous_roots(7);
+    // A second call finds nothing new to retire.
+    tree.retire_previous_roots(7);
+    let new_root = tree.try_push(fragment(7, None)).unwrap();
+    tree.try_push(fragment(8, Some(new_root))).unwrap();
+    tree.finalize();
+    let kept: Vec<_> = tree
+        .fragments
+        .iter()
+        .map(|fragment| (fragment.node_id, fragment.parent))
+        .collect();
+    assert_eq!(kept, [(3, None), (7, None), (8, Some(1))]);
+    assert!(
+        tree.fragments
+            .iter()
+            .all(|fragment| fragment.fragment_count == 1)
+    );
+}

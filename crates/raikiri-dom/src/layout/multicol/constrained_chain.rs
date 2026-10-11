@@ -350,6 +350,7 @@ pub(super) fn layout(
     let root = tree.nodes[leaf].ifc.as_mut()?;
     root.multicol_fragments = Some(fragments);
     root.multicol_fragment_origins_recorded = true;
+    tree.fragment_tree.retire_previous_roots(parent);
     let container = tree.fragment_tree.try_push(LayoutFragment {
         node_id: parent,
         parent: None,

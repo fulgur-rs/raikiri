@@ -471,6 +471,7 @@ pub(super) fn layout(
             return fallback.height;
         }
     }
+    tree.fragment_tree.retire_previous_roots(root);
     let Some(container) = tree.fragment_tree.try_push(fragment(
         root,
         None,

@@ -261,6 +261,14 @@ fn multicol_max_fragmentainer_height(
     Some(used_content_height.min(max_content_height))
 }
 
+/// The width a column imposes on a child it lays out, or `None` when an
+/// element's authored width resolves against the column width instead.
+fn column_child_known_width(tree: &Document, child: usize, column_width: f32) -> Option<f32> {
+    let node = &tree.nodes[child];
+    (node.kind() != NodeKind::Element || node.style.size.width == Dimension::auto())
+        .then_some(column_width)
+}
+
 pub(crate) fn multicol_definite_dimension(
     tree: &Document,
     value: Dimension,
@@ -495,6 +503,7 @@ fn relayout_nested_multicol_children(
     if has_spanners {
         spanning::retire_preliminary_fragments(tree, &children);
     }
+    tree.fragment_tree.retire_previous_roots(index);
     let Some(container_fragment) = tree
         .fragment_tree
         .try_push(crate::fragment::LayoutFragment {
@@ -583,7 +592,6 @@ fn layout_column_group(
     // keep every child in the first column and leave the container taller
     // than necessary.
     let auto_measurements = if context.column_fill != ColumnFillValue::Auto
-        && tree.fragmentation_stack.len() == 1
         && fragment_height.is_none()
         && !multicol_has_nested_descendant(tree, index)
     {
@@ -594,7 +602,7 @@ fn layout_column_group(
                 sizing_mode: SizingMode::InherentSize,
                 axis: RequestedAxis::Both,
                 known_dimensions: Size {
-                    width: Some(context.column_width),
+                    width: column_child_known_width(tree, child, context.column_width),
                     height: None,
                 },
                 known_dimensions_are_definite: Size {
@@ -679,7 +687,7 @@ fn layout_column_group(
                     sizing_mode: SizingMode::InherentSize,
                     axis: RequestedAxis::Both,
                     known_dimensions: Size {
-                        width: Some(context.column_width),
+                        width: column_child_known_width(tree, child, context.column_width),
                         height: None,
                     },
                     known_dimensions_are_definite: Size {
@@ -1539,6 +1547,11 @@ fn refresh_nested_text_fragments_in(
     chain: FlexFloatChain,
     float_fragmentainer: Option<usize>,
 ) {
+    // A nested column container assigns the lines below it to its own
+    // columns when it is laid out; the outer columns only move it as a whole.
+    if tree.nodes[node_id].multicol.is_some() {
+        return;
+    }
     let nested_row_flex_scope = chain.is_scope();
     let is_floated = tree.nodes[node_id].style.float.is_floated();
     // A paragraph laid out by the inline engine keeps its lines on its root:

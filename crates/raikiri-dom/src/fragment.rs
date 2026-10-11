@@ -257,6 +257,43 @@ impl FragmentTree {
         );
     }
 
+    /// Retire the container roots that an earlier layout of `node_id` left,
+    /// together with every record placed under them.
+    ///
+    /// A column container is laid out again whenever its parent measures it
+    /// before placing it, such as a nested container that is first sized at
+    /// the outer container's width and then at the outer column width. Only
+    /// the latest layout describes where its content is painted.
+    pub(crate) fn retire_previous_roots(&mut self, node_id: usize) {
+        let mut pending: Vec<usize> = self
+            .fragments
+            .iter()
+            .enumerate()
+            .filter(|(index, fragment)| {
+                fragment.node_id == node_id
+                    && fragment.parent.is_none()
+                    && !self.retired.contains(index)
+            })
+            .map(|(index, _)| index)
+            .collect();
+        if pending.is_empty() {
+            return;
+        }
+        // Reparenting can point a record at a later index, so collect the
+        // subtrees through an explicit child list.
+        let mut children = std::collections::HashMap::<usize, Vec<usize>>::new();
+        for (index, fragment) in self.fragments.iter().enumerate() {
+            if let Some(parent) = fragment.parent {
+                children.entry(parent).or_default().push(index);
+            }
+        }
+        while let Some(index) = pending.pop() {
+            if self.retired.insert(index) {
+                pending.extend(children.get(&index).into_iter().flatten().copied());
+            }
+        }
+    }
+
     /// Assign stable source-node order and total counts after layout finishes.
     pub(crate) fn finalize(&mut self) {
         if !self.retired.is_empty() {
