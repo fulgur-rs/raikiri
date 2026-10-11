@@ -175,7 +175,7 @@ fn generated_content_prefetch_stops_at_the_layout_image_limit() {
         .collect();
     let mut doc = raikiri_dom::Document::new();
     let style = doc.append_element(Some(0), "style", Default::default(), None::<&str>);
-    doc.append_text(style, &format!("div::before{{content:{content}}}"));
+    doc.append_text(style, format!("div::before{{content:{content}}}"));
     doc.append_element(Some(0), "div", Default::default(), None::<&str>);
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
