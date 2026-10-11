@@ -598,9 +598,13 @@ pub(super) fn paint_shift(
             // spec: https://www.w3.org/TR/css-transforms-1/#containing-block-for-all-descendants
             // A transformed or filtered ancestor makes the fixed box local
             // to it, while the projection repeats it on every page. How the
-            // painter combines an ancestor's offset with the fixed box's
-            // insets is not modeled either.
-            if !cv.transform.is_empty() || !cv.filter.is_empty() || (x, y) != (0.0, 0.0) {
+            // painter combines an ancestor's offset, applied by layout or by
+            // itself, with the fixed box's insets is not modeled either.
+            if !cv.transform.is_empty()
+                || !cv.filter.is_empty()
+                || (x, y) != (0.0, 0.0)
+                || paint_relative_offset(cv) != (0.0, 0.0)
+            {
                 return Err(TextRunOmission::FixedPlacement);
             }
             continue;
@@ -617,6 +621,11 @@ pub(super) fn paint_shift(
         dx += x;
         dy += y;
         fixed = cv.position == PositionValue::Fixed;
+        // The painter starts at the body; the boxes above it do not move
+        // its content.
+        if Some(id) == body {
+            break;
+        }
     }
     Ok((dx, dy))
 }

@@ -1155,6 +1155,17 @@ fn text_under_a_moved_clip_has_no_runs_and_a_warning() {
 
 #[test]
 fn fixed_boxes_in_moved_boxes_have_no_runs_and_a_warning() {
+    // Layout applies this ancestor's offset; the painter places the fixed
+    // box from its insets alone.
+    assert_omitted(
+        &format!(
+            "<p>kept</p><div style=\"position: relative; left: 4px; top: 3px\">\
+             <div id=\"x\" style=\"position: fixed; top: 5px; left: 5px\">fixed</div></div>{}",
+            paragraphs(12, 6)
+        ),
+        "",
+        "x",
+    );
     assert_omitted(
         &format!(
             "<p>kept</p><div style=\"float: left; position: relative; left: 4px\">\

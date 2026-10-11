@@ -50,10 +50,19 @@ pub(super) fn prepare(
             _ => {}
         }
     }
-    let roots = prepared;
-    if roots.is_empty() {
+    if prepared.is_empty() {
         return Ok(placements);
     }
+    // The painter moves a marker with its item's text.
+    let context = super::text_runs::RunContext::new(document, roots);
+    let roots: Vec<_> = prepared
+        .into_iter()
+        .map(|(root, kind)| {
+            let shift = super::text_runs::placement(document, cascade, &context, root.node)
+                .unwrap_or((0.0, 0.0));
+            (root, shift, kind)
+        })
+        .collect();
     let mut first_pages = BTreeMap::new();
     for page in pages {
         for item in &page.items {
@@ -65,7 +74,7 @@ pub(super) fn prepare(
     for page in pages {
         work.check()?;
         let mut markers = BTreeMap::new();
-        for (root, kind) in &roots {
+        for (root, paint_shift, kind) in &roots {
             work.charge(1)?;
             let mut root = *root;
             let source = generated_origin(root.node)
@@ -79,8 +88,8 @@ pub(super) fn prepare(
                 root.y += shift - page.content_origin_y;
                 root.is_repeat = true;
             }
-            let x = page.content_box.x + root.x;
-            let y = page.content_box.y + root.y
+            let x = page.content_box.x + root.x + paint_shift.0;
+            let y = page.content_box.y + root.y + paint_shift.1
                 - if root.is_repeat {
                     0.0
                 } else {
