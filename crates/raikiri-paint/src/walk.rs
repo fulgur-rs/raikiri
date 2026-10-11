@@ -2281,6 +2281,9 @@ pub(crate) fn paint_document_impl(
                     None
                 };
                 let mut paints_as_absolute_continuation = false;
+                // Where the box's border box starts on this page's coordinates
+                // before it is cut into a continuation fragment.
+                let mut unfragmented_top = paint_y;
                 if !paints_on_page
                     && is_absolute_fragment_candidate
                     && let Some(descendant_end) = descendant_end_on_page
@@ -2289,6 +2292,7 @@ pub(crate) fn paint_document_impl(
                     let continuation_height =
                         (descendant_end - fragment_top + cv.border.bottom.width().px()).max(0.0);
                     if continuation_height > 0.0 {
+                        unfragmented_top = paint_y;
                         paint_y = fragment_top + margins.top + insets.top - page_top
                             + pos_dy
                             + child_transform_y;
@@ -2560,17 +2564,46 @@ pub(crate) fn paint_document_impl(
                     );
                     let border_image_drawn = paints_table_part
                         && !collapsed_internal_table_box
-                        && paint_element_border_image(
-                            scene,
-                            own_paint_width,
-                            own_paint_height,
-                            own_paint_x,
-                            own_paint_y,
-                            cv,
-                            painted_border,
-                            pixel_source,
-                            warnings,
-                        );
+                        && if paints_as_absolute_continuation && unfragmented_top < own_paint_y {
+                            // A continuation fragment slices the image laid
+                            // out over the whole box, so it shows no top edge
+                            // at the break (CSS Fragmentation 3 §5.4).
+                            const UNBOUNDED: f64 = 1.0e7;
+                            scene.push_clip_layer(
+                                Affine::IDENTITY,
+                                &Rect::new(
+                                    -UNBOUNDED,
+                                    f64::from(own_paint_y),
+                                    UNBOUNDED,
+                                    UNBOUNDED,
+                                ),
+                            );
+                            let drawn = paint_element_border_image(
+                                scene,
+                                own_paint_width,
+                                own_paint_y + own_paint_height - unfragmented_top,
+                                own_paint_x,
+                                unfragmented_top,
+                                cv,
+                                painted_border,
+                                pixel_source,
+                                warnings,
+                            );
+                            scene.pop_layer();
+                            drawn
+                        } else {
+                            paint_element_border_image(
+                                scene,
+                                own_paint_width,
+                                own_paint_height,
+                                own_paint_x,
+                                own_paint_y,
+                                cv,
+                                painted_border,
+                                pixel_source,
+                                warnings,
+                            )
+                        };
                     let border_covered_by_background =
                         border_covered_by_background || border_image_drawn;
                     // Paint border on top of background (CSS Backgrounds 3 §5).
@@ -4601,14 +4634,32 @@ fn pixel_crop(
         clamp(start.0, decoded.width),
         clamp(start.1, decoded.height),
     );
+    let (mut x0, mut y0) = (x0, y0);
     let (mut x1, mut y1) = (clamp(end.0, decoded.width), clamp(end.1, decoded.height));
-    // A slice thinner than a pixel still shows the pixel it starts in.
-    if x1 == x0 && x0 < decoded.width {
-        x1 = x0 + 1;
-    }
-    if y1 == y0 && y0 < decoded.height {
-        y1 = y0 + 1;
-    }
+    // A slice thinner than a pixel still shows the pixel it starts in, or
+    // the last pixel when it rounds to the image's far edge.
+    let widen = |start: &mut u32, end: &mut u32, nonempty: bool, limit: u32| {
+        if *end == *start && nonempty && limit > 0 {
+            if *start < limit {
+                *end = *start + 1;
+            } else {
+                *start = limit - 1;
+            }
+        }
+    };
+    let inside = |from: f64, to: f64, limit: u32| to > from && from < f64::from(limit);
+    widen(
+        &mut x0,
+        &mut x1,
+        inside(start.0, end.0, decoded.width),
+        decoded.width,
+    );
+    widen(
+        &mut y0,
+        &mut y1,
+        inside(start.1, end.1, decoded.height),
+        decoded.height,
+    );
     (x1 > x0 && y1 > y0).then_some(PixelCrop { x0, y0, x1, y1 })
 }
 

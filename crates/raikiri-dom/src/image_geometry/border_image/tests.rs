@@ -351,3 +351,24 @@ fn an_infinite_width_is_reduced_to_the_area() {
         [x, y, w, h].iter().all(|value| value.is_finite())
     }));
 }
+
+#[test]
+fn an_infinite_outset_of_a_zero_border_extends_nothing() {
+    let mut image = image(27.0, BorderImageRepeatKeyword::Stretch);
+    image.width = Sides::all(BorderImageWidthSide::LengthPercentage(
+        ComputedLengthPercentage::Px(10.0),
+    ));
+    image.outset.top = BorderImageOutsetSide::Number(f32::INFINITY);
+    image.outset.left = BorderImageOutsetSide::Length(f32::INFINITY);
+    let geometry = border_image_geometry(
+        (0.0, 0.0, 90.0, 90.0),
+        Sides::all(0.0),
+        &image,
+        natural(81.0, 81.0),
+    )
+    .expect("geometry");
+    let (x, y, w, h) = geometry.area;
+    assert_eq!(y, 0.0);
+    assert!(x < 0.0 && x.is_finite());
+    assert!(w.is_finite() && h == 90.0);
+}

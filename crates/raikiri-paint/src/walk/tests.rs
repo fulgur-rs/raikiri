@@ -5375,6 +5375,9 @@ fn pixel_crops_keep_at_least_one_pixel() {
     assert_eq!((crop.width(), crop.height()), (1, 2));
     let brush = crop.brush(&decoded).unwrap();
     assert_eq!(brush.image.data.data(), &[4, 5, 6, 7, 20, 21, 22, 23]);
+    // A sliver that rounds to the far edge keeps the last pixel.
+    let crop = pixel_crop(&decoded, (3.6, 1.6), (4.0, 2.0)).unwrap();
+    assert_eq!((crop.x0, crop.y0, crop.x1, crop.y1), (3, 1, 4, 2));
     // A rectangle past the last pixel holds none.
     assert!(pixel_crop(&decoded, (4.0, 0.0), (5.0, 2.0)).is_none());
     // Pixels missing from the buffer give no brush.

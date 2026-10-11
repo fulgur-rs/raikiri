@@ -60,6 +60,10 @@ pub struct BorderImageGeometry {
 /// The largest side width kept before overlapping widths are reduced.
 const MAX_SIDE_WIDTH: f64 = 1.0e30;
 
+/// The largest outset kept, far beyond any page, so the border image area
+/// stays finite.
+const MAX_OUTSET: f64 = 1.0e7;
+
 /// Compute the parts of the border image of a box (CSS Backgrounds 3 §6.6).
 ///
 /// `border_box` is the box's border box and `border_widths` its computed
@@ -78,10 +82,19 @@ pub fn border_image_geometry(
         return None;
     }
     // §6.4: the outset extends the border image area beyond the border box.
-    let outset = |side: BorderImageOutsetSide<f32>, border: f64| match side {
-        BorderImageOutsetSide::Length(px) => f64::from(px),
-        BorderImageOutsetSide::Number(number) => f64::from(number) * border,
-        _ => 0.0,
+    let outset = |side: BorderImageOutsetSide<f32>, border: f64| {
+        let outset = match side {
+            BorderImageOutsetSide::Length(px) => f64::from(px),
+            BorderImageOutsetSide::Number(number) => f64::from(number) * border,
+            _ => 0.0,
+        };
+        // Overflowing values are clamped like widths below; an infinite
+        // multiple of a zero border width is NaN and extends nothing.
+        if outset.is_nan() {
+            0.0
+        } else {
+            outset.clamp(0.0, MAX_OUTSET)
+        }
     };
     let outsets = Sides {
         top: outset(image.outset.top, border_widths.top),
