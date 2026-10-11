@@ -9233,3 +9233,560 @@ fn repeated_header_copies_are_charged_to_the_projection_budget() {
         before
     );
 }
+
+/// Lays out one `div` per entry of `styles` in a zero-margin body on 100px
+/// tall pages and returns each box's block position with the page count.
+fn page_box_positions(styles: &[&str]) -> (Vec<f32>, usize) {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let boxes: Vec<_> = styles
+        .iter()
+        .map(|style| {
+            doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some(&format!("display:block;width:100px;{style}")),
+            )
+        })
+        .collect();
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let pages = layout_pages(&mut doc, &cascade, page).unwrap();
+    (
+        boxes
+            .into_iter()
+            .map(|id| doc.get_node(id).unwrap().unrounded_layout.location.y)
+            .collect(),
+        pages.len(),
+    )
+}
+
+#[test]
+fn a_margin_straddling_an_unforced_break_is_truncated() {
+    // CSS Fragmentation 3 §5.2: the 30px margin before the second box
+    // straddles the page edge at 100, so the box starts at the page top.
+    assert_eq!(
+        page_box_positions(&[
+            "height:80px",
+            "margin-top:30px;height:20px",
+            "margin-top:10px;height:10px",
+        ]),
+        (vec![0.0, 100.0, 130.0], 2)
+    );
+}
+
+#[test]
+fn a_margin_after_a_block_ending_at_the_page_edge_is_truncated() {
+    assert_eq!(
+        page_box_positions(&["height:100px", "margin-top:30px;height:20px", "height:10px",]),
+        (vec![0.0, 100.0, 120.0], 2)
+    );
+}
+
+#[test]
+fn an_absolute_box_does_not_interrupt_adjoining_block_margins() {
+    // A tall absolute box becomes a pagination candidate but stays outside
+    // the normal flow, so the two surrounding blocks still adjoin.
+    let (ys, _) = page_box_positions(&[
+        "height:80px",
+        "position:absolute;top:0;height:120px",
+        "margin-top:30px;height:20px",
+        "height:10px",
+    ]);
+    assert_eq!([ys[0], ys[2], ys[3]], [0.0, 100.0, 120.0]);
+}
+
+#[test]
+fn a_float_does_not_interrupt_adjoining_block_margins() {
+    let (ys, _) = page_box_positions(&[
+        "height:80px",
+        "float:left;height:120px",
+        "margin-top:30px;height:20px",
+        "height:10px",
+    ]);
+    assert_eq!([ys[0], ys[2], ys[3]], [0.0, 100.0, 120.0]);
+}
+
+#[test]
+fn a_forced_break_at_a_page_edge_keeps_a_negative_top_margin() {
+    for first in ["height:80px", "height:80px;margin-bottom:50px"] {
+        assert_eq!(
+            page_box_positions(&[
+                first,
+                "margin-top:-10px;height:20px;break-before:page",
+                "height:10px",
+            ]),
+            (vec![0.0, 90.0, 120.0], 2),
+            "{first}"
+        );
+    }
+}
+
+#[test]
+fn a_block_pushed_by_break_inside_avoid_drops_its_top_margin() {
+    assert_eq!(
+        page_box_positions(&[
+            "height:60px",
+            "margin-top:30px;height:30px;break-inside:avoid",
+            "height:10px",
+        ]),
+        (vec![0.0, 100.0, 130.0], 2)
+    );
+}
+
+#[test]
+fn a_forced_break_keeps_the_top_margin() {
+    assert_eq!(
+        page_box_positions(&[
+            "height:60px",
+            "margin-top:30px;height:20px;break-before:page",
+            "height:10px",
+        ]),
+        (vec![0.0, 130.0, 150.0], 2)
+    );
+}
+
+#[test]
+fn a_root_margin_crossing_pages_keeps_the_body_margin() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        Style::default(),
+        Some("display:block;margin-top:250px"),
+    );
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:8px"),
+    );
+    let child = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:10px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let pages = layout_pages(&mut doc, &cascade, page).unwrap();
+    // The root's margin is truncated at the break into the third page; the
+    // body's margin does not collapse with it and stays below the page top.
+    assert_eq!(pages.len(), 3);
+    assert_eq!(
+        doc.get_node(child).unwrap().unrounded_layout.location.y,
+        208.0
+    );
+}
+
+#[test]
+fn a_relative_offset_is_not_truncated_as_a_margin() {
+    // The offset moves only the box itself; it is not a margin that adjoins
+    // the break, and later siblings keep their flow positions.
+    assert_eq!(
+        page_box_positions(&[
+            "height:80px",
+            "position:relative;top:30px;height:20px",
+            "height:10px",
+        ]),
+        (vec![0.0, 110.0, 100.0], 2)
+    );
+}
+
+#[test]
+fn a_forced_break_at_a_page_edge_keeps_the_crossing_margin() {
+    assert_eq!(
+        page_box_positions(&[
+            "height:80px",
+            "margin-top:30px;height:20px;break-before:page",
+            "height:10px",
+        ]),
+        (vec![0.0, 130.0, 150.0], 2)
+    );
+}
+
+#[test]
+fn a_body_margin_crossing_a_later_break_is_truncated() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        Style::default(),
+        Some("display:block;margin-top:250px"),
+    );
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:150px 0 0"),
+    );
+    let child = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:10px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let pages = layout_pages(&mut doc, &cascade, page).unwrap();
+    // Both margins cross a break, so the content starts at the top of the
+    // fourth page.
+    assert_eq!(pages.len(), 4);
+    let body_y = doc.get_node(body).unwrap().unrounded_layout.location.y;
+    let child_y = doc.get_node(child).unwrap().unrounded_layout.location.y;
+    assert_eq!(body_y + child_y, 300.0, "body {body_y}, child {child_y}");
+}
+
+#[test]
+fn an_unforced_break_truncates_a_negative_top_margin() {
+    // The box cannot fit beside the break, so it moves to the next page;
+    // its negative margin adjoins an unforced break and is truncated too.
+    assert_eq!(
+        page_box_positions(&[
+            "height:80px",
+            "margin-top:-10px;height:40px;break-inside:avoid",
+        ]),
+        (vec![0.0, 100.0], 2)
+    );
+}
+
+/// The y positions of `body`'s descendants listed in `ids` after paginating
+/// on 100px pages, with Ahem as the text font.
+fn paginated_ys(
+    build: impl FnOnce(&mut Document, usize) -> Vec<usize>,
+    page_steps: &[f32],
+) -> Vec<f32> {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0;font:20px/30px Ahem"),
+    );
+    let ids = build(&mut doc, body);
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages_with_page_steps(with_ahem(&mut doc), &cascade, page, page_steps).unwrap();
+    ids.into_iter()
+        .map(|id| doc.get_node(id).unwrap().unrounded_layout.location.y)
+        .collect()
+}
+
+#[test]
+fn a_margin_after_a_contents_wrapper_is_truncated() {
+    let ys = paginated_ys(
+        |doc, body| {
+            let first = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;height:80px"),
+            );
+            let wrapper = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:contents"),
+            );
+            let wrapped = doc.append_element(
+                Some(wrapper),
+                "div",
+                Style::default(),
+                Some("display:block;margin-top:30px;height:20px"),
+            );
+            vec![first, wrapped]
+        },
+        &[],
+    );
+    assert_eq!(ys, [0.0, 100.0]);
+}
+
+#[test]
+fn text_between_blocks_is_not_a_margin() {
+    // The anonymous line sits between the blocks, so the last block's gap
+    // to the first one is not a margin crossing the break.
+    let ys = paginated_ys(
+        |doc, body| {
+            let first = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;height:60px"),
+            );
+            doc.append_text(body, "x");
+            let last = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;margin-top:20px;height:10px"),
+            );
+            vec![first, last]
+        },
+        &[],
+    );
+    assert_eq!(ys, [0.0, 110.0]);
+}
+
+#[test]
+fn inline_wrapped_text_between_blocks_is_not_a_margin() {
+    let ys = paginated_ys(
+        |doc, body| {
+            let first = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;height:60px"),
+            );
+            let span =
+                doc.append_element(Some(body), "span", Style::default(), Some("display:inline"));
+            doc.append_text(span, "x");
+            let last = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;margin-top:20px;height:10px"),
+            );
+            vec![first, last]
+        },
+        &[],
+    );
+    assert_eq!(ys, [0.0, 110.0]);
+}
+
+#[test]
+fn a_root_margin_within_a_taller_first_page_is_kept() {
+    // The first page is 150px tall, so the root's 120px margin stays on it
+    // and only the body's margin crosses the break.
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        Style::default(),
+        Some("display:block;margin-top:120px"),
+    );
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:40px 0 0"),
+    );
+    let child = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:10px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages_with_page_steps(&mut doc, &cascade, page, &[150.0]).unwrap();
+    let body_y = doc.get_node(body).unwrap().unrounded_layout.location.y;
+    let child_y = doc.get_node(child).unwrap().unrounded_layout.location.y;
+    assert_eq!(body_y + child_y, 150.0, "body {body_y}, child {child_y}");
+}
+
+#[test]
+fn float_clearance_is_not_truncated_as_an_adjoining_margin() {
+    assert_eq!(
+        page_box_positions(&[
+            "height:80px",
+            "float:left;height:30px",
+            "clear:left;height:20px",
+            "height:10px",
+        ]),
+        (vec![0.0, 80.0, 110.0, 130.0], 2)
+    );
+}
+
+#[test]
+fn margin_truncation_does_not_shift_an_explicit_absolute_inset() {
+    assert_eq!(
+        page_box_positions(&[
+            "height:80px",
+            "margin-top:30px;height:20px",
+            "position:absolute;top:0;height:120px",
+            "height:10px",
+        ]),
+        (vec![0.0, 100.0, 0.0, 120.0], 2)
+    );
+}
+
+#[test]
+fn a_margin_after_a_cleared_block_is_still_truncated() {
+    assert_eq!(
+        page_box_positions(&[
+            "height:80px",
+            "float:left;height:30px",
+            "clear:left;height:90px",
+            "margin-top:30px;height:20px",
+            "height:10px",
+        ]),
+        (vec![0.0, 80.0, 110.0, 200.0, 220.0], 3)
+    );
+}
+
+#[test]
+fn positioned_block_insets_and_auto_static_positions_remain_distinct() {
+    for (position, expected_y, expected_pages) in [
+        ("top:20px", 20.0, 2),
+        ("bottom:0", -20.0, 2),
+        ("top:auto;bottom:auto", 120.0, 3),
+    ] {
+        assert_eq!(
+            page_box_positions(&[
+                "height:80px",
+                "margin-top:30px;height:20px",
+                &format!("position:absolute;{position};height:120px"),
+                "height:10px",
+            ]),
+            (vec![0.0, 100.0, expected_y, 120.0], expected_pages)
+        );
+    }
+}
+
+#[test]
+fn positioned_text_follows_its_moved_containing_block_once() {
+    let ys = paginated_ys(
+        |doc, body| {
+            let first = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;height:80px"),
+            );
+            let wrapper = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;margin-top:30px;height:20px"),
+            );
+            let relative = doc.append_element(
+                Some(wrapper),
+                "div",
+                Style::default(),
+                Some("display:block;position:relative;height:20px"),
+            );
+            let absolute = doc.append_element(
+                Some(relative),
+                "div",
+                Style::default(),
+                Some("position:absolute;top:5px;height:120px;width:100px;padding-top:3px"),
+            );
+            let span = doc.append_element(
+                Some(absolute),
+                "span",
+                Style::default(),
+                Some("display:inline"),
+            );
+            doc.append_text(span, "x");
+            vec![first, wrapper, relative, absolute]
+        },
+        &[],
+    );
+    assert_eq!(ys, [0.0, 100.0, 0.0, 5.0]);
+}
+
+#[test]
+fn positioned_inline_text_keeps_its_explicit_outer_anchor() {
+    for (nested_auto_box, display, anonymous_text) in [
+        (false, "block", false),
+        (true, "block", false),
+        (false, "flex", false),
+        (false, "grid", false),
+        (false, "flex", true),
+        (false, "grid", true),
+    ] {
+        let positions = |margin: f32| {
+            paginated_ys(
+                |doc, body| {
+                    doc.append_element(
+                        Some(body),
+                        "div",
+                        Style::default(),
+                        Some("display:block;height:80px"),
+                    );
+                    doc.append_element(
+                        Some(body),
+                        "div",
+                        Style::default(),
+                        Some(&format!("display:block;margin-top:{margin}px;height:20px")),
+                    );
+                    let absolute = doc.append_element(
+                        Some(body),
+                        "div",
+                        Style::default(),
+                        Some(&format!("display:{display};position:absolute;top:5px;height:120px;width:100px;padding-top:3px")),
+                    );
+                    let text_parent = if nested_auto_box {
+                        doc.append_element(
+                            Some(absolute),
+                            "div",
+                            Style::default(),
+                            Some("position:absolute;top:auto;bottom:auto;height:120px;width:100px;padding-top:2px"),
+                        )
+                    } else {
+                        absolute
+                    };
+                    let text_container = if anonymous_text {
+                        text_parent
+                    } else {
+                        doc.append_element(
+                            Some(text_parent),
+                            "span",
+                            Style::default(),
+                            Some("display:inline"),
+                        )
+                    };
+                    let text = doc.append_text(text_container, "x");
+                    vec![absolute, text_parent, text]
+                },
+                &[],
+            )
+        };
+        let original = positions(0.0);
+        assert_eq!(original[0], 5.0);
+        assert_eq!(positions(30.0), original);
+    }
+}

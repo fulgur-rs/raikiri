@@ -54,12 +54,6 @@ pub(crate) fn place_fixed_boxes_in_page_area(
     root: usize,
     area_size: Size<f32>,
 ) {
-    if let Some(cv) = cascade.computed.get(root)
-        && establishes_fixed_containing_block(document, root, cv)
-    {
-        // A transformed or filtered body contains its fixed descendants.
-        return;
-    }
     // The page area takes the direction of the root element (CSS Writing
     // Modes 4 §8), not an override on the body.
     let direction = match document
@@ -70,6 +64,47 @@ pub(crate) fn place_fixed_boxes_in_page_area(
         Some(_) => TaffyDirection::Ltr,
         None => document.nodes[root].style.direction,
     };
+    visit_page_fixed_boxes(document, cascade, root, |document, id, parent_origin| {
+        place_fixed_box(document, id, parent_origin, area_size, direction);
+    });
+}
+
+/// Restore explicit fixed block insets after pagination moves ancestors,
+/// preserving the box's size, descendants, and existing layout corrections.
+pub(super) fn restore_fixed_box_block_positions(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    root: usize,
+    area_height: f32,
+) {
+    visit_page_fixed_boxes(document, cascade, root, |document, id, parent_origin| {
+        let style = &document.nodes[id].style;
+        let layout = document.nodes[id].unrounded_layout;
+        let calc = crate::taffy_impl::resolve_calc;
+        let top = style.inset.top.maybe_resolve(Some(area_height), calc);
+        let bottom = style.inset.bottom.maybe_resolve(Some(area_height), calc);
+        let page_y = top.map(|top| top + layout.margin.top).or_else(|| {
+            bottom.map(|bottom| area_height - layout.size.height - bottom - layout.margin.bottom)
+        });
+        if let Some(page_y) = page_y {
+            document.nodes[id].unrounded_layout.location.y = page_y - parent_origin.y;
+        }
+    });
+}
+
+/// Visit fixed boxes whose containing block is the page area.
+fn visit_page_fixed_boxes(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    root: usize,
+    mut visit: impl FnMut(&mut Document, usize, Point<f32>),
+) {
+    if let Some(cv) = cascade.computed.get(root)
+        && establishes_fixed_containing_block(document, root, cv)
+    {
+        // A transformed or filtered body contains its fixed descendants.
+        return;
+    }
     // (node, the origin its location is relative to, measured from the
     // root's border box, whether it is content of a paragraph)
     let in_paragraph = document.nodes[root].is_ifc_root();
@@ -88,7 +123,7 @@ pub(crate) fn place_fixed_boxes_in_page_area(
             continue; // cov:ignore: the cascade has a value for every arena node
         };
         if cv.position == PositionValue::Fixed && node.style.position == TaffyPosition::Absolute {
-            place_fixed_box(document, id, parent_origin, area_size, direction);
+            visit(document, id, parent_origin);
         }
         // The box's own transform or filter contains its descendants, not
         // the box itself.
