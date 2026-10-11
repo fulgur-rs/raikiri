@@ -333,6 +333,119 @@ fn finish_group(mut placements: Vec<Option<Placement>>, used: f32) -> Group {
     }
 }
 
+/// One line range of a nested container's paragraph in a row of its
+/// columns. Row `n` lies in the `n`th outer column the container reaches.
+pub(super) struct RowFragment {
+    /// Index of the paragraph's entry.
+    pub(super) entry: usize,
+    pub(super) line_start: usize,
+    pub(super) line_end: usize,
+    pub(super) row: usize,
+    /// Column of the nested container within the row.
+    pub(super) column: usize,
+    /// Block offset of the fragment's border box from the row's top.
+    pub(super) y: f32,
+    pub(super) height: f32,
+}
+
+pub(super) struct Rows {
+    pub(super) fragments: Vec<RowFragment>,
+    /// Used block size of each row, from the first.
+    pub(super) heights: Vec<f32>,
+}
+
+/// Fill the paragraphs of a nested column container into rows of its
+/// columns: the first row holds `first` of block size, every later row
+/// `later`, and at most `rows` rows exist. The last row is balanced unless
+/// the container fills its columns sequentially, and every row with
+/// `column-fill: balance-all`. `None` when the entries are
+/// not plain paragraphs or do not fit.
+pub(super) fn fill_rows(
+    tree: &Document,
+    parent: usize,
+    entries: &[Measurement],
+    context: FragmentationContext,
+    first: f32,
+    later: f32,
+    rows: usize,
+) -> Option<Rows> {
+    let (paragraphs, count, _, _) = collect(tree, parent, entries)?;
+    if count == 0 || context.column_count == 0 {
+        return None;
+    }
+    let mut result = Rows {
+        fragments: Vec::new(),
+        heights: Vec::new(),
+    };
+    let mut resume = FlowCursor::default();
+    for row in 0..rows {
+        let capacity = if row == 0 { first } else { later };
+        if !capacity.is_finite() || capacity <= 0.0 {
+            return None;
+        }
+        let mut chunk = fill_chunk(&paragraphs, context, capacity, resume)?;
+        // `balance` balances the last row only, `balance-all` every row; a
+        // balanced row keeps the content the full row would hold.
+        let balance = context.column_fill == ColumnFillValue::BalanceAll
+            || (context.column_fill != ColumnFillValue::Auto && chunk.next.is_none());
+        if balance {
+            let next = chunk.next;
+            let mut low = 0.0;
+            let mut high = capacity;
+            for _ in 0..32 {
+                if high - low <= 0.001 {
+                    break;
+                }
+                let trial = (low + high) * 0.5;
+                if let Some(candidate) = fill_chunk(&paragraphs, context, trial, resume)
+                    && candidate.next == next
+                {
+                    high = trial;
+                    chunk = candidate;
+                } else {
+                    low = trial;
+                }
+            }
+        }
+        let height = if chunk.next.is_some() && !balance {
+            capacity
+        } else {
+            chunk.group.height
+        };
+        for (offset, placement) in chunk.group.placements.into_iter().enumerate() {
+            let entry = resume.paragraph + offset;
+            let (Some(placement), Some(paragraph)) = (placement, &paragraphs[entry]) else {
+                continue;
+            };
+            for range in placement.fragments {
+                let y = placement.first_y + range.y;
+                let natural =
+                    paragraph.extents[range.line_end - 1].1 - paragraph.extents[range.line_start].0;
+                result.fragments.push(RowFragment {
+                    entry,
+                    line_start: range.line_start,
+                    line_end: range.line_end,
+                    row,
+                    column: range.fragmentainer,
+                    y,
+                    height: if range.line_end < paragraph.extents.len() {
+                        (height - y).max(0.0)
+                    } else {
+                        natural
+                    },
+                });
+            }
+        }
+        result.heights.push(height);
+        match chunk.next {
+            None => return Some(result),
+            Some(next) if next != resume => resume = next,
+            Some(_) => return None, // cov:ignore: fill_chunk returns a continuation only after advancing a line or a paragraph.
+        }
+    }
+    None
+}
+
 pub(super) struct PagedFragment {
     pub(super) child: usize,
     pub(super) line_start: usize,

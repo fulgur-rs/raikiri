@@ -277,7 +277,7 @@ impl FragmentTree {
     /// the latest layout describes where its content is painted.
     pub(crate) fn retire_previous_roots(&mut self, node_id: usize) {
         // Entries are checked again: a root may have been reparented since.
-        let mut pending: Vec<usize> = self
+        let pending: Vec<usize> = self
             .roots_by_node
             .remove(&node_id)
             .unwrap_or_default()
@@ -288,6 +288,12 @@ impl FragmentTree {
                 }) && !self.retired.contains(&index)
             })
             .collect();
+        self.retire_subtrees(pending);
+    }
+
+    /// Retire the records at `pending` together with every record placed
+    /// under them.
+    pub(crate) fn retire_subtrees(&mut self, mut pending: Vec<usize>) {
         if pending.is_empty() {
             return;
         }
@@ -346,6 +352,11 @@ impl FragmentTree {
 
     /// Attach a nested container root emitted during its recursive layout to
     /// the element fragment that the parent flow placed afterward.
+    /// Whether the record at `index` was retired by a later layout.
+    pub(crate) fn is_retired(&self, index: usize) -> bool {
+        self.retired.contains(&index)
+    }
+
     pub(crate) fn reparent_roots(&mut self, node_id: usize, parent: usize) {
         for fragment in &mut self.fragments {
             if fragment.node_id == node_id && fragment.parent.is_none() {

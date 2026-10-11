@@ -526,6 +526,7 @@ fn relayout_nested_multicol_children(
         return fallback_height;
     };
     tree.nodes[index].multicol_groups.clear();
+    tree.nodes[index].multicol_rows.clear();
     let used = if has_spanners {
         spanning::layout(
             tree,
@@ -739,7 +740,57 @@ fn layout_column_group(
             fragment_height.or_else(|| auto_measurements.as_ref().map(|(_, height)| *height));
         let avoid_column_break = avoid_column_break_after_previous
             || matches!(tree.nodes[child].break_before, BreakBetween::Avoid);
+        // A nested column container taller than the rest of this column
+        // continues in the following ones. When nothing of it fits here, it
+        // starts at the top of the next column instead.
+        let mut continuation = None;
+        if let Some(height) = fragment_height
+            && measured.is_none()
+            && planned.is_none()
+        {
+            continuation = plan_nested_continuation(
+                tree,
+                child,
+                context,
+                column,
+                cursor,
+                height,
+                margin_top,
+                child_output.size,
+            );
+            if continuation.is_none()
+                && column + 1 < context.column_count
+                && cursor > 0.0
+                && cursor + needed > height
+                && !avoid_column_break
+                && let Some(plan) = plan_nested_continuation(
+                    tree,
+                    child,
+                    context,
+                    column + 1,
+                    0.0,
+                    height,
+                    margin_top,
+                    child_output.size,
+                )
+            {
+                maximum = maximum.max(cursor);
+                tree.fragment_tree
+                    .record_break(crate::fragment::BreakToken {
+                        node_id: index,
+                        child_index: order,
+                        line_index: 0,
+                    });
+                column += 1;
+                cursor = 0.0;
+                continuation = Some(plan);
+            }
+        }
+        if let Some(plan) = &continuation {
+            child_output.size.height = plan.first_height;
+        }
         if let Some(height) = break_height
+            && continuation.is_none()
             && group_balance.is_none()
             && column + 1 < context.column_count
             && cursor > 0.0
@@ -804,6 +855,20 @@ fn layout_column_group(
             return fallback_height;
         };
         tree.fragment_tree.reparent_roots(child, child_fragment);
+        if let Some(plan) = &continuation {
+            if apply_nested_continuation(tree, plan).is_none() {
+                return fallback_height;
+            }
+            occupied.extend(column..=column + plan.columns);
+            column += plan.columns;
+            cursor = plan.end + margin_bottom;
+            maximum = maximum.max(fragment_height.unwrap_or(0.0));
+            if tree.nodes[child].kind() == NodeKind::Element {
+                avoid_column_break_after_previous =
+                    matches!(tree.nodes[child].break_after, BreakBetween::Avoid);
+            }
+            continue;
+        }
         let record_context = group_balance.as_ref().map_or_else(
             || {
                 paragraph_balance
@@ -873,6 +938,296 @@ fn layout_column_group(
                 .unwrap_or(fallback_height)
         };
     (maximum.max(cursor) + content_origin.y + block_end_inset).max(minimum_height)
+}
+
+/// A nested column container that continues from one column of its outer
+/// container into the following ones: its paragraphs fill a row of its own
+/// columns in each outer column it reaches. A fragmentation context nested in
+/// another is fragmented by the outer one too (CSS Fragmentation 3, 2).
+struct NestedContinuation {
+    /// The nested container's retained root record.
+    root: usize,
+    /// The nested container's children, by entry.
+    children: Vec<usize>,
+    rows: paragraph_group::Rows,
+    /// The nested container's own columns.
+    context: FragmentationContext,
+    /// Its content-box origin in its border box.
+    content_origin: Point<f32>,
+    /// Block offset of the outer column's top from the nested border box.
+    row_top: f32,
+    /// Inline distance between two outer columns.
+    row_step: f32,
+    /// Border-box block size of its first fragment, which reaches the end of
+    /// the outer column.
+    first_height: f32,
+    /// Outer columns it reaches after the first.
+    columns: usize,
+    /// Its border-box block end in the last outer column it reaches, from
+    /// that column's top.
+    end: f32,
+}
+
+/// Plan how the nested column container `child`, laid out at `cursor` in
+/// column `column` of `outer`, continues in the following outer columns.
+/// `None` when it fits in the rest of the column, when its content is not
+/// plain paragraphs, or when the outer columns run out.
+#[allow(clippy::too_many_arguments)]
+fn plan_nested_continuation(
+    tree: &Document,
+    child: usize,
+    outer: FragmentationContext,
+    column: usize,
+    cursor: f32,
+    fragmentainer_height: f32,
+    margin_top: f32,
+    border_box_size: Size<f32>,
+) -> Option<NestedContinuation> {
+    let node = &tree.nodes[child];
+    let style = node.multicol?;
+    let rows = outer.column_count.checked_sub(column)?;
+    // A box that avoids breaks inside, has a minimum height or generated
+    // content keeps its previous layout: the rows below hold its paragraph
+    // lines only.
+    if rows < 2
+        || !style.horizontal
+        || style.height_definite
+        || !node.style.size.height.is_auto()
+        || !node.style.min_size.height.is_auto()
+        || !node.style.max_size.height.is_auto()
+        || node.has_logical_min_block_size
+        || node.has_before_or_after_content
+        || node.break_inside != raikiri_style::property::BreakInside::Auto
+    {
+        return None;
+    }
+    let css = &node.style;
+    let basis = outer.column_width;
+    let inset = |value| multicol_resolve_inset(tree, value, basis);
+    let content_origin = Point {
+        x: inset(css.padding.left) + inset(css.border.left),
+        y: inset(css.padding.top) + inset(css.border.top),
+    };
+    let block_end_inset = inset(css.padding.bottom) + inset(css.border.bottom);
+    let content_width = border_box_size.width
+        - content_origin.x
+        - inset(css.padding.right)
+        - inset(css.border.right);
+    let first = fragmentainer_height - cursor - margin_top - content_origin.y;
+    let content_height = border_box_size.height - content_origin.y - block_end_inset;
+    if content_height <= first + 0.001 {
+        return None;
+    }
+    let context = FragmentationContext::resolve(content_width, None, style)?;
+    let root = (0..tree.fragment_tree.fragments.len())
+        .rev()
+        .find(|&index| {
+            let fragment = &tree.fragment_tree.fragments[index];
+            fragment.node_id == child
+                && fragment.parent.is_none()
+                && !tree.fragment_tree.is_retired(index)
+        })?;
+    let children: Vec<usize> = node
+        .children
+        .iter()
+        .copied()
+        .filter(|&id| {
+            tree.nodes[id].is_in_document() && tree.nodes[id].style.display != Display::None
+        })
+        .collect();
+    if children.iter().any(|&id| spanning::is_spanner(tree, id)) {
+        return None;
+    }
+    let entries: Vec<_> = children
+        .iter()
+        .map(|&id| {
+            let layout = tree.nodes[id].unrounded_layout;
+            (
+                id,
+                LayoutOutput::from_outer_size(layout.size),
+                layout,
+                layout.margin.top,
+                layout.margin.bottom,
+                layout.margin.top + layout.size.height + layout.margin.bottom,
+            )
+        })
+        .collect();
+    let rows = paragraph_group::fill_rows(
+        tree,
+        child,
+        &entries,
+        context,
+        first,
+        fragmentainer_height,
+        rows,
+    )?;
+    let columns = rows.heights.len().checked_sub(1).filter(|&n| n > 0)?;
+    // The block-end padding and border must fit in the last outer column too.
+    let end = rows.heights[columns] + block_end_inset;
+    if end > fragmentainer_height + 0.001 {
+        return None;
+    }
+    Some(NestedContinuation {
+        root,
+        children,
+        rows,
+        context,
+        content_origin,
+        row_top: -(cursor + margin_top),
+        row_step: outer.column_offset_x(1),
+        first_height: content_origin.y + first,
+        columns,
+        end,
+    })
+}
+
+/// Record the planned rows of a nested column container, in place of the
+/// records of its own balanced layout. The container's root is its box in the
+/// first row; each later row gets a box of its own in its outer column, so
+/// its background, border and overflow clip follow the row. Fragmentainers
+/// number the nested columns row by row.
+fn apply_nested_continuation(tree: &mut Document, plan: &NestedContinuation) -> Option<()> {
+    let root = tree.fragment_tree.fragments[plan.root];
+    tree.fragment_tree.fragments[plan.root].rect.height = plan.first_height;
+    let replaced: std::collections::HashSet<usize> = plan.children.iter().copied().collect();
+    let stale: Vec<usize> = tree
+        .fragment_tree
+        .fragments
+        .iter()
+        .enumerate()
+        .filter(|(_, fragment)| {
+            fragment.parent == Some(plan.root) && replaced.contains(&fragment.node_id)
+        })
+        .map(|(index, _)| index)
+        .collect();
+    tree.fragment_tree.retire_subtrees(stale);
+    // Each row's box record and its content-box origin within that box.
+    let last = plan.rows.heights.len() - 1;
+    let mut row_boxes = vec![(plan.root, plan.content_origin)];
+    for (row, &height) in plan.rows.heights.iter().enumerate().skip(1) {
+        let index = tree
+            .fragment_tree
+            .try_push(crate::fragment::LayoutFragment {
+                node_id: root.node_id,
+                parent: root.parent,
+                fragmentainer: root.fragmentainer + row,
+                rect: crate::fragment::FragmentRect {
+                    x: root.rect.x + row as f32 * plan.row_step,
+                    y: root.rect.y + plan.row_top,
+                    width: root.rect.width,
+                    height: if row == last { plan.end } else { height },
+                },
+                fragmentainer_clip: None,
+                fragment_index: 0,
+                fragment_count: 1,
+                line_start: None,
+                line_end: None,
+            })?;
+        // A continued box has no block-start padding or border.
+        row_boxes.push((
+            index,
+            Point {
+                x: plan.content_origin.x,
+                y: 0.0,
+            },
+        ));
+    }
+    // The origin of each row's box in the first box's coordinates.
+    let row_origin = |row: usize| {
+        if row == 0 {
+            Point::ZERO
+        } else {
+            Point {
+                x: row as f32 * plan.row_step,
+                y: plan.row_top,
+            }
+        }
+    };
+    let mut first_rects = std::collections::HashMap::<usize, crate::fragment::FragmentRect>::new();
+    let mut text = std::collections::HashMap::<usize, Vec<MulticolTextFragment>>::new();
+    for fragment in &plan.rows.fragments {
+        let child = plan.children[fragment.entry];
+        let layout = tree.nodes[child].unrounded_layout;
+        let (row_box, content) = row_boxes[fragment.row];
+        let column_x = content.x + plan.context.column_offset_x(fragment.column);
+        let rect = crate::fragment::FragmentRect {
+            x: column_x + layout.margin.left,
+            y: content.y + fragment.y,
+            width: layout.size.width,
+            height: fragment.height,
+        };
+        let fragmentainer = fragment.row * plan.context.column_count + fragment.column;
+        tree.fragment_tree
+            .try_push(crate::fragment::LayoutFragment {
+                node_id: child,
+                parent: Some(row_box),
+                fragmentainer,
+                rect,
+                fragmentainer_clip: Some(crate::fragment::FragmentRect {
+                    x: column_x,
+                    y: content.y,
+                    width: plan.context.column_width,
+                    height: plan.rows.heights[fragment.row],
+                }),
+                fragment_index: 0,
+                fragment_count: 1,
+                line_start: Some(fragment.line_start),
+                line_end: Some(fragment.line_end),
+            })?;
+        let origin = row_origin(fragment.row);
+        let rect = crate::fragment::FragmentRect {
+            x: origin.x + rect.x,
+            y: origin.y + rect.y,
+            ..rect
+        };
+        let first = *first_rects.entry(child).or_insert(rect);
+        text.entry(child).or_default().push(MulticolTextFragment {
+            line_start: fragment.line_start,
+            line_end: fragment.line_end,
+            fragmentainer,
+            x: rect.x - first.x,
+            y: rect.y - first.y,
+        });
+    }
+    // Column rules are drawn in each row's box, which the row's group names
+    // by its fragmentainer.
+    let mut rows: Vec<crate::fragment::MulticolGroup> = plan
+        .rows
+        .heights
+        .iter()
+        .enumerate()
+        .map(|(row, &height)| crate::fragment::MulticolGroup {
+            context: FragmentationContext {
+                origin_x: row_boxes[row].1.x,
+                origin_y: row_boxes[row].1.y,
+                available_height: Some(height),
+                column_index: root.fragmentainer + row,
+                ..plan.context
+            },
+            height,
+            occupied: std::collections::BTreeSet::new(),
+        })
+        .collect();
+    for fragment in &plan.rows.fragments {
+        if fragment.line_start < fragment.line_end {
+            rows[fragment.row].occupied.insert(fragment.column);
+        }
+    }
+    tree.nodes[root.node_id].multicol_rows = rows;
+    for (child, fragments) in text {
+        let first = first_rects[&child];
+        let node = &mut tree.nodes[child];
+        node.unrounded_layout.location = Point {
+            x: first.x,
+            y: first.y,
+        };
+        node.unrounded_layout.size.height = first.height;
+        if let Some(root) = node.ifc.as_mut() {
+            root.multicol_fragments = Some(fragments);
+            root.multicol_fragment_origins_recorded = true;
+        }
+    }
+    Some(())
 }
 
 // cov:ignore: nested box and float fragment records are exercised by the ignored flex-float WPT.

@@ -281,6 +281,7 @@ fn layout_single_page_with_table_projection(
     document.column_rules.clear();
     for node in &mut document.nodes {
         node.multicol_groups.clear();
+        node.multicol_rows.clear();
     }
     document.fragmentation_stack.clear();
 

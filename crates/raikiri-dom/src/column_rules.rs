@@ -202,10 +202,17 @@ pub(crate) fn prepare(
     }
     let mut result = BTreeMap::new();
     for (owner, group) in groups {
-        if !document.nodes[owner].multicol_groups.is_empty() {
+        // A nested container that continues in later outer columns keeps one
+        // row of its columns per outer column; its rules follow those rows.
+        let retained_groups = if document.nodes[owner].multicol_groups.is_empty() {
+            &document.nodes[owner].multicol_rows
+        } else {
+            &document.nodes[owner].multicol_groups
+        };
+        if !retained_groups.is_empty() {
             let width = cascade.computed[owner].column_rule.width().px();
             let mut rules = Vec::new();
-            for retained in &document.nodes[owner].multicol_groups {
+            for retained in retained_groups {
                 charge(retained.occupied.len().saturating_add(1))?;
                 if retained.height <= 0.0 {
                     continue;
@@ -299,6 +306,37 @@ pub(crate) fn project(
             if values.visibility != raikiri_style::property::Visibility::Visible {
                 continue;
             }
+            // A nested container continued in later outer columns has one
+            // box per row; each box draws the rules of its own row.
+            let row_rules: Vec<PaintRect>;
+            let source = if document.nodes[owner].multicol_rows.is_empty() {
+                source.as_slice()
+            } else {
+                let width = values.column_rule.width().px();
+                row_rules = document.nodes[owner]
+                    .multicol_rows
+                    .iter()
+                    .filter(|row| row.context.column_index == item.fragmentainer as usize)
+                    .flat_map(|row| {
+                        row.occupied
+                            .iter()
+                            .filter(|&&column| row.occupied.contains(&(column + 1)))
+                            .map(move |&column| {
+                                let center = row.context.origin_x
+                                    + row.context.column_offset_x(column)
+                                    + row.context.column_width
+                                    + row.context.column_gap / 2.0;
+                                PaintRect::new(
+                                    center - width / 2.0,
+                                    row.context.origin_y,
+                                    width,
+                                    row.height,
+                                )
+                            })
+                    })
+                    .collect();
+                row_rules.as_slice()
+            };
             work.charge(source.len())?;
             for &rect in source {
                 let mut rule = ColumnRule::new(
