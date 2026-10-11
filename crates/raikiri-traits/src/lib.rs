@@ -63,7 +63,7 @@ pub use page::{
     PageDefaultsBuilder, PendingResolution, ResolveOutcome, RunningTemplate, RunningTemplateId,
     TargetInfo, TargetRegistry, resolve_content_component,
 };
-pub use paint::{PaintClip, PaintColor, PaintInsets, PaintRect};
+pub use paint::{PaintClip, PaintColor, PaintInsets, PaintRect, PaintTransform};
 pub use plan::{BreakReason, DocumentPlan, PageSummary, TargetDefinition};
 pub use policy::{PolicyViolation, ResourceKind, ResourcePolicy, ViolationType};
 pub use resolver::{

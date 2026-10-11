@@ -21,7 +21,10 @@ pub struct GeneratedBox<'a> {
     pub kind: GeneratedKind,
     /// Paragraph line whose text belongs to this piece.
     pub line: crate::TextLineId,
-    /// Border box in page-local CSS pixels.
+    /// Border box in page-local CSS pixels, in the coordinates of the
+    /// paragraph's lines: like [`crate::PositionedGlyphRun::origin`], it
+    /// leaves the paint transforms around it to the enclosing
+    /// [`crate::PaintEvent::PushTransform`] events.
     pub rect: PaintRect,
     /// The pseudo-element's computed style.
     pub style: &'a ComputedValues,

@@ -9,7 +9,7 @@ use crate::{
 };
 use raikiri_style::property::{ColumnCountValue, DisplayValue, PositionValue};
 use raikiri_style::{CascadeResult, PseudoElem, StyleNodeId};
-use raikiri_traits::{NodeId, NodeKind, PaintClip, PaintRect};
+use raikiri_traits::{NodeId, NodeKind, PaintClip, PaintRect, PaintTransform};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// What a clip in [`PaintEvent::PushClip`] comes from.
@@ -43,6 +43,15 @@ pub enum PaintEvent<'a> {
     PushOpacity(f32),
     /// Close the innermost opacity group.
     PopOpacity,
+    /// Paint everything until the matching [`PaintEvent::PopTransform`]
+    /// through this transform, after the enclosing ones: the element's
+    /// relative offset that layout leaves to paint, and its `transform`.
+    /// Inside it, fragments, clips and the other events keep their layout
+    /// coordinates. Elements inside columns are not moved this way; there
+    /// the text runs carry the offsets instead.
+    PushTransform(PaintTransform),
+    /// Close the innermost transform.
+    PopTransform,
     /// An element's background, borders and outline. For a replaced element
     /// the fragment's kind is `Replaced` and the same fragment follows in a
     /// [`PaintEvent::Replaced`] event.
@@ -80,6 +89,7 @@ enum Frame {
     InlineGroup(usize, usize),
     PopClip,
     PopOpacity,
+    PopTransform,
 }
 
 /// The supplied lines of a page's paragraphs, split by the inline opacity
@@ -323,6 +333,10 @@ impl Document {
                     events.push(PaintEvent::PopOpacity);
                     continue;
                 }
+                Frame::PopTransform => {
+                    events.push(PaintEvent::PopTransform);
+                    continue;
+                }
                 Frame::Visit(node_id) => node_id,
             };
             // A subtree with nothing on this page lists no events.
@@ -346,6 +360,23 @@ impl Document {
                     let Some(cv) = cascade.computed.get(node_id) else {
                         continue; // cov:ignore: the cascade has a value for every arena node
                     };
+                    // The transform stays in effect, like the group, until
+                    // the element's whole subtree has been listed.
+                    match super::paint_transform::element_motion(
+                        self,
+                        cascade,
+                        &self.page_projection.run_context,
+                        page,
+                        node_id,
+                        cv,
+                    ) {
+                        super::paint_transform::Motion::Still => {}
+                        super::paint_transform::Motion::Moved(transform) => {
+                            events.push(PaintEvent::PushTransform(transform));
+                            stack.push(Frame::PopTransform);
+                        }
+                        super::paint_transform::Motion::Hidden => continue,
+                    }
                     // The group stays open until the element's whole subtree
                     // has been listed.
                     if let Some(alpha) = paint_rules::opacity_layer(cv) {
@@ -694,7 +725,7 @@ impl Document {
                             Frame::Visit(id) | Frame::Paragraph(id) | Frame::InlineGroup(_, id) => {
                                 position.get(&id).is_some_and(|&at| at > group_at)
                             }
-                            Frame::PopClip | Frame::PopOpacity => false, // cov:ignore: never listed here
+                            Frame::PopClip | Frame::PopOpacity | Frame::PopTransform => false, // cov:ignore: never listed here
                         })
                         .unwrap_or(entries.len())
                 });

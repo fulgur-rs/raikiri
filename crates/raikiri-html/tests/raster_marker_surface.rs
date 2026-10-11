@@ -1,8 +1,8 @@
 //! Raster list markers retain shared cached pixels and page paint ownership.
 
 use raikiri_html::{
-    FontCollectionBuilder, LayoutOptions, LayoutStatus, PaintEvent, PaintRect, RenderResources,
-    layout, parse_html_with_resources,
+    FontCollectionBuilder, LayoutOptions, LayoutStatus, PaintEvent, PaintRect, PaintTransform,
+    RenderResources, layout, parse_html_with_resources,
 };
 use raikiri_traits::{DecodedImage, ImagePixelSource, LayoutConfig, PageDefaults};
 use std::sync::Arc;
@@ -428,15 +428,26 @@ fn translated_png_markers_move_with_their_item_text() {
         let page = document.page(0).unwrap();
         let runs = page.text_runs();
         assert!(runs.iter().any(|run| run.text == "A"), "{css}");
-        let rects: Vec<_> = page
-            .paint_order_for_text_runs(&runs)
-            .iter()
-            .filter_map(|event| match event {
-                PaintEvent::MarkerImage(owner) => page.raster_marker(*owner, &pixels),
-                _ => None,
-            })
-            .map(|image| image.rect)
-            .collect();
+        // The marker is placed with the list's layout coordinates, inside
+        // the list's transform.
+        let mut transforms = vec![PaintTransform::IDENTITY];
+        let mut rects = Vec::new();
+        for event in page.paint_order_for_text_runs(&runs) {
+            match event {
+                PaintEvent::PushTransform(own) => {
+                    transforms.push(*transforms.last().unwrap() * own);
+                }
+                PaintEvent::PopTransform => {
+                    transforms.pop();
+                }
+                PaintEvent::MarkerImage(owner) => {
+                    let mut rect = page.raster_marker(owner, &pixels).unwrap().rect;
+                    (rect.x, rect.y) = transforms.last().unwrap().apply((rect.x, rect.y));
+                    rects.push(rect);
+                }
+                _ => {}
+            }
+        }
         assert_eq!(rects, [expected], "{css}");
     }
 }

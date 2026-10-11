@@ -830,3 +830,14 @@ fn observer_error_preserves_source() {
     assert_eq!(error.source().unwrap().to_string(), "observer failed");
     assert!(error.to_string().contains("Observer"));
 }
+
+// ── Paint transforms ────────────────────────────────────────
+
+#[test]
+fn paint_transform_product_applies_the_inner_transform_first() {
+    let scale = PaintTransform::new(2.0, 0.0, 0.0, 3.0, 0.0, 0.0);
+    let shift = PaintTransform::translate(5.0, 7.0);
+    assert_eq!((shift * scale).apply((1.0, 1.0)), (7.0, 10.0));
+    assert_eq!((scale * shift).apply((1.0, 1.0)), (12.0, 24.0));
+    assert_eq!(PaintTransform::IDENTITY * shift, shift);
+}

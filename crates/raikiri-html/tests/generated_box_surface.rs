@@ -233,9 +233,29 @@ fn header_pseudo_boxes_repeat_only_on_the_tables_pages() {
 
 #[test]
 fn transformed_inline_offsets_follow_the_text_omission_policy() {
+    // Outside columns, the decoration keeps the line's coordinates inside
+    // the transform, like its text.
     let document = lay_out(
         "<div><span>A</span></div>",
         "div{transform:rotate(5deg)}span::before{content:'X';background:red}",
+    );
+    let page = document.page(0).unwrap();
+    let runs = page.text_runs();
+    assert!(runs.iter().all(|run| run.transform.is_some()));
+    let events = page.paint_order_for_text_runs(&runs);
+    let open = events
+        .iter()
+        .position(|event| matches!(event, PaintEvent::PushTransform(_)))
+        .expect("the turned box");
+    let piece = events
+        .iter()
+        .position(|event| matches!(event, PaintEvent::GeneratedBox(_)))
+        .expect("the decoration");
+    assert!(open < piece);
+    // Inside columns, a turned box has neither runs nor decorations.
+    let document = lay_out(
+        "<div style=\"columns:2;height:40px\"><div class=\"t\"><span>A</span></div></div>",
+        ".t{transform:rotate(5deg)}span::before{content:'X';background:red}",
     );
     let page = document.page(0).unwrap();
     assert!(page.text_runs().is_empty());

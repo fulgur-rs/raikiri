@@ -293,8 +293,30 @@ fn empty_item_at_the_last_page_boundary_keeps_its_marker() {
 }
 
 #[test]
-fn transformed_item_reports_one_omission_for_body_and_marker() {
+fn transformed_item_keeps_its_marker_in_the_transform() {
     let document = lay_out("<ol><li>A</li></ol>", "li{transform:rotate(10deg)}");
+    let runs: Vec<_> = document.pages().flat_map(|page| page.text_runs()).collect();
+    let marker = runs
+        .iter()
+        .find(|run| run.is_standalone_marker())
+        .expect("the marker");
+    let text = runs.iter().find(|run| run.text == "A").expect("the text");
+    assert!(marker.transform.is_some());
+    assert_eq!(marker.transform, text.transform);
+    assert!(
+        !document
+            .warnings()
+            .iter()
+            .any(|warning| matches!(warning.kind, WarningKind::TextRunsOmitted))
+    );
+}
+
+#[test]
+fn turned_item_in_columns_reports_one_omission_for_body_and_marker() {
+    let document = lay_out(
+        "<div style='columns:2;height:40px'><ol><li>A</li></ol></div>",
+        "li{transform:rotate(10deg)}",
+    );
     assert!(
         !document
             .pages()

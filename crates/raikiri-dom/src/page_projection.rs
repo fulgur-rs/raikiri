@@ -5,6 +5,7 @@ pub(crate) mod fragment;
 pub(crate) mod generated_boxes;
 mod image_markers;
 pub(crate) mod paint_order;
+mod paint_transform;
 pub(crate) mod records;
 pub(crate) mod text_runs;
 
@@ -41,6 +42,8 @@ pub(crate) struct PageProjection {
     overflow_clips: BTreeMap<NodeId, OverflowClipSource>,
     /// Geometry shared by column placements, independently of the page count.
     placement_overflow_clips: Vec<PlacementOverflowClipSource>,
+    /// Layout boxes of the elements whose transforms do more than translate.
+    transform_boxes: std::collections::HashMap<usize, paint_transform::TransformBox>,
 }
 
 impl PageProjection {
@@ -57,6 +60,7 @@ impl PageProjection {
         self.column_rules.clear();
         self.overflow_clips.clear();
         self.placement_overflow_clips.clear();
+        self.transform_boxes.clear();
     }
 
     /// Position of page `page_index` in [`Self::pages`]. Pages are projected
@@ -182,6 +186,7 @@ impl Document {
         let text_roots_by_page =
             text_runs::roots_by_page(self, cascade, &text_roots, &markers, &pages);
         let run_context = text_runs::RunContext::new(self, &text_roots);
+        let transform_boxes = paint_transform::transform_boxes(self, cascade, &pages);
         let opacity_layers = cascade
             .computed
             .iter()
@@ -230,6 +235,7 @@ impl Document {
             column_rules,
             overflow_clips,
             placement_overflow_clips,
+            transform_boxes,
         };
         Ok(())
     }
