@@ -9352,3 +9352,68 @@ fn a_root_margin_crossing_pages_keeps_the_body_margin() {
         208.0
     );
 }
+
+#[test]
+fn a_relative_offset_is_not_truncated_as_a_margin() {
+    // The offset moves only the box itself; it is not a margin that adjoins
+    // the break, and later siblings keep their flow positions.
+    assert_eq!(
+        page_box_positions(&[
+            "height:80px",
+            "position:relative;top:30px;height:20px",
+            "height:10px",
+        ]),
+        (vec![0.0, 110.0, 100.0], 2)
+    );
+}
+
+#[test]
+fn a_forced_break_at_a_page_edge_keeps_the_crossing_margin() {
+    assert_eq!(
+        page_box_positions(&[
+            "height:80px",
+            "margin-top:30px;height:20px;break-before:page",
+            "height:10px",
+        ]),
+        (vec![0.0, 130.0, 150.0], 2)
+    );
+}
+
+#[test]
+fn a_body_margin_crossing_a_later_break_is_truncated() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        Style::default(),
+        Some("display:block;margin-top:250px"),
+    );
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:150px 0 0"),
+    );
+    let child = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:10px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let pages = layout_pages(&mut doc, &cascade, page).unwrap();
+    // Both margins cross a break, so the content starts at the top of the
+    // fourth page.
+    assert_eq!(pages.len(), 4);
+    let body_y = doc.get_node(body).unwrap().unrounded_layout.location.y;
+    let child_y = doc.get_node(child).unwrap().unrounded_layout.location.y;
+    assert_eq!(body_y + child_y, 300.0, "body {body_y}, child {child_y}");
+}

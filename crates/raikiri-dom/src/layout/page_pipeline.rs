@@ -2362,7 +2362,6 @@ pub fn layout_pages_with_page_geometry_and_control(
         })
         .unwrap_or(0.0);
     let body_margin_top = document.body_block_start_margin;
-    let root_margin_top = html_margin_top + body_margin_top;
     // Keep the scheduled inline size identical to the first layout pass.
     let content_width = insets.page_area_width(margins, page_box);
     let content_height = insets.page_area_height(margins, page_box);
@@ -2389,20 +2388,25 @@ pub fn layout_pages_with_page_geometry_and_control(
     // break is truncated (CSS Fragmentation 3 §5.2).
     // The body's part of that margin is already in the layout coordinates,
     // so only the rest is added to the content.
-    let root_flow_offset = if html_margin_top >= fixed_page_step {
+    let root_flow_start = if html_margin_top >= fixed_page_step {
         // The root's own margin crosses the break. The root's margins do not
         // collapse with the body's, so the body's margin starts after the
-        // truncated one and stays on the new page.
+        // truncated one.
         let page_index = page_index_for_y(html_margin_top);
         control.check_discovery_page_index(page_index)?;
         page_origin(page_index)
-    } else if root_margin_top >= fixed_page_step {
-        // The body's margin crosses the break: both are truncated.
-        let page_index = page_index_for_y(root_margin_top);
-        control.check_discovery_page_index(page_index)?;
-        page_origin(page_index) - body_margin_top
     } else {
         html_margin_top
+    };
+    // The body's margin may cross a later break of its own; its remainder is
+    // truncated as well, so the content starts at the top of that page.
+    let body_content_start = root_flow_start + body_margin_top;
+    let body_content_page = page_index_for_y(body_content_start);
+    let root_flow_offset = if body_content_page > page_index_for_y(root_flow_start) {
+        control.check_discovery_page_index(body_content_page)?;
+        page_origin(body_content_page) - body_margin_top
+    } else {
+        root_flow_start
     };
 
     // Pagination adjusts selected boxes after taffy has produced one normal
@@ -3863,7 +3867,10 @@ pub fn layout_pages_with_page_geometry_and_control(
             && effective_y < page_origin(current_page) + page_step_at(current_page)
             && effective_y + height > page_origin(current_page) + page_step_at(current_page);
 
+        // A relative offset is not part of the flow gap between siblings, so
+        // a positioned box cannot tell its margin apart from its offset.
         let collapses_with_previous_block = is_block_level_flow_box(computed.display)
+            && matches!(computed.position, PositionValue::Static)
             && !candidate.is_text
             && !candidate.is_table_row
             && !candidate.is_flex_item
@@ -3989,7 +3996,15 @@ pub fn layout_pages_with_page_geometry_and_control(
                         && page_index_for_y(previous_bottom.max(0.0)) < natural_page
                         && previous_bottom <= page_top + 0.001
                     {
-                        let delta = page_top - effective_y;
+                        // A forced break that already coincides with this
+                        // page edge sits before the margin, which therefore
+                        // stays on the new page.
+                        let target_y = if forced_before {
+                            page_top + margin_top.max(0.0)
+                        } else {
+                            page_top
+                        };
+                        let delta = target_y - effective_y;
                         document.nodes[node_id].unrounded_layout.location.y += delta;
                         follow_moved_ifc_block(document, node_id, delta);
                         flow_shift += delta;
