@@ -667,7 +667,7 @@ fn run_boxes_segment(
                 // A line that cannot wrap overflows where it is instead: moving
                 // it below the floats would act as a soft wrap.
                 let overflows = narrowed
-                    && !root.nowrap
+                    && !root.line_is_nowrap(&line)
                     && line.inline_size() + indent > space.inline_size + 0.01
                     && moves < MAX_LINE_MOVES;
                 if overflows {

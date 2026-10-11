@@ -2878,7 +2878,7 @@ mod page_fragments_tests;
 use crate::layout::test_support::{
     ahem_paragraph, ahem_paragraph_beside_float, ahem_paragraph_beside_floats,
     ahem_paragraph_in_block_wrapper, ahem_paragraph_with_atomic, ahem_paragraph_with_float,
-    ifc_ahem_fonts, line_start_x, line_text, page_box_800x600,
+    ahem_span_beside_float, ifc_ahem_fonts, line_start_x, line_text, page_box_800x600,
 };
 
 fn lay_out(doc: &mut Document, cascade: &CascadeResult) {
@@ -3214,6 +3214,32 @@ fn a_nowrap_line_too_wide_for_the_space_beside_a_float_stays_beside_it() {
             "{css}"
         );
         assert_eq!(lines[0].block_offset(), 0.0, "{css}");
+    }
+}
+
+#[test]
+fn the_wrap_mode_of_the_line_text_decides_whether_it_moves_below_a_float() {
+    // (root css, span css, line moves below the float). The text's own
+    // `white-space` decides, not the root's.
+    for (root_css, span_css, moves) in [
+        ("", "white-space:nowrap", false),
+        ("white-space:nowrap", "white-space:normal", true),
+        ("white-space:nowrap", "", false),
+    ] {
+        let (mut doc, cascade, root) = ahem_span_beside_float(
+            "aaaaaaaa",
+            "float:left;width:30px;height:20px",
+            root_css,
+            span_css,
+        );
+        lay_out(&mut doc, &cascade);
+        let lines = &stored_lines(&doc, root).lines;
+        let expected = if moves { (0.0, 20.0) } else { (30.0, 0.0) };
+        assert_eq!(
+            (line_start_x(&lines[0]), lines[0].block_offset()),
+            (Some(expected.0), expected.1),
+            "root {root_css:?} / span {span_css:?}"
+        );
     }
 }
 

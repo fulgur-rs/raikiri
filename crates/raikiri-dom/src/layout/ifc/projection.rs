@@ -27,6 +27,8 @@ use shodo::limits::Limits;
 use shodo::node::{InlineEdges, NodeId, OutOfFlowKind, TextSource};
 use shodo::style::LineOptions;
 use shodo::{LayoutContext, Paragraph, ParagraphBuilder};
+use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Tags of replaced elements the inline engine sizes as atomic inlines.
 pub(crate) const ATOMIC_TAGS: &[&str] = &["img", "svg"];
@@ -68,9 +70,13 @@ pub(crate) struct ProjectedIfc {
     pub(crate) fixed: bool,
     /// The root's lines end in an ellipsis where they overflow it.
     pub(crate) ellipsis: bool,
-    /// The root's text does not wrap (`text-wrap-mode: nowrap`): its lines
-    /// stay beside floats even when they overflow the space there.
+    /// The root's text does not wrap (`text-wrap-mode: nowrap`). It decides
+    /// for lines without DOM text, such as lines of generated content only.
     pub(crate) nowrap: bool,
+    /// Whether each DOM text node of the paragraph, by node id, does not
+    /// wrap (`text-wrap-mode: nowrap`). A line made only of such text stays
+    /// beside floats even when it overflows the space there.
+    pub(crate) text_nowrap: Arc<HashMap<u64, bool>>,
     pub(crate) letter_styles: Vec<LetterStyle>,
 }
 
@@ -463,9 +469,13 @@ pub(crate) struct ProjectedBuilder {
     pub(crate) fixed: bool,
     /// The root's lines end in an ellipsis where they overflow it.
     pub(crate) ellipsis: bool,
-    /// The root's text does not wrap (`text-wrap-mode: nowrap`): its lines
-    /// stay beside floats even when they overflow the space there.
+    /// The root's text does not wrap (`text-wrap-mode: nowrap`). It decides
+    /// for lines without DOM text, such as lines of generated content only.
     pub(crate) nowrap: bool,
+    /// Whether each DOM text node of the paragraph, by node id, does not
+    /// wrap (`text-wrap-mode: nowrap`). A line made only of such text stays
+    /// beside floats even when it overflows the space there.
+    pub(crate) text_nowrap: Arc<HashMap<u64, bool>>,
     pub(crate) letter_styles: Vec<LetterStyle>,
 }
 
@@ -493,6 +503,7 @@ impl ProjectedBuilder {
             fixed: self.fixed,
             ellipsis: self.ellipsis,
             nowrap: self.nowrap,
+            text_nowrap: self.text_nowrap,
             letter_styles: self.letter_styles,
         })
     }
@@ -592,6 +603,10 @@ pub(crate) fn project_ifc_text_builder(
         // An anonymous flex or grid item has no overflow of its own.
         ellipsis: false,
         nowrap: cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
+        text_nowrap: Arc::new(HashMap::from([(
+            text as u64,
+            cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
+        )])),
         letter_styles: Vec::new(),
     })
 }
@@ -689,6 +704,7 @@ fn project_children_builder(
     let mut boxes = Vec::new();
     let mut offsets = Vec::new();
     let mut cleared_breaks = Vec::new();
+    let mut text_nowrap = HashMap::new();
     let mut first_letter =
         FirstLetter::new_with_predecessors(doc, cascade, root, limits, &counters.predecessors);
     let marker_atomic = if anonymous_children.is_some() {
@@ -818,6 +834,10 @@ fn project_children_builder(
             NodeKind::Text => {
                 let text = node.text_content().ok_or(IfcError::InvalidNode(id))?;
                 let parent_style = &cascade.computed[doc.parent_of(id).unwrap_or(id)];
+                text_nowrap.insert(
+                    id as u64,
+                    parent_style.effective_text_wrap_mode == TextWrapMode::Nowrap,
+                );
                 // A continuation break splits the text so the line after it
                 // starts at the requested byte, as it did on an earlier page.
                 let split = doc
@@ -1056,6 +1076,7 @@ fn project_children_builder(
         fixed: anonymous_children.is_none() && root_cv.position == PositionValue::Fixed,
         ellipsis: anonymous_children.is_none() && style::ends_in_ellipsis(root_cv),
         nowrap: root_cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
+        text_nowrap: Arc::new(text_nowrap),
         letter_styles: first_letter.styles,
     })
 }

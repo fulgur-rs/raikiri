@@ -53,6 +53,8 @@ pub(crate) struct IfcRoot {
     pub(crate) ellipsis: bool,
     /// The root's text does not wrap (`text-wrap-mode: nowrap`).
     pub(crate) nowrap: bool,
+    /// Whether each DOM text node of the paragraph does not wrap, by node id.
+    pub(crate) text_nowrap: Arc<HashMap<u64, bool>>,
     pub(crate) letter_styles: Vec<super::first_letter::LetterStyle>,
     letter_style_index: Arc<LetterStyleIndex>,
 }
@@ -165,6 +167,28 @@ impl IfcRoot {
         self.lines.as_ref().and_then(super::flow::last_baseline)
     }
 
+    /// Whether `line` cannot wrap: its DOM text is all `text-wrap-mode:
+    /// nowrap`, or it has no DOM text and the root does not wrap.
+    pub(crate) fn line_is_nowrap(&self, line: &shodo::Line) -> bool {
+        let mut any_text = false;
+        for fragment in line.fragments() {
+            let shodo::Fragment::GlyphRun(run) = fragment else {
+                continue;
+            };
+            let Some(nowrap) = run
+                .node()
+                .and_then(|node| self.text_nowrap.get(&node.0).copied())
+            else {
+                continue;
+            };
+            if !nowrap {
+                return false;
+            }
+            any_text = true;
+        }
+        any_text || self.nowrap
+    }
+
     pub(crate) fn new(projected: ProjectedIfc) -> Self {
         let letter_style_index = Arc::new(LetterStyleIndex::new(&projected.letter_styles));
         Self {
@@ -183,6 +207,7 @@ impl IfcRoot {
             multicol_fragment_origins_recorded: false,
             ellipsis: projected.ellipsis,
             nowrap: projected.nowrap,
+            text_nowrap: projected.text_nowrap,
             letter_styles: projected.letter_styles,
             letter_style_index,
         }
@@ -206,6 +231,7 @@ impl IfcRoot {
             multicol_fragment_origins_recorded: false,
             ellipsis: self.ellipsis,
             nowrap: self.nowrap,
+            text_nowrap: self.text_nowrap.clone(),
             letter_styles: self.letter_styles.clone(),
             letter_style_index: self.letter_style_index.clone(),
         }
