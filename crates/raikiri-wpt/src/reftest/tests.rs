@@ -2244,29 +2244,42 @@ fn ignored_page_size_keeps_viewport_margin_basis_consistent() {
 
 #[test]
 fn print_declaration_reads_the_declaration_list_grammar() {
+    let raw = |value: &str| Some(value.to_owned());
     // Semicolons inside strings do not end a declaration.
     assert_eq!(
-        print_declaration(r#"content:"a;size:9px";size:1px"#, "size").as_deref(),
+        print_declaration(r#"content:"a;size:9px";size:1px"#, "size", raw).as_deref(),
         Some("1px")
     );
     // The last declaration wins, unless an earlier one is important.
     assert_eq!(
-        print_declaration("margin:1px;MARGIN : 2px 3px", "margin").as_deref(),
+        print_declaration("margin:1px;MARGIN : 2px 3px", "margin", raw).as_deref(),
         Some("2px 3px")
     );
     assert_eq!(
-        print_declaration("margin:1px !important;margin:2px", "margin").as_deref(),
+        print_declaration("margin:1px !important;margin:2px", "margin", raw).as_deref(),
         Some("1px")
     );
     // Declarations of nested margin rules belong to those rules.
     assert_eq!(
-        print_declaration("@top-left{content:'x';margin:5px}size:1px", "margin"),
+        print_declaration("@top-left{content:'x';margin:5px}size:1px", "margin", raw),
         None
     );
     assert_eq!(
-        print_declaration("@top-left{margin:5px}margin:1px", "margin").as_deref(),
+        print_declaration("@top-left{margin:5px}margin:1px", "margin", raw).as_deref(),
         Some("1px")
     );
+    // A value the property does not accept drops its declaration.
+    for block in [
+        "margin-top:10px;margin-top:bogus",
+        "margin-top:10px;margin-top:",
+        "margin-top:10px;margin-top:bogus !important",
+    ] {
+        assert_eq!(
+            print_declaration(block, "margin-top", |value| parse_print_length(value, None)),
+            Some(10.0),
+            "{block}"
+        );
+    }
 }
 
 #[test]
@@ -2316,6 +2329,11 @@ fn first_authored_page_name_reads_page_declarations_only() {
     );
     assert_eq!(
         first_authored_page_name("<style>/* page:comment */ div.page:first-child{}</style>"),
+        None
+    );
+    // A selector that follows a statement is no declaration.
+    assert_eq!(
+        first_authored_page_name("<style>@import url(a.css);page :first-child{color:red}</style>"),
         None
     );
 }

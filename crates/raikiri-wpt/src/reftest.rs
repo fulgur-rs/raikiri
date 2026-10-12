@@ -909,14 +909,55 @@ fn parse_print_length(token: &str, percent_basis: Option<f32>) -> Option<f32> {
     px.is_finite().then_some(px)
 }
 
-/// The value of the winning top-level `name` declaration in a declaration
-/// list, without its `!important` flag.
+/// A `size` value as the harness reads it.
+struct PageSize {
+    /// The width and height it names, if any.
+    size: Option<(f32, f32)>,
+    landscape: bool,
+    portrait: bool,
+}
+
+/// A `size` value, or `None` for one with a component the harness does not
+/// read, which drops the declaration.
+fn parse_page_size(value: &str) -> Option<PageSize> {
+    let mut dimensions = Vec::new();
+    let mut landscape = false;
+    let mut portrait = false;
+    for token in value.split_whitespace() {
+        match token.to_ascii_lowercase().as_str() {
+            "auto" => {}
+            "landscape" => landscape = true,
+            "portrait" => portrait = true,
+            "a4" => dimensions = vec![793.7008, 1122.5197],
+            "a3" => dimensions = vec![1122.5197, 1587.4016],
+            "a5" => dimensions = vec![559.3701, 793.7008],
+            "letter" => dimensions = vec![612.0, 792.0],
+            "legal" => dimensions = vec![612.0, 1008.0],
+            _ => dimensions.push(parse_print_length(token, None)?),
+        }
+    }
+    let size = match dimensions.as_slice() {
+        [] => None,
+        [side] => Some((*side, *side)),
+        [width, height, ..] => Some((*width, *height)),
+    };
+    (size.is_some() || landscape || portrait || value.trim().eq_ignore_ascii_case("auto"))
+        .then_some(PageSize {
+            size,
+            landscape,
+            portrait,
+        })
+}
+
+/// The value `parse` reads from the winning top-level `name` declaration in
+/// a declaration list, without its `!important` flag.
 ///
 /// The list is read with the CSS declaration-list grammar, so semicolons in
 /// strings do not split declarations and declarations inside nested rules
 /// such as `@top-left { margin: 0 }` are not part of the list. As in the
-/// cascade, a later declaration wins unless an earlier one is `!important`.
-fn print_declaration(block: &str, name: &str) -> Option<String> {
+/// cascade, a declaration whose value `parse` rejects is dropped, and of the
+/// rest a later one wins unless an earlier one is `!important`.
+fn print_declaration<T>(block: &str, name: &str, parse: impl Fn(&str) -> Option<T>) -> Option<T> {
     struct Declarations<'n> {
         name: &'n str,
     }
@@ -987,6 +1028,9 @@ fn print_declaration(block: &str, name: &str) -> Option<String> {
     for (value, is_important) in
         cssparser::RuleBodyParser::new(&mut parser, &mut declarations).filter_map(Result::ok)
     {
+        let Some(value) = parse(&value) else {
+            continue;
+        };
         if is_important {
             important = Some(value);
         } else {
@@ -1082,6 +1126,15 @@ fn first_authored_page_name(input: &str) -> Option<String> {
                     let value = input.try_parse(|input| {
                         input.expect_colon()?;
                         let value = input.expect_ident_cloned()?;
+                        // A declaration's value ends the declaration; a
+                        // selector such as `page :first-child {}` goes on.
+                        let end = input.state();
+                        match input.next() {
+                            Err(_)
+                            | Ok(cssparser::Token::Semicolon)
+                            | Ok(cssparser::Token::Delim('!')) => input.reset(&end),
+                            Ok(_) => return Err(input.new_custom_error(())),
+                        }
                         Ok::<_, cssparser::ParseError<'i, ()>>(value.to_string())
                     });
                     if let Ok(value) = value {
@@ -1562,7 +1615,6 @@ fn authored_page_viewport_for_name(
     // image size.  Keep the legacy fallback for pages without viewport units.
     let block_lower = block.to_ascii_lowercase();
     let has_page_viewport_units = block_lower.contains("vw") || block_lower.contains("vh");
-    let size_value = print_declaration(block, "size");
     let mut page_width = if has_page_viewport_units {
         480.0
     } else {
@@ -1573,42 +1625,16 @@ fn authored_page_viewport_for_name(
     } else {
         fallback_height
     };
-    if !has_page_viewport_units && let Some(size) = size_value.as_deref() {
-        let mut dimensions = Vec::new();
-        let mut landscape = false;
-        let mut portrait = false;
-        for token in size.split_whitespace() {
-            match token.to_ascii_lowercase().as_str() {
-                "landscape" => landscape = true,
-                "portrait" => portrait = true,
-                "a4" => {
-                    dimensions = vec![793.7008, 1122.5197];
-                }
-                "a3" => {
-                    dimensions = vec![1122.5197, 1587.4016];
-                }
-                "a5" => {
-                    dimensions = vec![559.3701, 793.7008];
-                }
-                "letter" => {
-                    dimensions = vec![612.0, 792.0];
-                }
-                "legal" => {
-                    dimensions = vec![612.0, 1008.0];
-                }
-                _ => {
-                    if let Some(value) = parse_print_length(token, None) {
-                        dimensions.push(value);
-                    }
-                }
-            }
-        }
-        if dimensions.len() == 1 {
-            page_width = dimensions[0];
-            page_height = dimensions[0];
-        } else if dimensions.len() >= 2 {
-            page_width = dimensions[0];
-            page_height = dimensions[1];
+    if !has_page_viewport_units
+        && let Some(PageSize {
+            size,
+            landscape,
+            portrait,
+        }) = print_declaration(block, "size", parse_page_size)
+    {
+        if let Some((width, height)) = size {
+            page_width = width;
+            page_height = height;
         }
         if (landscape && page_width < page_height) || (portrait && page_width > page_height) {
             std::mem::swap(&mut page_width, &mut page_height);
@@ -1616,22 +1642,20 @@ fn authored_page_viewport_for_name(
     }
 
     let mut margins = [0.0_f32; 4];
-    if let Some(value) = print_declaration(block, "margin") {
-        let tokens: Vec<_> = value.split_whitespace().collect();
-        let values: Vec<_> = tokens
-            .iter()
+    if let Some(values) = print_declaration(block, "margin", |value| {
+        let values = value
+            .split_whitespace()
             .map(|token| parse_print_length(token, Some(page_width)))
-            .collect();
-        if values.iter().all(Option::is_some) && !values.is_empty() {
-            let values: Vec<f32> = values.into_iter().map(Option::unwrap).collect();
-            margins = match values.as_slice() {
-                [one] => [*one, *one, *one, *one],
-                [vertical, horizontal] => [*vertical, *horizontal, *vertical, *horizontal],
-                [top, horizontal, bottom] => [*top, *horizontal, *bottom, *horizontal],
-                [top, right, bottom, left] => [*top, *right, *bottom, *left],
-                _ => margins,
-            };
+            .collect::<Option<Vec<_>>>()?;
+        match values.as_slice() {
+            [one] => Some([*one, *one, *one, *one]),
+            [vertical, horizontal] => Some([*vertical, *horizontal, *vertical, *horizontal]),
+            [top, horizontal, bottom] => Some([*top, *horizontal, *bottom, *horizontal]),
+            [top, right, bottom, left] => Some([*top, *right, *bottom, *left]),
+            _ => None,
         }
+    }) {
+        margins = values;
     }
     for (name, index) in [
         ("margin-top", 0),
@@ -1639,9 +1663,9 @@ fn authored_page_viewport_for_name(
         ("margin-bottom", 2),
         ("margin-left", 3),
     ] {
-        if let Some(value) = print_declaration(block, name)
-            && let Some(value) = parse_print_length(&value, Some(page_width))
-        {
+        if let Some(value) = print_declaration(block, name, |value| {
+            parse_print_length(value, Some(page_width))
+        }) {
             margins[index] = value;
         }
     }
