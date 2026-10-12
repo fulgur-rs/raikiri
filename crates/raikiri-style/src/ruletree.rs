@@ -1897,9 +1897,6 @@ impl<'i> cssparser::AtRuleParser<'i> for GroupRuleParser<'_, '_> {
                     .ok_or_else(|| input.new_custom_error(()))?,
             ),
         };
-        if !nested_block_has_closing_brace(self.source, input) {
-            return Err(input.new_custom_error(()));
-        }
         Ok(item)
     }
 }
@@ -2021,9 +2018,6 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for GroupRuleParser<'_, '_> {
                 self.budget,
             )),
         };
-        if !nested_block_has_closing_brace(self.source, input) {
-            return Err(input.new_custom_error(()));
-        }
         Ok(item)
     }
 }
@@ -2643,9 +2637,6 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
                     self.budget,
                 );
                 let body = input.slice_from(start).to_owned();
-                if !nested_block_has_closing_brace(self.source, input) {
-                    return Err(input.new_custom_error(()));
-                }
                 let children = parse_nested_rule_nodes(&body, self.opaque_budget);
                 Ok(ParsedRule::Group(
                     AtRuleRecord {
@@ -2667,10 +2658,9 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
                 // the declaration parser of style rule bodies).
                 // Unsupported properties/descriptors retain the existing
                 // silent-drop behavior.
+                // cssparser closes a simple block at EOF (CSS Syntax 3 §5.4.8),
+                // so declarations and margin boxes survive a missing final brace.
                 let body = parse_page_declaration_block(input, self.budget);
-                if !nested_block_has_closing_brace(self.source, input) {
-                    return Err(input.new_custom_error(()));
-                }
                 Ok(ParsedRule::Page(selector, body))
             }
             ParsedAtRulePrelude::Namespace { prelude, .. } => {
@@ -2708,9 +2698,6 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
                     self.budget,
                 );
                 let body = input.slice_from(start).to_owned();
-                if !nested_block_has_closing_brace(self.source, input) {
-                    return Err(input.new_custom_error(()));
-                }
                 let children = parse_nested_rule_nodes(&body, self.opaque_budget);
                 let record = AtRuleRecord {
                     name,
@@ -2810,9 +2797,6 @@ impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for StyleRuleParser<'s, 'b> 
                 self.budget,
             )),
         };
-        if !nested_block_has_closing_brace(self.source, input) {
-            return Err(input.new_custom_error(()));
-        }
         Ok(rule)
     }
 }

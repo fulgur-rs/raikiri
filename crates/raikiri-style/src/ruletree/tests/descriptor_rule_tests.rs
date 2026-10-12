@@ -287,7 +287,7 @@ fn escaped_descriptor_and_group_names_use_css_tokens() {
 }
 
 #[test]
-fn descriptor_groups_respect_depth_and_unclosed_container_limits() {
+fn descriptor_groups_respect_depth_limits_and_recover_at_eof() {
     let body = descriptors("demo", "red");
     for (depth, expected) in [(2, Some("red")), (MAX_OPAQUE_RULE_NESTING_DEPTH + 2, None)] {
         let mut tree = RuleTree::empty();
@@ -307,8 +307,8 @@ fn descriptor_groups_respect_depth_and_unclosed_container_limits() {
     ] {
         let mut tree = RuleTree::empty();
         tree.add_stylesheet(&source, Origin::Author);
-        assert_registration(&tree, &MediaContext::print(), "demo", None);
-        assert!(tree.opaque_at_rules().is_empty());
+        assert_registration(&tree, &MediaContext::print(), "demo", Some("red"));
+        assert_eq!(tree.opaque_at_rules().len(), 1);
     }
 }
 

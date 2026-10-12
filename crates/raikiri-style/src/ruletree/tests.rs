@@ -1981,21 +1981,70 @@ fn malformed_opaque_at_rule_is_not_retained() {
 }
 
 #[test]
-fn unterminated_rule_blocks_are_not_retained() {
+fn unterminated_opaque_rule_blocks_are_not_retained() {
     let mut tree = RuleTree::empty();
     tree.add_stylesheet("@future { p { color: red }", Origin::Author);
     assert!(tree.opaque_at_rules().is_empty());
     assert!(tree.rules().is_empty());
+}
 
-    let mut tree = RuleTree::empty();
-    tree.add_stylesheet("@page { color: red", Origin::Author);
-    assert!(tree.page_rules.is_empty());
-    assert!(tree.rules().is_empty());
+#[test]
+fn eof_page_blocks_preserve_declarations_and_margin_boxes() {
+    for suffix in ["", " ", " /* trailing comment */", " /* unfinished comment"] {
+        for margin_close in ["", " }"] {
+            let source = format!(
+                "@page :first {{ color: red; @top-left {{ content: 'header'{margin_close}{suffix}"
+            );
+            let rules = page_rules(&source);
+            let closed = page_rules("@page :first { color: red; @top-left { content: 'header' } }");
+            assert_eq!(rules.len(), 1, "{source:?}");
+            assert_eq!(rules[0].declarations, closed[0].declarations, "{source:?}");
+            assert_eq!(rules[0].margin_box_rules.len(), 1, "{source:?}");
+            assert_eq!(
+                rules[0].margin_box_rules[0].slot,
+                PageMarginBoxSlot::TopLeft
+            );
+            assert_eq!(
+                rules[0].margin_box_rules[0].declarations,
+                closed[0].margin_box_rules[0].declarations,
+                "{source:?}"
+            );
+        }
+    }
+}
 
+#[test]
+fn eof_style_and_supported_group_blocks_preserve_executable_rules() {
+    for source in [
+        "p { color: red",
+        "@supports (color: red) { p { color: red",
+        "@layer base { p { color: red",
+        "@supports (color: red) { @layer base { p { color: red",
+        ".test { & > span { color: red",
+        ".test { @supports (color: red) { & > span { color: red",
+    ] {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(source, Origin::Author);
+        assert_eq!(tree.style_rules.len(), 1, "{source:?}");
+        assert_eq!(tree.style_rules[0].declarations.len(), 1, "{source:?}");
+        assert_eq!(
+            tree.style_rules[0].declarations[0].value,
+            PropertyValue::Color(CssColor {
+                r: 255,
+                g: 0,
+                b: 0,
+                a: 255
+            }),
+            "{source:?}"
+        );
+    }
     let mut tree = RuleTree::empty();
-    tree.add_stylesheet("p { color: red", Origin::Author);
-    assert!(tree.style_rules.is_empty());
-    assert!(tree.rules().is_empty());
+    tree.add_stylesheet(
+        "@media print { @supports (color: red) { @page { color: red",
+        Origin::Author,
+    );
+    assert_eq!(tree.page_rules.len(), 1);
+    assert_eq!(tree.page_rules[0].declarations.len(), 1);
 }
 
 #[test]
@@ -3011,15 +3060,16 @@ fn media_content_edge_cases() {
     assert!(tree.media_rules.is_empty());
     assert_eq!(tree.style_rules().len(), 1);
 
-    // Unterminated blocks are dropped, as at the top level.
+    // EOF implicitly closes both the group and its last style rule.
     for source in [
         "@media print { p { color: red }",
         "@media print { p { color: red",
     ] {
         let mut tree = RuleTree::empty();
         tree.add_stylesheet(source, Origin::Author);
-        assert!(tree.media_rules.is_empty(), "{source:?}");
-        assert!(tree.opaque_at_rules().is_empty(), "{source:?}");
+        assert_eq!(tree.media_rules.len(), 1, "{source:?}");
+        assert_eq!(tree.media_rules[0].rule.declarations.len(), 1, "{source:?}");
+        assert_eq!(tree.opaque_at_rules().len(), 1, "{source:?}");
     }
 
     // Content nested deeper than the bound is not executed.
