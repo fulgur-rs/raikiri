@@ -416,3 +416,25 @@ fn canvas_color_serialization_uses_hex_or_rgba() {
         "rgba(1, 2, 3, 0.004)"
     );
 }
+
+#[test]
+fn current_color_without_a_computed_color_is_black() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var c = document.createElement('canvas'); var ctx = c.getContext('2d'); \
+         ctx.fillStyle = 'blue'; ctx.fillStyle = 'currentcolor'; ctx.fillStyle === '#000000'",
+    );
+}
+
+#[test]
+fn current_color_lookup_failure_is_a_host_error() {
+    let (mut host, ..) = StubHost::page();
+    host.fail_computed = true;
+    let mut rt = DomRuntime::new(host).unwrap();
+    let result = rt.evaluate(
+        "var c = document.createElement('canvas'); \
+         c.getContext('2d').fillStyle = 'currentcolor';",
+    );
+    assert!(result.is_err(), "got {result:?}");
+}

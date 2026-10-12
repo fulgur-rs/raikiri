@@ -46,3 +46,15 @@ fn rule_boundaries_follow_the_css_syntax_top_level_algorithm() {
     assert_eq!(rules.len(), 1);
     assert_eq!(rules[0].prelude, "p");
 }
+
+#[test]
+fn at_rules_with_blocks_record_their_body() {
+    let source = "@media print { p { color: red } }";
+    let rules = parse_css_rules(source);
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].prelude, "@media print");
+    assert_eq!(
+        &source[rules[0].body.clone().unwrap()],
+        " p { color: red } "
+    );
+}

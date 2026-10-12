@@ -1186,6 +1186,14 @@ fn serialized_declarations_keep_their_boundaries() {
         "--x: url(a); color: red;"
     );
     assert_eq!(
+        with_inline_style_property(Some("--x: url(a\\"), "color", "red", false),
+        "--x: url(a\\\u{FFFD}); color: red;"
+    );
+    assert_eq!(
+        with_inline_style_property(None, "--x", "a /* b */", false),
+        "--x: a /* b */;"
+    );
+    assert_eq!(
         with_inline_style_property(Some("--x: 'a\\"), "color", "red", false),
         "--x: 'a\\\n'; color: red;"
     );
