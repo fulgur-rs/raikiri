@@ -1980,12 +1980,147 @@ fn malformed_opaque_at_rule_is_not_retained() {
     assert_eq!(tree.style_rules.len(), 1);
 }
 
+/// Tokens of `source` with nested blocks walked in place, so that two texts
+/// with the same list compare equal however their blocks were closed.
+fn token_tree(source: &str) -> Vec<String> {
+    fn walk<'i>(parser: &mut Parser<'i, '_>, out: &mut Vec<String>) {
+        while let Ok(token) = parser.next_including_whitespace_and_comments() {
+            let token = token.clone();
+            out.push(format!("{token:?}"));
+            if matches!(
+                token,
+                Token::Function(_)
+                    | Token::ParenthesisBlock
+                    | Token::SquareBracketBlock
+                    | Token::CurlyBracketBlock
+            ) {
+                let _ = parser.parse_nested_block(
+                    |nested| -> Result<(), cssparser::ParseError<'i, ()>> {
+                        walk(nested, out);
+                        Ok(())
+                    },
+                );
+                out.push("end".to_owned());
+            }
+        }
+    }
+    let mut input = ParserInput::new(source);
+    let mut out = Vec::new();
+    walk(&mut Parser::new(&mut input), &mut out);
+    out
+}
+
 #[test]
-fn unterminated_opaque_rule_blocks_are_not_retained() {
+fn eof_completion_keeps_tokens_and_is_idempotent() {
+    for (source, expected) in [
+        ("", ""),
+        (" p { color: red }", " p { color: red }"),
+        (" p { color: red", " p { color: red}"),
+        (" a: (b [c", " a: (b [c])"),
+        (" a: f(b", " a: f(b)"),
+        (" a: \"x", " a: \"x\""),
+        (" a: 'x\\'", " a: 'x\\''"),
+        (" a: \"x\\", " a: \"x\""),
+        (" a: \"x\\\\", " a: \"x\\\\\""),
+        (" a: x\\", " a: x\u{FFFD}"),
+        (" a: url(x", " a: url(x)"),
+        (" a: url(x\\", " a: url(x\u{FFFD})"),
+        (" p{color:red} /* note", " p{color:red} /* note*/"),
+        (" /*/", " /*/*/"),
+        (" p { a: (\"x", " p { a: (\"x\")}"),
+    ] {
+        let completed = complete_raw_block(source, true).expect(source);
+        assert_eq!(completed, expected, "{source:?}");
+        assert_eq!(token_tree(&completed), token_tree(source), "{source:?}");
+        assert_eq!(
+            complete_raw_block(&completed, true).as_deref(),
+            Some(completed.as_str()),
+            "{source:?}"
+        );
+    }
+    // Error tokens reject the text only when asked to.
+    assert_eq!(complete_raw_block(" a: url(\"x\n) ", true), None);
+    assert!(complete_raw_block(" a: url(\"x\n) ", false).is_some());
+}
+
+/// A retained record serializes to a balanced block: with a rule appended
+/// after its text, parsing yields the same record, which would hold the
+/// appended rule as well if the text left a block open.
+fn assert_record_round_trips(record: &AtRuleRecord) {
+    let css = record.to_css();
     let mut tree = RuleTree::empty();
-    tree.add_stylesheet("@future { p { color: red }", Origin::Author);
+    tree.add_stylesheet(&format!("{css} p {{ color: blue }}"), Origin::Author);
+    let reparsed = tree
+        .opaque_at_rules()
+        .iter()
+        .find(|reparsed| reparsed.name == record.name)
+        .unwrap_or_else(|| panic!("{css:?} is not retained"));
+    assert_eq!(reparsed.prelude, record.prelude, "{css:?}");
+    assert_eq!(reparsed.body, record.body, "{css:?}");
+    assert_eq!(reparsed.children, record.children, "{css:?}");
+}
+
+#[test]
+fn eof_closes_every_rule_block_in_inspection_records() {
+    for (source, body, children) in [
+        ("@future { p { color: red }", " p { color: red }", 1),
+        ("@future { p { color: red", " p { color: red}", 1),
+        ("@container x { p{color:red}", " p{color:red}", 1),
+        ("@media print { p { color: red", " p { color: red}", 1),
+        (
+            "@media print { p{color:red} /* note",
+            " p{color:red} /* note*/",
+            1,
+        ),
+        ("@layer a { p { a: (\"x", " p { a: (\"x\")}", 1),
+        ("@future { a: url(x\\", " a: url(x\u{FFFD})", 0),
+        ("@namespace svg url(x) { a", " a", 0),
+    ] {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(source, Origin::Author);
+        assert_eq!(tree.opaque_at_rules().len(), 1, "{source:?}");
+        let record = &tree.opaque_at_rules()[0];
+        assert_eq!(record.body.as_block(), Some(body), "{source:?}");
+        assert_eq!(record.children().len(), children, "{source:?}");
+        assert_record_round_trips(record);
+    }
+}
+
+#[test]
+fn eof_closed_group_children_match_executable_rules() {
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet("@media print { p { color: red", Origin::Author);
+    assert_eq!(tree.media_rules.len(), 1);
+    let record = &tree.opaque_at_rules()[0];
+    let [RuleNode::Qualified(child)] = record.children() else {
+        panic!("{:?}", record.children());
+    };
+    assert_eq!(child.prelude, "p ");
+    assert_eq!(child.body, " color: red");
+
+    // A descriptor rule nested in a group is listed whether or not EOF closes it.
+    for source in [
+        "@media print { @property --x {syntax:'*';inherits:false",
+        "@supports (color:red) { @font-face { font-family: x; src: url(a)",
+    ] {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(source, Origin::Author);
+        let record = &tree.opaque_at_rules()[0];
+        let [RuleNode::AtRule(child)] = record.children() else {
+            panic!("{source:?}: {:?}", record.children());
+        };
+        assert!(child.body.as_block().is_some(), "{source:?}");
+        assert_record_round_trips(record);
+    }
+}
+
+#[test]
+fn group_record_is_left_out_when_eof_cuts_content_past_the_depth_bound() {
+    let depth = MAX_OPAQUE_RULE_NESTING_DEPTH + 2;
+    let source = format!("@media print {{{}", "(".repeat(depth));
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(&source, Origin::Author);
     assert!(tree.opaque_at_rules().is_empty());
-    assert!(tree.rules().is_empty());
 }
 
 #[test]
@@ -3070,6 +3205,8 @@ fn media_content_edge_cases() {
         assert_eq!(tree.media_rules.len(), 1, "{source:?}");
         assert_eq!(tree.media_rules[0].rule.declarations.len(), 1, "{source:?}");
         assert_eq!(tree.opaque_at_rules().len(), 1, "{source:?}");
+        assert_eq!(tree.opaque_at_rules()[0].children().len(), 1, "{source:?}");
+        assert_record_round_trips(&tree.opaque_at_rules()[0]);
     }
 
     // Content nested deeper than the bound is not executed.

@@ -475,9 +475,16 @@ fn group_depth_is_bounded_and_unclosed_blocks_recover_at_eof() {
         assert!(
             tree.style_rules()
                 .iter()
-                .all(|rule| rule.declarations.len() == 1)
+                .all(|rule| rule.declarations.len() == 1),
+            "{source:?}"
         );
         assert_eq!(tree.opaque_at_rules().len(), 1, "{source:?}");
+        assert_eq!(
+            tree.opaque_at_rules()[0].children().len(),
+            count,
+            "{source:?}"
+        );
+        assert_record_round_trips(&tree.opaque_at_rules()[0]);
     }
 }
 

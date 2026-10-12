@@ -84,6 +84,9 @@ pub enum Origin {
 /// The contents exclude the outer braces. `Statement` represents an at-rule
 /// terminated by `;` (or by the end of the stylesheet, which CSS syntax also
 /// permits). `Block` retains the raw component-value text inside `{ ... }`.
+/// When EOF ends the block, or a block, string, comment or url inside it, the
+/// text is completed with what EOF implied, so that it reads as the same tokens
+/// on its own and leaves nothing open inside the braces.
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AtRuleBody {
@@ -113,7 +116,8 @@ impl AtRuleBody {
 pub struct QualifiedRuleRecord {
     /// Raw component-value text before the nested rule's `{`.
     pub prelude: String,
-    /// Raw component-value text inside the nested rule's braces.
+    /// Raw component-value text inside the nested rule's braces, completed
+    /// as EOF closed it like [`AtRuleBody::Block`].
     pub body: String,
     /// Zero-based order among sibling nested rules.
     pub source_order: u32,
@@ -889,13 +893,15 @@ impl RuleTree {
                         registrations: &mut registrations,
                     };
                     add_group(local_condition, items, condition, false, &mut sink);
-                    push_at_rule(
-                        &mut self.opaque_at_rules,
-                        &mut self.rules,
-                        record,
-                        origin,
-                        &mut rule_order,
-                    );
+                    if let Some(record) = record {
+                        push_at_rule(
+                            &mut self.opaque_at_rules,
+                            &mut self.rules,
+                            record,
+                            origin,
+                            &mut rule_order,
+                        );
+                    }
                 }
                 ParsedRule::LayerStatement(record, names) => {
                     for name in names {
@@ -1326,19 +1332,81 @@ fn charset_prelude(source: &str, after_name: usize) -> Option<String> {
 
 /// Consume the rest of `input` as raw component values and return their text.
 ///
-/// `source` is the string `input` was created from; block-closing checks read
-/// it by byte position. A tokenizer error token or a block that is not closed
-/// by its own delimiter anywhere in the values rejects them. The walk enters
+/// `source` is the string `input` was created from. A tokenizer error token or
+/// a block that the values leave open rejects them: a prelude ends before its
+/// block or `;`, so a block still open there is malformed. The walk enters
 /// nested blocks directly, so the values are tokenized once.
 fn consume_raw_component_values<'i, 't>(
     input: &mut Parser<'i, 't>,
     source: &str,
 ) -> Result<String, cssparser::ParseError<'i, ()>> {
     let start = input.position();
-    if !parse_component_values(input, source, None, 0) {
+    let mut walk = ComponentWalk::strict(source);
+    if !walk.values(input, None, 0) {
         return Err(input.new_custom_error(()));
     }
     Ok(input.slice(start..input.position()).to_owned())
+}
+
+/// Consume the rest of a block's contents as raw component values and return
+/// their text, completed as EOF closed them.
+///
+/// `source` is the string `input` was created from. A tokenizer error token
+/// rejects the values; see [`complete_raw_block`] for the completion.
+fn consume_raw_block_contents<'i, 't>(
+    input: &mut Parser<'i, 't>,
+    source: &str,
+) -> Result<String, cssparser::ParseError<'i, ()>> {
+    let start = input.position();
+    let mut walk = ComponentWalk::completing(source, true);
+    if !walk.values(input, None, 0) {
+        return Err(input.new_custom_error(()));
+    }
+    let mut contents = input.slice(start..input.position()).to_owned();
+    walk.complete(&mut contents);
+    Ok(contents)
+}
+
+/// Complete the contents of a block as EOF closed them.
+///
+/// CSS Syntax 3 ends a block, string, comment or url that is still open at
+/// EOF as if it had been closed ("consume a simple block" and the tokenizer's
+/// EOF rules). The returned text spells out what EOF implied, so that on its
+/// own it reads as the same tokens, and between a pair of braces it leaves
+/// nothing open. Contents that a block closed are returned unchanged.
+///
+/// `None` when `reject_error_tokens` is set and the contents hold a tokenizer
+/// error token, or when EOF falls in content past the nesting bound, whose
+/// open blocks are not tracked.
+fn complete_raw_block(contents: &str, reject_error_tokens: bool) -> Option<String> {
+    let mut input = ParserInput::new(contents);
+    let mut parser = Parser::new(&mut input);
+    let mut walk = ComponentWalk::completing(contents, reject_error_tokens);
+    if !walk.values(&mut parser, None, 0) {
+        return None;
+    }
+    let mut completed = contents.to_owned();
+    walk.complete(&mut completed);
+    Some(completed)
+}
+
+/// The contents of a group block that `input` has consumed since `start`,
+/// completed as EOF closed them if EOF ended the block.
+///
+/// Unlike other at-rule bodies, a group's contents are kept when they hold a
+/// tokenizer error token, because its executable rules come straight from the
+/// block rather than from this text.
+fn group_block_contents(
+    input: &Parser<'_, '_>,
+    start: cssparser::SourcePosition,
+    source: &str,
+) -> Option<String> {
+    let contents = input.slice_from(start);
+    if input.position().byte_index() < source.len() {
+        // The block's own `}` ended it.
+        return Some(contents.to_owned());
+    }
+    complete_raw_block(contents, false)
 }
 
 /// Validate one component-value list with cssparser's own tokenization.
@@ -1350,78 +1418,208 @@ fn consume_raw_component_values<'i, 't>(
 fn css_component_values_are_balanced(source: &str) -> bool {
     let mut input = ParserInput::new(source);
     let mut parser = Parser::new(&mut input);
-    parse_component_values(&mut parser, source, None, 0)
+    ComponentWalk::strict(source).values(&mut parser, None, 0)
 }
 
-fn parse_component_values<'i, 't>(
-    parser: &mut Parser<'i, 't>,
-    source: &str,
-    expected_close: Option<u8>,
-    depth: usize,
-) -> bool {
-    loop {
-        let token = match parser.next_including_whitespace_and_comments() {
-            Ok(token) => token,
-            Err(_) => {
-                return expected_close.is_none()
-                    || source
-                        .get(parser.position().byte_index()..)
-                        .and_then(|suffix| suffix.as_bytes().first())
-                        == expected_close.as_ref();
-            }
-        };
+/// A walk over component values with cssparser's own tokenization.
+///
+/// cssparser reports the end of a nested block the same way whether its
+/// closing delimiter or EOF ended it. A block ends at EOF exactly when the
+/// walk has reached the end of `source`, the string the parser reads.
+struct ComponentWalk<'s> {
+    source: &'s str,
+    reject_error_tokens: bool,
+    /// What EOF implied so far, or `None` when content EOF ends is rejected.
+    eof: Option<EofCompletion>,
+}
 
-        let closing_delimiter = match token {
-            Token::Function(_) | Token::ParenthesisBlock => Some(b')'),
-            Token::SquareBracketBlock => Some(b']'),
-            Token::CurlyBracketBlock => Some(b'}'),
-            _ => None,
-        };
-        if token.is_parse_error() {
-            return false;
+/// The text that turns content EOF ended into content that closes itself.
+#[derive(Default)]
+struct EofCompletion {
+    /// What replaces an escaping `\` that ends the source, if one does.
+    escape: Option<&'static str>,
+    /// Closing text in the order EOF implied it, innermost first.
+    terminators: String,
+}
+
+/// The last token of a component-value list, as far as EOF can leave it open.
+#[derive(Clone, Copy)]
+enum TailToken {
+    Block,
+    Comment,
+    QuotedString(char),
+    Url,
+    Other,
+}
+
+/// Whether `text` ends with a `\` that escapes whatever follows it.
+fn ends_with_escape(text: &str) -> bool {
+    text.bytes().rev().take_while(|&byte| byte == b'\\').count() % 2 == 1
+}
+
+impl<'s> ComponentWalk<'s> {
+    fn strict(source: &'s str) -> Self {
+        Self {
+            source,
+            reject_error_tokens: true,
+            eof: None,
         }
-        let Some(closing_delimiter) = closing_delimiter else {
-            continue;
-        };
+    }
 
-        if depth >= MAX_OPAQUE_RULE_NESTING_DEPTH {
-            let mut ended_at_delimiter = false;
-            let result =
-                parser.parse_nested_block(|nested| -> Result<(), cssparser::ParseError<'i, ()>> {
-                    loop {
-                        match nested.next_including_whitespace_and_comments() {
-                            Ok(token) => {
-                                if token.is_parse_error() {
-                                    return Err(nested.new_custom_error(()));
-                                }
-                            }
-                            Err(_) => {
-                                ended_at_delimiter = source
-                                    .get(nested.position().byte_index()..)
-                                    .and_then(|suffix| suffix.as_bytes().first())
-                                    == Some(&closing_delimiter);
-                                return Ok(());
-                            }
-                        }
-                    }
-                });
-            if result.is_err() || !ended_at_delimiter {
+    fn completing(source: &'s str, reject_error_tokens: bool) -> Self {
+        Self {
+            source,
+            reject_error_tokens,
+            eof: Some(EofCompletion::default()),
+        }
+    }
+
+    /// Append what EOF implied to `text`, the source of a completing walk.
+    fn complete(self, text: &mut String) {
+        let Some(eof) = self.eof else {
+            return;
+        };
+        if let Some(replacement) = eof.escape {
+            text.pop();
+            text.push_str(replacement);
+        }
+        text.push_str(&eof.terminators);
+    }
+
+    fn values<'i, 't>(
+        &mut self,
+        parser: &mut Parser<'i, 't>,
+        expected_close: Option<char>,
+        depth: usize,
+    ) -> bool {
+        let mut tail = None;
+        loop {
+            let start = parser.position().byte_index();
+            let token = match parser.next_including_whitespace_and_comments() {
+                Ok(token) => token,
+                Err(_) => return self.end(parser, tail, expected_close),
+            };
+
+            if self.reject_error_tokens && token.is_parse_error() {
                 return false;
             }
-            continue;
-        }
-
-        let result =
-            parser.parse_nested_block(|nested| -> Result<(), cssparser::ParseError<'i, ()>> {
-                if parse_component_values(nested, source, Some(closing_delimiter), depth + 1) {
-                    Ok(())
-                } else {
-                    Err(nested.new_custom_error(()))
+            let (kind, closing_delimiter) = match token {
+                Token::Function(_) | Token::ParenthesisBlock => (TailToken::Block, Some(')')),
+                Token::SquareBracketBlock => (TailToken::Block, Some(']')),
+                Token::CurlyBracketBlock => (TailToken::Block, Some('}')),
+                Token::Comment(_) => (TailToken::Comment, None),
+                Token::QuotedString(_) => {
+                    let quote = self.source[start..].chars().next().unwrap_or('"');
+                    (TailToken::QuotedString(quote), None)
                 }
-            });
-        if result.is_err() {
-            return false;
+                Token::UnquotedUrl(_) | Token::BadUrl(_) => (TailToken::Url, None),
+                _ => (TailToken::Other, None),
+            };
+            tail = Some((start, kind));
+            let Some(closing_delimiter) = closing_delimiter else {
+                continue;
+            };
+
+            if depth >= MAX_OPAQUE_RULE_NESTING_DEPTH {
+                // Past the bound cssparser skips nested blocks itself, so a
+                // block that EOF ends here cannot be completed either.
+                let source_len = self.source.len();
+                let reject_error_tokens = self.reject_error_tokens;
+                let mut closed = false;
+                let result = parser.parse_nested_block(
+                    |nested| -> Result<(), cssparser::ParseError<'i, ()>> {
+                        loop {
+                            match nested.next_including_whitespace_and_comments() {
+                                Ok(token) => {
+                                    if reject_error_tokens && token.is_parse_error() {
+                                        return Err(nested.new_custom_error(()));
+                                    }
+                                }
+                                Err(_) => {
+                                    closed = nested.position().byte_index() < source_len;
+                                    return Ok(());
+                                }
+                            }
+                        }
+                    },
+                );
+                if result.is_err() || !closed {
+                    return false;
+                }
+                continue;
+            }
+
+            let result =
+                parser.parse_nested_block(|nested| -> Result<(), cssparser::ParseError<'i, ()>> {
+                    if self.values(nested, Some(closing_delimiter), depth + 1) {
+                        Ok(())
+                    } else {
+                        Err(nested.new_custom_error(()))
+                    }
+                });
+            if result.is_err() {
+                return false;
+            }
         }
+    }
+
+    /// End a component-value list whose last token, if any, is `tail`.
+    fn end(
+        &mut self,
+        parser: &Parser<'_, '_>,
+        tail: Option<(usize, TailToken)>,
+        expected_close: Option<char>,
+    ) -> bool {
+        if parser.position().byte_index() < self.source.len() {
+            // The list stopped before its closing delimiter.
+            return true;
+        }
+        let Some(eof) = self.eof.as_mut() else {
+            return expected_close.is_none();
+        };
+        if let Some((start, kind)) = tail {
+            let text = &self.source[start..];
+            let unterminated = |close: char| {
+                text.len() < 2
+                    || !text.ends_with(close)
+                    || ends_with_escape(&text[..text.len() - 1])
+            };
+            match kind {
+                TailToken::Block => {}
+                TailToken::Comment => {
+                    if text.len() < 4 || !text.ends_with("*/") {
+                        eof.terminators.push_str("*/");
+                    }
+                }
+                TailToken::QuotedString(quote) => {
+                    if unterminated(quote) {
+                        // An escape at EOF adds nothing to a string.
+                        if ends_with_escape(text) {
+                            eof.escape = Some("");
+                        }
+                        eof.terminators.push(quote);
+                    }
+                }
+                TailToken::Url => {
+                    if unterminated(')') {
+                        if ends_with_escape(text) {
+                            eof.escape = Some("\u{FFFD}");
+                        }
+                        eof.terminators.push(')');
+                    }
+                }
+                TailToken::Other => {
+                    // An escape at EOF is U+FFFD in any other token.
+                    if ends_with_escape(text) {
+                        eof.escape = Some("\u{FFFD}");
+                    }
+                }
+            }
+        }
+        if let Some(close) = expected_close {
+            eof.terminators.push(close);
+        }
+        true
     }
 }
 
@@ -1479,24 +1677,6 @@ fn prelude_opens_block(source: &str, input: &Parser<'_, '_>) -> bool {
         .is_some_and(|rest| rest.starts_with('{'))
 }
 
-fn nested_block_has_closing_brace(source: &str, input: &Parser<'_, '_>) -> bool {
-    let position = input.position().byte_index();
-    let Some(mut suffix) = source.get(position..) else {
-        return false;
-    };
-    loop {
-        suffix = suffix.trim_start_matches(|ch: char| ch.is_ascii_whitespace());
-        if let Some(rest) = suffix.strip_prefix("/*") {
-            let Some(end) = rest.find("*/") else {
-                return false;
-            };
-            suffix = &rest[end + 2..];
-        } else {
-            return suffix.starts_with('}');
-        }
-    }
-}
-
 struct RawRuleParser<'s, 'b> {
     depth: usize,
     source: &'s str,
@@ -1543,8 +1723,8 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for RawRuleParser<'s, 'b> {
         _start: &cssparser::ParserState,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::AtRule, cssparser::ParseError<'i, Self::Error>> {
-        let body = consume_raw_component_values(input, self.source)?;
-        if !nested_block_has_closing_brace(self.source, input) || !self.budget.spend(body.len()) {
+        let body = consume_raw_block_contents(input, self.source)?;
+        if !self.budget.spend(body.len()) {
             return Err(input.new_custom_error(()));
         }
         let children = if self.depth < MAX_OPAQUE_RULE_NESTING_DEPTH {
@@ -1581,8 +1761,8 @@ impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for RawRuleParser<'s, 'b> {
         _start: &cssparser::ParserState,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::QualifiedRule, cssparser::ParseError<'i, Self::Error>> {
-        let body = consume_raw_component_values(input, self.source)?;
-        if !nested_block_has_closing_brace(self.source, input) || !self.budget.spend(body.len()) {
+        let body = consume_raw_block_contents(input, self.source)?;
+        if !self.budget.spend(body.len()) {
             return Err(input.new_custom_error(()));
         }
         Ok(NestedParsedRule::Qualified(QualifiedRuleRecord {
@@ -2206,8 +2386,10 @@ enum ParsedRule {
     Page(PageSelector, PageBlockBody),
     OpaqueAtRule(AtRuleRecord),
     LayerStatement(AtRuleRecord, Vec<LayerName>),
-    /// A conditional group: its inspection record, condition, and executable content.
-    Group(AtRuleRecord, GroupCondition, Vec<GroupItem>),
+    /// A conditional group: its inspection record, condition, and executable
+    /// content. The record is `None` when EOF ends the block in content past
+    /// the nesting bound, which cannot be completed.
+    Group(Option<AtRuleRecord>, GroupCondition, Vec<GroupItem>),
     Descriptor {
         record: Option<AtRuleRecord>,
         rule: Option<Box<DescriptorRule>>,
@@ -2636,9 +2818,8 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
                     self.supports_context,
                     self.budget,
                 );
-                let body = input.slice_from(start).to_owned();
-                let children = parse_nested_rule_nodes(&body, self.opaque_budget);
-                Ok(ParsedRule::Group(
+                let record = group_block_contents(input, start, self.source).map(|body| {
+                    let children = parse_nested_rule_nodes(&body, self.opaque_budget);
                     AtRuleRecord {
                         name,
                         prelude,
@@ -2646,7 +2827,10 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
                         children,
                         source_order: 0,
                         origin: Origin::Author,
-                    },
+                    }
+                });
+                Ok(ParsedRule::Group(
+                    record,
                     GroupCondition::Layer(names),
                     items,
                 ))
@@ -2658,16 +2842,14 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
                 // the declaration parser of style rule bodies).
                 // Unsupported properties/descriptors retain the existing
                 // silent-drop behavior.
-                // cssparser closes a simple block at EOF (CSS Syntax 3 §5.4.8),
-                // so declarations and margin boxes survive a missing final brace.
+                // cssparser ends a block at EOF as CSS Syntax 3 "consume a
+                // simple block" does, so declarations and margin boxes survive
+                // a missing final brace.
                 let body = parse_page_declaration_block(input, self.budget);
                 Ok(ParsedRule::Page(selector, body))
             }
             ParsedAtRulePrelude::Namespace { prelude, .. } => {
-                let body = consume_raw_component_values(input, self.source)?;
-                if !nested_block_has_closing_brace(self.source, input) {
-                    return Err(input.new_custom_error(()));
-                }
+                let body = consume_raw_block_contents(input, self.source)?;
                 Ok(ParsedRule::OpaqueAtRule(AtRuleRecord {
                     name: "namespace".to_owned(),
                     prelude,
@@ -2697,23 +2879,21 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
                     self.supports_context,
                     self.budget,
                 );
-                let body = input.slice_from(start).to_owned();
-                let children = parse_nested_rule_nodes(&body, self.opaque_budget);
-                let record = AtRuleRecord {
-                    name,
-                    prelude,
-                    body: AtRuleBody::Block(body),
-                    children,
-                    source_order: 0,
-                    origin: Origin::Author,
-                };
+                let record = group_block_contents(input, start, self.source).map(|body| {
+                    let children = parse_nested_rule_nodes(&body, self.opaque_budget);
+                    AtRuleRecord {
+                        name,
+                        prelude,
+                        body: AtRuleBody::Block(body),
+                        children,
+                        source_order: 0,
+                        origin: Origin::Author,
+                    }
+                });
                 Ok(ParsedRule::Group(record, condition, items))
             }
             ParsedAtRulePrelude::Opaque { name, prelude } => {
-                let body = consume_raw_component_values(input, self.source)?;
-                if !nested_block_has_closing_brace(self.source, input) {
-                    return Err(input.new_custom_error(()));
-                }
+                let body = consume_raw_block_contents(input, self.source)?;
                 let children = parse_nested_rule_nodes(&body, self.opaque_budget);
                 Ok(ParsedRule::OpaqueAtRule(AtRuleRecord {
                     name,
@@ -2733,22 +2913,17 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
                 // when malformed raw values or EOF prevent an inspection record.
                 let start = input.position();
                 let rule = parse_descriptor_block(descriptor, input, self.budget);
-                let body = input.slice_from(start).to_owned();
-                let record = if nested_block_has_closing_brace(self.source, input)
-                    && css_component_values_are_balanced(&body)
-                {
+                let record = complete_raw_block(input.slice_from(start), true).map(|body| {
                     let children = parse_nested_rule_nodes(&body, self.opaque_budget);
-                    Some(AtRuleRecord {
+                    AtRuleRecord {
                         name,
                         prelude,
                         body: AtRuleBody::Block(body),
                         children,
                         source_order: 0,
                         origin: Origin::Author,
-                    })
-                } else {
-                    None
-                };
+                    }
+                });
                 Ok(ParsedRule::Descriptor { record, rule })
             }
         }
