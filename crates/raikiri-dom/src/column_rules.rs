@@ -292,6 +292,11 @@ pub(crate) fn project(
     if document.column_rules.is_empty() {
         return Ok(result);
     }
+    // Whether each owner's rules run down the container in order, so that a
+    // page box only visits the rules that reach its page. A long container
+    // has a box on every page, and visiting all of its rules on each one
+    // would cost the page count times the rule count.
+    let mut ordered = std::collections::HashMap::<usize, bool>::new();
     for page in pages {
         work.charge(page.items.len())?;
         for item in &page.items {
@@ -336,6 +341,25 @@ pub(crate) fn project(
                     })
                     .collect();
                 row_rules.as_slice()
+            };
+            let in_order = document.nodes[owner].multicol_rows.is_empty()
+                && *ordered.entry(owner).or_insert_with(|| {
+                    source.windows(2).all(|pair| {
+                        pair[0].y <= pair[1].y
+                            && pair[0].y + pair[0].height <= pair[1].y + pair[1].height
+                    })
+                });
+            let page_end = page.content_box.y + page.content_box.height;
+            let source = if in_order {
+                // Rules ending above the page and rules starting below it
+                // are skipped; the ones between are clipped as usual.
+                let top = |rect: &PaintRect| rect.y + item.box_y + page.content_box.y;
+                let first =
+                    source.partition_point(|rect| top(rect) + rect.height <= page.content_box.y);
+                let source = &source[first..];
+                &source[..source.partition_point(|rect| top(rect) < page_end)]
+            } else {
+                source
             };
             work.charge(source.len())?;
             for &rect in source {

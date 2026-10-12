@@ -357,9 +357,15 @@ impl FragmentTree {
         self.retired.contains(&index)
     }
 
+    /// Place the records of `node_id` that have no parent under `parent`.
     pub(crate) fn reparent_roots(&mut self, node_id: usize, parent: usize) {
-        for fragment in &mut self.fragments {
-            if fragment.node_id == node_id && fragment.parent.is_none() {
+        // Every record pushed without a parent is indexed, so the records of
+        // other nodes are not visited. Reparented records are no longer roots.
+        for index in self.roots_by_node.remove(&node_id).unwrap_or_default() {
+            if let Some(fragment) = self.fragments.get_mut(index)
+                && fragment.node_id == node_id
+                && fragment.parent.is_none()
+            {
                 fragment.parent = Some(parent);
             }
         }

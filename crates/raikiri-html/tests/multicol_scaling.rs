@@ -136,6 +136,12 @@ fn case(kind: &str, n: usize) -> (String, String, String) {
             "<div class=s><p>A</p><p>A</p><p>A</p><h2 style=\"column-span:all\">S</h2></div>"
                 .repeat(n),
         ),
+        // n paragraphs paginated into ruled column groups.
+        "ruled" => (
+            "400px 200px".into(),
+            ".mc{column-count:4;column-gap:10px;column-rule:2px solid}".into(),
+            "<p>A</p>".repeat(n),
+        ),
         // The same inline boxes without columns, as a control.
         "inline-control" => (
             "400px 100000px".into(),
@@ -165,6 +171,7 @@ fn multicol_scaling_probe() {
             "inline",
             "paged",
             "owners",
+            "ruled",
         ]
         .into_iter()
         .flat_map(|kind| [64, 256].map(|n| (kind.to_string(), n)))
