@@ -274,7 +274,7 @@ pub fn feature_properties(test_html: &str, test_id: &str) -> BTreeSet<String> {
                 .any(|window| window == parts.as_slice())
         })
     };
-    let declared: BTreeSet<String> = author_declarations(test_html)
+    let declared: BTreeSet<String> = test_declarations(test_html)
         .iter()
         .map(|decl| decl.property().to_owned())
         .filter(|property| !property.starts_with("--") && named(property))
@@ -346,10 +346,22 @@ fn property_of(key: &str) -> &str {
 }
 
 /// Collect declarations from `<style>` element contents and `style`
-/// attributes. Comments and `<script>` contents are skipped.
+/// attributes. Comments, `<script>` contents and inert `<template>` contents
+/// are skipped.
 pub fn author_declarations(html: &str) -> Vec<Declaration> {
+    declarations(html, false)
+}
+
+/// Declarations of a test document, including those inside inert templates.
+/// Ablating them is harmless when they are inert, and a probe that shows they
+/// have no effect flags a PASS that only holds because the template is inert.
+fn test_declarations(html: &str) -> Vec<Declaration> {
+    declarations(html, true)
+}
+
+fn declarations(html: &str, include_inert: bool) -> Vec<Declaration> {
     let mut out = Vec::new();
-    for tag in tags(html) {
+    for tag in tags_with(html, include_inert) {
         for (attr, value) in &tag.attributes {
             if attr == "style" {
                 // The attribute value is decoded before CSS parsing; scan the
@@ -395,12 +407,19 @@ struct Tag {
 /// contents of raw-text elements are not searched for tags, so markup inside
 /// a comment or a script string does not count as an element.
 fn tags(html: &str) -> Vec<Tag> {
+    tags_with(html, false)
+}
+
+/// [`tags`], also returning the tags inside inert templates when
+/// `include_inert` is set.
+fn tags_with(html: &str, include_inert: bool) -> Vec<Tag> {
     let lower = html.to_ascii_lowercase();
     let bytes = html.as_bytes();
     let mut out = Vec::new();
     // Open `<template>` elements whose contents are inert. Their styles and
-    // metadata do not apply unless a script clones them. A declarative
-    // shadow root template is not inert; its contents become the shadow tree.
+    // metadata do not apply unless a script clones them. The DOM does not
+    // attach declarative shadow roots, so `shadowrootmode` templates stay
+    // inert too.
     let mut inert_depth = 0usize;
     let mut i = 0;
     while i < bytes.len() {
@@ -410,6 +429,16 @@ fn tags(html: &str) -> Vec<Tag> {
         }
         if lower[i..].starts_with("<!--") {
             i = comment_end(&lower, i + 4);
+            continue;
+        }
+        // `<!...>` (a doctype or bogus comment), `<?...>` and `</` not
+        // followed by a letter run to the next `>` as one token.
+        if bytes.get(i + 1) == Some(&b'!')
+            || bytes.get(i + 1) == Some(&b'?')
+            || (bytes.get(i + 1) == Some(&b'/')
+                && bytes.get(i + 2).is_some_and(|b| !b.is_ascii_alphabetic()))
+        {
+            i = lower[i..].find('>').map_or(bytes.len(), |e| i + e + 1);
             continue;
         }
         if inert_depth > 0 && end_tag_at(&lower, i, "template") {
@@ -453,18 +482,10 @@ fn tags(html: &str) -> Vec<Tag> {
         });
         let next = raw_text.as_ref().map_or(end, |content| content.end);
         let inert = inert_depth > 0;
-        if name == "template"
-            && (inert
-                || !attributes.iter().any(|(name, value)| {
-                    name == "shadowrootmode"
-                        && ["open", "closed"]
-                            .iter()
-                            .any(|mode| html[value.clone()].eq_ignore_ascii_case(mode))
-                }))
-        {
+        if name == "template" {
             inert_depth += 1;
         }
-        if !inert {
+        if !inert || include_inert {
             out.push(Tag {
                 name,
                 range: i..end,
@@ -512,7 +533,7 @@ pub fn remove_declarations(html: &str, remove: impl Fn(&str) -> bool) -> (String
     let mut out = String::with_capacity(html.len());
     let mut last = 0;
     let mut removed = 0;
-    for decl in author_declarations(html) {
+    for decl in test_declarations(html) {
         if remove(&decl.key) {
             out.push_str(&html[last..decl.range.start]);
             last = decl.range.end;
@@ -632,9 +653,11 @@ pub fn css_declarations(css: &str, inline: bool, base: usize) -> Vec<Declaration
                 i += 2;
                 continue;
             }
+            // An unescaped newline ends a string (a bad-string token).
             q @ (b'"' | b'\'') => {
                 i += 1;
-                while i < bytes.len() && bytes[i] != q {
+                while i < bytes.len() && bytes[i] != q && !matches!(bytes[i], b'\n' | b'\r' | 0x0c)
+                {
                     i += if bytes[i] == b'\\' { 2 } else { 1 };
                 }
             }
@@ -679,9 +702,8 @@ pub fn css_declarations(css: &str, inline: bool, base: usize) -> Vec<Declaration
 /// Whether `segment`, the text of a declaration up to the current position,
 /// already names a custom property and has reached its value.
 fn is_custom_property(segment: &str) -> bool {
-    segment
-        .split_once(':')
-        .is_some_and(|(name, _)| strip_comments(name).trim().starts_with("--"))
+    colon_outside_comments(segment)
+        .is_some_and(|colon| strip_comments(&segment[..colon]).trim().starts_with("--"))
 }
 
 fn push_declaration(css: &str, range: Range<usize>, base: usize, out: &mut Vec<Declaration>) {
@@ -707,6 +729,7 @@ fn push_declaration(css: &str, range: Range<usize>, base: usize, out: &mut Vec<D
     if value.is_empty() {
         return;
     }
+    let name = css_unescape(name);
     out.push(Declaration {
         range: base + range.start..base + range.end,
         // Property names are ASCII case-insensitive, custom property names
@@ -719,6 +742,37 @@ fn push_declaration(css: &str, range: Range<usize>, base: usize, out: &mut Vec<D
             format!("{}:{value}", name.to_ascii_lowercase())
         },
     });
+}
+
+/// Resolve CSS escapes in an identifier: `\` with one to six hex digits and
+/// an optional whitespace character, or `\` with any other character.
+fn css_unescape(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    let mut chars = name.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        let mut hex = String::new();
+        while hex.len() < 6 && chars.peek().is_some_and(char::is_ascii_hexdigit) {
+            hex.extend(chars.next());
+        }
+        if hex.is_empty() {
+            out.extend(chars.next());
+            continue;
+        }
+        if chars.peek().is_some_and(|c| c.is_ascii_whitespace()) {
+            chars.next();
+        }
+        let code = u32::from_str_radix(&hex, 16).unwrap_or(0);
+        out.push(
+            char::from_u32(code)
+                .filter(|&c| c != '\0')
+                .unwrap_or('\u{fffd}'),
+        );
+    }
+    out
 }
 
 /// The offset of the first `:` in `text` outside CSS comments.
@@ -753,15 +807,39 @@ fn decode_character_references(text: &str) -> (String, Vec<usize>) {
                 .take_while(|b| b.is_ascii_alphanumeric() || *b == b'#')
                 .count();
             let body = &after[..body_len];
-            if !after[body_len..].starts_with(';') {
-                return None;
-            }
+            let semicolon = after[body_len..].starts_with(';');
+            // Numeric references decode without a `;`, and so do the
+            // legacy named ones unless an alphanumeric or `=` follows.
             let c = match body.strip_prefix('#') {
-                Some(number) => match number.strip_prefix(['x', 'X']) {
-                    Some(hex) => u32::from_str_radix(hex, 16).ok(),
-                    None => number.parse().ok(),
+                Some(number) => {
+                    let (digits, radix) = match number.strip_prefix(['x', 'X']) {
+                        Some(hex) => (hex, 16),
+                        None => (number, 10),
+                    };
+                    let valid = digits
+                        .bytes()
+                        .take_while(|b| (*b as char).is_digit(radix))
+                        .count();
+                    if valid == 0 {
+                        return None;
+                    }
+                    let len = body_len - (digits.len() - valid);
+                    let c = u32::from_str_radix(&digits[..valid], radix)
+                        .ok()
+                        .and_then(char::from_u32)
+                        .unwrap_or('\u{fffd}');
+                    let semicolon = after[len..].starts_with(';');
+                    return Some((c, 1 + len + usize::from(semicolon)));
                 }
-                .and_then(char::from_u32),
+                None if !semicolon => {
+                    let legacy = [("quot", '"'), ("amp", '&'), ("lt", '<'), ("gt", '>')];
+                    return legacy.iter().find_map(|(name, c)| {
+                        let next = after.as_bytes().get(name.len());
+                        (after.starts_with(name)
+                            && !next.is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'='))
+                        .then_some((*c, 1 + name.len()))
+                    });
+                }
                 None => match body {
                     "quot" => Some('"'),
                     "apos" => Some('\''),

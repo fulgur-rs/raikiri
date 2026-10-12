@@ -345,10 +345,7 @@ fn metadata_and_styles_inside_comments_or_scripts_are_ignored() {
 #[test]
 fn declaration_keys_keep_whitespace_in_strings_and_accept_escaped_names() {
     let html = r#"<div style="content: 'a  b'  'c';  --caf\e9:  x   y; --café: 1">"#;
-    assert_eq!(
-        keys(html),
-        ["content:'a  b' 'c'", r"--caf\e9:x y", "--café:1"]
-    );
+    assert_eq!(keys(html), ["content:'a  b' 'c'", "--café:x y", "--café:1"]);
     assert_eq!(collapse_whitespace(r#" "a\"  b"   c "#), r#""a\"  b" c"#);
 }
 
@@ -386,8 +383,9 @@ fn template_contents_are_inert() {
     let html = r#"<template><style>p { color: red }</style><template><i style="width: 1px"></i></template><meta name="fuzzy" content="0-255;0-1"></template><b style="height: 2px"></b><TEMPLATE><s style="x: 1">"#;
     assert_eq!(keys(html), ["height:2px"]);
     assert!(!blank_document(html).contains("fuzzy"));
+    // Declarative shadow roots are not attached, so these stay inert too.
     let shadow = r#"<template shadowrootmode="open"><style>p { color: red }</style></template>"#;
-    assert_eq!(keys(shadow), ["color:red"]);
+    assert!(keys(shadow).is_empty());
 }
 
 #[test]
@@ -452,9 +450,39 @@ fn character_references_are_decoded_before_scanning_style_attributes() {
 }
 
 #[test]
-fn only_valid_shadow_root_modes_make_templates_active() {
-    let html = r#"<template shadowrootmode="bogus"><i style="a: 1"></template><template shadowrootmode="CLOSED"><i style="b: 2"></template>"#;
-    assert_eq!(keys(html), ["b:2"]);
+fn template_declarations_are_ablated_in_tests_only() {
+    let html = r#"<template><style>p { color: red }</style></template><b style="width: 1px">"#;
+    assert_eq!(keys(html), ["width:1px"]);
+    let (out, removed) = remove_declarations(html, |key| key.starts_with("color"));
+    assert_eq!(removed, 1);
+    assert!(!out.contains("color"), "{out}");
+}
+
+#[test]
+fn bogus_comments_and_doctypes_hide_their_markup() {
+    let html = r#"<!DOCTYPE html><!foo <style>p { a: 1 }</style>><?pi <i style="b: 2">?></ <i style="c: 3">><i style="d: 4">"#;
+    assert_eq!(keys(html), ["d:4"]);
+}
+
+#[test]
+fn css_scanning_follows_comments_strings_and_escapes() {
+    // A comment colon does not hide a custom property's value block.
+    let html = "<style>p { /* note:x */ --tokens: { color: red }; }</style>";
+    assert_eq!(keys(html), ["--tokens:{ color: red }"]);
+    // An unescaped newline ends a string, so the next declaration is found.
+    let html = "<style>p { content: \"bad\n; clear: both }</style>";
+    assert_eq!(keys(html)[1], "clear:both");
+    // Escapes in property names are resolved.
+    assert_eq!(
+        keys(r"<i style='c\olor: red; \77idth: 1px'>"),
+        ["color:red", "width:1px"]
+    );
+}
+
+#[test]
+fn semicolonless_character_references_decode_like_html() {
+    let html = r#"<i style="clear&#58 both; x&#x3a;1; y: &lt a&ltb">"#;
+    assert_eq!(keys(html), ["clear:both", "x:1", "y:< a&ltb"]);
 }
 
 #[test]
