@@ -1,4 +1,5 @@
 use super::*;
+pub(super) mod clear_break_tests;
 use crate::layout::ifc::flow::FlowGeometry;
 use crate::layout::test_support::with_ahem;
 use crate::layout::test_support::{
