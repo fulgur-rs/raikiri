@@ -18,6 +18,9 @@ pub struct LogicalSnapshot {
     pub quirks: u8,
     /// Sources paired with origin (0: UA, 1: user, 2: author).
     pub stylesheets: Vec<(String, u8)>,
+    /// The document base URL, absolute when present.
+    #[cfg_attr(feature = "snapshot-serde", serde(default))]
+    pub base_url: Option<String>,
 }
 /// Node contents and ordered children without derived state.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -107,7 +110,13 @@ impl LogicalSnapshot {
         ) {
             return fail("root kind");
         }
-        if self.quirks > 2 || self.stylesheets.iter().any(|(_, k)| *k > 2) {
+        if self.quirks > 2
+            || self.stylesheets.iter().any(|(_, k)| *k > 2)
+            || self
+                .base_url
+                .as_deref()
+                .is_some_and(|url| url::Url::parse(url).is_err())
+        {
             return fail("document metadata");
         }
         let mut parents = vec![false; n];
@@ -181,6 +190,7 @@ impl Document {
     pub fn logical_snapshot(&self) -> LogicalSnapshot {
         LogicalSnapshot {
             root: self.root,
+            base_url: self.base_url().map(|url| url.as_str().to_owned()),
             quirks: match self.quirks_mode() {
                 QuirksMode::NoQuirks => 0,
                 QuirksMode::LimitedQuirks => 1,
@@ -248,6 +258,13 @@ impl Document {
             1 => QuirksMode::LimitedQuirks,
             _ => QuirksMode::Quirks,
         });
+        // `validate` rejected a base URL that does not parse.
+        doc.set_base_url(
+            snapshot
+                .base_url
+                .as_deref()
+                .and_then(|url| url::Url::parse(url).ok()),
+        );
         for (s, k) in snapshot.stylesheets {
             doc.add_stylesheet(
                 s,

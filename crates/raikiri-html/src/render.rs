@@ -846,6 +846,9 @@ pub(crate) fn run_pipeline(
     // lays out a clone of this document, so the probe and the layout below
     // use the same fonts.
     let mut dom = doc.uncascaded.dom.clone();
+    // Paint resolves relative `url()` values against the base the images
+    // were fetched with, which the resources' fallback base can change.
+    dom.set_base_url(runtime.effective_base_url.cloned());
     let font_report = enable_inline_engine(
         &mut dom,
         resources,
