@@ -206,18 +206,14 @@ impl CascadeResult {
             &mut Vec::new(),
             &mut specified,
             parent,
-            &custom,
+            &custom.effective,
             None,
             None,
             None,
         );
         let mut computed = specified.finalize(parent, &inputs.context);
-        computed.local_custom_properties = if custom_candidates.is_empty() {
-            crate::computed::empty_custom_properties()
-        } else {
-            std::sync::Arc::clone(&custom)
-        };
-        computed.custom_properties = custom;
+        computed.local_custom_properties = custom.local;
+        computed.custom_properties = custom.effective;
         Some(computed)
     }
 }

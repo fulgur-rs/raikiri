@@ -174,6 +174,17 @@ impl CustomPropertyEnvironment {
         })
     }
 
+    /// Create an environment containing only one node's local resolved values.
+    ///
+    /// This intentionally has no parent so local bookkeeping cannot retain an
+    /// inherited environment chain.
+    pub(crate) fn from_local_only(local: HashMap<SmolStr, Option<SmolStr>>) -> Arc<Self> {
+        Arc::new(Self {
+            parent: None,
+            local,
+        })
+    }
+
     /// Create a root environment from an already resolved flat map.
     #[cfg(test)]
     pub(crate) fn from_map(values: HashMap<SmolStr, SmolStr>) -> Arc<Self> {
@@ -220,6 +231,16 @@ impl CustomPropertyEnvironment {
     /// registrations are local by default.
     pub(crate) fn get_local(&self, name: &str) -> Option<SmolStr> {
         self.local.get(name).cloned().flatten()
+    }
+
+    /// Whether this environment's own layer contains `name` with `value`.
+    ///
+    /// Unlike [`Self::get_local`], this distinguishes an absent name from a
+    /// present guaranteed-invalid tombstone.
+    pub(crate) fn local_binding_matches(&self, name: &str, value: &Option<SmolStr>) -> bool {
+        self.local
+            .get(name)
+            .is_some_and(|local_value| local_value == value)
     }
 
     /// Number of entries owned by this environment, for bounded regression

@@ -1624,6 +1624,215 @@ fn prepared<T>(slot: &OnceCell<T>, expected: u64, build: impl FnOnce() -> (T, u6
     })
 }
 
+#[derive(Clone, Copy)]
+enum CustomPropertyEnvironmentShape {
+    RepeatedEqual,
+    Changed,
+    Distinct,
+    DistantEqual,
+    WideEqual,
+}
+
+struct CustomPropertyEnvironmentWorkload {
+    doc: BenchDoc,
+    tree: RuleTree,
+    element_ids: Vec<usize>,
+    checksum: u64,
+}
+
+fn custom_property_environment_workload(
+    n_elems: usize,
+    shape: CustomPropertyEnvironmentShape,
+) -> CustomPropertyEnvironmentWorkload {
+    let mut doc = match shape {
+        CustomPropertyEnvironmentShape::WideEqual => BenchDoc::wide(n_elems),
+        _ => BenchDoc::chain(n_elems),
+    };
+    let element_ids = match shape {
+        CustomPropertyEnvironmentShape::WideEqual => doc.nodes[1].children.clone(),
+        _ => (1..=n_elems).collect(),
+    };
+
+    if matches!(shape, CustomPropertyEnvironmentShape::WideEqual) {
+        doc.nodes[1].style = Some("--repeat: red; --ancestor: blue".to_owned());
+    }
+    for (index, &element_id) in element_ids.iter().enumerate() {
+        doc.nodes[element_id].style = Some(match shape {
+            CustomPropertyEnvironmentShape::RepeatedEqual => {
+                if index == 0 {
+                    "--repeat: red; --ancestor: blue".to_owned()
+                } else {
+                    "--repeat: red".to_owned()
+                }
+            }
+            CustomPropertyEnvironmentShape::Changed => {
+                if index == 0 {
+                    format!("--repeat: value-{index}; --ancestor: blue")
+                } else {
+                    format!("--repeat: value-{index}")
+                }
+            }
+            CustomPropertyEnvironmentShape::Distinct => {
+                let property = format!("--level-{index}");
+                if index == 0 {
+                    format!("{property}: value-{index}; --ancestor: blue")
+                } else {
+                    format!("{property}: value-{index}")
+                }
+            }
+            CustomPropertyEnvironmentShape::DistantEqual => match index {
+                0 => "--repeat: red; --ancestor: blue".to_owned(),
+                index if index % 2 == 1 => "--other: blue".to_owned(),
+                _ => "--repeat: red".to_owned(),
+            },
+            CustomPropertyEnvironmentShape::WideEqual => {
+                "--repeat: red; --ancestor: blue".to_owned()
+            }
+        });
+    }
+
+    let tree = RuleTree::empty();
+    let probe = cascade(&doc, &tree).expect(CASCADE_WITHIN_LIMITS);
+    let mut checksum = 0u64;
+    let mut expected_checksum = 0u64;
+    for (index, &element_id) in element_ids.iter().enumerate() {
+        let primary_name = match shape {
+            CustomPropertyEnvironmentShape::Distinct => format!("--level-{index}"),
+            _ => "--repeat".to_owned(),
+        };
+        let expected_primary = match shape {
+            CustomPropertyEnvironmentShape::RepeatedEqual
+            | CustomPropertyEnvironmentShape::DistantEqual
+            | CustomPropertyEnvironmentShape::WideEqual => "red".to_owned(),
+            CustomPropertyEnvironmentShape::Changed | CustomPropertyEnvironmentShape::Distinct => {
+                format!("value-{index}")
+            }
+        };
+        let values = &probe.computed[element_id];
+        let actual_primary = values
+            .resolved_custom_property(&primary_name)
+            .expect("primary custom property resolves");
+        let actual_ancestor = values
+            .resolved_custom_property("--ancestor")
+            .expect("ancestor-only custom property resolves");
+        assert_eq!(actual_primary, expected_primary, "element {index}");
+        assert_eq!(actual_ancestor, "blue", "element {index}");
+        checksum = checksum
+            .wrapping_add(actual_primary.bytes().map(u64::from).sum())
+            .wrapping_add(actual_ancestor.bytes().map(u64::from).sum());
+        expected_checksum = expected_checksum
+            .wrapping_add(expected_primary.bytes().map(u64::from).sum())
+            .wrapping_add("blue".bytes().map(u64::from).sum());
+    }
+    assert_eq!(checksum, expected_checksum);
+
+    CustomPropertyEnvironmentWorkload {
+        doc,
+        tree,
+        element_ids,
+        checksum,
+    }
+}
+
+fn bench_custom_property_environment(c: &mut Criterion) {
+    let mut group = c.benchmark_group("custom_property_environment");
+    for (name, n_elems, shape) in [
+        (
+            "repeated_equal_chain_1k",
+            1_000,
+            CustomPropertyEnvironmentShape::RepeatedEqual,
+        ),
+        (
+            "repeated_equal_chain_10k",
+            10_000,
+            CustomPropertyEnvironmentShape::RepeatedEqual,
+        ),
+        (
+            "repeated_equal_chain_100k",
+            100_000,
+            CustomPropertyEnvironmentShape::RepeatedEqual,
+        ),
+        (
+            "changed_value_chain_10k",
+            10_000,
+            CustomPropertyEnvironmentShape::Changed,
+        ),
+        (
+            "distinct_name_chain_10k",
+            10_000,
+            CustomPropertyEnvironmentShape::Distinct,
+        ),
+        (
+            "distant_equal_chain_10k",
+            10_000,
+            CustomPropertyEnvironmentShape::DistantEqual,
+        ),
+        (
+            "wide_equal_siblings_10k",
+            10_000,
+            CustomPropertyEnvironmentShape::WideEqual,
+        ),
+    ] {
+        let slot = OnceCell::new();
+        let checksum_logged = OnceCell::new();
+        group.throughput(Throughput::Elements(n_elems as u64));
+        group.bench_function(name, |b| {
+            let workload = prepared(&slot, n_elems as u64, || {
+                let workload = custom_property_environment_workload(n_elems, shape);
+                (workload, n_elems as u64)
+            });
+            if checksum_logged.get().is_none() {
+                eprintln!(
+                    "custom_property_environment {name} checksum={}",
+                    workload.checksum
+                );
+                let _ = checksum_logged.set(());
+            }
+            b.iter_with_large_drop(|| {
+                cascade(&workload.doc, &workload.tree).expect(CASCADE_WITHIN_LIMITS)
+            });
+        });
+    }
+
+    for (name, property) in [
+        ("lookup_redeclared_name_10k", "--repeat"),
+        ("lookup_ancestor_only_name_10k", "--ancestor"),
+    ] {
+        let slot = OnceCell::new();
+        let checksum_logged = OnceCell::new();
+        group.throughput(Throughput::Elements(1));
+        group.bench_function(name, |b| {
+            let workload = prepared(&slot, 10_000, || {
+                let workload = custom_property_environment_workload(
+                    10_000,
+                    CustomPropertyEnvironmentShape::RepeatedEqual,
+                );
+                (workload, 10_000)
+            });
+            let probe = cascade(&workload.doc, &workload.tree).expect(CASCADE_WITHIN_LIMITS);
+            let values = &probe.computed[*workload.element_ids.last().expect("non-empty chain")];
+            let expected = if property == "--repeat" {
+                "red"
+            } else {
+                "blue"
+            };
+            assert_eq!(
+                values.resolved_custom_property(property).as_deref(),
+                Some(expected)
+            );
+            if checksum_logged.get().is_none() {
+                eprintln!(
+                    "custom_property_environment {name} checksum={}",
+                    workload.checksum
+                );
+                let _ = checksum_logged.set(());
+            }
+            b.iter(|| std::hint::black_box(values.resolved_custom_property(property)));
+        });
+    }
+    group.finish();
+}
+
 /// Splits a workload builder's `(doc, tree, count)` into the cached pair and
 /// its count.
 // cov:ignore: bench harness — same reason as `BenchDoc::chain` above.
@@ -2052,5 +2261,6 @@ fn bench_cascade(c: &mut Criterion) {
 fn main() {
     let mut criterion = Criterion::default().configure_from_args();
     bench_cascade(&mut criterion);
+    bench_custom_property_environment(&mut criterion);
     criterion.final_summary();
 }

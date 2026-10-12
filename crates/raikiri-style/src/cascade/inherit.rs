@@ -647,13 +647,15 @@ pub(crate) fn walk_from<D: StyleDom>(
             (computed, custom_properties, root_ctx, source)
         } else {
             let (element_candidates, element_custom) = input.element(shared);
-            let local_custom_properties = element_custom
+            let resolved_custom_properties = element_custom
                 .map(|candidates| resolve_custom_properties(&parent_custom_properties, candidates));
-            let custom_properties = local_custom_properties
-                .clone()
+            let custom_properties = resolved_custom_properties
+                .as_ref()
+                .map(|resolved| resolved.effective.clone())
                 .unwrap_or_else(|| parent_custom_properties.clone());
-            let local_custom_properties =
-                local_custom_properties.unwrap_or_else(empty_custom_properties);
+            let local_custom_properties = resolved_custom_properties
+                .map(|resolved| resolved.local)
+                .unwrap_or_else(empty_custom_properties);
 
             // Phase 1: apply this node's cascade winners to the initial state of
             // the inheritance walk (inherited fields copied from the parent's
@@ -776,14 +778,16 @@ pub(crate) fn walk_from<D: StyleDom>(
                     if candidates.is_none() && custom_candidates.is_none() {
                         continue;
                     }
-                    let pseudo_local_custom_properties = custom_candidates.map(|candidates| {
+                    let pseudo_resolved_custom_properties = custom_candidates.map(|candidates| {
                         resolve_custom_properties(&custom_properties, candidates)
                     });
-                    let pseudo_custom_properties = pseudo_local_custom_properties
-                        .clone()
+                    let pseudo_custom_properties = pseudo_resolved_custom_properties
+                        .as_ref()
+                        .map(|resolved| resolved.effective.clone())
                         .unwrap_or_else(|| custom_properties.clone());
-                    let pseudo_local_custom_properties =
-                        pseudo_local_custom_properties.unwrap_or_else(empty_custom_properties);
+                    let pseudo_local_custom_properties = pseudo_resolved_custom_properties
+                        .map(|resolved| resolved.local)
+                        .unwrap_or_else(empty_custom_properties);
 
                     let mut pseudo_specified = if pseudo == PseudoElem::Marker {
                         SpecifiedValues::inherit_marker_from(&computed)

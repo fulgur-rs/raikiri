@@ -1082,6 +1082,229 @@ fn deep_custom_property_chain_keeps_persistent_environment_deltas() {
 }
 
 #[test]
+fn redeclared_equal_custom_property_reuses_effective_environment_but_stays_local() {
+    const DEPTH: usize = 256;
+    let mut doc = TestDoc::new();
+    let mut parent = 0;
+    let mut ids = Vec::with_capacity(DEPTH);
+    for _ in 0..DEPTH {
+        let id = doc.push_element(parent, "div", Some("--same: red"));
+        ids.push(id);
+        parent = id;
+    }
+
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    for (index, id) in ids.iter().copied().enumerate() {
+        let computed = &result.computed[id];
+        assert_eq!(
+            computed.resolved_custom_property("--same").as_deref(),
+            Some("red")
+        );
+        assert_eq!(
+            computed.local_resolved_custom_property("--same").as_deref(),
+            Some("red")
+        );
+        assert_eq!(computed.local_resolved_custom_property("--ancestor"), None);
+        assert_eq!(computed.local_custom_properties.local_entry_count(), 1);
+        if index > 0 {
+            assert!(
+                computed
+                    .local_custom_properties
+                    .parent_environment()
+                    .is_none()
+            );
+            assert!(std::sync::Arc::ptr_eq(
+                &computed.custom_properties,
+                &result.computed[ids[index - 1]].custom_properties
+            ));
+        }
+    }
+}
+
+#[test]
+fn resolved_equal_custom_property_reuses_parent_layer() {
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "div", Some("--seed: red; --same: red"));
+    let child = doc.push_element(parent, "div", Some("--same: var(--seed)"));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    assert_eq!(
+        result.computed[child]
+            .resolved_custom_property("--same")
+            .as_deref(),
+        Some("red")
+    );
+    assert_eq!(
+        result.computed[child]
+            .local_resolved_custom_property("--same")
+            .as_deref(),
+        Some("red")
+    );
+    assert!(std::sync::Arc::ptr_eq(
+        &result.computed[child].custom_properties,
+        &result.computed[parent].custom_properties
+    ));
+}
+
+#[test]
+fn distant_equal_custom_property_keeps_an_overlay() {
+    let mut doc = TestDoc::new();
+    let ancestor = doc.push_element(0, "div", Some("--same: red"));
+    let parent = doc.push_element(ancestor, "section", Some("--other: blue"));
+    let child = doc.push_element(parent, "p", Some("--same: red"));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    assert_eq!(
+        result.computed[child]
+            .resolved_custom_property("--same")
+            .as_deref(),
+        Some("red")
+    );
+    assert_eq!(
+        result.computed[child]
+            .local_resolved_custom_property("--same")
+            .as_deref(),
+        Some("red")
+    );
+    assert!(!std::sync::Arc::ptr_eq(
+        &result.computed[child].custom_properties,
+        &result.computed[parent].custom_properties
+    ));
+}
+
+#[test]
+fn local_tombstone_masks_inherited_value_and_uses_var_fallback() {
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "div", Some("--accent: red"));
+    let child = doc.push_element(
+        parent,
+        "p",
+        Some("--accent: var(--missing); color: var(--accent, blue)"),
+    );
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    assert_eq!(
+        result.computed[child].resolved_custom_property("--accent"),
+        None
+    );
+    assert_eq!(
+        result.computed[child].local_resolved_custom_property("--accent"),
+        None
+    );
+    assert_eq!(result.computed[child].color, BLUE);
+    assert!(!std::sync::Arc::ptr_eq(
+        &result.computed[child].custom_properties,
+        &result.computed[parent].custom_properties
+    ));
+}
+
+#[test]
+fn tombstone_reuses_a_matching_parent_layer_but_not_an_absent_binding() {
+    let mut doc = TestDoc::new();
+    let valid = doc.push_element(0, "div", Some("--accent: red"));
+    let tombstone = doc.push_element(
+        valid,
+        "div",
+        Some("--accent: var(--missing); color: var(--accent, blue)"),
+    );
+    let repeated_tombstone = doc.push_element(
+        tombstone,
+        "div",
+        Some("--accent: var(--missing); color: var(--accent, blue)"),
+    );
+    let absent_parent = doc.push_element(0, "section", None);
+    let absent_tombstone = doc.push_element(
+        absent_parent,
+        "p",
+        Some("--accent: var(--missing); color: var(--accent, blue)"),
+    );
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    assert!(std::sync::Arc::ptr_eq(
+        &result.computed[repeated_tombstone].custom_properties,
+        &result.computed[tombstone].custom_properties
+    ));
+    assert_eq!(
+        result.computed[repeated_tombstone]
+            .local_custom_properties
+            .local_entry_count(),
+        1
+    );
+    assert_eq!(
+        result.computed[repeated_tombstone].local_resolved_custom_property("--accent"),
+        None
+    );
+    assert_eq!(result.computed[tombstone].color, BLUE);
+    assert_eq!(result.computed[repeated_tombstone].color, BLUE);
+
+    assert!(!std::sync::Arc::ptr_eq(
+        &result.computed[absent_tombstone].custom_properties,
+        &result.computed[absent_parent].custom_properties
+    ));
+    assert_eq!(
+        result.computed[absent_tombstone]
+            .local_custom_properties
+            .local_entry_count(),
+        1
+    );
+    assert_eq!(
+        result.computed[absent_tombstone].local_resolved_custom_property("--accent"),
+        None
+    );
+    assert_eq!(result.computed[absent_tombstone].color, BLUE);
+}
+
+#[test]
+fn changed_multi_property_values_remain_overlays_and_siblings_are_isolated() {
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "div", Some("--first: red; --second: blue"));
+    let equal_sibling = doc.push_element(parent, "section", Some("--first: red; --second: blue"));
+    let changed_sibling =
+        doc.push_element(parent, "section", Some("--first: green; --second: blue"));
+    let equal_leaf = doc.push_element(equal_sibling, "p", Some("color: var(--first)"));
+    let changed_leaf = doc.push_element(changed_sibling, "p", Some("color: var(--first)"));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    assert!(std::sync::Arc::ptr_eq(
+        &result.computed[equal_sibling].custom_properties,
+        &result.computed[parent].custom_properties
+    ));
+    assert!(!std::sync::Arc::ptr_eq(
+        &result.computed[changed_sibling].custom_properties,
+        &result.computed[parent].custom_properties
+    ));
+    assert_eq!(
+        result.computed[equal_sibling].local_resolved_custom_property("--first"),
+        Some("red".into())
+    );
+    assert_eq!(
+        result.computed[changed_sibling].local_resolved_custom_property("--first"),
+        Some("green".into())
+    );
+    assert_eq!(
+        result.computed[equal_sibling].local_resolved_custom_property("--second"),
+        Some("blue".into())
+    );
+    assert_eq!(result.computed[equal_leaf].color, RED);
+    assert_eq!(
+        result.computed[changed_leaf].color,
+        CssColor {
+            r: 0,
+            g: 128,
+            b: 0,
+            a: 255,
+        }
+    );
+}
+
+#[test]
 fn invalid_var_keeps_inherited_property_value() {
     let mut doc = TestDoc::new();
     let parent = doc.push_element(0, "div", Some("color: red"));

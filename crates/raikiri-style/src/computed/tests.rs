@@ -9,6 +9,35 @@ use crate::resolve::{
 };
 
 #[test]
+fn local_binding_matches_requires_a_present_exact_binding() {
+    let empty = empty_custom_properties();
+    let environment = CustomPropertyEnvironment::from_local(
+        &empty,
+        HashMap::from([
+            (SmolStr::from("--color"), Some(SmolStr::from("red"))),
+            (SmolStr::from("--invalid"), None),
+        ]),
+    );
+
+    assert!(environment.local_binding_matches("--color", &Some(SmolStr::from("red"))));
+    assert!(!environment.local_binding_matches("--color", &Some(SmolStr::from("blue"))));
+    assert!(environment.local_binding_matches("--invalid", &None));
+    assert!(!environment.local_binding_matches("--missing", &None));
+}
+
+#[test]
+fn local_only_environment_does_not_retain_a_parent() {
+    let environment = CustomPropertyEnvironment::from_local_only(HashMap::from([(
+        SmolStr::from("--local"),
+        Some(SmolStr::from("green")),
+    )]));
+
+    assert!(environment.parent_environment().is_none());
+    assert_eq!(environment.get_local("--local"), Some("green".into()));
+    assert_eq!(environment.get("--inherited"), None);
+}
+
+#[test]
 fn custom_property_environment_equality_uses_effective_bindings() {
     let empty = empty_custom_properties();
     let inherited = CustomPropertyEnvironment::from_local(
