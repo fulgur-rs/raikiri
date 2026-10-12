@@ -9,7 +9,6 @@
 use anyrender::Scene;
 use anyrender::recording::RenderCommand;
 use kurbo::{Affine, BezPath, PathEl, Point};
-use raikiri_dom::CounterSnapshotBudget;
 use raikiri_html::{
     ClipKind, DocumentLayout, FontCollectionBuilder, LayoutConfig, LayoutOptions, LayoutStatus,
     Page, PageDefaults, PaintEvent, PaintRect, PaintTransform, RenderFonts, RenderResources,
@@ -68,7 +67,6 @@ fn vertices(transform: Affine, path: &BezPath) -> Vec<Point> {
 fn painted(page: &Page<'_>, page_count: u32) -> (Vec<Vec<Point>>, Vec<Vec<Point>>) {
     let (document, cascade, page_box, origin) = page.paint_inputs();
     let mut scene = Scene::new();
-    let mut budget = CounterSnapshotBudget::default();
     paint_single_page_with_origin_and_page(
         &mut scene,
         document,
@@ -78,7 +76,6 @@ fn painted(page: &Page<'_>, page_count: u32) -> (Vec<Vec<Point>>, Vec<Vec<Point>
         page.index(),
         page_count,
         page.index() % 2 == 1,
-        &mut budget,
     )
     .expect("paint");
     let mut fills = Vec::new();

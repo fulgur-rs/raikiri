@@ -62,15 +62,8 @@ fn raster(body: &str) -> Vec<u8> {
     let page = result.page(0).unwrap();
     let (document, cascade, page_box, _) = page.paint_inputs();
     let mut scene = Scene::new();
-    raikiri_paint::paint_single_page_with_images(
-        &mut scene,
-        document,
-        cascade,
-        page_box,
-        &pixels,
-        &mut raikiri_dom::CounterSnapshotBudget::default(),
-    )
-    .unwrap();
+    raikiri_paint::paint_single_page_with_images(&mut scene, document, cascade, page_box, &pixels)
+        .unwrap();
     anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
         |out| out.append_scene(scene, Affine::IDENTITY),
         200,

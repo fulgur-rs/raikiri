@@ -5,7 +5,7 @@
 //! page the body walk is traced with `trace_paint_order` and both sequences
 //! are reduced to a common shape before they are compared.
 
-use raikiri_dom::{CounterSnapshotBudget, Document};
+use raikiri_dom::Document;
 use raikiri_html::{
     ClipKind, DocumentLayout, FontCollectionBuilder, FragmentKind, LayoutConfig, LayoutOptions,
     LayoutStatus, NodeKind, Page, PageDefaults, PaintEvent, RenderFonts, RenderResources, layout,
@@ -65,16 +65,7 @@ enum Step {
 
 fn trace(page: &Page<'_>) -> Vec<PaintTraceEvent> {
     let (document, cascade, page_box, origin) = page.paint_inputs();
-    let mut budget = CounterSnapshotBudget::default();
-    trace_paint_order(
-        document,
-        cascade,
-        page_box,
-        origin,
-        Some(page.name()),
-        &mut budget,
-    )
-    .expect("trace")
+    trace_paint_order(document, cascade, page_box, origin, Some(page.name())).expect("trace")
 }
 
 /// The walker's steps, normalized without column clips and their closing
@@ -568,16 +559,10 @@ fn relative_box_paints_at_its_public_fragment_coordinates() {
 
         let pixels = |page: Page<'_>| {
             let (document, cascade, page_box, origin) = page.paint_inputs();
-            let mut budget = CounterSnapshotBudget::default();
             anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
                 |scene| {
                     raikiri_paint::paint_single_page_with_origin(
-                        scene,
-                        document,
-                        cascade,
-                        page_box,
-                        origin,
-                        &mut budget,
+                        scene, document, cascade, page_box, origin,
                     )
                     .expect("paint");
                 },

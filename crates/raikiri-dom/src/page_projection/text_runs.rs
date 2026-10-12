@@ -70,12 +70,14 @@ pub(super) fn prepare_markers(
     if owners.is_empty() {
         return Ok(markers);
     }
-    let snapshots = crate::counter_snapshots(document, cascade).map_err(|error| {
-        raikiri_traits::LayoutError::CounterSnapshotLimitExceeded {
-            limit: error.limit,
-            actual: error.actual,
-        }
-    })?;
+    let snapshots = document
+        .shared_counter_snapshots(cascade)
+        .map_err(
+            |error| raikiri_traits::LayoutError::CounterSnapshotLimitExceeded {
+                limit: error.limit,
+                actual: error.actual,
+            },
+        )?;
     let mut first_pages = BTreeMap::new();
     for page in pages {
         for item in &page.items {

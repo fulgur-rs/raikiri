@@ -93,15 +93,8 @@ fn inline_relative_image_uses_taffy_inset_once_when_painted() {
         }),
     );
     let mut scene = Scene::new();
-    paint_single_page_with_images(
-        &mut scene,
-        &document,
-        &cascade,
-        PageBox::A4,
-        &source,
-        &mut raikiri_dom::CounterSnapshotBudget::default(),
-    )
-    .expect("paint succeeds");
+    paint_single_page_with_images(&mut scene, &document, &cascade, PageBox::A4, &source)
+        .expect("paint succeeds");
 
     let image_fills: Vec<_> = scene
         .commands

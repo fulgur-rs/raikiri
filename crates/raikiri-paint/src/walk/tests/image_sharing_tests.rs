@@ -55,7 +55,6 @@ fn scene_for_pages(
             crate::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width_and_images(
                 &mut scene, &parsed.dom, &cascade, PageBox::A4, 0.0,
                 page, pages, false, None, None, PageBox::A4.width, source,
-                &mut raikiri_dom::CounterSnapshotBudget::default(),
             ).unwrap();
             continue;
         }
@@ -65,7 +64,6 @@ fn scene_for_pages(
             &cascade,
             PageBox::A4,
             source,
-            &mut raikiri_dom::CounterSnapshotBudget::default(),
         )
         .unwrap();
         assert!(warnings.is_empty());

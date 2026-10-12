@@ -2839,7 +2839,6 @@ pub(crate) fn render_raikiri_pages_with_resources(
     let page_count = slices.len() as u32;
     let mut pages = Vec::with_capacity(slices.len());
     let mut raster_budget = RasterBufferBudget::new();
-    let mut counter_snapshot_budget = raikiri_dom::CounterSnapshotBudget::default();
     for slice in slices {
         let mut query = PageContextQuery::default();
         query.page_name = slice
@@ -2913,7 +2912,6 @@ pub(crate) fn render_raikiri_pages_with_resources(
                         fixed_page_width,
                         pixel_source,
                         &custom_highlights,
-                        &mut counter_snapshot_budget,
                     );
                 } else {
                     paint_result = raikiri_paint::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width_and_highlights(
@@ -2929,7 +2927,6 @@ pub(crate) fn render_raikiri_pages_with_resources(
                         active_page_name.as_deref(),
                         fixed_page_width,
                         &custom_highlights,
-                        &mut counter_snapshot_budget,
                     );
                 }
             },

@@ -759,6 +759,39 @@ pub fn counter_snapshots(
     counter_snapshots_with_budget(doc, cascade, &mut CounterSnapshotBudget::default())
 }
 
+/// Counter snapshots shared between the stages that render one layout, or
+/// the limit error that building them hit.
+pub(crate) type SharedCounterSnapshots =
+    Result<std::sync::Arc<[CounterSnapshot]>, CounterSnapshotLimitExceeded>;
+
+impl Document {
+    /// The [`counter_snapshots`] of this document for `cascade`, built once
+    /// and shared by layout, page projection, paint and generated-content
+    /// resolution until the tree changes.
+    ///
+    /// Counters read only the element cascade, so the snapshots are reused
+    /// for every cascade with the same
+    /// [`CascadeResult::element_generation`]. A cascade with another
+    /// generation gets snapshots of its own, which are not kept. The memory
+    /// budget is charged once for the shared build, so a multi-page render no
+    /// longer pays it per page.
+    pub fn shared_counter_snapshots(
+        &self,
+        cascade: &CascadeResult,
+    ) -> Result<std::sync::Arc<[CounterSnapshot]>, CounterSnapshotLimitExceeded> {
+        let generation = cascade.element_generation();
+        let build = || counter_snapshots(self, cascade).map(std::sync::Arc::from);
+        let (cached_generation, cached) = self
+            .counter_snapshot_cache
+            .get_or_init(|| (generation, build()));
+        if *cached_generation == generation {
+            cached.clone()
+        } else {
+            build()
+        }
+    }
+}
+
 /// Build named-counter snapshots while consuming a caller-owned cumulative
 /// budget. Reusing one budget across pages bounds the total clone and
 /// allocation work for the whole multi-page render.

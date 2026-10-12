@@ -281,7 +281,8 @@ impl Document {
     /// A relayout that resumes at a page start uses this for the content
     /// wholly before the start, which an earlier layout already placed on
     /// finished pages: the relayout spends no layout on it, but the counters
-    /// in effect after it, such as list item numbers, do not change.
+    /// in effect after it, such as list item numbers, do not change. The
+    /// shared counter snapshots therefore stay valid.
     pub fn skip_layout(&mut self, cascade: &mut CascadeResult, roots: &[usize]) {
         for &id in roots {
             if let Some(computed) = cascade.computed.get_mut(id)

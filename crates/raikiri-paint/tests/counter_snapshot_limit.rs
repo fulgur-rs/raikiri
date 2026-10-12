@@ -2,8 +2,7 @@
 
 use anyrender::Scene;
 use raikiri_dom::{
-    CounterSnapshotBudget, Document, MAX_COUNTER_SNAPSHOT_ESTIMATED_BYTES, counter_snapshots,
-    layout_single_page,
+    Document, MAX_COUNTER_SNAPSHOT_ESTIMATED_BYTES, counter_snapshots, layout_single_page,
 };
 use raikiri_paint::{paint_single_page, paint_single_page_with_origin};
 use raikiri_style::{build_rule_tree, cascade};
@@ -87,7 +86,6 @@ fn counter_snapshot_budget_fails_closed_at_api_layout_and_paint_boundaries() {
         &cascade,
         PageBox::A4,
         &EmptyPixels,
-        &mut CounterSnapshotBudget::default(),
     )
     .expect_err("image paint must propagate the counter snapshot limit");
     assert!(matches!(
@@ -103,8 +101,12 @@ fn counter_snapshot_budget_fails_closed_at_api_layout_and_paint_boundaries() {
     );
 }
 
+/// Every page slice reads the snapshots built once for the document, so a
+/// document whose snapshots fit the limit paints any number of pages. Each
+/// page used to rebuild them and charge one shared budget, which this
+/// document exceeds on its second page.
 #[test]
-fn multipage_paint_shares_one_counter_snapshot_budget() {
+fn multipage_paint_shares_one_counter_snapshot_build() {
     const COUNTER_COUNT: usize = 512;
     const DESCENDANT_COUNT: usize = 1024;
 
@@ -135,35 +137,25 @@ fn multipage_paint_shares_one_counter_snapshot_budget() {
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade succeeds");
 
-    let mut budget = CounterSnapshotBudget::default();
-    let mut first_page = Scene::new();
-    paint_single_page_with_origin(
-        &mut first_page,
-        &document,
-        &cascade,
-        PageBox::A4,
-        0.0,
-        &mut budget,
-    )
-    .expect("the first page stays within the shared snapshot budget");
-
-    let mut second_page = Scene::new();
-    let error = paint_single_page_with_origin(
-        &mut second_page,
-        &document,
-        &cascade,
-        PageBox::A4,
-        PageBox::A4.height,
-        &mut budget,
-    )
-    .expect_err("the second page must consume the same operation budget");
-
-    assert!(matches!(
-        error,
-        RenderError::LimitExceeded {
-            kind: LimitKind::CounterSnapshots,
-            ..
-        }
-    ));
-    assert!(second_page.commands.is_empty());
+    let shared = document
+        .shared_counter_snapshots(&cascade)
+        .expect("one build stays within the snapshot limit");
+    for page in 0..4 {
+        let mut scene = Scene::new();
+        paint_single_page_with_origin(
+            &mut scene,
+            &document,
+            &cascade,
+            PageBox::A4,
+            page as f32 * PageBox::A4.height,
+        )
+        .expect("every page reuses the shared snapshots");
+    }
+    let again = document
+        .shared_counter_snapshots(&cascade)
+        .expect("the shared snapshots stay cached");
+    assert!(
+        std::sync::Arc::ptr_eq(&shared, &again),
+        "painting must not rebuild the shared snapshots"
+    );
 }
