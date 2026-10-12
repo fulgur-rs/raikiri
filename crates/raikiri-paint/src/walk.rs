@@ -4219,8 +4219,10 @@ fn paint_element_background_slice(
     let color = Color::from_rgba8(effective.r, effective.g, effective.b, effective.a);
     // When an opaque background and all border sides use the same color, the
     // visible union is the border-box curve. Painting that union once avoids
-    // a one-pixel seam where an inner clipped fill meets its border ring.
+    // a one-pixel seam where an inner clipped fill meets its border ring. A
+    // gradient is not one color, so it keeps its own clip.
     let border_box_union = matches!(clip, VisualBox::PaddingBox | VisualBox::ContentBox)
+        && !has_gradient
         && [&border.top, &border.right, &border.bottom, &border.left]
             .iter()
             .all(|side| {

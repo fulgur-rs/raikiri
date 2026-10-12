@@ -6,8 +6,8 @@
 
 use super::*;
 use raikiri_style::property::{
-    GradientColorStop, HorizontalSide, LinearGradient, LinearGradientDirection, RadialExtent,
-    RadialGradient, RadialShape, RadialSize, VerticalSide,
+    BackgroundRepeatKeyword, GradientColorStop, HorizontalSide, LinearGradient,
+    LinearGradientDirection, RadialExtent, RadialGradient, RadialShape, RadialSize, VerticalSide,
 };
 
 /// What one gradient tile is filled with.
@@ -71,9 +71,13 @@ pub(super) fn paint_gradient_layer(
     let Some((tile_w, tile_h)) = gradient_image_size(size, positioning) else {
         return true;
     };
-    // A tile below one pixel cannot be drawn without coverage gaps; like
-    // browsers, paint such a gradient in one-pixel tiles.
-    let (tile_w, tile_h) = (tile_w.max(1.0), tile_h.max(1.0));
+    // Repeated tiles below one pixel cannot be drawn without coverage gaps;
+    // like browsers, repeat such a gradient in one-pixel tiles. A single
+    // tile keeps its size.
+    let repeats = |keyword| !matches!(keyword, BackgroundRepeatKeyword::NoRepeat);
+    let (repeat_x, repeat_y) = (repeats(repeat.x), repeats(repeat.y));
+    let tile_w = if repeat_x { tile_w.max(1.0) } else { tile_w };
+    let tile_h = if repeat_y { tile_h.max(1.0) } else { tile_h };
     let Some(tiles) = background_tiles(
         (
             positioning.x0,
@@ -105,13 +109,18 @@ pub(super) fn paint_gradient_layer(
     for tile_y in &tiles.y {
         for tile_x in &tiles.x {
             // Tile edges snap to whole pixels so neighboring tiles meet
-            // without antialiased seams; the painting area keeps its own
-            // edges.
+            // without antialiased seams; a single tile thinner than a pixel
+            // and the painting area keep their own edges.
+            let snap = |edge: f64, snaps: bool| if snaps { edge.round() } else { edge };
+            let (snap_x, snap_y) = (
+                repeat_x || tiles.width >= 1.0,
+                repeat_y || tiles.height >= 1.0,
+            );
             let shape = Rect::new(
-                tile_x.round(),
-                tile_y.round(),
-                (tile_x + tiles.width).round(),
-                (tile_y + tiles.height).round(),
+                snap(*tile_x, snap_x),
+                snap(*tile_y, snap_y),
+                snap(tile_x + tiles.width, snap_x),
+                snap(tile_y + tiles.height, snap_y),
             )
             .intersect(painting);
             if shape.width() <= 0.0 || shape.height() <= 0.0 {
@@ -139,7 +148,7 @@ pub(super) fn paint_gradient_layer(
 /// The fill of one linear or radial gradient tile placed at the origin.
 ///
 /// Returns `None` for a conic gradient and for a gradient with nothing to
-/// paint, such as a radial gradient whose ending shape has no size.
+/// paint, such as one without color stops.
 pub(super) fn gradient_fill(
     gradient: &Gradient,
     tile: Rect,
@@ -205,7 +214,7 @@ fn linear_fill(
     let center = tile.center();
     let start = center - direction * (length / 2.0);
     let line = direction * length;
-    let stops = resolved_stops(&linear.stops, length, current_color);
+    let stops = resolved_stops(&linear.stops, length, length, current_color);
     let (first, last, stops) = match normalize_stops(stops, linear.repeating)? {
         Normalized::Solid(color) => return Some(GradientFill::Solid(color)),
         Normalized::Stops { first, last, stops } => (first, last, stops),
@@ -288,10 +297,37 @@ fn radial_fill(
 ) -> Option<GradientFill> {
     let center = conic_center(&radial.position, tile);
     let (rx, ry) = radial_radii(radial, center, tile);
-    if !(rx > 0.0 && ry > 0.0 && rx.is_finite() && ry.is_finite()) {
+    if !(rx >= 0.0 && ry >= 0.0 && rx.is_finite() && ry.is_finite()) {
         return None;
     }
-    let mut stops = resolved_stops(&radial.stops, rx, current_color);
+    // A degenerate ending shape is drawn as a vanishingly thin one (CSS
+    // Images 3 §3.2.3): percentages of its ray resolve to zero and lengths
+    // keep their size, so the ray is measured here in pixels.
+    let circle = matches!(radial.shape, RadialShape::Circle);
+    let (rx, ry, percent_basis) = if rx > 0.0 && ry > 0.0 {
+        (rx, ry, rx)
+    } else if circle || rx <= 0.0 {
+        // A zero-width ellipse is as tall as any distance in the tile, which
+        // makes a horizontal gradient mirrored across the center.
+        let ry = if circle {
+            1.0
+        } else {
+            DEGENERATE_ELLIPSE_RATIO * tile.width().max(tile.height()).max(1.0)
+        };
+        (1.0, ry, 0.0)
+    } else {
+        // A zero-height ellipse is as wide as any distance in the tile, so
+        // only its last color, or the average of a repeating one, shows.
+        let stops = resolved_stops(&radial.stops, rx, rx, current_color);
+        let color = if radial.repeating {
+            average_color(&stops)
+        } else {
+            let (_, last) = *stops.last()?;
+            Color::from_rgba8(last.r, last.g, last.b, last.a)
+        };
+        return Some(GradientFill::Solid(color));
+    };
+    let mut stops = resolved_stops(&radial.stops, rx, percent_basis, current_color);
     if radial.repeating {
         // The pattern is periodic, so shifting it by whole periods keeps every
         // radius at or above zero without changing the colors.
@@ -337,11 +373,20 @@ fn radial_fill(
 /// computed value keeps unresolved.
 const DEFAULT_FONT_SIZE: f32 = 16.0;
 
+/// How many times taller than the tile a zero-width ellipse is drawn, so
+/// that vertical distances inside the tile do not change its colors.
+const DEGENERATE_ELLIPSE_RATIO: f64 = 1e4;
+
 /// Stop positions as fractions of the gradient line or ray, after the color
 /// stop fixup (CSS Images 3 §3.4.3).
+///
+/// `length` is the drawn line or ray and `percent_basis` the length its
+/// percentages resolve against, which differ only for a degenerate radial
+/// gradient.
 fn resolved_stops(
     stops: &[GradientColorStop],
     length: f64,
+    percent_basis: f64,
     current_color: CssColor,
 ) -> Vec<(f64, CssColor)> {
     let raw: Vec<Option<f32>> = stops
@@ -349,6 +394,9 @@ fn resolved_stops(
         .map(|stop| {
             stop.position.map(|position| {
                 let fraction = match position {
+                    Length::Percent(percent) if length > 0.0 => {
+                        f64::from(percent) / 100.0 * percent_basis / length
+                    }
                     Length::Percent(percent) => f64::from(percent) / 100.0,
                     Length::Px(px) if length > 0.0 => f64::from(px) / length,
                     other if length > 0.0 => {
@@ -404,14 +452,61 @@ fn clip_stops_at_zero(stops: &mut Vec<(f64, CssColor)>) {
     stops.insert(0, (0.0, color));
 }
 
+/// The color `t` of the way from `from` to `to`, interpolated with
+/// premultiplied alpha (CSS Images 3 §3.4.2).
 fn lerp_color(from: CssColor, to: CssColor, t: f64) -> CssColor {
-    let mix = |a: u8, b: u8| (f64::from(a) + (f64::from(b) - f64::from(a)) * t).round() as u8;
-    CssColor {
-        r: mix(from.r, to.r),
-        g: mix(from.g, to.g),
-        b: mix(from.b, to.b),
-        a: mix(from.a, to.a),
+    let (from, to) = (premultiply(from), premultiply(to));
+    let [r, g, b, a] = unpremultiply(std::array::from_fn(|channel| {
+        from[channel] + (to[channel] - from[channel]) * t
+    }));
+    CssColor { r, g, b, a }
+}
+
+/// The average color of stops spread evenly over one period (CSS Images 4
+/// §3.5.3): each pair of neighboring stops contributes the mean of its two
+/// colors, weighted equally, in premultiplied sRGB.
+fn average_color(stops: &[(f64, CssColor)]) -> Color {
+    let premultiplied: Vec<[f64; 4]> = stops.iter().map(|(_, color)| premultiply(*color)).collect();
+    let [r, g, b, a] = match premultiplied.as_slice() {
+        [] => return Color::TRANSPARENT,
+        [only] => unpremultiply(*only),
+        many => {
+            let pairs = (many.len() - 1) as f64;
+            unpremultiply(std::array::from_fn(|channel| {
+                many.windows(2)
+                    .map(|pair| (pair[0][channel] + pair[1][channel]) / 2.0)
+                    .sum::<f64>()
+                    / pairs
+            }))
+        }
+    };
+    Color::from_rgba8(r, g, b, a)
+}
+
+/// Color channels from 0 to 1, multiplied by alpha.
+fn premultiply(color: CssColor) -> [f64; 4] {
+    let alpha = f64::from(color.a) / 255.0;
+    [
+        f64::from(color.r) / 255.0 * alpha,
+        f64::from(color.g) / 255.0 * alpha,
+        f64::from(color.b) / 255.0 * alpha,
+        alpha,
+    ]
+}
+
+/// 8-bit channels of a premultiplied color; a transparent one is black.
+fn unpremultiply(channels: [f64; 4]) -> [u8; 4] {
+    let alpha = channels[3];
+    let byte = |value: f64| (value.clamp(0.0, 1.0) * 255.0).round() as u8;
+    if alpha <= 0.0 {
+        return [0, 0, 0, 0];
     }
+    [
+        byte(channels[0] / alpha),
+        byte(channels[1] / alpha),
+        byte(channels[2] / alpha),
+        byte(alpha),
+    ]
 }
 
 enum Normalized {
@@ -433,21 +528,7 @@ enum Normalized {
 fn normalize_stops(stops: Vec<(f64, CssColor)>, repeating: bool) -> Option<Normalized> {
     let (first, last) = (stops.first()?.0, stops.last()?.0);
     if repeating && last - first <= 1e-6 {
-        let count = stops.len() as f64;
-        let average = |channel: fn(&CssColor) -> u8| {
-            (stops
-                .iter()
-                .map(|(_, c)| f64::from(channel(c)))
-                .sum::<f64>()
-                / count)
-                .round() as u8
-        };
-        return Some(Normalized::Solid(Color::from_rgba8(
-            average(|c| c.r),
-            average(|c| c.g),
-            average(|c| c.b),
-            average(|c| c.a),
-        )));
+        return Some(Normalized::Solid(average_color(&stops)));
     }
     let (start, end) = if repeating {
         (first, last)

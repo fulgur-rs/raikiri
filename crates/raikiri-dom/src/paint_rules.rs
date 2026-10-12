@@ -264,29 +264,49 @@ pub fn defers_inline_content(document: &Document, cascade: &CascadeResult, node_
         && document
             .parent_of(node_id)
             .and_then(|parent| cascade.computed.get(parent))
-            .is_some_and(|parent| block_container(parent.display))
+            .is_some_and(|parent| {
+                block_container(parent.display)
+                    || matches!(
+                        parent.display,
+                        DisplayValue::InlineBlock
+                            | DisplayValue::TableCell
+                            | DisplayValue::TableCaption
+                    )
+            })
 }
 
 /// Whether the inline content deferred in front of an element paints
 /// before it.
 ///
 /// Positioned boxes and other stacking contexts paint above inline content
-/// (CSS 2.1 Appendix E steps 8 and 9). Floats, clipping blocks and other
-/// boxes that do not defer keep the inline content before them in tree
-/// order too, so deferral only reorders a run of plain blocks. A
-/// `display: none` element paints nothing and closes nothing.
+/// (CSS 2.1 Appendix E steps 8 and 9), and so do tables, flex containers,
+/// atomic inlines and other boxes that are not block containers, which keep
+/// the inline content before them in tree order. Floats (step 5) and in-flow
+/// blocks that clip or fragment into columns (step 4) paint below it, so
+/// the earlier text stays above them. A `display: none` element paints
+/// nothing and closes nothing.
 pub fn closes_deferred_inline_content(
     document: &Document,
     cascade: &CascadeResult,
     node_id: usize,
 ) -> bool {
+    let Some(cv) = cascade.computed.get(node_id) else {
+        return false;
+    };
+    let below_inline_content = matches!(cv.position, PositionValue::Static)
+        && opacity_layer(cv).is_none()
+        && cv.transform.is_empty()
+        && cv.filter.is_empty()
+        && (!matches!(cv.float, FloatValue::None)
+            || matches!(
+                cv.display,
+                DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
+            ));
     document
         .get_node(node_id)
         .is_some_and(|node| node.kind() == NodeKind::Element)
-        && cascade
-            .computed
-            .get(node_id)
-            .is_some_and(|cv| cv.display != DisplayValue::None)
+        && cv.display != DisplayValue::None
+        && !below_inline_content
         && !defers_inline_content(document, cascade, node_id)
 }
 

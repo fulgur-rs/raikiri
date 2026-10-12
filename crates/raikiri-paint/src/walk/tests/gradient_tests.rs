@@ -199,11 +199,72 @@ fn degenerate_gradients_paint_a_switch_or_an_average() {
     );
     assert_eq!(pixel(&rgba, 40, 10, 5), RED);
     assert_eq!(pixel(&rgba, 40, 30, 5), BLUE);
-    // A radial gradient with no size paints nothing.
-    let cv = computed_for("background-image: radial-gradient(circle 0px, red, blue)");
-    let fill =
-        gradient::gradient_fill(&gradient_of(&cv), Rect::new(0.0, 0.0, 10.0, 10.0), cv.color);
-    assert!(fill.is_none());
+    // The average weighs each pair of neighboring stops equally.
+    let rgba = raster_layer(
+        "background-image: repeating-linear-gradient(red 0, white 0, blue 0)",
+        10,
+        10,
+    );
+    assert_eq!(pixel(&rgba, 10, 5, 5), [191, 128, 191, 255]);
+}
+
+#[test]
+fn degenerate_radial_gradients_follow_their_thin_ending_shape() {
+    // A zero-radius circle shows its last color outside the center.
+    let rgba = raster_layer(
+        "background-image: radial-gradient(circle 0px, red, blue)",
+        40,
+        40,
+    );
+    assert_eq!(pixel(&rgba, 40, 30, 30), BLUE);
+    // Lengths keep their size, so the circle still grows to them.
+    let rgba = raster_layer(
+        "background-image: radial-gradient(circle 0px, red 10px, blue 10px)",
+        40,
+        40,
+    );
+    assert_eq!(pixel(&rgba, 40, 22, 22), RED);
+    assert_eq!(pixel(&rgba, 40, 35, 20), BLUE);
+    // A zero-width ellipse is a horizontal gradient mirrored at the center.
+    let rgba = raster_layer(
+        "background-image: radial-gradient(0px 20px, red 10px, blue 10px)",
+        40,
+        40,
+    );
+    for y in [2, 20, 37] {
+        assert_eq!(pixel(&rgba, 40, 15, y), RED);
+        assert_eq!(pixel(&rgba, 40, 25, y), RED);
+        assert_eq!(pixel(&rgba, 40, 5, y), BLUE);
+        assert_eq!(pixel(&rgba, 40, 35, y), BLUE);
+    }
+    // A zero-height ellipse shows its last color, or the average of a
+    // repeating one.
+    let rgba = raster_layer(
+        "background-image: radial-gradient(20px 0px, red 10px, blue 10px)",
+        40,
+        40,
+    );
+    assert_eq!(pixel(&rgba, 40, 20, 20), BLUE);
+    let rgba = raster_layer(
+        "background-image: repeating-radial-gradient(20px 0px, red 0px, blue 10px)",
+        40,
+        40,
+    );
+    let average = pixel(&rgba, 40, 20, 20);
+    assert!((127..=128).contains(&average[0]) && (127..=128).contains(&average[2]));
+}
+
+#[test]
+fn single_tiles_keep_a_subpixel_size() {
+    let rgba = raster_layer(
+        "background-image: linear-gradient(red, red); background-size: 0.5px 10px; \
+         background-repeat: no-repeat",
+        10,
+        10,
+    );
+    let edge = pixel(&rgba, 10, 0, 5);
+    assert!((100..=160).contains(&edge[3]), "{edge:?}");
+    assert_eq!(pixel(&rgba, 10, 1, 5)[3], 0);
 }
 
 #[test]
@@ -216,6 +277,17 @@ fn radial_stops_before_the_center_are_cut_at_zero() {
     // Halfway between the stops the center is the mix of both colors.
     let center = pixel(&rgba, 40, 20, 20);
     assert!(center[0] > 64 && center[2] > 64, "{center:?}");
+    // The mix at the center is premultiplied, so a transparent stop does
+    // not darken it.
+    let rgba = raster_layer(
+        "background-image: radial-gradient(circle 20px, transparent -20px, blue 20px)",
+        40,
+        40,
+    );
+    let center = pixel(&rgba, 40, 20, 20);
+    assert!(center[0] == 0 && center[1] == 0, "{center:?}");
+    assert!((120..=136).contains(&center[3]), "{center:?}");
+    assert!(center[2] > 245 || center[2] >= center[3] - 2, "{center:?}");
     let rgba = raster_layer(
         "background-image: radial-gradient(circle 20px, red -20px, blue -10px)",
         40,
@@ -304,6 +376,49 @@ fn element_background_paints_the_gradient_over_its_color() {
     );
     assert_eq!(pixel(&rgba, 40, 5, 5), [0, 255, 0, 255]);
     assert_eq!(pixel(&rgba, 40, 35, 5), BLUE);
+}
+
+#[test]
+fn gradient_keeps_its_clip_inside_a_matching_border() {
+    let cv = computed_for(
+        "background: transparent linear-gradient(red, red); background-clip: content-box; \
+         border: 10px solid red",
+    );
+    let mut scene = Scene::new();
+    let mut warnings = Vec::new();
+    paint_element_background(
+        &ImageBrushCache::default(),
+        &mut scene,
+        40.0,
+        40.0,
+        0.0,
+        0.0,
+        cv.background_color,
+        &cv.background_image,
+        cv.color,
+        cv.background_clip,
+        cv.background_origin,
+        &cv.border_radius,
+        &cv.border,
+        &taffy::Rect {
+            left: 0.0,
+            right: 0.0,
+            top: 0.0,
+            bottom: 0.0,
+        },
+        &cv.background_size,
+        &cv.background_position,
+        &cv.background_repeat,
+        None,
+        &mut warnings,
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        40,
+        40,
+    );
+    assert_eq!(pixel(&rgba, 40, 20, 20), RED);
+    assert_eq!(pixel(&rgba, 40, 5, 20)[3], 0);
 }
 
 #[test]
