@@ -95,6 +95,16 @@ fn feature_properties_come_from_file_name_and_help_links() {
 }
 
 #[test]
+fn vendor_prefixed_feature_properties_are_named() {
+    let html = "<div style=\"-webkit-line-clamp: 2; display: block\">";
+    let features = feature_properties(html, "css/css-overflow/webkit-line-clamp-001.html");
+    assert_eq!(
+        features.into_iter().collect::<Vec<_>>(),
+        ["-webkit-line-clamp"]
+    );
+}
+
+#[test]
 fn blank_document_keeps_only_reference_links_by_rel_token() {
     let html = r#"<link rel="stylesheet" href="matching.css"><link rel=mismatch href="b.html">
 <link rel="help" href="https://example.test/#match">"#;
@@ -378,6 +388,36 @@ fn template_contents_are_inert() {
     assert!(!blank_document(html).contains("fuzzy"));
     let shadow = r#"<template shadowrootmode="open"><style>p { color: red }</style></template>"#;
     assert_eq!(keys(shadow), ["color:red"]);
+}
+
+#[test]
+fn raw_text_and_inert_markup_do_not_confuse_the_walker() {
+    // A `</style-x>` prefix does not close the element.
+    let html = "<title>—</title><style>p { a: 1 } </style-x> q { b: 2 }</style ><i style=\"c: 3\">";
+    assert_eq!(keys(html), ["a:1", "b:2", "c:3"]);
+    // Template markup inside a script or comment is not a nested template.
+    let html = r#"<template><script>"<template>"</script><!-- <template> --><i style="x: 1"></template><b style="y: 2">"#;
+    assert_eq!(keys(html), ["y:2"]);
+    // A shadow root template nested in an inert template is inert too.
+    let html = r#"<template><template shadowrootmode="open"><i style="x: 1"></template></template><b style="y: 2">"#;
+    assert_eq!(keys(html), ["y:2"]);
+}
+
+#[test]
+fn duplicate_attributes_keep_the_first() {
+    assert_eq!(
+        keys(r#"<div style="width: 1px" style="color: red"><p style STYLE="x: 1">"#),
+        ["width:1px"]
+    );
+}
+
+#[test]
+fn character_references_in_style_attributes_do_not_split_declarations() {
+    let html = r#"<div style="content: &quot;x&quot;; color: red">"#;
+    assert_eq!(keys(html), ["content:&quot;x&quot", "color:red"]);
+    let (out, removed) = remove_declarations(html, |key| key.starts_with("color"));
+    assert_eq!(removed, 1);
+    assert_eq!(out, r#"<div style="content: &quot;x&quot;;">"#);
 }
 
 #[test]

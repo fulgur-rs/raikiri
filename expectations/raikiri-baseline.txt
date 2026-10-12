@@ -2922,8 +2922,6 @@ css/css-overflow/clip-004.html
 css/css-overflow/clip-007.html
 css/css-overflow/clip-008.html
 css/css-overflow/incremental-scroll-002.html
-css/css-overflow/line-clamp/webkit-line-clamp-block-in-inline-001.html
-css/css-overflow/line-clamp/webkit-line-clamp-dynamic-001.html
 css/css-overflow/no-scrollable-overflow-vertical-rl-2.html
 css/css-overflow/no-scrollable-overflow-vertical-rl.html
 css/css-overflow/overflow-clip-content-visual-overflow.html

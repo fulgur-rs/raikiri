@@ -264,7 +264,8 @@ pub fn feature_properties(test_html: &str, test_id: &str) -> BTreeSet<String> {
         })
         .collect();
     let named = |property: &str| {
-        let parts: Vec<&str> = property.split('-').collect();
+        // Vendor prefixes start with a hyphen; match their words only.
+        let parts: Vec<&str> = property.split('-').filter(|p| !p.is_empty()).collect();
         words.iter().any(|w| {
             w.windows(parts.len())
                 .any(|window| window == parts.as_slice())
@@ -383,6 +384,10 @@ fn tags(html: &str) -> Vec<Tag> {
     let lower = html.to_ascii_lowercase();
     let bytes = html.as_bytes();
     let mut out = Vec::new();
+    // Open `<template>` elements whose contents are inert. Their styles and
+    // metadata do not apply unless a script clones them. A declarative
+    // shadow root template is not inert; its contents become the shadow tree.
+    let mut inert_depth = 0usize;
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] != b'<' {
@@ -393,6 +398,11 @@ fn tags(html: &str) -> Vec<Tag> {
             i = lower[i + 4..]
                 .find("-->")
                 .map_or(bytes.len(), |e| i + 4 + e + 3);
+            continue;
+        }
+        if inert_depth > 0 && end_tag_at(&lower, i, "template") {
+            inert_depth -= 1;
+            i += "</template".len();
             continue;
         }
         let name_start = i + 1;
@@ -414,45 +424,38 @@ fn tags(html: &str) -> Vec<Tag> {
             "style" | "script" | "title" | "textarea" | "xmp" | "noscript"
         )
         .then(|| {
-            let close = format!("</{name}");
-            end..lower[end..].find(&close).map_or(bytes.len(), |e| end + e)
+            let close = (end..bytes.len()).find(|&at| end_tag_at(&lower, at, &name));
+            end..close.unwrap_or(bytes.len())
         });
-        let mut next = raw_text.as_ref().map_or(end, |content| content.end);
-        if name == "template" && !attributes.iter().any(|(name, _)| name == "shadowrootmode") {
-            // Template contents are inert: their styles and metadata do not
-            // apply unless a script clones them. A declarative shadow root
-            // template is not inert; its contents become the shadow tree.
-            next = template_end(&lower, end);
+        let next = raw_text.as_ref().map_or(end, |content| content.end);
+        let inert = inert_depth > 0;
+        if name == "template"
+            && (inert || !attributes.iter().any(|(name, _)| name == "shadowrootmode"))
+        {
+            inert_depth += 1;
         }
-        out.push(Tag {
-            name,
-            range: i..end,
-            attributes,
-            raw_text,
-        });
+        if !inert {
+            out.push(Tag {
+                name,
+                range: i..end,
+                attributes,
+                raw_text,
+            });
+        }
         i = next;
     }
     out
 }
 
-/// The offset of the `</template` that closes a template whose contents
-/// start at `from`, counting nested templates.
-fn template_end(lower: &str, from: usize) -> usize {
-    let mut depth = 1;
-    let mut i = from;
-    while let Some(offset) = lower[i..].find("template") {
-        let at = i + offset;
-        i = at + "template".len();
-        if lower[..at].ends_with("</") {
-            depth -= 1;
-            if depth == 0 {
-                return at - 2;
-            }
-        } else if lower[..at].ends_with('<') {
-            depth += 1;
-        }
-    }
-    lower.len()
+/// Whether an end tag for `name` starts at `at`: `</name` followed by
+/// whitespace, `/`, `>` or the end of input.
+fn end_tag_at(lower: &str, at: usize, name: &str) -> bool {
+    let rest = &lower.as_bytes()[at..];
+    rest.starts_with(b"</")
+        && rest[2..].starts_with(name.as_bytes())
+        && rest
+            .get(2 + name.len())
+            .is_none_or(|b| b.is_ascii_whitespace() || matches!(b, b'/' | b'>'))
 }
 
 /// Remove every declaration whose key satisfies `remove`. Returns the new
@@ -513,6 +516,8 @@ fn attributes(html: &str, attrs_start: usize, tag_end: usize) -> Vec<(String, Ra
         if i >= tag_end || bytes[i] != b'=' {
             if i == name_start {
                 i += 1;
+            } else if !out.iter().any(|(seen, _)| *seen == name) {
+                out.push((name, i..i));
             }
             continue;
         }
@@ -538,7 +543,10 @@ fn attributes(html: &str, attrs_start: usize, tag_end: usize) -> Vec<(String, Ra
                 start..i
             }
         };
-        out.push((name, value));
+        // The HTML tokenizer keeps the first of duplicate attributes.
+        if !out.iter().any(|(seen, _)| *seen == name) {
+            out.push((name, value));
+        }
     }
     out
 }
@@ -580,6 +588,17 @@ pub fn css_declarations(css: &str, inline: bool, base: usize) -> Vec<Declaration
                 i += 1;
                 while i < bytes.len() && bytes[i] != q {
                     i += if bytes[i] == b'\\' { 2 } else { 1 };
+                }
+            }
+            // A character reference in a `style` attribute is decoded
+            // before CSS parsing, so its `;` does not end a declaration.
+            b'&' if inline => {
+                let run = bytes[i + 1..]
+                    .iter()
+                    .take_while(|b| b.is_ascii_alphanumeric() || **b == b'#')
+                    .count();
+                if run > 0 && bytes.get(i + 1 + run) == Some(&b';') {
+                    i += run + 1;
                 }
             }
             b'(' | b'[' => nesting += 1,
