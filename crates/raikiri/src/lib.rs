@@ -154,14 +154,16 @@ pub use raikiri_dom::Document;
 // ComputedBorder, a width/style/color struct rather than a scalar):
 //
 // - `ComputedLength`                 — `font_size` / `ComputedBorder::width()`
-// - `ComputedLengthPercentage`       — per-side leaf of `padding`
+// - `ComputedLengthPercentage`       — computed length-percentage leaf
+// - `ComputedLengthPercentageOrCalc` — per-side leaf of `padding`; keeps a
+//   mixed calc() until used-value time
 // - `ComputedLengthPercentageOrAuto` — per-side leaf of `margin`, `width`, `height`
 // - `ComputedLineHeight`             — `line_height`
 // - `ComputedBorder`                 — per-side leaf of `border`
 //
 // **Correction:** These five are only leaves. The actual `padding`, `margin`,
 // and `border` field types are four-side containers such as
-// `Sides<ComputedLengthPercentage>`. When the leaves were first re-exported,
+// `Sides<ComputedLengthPercentageOrAuto>`. When the leaves were first re-exported,
 // `Sides<T>` was deliberately kept outside the approved surface. Thus those
 // three fields still could not be named with explicit types. A later change
 // re-exported `Sides` and closed that gap (see below).
@@ -192,8 +194,8 @@ pub use raikiri_dom::Document;
 //
 // - `Sides<T>` is a layer-agnostic top/right/bottom/left container. It is
 //   parameterized for both specified values (e.g.
-//   `PropertyValue::Padding(Sides<Length>)`) and computed values (e.g.
-//   `ComputedValues.padding: Sides<ComputedLengthPercentage>`). Unlike the
+//   `PropertyValue::Padding(Sides<LengthPercentageOrCalc>)`) and computed values (e.g.
+//   `ComputedValues.padding: Sides<ComputedLengthPercentageOrCalc>`). Unlike the
 //   other three additions, it is not itself a specified-layer type. It closes
 //   the missing-container gap described above.
 // - `LengthOrAuto` is specified-layer data, e.g. the payload of
@@ -254,12 +256,13 @@ pub use raikiri_dom::Document;
 pub use raikiri_style::{
     AtRuleBody, AtRuleRecord, Atom, CascadeLimitKind, CascadeLimits, CascadeOptions, CascadeResult,
     ComputedBorder, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
-    ComputedLineHeight, ComputedValues, CssColor, CssRule, CssRuleKind, DisplayValue,
-    FontFamilyKind, FontFamilyName, FontSizeKeywordInfo, Length, LengthOrAuto, MediaContext,
-    MediaType, Origin, PageBleed, PageCascadeResult, PageContextQuery, PageInheritance,
-    PageMarginBoxCascadeResult, PageMarginBoxSlot, PageMarks, PageOrientation, PageSize,
-    PageSizeKeyword, PropertyValue, QualifiedRuleRecord, RuleNode, RuleTree, RuleTreeLimits, Sides,
-    cascade_with_media_context, cascade_with_media_context_for_page, cascade_with_options,
+    ComputedLengthPercentageOrCalc, ComputedLineHeight, ComputedValues, CssColor, CssRule,
+    CssRuleKind, DisplayValue, FontFamilyKind, FontFamilyName, FontSizeKeywordInfo, Length,
+    LengthOrAuto, MediaContext, MediaType, Origin, PageBleed, PageCascadeResult, PageContextQuery,
+    PageInheritance, PageMarginBoxCascadeResult, PageMarginBoxSlot, PageMarks, PageOrientation,
+    PageSize, PageSizeKeyword, PropertyValue, QualifiedRuleRecord, RuleNode, RuleTree,
+    RuleTreeLimits, Sides, cascade_with_media_context, cascade_with_media_context_for_page,
+    cascade_with_options,
 };
 // `AbsoluteFontSize`, `Border`, `BorderColor`, `BorderStyle`, and
 // `LineHeight` are not exported from the raikiri-style crate root. They are
@@ -269,7 +272,9 @@ pub use raikiri_style::{
 // `AbsoluteFontSize` is the payload of `PropertyValue::FontSizeKeyword` and
 // the keyword of `ComputedValues.font_size_keyword`
 // (`FontSizeKeywordInfo`, re-exported above).
-pub use raikiri_style::property::{AbsoluteFontSize, Border, BorderColor, BorderStyle, LineHeight};
+pub use raikiri_style::property::{
+    AbsoluteFontSize, Border, BorderColor, BorderStyle, LengthPercentageOrCalc, LineHeight,
+};
 pub use raikiri_style::{ConsumerPropertyGrammar, ConsumerPropertyRegistration};
 
 // ── url: concrete type for `ParseOptions.base_url: Option<Url>` ────────

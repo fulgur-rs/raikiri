@@ -45,22 +45,22 @@ use crate::property::{
     FontVariantLigatures, FontVariantNumeric, FontVariantPosition, FontVariationSettings,
     GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, GridTemplateTracks, GridTrackSize,
     HangingPunctuation, HyphenateCharacter, HyphenateLimitChars, Hyphens, Isolation, Length,
-    LengthOrAuto, LengthOrNormal, LetterSpacingValue, LineBreak, LineHeight, ListStylePosition,
-    ListStyleType, MaskImage, MixBlendMode, ObjectFit, Outline, OutlineColor, OutlineStyle,
-    OverflowValue, OverflowWrap, OverflowXY, PageValue, PositionValue, RubyPosition,
-    SelfAlignmentValue, Sides, TabSize, TableLayoutValue, TextAlign, TextAlignLast, TextAutospace,
-    TextCombineUpright, TextDecorationColor, TextDecorationInset, TextDecorationLine,
-    TextDecorationSkipInk, TextDecorationSkipSpaces, TextDecorationStyle, TextDecorationThickness,
-    TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisShape, TextEmphasisStyle,
-    TextEmphasisVEdge, TextIndentLength, TextJustify, TextOrientation, TextOverflowValue,
-    TextShadowItem, TextSpacingTrim, TextTransform, TextUnderlineOffset, TextUnderlinePosition,
-    TextWrapMode, TextWrapStyle, TransformFunction, UnicodeBidi, VerticalAlign, Visibility,
-    VisualBox, WhiteSpace, WhiteSpaceCollapse, WordBreak, WordSpaceTransform, WordSpacingValue,
-    WritingMode, ZIndexValue, empty_box_shadow_list, empty_content_list, empty_counter_entries,
-    empty_filter_list, empty_quotes_entries, empty_string_set_entries, empty_text_shadow_list,
-    empty_transform_list, initial_font_family, initial_grid_auto_track_list,
-    resolve_display_for_float, resolve_overflow, resolve_text_align_internal_center,
-    resolve_text_align_match_parent, resolve_writing_mode,
+    LengthOrAuto, LengthOrNormal, LengthPercentageOrCalc, LetterSpacingValue, LineBreak,
+    LineHeight, ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit, Outline,
+    OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PageValue, PositionValue,
+    RubyPosition, SelfAlignmentValue, Sides, TabSize, TableLayoutValue, TextAlign, TextAlignLast,
+    TextAutospace, TextCombineUpright, TextDecorationColor, TextDecorationInset,
+    TextDecorationLine, TextDecorationSkipInk, TextDecorationSkipSpaces, TextDecorationStyle,
+    TextDecorationThickness, TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisShape,
+    TextEmphasisStyle, TextEmphasisVEdge, TextIndentLength, TextJustify, TextOrientation,
+    TextOverflowValue, TextShadowItem, TextSpacingTrim, TextTransform, TextUnderlineOffset,
+    TextUnderlinePosition, TextWrapMode, TextWrapStyle, TransformFunction, UnicodeBidi,
+    VerticalAlign, Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse, WordBreak,
+    WordSpaceTransform, WordSpacingValue, WritingMode, ZIndexValue, empty_box_shadow_list,
+    empty_content_list, empty_counter_entries, empty_filter_list, empty_quotes_entries,
+    empty_string_set_entries, empty_text_shadow_list, empty_transform_list, initial_font_family,
+    initial_grid_auto_track_list, resolve_display_for_float, resolve_overflow,
+    resolve_text_align_internal_center, resolve_text_align_match_parent, resolve_writing_mode,
 };
 use crate::resolve::{
     ComputedBoxShadowItem, ComputedLength, ComputedLineHeight, ComputedTextIndent, ResolveContext,
@@ -70,14 +70,14 @@ use crate::resolve::{
     resolve_background_size, resolve_border, resolve_border_radius, resolve_border_spacing,
     resolve_box_shadow_item, resolve_column_width, resolve_css_position, resolve_flex_basis,
     resolve_font_size, resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
-    resolve_length_percentage, resolve_length_percentage_or_auto,
-    resolve_length_percentage_or_normal, resolve_length_percentage_with_ch, resolve_letter_spacing,
-    resolve_letter_spacing_with_ch, resolve_line_height, resolve_margin_length_or_auto,
-    resolve_outline, resolve_size_length_percentage_or_auto, resolve_tab_size,
-    resolve_text_decoration_inset, resolve_text_decoration_thickness, resolve_text_indent_calc,
-    resolve_text_shadow_item, resolve_text_underline_offset, resolve_transform_function,
-    resolve_vertical_align, resolve_word_spacing, resolve_word_spacing_with_ch,
-    used_line_height_length,
+    resolve_length_percentage_or_auto, resolve_length_percentage_or_normal,
+    resolve_length_percentage_with_ch, resolve_letter_spacing, resolve_letter_spacing_with_ch,
+    resolve_line_height, resolve_margin_length_or_auto,
+    resolve_non_negative_length_percentage_or_calc, resolve_outline,
+    resolve_size_length_percentage_or_auto, resolve_tab_size, resolve_text_decoration_inset,
+    resolve_text_decoration_thickness, resolve_text_indent_calc, resolve_text_shadow_item,
+    resolve_text_underline_offset, resolve_transform_function, resolve_vertical_align,
+    resolve_word_spacing, resolve_word_spacing_with_ch, used_line_height_length,
 };
 
 /// The `text-shadow` of a node's [`SpecifiedValues`].
@@ -284,9 +284,10 @@ pub struct SpecifiedValues {
     pub text_indent_hanging: bool,
     /// `text-indent`'s `each-line` flag staging. Inherited, initial `false`.
     pub text_indent_each_line: bool,
-    /// **Specified** `padding`; phase 3 ([`resolve_length_percentage`]) absolutizes lengths but
-    /// leaves percentages unchanged.
-    pub padding: Sides<Length>,
+    /// **Specified** `padding`; phase 3
+    /// ([`resolve_non_negative_length_percentage_or_calc`]) absolutizes lengths but
+    /// leaves percentages, and calc() sums that contain one, unchanged.
+    pub padding: Sides<LengthPercentageOrCalc>,
     /// **Specified** `margin`; phase 3 ([`resolve_margin_length_or_auto`]) absolutizes its lengths.
     pub margin: Sides<LengthOrAuto>,
     /// **Specified** `border`; phase 3 ([`resolve_border`]) absolutizes its width and applies
@@ -637,7 +638,7 @@ pub struct SpecifiedValues {
     /// Staging value for [`ComputedBorderImage::slice`]; computed-equivalent.
     pub border_image_slice: BorderImageSlice,
     /// **Specified** `border-image-width`; phase 3 absolutizes its lengths.
-    pub border_image_width: Sides<BorderImageWidthSide<Length>>,
+    pub border_image_width: Sides<BorderImageWidthSide<LengthPercentageOrCalc>>,
     /// **Specified** `border-image-outset`; phase 3 absolutizes its lengths.
     pub border_image_outset: Sides<BorderImageOutsetSide<Length>>,
     /// Staging value for [`ComputedBorderImage::repeat`]; computed-equivalent.
@@ -824,7 +825,7 @@ impl SpecifiedValues {
             text_indent_ch_inherited: false,
             text_indent_hanging: false,
             text_indent_each_line: false,
-            padding: Sides::all(Length::Px(0.0)),
+            padding: Sides::all(LengthPercentageOrCalc::Length(Length::Px(0.0))),
             margin: Sides::all(LengthOrAuto::Length(Length::Px(0.0))),
             // CSS Backgrounds 3 §3.3 / §3.2 / §3.1: width=medium (3px) / style=none /
             // color=currentcolor. Style gating reduces the width to 0px in the computed layer
@@ -1318,7 +1319,7 @@ impl SpecifiedValues {
             string_set: empty_string_set_entries(),
             running_templates: Vec::new(),
             position: PositionValue::Static,
-            padding: Sides::all(Length::Px(0.0)),
+            padding: Sides::all(LengthPercentageOrCalc::Length(Length::Px(0.0))),
             margin: Sides::all(LengthOrAuto::Length(Length::Px(0.0))),
             border: Sides::all(INITIAL_BORDER),
             border_radius: BorderRadius {
@@ -1926,7 +1927,10 @@ impl SpecifiedValues {
             LengthOrAuto::Length(length) => ch_provenance(length),
             _ => None,
         };
-        let padding_ch = self.padding.map(ch_provenance);
+        let padding_ch = self.padding.map(|value| match value {
+            LengthPercentageOrCalc::Length(length) => ch_provenance(length),
+            _ => None,
+        });
         let margin_ch = self.margin.map(|value| match value {
             LengthOrAuto::Length(length) => ch_provenance(length),
             _ => None,
@@ -2051,9 +2055,9 @@ impl SpecifiedValues {
             // Flags pass through untouched (no absolutization needed).
             text_indent_hanging: self.text_indent_hanging,
             text_indent_each_line: self.text_indent_each_line,
-            padding: self
-                .padding
-                .map(|l| resolve_length_percentage(l, font_size, own_line_height, ctx)),
+            padding: self.padding.map(|l| {
+                resolve_non_negative_length_percentage_or_calc(l, font_size, own_line_height, ctx)
+            }),
             padding_ch,
             // Although `margin` shares a type with `width` and `height`, it has a different
             // fallback when `Lh` / `Rlh` cannot be resolved (see Finding A in the
@@ -2164,12 +2168,14 @@ impl SpecifiedValues {
                 slice: self.border_image_slice,
                 width: self.border_image_width.map(|side| match side {
                     BorderImageWidthSide::LengthPercentage(length) => {
-                        BorderImageWidthSide::LengthPercentage(resolve_length_percentage(
-                            length,
-                            font_size,
-                            own_line_height,
-                            ctx,
-                        ))
+                        BorderImageWidthSide::LengthPercentage(
+                            resolve_non_negative_length_percentage_or_calc(
+                                length,
+                                font_size,
+                                own_line_height,
+                                ctx,
+                            ),
+                        )
                     }
                     BorderImageWidthSide::Number(number) => BorderImageWidthSide::Number(number),
                     BorderImageWidthSide::Auto => BorderImageWidthSide::Auto,

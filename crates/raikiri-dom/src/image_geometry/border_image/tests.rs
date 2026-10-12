@@ -151,9 +151,11 @@ fn outset_and_widths_resolve_against_the_border() {
         left: BorderImageOutsetSide::Number(0.0),
     };
     image.width = Sides {
-        top: BorderImageWidthSide::LengthPercentage(ComputedLengthPercentage::Px(6.0)),
+        top: BorderImageWidthSide::LengthPercentage(ComputedLengthPercentageOrCalc::Px(6.0)),
         right: BorderImageWidthSide::Number(2.0),
-        bottom: BorderImageWidthSide::LengthPercentage(ComputedLengthPercentage::Percent(10.0)),
+        bottom: BorderImageWidthSide::LengthPercentage(ComputedLengthPercentageOrCalc::Percent(
+            10.0,
+        )),
         left: BorderImageWidthSide::Auto,
     };
     let geometry = border_image_geometry(
@@ -176,7 +178,7 @@ fn outset_and_widths_resolve_against_the_border() {
 fn overlapping_widths_scale_down_together() {
     let mut image = image(27.0, BorderImageRepeatKeyword::Stretch);
     image.width = Sides::all(BorderImageWidthSide::LengthPercentage(
-        ComputedLengthPercentage::Px(40.0),
+        ComputedLengthPercentageOrCalc::Px(40.0),
     ));
     let geometry = border_image_geometry(
         (0.0, 0.0, 60.0, 100.0),
@@ -235,7 +237,7 @@ fn zero_widths_draw_nothing() {
 fn tiny_tiles_are_stretched_instead() {
     let mut image = image(27.0, BorderImageRepeatKeyword::Repeat);
     image.width = Sides::all(BorderImageWidthSide::LengthPercentage(
-        ComputedLengthPercentage::Px(0.001),
+        ComputedLengthPercentageOrCalc::Px(0.001),
     ));
     let geometry = border_image_geometry(
         (0.0, 0.0, 10_000.0, 10_000.0),
@@ -254,7 +256,7 @@ fn a_dense_filled_middle_is_stretched_instead() {
     let mut image = image(27.0, BorderImageRepeatKeyword::Repeat);
     image.slice.fill = true;
     image.width = Sides::all(BorderImageWidthSide::LengthPercentage(
-        ComputedLengthPercentage::Px(0.25),
+        ComputedLengthPercentageOrCalc::Px(0.25),
     ));
     let geometry = border_image_geometry(
         (0.0, 0.0, 1000.0, 1000.0),
@@ -356,7 +358,7 @@ fn an_infinite_width_is_reduced_to_the_area() {
 fn an_infinite_outset_of_a_zero_border_extends_nothing() {
     let mut image = image(27.0, BorderImageRepeatKeyword::Stretch);
     image.width = Sides::all(BorderImageWidthSide::LengthPercentage(
-        ComputedLengthPercentage::Px(10.0),
+        ComputedLengthPercentageOrCalc::Px(10.0),
     ));
     image.outset.top = BorderImageOutsetSide::Number(f32::INFINITY);
     image.outset.left = BorderImageOutsetSide::Length(f32::INFINITY);

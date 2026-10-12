@@ -16,8 +16,9 @@ use crate::{
 };
 use raikiri_style::property::{
     BackgroundImage, BackgroundRepeat, Border, BorderColor, BorderStyle, ContentComponent,
-    CounterStyle, CssColor, FontFamilyName, Length, LengthOrAuto, PropertyKey, PropertyValue,
-    QuoteKeyword, Sides, StringFetchMode, TextAlign, VerticalAlign, VisualBox, WritingMode,
+    CounterStyle, CssColor, FontFamilyName, Length, LengthOrAuto, LengthPercentageOrCalc,
+    PropertyKey, PropertyValue, QuoteKeyword, Sides, StringFetchMode, TextAlign, VerticalAlign,
+    VisualBox, WritingMode,
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedCssPosition, ComputedLength, ComputedValues,
@@ -514,6 +515,20 @@ fn length_or_auto_to_px(value: LengthOrAuto, basis: f32, font_size: f32) -> Opti
     } else {
         0.0
     })
+}
+
+fn length_percentage_or_calc_to_px(
+    value: LengthPercentageOrCalc,
+    basis: f32,
+    font_size: f32,
+) -> f32 {
+    let value = match value {
+        LengthPercentageOrCalc::Length(length) => LengthOrAuto::Length(length),
+        LengthPercentageOrCalc::Calc(calc) => LengthOrAuto::Calc(calc),
+        LengthPercentageOrCalc::RelativeCalc(calc) => LengthOrAuto::RelativeCalc(calc),
+        _ => return 0.0,
+    };
+    length_or_auto_to_px(value, basis, font_size).unwrap_or(0.0)
 }
 
 fn root_computed<'a>(
@@ -1202,7 +1217,7 @@ fn margin_box_padding(
         PropertyValue::Padding(sides) => Some(*sides),
         _ => None,
     });
-    let side = |key: PropertyKey, fallback: Option<Length>| {
+    let side = |key: PropertyKey, fallback: Option<LengthPercentageOrCalc>| {
         margin_box_property(rule, key)
             .and_then(|value| match value {
                 PropertyValue::PaddingTop(value)
@@ -1211,7 +1226,7 @@ fn margin_box_padding(
                 | PropertyValue::PaddingLeft(value) => Some(*value),
                 _ => fallback,
             })
-            .map(|value| length_to_px(value, width_basis, font_size).max(0.0))
+            .map(|value| length_percentage_or_calc_to_px(value, width_basis, font_size))
             .unwrap_or(0.0)
     };
     [

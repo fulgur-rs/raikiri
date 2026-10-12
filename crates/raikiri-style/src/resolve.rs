@@ -181,11 +181,11 @@ use crate::property::{
     CssPosition, CssPositionOffset, FlexBasisValue, Gradient, GradientColorStop,
     GridInflexibleBreadth, GridRepeatCount, GridTemplateTracks, GridTrackBreadth, GridTrackList,
     GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto, LengthOrNormal,
-    LengthPercentageCalc, LetterSpacingValue, LineHeight, LinearGradient, Outline, OutlineColor,
-    OutlineStyle, RadialGradient, RadialSize, RelativeCalcLengthPercentage, RelativeCalcUnit,
-    TabSize, TextDecorationInset, TextDecorationThickness, TextIndentLength, TextShadowColor,
-    TextShadowItem, TextShadowLength, TextUnderlineOffset, TransformFunction, VerticalAlign,
-    WordSpacingValue,
+    LengthPercentageCalc, LengthPercentageOrCalc, LetterSpacingValue, LineHeight, LinearGradient,
+    Outline, OutlineColor, OutlineStyle, RadialGradient, RadialSize, RelativeCalcLengthPercentage,
+    RelativeCalcUnit, TabSize, TextDecorationInset, TextDecorationThickness, TextIndentLength,
+    TextShadowColor, TextShadowItem, TextShadowLength, TextUnderlineOffset, TransformFunction,
+    VerticalAlign, WordSpacingValue,
 };
 
 // ---------------------------------------------------------------------------
@@ -360,6 +360,41 @@ pub enum ComputedLengthPercentage {
     Px(f32),
     /// Percentage — retain the authored number (`50%` → `Percent(50.0)`).
     Percent(f32),
+}
+
+/// Computed value of a `<length-percentage>` that may be a mixed `calc()`
+/// (`padding-*` and the length sides of `border-image-width`): the specified
+/// [`LengthPercentageOrCalc`] with its font-relative and viewport terms
+/// absolutized. The percentage of a calc is resolved against its basis at
+/// used-value time.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ComputedLengthPercentageOrCalc {
+    /// Absolutized length in px.
+    Px(f32),
+    /// Percentage — retain the authored number (`50%` → `Percent(50.0)`).
+    Percent(f32),
+    /// A percentage with an absolute-length offset.
+    Calc(CalcLengthPercentage),
+}
+
+impl ComputedLengthPercentageOrCalc {
+    /// The used value in px against the percentage `basis`.
+    pub fn resolve(self, basis: f32) -> f32 {
+        match self {
+            Self::Px(px) => px,
+            Self::Percent(percent) => basis * percent / 100.0,
+            Self::Calc(calc) => calc.px + basis * calc.percent / 100.0,
+        }
+    }
+}
+
+impl From<ComputedLengthPercentage> for ComputedLengthPercentageOrCalc {
+    fn from(value: ComputedLengthPercentage) -> Self {
+        match value {
+            ComputedLengthPercentage::Px(px) => Self::Px(px),
+            ComputedLengthPercentage::Percent(percent) => Self::Percent(percent),
+        }
+    }
 }
 
 /// Computed `text-indent` value. Unlike other length-percentage properties,
@@ -3130,6 +3165,43 @@ pub fn resolve_length_percentage_or_normal(
     }
 }
 
+/// Absolutize a `<length-percentage [0,∞]>` that may be a mixed `calc()`
+/// (`padding-*`, the length sides of `border-image-width`).
+///
+/// A plain length or percentage resolves as in [`resolve_length_percentage`].
+/// A `calc()` keeps its percentage for used-value time; one without a
+/// percentage is clamped to zero now (CSS Values 4 "Range Checking",
+/// <https://www.w3.org/TR/css-values-4/#calc-range>), and one with a
+/// percentage is clamped by its consumer once the basis is known.
+pub fn resolve_non_negative_length_percentage_or_calc(
+    specified: LengthPercentageOrCalc,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedLengthPercentageOrCalc {
+    let calc = match specified {
+        LengthPercentageOrCalc::Length(length) => {
+            return resolve_length_percentage(length, font_size, own_line_height, ctx).into();
+        }
+        LengthPercentageOrCalc::Calc(calc) => LengthOrAuto::Calc(calc),
+        LengthPercentageOrCalc::RelativeCalc(calc) => LengthOrAuto::RelativeCalc(calc),
+    };
+    // An `lh` term without a basis falls back to zero, the initial value.
+    match resolve_length_percentage_or_auto(calc, font_size, own_line_height, ctx) {
+        ComputedLengthPercentageOrAuto::Px(px) => ComputedLengthPercentageOrCalc::Px(px.max(0.0)),
+        ComputedLengthPercentageOrAuto::Percent(percent) => {
+            ComputedLengthPercentageOrCalc::Percent(percent.max(0.0))
+        }
+        ComputedLengthPercentageOrAuto::Calc(calc) if calc.percent == 0.0 => {
+            ComputedLengthPercentageOrCalc::Px(calc.px.max(0.0))
+        }
+        ComputedLengthPercentageOrAuto::Calc(calc) => ComputedLengthPercentageOrCalc::Calc(calc),
+        ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::MinContent => {
+            ComputedLengthPercentageOrCalc::Px(0.0)
+        }
+    }
+}
+
 /// Absolutize **only `margin-*`** specified `<length-percentage> | auto`.
 ///
 /// This has the same shape as [`resolve_length_percentage_or_auto`]: pass the
@@ -3151,10 +3223,12 @@ pub fn resolve_margin_length_or_auto(
 ) -> ComputedLengthPercentageOrAuto {
     match specified {
         LengthOrAuto::Auto => ComputedLengthPercentageOrAuto::Auto,
-        // Margin calc support is not yet wired into the taffy margin bridge;
-        // retain the safe initial-equivalent until that bridge is added.
-        LengthOrAuto::Calc(_) | LengthOrAuto::RelativeCalc(_) => {
-            ComputedLengthPercentageOrAuto::Px(0.0)
+        LengthOrAuto::Calc(value) => ComputedLengthPercentageOrAuto::Calc(value),
+        // An `lh` term without a basis falls back to the margin's initial
+        // value, as a plain `lh` margin does.
+        LengthOrAuto::RelativeCalc(value) => {
+            resolve_relative_calc(value, font_size, own_line_height, ctx)
+                .unwrap_or(ComputedLengthPercentageOrAuto::Px(0.0))
         }
         // Only `width` / `inline-size` parse `min-content`; a margin never
         // holds it.
@@ -3432,6 +3506,21 @@ pub fn lift_length_percentage(computed: ComputedLengthPercentage) -> Length {
     match computed {
         ComputedLengthPercentage::Px(v) => Length::Px(v),
         ComputedLengthPercentage::Percent(p) => Length::Percent(p),
+    }
+}
+
+/// Lift a computed [`ComputedLengthPercentageOrCalc`] back into the
+/// specified-layer [`LengthPercentageOrCalc`] (the sibling of
+/// [`lift_length_percentage`]).
+pub fn lift_length_percentage_or_calc(
+    computed: ComputedLengthPercentageOrCalc,
+) -> LengthPercentageOrCalc {
+    match computed {
+        ComputedLengthPercentageOrCalc::Px(v) => LengthPercentageOrCalc::Length(Length::Px(v)),
+        ComputedLengthPercentageOrCalc::Percent(p) => {
+            LengthPercentageOrCalc::Length(Length::Percent(p))
+        }
+        ComputedLengthPercentageOrCalc::Calc(calc) => LengthPercentageOrCalc::Calc(calc),
     }
 }
 

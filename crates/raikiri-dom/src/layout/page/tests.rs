@@ -419,11 +419,14 @@ fn used_style_length_helpers_cover_used_value_forms() {
         used_style_length_percentage(LengthPercentage::percent(0.25), 100.0),
         Some(25.0)
     );
-    let calc_token = 0usize;
-    let calc_ptr = &calc_token as *const usize as *const ();
+    let calc_value = CalcLengthPercentage {
+        percent: 10.0,
+        px: 2.0,
+    };
+    let calc_ptr = &calc_value as *const CalcLengthPercentage as *const ();
     assert_eq!(
         used_style_length_percentage(LengthPercentage::calc(calc_ptr), 100.0),
-        None
+        Some(12.0)
     );
     assert_eq!(
         used_style_length_percentage(LengthPercentage::length(f32::NAN), 100.0),
@@ -446,7 +449,7 @@ fn used_style_length_helpers_cover_used_value_forms() {
     );
     assert_eq!(
         used_style_length_percentage_auto(LengthPercentageAuto::calc(calc_ptr), 100.0),
-        None
+        Some(12.0)
     );
     assert_eq!(
         used_computed_length_percentage_or_auto(ComputedLengthPercentageOrAuto::Px(12.0), 100.0),

@@ -716,16 +716,22 @@ fn padding_shorthand_expands_into_four_longhand_declarations() {
     // Migrate margin's parse-time expansion model to padding.
     let decls = parse_block("padding: 10px 20px;");
     assert_eq!(decls.len(), 4, "shorthand must expand to 4 longhand decls");
-    assert_eq!(decls[0].value, PropertyValue::PaddingTop(Length::Px(10.0)));
+    assert_eq!(
+        decls[0].value,
+        PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(Length::Px(10.0)))
+    );
     assert_eq!(
         decls[1].value,
-        PropertyValue::PaddingRight(Length::Px(20.0))
+        PropertyValue::PaddingRight(LengthPercentageOrCalc::Length(Length::Px(20.0)))
     );
     assert_eq!(
         decls[2].value,
-        PropertyValue::PaddingBottom(Length::Px(10.0))
+        PropertyValue::PaddingBottom(LengthPercentageOrCalc::Length(Length::Px(10.0)))
     );
-    assert_eq!(decls[3].value, PropertyValue::PaddingLeft(Length::Px(20.0)));
+    assert_eq!(
+        decls[3].value,
+        PropertyValue::PaddingLeft(LengthPercentageOrCalc::Length(Length::Px(20.0)))
+    );
 }
 
 #[test]
@@ -744,7 +750,10 @@ fn padding_longhand_declaration_not_expanded() {
     // A longhand passes through the `expand_shorthand_into` match arm unchanged (one declaration).
     let decls = parse_block("padding-top: 10px;");
     assert_eq!(decls.len(), 1);
-    assert_eq!(decls[0].value, PropertyValue::PaddingTop(Length::Px(10.0)));
+    assert_eq!(
+        decls[0].value,
+        PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(Length::Px(10.0)))
+    );
 }
 
 // ── border shorthand expansion (CSS Cascading L4 §3) ──

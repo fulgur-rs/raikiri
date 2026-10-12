@@ -55,7 +55,7 @@ fn multicol_style_from_computed(cv: &ComputedValues) -> Option<MulticolStyle> {
 /// - [`bridge_float`] — [`ComputedValues::float`] / [`ComputedValues::clear`] →
 ///   [`taffy::Style::float`] / [`taffy::Style::clear`] (CSS2 §9.5.1 / §9.5.2)
 /// - [`bridge_margin`] — `Sides<ComputedLengthPercentageOrAuto>` → [`taffy::Rect<LengthPercentageAuto>`]
-/// - [`bridge_padding`] — `Sides<ComputedLengthPercentage>` → [`taffy::Rect<LengthPercentage>`]
+/// - [`bridge_padding`] — `Sides<ComputedLengthPercentageOrCalc>` → [`taffy::Rect<LengthPercentage>`]
 /// - [`bridge_size`] — [`ComputedLengthPercentageOrAuto`] `cv.width` / `cv.height` →
 ///   [`taffy::Style::size`] (`Size<Dimension>`). Assigns both width and height
 ///   fields at once with a struct literal.
@@ -269,8 +269,8 @@ pub(crate) fn apply_computed_to_style(
         bridge_position(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
         bridge_overflow(style, cv);
         bridge_float(style, cv);
-        bridge_margin(style, cv, &mut doc.layout_warnings);
-        bridge_padding(style, cv, &mut doc.layout_warnings);
+        bridge_margin(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
+        bridge_padding(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
         bridge_min_max_size(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
         bridge_border(style, cv, &mut doc.layout_warnings);
         bridge_box_sizing(style, cv);
@@ -440,21 +440,26 @@ fn bridge_float(style: &mut taffy::Style, cv: &ComputedValues) {
 /// `left,right,top,bottom`; named fields prevent a silent transpose.
 ///
 /// See [`computed_length_percentage_or_auto_to_taffy_length_percentage_auto`] for length policy.
-fn bridge_margin(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
+fn bridge_margin(
+    style: &mut taffy::Style,
+    cv: &ComputedValues,
+    calc_values: &mut Vec<std::sync::Arc<raikiri_style::property::CalcLengthPercentage>>,
+    diag: &mut Vec<LayoutWarn>,
+) {
     let m = cv.margin;
+    let mut side = |value| {
+        computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
+            calc_values,
+            value,
+            "margin",
+            diag,
+        )
+    };
     style.margin = Rect {
-        top: computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
-            m.top, "margin", diag,
-        ),
-        right: computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
-            m.right, "margin", diag,
-        ),
-        bottom: computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
-            m.bottom, "margin", diag,
-        ),
-        left: computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
-            m.left, "margin", diag,
-        ),
+        top: side(m.top),
+        right: side(m.right),
+        bottom: side(m.bottom),
+        left: side(m.left),
     };
 }
 
@@ -471,13 +476,44 @@ fn bridge_margin(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<L
 /// [`computed_length_percentage_to_taffy_length_percentage`].
 ///
 /// See [`computed_length_percentage_to_taffy_length_percentage`] for length policy.
-fn bridge_padding(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
+fn bridge_padding(
+    style: &mut taffy::Style,
+    cv: &ComputedValues,
+    calc_values: &mut Vec<std::sync::Arc<raikiri_style::property::CalcLengthPercentage>>,
+    diag: &mut Vec<LayoutWarn>,
+) {
     let p = cv.padding;
+    let mut side = |value| match value {
+        ComputedLengthPercentageOrCalc::Px(px) => {
+            computed_length_percentage_to_taffy_length_percentage(
+                ComputedLengthPercentage::Px(px),
+                "padding",
+                diag,
+            )
+        }
+        ComputedLengthPercentageOrCalc::Percent(percent) => {
+            computed_length_percentage_to_taffy_length_percentage(
+                ComputedLengthPercentage::Percent(percent),
+                "padding",
+                diag,
+            )
+        }
+        // A mixed percentage-and-length padding resolves against the
+        // containing block in taffy, through the same arena as sizes.
+        ComputedLengthPercentageOrCalc::Calc(value) => {
+            calc_values.push(std::sync::Arc::new(value));
+            let pointer = calc_values
+                .last()
+                .map(|value| (&**value) as *const _ as *const ())
+                .expect("calc value was just pushed");
+            LengthPercentage::calc(pointer)
+        }
+    };
     style.padding = Rect {
-        top: computed_length_percentage_to_taffy_length_percentage(p.top, "padding", diag),
-        right: computed_length_percentage_to_taffy_length_percentage(p.right, "padding", diag),
-        bottom: computed_length_percentage_to_taffy_length_percentage(p.bottom, "padding", diag),
-        left: computed_length_percentage_to_taffy_length_percentage(p.left, "padding", diag),
+        top: side(p.top),
+        right: side(p.right),
+        bottom: side(p.bottom),
+        left: side(p.left),
     };
 }
 
@@ -763,13 +799,11 @@ fn bridge_box_sizing(style: &mut taffy::Style, cv: &ComputedValues) {
         && cv.border.bottom.width().px() == 0.0
         && matches!(
             cv.padding.top,
-            raikiri_style::ComputedLengthPercentage::Px(0.0)
-                | raikiri_style::ComputedLengthPercentage::Percent(0.0)
+            ComputedLengthPercentageOrCalc::Px(0.0) | ComputedLengthPercentageOrCalc::Percent(0.0)
         )
         && matches!(
             cv.padding.bottom,
-            raikiri_style::ComputedLengthPercentage::Px(0.0)
-                | raikiri_style::ComputedLengthPercentage::Percent(0.0)
+            ComputedLengthPercentageOrCalc::Px(0.0) | ComputedLengthPercentageOrCalc::Percent(0.0)
         );
     if width_auto
         && has_side_borders
@@ -1448,6 +1482,7 @@ fn computed_length_percentage_or_auto_to_taffy_min_max(
 /// `LengthPercentageAuto::auto()` (delegating CSS Box 3 §3.1's "margin auto = distribute
 /// available space" to taffy; no `f32` means no guard is needed).
 fn computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
+    calc_values: &mut Vec<std::sync::Arc<raikiri_style::property::CalcLengthPercentage>>,
     loa: ComputedLengthPercentageOrAuto,
     site: &'static str,
     diag: &mut Vec<LayoutWarn>,
@@ -1463,9 +1498,16 @@ fn computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
             LengthPercentageAuto::percent(sanitize_taffy(p / 100.0, site, diag))
         }
         ComputedLengthPercentageOrAuto::Auto => LengthPercentageAuto::auto(),
-        // Margins do not compute to a calc payload yet; margin calc
-        // resolution will share the same arena in a later pass.
-        ComputedLengthPercentageOrAuto::Calc(_) => LengthPercentageAuto::length(0.0),
+        // A mixed percentage-and-length margin resolves against the
+        // containing block in taffy, through the same arena as sizes.
+        ComputedLengthPercentageOrAuto::Calc(value) => {
+            calc_values.push(std::sync::Arc::new(value));
+            let pointer = calc_values
+                .last()
+                .map(|value| (&**value) as *const _ as *const ())
+                .expect("calc value was just pushed");
+            LengthPercentageAuto::calc(pointer)
+        }
         // Margins never compute to `min-content`.
         ComputedLengthPercentageOrAuto::MinContent => LengthPercentageAuto::length(0.0), // cov:ignore: only the width / inline-size parser produces min-content
     }

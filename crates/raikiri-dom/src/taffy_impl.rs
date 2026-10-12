@@ -534,26 +534,21 @@ impl Document {
             if is_leaf {
                 let style = tree.nodes[idx].style.clone();
                 let leaf_intrinsic = leaf_intrinsic_size(&tree.nodes[idx]);
-                compute_leaf_layout(
-                    inputs,
-                    &style,
-                    |_val, _basis| 0.0,
-                    |known, _available| {
-                        // An explicit size from the style wins; otherwise an
-                        // image's intrinsic size; a text node outside every
-                        // paragraph and any other leaf measure zero.
-                        Size {
-                            width: known
-                                .width
-                                .or(leaf_intrinsic.map(|s| s.width))
-                                .unwrap_or(0.0),
-                            height: known
-                                .height
-                                .or(leaf_intrinsic.map(|s| s.height))
-                                .unwrap_or(0.0),
-                        }
-                    },
-                )
+                compute_leaf_layout(inputs, &style, resolve_calc, |known, _available| {
+                    // An explicit size from the style wins; otherwise an
+                    // image's intrinsic size; a text node outside every
+                    // paragraph and any other leaf measure zero.
+                    Size {
+                        width: known
+                            .width
+                            .or(leaf_intrinsic.map(|s| s.width))
+                            .unwrap_or(0.0),
+                        height: known
+                            .height
+                            .or(leaf_intrinsic.map(|s| s.height))
+                            .unwrap_or(0.0),
+                    }
+                })
             } else {
                 match display {
                     Display::Block | Display::FlowRoot => {

@@ -2974,7 +2974,7 @@ fn background_canvas_percent_padding_and_empty_painting() {
     let (left, _, _, _) = canvas_used_padding(&computed, 200.0);
     let _ = left;
     let mut percent_computed = ComputedValues::initial();
-    percent_computed.padding.left = ComputedLengthPercentage::Percent(10.0);
+    percent_computed.padding.left = raikiri_style::ComputedLengthPercentageOrCalc::Percent(10.0);
     let (pl, _, _, _) = canvas_used_padding(&percent_computed, 200.0);
     assert!((pl - 20.0).abs() < 0.001);
 

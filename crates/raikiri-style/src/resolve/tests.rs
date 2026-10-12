@@ -1622,10 +1622,15 @@ fn initial_length_fields_absolutize_to_spec_initials() {
     let initial = SpecifiedValues::initial();
     let fs = ComputedLength(INITIAL_FONT_SIZE_PX);
 
-    assert_eq!(initial.padding, Sides::all(Length::Px(0.0)));
     assert_eq!(
-        resolve_length_percentage(initial.padding.top, fs, None, &CTX),
-        ComputedLengthPercentage::Px(0.0),
+        initial.padding,
+        Sides::all(crate::property::LengthPercentageOrCalc::Length(Length::Px(
+            0.0
+        )))
+    );
+    assert_eq!(
+        resolve_non_negative_length_percentage_or_calc(initial.padding.top, fs, None, &CTX),
+        ComputedLengthPercentageOrCalc::Px(0.0),
     );
     assert_eq!(
         initial.text_indent,
@@ -1901,10 +1906,20 @@ fn relative_calc_terms_resolve_against_their_bases() {
             ComputedLengthPercentageOrAuto::Auto
         );
     }
-    // Margins never hold a mixed calc; the resolver keeps their initial.
+    // A margin resolves the same terms; an `lh` term without a basis falls
+    // back to the margin's initial value instead of `auto`.
     assert_eq!(
         resolve_margin_length_or_auto(
             LengthOrAuto::RelativeCalc(relative_calc_plus_1px(1.0, "em")),
+            font_size,
+            None,
+            &CTX,
+        ),
+        ComputedLengthPercentageOrAuto::Px(11.0)
+    );
+    assert_eq!(
+        resolve_margin_length_or_auto(
+            LengthOrAuto::RelativeCalc(relative_calc_plus_1px(1.0, "lh")),
             font_size,
             None,
             &CTX,

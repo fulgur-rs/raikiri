@@ -228,12 +228,17 @@ fn position_rejects_running_with_extra_arg() {
 // - https://www.w3.org/TR/css-box-3/#padding-shorthand
 //   `<'padding-top'>{1,4}` — 1-4 value expansion (top/right/bottom/left).
 
-fn padding_sides(top: Length, right: Length, bottom: Length, left: Length) -> Sides<Length> {
+fn padding_sides(
+    top: Length,
+    right: Length,
+    bottom: Length,
+    left: Length,
+) -> Sides<LengthPercentageOrCalc> {
     Sides {
-        top,
-        right,
-        bottom,
-        left,
+        top: top.into(),
+        right: right.into(),
+        bottom: bottom.into(),
+        left: left.into(),
     }
 }
 
@@ -242,7 +247,9 @@ fn padding_sides(top: Length, right: Length, bottom: Length, left: Length) -> Si
 fn padding_top_parses_px() {
     assert_eq!(
         parse("10px", "padding-top"),
-        Some(PropertyValue::PaddingTop(Length::Px(10.0)))
+        Some(PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(
+            Length::Px(10.0)
+        )))
     );
 }
 
@@ -251,7 +258,9 @@ fn padding_right_parses_percentage() {
     // Spec grammar `<length-percentage>` accepts `%`.
     assert_eq!(
         parse("5%", "padding-right"),
-        Some(PropertyValue::PaddingRight(Length::Percent(5.0)))
+        Some(PropertyValue::PaddingRight(LengthPercentageOrCalc::Length(
+            Length::Percent(5.0)
+        )))
     );
 }
 
@@ -259,7 +268,9 @@ fn padding_right_parses_percentage() {
 fn padding_bottom_parses_em() {
     assert_eq!(
         parse("1em", "padding-bottom"),
-        Some(PropertyValue::PaddingBottom(Length::Em(1.0)))
+        Some(PropertyValue::PaddingBottom(
+            LengthPercentageOrCalc::Length(Length::Em(1.0))
+        ))
     );
 }
 
@@ -267,7 +278,9 @@ fn padding_bottom_parses_em() {
 fn padding_left_parses_pt() {
     assert_eq!(
         parse("12pt", "padding-left"),
-        Some(PropertyValue::PaddingLeft(Length::Pt(12.0)))
+        Some(PropertyValue::PaddingLeft(LengthPercentageOrCalc::Length(
+            Length::Pt(12.0)
+        )))
     );
 }
 
@@ -278,7 +291,9 @@ fn padding_shorthand_one_value_all_sides() {
     let px10 = Length::Px(10.0);
     assert_eq!(
         parse("10px", "padding"),
-        Some(PropertyValue::Padding(Sides::all(px10)))
+        Some(PropertyValue::Padding(Sides::all(
+            LengthPercentageOrCalc::Length(px10)
+        )))
     );
 }
 
@@ -376,11 +391,15 @@ fn padding_top_accepts_zero() {
     // the CSS Values 3 §5 unitless-zero clause, then passes the nonnegative filter.
     assert_eq!(
         parse("0px", "padding-top"),
-        Some(PropertyValue::PaddingTop(Length::Px(0.0)))
+        Some(PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(
+            Length::Px(0.0)
+        )))
     );
     assert_eq!(
         parse("0", "padding-top"),
-        Some(PropertyValue::PaddingTop(Length::Px(0.0)))
+        Some(PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(
+            Length::Px(0.0)
+        )))
     );
 }
 
@@ -458,11 +477,15 @@ fn padding_top_accepts_lh() {
     // CSS Values 4 §6.1.1 `lh`/`rlh`.
     assert_eq!(
         parse("5lh", "padding-top"),
-        Some(PropertyValue::PaddingTop(Length::Lh(5.0)))
+        Some(PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(
+            Length::Lh(5.0)
+        )))
     );
     assert_eq!(
         parse("1rlh", "padding-top"),
-        Some(PropertyValue::PaddingTop(Length::Rlh(1.0)))
+        Some(PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(
+            Length::Rlh(1.0)
+        )))
     );
 }
 
@@ -470,7 +493,9 @@ fn padding_top_accepts_lh() {
 fn padding_top_accepts_ch() {
     assert_eq!(
         parse("2ch", "padding-top"),
-        Some(PropertyValue::PaddingTop(Length::Ch(2.0)))
+        Some(PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(
+            Length::Ch(2.0)
+        )))
     );
 }
 
@@ -478,7 +503,9 @@ fn padding_top_accepts_ch() {
 fn padding_top_accepts_cm() {
     assert_eq!(
         parse("2cm", "padding-top"),
-        Some(PropertyValue::PaddingTop(Length::Cm(2.0)))
+        Some(PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(
+            Length::Cm(2.0)
+        )))
     );
 }
 
@@ -512,27 +539,39 @@ fn padding_top_rejects_negative_lh() {
 fn padding_top_accepts_remaining_additional_units() {
     assert_eq!(
         parse("1rex", "padding-top"),
-        Some(PropertyValue::PaddingTop(Length::Rex(1.0)))
+        Some(PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(
+            Length::Rex(1.0)
+        )))
     );
     assert_eq!(
         parse("1rch", "padding-top"),
-        Some(PropertyValue::PaddingTop(Length::Rch(1.0)))
+        Some(PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(
+            Length::Rch(1.0)
+        )))
     );
     assert_eq!(
         parse("1ic", "padding-top"),
-        Some(PropertyValue::PaddingTop(Length::Ic(1.0)))
+        Some(PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(
+            Length::Ic(1.0)
+        )))
     );
     assert_eq!(
         parse("1ric", "padding-top"),
-        Some(PropertyValue::PaddingTop(Length::Ric(1.0)))
+        Some(PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(
+            Length::Ric(1.0)
+        )))
     );
     assert_eq!(
         parse("1mm", "padding-top"),
-        Some(PropertyValue::PaddingTop(Length::Mm(1.0)))
+        Some(PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(
+            Length::Mm(1.0)
+        )))
     );
     assert_eq!(
         parse("40Q", "padding-top"),
-        Some(PropertyValue::PaddingTop(Length::Q(40.0)))
+        Some(PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(
+            Length::Q(40.0)
+        )))
     );
 }
 
@@ -542,23 +581,23 @@ fn padding_key_maps_to_padding_property_keys() {
     // Each of five discriminants (four longhands and one shorthand) returns its own PropertyKey.
     // Verify discriminant integrity for cascade winner selection.
     assert_eq!(
-        PropertyValue::PaddingTop(Length::Px(0.0)).key(),
+        PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(Length::Px(0.0))).key(),
         PropertyKey::PaddingTop
     );
     assert_eq!(
-        PropertyValue::PaddingRight(Length::Px(0.0)).key(),
+        PropertyValue::PaddingRight(LengthPercentageOrCalc::Length(Length::Px(0.0))).key(),
         PropertyKey::PaddingRight
     );
     assert_eq!(
-        PropertyValue::PaddingBottom(Length::Px(0.0)).key(),
+        PropertyValue::PaddingBottom(LengthPercentageOrCalc::Length(Length::Px(0.0))).key(),
         PropertyKey::PaddingBottom
     );
     assert_eq!(
-        PropertyValue::PaddingLeft(Length::Px(0.0)).key(),
+        PropertyValue::PaddingLeft(LengthPercentageOrCalc::Length(Length::Px(0.0))).key(),
         PropertyKey::PaddingLeft
     );
     assert_eq!(
-        PropertyValue::Padding(Sides::all(Length::Px(0.0))).key(),
+        PropertyValue::Padding(Sides::all(LengthPercentageOrCalc::Length(Length::Px(0.0)))).key(),
         PropertyKey::Padding
     );
 }
@@ -594,11 +633,15 @@ fn padding_case_insensitive_unit() {
     // CSS spec: unit identifiers are ASCII case-insensitive.
     assert_eq!(
         parse("10PX", "padding-top"),
-        Some(PropertyValue::PaddingTop(Length::Px(10.0)))
+        Some(PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(
+            Length::Px(10.0)
+        )))
     );
     assert_eq!(
         parse("2EM", "padding-bottom"),
-        Some(PropertyValue::PaddingBottom(Length::Em(2.0)))
+        Some(PropertyValue::PaddingBottom(
+            LengthPercentageOrCalc::Length(Length::Em(2.0))
+        ))
     );
 }
 
@@ -1320,7 +1363,9 @@ fn margin_block_end_parses_to_margin_bottom() {
 fn padding_inline_start_parses_to_padding_left() {
     assert_eq!(
         parse("5px", "padding-inline-start"),
-        Some(PropertyValue::PaddingLeft(Length::Px(5.0)))
+        Some(PropertyValue::PaddingLeft(LengthPercentageOrCalc::Length(
+            Length::Px(5.0)
+        )))
     );
 }
 
@@ -1328,7 +1373,9 @@ fn padding_inline_start_parses_to_padding_left() {
 fn padding_inline_end_parses_to_padding_right() {
     assert_eq!(
         parse("5%", "padding-inline-end"),
-        Some(PropertyValue::PaddingRight(Length::Percent(5.0)))
+        Some(PropertyValue::PaddingRight(LengthPercentageOrCalc::Length(
+            Length::Percent(5.0)
+        )))
     );
 }
 
@@ -1336,7 +1383,9 @@ fn padding_inline_end_parses_to_padding_right() {
 fn padding_block_start_parses_to_padding_top() {
     assert_eq!(
         parse("5px", "padding-block-start"),
-        Some(PropertyValue::PaddingTop(Length::Px(5.0)))
+        Some(PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(
+            Length::Px(5.0)
+        )))
     );
 }
 
@@ -1344,7 +1393,9 @@ fn padding_block_start_parses_to_padding_top() {
 fn padding_block_end_parses_to_padding_bottom() {
     assert_eq!(
         parse("5px", "padding-block-end"),
-        Some(PropertyValue::PaddingBottom(Length::Px(5.0)))
+        Some(PropertyValue::PaddingBottom(
+            LengthPercentageOrCalc::Length(Length::Px(5.0))
+        ))
     );
 }
 
@@ -1396,9 +1447,9 @@ fn margin_block_shorthand_two_value() {
 fn padding_inline_shorthand_one_value_spreads_to_start_and_end() {
     assert_eq!(
         parse("12px", "padding-inline"),
-        Some(PropertyValue::PaddingInline(StartEnd::both(Length::Px(
-            12.0
-        ))))
+        Some(PropertyValue::PaddingInline(StartEnd::both(
+            LengthPercentageOrCalc::Length(Length::Px(12.0))
+        )))
     );
 }
 
@@ -1407,8 +1458,8 @@ fn padding_inline_shorthand_two_value() {
     assert_eq!(
         parse("5px 10px", "padding-inline"),
         Some(PropertyValue::PaddingInline(StartEnd {
-            start: Length::Px(5.0),
-            end: Length::Px(10.0),
+            start: LengthPercentageOrCalc::Length(Length::Px(5.0)),
+            end: LengthPercentageOrCalc::Length(Length::Px(10.0)),
         }))
     );
 }
@@ -1418,8 +1469,8 @@ fn padding_block_shorthand_two_value() {
     assert_eq!(
         parse("5px 10px", "padding-block"),
         Some(PropertyValue::PaddingBlock(StartEnd {
-            start: Length::Px(5.0),
-            end: Length::Px(10.0),
+            start: LengthPercentageOrCalc::Length(Length::Px(5.0)),
+            end: LengthPercentageOrCalc::Length(Length::Px(10.0)),
         }))
     );
 }
@@ -1439,9 +1490,9 @@ fn padding_inline_shorthand_rejects_negative_component() {
     // reader doesn't mistake it for one.
     assert_eq!(
         parse("10px -5px", "padding-inline"),
-        Some(PropertyValue::PaddingInline(StartEnd::both(Length::Px(
-            10.0
-        ))))
+        Some(PropertyValue::PaddingInline(StartEnd::both(
+            LengthPercentageOrCalc::Length(Length::Px(10.0))
+        )))
     );
     let decls = crate::rule::parse_declaration_block(&mut Parser::new(&mut ParserInput::new(
         "padding-inline: 10px -5px;",
@@ -1491,11 +1542,17 @@ fn logical_margin_padding_keys_map_to_their_physical_counterparts() {
         PropertyKey::MarginBlock
     );
     assert_eq!(
-        PropertyValue::PaddingInline(StartEnd::both(Length::Px(1.0))).key(),
+        PropertyValue::PaddingInline(StartEnd::both(LengthPercentageOrCalc::Length(Length::Px(
+            1.0
+        ))))
+        .key(),
         PropertyKey::PaddingInline
     );
     assert_eq!(
-        PropertyValue::PaddingBlock(StartEnd::both(Length::Px(1.0))).key(),
+        PropertyValue::PaddingBlock(StartEnd::both(LengthPercentageOrCalc::Length(Length::Px(
+            1.0
+        ))))
+        .key(),
         PropertyKey::PaddingBlock
     );
 }

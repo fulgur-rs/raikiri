@@ -3736,6 +3736,36 @@ fn a_percentage_margin_resolves_against_the_paragraph_width() {
 }
 
 #[test]
+fn a_mixed_calc_margin_resolves_against_the_paragraph_width() {
+    // `calc(10% + 3px)` keeps both terms until layout: 10px + 3px.
+    let (mut doc, cascade, float, _root) = ahem_paragraph_with_float(
+        "aa",
+        "float:left;width:30px;height:20px;margin-left:calc(10% + 3px)",
+        " bb",
+        "",
+    );
+    lay_out(&mut doc, &cascade);
+    let layout = doc.nodes[float].unrounded_layout;
+    assert_eq!(layout.margin.left, 13.0);
+    assert_eq!(layout.location.x, 13.0);
+}
+
+#[test]
+fn a_mixed_calc_padding_resolves_against_the_paragraph_width() {
+    // `calc(10% + 2px)` keeps both terms until layout: 10px + 2px.
+    let (mut doc, cascade, float, _root) = ahem_paragraph_with_float(
+        "aa",
+        "float:left;width:30px;height:20px;padding-left:calc(10% + 2px)",
+        " bb",
+        "",
+    );
+    lay_out(&mut doc, &cascade);
+    let layout = doc.nodes[float].unrounded_layout;
+    assert_eq!(layout.padding.left, 12.0);
+    assert_eq!(layout.size.width, 42.0);
+}
+
+#[test]
 fn a_padded_formatting_context_does_not_count_its_top_edge_twice() {
     // The context measures floats from the border-box top, the box height from
     // the content-box top: a 15px top padding and a 50px float make a box that

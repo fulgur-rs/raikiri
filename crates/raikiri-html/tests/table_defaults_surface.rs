@@ -1,6 +1,6 @@
 //! Default HTML table styling through the independent painter surface.
 
-use raikiri_html::computed::ComputedLengthPercentage;
+use raikiri_html::computed::ComputedLengthPercentageOrCalc;
 use raikiri_html::{
     DocumentLayout, FontCollectionBuilder, LayoutOptions, LayoutStatus, NodeId, RenderResources,
     layout, parse_html_with_resources,
@@ -60,7 +60,7 @@ fn default_cells_have_one_pixel_padding_and_headers_are_bold() {
             cv.padding.bottom,
             cv.padding.left,
         ] {
-            assert_eq!(side, ComputedLengthPercentage::Px(1.0));
+            assert_eq!(side, ComputedLengthPercentageOrCalc::Px(1.0));
         }
         assert_eq!(cv.font_weight, if id == "header" { 700.0 } else { 400.0 });
         let rect = page
@@ -137,7 +137,7 @@ fn author_styles_override_each_table_default() {
     let header = page
         .computed(find_by_id(dom.root(), &dom, "header").unwrap())
         .unwrap();
-    assert_eq!(header.padding.left, ComputedLengthPercentage::Px(4.0));
+    assert_eq!(header.padding.left, ComputedLengthPercentageOrCalc::Px(4.0));
     assert_eq!(header.font_weight, 400.0);
     let caption = page
         .computed(find_by_id(dom.root(), &dom, "caption").unwrap())
@@ -162,7 +162,7 @@ fn cell_padding_hint_beats_ua_padding_but_author_css_still_wins() {
             cv.padding.bottom,
             cv.padding.left,
         ] {
-            assert_eq!(side, ComputedLengthPercentage::Px(padding));
+            assert_eq!(side, ComputedLengthPercentageOrCalc::Px(padding));
         }
     }
 }

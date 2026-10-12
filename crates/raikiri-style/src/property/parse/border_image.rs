@@ -91,7 +91,7 @@ pub(crate) fn parse_border_image_slice(input: &mut Parser<'_, '_>) -> Option<Bor
 
 fn parse_width_side<'i>(
     input: &mut Parser<'i, '_>,
-) -> Result<BorderImageWidthSide<Length>, ParseError<'i, ()>> {
+) -> Result<BorderImageWidthSide<LengthPercentageOrCalc>, ParseError<'i, ()>> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Ok(BorderImageWidthSide::Auto);
     }
@@ -99,13 +99,21 @@ fn parse_width_side<'i>(
     if let Ok(number) = input.try_parse(parse_non_negative_number) {
         return Ok(BorderImageWidthSide::Number(number));
     }
-    parse_non_negative_length_percentage_res(input).map(BorderImageWidthSide::LengthPercentage)
+    // A mixed-unit `calc()` that substitution or simplification could not
+    // fold keeps its terms; a math function is clamped to the range.
+    if let Some(calc) = crate::cascade::parse_relative_calc_function(input) {
+        return Ok(BorderImageWidthSide::LengthPercentage(
+            LengthPercentageOrCalc::from_non_negative_calc(calc),
+        ));
+    }
+    parse_non_negative_length_percentage_res(input)
+        .map(|length| BorderImageWidthSide::LengthPercentage(length.into()))
 }
 
 /// `border-image-width: [<length-percentage [0,∞]> | <number [0,∞]> | auto]{1,4}`.
 pub(crate) fn parse_border_image_width(
     input: &mut Parser<'_, '_>,
-) -> Option<Sides<BorderImageWidthSide<Length>>> {
+) -> Option<Sides<BorderImageWidthSide<LengthPercentageOrCalc>>> {
     parse_up_to_four(input, parse_width_side)
 }
 
