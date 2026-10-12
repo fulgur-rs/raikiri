@@ -9,6 +9,10 @@ thread_local! {
     pub(crate) static GRID_PARENT_LOOKUP_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static TEXT_LINE_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     pub(crate) static TABLE_CELL_LOOKUP_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static IFC_ATOMIC_OUTPUT_LOOKUP_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static IFC_ATOMIC_VISIBILITY_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static IFC_CANDIDATE_BOX_MEMBERSHIP_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(crate) static IFC_ROOT_BOX_MEMBERSHIP_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// A `<div>` of Ahem text under `html > body`, with a fixed 10px line height.

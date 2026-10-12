@@ -11,6 +11,7 @@ use shodo::{
     AtomicIntrinsic, AtomicIntrinsics, AtomicSize, AtomicSizes, BreakToken, FloatClear,
     FloatCursor, FloatIntrinsic, FloatSide, LineConstraint, LineResult,
 };
+use std::collections::{HashMap, HashSet};
 use taffy::util::ResolveOrZero;
 use taffy::{
     AvailableSpace, BlockContext, BlockFormattingContext, Clear, CollapsibleMarginSet,
@@ -1624,15 +1625,28 @@ fn hide_truncated_atomics(
     lines: &[shodo::Line],
     outputs: &[(usize, taffy::LayoutOutput)],
 ) {
+    if outputs.is_empty() {
+        return;
+    }
+    let mut on_a_line = HashSet::with_capacity(outputs.len());
+    for line in lines {
+        for fragment in line.fragments() {
+            #[cfg(test)]
+            crate::layout::test_support::IFC_ATOMIC_VISIBILITY_STEPS
+                .with(|steps| steps.set(steps.get() + 1));
+            if let shodo::Fragment::Atomic(atomic) = fragment {
+                on_a_line.insert(atomic.node.0 as usize);
+            }
+        }
+    }
     for &(node, _) in outputs {
-        let on_a_line = lines.iter().any(|line| {
-            line.fragments().any(|fragment| {
-                matches!(fragment, shodo::Fragment::Atomic(atomic) if atomic.node.0 as usize == node)
-            })
-        });
-        tree.nodes[node]
-            .flags
-            .set(crate::node::NodeFlags::HIDDEN_BY_TEXT_OVERFLOW, !on_a_line);
+        #[cfg(test)]
+        crate::layout::test_support::IFC_ATOMIC_VISIBILITY_STEPS
+            .with(|steps| steps.set(steps.get() + 1));
+        tree.nodes[node].flags.set(
+            crate::node::NodeFlags::HIDDEN_BY_TEXT_OVERFLOW,
+            !on_a_line.contains(&node),
+        );
     }
 }
 
@@ -1643,13 +1657,26 @@ fn place_atomics(
     geometry: FlowGeometry,
     rtl: bool,
 ) {
+    if outputs.is_empty() {
+        return;
+    }
+    let mut outputs_by_node = HashMap::with_capacity(outputs.len());
+    for (node, output) in outputs {
+        #[cfg(test)]
+        crate::layout::test_support::IFC_ATOMIC_OUTPUT_LOOKUP_STEPS
+            .with(|steps| steps.set(steps.get() + 1));
+        outputs_by_node.entry(*node).or_insert(output);
+    }
     for line in lines {
         for fragment in line.fragments() {
             let shodo::Fragment::Atomic(atomic) = fragment else {
                 continue;
             };
             let node = atomic.node.0 as usize;
-            let Some((_, output)) = outputs.iter().find(|(n, _)| *n == node) else {
+            #[cfg(test)]
+            crate::layout::test_support::IFC_ATOMIC_OUTPUT_LOOKUP_STEPS
+                .with(|steps| steps.set(steps.get() + 1));
+            let Some(output) = outputs_by_node.get(&node).copied() else {
                 continue;
             };
             // The fragment is relative to the line's top and the content-box

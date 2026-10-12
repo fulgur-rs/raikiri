@@ -224,6 +224,43 @@ fn is_root(fixture: &crate::layout::ifc::test_support::Fixture, id: usize) -> bo
 }
 
 #[test]
+fn many_atomic_boxes_keep_candidate_and_root_membership_work_linear() {
+    const ATOMIC_COUNT: usize = 64;
+    let mut atomics = Vec::with_capacity(ATOMIC_COUNT);
+    let mut fixture = block_fixture("", |doc, root| {
+        for _ in 0..ATOMIC_COUNT {
+            atomics.push(span(
+                doc,
+                root,
+                "display:inline-block;width:1px;height:10px",
+            ));
+        }
+    });
+    enable(&mut fixture);
+    crate::layout::test_support::IFC_CANDIDATE_BOX_MEMBERSHIP_STEPS.with(|steps| steps.set(0));
+    crate::layout::test_support::IFC_ROOT_BOX_MEMBERSHIP_STEPS.with(|steps| steps.set(0));
+
+    assign(&mut fixture);
+
+    assert!(is_root(&fixture, fixture.root));
+    for atomic in atomics {
+        assert!(
+            !fixture.doc.nodes[atomic]
+                .flags
+                .contains(NodeFlags::IN_IFC_SUBTREE)
+        );
+    }
+    let candidate_steps =
+        crate::layout::test_support::IFC_CANDIDATE_BOX_MEMBERSHIP_STEPS.with(std::cell::Cell::get);
+    let root_steps =
+        crate::layout::test_support::IFC_ROOT_BOX_MEMBERSHIP_STEPS.with(std::cell::Cell::get);
+    assert!(
+        candidate_steps <= ATOMIC_COUNT * 4 && root_steps <= ATOMIC_COUNT * 4,
+        "candidate membership did {candidate_steps} steps and root membership did {root_steps} steps for {ATOMIC_COUNT} atomics"
+    );
+}
+
+#[test]
 fn a_plain_paragraph_becomes_a_root_and_marks_its_subtree() {
     let mut fixture = block_fixture("", |doc, root| {
         doc.append_text(root, "aa ");
