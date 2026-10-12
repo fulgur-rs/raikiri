@@ -92,18 +92,18 @@ impl WptRunner {
         if self.expectations.expected_failures.get(test_id).is_some() {
             return None;
         }
-        // A baseline entry stays protected against regression even when a
-        // directory-level known-issue marks the rest of its area out of scope.
-        if self.expectations.baseline.entries.contains(test_id) {
-            return None;
-        }
-        // known-issues => Skip (non-goal)
+        // known-issues => Skip (non-goal). A baseline entry stays protected
+        // against regression when only a directory-level known-issue marks
+        // its area out of scope; an exact known-issue entry still skips it.
+        let in_baseline = self.expectations.baseline.entries.contains(test_id);
         if self
             .expectations
             .known_issues
             .entries
             .iter()
-            .any(|(pat, _)| test_id_matches_pattern(test_id, pat))
+            .any(|(pat, _)| {
+                test_id_matches_pattern(test_id, pat) && !(in_baseline && pat.ends_with('/'))
+            })
         {
             return Some(TestOutcome::Skip("known-issue (non-goal)".to_owned()));
         }

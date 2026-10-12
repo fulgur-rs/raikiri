@@ -468,8 +468,9 @@ fn sweep_label(sweep: &Path, pin: &str) -> Result<String, String> {
     ))
 }
 
+/// The file part of a test id, without a `?query` or `#fragment` variant.
 fn strip_query(id: &str) -> &str {
-    id.split_once('?').map_or(id, |(file, _)| file)
+    id.find(['?', '#']).map_or(id, |index| &id[..index])
 }
 
 fn matches_known_issue(file: &str, pattern: &str) -> bool {

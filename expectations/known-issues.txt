@@ -10,7 +10,8 @@
 # - An exact expected-failure entry may override a directory-prefix SKIP so
 #   that one reviewed test variant executes; exact-id overlap is a lint error.
 # - A raikiri-baseline.txt entry also overrides a directory-prefix SKIP, so
-#   a regression guard keeps running inside an out-of-scope area.
+#   a regression guard keeps running inside an out-of-scope area; an exact
+#   known-issue entry still skips it.
 # - Results are not reported as regressions and do not count toward
 #   tracked-wpt statistics.
 

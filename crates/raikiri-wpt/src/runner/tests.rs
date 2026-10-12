@@ -118,9 +118,19 @@ fn baseline_entry_overrides_a_known_issue_prefix() {
     set.baseline
         .entries
         .insert("css/scroll/parsing/guarded.html".to_owned());
+    set.known_issues
+        .entries
+        .push(("css/other/waived.html".to_owned(), "waived".to_owned()));
+    set.baseline
+        .entries
+        .insert("css/other/waived.html".to_owned());
     let runner = WptRunner::new(set);
 
     assert!(runner.classify("css/scroll/parsing/guarded.html").is_none());
+    assert!(matches!(
+        runner.classify("css/other/waived.html"),
+        Some(TestOutcome::Skip(_))
+    ));
     assert!(matches!(
         runner.classify("css/scroll/other.html"),
         Some(TestOutcome::Skip(_))

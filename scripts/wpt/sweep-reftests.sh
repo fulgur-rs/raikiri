@@ -29,7 +29,7 @@ from pathlib import Path
 
 
 class VariantParser(html.parser.HTMLParser):
-    """Collect `<meta name="variant" content="?...">` query suffixes."""
+    """Collect `<meta name="variant" content="?..." | "#...">` suffixes."""
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -40,7 +40,7 @@ class VariantParser(html.parser.HTMLParser):
             return
         values = {key.casefold(): value or "" for key, value in attrs}
         content = values.get("content", "")
-        if values.get("name", "").casefold() == "variant" and content.startswith("?"):
+        if values.get("name", "").casefold() == "variant" and content[:1] in ("?", "#") and len(content) > 1:
             self.variants.append(content)
 
     handle_startendtag = handle_starttag
@@ -58,7 +58,9 @@ for category in report["categories"].values():
             parser = VariantParser()
             parser.feed((wpt_root / test_id).read_bytes().decode("utf-8", errors="replace"))
             # A file with declared variants runs once per variant, as WPT does;
-            # the dashboard reduces them back to one outcome per file.
+            # the dashboard reduces them back to one outcome per file. The
+            # report runner does not apply `#` variants yet and reports them as
+            # ERROR, which keeps such a file from counting as PASS.
             ids.extend(f"{test_id}{variant}" for variant in parser.variants or [""])
 ids.sort()
 with open(sys.argv[2], "w", encoding="utf-8") as out:
