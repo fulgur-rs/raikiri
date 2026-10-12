@@ -75,6 +75,8 @@ impl SelectorQuery {
     /// `matches`/`closest`, DOM §4.2.6, §4.9); a document- or
     /// fragment-scoped query has no such element, so it calls this the
     /// same as [`Self::matches`] (`scope: None`).
+    /// This single-candidate entry point scans filtered sibling positions
+    /// directly; [`Self::matcher`] retains ranks for repeated candidates.
     pub fn matches_scoped<D: StyleDom>(
         &self,
         dom: &D,
@@ -82,7 +84,8 @@ impl SelectorQuery {
         ancestors: &[StyleNodeId],
         scope: Option<StyleNodeId>,
     ) -> bool {
-        self.matcher(dom, scope).matches(elem_id, ancestors)
+        self.matcher_with_caches(dom, scope, MatchCaches::for_single_match())
+            .matches(elem_id, ancestors)
     }
 
     /// A matcher that tests many elements of `dom` against this selector
@@ -99,11 +102,20 @@ impl SelectorQuery {
         dom: &'a D,
         scope: Option<StyleNodeId>,
     ) -> SelectorMatcher<'a, D> {
+        self.matcher_with_caches(dom, scope, MatchCaches::default())
+    }
+
+    fn matcher_with_caches<'a, D: StyleDom>(
+        &'a self,
+        dom: &'a D,
+        scope: Option<StyleNodeId>,
+        caches: MatchCaches,
+    ) -> SelectorMatcher<'a, D> {
         SelectorMatcher {
             query: self,
             dom,
             scope,
-            caches: MatchCaches::default(),
+            caches,
         }
     }
 }

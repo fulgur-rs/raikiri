@@ -17,6 +17,9 @@ use super::collect::{Specificity, specificity_of};
 use super::lang::{effective_language, lang_pseudo_matches};
 use super::resolve_directionality;
 
+mod filtered_nth;
+use filtered_nth::FilteredNthCache;
+
 /// The matching parameters that stay constant for one whole match call — a
 /// stylesheet cascade walk, or one [`crate::SelectorQuery`] entry-point call.
 ///
@@ -70,12 +73,12 @@ impl<'a, D: StyleDom> MatchContext<'a, D> {
 /// parent for a scan that is already cheap.
 const SIBLING_CACHE_MIN_CHILDREN: usize = 8;
 
-/// Memoized, DOM-derived facts shared by every match performed through one
+/// Memoized matching facts shared by every match performed through one
 /// [`MatchContext`].
 ///
 /// # Soundness precondition
 ///
-/// Every entry is a pure function of the DOM, so the DOM must not change
+/// Entries depend on the DOM and matching parameters, so the DOM must not change
 /// while a `MatchCaches` is alive. Callers create one per stylesheet cascade
 /// (which borrows the DOM immutably for the whole walk) or per
 /// [`crate::SelectorQuery`] call; [`StyleDom`] reads never mutate.
@@ -91,10 +94,13 @@ const SIBLING_CACHE_MIN_CHILDREN: usize = 8;
 ///
 /// Building a [`SiblingInfo`], an effective language or a directionality
 /// only reads the DOM and never calls back into the matcher, so it cannot
-/// re-enter these `RefCell`s. Every borrow is still released before the
-/// result is used, so no borrow is ever held across a matcher recursion.
+/// re-enter their `RefCell`s. Filtered ranks do call back into the matcher;
+/// their cache borrow ends before construction and their budget is checked
+/// again afterwards. No borrow is ever held across a matcher recursion.
 #[derive(Default)]
 pub(crate) struct MatchCaches {
+    /// Filtered sibling ranks, bounded per immutable match operation.
+    filtered_nth: RefCell<FilteredNthCache>,
     /// Keyed by `(parent_id, allow_detached)`; see [`SiblingInfo`].
     siblings: RefCell<HashMap<(StyleNodeId, bool), Rc<SiblingInfo>>>,
     /// Effective content language per element id; see [`effective_language`].
@@ -121,6 +127,15 @@ struct HasScratch {
 }
 
 impl MatchCaches {
+    /// One-shot queries cannot reuse filtered ranks. Skip rank construction
+    /// while retaining the other matching memos.
+    pub(super) fn for_single_match() -> Self {
+        Self {
+            filtered_nth: RefCell::new(FilteredNthCache::with_limits(0, 0)),
+            ..Self::default()
+        }
+    }
+
     /// Takes a cleared [`HasScratch`] from the pool (or a new one).
     fn take_has_scratch(&self) -> HasScratch {
         let mut scratch = self.has_scratch.borrow_mut().pop().unwrap_or_default();
@@ -815,9 +830,8 @@ fn matches_nth<D: StyleDom>(
 /// matcher therefore runs for every direct element child before the normal
 /// `An+B` arithmetic is applied.
 ///
-/// Not served from the [`SiblingInfo`] cache: the filter runs the matcher on
-/// every sibling, so its result depends on the selector list, not on the
-/// DOM alone.
+/// Wide sibling lists share filter-specific ranks through [`FilteredNthCache`].
+/// Small lists and entries exceeding its budget use the direct scan.
 fn matches_nth_of<D: StyleDom>(
     ctx: MatchContext<'_, D>,
     parent_id: StyleNodeId,
@@ -827,15 +841,18 @@ fn matches_nth_of<D: StyleDom>(
     ancestors: &[StyleNodeId],
 ) -> bool {
     let nth_data = data.nth_data();
-    let (from_start, from_end, total) = sibling_position(
-        ctx,
-        parent_id,
-        elem_id,
-        elem_tag,
-        nth_data.ty.is_of_type(),
-        Some(data.selectors()),
-        ancestors,
-    );
+    let (from_start, from_end, total) =
+        filtered_nth::position(ctx, parent_id, elem_id, data, ancestors).unwrap_or_else(|| {
+            sibling_position(
+                ctx,
+                parent_id,
+                elem_id,
+                elem_tag,
+                nth_data.ty.is_of_type(),
+                Some(data.selectors()),
+                ancestors,
+            )
+        });
     matches_nth_position(from_start, from_end, total, nth_data)
 }
 
