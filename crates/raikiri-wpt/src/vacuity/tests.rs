@@ -1,5 +1,11 @@
 use super::*;
 
+/// The normalized form of a declaration value.
+fn collapse_whitespace(value: &str) -> String {
+    let decls = css_declarations(&format!("--v:{value}"), true);
+    decls[0].key.strip_prefix("--v:").unwrap().to_owned()
+}
+
 fn keys(html: &str) -> Vec<String> {
     author_declarations(html)
         .into_iter()
@@ -55,7 +61,7 @@ fn removes_only_matching_declarations() {
     assert_eq!(removed, 2);
     assert_eq!(
         out,
-        r#"<style>div { color: green; }</style><p style=" width: 5px">"#
+        r#"<style>div { color: green;  }</style><p style=" width: 5px">"#
     );
 }
 
@@ -64,7 +70,7 @@ fn removes_last_declaration_without_semicolon() {
     let html = "<style>div { color: green; width: 1px }</style>";
     let (out, removed) = remove_declarations(html, |key| key == "width:1px");
     assert_eq!(removed, 1);
-    assert_eq!(out, "<style>div { color: green;}</style>");
+    assert_eq!(out, "<style>div { color: green; }</style>");
 }
 
 #[test]
@@ -273,10 +279,7 @@ fn a_self_reference_keeps_its_original_document() {
 #[test]
 fn scanner_handles_escapes_unquoted_and_valueless_attributes() {
     let html = r#"<input disabled style=color:green><p data-x = 'a' style = "content: '\'}'; /* x */ width: 1px; : bad; 9:9; --e:">"#;
-    assert_eq!(
-        keys(html),
-        ["color:green", r"content:'\'}'", "width:1px", "9:9"]
-    );
+    assert_eq!(keys(html), ["color:green", r"content:'\'}'", "width:1px"]);
 }
 
 #[test]
@@ -288,8 +291,8 @@ fn scanner_stops_at_unterminated_constructs() {
         Vec::<String>::new()
     );
     assert_eq!(keys("a < b <1 <style>b { top: 0 }"), ["top:0"]);
-    assert_eq!(css_declarations("top: 1px; left: 2px", true, 10).len(), 2);
-    assert_eq!(css_declarations("x { a: 1 } }", false, 0).len(), 1);
+    assert_eq!(css_declarations("top: 1px; left: 2px", true).len(), 2);
+    assert_eq!(css_declarations("x { a: 1 } }", false).len(), 1);
 }
 
 #[test]
@@ -419,7 +422,7 @@ fn character_references_in_style_attributes_do_not_split_declarations() {
     );
     let (out, removed) = remove_declarations(html, |key| key.starts_with("color"));
     assert_eq!(removed, 1);
-    assert_eq!(out, r#"<div style="content: &quot;x&quot;;">"#);
+    assert_eq!(out, r#"<div style="content: &quot;x&quot;; ">"#);
 }
 
 #[test]
@@ -446,7 +449,7 @@ fn character_references_are_decoded_before_scanning_style_attributes() {
     assert_eq!(keys(html), [r#"content:"a;b""#, "color:red", "width:1px"]);
     let (out, removed) = remove_declarations(html, |key| key.starts_with("color"));
     assert_eq!(removed, 1);
-    assert_eq!(out, r#"<i style="content:&quot;a;b&quot;;width:1px">"#);
+    assert_eq!(out, r#"<i style="content:&quot;a;b&quot;; width:1px">"#);
 }
 
 #[test]
@@ -597,4 +600,105 @@ fn help_links_are_decoded_before_matching_features() {
         features.into_iter().collect::<Vec<_>>(),
         ["background-color"]
     );
+}
+
+#[test]
+fn declarations_follow_the_css_tokenizer() {
+    // A comment opener inside an unquoted URL is URL data.
+    assert_eq!(
+        keys("<i style='background: url(a/*b.png); clear: both'>"),
+        ["background:url(a/*b.png)", "clear:both"]
+    );
+    // A hex escape consumes the newline after it, so the string continues.
+    assert_eq!(
+        keys("<style>p { content: \"\\41\n; color: red\"; clear: both }</style>"),
+        ["content:\"\\41\n; color: red\"", "clear:both"]
+    );
+    // U+000B is not CSS whitespace, and a property name cannot start with a
+    // digit.
+    assert_eq!(
+        keys("<i style='--a:\u{b}x; 1a: 1; clear: both'>"),
+        ["--a:\u{b}x", "clear:both"]
+    );
+    // Nested rules hold declarations; a declaration-looking selector is a
+    // nested rule because a non-custom value cannot hold a `{}` block.
+    assert_eq!(
+        keys("<style>p { color: red; a:hover { clear: both } @media print { top: 0 } }</style>"),
+        ["color:red", "clear:both", "top:0"]
+    );
+}
+
+#[test]
+fn start_tags_follow_the_html_tokenizer() {
+    // A quote after `=` inside an unquoted value is part of the value.
+    let html = r#"<i title=a=" style='c: 1'"><b style="d: 2">"#;
+    assert_eq!(keys(html), ["c:1", "d:2"]);
+    // A `:` belongs to the tag name, so `<a:b>` is not a style element.
+    let html = "<style:x>p { a: 1 }</style:x><i style='b: 2'>";
+    assert_eq!(keys(html), ["b:2"]);
+    // Escaped script data hides markup until the script ends.
+    let html = "<script><!--<script></script><i style='a: 1'></script>--></script><b style='b: 2'>";
+    assert_eq!(keys(html), ["b:2"]);
+}
+
+#[test]
+fn the_tree_builder_decides_which_tags_apply() {
+    // A nested form start tag is dropped, along with its attributes.
+    let html = "<form><form style='a: 1'><i style='b: 2'>";
+    assert_eq!(keys(html), ["b:2"]);
+    // A repeated body start tag only adds attributes the body lacks.
+    let html = "<body style='a: 1'><body style='b: 2' class=x><i style='c: 3'>";
+    assert_eq!(keys(html), ["a:1", "c:3"]);
+    let html = "<body><body style='b: 2'>";
+    assert_eq!(keys(html), ["b:2"]);
+    // A MathML style element holds no style sheet; an SVG one does.
+    let html = "<math><style>p { a: 1 }</style></math><svg><style>p { b: 2 }</style></svg>";
+    assert_eq!(keys(html), ["b:2"]);
+    // Under an HTML element in an integration point `<![CDATA[` is a bogus
+    // comment.
+    let html = "<svg><foreignObject><p><![CDATA[x > <i style='a: 1'>]]></foreignObject></svg>";
+    assert_eq!(keys(html), ["a:1"]);
+}
+
+#[test]
+fn decoded_svg_style_text_is_rewritten_when_ablated() {
+    let html =
+        "<svg><style>p { content: '&lt;'; clear: both }<![CDATA[ q { top: 0 } ]]></style></svg><i>";
+    assert_eq!(keys(html), ["content:'<'", "clear:both", "top:0"]);
+    let (out, removed) = remove_declarations(html, |key| key == "clear:both");
+    assert_eq!(removed, 1);
+    assert_eq!(
+        out,
+        "<svg><style>p { content: '&lt;'; } q { top: 0 } </style></svg><i>"
+    );
+    // A style sheet without references is edited in place.
+    let html = "<svg><style>p { clear: both; top: 0 }</style></svg>";
+    let (out, _) = remove_declarations(html, |key| key == "clear:both");
+    assert_eq!(out, "<svg><style>p {  top: 0 }</style></svg>");
+}
+
+#[test]
+fn tag_ranges_cover_whole_start_tags() {
+    let html = "x<<b class='<a>'>&amp<i\r\nstyle=\"a: 1\">a < b<P/>";
+    let scan = scan(html);
+    let tags: Vec<&str> = scan
+        .tags
+        .iter()
+        .filter(|tag| !matches!(tag.name.as_str(), "html" | "head" | "body"))
+        .map(|tag| &html[tag.range.clone()])
+        .collect();
+    assert_eq!(tags, ["<b class='<a>'>", "<i\r\nstyle=\"a: 1\">", "<P/>"]);
+}
+
+#[test]
+fn an_encoding_declaration_does_not_stop_the_scan() {
+    let html = "<meta charset=utf-8><style>p { a: 1 }</style><i style='b: 2'>";
+    assert_eq!(keys(html), ["a:1", "b:2"]);
+}
+
+#[test]
+fn whitespace_ending_an_escape_is_not_doubled() {
+    assert_eq!(collapse_whitespace("\\66  6, \\63"), "\\66 6, \\63");
+    // Braces at the top level of a style attribute make an invalid block.
+    assert!(keys("<p style='{color: red; background: red; }'>").is_empty());
 }

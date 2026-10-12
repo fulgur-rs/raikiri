@@ -2787,6 +2787,7 @@ dependencies = [
  "blitz-paint",
  "blitz-traits",
  "cssparser",
+ "html5ever 0.40.1",
  "insta",
  "markup5ever 0.40.0",
  "png",
