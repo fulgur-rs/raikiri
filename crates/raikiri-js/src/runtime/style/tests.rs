@@ -1190,6 +1190,17 @@ fn serialized_declarations_keep_their_boundaries() {
         "--x: url(a\\\u{FFFD}); color: red;"
     );
     assert_eq!(
+        with_inline_style_property(Some("--x: url(a\""), "color", "red", false),
+        "--x: url(a\"); color: red;"
+    );
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "document.body.setAttribute('style', '--x: url(a\"'); \
+         document.body.style.color = 'red'; document.body.style.color === 'red'",
+    );
+    assert_eq!(
         with_inline_style_property(None, "--x", "a /* b */", false),
         "--x: a /* b */;"
     );

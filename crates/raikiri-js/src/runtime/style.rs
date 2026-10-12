@@ -416,7 +416,9 @@ fn unclosed_suffix_in(input: &mut Parser<'_, '_>, source: &str) -> (String, usiz
                     quote.to_owned()
                 }
             }
-            Token::UnquotedUrl(_) => {
+            // A bad URL (for example one with a quote inside) also runs to
+            // its `)` or EOF, so it is closed the same way.
+            Token::UnquotedUrl(_) | Token::BadUrl(_) => {
                 if closed_by(")") {
                     String::new()
                 } else if odd_backslashes(text) {
