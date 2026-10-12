@@ -1844,7 +1844,7 @@ fn reject_exported_external_references(source: &str) -> Result<(), SvgError> {
 fn reject_external_css_references(source: &str) -> Result<(), SvgError> {
     let mut input = cssparser::ParserInput::new(source);
     let mut parser = cssparser::Parser::new(&mut input);
-    reject_external_css_tokens(&mut parser, 0).map_err(|error| match error.kind {
+    reject_external_css_tokens(&mut parser, 0, false).map_err(|error| match error.kind {
         cssparser::ParseErrorKind::Custom(error) => error,
         cssparser::ParseErrorKind::Basic(error) => {
             SvgError::InvalidDocument(format!("invalid SVG CSS resource reference: {error:?}"))
@@ -1852,9 +1852,15 @@ fn reject_external_css_references(source: &str) -> Result<(), SvgError> {
     })
 }
 
+/// Rejects every non-fragment URL in `input`.
+///
+/// `in_image_set` is true directly inside `image-set()` or
+/// `-webkit-image-set()`, whose bare `<string>` arguments are URLs
+/// (CSS Images 4 §2.2).
 fn reject_external_css_tokens<'i>(
     input: &mut cssparser::Parser<'i, '_>,
     depth: usize,
+    in_image_set: bool,
 ) -> Result<(), cssparser::ParseError<'i, SvgError>> {
     if depth >= MAX_FILTER_CSS_NESTING {
         return Err(input.new_custom_error(SvgError::InvalidDocument(
@@ -1869,7 +1875,14 @@ fn reject_external_css_tokens<'i>(
             cssparser::Token::UnquotedUrl(url) if !url.trim().starts_with('#') => {
                 return Err(input.new_custom_error(SvgError::ExternalReference));
             }
-            cssparser::Token::Function(name) if name.eq_ignore_ascii_case("url") => {
+            cssparser::Token::QuotedString(url) if in_image_set && !url.trim().starts_with('#') => {
+                return Err(input.new_custom_error(SvgError::ExternalReference));
+            }
+            // `src()` takes the same `<string>` argument as quoted `url()`
+            // (CSS Values 4 §4.5).
+            cssparser::Token::Function(name)
+                if name.eq_ignore_ascii_case("url") || name.eq_ignore_ascii_case("src") =>
+            {
                 input.parse_nested_block(|nested| {
                     let url = nested.expect_string_cloned()?;
                     if !url.trim().starts_with('#') {
@@ -1878,11 +1891,19 @@ fn reject_external_css_tokens<'i>(
                     Ok(())
                 })?;
             }
-            cssparser::Token::Function(_)
-            | cssparser::Token::ParenthesisBlock
+            cssparser::Token::Function(name) => {
+                let image_set = name.eq_ignore_ascii_case("image-set")
+                    || name.eq_ignore_ascii_case("-webkit-image-set");
+                input.parse_nested_block(|nested| {
+                    reject_external_css_tokens(nested, depth + 1, image_set)
+                })?;
+            }
+            cssparser::Token::ParenthesisBlock
             | cssparser::Token::SquareBracketBlock
             | cssparser::Token::CurlyBracketBlock => {
-                input.parse_nested_block(|nested| reject_external_css_tokens(nested, depth + 1))?;
+                input.parse_nested_block(|nested| {
+                    reject_external_css_tokens(nested, depth + 1, false)
+                })?;
             }
             _ => {}
         }
@@ -2069,9 +2090,28 @@ fn intrinsic_size(root: roxmltree::Node<'_, '_>) -> SvgIntrinsicSize {
     }
 }
 
+/// Parses an SVG root `width`/`height` as a `<number>` or an absolute
+/// `<length>` in CSS px, rejecting anything the CSS tokenizer does not read
+/// as exactly one such token (so `10 px` and `10.px` are not lengths).
 fn parse_absolute_length(value: &str) -> Option<f32> {
-    let value = value.trim();
-    let units = [
+    let mut input = cssparser::ParserInput::new(value);
+    let mut parser = cssparser::Parser::new(&mut input);
+    let (number, factor) = match parser.next().ok()? {
+        cssparser::Token::Number { value, .. } => (*value, 1.0_f64),
+        cssparser::Token::Dimension { value, unit, .. } => (*value, absolute_length_unit_px(unit)?),
+        _ => return None,
+    };
+    parser.expect_exhausted().ok()?;
+    let length = f64::from(number) * factor;
+    if !length.is_finite() || length <= 0.0 || length > f32::MAX as f64 {
+        return None;
+    }
+    Some(length as f32)
+}
+
+/// The size of one absolute length `unit` in CSS px.
+fn absolute_length_unit_px(unit: &str) -> Option<f64> {
+    [
         ("px", 1.0_f64),
         ("in", 96.0),
         ("cm", 96.0 / 2.54),
@@ -2079,17 +2119,9 @@ fn parse_absolute_length(value: &str) -> Option<f32> {
         ("q", 96.0 / 101.6),
         ("pt", 96.0 / 72.0),
         ("pc", 16.0),
-    ];
-    let lower = value.to_ascii_lowercase();
-    let (number, factor) = units
-        .iter()
-        .find_map(|(unit, factor)| lower.strip_suffix(unit).map(|number| (number, *factor)))
-        .unwrap_or((value, 1.0));
-    let length = number.trim().parse::<f64>().ok()? * factor;
-    if !length.is_finite() || length <= 0.0 || length > f32::MAX as f64 {
-        return None;
-    }
-    Some(length as f32)
+    ]
+    .into_iter()
+    .find_map(|(name, factor)| unit.eq_ignore_ascii_case(name).then_some(factor))
 }
 
 fn parse_view_box_ratio(value: &str) -> Option<f32> {

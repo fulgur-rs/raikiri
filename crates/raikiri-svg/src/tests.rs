@@ -994,6 +994,30 @@ fn intrinsic_dimensions_are_independent_of_raster_size() {
 }
 
 #[test]
+fn root_lengths_are_read_as_single_css_tokens() {
+    use super::parse_absolute_length;
+    for (value, expected) in [
+        ("10", Some(10.0)),
+        (" 10px ", Some(10.0)),
+        ("1IN", Some(96.0)),
+        ("2.5e1PX", Some(25.0)),
+        ("6pc", Some(96.0)),
+        ("10 px", None),
+        ("10.px", None),
+        ("10px 5", None),
+        ("inf", None),
+        ("NaN", None),
+        ("50%", None),
+        ("2em", None),
+        ("0", None),
+        ("-1px", None),
+        ("1e40px", None),
+    ] {
+        assert_eq!(parse_absolute_length(value), expected, "{value:?}");
+    }
+}
+
+#[test]
 fn view_box_ratio_is_preserved_when_natural_dimensions_are_absent() {
     let svg = SvgDocument::parse(
         br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4 2"><rect width="4" height="2"/></svg>"#,
@@ -1725,6 +1749,34 @@ fn exported_css_reference_validation_is_bounded_and_preserves_literal_strings() 
         reject_external_css_references(&nested),
         Err(SvgError::InvalidDocument(_))
     ));
+}
+
+#[test]
+fn css_reference_validation_covers_src_and_image_set_strings() {
+    use super::reject_external_css_references;
+    for source in [
+        "rect{fill:src(\"https://example.com/paint.svg#p\")}",
+        "rect{fill:SRC('file:///paint.svg')}",
+        "rect{fill:image-set(\"https://example.com/a.png\" 1x)}",
+        "rect{fill:-webkit-image-set('a.png' 1x, \"b.png\" 2x)}",
+        "rect{fill:image-set(url(#ok) 1x, \"b.png\" 2x)}",
+    ] {
+        assert!(
+            matches!(
+                reject_external_css_references(source),
+                Err(SvgError::ExternalReference)
+            ),
+            "external reference accepted: {source}"
+        );
+    }
+    for source in [
+        "rect{fill:src(\"#paint\")}",
+        "rect{fill:image-set(\"#paint\" 1x)}",
+        "rect{fill:image-set(url(#paint) type(\"image/png\"))}",
+        "rect{font-family:\"a.png\"}",
+    ] {
+        reject_external_css_references(source).unwrap();
+    }
 }
 
 #[test]

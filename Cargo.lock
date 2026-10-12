@@ -2604,6 +2604,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags",
  "criterion",
+ "cssparser",
  "raikiri-html",
  "raikiri-style",
  "raikiri-traits",

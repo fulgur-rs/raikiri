@@ -411,3 +411,22 @@ fn resolved_urls_follow_relative_sources_base_changes_and_attribute_mutation() {
     assert_eq!(document.resolved_image_url(image), None);
     assert_eq!(document.resolved_image_url(usize::MAX), None);
 }
+
+#[test]
+fn svg_root_lengths_are_read_as_single_css_tokens() {
+    for (value, expected) in [
+        ("10", Some(10.0)),
+        (" 10px ", Some(10.0)),
+        ("1IN", Some(96.0)),
+        ("6pc", Some(96.0)),
+        ("10 px", None),
+        ("10.px", None),
+        ("10px 5", None),
+        ("inf", None),
+        ("50%", None),
+        ("0", None),
+        ("1e40px", None),
+    ] {
+        assert_eq!(parse_absolute_svg_length(value), expected, "{value:?}");
+    }
+}
