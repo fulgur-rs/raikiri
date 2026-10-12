@@ -395,9 +395,7 @@ fn tags(html: &str) -> Vec<Tag> {
             continue;
         }
         if lower[i..].starts_with("<!--") {
-            i = lower[i + 4..]
-                .find("-->")
-                .map_or(bytes.len(), |e| i + 4 + e + 3);
+            i = comment_end(&lower, i + 4);
             continue;
         }
         if inert_depth > 0 && end_tag_at(&lower, i, "template") {
@@ -421,10 +419,22 @@ fn tags(html: &str) -> Vec<Tag> {
         let attributes = attributes(html, name_start + name_len, end);
         let raw_text = matches!(
             name.as_str(),
-            "style" | "script" | "title" | "textarea" | "xmp" | "noscript"
+            "style"
+                | "script"
+                | "title"
+                | "textarea"
+                | "xmp"
+                | "noscript"
+                | "iframe"
+                | "noembed"
+                | "noframes"
+                | "plaintext"
         )
         .then(|| {
-            let close = (end..bytes.len()).find(|&at| end_tag_at(&lower, at, &name));
+            // Nothing ends `plaintext`; the rest of the document is text.
+            let close = (name != "plaintext")
+                .then(|| (end..bytes.len()).find(|&at| end_tag_at(&lower, at, &name)))
+                .flatten();
             end..close.unwrap_or(bytes.len())
         });
         let next = raw_text.as_ref().map_or(end, |content| content.end);
@@ -445,6 +455,24 @@ fn tags(html: &str) -> Vec<Tag> {
         i = next;
     }
     out
+}
+
+/// The offset just past a comment whose text starts at `from` (after
+/// `<!--`). Like the HTML tokenizer, `<!-->` and `<!--->` end at once and
+/// `--!>` also closes a comment.
+fn comment_end(lower: &str, from: usize) -> usize {
+    let rest = &lower[from..];
+    if rest.starts_with('>') {
+        return from + 1;
+    }
+    if rest.starts_with("->") {
+        return from + 2;
+    }
+    [("-->", 3), ("--!>", 4)]
+        .iter()
+        .filter_map(|(close, len)| rest.find(close).map(|at| from + at + len))
+        .min()
+        .unwrap_or(lower.len())
 }
 
 /// Whether an end tag for `name` starts at `at`: `</name` followed by
@@ -614,7 +642,7 @@ pub fn css_declarations(css: &str, inline: bool, base: usize) -> Vec<Declaration
             _ if nesting > 0 => {}
             b';' => {
                 if in_declarations(depth) {
-                    push_declaration(css, segment_start..i + 1, base, &mut out);
+                    push_declaration(css, segment_start..i + 1, base, inline, &mut out);
                 }
                 segment_start = i + 1;
             }
@@ -624,7 +652,7 @@ pub fn css_declarations(css: &str, inline: bool, base: usize) -> Vec<Declaration
             }
             b'}' => {
                 if in_declarations(depth) {
-                    push_declaration(css, segment_start..i, base, &mut out);
+                    push_declaration(css, segment_start..i, base, inline, &mut out);
                 }
                 depth = depth.saturating_sub(1);
                 segment_start = i + 1;
@@ -634,7 +662,7 @@ pub fn css_declarations(css: &str, inline: bool, base: usize) -> Vec<Declaration
         i += 1;
     }
     if in_declarations(depth) && segment_start < bytes.len() {
-        push_declaration(css, segment_start..bytes.len(), base, &mut out);
+        push_declaration(css, segment_start..bytes.len(), base, inline, &mut out);
     }
     out
 }
@@ -647,14 +675,30 @@ fn is_custom_property(segment: &str) -> bool {
         .is_some_and(|(name, _)| strip_comments(name).trim().starts_with("--"))
 }
 
-fn push_declaration(css: &str, range: Range<usize>, base: usize, out: &mut Vec<Declaration>) {
+fn push_declaration(
+    css: &str,
+    range: Range<usize>,
+    base: usize,
+    inline: bool,
+    out: &mut Vec<Declaration>,
+) {
     let Some(text) = css.get(range.clone()) else {
         return;
     };
+    // A `style` attribute is decoded before CSS parsing; the key uses the
+    // decoded text, the removal range the source.
+    let decoded;
+    let text = if inline && text.contains('&') {
+        decoded = decode_character_references(text);
+        decoded.as_str()
+    } else {
+        text
+    };
     let text = text.trim_end_matches(';');
-    let Some((name, value)) = text.split_once(':') else {
+    let Some(colon) = colon_outside_comments(text) else {
         return;
     };
+    let (name, value) = (&text[..colon], &text[colon + 1..]);
     let name = strip_comments(name);
     let name = name.trim();
     // Identifier characters, including escapes and non-ASCII code points.
@@ -681,6 +725,76 @@ fn push_declaration(css: &str, range: Range<usize>, base: usize, out: &mut Vec<D
             format!("{}:{value}", name.to_ascii_lowercase())
         },
     });
+}
+
+/// The offset of the first `:` in `text` outside CSS comments.
+fn colon_outside_comments(text: &str) -> Option<usize> {
+    let mut i = 0;
+    while i < text.len() {
+        if text.as_bytes()[i..].starts_with(b"/*") {
+            i = text[i + 2..]
+                .find("*/")
+                .map_or(text.len(), |e| i + 2 + e + 2);
+        } else if text.as_bytes()[i] == b':' {
+            return Some(i);
+        } else {
+            i += 1;
+        }
+    }
+    None
+}
+
+/// Decode numeric character references and the named references that can
+/// change CSS tokenization. Others are kept as written.
+fn decode_character_references(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find('&') {
+        out.push_str(&rest[..at]);
+        rest = &rest[at..];
+        let body_len = rest[1..]
+            .bytes()
+            .take_while(|b| b.is_ascii_alphanumeric() || *b == b'#')
+            .count();
+        let body = &rest[1..1 + body_len];
+        let decoded = if rest[1 + body_len..].starts_with(';') {
+            match body.strip_prefix('#') {
+                Some(number) => match number.strip_prefix(['x', 'X']) {
+                    Some(hex) => u32::from_str_radix(hex, 16).ok(),
+                    None => number.parse().ok(),
+                }
+                .and_then(char::from_u32),
+                None => match body {
+                    "quot" => Some('"'),
+                    "apos" => Some('\''),
+                    "amp" => Some('&'),
+                    "lt" => Some('<'),
+                    "gt" => Some('>'),
+                    "colon" => Some(':'),
+                    "semi" => Some(';'),
+                    "lpar" => Some('('),
+                    "rpar" => Some(')'),
+                    "sol" => Some('/'),
+                    "ast" => Some('*'),
+                    _ => None,
+                },
+            }
+        } else {
+            None
+        };
+        match decoded {
+            Some(c) => {
+                out.push(c);
+                rest = &rest[1 + body_len + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Normalize a declaration value: drop comments, trim, and collapse runs of

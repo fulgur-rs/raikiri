@@ -1797,7 +1797,6 @@ css/css-align/distribution-values/space-evenly-001.html
 css/css-align/self-alignment/self-align-normal-flex.html
 css/css-align/self-alignment/self-align-safe-unsafe-grid-002.html
 css/css-align/self-alignment/self-align-safe-unsafe-grid-003.html
-css/css-align/self-alignment/self-align-start-end-flex-001.html
 css/css-anchor-position/container-queries/anchored-fallback-style-containment.html
 css/css-backgrounds/background-clip-002.html
 css/css-backgrounds/background-clip-004.html
@@ -2250,6 +2249,7 @@ css/css-flexbox/flex-minimum-height-flex-items-014.html
 css/css-flexbox/flex-minimum-height-flex-items-015.html
 css/css-flexbox/flex-minimum-height-flex-items-016.html
 css/css-flexbox/flex-minimum-height-flex-items-017.html
+css/css-flexbox/flex-minimum-height-flex-items-018.html
 css/css-flexbox/flex-minimum-height-flex-items-019.html
 css/css-flexbox/flex-minimum-height-flex-items-021.html
 css/css-flexbox/flex-minimum-height-flex-items-022.html
@@ -2859,8 +2859,6 @@ css/css-lists/pseudo-element-remove-update.html
 css/css-logical/cascading-001.html
 css/css-masking/clip-path/clip-path-url-reference-change-from-empty.html
 css/css-masking/clip-path/clip-path-url-reference-change.html
-css/css-masking/mask-image/bad-mask-image-svg-2.html
-css/css-masking/mask-image/bad-mask-image-svg-3.html
 css/css-masking/mask-image/mask-image-1d.html
 css/css-multicol/abspos-after-spanner.html
 css/css-multicol/balance-break-avoidance-002.html
@@ -2999,7 +2997,6 @@ css/css-page/page-size-009-print.html
 css/css-page/page-size-010-print.html
 css/css-page/page-size-011-print.html
 css/css-page/page-size-014-print.html
-css/css-page/page-size-016-print.tentative.html
 css/css-page/page-size-017-print.tentative.html
 css/css-page/page-visibility-hidden-001-print.html
 css/css-page/pseudo-first-margin-001-print.html
@@ -3070,7 +3067,6 @@ css/css-pseudo/marker-unicode-bidi-default.html
 css/css-pseudo/marker-unicode-bidi-normal.html
 css/css-pseudo/marker-variable.html
 css/css-pseudo/outside-marker-paint-order.html
-css/css-pseudo/selection-originating-strikethrough-order.html
 css/css-pseudo/target-text-011.html
 css/css-rhythm/definite-height-same-as-step-unit.html
 css/css-scroll-snap/large-scroll-margin-001.html
@@ -4196,7 +4192,6 @@ css/selectors/invalidation/nth-last-child-of-sibling.html
 css/selectors/invalidation/nth-last-child-when-ancestor-changes.html
 css/selectors/invalidation/nth-last-child-when-sibling-changes.html
 css/selectors/is-where-pseudo-elements.html
-css/selectors/not-links.html
 css/selectors/nth-child-of-pseudo.html
 css/selectors/nth-last-child-of-classname.html
 css/selectors/nth-last-child-of-complex-selector.html

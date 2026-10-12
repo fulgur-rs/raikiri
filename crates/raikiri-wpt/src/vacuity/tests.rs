@@ -414,10 +414,32 @@ fn duplicate_attributes_keep_the_first() {
 #[test]
 fn character_references_in_style_attributes_do_not_split_declarations() {
     let html = r#"<div style="content: &quot;x&quot;; color: red">"#;
-    assert_eq!(keys(html), ["content:&quot;x&quot", "color:red"]);
+    assert_eq!(keys(html), [r#"content:"x""#, "color:red"]);
+    assert_eq!(
+        keys(r#"<i style="width&#58;1px; height&colon;2px; x: &unknown; &#x26;">"#),
+        ["width:1px", "height:2px", "x:&unknown; &"]
+    );
     let (out, removed) = remove_declarations(html, |key| key.starts_with("color"));
     assert_eq!(removed, 1);
     assert_eq!(out, r#"<div style="content: &quot;x&quot;;">"#);
+}
+
+#[test]
+fn comments_end_like_the_html_tokenizer() {
+    let html = "<!--><i style=\"a: 1\"><!---><i style=\"b: 2\"><!-- x --!><i style=\"c: 3\"><!-- <i style=\"d: 4\">";
+    assert_eq!(keys(html), ["a:1", "b:2", "c:3"]);
+}
+
+#[test]
+fn text_only_elements_hide_their_markup() {
+    let html = "<iframe><style>p { a: 1 }</style></iframe><noembed><i style=\"b: 2\"></noembed><noframes></noframes><i style=\"c: 3\"><plaintext></plaintext><i style=\"d: 4\">";
+    assert_eq!(keys(html), ["c:3"]);
+}
+
+#[test]
+fn colons_inside_comments_do_not_split_declarations() {
+    let html = "<style>p { /* expected: red */ color: red; /* a:b */ }</style>";
+    assert_eq!(keys(html), ["color:red"]);
 }
 
 #[test]
