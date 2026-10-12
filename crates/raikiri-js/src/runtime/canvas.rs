@@ -98,8 +98,9 @@ fn parse_fill_color(input: &str) -> Option<FillColor> {
 
 /// Whether `input` (already known to be one `<color>`) is written as a hex
 /// color, a named or system color, or a non-relative `rgb()`, `rgba()`,
-/// `hsl()`, `hsla()` or `hwb()` function: the forms CSS Color serializes as
-/// sRGB with the HTML-compatible serialization.
+/// `hsl()`, `hsla()` or `hwb()` function with no missing (`none`)
+/// component: the forms CSS Color serializes as sRGB with the
+/// HTML-compatible serialization.
 fn is_srgb_color_form(input: &str) -> bool {
     use cssparser::Token;
 
@@ -117,11 +118,19 @@ fn is_srgb_color_form(input: &str) -> bool {
     }
     parser
         .parse_nested_block(|block| {
-            let relative =
-                matches!(block.next(), Ok(Token::Ident(word)) if word.eq_ignore_ascii_case("from"));
-            // A nested block must be consumed to its end.
-            while block.next().is_ok() {}
-            Ok::<_, cssparser::ParseError<'_, ()>>(!relative)
+            // `from` starts relative color syntax; `none` is a missing
+            // component, which only the `color()` serialization can keep.
+            // Reading every token also consumes the block to its end, as a
+            // nested block must be.
+            let mut legacy = true;
+            while let Ok(token) = block.next() {
+                if let Token::Ident(word) = token
+                    && (word.eq_ignore_ascii_case("from") || word.eq_ignore_ascii_case("none"))
+                {
+                    legacy = false;
+                }
+            }
+            Ok::<_, cssparser::ParseError<'_, ()>>(legacy)
         })
         .unwrap_or(false)
 }

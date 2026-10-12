@@ -436,6 +436,8 @@ fn fill_style_rejects_colors_outside_srgb() {
         "color(srgb 1 0 0)",
         "color-mix(in srgb, red, blue)",
         "rgb(from red r g b)",
+        "rgb(none 0 0)",
+        "hsl(none 100% 50%)",
     ] {
         ok(
             &mut rt,
