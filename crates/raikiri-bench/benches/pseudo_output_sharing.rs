@@ -11,7 +11,6 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::collections::HashSet;
 use std::hint::black_box;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicIsize, Ordering::Relaxed};
 use std::time::Instant;
 
@@ -101,7 +100,13 @@ impl PseudoOutput for ComputedValues {
     }
 }
 
-impl PseudoOutput for Arc<ComputedValues> {
+impl PseudoOutput for std::sync::Arc<ComputedValues> {
+    fn computed_values(&self) -> &ComputedValues {
+        self.as_ref()
+    }
+}
+
+impl PseudoOutput for triomphe::Arc<ComputedValues> {
     fn computed_values(&self) -> &ComputedValues {
         self.as_ref()
     }

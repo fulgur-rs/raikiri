@@ -95,6 +95,7 @@ pub use computed::{
     ChFontKey, ChLengthProvenance, ComputedBorderImage, ComputedProperty, ComputedValues,
     FontSizeKeywordInfo, VerticalLogicalSize,
 };
+pub use triomphe::Arc as PseudoValueArc;
 pub mod computed_api;
 
 pub mod resolve;

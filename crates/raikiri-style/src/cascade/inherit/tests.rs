@@ -9587,7 +9587,7 @@ struct ComparedWalkOutputs {
     computed: Vec<ComputedValues>,
     authored_writing_modes: Vec<Option<WritingMode>>,
     page_values: Vec<PageValue>,
-    pseudo: Vec<((u64, PseudoElem), Arc<ComputedValues>)>,
+    pseudo: Vec<((u64, PseudoElem), crate::PseudoValueArc<ComputedValues>)>,
     svg_properties: HashMap<StyleNodeId, Vec<SvgStyleProperty>>,
 }
 
@@ -9812,7 +9812,7 @@ fn output_budget_charges_full_value_for_each_pseudo_entry() {
         }
         if sibling_sharing {
             assert!(with_pseudo.shared_nodes > 0);
-            assert!(Arc::ptr_eq(
+            assert!(crate::PseudoValueArc::ptr_eq(
                 &with_pseudo.pseudo[&(StyleNodeId(first as u64), PseudoElem::Before)],
                 &with_pseudo.pseudo[&(StyleNodeId(second as u64), PseudoElem::Before)]
             ));
@@ -9841,6 +9841,18 @@ fn output_budget_charges_full_value_for_each_pseudo_entry() {
     };
 
     assert_eq!(added_output_bytes(false), added_output_bytes(true));
+}
+
+#[test]
+fn pseudo_value_allocation_failure_is_resource_exhausted() {
+    let error = try_pseudo_arc_with(17_u8, |_| Err(()))
+        .expect_err("a refused pseudo allocation is a cascade error");
+
+    assert!(matches!(
+        error,
+        crate::CascadeError::ResourceExhausted { bytes }
+            if bytes == pseudo_arc_allocation_bytes::<u8>()
+    ));
 }
 
 #[test]

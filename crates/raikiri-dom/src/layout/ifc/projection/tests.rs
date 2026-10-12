@@ -1173,7 +1173,7 @@ fn unsupported_marker_style_returns_an_explicit_projection_error() {
             PseudoElem::Marker,
         ))
         .unwrap();
-    let marker = std::sync::Arc::make_mut(marker);
+    let marker = raikiri_style::PseudoValueArc::make_mut(marker);
     let raikiri_style::property::FontVariationSettings::Settings(values) =
         &mut marker.font_variation_settings
     else {

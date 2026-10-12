@@ -16,6 +16,7 @@ cssparser  = { workspace = true }
 selectors  = { workspace = true }
 smol_str   = { workspace = true }
 rustc-hash = { workspace = true }
+triomphe = "0.1.16"
 
 # `precomputed-hash` is a stylo-side implementation detail (`SelectorImpl`
 # bounds Identifier/LocalName/NamespaceUrl on `PrecomputedHash`). It is
