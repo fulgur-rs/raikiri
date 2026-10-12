@@ -20,7 +20,7 @@ struct FilterRanks {
     // Keep the ThinArc allocation alive: its selector-slice address is the
     // filter identity, and must not be recycled during this cache's lifetime.
     _filter: NthOfSelectorData<RaikiriSelectorImpl>,
-    from_start: HashMap<StyleNodeId, i32>,
+    from_start: FxHashMap<StyleNodeId, i32>,
     total: i32,
 }
 
@@ -35,10 +35,10 @@ impl FilterRanks {
 /// Ancestor chains obey the same subject-chain invariant as [`MatchCaches`].
 /// Each key retains its filter allocation and every matching condition.
 pub(super) struct FilteredNthCache {
-    entries: HashMap<FilterKey, FilterRanks>,
+    entries: FxHashMap<FilterKey, FilterRanks>,
     // The remaining budget only decreases. A parent rejected on its raw
     // child count remains oversized for any future uncached filter.
-    over_budget_parents: HashSet<StyleNodeId>,
+    over_budget_parents: FxHashSet<StyleNodeId>,
     charged_children: usize,
     max_entries: usize,
     max_children: usize,
@@ -57,8 +57,8 @@ impl Default for FilteredNthCache {
 impl FilteredNthCache {
     pub(super) fn with_limits(max_entries: usize, max_children: usize) -> Self {
         Self {
-            entries: HashMap::new(),
-            over_budget_parents: HashSet::new(),
+            entries: FxHashMap::default(),
+            over_budget_parents: FxHashSet::default(),
             charged_children: 0,
             max_entries,
             max_children,
@@ -118,7 +118,7 @@ pub(super) fn position<D: StyleDom>(
 
     let mut ranks = FilterRanks {
         _filter: data.clone(),
-        from_start: HashMap::new(),
+        from_start: FxHashMap::default(),
         total: 0,
     };
     for child in ctx.dom.child_ids(parent) {

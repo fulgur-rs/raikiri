@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId};
 
 /// `PseudoClass::Lang` arm of [`super::selector_match::compound_matches`] — CSS Selectors L4 §7.2
@@ -62,7 +64,7 @@ pub(crate) fn lang_pseudo_matches(ranges: &[String], content_language: &str) -> 
 /// language either, both out of scope — this crate has no HTTP layer and
 /// does not parse `<meta http-equiv=content-language>`), the language is
 /// unknown — represented, per the quoted "the corresponding language tag is
-/// the empty string" fallback, as `String::new()` (see the "`lang=\"\"`
+/// the empty string" fallback, as an empty string (see the "`lang=\"\"`
 /// stopping inheritance" section below for how this converges with the
 /// explicit-`lang=\"\"` case).
 ///
@@ -78,7 +80,7 @@ pub(crate) fn lang_pseudo_matches(ranges: &[String], content_language: &str) -> 
 /// attribute counts — the ancestor walk below still applies the same gate
 /// per ancestor (a MathML ancestor's `lang` is skipped too, same as its own
 /// element case), and a chain that bottoms out with no HTML/SVG element
-/// carrying `lang` still resolves to `String::new()`, same as "absent
+/// carrying `lang` still resolves to the empty string, same as "absent
 /// everywhere" below.
 ///
 /// # Deliberately out of scope
@@ -112,33 +114,44 @@ pub(crate) fn lang_pseudo_matches(ranges: &[String], content_language: &str) -> 
 /// quoted algorithm's own final "the corresponding language tag is the
 /// empty string" fallback — even though it is reached via a different step
 /// (running out of ancestors, not an explicit `lang=""` short-circuit).
+///
+/// # Reusing known languages
+///
+/// `known` reports an ancestor whose language a caller has already
+/// resolved; the walk stops there and uses it, as the quoted "use the
+/// language of that parent element" step allows. Alongside the language,
+/// the result gives how many of `ancestors` (root-most first) lie above the
+/// walk's stopping point: every ancestor from that index on carries no
+/// language of its own and so has the same language as the element.
 pub(crate) fn effective_language<D: StyleDom, E: StyleElement>(
     dom: &D,
     elem: &E,
     ancestors: &[StyleNodeId],
-) -> String {
+    mut known: impl FnMut(StyleNodeId) -> Option<Rc<str>>,
+) -> (Rc<str>, usize) {
     if let Some(lang) = own_html_or_svg_lang_attribute(elem) {
-        return lang.to_owned();
+        return (lang.into(), ancestors.len());
     }
-    for &ancestor_id in ancestors.iter().rev() {
+    for (index, &ancestor_id) in ancestors.iter().enumerate().rev() {
+        if let Some(lang) = known(ancestor_id) {
+            return (lang, index + 1);
+        }
         // `node`'s borrow must outlive `ancestor_elem`'s — a `.and_then`
         // chain would try to return a `&str` borrowed from a `node` that
         // drops at the end of the closure, hence the explicit `if let`
-        // nesting instead of the more compact combinator chain
-        // `effective_language`'s own doc-adjacent sibling functions use
-        // where the borrow doesn't need to cross a temporary like this.
+        // nesting.
         if let Some(node) = dom.node(ancestor_id)
             && let Some(ancestor_elem) = node.as_element()
             && let Some(lang) = own_html_or_svg_lang_attribute(&ancestor_elem)
         {
-            return lang.to_owned();
+            return (lang.into(), index + 1);
         }
     }
     // Ancestor chain exhausted with no pragma-set default / protocol-level
     // language available (both out of scope, see this function's doc).
     // HTML LS §3.2.6.2's final fallback: "the language of the node is
     // unknown, and the corresponding language tag is the empty string."
-    String::new()
+    (Rc::from(""), 0)
 }
 
 /// The **own**-attribute half of HTML LS §3.2.6.2's "determine the language
