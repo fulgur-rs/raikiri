@@ -40,6 +40,9 @@ const MAX_IMPORT_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 /// Refuse unreasonably large provider-controlled URL tokens before parsing or
 /// handing them to a network implementation.
 const MAX_IMPORT_URL_LENGTH: usize = 8 * 1024;
+/// Deepest block nesting accepted in an `@import` media list. Validation
+/// recurses once per block, so the bound keeps stack use fixed.
+const MAX_MEDIA_NESTING: usize = 32;
 
 #[derive(Debug)]
 struct ImportStatement {
@@ -592,17 +595,20 @@ fn parse_import_prelude(input: &mut Parser<'_, '_>) -> Option<(String, Option<St
 /// `<url>` or `<string>`. Unlike [`Parser::expect_url_or_string`], a quoted
 /// `url()` must hold exactly one string.
 fn parse_import_url(input: &mut Parser<'_, '_>) -> Option<String> {
-    match input.next().ok()?.clone() {
-        Token::QuotedString(url) | Token::UnquotedUrl(url) => Some(url.as_ref().to_owned()),
+    let url = match input.next().ok()?.clone() {
+        Token::QuotedString(url) | Token::UnquotedUrl(url) => url.as_ref().to_owned(),
         Token::Function(name) if name.eq_ignore_ascii_case("url") => input
             .parse_nested_block(|input| {
                 let url = input.expect_string()?.as_ref().to_owned();
                 input.expect_exhausted()?;
                 Ok::<_, ParseError<'_, ()>>(url)
             })
-            .ok(),
-        _ => None,
-    }
+            .ok()?,
+        _ => return None,
+    };
+    // An empty URL names no external resource; resolving it would fetch the
+    // base URL itself.
+    (!url.is_empty()).then_some(url)
 }
 
 fn starts_unsupported_import_clause(input: &mut Parser<'_, '_>) -> bool {
@@ -640,16 +646,7 @@ fn media_tail_is_valid(input: &mut Parser<'_, '_>) -> bool {
             }
             Token::Function(_) | Token::ParenthesisBlock | Token::SquareBracketBlock => {
                 component = true;
-                if input
-                    .parse_nested_block(|input| {
-                        if block_tokens_are_valid(input) {
-                            Ok(())
-                        } else {
-                            Err(input.new_custom_error::<_, ()>(()))
-                        }
-                    })
-                    .is_err()
-                {
+                if !nested_block_is_valid(input, 1) {
                     return false;
                 }
             }
@@ -659,21 +656,32 @@ fn media_tail_is_valid(input: &mut Parser<'_, '_>) -> bool {
     }
 }
 
-fn block_tokens_are_valid(input: &mut Parser<'_, '_>) -> bool {
+/// Validate the block the parser has just opened. `depth` counts the blocks
+/// already entered; nesting beyond [`MAX_MEDIA_NESTING`] is rejected so
+/// provider-controlled CSS cannot exhaust the stack.
+fn nested_block_is_valid(input: &mut Parser<'_, '_>, depth: usize) -> bool {
+    if depth > MAX_MEDIA_NESTING {
+        return false;
+    }
+    input
+        .parse_nested_block(|input| {
+            if block_tokens_are_valid(input, depth) {
+                Ok(())
+            } else {
+                Err(input.new_custom_error::<_, ()>(()))
+            }
+        })
+        .is_ok()
+}
+
+fn block_tokens_are_valid(input: &mut Parser<'_, '_>, depth: usize) -> bool {
     while let Ok(token) = input.next() {
         match token {
             Token::Function(_)
             | Token::ParenthesisBlock
             | Token::SquareBracketBlock
             | Token::CurlyBracketBlock => {
-                let nested = input.parse_nested_block(|input| {
-                    if block_tokens_are_valid(input) {
-                        Ok(())
-                    } else {
-                        Err(input.new_custom_error::<_, ()>(()))
-                    }
-                });
-                if nested.is_err() {
+                if !nested_block_is_valid(input, depth + 1) {
                     return false;
                 }
             }

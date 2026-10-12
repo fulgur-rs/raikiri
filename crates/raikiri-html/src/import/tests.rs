@@ -1137,3 +1137,18 @@ fn layer_blocks_block_imports_but_import_blocks_do_not() {
     assert_eq!(imports.len(), 1);
     assert_eq!(imports[0].url, "b.css");
 }
+
+#[test]
+fn empty_import_urls_are_not_expanded() {
+    for source in ["@import url();", r#"@import "";"#, r#"@import url("");"#] {
+        assert!(scan_leading_imports(source).is_empty(), "{source}");
+    }
+}
+
+#[test]
+fn deeply_nested_import_media_is_rejected_without_recursing_through_it() {
+    let shallow = format!("@import \"a.css\" {}x{};", "(".repeat(32), ")".repeat(32));
+    assert_eq!(scan_leading_imports(&shallow).len(), 1);
+    let deep = format!("@import \"a.css\" {}x;", "(".repeat(100_000));
+    assert!(scan_leading_imports(&deep).is_empty());
+}
