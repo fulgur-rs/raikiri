@@ -89,6 +89,9 @@ pub struct Page<'a> {
     pub(super) running: Option<super::running::RunningSource<'a>>,
     /// Prepared inline SVG sources of [`Self::document`].
     pub(super) svg_sources: &'a InlineSvgCache,
+    /// The `element()` and `string()` values of [`Self::document`], shared
+    /// by its pages.
+    pub(super) margin_values: &'a raikiri_dom::MarginBoxNamedValues,
 }
 
 /// A running element placed in a page-margin box.
@@ -656,12 +659,13 @@ impl<'a> Page<'a> {
         if self.page_count_deferred {
             context = context.with_deferred_page_count();
         }
-        raikiri_dom::page_margin_boxes(
+        raikiri_dom::page_margin_boxes_with_values(
             self.document,
             self.cascade,
             self.style,
             self.geometry.page_box,
             context,
+            self.margin_values,
         )
     }
 

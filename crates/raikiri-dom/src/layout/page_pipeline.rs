@@ -1634,6 +1634,17 @@ pub(crate) fn project_slices_with_control(
         }
     }
 
+    // The pages with a flow range, in page order, and whether both ends of
+    // their ranges never decrease, so that a source's pages can be found by
+    // binary search instead of testing every page.
+    let flow_slots: Vec<(usize, f32, f32)> = pages
+        .iter()
+        .enumerate()
+        .filter_map(|(page_slot, page)| page.flow_range.map(|(start, end)| (page_slot, start, end)))
+        .collect();
+    let flow_slots_ordered = flow_slots
+        .windows(2)
+        .all(|pair| pair[0].1 <= pair[1].1 && pair[0].2 <= pair[1].2);
     for source in &nodes {
         work.check()?;
         let header_placements = document
@@ -1675,13 +1686,25 @@ pub(crate) fn project_slices_with_control(
                 }
             }
         }
-        for (page_slot, page) in pages.iter().enumerate() {
-            if is_table_header {
-                break;
-            }
-            let Some((page_start, page_end)) = page.flow_range else {
-                continue;
-            };
+        // A repeated source lands on every page. Any other source only
+        // intersects the pages whose flow range overlaps it, which form one
+        // run of `flow_slots` when the ranges are ordered.
+        let candidates = if is_table_header {
+            &flow_slots[..0]
+        } else if source.is_repeat || !flow_slots_ordered {
+            &flow_slots[..]
+        } else if source.height > 0.0 {
+            let bottom = source.abs_y + source.height;
+            let first = flow_slots.partition_point(|&(_, _, end)| end <= source.abs_y);
+            let last = first + flow_slots[first..].partition_point(|&(_, start, _)| start < bottom);
+            &flow_slots[first..last]
+        } else {
+            let first = flow_slots.partition_point(|&(_, _, end)| end < source.abs_y);
+            let last =
+                first + flow_slots[first..].partition_point(|&(_, start, _)| start <= source.abs_y);
+            &flow_slots[first..last]
+        };
+        for &(page_slot, page_start, page_end) in candidates {
             if source.is_repeat {
                 placements.push((
                     page_slot,

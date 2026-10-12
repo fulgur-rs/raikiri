@@ -415,6 +415,7 @@ fn margin_box_flow_inherits_from_root_and_page_and_allows_local_override() {
             100.0,
             40.0,
             MarginBoxPageContext::new(0, 1, false),
+            &MarginBoxNamedValues::new(),
         )
         .unwrap();
         assert_eq!(spec.text_style.writing_mode, mode, "{page} {local}");
