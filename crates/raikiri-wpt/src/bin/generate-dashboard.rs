@@ -37,6 +37,7 @@ const DEFAULT_BASELINE: &str = "expectations/raikiri-baseline.txt";
 const DEFAULT_OUTPUT: &str = "docs/wpt-dashboard.html";
 const DEFAULT_PRINT_SCOPE: &str = "expectations/print-scope.txt";
 const DEFAULT_KNOWN_ISSUES: &str = "expectations/known-issues.txt";
+const DEFAULT_TRACKED_AREAS: &str = "expectations/tracked-areas.txt";
 
 #[derive(Debug, PartialEq, Eq)]
 struct Args {
@@ -45,6 +46,7 @@ struct Args {
     output: PathBuf,
     print_scope: PathBuf,
     known_issues: PathBuf,
+    tracked_areas: PathBuf,
     sweep: Option<PathBuf>,
     basic_reftest_count: Option<usize>,
 }
@@ -57,6 +59,7 @@ impl Default for Args {
             output: PathBuf::from(DEFAULT_OUTPUT),
             print_scope: PathBuf::from(DEFAULT_PRINT_SCOPE),
             known_issues: PathBuf::from(DEFAULT_KNOWN_ISSUES),
+            tracked_areas: PathBuf::from(DEFAULT_TRACKED_AREAS),
             sweep: None,
             basic_reftest_count: None,
         }
@@ -84,7 +87,8 @@ fn run() -> Result<(), String> {
     let args = parse_args(&raw_args[1..])?;
     let files = list_wpt_files(&args.wpt_root)?;
     let baseline = read_baseline(&args.baseline, &files)?;
-    let print_scope = read_print_scope(&args.print_scope)?;
+    let print_scope = read_area_list("print scope", &args.print_scope)?;
+    let tracked_areas = read_area_list("tracked areas", &args.tracked_areas)?;
     let known_issues = read_known_issues(&args.known_issues)?;
     let pin = git_head(&args.wpt_root).unwrap_or_else(|| "unknown".to_owned());
     let sweep = args.sweep.as_deref().map(read_sweep).transpose()?;
@@ -99,6 +103,7 @@ fn run() -> Result<(), String> {
         &reftests,
         &baseline,
         &print_scope,
+        &tracked_areas,
         &known_issues,
         sweep.as_ref(),
     )?;
@@ -142,7 +147,7 @@ fn run() -> Result<(), String> {
 }
 
 fn usage() -> &'static str {
-    "Usage: generate-dashboard [--wpt-root PATH] [--baseline PATH] [--print-scope PATH] [--known-issues PATH] [--sweep PATH] [--output PATH] [--basic-reftest-count N]\n\n  --wpt-root PATH          pinned WPT checkout (default: target/wpt)\n  --baseline PATH          raikiri baseline file (default: expectations/raikiri-baseline.txt)\n  --print-scope PATH       in-scope css/ areas (default: expectations/print-scope.txt)\n  --known-issues PATH      out-of-scope areas and waived tests (default: expectations/known-issues.txt)\n  --sweep PATH             run-baseline-report TSV over the runnable reftests (optional)\n  --output PATH            HTML output (default: docs/wpt-dashboard.html)\n  --basic-reftest-count N  passed smoke reftest count from the updater (optional)"
+    "Usage: generate-dashboard [--wpt-root PATH] [--baseline PATH] [--print-scope PATH] [--known-issues PATH] [--tracked-areas PATH] [--sweep PATH] [--output PATH] [--basic-reftest-count N]\n\n  --wpt-root PATH          pinned WPT checkout (default: target/wpt)\n  --baseline PATH          raikiri baseline file (default: expectations/raikiri-baseline.txt)\n  --print-scope PATH       in-scope css/ areas (default: expectations/print-scope.txt)\n  --known-issues PATH      out-of-scope areas and waived tests (default: expectations/known-issues.txt)\n  --tracked-areas PATH     areas tracked outside the print scope (default: expectations/tracked-areas.txt)\n  --sweep PATH             run-baseline-report TSV over the runnable reftests (optional)\n  --output PATH            HTML output (default: docs/wpt-dashboard.html)\n  --basic-reftest-count N  passed smoke reftest count from the updater (optional)"
 }
 
 fn parse_args(args: &[String]) -> Result<Args, String> {
@@ -171,6 +176,7 @@ fn parse_args(args: &[String]) -> Result<Args, String> {
             "--output" => parsed.output = PathBuf::from(value(&mut index)?),
             "--print-scope" => parsed.print_scope = PathBuf::from(value(&mut index)?),
             "--known-issues" => parsed.known_issues = PathBuf::from(value(&mut index)?),
+            "--tracked-areas" => parsed.tracked_areas = PathBuf::from(value(&mut index)?),
             "--sweep" => parsed.sweep = Some(PathBuf::from(value(&mut index)?)),
             "--basic-reftest-count" => {
                 let raw = value(&mut index)?;
@@ -361,14 +367,15 @@ fn read_wpt_file(wpt_root: &Path, file: &str) -> Option<String> {
         .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
 }
 
-/// The print scope: `css/<area>/` prefixes from `print-scope.txt`.
-fn read_print_scope(path: &Path) -> Result<Vec<String>, String> {
+/// A list of `css/<area>/` prefixes, as in `print-scope.txt` and
+/// `tracked-areas.txt`.
+fn read_area_list(what: &str, path: &Path) -> Result<Vec<String>, String> {
     let content = fs::read_to_string(path)
-        .map_err(|error| format!("could not read print scope {}: {error}", path.display()))?;
-    parse_print_scope(&content).map_err(|error| format!("{}: {error}", path.display()))
+        .map_err(|error| format!("could not read {what} {}: {error}", path.display()))?;
+    parse_area_list(&content).map_err(|error| format!("{}: {error}", path.display()))
 }
 
-fn parse_print_scope(content: &str) -> Result<Vec<String>, String> {
+fn parse_area_list(content: &str) -> Result<Vec<String>, String> {
     let mut areas = Vec::new();
     for (index, line) in content.lines().enumerate() {
         let entry = line.trim();
@@ -528,6 +535,8 @@ struct OutOfScopeRow {
 #[derive(Debug, Default, PartialEq, Eq)]
 struct Summary {
     in_scope: Vec<AreaRow>,
+    /// Areas outside the print scope whose results are still tracked.
+    tracked: Vec<AreaRow>,
     unclassified: Vec<AreaRow>,
     out_of_scope: Vec<OutOfScopeRow>,
     /// Reftests in print-scope areas that match a narrower known-issues entry.
@@ -538,12 +547,16 @@ struct Summary {
 
 impl Summary {
     fn in_scope_total(&self) -> Tally {
-        let mut total = Tally::default();
-        for row in &self.in_scope {
-            total.add(row.tally);
-        }
-        total
+        total_of(&self.in_scope)
     }
+}
+
+fn total_of(rows: &[AreaRow]) -> Tally {
+    let mut total = Tally::default();
+    for row in rows {
+        total.add(row.tally);
+    }
+    total
 }
 
 fn area_of(file: &str) -> Option<&str> {
@@ -557,6 +570,7 @@ fn summarize(
     reftests: &Reftests,
     baseline: &HashSet<String>,
     print_scope: &[String],
+    tracked_areas: &[String],
     known_issues: &[(String, String)],
     sweep: Option<&BTreeMap<String, Outcome>>,
 ) -> Result<Summary, String> {
@@ -570,6 +584,18 @@ fn summarize(
         if area_reason(area).is_some() {
             return Err(format!(
                 "{area} is listed in both print-scope.txt and known-issues.txt"
+            ));
+        }
+    }
+    for area in tracked_areas {
+        if print_scope.contains(area) {
+            return Err(format!(
+                "{area} is listed in both print-scope.txt and tracked-areas.txt"
+            ));
+        }
+        if area_reason(area).is_some() {
+            return Err(format!(
+                "{area} is listed in both tracked-areas.txt and known-issues.txt"
             ));
         }
     }
@@ -651,6 +677,8 @@ fn summarize(
         };
         if print_scope.contains(&area_path) {
             summary.in_scope.push(row);
+        } else if tracked_areas.contains(&area_path) {
+            summary.tracked.push(row);
         } else {
             summary.unclassified.push(row);
         }
@@ -664,6 +692,7 @@ fn summarize(
             .then_with(|| left.path.cmp(&right.path))
     };
     summary.in_scope.sort_by(by_reftests);
+    summary.tracked.sort_by(by_reftests);
     summary.unclassified.sort_by(by_reftests);
     summary.out_of_scope.sort_by(|left, right| {
         right
@@ -804,7 +833,7 @@ h2 { font-size: 18px; }
     }
     let _ = writeln!(
         html,
-        "<p>The denominator is the number of reftests (test files linking a <code>match</code> or <code>mismatch</code> reference, excluding support and reference files) in the print-scope areas listed in <code>expectations/print-scope.txt</code>. Areas without meaning for print are listed in <code>expectations/known-issues.txt</code> and reported separately below. {} in-scope reftests matching a narrower known-issues entry are waived, and {} XML reftests (<code>.xht</code>, <code>.xml</code>, <code>.svg</code>) are left out because they are judged by rendering review rather than pixel comparison.</p>",
+        "<p>The denominator is the number of reftests (test files linking a <code>match</code> or <code>mismatch</code> reference, excluding support and reference files) in the print-scope areas listed in <code>expectations/print-scope.txt</code>. Areas without meaning for print are listed in <code>expectations/known-issues.txt</code> and reported separately below, and areas outside the print scope that are still worked on are tracked in their own table from <code>expectations/tracked-areas.txt</code>. {} in-scope reftests matching a narrower known-issues entry are waived, and {} XML reftests (<code>.xht</code>, <code>.xml</code>, <code>.svg</code>) are left out because they are judged by rendering review rather than pixel comparison.</p>",
         summary.waived, summary.xml_reftests
     );
     if summary.unreadable > 0 {
@@ -829,8 +858,20 @@ h2 { font-size: 18px; }
     render_area_rows(&mut html, &summary.in_scope, has_sweep);
     html.push_str("</table>\n");
 
+    if !summary.tracked.is_empty() {
+        html.push_str("<h2>Tracked outside the print scope</h2>\n<p>These areas from <code>expectations/tracked-areas.txt</code> are not part of the print scope and are not counted above, but their results are still tracked.</p>\n<table>\n");
+        html.push_str(header);
+        let _ = writeln!(
+            html,
+            "<tr class=\"total\"><td>Total (tracked)</td>{}</tr>",
+            tally_cells(total_of(&summary.tracked), has_sweep)
+        );
+        render_area_rows(&mut html, &summary.tracked, has_sweep);
+        html.push_str("</table>\n");
+    }
+
     if !summary.unclassified.is_empty() {
-        html.push_str("<h2>Unclassified</h2>\n<p>These areas are in neither <code>print-scope.txt</code> nor <code>known-issues.txt</code> and are not counted above.</p>\n<table>\n");
+        html.push_str("<h2>Unclassified</h2>\n<p>These areas are in none of <code>print-scope.txt</code>, <code>tracked-areas.txt</code>, and <code>known-issues.txt</code>, and are not counted above.</p>\n<table>\n");
         html.push_str(header);
         render_area_rows(&mut html, &summary.unclassified, has_sweep);
         html.push_str("</table>\n");

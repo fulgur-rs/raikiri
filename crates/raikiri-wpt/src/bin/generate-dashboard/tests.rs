@@ -11,12 +11,14 @@ fn parse_args_uses_defaults_and_accepts_overrides() {
         "--output".to_owned(),
         "dashboard.html".to_owned(),
         "--basic-reftest-count=12".to_owned(),
+        "--tracked-areas=tracked.txt".to_owned(),
     ])
     .unwrap();
     assert_eq!(args.wpt_root, PathBuf::from("wpt"));
     assert_eq!(args.baseline, PathBuf::from("base.txt"));
     assert_eq!(args.output, PathBuf::from("dashboard.html"));
     assert_eq!(args.basic_reftest_count, Some(12));
+    assert_eq!(args.tracked_areas, PathBuf::from("tracked.txt"));
 }
 
 #[test]
@@ -125,16 +127,16 @@ fn wpt_test_path_follows_manifest_naming_rules() {
 }
 
 #[test]
-fn print_scope_accepts_area_prefixes_only() {
+fn area_list_accepts_area_prefixes_only() {
     assert_eq!(
-        parse_print_scope("# comment\n\ncss/css-page/\n css/CSS2/ \n").unwrap(),
+        parse_area_list("# comment\n\ncss/css-page/\n css/CSS2/ \n").unwrap(),
         ["css/css-page/", "css/CSS2/"]
     );
-    assert!(parse_print_scope("css/css-page").is_err());
-    assert!(parse_print_scope("css/css-page/sub/").is_err());
-    assert!(parse_print_scope("html/x/").is_err());
-    assert!(parse_print_scope("css//").is_err());
-    assert!(parse_print_scope("css/a/\ncss/a/\n").is_err());
+    assert!(parse_area_list("css/css-page").is_err());
+    assert!(parse_area_list("css/css-page/sub/").is_err());
+    assert!(parse_area_list("html/x/").is_err());
+    assert!(parse_area_list("css//").is_err());
+    assert!(parse_area_list("css/a/\ncss/a/\n").is_err());
 }
 
 #[test]
@@ -179,6 +181,7 @@ fn summary_fixture(sweep: Option<&BTreeMap<String, Outcome>>) -> Summary {
         &reftests,
         &baseline,
         &["css/css-page/".to_owned()],
+        &[],
         &known_issues,
         sweep,
     )
@@ -242,11 +245,69 @@ fn summarize_rejects_an_area_in_both_scope_lists() {
         &reftests,
         &HashSet::new(),
         &["css/css-page/".to_owned()],
+        &[],
         &[("css/css-page/".to_owned(), "reason".to_owned())],
         None,
     )
     .unwrap_err();
     assert!(error.contains("both print-scope.txt and known-issues.txt"));
+}
+
+#[test]
+fn summarize_rejects_a_tracked_area_in_another_scope_list() {
+    let (files, reftests) = reftest_fixture();
+    let tracked = ["css/css-new/".to_owned()];
+    let error = summarize(
+        &files,
+        &reftests,
+        &HashSet::new(),
+        &tracked,
+        &tracked,
+        &[],
+        None,
+    )
+    .unwrap_err();
+    assert!(error.contains("both print-scope.txt and tracked-areas.txt"));
+    let error = summarize(
+        &files,
+        &reftests,
+        &HashSet::new(),
+        &[],
+        &tracked,
+        &[("css/css-new/".to_owned(), "reason".to_owned())],
+        None,
+    )
+    .unwrap_err();
+    assert!(error.contains("both tracked-areas.txt and known-issues.txt"));
+}
+
+#[test]
+fn tracked_areas_get_their_own_table_outside_the_print_scope() {
+    let (files, reftests) = reftest_fixture();
+    let sweep: BTreeMap<String, Outcome> = [("css/css-new/g.html".to_owned(), Outcome::Pass)]
+        .into_iter()
+        .collect();
+    let summary = summarize(
+        &files,
+        &reftests,
+        &HashSet::new(),
+        &["css/css-page/".to_owned()],
+        &["css/css-new/".to_owned()],
+        &[("css/css-scroll-snap/".to_owned(), "reason".to_owned())],
+        Some(&sweep),
+    )
+    .unwrap();
+    assert!(summary.unclassified.is_empty());
+    assert_eq!(summary.tracked.len(), 1);
+    assert_eq!(summary.tracked[0].path, "css/css-new");
+    assert_eq!(summary.tracked[0].tally.pass, 1);
+    assert_eq!(summary.in_scope_total().reftests, 4);
+    assert_eq!(summary.in_scope_total().pass, 0);
+    let html = render_dashboard(&summary, &page_info(Some("raikiri abc")));
+    assert!(html.contains("<h2>Tracked outside the print scope</h2>"));
+    assert!(html.contains("<tr class=\"total\"><td>Total (tracked)</td><td class=\"num\">1</td><td class=\"num\">1</td>"));
+    assert!(html.contains("In-scope pass rate: 0.00%</strong> (0 of 4 reftests)"));
+    assert!(!html.contains("<h2>Unclassified</h2>"));
 }
 
 #[test]
@@ -339,6 +400,7 @@ fn render_dashboard_without_sweep_falls_back_to_baseline_rate() {
     let html = render_dashboard(&unreadable, &page_info(None));
     assert!(html.contains("2 candidate files could not be read"));
     assert!(!html.contains("<h2>Unclassified</h2>"));
+    assert!(!html.contains("<h2>Tracked outside the print scope</h2>"));
 }
 
 #[test]

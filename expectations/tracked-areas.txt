@@ -1,0 +1,15 @@
+# expectations/tracked-areas.txt — WPT css/ areas tracked outside the print scope.
+#
+# Format: one `css/<area>/` directory prefix per line, as in print-scope.txt.
+# Lines starting with '#' are comments. Empty lines are ignored.
+#
+# These areas are not part of the print scope, so the WPT dashboard
+# (`generate-dashboard`) leaves them out of the in-scope pass rate. Their
+# tests still run, and the dashboard shows their PASS / FAIL / ERROR in a
+# separate table, because work on them continues alongside the print scope.
+# An area listed here may not also appear in print-scope.txt or
+# known-issues.txt.
+
+# ── Form controls and UI properties ──
+css/css-forms/
+css/css-ui/

@@ -11,11 +11,15 @@ fn scope_args(root: &std::path::Path) -> Vec<String> {
     fs::write(&print_scope, "css/foo/\n").unwrap();
     let known_issues = root.join("known-issues.txt");
     fs::write(&known_issues, "css/bar/ | Out of print scope (fixture)\n").unwrap();
+    let tracked_areas = root.join("tracked-areas.txt");
+    fs::write(&tracked_areas, "css/baz/\n").unwrap();
     vec![
         "--print-scope".to_owned(),
         print_scope.to_str().unwrap().to_owned(),
         "--known-issues".to_owned(),
         known_issues.to_str().unwrap().to_owned(),
+        "--tracked-areas".to_owned(),
+        tracked_areas.to_str().unwrap().to_owned(),
     ]
 }
 
@@ -25,6 +29,8 @@ fn binary_generates_dashboard_from_a_non_git_wpt_tree() {
     let link = r#"<link rel="match" href="ref.html">"#;
     fs::create_dir_all(root.path().join("css/foo/sub")).unwrap();
     fs::create_dir_all(root.path().join("css/bar")).unwrap();
+    fs::create_dir_all(root.path().join("css/baz")).unwrap();
+    fs::write(root.path().join("css/baz/d.html"), link).unwrap();
     fs::write(root.path().join("css/foo/a.html"), link).unwrap();
     fs::write(root.path().join("css/foo/sub/b.html"), link).unwrap();
     fs::write(root.path().join("css/foo/parsing.html"), "no reference").unwrap();
@@ -36,7 +42,7 @@ fn binary_generates_dashboard_from_a_non_git_wpt_tree() {
     let sweep = root.path().join("sweep.tsv");
     fs::write(
         &sweep,
-        "css/foo/a.html\tPASS\t\ncss/foo/sub/b.html\tFAIL\tmismatch\n",
+        "css/foo/a.html\tPASS\t\ncss/foo/sub/b.html\tFAIL\tmismatch\ncss/baz/d.html\tPASS\t\n",
     )
     .unwrap();
     fs::write(
@@ -62,13 +68,15 @@ fn binary_generates_dashboard_from_a_non_git_wpt_tree() {
         .assert()
         .success();
     let stdout = String::from_utf8(assertion.get_output().stdout.clone()).unwrap();
-    assert!(stdout.contains("5 WPT files, 2 baseline entries, 2 in-scope reftests, 1 PASS"));
+    assert!(stdout.contains("6 WPT files, 2 baseline entries, 2 in-scope reftests, 1 PASS"));
 
     let html = fs::read_to_string(output).unwrap();
     assert!(html.contains("In-scope pass rate: 50.00%"));
     assert!(html.contains("sweep: <code>raikiri def, WPT abc</code>"));
     assert!(html.contains("css/foo/sub"));
     assert!(html.contains("Out of print scope (fixture)"));
+    assert!(html.contains("<h2>Tracked outside the print scope</h2>"));
+    assert!(html.contains("<td>css/baz</td>"));
 }
 
 #[test]
@@ -204,6 +212,10 @@ fn binary_reports_scope_and_sweep_errors() {
     let mut args = scope.clone();
     args[3] = missing.clone();
     assert!(stderr(&args).contains("could not read known issues"));
+
+    let mut args = scope.clone();
+    args[5] = missing.clone();
+    assert!(stderr(&args).contains("could not read tracked areas"));
 
     let sweep = root.path().join("sweep.tsv");
     fs::write(&sweep, "css/foo/a.html\tPASS\t\n").unwrap();
