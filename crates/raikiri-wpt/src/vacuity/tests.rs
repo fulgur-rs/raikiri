@@ -523,6 +523,25 @@ fn cdata_sections_in_foreign_content_hide_their_markup() {
 }
 
 #[test]
+fn quotes_open_values_only_after_an_equals_sign() {
+    let html = r#"<div data-x=a"><style>p { clear: both }</style><i a= 'b>c' style="d: 1">"#;
+    assert_eq!(keys(html), ["clear:both", "d:1"]);
+    // A quote in a tag name or an attribute name is an ordinary character.
+    let html = r#"<a"b c'd=e><style>p { clear: both }</style>"#;
+    assert_eq!(keys(html), ["clear:both"]);
+}
+
+#[test]
+fn css_whitespace_and_escapes_follow_the_css_tokenizer() {
+    // CRLF ends a hex escape as one newline.
+    assert_eq!(keys("<i style='\\63\r\nolor: red'>"), ["color:red"]);
+    // An escaped colon belongs to the name.
+    assert_eq!(keys(r"<i style='--foo\:bar: red'>"), ["--foo:bar:red"]);
+    // U+00A0 is not CSS whitespace, so it is kept in values.
+    assert_eq!(keys("<i style='--a:\u{a0}'>"), ["--a:\u{a0}"]);
+}
+
+#[test]
 fn hyphen_only_property_names_are_not_features() {
     let html = "<style>p { -: x; --: y; clear: both }</style>";
     let features = feature_properties(html, "css/a/clear-001.html");

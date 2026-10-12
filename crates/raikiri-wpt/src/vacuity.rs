@@ -559,18 +559,30 @@ pub fn remove_declarations(html: &str, remove: impl Fn(&str) -> bool) -> (String
     (out, removed)
 }
 
-/// End offset (exclusive) of the tag that starts at `start`, honoring quoted
-/// attribute values.
+/// End offset (exclusive) of the tag that starts at `start`. As in the HTML
+/// tokenizer, a quote opens a quoted value only right after an attribute's
+/// `=` (and optional whitespace); elsewhere it is an ordinary character.
 fn tag_end(html: &str, start: usize) -> Option<usize> {
     let bytes = html.as_bytes();
     let mut quote = None;
+    // Whether the tag name has ended, and whether the next non-whitespace
+    // character starts an attribute value.
+    let mut in_attributes = false;
+    let mut before_value = false;
     for (offset, &byte) in bytes[start..].iter().enumerate() {
         match (quote, byte) {
             (Some(q), b) if b == q => quote = None,
             (Some(_), _) => {}
-            (None, b'"' | b'\'') => quote = Some(byte),
             (None, b'>') => return Some(start + offset + 1),
-            (None, _) => {}
+            (None, b'"' | b'\'') if before_value => {
+                quote = Some(byte);
+                before_value = false;
+            }
+            (None, b'=') if in_attributes && !before_value => before_value = true,
+            (None, b) if b.is_ascii_whitespace() || b == b'/' && !before_value => {
+                in_attributes = true;
+            }
+            (None, _) => before_value = false,
         }
     }
     None
@@ -732,7 +744,7 @@ fn escape_len(bytes: &[u8], at: usize) -> usize {
 /// already names a custom property and has reached its value.
 fn is_custom_property(segment: &str) -> bool {
     colon_outside_comments(segment).is_some_and(|colon| {
-        css_unescape(strip_comments(&segment[..colon]).trim()).starts_with("--")
+        css_unescape(strip_comments(&segment[..colon]).trim_ascii()).starts_with("--")
     })
 }
 
@@ -746,7 +758,7 @@ fn push_declaration(css: &str, range: Range<usize>, base: usize, out: &mut Vec<D
     };
     let (name, value) = (&text[..colon], &text[colon + 1..]);
     let name = strip_comments(name);
-    let name = name.trim();
+    let name = name.trim_ascii();
     if !is_identifier(name) {
         return;
     }
@@ -786,6 +798,8 @@ fn is_identifier(name: &str) -> bool {
                 if chars.next().is_none_or(|c| c == '\n') {
                     return false;
                 }
+            } else if chars.next_if_eq(&'\r').is_some() {
+                chars.next_if_eq(&'\n');
             } else if chars.peek().is_some_and(|c| c.is_ascii_whitespace()) {
                 chars.next();
             }
@@ -814,7 +828,10 @@ fn css_unescape(name: &str) -> String {
             out.extend(chars.next());
             continue;
         }
-        if chars.peek().is_some_and(|c| c.is_ascii_whitespace()) {
+        // One whitespace character ends the escape; CSS reads CRLF as one.
+        if chars.next_if_eq(&'\r').is_some() {
+            chars.next_if_eq(&'\n');
+        } else if chars.peek().is_some_and(|c| c.is_ascii_whitespace()) {
             chars.next();
         }
         let code = u32::from_str_radix(&hex, 16).unwrap_or(0);
@@ -827,11 +844,13 @@ fn css_unescape(name: &str) -> String {
     out
 }
 
-/// The offset of the first `:` in `text` outside CSS comments.
+/// The offset of the first unescaped `:` in `text` outside CSS comments.
 fn colon_outside_comments(text: &str) -> Option<usize> {
     let mut i = 0;
     while i < text.len() {
-        if text.as_bytes()[i..].starts_with(b"/*") {
+        if text.as_bytes()[i] == b'\\' {
+            i += 2;
+        } else if text.as_bytes()[i..].starts_with(b"/*") {
             i = text[i + 2..]
                 .find("*/")
                 .map_or(text.len(), |e| i + 2 + e + 2);
@@ -933,7 +952,7 @@ fn named_reference(after: &str) -> Option<([Option<char>; 2], usize)> {
 }
 
 /// Normalize a declaration value: drop comments, trim, and collapse runs of
-/// whitespace to one space. Quoted strings and unquoted `url()` contents are
+/// CSS whitespace (space, tab and newlines) to one space. Quoted strings and unquoted `url()` contents are
 /// data, not comments or insignificant whitespace, and are kept verbatim.
 fn collapse_whitespace(value: &str) -> String {
     let chars: Vec<char> = value.chars().collect();
@@ -958,7 +977,7 @@ fn collapse_whitespace(value: &str) -> String {
             pending_space = true;
             continue;
         }
-        if c.is_whitespace() {
+        if c.is_ascii_whitespace() {
             pending_space = true;
             i += 1;
             continue;
@@ -975,7 +994,7 @@ fn collapse_whitespace(value: &str) -> String {
         } else if c == '(' && out.to_ascii_lowercase().ends_with("url") && !pending_space {
             // An unquoted URL runs to the closing parenthesis as one token.
             let mut j = i + 1;
-            while j < chars.len() && chars[j].is_whitespace() {
+            while j < chars.len() && chars[j].is_ascii_whitespace() {
                 j += 1;
             }
             i += 1;
