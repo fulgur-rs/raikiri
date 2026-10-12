@@ -738,6 +738,21 @@ pub struct InitialPageContext {
     pub cascade: CascadeResult,
     /// Physical page dimensions derived from that cascade or caller defaults.
     pub page_box: PageBox,
+    /// Paragraphs the last placement probe built, if one ran.
+    paragraphs: Option<crate::layout::ifc::root::RetainedParagraphs>,
+}
+
+impl InitialPageContext {
+    /// Give `document` the paragraphs the placement probe built, so that its
+    /// next layout breaks their lines instead of shaping them again.
+    /// `document` must be the document the context was resolved for; the
+    /// paragraphs are used only with an element cascade from the same run.
+    #[doc(hidden)]
+    pub fn give_paragraphs_to(&mut self, document: &mut Document) {
+        if let (Some(paragraphs), Some(state)) = (self.paragraphs.take(), document.ifc.as_mut()) {
+            state.retained = Some(paragraphs);
+        }
+    }
 }
 
 /// Failure while resolving the page context selected by the first placed Grid item.
@@ -817,6 +832,7 @@ pub fn resolve_initial_page_context(
         page_name,
         cascade,
         page_box,
+        paragraphs: None,
     };
     let has_named_page = context
         .cascade
@@ -839,6 +855,10 @@ pub fn resolve_initial_page_context(
     const MAX_INITIAL_PAGE_CONTEXT_PASSES: u32 = 3;
     for _ in 0..MAX_INITIAL_PAGE_CONTEXT_PASSES {
         let mut probe_document = document.clone();
+        // A page context changes no paragraph: every probe, and the caller's
+        // first layout, breaks the lines of the first probe's paragraphs.
+        probe_document.set_ifc_retain_paragraphs(true);
+        context.give_paragraphs_to(&mut probe_document);
         let probe_layout = if let Some(resolver) = resources.resolver {
             layout_single_page_with_resolver_and_base_url(
                 &mut probe_document,
@@ -851,6 +871,10 @@ pub fn resolve_initial_page_context(
             layout_single_page(&mut probe_document, &context.cascade, context.page_box)
         };
         probe_layout.map_err(InitialPageContextError::Layout)?;
+        context.paragraphs = probe_document
+            .ifc
+            .as_mut()
+            .and_then(|state| state.retained.take());
         let resolved_name = first_page_name(&probe_document, &context.cascade);
         if resolved_name == context.page_name {
             return Ok(context);

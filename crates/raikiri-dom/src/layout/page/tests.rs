@@ -1351,3 +1351,48 @@ fn body_inline_margins_keep_absolute_offsets_against_the_page() {
     assert_eq!(layout.size.width, width / 2.0);
     assert_eq!(layout.location.x, width / 2.0);
 }
+
+#[test]
+fn the_first_layout_breaks_the_lines_of_the_placement_probes_paragraphs() {
+    use raikiri_style::{build_rule_tree, cascade};
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:flex"));
+    let item = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;page:chapter;font-family:Ahem;font-size:10px"),
+    );
+    doc.append_text(item, "aa bb cc");
+    doc.mark_in_document_flags();
+    doc.set_font_collection_with_limits(
+        crate::layout::ifc::test_support::ahem_fonts(),
+        shodo::limits::Limits::default(),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    let page_box = PageBox::default();
+    let mut probes = 0;
+    let mut context = resolve_initial_page_context(
+        &doc,
+        None,
+        cascade,
+        page_box,
+        InitialPageProbeResources::new(None, None),
+        |_, cascade| {
+            probes += 1;
+            (cascade.page.clone(), page_box)
+        },
+    )
+    .expect("context");
+    // The probe found the named first page and probed it again.
+    assert_eq!(probes, 1);
+    assert_eq!(context.page_name.as_deref(), Some("chapter"));
+    context.give_paragraphs_to(&mut doc);
+    layout_single_page(&mut doc, &context.cascade, page_box).expect("layout");
+    assert_eq!(doc.ifc_last_build(), Some(crate::IfcBuildMode::Retained));
+    // The given paragraphs served that one layout.
+    layout_single_page(&mut doc, &context.cascade, page_box).expect("layout");
+    assert_ne!(doc.ifc_last_build(), Some(crate::IfcBuildMode::Retained));
+}

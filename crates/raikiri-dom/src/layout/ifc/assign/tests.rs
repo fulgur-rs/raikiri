@@ -2054,3 +2054,120 @@ fn hanging_punctuation_end_modes_and_combinations_keep_the_actual_ifc_path() {
         assert!(is_root(&fixture, fixture.root), "{css}");
     }
 }
+
+/// The text of each root's lines, by root, at a 50px line width.
+fn line_texts(doc: &Document) -> Vec<(usize, Vec<String>)> {
+    (0..doc.nodes.len())
+        .filter_map(|idx| {
+            let root = doc.nodes[idx].ifc.as_ref()?;
+            let mut cx = shodo::LayoutContext::new();
+            let lines =
+                root.paragraph
+                    .break_all(&mut cx, &root.options, 50.0, &shodo::AtomicSizes::EMPTY);
+            let texts = lines
+                .iter()
+                .map(|line| line.text()[line.text_range()].trim_end().to_owned())
+                .collect();
+            Some((idx, texts))
+        })
+        .collect()
+}
+
+#[test]
+fn a_document_that_keeps_its_paragraphs_reuses_them_in_the_next_pass() {
+    let mut fixture = many_paragraphs(8);
+    enable(&mut fixture);
+    fixture.doc.set_ifc_retain_paragraphs(true);
+    assign(&mut fixture);
+    assert_eq!(fixture.doc.ifc_last_build(), Some(IfcBuildMode::Sequential));
+    let built = line_texts(&fixture.doc);
+    assign(&mut fixture);
+    assert_eq!(fixture.doc.ifc_last_build(), Some(IfcBuildMode::Retained));
+    assert_eq!(line_texts(&fixture.doc), built);
+    assert_eq!(built.len(), 8);
+    // The reused roots carry no lines of an earlier pass.
+    assert!(
+        fixture
+            .doc
+            .nodes
+            .iter()
+            .filter_map(|node| node.ifc.as_ref())
+            .all(|root| root.lines.is_none())
+    );
+}
+
+#[test]
+fn paragraphs_are_not_kept_by_default() {
+    let mut fixture = many_paragraphs(8);
+    enable(&mut fixture);
+    assign(&mut fixture);
+    assign(&mut fixture);
+    assert_ne!(fixture.doc.ifc_last_build(), Some(IfcBuildMode::Retained));
+}
+
+#[test]
+fn turning_retention_off_drops_the_kept_paragraphs() {
+    let mut fixture = many_paragraphs(8);
+    enable(&mut fixture);
+    fixture.doc.set_ifc_retain_paragraphs(true);
+    assign(&mut fixture);
+    fixture.doc.set_ifc_retain_paragraphs(false);
+    fixture.doc.set_ifc_retain_paragraphs(true);
+    assign(&mut fixture);
+    assert_ne!(fixture.doc.ifc_last_build(), Some(IfcBuildMode::Retained));
+}
+
+#[test]
+fn a_mutation_of_the_document_drops_the_kept_paragraphs() {
+    let mut fixture = many_paragraphs(8);
+    enable(&mut fixture);
+    fixture.doc.set_ifc_retain_paragraphs(true);
+    assign(&mut fixture);
+    let text = fixture.doc.nodes[fixture.root].children[0];
+    fixture
+        .doc
+        .set_character_data(text, "zz yy xx ww vv uu")
+        .expect("text node");
+    assign(&mut fixture);
+    assert_ne!(fixture.doc.ifc_last_build(), Some(IfcBuildMode::Retained));
+    let (_, lines) = line_texts(&fixture.doc)
+        .into_iter()
+        .find(|(idx, _)| *idx == fixture.root)
+        .expect("root");
+    assert_eq!(lines.first().map(String::as_str), Some("zz yy"));
+}
+
+#[test]
+fn another_element_cascade_builds_the_paragraphs_again() {
+    let mut fixture = many_paragraphs(8);
+    enable(&mut fixture);
+    fixture.doc.set_ifc_retain_paragraphs(true);
+    assign(&mut fixture);
+    let rules = raikiri_style::build_rule_tree(&fixture.doc);
+    fixture.cascade = raikiri_style::cascade(&fixture.doc, &rules).expect("cascade");
+    assign(&mut fixture);
+    assert_ne!(fixture.doc.ifc_last_build(), Some(IfcBuildMode::Retained));
+}
+
+#[test]
+fn a_new_page_context_keeps_the_paragraphs() {
+    let mut fixture = many_paragraphs(8);
+    enable(&mut fixture);
+    fixture.doc.set_ifc_retain_paragraphs(true);
+    assign(&mut fixture);
+    let page = fixture.cascade.page.clone();
+    fixture.cascade.replace_page(page);
+    assign(&mut fixture);
+    assert_eq!(fixture.doc.ifc_last_build(), Some(IfcBuildMode::Retained));
+}
+
+#[test]
+fn a_clone_does_not_keep_the_paragraphs() {
+    let mut fixture = many_paragraphs(8);
+    enable(&mut fixture);
+    fixture.doc.set_ifc_retain_paragraphs(true);
+    assign(&mut fixture);
+    let mut clone = fixture.doc.clone();
+    assign_ifc_roots(&mut clone, &fixture.cascade).expect("assign");
+    assert_ne!(clone.ifc_last_build(), Some(IfcBuildMode::Retained));
+}

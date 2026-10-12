@@ -70,6 +70,8 @@ pub struct SvgStyleProperty {
 #[non_exhaustive]
 pub struct CascadeResult {
     generation: u64,
+    /// Identity of the element cascade alone: [`Self::replace_page`] keeps it.
+    element_generation: u64,
     svg_style_properties: HashMap<StyleNodeId, Vec<SvgStyleProperty>>,
     first_letter_inputs: HashMap<StyleNodeId, first_letter::FirstLetterInputs>,
     typographic_inheritance: HashMap<(StyleNodeId, Option<PseudoElem>), OwnedCandidates>,
@@ -235,6 +237,16 @@ impl CascadeResult {
         self.generation
     }
 
+    /// Opaque identity for the cascade run that produced the element
+    /// results: unlike [`Self::generation`], it survives
+    /// [`Self::replace_page`], which changes only the page context.
+    ///
+    /// Layout caches that read only element results use it.
+    #[doc(hidden)]
+    pub fn element_generation(&self) -> u64 {
+        self.element_generation
+    }
+
     /// Computed values of the root element, the inheritance parent of the
     /// `@page` cascade.
     ///
@@ -279,6 +291,7 @@ impl CascadeResult {
         // Every field is named so that a new one has to be considered here.
         let Self {
             generation: _,
+            element_generation: _,
             svg_style_properties,
             first_letter_inputs,
             typographic_inheritance,
@@ -300,8 +313,10 @@ impl CascadeResult {
             .map(|(new, &old)| (old as u64, new as u64))
             .collect();
         let node = |id: &StyleNodeId| new_of_old.get(&id.0).map(|&new| StyleNodeId(new));
+        let generation = NEXT_CASCADE_GENERATION.fetch_add(1, Ordering::Relaxed);
         Self {
-            generation: NEXT_CASCADE_GENERATION.fetch_add(1, Ordering::Relaxed),
+            generation,
+            element_generation: generation,
             svg_style_properties: svg_style_properties
                 .iter()
                 .filter_map(|(id, value)| Some((node(id)?, value.clone())))
@@ -479,8 +494,10 @@ fn finish<D: StyleDom>(
         PageInheritance::FromRoot(&outputs.computed[root_element_index]),
         media_context,
     );
+    let generation = NEXT_CASCADE_GENERATION.fetch_add(1, Ordering::Relaxed);
     CascadeResult {
-        generation: NEXT_CASCADE_GENERATION.fetch_add(1, Ordering::Relaxed),
+        generation,
+        element_generation: generation,
         svg_style_properties: outputs.svg_properties,
         first_letter_inputs: outputs.first_letter_inputs,
         typographic_inheritance: outputs.typographic_inheritance,
