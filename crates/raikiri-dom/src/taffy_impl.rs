@@ -1425,20 +1425,33 @@ fn compute_inline_block_shrink_wrap(
 /// children's percentage padding and borders resolve against. A container
 /// in a vertical writing mode is left to taffy: its inline size, which those
 /// percentages refer to, is its height.
+///
+/// A container whose width is not definite yet (an auto-width float, say)
+/// only learns it from its contents, after taffy has listed the children.
+/// When such a container starts a formatting context of its own and a child
+/// has percentage vertical edges, it is laid out a second time with the
+/// width the first pass derived.
 pub(crate) fn block_layout(
     tree: &mut Document,
     node_id: NodeId,
     inputs: LayoutInput,
-    block_ctx: Option<&mut BlockContext<'_>>,
+    mut block_ctx: Option<&mut BlockContext<'_>>,
 ) -> LayoutOutput {
     let idx = usize::from(node_id);
     if tree.has_vertical_writing_mode(idx) {
         return compute_block_layout(tree, node_id, inputs, block_ctx);
     }
-    let basis = tree.block_content_box_width(idx, &inputs);
+    let (width, inline_inset) = tree.block_definite_width(idx, &inputs);
+    let basis = width.map(|width| width - inline_inset);
     tree.block_item_percent_bases.push((idx, basis));
-    let output = compute_block_layout(tree, node_id, inputs, block_ctx);
+    let mut output = compute_block_layout(tree, node_id, inputs, block_ctx.as_deref_mut());
     tree.block_item_percent_bases.pop();
+    if basis.is_none() && block_ctx.is_none() && tree.has_percent_vertical_edge_child(idx) {
+        let basis = Some(output.size.width - inline_inset);
+        tree.block_item_percent_bases.push((idx, basis));
+        output = compute_block_layout(tree, node_id, inputs, None);
+        tree.block_item_percent_bases.pop();
+    }
     output
 }
 
@@ -1457,14 +1470,14 @@ impl Document {
         false
     }
 
-    /// The content-box width of block container `idx` that taffy's block
+    /// The border-box width of block container `idx` that taffy's block
     /// algorithm derives from `inputs` before it lists the container's
-    /// children: the definite size the container is given or styled with,
-    /// minus its padding, border and vertical scrollbar gutter. `None` when
-    /// that width is not definite yet (while it is being measured).
+    /// children (the definite size the container is given or styled with,
+    /// `None` when there is none yet), and the padding, border and vertical
+    /// scrollbar gutter that separate it from the content box.
     ///
     /// Mirrors [`taffy::compute_block_layout`] and its `compute_inner`.
-    fn block_content_box_width(&self, idx: usize, inputs: &LayoutInput) -> Option<f32> {
+    fn block_definite_width(&self, idx: usize, inputs: &LayoutInput) -> (Option<f32>, f32) {
         use taffy::{BoxSizing, MaybeMath, MaybeResolve, Overflow, ResolveOrZero, SizingMode};
 
         let style = &self.nodes[idx].style;
@@ -1514,14 +1527,42 @@ impl Document {
         let width = known.width.or(known
             .maybe_apply_aspect_ratio(aspect_ratio)
             .maybe_clamp(min_size, max_size)
-            .width)?;
+            .width);
         // A vertical scrollbar takes its gutter from the inline axis.
         let gutter = if style.overflow.y == Overflow::Scroll {
             style.scrollbar_width
         } else {
             0.0
         };
-        Some(width - padding.horizontal_axis_sum() - border.horizontal_axis_sum() - gutter)
+        (
+            width,
+            padding.horizontal_axis_sum() + border.horizontal_axis_sum() + gutter,
+        )
+    }
+
+    /// Whether an in-flow child of block container `idx` has a top or bottom
+    /// padding or border that depends on its percentage basis.
+    fn has_percent_vertical_edge_child(&self, idx: usize) -> bool {
+        use taffy::ResolveOrZero;
+        let depends_on_basis = |edge: taffy::LengthPercentage| {
+            edge.resolve_or_zero(Some(0.0), resolve_calc)
+                != edge.resolve_or_zero(Some(1.0), resolve_calc)
+        };
+        TaffyChildIter::new(self, NodeId::from(idx)).any(|child| {
+            let Some(node) = self.nodes.get(usize::from(child)) else {
+                return false;
+            };
+            let style = &node.style;
+            style.position != TaffyPosition::Absolute
+                && [
+                    style.padding.top,
+                    style.padding.bottom,
+                    style.border.top,
+                    style.border.bottom,
+                ]
+                .into_iter()
+                .any(depends_on_basis)
+        })
     }
 }
 

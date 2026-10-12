@@ -128,12 +128,10 @@ fn vertical_percent_padding_of_an_abspos_box_uses_its_containing_block_width() {
 }
 
 #[test]
-fn vertical_percent_padding_inside_an_auto_width_float_keeps_its_inset() {
-    // The float's width is not known when its children are listed, so the
-    // child's vertical padding is left to taffy, which resolves it against the
-    // float's 100px height here.
+fn vertical_percent_padding_inside_an_auto_width_float_uses_its_derived_width() {
+    // The float is 100px wide from its content but 50px tall; 10% is 10px.
     let html = format!(
-        "<!DOCTYPE html><style>{PAGE} div {{ float: left; height: 100px }}\
+        "<!DOCTYPE html><style>{PAGE} div {{ float: left; height: 50px }}\
          p {{ margin: 0; width: 100px; height: 10px }}</style>\
          <div><p id=p style=\"padding: 10% 0\"></p></div>"
     );
