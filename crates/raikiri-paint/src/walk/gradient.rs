@@ -107,6 +107,18 @@ pub(super) fn paint_gradient_layer(
         Some(path) => scene.push_clip_layer(Affine::IDENTITY, path),
         None => scene.push_clip_layer(Affine::IDENTITY, &painting),
     }
+    // Too many tiles to fill one by one, such as one-pixel tiles over a
+    // large box, are approximated by the average color of one tile, which
+    // keeps the scene bounded.
+    if tiles.x.len().saturating_mul(tiles.y.len()) > MAX_GRADIENT_TILES {
+        let color = match &fill {
+            GradientFill::Brush(brush, _) => brush_average_color(brush),
+            GradientFill::Solid(color) => *color,
+        };
+        scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &painting);
+        scene.pop_layer();
+        return true;
+    }
     for tile_y in &tiles.y {
         for tile_x in &tiles.x {
             // Tile edges snap to whole pixels so neighboring tiles meet
@@ -144,6 +156,31 @@ pub(super) fn paint_gradient_layer(
     }
     scene.pop_layer();
     true
+}
+
+/// Most gradient tiles one background layer fills one by one.
+const MAX_GRADIENT_TILES: usize = 16_384;
+
+/// The average color along a gradient brush, weighting each pair of stops by
+/// the distance between them.
+fn brush_average_color(brush: &PenikoGradient) -> Color {
+    let stops: Vec<(f64, CssColor)> = brush
+        .stops
+        .iter()
+        .map(|stop| {
+            let color = stop.color.to_alpha_color::<Srgb>().to_rgba8();
+            (
+                f64::from(stop.offset),
+                CssColor {
+                    r: color.r,
+                    g: color.g,
+                    b: color.b,
+                    a: color.a,
+                },
+            )
+        })
+        .collect();
+    average_color(&stops)
 }
 
 /// The fill of one linear or radial gradient tile placed at the origin.

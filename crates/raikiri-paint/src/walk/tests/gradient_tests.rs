@@ -593,3 +593,36 @@ fn short_segments_keep_their_interpolation_space() {
         "{middle:?} vs {srgb_middle:?}"
     );
 }
+
+#[test]
+fn many_tiny_tiles_paint_their_average_color() {
+    let cv = computed_for(
+        "background-image: linear-gradient(to right, red 50%, blue 50%); \
+         background-size: 1px 1px",
+    );
+    let area = Rect::new(0.0, 0.0, 1000.0, 1000.0);
+    let mut scene = Scene::new();
+    assert!(gradient::paint_gradient_layer(
+        &mut scene,
+        &gradient_of(&cv),
+        area,
+        area,
+        None,
+        &cv.background_size,
+        &cv.background_position,
+        &cv.background_repeat,
+        cv.color,
+    ));
+    assert!(
+        scene.commands.len() < 10,
+        "{} commands",
+        scene.commands.len()
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        10,
+        10,
+    );
+    let [r, g, b, a] = pixel(&rgba, 10, 5, 5);
+    assert!(r.abs_diff(128) <= 1 && g == 0 && b.abs_diff(128) <= 1 && a == 255);
+}
