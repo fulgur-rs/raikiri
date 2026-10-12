@@ -801,3 +801,35 @@ fn the_tile_fallback_keeps_single_space_tiles_and_padding() {
     let [r, _, b, _] = pixel(&rgba, 10, 5, 5);
     assert!(r > 215 && b < 45, "{r} {b}");
 }
+
+#[test]
+fn page_gradients_resolve_font_lengths_with_the_page_font() {
+    let (document, cascade) = canvas_fixture(
+        Some(
+            "@page { size: 100px 40px; margin: 0; font-size: 32px; \
+             background-image: linear-gradient(to right, red 1em, blue 1em) }",
+        ),
+        None,
+    );
+    let mut page_box = PageBox::A4;
+    page_box.width = 100.0;
+    page_box.height = 40.0;
+    let mut scene = Scene::new();
+    let mut warnings = Vec::new();
+    paint_canvas_background(
+        &ImageBrushCache::default(),
+        &mut scene,
+        &document,
+        &cascade,
+        page_box,
+        None,
+        &mut warnings,
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        100,
+        40,
+    );
+    assert_eq!(pixel(&rgba, 100, 24, 20), RED);
+    assert_eq!(pixel(&rgba, 100, 40, 20), BLUE);
+}

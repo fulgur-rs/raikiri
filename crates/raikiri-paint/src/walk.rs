@@ -609,7 +609,7 @@ fn paint_page_background_image(
             };
             Ok((pixel_source, url))
         }
-        BackgroundImage::Gradient(gradient) if paints_gradient_image(image) => Err(&**gradient),
+        BackgroundImage::Gradient(_) if paints_gradient_image(image) => Err(()),
         _ => return,
     };
     let url = source.as_ref().ok().map(|(_, url)| url);
@@ -680,14 +680,25 @@ fn paint_page_background_image(
             pixel_source,
             warnings,
         ),
-        Err(gradient) => {
+        Err(_) => {
+            // Font-relative lengths in the gradient take the page font.
+            let BackgroundImage::Gradient(gradient) =
+                raikiri_style::resolve::resolve_background_image(
+                    image.clone(),
+                    page_font_size,
+                    None,
+                    &resolve_context,
+                )
+            else {
+                return;
+            };
             let current_color = match page_property(cascade, PropertyKey::Color) {
                 Some(PropertyValue::Color(color)) => *color,
                 _ => CssColor::BLACK,
             };
             gradient::paint_gradient_layer(
                 scene,
-                gradient,
+                &gradient,
                 positioning,
                 painting,
                 None,
