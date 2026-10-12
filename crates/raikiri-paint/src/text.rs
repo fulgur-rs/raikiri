@@ -51,7 +51,7 @@ pub(crate) fn draw_margin_text(
     height: f32,
     color: Color,
     font_size: f32,
-    font_family: &str,
+    font_family: &[raikiri_style::FontFamilyName],
     alignment: StandaloneAlign,
     vertical_align: MarginTextVerticalAlign,
 ) {
@@ -136,7 +136,7 @@ pub(crate) fn measure_margin_text_advance(
     document: &Document,
     content: &str,
     font_size: f32,
-    font_family: &str,
+    font_family: &[raikiri_style::FontFamilyName],
 ) -> f32 {
     crate::standalone_text::shape(
         document,
@@ -157,7 +157,7 @@ pub(crate) fn measure_margin_text_height(
     document: &Document,
     content: &str,
     font_size: f32,
-    font_family: &str,
+    font_family: &[raikiri_style::FontFamilyName],
 ) -> f32 {
     crate::standalone_text::shape(
         document,

@@ -893,9 +893,14 @@ fn generated_pseudo_text_advance(
     let family = computed
         .font_family
         .first()
-        .map(|family| family.as_str().to_string())
-        .unwrap_or_else(|| "serif".to_string());
-    text::measure_margin_text_advance(document, &content, computed.font_size.px(), &family)
+        .cloned()
+        .unwrap_or_else(|| raikiri_style::FontFamilyName::generic("serif"));
+    text::measure_margin_text_advance(
+        document,
+        &content,
+        computed.font_size.px(),
+        std::slice::from_ref(&family),
+    )
 }
 
 fn generated_flow_height(
@@ -1050,9 +1055,14 @@ fn generated_pseudo_text_height(
     let family = computed
         .font_family
         .first()
-        .map(|family| family.as_str().to_string())
-        .unwrap_or_else(|| "serif".to_string());
-    text::measure_margin_text_height(document, &content, computed.font_size.px(), &family)
+        .cloned()
+        .unwrap_or_else(|| raikiri_style::FontFamilyName::generic("serif"));
+    text::measure_margin_text_height(
+        document,
+        &content,
+        computed.font_size.px(),
+        std::slice::from_ref(&family),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1082,10 +1092,14 @@ fn paint_generated_pseudo(
     let family = computed
         .font_family
         .first()
-        .map(|family| family.as_str().to_string())
-        .unwrap_or_else(|| "serif".to_string());
-    let advance =
-        text::measure_margin_text_advance(document, &content, computed.font_size.px(), &family);
+        .cloned()
+        .unwrap_or_else(|| raikiri_style::FontFamilyName::generic("serif"));
+    let advance = text::measure_margin_text_advance(
+        document,
+        &content,
+        computed.font_size.px(),
+        std::slice::from_ref(&family),
+    );
     text::draw_margin_text(
         document,
         scene,
@@ -1096,7 +1110,7 @@ fn paint_generated_pseudo(
         height,
         css_color(computed.color),
         computed.font_size.px(),
-        &family,
+        std::slice::from_ref(&family),
         StandaloneAlign::Start,
         text::MarginTextVerticalAlign::Top,
     );
@@ -3088,13 +3102,13 @@ pub(crate) fn paint_document_impl(
                     let family = cv
                         .font_family
                         .first()
-                        .map(|family| family.as_str().to_string())
-                        .unwrap_or_else(|| "serif".to_string());
+                        .cloned()
+                        .unwrap_or_else(|| raikiri_style::FontFamilyName::generic("serif"));
                     let collapsed_space = text::measure_margin_text_advance(
                         document,
                         " ",
                         cv.font_size.px(),
-                        &family,
+                        std::slice::from_ref(&family),
                     );
                     let mut flow_advance = 0.0;
                     let mut saw_generated_inline = false;

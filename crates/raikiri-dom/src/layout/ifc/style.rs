@@ -125,29 +125,32 @@ fn own_ch_font(cv: &ComputedValues) -> ChFontKey {
 pub(crate) fn map_font_families(names: &[FontFamilyName]) -> Result<Vec<FontFamily>, &'static str> {
     names
         .iter()
-        .map(|family| {
-            if family.1 == FontFamilyKind::Named {
-                Ok(FontFamily::Named(family.as_str().into()))
-            } else {
-                let generic = match family.as_str().to_ascii_lowercase().as_str() {
-                    "serif" => s::GenericFamily::Serif,
-                    "sans-serif" => s::GenericFamily::SansSerif,
-                    "monospace" => s::GenericFamily::Monospace,
-                    "cursive" => s::GenericFamily::Cursive,
-                    "fantasy" => s::GenericFamily::Fantasy,
-                    "system-ui" => s::GenericFamily::SystemUi,
-                    // shodo names six generic families; the others take the
-                    // nearest of those (CSS Fonts 4, 4.2: a UA may map a
-                    // generic family it does not distinguish to another).
-                    "ui-serif" | "math" | "fangsong" => s::GenericFamily::Serif,
-                    "ui-sans-serif" | "ui-rounded" | "emoji" => s::GenericFamily::SansSerif,
-                    "ui-monospace" => s::GenericFamily::Monospace,
-                    _ => return Err("generic family is not represented by shodo"),
-                };
-                Ok(FontFamily::Generic(generic))
-            }
-        })
+        .map(|family| map_font_family(family).ok_or("generic family is not represented by shodo"))
         .collect()
+}
+
+/// One `font-family` entry as a shodo family, or `None` for a generic family
+/// shodo does not name.
+pub(crate) fn map_font_family(family: &FontFamilyName) -> Option<FontFamily> {
+    if family.1 == FontFamilyKind::Named {
+        return Some(FontFamily::Named(family.as_str().into()));
+    }
+    let generic = match family.as_str().to_ascii_lowercase().as_str() {
+        "serif" => s::GenericFamily::Serif,
+        "sans-serif" => s::GenericFamily::SansSerif,
+        "monospace" => s::GenericFamily::Monospace,
+        "cursive" => s::GenericFamily::Cursive,
+        "fantasy" => s::GenericFamily::Fantasy,
+        "system-ui" => s::GenericFamily::SystemUi,
+        // shodo names six generic families; the others take the
+        // nearest of those (CSS Fonts 4, 4.2: a UA may map a
+        // generic family it does not distinguish to another).
+        "ui-serif" | "math" | "fangsong" => s::GenericFamily::Serif,
+        "ui-sans-serif" | "ui-rounded" | "emoji" => s::GenericFamily::SansSerif,
+        "ui-monospace" => s::GenericFamily::Monospace,
+        _ => return None,
+    };
+    Some(FontFamily::Generic(generic))
 }
 
 /// Text style of one element (or of the paragraph root).

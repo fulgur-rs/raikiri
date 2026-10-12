@@ -29,7 +29,7 @@ fn shape_mark(
     document: &Document,
     character: char,
     font_size: f32,
-    families: &str,
+    families: &[raikiri_style::FontFamilyName],
 ) -> Option<ShapedMark> {
     let mut content = [0u8; 4];
     let text = crate::standalone_text::shape(
@@ -64,17 +64,6 @@ fn shape_mark(
     })
 }
 
-/// The CSS `font-family` list of `style`, for shaping the mark in the same
-/// fonts as the emphasized text.
-fn families(style: &ComputedValues) -> String {
-    let names: Vec<&str> = style
-        .font_family
-        .iter()
-        .map(|family| family.as_str())
-        .collect();
-    names.join(", ")
-}
-
 /// Draw the emphasis marks of one horizontal glyph run.
 ///
 /// `glyphs` are the run's glyph positions in line coordinates, drawn from
@@ -92,7 +81,7 @@ pub(crate) fn draw_marks(
     let Some(mark) = run.emphasis_mark() else {
         return;
     };
-    let Some(shaped) = shape_mark(document, mark.character, mark.font_size, &families(style))
+    let Some(shaped) = shape_mark(document, mark.character, mark.font_size, &style.font_family)
     else {
         return; // cov:ignore: shaping one character fails only past the engine's limits.
     };

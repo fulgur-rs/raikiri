@@ -91,7 +91,7 @@ fn inherited_margin_box_font_uses_root_computed_family() {
 
     assert_eq!(
         inherited_margin_box_font(&document, &cascade, &cascade.page, rule),
-        (16.0, "serif".to_owned())
+        (16.0, FontFamilyName::generic("serif"))
     );
 }
 
@@ -129,7 +129,7 @@ fn inherited_margin_box_font_resolves_absolute_size_keywords() {
             .expect("the @page fixture has a margin box");
         assert_eq!(
             inherited_margin_box_font(&document, &cascade, &cascade.page, rule),
-            (expected, "serif".to_owned()),
+            (expected, FontFamilyName::generic("serif")),
             "{css}"
         );
     }
@@ -174,7 +174,7 @@ fn fixed_margin_spec() -> MarginBoxSpec {
         width: Some(100.0),
         height: None,
         text_color: CssColor::BLACK,
-        text_style: text_style(16.0, ""),
+        text_style: text_style(16.0, &[]),
         alignment: StandaloneAlign::Start,
         vertical_align: MarginTextVerticalAlign::Top,
         running: None,
@@ -251,7 +251,7 @@ fn a_margin_box_width_follows_the_document_font() {
     let doc = engine_document();
     let mut spec = fixed_margin_spec();
     spec.content = "abc".to_owned();
-    spec.text_style.families = vec!["serif".to_owned()];
+    spec.text_style.families = vec![FontFamilyName::generic("serif")];
     spec.text_style.font_size = 10.0;
     assert_eq!(margin_box_text_width(&doc, &spec, None), 30.0);
     assert_eq!(doc.standalone_text_calls(), 1);
@@ -266,7 +266,7 @@ fn vertical_margin_box_intrinsics_use_physical_axes() {
     let doc = engine_document();
     let mut spec = fixed_margin_spec();
     spec.content = "abc\ndef".into();
-    spec.text_style = text_style(10.0, "Ahem");
+    spec.text_style = text_style(10.0, &[FontFamilyName::named("Ahem")]);
     spec.text_style.writing_mode = shodo::geometry::WritingMode::VerticalRl;
     assert_eq!(margin_box_text_width(&doc, &spec, None), 20.0);
     assert_eq!(margin_box_intrinsic_height(&doc, &spec), 30.0);
@@ -277,7 +277,7 @@ fn vertical_auto_width_counts_columns_wrapped_to_the_content_height() {
     let doc = engine_document();
     let mut spec = fixed_margin_spec();
     spec.content = "ab cd ef".into();
-    spec.text_style = text_style(10.0, "Ahem");
+    spec.text_style = text_style(10.0, &[FontFamilyName::named("Ahem")]);
     spec.text_style.writing_mode = shodo::geometry::WritingMode::VerticalRl;
     spec.height = Some(25.0);
     assert_eq!(margin_box_text_width(&doc, &spec, None), 30.0);
@@ -289,7 +289,7 @@ fn vertical_margin_row_distributes_auto_width_using_wrapped_columns() {
     let mut long = fixed_margin_spec();
     long.slot = PageMarginBoxSlot::TopLeft;
     long.content = "ab cd ef".into();
-    long.text_style = text_style(10.0, "Ahem");
+    long.text_style = text_style(10.0, &[FontFamilyName::named("Ahem")]);
     long.text_style.writing_mode = shodo::geometry::WritingMode::VerticalRl;
     long.width = None;
     let mut short = long.clone();
@@ -441,7 +441,7 @@ fn a_vertical_writing_margin_box_advances_glyphs_down_the_column() {
     let doc = engine_document();
     let mut spec = fixed_margin_spec();
     spec.content = "abc".to_owned();
-    spec.text_style.families = vec!["Ahem".to_owned()];
+    spec.text_style.families = vec![FontFamilyName::named("Ahem")];
     spec.text_style.font_size = 10.0;
     let glyphs = |spec: &MarginBoxSpec| -> Vec<(f32, f32)> {
         let placed = place_margin_box(&doc, spec, PaintRect::new(0.0, 0.0, 200.0, 40.0))
@@ -560,7 +560,7 @@ fn margin_box_text_is_debuggable_and_borders_clamp_to_the_box() {
     );
     let mut text = fixed_margin_spec();
     text.content = "abc".into();
-    text.text_style = text_style(10.0, "Ahem");
+    text.text_style = text_style(10.0, &[FontFamilyName::named("Ahem")]);
     let placed = place_margin_box(
         &engine_document(),
         &text,
