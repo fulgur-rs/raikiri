@@ -4074,15 +4074,21 @@ pub fn layout_pages_with_page_geometry_and_control(
                     });
                 *trailing_child == Some(node_id)
             });
+        // An item already at the top of its page, or one taller than the
+        // next page, would cross a page edge wherever it went: pushing it
+        // only leaves a blank page behind (CSS Fragmentation 3 §4.4 lets
+        // monolithic content overflow a fresh fragmentainer).
+        let item_can_move = effective_y > page_origin(current_page) + 0.001
+            && height <= page_step_at(current_page.saturating_add(1)) + 0.001;
         let flex_item_overflow = candidate.is_flex_item
             && !flex_item_is_last
+            && item_can_move
             && effective_y.is_finite()
-            && effective_y >= page_origin(current_page)
             && effective_y < page_origin(current_page) + page_step_at(current_page)
             && effective_y + height > page_origin(current_page) + page_step_at(current_page);
         let grid_item_overflow = candidate.is_grid_item
+            && item_can_move
             && effective_y.is_finite()
-            && effective_y >= page_origin(current_page)
             && effective_y < page_origin(current_page) + page_step_at(current_page)
             && effective_y + height > page_origin(current_page) + page_step_at(current_page);
 
