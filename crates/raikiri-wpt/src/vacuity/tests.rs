@@ -372,6 +372,15 @@ fn braces_inside_custom_property_values_stay_in_the_declaration() {
 }
 
 #[test]
+fn template_contents_are_inert() {
+    let html = r#"<template><style>p { color: red }</style><template><i style="width: 1px"></i></template><meta name="fuzzy" content="0-255;0-1"></template><b style="height: 2px"></b><TEMPLATE><s style="x: 1">"#;
+    assert_eq!(keys(html), ["height:2px"]);
+    assert!(!blank_document(html).contains("fuzzy"));
+    let shadow = r#"<template shadowrootmode="open"><style>p { color: red }</style></template>"#;
+    assert_eq!(keys(shadow), ["color:red"]);
+}
+
+#[test]
 fn inconclusive_verdicts_name_the_failing_probe() {
     let verdict = Verdict::Inconclusive { probe: "blank" };
     assert_eq!(verdict.label(), "INCONCLUSIVE");

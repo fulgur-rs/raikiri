@@ -30,7 +30,9 @@
 //! intended rendering. The probes are heuristics. Declarations in external
 //! stylesheets or applied by script are not ablated, so a non-vacuous verdict
 //! is weaker evidence when [`Verdict::Kept`] reports no test-only
-//! declarations.
+//! declarations. Declarations are compared as source text without a cascade:
+//! a reference declaration counts as used even inside an inactive `@media`
+//! block, behind an unmatched selector or when overridden.
 
 use crate::baseline_report::{Status, report_config, run_id_with_config};
 use crate::reftest::{
@@ -415,7 +417,13 @@ fn tags(html: &str) -> Vec<Tag> {
             let close = format!("</{name}");
             end..lower[end..].find(&close).map_or(bytes.len(), |e| end + e)
         });
-        let next = raw_text.as_ref().map_or(end, |content| content.end);
+        let mut next = raw_text.as_ref().map_or(end, |content| content.end);
+        if name == "template" && !attributes.iter().any(|(name, _)| name == "shadowrootmode") {
+            // Template contents are inert: their styles and metadata do not
+            // apply unless a script clones them. A declarative shadow root
+            // template is not inert; its contents become the shadow tree.
+            next = template_end(&lower, end);
+        }
         out.push(Tag {
             name,
             range: i..end,
@@ -425,6 +433,26 @@ fn tags(html: &str) -> Vec<Tag> {
         i = next;
     }
     out
+}
+
+/// The offset of the `</template` that closes a template whose contents
+/// start at `from`, counting nested templates.
+fn template_end(lower: &str, from: usize) -> usize {
+    let mut depth = 1;
+    let mut i = from;
+    while let Some(offset) = lower[i..].find("template") {
+        let at = i + offset;
+        i = at + "template".len();
+        if lower[..at].ends_with("</") {
+            depth -= 1;
+            if depth == 0 {
+                return at - 2;
+            }
+        } else if lower[..at].ends_with('<') {
+            depth += 1;
+        }
+    }
+    lower.len()
 }
 
 /// Remove every declaration whose key satisfies `remove`. Returns the new
