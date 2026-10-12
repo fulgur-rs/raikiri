@@ -1587,7 +1587,7 @@ fn the_laid_out_document_keeps_the_base_url_its_images_were_fetched_with() {
 }
 
 #[test]
-fn a_layout_without_a_base_url_keeps_the_parse_time_base_url() {
+fn a_layout_without_a_base_url_uses_the_parse_time_base_url() {
     let base = url::Url::parse("https://example.test/dir/page.html").unwrap();
     let document = crate::parse_html_with_resources(
         "<p style='background-image:url(bg.png)'>x</p>".as_bytes(),
@@ -1604,5 +1604,7 @@ fn a_layout_without_a_base_url_keeps_the_parse_time_base_url() {
         )
         .unwrap(),
     );
+    // Images, fonts and paint all resolve against it.
+    assert_eq!(layout.base_url(), Some(&base));
     assert_eq!(layout.out.document.base_url(), Some(&base));
 }
