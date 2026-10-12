@@ -6,7 +6,7 @@ mod spanning;
 
 use super::*;
 
-pub(super) use paged_spanning::paginate_spanning_columns;
+pub(super) use paged_spanning::{FragmentEdits, paginate_spanning_columns};
 
 /// Dispatch a multicolumn container through the nested fragmentation seam.
 ///

@@ -64,6 +64,17 @@ fn a_long_paged_group_before_a_spanner_stays_within_the_work_budget() {
     assert_eq!(pages, 13);
 }
 
+// Every paginated column container with a spanner changes the fragment
+// tree and moves the boxes after it. Rebuilding the tree or visiting every
+// later sibling for each container is quadratic and exhausts the layout work
+// budget long before a few hundred sections.
+#[test]
+fn many_paged_containers_with_spanners_stay_within_the_work_budget() {
+    let (page, css, body) = case("owners", 300);
+    let (_, pages) = lay_out(&page, &css, &body);
+    assert_eq!(pages, 46);
+}
+
 fn case(kind: &str, n: usize) -> (String, String, String) {
     match kind {
         // One single-line paragraph per column.
@@ -118,6 +129,13 @@ fn case(kind: &str, n: usize) -> (String, String, String) {
                 "</div>".repeat(n)
             ),
         ),
+        // n small paginated column containers, each ending in a spanner.
+        "owners" => (
+            "400px 200px".into(),
+            ".s{column-count:2;column-gap:0}".into(),
+            "<div class=s><p>A</p><p>A</p><p>A</p><h2 style=\"column-span:all\">S</h2></div>"
+                .repeat(n),
+        ),
         // The same inline boxes without columns, as a control.
         "inline-control" => (
             "400px 100000px".into(),
@@ -146,6 +164,7 @@ fn multicol_scaling_probe() {
             "deep-wide",
             "inline",
             "paged",
+            "owners",
         ]
         .into_iter()
         .flat_map(|kind| [64, 256].map(|n| (kind.to_string(), n)))
