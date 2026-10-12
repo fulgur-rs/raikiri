@@ -2032,6 +2032,36 @@ fn mixed_calc_with_viewport_terms_resolves_against_the_viewport() {
 }
 
 #[test]
+fn mixed_calc_bases_that_cancel_do_not_count_against_the_limit() {
+    for width in [
+        "calc(1em + 1vw - 1vw + 1px)",
+        "calc(1vw - 1vw + 1em + 1px)",
+        "calc(1em + 2rem + 1px - 2rem)",
+    ] {
+        let cv = cascade_doc("", "div", Some(&format!("font-size: 10px; width: {width}")));
+        assert_eq!(
+            cv.width,
+            ComputedLengthPercentageOrAuto::Px(11.0),
+            "{width}"
+        );
+    }
+}
+
+#[test]
+fn negative_mixed_calc_clamps_sizes_but_not_insets() {
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some(
+            "font-size: 16px; width: calc(1em - 20px); max-height: calc(1em - 20px); left: calc(1em - 20px)",
+        ),
+    );
+    assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Px(0.0));
+    assert_eq!(cv.max_height, ComputedLengthPercentageOrAuto::Px(0.0));
+    assert_eq!(cv.left, ComputedLengthPercentageOrAuto::Px(-4.0));
+}
+
+#[test]
 fn mixed_calc_beyond_one_relative_basis_or_on_vertical_align_stays_invalid() {
     let cv = cascade_doc(
         "",
@@ -2067,6 +2097,8 @@ fn relative_calc_parser_accepts_linear_sums_only() {
         "calc((1e30 * 1e30) * 1em)",
         "calc((3e38 + 3e38) * 1em)",
         "calc(1em * (1 / 1e-40))",
+        "calc(3e38px + 3e38px + 1em)",
+        "calc(3e38px * 10 + 1em)",
         "calc(1em * 1px)",
         "calc(1em / 0)",
         "calc(1em / 1px)",

@@ -8,8 +8,8 @@ use crate::computed::CustomPropertyEnvironment;
 use crate::property::{
     CssWideKeyword, CustomProperty, DeferredValue, FontFeatureSettings, FontVariationSettings,
     LengthOrAuto, MAX_DEFERRED_VALUE_NESTING_DEPTH, MAX_SUBSTITUTED_VALUE_BYTES, PropertyKey,
-    PropertyValue, RelativeCalcLengthPercentage, VerticalAlign, is_custom_property_name,
-    parse_value, property_key_for_name,
+    PropertyValue, RelativeCalcLengthPercentage, RelativeCalcUnit, VerticalAlign,
+    is_custom_property_name, parse_value, property_key_for_name,
 };
 
 use super::candidate::CustomCandidates;
@@ -214,7 +214,8 @@ fn calc_length_percentage_value(
 /// one coefficient per basis.
 ///
 /// The body is a linear sum: `+` / `-` between terms, and `*` / `/` only with
-/// a plain number on one side (CSS Values 4 §10.8 "Type Checking"). Nested
+/// a plain number on one side (CSS Values 4 "Type Checking",
+/// <https://www.w3.org/TR/css-values-4/#calc-type-checking>). Nested
 /// parentheses and nested `calc()` are accepted; other math functions are not.
 pub(crate) fn parse_relative_calc_length_percentage(
     input: &str,
@@ -237,7 +238,7 @@ pub(crate) fn parse_relative_calc_length_percentage(
         return None;
     }
     match value {
-        LinearValue::Length(value) => Some(value),
+        LinearValue::Length(terms) => terms.into_value(),
         LinearValue::Number(_) => None,
     }
 }
@@ -247,7 +248,78 @@ pub(crate) fn parse_relative_calc_length_percentage(
 #[derive(Clone, Copy)]
 enum LinearValue {
     Number(f32),
-    Length(RelativeCalcLengthPercentage),
+    Length(LinearTerms),
+}
+
+/// Length-percentage terms of a linear `calc()` with one coefficient per
+/// relative basis. Unlike [`RelativeCalcLengthPercentage`] it has room for
+/// every basis, so terms that cancel later in the expression do not count
+/// against that type's limit.
+#[derive(Clone, Copy, Default)]
+struct LinearTerms {
+    percent: f32,
+    px: f32,
+    relative: [f32; RelativeCalcUnit::ALL.len()],
+}
+
+impl LinearTerms {
+    fn from_unit(value: f32, unit: &str) -> Option<Self> {
+        let single = RelativeCalcLengthPercentage::from_unit(value, unit)?;
+        let mut terms = Self {
+            percent: single.percent,
+            px: single.px,
+            ..Self::default()
+        };
+        for (unit, coefficient) in single.relative_terms() {
+            terms.relative[unit as usize] = coefficient;
+        }
+        Some(terms)
+    }
+
+    fn coefficients_mut(&mut self) -> impl Iterator<Item = &mut f32> {
+        [&mut self.percent, &mut self.px]
+            .into_iter()
+            .chain(self.relative.iter_mut())
+    }
+
+    /// Add `sign * other` to every coefficient.
+    fn add_scaled(mut self, mut other: Self, sign: f32) -> Option<Self> {
+        for (left, right) in self.coefficients_mut().zip(other.coefficients_mut()) {
+            *left += sign * *right;
+            if !left.is_finite() {
+                return None;
+            }
+        }
+        Some(self)
+    }
+
+    /// Multiply every coefficient by `factor`.
+    fn scale(mut self, factor: f32) -> Option<Self> {
+        for coefficient in self.coefficients_mut() {
+            *coefficient *= factor;
+            if !coefficient.is_finite() {
+                return None;
+            }
+        }
+        Some(self)
+    }
+
+    /// The compact value, or `None` when more relative bases remain than it
+    /// can hold.
+    fn into_value(self) -> Option<RelativeCalcLengthPercentage> {
+        let mut value = RelativeCalcLengthPercentage::default();
+        value.percent = self.percent;
+        value.px = self.px;
+        for (unit, coefficient) in RelativeCalcUnit::ALL.into_iter().zip(self.relative) {
+            if coefficient != 0.0 {
+                value = value.add_scaled(
+                    RelativeCalcLengthPercentage::relative(unit, coefficient)?,
+                    1.0,
+                )?;
+            }
+        }
+        Some(value)
+    }
 }
 
 fn radius_corner_property(key: PropertyKey) -> Option<&'static str> {
@@ -1471,9 +1543,7 @@ impl<'a> MathParser<'a> {
         }
         Some(match unit {
             None => LinearValue::Number(number),
-            Some(unit) => {
-                LinearValue::Length(RelativeCalcLengthPercentage::from_unit(number, &unit)?)
-            }
+            Some(unit) => LinearValue::Length(LinearTerms::from_unit(number, &unit)?),
         })
     }
 

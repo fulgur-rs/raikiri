@@ -118,10 +118,10 @@ pub use resolve::{
     resolve_length_or_normal_with_ch, resolve_length_percentage, resolve_length_percentage_or_auto,
     resolve_length_percentage_or_normal, resolve_length_percentage_with_ch, resolve_letter_spacing,
     resolve_letter_spacing_with_ch, resolve_line_height, resolve_margin_length_or_auto,
-    resolve_outline, resolve_tab_size, resolve_text_decoration_inset,
-    resolve_text_decoration_thickness, resolve_text_indent_calc, resolve_text_shadow_item,
-    resolve_transform_function, resolve_word_spacing, resolve_word_spacing_with_ch,
-    used_line_height_length,
+    resolve_outline, resolve_size_length_percentage_or_auto, resolve_tab_size,
+    resolve_text_decoration_inset, resolve_text_decoration_thickness, resolve_text_indent_calc,
+    resolve_text_shadow_item, resolve_transform_function, resolve_word_spacing,
+    resolve_word_spacing_with_ch, used_line_height_length,
 };
 
 pub mod specified;

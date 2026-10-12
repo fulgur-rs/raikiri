@@ -1868,10 +1868,10 @@ fn relative_calc_terms_resolve_against_their_bases() {
         );
     }
     let percent = RelativeCalcLengthPercentage::from_unit(50.0, "%").unwrap();
-    let em = relative_calc_plus_1px(1.0, "em").scale(-1.0).unwrap();
+    let em = relative_calc_plus_1px(1.0, "em");
     assert_eq!(
         resolve_length_percentage_or_auto(
-            LengthOrAuto::RelativeCalc(percent.add_scaled(em, 1.0).unwrap()),
+            LengthOrAuto::RelativeCalc(percent.add_scaled(em, -1.0).unwrap()),
             ComputedLength(1.0),
             None,
             &CTX,
@@ -1916,11 +1916,54 @@ fn relative_calc_terms_resolve_against_their_bases() {
 #[test]
 fn relative_calc_arithmetic_rejects_non_finite_results() {
     let calc = relative_calc_plus_1px(1e30, "em");
-    assert_eq!(calc.scale(1e30), None);
     assert_eq!(calc.add_scaled(calc, 1e30), None);
     let percent = RelativeCalcLengthPercentage::from_unit(1e30, "%").unwrap();
-    assert_eq!(percent.scale(1e30), None);
+    assert_eq!(percent.add_scaled(percent, 1e30), None);
+    // A second relative basis does not fit.
+    assert_eq!(
+        calc.add_scaled(
+            RelativeCalcLengthPercentage::from_unit(1.0, "vw").unwrap(),
+            1.0
+        ),
+        None
+    );
     assert_eq!(RelativeCalcLengthPercentage::from_unit(1e38, "in"), None);
     assert_eq!(RelativeCalcLengthPercentage::from_unit(1.0, "svx"), None);
     assert_eq!(RelativeCalcLengthPercentage::from_unit(1.0, "ch"), None);
+}
+
+#[test]
+fn negative_relative_calc_sizes_clamp_to_zero_but_insets_keep_their_sign() {
+    let calc = crate::cascade::parse_relative_calc_length_percentage("calc(1em - 20px)").unwrap();
+    let resolve = |resolver: fn(
+        LengthOrAuto,
+        ComputedLength,
+        Option<ComputedLength>,
+        &ResolveContext,
+    ) -> ComputedLengthPercentageOrAuto| {
+        resolver(
+            LengthOrAuto::RelativeCalc(calc),
+            ComputedLength(16.0),
+            None,
+            &CTX,
+        )
+    };
+    assert_eq!(
+        resolve(resolve_size_length_percentage_or_auto),
+        ComputedLengthPercentageOrAuto::Px(0.0)
+    );
+    assert_eq!(
+        resolve(resolve_length_percentage_or_auto),
+        ComputedLengthPercentageOrAuto::Px(-4.0)
+    );
+    // Other values pass through unchanged.
+    assert_eq!(
+        resolve_size_length_percentage_or_auto(
+            LengthOrAuto::Length(Length::Px(-4.0)),
+            ComputedLength(16.0),
+            None,
+            &CTX,
+        ),
+        ComputedLengthPercentageOrAuto::Px(-4.0)
+    );
 }

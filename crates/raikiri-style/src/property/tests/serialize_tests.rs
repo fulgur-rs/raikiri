@@ -74,6 +74,12 @@ fn serialize_length_or_auto_formats_relative_calc_terms_in_canonical_order() {
         );
     }
     assert_eq!(
+        serialize_length_or_auto(&LengthOrAuto::RelativeCalc(
+            term(50.0, "%").add_scaled(term(1.0, "vw"), 1.0).unwrap()
+        )),
+        "calc(50% + 1vw)"
+    );
+    assert_eq!(
         serialize_relative_calc_length_percentage(&RelativeCalcLengthPercentage::default()),
         "calc(0px)"
     );

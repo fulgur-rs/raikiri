@@ -2579,8 +2579,34 @@ pub fn resolve_length_percentage_or_auto(
     }
 }
 
+/// [`resolve_length_percentage_or_auto`] for the sizing properties
+/// (`width`, `height`, their `min-` / `max-` forms and logical aliases),
+/// whose range is `[0, ∞]`.
+///
+/// CSS Values 4 "Range Checking"
+/// (<https://www.w3.org/TR/css-values-4/#calc-range>) clamps a math function
+/// that resolves outside the property's range rather than invalidating it, so
+/// a mixed `calc()` such as `calc(1em - 20px)` that computes to a negative
+/// length becomes zero. Insets accept negative lengths and keep using
+/// [`resolve_length_percentage_or_auto`].
+pub fn resolve_size_length_percentage_or_auto(
+    specified: LengthOrAuto,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedLengthPercentageOrAuto {
+    let computed = resolve_length_percentage_or_auto(specified, font_size, own_line_height, ctx);
+    match (specified, computed) {
+        (LengthOrAuto::RelativeCalc(_), ComputedLengthPercentageOrAuto::Px(px)) => {
+            ComputedLengthPercentageOrAuto::Px(px.max(0.0))
+        }
+        _ => computed,
+    }
+}
+
 /// Absolutize the font-relative and viewport terms of a mixed `calc()`
-/// (CSS Values 4 §10.9 <https://www.w3.org/TR/css-values-4/#calc-computed-value>),
+/// (CSS Values 4 "Computed Value",
+/// <https://www.w3.org/TR/css-values-4/#calc-computed-value>),
 /// keeping the percentage for used-value resolution. A result without a
 /// percentage collapses to `Px`, one without a length offset to `Percent`.
 ///

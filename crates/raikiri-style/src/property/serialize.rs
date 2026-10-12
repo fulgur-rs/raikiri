@@ -719,8 +719,9 @@ pub(crate) fn serialize_calc_length_percentage(calc: &CalcLengthPercentage) -> S
 }
 
 /// Serializes a [`RelativeCalcLengthPercentage`] as a `calc()` sum, one term
-/// per non-zero coefficient in the canonical order of CSS Values 4 §10.12
-/// (percentage first, then dimensions sorted by unit name).
+/// per non-zero coefficient in the canonical order of CSS Values 4 "Serialization"
+/// (<https://www.w3.org/TR/css-values-4/#calc-serialize>): the percentage
+/// first, then dimensions sorted by unit name.
 pub(crate) fn serialize_relative_calc_length_percentage(
     calc: &RelativeCalcLengthPercentage,
 ) -> String {

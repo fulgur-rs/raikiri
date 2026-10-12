@@ -576,6 +576,23 @@ fn apply_computed_to_style_bridges_max_size_to_taffy() {
             .is_calc()
     );
 
+    // Case 3b: an inset calc() is preserved the same way.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let p = doc.append_element(
+        Some(body),
+        "p",
+        Style::default(),
+        Some("position: relative; left: calc(50% + 1em); top: calc(10% - 2px)"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    apply_computed_to_style(&mut doc, &cr).expect("styles");
+    assert!(doc.nodes[p].style.inset.left.into_raw().is_calc());
+    assert!(doc.nodes[p].style.inset.top.into_raw().is_calc());
+    assert_eq!(doc.nodes[p].style.inset.right, LengthPercentageAuto::auto());
+
     // Case 4: `max-width: none` → LengthPercentageAuto::auto() (no maximum).
     assert_eq!(
         max_for(Some("max-width: none")).width,

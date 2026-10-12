@@ -782,7 +782,7 @@ pub struct CalcLengthPercentage {
 /// A `calc()` sum whose terms include font-relative or viewport-percentage
 /// lengths, kept until computed-value time.
 ///
-/// CSS Values 4 §10.9 "Computed Value"
+/// CSS Values 4 "Computed Value"
 /// (<https://www.w3.org/TR/css-values-4/#calc-computed-value>) absolutizes
 /// every length term of a math function at computed-value time, while
 /// percentages stay unresolved until used-value time. The cascade only knows
@@ -836,6 +836,22 @@ pub enum RelativeCalcUnit {
     Vmax,
 }
 
+impl RelativeCalcUnit {
+    /// Every unit, in declaration order.
+    pub(crate) const ALL: [Self; 10] = [
+        Self::Em,
+        Self::Rem,
+        Self::Lh,
+        Self::Rlh,
+        Self::Vw,
+        Self::Vh,
+        Self::Vi,
+        Self::Vb,
+        Self::Vmin,
+        Self::Vmax,
+    ];
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct RelativeCalcTerm {
     unit: RelativeCalcUnit,
@@ -845,6 +861,13 @@ struct RelativeCalcTerm {
 impl RelativeCalcLengthPercentage {
     /// The number of distinct relative bases one value can hold.
     pub const MAX_RELATIVE_TERMS: usize = 1;
+
+    /// A value made of one relative term.
+    pub(crate) fn relative(unit: RelativeCalcUnit, coefficient: f32) -> Option<Self> {
+        let mut value = Self::default();
+        value.terms[0] = Some(RelativeCalcTerm { unit, coefficient });
+        value.normalized()
+    }
 
     /// A single term of `value` in `unit`, or `None` for a unit that is not a
     /// length or percentage. `unit` is ASCII lowercase.
@@ -914,16 +937,6 @@ impl RelativeCalcLengthPercentage {
                     coefficient,
                 });
             }
-        }
-        self.normalized()
-    }
-
-    /// Multiply every coefficient by `factor`.
-    pub(crate) fn scale(mut self, factor: f32) -> Option<Self> {
-        self.percent *= factor;
-        self.px *= factor;
-        for term in self.terms.iter_mut().flatten() {
-            term.coefficient *= factor;
         }
         self.normalized()
     }
