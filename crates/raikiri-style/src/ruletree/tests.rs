@@ -3048,9 +3048,9 @@ fn registry_replay_keeps_insertion_precedence() {
     assert_eq!(screen.get("Ahem"), tree.font_faces().get("Ahem"));
 }
 
-/// The previous two-pass implementation of `consume_raw_component_values`:
-/// collect the top-level tokens, then re-tokenize the text to check nested
-/// blocks.
+/// A two-pass check of raw component values: collect the top-level tokens,
+/// then re-tokenize the text to check nested blocks. Unlike
+/// `consume_raw_component_values` it rejects a block that EOF closes.
 fn two_pass_raw_component_values(source: &str) -> Option<String> {
     let mut input = ParserInput::new(source);
     let mut parser = Parser::new(&mut input);
@@ -3094,15 +3094,33 @@ fn single_pass_raw_component_values_match_the_two_pass_check() {
     sources.push(format!("{}x ]{}", "(".repeat(deep), ")".repeat(deep)));
     sources.push(format!("{}\"bad\n{}", "[".repeat(3), "]".repeat(3)));
     let mut accepted = 0;
+    let mut completed = 0;
     for source in &sources {
         let mut input = ParserInput::new(source);
         let mut parser = Parser::new(&mut input);
         let single = consume_raw_component_values(&mut parser, source).ok();
-        assert_eq!(single, two_pass_raw_component_values(source), "{source:?}");
+        // Values the two-pass check accepts come back unchanged. The others
+        // are accepted only when EOF left them open, completed as it closed
+        // them, so the result passes the two-pass check itself.
+        match two_pass_raw_component_values(source) {
+            Some(raw) => assert_eq!(single.as_ref(), Some(&raw), "{source:?}"),
+            None => {
+                assert_eq!(single, complete_raw_block(source, true), "{source:?}");
+                if let Some(values) = &single {
+                    assert_eq!(
+                        two_pass_raw_component_values(values).as_ref(),
+                        Some(values),
+                        "{source:?}"
+                    );
+                    completed += 1;
+                }
+            }
+        }
         accepted += usize::from(single.is_some());
     }
-    // The corpus exercises both outcomes.
-    assert!(accepted > 0 && accepted < sources.len(), "{accepted}");
+    // The corpus exercises every outcome.
+    assert!(accepted > completed && completed > 0, "{completed}");
+    assert!(accepted < sources.len(), "{accepted}");
 }
 
 #[test]
@@ -3425,5 +3443,112 @@ fn forward_dependent_selectors_are_detected() {
         let mut tree = RuleTree::empty();
         tree.add_stylesheet(css, Origin::Author);
         assert!(tree.has_forward_dependent_selectors(), "{css}");
+    }
+}
+
+#[test]
+fn eof_closes_blocks_in_at_rule_preludes() {
+    for (source, prelude) in [
+        ("@foo (a", " (a)"),
+        ("@foo f(a", " f(a)"),
+        ("@foo [a { b }", " [a { b }]"),
+        ("@foo \"x", " \"x\""),
+        ("@foo x /* note", " x /* note*/"),
+        ("@namespace x url(y) /* note", " x url(y) /* note*/"),
+        ("@layer a /* note", " a /* note*/"),
+    ] {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(source, Origin::Author);
+        assert_eq!(tree.opaque_at_rules().len(), 1, "{source:?}");
+        let record = &tree.opaque_at_rules()[0];
+        assert_eq!(record.prelude, prelude, "{source:?}");
+        assert_eq!(record.body, AtRuleBody::Statement, "{source:?}");
+        assert_record_round_trips(record);
+    }
+    // A tokenizer error token still rejects the prelude.
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet("@foo url(a b", Origin::Author);
+    assert!(tree.opaque_at_rules().is_empty());
+}
+
+#[test]
+fn eof_closed_unknown_at_rule_lists_its_open_rule() {
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet("@foo { a { b", Origin::Author);
+    let record = &tree.opaque_at_rules()[0];
+    assert_eq!(record.body.as_block(), Some(" a { b}"));
+    let [RuleNode::Qualified(child)] = record.children() else {
+        panic!("{:?}", record.children());
+    };
+    assert_eq!((child.prelude.as_str(), child.body.as_str()), ("a ", " b"));
+}
+
+#[test]
+fn block_rule_lists_have_no_top_level_cdo_or_charset_handling() {
+    // `<!--` is part of the prelude inside a block, so the rule is invalid.
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet("@media all { <!-- a { color: red } }", Origin::Author);
+    assert!(tree.media_rules.is_empty());
+    assert!(tree.style_rules.is_empty());
+    let [RuleNode::Qualified(child)] = tree.opaque_at_rules()[0].children() else {
+        panic!("{:?}", tree.opaque_at_rules()[0].children());
+    };
+    assert_eq!(child.prelude, "<!-- a ");
+
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "@supports (color: red) { --> a { color: red } }",
+        Origin::Author,
+    );
+    assert!(tree.style_rules.is_empty());
+
+    // A nested `@charset` is an ordinary at-rule, listed in order.
+    for source in [
+        "@foo { @charset \"x\"; a{} }",
+        "@media print { @charset \"x\"; a{} }",
+    ] {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(source, Origin::Author);
+        let children = tree.opaque_at_rules()[0].children();
+        let [RuleNode::AtRule(charset), RuleNode::Qualified(rule)] = children else {
+            panic!("{source:?}: {children:?}");
+        };
+        assert_eq!(charset.name, "charset", "{source:?}");
+        assert_eq!(rule.prelude, "a", "{source:?}");
+    }
+
+    // The top level still skips them.
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet("<!-- a { color: red } -->", Origin::Author);
+    assert_eq!(tree.style_rules.len(), 1);
+}
+
+#[test]
+fn namespace_after_other_rules_declares_nothing() {
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet("p{} @namespace x url(y); x|p{color:red}", Origin::Author);
+    // `x|p` has an undeclared prefix, so only `p{}` is a style rule.
+    assert_eq!(tree.style_rules.len(), 1);
+    // The ignored rule is still listed.
+    assert_eq!(tree.opaque_at_rules()[0].name, "namespace");
+
+    for source in [
+        "@charset \"utf-8\"; @import url(a.css); @layer l; @foo; @namespace x url(y); x|p{}",
+        "@namespace a url(b); @namespace x url(y); x|p{}",
+        "q:unknown(1) {} @media x; @namespace x url(y); x|p{}",
+    ] {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(source, Origin::Author);
+        assert_eq!(tree.style_rules.len(), 1, "{source:?}");
+    }
+    for source in [
+        "@media print {} @namespace x url(y); x|p{}",
+        "@layer l {} @namespace x url(y); x|p{}",
+        "@page {} @namespace x url(y); x|p{}",
+        "@font-face { font-family: f } @namespace x url(y); x|p{}",
+    ] {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(source, Origin::Author);
+        assert!(tree.style_rules.is_empty(), "{source:?}");
     }
 }
