@@ -74,21 +74,14 @@ fn assert_linear_identifier_work(malformed: bool) {
         } else {
             format!("{{{}:red}}", "a".repeat(size))
         };
-        for balance in [false, true] {
-            IDENTIFIER_SCAN_STEPS.with(|steps| steps.set(0));
-            let accepted = if balance {
-                stylesheet_source_is_balanced(&source)
-            } else {
-                scan_block_end(&source, 0).is_some()
-            };
-            assert_eq!(accepted, !malformed);
-            let steps = IDENTIFIER_SCAN_STEPS.with(std::cell::Cell::get);
-            assert!(
-                steps <= 2 * source.len(),
-                "identifier work {steps} for {} bytes",
-                source.len()
-            );
-        }
+        IDENTIFIER_SCAN_STEPS.with(|steps| steps.set(0));
+        assert_eq!(scan_block_end(&source, 0).is_some(), !malformed);
+        let steps = IDENTIFIER_SCAN_STEPS.with(std::cell::Cell::get);
+        assert!(
+            steps <= 2 * source.len(),
+            "identifier work {steps} for {} bytes",
+            source.len()
+        );
     }
 }
 
@@ -106,11 +99,11 @@ fn identifier_scanning_work_is_linear_on_a_failed_escape() {
 fn component_scanners_preserve_complete_and_escaped_url_names() {
     for name in ["url", "URL", r"u\72l", r"\75rl"] {
         let source = format!("{{background:{name}(data:,}})}}");
-        assert!(stylesheet_source_is_balanced(&source), "{source}");
         assert_eq!(scan_block_end(&source, 0), Some(source.len()), "{source}");
     }
-    assert!(!stylesheet_source_is_balanced("{x:myurl(data:,})}"));
-    assert!(!stylesheet_source_is_balanced("{x:url('unterminated)}"));
+    // `myurl(` opens a function, so its `}` does not close the block.
+    assert_eq!(scan_block_end("{x:myurl(data:,})}", 0), Some(18));
+    assert_eq!(scan_block_end("{x:url('unterminated)}", 0), None);
 }
 
 #[test]
@@ -121,7 +114,6 @@ fn component_scanners_preserve_strings_comments_and_escaped_delimiters() {
         "{x:a\\\nb}",
         "{x:é; y:名; z:🦀}",
     ] {
-        assert!(stylesheet_source_is_balanced(source), "{source}");
         assert_eq!(scan_block_end(source, 0), Some(source.len()), "{source}");
     }
 }
@@ -321,6 +313,46 @@ fn non_css_import_response_remains_opaque() {
 }
 
 #[test]
+fn import_responses_closed_by_eof_expand_into_their_own_parts() {
+    // CSS Syntax 3 §5.4.8 closes blocks, strings, comments, and url() at EOF,
+    // and each part is parsed as its own stylesheet, so an unclosed response
+    // cannot absorb the importer's following rules.
+    for (child, expected) in [
+        ("a { color: green", "a { color: green"),
+        (
+            "a { color: green } /* trailing",
+            "a { color: green } /* trailing",
+        ),
+        ("a { content: 'open", "a { content: 'open"),
+        (
+            "a { background: url(x.png",
+            r#"a { background: url("https://example.test/x.png")"#,
+        ),
+        (
+            "@media print { a { color: green",
+            "@media print { a { color: green",
+        ),
+    ] {
+        let provider = MapProvider::new(&[("https://example.test/a.css", child)]);
+        let source = r#"@import "a.css"; p { color: blue }"#;
+        let mut warnings = Vec::new();
+        let mut budget = ImportBudget::default();
+        let parts = expand_stylesheet_imports_with_budget(
+            source,
+            Some(&Url::parse("https://example.test/main.css").unwrap()),
+            None,
+            Some(&provider),
+            &mut warnings,
+            &mut budget,
+        );
+        assert!(warnings.is_empty(), "{child:?}: {warnings:?}");
+        assert_eq!(parts.len(), 2, "{child:?}: {parts:?}");
+        assert_eq!(parts[0].source, expected, "{child:?}");
+        assert_eq!(parts[1].source, " p { color: blue }", "{child:?}");
+    }
+}
+
+#[test]
 fn policy_failures_remain_opaque_and_are_reported_as_policy_warnings() {
     struct PolicyProvider;
 
@@ -380,25 +412,6 @@ fn fragments_do_not_bypass_active_import_cycle_detection() {
         *provider.requests.lock().unwrap(),
         vec!["https://example.test/a.css".to_owned()]
     );
-}
-
-#[test]
-fn malformed_child_is_not_allowed_to_consume_parent_source() {
-    let provider = MapProvider::new(&[("https://example.test/a.css", "a { color: red")]);
-    let source = r#"@import "a.css"; p { color: blue }"#;
-    let mut warnings = Vec::new();
-    let expanded = expand_stylesheet_imports(
-        source,
-        Some(&Url::parse("https://example.test/main.css").unwrap()),
-        None,
-        Some(&provider),
-        &mut warnings,
-    );
-    assert_eq!(expanded, source);
-    assert!(matches!(
-        &warnings[0].kind,
-        WarningKind::NetworkFallback { .. }
-    ));
 }
 
 #[test]

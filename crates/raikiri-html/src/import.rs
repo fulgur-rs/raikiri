@@ -373,13 +373,6 @@ impl ImportExpander<'_> {
         }
 
         let css = String::from_utf8_lossy(&fetched.bytes).into_owned();
-        if !stylesheet_source_is_balanced(&css) {
-            self.record_import_fallback(
-                fetched_url,
-                "stylesheet @import response was not a self-contained CSS source".to_owned(),
-            );
-            return None;
-        }
         let chain_entries = if requested_url == fetched_url { 1 } else { 2 };
         self.chain.push(requested_url);
         if chain_entries == 2 {
@@ -770,63 +763,6 @@ fn scan_block_end(source: &str, open_brace: usize) -> Option<usize> {
         cursor += 1;
     }
     None
-}
-
-fn stylesheet_source_is_balanced(source: &str) -> bool {
-    let bytes = source.as_bytes();
-    let mut cursor = 0;
-    let mut braces = 0u32;
-    let mut parentheses = 0u32;
-    let mut brackets = 0u32;
-    while cursor < bytes.len() {
-        if bytes[cursor] == b'/' && bytes.get(cursor + 1) == Some(&b'*') {
-            let Some(end) = source[cursor + 2..].find("*/") else {
-                return false;
-            };
-            cursor += end + 4;
-            continue;
-        }
-        if matches!(bytes[cursor], b'\'' | b'"') {
-            let Some(next) = skip_string(source, cursor) else {
-                return false;
-            };
-            cursor = next;
-            continue;
-        }
-        let Some(next) = skip_component_name(source, cursor) else {
-            return false;
-        };
-        if next > cursor {
-            cursor = next;
-            continue;
-        }
-        match bytes[cursor] {
-            b'{' => braces = braces.saturating_add(1),
-            b'}' => {
-                if braces == 0 {
-                    return false;
-                }
-                braces -= 1;
-            }
-            b'(' => parentheses = parentheses.saturating_add(1),
-            b')' => {
-                if parentheses == 0 {
-                    return false;
-                }
-                parentheses -= 1;
-            }
-            b'[' => brackets = brackets.saturating_add(1),
-            b']' => {
-                if brackets == 0 {
-                    return false;
-                }
-                brackets -= 1;
-            }
-            _ => {}
-        }
-        cursor += 1;
-    }
-    braces == 0 && parentheses == 0 && brackets == 0
 }
 
 fn skip_string(source: &str, quote_start: usize) -> Option<usize> {
