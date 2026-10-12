@@ -356,6 +356,34 @@ pub(crate) struct IfcState {
     /// Width of the page area of the current layout pass: the containing
     /// block of fixed boxes.
     pub(crate) page_width: Option<f32>,
+    /// Whether layout passes keep the paragraphs they build, for later passes
+    /// over the same document and cascade to reuse.
+    pub(crate) retain_paragraphs: bool,
+    /// The paragraphs of the last layout pass, before any line was broken,
+    /// when [`Self::retain_paragraphs`] is set.
+    pub(crate) retained: Option<RetainedParagraphs>,
+}
+
+/// Paragraphs built by one layout pass, with what they were built from.
+///
+/// A paragraph depends on the document's content and the element cascade,
+/// never on the page geometry, so passes that only change the page sizes can
+/// reuse it and break its lines again.
+pub(crate) struct RetainedParagraphs {
+    pub(crate) key: RetainedKey,
+    /// Each root with its paragraph, in ascending index order.
+    pub(crate) roots: Vec<(usize, IfcRoot)>,
+}
+
+/// What a set of retained paragraphs was built from. Document mutations drop
+/// the retained paragraphs; the key catches the inputs that change without
+/// one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RetainedKey {
+    pub(crate) element_generation: u64,
+    pub(crate) node_count: usize,
+    pub(crate) continuation_break: Option<(usize, u32)>,
+    pub(crate) anonymous_cells: usize,
 }
 
 /// How a layout pass built its paragraphs.
@@ -366,6 +394,8 @@ pub enum IfcBuildMode {
     Sequential,
     /// On several threads, one layout context per worker.
     Parallel,
+    /// Reused from the previous pass over the same document and cascade.
+    Retained,
 }
 
 /// Below this many paragraphs the thread overhead outweighs the gain.
@@ -384,6 +414,8 @@ impl IfcState {
             parallel_build: true,
             last_build: None,
             page_width: None,
+            retain_paragraphs: false,
+            retained: None,
         }
     }
 }
@@ -428,9 +460,10 @@ impl fmt::Debug for IfcState {
     }
 }
 
-// The layout context is per-owner scratch space and the call count and the
-// last build belong to its document, so a clone starts fresh. The build
-// policy is kept: a clone holds the same font collection.
+// The layout context is per-owner scratch space and the call count, the
+// last build and the retained paragraphs belong to its document, so a clone
+// starts fresh. The build policy is kept: a clone holds the same font
+// collection.
 impl Clone for IfcState {
     fn clone(&self) -> Self {
         Self {

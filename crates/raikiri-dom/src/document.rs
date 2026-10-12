@@ -497,6 +497,31 @@ impl Document {
         }
     }
 
+    /// Keep the paragraphs a layout pass builds, so that a later pass over
+    /// the same document and cascade breaks their lines again instead of
+    /// shaping them anew. Passes that lay the document out again at other
+    /// page sizes use this; any mutation of the document drops the kept
+    /// paragraphs, and so does turning this off. A cascade changed in place
+    /// keeps its generation, so it must not be passed to a later pass while
+    /// this is on. Off by default; no effect without the inline engine.
+    #[doc(hidden)]
+    pub fn set_ifc_retain_paragraphs(&mut self, retain: bool) {
+        if let Some(state) = self.ifc.as_mut() {
+            state.retain_paragraphs = retain;
+            if !retain {
+                state.retained = None;
+            }
+        }
+    }
+
+    /// Drop the paragraphs kept by [`Document::set_ifc_retain_paragraphs`]:
+    /// what they were built from has changed.
+    pub(crate) fn drop_retained_paragraphs(&mut self) {
+        if let Some(state) = self.ifc.as_mut() {
+            state.retained = None;
+        }
+    }
+
     /// Whether paragraphs may be built on several threads (`false` without
     /// the inline engine).
     #[doc(hidden)]
@@ -2711,6 +2736,7 @@ impl Document {
     /// costs O(1); each layout batch incurs amortized O(N) clearing.
     pub(crate) fn invalidate_layout_cache(&mut self) {
         self.page_projection.clear();
+        self.drop_retained_paragraphs();
         self.layout_dirty = true;
     }
 
@@ -2808,6 +2834,8 @@ impl Document {
         base_url: Option<&url::Url>,
         mut remaining: u64,
     ) {
+        // Paragraphs hold the sizes of these images as atomic inlines.
+        self.drop_retained_paragraphs();
         self.list_marker_images.clear();
         self.content_images.clear();
         let mut variants =

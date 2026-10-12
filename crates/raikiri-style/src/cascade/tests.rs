@@ -557,7 +557,7 @@ fn root_element_computed_falls_back_to_the_document_without_an_element() {
 }
 
 #[test]
-fn replace_page_swaps_the_page_context_and_starts_a_new_generation() {
+fn replace_page_swaps_the_page_context_and_starts_a_new_generation_of_the_page_only() {
     let css = "@page { margin: 10px } @page :first { margin-top: 30px }\
         p::before { content: \"x\" } p { page: chapter }";
     let mut doc = TestDoc::new();
@@ -571,6 +571,8 @@ fn replace_page_swaps_the_page_context_and_starts_a_new_generation() {
     let mut result = cascade_with_media_context(&doc, &tree, &media).expect("cascade Ok");
     let other = cascade_with_media_context(&doc, &tree, &media).expect("cascade Ok");
     let generation = result.generation();
+    let element_generation = result.element_generation();
+    assert_eq!(element_generation, generation);
     let computed = result.computed.clone();
     let computed_ptr = result.computed.as_ptr();
     let pseudo = result.pseudo.clone();
@@ -598,6 +600,9 @@ fn replace_page_swaps_the_page_context_and_starts_a_new_generation() {
     assert_eq!(result.page_values, page_values);
     assert_ne!(result.generation(), generation);
     assert_ne!(result.generation(), other.generation());
+    // The element results are the same run's.
+    assert_eq!(result.element_generation(), element_generation);
+    assert_ne!(other.element_generation(), element_generation);
 
     // Replacing with an equal page context still starts a new generation.
     let replaced = result.generation();
@@ -629,6 +634,7 @@ fn extract_renumbers_the_results_for_part_of_the_tree() {
     let nodes = [0, html, body, second, text, svg, rect];
     let part = result.extract(&nodes);
     assert_ne!(part.generation(), result.generation());
+    assert_ne!(part.element_generation(), result.element_generation());
     assert_eq!(part.computed.len(), nodes.len());
     for (new, &old) in nodes.iter().enumerate() {
         assert_eq!(part.computed[new], result.computed[old]);

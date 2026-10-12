@@ -837,7 +837,7 @@ pub(crate) fn run_pipeline(
     if let Some(source) = resources.image_pixel_source_ref() {
         dom.prepare_list_marker_images(&first_cascade, source, runtime.effective_base_url);
     }
-    let resolved_initial_context = resolve_initial_page_context(
+    let mut resolved_initial_context = resolve_initial_page_context(
         &dom,
         first_query.page_name.as_ref().map(ToString::to_string),
         first_cascade,
@@ -851,6 +851,7 @@ pub(crate) fn run_pipeline(
         },
     )
     .map_err(map_initial_page_context_error)?;
+    resolved_initial_context.give_paragraphs_to(&mut dom);
     let mut first_cascade = resolved_initial_context.cascade;
     let page_box = resolved_initial_context.page_box;
     // A named first page, or page lengths relative to the root's font, can
@@ -911,6 +912,10 @@ pub(crate) fn run_pipeline(
     // again from a copy of the document as it is before any layout.
     let pristine = dom.clone();
     let mut document = dom;
+    // The passes below lay the same content out with the same element
+    // cascade at other page sizes: they break the lines of the first pass's
+    // paragraphs again instead of shaping them anew.
+    document.set_ifc_retain_paragraphs(true);
     let mut slices = match layout_pages_with_resolver_and_base_url_and_control(
         &mut document,
         &first_cascade,
@@ -1018,6 +1023,7 @@ pub(crate) fn run_pipeline(
             geometry_converged = false;
         }
     }
+    document.set_ifc_retain_paragraphs(false);
     // cov:ignore: see the bounded non-convergence branch above; no inconsistent
     // pages are emitted, and the structured error variant is contract-tested.
     if !geometry_converged {
