@@ -5346,6 +5346,65 @@ fn a_url_border_image_draws_each_part_instead_of_the_border() {
     assert_eq!(root_border_fills(URL_BORDER_IMAGE, Some(&pixels)), (9, 0));
 }
 
+/// Pixels for `url` only, so a test sees which URL paint asked for.
+struct PixelsAt {
+    url: url::Url,
+    pixels: BorderImagePixels,
+}
+
+impl ImagePixelSource for PixelsAt {
+    fn get_decoded(&self, url: &url::Url) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+        (*url == self.url)
+            .then(|| self.pixels.get_decoded(url))
+            .flatten()
+    }
+    fn intrinsic_size(&self, url: &url::Url) -> Option<raikiri_traits::ImageIntrinsicSize> {
+        (*url == self.url)
+            .then(|| self.pixels.intrinsic_size(url))
+            .flatten()
+    }
+}
+
+#[test]
+fn a_relative_border_image_url_resolves_against_the_document_base_url() {
+    let source = PixelsAt {
+        url: url::Url::parse("https://images.test/dir/border.png").unwrap(),
+        pixels: BorderImagePixels::opaque(),
+    };
+    let fills = |base_url: Option<&str>| {
+        let mut document = Document::new();
+        document.set_base_url(base_url.map(|base| url::Url::parse(base).unwrap()));
+        document.append_element(
+            Some(document.root_index()),
+            "html",
+            Style::default(),
+            Some("border: 5px solid red; border-image: url(border.png#part) 1 fill"),
+        );
+        let rules = build_rule_tree(&document);
+        let cascade = cascade(&document, &rules).expect("cascade Ok");
+        let mut scene = Scene::new();
+        let mut warnings = Vec::new();
+        paint_root_element_border(
+            &crate::walk::ImageBrushCache::for_document(&document),
+            &mut scene,
+            &document,
+            &cascade,
+            PageBox::A4,
+            Some(&source),
+            &mut warnings,
+        );
+        scene
+            .commands
+            .iter()
+            .filter(|command| matches!(command, RenderCommand::Fill(_)))
+            .count()
+    };
+    // The nine parts of the image replace the border.
+    assert_eq!(fills(Some("https://images.test/dir/page.html")), 9);
+    // Without a base the URL names nothing, so the border is painted.
+    assert_eq!(fills(None), 4);
+}
+
 #[test]
 fn a_url_border_image_that_cannot_be_displayed_leaves_the_border() {
     let no_natural_size = BorderImagePixels {

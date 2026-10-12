@@ -140,6 +140,9 @@ pub(crate) fn finish_document(
     // inline and extra stylesheets. External stylesheets instead use their
     // fetched `FetchedResource::final_url` as the base.
     let effective_base = effective_document_base_url(&doc, options.base_url.as_ref());
+    // Paint resolves the relative `url()` values that computed values keep,
+    // such as those of `style` attributes, against this base.
+    doc.dom.set_base_url(effective_base.clone());
     // Share import limits across every stylesheet root in this document. A
     // separate per-root expander would let many inline/link sheets multiply
     // the fetch and expansion caps.
