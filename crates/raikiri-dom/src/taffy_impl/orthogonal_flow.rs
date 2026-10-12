@@ -16,8 +16,7 @@
 
 use taffy::tree::{RequestedAxis, RunMode};
 use taffy::{
-    AvailableSpace, BlockContext, Display, LayoutInput, LayoutOutput, NodeId,
-    Position as TaffyPosition, Size,
+    AvailableSpace, Display, LayoutInput, LayoutOutput, NodeId, Position as TaffyPosition, Size,
 };
 
 use crate::document::Document;
@@ -27,23 +26,29 @@ fn is_vertical(mode: WritingMode) -> bool {
     matches!(mode, WritingMode::VerticalRl | WritingMode::VerticalLr)
 }
 
-/// Whether `idx` is an in-flow block-level box with an auto width that
-/// authors a vertical writing mode under a horizontal block container.
+/// Whether `idx` is an in-flow block-level box with an auto width in a
+/// vertical writing mode, its own or inherited, under a horizontal block
+/// container.
 pub(super) fn is_orthogonal_auto_block_size(tree: &Document, idx: usize) -> bool {
+    use super::vertical_oof::used_writing_mode;
     let node = &tree.nodes[idx];
-    node.authored_writing_mode.is_some_and(is_vertical)
-        && node.style.size.width.is_auto()
+    node.style.size.width.is_auto()
         && node.style.position != TaffyPosition::Absolute
         && node.style.float == taffy::Float::None
         && matches!(
             node.display,
-            DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::Flex | DisplayValue::Grid
+            DisplayValue::Block
+                | DisplayValue::FlowRoot
+                | DisplayValue::ListItem
+                | DisplayValue::Flex
+                | DisplayValue::Grid
         )
+        && is_vertical(used_writing_mode(tree, idx))
         && tree.taffy_parent_of(idx).is_some_and(|parent| {
             matches!(
                 tree.nodes[parent].style.display,
                 Display::Block | Display::FlowRoot
-            ) && !is_vertical(super::vertical_oof::used_writing_mode(tree, parent))
+            ) && !is_vertical(used_writing_mode(tree, parent))
         })
 }
 
@@ -54,11 +59,13 @@ pub(super) fn is_orthogonal_auto_block_size(tree: &Document, idx: usize) -> bool
 /// multicol containers and the out-of-flow handling of vertical block
 /// containers keep their own paths. The final pass marks the node so that
 /// dispatch does not divert it here again.
+///
+/// An orthogonal flow establishes an independent formatting context (CSS
+/// Writing Modes 4 §7.3), so neither pass continues the parent's floats.
 pub(super) fn compute_orthogonal_block(
     tree: &mut Document,
     node_id: NodeId,
     inputs: LayoutInput,
-    block_ctx: Option<&mut BlockContext<'_>>,
 ) -> LayoutOutput {
     let idx = usize::from(node_id);
     let measure_inputs = LayoutInput {
@@ -96,7 +103,7 @@ pub(super) fn compute_orthogonal_block(
         ..inputs
     };
     let outer = tree.orthogonal_block_in_layout.replace(idx);
-    let output = tree.compute_child_layout_with_block_ctx(node_id, final_inputs, block_ctx);
+    let output = tree.compute_child_layout_with_block_ctx(node_id, final_inputs, None);
     tree.orthogonal_block_in_layout = outer;
     output
 }
