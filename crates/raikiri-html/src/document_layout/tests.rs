@@ -489,16 +489,18 @@ fn inline_svg_payload_uses_the_resolved_content_box_and_host_style() {
         .find(|f| page.dom().local_name(f.node()) == Some("svg"))
         .unwrap();
     let content = fragment.content_rect().unwrap();
+    // `padding: 10%` is 28px on every side: percentages refer to the page
+    // area's 280px width, also for the top and bottom.
     assert_eq!(
         (content.x, content.y, content.width, content.height),
-        (40.0, 30.0, 140.0, 80.0)
+        (40.0, 40.0, 140.0, 60.0)
     );
     let svg = page.inline_svg(&fragment).unwrap().unwrap();
     assert_eq!(svg.viewport, content);
     assert_eq!(svg.host_opacity, Some(0.5));
     let prepared = raikiri_svg::SvgDocument::parse(svg.source.as_bytes()).unwrap();
     assert_eq!(prepared.intrinsic_size().width, Some(140.0));
-    assert_eq!(prepared.intrinsic_size().height, Some(80.0));
+    assert_eq!(prepared.intrinsic_size().height, Some(60.0));
     let image = prepared
         .rasterize(
             raikiri_svg::SvgViewport {

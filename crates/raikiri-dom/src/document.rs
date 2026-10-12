@@ -412,6 +412,10 @@ pub struct Document {
     /// children use the recorded physical height as their containing
     /// block's inline size; see `taffy_impl::vertical_oof`.
     pub(crate) vertical_oof_containing_blocks: Vec<(usize, f32)>,
+    /// Block containers being laid out, each with the content-box width its
+    /// children's percentage padding and borders resolve against; see
+    /// [`crate::taffy_impl::BlockChildStyle`].
+    pub(crate) block_item_percent_bases: Vec<(usize, Option<f32>)>,
     /// HTML5 quirks mode for this whole document. Default
     /// [`QuirksMode::NoQuirks`] (matching the type's own `#[default]`) for
     /// `Document`s built by hand (raikiri-dom unit tests, raikiri-paint
@@ -570,6 +574,7 @@ impl Document {
             column_rules: std::collections::BTreeMap::new(),
             fragmentation_stack: Vec::new(),
             vertical_oof_containing_blocks: Vec::new(),
+            block_item_percent_bases: Vec::new(),
             quirks_mode: QuirksMode::default(),
         }
     }
@@ -1846,6 +1851,7 @@ impl Document {
             column_rules: _,
             fragmentation_stack: _,
             vertical_oof_containing_blocks: _,
+            block_item_percent_bases: _,
             quirks_mode,
         } = self;
 

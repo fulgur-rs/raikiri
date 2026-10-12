@@ -41,7 +41,7 @@ use taffy::{
     MaxTrackSizingFunction, MinTrackSizingFunction, NodeId as TaffyNodeId,
     Overflow as TaffyOverflow, Point, Position as TaffyPosition, Rect,
     RepetitionCount as TaffyRepetitionCount, RequestedAxis, RunMode, Size, SizingMode,
-    TrackSizingFunction, compute_block_layout, style_helpers as taffy_style_helpers,
+    TrackSizingFunction, style_helpers as taffy_style_helpers,
 };
 
 pub(crate) mod table;

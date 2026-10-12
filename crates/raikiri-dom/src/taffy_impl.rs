@@ -553,7 +553,7 @@ impl Document {
                         if let Some(inline_size) = vertical_cb {
                             tree.vertical_oof_containing_blocks.push((idx, inline_size));
                         }
-                        let output = compute_block_layout(tree, node_id, inputs, block_ctx);
+                        let output = block_layout(tree, node_id, inputs, block_ctx);
                         if vertical_cb.is_some() {
                             tree.vertical_oof_containing_blocks.pop();
                         }
@@ -1359,7 +1359,7 @@ fn compute_inline_block_shrink_wrap(
                         .width
                 }
                 _ => {
-                    compute_block_layout(tree, node_id, intrinsic_inputs, None)
+                    block_layout(tree, node_id, intrinsic_inputs, None)
                         .size
                         .width
                 }
@@ -1413,8 +1413,273 @@ fn compute_inline_block_shrink_wrap(
             DisplayValue::InlineFlex => compute_flexbox_layout(tree, node_id, final_inputs),
             DisplayValue::InlineGrid => compute_grid_layout(tree, node_id, final_inputs),
             _ if ifc_root => compute_ifc_root(tree, node_id, final_inputs, block_ctx),
-            _ => compute_block_layout(tree, node_id, final_inputs, block_ctx),
+            _ => block_layout(tree, node_id, final_inputs, block_ctx),
         }
+    }
+}
+
+/// Lay out the block container `node_id` with taffy's block algorithm.
+///
+/// Every block container goes through here so that
+/// [`Document::get_block_child_style`] knows the content-box width its
+/// children's percentage padding and borders resolve against. A container
+/// in a vertical writing mode is left to taffy: its inline size, which those
+/// percentages refer to, is its height.
+///
+/// A container whose width is not definite yet (an auto-width float, say)
+/// only learns it from its contents, after taffy has listed the children.
+/// When such a container starts a formatting context of its own and a child
+/// has percentage vertical edges, it is laid out a second time with the
+/// width the first pass derived.
+pub(crate) fn block_layout(
+    tree: &mut Document,
+    node_id: NodeId,
+    inputs: LayoutInput,
+    mut block_ctx: Option<&mut BlockContext<'_>>,
+) -> LayoutOutput {
+    let idx = usize::from(node_id);
+    if tree.has_vertical_writing_mode(idx) {
+        return compute_block_layout(tree, node_id, inputs, block_ctx);
+    }
+    let (width, inline_inset) = tree.block_definite_width(idx, &inputs);
+    let basis = width.map(|width| width - inline_inset);
+    tree.block_item_percent_bases.push((idx, basis));
+    let mut output = compute_block_layout(tree, node_id, inputs, block_ctx.as_deref_mut());
+    tree.block_item_percent_bases.pop();
+    if basis.is_none() && block_ctx.is_none() && tree.has_percent_vertical_edge_child(idx) {
+        let basis = Some(output.size.width - inline_inset);
+        tree.block_item_percent_bases.push((idx, basis));
+        output = compute_block_layout(tree, node_id, inputs, None);
+        tree.block_item_percent_bases.pop();
+    }
+    output
+}
+
+impl Document {
+    /// Whether `idx` uses a vertical writing mode: the one authored on it or
+    /// on its nearest ancestor that authors one.
+    fn has_vertical_writing_mode(&self, idx: usize) -> bool {
+        use raikiri_style::property::WritingMode;
+        let mut node = Some(idx);
+        while let Some(id) = node {
+            if let Some(mode) = self.nodes[id].authored_writing_mode {
+                return matches!(mode, WritingMode::VerticalRl | WritingMode::VerticalLr);
+            }
+            node = self.nodes[id].parent;
+        }
+        false
+    }
+
+    /// The border-box width of block container `idx` that taffy's block
+    /// algorithm derives from `inputs` before it lists the container's
+    /// children (the definite size the container is given or styled with,
+    /// `None` when there is none yet), and the padding, border and vertical
+    /// scrollbar gutter that separate it from the content box.
+    ///
+    /// Mirrors [`taffy::compute_block_layout`] and its `compute_inner`.
+    fn block_definite_width(&self, idx: usize, inputs: &LayoutInput) -> (Option<f32>, f32) {
+        use taffy::{BoxSizing, MaybeMath, MaybeResolve, Overflow, ResolveOrZero, SizingMode};
+
+        let style = &self.nodes[idx].style;
+        let parent_size = inputs.parent_size;
+        let padding = style
+            .padding
+            .resolve_or_zero(parent_size.width, resolve_calc);
+        let border = style
+            .border
+            .resolve_or_zero(parent_size.width, resolve_calc);
+        let padding_border_size = (padding + border).sum_axes();
+        let box_sizing_adjustment = if style.box_sizing == BoxSizing::ContentBox {
+            padding_border_size
+        } else {
+            Size::ZERO
+        };
+        let aspect_ratio = style.aspect_ratio;
+        let min_size = style
+            .min_size
+            .maybe_resolve(parent_size, resolve_calc)
+            .maybe_apply_aspect_ratio(aspect_ratio)
+            .maybe_add(box_sizing_adjustment);
+        let max_size = style
+            .max_size
+            .maybe_resolve(parent_size, resolve_calc)
+            .maybe_apply_aspect_ratio(aspect_ratio)
+            .maybe_add(box_sizing_adjustment);
+        let clamped_style_size = if inputs.sizing_mode == SizingMode::InherentSize {
+            style
+                .size
+                .maybe_resolve(parent_size, resolve_calc)
+                .maybe_apply_aspect_ratio(aspect_ratio)
+                .maybe_add(box_sizing_adjustment)
+                .maybe_clamp(min_size, max_size)
+        } else {
+            Size::NONE
+        };
+        let min_max_definite_size = min_size.zip_map(max_size, |min, max| match (min, max) {
+            (Some(min), Some(max)) if max <= min => Some(min),
+            _ => None,
+        });
+        let known = inputs
+            .known_dimensions
+            .or(min_max_definite_size)
+            .or(clamped_style_size)
+            .maybe_max(padding_border_size);
+        let width = known.width.or(known
+            .maybe_apply_aspect_ratio(aspect_ratio)
+            .maybe_clamp(min_size, max_size)
+            .width);
+        // A vertical scrollbar takes its gutter from the inline axis.
+        let gutter = if style.overflow.y == Overflow::Scroll {
+            style.scrollbar_width
+        } else {
+            0.0
+        };
+        (
+            width,
+            padding.horizontal_axis_sum() + border.horizontal_axis_sum() + gutter,
+        )
+    }
+
+    /// Whether an in-flow child of block container `idx` has a top or bottom
+    /// padding or border that depends on its percentage basis.
+    fn has_percent_vertical_edge_child(&self, idx: usize) -> bool {
+        use taffy::ResolveOrZero;
+        let depends_on_basis = |edge: taffy::LengthPercentage| {
+            edge.resolve_or_zero(Some(0.0), resolve_calc)
+                != edge.resolve_or_zero(Some(1.0), resolve_calc)
+        };
+        TaffyChildIter::new(self, NodeId::from(idx)).any(|child| {
+            let Some(node) = self.nodes.get(usize::from(child)) else {
+                return false;
+            };
+            let style = &node.style;
+            style.position != TaffyPosition::Absolute
+                && [
+                    style.padding.top,
+                    style.padding.bottom,
+                    style.border.top,
+                    style.border.bottom,
+                ]
+                .into_iter()
+                .any(depends_on_basis)
+        })
+    }
+}
+
+/// A block-level child's style as its block container's layout reads it.
+///
+/// Percentage padding and borders refer to the containing block's width on
+/// all four sides (CSS Box 4 §4), but taffy 0.14's block algorithm resolves
+/// a child's top and bottom against the container's height when it lists
+/// the children, which feeds `box-sizing` and the recorded insets. Those
+/// edges are handed over here already resolved against the container's
+/// content-box width, the same basis the child's own layout uses.
+///
+/// Upstream taffy fixed this after 0.14.0 (DioxusLabs/taffy#1187); this
+/// wrapper and [`block_layout`]'s bookkeeping can go once raikiri depends on
+/// a taffy release that carries the fix.
+#[derive(Clone, Copy)]
+pub struct BlockChildStyle<'a> {
+    style: &'a Style,
+    padding: taffy::Rect<taffy::LengthPercentage>,
+    border: taffy::Rect<taffy::LengthPercentage>,
+}
+
+impl<'a> BlockChildStyle<'a> {
+    /// `percent_basis` is the container's content-box width, or `None` to
+    /// keep taffy's own resolution.
+    fn new(style: &'a Style, percent_basis: Option<f32>) -> Self {
+        let resolve_vertical = |edges: taffy::Rect<taffy::LengthPercentage>, basis: f32| {
+            let resolve = |edge: taffy::LengthPercentage| {
+                use taffy::ResolveOrZero;
+                taffy::LengthPercentage::length(edge.resolve_or_zero(Some(basis), resolve_calc))
+            };
+            taffy::Rect {
+                top: resolve(edges.top),
+                bottom: resolve(edges.bottom),
+                ..edges
+            }
+        };
+        match percent_basis {
+            Some(basis) => Self {
+                style,
+                padding: resolve_vertical(style.padding, basis),
+                border: resolve_vertical(style.border, basis),
+            },
+            None => Self {
+                style,
+                padding: style.padding,
+                border: style.border,
+            },
+        }
+    }
+}
+
+impl CoreStyle for BlockChildStyle<'_> {
+    type CustomIdent = String;
+
+    fn box_generation_mode(&self) -> BoxGenerationMode {
+        self.style.box_generation_mode()
+    }
+    fn is_block(&self) -> bool {
+        self.style.is_block()
+    }
+    fn is_compressible_replaced(&self) -> bool {
+        self.style.is_compressible_replaced()
+    }
+    fn box_sizing(&self) -> taffy::BoxSizing {
+        self.style.box_sizing()
+    }
+    fn direction(&self) -> taffy::Direction {
+        self.style.direction()
+    }
+    fn overflow(&self) -> taffy::Point<taffy::Overflow> {
+        self.style.overflow()
+    }
+    fn scrollbar_width(&self) -> f32 {
+        self.style.scrollbar_width()
+    }
+    fn position(&self) -> TaffyPosition {
+        self.style.position()
+    }
+    fn inset(&self) -> taffy::Rect<taffy::LengthPercentageAuto> {
+        self.style.inset()
+    }
+    fn size(&self) -> Size<taffy::Dimension> {
+        self.style.size()
+    }
+    fn min_size(&self) -> Size<taffy::LengthPercentageAuto> {
+        self.style.min_size()
+    }
+    fn max_size(&self) -> Size<taffy::LengthPercentageAuto> {
+        self.style.max_size()
+    }
+    fn aspect_ratio(&self) -> Option<f32> {
+        self.style.aspect_ratio()
+    }
+    fn margin(&self) -> taffy::Rect<taffy::LengthPercentageAuto> {
+        self.style.margin()
+    }
+    fn padding(&self) -> taffy::Rect<taffy::LengthPercentage> {
+        self.padding
+    }
+    fn border(&self) -> taffy::Rect<taffy::LengthPercentage> {
+        self.border
+    }
+    fn contain(&self) -> taffy::Contain {
+        self.style.contain()
+    }
+}
+
+impl taffy::BlockItemStyle for BlockChildStyle<'_> {
+    fn is_table(&self) -> bool {
+        taffy::BlockItemStyle::is_table(self.style)
+    }
+    fn float(&self) -> taffy::Float {
+        taffy::BlockItemStyle::float(self.style)
+    }
+    fn clear(&self) -> taffy::Clear {
+        taffy::BlockItemStyle::clear(self.style)
     }
 }
 
@@ -1424,7 +1689,7 @@ impl LayoutBlockContainer for Document {
     where
         Self: 'a;
     type BlockItemStyle<'a>
-        = &'a Style
+        = BlockChildStyle<'a>
     where
         Self: 'a;
 
@@ -1432,8 +1697,26 @@ impl LayoutBlockContainer for Document {
         &self.nodes[usize::from(node_id)].style
     }
 
+    /// Taffy also reads a child's style when it places the child as an
+    /// absolutely positioned box, against a different basis (the padding
+    /// box of the containing block), so only in-flow children of the
+    /// container on top of [`Document::block_item_percent_bases`] get their
+    /// vertical edges resolved here. Neither do the children of a container
+    /// whose width is not known yet when taffy lists them (an auto-width
+    /// float, say): taffy sizes such a container from its contents only
+    /// afterwards, and a zero inset fixed now could not follow that width.
     fn get_block_child_style(&self, child_node_id: NodeId) -> Self::BlockItemStyle<'_> {
-        &self.nodes[usize::from(child_node_id)].style
+        let child = usize::from(child_node_id);
+        let style = &self.nodes[child].style;
+        let basis = self
+            .block_item_percent_bases
+            .last()
+            .filter(|&&(container, _)| {
+                style.position != TaffyPosition::Absolute
+                    && self.taffy_parent_of(child) == Some(container)
+            })
+            .and_then(|&(_, basis)| basis);
+        BlockChildStyle::new(style, basis)
     }
 
     /// Overrides the default (which forwards to
