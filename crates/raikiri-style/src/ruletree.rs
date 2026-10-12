@@ -7,7 +7,10 @@
 //! which also has a dedicated view, is recorded here for raw/source-order inspection;
 //! `@page` remains in the existing page view.
 
-use cssparser::{Parser, ParserInput, SourceLocation, StyleSheetParser, Token};
+use cssparser::{
+    DeclarationParser, Parser, ParserInput, RuleBodyItemParser, RuleBodyParser, SourceLocation,
+    StyleSheetParser, Token,
+};
 use selectors::parser::{ParseRelative, Parser as SelectorParser, Selector, SelectorList};
 use std::cell::OnceCell;
 use std::collections::HashMap;
@@ -792,6 +795,7 @@ impl RuleTree {
             opaque_budget: &mut self.opaque_budget,
             budget: &mut self.budget,
             namespaces: &mut namespaces,
+            namespaces_open: true,
             supports_context,
         };
         let mut style_order = self.next_style_order;
@@ -830,6 +834,15 @@ impl RuleTree {
             let Ok(rule) = rule else {
                 continue;
             };
+            if matches!(
+                rule,
+                ParsedRule::Style(_)
+                    | ParsedRule::Page(..)
+                    | ParsedRule::Group(..)
+                    | ParsedRule::Descriptor { .. }
+            ) {
+                sheet.parser.namespaces_open = false;
+            }
             match rule {
                 ParsedRule::Style(items) => {
                     let mut sink = GroupSink {
@@ -1330,30 +1343,15 @@ fn charset_prelude(source: &str, after_name: usize) -> Option<String> {
     None
 }
 
-/// Consume the rest of `input` as raw component values and return their text.
-///
-/// `source` is the string `input` was created from. A tokenizer error token or
-/// a block that the values leave open rejects them: a prelude ends before its
-/// block or `;`, so a block still open there is malformed. The walk enters
-/// nested blocks directly, so the values are tokenized once.
-fn consume_raw_component_values<'i, 't>(
-    input: &mut Parser<'i, 't>,
-    source: &str,
-) -> Result<String, cssparser::ParseError<'i, ()>> {
-    let start = input.position();
-    let mut walk = ComponentWalk::strict(source);
-    if !walk.values(input, None, 0) {
-        return Err(input.new_custom_error(()));
-    }
-    Ok(input.slice(start..input.position()).to_owned())
-}
-
-/// Consume the rest of a block's contents as raw component values and return
-/// their text, completed as EOF closed them.
+/// Consume the rest of `input` as raw component values and return their
+/// text, completed as EOF closed them.
 ///
 /// `source` is the string `input` was created from. A tokenizer error token
-/// rejects the values; see [`complete_raw_block`] for the completion.
-fn consume_raw_block_contents<'i, 't>(
+/// rejects the values. CSS Syntax 3 closes whatever EOF leaves open, in a
+/// prelude as in a block's contents; see [`complete_raw_block`] for the
+/// completion. The walk enters nested blocks directly, so the values are
+/// tokenized once.
+fn consume_raw_component_values<'i, 't>(
     input: &mut Parser<'i, 't>,
     source: &str,
 ) -> Result<String, cssparser::ParseError<'i, ()>> {
@@ -1362,9 +1360,9 @@ fn consume_raw_block_contents<'i, 't>(
     if !walk.values(input, None, 0) {
         return Err(input.new_custom_error(()));
     }
-    let mut contents = input.slice(start..input.position()).to_owned();
-    walk.complete(&mut contents);
-    Ok(contents)
+    let mut values = input.slice_from(start).to_owned();
+    walk.complete(&mut values);
+    Ok(values)
 }
 
 /// Complete the contents of a block as EOF closed them.
@@ -1723,7 +1721,7 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for RawRuleParser<'s, 'b> {
         _start: &cssparser::ParserState,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::AtRule, cssparser::ParseError<'i, Self::Error>> {
-        let body = consume_raw_block_contents(input, self.source)?;
+        let body = consume_raw_component_values(input, self.source)?;
         if !self.budget.spend(body.len()) {
             return Err(input.new_custom_error(()));
         }
@@ -1761,7 +1759,7 @@ impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for RawRuleParser<'s, 'b> {
         _start: &cssparser::ParserState,
         input: &mut Parser<'i, 't>,
     ) -> Result<Self::QualifiedRule, cssparser::ParseError<'i, Self::Error>> {
-        let body = consume_raw_block_contents(input, self.source)?;
+        let body = consume_raw_component_values(input, self.source)?;
         if !self.budget.spend(body.len()) {
             return Err(input.new_custom_error(()));
         }
@@ -1771,6 +1769,21 @@ impl<'i, 's, 'b> cssparser::QualifiedRuleParser<'i> for RawRuleParser<'s, 'b> {
             source_order: 0,
             origin: Origin::Author,
         }))
+    }
+}
+
+/// A rule list holds no declarations, so none is parsed.
+impl<'i> DeclarationParser<'i> for RawRuleParser<'_, '_> {
+    type Declaration = NestedParsedRule;
+    type Error = ();
+}
+
+impl<'i> RuleBodyItemParser<'i, NestedParsedRule, ()> for RawRuleParser<'_, '_> {
+    fn parse_qualified(&self) -> bool {
+        true
+    }
+    fn parse_declarations(&self) -> bool {
+        false
     }
 }
 
@@ -1791,7 +1804,10 @@ fn parse_nested_rule_nodes_at_depth(
         budget,
     };
     let mut nodes = Vec::new();
-    let mut rules = StyleSheetParser::new(&mut parser, &mut rule_parser);
+    // A block's contents are a rule list, read without the top-level-only
+    // handling of `<!--`, `-->` and a leading `@charset` (CSS Syntax 3
+    // "consume a block's contents").
+    let mut rules = RuleBodyParser::new(&mut parser, &mut rule_parser);
     while let Some(rule) = rules.next() {
         if let Ok(rule) = rule {
             let source_order = nodes.len() as u32;
@@ -1962,7 +1978,10 @@ fn parse_group_items(
         budget,
     };
     let mut items = Vec::new();
-    let mut group = StyleSheetParser::new(input, &mut rule_parser);
+    // A group's block holds a rule list, read without the top-level-only
+    // handling of `<!--`, `-->` and a leading `@charset` (CSS Syntax 3
+    // "consume a block's contents").
+    let mut group = RuleBodyParser::new(input, &mut rule_parser);
     while let Some(item) = group.next() {
         // Past a limit the tree retains nothing more, so the rest of the
         // group is skipped without being parsed.
@@ -2078,6 +2097,21 @@ impl<'i> cssparser::AtRuleParser<'i> for GroupRuleParser<'_, '_> {
             ),
         };
         Ok(item)
+    }
+}
+
+/// A group's rule list holds no declarations, so none is parsed.
+impl<'i> DeclarationParser<'i> for GroupRuleParser<'_, '_> {
+    type Declaration = GroupItem;
+    type Error = ();
+}
+
+impl<'i> RuleBodyItemParser<'i, GroupItem, ()> for GroupRuleParser<'_, '_> {
+    fn parse_qualified(&self) -> bool {
+        true
+    }
+    fn parse_declarations(&self) -> bool {
+        false
     }
 }
 
@@ -2638,6 +2672,11 @@ struct StyleRuleParser<'s, 'b> {
     source: &'s str,
     opaque_budget: &'b mut OpaqueBudget,
     namespaces: &'b mut NamespaceMap,
+    /// Whether an `@namespace` may still follow. CSS Namespaces 3 section 3
+    /// ignores one after any non-ignored rule other than `@charset`,
+    /// `@import` and `@namespace`; CSS Cascade 5 lets `@layer` statements
+    /// precede it as well.
+    namespaces_open: bool,
     supports_context: &'b SupportsContext<'b>,
     budget: &'b mut ParseBudget,
 }
@@ -2661,12 +2700,13 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
             return parse_page_prelude(input, self.budget).map(ParsedAtRulePrelude::Page);
         }
         if name.eq_ignore_ascii_case("layer") {
-            let start = input.position();
+            let start = input.state();
             if let Ok(names) = input.try_parse(|input| parse_layer_names(input, self.budget)) {
-                consume_raw_component_values(input, self.source)?;
+                // The record keeps the whole prelude as raw text.
+                input.reset(&start);
                 return Ok(ParsedAtRulePrelude::Layer {
                     name: name.to_string(),
-                    prelude: input.slice_from(start).to_owned(),
+                    prelude: consume_raw_component_values(input, self.source)?,
                     names,
                 });
             }
@@ -2676,11 +2716,11 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
             }
         }
         if name.eq_ignore_ascii_case("namespace") {
-            let start = input.position();
+            let start = input.state();
             let (prefix, uri) = parse_namespace_prelude(input)?;
             input.expect_exhausted()?;
-            consume_raw_component_values(input, self.source)?;
-            let prelude = input.slice(start..input.position()).to_owned();
+            input.reset(&start);
+            let prelude = consume_raw_component_values(input, self.source)?;
             return Ok(ParsedAtRulePrelude::Namespace {
                 prefix,
                 uri,
@@ -2705,14 +2745,14 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
                 condition,
             });
         }
-        let start = input.position();
+        let start = input.state();
         if let Ok(Some(descriptor)) =
             input.try_parse(|input| parse_descriptor_prelude(&name, input))
         {
-            consume_raw_component_values(input, self.source)?;
+            input.reset(&start);
             return Ok(ParsedAtRulePrelude::Descriptor {
                 name: name.to_string(),
-                prelude: input.slice_from(start).to_owned(),
+                prelude: consume_raw_component_values(input, self.source)?,
                 descriptor,
             });
         }
@@ -2758,8 +2798,12 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
                 uri,
                 prelude,
             } => {
-                self.namespaces
-                    .insert(prefix.unwrap_or_else(|| Atom::from("")), uri);
+                // A late one is still listed, as other ignored at-rules are,
+                // but declares nothing.
+                if self.namespaces_open {
+                    self.namespaces
+                        .insert(prefix.unwrap_or_else(|| Atom::from("")), uri);
+                }
                 Ok(ParsedRule::OpaqueAtRule(AtRuleRecord {
                     name: "namespace".to_owned(),
                     prelude,
@@ -2849,7 +2893,7 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
                 Ok(ParsedRule::Page(selector, body))
             }
             ParsedAtRulePrelude::Namespace { prelude, .. } => {
-                let body = consume_raw_block_contents(input, self.source)?;
+                let body = consume_raw_component_values(input, self.source)?;
                 Ok(ParsedRule::OpaqueAtRule(AtRuleRecord {
                     name: "namespace".to_owned(),
                     prelude,
@@ -2893,7 +2937,7 @@ impl<'i, 's, 'b> cssparser::AtRuleParser<'i> for StyleRuleParser<'s, 'b> {
                 Ok(ParsedRule::Group(record, condition, items))
             }
             ParsedAtRulePrelude::Opaque { name, prelude } => {
-                let body = consume_raw_block_contents(input, self.source)?;
+                let body = consume_raw_component_values(input, self.source)?;
                 let children = parse_nested_rule_nodes(&body, self.opaque_budget);
                 Ok(ParsedRule::OpaqueAtRule(AtRuleRecord {
                     name,
