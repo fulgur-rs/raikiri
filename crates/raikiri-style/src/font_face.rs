@@ -78,7 +78,8 @@ use std::collections::HashMap;
 
 use cssparser::{
     AtRuleParser, CowRcStr, DeclarationParser, ParseError, Parser, ParserInput, ParserState,
-    QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser, StyleSheetParser, Token, UnicodeRange,
+    QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser, StyleSheetParser, ToCss, Token,
+    UnicodeRange,
 };
 use smol_str::SmolStr;
 
@@ -527,14 +528,11 @@ fn parse_style(input: &mut Parser<'_, '_>) -> Option<FontFaceStyle> {
             // `oblique 10deg` still parses instead of failing exhaustive
             // consumption at the declaration level.
             for _ in 0..2 {
-                let is_angle = matches!(input.next(), Ok(Token::Dimension { unit, .. }) if {
-                    let u: &str = unit.as_ref();
-                    u.eq_ignore_ascii_case("deg")
-                        || u.eq_ignore_ascii_case("grad")
-                        || u.eq_ignore_ascii_case("rad")
-                        || u.eq_ignore_ascii_case("turn")
+                let angle = input.try_parse(|input| match input.next() {
+                    Ok(Token::Dimension { unit, .. }) if is_angle_unit(unit) => Ok(()),
+                    _ => Err(()),
                 });
-                if !is_angle {
+                if angle.is_err() {
                     break;
                 }
             }
@@ -542,6 +540,12 @@ fn parse_style(input: &mut Parser<'_, '_>) -> Option<FontFaceStyle> {
         }
         _ => None,
     }
+}
+
+fn is_angle_unit(unit: &str) -> bool {
+    ["deg", "grad", "rad", "turn"]
+        .iter()
+        .any(|u| unit.eq_ignore_ascii_case(u))
 }
 
 /// `font-weight: normal | bold | <number> | <number> <number>`.
@@ -590,10 +594,16 @@ fn parse_stretch(input: &mut Parser<'_, '_>) -> Option<FontFaceStretch> {
         }
         return Some(FontFaceStretch(SmolStr::new(lower)));
     }
-    if let Ok(percentage) = input.try_parse(|input| input.expect_percentage()) {
-        return Some(FontFaceStretch(SmolStr::new(format!("{percentage}%"))));
-    }
-    None
+    // `<percentage [0,∞]>`: serialize the token itself so `75%` stays
+    // `75%` (`expect_percentage` returns the unit value, i.e. `0.75`).
+    input
+        .try_parse(|input| match input.next() {
+            Ok(token @ Token::Percentage { unit_value, .. }) if *unit_value >= 0.0 => {
+                Ok(FontFaceStretch(SmolStr::new(token.to_css_string())))
+            }
+            _ => Err(()),
+        })
+        .ok()
 }
 
 /// `unicode-range: <unicode-range>#` via cssparser's own `U+…` tokenizer —
