@@ -789,3 +789,12 @@ fn xhtml_cdata_wrappers_around_style_sheets_are_dropped() {
     assert_eq!(removed, 1);
     assert_eq!(out, "<style>\n<![CDATA[\np {  clear: both }\n]]>\n</style>");
 }
+
+#[test]
+fn nested_svg_style_elements_close_separately() {
+    let html = "<svg><style>p{a:1}<style>q{b:2}</style>r{c:3}</style></svg><i style='d:4'>";
+    assert_eq!(keys(html), ["a:1", "c:3", "b:2", "d:4"]);
+    let (out, removed) = remove_declarations(html, |key| key == "c:3");
+    assert_eq!(removed, 1);
+    assert_eq!(out, "<svg><style>p{a:1}r{}</style></svg><i style='d:4'>");
+}

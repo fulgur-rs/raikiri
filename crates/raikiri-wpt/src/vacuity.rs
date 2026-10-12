@@ -754,7 +754,7 @@ impl TokenSink for Recorder<'_> {
         // breaks out of foreign content close it. Other end tags close an
         // element inside it or are ignored.
         let open = dom.open_style.take();
-        if let Some((style, mut inner)) = open {
+        for (style, mut inner) in open {
             let still_open = if eof {
                 false
             } else if let Some(name) = &end_tag {
@@ -776,7 +776,7 @@ impl TokenSink for Recorder<'_> {
                 true
             };
             if still_open {
-                dom.open_style.replace(Some((style, inner)));
+                dom.open_style.borrow_mut().push((style, inner));
             } else {
                 dom.close(style);
             }
@@ -857,8 +857,9 @@ struct Dom {
     token: Cell<(usize, usize)>,
     /// The start tag token the tree builder is processing.
     start_tag: RefCell<Option<PendingTag>>,
-    /// The open style element and the names of the elements open inside it.
-    open_style: RefCell<Option<(usize, Vec<String>)>>,
+    /// The open style elements, outermost first, each with the names of the
+    /// elements open inside it. An SVG style element can hold another one.
+    open_style: RefCell<Vec<(usize, Vec<String>)>>,
 }
 
 impl Dom {
@@ -898,7 +899,7 @@ impl Dom {
                 if pending.self_closing && pending.namespace != ns!(html) {
                     content.end = content.start;
                 } else {
-                    self.open_style.replace(Some((id, Vec::new())));
+                    self.open_style.borrow_mut().push((id, Vec::new()));
                 }
             }
         }
