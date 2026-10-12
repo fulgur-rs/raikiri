@@ -23,3 +23,38 @@ fn top_level_rule_ranges_preserve_preludes_and_declaration_bodies() {
 fn malformed_blocks_stop_rule_parsing_without_panicking() {
     assert!(parse_css_rules("}").is_empty());
 }
+
+#[test]
+fn rule_boundaries_follow_the_css_syntax_top_level_algorithm() {
+    // A `;` does not end a qualified rule's prelude.
+    let rules = parse_css_rules("a;b{} c{}");
+    assert_eq!(
+        rules.iter().map(|r| r.prelude.as_str()).collect::<Vec<_>>(),
+        ["a;b", "c"]
+    );
+
+    // An at-rule without a block may end at EOF.
+    let source = "p{} @import \"x\"";
+    let rules = parse_css_rules(source);
+    assert_eq!(rules.len(), 2);
+    assert_eq!(rules[1].prelude, "@import \"x\"");
+    assert_eq!(&source[rules[1].source.clone()], "@import \"x\"");
+    assert_eq!(rules[1].body, None);
+
+    // Top-level `<!--` and `-->` are skipped, not part of a selector.
+    let rules = parse_css_rules("<!-- p { color: red } -->");
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].prelude, "p");
+}
+
+#[test]
+fn at_rules_with_blocks_record_their_body() {
+    let source = "@media print { p { color: red } }";
+    let rules = parse_css_rules(source);
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].prelude, "@media print");
+    assert_eq!(
+        &source[rules[0].body.clone().unwrap()],
+        " p { color: red } "
+    );
+}

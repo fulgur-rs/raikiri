@@ -8,7 +8,10 @@ use boa_engine::{
     Context, Finalize, JsData, JsError, JsNativeError, JsResult, JsString, JsValue, Trace,
     js_string,
 };
-use cssparser::{Delimiter, Parser, ParserInput, Token};
+use cssparser::{
+    AtRuleParser, CowRcStr, ParseError, Parser, ParserInput, ParserState, QualifiedRuleParser,
+    StyleSheetParser,
+};
 use raikiri_dom::{Document, NodeKind};
 
 use super::indexed::{IndexedSource, indexed_object, this_indexed};
@@ -23,65 +26,126 @@ pub(crate) struct CssRuleInfo {
 }
 
 /// Parse the top-level CSS rules while retaining source ranges for live edits.
+///
+/// Rules are found by cssparser's [`cssparser::StyleSheetParser`], the same
+/// top-level algorithm the cascade uses, so rule boundaries (and therefore
+/// `cssRules` indices) agree with it: a qualified rule's prelude runs up to
+/// its `{` block (a `;` does not end it), an at-rule without a block may end
+/// at EOF, and top-level `<!--`/`-->` are skipped.
 pub(crate) fn parse_css_rules(source: &str) -> Vec<CssRuleInfo> {
     let mut input = ParserInput::new(source);
     let mut parser = Parser::new(&mut input);
-    let mut rules = Vec::new();
-
-    loop {
-        parser.skip_whitespace();
-        let start = parser.position().byte_index();
-        if start >= source.len() {
-            break;
-        }
-        let prelude = parser.parse_until_before(
-            Delimiter::CurlyBracketBlock | Delimiter::Semicolon,
-            |prelude| {
-                let start = prelude.position();
-                while prelude.next_including_whitespace_and_comments().is_ok() {}
-                Ok::<_, cssparser::ParseError<'_, ()>>(
-                    prelude.slice(start..prelude.position()).to_owned(),
-                )
-            },
-        );
-        let Ok(prelude) = prelude else {
-            break; // cov:ignore: The parser closure always returns Ok and consumes tokenizer errors itself.
+    let mut ranges = RuleRangeParser { source };
+    let mut rules = StyleSheetParser::new(&mut parser, &mut ranges);
+    let mut out = Vec::new();
+    while let Some(rule) = rules.next() {
+        let Ok((prelude, start, body)) = rule else {
+            continue; // cov:ignore: RuleRangeParser accepts every rule cssparser hands it.
         };
-        let prelude = prelude.trim().to_owned();
-        let token = parser.next_including_whitespace_and_comments().cloned();
-        match token {
-            Ok(Token::CurlyBracketBlock) => {
-                let body_start = parser.position().byte_index();
-                let body_end = parser.parse_nested_block(|body| {
-                    let start = body.position();
-                    while body.next_including_whitespace_and_comments().is_ok() {}
-                    Ok::<_, cssparser::ParseError<'_, ()>>(
-                        body.position().byte_index().max(start.byte_index()),
-                    )
-                });
-                let Ok(body_end) = body_end else {
-                    break; // cov:ignore: The nested parser closure always returns Ok after consuming its tokens.
-                };
-                let end = parser.position().byte_index();
-                rules.push(CssRuleInfo {
-                    prelude,
-                    source: start..end,
-                    body: Some(body_start..body_end),
-                });
-            }
-            Ok(Token::Semicolon) => {
-                let end = parser.position().byte_index();
-                rules.push(CssRuleInfo {
-                    prelude,
-                    source: start..end,
-                    body: None,
-                });
-            }
-            _ => break,
-        }
+        out.push(CssRuleInfo {
+            prelude,
+            source: start..rules.input.position().byte_index(),
+            body,
+        });
+    }
+    out
+}
+
+/// A rule as [`RuleRangeParser`] reports it: the trimmed prelude text, the
+/// rule's start offset, and its block body's range, if any. The rule's end
+/// offset is read from the parser once the whole rule has been consumed.
+type RuleRange = (String, usize, Option<Range<usize>>);
+
+/// Accepts every top-level rule, recording where it is rather than what it
+/// means. The prelude is the byte offset where the prelude ends.
+struct RuleRangeParser<'s> {
+    source: &'s str,
+}
+
+impl RuleRangeParser<'_> {
+    fn prelude(&self, start: &ParserState, prelude_end: usize) -> String {
+        self.source[start.position().byte_index()..prelude_end]
+            .trim()
+            .to_owned()
     }
 
-    rules
+    fn block<'i>(
+        &self,
+        prelude_end: usize,
+        start: &ParserState,
+        input: &mut Parser<'i, '_>,
+    ) -> RuleRange {
+        let body_start = input.position().byte_index();
+        while input.next_including_whitespace_and_comments().is_ok() {}
+        let body_end = input.position().byte_index().max(body_start);
+        (
+            self.prelude(start, prelude_end),
+            start.position().byte_index(),
+            Some(body_start..body_end),
+        )
+    }
+}
+
+fn consume_prelude<'i>(input: &mut Parser<'i, '_>) -> usize {
+    while input.next_including_whitespace_and_comments().is_ok() {}
+    input.position().byte_index()
+}
+
+impl<'i> AtRuleParser<'i> for RuleRangeParser<'_> {
+    type Prelude = usize;
+    type AtRule = RuleRange;
+    type Error = ();
+
+    fn parse_prelude<'t>(
+        &mut self,
+        _name: CowRcStr<'i>,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<usize, ParseError<'i, ()>> {
+        Ok(consume_prelude(input))
+    }
+
+    fn rule_without_block(
+        &mut self,
+        prelude_end: usize,
+        start: &ParserState,
+    ) -> Result<RuleRange, ()> {
+        Ok((
+            self.prelude(start, prelude_end),
+            start.position().byte_index(),
+            None,
+        ))
+    }
+
+    fn parse_block<'t>(
+        &mut self,
+        prelude_end: usize,
+        start: &ParserState,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<RuleRange, ParseError<'i, ()>> {
+        Ok(self.block(prelude_end, start, input))
+    }
+}
+
+impl<'i> QualifiedRuleParser<'i> for RuleRangeParser<'_> {
+    type Prelude = usize;
+    type QualifiedRule = RuleRange;
+    type Error = ();
+
+    fn parse_prelude<'t>(
+        &mut self,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<usize, ParseError<'i, ()>> {
+        Ok(consume_prelude(input))
+    }
+
+    fn parse_block<'t>(
+        &mut self,
+        prelude_end: usize,
+        start: &ParserState,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<RuleRange, ParseError<'i, ()>> {
+        Ok(self.block(prelude_end, start, input))
+    }
 }
 
 pub(crate) fn stylesheet_text(document: &Document, style_element: usize) -> String {

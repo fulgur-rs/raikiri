@@ -142,12 +142,12 @@ fn fill_style_parses_named_hex_and_rgb_and_ignores_invalid() {
     ok(
         &mut rt,
         "var c = document.createElement('canvas'); var ctx = c.getContext('2d'); \
-         ctx.fillStyle = 'blue'; ctx.fillStyle === 'blue'",
+         ctx.fillStyle = 'blue'; ctx.fillStyle === '#0000ff'",
     );
     ok(
         &mut rt,
         "var c = document.createElement('canvas'); var ctx = c.getContext('2d'); \
-         ctx.fillStyle = 'blue'; ctx.fillStyle = 'not-a-color'; ctx.fillStyle === 'blue'",
+         ctx.fillStyle = 'blue'; ctx.fillStyle = 'not-a-color'; ctx.fillStyle === '#0000ff'",
     );
     ok(
         &mut rt,
@@ -157,7 +157,7 @@ fn fill_style_parses_named_hex_and_rgb_and_ignores_invalid() {
     ok(
         &mut rt,
         "var c = document.createElement('canvas'); var ctx = c.getContext('2d'); \
-         ctx.fillStyle = 'rgb(0, 128, 0)'; ctx.fillStyle === 'rgb(0, 128, 0)'",
+         ctx.fillStyle = 'rgb(0, 128, 0)'; ctx.fillStyle === '#008000'",
     );
 }
 
@@ -260,15 +260,15 @@ fn paint_canvases_helper_sequence_matches_wpt() {
 fn fill_style_accepts_every_supported_color_shape() {
     let mut rt = rt();
     for (input, expected) in [
-        ("transparent", "transparent"),
-        ("#f00", "#f00"),
-        ("#f008", "#f008"),
+        ("transparent", "rgba(0, 0, 0, 0)"),
+        ("#f00", "#ff0000"),
+        ("#f008", "rgba(255, 0, 0, 0.533)"),
         ("#ff0000", "#ff0000"),
-        ("#ff000080", "#ff000080"),
-        ("rgb(255, 0, 0)", "rgb(255, 0, 0)"),
+        ("#ff000080", "rgba(255, 0, 0, 0.5)"),
+        ("rgb(255, 0, 0)", "#ff0000"),
         ("rgba(255, 0, 0, 0.5)", "rgba(255, 0, 0, 0.5)"),
-        ("rgb(100%, 0%, 0%)", "rgb(100%, 0%, 0%)"),
-        ("rgb(255 0 0 / 50%)", "rgb(255 0 0 / 50%)"),
+        ("rgb(100%, 0%, 0%)", "#ff0000"),
+        ("rgb(255 0 0 / 50%)", "rgba(255, 0, 0, 0.5)"),
     ] {
         rt.evaluate(&format!(
             "var c = document.createElement('canvas'); var ctx = c.getContext('2d'); ctx.fillStyle = '{input}';"
@@ -280,15 +280,17 @@ fn fill_style_accepts_every_supported_color_shape() {
     ok(
         &mut rt,
         "var c = document.createElement('canvas'); var ctx = c.getContext('2d'); \
-         ctx.fillStyle = 'blue'; ctx.fillStyle = '#12'; ctx.fillStyle === 'blue' && \
-         (ctx.fillStyle = 'rgb(bogus)', ctx.fillStyle === 'blue')",
+         ctx.fillStyle = 'blue'; ctx.fillStyle = '#12'; ctx.fillStyle === '#0000ff' && \
+         (ctx.fillStyle = 'rgb(bogus)', ctx.fillStyle === '#0000ff')",
     );
     ok(
         &mut rt,
         "var c = document.createElement('canvas'); var ctx = c.getContext('2d'); \
-         ctx.fillStyle = 'blue'; ctx.fillStyle = 'rgb(inf%, 0%, 0%)'; ctx.fillStyle === 'blue' && \
-         (ctx.fillStyle = 'rgb(inf, 0, 0)', ctx.fillStyle === 'blue') && \
-         (ctx.fillStyle = 'rgba(255, 0, 0)', ctx.fillStyle === 'blue')",
+         ctx.fillStyle = 'blue'; ctx.fillStyle = 'rgb(inf%, 0%, 0%)'; ctx.fillStyle === '#0000ff' && \
+         (ctx.fillStyle = 'rgb(inf, 0, 0)', ctx.fillStyle === '#0000ff') && \
+         (ctx.fillStyle = 'rgb(255, 0 0)', ctx.fillStyle === '#0000ff') && \
+         (ctx.fillStyle = '#+12345', ctx.fillStyle === '#0000ff') && \
+         (ctx.fillStyle = 'var(--x)', ctx.fillStyle === '#0000ff')",
     );
 }
 
@@ -343,4 +345,168 @@ fn translucent_fill_blends_in_js_bitmap() {
     let host = rt.into_host();
     let bitmap = host.document().canvas_bitmap(canvas).expect("bitmap");
     assert_eq!(bitmap.rgba.as_slice(), &[128, 0, 127, 255]);
+}
+
+#[test]
+fn fill_style_uses_the_css_color_parser() {
+    let mut rt = rt();
+    // CSS Color 4 shapes and comments the cascade also accepts.
+    for (input, expected) in [
+        ("rgba(255, 0, 0)", "#ff0000"),
+        ("rgb(255,0,0,0.5)", "rgba(255, 0, 0, 0.5)"),
+        ("rgb(255,0,0)/**/", "#ff0000"),
+        ("rgb(255, /* c */ 0, 0)", "#ff0000"),
+        ("hsl(0 100% 50%)", "#ff0000"),
+    ] {
+        ok(
+            &mut rt,
+            &format!(
+                "var c = document.createElement('canvas'); var ctx = c.getContext('2d'); \
+                 ctx.fillStyle = 'blue'; ctx.fillStyle = '{input}'; ctx.fillStyle === '{expected}'"
+            ),
+        );
+    }
+}
+
+#[test]
+fn current_color_fill_uses_the_canvas_color() {
+    let (mut host, _, _, body) = StubHost::page();
+    let canvas = host.document.create_detached_element("canvas").unwrap();
+    host.document.append_child(body, canvas).unwrap();
+    host.document.mark_in_document_flags();
+    host.computed
+        .insert((canvas, "color".to_owned()), "rgb(0, 255, 0)".to_owned());
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var c = document.getElementsByTagName('canvas')[0]; \
+         c.width = 2; c.height = 1; \
+         var ctx = c.getContext('2d'); \
+         ctx.fillStyle = 'currentcolor'; var serialized = ctx.fillStyle; ctx.fillRect(0, 0, 1, 1); \
+         ctx.fillStyle = 'color-mix(in srgb, currentcolor, blue)'; var mixed = ctx.fillStyle; \
+         ctx.fillStyle = 'rgb(255 0 0 / 50%)'; ctx.fillRect(1, 0, 1, 1);",
+    )
+    .unwrap();
+    // `currentcolor` reads back as the color it resolved to; a nested
+    // `currentcolor` the parser cannot resolve is rejected.
+    assert!(
+        rt.evaluate("serialized === '#00ff00' && mixed === '#00ff00'")
+            .unwrap()
+            .to_boolean()
+    );
+    let host = rt.into_host();
+    let bitmap = host.document().canvas_bitmap(canvas).expect("bitmap");
+    assert_eq!(&bitmap.rgba[..4], &[0, 255, 0, 255]);
+    // `rgb(255 0 0 / 50%)` (space syntax with a slash alpha) is translucent.
+    assert_eq!(bitmap.rgba[7], 128);
+}
+
+#[test]
+fn canvas_color_serialization_uses_hex_or_rgba() {
+    assert_eq!(super::serialize_canvas_color([0, 255, 0, 255]), "#00ff00");
+    assert_eq!(
+        super::serialize_canvas_color([255, 0, 0, 128]),
+        "rgba(255, 0, 0, 0.5)"
+    );
+    assert_eq!(
+        super::serialize_canvas_color([1, 2, 3, 0]),
+        "rgba(1, 2, 3, 0)"
+    );
+    assert_eq!(
+        super::serialize_canvas_color([1, 2, 3, 1]),
+        "rgba(1, 2, 3, 0.004)"
+    );
+    // CSS Color 4 "serializing legacy alpha values": an integer percentage
+    // when one maps to the byte, otherwise thousandths.
+    assert_eq!(
+        super::serialize_canvas_color([0, 0, 0, 237]),
+        "rgba(0, 0, 0, 0.93)"
+    );
+    assert_eq!(
+        super::serialize_canvas_color([0, 0, 0, 236]),
+        "rgba(0, 0, 0, 0.925)"
+    );
+}
+
+#[test]
+fn fill_style_rejects_colors_outside_srgb() {
+    let mut rt = rt();
+    for input in [
+        "lab(29% 39 20)",
+        "oklch(60% 0.1 30)",
+        "color(srgb 1 0 0)",
+        "color-mix(in srgb, red, blue)",
+        "rgb(from red r g b)",
+        "rgb(none 0 0)",
+        "hsl(none 100% 50%)",
+        // Math the shared parser leaves deferred has no color to store.
+        "rgb(calc(255) 0 0)",
+        "hsl(calc(120) 100% 50%)",
+    ] {
+        ok(
+            &mut rt,
+            &format!(
+                "var c = document.createElement('canvas'); var ctx = c.getContext('2d'); \
+                 ctx.fillStyle = 'blue'; ctx.fillStyle = '{input}'; ctx.fillStyle === '#0000ff'"
+            ),
+        );
+    }
+    for (input, expected) in [
+        ("hwb(0 0% 0%)", "#ff0000"),
+        ("HSLA(0, 100%, 50%, 0.5)", "rgba(255, 0, 0, 0.5)"),
+        ("Canvas", "#ffffff"),
+        // Math the shared parser resolves is stored as its result.
+        ("hsl(calc(60deg * 2) 100% 50%)", "#00ff00"),
+        ("rgba(calc(50%), 0%, 0%, 0.5)", "rgba(128, 0, 0, 0.5)"),
+    ] {
+        ok(
+            &mut rt,
+            &format!(
+                "var c = document.createElement('canvas'); var ctx = c.getContext('2d'); \
+                 ctx.fillStyle = 'blue'; ctx.fillStyle = '{input}'; ctx.fillStyle === '{expected}'"
+            ),
+        );
+    }
+}
+
+#[test]
+fn current_color_without_a_computed_color_is_black() {
+    let mut rt = rt();
+    // A canvas outside the document has no computed style.
+    ok(
+        &mut rt,
+        "var c = document.createElement('canvas'); var ctx = c.getContext('2d'); \
+         ctx.fillStyle = 'blue'; ctx.fillStyle = 'currentcolor'; ctx.fillStyle === '#000000'",
+    );
+    // A connected canvas whose host cannot report `color` keeps its fill.
+    ok(
+        &mut rt,
+        "var c = document.body.appendChild(document.createElement('canvas')); \
+         var ctx = c.getContext('2d'); \
+         ctx.fillStyle = 'blue'; ctx.fillStyle = 'currentcolor'; ctx.fillStyle === '#0000ff'",
+    );
+}
+
+#[test]
+fn current_color_lookup_failure_is_a_host_error() {
+    let (mut host, ..) = StubHost::page();
+    host.fail_computed = true;
+    let mut rt = DomRuntime::new(host).unwrap();
+    let result = rt.evaluate(
+        "var c = document.body.appendChild(document.createElement('canvas')); \
+         c.getContext('2d').fillStyle = 'currentcolor';",
+    );
+    assert!(result.is_err(), "got {result:?}");
+}
+
+#[test]
+fn deeply_nested_fill_style_is_rejected() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var c = document.createElement('canvas'); var ctx = c.getContext('2d'); \
+         ctx.fillStyle = 'blue'; ctx.fillStyle = 'color-mix(in srgb, '.repeat(20000) + 'red'; \
+         ctx.fillStyle === '#0000ff'",
+    );
+    assert!(super::mentions_current_color(&"(".repeat(20000)));
+    assert!(!super::mentions_current_color(&"(".repeat(100)));
 }
