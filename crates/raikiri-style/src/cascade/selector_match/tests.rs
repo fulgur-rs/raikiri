@@ -7,6 +7,7 @@ use crate::ruletree::{Origin, RuleTree, build_rule_tree};
 use crate::test_dom::TestDoc;
 
 mod filtered_nth_tests;
+mod later_sibling_tests;
 mod namespace_tests;
 
 #[test]

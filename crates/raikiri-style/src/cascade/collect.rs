@@ -22,7 +22,9 @@ use crate::error::CascadeLimitKind;
 use crate::ruletree::{Origin, RuleTree};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleQuirksMode};
 
-use super::html_quirks::{push_img_dimension_hints, push_margin_collapsing_quirk_declarations};
+use super::html_quirks::{
+    SubstantialBoundsCache, push_img_dimension_hints, push_margin_collapsing_quirk_declarations,
+};
 use super::limits::{CandidateBudget, CascadeLimits, Counter, WalkCounts};
 use super::rule_index::{AncestorFilter, RuleIndex};
 use super::selector_match::{
@@ -442,6 +444,9 @@ pub(crate) struct Collector<'a, 'r, D: StyleDom> {
     index: RuleIndex<'r>,
     block_cache: DeclarationBlockCache,
     cell_padding_cache: HashMap<StyleNodeId, Option<u32>>,
+    /// First and last substantial child per parent, for the quirks-mode
+    /// margin-collapsing hints.
+    substantial_bounds: SubstantialBoundsCache,
     /// Scratch list of the rules the index could not rule out for an element.
     candidate_rules: Vec<u32>,
     candidates: CandidateBudget,
@@ -503,6 +508,7 @@ impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
             index,
             block_cache: DeclarationBlockCache::new(stored_block_budget),
             cell_padding_cache: HashMap::new(),
+            substantial_bounds: SubstantialBoundsCache::new(),
             candidate_rules: Vec::new(),
             candidates: CandidateBudget::new(limits),
             selector_tests: Counter::new(
@@ -657,6 +663,7 @@ impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
             elem,
             ancestor_path,
             self.quirks_mode,
+            &mut self.substantial_bounds,
             &mut sink,
         )?; // cov:ignore: the error branch needs a u32 handle overflow
         // stylesheet rule matching, restricted to the rules the
