@@ -21,6 +21,9 @@ use crate::image_decoder::ImageDecoder;
 pub(crate) const MAX_SVG_BYTES: usize = 32 * 1024 * 1024;
 const MAX_CACHE_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_CACHE_ENTRIES: usize = 256;
+/// SVG rasters kept per source, one per paint size, so that an image painted
+/// at a few sizes in turn is not rasterized again at every switch.
+const MAX_RASTER_SIZES: usize = 4;
 
 struct CacheBudget {
     used: u64,
@@ -54,7 +57,8 @@ pub(crate) struct ResourceLoader<N> {
 pub(crate) struct ImageSource {
     kind: ImageSourceKind,
     pub(crate) intrinsic: ImageIntrinsicSize,
-    raster_cache: Mutex<Option<(ImageRasterSize, Arc<DecodedImage>)>>,
+    /// SVG rasters by paint size, least recently used first.
+    raster_cache: Mutex<Vec<(ImageRasterSize, Arc<DecodedImage>)>>,
     budget: Arc<Mutex<CacheBudget>>,
 }
 
@@ -74,7 +78,7 @@ impl ImageSource {
                 height: Some(height),
                 aspect_ratio: (height > 0.0).then_some(width / height),
             },
-            raster_cache: Mutex::new(None),
+            raster_cache: Mutex::new(Vec::new()),
             budget,
         }
     }
@@ -90,7 +94,7 @@ impl ImageSource {
                 height: intrinsic.height,
                 aspect_ratio: intrinsic.aspect_ratio,
             },
-            raster_cache: Mutex::new(None),
+            raster_cache: Mutex::new(Vec::new()),
             budget,
         }
     }
@@ -110,21 +114,25 @@ impl ImageSource {
             }
             ImageSourceKind::Svg(bytes) => {
                 let mut cached = self.raster_cache.lock().ok()?;
-                if let Some((cached_size, cached_image)) = &*cached
-                    && *cached_size == size
-                {
+                if let Some(index) = cached.iter().position(|(cached, _)| *cached == size) {
+                    let entry = cached.remove(index);
+                    let image = entry.1.clone();
+                    cached.push(entry);
                     return max_output_bytes
-                        .is_none_or(|limit| cached_image.rgba.len() as u64 <= limit)
-                        .then(|| cached_image.clone());
+                        .is_none_or(|limit| image.rgba.len() as u64 <= limit)
+                        .then_some(image);
                 }
-                let old_bytes = cached
-                    .as_ref()
-                    .map_or(0, |(_, image)| image.rgba.len() as u64);
+                let cached_bytes: u64 = cached
+                    .iter()
+                    .map(|(_, image)| image.rgba.len() as u64)
+                    .sum();
                 // Serialize allocations across all sources sharing this cache.
-                // Keep the previous raster on failure. During replacement the
-                // extra buffer is bounded by the SVG per-image output limit.
+                // Keep the previous rasters on failure. The new raster may
+                // use the bytes of every cached size, which are then evicted,
+                // so the extra buffer is bounded by the SVG per-image output
+                // limit.
                 let mut budget = self.budget.lock().ok()?;
-                let available = budget.remaining().checked_add(old_bytes)?;
+                let available = budget.remaining().checked_add(cached_bytes)?;
                 let limit = max_output_bytes.map_or(available, |limit| limit.min(available));
                 let document = SvgDocument::parse(bytes).ok()?;
                 let image = document
@@ -137,9 +145,19 @@ impl ImageSource {
                         Some(limit),
                     )
                     .ok()?;
-                budget.used = budget.used.checked_sub(old_bytes)? + image.rgba.len() as u64;
                 let image = Arc::new(image);
-                *cached = Some((size, image.clone()));
+                let new_bytes = image.rgba.len() as u64;
+                // Evict the least recently used sizes until the new raster
+                // fits the budget and the size count.
+                let mut excess = new_bytes.saturating_sub(budget.remaining());
+                while !cached.is_empty() && (cached.len() >= MAX_RASTER_SIZES || excess > 0) {
+                    let (_, old) = cached.remove(0);
+                    let old_bytes = old.rgba.len() as u64;
+                    excess = excess.saturating_sub(old_bytes);
+                    budget.used = budget.used.checked_sub(old_bytes)?;
+                }
+                budget.used += new_bytes;
+                cached.push((size, image.clone()));
                 Some(image)
             }
         }
@@ -160,7 +178,7 @@ impl ImageSource {
                 .raster_cache
                 .lock()
                 .ok()?
-                .as_ref()
+                .last()
                 .map(|(_, image)| image.clone()),
         }
     }

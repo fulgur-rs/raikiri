@@ -53,10 +53,28 @@ enum CachedBackgroundSource {
     Svg(Arc<SvgDocument>),
 }
 
+/// Rasters kept per background image, one per paint size, so that an SVG
+/// painted at a few sizes in turn is not rasterized again at every switch.
+const MAX_RASTER_SIZES: usize = 4;
+
 #[derive(Clone)]
 struct CachedBackgroundImage {
     source: CachedBackgroundSource,
-    raster: Option<(ImageRasterSize, Arc<DecodedImage>)>,
+    /// Rasters by paint size, oldest first.
+    rasters: Vec<(ImageRasterSize, Arc<DecodedImage>)>,
+}
+
+impl CachedBackgroundImage {
+    fn raster(&self, size: ImageRasterSize) -> Option<Arc<DecodedImage>> {
+        self.rasters
+            .iter()
+            .find(|(cached, _)| *cached == size)
+            .map(|(_, image)| image.clone())
+    }
+}
+
+fn image_bytes(image: &DecodedImage) -> u64 {
+    u64::try_from(image.rgba.len()).unwrap_or(u64::MAX)
 }
 
 /// Process-wide budget shared by every [`RenderResources`] for CSS background decoding.
@@ -280,17 +298,15 @@ impl Drop for DecodedImageCache {
 
 impl DecodedImageCache {
     fn raster_bytes(entry: &CachedBackgroundImage) -> u64 {
-        entry
-            .raster
-            .as_ref()
-            .map(|(_, image)| u64::try_from(image.rgba.len()).unwrap_or(u64::MAX))
-            .or_else(|| match &entry.source {
-                CachedBackgroundSource::Raster(image) => {
-                    Some(u64::try_from(image.rgba.len()).unwrap_or(u64::MAX))
-                }
-                CachedBackgroundSource::Svg(_) => None,
-            })
-            .unwrap_or(0)
+        if entry.rasters.is_empty() {
+            return match &entry.source {
+                CachedBackgroundSource::Raster(image) => image_bytes(image),
+                CachedBackgroundSource::Svg(_) => 0,
+            };
+        }
+        entry.rasters.iter().fold(0, |sum: u64, (_, image)| {
+            sum.saturating_add(image_bytes(image))
+        })
     }
 
     fn remaining_for(&self, url: &Url) -> u64 {
@@ -312,11 +328,15 @@ impl DecodedImageCache {
             url,
             CachedBackgroundImage {
                 source,
-                raster: None,
+                rasters: Vec::new(),
             },
         );
     }
 
+    /// Cache `image` as the raster of `url` at `size`, next to the rasters
+    /// of other sizes. The oldest sizes make room when the size count or a
+    /// byte budget would be exceeded; the error reports the budget left for
+    /// `image` alone when even that does not fit.
     fn insert_raster(
         &mut self,
         url: Url,
@@ -324,32 +344,59 @@ impl DecodedImageCache {
         size: ImageRasterSize,
         image: Arc<DecodedImage>,
     ) -> Result<(), (u64, u64)> {
-        let actual = u64::try_from(image.rgba.len()).unwrap_or(u64::MAX);
+        let actual = image_bytes(&image);
         let prior = self.prior_bytes(&url);
         let per_available = self.remaining_for(&url);
-        if actual > per_available {
-            return Err((per_available, actual));
-        }
-        if actual > prior {
-            let delta = actual.saturating_sub(prior);
-            if !self.process_budget.try_reserve(delta) {
-                let global_available = self.process_budget.available_for(prior);
-                return Err((global_available.min(per_available), actual));
+        let previous = self.entries.get(&url);
+        let svg = matches!(
+            previous.map_or(&source, |entry| &entry.source),
+            CachedBackgroundSource::Svg(_)
+        );
+        // A decoded raster image has one size; only SVG keeps several.
+        let mut rasters: Vec<_> = match previous {
+            Some(entry) if svg => entry.rasters.clone(),
+            _ => Vec::new(),
+        };
+        rasters.retain(|(cached, _)| *cached != size);
+        rasters.push((size, image));
+        let excess = rasters.len().saturating_sub(MAX_RASTER_SIZES);
+        rasters.drain(..excess);
+        loop {
+            let total = rasters.iter().fold(0, |sum: u64, (_, image)| {
+                sum.saturating_add(image_bytes(image))
+            });
+            let fits = total <= per_available
+                && (total <= prior || self.process_budget.try_reserve(total - prior));
+            if fits {
+                if prior > total {
+                    self.process_budget.release(prior - total);
+                }
+                self.decoded_bytes = self
+                    .decoded_bytes
+                    .saturating_sub(prior)
+                    .saturating_add(total);
+                break;
             }
-        } else if prior > actual {
-            self.process_budget.release(prior.saturating_sub(actual));
+            if rasters.len() == 1 {
+                let limit = if actual > per_available {
+                    per_available
+                } else {
+                    self.process_budget.available_for(prior).min(per_available)
+                };
+                return Err((limit, actual));
+            }
+            rasters.remove(0);
         }
-        let previous = self.entries.remove(&url);
-        let retained_source = previous.map(|entry| entry.source).unwrap_or(source);
-        self.decoded_bytes = self
-            .decoded_bytes
-            .saturating_sub(prior)
-            .saturating_add(actual);
+        let retained_source = self
+            .entries
+            .remove(&url)
+            .map(|entry| entry.source)
+            .unwrap_or(source);
         self.entries.insert(
             url,
             CachedBackgroundImage {
                 source: retained_source,
-                raster: Some((size, image)),
+                rasters,
             },
         );
         Ok(())
@@ -1487,9 +1534,10 @@ impl ImagePixelSource for RenderResources<'_> {
         if let Some(cached) = self.cached_background_image(&canonical) {
             return match cached.source {
                 CachedBackgroundSource::Raster(image) => Some(image.rgba.len() as u64),
-                CachedBackgroundSource::Svg(_) => {
-                    cached.raster.map(|(_, image)| image.rgba.len() as u64)
-                }
+                CachedBackgroundSource::Svg(_) => cached
+                    .rasters
+                    .last()
+                    .map(|(_, image)| image.rgba.len() as u64),
             };
         }
         self.image_pixel_source?.decoded_byte_len(url)
@@ -1522,8 +1570,7 @@ impl ImagePixelSource for RenderResources<'_> {
                     return Some(image);
                 }
                 CachedBackgroundSource::Svg(_) => {
-                    if let Some((cached_size, image)) = cached.raster
-                        && cached_size == size
+                    if let Some(image) = cached.raster(size)
                         && effective_limit.is_none_or(|limit| image.rgba.len() as u64 <= limit)
                     {
                         return Some(image);
@@ -1531,8 +1578,7 @@ impl ImagePixelSource for RenderResources<'_> {
                     let start = Instant::now();
                     let _permit = self.acquire_decode_permit();
                     let cached = self.cached_background_image(&canonical)?;
-                    if let Some((cached_size, image)) = cached.raster
-                        && cached_size == size
+                    if let Some(image) = cached.raster(size)
                         && effective_limit.is_none_or(|limit| image.rgba.len() as u64 <= limit)
                     {
                         return Some(image);
