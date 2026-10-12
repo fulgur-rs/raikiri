@@ -652,6 +652,28 @@ fn a_long_row_of_tiny_tiles_still_paints() {
         "{} commands",
         scene.commands.len()
     );
+
+    // The axis that does not repeat keeps its single tile.
+    let area = Rect::new(0.0, 0.0, 20_000.0, 100.0);
+    let mut scene = Scene::new();
+    gradient::paint_gradient_layer(
+        &mut scene,
+        &gradient_of(&cv),
+        area,
+        area,
+        None,
+        &cv.background_size,
+        &cv.background_position,
+        &cv.background_repeat,
+        cv.color,
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        20,
+        100,
+    );
+    assert_eq!(pixel(&rgba, 20, 5, 5)[3], 255);
+    assert_eq!(pixel(&rgba, 20, 5, 50)[3], 0);
 }
 
 #[test]

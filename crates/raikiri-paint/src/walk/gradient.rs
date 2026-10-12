@@ -92,9 +92,41 @@ pub(super) fn paint_gradient_layer(
     if estimate(repeat_x, painting.width(), tile_w) * estimate(repeat_y, painting.height(), tile_h)
         > MAX_GRADIENT_TILES as f64
     {
+        // A `no-repeat` axis still shows its one positioned tile.
+        let span = |repeats: bool, start: f64, extent: f64, tile: f64, offset| {
+            if repeats {
+                (f64::NEG_INFINITY, f64::INFINITY)
+            } else {
+                let start = start + position_offset(offset, extent - tile);
+                (start, start + tile)
+            }
+        };
+        let (x0, x1) = span(
+            repeat_x,
+            positioning.x0,
+            positioning.width(),
+            tile_w,
+            position.horizontal,
+        );
+        let (y0, y1) = span(
+            repeat_y,
+            positioning.y0,
+            positioning.height(),
+            tile_h,
+            position.vertical,
+        );
+        let area = Rect::new(
+            x0.max(painting.x0),
+            y0.max(painting.y0),
+            x1.min(painting.x1),
+            y1.min(painting.y1),
+        );
         let tile = Rect::new(0.0, 0.0, tile_w, tile_h);
-        if let Some(fill) = gradient_fill(gradient, tile, current_color) {
-            fill_average(scene, &fill, painting, clip);
+        if area.width() > 0.0
+            && area.height() > 0.0
+            && let Some(fill) = gradient_fill(gradient, tile, current_color)
+        {
+            fill_average(scene, &fill, area, clip);
         }
         return true;
     }
