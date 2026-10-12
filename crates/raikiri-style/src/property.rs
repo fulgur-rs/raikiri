@@ -19,7 +19,10 @@ pub use names::*;
 mod calc_serialize;
 
 mod media_math;
-pub(crate) use media_math::{MediaNumericType, math_value_has_type};
+pub(crate) use media_math::{
+    MathTypes, MediaNumericType, is_math_function_name, math_value_has_type, parse_math_function,
+    product_operator, sum_operator,
+};
 
 mod serialize;
 pub use serialize::*;

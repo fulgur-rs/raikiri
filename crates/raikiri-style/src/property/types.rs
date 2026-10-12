@@ -11642,7 +11642,7 @@ fn is_deferred_function(name: &str) -> bool {
 /// length/percentage/dimension, so it should be rejected as invalid parsing
 /// rather than deferred. Valid examples like `calc(2em + 3ex)` or
 /// `min(20px, 10px)` contain only Dimension/Percentage/Number and operators.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ColorMathType {
     Number,
     Percentage,
@@ -11652,13 +11652,6 @@ pub(crate) enum ColorMathType {
     OtherDimension,
     Unknown,
     Invalid,
-}
-
-#[derive(Clone, Copy)]
-pub(crate) enum MathTerm {
-    Value(ColorMathType),
-    Operator(char),
-    Comma,
 }
 
 pub(crate) fn color_math_dimension_type(unit: &str) -> ColorMathType {
@@ -11780,89 +11773,6 @@ fn color_math_divide(left: ColorMathType, right: ColorMathType) -> ColorMathType
     ColorMathType::Invalid
 }
 
-pub(crate) struct MathTermsParser {
-    terms: Vec<MathTerm>,
-    index: usize,
-}
-
-impl MathTermsParser {
-    pub(crate) fn new(terms: Vec<MathTerm>) -> Self {
-        Self { terms, index: 0 }
-    }
-
-    fn peek(&self) -> Option<MathTerm> {
-        self.terms.get(self.index).copied()
-    }
-
-    fn take(&mut self) -> Option<MathTerm> {
-        let term = self.peek()?;
-        self.index += 1;
-        Some(term)
-    }
-
-    fn parse_primary(&mut self) -> ColorMathType {
-        if matches!(self.peek(), Some(MathTerm::Operator('+' | '-'))) {
-            self.take();
-        }
-        match self.take() {
-            Some(MathTerm::Value(value)) => value,
-            _ => ColorMathType::Invalid,
-        }
-    }
-
-    fn parse_product(&mut self) -> ColorMathType {
-        let mut value = self.parse_primary();
-        while let Some(MathTerm::Operator(operator)) = self.peek() {
-            if !matches!(operator, '*' | '/') {
-                break;
-            }
-            self.take();
-            let right = self.parse_primary();
-            value = if operator == '*' {
-                color_math_multiply(value, right)
-            } else {
-                color_math_divide(value, right)
-            };
-        }
-        value
-    }
-
-    fn parse_sum(&mut self) -> ColorMathType {
-        let mut value = self.parse_product();
-        while let Some(MathTerm::Operator(operator)) = self.peek() {
-            if !matches!(operator, '+' | '-') {
-                break;
-            }
-            self.take();
-            let right = self.parse_product();
-            value = color_math_add(value, right);
-        }
-        value
-    }
-
-    pub(crate) fn parse_all(&mut self, allow_comma: bool) -> ColorMathType {
-        if self.terms.is_empty() {
-            return ColorMathType::Invalid;
-        }
-        let mut value = self.parse_sum();
-        if matches!(self.peek(), Some(MathTerm::Comma)) {
-            if !allow_comma {
-                return ColorMathType::Invalid;
-            }
-            while matches!(self.peek(), Some(MathTerm::Comma)) {
-                self.take();
-                let right = self.parse_sum();
-                value = color_math_add(value, right);
-            }
-        }
-        if self.index != self.terms.len() {
-            ColorMathType::Invalid
-        } else {
-            value
-        }
-    }
-}
-
 pub(crate) fn consume_math_component_values<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<(), ParseError<'i, ()>> {
@@ -11884,81 +11794,86 @@ pub(crate) fn consume_math_component_values<'i>(
     Ok(())
 }
 
-fn color_math_expression_type<'i>(
-    input: &mut Parser<'i, '_>,
-    allow_comma: bool,
-) -> Result<ColorMathType, ParseError<'i, ()>> {
-    let mut terms = Vec::new();
-    loop {
-        let token = match input.next() {
-            Ok(token) => token.clone(),
-            Err(_) => break,
-        };
-        match token {
-            Token::Number { .. } => terms.push(MathTerm::Value(ColorMathType::Number)),
-            Token::Percentage { .. } => terms.push(MathTerm::Value(ColorMathType::Percentage)),
-            Token::Dimension { ref unit, .. } => {
-                terms.push(MathTerm::Value(color_math_dimension_type(unit.as_ref())))
-            }
-            Token::Ident(ref name) if is_math_constant(name.as_ref()) => {
-                terms.push(MathTerm::Value(ColorMathType::Number));
-            }
-            Token::Ident(_) => terms.push(MathTerm::Value(ColorMathType::Invalid)),
-            Token::Function(ref name) => {
-                let name_lower = name.as_ref().to_ascii_lowercase();
-                let function_type = if name_lower == "var" || name_lower == "env" {
-                    input.parse_nested_block(|nested| {
-                        consume_math_component_values(nested)?;
-                        Ok::<_, ParseError<'_, ()>>(ColorMathType::Unknown)
-                    })?
-                } else {
-                    let nested_allows_comma = matches!(
-                        name_lower.as_str(),
-                        "min" | "max" | "clamp" | "round" | "mod" | "rem" | "atan2"
-                    );
-                    let nested = input
-                        .parse_nested_block(|nested| {
-                            color_math_expression_type(nested, nested_allows_comma)
-                        })
-                        .unwrap_or(ColorMathType::Invalid);
-                    if !relative_math_function(name_lower.as_ref()) {
-                        ColorMathType::Invalid
-                    } else {
-                        match name_lower.as_str() {
-                            "calc" | "min" | "max" | "clamp" | "abs" | "round" | "mod" | "rem" => {
-                                nested
-                            }
-                            "sign" | "pow" | "sqrt" | "hypot" | "log" | "exp" | "sin" | "cos"
-                            | "tan" | "asin" | "acos" | "atan" | "atan2" => {
-                                if nested == ColorMathType::Invalid {
-                                    ColorMathType::Invalid
-                                } else {
-                                    ColorMathType::Number
-                                }
-                            }
-                            _ => ColorMathType::Invalid,
-                        }
-                    }
-                };
-                terms.push(MathTerm::Value(function_type));
-            }
-            Token::ParenthesisBlock => {
-                let nested = input
-                    .parse_nested_block(|nested| color_math_expression_type(nested, false))
-                    .unwrap_or(ColorMathType::Invalid);
-                terms.push(MathTerm::Value(nested));
-            }
-            Token::Delim('+' | '-' | '*' | '/') => {
-                if let Token::Delim(operator) = token {
-                    terms.push(MathTerm::Operator(operator));
-                }
-            }
-            Token::Comma if allow_comma => terms.push(MathTerm::Comma),
-            Token::WhiteSpace(_) | Token::Comment(_) => {}
-            _ => terms.push(MathTerm::Value(ColorMathType::Invalid)),
-        }
+/// The numeric type algebra of math functions in property values and color
+/// components.
+///
+/// Percentages combine with lengths, and `var()` stands for a value of any
+/// type until substitution. `channel` names the relative color channel
+/// keywords that may appear as numbers.
+#[derive(Default)]
+pub(crate) struct ValueMathTypes<'a> {
+    pub(crate) channel: Option<&'a dyn Fn(&str) -> bool>,
+}
+
+impl MathTypes for ValueMathTypes<'_> {
+    type Kind = ColorMathType;
+
+    fn number(&self) -> ColorMathType {
+        ColorMathType::Number
     }
-    Ok(MathTermsParser::new(terms).parse_all(allow_comma))
+
+    fn length(&self) -> ColorMathType {
+        ColorMathType::Length
+    }
+
+    fn angle(&self) -> ColorMathType {
+        ColorMathType::Angle
+    }
+
+    fn percentage(&self) -> ColorMathType {
+        ColorMathType::Percentage
+    }
+
+    fn dimension(&self, unit: &str) -> Option<ColorMathType> {
+        let kind = color_math_dimension_type(unit);
+        // Other dimensions are times, frequencies, resolutions and flex;
+        // an unknown unit is not a dimension at all.
+        (kind != ColorMathType::OtherDimension
+            || matches!(
+                unit.to_ascii_lowercase().as_str(),
+                "s" | "ms" | "hz" | "khz" | "dpi" | "dpcm" | "dppx" | "x" | "fr"
+            ))
+        .then_some(kind)
+    }
+
+    fn ident(&self, name: &str) -> Option<ColorMathType> {
+        // Relative channel keywords are unitless channel values. A
+        // percentage or angle can still be produced by multiplying or
+        // dividing them, but they cannot be added to one directly.
+        self.channel
+            .is_some_and(|channel| channel(name))
+            .then_some(ColorMathType::Number)
+    }
+
+    fn substitution(&self) -> Option<ColorMathType> {
+        Some(ColorMathType::Unknown)
+    }
+
+    fn add(&self, left: ColorMathType, right: ColorMathType) -> Option<ColorMathType> {
+        Some(color_math_add(left, right)).filter(|kind| *kind != ColorMathType::Invalid)
+    }
+
+    fn product(
+        &self,
+        left: ColorMathType,
+        right: ColorMathType,
+        operator: char,
+    ) -> Option<ColorMathType> {
+        let kind = if operator == '*' {
+            color_math_multiply(left, right)
+        } else {
+            color_math_divide(left, right)
+        };
+        (kind != ColorMathType::Invalid).then_some(kind)
+    }
+
+    fn is_number(&self, kind: ColorMathType) -> bool {
+        matches!(kind, ColorMathType::Number | ColorMathType::Unknown)
+    }
+
+    fn is_angle(&self, kind: ColorMathType) -> bool {
+        matches!(kind, ColorMathType::Angle | ColorMathType::Unknown)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -11995,7 +11910,9 @@ pub(crate) fn parse_color_math_value<'i>(
     if !name.eq_ignore_ascii_case("calc") {
         return Err(input.new_custom_error(()));
     }
-    let value = input.parse_nested_block(|nested| color_math_expression_type(nested, false))?;
+    let value = input.parse_nested_block(|nested| {
+        parse_math_function(&ValueMathTypes::default(), nested, "calc")
+    })?;
     if color_math_type_allowed(value, context) {
         Ok((value, 0.0))
     } else {
@@ -12046,11 +11963,8 @@ fn math_syntax_valid_in_parser(parser: &mut Parser<'_, '_>, depth: usize) -> boo
                 let valid = parser
                     .parse_nested_block(|nested| {
                         if is_math {
-                            // Inside math, check inner tokens are valid calc expression
-                            Ok::<_, ParseError<'_, ()>>(math_calc_inner_is_valid(
-                                nested,
-                                depth.saturating_add(1),
-                            ))
+                            parse_math_function(&ValueMathTypes::default(), nested, &name)
+                                .map(|_| true)
                         } else {
                             // Non-math function: recursively check inside
                             Ok::<_, ParseError<'_, ()>>(math_syntax_valid_in_parser(
@@ -12081,97 +11995,6 @@ fn math_syntax_valid_in_parser(parser: &mut Parser<'_, '_>, depth: usize) -> boo
         }
     }
     true
-}
-
-fn math_calc_inner_is_valid(parser: &mut Parser<'_, '_>, depth: usize) -> bool {
-    if depth > MAX_DEFERRED_VALUE_NESTING_DEPTH {
-        return false;
-    }
-    let mut has_content = false;
-    loop {
-        let token = match parser.next() {
-            Ok(t) => t.clone(),
-            Err(_) => break,
-        };
-        has_content = true;
-        match token {
-            Token::Dimension { .. } | Token::Percentage { .. } | Token::Number { .. } => {}
-            Token::Delim('+' | '-' | '*' | '/' | ',' | '(' | ')') => {}
-            Token::WhiteSpace(_) | Token::Comment(_) => {}
-            Token::ParenthesisBlock | Token::SquareBracketBlock | Token::CurlyBracketBlock => {
-                let valid = parser
-                    .parse_nested_block(|nested| {
-                        Ok::<_, ParseError<'_, ()>>(math_calc_inner_is_valid(
-                            nested,
-                            depth.saturating_add(1),
-                        ))
-                    })
-                    .unwrap_or(false);
-                if !valid {
-                    return false;
-                }
-            }
-            Token::Function(name) => {
-                // Nested math functions are allowed (e.g., calc(calc(...)))
-                let is_math = MATH_FUNCTIONS.iter().any(|m| name.eq_ignore_ascii_case(m));
-                let valid = parser
-                    .parse_nested_block(|nested| {
-                        if is_math || !name.eq_ignore_ascii_case("var") {
-                            // CSS math functions such as sign() have a
-                            // numeric expression as their argument. `var()`
-                            // is the exception: its custom-property syntax is
-                            // not a math expression, but it is still valid in
-                            // a deferred calc and must be consumed in full.
-                            Ok::<_, ParseError<'_, ()>>(math_calc_inner_is_valid(
-                                nested,
-                                depth.saturating_add(1),
-                            ))
-                        } else {
-                            while nested.next().is_ok() {}
-                            Ok::<_, ParseError<'_, ()>>(true)
-                        }
-                    })
-                    .unwrap_or(false);
-                if !is_math && !valid {
-                    return false;
-                }
-                // For math nested, if valid is false, fail
-                if is_math && !valid {
-                    return false;
-                }
-            }
-            Token::Ident(ref name) if is_math_constant(name) => {}
-            Token::Ident(_)
-            | Token::IDHash(_)
-            | Token::Hash(_)
-            | Token::AtKeyword(_)
-            | Token::UnquotedUrl(_) => {
-                // Bare ident like `foo` inside calc is invalid
-                return false;
-            }
-            Token::QuotedString(_)
-            | Token::BadString(_)
-            | Token::BadUrl(_)
-            | Token::Colon
-            | Token::Semicolon
-            | Token::Comma
-            | Token::IncludeMatch
-            | Token::DashMatch
-            | Token::PrefixMatch
-            | Token::SuffixMatch
-            | Token::SubstringMatch => {
-                // These inside calc are invalid
-                if !matches!(token, Token::Comma) {
-                    return false;
-                }
-            }
-            _ => {
-                // Any other token considered invalid for calc inner
-                return false;
-            }
-        }
-    }
-    has_content
 }
 
 /// Whether `value` contains any dimension or percentage token inside a

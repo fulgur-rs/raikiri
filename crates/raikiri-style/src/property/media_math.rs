@@ -1,4 +1,9 @@
-//! Numeric grammar used to retain valid, unevaluated paper media features.
+//! Typed grammar of CSS math functions (CSS Values 4 §10).
+//!
+//! One grammar serves every caller that checks a math expression without
+//! evaluating it: paper media features, deferred property values and color
+//! components. Callers differ only in their numeric type algebra, given by a
+//! [`MathTypes`] implementation.
 
 use cssparser::{ParseError, Parser, ParserInput, Token};
 
@@ -41,9 +46,92 @@ impl NumericType {
     }
 }
 
+/// The numeric type algebra a caller checks math expressions against.
+pub(crate) trait MathTypes {
+    type Kind: Copy + PartialEq;
+
+    fn number(&self) -> Self::Kind;
+    fn length(&self) -> Self::Kind;
+    fn angle(&self) -> Self::Kind;
+    fn percentage(&self) -> Self::Kind;
+    /// The type of a dimension, or `None` for a unit the caller rejects.
+    fn dimension(&self, unit: &str) -> Option<Self::Kind>;
+    /// The type of an identifier other than a math constant, such as a
+    /// relative color channel keyword.
+    fn ident(&self, _name: &str) -> Option<Self::Kind> {
+        None
+    }
+    /// The type of a `var()` whose value is only known after substitution,
+    /// or `None` where none is allowed.
+    fn substitution(&self) -> Option<Self::Kind> {
+        None
+    }
+    /// The type of `left + right`, or `None` when the types do not match.
+    fn add(&self, left: Self::Kind, right: Self::Kind) -> Option<Self::Kind>;
+    /// The type of `left * right` or `left / right`.
+    fn product(&self, left: Self::Kind, right: Self::Kind, operator: char) -> Option<Self::Kind>;
+    fn is_number(&self, kind: Self::Kind) -> bool {
+        kind == self.number()
+    }
+    fn is_angle(&self, kind: Self::Kind) -> bool {
+        kind == self.angle()
+    }
+}
+
+/// Exact CSS Values 4 type checking for media features, which take no
+/// percentages and no substitution functions.
+struct MediaTypes;
+
+impl MathTypes for MediaTypes {
+    type Kind = NumericType;
+
+    fn number(&self) -> NumericType {
+        NumericType::NUMBER
+    }
+
+    fn length(&self) -> NumericType {
+        NumericType::dimension(0)
+    }
+
+    fn angle(&self) -> NumericType {
+        NumericType::dimension(2)
+    }
+
+    fn percentage(&self) -> NumericType {
+        NumericType::dimension(1)
+    }
+
+    fn dimension(&self, unit: &str) -> Option<NumericType> {
+        let index = if color_math_dimension_type(unit) == ColorMathType::Length {
+            0
+        } else {
+            match unit.to_ascii_lowercase().as_str() {
+                "deg" | "grad" | "rad" | "turn" => 2,
+                "s" | "ms" => 3,
+                "hz" | "khz" => 4,
+                "dpi" | "dpcm" | "dppx" | "x" => 5,
+                "fr" => 6,
+                _ => return None,
+            }
+        };
+        Some(NumericType::dimension(index))
+    }
+
+    fn add(&self, left: NumericType, right: NumericType) -> Option<NumericType> {
+        (left == right).then_some(left)
+    }
+
+    fn product(
+        &self,
+        left: NumericType,
+        right: NumericType,
+        operator: char,
+    ) -> Option<NumericType> {
+        left.product(right, operator)
+    }
+}
+
 /// Validate complete math grammar and numeric type for a media feature.
-/// This separate parser exposes strict feature validation without changing
-/// the existing property parser's deferred color-math approximations.
 pub(crate) fn math_value_has_type(source: &str, expected: MediaNumericType) -> bool {
     let expected = match expected {
         MediaNumericType::Number => NumericType::NUMBER,
@@ -52,93 +140,155 @@ pub(crate) fn math_value_has_type(source: &str, expected: MediaNumericType) -> b
     let mut parser_input = ParserInput::new(source);
     let mut parser = Parser::new(&mut parser_input);
     parser
-        .parse_entirely(|input| parse_sum(input, 0))
+        .parse_entirely(|input| parse_sum(&MediaTypes, input, 0))
         .is_ok_and(|kind| kind == expected)
 }
 
-fn parse_sum<'i>(input: &mut Parser<'i, '_>, depth: usize) -> MathResult<'i, NumericType> {
-    let mut kind = parse_product(input, depth)?;
+/// Whether `name` is a math function this grammar knows.
+pub(crate) fn is_math_function_name(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "calc"
+            | "min"
+            | "max"
+            | "clamp"
+            | "round"
+            | "mod"
+            | "rem"
+            | "abs"
+            | "sign"
+            | "pow"
+            | "sqrt"
+            | "hypot"
+            | "log"
+            | "exp"
+            | "sin"
+            | "cos"
+            | "tan"
+            | "asin"
+            | "acos"
+            | "atan"
+            | "atan2"
+    )
+}
+
+/// Type a math function's arguments, the content of its nested block.
+pub(crate) fn parse_math_function<'i, T: MathTypes>(
+    types: &T,
+    input: &mut Parser<'i, '_>,
+    name: &str,
+) -> MathResult<'i, T::Kind> {
+    parse_function(types, input, name, 1)
+}
+
+/// Type a `<calc-sum>`.
+pub(crate) fn parse_sum<'i, T: MathTypes>(
+    types: &T,
+    input: &mut Parser<'i, '_>,
+    depth: usize,
+) -> MathResult<'i, T::Kind> {
+    let mut kind = parse_product(types, input, depth)?;
     while input.try_parse(sum_operator).is_ok() {
-        let right = parse_product(input, depth)?;
-        if right != kind {
-            return Err(input.new_custom_error(()));
-        }
-        kind = right;
-    }
-    Ok(kind)
-}
-
-// CSS Values 4 requires whitespace on both sides of binary + and -.
-fn sum_operator<'i>(input: &mut Parser<'i, '_>) -> MathResult<'i, ()> {
-    let mut space = false;
-    loop {
-        match input.next_including_whitespace_and_comments()? {
-            Token::WhiteSpace(_) => space = true,
-            Token::Comment(_) => {}
-            Token::Delim('+' | '-') if space => break,
-            _ => return Err(input.new_custom_error(())),
-        }
-    }
-    loop {
-        match input.next_including_whitespace_and_comments()? {
-            Token::WhiteSpace(_) => return Ok(()),
-            Token::Comment(_) => {}
-            _ => return Err(input.new_custom_error(())),
-        }
-    }
-}
-
-fn parse_product<'i>(input: &mut Parser<'i, '_>, depth: usize) -> MathResult<'i, NumericType> {
-    let mut kind = parse_value(input, depth)?;
-    while let Ok(operator) = input.try_parse(|input| match input.next()? {
-        Token::Delim(operator @ ('*' | '/')) => Ok::<_, ParseError<'i, ()>>(*operator),
-        _ => Err(input.new_custom_error(())),
-    }) {
-        let right = parse_value(input, depth)?;
-        kind = kind
-            .product(right, operator)
+        let right = parse_product(types, input, depth)?;
+        kind = types
+            .add(kind, right)
             .ok_or_else(|| input.new_custom_error(()))?;
     }
     Ok(kind)
 }
 
-fn parse_value<'i>(input: &mut Parser<'i, '_>, depth: usize) -> MathResult<'i, NumericType> {
-    if depth > MAX_DEFERRED_VALUE_NESTING_DEPTH {
-        return Err(input.new_custom_error(()));
+/// A binary `+` or `-` of a `<calc-sum>`, with the whitespace that CSS
+/// Values 4 §10.1 requires on both sides. Comments are not whitespace.
+pub(crate) fn sum_operator<'i>(input: &mut Parser<'i, '_>) -> MathResult<'i, char> {
+    let mut space = false;
+    let operator = loop {
+        match input.next_including_whitespace_and_comments()? {
+            Token::WhiteSpace(_) => space = true,
+            Token::Comment(_) => {}
+            Token::Delim(operator @ ('+' | '-')) if space => break *operator,
+            _ => return Err(input.new_custom_error(())),
+        }
+    };
+    loop {
+        match input.next_including_whitespace_and_comments()? {
+            Token::WhiteSpace(_) => return Ok(operator),
+            Token::Comment(_) => {}
+            _ => return Err(input.new_custom_error(())),
+        }
     }
-    match input.next()?.clone() {
-        Token::Number { .. } => Ok(NumericType::NUMBER),
-        Token::Percentage { .. } => Ok(NumericType::dimension(1)),
-        Token::Dimension { unit, .. } => {
-            let index = if color_math_dimension_type(&unit) == ColorMathType::Length {
-                0
-            } else {
-                match unit.to_ascii_lowercase().as_str() {
-                    "deg" | "grad" | "rad" | "turn" => 2,
-                    "s" | "ms" => 3,
-                    "hz" | "khz" => 4,
-                    "dpi" | "dpcm" | "dppx" | "x" => 5,
-                    "fr" => 6,
-                    _ => return Err(input.new_custom_error(())),
-                }
-            };
-            Ok(NumericType::dimension(index))
-        }
-        Token::Ident(name) if is_math_constant(&name) => Ok(NumericType::NUMBER),
-        Token::ParenthesisBlock => input.parse_nested_block(|input| parse_sum(input, depth + 1)),
-        Token::Function(name) => {
-            input.parse_nested_block(|input| parse_function(input, &name, depth + 1))
-        }
+}
+
+/// A `*` or `/` of a `<calc-product>`.
+pub(crate) fn product_operator<'i>(input: &mut Parser<'i, '_>) -> MathResult<'i, char> {
+    match input.next()? {
+        Token::Delim(operator @ ('*' | '/')) => Ok(*operator),
         _ => Err(input.new_custom_error(())),
     }
 }
 
-fn parse_function<'i>(
+fn parse_product<'i, T: MathTypes>(
+    types: &T,
+    input: &mut Parser<'i, '_>,
+    depth: usize,
+) -> MathResult<'i, T::Kind> {
+    let mut kind = parse_value(types, input, depth)?;
+    while let Ok(operator) = input.try_parse(product_operator) {
+        let right = parse_value(types, input, depth)?;
+        kind = types
+            .product(kind, right, operator)
+            .ok_or_else(|| input.new_custom_error(()))?;
+    }
+    Ok(kind)
+}
+
+fn parse_value<'i, T: MathTypes>(
+    types: &T,
+    input: &mut Parser<'i, '_>,
+    depth: usize,
+) -> MathResult<'i, T::Kind> {
+    if depth > MAX_DEFERRED_VALUE_NESTING_DEPTH {
+        return Err(input.new_custom_error(()));
+    }
+    let kind = match input.next()?.clone() {
+        Token::Number { .. } => Some(types.number()),
+        Token::Percentage { .. } => Some(types.percentage()),
+        Token::Dimension { unit, .. } => types.dimension(&unit),
+        Token::Ident(name) if is_math_constant(&name) => Some(types.number()),
+        Token::Ident(name) => types.ident(&name),
+        Token::ParenthesisBlock => {
+            return input.parse_nested_block(|input| parse_sum(types, input, depth + 1));
+        }
+        // Only `var()` is substituted before computed-value time; `env()` is
+        // not, so a math expression holding it can never be evaluated.
+        Token::Function(name) if name.eq_ignore_ascii_case("var") => {
+            let kind = types
+                .substitution()
+                .ok_or_else(|| input.new_custom_error(()))?;
+            input.parse_nested_block(|input| {
+                while input.next().is_ok() {}
+                Ok::<_, ParseError<'i, ()>>(())
+            })?;
+            Some(kind)
+        }
+        Token::Function(name) => {
+            return input
+                .parse_nested_block(|input| parse_function(types, input, &name, depth + 1));
+        }
+        _ => None,
+    };
+    kind.ok_or_else(|| input.new_custom_error(()))
+}
+
+fn parse_function<'i, T: MathTypes>(
+    types: &T,
     input: &mut Parser<'i, '_>,
     name: &str,
     depth: usize,
-) -> MathResult<'i, NumericType> {
+) -> MathResult<'i, T::Kind> {
     let name = name.to_ascii_lowercase();
+    if depth > MAX_DEFERRED_VALUE_NESTING_DEPTH || !is_math_function_name(&name) {
+        return Err(input.new_custom_error(()));
+    }
     let line_width_rounding = if name == "round" {
         input
             .try_parse(|input| {
@@ -174,54 +324,51 @@ fn parse_function<'i>(
         {
             Ok(None)
         } else {
-            parse_sum(input, depth).map(Some)
+            parse_sum(types, input, depth).map(Some)
         }
     })?;
+    let invalid = || input.new_custom_error(());
     if name == "clamp" {
-        if let [minimum, Some(center), maximum] = arguments.as_slice()
-            && minimum.is_none_or(|kind| kind == *center)
-            && maximum.is_none_or(|kind| kind == *center)
-        {
-            return Ok(*center);
+        if let [minimum, Some(center), maximum] = arguments.as_slice() {
+            let mut kind = *center;
+            for bound in [minimum, maximum].into_iter().flatten() {
+                kind = types.add(kind, *bound).ok_or_else(invalid)?;
+            }
+            return Ok(kind);
         }
-        return Err(input.new_custom_error(()));
+        return Err(invalid());
     }
-    let first = arguments
-        .first()
-        .copied()
-        .flatten()
-        .ok_or_else(|| input.new_custom_error(()))?;
-    let consistent = arguments.iter().all(|kind| *kind == Some(first));
-    let number = arguments
+    let arguments = arguments
+        .into_iter()
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(invalid)?;
+    let first = *arguments.first().ok_or_else(invalid)?;
+    // The common type of all arguments, when they have one.
+    let consistent = arguments
         .iter()
-        .all(|kind| *kind == Some(NumericType::NUMBER));
+        .try_fold(first, |kind, argument| types.add(kind, *argument));
+    let number = arguments.iter().all(|kind| types.is_number(*kind));
     let arity = arguments.len();
     let kind = match name.as_str() {
-        "calc" | "abs" if arity == 1 => first,
-        "min" | "max" | "hypot" if consistent => first,
-        "round"
-            if consistent
-                && if line_width_rounding {
-                    first == NumericType::dimension(0) && (1..=2).contains(&arity)
-                } else {
-                    arity == 2 || (arity == 1 && first == NumericType::NUMBER)
-                } =>
-        {
-            first
+        "calc" | "abs" if arity == 1 => Some(first),
+        "min" | "max" | "hypot" => consistent,
+        "round" if line_width_rounding => consistent.filter(|kind| {
+            (1..=2).contains(&arity) && types.add(*kind, types.length()) == Some(types.length())
+        }),
+        "round" if arity == 2 || (arity == 1 && types.is_number(first)) => consistent,
+        "mod" | "rem" if arity == 2 => consistent,
+        "sign" if arity == 1 => Some(types.number()),
+        "pow" if arity == 2 && number => Some(types.number()),
+        "sqrt" | "exp" if arity == 1 && number => Some(types.number()),
+        "log" if (1..=2).contains(&arity) && number => Some(types.number()),
+        "sin" | "cos" | "tan" if arity == 1 && (number || types.is_angle(first)) => {
+            Some(types.number())
         }
-        "mod" | "rem" if arity == 2 && consistent => first,
-        "sign" if arity == 1 => NumericType::NUMBER,
-        "pow" if arity == 2 && number => NumericType::NUMBER,
-        "sqrt" | "exp" if arity == 1 && number => NumericType::NUMBER,
-        "log" if (1..=2).contains(&arity) && number => NumericType::NUMBER,
-        "sin" | "cos" | "tan" if arity == 1 && (number || first == NumericType::dimension(2)) => {
-            NumericType::NUMBER
-        }
-        "asin" | "acos" | "atan" if arity == 1 && number => NumericType::dimension(2),
-        "atan2" if arity == 2 && consistent => NumericType::dimension(2),
-        _ => return Err(input.new_custom_error(())),
+        "asin" | "acos" | "atan" if arity == 1 && number => Some(types.angle()),
+        "atan2" if arity == 2 => consistent.map(|_| types.angle()),
+        _ => None,
     };
-    Ok(kind)
+    kind.ok_or_else(invalid)
 }
 
 #[cfg(test)]
