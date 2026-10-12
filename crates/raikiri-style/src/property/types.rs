@@ -11642,7 +11642,7 @@ fn is_deferred_function(name: &str) -> bool {
 /// length/percentage/dimension, so it should be rejected as invalid parsing
 /// rather than deferred. Valid examples like `calc(2em + 3ex)` or
 /// `min(20px, 10px)` contain only Dimension/Percentage/Number and operators.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ColorMathType {
     Number,
     Percentage,

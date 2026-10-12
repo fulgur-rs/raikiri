@@ -175,3 +175,44 @@ fn grammar_storage_and_nesting_are_bounded() {
         MediaNumericType::Length
     ));
 }
+
+#[test]
+fn value_types_share_the_grammar_with_percentages_and_substitutions() {
+    use crate::property::{ColorMathType, ValueMathTypes};
+
+    fn kind(source: &str) -> Option<ColorMathType> {
+        let mut parser_input = ParserInput::new(source);
+        let mut parser = Parser::new(&mut parser_input);
+        parser
+            .parse_entirely(|input| {
+                let name = input.expect_function()?.clone();
+                input.parse_nested_block(|input| {
+                    parse_math_function(&ValueMathTypes::default(), input, &name)
+                })
+            })
+            .ok()
+    }
+
+    assert_eq!(
+        kind("calc(1px + 5%)"),
+        Some(ColorMathType::LengthPercentage)
+    );
+    assert_eq!(kind("calc(var(--x) * 2px)"), Some(ColorMathType::Length));
+    assert_eq!(kind("calc(env(x) + 1)"), Some(ColorMathType::Number));
+    assert_eq!(kind("round(line-width, 1px)"), Some(ColorMathType::Length));
+    assert_eq!(kind("round(line-width, 1deg)"), None);
+    assert_eq!(kind("asin(1)"), Some(ColorMathType::Angle));
+    assert_eq!(kind("sin(1deg)"), Some(ColorMathType::Number));
+    assert_eq!(kind("sin(var(--x))"), Some(ColorMathType::Number));
+    assert_eq!(kind("calc(1s + 1ms)"), Some(ColorMathType::OtherDimension));
+    assert_eq!(kind("calc(1unknown)"), None);
+    assert_eq!(kind("calc(r)"), None);
+}
+
+#[test]
+fn media_features_reject_substitution_functions_inside_math() {
+    assert!(!math_value_has_type(
+        "calc(var(--x) * 1px)",
+        MediaNumericType::Length
+    ));
+}
