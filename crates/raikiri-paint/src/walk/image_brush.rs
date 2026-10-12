@@ -40,8 +40,13 @@ impl ImageBrushCache {
     /// Stylesheet URLs are made absolute when the sheet is parsed, but a
     /// `style` attribute keeps its authored text, so a relative URL still
     /// left here resolves against the document base URL (CSS Values 4
-    /// §4.5.1).
+    /// §4.5.1). An empty or fragment-only URL names no external image, so
+    /// it resolves to nothing rather than to the document itself.
     pub(crate) fn resolve_url(&self, raw_url: &str) -> Option<url::Url> {
+        let trimmed = raw_url.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            return None;
+        }
         match url::Url::parse(raw_url) {
             Ok(url) => Some(url),
             Err(url::ParseError::RelativeUrlWithoutBase) => {

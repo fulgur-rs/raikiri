@@ -5406,6 +5406,27 @@ fn a_relative_border_image_url_resolves_against_the_document_base_url() {
 }
 
 #[test]
+fn empty_and_fragment_only_image_urls_name_no_image_even_with_a_base_url() {
+    let mut document = Document::new();
+    document.set_base_url(Some(
+        url::Url::parse("https://images.test/page.html").unwrap(),
+    ));
+    let cache = crate::walk::ImageBrushCache::for_document(&document);
+    for raw in ["", "  ", "#part", " #part"] {
+        assert_eq!(cache.resolve_url(raw), None, "{raw:?}");
+    }
+    // An invalid absolute URL does not fall back to the base either.
+    assert_eq!(cache.resolve_url("https://"), None);
+    assert_eq!(
+        cache
+            .image_url("a.png#x")
+            .map(|url| url.to_string())
+            .as_deref(),
+        Some("https://images.test/a.png")
+    );
+}
+
+#[test]
 fn a_url_border_image_that_cannot_be_displayed_leaves_the_border() {
     let no_natural_size = BorderImagePixels {
         natural: None,
