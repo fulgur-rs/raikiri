@@ -11,6 +11,11 @@
 //!   boxes with `break-inside: avoid*`, and shrink-to-fit or
 //!   `min-content` wide boxes (floats and absolutely positioned boxes with
 //!   an auto width), whose width comes from their widest content;
+//! - an open element whose painting turns on its whole height: a
+//!   `transform` that does more than translate, which turns the box about
+//!   its transform origin, or a translation by a percentage of its height.
+//!   A page that shows the start of such a box would otherwise be drawn
+//!   with the height of the content that arrived so far;
 //! - an open element with auto directionality (`dir=auto`, or `<bdi>`
 //!   without a valid `dir`), whose direction comes from its first strong
 //!   character, which may not have arrived yet, and which `:dir()` exposes
@@ -45,7 +50,10 @@ use raikiri_style::computed::ComputedValues;
 use raikiri_style::property::{
     BreakBetween, BreakInside, ColumnCountValue, DisplayValue, FloatValue, PositionValue,
 };
-use raikiri_style::{CascadeResult, ComputedColumnWidth, ComputedLengthPercentageOrAuto};
+use raikiri_style::{
+    CascadeResult, ComputedColumnWidth, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
+    ComputedTransformFunction,
+};
 use raikiri_traits::NodeKind;
 
 use crate::document_layout::DocumentLayout;
@@ -111,7 +119,9 @@ pub(crate) fn stable_frontier(
         if has_auto_direction(document, id) {
             held.push(id);
         }
-        if computed(cascade, id).is_none_or(needs_all_children) {
+        if computed(cascade, id)
+            .is_none_or(|values| needs_all_children(values) || paints_from_whole_height(values))
+        {
             held.push(surrounding_run_start(document, cascade, &position, id));
         }
     }
@@ -289,6 +299,20 @@ fn needs_all_children(values: &ComputedValues) -> bool {
         || matches!(values.column_count, ColumnCountValue::Count(_))
         || matches!(values.column_width, ComputedColumnWidth::Px(_))
         || values.break_inside != BreakInside::Auto
+}
+
+/// Whether the painter needs the box's whole height to draw any part of it:
+/// its `transform` resolves against the border box (CSS Transforms 1 §6),
+/// whose height an open box does not know yet. A transform that only
+/// translates by lengths, or by a percentage of the width, does not use it.
+fn paints_from_whole_height(values: &ComputedValues) -> bool {
+    values.transform.iter().any(|function| match function {
+        ComputedTransformFunction::Translate(_, y) | ComputedTransformFunction::TranslateY(y) => {
+            matches!(y, ComputedLengthPercentage::Percent(_))
+        }
+        ComputedTransformFunction::TranslateX(_) => false,
+        _ => true,
+    })
 }
 
 /// Whether the box's width depends on the size of its content: a

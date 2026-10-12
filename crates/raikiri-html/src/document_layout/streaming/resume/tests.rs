@@ -9,8 +9,9 @@ use crate::render::ResumePoint;
 
 /// What a page shows: its name, every fragment with its geometry and
 /// position among the node's fragments, its text runs and its margin
-/// boxes. A box that continues on later pages is left open on a delivered
-/// page, so only the top of its content box is compared.
+/// boxes, and the paint transforms of the boxes it places. A box that
+/// continues on later pages is left open on a delivered page, so only the
+/// top of its content box is compared.
 fn digest(page: &Page<'_>) -> String {
     let mut out = format!("page {} {:?}\n", page.index(), page.name());
     for fragment in page.fragments() {
@@ -30,6 +31,14 @@ fn digest(page: &Page<'_>) -> String {
                 .content_rect()
                 .map(|content| (content.x, content.y, content.width)),
         ));
+    }
+    for fragment in page.fragments() {
+        if let Some(transform) = page
+            .paint_transform(fragment.node())
+            .filter(|transform| *transform != raikiri_traits::PaintTransform::IDENTITY)
+        {
+            out.push_str(&format!("transform {:?} {transform:?}\n", fragment.node()));
+        }
     }
     for run in page.text_runs() {
         out.push_str(&format!(
@@ -142,6 +151,13 @@ fn same(left: &str, right: &str) -> bool {
 /// Streamed pages and anchors equal the batch layout's, and some layouts
 /// resumed.
 fn assert_resumes_like_batch(html: &str) {
+    let resumed = assert_streams_like_batch(html);
+    assert!(resumed > 0, "no layout resumed");
+}
+
+/// Streamed pages and anchors equal the batch layout's. Returns how many
+/// layouts resumed.
+fn assert_streams_like_batch(html: &str) -> usize {
     let (expected, anchors) = batch(html);
     assert!(expected.len() > 4, "the fixture spans several pages");
     let (pages, summary, resumed) = stream(html, 2048);
@@ -152,7 +168,6 @@ fn assert_resumes_like_batch(html: &str) {
             "streamed:\n{streamed}\nbatch:\n{batch}"
         );
     }
-    assert!(resumed > 0, "no layout resumed");
     let streamed = paragraph_anchors(&summary.anchors);
     assert!(
         streamed
@@ -161,6 +176,7 @@ fn assert_resumes_like_batch(html: &str) {
             .all(|(left, right)| same(left, right)),
         "streamed {streamed:?}, batch {anchors:?}"
     );
+    resumed
 }
 
 fn paragraphs(count: usize, words: usize) -> String {
@@ -233,6 +249,19 @@ fn named_pages_sides_and_strings_resume_like_batch() {
     }
     html.push_str("</body>");
     assert_resumes_like_batch(&html);
+}
+
+/// A box turned about its transform origin, by default its center, is not
+/// delivered before its whole height is known.
+#[test]
+fn boxes_turned_about_their_height_stream_like_batch() {
+    let html = format!(
+        "<!doctype html><body>{}<section style='transform: rotate(1deg)'>{}</section>{}</body>",
+        paragraphs(10, 60),
+        paragraphs(30, 60),
+        paragraphs(20, 60)
+    );
+    assert_streams_like_batch(&html);
 }
 
 #[test]
@@ -532,4 +561,87 @@ fn a_box_that_begins_in_columns_on_a_page_does_not_cross_it() {
             .iter()
             .all(|crossing| crossing.node.0 as usize != target)
     );
+}
+
+/// Loads every image but `broken.png`, and `flaky.png` only once `flaky`
+/// is cleared.
+struct FlakyResolver {
+    flaky: std::sync::atomic::AtomicBool,
+}
+
+impl raikiri_traits::ReplacedResolver for FlakyResolver {
+    fn resolve(
+        &self,
+        request: raikiri_traits::ResolverRequest<'_>,
+    ) -> Result<raikiri_traits::ResolvedIntrinsic, raikiri_traits::ResolverError> {
+        let path = request.url().path();
+        let fails = path.ends_with("broken.png")
+            || (path.ends_with("flaky.png")
+                && self.flaky.load(std::sync::atomic::Ordering::SeqCst));
+        let disposition = if fails {
+            raikiri_traits::ResolveDisposition::Fallback {
+                reason: "unavailable".to_owned(),
+            }
+        } else {
+            raikiri_traits::ResolveDisposition::Ok
+        };
+        Ok(raikiri_traits::ResolvedIntrinsic {
+            intrinsic: raikiri_traits::IntrinsicBox::new(20.0, 20.0),
+            disposition,
+        })
+    }
+}
+
+/// The image URLs whose fallback a summary reports.
+fn image_fallbacks(summary: &StreamSummary) -> Vec<String> {
+    summary
+        .warnings
+        .iter()
+        .filter_map(|warning| match &warning.kind {
+            raikiri_traits::WarningKind::ResourceFallback {
+                kind: raikiri_traits::ResourceKind::Image,
+                url: Some(url),
+            } => Some(url.path().to_owned()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_resumed_layout_reports_the_resources_of_delivered_pages_as_last_loaded() {
+    let image = |name: &str| {
+        format!("<img style='width: 20px; height: 20px' src='https://example.invalid/{name}'>")
+    };
+    let mut html = String::from("<!doctype html><body>");
+    html.push_str(&format!("<p>{}</p>", image("broken.png")));
+    html.push_str(&format!("<p>{}</p>", image("flaky.png")));
+    html.push_str(&paragraphs(60, 60));
+    html.push_str("</body>");
+    let resolver = FlakyResolver {
+        flaky: std::sync::atomic::AtomicBool::new(true),
+    };
+    let resources = RenderResources::new().replaced_resolver(&resolver);
+    let mut stream = StreamingLayout::new(
+        &resources,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        Digests::default(),
+    )
+    .checkpoint_bytes(2048);
+    let mut pieces = html.as_bytes().chunks(2048);
+    // The first layout fails to load the flaky image before its page is
+    // final; every later one loads it.
+    stream.feed(pieces.next().expect("input")).expect("feed");
+    assert_eq!(stream.delivered, 0, "the images' page is not delivered yet");
+    resolver
+        .flaky
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    for piece in pieces {
+        stream.feed(piece).expect("feed");
+    }
+    assert!(stream.settings.resumed.get() > 0, "no layout resumed");
+    let StreamStatus::Completed(summary) = stream.finish().expect("finish") else {
+        panic!("aborted");
+    };
+    assert_eq!(image_fallbacks(&summary), ["/broken.png"]);
 }

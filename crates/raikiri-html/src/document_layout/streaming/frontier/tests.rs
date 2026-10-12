@@ -90,6 +90,23 @@ fn open_layout_containers_hold_from_their_start() {
 }
 
 #[test]
+fn an_open_box_transformed_about_its_height_holds_from_its_start() {
+    assert_eq!(
+        frontier_of("<p>a</p><section style='transform: rotate(5deg)'><p>x</p>"),
+        "<section>"
+    );
+    assert_eq!(
+        frontier_of("<p>a</p><section style='transform: translateY(10%)'><p>x</p>"),
+        "<section>"
+    );
+    // Translations by lengths, or along the width, do not use the height.
+    assert_eq!(
+        frontier_of("<p>a</p><section style='transform: translate(10%, 4px)'><p>x</p>"),
+        "end"
+    );
+}
+
+#[test]
 fn the_outermost_open_layout_container_wins() {
     assert_eq!(
         frontier_of("<main style='display:flex'><table><tr><td>x"),
