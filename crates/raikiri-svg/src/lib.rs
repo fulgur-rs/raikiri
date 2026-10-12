@@ -3891,19 +3891,8 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for ScopedStylesheetParser<'_> {
 
         self.removals
             .extend(scoped_declarations.iter().map(|declaration| {
-                let mut range = declaration.range.clone();
-                while self
-                    .source
-                    .as_bytes()
-                    .get(range.end)
-                    .is_some_and(u8::is_ascii_whitespace)
-                {
-                    range.end += 1;
-                }
-                if self.source.as_bytes().get(range.end) == Some(&b';') {
-                    range.end += 1;
-                }
-                range
+                let range = &declaration.range;
+                range.start..declaration_removal_end(self.source, range.end)
             }));
         let raw_storage = scoped_declaration_count
             .checked_mul(2 * std::mem::size_of::<String>())
@@ -4105,125 +4094,85 @@ fn source_slice_offset(source: &str, slice: &str) -> usize {
     offset
 }
 
+/// Extends a declaration's removal range over the whitespace and comments
+/// that follow it, through its terminating `;` when one is present.
+fn declaration_removal_end(source: &str, declaration_end: usize) -> usize {
+    let tail = &source[declaration_end..];
+    let mut input = cssparser::ParserInput::new(tail);
+    let mut parser = cssparser::Parser::new(&mut input);
+    let mut end = 0;
+    let mut seen_comment = false;
+    loop {
+        match parser.next_including_whitespace_and_comments() {
+            // Without a `;`, only the whitespace run directly after the
+            // declaration goes, so a trailing comment stays in place.
+            Ok(cssparser::Token::WhiteSpace(_)) if !seen_comment => {
+                end = parser.position().byte_index();
+            }
+            Ok(cssparser::Token::WhiteSpace(_)) => {}
+            Ok(cssparser::Token::Comment(_)) => seen_comment = true,
+            Ok(cssparser::Token::Semicolon) => {
+                end = parser.position().byte_index();
+                break;
+            }
+            _ => break,
+        }
+    }
+    declaration_end + end
+}
+
+/// Splits a selector list at its top-level commas. Commas inside strings,
+/// comments, functions and `[]`/`()` blocks belong to their selector.
 fn split_css_selector_list(selectors: &str) -> Vec<&str> {
-    let bytes = selectors.as_bytes();
+    let mut input = cssparser::ParserInput::new(selectors);
+    let mut parser = cssparser::Parser::new(&mut input);
     let mut result = Vec::new();
     let mut start = 0;
-    let mut index = 0;
-    let mut bracket_depth = 0_u32;
-    let mut parenthesis_depth = 0_u32;
-    let mut quote = None;
-    let mut escaped = false;
-    let mut in_comment = false;
-
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if in_comment {
-            if byte == b'*' && bytes.get(index + 1) == Some(&b'/') {
-                in_comment = false;
-                index += 2;
-                continue;
+    loop {
+        // Block-opening tokens are returned without their contents; the
+        // following `next` call skips the whole block, nested commas included.
+        match parser.next_including_whitespace_and_comments() {
+            Ok(cssparser::Token::Comma) => {
+                let comma_end = parser.position().byte_index();
+                result.push(&selectors[start..comma_end - ','.len_utf8()]);
+                start = comma_end;
             }
-            index += 1;
-            continue;
+            Ok(_) => {}
+            Err(_) => break,
         }
-        if let Some(quote_byte) = quote {
-            if escaped {
-                escaped = false;
-            } else if byte == b'\\' {
-                escaped = true;
-            } else if byte == quote_byte {
-                quote = None;
-            }
-            index += 1;
-            continue;
-        }
-        if byte == b'/' && bytes.get(index + 1) == Some(&b'*') {
-            in_comment = true;
-            index += 2;
-            continue;
-        }
-        if byte == b'\\' {
-            index += 2;
-            continue;
-        }
-        match byte {
-            b'\'' | b'"' => quote = Some(byte),
-            b'[' => bracket_depth += 1,
-            b']' => bracket_depth = bracket_depth.saturating_sub(1),
-            b'(' => parenthesis_depth += 1,
-            b')' => parenthesis_depth = parenthesis_depth.saturating_sub(1),
-            b',' if bracket_depth == 0 && parenthesis_depth == 0 => {
-                result.push(&selectors[start..index]);
-                start = index + 1;
-            }
-            _ => {}
-        }
-        index += 1;
     }
     result.push(&selectors[start..]);
     result
 }
 
+/// Returns the byte offset just past the selector's last significant token,
+/// excluding trailing whitespace and comments, or zero for a selector made of
+/// whitespace and comments only.
 fn selector_scope_insertion(selector: &str) -> usize {
-    let bytes = selector.as_bytes();
-    let mut index = 0;
+    let mut input = cssparser::ParserInput::new(selector);
+    let mut parser = cssparser::Parser::new(&mut input);
     let mut last_significant_end = 0;
-    let mut bracket_depth = 0_u32;
-    let mut parenthesis_depth = 0_u32;
-    let mut quote = None;
-    let mut escaped = false;
-    let mut in_comment = false;
-
-    while index < bytes.len() {
-        let byte = bytes[index];
-        if in_comment {
-            if byte == b'*' && bytes.get(index + 1) == Some(&b'/') {
-                in_comment = false;
-                index += 2;
-                continue;
+    loop {
+        let token = match parser.next_including_whitespace_and_comments() {
+            Ok(token) => token.clone(),
+            Err(_) => break,
+        };
+        match token {
+            cssparser::Token::WhiteSpace(_) | cssparser::Token::Comment(_) => continue,
+            cssparser::Token::Function(_)
+            | cssparser::Token::ParenthesisBlock
+            | cssparser::Token::SquareBracketBlock
+            | cssparser::Token::CurlyBracketBlock => {
+                // Consume the block so the position lands after its closing
+                // token, or at the end of input when the block is unterminated.
+                let _ = parser.parse_nested_block(|block| {
+                    while block.next_including_whitespace_and_comments().is_ok() {}
+                    Ok::<_, cssparser::ParseError<'_, ()>>(())
+                });
             }
-            index += 1;
-            continue;
-        }
-        if let Some(quote_byte) = quote {
-            if escaped {
-                escaped = false;
-            } else if byte == b'\\' {
-                escaped = true;
-            } else if byte == quote_byte {
-                quote = None;
-            }
-            index += 1;
-            last_significant_end = index;
-            continue;
-        }
-        if byte == b'/' && bytes.get(index + 1) == Some(&b'*') {
-            in_comment = true;
-            index += 2;
-            continue;
-        }
-        if byte == b'\\' {
-            index += 1;
-            if index < bytes.len() {
-                let escaped_char_len = selector[index..].chars().next().map_or(0, char::len_utf8);
-                index += escaped_char_len;
-            }
-            last_significant_end = index;
-            continue;
-        }
-        match byte {
-            b'\'' | b'"' => quote = Some(byte),
-            b'[' => bracket_depth += 1,
-            b']' => bracket_depth = bracket_depth.saturating_sub(1),
-            b'(' => parenthesis_depth += 1,
-            b')' => parenthesis_depth = parenthesis_depth.saturating_sub(1),
             _ => {}
         }
-        if !byte.is_ascii_whitespace() {
-            last_significant_end = index + 1;
-        }
-        index += 1;
+        last_significant_end = parser.position().byte_index();
     }
 
     debug_assert!(selector.is_char_boundary(last_significant_end));
