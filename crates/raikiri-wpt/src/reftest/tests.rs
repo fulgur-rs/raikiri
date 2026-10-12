@@ -2285,6 +2285,19 @@ fn print_declaration_reads_the_declaration_list_grammar() {
 #[test]
 fn page_sizes_reject_negative_lengths() {
     assert!(parse_page_size("-10px").is_none());
+    for value in [
+        "10px 20px 30px",
+        "a4 10px",
+        "a4 a5",
+        "landscape portrait",
+        "auto a4",
+    ] {
+        assert!(parse_page_size(value).is_none(), "{value}");
+    }
+    assert_eq!(
+        parse_page_size("landscape a4").and_then(|size| size.size),
+        Some((793.7008, 1122.5197))
+    );
     assert_eq!(
         print_declaration("size:300px;size:-10px", "size", parse_page_size)
             .and_then(|size| size.size),
@@ -2327,6 +2340,10 @@ fn page_rules_with_invalid_selectors_are_dropped() {
     assert_eq!(
         page_block("@page :bogus{size:1px}@page{size:2px}"),
         Some("size:2px")
+    );
+    assert_eq!(
+        page_block_named("@page foo: first{margin:5px}@page foo{margin:10px}", "foo"),
+        Some("margin:10px")
     );
 }
 

@@ -929,34 +929,55 @@ struct PageSize {
 /// A `size` value, or `None` for one with a component the harness does not
 /// read, which drops the declaration.
 fn parse_page_size(value: &str) -> Option<PageSize> {
-    let mut dimensions = Vec::new();
-    let mut landscape = false;
-    let mut portrait = false;
-    for token in value.split_whitespace() {
-        match token.to_ascii_lowercase().as_str() {
-            "auto" => {}
-            "landscape" => landscape = true,
-            "portrait" => portrait = true,
-            "a4" => dimensions = vec![793.7008, 1122.5197],
-            "a3" => dimensions = vec![1122.5197, 1587.4016],
-            "a5" => dimensions = vec![559.3701, 793.7008],
-            "letter" => dimensions = vec![612.0, 792.0],
-            "legal" => dimensions = vec![612.0, 1008.0],
+    let tokens: Vec<_> = value.split_whitespace().collect();
+    if let [token] = tokens.as_slice()
+        && token.eq_ignore_ascii_case("auto")
+    {
+        return Some(PageSize {
+            size: None,
+            landscape: false,
+            portrait: false,
+        });
+    }
+    // `<length>{1,2} | [ <page-size> || [ portrait | landscape ] ]`
+    let mut lengths = Vec::new();
+    let mut named = None;
+    let mut orientation = None;
+    for token in tokens {
+        let lower = token.to_ascii_lowercase();
+        let named_size = match lower.as_str() {
+            "a4" => Some((793.7008, 1122.5197)),
+            "a3" => Some((1122.5197, 1587.4016)),
+            "a5" => Some((559.3701, 793.7008)),
+            "letter" => Some((612.0, 792.0)),
+            "legal" => Some((612.0, 1008.0)),
+            _ => None,
+        };
+        if let Some(size) = named_size {
+            if named.replace(size).is_some() {
+                return None;
+            }
+        } else if lower == "landscape" || lower == "portrait" {
+            if orientation.replace(lower == "landscape").is_some() {
+                return None;
+            }
+        } else {
             // Page size lengths are non-negative.
-            _ => dimensions.push(parse_print_length(token, None).filter(|length| *length >= 0.0)?),
+            lengths.push(parse_print_length(token, None).filter(|length| *length >= 0.0)?);
         }
     }
-    let size = match dimensions.as_slice() {
-        [] => None,
-        [side] => Some((*side, *side)),
-        [width, height, ..] => Some((*width, *height)),
+    let size = match (lengths.as_slice(), named, orientation) {
+        ([], None, None) => return None,
+        ([], named, _) => named,
+        ([side], None, None) => Some((*side, *side)),
+        ([width, height], None, None) => Some((*width, *height)),
+        _ => return None,
     };
-    (size.is_some() || landscape || portrait || value.trim().eq_ignore_ascii_case("auto"))
-        .then_some(PageSize {
-            size,
-            landscape,
-            portrait,
-        })
+    Some(PageSize {
+        size,
+        landscape: orientation == Some(true),
+        portrait: orientation == Some(false),
+    })
 }
 
 /// The value `parse` reads from the winning top-level `name` declaration in
@@ -1101,7 +1122,18 @@ fn page_rules(input: &str) -> Vec<PageRule<'_>> {
                                     .any(|class| name.eq_ignore_ascii_case(class));
                             }
                             cssparser::Token::Ident(name) => names.push(name.to_string()),
-                            cssparser::Token::Colon | cssparser::Token::Comma => {}
+                            // A pseudo-class name follows its colon directly.
+                            cssparser::Token::Colon => {
+                                let state = input.state();
+                                if matches!(
+                                    input.next_including_whitespace(),
+                                    Ok(cssparser::Token::WhiteSpace(_))
+                                ) {
+                                    *valid = false;
+                                }
+                                input.reset(&state);
+                            }
+                            cssparser::Token::Comma => {}
                             _ => *valid = false,
                         }
                     }
