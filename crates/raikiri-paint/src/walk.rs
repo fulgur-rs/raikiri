@@ -242,7 +242,7 @@ pub(crate) fn paint_page_border(
         resolve_border(border, ComputedLength(16.0), None, &ctx)
     };
 
-    let mut borders = Sides {
+    let borders = Sides {
         top: side(
             PropertyKey::BorderTopWidth,
             PropertyKey::BorderTopStyle,
@@ -265,45 +265,7 @@ pub(crate) fn paint_page_border(
         ),
     };
     let margins = raikiri_dom::page_margins(cascade, page_box);
-    // A padded page border establishes a flex-like page-area minimum inline
-    // size in the WPT page-box cases.  Keep the ordinary margin-box width for
-    // border-only and margin-only pages, but let the padded border reach the
-    // physical right edge instead of shrinking by the right page margin.
-    let has_page_padding = [
-        PropertyKey::PaddingTop,
-        PropertyKey::PaddingRight,
-        PropertyKey::PaddingBottom,
-        PropertyKey::PaddingLeft,
-    ]
-    .iter()
-    .any(|key| {
-        matches!(
-            declarations.get(key),
-            Some(PropertyValue::PaddingTop(value))
-                | Some(PropertyValue::PaddingRight(value))
-                | Some(PropertyValue::PaddingBottom(value))
-                | Some(PropertyValue::PaddingLeft(value))
-                if !matches!(value, Length::Px(px) if *px == 0.0)
-        )
-    });
-    let has_dotted_border = declarations.values().any(|value| {
-        matches!(
-            value,
-            PropertyValue::BorderTopStyle(BorderStyle::Dotted)
-                | PropertyValue::BorderRightStyle(BorderStyle::Dotted)
-                | PropertyValue::BorderBottomStyle(BorderStyle::Dotted)
-                | PropertyValue::BorderLeftStyle(BorderStyle::Dotted)
-        )
-    });
-    let border_box_width = if has_page_padding && has_dotted_border && margins.right > 0.0 {
-        // The padded page-area flex item can overflow its containing page
-        // area. Its right border is consequently outside the painted viewport;
-        // retain only the top/bottom extent and the left edge here.
-        borders.right = resolve_border(Border::new(), ComputedLength(16.0), None, &ctx);
-        (page_box.width - margins.left).max(0.0)
-    } else {
-        (page_box.width - margins.left - margins.right).max(0.0)
-    };
+    let border_box_width = (page_box.width - margins.left - margins.right).max(0.0);
     let border_box_height = (page_box.height - margins.top - margins.bottom).max(0.0);
     paint_element_border(
         scene,
