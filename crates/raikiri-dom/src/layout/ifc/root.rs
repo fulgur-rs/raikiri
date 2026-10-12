@@ -2,6 +2,7 @@
 //! the last performed layout, and the document-level engine handles.
 
 use super::boxes::IfcBox;
+use super::clear_breaks::ClearBreakIndex;
 use super::first_letter::LetterStyle;
 use super::projection::ProjectedIfc;
 use raikiri_style::ComputedTextIndent;
@@ -41,7 +42,7 @@ pub(crate) struct IfcRoot {
     pub(crate) offsets: Vec<(usize, (f32, f32))>,
     /// `<br>` elements with a physical `clear`: the line after each starts
     /// below the floats it clears.
-    pub(crate) cleared_breaks: Vec<(usize, taffy::Clear)>,
+    pub(crate) cleared_breaks: ClearBreakIndex,
     /// The root is a fixed box: its containing block is the page area.
     pub(crate) fixed: bool,
     /// Line ranges of the last performed lines and where each range is drawn
@@ -225,7 +226,7 @@ impl IfcRoot {
             generated_atomics: projected.generated_atomics,
             rtl: projected.rtl,
             offsets: projected.offsets,
-            cleared_breaks: projected.cleared_breaks,
+            cleared_breaks: projected.cleared_breaks.into_iter().collect(),
             fixed: projected.fixed,
             multicol_fragments: None,
             multicol_fragment_origins_recorded: false,

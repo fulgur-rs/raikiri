@@ -1,5 +1,6 @@
 //! Lay out a paragraph together with the boxes that sit in its lines.
 
+use super::clear_breaks::ClearBreakIndex;
 use super::flow::{FlowGeometry, LineSpace, MAX_SPACE_RETRIES, line_space, resolve_indent};
 use super::root::{IfcBoxFragment, IfcLines, IfcRoot, with_state};
 use crate::Document;
@@ -893,12 +894,11 @@ fn commit_fragmented_float(
 }
 
 /// The `clear` of the cleared `<br>` that ends `line`, if any.
-fn cleared_break(line: &shodo::Line, cleared: &[(usize, taffy::Clear)]) -> Option<taffy::Clear> {
+fn cleared_break(line: &shodo::Line, cleared: &ClearBreakIndex) -> Option<taffy::Clear> {
     let node = line.forced_break()?.node.0 as usize;
-    cleared
-        .iter()
-        .find(|(cleared, _)| *cleared == node)
-        .map(|(_, clear)| *clear)
+    #[cfg(all(test, debug_assertions))]
+    tests::clear_break_tests::note_probe();
+    cleared.get(node)
 }
 
 /// Move every box that sits inside relatively positioned inline elements of
