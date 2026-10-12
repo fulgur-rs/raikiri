@@ -185,7 +185,9 @@ pub struct BackgroundTiles {
 /// positioning edges with even gaps and keeps that pitch over the rest of the
 /// painting area; `round` rescales the tile so a whole number fills the
 /// positioning area, then places and repeats it like `repeat`. Axes combine
-/// independently. Returns `None` when nothing can be painted.
+/// independently, except that `round` axes give up tiles to keep the layer
+/// within a bounded tile count. Returns `None` when nothing can be painted,
+/// including a layer that would still need too many tiles.
 pub fn background_tiles(
     positioning: (f64, f64, f64, f64),
     painting: (f64, f64, f64, f64),
@@ -207,34 +209,75 @@ pub fn background_tiles(
     }
     // Effective tile size after `round` rescaling on each axis. `space` and
     // `repeat` never rescale, so their effective size stays the base size.
-    let (tile_w, x_count) = round_axis_tiles(pos_w, image_w, repeat.x);
-    let (tile_h, y_count) = round_axis_tiles(pos_h, image_h, repeat.y);
+    let (mut tile_w, mut x_count) = round_axis_tiles(pos_w, image_w, repeat.x);
+    let (mut tile_h, mut y_count) = round_axis_tiles(pos_h, image_h, repeat.y);
+    // `round` is free to pick fewer, larger tiles, so two `round` axes share
+    // the tile budget instead of filling it one axis at a time.
+    if let (Some(nx), Some(ny)) = (x_count, y_count)
+        && (nx as f64) * (ny as f64) > MAX_BACKGROUND_TILES as f64
+    {
+        let scale = (MAX_BACKGROUND_TILES as f64 / (nx as f64 * ny as f64)).sqrt();
+        let nx = ((nx as f64 * scale).floor() as i64).max(1);
+        let ny = ((ny as f64 * scale).floor() as i64).max(1);
+        (tile_w, x_count) = (pos_w / nx as f64, Some(nx));
+        (tile_h, y_count) = (pos_h / ny as f64, Some(ny));
+    }
     // cov:ignore: defensive for non-finite rescaled tiles; base and positioning are finite here
     if tile_w <= 0.0 || tile_h <= 0.0 || !tile_w.is_finite() || !tile_h.is_finite() {
         return None;
     }
-    let x = axis_origins(
-        pos_x,
-        pos_w,
-        paint_x,
-        paint_x + paint_w,
-        tile_w,
-        image_w,
-        &position.horizontal,
-        &repeat.x,
-        x_count,
-    )?;
-    let y = axis_origins(
-        pos_y,
-        pos_h,
-        paint_y,
-        paint_y + paint_h,
-        tile_h,
-        image_h,
-        &position.vertical,
-        &repeat.y,
-        y_count,
-    )?;
+    let x_origins = |tile_w: f64, x_count: Option<i64>| {
+        axis_origins(
+            pos_x,
+            pos_w,
+            paint_x,
+            paint_x + paint_w,
+            tile_w,
+            image_w,
+            &position.horizontal,
+            &repeat.x,
+            x_count,
+        )
+    };
+    let y_origins = |tile_h: f64, y_count: Option<i64>| {
+        axis_origins(
+            pos_y,
+            pos_h,
+            paint_y,
+            paint_y + paint_h,
+            tile_h,
+            image_h,
+            &position.vertical,
+            &repeat.y,
+            y_count,
+        )
+    };
+    let mut x = x_origins(tile_w, x_count)?;
+    let mut y = y_origins(tile_h, y_count)?;
+    // A single `round` axis gives up tiles until the product fits.
+    let product = |x: &[f64], y: &[f64]| x.len() as f64 * y.len() as f64;
+    let excess = product(&x, &y) / MAX_BACKGROUND_TILES as f64;
+    if excess > 1.0 {
+        let fewer = |count: i64| ((count as f64 / excess).floor() as i64).max(1);
+        match (x_count, y_count) {
+            (Some(nx), None) => {
+                let nx = fewer(nx);
+                tile_w = pos_w / nx as f64;
+                x = x_origins(tile_w, Some(nx))?;
+            }
+            (None, Some(ny)) => {
+                let ny = fewer(ny);
+                tile_h = pos_h / ny as f64;
+                y = y_origins(tile_h, Some(ny))?;
+            }
+            _ => {}
+        }
+    }
+    // Beyond the budget, like an axis with too many tiles, nothing paints
+    // rather than emitting an unbounded number of tiles.
+    if product(&x, &y) > MAX_BACKGROUND_TILES as f64 {
+        return None;
+    }
     // cov:ignore: defensive for non-finite tiles; origins are finite here
     let x: Vec<f64> = x.into_iter().filter(|value| value.is_finite()).collect();
     let y: Vec<f64> = y.into_iter().filter(|value| value.is_finite()).collect();
@@ -274,6 +317,9 @@ fn round_axis_tiles(
     let count = ((positioning_len / base_len).round() as i64).clamp(1, MAX_ROUND_TILES);
     (positioning_len / count as f64, Some(count))
 }
+
+/// Most tiles one background layer places.
+const MAX_BACKGROUND_TILES: usize = 1 << 18;
 
 /// Most tiles `round` fits into one axis of the positioning area.
 const MAX_ROUND_TILES: i64 = 10_000;

@@ -5659,3 +5659,24 @@ fn fixed_box_with_auto_insets_keeps_its_static_position_on_every_page() {
     );
     assert_eq!(off_page, Some((-5000.0, -8000.0)));
 }
+
+#[test]
+fn a_standalone_after_paints_after_its_deferred_lines() {
+    let (_, _, scene, _) = generated_scene(
+        r#"div::after { content: "YY"; position: absolute }"#,
+        |doc, div| {
+            doc.append_text(div, "x");
+        },
+    );
+    let runs: Vec<usize> = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::GlyphRun(run) => Some(run.glyphs.len()),
+            _ => None,
+        })
+        .collect();
+    // The paragraph's one-glyph line comes first, then the positioned
+    // two-glyph `::after`.
+    assert_eq!(runs, [1, 2]);
+}

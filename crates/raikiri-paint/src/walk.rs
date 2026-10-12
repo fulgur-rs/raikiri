@@ -3207,7 +3207,8 @@ pub(crate) fn paint_document_impl(
                 // clip closes.  A full IFC would place the after run after
                 // laid-out inline descendants; this minimal path uses the
                 // generated-before advance as its only inline position.
-                if paints_on_page && !paints_as_absolute_continuation {
+                let after_pushed = paints_on_page && !paints_as_absolute_continuation;
+                if after_pushed {
                     stack.push(PaintFrame::PaintAfter {
                         node_id,
                         x: generated_x,
@@ -3538,6 +3539,11 @@ pub(crate) fn paint_document_impl(
                     if let Some(pending) = deferral_scopes.last_mut() {
                         pending.extend(lines_frame);
                         pending.extend(child_frames.into_iter().rev());
+                        // A standalone `::after` still follows the content
+                        // it is generated after.
+                        if after_pushed {
+                            pending.extend(stack.pop());
+                        }
                     }
                 } else {
                     // A `display: contents` element has no box, so its

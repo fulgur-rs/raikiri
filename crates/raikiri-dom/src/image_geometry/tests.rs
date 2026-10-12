@@ -239,6 +239,46 @@ fn round_tiles_bound_degenerate_counts() {
     .expect("round tiles");
     assert_eq!(tiles.x.len(), 10_000);
     assert_eq!(tiles.x[0], 0.0);
+    // Two `round` axes share the tile budget.
+    let mut both = repeat;
+    both.y = BackgroundRepeatKeyword::Round;
+    let tiles = background_tiles(
+        (0.0, 0.0, 20_000.0, 20_000.0),
+        (0.0, 0.0, 20_000.0, 20_000.0),
+        (1.0, 1.0),
+        &position,
+        &both,
+    )
+    .expect("round tiles");
+    assert!(tiles.x.len() * tiles.y.len() <= 1 << 18);
+    assert_eq!(tiles.x.len(), 512);
+    // One `round` axis gives up tiles to a repeated one.
+    let mut mixed = both;
+    mixed.y = BackgroundRepeatKeyword::Repeat;
+    let tiles = background_tiles(
+        (0.0, 0.0, 20_000.0, 2_000.0),
+        (0.0, 0.0, 20_000.0, 2_000.0),
+        (1.0, 1.0),
+        &position,
+        &mixed,
+    )
+    .expect("round tiles");
+    assert_eq!(tiles.y.len(), 2_000);
+    assert!(tiles.x.len() * tiles.y.len() <= 1 << 18);
+    // Repeated tiny tiles over a large area paint nothing.
+    let mut repeated = both;
+    repeated.x = BackgroundRepeatKeyword::Repeat;
+    repeated.y = BackgroundRepeatKeyword::Repeat;
+    assert!(
+        background_tiles(
+            (0.0, 0.0, 5_000.0, 5_000.0),
+            (0.0, 0.0, 5_000.0, 5_000.0),
+            (1.0, 1.0),
+            &position,
+            &repeated,
+        )
+        .is_none()
+    );
     let origins = axis_origins(
         0.0,
         100.0,
