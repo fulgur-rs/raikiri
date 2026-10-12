@@ -2016,3 +2016,61 @@ fn border_images_of_elements_and_pseudo_elements_are_preloaded() {
         ))
     );
 }
+
+#[test]
+fn cache_keeps_svg_rasters_of_several_sizes_within_the_budget() {
+    let budget = Arc::new(ProcessImageBudget::new(1024 * 1024, 4));
+    let mut cache = DecodedImageCache::new(Arc::clone(&budget));
+    let url = Url::parse("https://images.test/icon.svg").unwrap();
+    let document = Arc::new(SvgDocument::parse(TWO_COLOR_SVG).expect("fixture SVG parses"));
+    cache.insert_source(
+        url.clone(),
+        CachedBackgroundSource::Svg(Arc::clone(&document)),
+    );
+    let raster = |side: u32| {
+        (
+            ImageRasterSize {
+                width: side as f32,
+                height: side as f32,
+            },
+            Arc::new(DecodedImage {
+                width: side,
+                height: side,
+                rgba: vec![0; (side * side * 4) as usize],
+            }),
+        )
+    };
+    let insert = |cache: &mut DecodedImageCache, side: u32| {
+        let (size, image) = raster(side);
+        cache.insert_raster(
+            url.clone(),
+            CachedBackgroundSource::Svg(Arc::clone(&document)),
+            size,
+            image,
+        )
+    };
+    insert(&mut cache, 1).unwrap();
+    insert(&mut cache, 2).unwrap();
+    let entry = cache.entries[&url].clone();
+    assert!(entry.raster(raster(1).0).is_some());
+    assert!(entry.raster(raster(2).0).is_some());
+    assert_eq!(budget.retained(), 4 + 16);
+
+    // Past the size limit the oldest raster goes.
+    for side in 3..=5 {
+        insert(&mut cache, side).unwrap();
+    }
+    let entry = cache.entries[&url].clone();
+    assert!(entry.raster(raster(1).0).is_none());
+    assert_eq!(cache.prior_bytes(&url), (4 + 9 + 16 + 25) * 4);
+    assert_eq!(budget.retained(), (4 + 9 + 16 + 25) * 4);
+
+    // A raster that only fits without the older ones evicts them.
+    cache.max_bytes = 29 * 29 * 4 + 10;
+    insert(&mut cache, 29).unwrap();
+    let entry = cache.entries[&url].clone();
+    assert_eq!(entry.rasters.len(), 1);
+    assert_eq!(budget.retained(), 29 * 29 * 4);
+    assert!(insert(&mut cache, 31).is_err());
+    assert!(cache.entries[&url].raster(raster(29).0).is_some());
+}

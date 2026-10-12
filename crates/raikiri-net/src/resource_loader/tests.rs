@@ -196,6 +196,39 @@ fn svg_source_rasterize_caches_second_call() {
     assert_eq!(second.rgba, first.rgba);
 }
 
+#[test]
+fn svg_source_keeps_rasters_of_sizes_painted_in_turn() {
+    let document = SvgDocument::parse(TWO_COLOR_SVG).expect("parse svg");
+    let budget = test_budget(MAX_CACHE_BYTES);
+    let source = ImageSource::svg(document, TWO_COLOR_SVG.into(), budget.clone());
+    let size = |width: f32| ImageRasterSize { width, height: 2.0 };
+    let small = source.rasterize(size(2.0), None).unwrap();
+    let large = source.rasterize(size(4.0), None).unwrap();
+    assert!(Arc::ptr_eq(
+        &small,
+        &source.rasterize(size(2.0), None).unwrap()
+    ));
+    assert!(Arc::ptr_eq(
+        &large,
+        &source.rasterize(size(4.0), None).unwrap()
+    ));
+    assert_eq!(budget.lock().unwrap().used, 16 + 32);
+
+    // Past the size limit the least recently used raster goes.
+    for width in [5.0, 6.0, 7.0] {
+        source.rasterize(size(width), None).unwrap();
+    }
+    assert_eq!(budget.lock().unwrap().used, (5 + 6 + 7) * 8 + 32);
+    assert!(Arc::ptr_eq(
+        &large,
+        &source.rasterize(size(4.0), None).unwrap()
+    ));
+    assert!(!Arc::ptr_eq(
+        &small,
+        &source.rasterize(size(2.0), None).unwrap()
+    ));
+}
+
 fn test_budget(limit: u64) -> Arc<Mutex<CacheBudget>> {
     Arc::new(Mutex::new(CacheBudget { used: 0, limit }))
 }
