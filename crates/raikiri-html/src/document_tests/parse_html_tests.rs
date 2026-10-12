@@ -1,5 +1,20 @@
 use super::*;
 use raikiri_traits::LimitKind;
+use std::io::{self, Read};
+
+struct CountedReader {
+    bytes: Vec<u8>,
+    consumed: usize,
+}
+
+impl Read for CountedReader {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let count = buffer.len().min(self.bytes.len() - self.consumed);
+        buffer[..count].copy_from_slice(&self.bytes[self.consumed..self.consumed + count]);
+        self.consumed += count;
+        Ok(count)
+    }
+}
 
 #[test]
 fn parse_html_with_limits_rejects_dom_node_count_above_cap() {
@@ -20,6 +35,43 @@ fn parse_html_with_limits_rejects_dom_node_count_above_cap() {
             actual: 6,
         }
     ));
+}
+
+#[test]
+fn parse_html_with_limits_stops_reading_after_dom_node_cap_is_reached() {
+    let opts = ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let mut bytes = b"<p>Hi</p>".to_vec();
+    bytes.extend(std::iter::repeat_n(b'x', 128 * 1024));
+    let mut input = CountedReader { bytes, consumed: 0 };
+    let total_bytes = input.bytes.len();
+    let limits = RenderLimits::builder()
+        .max_dom_nodes(Some(5))
+        .max_input_bytes(None)
+        .build();
+
+    let err = parse_html_with_limits(&mut input, &opts, limits)
+        .expect_err("six DOM nodes must exceed a five-node cap");
+    assert!(
+        matches!(
+            err,
+            RenderError::LimitExceeded {
+                kind: LimitKind::DomNodes,
+                limit: 5,
+                ..
+            }
+        ),
+        "{err:?}"
+    );
+    assert!(
+        input.consumed < total_bytes,
+        "read {}/{} bytes",
+        input.consumed,
+        total_bytes
+    );
 }
 
 #[test]

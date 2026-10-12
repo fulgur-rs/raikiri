@@ -199,6 +199,33 @@ fn input_cap_stops_feeding() {
 }
 
 #[test]
+fn dom_node_cap_stops_streaming_tree_allocation() {
+    let limits = RenderLimits::builder().max_dom_nodes(Some(5)).build();
+    let resources = RenderResources::new().render_limits(limits);
+    let mut record = Record::default();
+    let mut stream = StreamingLayout::new(
+        &resources,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        &mut record,
+    );
+
+    let error = stream
+        .feed(b"<p>Hi</p>")
+        .expect_err("the text node must exceed a five-node budget");
+    assert!(matches!(
+        error,
+        RenderError::LimitExceeded {
+            kind: LimitKind::DomNodes,
+            limit: 5,
+            actual: 6,
+        }
+    ));
+    drop(stream);
+    assert!(!record.finished);
+}
+
+#[test]
 fn incomplete_trailing_character_fails_at_finish() {
     let mut record = Record::default();
     let resources = RenderResources::new();

@@ -9,6 +9,10 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::Range;
 
 const DEFAULT_MAX_OUTPUT_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_INITIAL_PARSE_XML_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_INITIAL_PARSE_XML_NODES: u32 = 1_000_000;
+const MAX_INITIAL_PARSE_XML_DEPTH: usize = 128;
+const MAX_INITIAL_PARSE_EXPANDED_NODES: usize = 1_000_000;
 const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
 const XLINK_NAMESPACE: &str = "http://www.w3.org/1999/xlink";
 const XML_NAMESPACE: &str = "http://www.w3.org/XML/1998/namespace";
@@ -109,6 +113,36 @@ struct SourceRootStyle<'a> {
 pub enum SvgError {
     /// The source is not a supported SVG document.
     InvalidDocument(String),
+    /// The encoded SVG source exceeds the parser input cap.
+    InputLimitExceeded {
+        /// Number of input bytes.
+        bytes: u64,
+        /// Maximum permitted input bytes.
+        limit: u64,
+    },
+    /// The SVG source contains too many XML nodes.
+    XmlNodeLimitExceeded {
+        /// First node count beyond the limit.
+        nodes: u64,
+        /// Maximum permitted XML nodes.
+        limit: u64,
+    },
+    /// A parser allocation heuristic would reserve beyond the bounded marker count.
+    XmlPreallocationLimitExceeded {
+        /// Source byte used by the parser's capacity estimate.
+        marker: char,
+        /// Number of marker bytes found in the source.
+        occurrences: u64,
+        /// Maximum permitted marker count.
+        limit: u64,
+    },
+    /// The SVG source nests XML elements beyond the parser depth cap.
+    XmlDepthLimitExceeded {
+        /// First depth beyond the limit.
+        depth: usize,
+        /// Maximum permitted depth.
+        limit: usize,
+    },
     /// The document contains a DTD other than the inert SVG 1.1 public declaration.
     UnsupportedDoctype,
     /// An SVG resource reference would access a resource outside this file.
@@ -134,6 +168,29 @@ impl std::fmt::Display for SvgError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InvalidDocument(message) => write!(f, "invalid SVG document: {message}"),
+            Self::InputLimitExceeded { bytes, limit } => {
+                write!(
+                    f,
+                    "SVG input is {bytes} bytes, exceeding the {limit}-byte limit"
+                )
+            }
+            Self::XmlNodeLimitExceeded { nodes, limit } => {
+                write!(
+                    f,
+                    "SVG XML has {nodes} nodes, exceeding the {limit}-node limit"
+                )
+            }
+            Self::XmlPreallocationLimitExceeded {
+                marker,
+                occurrences,
+                limit,
+            } => write!(
+                f,
+                "SVG XML contains {occurrences} '{marker}' markers, exceeding the {limit}-marker preallocation limit"
+            ),
+            Self::XmlDepthLimitExceeded { depth, limit } => {
+                write!(f, "SVG XML depth {depth} exceeds the {limit}-element limit")
+            }
             Self::UnsupportedDoctype => f.write_str("SVG documents with a DOCTYPE are unsupported"),
             Self::ExternalReference => {
                 f.write_str("SVG resource references outside the document are disabled")
@@ -167,22 +224,36 @@ pub struct SvgDocument {
 }
 
 impl SvgDocument {
-    /// Parses and validates a UTF-8 SVG document.
+    /// Parses and validates a UTF-8 SVG document within fixed input-byte,
+    /// XML-node, and element-depth limits.
     pub fn parse(data: &[u8]) -> Result<Self, SvgError> {
+        if data.len() as u64 > MAX_INITIAL_PARSE_XML_BYTES {
+            return Err(SvgError::InputLimitExceeded {
+                bytes: data.len() as u64,
+                limit: MAX_INITIAL_PARSE_XML_BYTES,
+            });
+        }
         let source = std::str::from_utf8(data)
             .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
         let normalized = without_svg11_public_doctype(source)?;
-        ensure_initial_svg_xml_depth_bounded(&normalized)?;
+        preflight_initial_svg_xml(source)?;
         // Validate placement in the original XML, then keep DTD-free source
         // for every subsequent parser pass. No DTD resource is ever loaded.
         let xml = roxmltree::Document::parse_with_options(
             source,
             roxmltree::ParsingOptions {
                 allow_dtd: matches!(normalized, std::borrow::Cow::Owned(_)),
+                nodes_limit: MAX_INITIAL_PARSE_XML_NODES,
                 ..Default::default()
             },
         )
-        .map_err(|error| SvgError::InvalidDocument(error.to_string()))?;
+        .map_err(|error| match error {
+            roxmltree::Error::NodesLimitReached => SvgError::XmlNodeLimitExceeded {
+                nodes: u64::from(MAX_INITIAL_PARSE_XML_NODES) + 1,
+                limit: u64::from(MAX_INITIAL_PARSE_XML_NODES),
+            },
+            error => SvgError::InvalidDocument(error.to_string()),
+        })?;
         let root = xml.root_element();
         if root.tag_name().name() != "svg"
             || root
@@ -1438,11 +1509,6 @@ fn preflight_initial_svg_selectors(xml: &roxmltree::Document<'_>) -> Result<(), 
         return Ok(());
     }
 
-    let mut xml_node_count = 0usize;
-    for _ in xml.descendants() {
-        charge_initial_parse_node_count(&mut xml_node_count, MAX_INITIAL_PARSE_XML_NODES)?;
-    }
-
     let mut id_map = HashMap::new();
     for node in xml.descendants() {
         budget.charge_work(1)?;
@@ -1471,27 +1537,103 @@ fn preflight_initial_svg_selectors(xml: &roxmltree::Document<'_>) -> Result<(), 
     )
 }
 
-fn ensure_initial_svg_xml_depth_bounded(source: &str) -> Result<(), SvgError> {
+fn preflight_initial_svg_xml(source: &str) -> Result<(), SvgError> {
+    preflight_initial_svg_xml_with_limits(
+        source,
+        MAX_INITIAL_PARSE_XML_BYTES,
+        u64::from(MAX_INITIAL_PARSE_XML_NODES),
+        MAX_INITIAL_PARSE_XML_DEPTH,
+    )
+}
+
+fn preflight_initial_svg_xml_with_limits(
+    source: &str,
+    max_bytes: u64,
+    max_nodes: u64,
+    max_depth: usize,
+) -> Result<(), SvgError> {
+    let byte_len = source.len() as u64;
+    if byte_len > max_bytes {
+        return Err(SvgError::InputLimitExceeded {
+            bytes: byte_len,
+            limit: max_bytes,
+        });
+    }
+
     let bytes = source.as_bytes();
-    let mut cursor = 0usize;
+    for marker in [b'<', b'='] {
+        let mut occurrences = 0u64;
+        for _ in bytes.iter().filter(|byte| **byte == marker) {
+            occurrences = occurrences.saturating_add(1);
+            if occurrences > max_nodes {
+                return Err(SvgError::XmlPreallocationLimitExceeded {
+                    marker: char::from(marker),
+                    occurrences,
+                    limit: max_nodes,
+                });
+            }
+        }
+    }
+
+    let document_start = usize::from(bytes.starts_with(&[0xEF, 0xBB, 0xBF])) * 3;
+    let mut cursor = document_start;
+    let mut text_start = document_start;
     let mut depth = 0usize;
+    let mut text_node_pending = false;
+    let mut node_count = 1u64;
+    if node_count > max_nodes {
+        return Err(SvgError::XmlNodeLimitExceeded {
+            nodes: node_count,
+            limit: max_nodes,
+        });
+    }
 
     while cursor < bytes.len() {
         let Some(relative_start) = bytes[cursor..].iter().position(|byte| *byte == b'<') else {
             break;
         };
-        cursor += relative_start;
+        let markup_start = cursor + relative_start;
+        if markup_start > text_start && depth > 0 && !text_node_pending {
+            charge_initial_svg_xml_node(&mut node_count, max_nodes)?;
+            text_node_pending = true;
+        }
+        cursor = markup_start;
 
         if bytes[cursor..].starts_with(b"<!--") {
+            charge_initial_svg_xml_node(&mut node_count, max_nodes)?;
             cursor = skip_xml_markup_until(bytes, cursor + 4, b"-->");
+            text_start = cursor;
+            text_node_pending = false;
             continue;
         }
         if bytes[cursor..].starts_with(b"<![CDATA[") {
+            if depth > 0 && !text_node_pending {
+                charge_initial_svg_xml_node(&mut node_count, max_nodes)?;
+                text_node_pending = true;
+            }
             cursor = skip_xml_markup_until(bytes, cursor + 9, b"]]>");
+            text_start = cursor;
             continue;
         }
         if bytes[cursor..].starts_with(b"<?") {
+            let is_xml_declaration =
+                cursor == document_start && bytes[cursor..].starts_with(b"<?xml ");
+            if !is_xml_declaration {
+                charge_initial_svg_xml_node(&mut node_count, max_nodes)?;
+            }
             cursor = skip_xml_markup_until(bytes, cursor + 2, b"?>");
+            text_start = cursor;
+            text_node_pending = false;
+            continue;
+        }
+        if bytes[cursor..].starts_with(b"<!") {
+            let end = scan_xml_markup_end(bytes, cursor + 2);
+            if end == bytes.len() {
+                break;
+            }
+            cursor = end + 1;
+            text_start = cursor;
+            text_node_pending = false;
             continue;
         }
 
@@ -1504,29 +1646,16 @@ fn ensure_initial_svg_xml_depth_bounded(source: &str) -> Result<(), SvgError> {
             continue;
         }
 
-        let mut quote = None;
-        let mut end = name_start;
-        while let Some(byte) = bytes.get(end).copied() {
-            if let Some(quote_byte) = quote {
-                if byte == quote_byte {
-                    quote = None;
-                }
-            } else {
-                match byte {
-                    b'\'' | b'"' => quote = Some(byte),
-                    b'>' => break,
-                    _ => {}
-                }
-            }
-            end += 1;
-        }
+        let end = scan_xml_markup_end(bytes, name_start);
         if end == bytes.len() {
             break;
         }
 
+        text_node_pending = false;
         if closing {
             depth = depth.saturating_sub(1);
         } else {
+            charge_initial_svg_xml_node(&mut node_count, max_nodes)?;
             let last_non_space = bytes[name_start..end]
                 .iter()
                 .rev()
@@ -1534,16 +1663,61 @@ fn ensure_initial_svg_xml_depth_bounded(source: &str) -> Result<(), SvgError> {
             if last_non_space != Some(&b'/') {
                 depth = depth
                     .checked_add(1)
-                    .ok_or_else(initial_parse_selector_limit_error)?;
-                if depth > MAX_INITIAL_PARSE_XML_DEPTH {
-                    return Err(initial_parse_selector_limit_error());
+                    .ok_or(SvgError::XmlDepthLimitExceeded {
+                        depth: usize::MAX,
+                        limit: max_depth,
+                    })?;
+                if depth > max_depth {
+                    return Err(SvgError::XmlDepthLimitExceeded {
+                        depth,
+                        limit: max_depth,
+                    });
                 }
             }
         }
 
         cursor = end + 1;
+        text_start = cursor;
     }
 
+    if text_start < bytes.len() && depth > 0 && !text_node_pending {
+        charge_initial_svg_xml_node(&mut node_count, max_nodes)?;
+    }
+
+    Ok(())
+}
+
+fn scan_xml_markup_end(bytes: &[u8], start: usize) -> usize {
+    let mut quote = None;
+    let mut cursor = start;
+    while let Some(byte) = bytes.get(cursor).copied() {
+        if let Some(quote_byte) = quote {
+            if byte == quote_byte {
+                quote = None;
+            }
+        } else {
+            match byte {
+                b'\'' | b'"' => quote = Some(byte),
+                b'>' => break,
+                _ => {}
+            }
+        }
+        cursor += 1;
+    }
+    cursor
+}
+
+fn charge_initial_svg_xml_node(count: &mut u64, limit: u64) -> Result<(), SvgError> {
+    *count = count.checked_add(1).ok_or(SvgError::XmlNodeLimitExceeded {
+        nodes: u64::MAX,
+        limit,
+    })?;
+    if *count > limit {
+        return Err(SvgError::XmlNodeLimitExceeded {
+            nodes: *count,
+            limit,
+        });
+    }
     Ok(())
 }
 
@@ -1638,7 +1812,7 @@ fn preflight_svg_selector_children<'a, 'input: 'a, 'css>(
             return Err(initial_parse_selector_limit_error());
         }
 
-        charge_initial_parse_node_count(expanded_node_count, MAX_INITIAL_PARSE_XML_NODES)?;
+        charge_initial_parse_node_count(expanded_node_count, MAX_INITIAL_PARSE_EXPANDED_NODES)?;
 
         for selector in selectors {
             budget.charge_work(1)?;
@@ -2800,8 +2974,6 @@ const MAX_INITIAL_PARSE_DECLARATION_STORAGE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_INITIAL_PARSE_SELECTOR_AST_BYTES_PER_SOURCE_BYTE: usize = 512;
 const INITIAL_PARSE_DECLARATION_CAPACITY_FACTOR: usize = 2;
 const MAX_INITIAL_PARSE_STYLE_SORT_WORK: usize = 4_194_304;
-const MAX_INITIAL_PARSE_XML_NODES: usize = 1_000_000;
-const MAX_INITIAL_PARSE_XML_DEPTH: usize = 128;
 
 struct SelectorFreezeBudget {
     bytes: usize,

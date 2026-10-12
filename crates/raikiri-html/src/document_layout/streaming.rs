@@ -646,7 +646,11 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
         config: LayoutConfig,
         sink: S,
     ) -> Self {
-        let tree = RaikiriTreeSink::new(resources.parse_limits().max_parse_warnings);
+        let parse_limits = resources.parse_limits();
+        let tree = RaikiriTreeSink::with_limits(
+            parse_limits.max_parse_warnings,
+            parse_limits.max_dom_nodes,
+        );
         Self {
             settings: Settings {
                 resources,
@@ -740,16 +744,33 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
         // the input however the caller chunks it.
         let mut rest = bytes;
         while !rest.is_empty() {
-            if self.aborted {
-                return self.input.feed(rest).map_err(RenderError::Parse);
-            }
-            let room = self
-                .checkpoint_bytes
-                .saturating_sub(self.unchecked_bytes)
-                .max(1);
+            let room = if self.aborted {
+                CHECKPOINT_BYTES
+            } else {
+                self.checkpoint_bytes
+                    .saturating_sub(self.unchecked_bytes)
+                    .max(1)
+            };
             let (piece, tail) = rest.split_at(room.min(rest.len()));
             rest = tail;
-            self.input.feed(piece).map_err(RenderError::Parse)?;
+            self.input.feed(piece).map_err(RenderError::from)?;
+            if let Some((limit, actual)) = self
+                .input
+                .parser()
+                .tokenizer
+                .sink
+                .sink
+                .dom_node_limit_error()
+            {
+                return Err(RenderError::LimitExceeded {
+                    kind: LimitKind::DomNodes,
+                    limit,
+                    actual,
+                });
+            }
+            if self.aborted {
+                continue;
+            }
             self.unchecked_bytes += piece.len();
             if self.unchecked_bytes >= self.checkpoint_bytes {
                 self.unchecked_bytes = 0;
@@ -762,8 +783,22 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
     /// Lay out the document parsed so far and deliver its final pages.
     fn checkpoint(&mut self) -> Result<(), RenderError> {
         let builder = &self.input.parser().tokenizer.sink;
+        if let Some((limit, actual)) = builder.sink.dom_node_limit_error() {
+            return Err(RenderError::LimitExceeded {
+                kind: LimitKind::DomNodes,
+                limit,
+                actual,
+            });
+        }
         let traced = traced_handles(builder);
         let parsed = builder.sink.snapshot();
+        if let Some((limit, actual)) = builder.sink.dom_node_limit_error() {
+            return Err(RenderError::LimitExceeded {
+                kind: LimitKind::DomNodes,
+                limit,
+                actual,
+            });
+        }
         let Cascaded {
             document,
             forward_dependent,
@@ -883,7 +918,16 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
             earlier_warnings,
             ..
         } = self;
+        let node_limit = settings.resources.parse_limits().max_dom_nodes;
+        let node_limit_signal = input.parser().tokenizer.sink.sink.dom_node_limit_signal();
         let parsed = input.finish().map_err(RenderError::Parse)?;
+        if let Some(actual) = node_limit_signal.get() {
+            return Err(RenderError::LimitExceeded {
+                kind: LimitKind::DomNodes,
+                limit: node_limit.unwrap_or_else(|| actual.saturating_sub(1)),
+                actual,
+            });
+        }
         let Cascaded {
             mut document,
             mut ignored,
