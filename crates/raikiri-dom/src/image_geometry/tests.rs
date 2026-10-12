@@ -228,3 +228,38 @@ fn round_tiles_bound_degenerate_counts() {
     );
     assert_eq!(origins, Some(vec![0.0]));
 }
+
+#[test]
+fn round_tiles_follow_position_and_space_tiles_cover_the_painting_area() {
+    let computed = raikiri_style::ComputedValues::initial();
+    let mut position = computed.background_position;
+    position.horizontal = ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(5.0));
+    // A rescaled `round` tile is placed by `background-position` and repeats
+    // over the painting area like `repeat`.
+    let round = axis_origins(
+        1.0,
+        72.0,
+        0.0,
+        74.0,
+        36.0,
+        32.0,
+        &position.horizontal,
+        &BackgroundRepeatKeyword::Round,
+        Some(2),
+    );
+    assert_eq!(round, Some(vec![-30.0, 6.0, 42.0]));
+    // Spaced tiles keep their pitch over a painting area larger than the
+    // positioning area.
+    let space = axis_origins(
+        35.0,
+        65.0,
+        0.0,
+        135.0,
+        30.0,
+        30.0,
+        &computed.background_position.horizontal,
+        &BackgroundRepeatKeyword::Space,
+        None,
+    );
+    assert_eq!(space, Some(vec![0.0, 35.0, 70.0, 105.0]));
+}

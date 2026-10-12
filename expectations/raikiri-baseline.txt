@@ -252,9 +252,6 @@ css/css-backgrounds/background-image-large-with-auto.html
 css/css-backgrounds/background-image-table-cells-zoomed.html
 css/css-backgrounds/background-image-with-border-radius-fidelity.html
 css/css-backgrounds/background-margin-iframe-root.html
-css/css-backgrounds/background-margin-root.html
-css/css-backgrounds/background-margin-transformed-root.html
-css/css-backgrounds/background-margin-will-change-root.html
 css/css-backgrounds/background-multiple-layers-table-cell.html
 css/css-backgrounds/background-paint-order-001.html
 css/css-backgrounds/background-position-negative-percentage-comparison-002.html
@@ -992,7 +989,6 @@ css/css-flexbox/item-with-max-height-and-scrollbar.html
 css/css-flexbox/layout-algorithm_algo-cross-line-001.html
 css/css-flexbox/min-size-auto-overflow-clip.html
 css/css-flexbox/overflow-area-003.html
-css/css-flexbox/overflow-auto-005.html
 css/css-flexbox/percentage-heights-004.html
 # REMOVED 2026-09-15: css/css-flexbox/percentage-heights-015.html — regressed by
 # the min/max-size bridge (container max-height:200px + item min-height:0 now
@@ -2776,16 +2772,7 @@ css/css-images/conic-gradient-angle-negative.html
 css/css-images/gradient-move-stops.html
 css/css-images/gradient/gradient-analogous-missing-components-001.html
 css/css-images/gradient/gradient-analogous-missing-components-004.html
-css/css-images/gradient/gradient-decreasing-hue-lch.html
 css/css-images/gradient/gradient-hue-direction.html
-css/css-images/gradient/gradient-increasing-hue-lch.html
-css/css-images/gradient/gradient-longer-hue-lch-001.html
-css/css-images/gradient/gradient-longer-hue-lch-002.html
-css/css-images/gradient/gradient-longer-hue-lch-003.html
-css/css-images/gradient/gradient-longer-hue-lch-004.html
-css/css-images/gradient/gradient-longer-hue-lch-005.html
-css/css-images/gradient/gradient-longer-hue-lch-006.html
-css/css-images/gradient/gradient-longer-hue-lch-007.html
 css/css-images/gradient/gradient-longer-hue-lch-008.html
 css/css-images/gradient/gradient-longer-hue-lch-009.html
 css/css-images/gradient/gradient-longer-hue-lch-010.html
@@ -3126,7 +3113,6 @@ css/css-tables/height-distribution/percentage-sizing-of-table-cell-children-005.
 css/css-tables/insert-after-colgroup.html
 css/css-tables/internal-containing-block-001.html
 css/css-tables/min-height-table.html
-css/css-tables/paint/col-change-span-bg-invalidation-002.html
 css/css-tables/paint/row-background-paint-remove-last-cell.html
 css/css-tables/percent-height-overflow-auto-in-unrestricted-block-size-cell.tentative.html
 css/css-tables/remove-caption-from-anon-table.html

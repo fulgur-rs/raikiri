@@ -1,0 +1,380 @@
+use super::*;
+
+/// The computed values of a `div` with `style`.
+fn computed_for(style: &str) -> ComputedValues {
+    let mut document = Document::new();
+    let id = document.append_element(
+        Some(document.root_index()),
+        "div",
+        taffy::Style::default(),
+        Some(style),
+    );
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade Ok");
+    cascade.computed[id].clone()
+}
+
+fn gradient_of(cv: &ComputedValues) -> Gradient {
+    match &cv.background_image {
+        BackgroundImage::Gradient(gradient) => (**gradient).clone(),
+        other => panic!("expected a gradient, got {other:?}"),
+    }
+}
+
+/// Rasterize a gradient layer over a `width` by `height` box at the origin.
+fn raster_layer(style: &str, width: u32, height: u32) -> Vec<u8> {
+    let cv = computed_for(style);
+    let gradient = gradient_of(&cv);
+    let area = Rect::new(0.0, 0.0, f64::from(width), f64::from(height));
+    let mut scene = Scene::new();
+    assert!(gradient::paint_gradient_layer(
+        &mut scene,
+        &gradient,
+        area,
+        area,
+        None,
+        &cv.background_size,
+        &cv.background_position,
+        &cv.background_repeat,
+        cv.color,
+    ));
+    anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        width,
+        height,
+    )
+}
+
+fn pixel(rgba: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
+    let at = ((y * width + x) * 4) as usize;
+    [rgba[at], rgba[at + 1], rgba[at + 2], rgba[at + 3]]
+}
+
+const RED: [u8; 4] = [255, 0, 0, 255];
+const BLUE: [u8; 4] = [0, 0, 255, 255];
+
+#[test]
+fn linear_gradient_hard_stops_split_the_box() {
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to right, red 50%, blue 50%)",
+        40,
+        10,
+    );
+    assert_eq!(pixel(&rgba, 40, 5, 5), RED);
+    assert_eq!(pixel(&rgba, 40, 35, 5), BLUE);
+}
+
+#[test]
+fn linear_gradient_angle_and_corner_follow_the_gradient_line() {
+    let rgba = raster_layer(
+        "background-image: linear-gradient(180deg, red 50%, blue 50%)",
+        10,
+        40,
+    );
+    assert_eq!(pixel(&rgba, 10, 5, 5), RED);
+    assert_eq!(pixel(&rgba, 10, 5, 35), BLUE);
+    // The 50% line of a corner gradient runs through the other two corners.
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to bottom right, red 50%, blue 50%)",
+        40,
+        20,
+    );
+    assert_eq!(pixel(&rgba, 40, 2, 2), RED);
+    assert_eq!(pixel(&rgba, 40, 37, 17), BLUE);
+    assert_eq!(pixel(&rgba, 40, 30, 2), RED);
+    assert_eq!(pixel(&rgba, 40, 34, 4), BLUE);
+}
+
+#[test]
+fn linear_gradient_pads_before_and_after_its_stops() {
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to right, red 25%, blue 75%)",
+        40,
+        10,
+    );
+    assert_eq!(pixel(&rgba, 40, 2, 5), RED);
+    assert_eq!(pixel(&rgba, 40, 38, 5), BLUE);
+    let middle = pixel(&rgba, 40, 20, 5);
+    assert!(middle[0] > 0 && middle[2] > 0, "{middle:?}");
+}
+
+#[test]
+fn repeating_linear_gradient_repeats_its_stops() {
+    let rgba = raster_layer(
+        "background-image: repeating-linear-gradient(to right, red 0, red 10px, blue 10px, blue 20px)",
+        40,
+        10,
+    );
+    assert_eq!(pixel(&rgba, 40, 5, 5), RED);
+    assert_eq!(pixel(&rgba, 40, 15, 5), BLUE);
+    assert_eq!(pixel(&rgba, 40, 25, 5), RED);
+    assert_eq!(pixel(&rgba, 40, 35, 5), BLUE);
+}
+
+#[test]
+fn gradient_tiles_follow_background_size() {
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to right, red 50%, blue 50%); background-size: 20px 20px",
+        40,
+        20,
+    );
+    assert_eq!(pixel(&rgba, 40, 5, 10), RED);
+    assert_eq!(pixel(&rgba, 40, 15, 10), BLUE);
+    assert_eq!(pixel(&rgba, 40, 25, 10), RED);
+    assert_eq!(pixel(&rgba, 40, 35, 10), BLUE);
+}
+
+#[test]
+fn radial_gradient_sizes_circles_and_ellipses() {
+    let rgba = raster_layer(
+        "background-image: radial-gradient(circle 10px, red 50%, blue 50%)",
+        40,
+        40,
+    );
+    assert_eq!(pixel(&rgba, 40, 20, 20), RED);
+    assert_eq!(pixel(&rgba, 40, 28, 20), BLUE);
+    // A closest-side ellipse in a wide box is wider than it is tall.
+    let rgba = raster_layer(
+        "background-image: radial-gradient(closest-side, red 80%, blue 80%)",
+        80,
+        20,
+    );
+    assert_eq!(pixel(&rgba, 80, 40, 10), RED);
+    assert_eq!(pixel(&rgba, 80, 70, 10), RED);
+    assert_eq!(pixel(&rgba, 80, 40, 1), BLUE);
+}
+
+#[test]
+fn radial_extents_measure_sides_and_corners() {
+    let tile = Rect::new(0.0, 0.0, 40.0, 20.0);
+    let center = Point::new(10.0, 10.0);
+    let radii = |style: &str| match gradient_of(&computed_for(style)) {
+        Gradient::Radial(radial) => gradient::radial_radii(&radial, center, tile),
+        other => panic!("expected radial, got {other:?}"),
+    };
+    assert_eq!(
+        radii("background-image: radial-gradient(circle closest-side, red, blue)"),
+        (10.0, 10.0)
+    );
+    assert_eq!(
+        radii("background-image: radial-gradient(circle farthest-side, red, blue)"),
+        (30.0, 30.0)
+    );
+    let (r, _) = radii("background-image: radial-gradient(circle farthest-corner, red, blue)");
+    assert!((r - 30.0f64.hypot(10.0)).abs() < 1e-9);
+    let (r, _) = radii("background-image: radial-gradient(circle closest-corner, red, blue)");
+    assert!((r - 10.0f64.hypot(10.0)).abs() < 1e-9);
+    assert_eq!(
+        radii("background-image: radial-gradient(ellipse farthest-side, red, blue)"),
+        (30.0, 10.0)
+    );
+    // A corner ellipse keeps the side extent's aspect ratio.
+    let (rx, ry) = radii("background-image: radial-gradient(ellipse closest-corner, red, blue)");
+    assert!((rx - 10.0 * 2f64.sqrt()).abs() < 1e-9);
+    assert!((ry - 10.0 * 2f64.sqrt()).abs() < 1e-9);
+    let (rx, ry) = radii("background-image: radial-gradient(red, blue)");
+    assert!((rx / ry - 3.0).abs() < 1e-9);
+    assert!((rx - 30.0 * 2f64.sqrt()).abs() < 1e-9);
+    assert_eq!(
+        radii("background-image: radial-gradient(ellipse 50% 5px, red, blue)"),
+        (20.0, 5.0)
+    );
+}
+
+#[test]
+fn degenerate_gradients_paint_a_switch_or_an_average() {
+    // A repeating gradient with no period paints the average stop color.
+    let rgba = raster_layer(
+        "background-image: repeating-linear-gradient(to right, red 10px, blue 10px)",
+        40,
+        10,
+    );
+    let average = pixel(&rgba, 40, 5, 5);
+    assert!((127..=128).contains(&average[0]) && (127..=128).contains(&average[2]));
+    // Stops sharing one position switch colors there.
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to right, red 20px, blue 20px)",
+        40,
+        10,
+    );
+    assert_eq!(pixel(&rgba, 40, 10, 5), RED);
+    assert_eq!(pixel(&rgba, 40, 30, 5), BLUE);
+    // A radial gradient with no size paints nothing.
+    let cv = computed_for("background-image: radial-gradient(circle 0px, red, blue)");
+    let fill =
+        gradient::gradient_fill(&gradient_of(&cv), Rect::new(0.0, 0.0, 10.0, 10.0), cv.color);
+    assert!(fill.is_none());
+}
+
+#[test]
+fn radial_stops_before_the_center_are_cut_at_zero() {
+    let rgba = raster_layer(
+        "background-image: radial-gradient(circle 20px, red -20px, blue 20px)",
+        40,
+        40,
+    );
+    // Halfway between the stops the center is the mix of both colors.
+    let center = pixel(&rgba, 40, 20, 20);
+    assert!(center[0] > 64 && center[2] > 64, "{center:?}");
+    let rgba = raster_layer(
+        "background-image: radial-gradient(circle 20px, red -20px, blue -10px)",
+        40,
+        40,
+    );
+    assert_eq!(pixel(&rgba, 40, 20, 20), BLUE);
+    let rgba = raster_layer(
+        "background-image: repeating-radial-gradient(circle 20px, red -10px, red 0px, blue 0px, blue 10px)",
+        40,
+        40,
+    );
+    assert_eq!(pixel(&rgba, 40, 25, 20), BLUE);
+    assert_eq!(pixel(&rgba, 40, 35, 20), RED);
+}
+
+#[test]
+fn conic_gradients_are_left_to_their_own_painter() {
+    let cv = computed_for("background-image: conic-gradient(red, blue)");
+    let area = Rect::new(0.0, 0.0, 10.0, 10.0);
+    let mut scene = Scene::new();
+    assert!(!gradient::paint_gradient_layer(
+        &mut scene,
+        &gradient_of(&cv),
+        area,
+        area,
+        None,
+        &cv.background_size,
+        &cv.background_position,
+        &cv.background_repeat,
+        cv.color,
+    ));
+    assert!(scene.commands.is_empty());
+    assert!(gradient::gradient_fill(&gradient_of(&cv), area, cv.color).is_none());
+}
+
+#[test]
+fn gradient_size_ignores_natural_dimensions() {
+    let area = Rect::new(0.0, 0.0, 80.0, 40.0);
+    let size =
+        |style: &str| gradient::gradient_image_size(&computed_for(style).background_size, area);
+    assert_eq!(size("background-size: auto"), Some((80.0, 40.0)));
+    assert_eq!(size("background-size: contain"), Some((80.0, 40.0)));
+    assert_eq!(size("background-size: 25% auto"), Some((20.0, 40.0)));
+    assert_eq!(size("background-size: auto 10px"), Some((80.0, 10.0)));
+    assert_eq!(size("background-size: 20px 0px"), None);
+}
+
+#[test]
+fn element_background_paints_the_gradient_over_its_color() {
+    let cv = computed_for(
+        "background: rgb(0, 255, 0) linear-gradient(to right, transparent 50%, blue 50%)",
+    );
+    let mut scene = Scene::new();
+    let mut warnings = Vec::new();
+    paint_element_background(
+        &ImageBrushCache::default(),
+        &mut scene,
+        40.0,
+        10.0,
+        0.0,
+        0.0,
+        cv.background_color,
+        &cv.background_image,
+        cv.color,
+        cv.background_clip,
+        cv.background_origin,
+        &cv.border_radius,
+        &cv.border,
+        &taffy::Rect {
+            left: 0.0,
+            right: 0.0,
+            top: 0.0,
+            bottom: 0.0,
+        },
+        &cv.background_size,
+        &cv.background_position,
+        &cv.background_repeat,
+        None,
+        &mut warnings,
+    );
+    assert!(warnings.is_empty());
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        40,
+        10,
+    );
+    assert_eq!(pixel(&rgba, 40, 5, 5), [0, 255, 0, 255]);
+    assert_eq!(pixel(&rgba, 40, 35, 5), BLUE);
+}
+
+#[test]
+fn canvas_background_paints_a_propagated_body_gradient() {
+    let (document, cascade) = canvas_fixture(
+        Some("@page { size: 100px 40px; margin: 0 }"),
+        Some("background: linear-gradient(90deg, rgb(211, 211, 211) 50%, white 50%)"),
+    );
+    let mut page_box = PageBox::A4;
+    page_box.width = 100.0;
+    page_box.height = 40.0;
+    let mut scene = Scene::new();
+    let mut warnings = Vec::new();
+    paint_canvas_background(
+        &ImageBrushCache::default(),
+        &mut scene,
+        &document,
+        &cascade,
+        page_box,
+        None,
+        &mut warnings,
+    );
+    assert!(warnings.is_empty());
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        100,
+        40,
+    );
+    assert_eq!(pixel(&rgba, 100, 10, 20), [211, 211, 211, 255]);
+    assert_eq!(pixel(&rgba, 100, 90, 20), [255, 255, 255, 255]);
+}
+
+#[test]
+fn canvas_gradient_with_an_unsupported_clip_warns() {
+    let (document, cascade) = canvas_fixture(
+        None,
+        Some("background: linear-gradient(red, blue); background-clip: text"),
+    );
+    let mut scene = Scene::new();
+    let mut warnings = Vec::new();
+    paint_canvas_background(
+        &ImageBrushCache::default(),
+        &mut scene,
+        &document,
+        &cascade,
+        PageBox::A4,
+        None,
+        &mut warnings,
+    );
+    assert_eq!(warnings.len(), 1);
+}
+
+#[test]
+fn longer_hue_padding_stays_solid() {
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to right in lch longer hue, red 0px, blue 0px)",
+        100,
+        4,
+    );
+    for x in [10, 50, 90] {
+        let [r, g, b, _] = pixel(&rgba, 100, x, 2);
+        assert!(r < 8 && g < 8 && b > 240, "x={x} must stay blue");
+    }
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to right in lch longer hue, red 0px, blue 100px)",
+        100,
+        4,
+    );
+    let [_, g, _, _] = pixel(&rgba, 100, 50, 2);
+    assert!(
+        g > 60,
+        "the longer hue arc passes through green at the middle"
+    );
+}

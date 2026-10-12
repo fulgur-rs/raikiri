@@ -410,6 +410,37 @@ fn float_and_in_flow_siblings() {
     );
 }
 
+/// CSS 2.1 Appendix E paints every in-flow block background of a layer
+/// before the inline content of those blocks, and positioned boxes after
+/// both. Text overflowing an empty block stays above the next block's
+/// background, and below a later positioned box.
+#[test]
+fn overflowing_text_paints_above_later_block_backgrounds() {
+    let result = assert_same_order(
+        "<div id=a style=\"height: 0\">over flow</div>\
+         <div id=b style=\"height: 20px; background: yellow\"></div>\
+         <div id=c style=\"position: relative; height: 5px; background: lime\"></div>\
+         <div id=d style=\"background: gray\">after</div>\
+         <div id=e style=\"overflow: hidden; background: teal\"><p id=f>clipped</p></div>",
+        "",
+    );
+    let page = result.pages().next().expect("a page");
+    let steps = walker_steps(&page);
+    let at = |step: Step| {
+        steps
+            .iter()
+            .position(|s| *s == step)
+            .unwrap_or_else(|| panic!("{step:?} in {}", describe(&page, &steps)))
+    };
+    let [a, b, c, d, e, f] = ["a", "b", "c", "d", "e", "f"].map(|id| by_id(&result, id));
+    assert!(at(Step::Box(b)) < at(Step::Text(a)));
+    assert!(at(Step::Text(a)) < at(Step::Box(c)));
+    assert!(at(Step::Box(d)) < at(Step::Text(d)));
+    // A clipping block closes its own layer, so its content stays inside
+    // the clip, before the blocks that follow it.
+    assert!(at(Step::Box(e)) < at(Step::Text(f)));
+}
+
 /// The walker draws an inline element's background with the paragraph's
 /// lines and records only the paragraph's `Text`; `paint_order` lists the
 /// inline element's `Box` on its own, before the paragraph's text. The

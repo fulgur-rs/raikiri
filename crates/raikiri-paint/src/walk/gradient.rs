@@ -1,0 +1,558 @@
+//! Linear and radial gradient images (CSS Images 3 §3.1–§3.6).
+//!
+//! A gradient has no natural size, so it fills each background tile it is
+//! sized to. The brush is built once for a tile at the origin and moved onto
+//! every tile with a brush transform.
+
+use super::*;
+use raikiri_style::property::{
+    GradientColorStop, HorizontalSide, LinearGradient, LinearGradientDirection, RadialExtent,
+    RadialGradient, RadialShape, RadialSize, VerticalSide,
+};
+
+/// What one gradient tile is filled with.
+#[derive(Debug, Clone)]
+pub(super) enum GradientFill {
+    /// A gradient brush for a tile at the origin, with an optional brush
+    /// transform that maps the circle of an elliptical radial gradient onto
+    /// its ellipse.
+    Brush(Box<PenikoGradient>, Option<Affine>),
+    /// A repeating gradient whose stops share one position paints the
+    /// average of its stop colors (CSS Images 3 §3.6).
+    Solid(Color),
+}
+
+/// Used size of a gradient tile (CSS Backgrounds 3 §3.9).
+///
+/// A gradient has no natural dimensions, so `auto`, `contain` and `cover`
+/// all take the size of the positioning area on that axis.
+pub(super) fn gradient_image_size(size: &ComputedBackgroundSize, area: Rect) -> Option<(f64, f64)> {
+    let (area_w, area_h) = (area.width(), area.height());
+    let resolve = |value: ComputedLengthPercentageOrAuto, basis: f64| match value {
+        ComputedLengthPercentageOrAuto::Px(px) => f64::from(px),
+        ComputedLengthPercentageOrAuto::Percent(percent) => basis * f64::from(percent) / 100.0,
+        ComputedLengthPercentageOrAuto::Calc(calc) => {
+            basis * f64::from(calc.percent) / 100.0 + f64::from(calc.px)
+        }
+        _ => basis,
+    };
+    let (width, height) = match size {
+        ComputedBackgroundSize::Explicit { width, height } => {
+            (resolve(*width, area_w), resolve(*height, area_h))
+        }
+        _ => (area_w, area_h),
+    };
+    (width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0)
+        .then_some((width, height))
+}
+
+/// Paint a linear or radial gradient layer.
+///
+/// `positioning` is the `background-origin` box that sizes and places the
+/// tiles; `painting` is the `background-clip` box the tiles cover and are
+/// clipped to, or `clip` when the box has rounded corners. Returns false for
+/// a gradient this module does not draw (a conic gradient), so the caller
+/// can fall back to its own path.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn paint_gradient_layer(
+    scene: &mut impl PaintScene,
+    gradient: &Gradient,
+    positioning: Rect,
+    painting: Rect,
+    clip: Option<&BezPath>,
+    size: &ComputedBackgroundSize,
+    position: &ComputedCssPosition,
+    repeat: &raikiri_style::property::BackgroundRepeat,
+    current_color: CssColor,
+) -> bool {
+    if !matches!(gradient, Gradient::Linear(_) | Gradient::Radial(_)) {
+        return false;
+    }
+    let Some((tile_w, tile_h)) = gradient_image_size(size, positioning) else {
+        return true;
+    };
+    // A tile below one pixel cannot be drawn without coverage gaps; like
+    // browsers, paint such a gradient in one-pixel tiles.
+    let (tile_w, tile_h) = (tile_w.max(1.0), tile_h.max(1.0));
+    let Some(tiles) = background_tiles(
+        (
+            positioning.x0,
+            positioning.y0,
+            positioning.width(),
+            positioning.height(),
+        ),
+        (
+            painting.x0,
+            painting.y0,
+            painting.width(),
+            painting.height(),
+        ),
+        (tile_w, tile_h),
+        position,
+        repeat,
+    ) else {
+        return true;
+    };
+    // `round` may rescale the tile, so the brush is built for the used size.
+    let tile = Rect::new(0.0, 0.0, tiles.width, tiles.height);
+    let Some(fill) = gradient_fill(gradient, tile, current_color) else {
+        return true;
+    };
+    match clip {
+        Some(path) => scene.push_clip_layer(Affine::IDENTITY, path),
+        None => scene.push_clip_layer(Affine::IDENTITY, &painting),
+    }
+    for tile_y in &tiles.y {
+        for tile_x in &tiles.x {
+            // Tile edges snap to whole pixels so neighboring tiles meet
+            // without antialiased seams; the painting area keeps its own
+            // edges.
+            let shape = Rect::new(
+                tile_x.round(),
+                tile_y.round(),
+                (tile_x + tiles.width).round(),
+                (tile_y + tiles.height).round(),
+            )
+            .intersect(painting);
+            if shape.width() <= 0.0 || shape.height() <= 0.0 {
+                continue;
+            }
+            let offset = Affine::translate((*tile_x, *tile_y));
+            match &fill {
+                GradientFill::Brush(brush, brush_transform) => scene.fill(
+                    Fill::NonZero,
+                    Affine::IDENTITY,
+                    brush.as_ref(),
+                    Some(offset * brush_transform.unwrap_or(Affine::IDENTITY)),
+                    &shape,
+                ),
+                GradientFill::Solid(color) => {
+                    scene.fill(Fill::NonZero, Affine::IDENTITY, *color, None, &shape)
+                }
+            }
+        }
+    }
+    scene.pop_layer();
+    true
+}
+
+/// The fill of one linear or radial gradient tile placed at the origin.
+///
+/// Returns `None` for a conic gradient and for a gradient with nothing to
+/// paint, such as a radial gradient whose ending shape has no size.
+pub(super) fn gradient_fill(
+    gradient: &Gradient,
+    tile: Rect,
+    current_color: CssColor,
+) -> Option<GradientFill> {
+    match gradient {
+        Gradient::Linear(linear) => linear_fill(linear, tile, current_color),
+        Gradient::Radial(radial) => radial_fill(radial, tile, current_color),
+        _ => None,
+    }
+}
+
+/// Unit direction of the gradient line in a y-down space (CSS Images 3
+/// §3.1.1).
+///
+/// An angle counts clockwise from "to top". A corner keyword points the line
+/// so that the 50% line runs through the two neighboring corners, which makes
+/// it perpendicular to the diagonal between them.
+fn linear_direction(direction: LinearGradientDirection, width: f64, height: f64) -> Vec2 {
+    match direction {
+        LinearGradientDirection::Angle(angle) => {
+            let degrees = if angle.0.is_finite() { angle.0 } else { 180.0 };
+            let radians = f64::from(degrees).to_radians();
+            Vec2::new(radians.sin(), -radians.cos())
+        }
+        LinearGradientDirection::Side(side) => {
+            let sx = match side.horizontal {
+                Some(HorizontalSide::Left) => -1.0,
+                Some(HorizontalSide::Right) => 1.0,
+                _ => 0.0,
+            };
+            let sy = match side.vertical {
+                Some(VerticalSide::Top) => -1.0,
+                Some(VerticalSide::Bottom) => 1.0,
+                _ => 0.0,
+            };
+            let corner = Vec2::new(sx * height, sy * width);
+            if sx != 0.0 && sy != 0.0 && corner.hypot() > 0.0 {
+                corner / corner.hypot()
+            } else {
+                let fallback = Vec2::new(sx, sy);
+                if fallback.hypot() > 0.0 {
+                    fallback / fallback.hypot()
+                } else {
+                    // cov:ignore: the parser requires at least one side keyword
+                    Vec2::new(0.0, 1.0)
+                }
+            }
+        }
+        // cov:ignore: defensive fallback for future direction variants
+        _ => Vec2::new(0.0, 1.0),
+    }
+}
+
+fn linear_fill(
+    linear: &LinearGradient,
+    tile: Rect,
+    current_color: CssColor,
+) -> Option<GradientFill> {
+    let (width, height) = (tile.width(), tile.height());
+    let direction = linear_direction(linear.direction, width, height);
+    let length = (width * direction.x).abs() + (height * direction.y).abs();
+    let center = tile.center();
+    let start = center - direction * (length / 2.0);
+    let line = direction * length;
+    let stops = resolved_stops(&linear.stops, length, current_color);
+    let (first, last, stops) = match normalize_stops(stops, linear.repeating)? {
+        Normalized::Solid(color) => return Some(GradientFill::Solid(color)),
+        Normalized::Stops { first, last, stops } => (first, last, stops),
+    };
+    let brush = PenikoGradient::new_linear(start + line * first, start + line * last);
+    Some(GradientFill::Brush(
+        Box::new(finish_brush(
+            brush,
+            &stops,
+            linear.repeating,
+            linear.interpolation.color_space,
+            linear.interpolation.hue_method,
+        )),
+        None,
+    ))
+}
+
+/// Horizontal and vertical radii of a radial gradient's ending shape (CSS
+/// Images 3 §3.2.1).
+pub(super) fn radial_radii(radial: &RadialGradient, center: Point, tile: Rect) -> (f64, f64) {
+    let left = (center.x - tile.x0).abs();
+    let right = (tile.x1 - center.x).abs();
+    let top = (center.y - tile.y0).abs();
+    let bottom = (tile.y1 - center.y).abs();
+    let (near_x, far_x) = (left.min(right), left.max(right));
+    let (near_y, far_y) = (top.min(bottom), top.max(bottom));
+    let circle = matches!(radial.shape, RadialShape::Circle);
+    // An ellipse sized to a corner keeps the aspect ratio of the matching
+    // side extent and passes through that corner.
+    let through_corner = |side_x: f64, side_y: f64, corner_x: f64, corner_y: f64| {
+        if side_x <= 0.0 || side_y <= 0.0 {
+            return (0.0, 0.0);
+        }
+        let ratio = side_x / side_y;
+        let rx = (corner_x * corner_x + (corner_y * ratio) * (corner_y * ratio)).sqrt();
+        (rx, rx / ratio)
+    };
+    match radial.size {
+        RadialSize::Extent(RadialExtent::ClosestSide) if circle => {
+            let r = near_x.min(near_y);
+            (r, r)
+        }
+        RadialSize::Extent(RadialExtent::FarthestSide) if circle => {
+            let r = far_x.max(far_y);
+            (r, r)
+        }
+        RadialSize::Extent(RadialExtent::ClosestCorner) if circle => {
+            let r = near_x.hypot(near_y);
+            (r, r)
+        }
+        RadialSize::Extent(RadialExtent::FarthestCorner) if circle => {
+            let r = far_x.hypot(far_y);
+            (r, r)
+        }
+        RadialSize::Extent(RadialExtent::ClosestSide) => (near_x, near_y),
+        RadialSize::Extent(RadialExtent::FarthestSide) => (far_x, far_y),
+        RadialSize::Extent(RadialExtent::ClosestCorner) => {
+            through_corner(near_x, near_y, near_x, near_y)
+        }
+        RadialSize::Extent(RadialExtent::FarthestCorner) => {
+            through_corner(far_x, far_y, far_x, far_y)
+        }
+        RadialSize::Circle(length) => {
+            let r = f64::from(length_to_px(length, 0.0, DEFAULT_FONT_SIZE));
+            (r, r)
+        }
+        RadialSize::Ellipse(rx, ry) => (
+            f64::from(length_to_px(rx, tile.width() as f32, DEFAULT_FONT_SIZE)),
+            f64::from(length_to_px(ry, tile.height() as f32, DEFAULT_FONT_SIZE)),
+        ),
+        // cov:ignore: defensive fallback for future size variants
+        _ => through_corner(far_x, far_y, far_x, far_y),
+    }
+}
+
+fn radial_fill(
+    radial: &RadialGradient,
+    tile: Rect,
+    current_color: CssColor,
+) -> Option<GradientFill> {
+    let center = conic_center(&radial.position, tile);
+    let (rx, ry) = radial_radii(radial, center, tile);
+    if !(rx > 0.0 && ry > 0.0 && rx.is_finite() && ry.is_finite()) {
+        return None;
+    }
+    let mut stops = resolved_stops(&radial.stops, rx, current_color);
+    if radial.repeating {
+        // The pattern is periodic, so shifting it by whole periods keeps every
+        // radius at or above zero without changing the colors.
+        let first = stops.first().map_or(0.0, |stop| stop.0);
+        let span = stops.last().map_or(0.0, |stop| stop.0) - first;
+        if first < 0.0 && span > 0.0 {
+            let shift = (-first / span).ceil() * span;
+            for stop in &mut stops {
+                stop.0 += shift;
+            }
+        }
+    } else {
+        clip_stops_at_zero(&mut stops);
+    }
+    let (first, last, stops) = match normalize_stops(stops, radial.repeating)? {
+        Normalized::Solid(color) => return Some(GradientFill::Solid(color)),
+        Normalized::Stops { first, last, stops } => (first, last, stops),
+    };
+    let brush = PenikoGradient::new_two_point_radial(
+        center,
+        (rx * first) as f32,
+        center,
+        (rx * last) as f32,
+    );
+    let ellipse = (ry != rx).then(|| {
+        Affine::translate(center.to_vec2())
+            * Affine::scale_non_uniform(1.0, ry / rx)
+            * Affine::translate(-center.to_vec2())
+    });
+    Some(GradientFill::Brush(
+        Box::new(finish_brush(
+            brush,
+            &stops,
+            radial.repeating,
+            radial.interpolation.color_space,
+            radial.interpolation.hue_method,
+        )),
+        ellipse,
+    ))
+}
+
+/// Font size assumed for font-relative stop positions and radii, which the
+/// computed value keeps unresolved.
+const DEFAULT_FONT_SIZE: f32 = 16.0;
+
+/// Stop positions as fractions of the gradient line or ray, after the color
+/// stop fixup (CSS Images 3 §3.4.3).
+fn resolved_stops(
+    stops: &[GradientColorStop],
+    length: f64,
+    current_color: CssColor,
+) -> Vec<(f64, CssColor)> {
+    let raw: Vec<Option<f32>> = stops
+        .iter()
+        .map(|stop| {
+            stop.position.map(|position| {
+                let fraction = match position {
+                    Length::Percent(percent) => f64::from(percent) / 100.0,
+                    Length::Px(px) if length > 0.0 => f64::from(px) / length,
+                    other if length > 0.0 => {
+                        f64::from(length_to_px(other, 0.0, DEFAULT_FONT_SIZE)) / length
+                    }
+                    _ => 0.0,
+                };
+                if fraction.is_finite() {
+                    fraction as f32
+                } else {
+                    0.0
+                }
+            })
+        })
+        .collect();
+    fixup_conic_offsets(&raw)
+        .into_iter()
+        .zip(stops)
+        .map(|(offset, stop)| {
+            (
+                f64::from(offset),
+                resolve_gradient_stop_color(stop.color, current_color),
+            )
+        })
+        .collect()
+}
+
+/// Drop stops below zero from a radial gradient, keeping the color the line
+/// has at zero.
+fn clip_stops_at_zero(stops: &mut Vec<(f64, CssColor)>) {
+    let Some(index) = stops.iter().position(|stop| stop.0 >= 0.0) else {
+        // Every stop lies before the center: the whole shape shows the last color.
+        if let Some(&(_, color)) = stops.last() {
+            stops.clear();
+            stops.push((0.0, color));
+            stops.push((1.0, color));
+        }
+        return;
+    };
+    if index == 0 {
+        return;
+    }
+    let (before_offset, before) = stops[index - 1];
+    let (after_offset, after) = stops[index];
+    let t = if after_offset > before_offset {
+        -before_offset / (after_offset - before_offset)
+    } else {
+        // cov:ignore: fixup keeps offsets non-decreasing, so a gap below zero is positive
+        1.0
+    };
+    let color = lerp_color(before, after, t);
+    stops.drain(..index);
+    stops.insert(0, (0.0, color));
+}
+
+fn lerp_color(from: CssColor, to: CssColor, t: f64) -> CssColor {
+    let mix = |a: u8, b: u8| (f64::from(a) + (f64::from(b) - f64::from(a)) * t).round() as u8;
+    CssColor {
+        r: mix(from.r, to.r),
+        g: mix(from.g, to.g),
+        b: mix(from.b, to.b),
+        a: mix(from.a, to.a),
+    }
+}
+
+enum Normalized {
+    Solid(Color),
+    Stops {
+        first: f64,
+        last: f64,
+        stops: Vec<(f32, CssColor)>,
+    },
+}
+
+/// Map the stops onto the 0..1 range of the brush.
+///
+/// A non-repeating brush spans the gradient line or ray from 0% to 100%,
+/// widened to reach stops outside it; pad extension shows the first and last
+/// colors beyond the stops as CSS requires. A repeating brush spans one
+/// period, from the first stop to the last. A repeating gradient whose stops
+/// share one position paints the average color (CSS Images 3 §3.6).
+fn normalize_stops(stops: Vec<(f64, CssColor)>, repeating: bool) -> Option<Normalized> {
+    let (first, last) = (stops.first()?.0, stops.last()?.0);
+    if repeating && last - first <= 1e-6 {
+        let count = stops.len() as f64;
+        let average = |channel: fn(&CssColor) -> u8| {
+            (stops
+                .iter()
+                .map(|(_, c)| f64::from(channel(c)))
+                .sum::<f64>()
+                / count)
+                .round() as u8
+        };
+        return Some(Normalized::Solid(Color::from_rgba8(
+            average(|c| c.r),
+            average(|c| c.g),
+            average(|c| c.b),
+            average(|c| c.a),
+        )));
+    }
+    let (start, end) = if repeating {
+        (first, last)
+    } else {
+        (first.min(0.0), last.max(1.0))
+    };
+    // Coincident stops make a hard transition. The brush needs strictly
+    // increasing offsets to keep the later color past the shared position,
+    // so each repeated position moves forward by a negligible step.
+    let step = (end - start) * 1e-5;
+    let mut previous = f64::NEG_INFINITY;
+    let stops: Vec<(f64, CssColor)> = stops
+        .into_iter()
+        .map(|(offset, color)| {
+            let offset = offset.max(previous + step);
+            previous = offset;
+            (offset, color)
+        })
+        .collect();
+    let end = if repeating {
+        previous
+    } else {
+        end.max(previous)
+    };
+    let span = end - start;
+    let stops = stops
+        .into_iter()
+        .map(|(offset, color)| (((offset - start) / span) as f32, color))
+        .collect();
+    Some(Normalized::Stops {
+        first: start,
+        last: end,
+        stops,
+    })
+}
+
+fn finish_brush(
+    brush: PenikoGradient,
+    stops: &[(f32, CssColor)],
+    repeating: bool,
+    color_space: MixColorSpace,
+    hue_method: HueInterpolationMethod,
+) -> PenikoGradient {
+    let stops: Vec<(f32, DynamicColor)> = stops
+        .iter()
+        .map(|(offset, color)| (*offset, css_color_to_dynamic(*color)))
+        .collect();
+    let space = conic_interpolation_tag(color_space);
+    let brush = brush.with_extend(if repeating {
+        PenikoExtend::Repeat
+    } else {
+        PenikoExtend::Pad
+    });
+    if space == ColorSpaceTag::Srgb {
+        return brush.with_stops(stops.as_slice());
+    }
+    let stops = expand_stops(&stops, space, conic_hue_direction(hue_method), repeating);
+    brush.with_stops(stops.as_slice())
+}
+
+/// Shortest segment worth approximating with intermediate sRGB stops; a
+/// shorter one is a hard transition narrower than any device pixel.
+const MIN_EXPANDED_SEGMENT: f32 = 1e-3;
+
+/// Approximate interpolation in `space` with dense sRGB stops.
+///
+/// The colors outside the first and last stops are solid (CSS Images 3
+/// §3.5.1), but a renderer padding a brush interpolated in a polar space
+/// draws the pad as a segment between two equal colors, which `longer hue`
+/// turns into a full hue turn. Expanding each segment here and pinning the
+/// first and last colors to 0 and 1 keeps the pads solid.
+fn expand_stops(
+    stops: &[(f32, DynamicColor)],
+    space: ColorSpaceTag,
+    direction: HueDirection,
+    repeating: bool,
+) -> Vec<(f32, DynamicColor)> {
+    let mut expanded = Vec::with_capacity(stops.len() * 8);
+    if let Some((offset, color)) = stops.first()
+        && !repeating
+        && *offset > 0.0
+    {
+        expanded.push((0.0, *color));
+    }
+    for pair in stops.windows(2) {
+        let ((from_offset, from), (to_offset, to)) = (pair[0], pair[1]);
+        let span = to_offset - from_offset;
+        if span < MIN_EXPANDED_SEGMENT || from == to {
+            expanded.push((from_offset, from));
+            continue;
+        }
+        for (t, color) in peniko::color::gradient::<Srgb>(from, to, space, direction, 0.01) {
+            if t < 1.0 {
+                expanded.push((
+                    from_offset + span * t,
+                    DynamicColor::from_alpha_color(color.un_premultiply()),
+                ));
+            }
+        }
+    }
+    if let Some((offset, color)) = stops.last() {
+        expanded.push((*offset, *color));
+        if !repeating && *offset < 1.0 {
+            expanded.push((1.0, *color));
+        }
+    }
+    expanded
+}
