@@ -183,7 +183,8 @@ impl PageMarginBoxCascadeResult {
                 },
             ));
         let custom_properties =
-            resolve_custom_property_environment(&inherited.custom_properties, &local_custom);
+            resolve_custom_property_environment(&inherited.custom_properties, &local_custom)
+                .effective;
         let resolved_value = |value: &PropertyValue| {
             if let PropertyValue::Deferred(deferred) = value
                 && matches!(
@@ -1095,7 +1096,7 @@ pub fn cascade_page_with_media_context(
         }
     };
     let custom_properties =
-        resolve_custom_property_environment(inherited_custom_properties, &custom_local);
+        resolve_custom_property_environment(inherited_custom_properties, &custom_local).effective;
     // Defaulting after substitution participates in rollback before selecting
     // ordinary winners. Invalid computed values still win their own slot.
     let candidate_rollback = |value: &PropertyValue| {

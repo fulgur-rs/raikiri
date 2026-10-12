@@ -4,7 +4,7 @@ use std::sync::Arc;
 use cssparser::{Parser, ParserInput, Token};
 use smol_str::SmolStr;
 
-use crate::computed::CustomPropertyEnvironment;
+use crate::computed::{CustomPropertyEnvironment, empty_custom_properties};
 use crate::property::{
     CssWideKeyword, CustomProperty, DeferredValue, FontFeatureSettings, FontVariationSettings,
     LengthOrAuto, MAX_DEFERRED_VALUE_NESTING_DEPTH, MAX_SUBSTITUTED_VALUE_BYTES, PropertyKey,
@@ -1742,10 +1742,22 @@ pub(crate) fn select_custom_rollback_values<'a, P: Copy + Ord>(
         .collect()
 }
 
+pub(crate) struct ResolvedCustomProperties {
+    pub(crate) effective: Arc<CustomPropertyEnvironment>,
+    pub(crate) local: Arc<CustomPropertyEnvironment>,
+}
+
 pub(crate) fn resolve_custom_properties(
     inherited: &Arc<CustomPropertyEnvironment>,
     candidates: CustomCandidates<'_>,
-) -> Arc<CustomPropertyEnvironment> {
+) -> ResolvedCustomProperties {
+    if candidates.is_empty() {
+        return ResolvedCustomProperties {
+            effective: inherited.clone(),
+            local: empty_custom_properties(),
+        };
+    }
+
     // The winners borrow their declarations; only the final local values are
     // cloned.
     let mut winners: HashMap<&SmolStr, (&CustomProperty, RankedDecl)> = HashMap::new();
@@ -1782,18 +1794,42 @@ pub(crate) fn resolve_custom_properties(
 /// Resolve one element or page context's local custom properties against a
 /// shared inherited environment.
 ///
-/// The returned environment owns only local entries. A `None` entry records a
-/// declared-but-invalid custom property, which is a guaranteed-invalid value
-/// and therefore shadows an inherited value while allowing `var()` fallback.
+/// The returned pair holds the effective environment and this node's local
+/// declarations separately. A `None` entry records a declared-but-invalid
+/// custom property, which shadows an inherited value while allowing `var()`
+/// fallback.
 pub(crate) fn resolve_custom_property_environment(
     inherited: &Arc<CustomPropertyEnvironment>,
     local: &HashMap<SmolStr, SmolStr>,
-) -> Arc<CustomPropertyEnvironment> {
+) -> ResolvedCustomProperties {
     if local.is_empty() {
-        return inherited.clone();
+        return ResolvedCustomProperties {
+            effective: inherited.clone(),
+            local: empty_custom_properties(),
+        };
     }
     let entries = resolve_local_custom_properties(inherited.as_ref(), local);
-    CustomPropertyEnvironment::from_local(inherited, entries)
+    if entries.is_empty() {
+        return ResolvedCustomProperties {
+            effective: inherited.clone(),
+            local: empty_custom_properties(),
+        };
+    }
+    let matches_inherited_layer = entries
+        .iter()
+        .all(|(name, value)| inherited.local_binding_matches(name, value));
+    if matches_inherited_layer {
+        ResolvedCustomProperties {
+            effective: inherited.clone(),
+            local: CustomPropertyEnvironment::from_local_only(entries),
+        }
+    } else {
+        let effective = CustomPropertyEnvironment::from_local(inherited, entries);
+        ResolvedCustomProperties {
+            effective: Arc::clone(&effective),
+            local: effective,
+        }
+    }
 }
 
 fn resolve_local_custom_properties(
