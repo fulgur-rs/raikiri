@@ -848,7 +848,10 @@ pub(crate) fn run_pipeline(
     let mut dom = doc.uncascaded.dom.clone();
     // Paint resolves relative `url()` values against the base the images
     // were fetched with, which the resources' fallback base can change.
-    dom.set_base_url(runtime.effective_base_url.cloned());
+    // Without one the base found at parse time stays.
+    if let Some(base_url) = runtime.effective_base_url {
+        dom.set_base_url(Some(base_url.clone()));
+    }
     let font_report = enable_inline_engine(
         &mut dom,
         resources,
