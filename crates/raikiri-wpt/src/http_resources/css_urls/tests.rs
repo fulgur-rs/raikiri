@@ -33,6 +33,43 @@ fn preserves_stylesheets_without_valid_url_tokens() {
 }
 
 #[test]
+fn rewrites_src_and_image_set_string_urls() {
+    let base = Url::parse("http://web-platform.test/styles/sheet.css").unwrap();
+    let source = r#"p{a:src("a.png");b:image-set("b.png" 1x,'c.png' type("image/png") 2x);c:-webkit-image-set("d.png" 1x);d:url("e.png" cross-origin(anonymous));e:fn("f.png")}"#;
+    assert_eq!(
+        absolutize_stylesheet_urls(source, &base),
+        r#"p{a:src("http://web-platform.test/styles/a.png");b:image-set("http://web-platform.test/styles/b.png" 1x,"http://web-platform.test/styles/c.png" type("image/png") 2x);c:-webkit-image-set("http://web-platform.test/styles/d.png" 1x);d:url("http://web-platform.test/styles/e.png" cross-origin(anonymous));e:fn("f.png")}"#
+    );
+}
+
+#[test]
+fn keeps_fragment_only_urls() {
+    let base = Url::parse("http://web-platform.test/styles/sheet.css").unwrap();
+    for source in [
+        "p{clip-path:url(#clip)}",
+        r##"p{mask:url("#mask")}"##,
+        r##"p{a:src("#a");b:image-set("#b" 1x)}"##,
+    ] {
+        assert_eq!(absolutize_stylesheet_urls(source, &base), source);
+    }
+}
+
+#[test]
+fn rewritten_urls_round_trip_as_css_strings() {
+    // An opaque `data:` path keeps `"` and `\` unencoded, so the rewritten
+    // string must escape them to read back as the same URL.
+    let base = Url::parse("http://web-platform.test/styles/sheet.css").unwrap();
+    let source = r#"p{a:url('data:text/plain,"\\')}"#;
+    let output = absolutize_stylesheet_urls(source, &base);
+    assert_eq!(output, r#"p{a:url("data:text/plain,\"\\")}"#);
+    let mut input = ParserInput::new(&output);
+    let mut parser = Parser::new(&mut input);
+    let mut replacements = Vec::new();
+    collect_urls(&mut parser, &mut replacements, false).unwrap();
+    assert_eq!(replacements[0].value, r#"data:text/plain,"\"#);
+}
+
+#[test]
 fn keeps_absolute_and_data_urls_and_resolves_protocol_relative_urls() {
     let base = Url::parse("http://web-platform.test/styles/sheet.css").unwrap();
     assert_eq!(
