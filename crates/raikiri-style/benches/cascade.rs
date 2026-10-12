@@ -1721,8 +1721,87 @@ fn nth_child_query_workload(n_elems: usize) -> (NthChildQuery, u64) {
     ((doc, divs, query), count)
 }
 
+// The wrapper makes these elements actual siblings. Equal declarations can
+// use sibling sharing; distinct inline custom values force per-element work.
+// cov:ignore: bench harness — `cargo test`/`cargo llvm-cov --workspace`
+// do not build or instrument benchmark targets.
+fn deferred_shorthand_workload(
+    n_elems: usize,
+    shared: bool,
+    variables: bool,
+) -> (BenchDoc, RuleTree, u64) {
+    let mut doc = BenchDoc::wide(n_elems);
+    for (index, &id) in doc.nodes[1].children.clone().iter().enumerate() {
+        let width = if shared { 2 } else { index % 5 + 2 };
+        let size = if shared { 20 } else { index % 7 + 20 };
+        if !shared {
+            doc.nodes[id].style = Some(if variables {
+                format!("--b: {width}px solid red; --f: italic bold {size}px/1.5 serif")
+            } else {
+                format!("border: {width}px solid red; font: italic bold {size}px/1.5 serif")
+            });
+        }
+    }
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(if !variables {
+        ""
+    } else if shared {
+        "div { --b: 2px solid red; --f: italic bold 20px/1.5 serif; border: var(--b); font: var(--f) }"
+    } else {
+        "div { border: var(--b); font: var(--f) }"
+    }, Origin::Author);
+    let probe = cascade(&doc, &tree).expect(CASCADE_WITHIN_LIMITS);
+    for (index, &id) in doc.nodes[1].children.iter().enumerate() {
+        let cv = &probe.computed[id];
+        let width = if shared { 2.0 } else { (index % 5 + 2) as f32 };
+        let size = if shared {
+            20.0
+        } else {
+            (index % 7 + 20) as f32
+        };
+        assert_eq!(cv.font_size.px(), size);
+        for border in [
+            &cv.border.top,
+            &cv.border.right,
+            &cv.border.bottom,
+            &cv.border.left,
+        ] {
+            assert_eq!(border.width(), raikiri_style::ComputedLength(width));
+            assert_eq!(
+                border.color,
+                raikiri_style::property::BorderColor::Resolved(CssColor {
+                    r: 255,
+                    g: 0,
+                    b: 0,
+                    a: 255
+                })
+            );
+        }
+    }
+    (doc, tree, n_elems as u64)
+}
+
 fn bench_cascade(c: &mut Criterion) {
     let mut group = c.benchmark_group("cascade");
+
+    // cov:ignore: bench harness — `cargo test`/`cargo llvm-cov --workspace`
+    // do not build or instrument benchmark targets.
+    for (name, n_elems, shared, variables) in [
+        ("var_shorthand_unique_1", 1, false, true),
+        ("var_shorthand_unique_256", 256, false, true),
+        ("var_shorthand_unique_1024", 1024, false, true),
+        ("var_shorthand_shared_1024", 1024, true, true),
+        ("var_shorthand_literal_1024", 1024, false, false),
+    ] {
+        let slot = OnceCell::new();
+        group.throughput(Throughput::Elements(n_elems as u64));
+        group.bench_function(name, |b| {
+            let (doc, tree) = prepared(&slot, n_elems as u64, || {
+                cached(deferred_shorthand_workload(n_elems, shared, variables))
+            });
+            b.iter_with_large_drop(|| cascade(doc, tree).expect(CASCADE_WITHIN_LIMITS));
+        });
+    }
 
     // Exercise both rule-heavy and element-heavy workloads.
     // cov:ignore: bench harness — never instrumented under `cargo llvm-cov

@@ -6,10 +6,10 @@ use smol_str::SmolStr;
 
 use crate::computed::CustomPropertyEnvironment;
 use crate::property::{
-    CalcLengthPercentage, CustomProperty, DeferredValue, FontFeatureSettings,
+    CalcLengthPercentage, CssWideKeyword, CustomProperty, DeferredValue, FontFeatureSettings,
     FontVariationSettings, LengthOrAuto, MAX_DEFERRED_VALUE_NESTING_DEPTH,
     MAX_SUBSTITUTED_VALUE_BYTES, PropertyKey, PropertyValue, VerticalAlign,
-    is_custom_property_name, parse_value,
+    is_custom_property_name, parse_value, property_key_for_name,
 };
 
 use super::candidate::CustomCandidates;
@@ -24,8 +24,10 @@ pub(crate) fn resolve_deferred_value(
     deferred: &DeferredValue,
     custom_properties: &CustomPropertyEnvironment,
 ) -> Option<PropertyValue> {
+    #[cfg(test)]
+    tests::note_resolution(deferred);
     let substituted = substitute_vars(&deferred.value, &mut |name| custom_properties.get(name), 0)?;
-    resolve_substituted_value(deferred, &substituted)
+    resolve_substituted_value(deferred, &substituted)?.project(deferred)
 }
 
 /// [`resolve_deferred_value`] for the page context, whose lengths are
@@ -40,10 +42,89 @@ pub(crate) fn resolve_page_deferred_value(
     if crate::property::has_viewport_length_in(&substituted) {
         return None;
     }
-    resolve_substituted_value(deferred, &substituted)
+    resolve_substituted_value(deferred, &substituted)?.project(deferred)
 }
 
-fn resolve_substituted_value(deferred: &DeferredValue, substituted: &str) -> Option<PropertyValue> {
+// The lifetime fixes the custom-property environment for an entire winner drain,
+// including any origin/layer rollback. Parsed shorthands never escape that drain.
+pub(super) struct DeferredResolver<'a> {
+    environment: &'a CustomPropertyEnvironment,
+    shorthands: HashMap<(SmolStr, SmolStr), Option<ResolvedValue>>,
+}
+
+impl<'a> DeferredResolver<'a> {
+    pub(super) fn new(environment: &'a CustomPropertyEnvironment) -> Self {
+        Self {
+            environment,
+            shorthands: HashMap::new(),
+        }
+    }
+
+    // Rollback inspects every candidate, including arbitrarily many losers.
+    // Only actual winners and selected fallbacks may retain parsed payloads.
+    pub(super) fn inspect(&self, deferred: &DeferredValue) -> Option<PropertyValue> {
+        let source = (deferred.property.clone(), deferred.value.clone());
+        if let Some(value) = self.shorthands.get(&source) {
+            return value.as_ref()?.clone().project(deferred);
+        }
+        resolve_deferred_value(deferred, self.environment)
+    }
+
+    pub(super) fn resolve(&mut self, deferred: &DeferredValue) -> Option<PropertyValue> {
+        if !property_key_for_name(&deferred.property).is_some_and(|key| {
+            matches!(
+                crate::rule::classify(key),
+                crate::rule::KeyClass::Shorthand { .. }
+            )
+        }) {
+            return resolve_deferred_value(deferred, self.environment);
+        }
+        let source = (deferred.property.clone(), deferred.value.clone());
+        if let Some(value) = self.shorthands.get(&source) {
+            return value.as_ref()?.clone().project(deferred);
+        }
+        #[cfg(test)]
+        tests::note_resolution(deferred);
+        let value = substitute_vars(&deferred.value, &mut |name| self.environment.get(name), 0)
+            .and_then(|substituted| resolve_substituted_value(deferred, &substituted));
+        // Missing variables are negative cache entries too.
+        let projected = value
+            .as_ref()
+            .cloned()
+            .and_then(|value| value.project(deferred));
+        // Allocation failure falls back to uncached resolution, without changing
+        // CSS validity or making the cache an additional cascade failure mode.
+        if self.shorthands.try_reserve(1).is_ok() {
+            #[cfg(test)]
+            tests::note_cache_size(self.shorthands.len() + 1);
+            self.shorthands.insert(source, value);
+        }
+        projected
+    }
+}
+
+#[derive(Clone)]
+enum ResolvedValue {
+    Parsed(PropertyValue),
+    Calc(CalcLengthPercentage),
+    RadiusKeyword(CssWideKeyword),
+}
+
+impl ResolvedValue {
+    fn project(self, deferred: &DeferredValue) -> Option<PropertyValue> {
+        match self {
+            Self::Parsed(value) => project_deferred_value(value, deferred.key),
+            Self::Calc(value) => calc_length_percentage_value(deferred.key, value),
+            Self::RadiusKeyword(keyword) => Some(PropertyValue::Deferred(DeferredValue {
+                property: radius_corner_property(deferred.key)?.into(),
+                value: keyword.as_css_str().into(),
+                key: deferred.key,
+            })),
+        }
+    }
+}
+
+fn resolve_substituted_value(deferred: &DeferredValue, substituted: &str) -> Option<ResolvedValue> {
     if deferred.key == PropertyKey::HyphenateLimitChars {
         // The integer components need to know whether a fractional number came
         // from a math function: calc results are rounded, direct fractional
@@ -53,7 +134,7 @@ fn resolve_substituted_value(deferred: &DeferredValue, substituted: &str) -> Opt
         let mut parser = Parser::new(&mut input);
         let value = parse_value(&deferred.property, &mut parser)?;
         parser.expect_exhausted().ok()?;
-        return project_deferred_value(value, deferred.key);
+        return Some(ResolvedValue::Parsed(value));
     }
     if deferred.key == PropertyKey::TextUnderlineOffset {
         // Preserve the substituted calc's em and percentage terms for the
@@ -62,7 +143,7 @@ fn resolve_substituted_value(deferred: &DeferredValue, substituted: &str) -> Opt
         let mut parser = Parser::new(&mut input);
         let value = parse_value(&deferred.property, &mut parser)?;
         parser.expect_exhausted().ok()?;
-        return project_deferred_value(value, deferred.key);
+        return Some(ResolvedValue::Parsed(value));
     }
     if deferred.key == PropertyKey::TextShadow {
         // The text-shadow parser must see the substituted calc source: generic
@@ -72,27 +153,26 @@ fn resolve_substituted_value(deferred: &DeferredValue, substituted: &str) -> Opt
         let mut parser = Parser::new(&mut input);
         let value = parse_value(&deferred.property, &mut parser)?;
         parser.expect_exhausted().ok()?;
-        return project_deferred_value(value, deferred.key);
+        return Some(ResolvedValue::Parsed(value));
     }
     let simplified = match simplify_math_functions(substituted) {
         Some(value) => value,
         None => {
             let value = parse_simple_calc_length_percentage(substituted)?;
-            return calc_length_percentage_value(deferred.key, value);
+            return Some(ResolvedValue::Calc(value));
         }
     };
-    let property = if deferred.property.as_str() == "border-radius"
-        && crate::property::CssWideKeyword::from_css_ident(simplified.trim()).is_some()
+    if deferred.property.as_str() == "border-radius"
+        && let Some(keyword) = CssWideKeyword::from_css_ident(simplified.trim())
+        && radius_corner_property(deferred.key).is_some()
     {
-        radius_corner_property(deferred.key).unwrap_or(&deferred.property)
-    } else {
-        &deferred.property
-    };
+        return Some(ResolvedValue::RadiusKeyword(keyword));
+    }
     let mut input = ParserInput::new(simplified.as_ref());
     let mut parser = Parser::new(&mut input);
-    let value = parse_value(property, &mut parser)?;
+    let value = parse_value(&deferred.property, &mut parser)?;
     parser.expect_exhausted().ok()?;
-    project_deferred_value(value, deferred.key)
+    Some(ResolvedValue::Parsed(value))
 }
 
 /// Wrap a mixed-unit `calc()` in the value of the property it was declared
