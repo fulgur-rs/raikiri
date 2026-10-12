@@ -261,8 +261,7 @@ pub fn defers_inline_content(document: &Document, cascade: &CascadeResult, node_
         && !clips_overflow(cv)
         && matches!(cv.column_count, ColumnCountValue::Auto)
         && matches!(cv.column_width, ComputedColumnWidth::Auto)
-        && document
-            .parent_of(node_id)
+        && box_parent(document, cascade, node_id)
             .and_then(|parent| cascade.computed.get(parent))
             .is_some_and(|parent| {
                 block_container(parent.display)
@@ -275,6 +274,20 @@ pub fn defers_inline_content(document: &Document, cascade: &CascadeResult, node_
             })
 }
 
+/// The nearest ancestor that generates a box, skipping `display: contents`
+/// elements, whose children take their place (CSS Display 3 §2.5).
+fn box_parent(document: &Document, cascade: &CascadeResult, node_id: usize) -> Option<usize> {
+    let mut parent = document.parent_of(node_id)?;
+    while cascade
+        .computed
+        .get(parent)
+        .is_some_and(|cv| cv.display == DisplayValue::Contents)
+    {
+        parent = document.parent_of(parent)?;
+    }
+    Some(parent)
+}
+
 /// Whether the inline content deferred in front of an element paints
 /// before it.
 ///
@@ -283,8 +296,8 @@ pub fn defers_inline_content(document: &Document, cascade: &CascadeResult, node_
 /// atomic inlines and other boxes that are not block containers, which keep
 /// the inline content before them in tree order. Floats (step 5) and in-flow
 /// blocks that clip or fragment into columns (step 4) paint below it, so
-/// the earlier text stays above them. A `display: none` element paints
-/// nothing and closes nothing.
+/// the earlier text stays above them. An element without a box, such as a
+/// `display: none` or `display: contents` one, closes nothing.
 pub fn closes_deferred_inline_content(
     document: &Document,
     cascade: &CascadeResult,
@@ -305,7 +318,7 @@ pub fn closes_deferred_inline_content(
     document
         .get_node(node_id)
         .is_some_and(|node| node.kind() == NodeKind::Element)
-        && cv.display != DisplayValue::None
+        && generates_box(cv)
         && !below_inline_content
         && !defers_inline_content(document, cascade, node_id)
 }

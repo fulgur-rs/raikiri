@@ -538,3 +538,58 @@ fn longer_hue_padding_stays_solid() {
         "the longer hue arc passes through green at the middle"
     );
 }
+
+#[test]
+fn page_box_paints_its_gradient_over_its_color() {
+    let (document, cascade) = canvas_fixture(
+        Some(
+            "@page { size: 100px 40px; margin: 0; background-color: white; \
+             background-image: linear-gradient(90deg, red 50%, blue 50%) }",
+        ),
+        None,
+    );
+    let mut page_box = PageBox::A4;
+    page_box.width = 100.0;
+    page_box.height = 40.0;
+    let mut scene = Scene::new();
+    let mut warnings = Vec::new();
+    paint_canvas_background(
+        &ImageBrushCache::default(),
+        &mut scene,
+        &document,
+        &cascade,
+        page_box,
+        None,
+        &mut warnings,
+    );
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        100,
+        40,
+    );
+    assert_eq!(pixel(&rgba, 100, 10, 20), RED);
+    assert_eq!(pixel(&rgba, 100, 90, 20), BLUE);
+}
+
+#[test]
+fn short_segments_keep_their_interpolation_space() {
+    // A segment 0.02% of a 10,000px line still spans 2px, so it follows
+    // Oklab rather than sRGB.
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to right in oklab, red 49.99%, blue 50.01%)",
+        10_000,
+        1,
+    );
+    let middle = pixel(&rgba, 10_000, 4_999, 0);
+    let srgb = raster_layer(
+        "background-image: linear-gradient(to right in srgb, red 49.99%, blue 50.01%)",
+        10_000,
+        1,
+    );
+    let srgb_middle = pixel(&srgb, 10_000, 4_999, 0);
+    assert!(
+        middle[1] > srgb_middle[1] + 20,
+        "{middle:?} vs {srgb_middle:?}"
+    );
+}

@@ -395,6 +395,18 @@ fn page_background_color(
     if !has_background_declaration {
         return None;
     }
+    // A gradient the page box draws paints over the background color
+    // rather than standing in for it.
+    if paints_gradient_image(&background_image) {
+        return (background_color.a != 0).then(|| {
+            Color::from_rgba8(
+                background_color.r,
+                background_color.g,
+                background_color.b,
+                background_color.a,
+            )
+        });
+    }
     background_color_with_image_source(
         background_color,
         &background_image,
@@ -582,15 +594,25 @@ fn paint_page_background_image(
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
 ) {
-    let (Some(pixel_source), Some(PropertyValue::BackgroundImage(BackgroundImage::Url(raw_url)))) = (
-        pixel_source,
-        page_property(cascade, PropertyKey::BackgroundImage),
-    ) else {
+    // The page box paints a URL image through the pixel source, and a
+    // linear or radial gradient itself.
+    let Some(PropertyValue::BackgroundImage(image)) =
+        page_property(cascade, PropertyKey::BackgroundImage)
+    else {
         return;
     };
-    let Some(url) = image_cache.image_url(raw_url) else {
-        return;
+    let source = match image {
+        BackgroundImage::Url(raw_url) => {
+            let (Some(pixel_source), Some(url)) = (pixel_source, image_cache.image_url(raw_url))
+            else {
+                return;
+            };
+            Ok((pixel_source, url))
+        }
+        BackgroundImage::Gradient(gradient) if paints_gradient_image(image) => Err(&**gradient),
+        _ => return,
     };
+    let url = source.as_ref().ok().map(|(_, url)| url);
     let initial = ComputedValues::initial();
     let root_font_size = find_html(document)
         .and_then(|node_id| cascade.computed.get(node_id))
@@ -627,34 +649,55 @@ fn paint_page_background_image(
     let clip = page_background_clip(cascade);
     let border = page_border_widths(cascade, area);
     let padding = page_padding_widths(cascade, area);
-    let positioning = origin_inset_rect(area, origin, border, padding, Some(&url), warnings);
+    let positioning = origin_inset_rect(area, origin, border, padding, url, warnings);
     let Some(painting) = clip_inset_rect(area, clip, border, padding) else {
+        let what = if url.is_some() { "image" } else { "gradient" };
         warnings.push(RenderWarning {
             kind: WarningKind::ResourceFallback {
                 kind: raikiri_traits::ResourceKind::Image,
-                url: Some(redacted_image_url(&url)),
+                url: url.map(redacted_image_url),
             },
             node_id: None,
-            details: "page background-clip has an unsupported visual box; the image was skipped"
-                .into(),
+            details: format!(
+                "page background-clip has an unsupported visual box; the {what} was skipped"
+            ),
         });
         return;
     };
     if painting.x1 <= painting.x0 || painting.y1 <= painting.y0 {
         return;
     }
-    paint_background_from_source(
-        image_cache,
-        scene,
-        &url,
-        positioning,
-        painting,
-        &background_size,
-        &background_position,
-        &background_repeat,
-        pixel_source,
-        warnings,
-    );
+    match source {
+        Ok((pixel_source, url)) => paint_background_from_source(
+            image_cache,
+            scene,
+            &url,
+            positioning,
+            painting,
+            &background_size,
+            &background_position,
+            &background_repeat,
+            pixel_source,
+            warnings,
+        ),
+        Err(gradient) => {
+            let current_color = match page_property(cascade, PropertyKey::Color) {
+                Some(PropertyValue::Color(color)) => *color,
+                _ => CssColor::BLACK,
+            };
+            gradient::paint_gradient_layer(
+                scene,
+                gradient,
+                positioning,
+                painting,
+                None,
+                &background_size,
+                &background_position,
+                &background_repeat,
+                current_color,
+            );
+        }
+    }
 }
 
 fn canvas_used_padding(computed: &ComputedValues, area_width: f64) -> (f64, f64, f64, f64) {
@@ -2629,7 +2672,9 @@ pub(crate) fn paint_document_impl(
                 if paints_on_page
                     && !raikiri_dom::paint_rules::hides_empty_table_cell(document, cascade, node_id)
                 {
-                    if let Some(t) = trace.as_deref_mut() {
+                    if let Some(t) = trace.as_deref_mut()
+                        && raikiri_dom::paint_rules::generates_box(cv)
+                    {
                         t.push(crate::PaintTraceEvent::Box(node_id));
                     }
                     // A body background is propagated to the page canvas.  For
@@ -3484,7 +3529,9 @@ pub(crate) fn paint_document_impl(
                         pending.extend(child_frames.into_iter().rev());
                     }
                 } else {
-                    if !defers {
+                    // A `display: contents` element has no box, so its
+                    // children share the enclosing layer.
+                    if !defers && raikiri_dom::paint_rules::generates_box(cv) {
                         deferral_scopes.push(Vec::new());
                         stack.push(PaintFrame::EndDeferral);
                     }

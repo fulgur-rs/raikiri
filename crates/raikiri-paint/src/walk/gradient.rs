@@ -576,7 +576,7 @@ fn normalize_stops(stops: Vec<(f64, CssColor)>, repeating: bool) -> Option<Norma
     // Coincident stops make a hard transition. The brush needs strictly
     // increasing offsets to keep the later color past the shared position,
     // so each repeated position moves forward by a negligible step.
-    let step = (end - start) * 1e-5;
+    let step = (end - start) * f64::from(COINCIDENT_STEP);
     let mut previous = f64::NEG_INFINITY;
     let stops: Vec<(f64, CssColor)> = stops
         .into_iter()
@@ -627,9 +627,13 @@ fn finish_brush(
     brush.with_stops(stops.as_slice())
 }
 
-/// Shortest segment worth approximating with intermediate sRGB stops; a
-/// shorter one is a hard transition narrower than any device pixel.
-const MIN_EXPANDED_SEGMENT: f32 = 1e-3;
+/// The fraction of the brush that separates coincident stops.
+const COINCIDENT_STEP: f32 = 1e-5;
+
+/// Shortest segment approximated with intermediate sRGB stops. Only the
+/// steps between coincident stops are shorter, and those are hard
+/// transitions with nothing to interpolate.
+const MIN_EXPANDED_SEGMENT: f32 = 2.0 * COINCIDENT_STEP;
 
 /// Approximate interpolation in `space` with dense sRGB stops.
 ///

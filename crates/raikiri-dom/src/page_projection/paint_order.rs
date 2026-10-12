@@ -600,7 +600,9 @@ impl Document {
                         }
                         continue;
                     }
-                    if !defers {
+                    // A `display: contents` element has no box, so its
+                    // children share the enclosing layer.
+                    if !defers && paint_rules::generates_box(cv) {
                         let columns = !matches!(cv.column_count, ColumnCountValue::Auto)
                             || !matches!(cv.column_width, raikiri_style::ComputedColumnWidth::Auto);
                         layers.push((Vec::new(), deferring && !columns));

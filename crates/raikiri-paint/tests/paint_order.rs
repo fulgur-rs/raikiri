@@ -485,6 +485,30 @@ fn floats_clipping_blocks_and_atomic_containers_keep_text_above() {
     assert!(at(Step::Box(i)) < at(Step::Text(h)));
 }
 
+/// A `display: contents` element has no box, so the blocks inside it defer
+/// their content and stay in the layer of its parent.
+#[test]
+fn display_contents_stays_inside_the_deferral_layer() {
+    let result = assert_same_order(
+        "<div id=a style=\"height: 0\">over flow</div>\
+         <section style=\"display: contents\">\
+         <div id=b style=\"height: 0\">inner</div>\
+         <div id=c style=\"height: 20px; background: teal\"></div></section>",
+        "",
+    );
+    let page = result.pages().next().expect("a page");
+    let steps = walker_steps(&page);
+    let at = |step: Step| {
+        steps
+            .iter()
+            .position(|s| *s == step)
+            .unwrap_or_else(|| panic!("{step:?} in {}", describe(&page, &steps)))
+    };
+    let [a, b, c] = ["a", "b", "c"].map(|id| by_id(&result, id));
+    assert!(at(Step::Box(c)) < at(Step::Text(a)));
+    assert!(at(Step::Box(c)) < at(Step::Text(b)));
+}
+
 /// The walker draws an inline element's background with the paragraph's
 /// lines and records only the paragraph's `Text`; `paint_order` lists the
 /// inline element's `Box` on its own, before the paragraph's text. The
