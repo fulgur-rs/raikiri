@@ -865,3 +865,46 @@ fn short_periods_in_long_gradients_still_repeat() {
     assert!(b4 > 150 && r4 < 100, "end of a period: {r4} {b4}");
     assert!(r5 > 200 && b5 < 60, "next period: {r5} {b5}");
 }
+
+#[test]
+fn many_coincident_stops_make_one_hard_edge() {
+    let stops: String = (0..101)
+        .map(|index| {
+            if index % 2 == 0 {
+                "red 50%"
+            } else {
+                "blue 50%"
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let cv = computed_for(&format!(
+        "background-image: linear-gradient(to right, {stops})"
+    ));
+    let area = Rect::new(0.0, 0.0, 10_000.0, 10.0);
+    let mut scene = Scene::new();
+    gradient::paint_gradient_layer(
+        &mut scene,
+        &gradient_of(&cv),
+        area,
+        area,
+        None,
+        &cv.background_size,
+        &cv.background_position,
+        &cv.background_repeat,
+        cv.color,
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| {
+            out.append_scene(
+                scene,
+                Affine::IDENTITY.then_translate((-4_990.0, 0.0).into()),
+            )
+        },
+        20,
+        10,
+    );
+    // The last color, red, starts right at 50%: no band of mixed colors.
+    assert_eq!(pixel(&rgba, 20, 5, 5), RED);
+    assert_eq!(pixel(&rgba, 20, 11, 5), RED);
+}

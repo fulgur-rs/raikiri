@@ -5646,4 +5646,16 @@ fn fixed_box_with_auto_insets_keeps_its_static_position_on_every_page() {
     // Percentages resolve against the page area instead.
     assert_eq!(place(percent_id, 1000.0), Some((8.0, 1105.0)));
     assert_eq!(place(bottom_id, 1000.0), Some((8.0, 1510.0)));
+    // A static position far off the page is not pulled back onto it.
+    let off_page = fixed_position_px(
+        &cascade.computed[auto_id],
+        &layout,
+        (-5000.0, -9000.0),
+        false,
+        800.0,
+        1000.0,
+        784.0,
+        1000.0,
+    );
+    assert_eq!(off_page, Some((-5000.0, -8000.0)));
 }

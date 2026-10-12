@@ -719,17 +719,31 @@ fn normalize_stops(
     };
     // Coincident stops make a hard transition. The brush needs strictly
     // increasing offsets to keep the later color past the shared position,
-    // so each repeated position moves forward by a negligible step.
+    // so the stops of one cluster spread over at most one negligible step,
+    // however many there are.
     let step = (end - start) * f64::from(COINCIDENT_STEP);
-    let mut previous = f64::NEG_INFINITY;
-    let stops: Vec<(f64, CssColor)> = stops
-        .into_iter()
-        .map(|(offset, color)| {
-            let offset = offset.max(previous + step);
-            previous = offset;
-            (offset, color)
-        })
-        .collect();
+    let mut stops = stops;
+    let mut cluster_start = 0;
+    while cluster_start < stops.len() {
+        let position = stops[cluster_start].0;
+        let mut cluster_end = cluster_start + 1;
+        while cluster_end < stops.len() && stops[cluster_end].0 <= position {
+            cluster_end += 1;
+        }
+        let count = cluster_end - cluster_start;
+        if count > 1 {
+            // Stay clear of the next stop so the order is kept.
+            let width = stops
+                .get(cluster_end)
+                .map_or(step, |next| step.min((next.0 - position) / 2.0));
+            let spacing = width / (count - 1) as f64;
+            for (index, stop) in stops[cluster_start..cluster_end].iter_mut().enumerate() {
+                stop.0 = position + spacing * index as f64;
+            }
+        }
+        cluster_start = cluster_end;
+    }
+    let previous = stops.last().map_or(start, |stop| stop.0);
     let end = if repeating {
         previous
     } else {

@@ -6459,14 +6459,23 @@ fn fixed_position_px(
         .or_else(|| {
             bottom.map(|value| content_origin_y + content_height - value - height - margin.bottom)
         });
-    Some((
-        x.unwrap_or(static_position.0)
-            .clamp(-page_width, page_width),
-        y.unwrap_or(content_origin_y + static_position.1).clamp(
+    // Inset-placed boxes are kept near the page; a static position is used
+    // as laid out, so a box whose static position lies off the page stays
+    // off it.
+    let x = match x {
+        Some(x) => x.clamp(-page_width, page_width),
+        None if static_position.0.is_finite() => static_position.0,
+        None => 0.0,
+    };
+    let y = match y {
+        Some(y) => y.clamp(
             content_origin_y - page_width,
             content_origin_y + page_width + content_height,
         ),
-    ))
+        None if static_position.1.is_finite() => content_origin_y + static_position.1,
+        None => content_origin_y,
+    };
+    Some((x, y))
 }
 
 pub(crate) fn position_offset_px(cv: &raikiri_style::ComputedValues) -> (f32, f32) {
