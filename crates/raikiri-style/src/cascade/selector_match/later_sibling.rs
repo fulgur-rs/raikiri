@@ -46,7 +46,7 @@ struct LaterSiblingState {
 /// Per-matcher record of `~` left-side results. Ancestor chains obey the
 /// same subject-chain invariant as [`MatchCaches`].
 pub(super) struct LaterSiblingCache {
-    entries: HashMap<LaterSiblingKey, LaterSiblingState>,
+    entries: FxHashMap<LaterSiblingKey, LaterSiblingState>,
     max_entries: usize,
 }
 
@@ -59,7 +59,7 @@ impl Default for LaterSiblingCache {
 impl LaterSiblingCache {
     pub(super) fn with_limit(max_entries: usize) -> Self {
         Self {
-            entries: HashMap::new(),
+            entries: FxHashMap::default(),
             max_entries,
         }
     }

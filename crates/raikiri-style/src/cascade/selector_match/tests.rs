@@ -7,6 +7,7 @@ use crate::ruletree::{Origin, RuleTree, build_rule_tree};
 use crate::test_dom::TestDoc;
 
 mod filtered_nth_tests;
+mod has_cache_tests;
 mod later_sibling_tests;
 mod namespace_tests;
 
@@ -2876,9 +2877,9 @@ fn lang_and_dir_memo_agree_with_direct_resolution() {
             let ancestors: Vec<StyleNodeId> = chain.iter().map(|&a| node_id(a)).collect();
             let node = doc.node(node_id(*id)).unwrap();
             let elem = node.as_element().unwrap();
-            let direct_lang = effective_language(&doc, &elem, &ancestors);
+            let (direct_lang, _) = effective_language(&doc, &elem, &ancestors, |_| None);
             let direct_dir = resolve_directionality(&doc, &elem, node_id(*id), &ancestors);
-            assert_eq!(direct_lang, lang, "direct language of {id}");
+            assert_eq!(&*direct_lang, lang, "direct language of {id}");
             assert_eq!(direct_dir, dir, "direct direction of {id}");
             for source in selectors {
                 let list = crate::parse_selector_list(source).expect("selector parses");
@@ -2896,7 +2897,7 @@ fn lang_and_dir_memo_agree_with_direct_resolution() {
             }
             assert_eq!(
                 &*caches.content_language(&doc, &elem, node_id(*id), &ancestors),
-                direct_lang
+                &*direct_lang
             );
             assert_eq!(
                 caches.directionality(&doc, &elem, node_id(*id), &ancestors),

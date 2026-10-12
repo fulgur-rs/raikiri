@@ -46,8 +46,7 @@
 //! the [`RuleTree`](crate::ruletree::RuleTree) changed after it was parsed, at
 //! the cost of one pass over the active rules per cascade.
 
-use std::collections::HashMap;
-
+use rustc_hash::FxHashMap;
 use selectors::bloom::BloomFilter;
 use selectors::parser::{Combinator, Component, Selector, SelectorIter};
 
@@ -217,9 +216,11 @@ impl SelectorEntry {
 pub(crate) struct RuleIndex<'a> {
     rules: Vec<IndexedRule<'a>>,
     entries: Vec<SelectorEntry>,
-    by_id: HashMap<u32, Vec<u32>>,
-    by_class: HashMap<u32, Vec<u32>>,
-    by_tag: HashMap<u32, Vec<u32>>,
+    // The keys are already well-mixed hashes (`hash_folded`), so a cheap
+    // hasher suffices; SipHash would only hash them a second time.
+    by_id: FxHashMap<u32, Vec<u32>>,
+    by_class: FxHashMap<u32, Vec<u32>>,
+    by_tag: FxHashMap<u32, Vec<u32>>,
     universal: Vec<u32>,
     /// The pseudo-elements some selector targets, one bit each (see
     /// [`pseudo_bit`]).
@@ -242,9 +243,9 @@ impl<'a> RuleIndex<'a> {
         let mut index = Self {
             rules: Vec::new(),
             entries: Vec::new(),
-            by_id: HashMap::new(),
-            by_class: HashMap::new(),
-            by_tag: HashMap::new(),
+            by_id: FxHashMap::default(),
+            by_class: FxHashMap::default(),
+            by_tag: FxHashMap::default(),
             universal: Vec::new(),
             pseudo_targets: 0,
         };

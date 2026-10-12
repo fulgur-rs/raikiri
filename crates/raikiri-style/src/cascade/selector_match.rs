@@ -1,6 +1,8 @@
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::rc::Rc;
+
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use selectors::attr::{CaseSensitivity, ParsedCaseSensitivity};
 use selectors::parser::{
@@ -21,6 +23,8 @@ mod filtered_nth;
 use filtered_nth::FilteredNthCache;
 mod later_sibling;
 use later_sibling::{LaterSiblingCache, LaterSiblingKey, LaterSiblingPlan};
+mod has_cache;
+use has_cache::HasCache;
 
 /// The matching parameters that stay constant for one whole match call — a
 /// stylesheet cascade walk, or one [`crate::SelectorQuery`] entry-point call.
@@ -106,11 +110,13 @@ pub(crate) struct MatchCaches {
     /// Left-side results of `~` frames; see [`LaterSiblingCache`].
     later_siblings: RefCell<LaterSiblingCache>,
     /// Keyed by `(parent_id, allow_detached)`; see [`SiblingInfo`].
-    siblings: RefCell<HashMap<(StyleNodeId, bool), Rc<SiblingInfo>>>,
+    siblings: RefCell<FxHashMap<(StyleNodeId, bool), Rc<SiblingInfo>>>,
     /// Effective content language per element id; see [`effective_language`].
-    languages: RefCell<HashMap<StyleNodeId, Rc<str>>>,
+    languages: RefCell<FxHashMap<StyleNodeId, Rc<str>>>,
     /// Resolved directionality per element id; see [`resolve_directionality`].
-    directions: RefCell<HashMap<StyleNodeId, Direction>>,
+    directions: RefCell<FxHashMap<StyleNodeId, Direction>>,
+    /// `:has()` results per anchor; see [`HasCache`].
+    has: RefCell<HasCache>,
     /// Reusable buffers for `:has()` searches; see [`HasScratch`].
     has_scratch: RefCell<Vec<HasScratch>>,
 }
@@ -153,7 +159,14 @@ impl MatchCaches {
         self.has_scratch.borrow_mut().push(scratch);
     }
 
-    /// The effective content language of `elem`, computed once per element.
+    /// The effective content language of `elem` (see [`effective_language`]),
+    /// computed once per element.
+    ///
+    /// The ancestor walk stops at the first ancestor whose language is
+    /// already recorded, and records every ancestor it passes: those carry
+    /// no language of their own, so they share the element's.
+    /// Each element is then walked over at most once per matcher instead of
+    /// once per descendant that asks.
     fn content_language<D: StyleDom, E: StyleElement>(
         &self,
         dom: &D,
@@ -164,10 +177,14 @@ impl MatchCaches {
         if let Some(lang) = self.languages.borrow().get(&elem_id) {
             return Rc::clone(lang);
         }
-        let lang: Rc<str> = effective_language(dom, elem, ancestors).into();
-        self.languages
-            .borrow_mut()
-            .insert(elem_id, Rc::clone(&lang));
+        let (lang, walked) = effective_language(dom, elem, ancestors, |ancestor_id| {
+            self.languages.borrow().get(&ancestor_id).cloned()
+        });
+        let mut languages = self.languages.borrow_mut();
+        for &ancestor_id in &ancestors[walked..] {
+            languages.insert(ancestor_id, Rc::clone(&lang));
+        }
+        languages.insert(elem_id, Rc::clone(&lang));
         lang
     }
 
@@ -230,7 +247,7 @@ struct SiblingInfo {
     /// Candidate element children in document order.
     elements: Vec<StyleNodeId>,
     /// Index into `elements` for each candidate child.
-    index_of: HashMap<StyleNodeId, usize>,
+    index_of: FxHashMap<StyleNodeId, usize>,
     /// Per entry of `elements`: its 1-based position among candidates with
     /// the same tag name, and the number of such candidates.
     of_type: Vec<(i32, i32)>,
@@ -548,7 +565,7 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
             }
             Component::Has(_) if relative_anchor.is_some() => false,
             Component::Has(relative_selectors) => {
-                has_relative_selector_matches(ctx, relative_selectors, elem_id, ancestors)
+                has_cache::matches(ctx, relative_selectors, elem_id, ancestors)
             }
             Component::Nth(data) => {
                 // Sibling-list parent: the element parent when present,
@@ -1490,9 +1507,10 @@ pub(crate) fn selector_matches_pseudo_element<D: StyleDom, E: StyleElement>(
 /// not a cache hit) at most once per [`match_combinator_chain`] call,
 /// bounding the total number of [`match_from_element`] calls to a
 /// low-degree polynomial in the ancestor/compound counts instead of
-/// `2^depth`. The memo (`HashSet`) is created fresh per call and never
+/// `2^depth`. The memo (an [`FxHashSet`]: its keys are node ids and
+/// small depths, so SipHash's flooding resistance buys nothing) is created fresh per call and never
 /// shared across calls — [`Combinator::Descendant`]'s search space for one
-/// element/selector pair has no bearing on any other — and `HashSet::new()`
+/// element/selector pair has no bearing on any other — and `FxHashSet::default()`
 /// performs no heap allocation until the first `insert`, so the common
 /// shape of a shallow selector (few combinators, hence few distinct
 /// `depth` values) failing at its very first (`depth == 1`) combinator
@@ -1549,7 +1567,7 @@ fn match_combinator_chain<D: StyleDom>(
         origin: Option<(StyleNodeId, usize)>,
     }
 
-    let mut memo: HashSet<(StyleNodeId, usize)> = HashSet::new();
+    let mut memo: FxHashSet<(StyleNodeId, usize)> = FxHashSet::default();
     // The stack is seeded with one frame and gains one more per combinator
     // crossed. Building it as `vec![frame]` (the previous form) allocates
     // for exactly one element, so pushing a second frame — i.e. a selector
