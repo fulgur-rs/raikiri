@@ -1,4 +1,5 @@
 pub(crate) mod column_projection;
+mod sibling_shifts;
 use column_projection::{ParagraphCache, ParagraphProjection, ProjectionWork};
 
 use super::ifc::text_lines::TextLineIndex;
@@ -2587,10 +2588,20 @@ pub fn layout_pages_with_page_geometry_and_control(
         .map(|(id, _)| (current_abs_y(document, id, &parent_of), id))
         .collect();
     spanning_owners.sort_by(|a, b| a.0.total_cmp(&b.0));
+    // Fragment records change for every owner; they are installed together
+    // once all owners are paginated.
+    let mut fragment_edits = FragmentEdits::new(&document.fragment_tree);
+    // So are the moves of the boxes after each owner, which are applied to a
+    // parent's children before they are read.
+    let mut sibling_shifts = sibling_shifts::SiblingShifts::default();
     for (_, owner) in spanning_owners {
-        let owner_y = root_flow_offset + current_abs_y(document, owner, &parent_of);
+        let owner_y = root_flow_offset
+            + current_abs_y(document, owner, &parent_of)
+            + sibling_shifts.offset(document, owner);
+        sibling_shifts.apply(document, &mut fragment_edits, owner);
         let delta = paginate_spanning_columns(
             document,
+            &mut fragment_edits,
             owner,
             owner_y,
             &|y| {
@@ -2609,65 +2620,25 @@ pub fn layout_pages_with_page_geometry_and_control(
             {
                 break;
             }
-            column_work.charge(document.nodes[parent].children.len())?;
-            let ifc_boxes: HashSet<_> =
-                document.nodes[parent].ifc_boxes().iter().copied().collect();
+            // A paragraph's line shifts follow its boxes' current positions.
+            if document.nodes[parent].ifc.is_some() {
+                sibling_shifts.apply(document, &mut fragment_edits, parent);
+            }
             follow_moved_ifc_block(document, child, delta);
-            let mut after = false;
-            let mut moved = HashSet::new();
-            let siblings = document.nodes[parent].children.clone();
-            for sibling in siblings {
-                if sibling == child {
-                    after = true;
-                    continue;
-                }
-                if !after
-                    || document.nodes[sibling].style.position == TaffyPosition::Absolute
-                    || document.nodes[sibling].style.float.is_floated()
-                    || document.nodes[sibling].in_ifc_subtree()
-                    || ifc_boxes.contains(&sibling)
-                {
-                    continue;
-                }
-                document.nodes[sibling].unrounded_layout.location.y += delta;
-                moved.insert(sibling);
-            }
-            // Move the following siblings' fragments in one pass rather than
-            // scanning every fragment for each sibling.
-            if !moved.is_empty() {
-                let parent_fragments: HashSet<_> = document
-                    .fragment_tree
-                    .fragments
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, fragment)| fragment.node_id == parent)
-                    .map(|(id, _)| id)
-                    .collect();
-                for fragment in &mut document.fragment_tree.fragments {
-                    if moved.contains(&fragment.node_id)
-                        && fragment
-                            .parent
-                            .is_some_and(|id| parent_fragments.contains(&id))
-                    {
-                        fragment.rect.y += delta;
-                    }
-                }
-            }
+            sibling_shifts.record(document, parent, child, delta, &mut column_work)?;
             if !document.nodes[parent].style.size.height.is_auto() {
                 break;
             }
             document.nodes[parent].unrounded_layout.size.height += delta;
-            for fragment in &mut document.fragment_tree.fragments {
-                if fragment.node_id == parent {
-                    fragment.rect.height += delta;
-                }
-            }
+            fragment_edits.grow(parent, delta);
             if parent == body_id {
                 break; // cov:ignore: the body has a pinned viewport height and exits at the preceding fixed-height boundary.
             }
             child = parent;
         }
     }
+    sibling_shifts.apply_all(document, &mut fragment_edits);
+    fragment_edits.finish(document, &mut column_work)?;
     document.fragment_tree.break_flow_work_used =
         document.fragment_tree.limit - column_work.remaining();
     document.fragment_tree.finalize();
