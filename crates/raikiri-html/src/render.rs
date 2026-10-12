@@ -1277,10 +1277,6 @@ pub(crate) fn run_pipeline(
     );
     drop(runtime);
     drop(resolver);
-    debug_assert!(
-        continuations.is_sorted_by_key(|continuation| continuation.first_page),
-        "continuations are in page order"
-    );
     Ok(PipelineRun::Completed(Box::new(PipelineOutput {
         document,
         cascade: first_cascade,

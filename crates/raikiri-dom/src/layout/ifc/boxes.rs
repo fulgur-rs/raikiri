@@ -108,7 +108,7 @@ pub(crate) fn layout_with_boxes_in(
             escaping_margin: CollapsibleMarginSet::ZERO,
             leading_block_margin: None,
             block_line_starts: Vec::new(),
-            shifts: super::root::LineShifts::default(),
+            shifts: super::root::LineShifts::default(), // cov:ignore: empty IFC fallback has no runtime placement to measure.
             fragment_box_placements: Vec::new(), // cov:ignore: empty IFC fallback has no runtime placement to measure.
             fragmentainer_line_ranges: None, // cov:ignore: empty IFC fallback has no runtime placement to measure.
             unfragmented_tail_column: None,
