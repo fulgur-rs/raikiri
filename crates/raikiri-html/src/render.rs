@@ -14,7 +14,7 @@ use raikiri_traits::{
     RenderWarning, ReplacedResolver, ResolveDisposition, ResolvedIntrinsic, ResolverError,
     ResolverRequest, ResourceKind, ResourcePolicy, ViolationType, WarningKind,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use raikiri_style::{
@@ -48,11 +48,57 @@ struct FallbackRecordingResolver<'a> {
     image_pixel_source: Option<&'a (dyn raikiri_traits::ImagePixelSource + Send + Sync)>,
     warnings: SharedRenderWarnings,
     seen: Mutex<HashSet<(url::Url, String)>>,
+    /// Every URL resolved, with the warnings resolving it reported.
+    outcomes: Mutex<ReplacedOutcomes>,
+}
+
+/// The replaced resources one layout resolved, in the order first resolved,
+/// each with the warnings resolving it reported: none when it loaded.
+#[derive(Default)]
+struct ReplacedOutcomes {
+    resources: Vec<(url::Url, Vec<RenderWarning>)>,
+    index: HashMap<url::Url, usize>,
+}
+
+impl ReplacedOutcomes {
+    /// Record that resolving `url` reported `warnings`.
+    fn record(&mut self, url: &url::Url, warnings: Vec<RenderWarning>) {
+        let index = match self.index.get(url) {
+            Some(&index) => index,
+            None => {
+                self.resources.push((url.clone(), Vec::new()));
+                self.index.insert(url.clone(), self.resources.len() - 1);
+                self.resources.len() - 1
+            }
+        };
+        let held = &mut self.resources[index].1;
+        for warning in warnings {
+            let key = format!("{warning:?}");
+            if !held.iter().any(|kept| format!("{kept:?}") == key) {
+                held.push(warning);
+            }
+        }
+    }
+}
+
+impl FallbackRecordingResolver<'_> {
+    /// Report `warning` and note it among the outcomes of resolving `url`.
+    fn report(&self, url: &url::Url, warning: RenderWarning) {
+        self.outcomes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .record(url, vec![warning.clone()]);
+        push_resource_warning(&self.warnings, warning);
+    }
 }
 
 impl ReplacedResolver for FallbackRecordingResolver<'_> {
     fn resolve(&self, request: ResolverRequest<'_>) -> Result<ResolvedIntrinsic, ResolverError> {
         let url = request.url().clone();
+        self.outcomes
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .record(&url, Vec::new());
         let mut resolved = if let Some(policy) = self.policy {
             let violation_type = if !policy.is_scheme_allowed(url.scheme(), ResourceKind::Image) {
                 Some(ViolationType::SchemeNotAllowed)
@@ -68,8 +114,8 @@ impl ReplacedResolver for FallbackRecordingResolver<'_> {
                     violation_type,
                     details: "replaced resource URL denied by policy".to_owned(),
                 };
-                push_resource_warning(
-                    &self.warnings,
+                self.report(
+                    &url,
                     RenderWarning {
                         kind: WarningKind::PolicyWarning {
                             violation: sanitize_policy_violation(violation),
@@ -99,8 +145,8 @@ impl ReplacedResolver for FallbackRecordingResolver<'_> {
             && let Some(actual) = source.decoded_byte_len(&url)
             && actual > limit
         {
-            push_resource_warning(
-                &self.warnings,
+            self.report(
+                &url,
                 RenderWarning {
                     kind: WarningKind::ResourceLimitExceeded {
                         kind: ResourceKind::Image,
@@ -122,8 +168,8 @@ impl ReplacedResolver for FallbackRecordingResolver<'_> {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             if seen.insert((url.clone(), reason.clone())) {
-                push_resource_warning(
-                    &self.warnings,
+                self.report(
+                    &url,
                     RenderWarning {
                         kind: WarningKind::ResourceFallback {
                             kind: ResourceKind::Image,
@@ -721,6 +767,9 @@ pub(crate) struct PipelineOutput {
     pub(crate) geometries: Vec<ResolvedPageGeometry>,
     pub(crate) page_styles: Vec<raikiri_style::PageCascadeResult>,
     pub(crate) warnings: Vec<RenderWarning>,
+    /// The replaced resources this layout resolved, with the warnings each
+    /// reported. They are among `warnings` too.
+    pub(crate) replaced_resources: Vec<(url::Url, Vec<RenderWarning>)>,
     pub(crate) base_url: Option<url::Url>,
 }
 pub(crate) enum PipelineRun {
@@ -797,6 +846,7 @@ pub(crate) fn run_pipeline(
         image_pixel_source: resources.raw_image_pixel_source(),
         warnings: Arc::clone(&warnings),
         seen: Mutex::new(HashSet::new()),
+        outcomes: Mutex::new(ReplacedOutcomes::default()),
     };
     let signal = config.signal.clone();
     let is_aborted = || signal.as_ref().is_some_and(|signal| signal.is_aborted());
@@ -1276,7 +1326,11 @@ pub(crate) fn run_pipeline(
             .cloned(),
     );
     drop(runtime);
-    drop(resolver);
+    let replaced_resources = resolver
+        .outcomes
+        .into_inner()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .resources;
     Ok(PipelineRun::Completed(Box::new(PipelineOutput {
         document,
         cascade: first_cascade,
@@ -1285,6 +1339,7 @@ pub(crate) fn run_pipeline(
         geometries: page_geometries,
         page_styles,
         warnings,
+        replaced_resources,
         base_url: effective_base_url,
     })))
 }

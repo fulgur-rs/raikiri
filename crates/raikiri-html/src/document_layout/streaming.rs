@@ -17,6 +17,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::Write;
 
 use html5ever::driver::{ParseOpts, Parser, parse_document};
+use raikiri_dom::generated_content::generated_origin;
 use raikiri_style::property::{DisplayValue, PositionValue};
 use raikiri_traits::{
     ConsumerPropertyEvent, ConsumerPropertyValue, FetchOutcome, FetchedResource, LayoutConfig,
@@ -39,7 +40,7 @@ use crate::{
     build_rule_tree,
 };
 use frontier::{Frontier, final_page_count, open_html_elements, stable_frontier};
-use resume::{can_resume, resume_point};
+use resume::{can_resume, inside_subtrees, resume_point};
 
 mod resume;
 
@@ -99,6 +100,14 @@ impl<'a> StreamPage<'a> {
     /// place once [`PageSink::finish`] runs, or draw the page's margin boxes
     /// from [`StreamSummary::page_count_margin_boxes`] instead. Pages
     /// delivered by [`StreamingLayout::finish`] show the real number.
+    ///
+    /// Nor does such a page know the whole height of a box that continues
+    /// on later pages: [`crate::Fragment::content_rect`] of a fragment that
+    /// is not the box's last spans only the content that arrived so far.
+    /// Its top, its width and everything painted on the page match a layout
+    /// of the whole document; a box whose painting turns on its whole
+    /// height, such as one turned by a `transform`, is not delivered before
+    /// that height is known.
     pub fn page(&self) -> Page<'a> {
         let page = self.layout.page_at(self.index as usize);
         match self.page_count_placeholder {
@@ -266,7 +275,7 @@ pub struct StreamingLayout<'r, 'a, S> {
     delivered_anchors: AnchorIndex,
     /// Layout-time warnings of earlier layouts, which a resumed layout
     /// does not repeat for the content it leaves out.
-    earlier_warnings: Warnings,
+    earlier_warnings: EarlierWarnings,
     /// The abort signal fired during a checkpoint.
     aborted: bool,
     /// The first input failure. [`StreamingLayout::feed`] returns it to its
@@ -537,6 +546,16 @@ impl Settings<'_, '_> {
         Ok(document)
     }
 
+    /// The elements that the last layout of `document`, given `resume`,
+    /// left out: none unless it resumed.
+    fn left_out(&self, document: &HtmlDocument, resume: Option<&ResumePoint>) -> LeftOut {
+        let dom = &document.uncascaded.dom;
+        match resume.filter(|_| self.last_resumed.get()) {
+            Some(resume) => LeftOut(inside_subtrees(dom, &resume.skipped)),
+            None => LeftOut(Vec::new()),
+        }
+    }
+
     /// Lay `document` out, resuming at `resume` when it can, and leaving out
     /// the absolutely positioned elements with node id `late_nodes_from` or
     /// more that land on one of the first `delivered` pages; those are added
@@ -671,7 +690,7 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
             page_names: Vec::new(),
             delivered_nodes: HashSet::new(),
             delivered_anchors: AnchorIndex::default(),
-            earlier_warnings: Warnings::default(),
+            earlier_warnings: EarlierWarnings::default(),
             aborted: false,
             failure: Failure::None,
         }
@@ -796,7 +815,8 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
             return Ok(());
         };
         drop_delivered_events(&mut events, &self.delivered_nodes);
-        self.earlier_warnings.merge(laid_out.warnings());
+        let left_out = self.settings.left_out(&document, resume);
+        self.earlier_warnings.record(&laid_out, &left_out);
         let held = open_text_event_sources(&document, &traced, &events);
         let final_pages = final_page_count(
             &document.uncascaded.dom,
@@ -893,7 +913,7 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
         let resume = resume
             .as_ref()
             .filter(|_| can_resume(&document, late_nodes_from));
-        let Some((_, laid_out, mut events)) = settings.layout_without_late_boxes(
+        let Some((document, laid_out, mut events)) = settings.layout_without_late_boxes(
             document,
             late_nodes_from,
             delivered,
@@ -904,6 +924,10 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
             return Ok(StreamStatus::Aborted);
         };
         drop_delivered_events(&mut events, &delivered_nodes);
+        let left_out = settings.left_out(&document, resume);
+        drop(document);
+        let mut earlier_warnings = earlier_warnings;
+        earlier_warnings.record(&laid_out, &left_out);
         let signal = settings.config.signal.clone();
         let (mut by_page, unplaced_events) = events_by_first_page(&laid_out, events);
         let Some((page_count_margin_boxes, page_count_running_elements)) =
@@ -1064,34 +1088,90 @@ fn page_count_margin_boxes(
 /// Rebuilt margin boxes per page, and the running elements they show.
 type RebuiltMarginBoxes = (Vec<(u32, Vec<MarginBox>)>, Vec<PageCountRunningElement>);
 
-/// Distinct warnings, in the order they were first reported.
-#[derive(Default)]
-struct Warnings {
-    warnings: Vec<RenderWarning>,
-    /// The debug form of each warning: `RenderWarning` has no `PartialEq`,
-    /// and its debug form shows every field.
-    keys: HashSet<String>,
+/// The elements a layout left out, laid out as `display: none` because
+/// they lie wholly on delivered pages.
+struct LeftOut(Vec<bool>);
+
+impl LeftOut {
+    /// Whether the layout left out `node`, or the element generating it.
+    fn holds(&self, node: NodeId) -> bool {
+        let id = node.0 as usize;
+        let owner = if id < self.0.len() {
+            Some(id)
+        } else {
+            generated_origin(id).map(|(element, _)| element)
+        };
+        owner.is_some_and(|owner| self.0.get(owner).copied().unwrap_or(false))
+    }
 }
 
-impl Warnings {
-    /// Add the warnings of `new` not held yet.
-    fn merge(&mut self, new: &[RenderWarning]) {
-        for warning in new {
-            if self.keys.insert(format!("{warning:?}")) {
-                self.warnings.push(warning.clone());
+/// What a warning of an earlier layout is about.
+#[derive(Debug, PartialEq, Eq)]
+enum WarningSource {
+    /// An element, which later layouts report again unless they leave it
+    /// out.
+    Node(NodeId),
+    /// A replaced resource, which later layouts report again, or find
+    /// loaded, unless they leave out every element showing it.
+    Resource(url::Url),
+}
+
+/// The layout-time warnings of the content that a resumed layout leaves
+/// out, as the last layout to lay that content out reported them.
+///
+/// The cascade and the preloads of every layout cover the whole document,
+/// so their warnings are not kept: a layout reports them again, or does not
+/// when a fetch that failed before succeeded. What a resumed layout does not
+/// repeat is what laying out the content of delivered pages reports: the
+/// warnings about its elements, and those of resolving the replaced
+/// resources it shows.
+#[derive(Default)]
+struct EarlierWarnings {
+    /// Each element or resource with the warnings about it, in the order
+    /// first reported.
+    sources: Vec<(WarningSource, Vec<RenderWarning>)>,
+}
+
+impl EarlierWarnings {
+    /// Take the warnings of `laid_out`, which left out the elements for
+    /// which `left_out` holds, in place of those that earlier layouts
+    /// reported about the content it laid out again.
+    fn record(&mut self, laid_out: &DocumentLayout, left_out: &LeftOut) {
+        let resolved = &laid_out.out.replaced_resources;
+        self.sources.retain(|(source, _)| match source {
+            WarningSource::Node(node) => left_out.holds(*node),
+            WarningSource::Resource(url) => !resolved.iter().any(|(resolved, _)| resolved == url),
+        });
+        for warning in laid_out.warnings() {
+            let Some(node) = warning.node_id else {
+                continue;
+            };
+            let source = WarningSource::Node(node);
+            match self.sources.iter_mut().find(|(held, _)| *held == source) {
+                Some((_, warnings)) => warnings.push(warning.clone()),
+                None => self.sources.push((source, vec![warning.clone()])),
             }
         }
+        self.sources.extend(
+            resolved
+                .iter()
+                .filter(|(_, warnings)| !warnings.is_empty())
+                .map(|(url, warnings)| (WarningSource::Resource(url.clone()), warnings.clone())),
+        );
     }
 
-    /// The warnings held that `warnings` does not hold.
+    /// The warnings held that `warnings` does not hold, once each.
     fn missing_from(self, warnings: &[RenderWarning]) -> Vec<RenderWarning> {
-        let present: HashSet<String> = warnings
+        // `RenderWarning` has no `PartialEq`, and its debug form shows every
+        // field.
+        let mut present: HashSet<String> = warnings
             .iter()
             .map(|warning| format!("{warning:?}"))
             .collect();
-        self.warnings
+        self.sources
             .into_iter()
-            .filter(|warning| !present.contains(&format!("{warning:?}")))
+            .flat_map(|(_, warnings)| warnings)
+            .filter(|warning| present.insert(format!("{warning:?}")))
             .collect()
     }
 }

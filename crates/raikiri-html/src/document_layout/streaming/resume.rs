@@ -281,7 +281,7 @@ fn element_parent(dom: &Document, id: usize) -> bool {
 }
 
 /// Which nodes are `roots` or inside the subtree of one of them.
-fn inside_subtrees(dom: &Document, roots: &[usize]) -> Vec<bool> {
+pub(super) fn inside_subtrees(dom: &Document, roots: &[usize]) -> Vec<bool> {
     let mut inside = vec![false; dom.node_count()];
     let mut stack = roots.to_vec();
     while let Some(id) = stack.pop() {
