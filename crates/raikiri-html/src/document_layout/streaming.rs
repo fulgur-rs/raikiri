@@ -13,7 +13,7 @@
 //! later content would have to change pages already delivered: that content
 //! is left out and reported, as [`StreamingLayout`] lists.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 
 use html5ever::driver::{ParseOpts, Parser, parse_document};
@@ -25,11 +25,13 @@ use raikiri_traits::{
 };
 
 use super::{
-    AnchorIndex, DocumentLayout, LayoutOptions, LayoutStatus, Page, RunningElementLayout, layout,
+    AnchorIndex, DocumentLayout, LayoutOptions, LayoutStatus, Page, RunningElementLayout,
+    layout_resumed,
 };
 use crate::document_parse::assemble_document;
 use crate::input::Utf8Feed;
 use crate::parse::finish_document;
+use crate::render::ResumePoint;
 use crate::sink::{collect_body_inline_stylesheet_ids, traced_handles};
 use crate::types::UncascadedDocument;
 use crate::{
@@ -37,6 +39,9 @@ use crate::{
     build_rule_tree,
 };
 use frontier::{Frontier, final_page_count, open_html_elements, stable_frontier};
+use resume::{can_resume, resume_point};
+
+mod resume;
 
 /// Input bytes between two layouts of the document parsed so far.
 const CHECKPOINT_BYTES: usize = 64 * 1024;
@@ -178,10 +183,14 @@ pub enum StreamStatus<T> {
 /// Feed the document with [`StreamingLayout::feed`] or through
 /// [`std::io::Write`], then call [`StreamingLayout::finish`]. Every 64 KiB
 /// of input, the document parsed so far is laid out and the pages no later
-/// input can change are delivered; each of those layouts covers the whole
-/// prefix, so a checkpoint costs as much as a layout of everything fed so
-/// far. Input must be UTF-8. The input byte cap and the other parse limits
-/// come from the [`RenderResources`]. Only print media is supported.
+/// input can change are delivered. Once pages are delivered, later layouts
+/// usually resume after them, so the content of delivered pages takes no
+/// more layout time or layout memory; the parsed document itself is kept
+/// whole. Documents with running elements or `target-counter()`-style
+/// lookups, and pages that begin inside a table, flex, grid or multi-column
+/// container, are laid out from the start each time. Input must be UTF-8.
+/// The input byte cap and the other parse limits come from the
+/// [`RenderResources`]. Only print media is supported.
 ///
 /// Delivered pages never change, so content that would change them is left
 /// out, each case reported in [`StreamSummary::warnings`] as
@@ -247,6 +256,17 @@ pub struct StreamingLayout<'r, 'a, S> {
     /// Absolutely positioned elements created after the first delivery that
     /// landed on delivered pages, and are left out of every later layout.
     hidden_late: Vec<usize>,
+    /// Where the next layout resumes, after the pages already delivered.
+    resume: Option<ResumePoint>,
+    /// Names of the pages already delivered, in page order.
+    page_names: Vec<Option<String>>,
+    /// Nodes with a fragment on a page already delivered.
+    delivered_nodes: HashSet<NodeId>,
+    /// Anchors on the pages already delivered.
+    delivered_anchors: AnchorIndex,
+    /// Layout-time warnings of earlier layouts, which a resumed layout
+    /// does not repeat for the content it leaves out.
+    earlier_warnings: Warnings,
     /// The abort signal fired during a checkpoint.
     aborted: bool,
     /// The first input failure. [`StreamingLayout::feed`] returns it to its
@@ -264,6 +284,11 @@ struct Settings<'r, 'a> {
     preload_background_images: bool,
     /// The network every cascade fetches style sheets through.
     network: Option<StreamNetwork<'r>>,
+    /// Whether the last layout resumed after delivered pages.
+    last_resumed: std::cell::Cell<bool>,
+    /// How many layouts resumed after delivered pages.
+    #[cfg(test)]
+    resumed: std::cell::Cell<usize>,
 }
 
 /// A network provider that fetches each style sheet once per stream.
@@ -512,18 +537,20 @@ impl Settings<'_, '_> {
         Ok(document)
     }
 
-    /// Lay `document` out, leaving out the absolutely positioned elements
-    /// with node id `late_nodes_from` or more that land on one of the first
-    /// `delivered` pages; those are added to `hidden` and reported in the
-    /// document's warnings. Returns `None` when the abort signal fires.
+    /// Lay `document` out, resuming at `resume` when it can, and leaving out
+    /// the absolutely positioned elements with node id `late_nodes_from` or
+    /// more that land on one of the first `delivered` pages; those are added
+    /// to `hidden` and reported in the document's warnings. Returns `None`
+    /// when the abort signal fires.
     fn layout_without_late_boxes(
         &self,
         mut document: HtmlDocument,
         late_nodes_from: Option<usize>,
         delivered: u32,
         hidden: &mut Vec<usize>,
+        resume: Option<&ResumePoint>,
     ) -> Result<Option<LaidOut>, RenderError> {
-        let Some((laid_out, events)) = self.run_layout(&document)? else {
+        let Some((laid_out, events)) = self.run_layout(&document, resume)? else {
             return Ok(None);
         };
         let late = late_nodes_from.map_or_else(Vec::new, |from| {
@@ -540,16 +567,41 @@ impl Settings<'_, '_> {
             .warnings
             .extend(late.iter().map(|&id| ignored_warning(id, LATE_ABSOLUTE)));
         Ok(self
-            .run_layout(&document)?
+            .run_layout(&document, resume)?
             .map(|(laid_out, events)| (document, laid_out, events)))
     }
 
-    /// Lay `document` out, collecting its consumer property events.
-    /// Returns `None` when the abort signal fires.
+    /// Lay `document` out, resuming at `resume` when it can, and collecting
+    /// its consumer property events. Returns `None` when the abort signal
+    /// fires.
     fn run_layout(
         &self,
         document: &HtmlDocument,
+        resume: Option<&ResumePoint>,
     ) -> Result<Option<(DocumentLayout, Vec<ConsumerPropertyEvent>)>, RenderError> {
+        if let Some(resume) = resume
+            && let Some(laid_out) = self.try_layout(document, Some(resume))?
+        {
+            self.last_resumed.set(true);
+            #[cfg(test)]
+            self.resumed.set(self.resumed.get() + 1);
+            return Ok(laid_out);
+        }
+        self.last_resumed.set(false);
+        Ok(self
+            .try_layout(document, None)?
+            .expect("a layout without a resume point always runs"))
+    }
+
+    /// One layout of `document`, resuming at `resume` when given. The outer
+    /// `None` means it could not resume there, the inner one that the abort
+    /// signal fired.
+    #[allow(clippy::type_complexity)]
+    fn try_layout(
+        &self,
+        document: &HtmlDocument,
+        resume: Option<&ResumePoint>,
+    ) -> Result<Option<Option<(DocumentLayout, Vec<ConsumerPropertyEvent>)>>, RenderError> {
         let mut events = Vec::new();
         let mut collect = |event| {
             events.push(event);
@@ -562,16 +614,17 @@ impl Settings<'_, '_> {
             layout_options =
                 layout_options.consumer_properties(self.consumer_properties, &mut collect);
         }
-        let status = layout(
+        let status = layout_resumed(
             document,
             self.defaults.clone(),
             self.config.clone(),
             layout_options,
+            resume,
         )?;
-        Ok(match status {
+        Ok(status.map(|status| match status {
             LayoutStatus::Completed(laid_out) => Some((laid_out, events)),
             LayoutStatus::Aborted => None,
-        })
+        }))
     }
 }
 
@@ -602,6 +655,9 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
                 consumer_properties: &[],
                 preload_background_images: true,
                 network: resources.network_adapter().map(StreamNetwork::new),
+                last_resumed: std::cell::Cell::new(false),
+                #[cfg(test)]
+                resumed: std::cell::Cell::new(0),
             },
             sink,
             input: Utf8Feed::new(parse_document(tree, ParseOpts::default())),
@@ -611,6 +667,11 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
             delivered: 0,
             late_nodes_from: None,
             hidden_late: Vec::new(),
+            resume: None,
+            page_names: Vec::new(),
+            delivered_nodes: HashSet::new(),
+            delivered_anchors: AnchorIndex::default(),
+            earlier_warnings: Warnings::default(),
             aborted: false,
             failure: Failure::None,
         }
@@ -651,8 +712,8 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
     /// - `RenderError::Parse(ParseError::Encoding)`: the input is not UTF-8.
     /// - `RenderError::LimitExceeded { kind: LimitKind::InputBytes, .. }`:
     ///   more input than the configured input byte cap.
-    /// - The cascade and layout errors of [`layout`] at a checkpoint, and
-    ///   [`RenderError::Io`] when the sink fails.
+    /// - The cascade and layout errors of [`layout`](super::layout) at a
+    ///   checkpoint, and [`RenderError::Io`] when the sink fails.
     pub fn feed(&mut self, bytes: &[u8]) -> Result<(), RenderError> {
         if !matches!(self.failure, Failure::None) {
             return Err(failed_earlier());
@@ -719,16 +780,23 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
         if frontier == Frontier::At(document.uncascaded.dom.root_index()) {
             return Ok(());
         }
-        let Some((document, laid_out, events)) = self.settings.layout_without_late_boxes(
+        let resume = self
+            .resume
+            .as_ref()
+            .filter(|_| can_resume(&document, self.late_nodes_from));
+        let Some((document, laid_out, mut events)) = self.settings.layout_without_late_boxes(
             document,
             self.late_nodes_from,
             self.delivered,
             &mut self.hidden_late,
+            resume,
         )?
         else {
             self.aborted = true;
             return Ok(());
         };
+        drop_delivered_events(&mut events, &self.delivered_nodes);
+        self.earlier_warnings.merge(laid_out.warnings());
         let held = open_text_event_sources(&document, &traced, &events);
         let final_pages = final_page_count(
             &document.uncascaded.dom,
@@ -739,6 +807,7 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
         );
         let signal = self.settings.config.signal.clone();
         let (mut by_page, _) = events_by_first_page(&laid_out, events);
+        let from = self.delivered;
         let delivery = deliver(
             &mut self.sink,
             &laid_out,
@@ -747,9 +816,15 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
             final_pages,
             Some(page_count_placeholder(&self.settings.config)),
             signal.as_ref(),
-        )?;
-        if delivery == Delivery::Aborted {
+        );
+        self.record_delivered(&laid_out, from);
+        if delivery? == Delivery::Aborted {
             self.aborted = true;
+        }
+        // A page start found in this layout lets the next one leave more
+        // out; a start found earlier stays valid when this one has none.
+        if let Some(point) = resume_point(&document, &laid_out, self.delivered, &self.page_names) {
+            self.resume = Some(point);
         }
         if self.delivered > 0 && self.late_nodes_from.is_none() {
             self.late_nodes_from = Some(document.uncascaded.dom.node_count());
@@ -763,15 +838,29 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
         Ok(())
     }
 
+    /// Remember what later layouts need of pages `from..self.delivered` of
+    /// `laid_out`, which were just delivered: their names, the nodes they
+    /// show and the anchors on them.
+    fn record_delivered(&mut self, laid_out: &DocumentLayout, from: u32) {
+        for index in from..self.delivered {
+            let page = laid_out.page_at(index as usize);
+            self.page_names.push(page.name().map(str::to_owned));
+            self.delivered_nodes
+                .extend(page.fragments().map(|fragment| fragment.node()));
+        }
+        self.delivered_anchors
+            .insert_missing(laid_out.anchors(), self.delivered);
+    }
+
     /// End the input, lay the document out, and deliver the remaining pages
     /// and the summary to the sink.
     ///
     /// # Errors
     ///
     /// Returns the parse, limit, cascade and layout errors of
-    /// [`crate::parse_html_with_resources`] and [`layout`], an input error
-    /// kept from [`std::io::Write`], and [`RenderError::Io`] when the sink
-    /// fails.
+    /// [`crate::parse_html_with_resources`] and [`layout`](super::layout), an
+    /// input error kept from [`std::io::Write`], and [`RenderError::Io`] when
+    /// the sink fails.
     pub fn finish(self) -> Result<StreamStatus<S::Output>, RenderError> {
         match self.failure {
             Failure::None => {}
@@ -788,6 +877,10 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
             mut delivered,
             late_nodes_from,
             mut hidden_late,
+            resume,
+            delivered_nodes,
+            delivered_anchors,
+            earlier_warnings,
             ..
         } = self;
         let parsed = input.finish().map_err(RenderError::Parse)?;
@@ -797,15 +890,20 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
             ..
         } = settings.cascade(parsed, false, late_nodes_from, &hidden_late)?;
         document.uncascaded.warnings.append(&mut ignored);
-        let Some((_, laid_out, events)) = settings.layout_without_late_boxes(
+        let resume = resume
+            .as_ref()
+            .filter(|_| can_resume(&document, late_nodes_from));
+        let Some((_, laid_out, mut events)) = settings.layout_without_late_boxes(
             document,
             late_nodes_from,
             delivered,
             &mut hidden_late,
+            resume,
         )?
         else {
             return Ok(StreamStatus::Aborted);
         };
+        drop_delivered_events(&mut events, &delivered_nodes);
         let signal = settings.config.signal.clone();
         let (mut by_page, unplaced_events) = events_by_first_page(&laid_out, events);
         let Some((page_count_margin_boxes, page_count_running_elements)) =
@@ -830,10 +928,20 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
         let DocumentLayout {
             mut out, anchors, ..
         } = laid_out;
+        let mut all_anchors = delivered_anchors;
+        all_anchors.insert_missing(&anchors, u32::MAX);
+        // The warnings of this layout come first, as in a batch layout. A
+        // resumed layout leaves out the content of delivered pages, whose
+        // warnings only earlier layouts reported.
+        let mut warnings = std::mem::take(&mut out.warnings);
+        if settings.last_resumed.get() {
+            let missing = earlier_warnings.missing_from(&warnings);
+            warnings.extend(missing);
+        }
         let summary = StreamSummary {
             page_count,
-            anchors,
-            warnings: std::mem::take(&mut out.warnings),
+            anchors: all_anchors,
+            warnings,
             unplaced_events,
             page_count_margin_boxes,
             page_count_running_elements,
@@ -956,8 +1064,48 @@ fn page_count_margin_boxes(
 /// Rebuilt margin boxes per page, and the running elements they show.
 type RebuiltMarginBoxes = (Vec<(u32, Vec<MarginBox>)>, Vec<PageCountRunningElement>);
 
+/// Distinct warnings, in the order they were first reported.
+#[derive(Default)]
+struct Warnings {
+    warnings: Vec<RenderWarning>,
+    /// The debug form of each warning: `RenderWarning` has no `PartialEq`,
+    /// and its debug form shows every field.
+    keys: HashSet<String>,
+}
+
+impl Warnings {
+    /// Add the warnings of `new` not held yet.
+    fn merge(&mut self, new: &[RenderWarning]) {
+        for warning in new {
+            if self.keys.insert(format!("{warning:?}")) {
+                self.warnings.push(warning.clone());
+            }
+        }
+    }
+
+    /// The warnings held that `warnings` does not hold.
+    fn missing_from(self, warnings: &[RenderWarning]) -> Vec<RenderWarning> {
+        let present: HashSet<String> = warnings
+            .iter()
+            .map(|warning| format!("{warning:?}"))
+            .collect();
+        self.warnings
+            .into_iter()
+            .filter(|warning| !present.contains(&format!("{warning:?}")))
+            .collect()
+    }
+}
+
 fn failed_earlier() -> RenderError {
     RenderError::Configuration("streaming layout input already failed".to_owned())
+}
+
+/// Drop the events of the elements shown on delivered pages, `delivered`:
+/// the page of their first fragment carried them. A resumed layout leaves
+/// out their fragments on those pages, so its first fragment of an element
+/// that continues past them is not the element's first.
+fn drop_delivered_events(events: &mut Vec<ConsumerPropertyEvent>, delivered: &HashSet<NodeId>) {
+    events.retain(|event| !delivered.contains(&event.node_id));
 }
 
 /// Bucket `events` by the page of each element's first fragment. Events of

@@ -225,6 +225,7 @@ fn inside_marker_fetch_is_independent_of_background_preloading() {
             consumer_properties: &[],
             property_observer: None,
             preload_background_images: false,
+            resume: None,
         },
     )
     .unwrap() else {
@@ -263,6 +264,7 @@ fn relative_background_urls_preload_against_the_document_base() {
             consumer_properties: &[],
             property_observer: None,
             preload_background_images: true,
+            resume: None,
         },
     )
     .unwrap() else {
@@ -332,6 +334,7 @@ fn stylesheet_background_urls_resolve_against_the_stylesheet() {
             consumer_properties: &[],
             property_observer: None,
             preload_background_images: true,
+            resume: None,
         },
     )
     .unwrap() else {
@@ -415,6 +418,7 @@ fn render_preloads_only_effective_marker_images() {
             consumer_properties: &[],
             property_observer: None,
             preload_background_images: true,
+            resume: None,
         },
     )
     .unwrap() else {

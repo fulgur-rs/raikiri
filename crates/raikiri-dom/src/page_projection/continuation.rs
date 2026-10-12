@@ -11,8 +11,20 @@ use super::records::{PageFragmentItem, PageFragmentKind};
 use crate::Document;
 use crate::layout::is_floating_box_for_pagination;
 use raikiri_style::CascadeResult;
-use raikiri_style::property::{BreakBetween, BreakInside, PageValue, PositionValue};
-use raikiri_traits::NodeKind;
+use raikiri_style::property::{BreakBetween, BreakInside, DisplayValue, PageValue, PositionValue};
+use raikiri_traits::{NodeId, NodeKind};
+
+/// A box that crosses the start of a page: it began on an earlier page.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CrossingBox {
+    /// The box's node.
+    pub node: NodeId,
+    /// How many fragments the box has on the pages before the page.
+    pub earlier_fragments: u32,
+    /// Offset of the box's top from the page's content origin; negative,
+    /// as the box began above the page.
+    pub top: f32,
+}
 
 /// The first content of a page, in source order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -260,6 +272,84 @@ impl Document {
             self.continuation_break = at;
             self.layout_dirty = true;
         }
+    }
+
+    /// Lay the elements `roots` and their subtrees out as if they had
+    /// `display: none`, in `cascade`, while counters keep seeing them with
+    /// their own display.
+    ///
+    /// A relayout that resumes at a page start uses this for the content
+    /// wholly before the start, which an earlier layout already placed on
+    /// finished pages: the relayout spends no layout on it, but the counters
+    /// in effect after it, such as list item numbers, do not change.
+    pub fn skip_layout(&mut self, cascade: &mut CascadeResult, roots: &[usize]) {
+        for &id in roots {
+            if let Some(computed) = cascade.computed.get_mut(id)
+                && computed.display != DisplayValue::None
+            {
+                self.skipped_displays.insert(id, computed.display);
+                computed.display = DisplayValue::None;
+                self.layout_dirty = true;
+            }
+        }
+    }
+
+    /// Continue, in a relayout that resumes at a page start, the boxes that
+    /// cross that start in an earlier layout, as [`Document::crossing_boxes`]
+    /// lists them.
+    ///
+    /// The next projection numbers their fragments after those of the
+    /// earlier pages and keeps the top the earlier layout gave them, which
+    /// the content left out of the relayout would otherwise move. The body,
+    /// which spans one page area from the top of the relayout's dropped
+    /// first page, has no fragment on the resumed page unless it is listed.
+    pub fn continue_fragments(&mut self, crossing: impl IntoIterator<Item = CrossingBox>) {
+        self.earlier_fragments = Some(
+            crossing
+                .into_iter()
+                .map(|crossing| (crossing.node, crossing))
+                .collect(),
+        );
+    }
+
+    /// The boxes on projected page `page_index` that began on an earlier
+    /// page, by node.
+    pub fn crossing_boxes(&self, page_index: u32) -> Vec<CrossingBox> {
+        // Fragments are numbered in page order, so a box's lowest-numbered
+        // fragment on the page carries its count of earlier fragments. A box
+        // that begins on the page, with several fragments there such as one
+        // per column, has its first fragment among them.
+        let mut lowest: std::collections::BTreeMap<NodeId, CrossingBox> = Default::default();
+        let pages = self.page_projection.pages.iter();
+        for item in pages
+            .filter(|page| page.page_index == page_index)
+            .flat_map(|page| &page.items)
+            .filter(|item| !item.is_repeat && !item.is_table_header_repeat)
+        {
+            let candidate = CrossingBox {
+                node: item.node_id,
+                earlier_fragments: item.fragment_index,
+                top: item.box_y,
+            };
+            lowest
+                .entry(item.node_id)
+                .and_modify(|current| {
+                    if candidate.earlier_fragments < current.earlier_fragments {
+                        *current = candidate;
+                    }
+                })
+                .or_insert(candidate);
+        }
+        lowest
+            .into_values()
+            .filter(|crossing| crossing.earlier_fragments > 0)
+            .collect()
+    }
+
+    /// The display counters see for element `id` whose computed display is
+    /// `display`: its own display when [`Document::skip_layout`] hid it.
+    pub(crate) fn counter_display(&self, id: usize, display: DisplayValue) -> DisplayValue {
+        self.skipped_displays.get(&id).copied().unwrap_or(display)
     }
 
     /// Keep the content before `token` from adding breaks of its own in a

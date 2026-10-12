@@ -25,12 +25,13 @@ fn run(html: &str) -> PipelineOutput {
             consumer_properties: &[],
             property_observer: None,
             preload_background_images: false,
+            resume: None,
         },
     )
     .expect("layout")
     {
         PipelineRun::Completed(out) => *out,
-        PipelineRun::Aborted => panic!("completed layout"),
+        PipelineRun::Aborted | PipelineRun::NotResumed => panic!("completed layout"),
     }
 }
 
@@ -261,6 +262,7 @@ fn narrower_later_pages_count_toward_the_page_limit() {
             consumer_properties: &[],
             property_observer: None,
             preload_background_images: false,
+            resume: None,
         },
     );
     assert!(matches!(

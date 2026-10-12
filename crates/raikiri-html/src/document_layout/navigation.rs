@@ -36,6 +36,16 @@ impl AnchorIndex {
     pub fn is_empty(&self) -> bool {
         self.by_name.is_empty()
     }
+
+    /// Add the anchors of `other` on pages before `before_page` whose names
+    /// this index does not hold yet.
+    pub(crate) fn insert_missing(&mut self, other: &AnchorIndex, before_page: u32) {
+        for (name, anchor) in &other.by_name {
+            if anchor.page_index < before_page && !self.by_name.contains_key(name) {
+                self.by_name.insert(name.clone(), anchor.clone());
+            }
+        }
+    }
 }
 
 /// One link on a page: all quads of one `<a>` element for one target.

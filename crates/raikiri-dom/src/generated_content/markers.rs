@@ -90,11 +90,9 @@ fn list_item_ordinal(document: &Document, cascade: &CascadeResult, node_id: usiz
     };
     let mut ordinal = 0_u32;
     for child_id in &parent.children {
-        if cascade
-            .computed
-            .get(*child_id)
-            .is_some_and(|computed| computed.display == DisplayValue::ListItem)
-        {
+        if cascade.computed.get(*child_id).is_some_and(|computed| {
+            document.counter_display(*child_id, computed.display) == DisplayValue::ListItem
+        }) {
             ordinal = ordinal.saturating_add(1);
             if *child_id == node_id {
                 return ordinal;

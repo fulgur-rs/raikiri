@@ -1615,6 +1615,24 @@ pub(crate) fn project_slices_with_control(
         }
     }
     nodes.sort_by_key(|node| node.node_id);
+    // A relayout resumed at a page start lays the content before it out
+    // without the elements wholly before it, so a box crossing the start
+    // begins lower than in the earlier layout. It keeps the top the earlier
+    // layout gave it; its end, after the start, is the same in both.
+    if let Some(earlier) = &document.earlier_fragments
+        && let Some((page_start, _)) = pages.first().and_then(|page| page.flow_range)
+    {
+        for source in &mut nodes {
+            if let Some(crossing) = earlier.get(&source.node_id)
+                && !source.is_repeat
+                && source.abs_y < page_start
+            {
+                let bottom = source.abs_y + source.height;
+                source.abs_y = page_start + crossing.top;
+                source.height = (bottom - source.abs_y).max(0.0);
+            }
+        }
+    }
 
     for source in &nodes {
         work.check()?;
@@ -1751,15 +1769,39 @@ pub(crate) fn project_slices_with_control(
         }
     }
 
+    // A relayout resumed at a page start continues the fragments the boxes
+    // crossing that start had before it. The body spans one page area from
+    // the top of the relayout's first page, which the relayout drops; when
+    // it did not cross the start in the earlier layout, it has no fragment
+    // after it.
+    if let Some(earlier) = &document.earlier_fragments
+        && let Some(first) = pages.first_mut()
+    {
+        let body = NodeId::new(body_id as u64);
+        first.items.retain(|item| {
+            item.node_id != body || item.box_y >= -0.01 || earlier.contains_key(&body)
+        });
+    }
+    let earlier = document.earlier_fragments.as_ref();
+    let before = |node: &NodeId| {
+        earlier
+            .and_then(|earlier| earlier.get(node))
+            .map(|crossing| crossing.earlier_fragments)
+    };
+
     // A source can have several column pieces on the same physical page.
     // Count all committed pieces together so edge ownership remains stable.
     let mut fragment_counts = HashMap::<NodeId, u32>::new();
     for item in pages.iter().flat_map(|page| &page.items) {
-        *fragment_counts.entry(item.node_id).or_default() += 1;
+        *fragment_counts
+            .entry(item.node_id)
+            .or_insert_with(|| before(&item.node_id).unwrap_or(0)) += 1;
     }
     let mut fragment_indices = HashMap::<NodeId, u32>::new();
     for item in pages.iter_mut().flat_map(|page| &mut page.items) {
-        let index = fragment_indices.entry(item.node_id).or_default();
+        let index = fragment_indices
+            .entry(item.node_id)
+            .or_insert_with(|| before(&item.node_id).unwrap_or(0));
         item.fragment_index = *index;
         item.fragment_count = fragment_counts[&item.node_id];
         *index += 1;

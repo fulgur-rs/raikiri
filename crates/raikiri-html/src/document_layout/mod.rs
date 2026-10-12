@@ -139,6 +139,20 @@ pub fn layout(
     config: LayoutConfig,
     options: LayoutOptions<'_, '_>,
 ) -> Result<LayoutStatus, RenderError> {
+    let status = layout_resumed(doc, defaults, config, options, None)?;
+    // Only a layout given a resume point can fail to resume.
+    Ok(status.expect("a layout without a resume point always runs"))
+}
+
+/// [`layout`], resuming at `resume` when given. Returns `None` when the
+/// layout cannot resume there.
+pub(crate) fn layout_resumed<'r>(
+    doc: &HtmlDocument,
+    defaults: PageDefaults,
+    config: LayoutConfig,
+    options: LayoutOptions<'r, '_>,
+    resume: Option<&'r crate::render::ResumePoint>,
+) -> Result<Option<LayoutStatus>, RenderError> {
     if config.media_context.media_type() != crate::MediaType::Print {
         return Err(RenderError::Configuration(
             "Document layout requires print media".to_owned(),
@@ -160,11 +174,13 @@ pub fn layout(
             consumer_properties,
             property_observer,
             preload_background_images,
+            resume,
         },
     )?;
     let mut out = match run {
         PipelineRun::Completed(out) => out,
-        PipelineRun::Aborted => return Ok(LayoutStatus::Aborted),
+        PipelineRun::Aborted => return Ok(Some(LayoutStatus::Aborted)),
+        PipelineRun::NotResumed => return Ok(None),
     };
     // A paragraph or subtree is reported once, however many of the page
     // layouts it appears in.
@@ -203,7 +219,7 @@ pub fn layout(
             }),
     );
     if signal.as_ref().is_some_and(|signal| signal.is_aborted()) {
-        return Ok(LayoutStatus::Aborted);
+        return Ok(Some(LayoutStatus::Aborted));
     }
     let rendered = navigation::build_rendered(&out);
     let anchors = navigation::build_anchors(DomView::new(&out.document), &out);
@@ -213,16 +229,16 @@ pub fn layout(
         .map(|_| page::InlineSvgCache::default())
         .collect();
     if signal.as_ref().is_some_and(|signal| signal.is_aborted()) {
-        return Ok(LayoutStatus::Aborted);
+        return Ok(Some(LayoutStatus::Aborted)); // cov:ignore: needs the abort signal to fire while the running elements are indexed
     }
-    Ok(LayoutStatus::Completed(DocumentLayout {
+    Ok(Some(LayoutStatus::Completed(DocumentLayout {
         out,
         anchors,
         rendered,
         running,
         running_layouts,
         svg_sources,
-    }))
+    })))
 }
 
 /// An owned, laid-out document.

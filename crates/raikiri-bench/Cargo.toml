@@ -35,5 +35,9 @@ harness = false
 name = "cascade_document"
 harness = false
 
+[[bench]]
+name = "streaming_memory"
+harness = false
+
 [lints]
 workspace = true

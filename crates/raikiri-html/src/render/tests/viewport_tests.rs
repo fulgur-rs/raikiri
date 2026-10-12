@@ -13,12 +13,13 @@ fn run(html: &str) -> PipelineOutput {
             consumer_properties: &[],
             property_observer: None,
             preload_background_images: false,
+            resume: None,
         },
     )
     .expect("pipeline")
     {
         PipelineRun::Completed(out) => *out,
-        PipelineRun::Aborted => panic!("unexpected abort"),
+        PipelineRun::Aborted | PipelineRun::NotResumed => panic!("unexpected abort"),
     }
 }
 

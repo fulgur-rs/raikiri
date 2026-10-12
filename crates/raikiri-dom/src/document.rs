@@ -342,6 +342,20 @@ pub struct Document {
     /// of text node `text`, so a relayout at another width starts a line
     /// exactly where a page began in an earlier layout.
     pub(crate) continuation_break: Option<(usize, u32)>,
+    /// The display of the elements a relayout lays out as `display: none`
+    /// (see [`Document::skip_layout`]), by node id. Counters still see the
+    /// elements with these displays.
+    pub(crate) skipped_displays:
+        std::collections::HashMap<usize, raikiri_style::property::DisplayValue>,
+    /// For a relayout that resumes at a page start, the boxes crossing that
+    /// start in an earlier layout (see [`Document::continue_fragments`]).
+    /// `None` for any other layout.
+    pub(crate) earlier_fragments: Option<
+        std::collections::HashMap<
+            raikiri_traits::NodeId,
+            crate::page_projection::continuation::CrossingBox,
+        >,
+    >,
     /// Dirty flag for the IS_IN_DOCUMENT bit. Any tree mutation primitive
     /// (append_* / attach_child / insert_child_before / detach_from_parent /
     /// reparent_children / retain_children) sets it. Observation APIs
@@ -562,6 +576,8 @@ impl Document {
             body_block_start_margin: 0.0,
             fixed_page_area: (0.0, 0.0),
             continuation_break: None,
+            skipped_displays: Default::default(),
+            earlier_fragments: None,
             // Node::new_document() sets IS_IN_DOCUMENT=true on the initial root,
             // consistent with an attached root. There are no templates or
             // detached nodes yet, so the flag is not dirty.
@@ -1842,6 +1858,8 @@ impl Document {
             body_block_start_margin: _,
             fixed_page_area: _,
             continuation_break: _,
+            skipped_displays: _,
+            earlier_fragments: _,
             flags_dirty: _,
             stylesheets,
             layout_warnings: _,
