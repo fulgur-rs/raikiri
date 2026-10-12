@@ -582,6 +582,29 @@ fn preloads_an_absolute_svg_background_once_and_rasterizes_on_demand() {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .is_empty()
     );
+
+    // Painting at another size keeps the first raster.
+    let small = ImageRasterSize {
+        width: 2.0,
+        height: 1.0,
+    };
+    let small_image = resources.get_decoded_at_size(&url, small, None).unwrap();
+    assert_eq!(resources.decoded_byte_len(&url), Some(8));
+    let again = resources
+        .get_decoded_at_size(
+            &url,
+            ImageRasterSize {
+                width: 4.0,
+                height: 2.0,
+            },
+            None,
+        )
+        .unwrap();
+    assert!(Arc::ptr_eq(&image, &again));
+    assert!(Arc::ptr_eq(
+        &small_image,
+        &resources.get_decoded_at_size(&url, small, None).unwrap()
+    ));
 }
 
 #[test]
@@ -2073,4 +2096,59 @@ fn cache_keeps_svg_rasters_of_several_sizes_within_the_budget() {
     assert_eq!(budget.retained(), 29 * 29 * 4);
     assert!(insert(&mut cache, 31).is_err());
     assert!(cache.entries[&url].raster(raster(29).0).is_some());
+}
+
+#[test]
+fn cache_evicts_svg_rasters_for_the_process_budget() {
+    let budget = Arc::new(ProcessImageBudget::new(100, 4));
+    let mut cache = DecodedImageCache::new(Arc::clone(&budget));
+    let url = Url::parse("https://images.test/process.svg").unwrap();
+    let document = Arc::new(SvgDocument::parse(TWO_COLOR_SVG).expect("fixture SVG parses"));
+    let insert = |cache: &mut DecodedImageCache, side: u32| {
+        cache.insert_raster(
+            url.clone(),
+            CachedBackgroundSource::Svg(Arc::clone(&document)),
+            ImageRasterSize {
+                width: side as f32,
+                height: side as f32,
+            },
+            Arc::new(DecodedImage {
+                width: side,
+                height: side,
+                rgba: vec![0; (side * side * 4) as usize],
+            }),
+        )
+    };
+    insert(&mut cache, 3).unwrap();
+    insert(&mut cache, 4).unwrap();
+    assert_eq!(budget.retained(), 36 + 64);
+    // 4x4 alone fits the process budget once the 3x3 raster goes.
+    insert(&mut cache, 4).unwrap();
+    insert(&mut cache, 2).unwrap();
+    assert_eq!(budget.retained(), 64 + 16);
+    insert(&mut cache, 5).unwrap();
+    assert_eq!(cache.entries[&url].rasters.len(), 1);
+    assert_eq!(budget.retained(), 100);
+    // Too large even alone: the process budget is reported, nothing changes.
+    assert_eq!(insert(&mut cache, 6), Err((100, 144)));
+    assert_eq!(budget.retained(), 100);
+    // Replacing the only raster with a smaller one releases the difference.
+    let small = |cache: &mut DecodedImageCache| {
+        let image = Arc::new(DecodedImage {
+            width: 1,
+            height: 1,
+            rgba: vec![0; 4],
+        });
+        cache.insert_raster(
+            url.clone(),
+            CachedBackgroundSource::Svg(Arc::clone(&document)),
+            ImageRasterSize {
+                width: 5.0,
+                height: 5.0,
+            },
+            image,
+        )
+    };
+    small(&mut cache).unwrap();
+    assert_eq!(budget.retained(), 4);
 }
