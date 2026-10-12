@@ -2241,3 +2241,427 @@ fn ignored_page_size_keeps_viewport_margin_basis_consistent() {
     assert_eq!(&actual.rgba[offset..offset + 4], &[0, 128, 0, 255]);
     assert_eq!(actual.rgba, expected.rgba);
 }
+
+#[test]
+fn print_declaration_reads_the_declaration_list_grammar() {
+    let raw = |value: &str| Some(value.to_owned());
+    // Semicolons inside strings do not end a declaration.
+    assert_eq!(
+        print_declaration(r#"content:"a;size:9px";size:1px"#, "size", raw).as_deref(),
+        Some("1px")
+    );
+    // The last declaration wins, unless an earlier one is important.
+    assert_eq!(
+        print_declaration("margin:1px;MARGIN : 2px 3px", "margin", raw).as_deref(),
+        Some("2px 3px")
+    );
+    assert_eq!(
+        print_declaration("margin:1px !important;margin:2px", "margin", raw).as_deref(),
+        Some("1px")
+    );
+    // Declarations of nested margin rules belong to those rules.
+    assert_eq!(
+        print_declaration("@top-left{content:'x';margin:5px}size:1px", "margin", raw),
+        None
+    );
+    assert_eq!(
+        print_declaration("@top-left{margin:5px}margin:1px", "margin", raw).as_deref(),
+        Some("1px")
+    );
+    // A value the property does not accept drops its declaration.
+    for block in [
+        "margin-top:10px;margin-top:bogus",
+        "margin-top:10px;margin-top:",
+        "margin-top:10px;margin-top:bogus !important",
+    ] {
+        assert_eq!(
+            print_declaration(block, "margin-top", |value| parse_print_length(value, None)),
+            Some(10.0),
+            "{block}"
+        );
+    }
+}
+
+#[test]
+fn page_sizes_reject_negative_lengths() {
+    assert!(parse_page_size("-10px").is_none());
+    for value in [
+        "10px 20px 30px",
+        "a4 10px",
+        "a4 a5",
+        "landscape portrait",
+        "auto a4",
+    ] {
+        assert!(parse_page_size(value).is_none(), "{value}");
+    }
+    let (width, height) = parse_page_size("landscape a4")
+        .and_then(|size| size.size)
+        .unwrap();
+    assert!((width - 793.7008).abs() < 0.01 && (height - 1122.5197).abs() < 0.01);
+    assert_eq!(
+        print_declaration("size:300px;size:-10px", "size", parse_page_size)
+            .and_then(|size| size.size),
+        Some((300.0, 300.0))
+    );
+}
+
+#[test]
+fn page_declarations_follow_nested_rule_blocks() {
+    assert_eq!(
+        first_authored_page_name("<style>.a{& b{} page:named}</style>").as_deref(),
+        Some("named")
+    );
+    assert_eq!(
+        first_authored_page_name("<style>.a{}page :first-child{}</style>"),
+        None
+    );
+}
+
+#[test]
+fn page_margins_reject_unitless_nonzero_lengths() {
+    assert_eq!(parse_page_margin("5", 300.0), None);
+    assert_eq!(parse_page_margin("0", 300.0), Some(0.0));
+    assert_eq!(parse_page_margin("5px", 300.0), Some(5.0));
+}
+
+#[test]
+fn page_rules_with_invalid_selectors_are_dropped() {
+    assert_eq!(
+        page_block_named("@page foo:bogus{margin:5px}@page foo{margin:10px}", "foo"),
+        Some("margin:10px")
+    );
+    assert_eq!(
+        page_block_named(
+            "@page foo:nth(1){margin:5px}@page foo:first{margin:10px}",
+            "foo"
+        ),
+        Some("margin:10px")
+    );
+    assert_eq!(
+        page_block("@page :bogus{size:1px}@page{size:2px}"),
+        Some("size:2px")
+    );
+    assert_eq!(
+        page_block_named("@page foo: first{margin:5px}@page foo{margin:10px}", "foo"),
+        Some("margin:10px")
+    );
+}
+
+#[test]
+fn page_blocks_skip_comments_strings_and_escapes() {
+    assert_eq!(
+        page_block("/* @page{size:1px} */@page{size:2px}"),
+        Some("size:2px")
+    );
+    assert_eq!(
+        page_block(r#".a{content:"@page{size:1px}"}@page{size:2px}"#),
+        Some("size:2px")
+    );
+    assert_eq!(
+        page_block("@page{/* } */size:1px}"),
+        Some("/* } */size:1px")
+    );
+    assert_eq!(
+        page_block(r#"@page{content:"\"}";size:1px}"#),
+        Some(r#"content:"\"}";size:1px"#)
+    );
+    assert_eq!(
+        page_block_named("/* @page a{size:1px} */@page a{size:2px}", "a"),
+        Some("size:2px")
+    );
+    assert_eq!(
+        page_block_named("@page b{size:1px}@page A:first{size:2px}", "A"),
+        Some("size:2px")
+    );
+    assert_eq!(page_block_named("@page :a{size:1px}", "a"), None);
+}
+
+#[test]
+fn first_authored_page_name_reads_page_declarations_only() {
+    assert_eq!(
+        first_authored_page_name("<style>.page:hover{color:red}.box{page:named}</style>")
+            .as_deref(),
+        Some("named")
+    );
+    assert_eq!(
+        first_authored_page_name(r#"<style>.a{content:"page:quoted";page : b}</style>"#).as_deref(),
+        Some("b")
+    );
+    assert_eq!(
+        first_authored_page_name(r#"<div title="page:title" style="color:red;page:inline">"#)
+            .as_deref(),
+        Some("inline")
+    );
+    assert_eq!(
+        first_authored_page_name("<style>/* page:comment */ div.page:first-child{}</style>"),
+        None
+    );
+    // A selector that follows a statement is no declaration.
+    assert_eq!(
+        first_authored_page_name("<style>@import url(a.css);page :first-child{color:red}</style>"),
+        None
+    );
+}
+
+#[test]
+fn viewport_expansion_leaves_selectors_unchanged() {
+    let source = r#"[data-x=1vw] .a:nth-child(2n),[data-y="1vw"]{width:1vw}@media (width:1vw){[data-z=1vw]{height:1vh}}.b{--x:{y:1vw}}"#;
+    assert_eq!(
+        expand_css_viewport_units_with_media_basis(source, 200.0, 100.0, 800.0, 600.0),
+        r#"[data-x=1vw] .a:nth-child(2n),[data-y="1vw"]{width:2.000000px}@media (width:8.000000px){[data-z=1vw]{height:1.000000px}}.b{--x:{y:2.000000px}}"#
+    );
+    // Declaration lists and bare media queries have no selectors.
+    assert_eq!(
+        expand_css_viewport_units_with_media_basis(
+            "width:1vw;height:1vh",
+            200.0,
+            100.0,
+            800.0,
+            600.0
+        ),
+        "width:2.000000px;height:1.000000px"
+    );
+    assert_eq!(
+        expand_css_viewport_units_with_media_basis(
+            "print and (max-width:1vw)",
+            800.0,
+            600.0,
+            800.0,
+            600.0
+        ),
+        "print and (max-width:8.000000px)"
+    );
+}
+
+#[test]
+fn page_sizes_reject_unitless_nonzero_numbers() {
+    assert!(parse_page_size("5").is_none());
+    assert_eq!(
+        parse_page_size("0").and_then(|size| size.size),
+        Some((0.0, 0.0))
+    );
+    assert_eq!(
+        print_declaration("size:300px;size:5", "size", parse_page_size).and_then(|size| size.size),
+        Some((300.0, 300.0))
+    );
+}
+
+#[test]
+fn named_pages_match_case_sensitively() {
+    let css = "@page cover{size:100px}@page Cover{size:200px}";
+    assert_eq!(page_block_named(css, "Cover"), Some("size:200px"));
+    assert_eq!(page_block_named(css, "cover"), Some("size:100px"));
+    assert_eq!(page_block_named("@page cover{size:100px}", "COVER"), None);
+}
+
+#[test]
+fn page_sizes_read_every_named_size() {
+    for (value, size) in [
+        ("b5", (665.1968, 944.8819)),
+        ("B4", (944.8819, 1334.1732)),
+        ("jis-b5", (687.874, 971.3386)),
+        ("JIS-B4", (971.3386, 1375.748)),
+        ("letter", (816.0, 1056.0)),
+        ("legal", (816.0, 1344.0)),
+        ("ledger", (1056.0, 1632.0)),
+    ] {
+        let parsed = parse_page_size(value).and_then(|size| size.size).unwrap();
+        assert!(
+            (parsed.0 - size.0).abs() < 0.01 && (parsed.1 - size.1).abs() < 0.01,
+            "{value}: {parsed:?}"
+        );
+    }
+    let size = parse_page_size("b4 landscape").unwrap();
+    assert!(size.landscape && size.size.is_some());
+}
+
+#[test]
+fn page_rules_skip_style_rule_blocks_and_space_before_colons() {
+    assert_eq!(
+        page_block(".a{@page{margin:10vw}}@page{size:200px}"),
+        Some("size:200px")
+    );
+    assert_eq!(
+        page_block("@media print{@page{size:100px}}@page{size:200px}"),
+        Some("size:100px")
+    );
+    assert_eq!(
+        page_block_named("@page foo :first{margin:5vw}@page foo{margin:10vw}", "foo"),
+        Some("margin:10vw")
+    );
+    assert_eq!(
+        page_block_named("@page foo, bar:first{margin:5vw}", "bar"),
+        Some("margin:5vw")
+    );
+}
+
+#[test]
+fn first_authored_page_name_reads_unquoted_style_attributes() {
+    assert_eq!(
+        first_authored_page_name("<div style=page:Cover>x</div>").as_deref(),
+        Some("Cover")
+    );
+    assert_eq!(
+        first_authored_page_name("<div style=page:Cover class=a>x</div>").as_deref(),
+        Some("Cover")
+    );
+}
+
+#[test]
+fn page_rules_drop_selector_lists_with_empty_entries() {
+    for css in [
+        "@page foo,,bar{size:10vw}@page foo{size:20vw}",
+        "@page ,foo{size:10vw}@page foo{size:20vw}",
+        "@page foo,{size:10vw}@page foo{size:20vw}",
+        "@page foo:{size:10vw}@page foo{size:20vw}",
+    ] {
+        assert_eq!(page_block_named(css, "foo"), Some("size:20vw"), "{css}");
+    }
+    assert_eq!(
+        page_block_named("@page :first, foo{size:10vw}", "foo"),
+        Some("size:10vw")
+    );
+    assert_eq!(page_block("@page{size:10vw}"), Some("size:10vw"));
+}
+
+#[test]
+fn page_rules_keep_pseudo_only_selectors_after_whitespace() {
+    assert_eq!(page_block("@page :first{size:10vw}"), Some("size:10vw"));
+    assert_eq!(
+        page_block_named("@page foo, :left{size:10vw}", "foo"),
+        Some("size:10vw")
+    );
+}
+
+#[test]
+fn page_rules_drop_selectors_with_two_page_names() {
+    for css in [
+        "@page foo/**/bar{margin:10vw}@page foo{margin:20vw}",
+        "@page foo bar{margin:10vw}@page foo{margin:20vw}",
+        "@page :first foo{margin:10vw}@page foo{margin:20vw}",
+    ] {
+        assert_eq!(page_block_named(css, "foo"), Some("margin:20vw"), "{css}");
+    }
+}
+
+#[test]
+fn first_authored_page_name_skips_keywords_that_name_no_page() {
+    for keyword in [
+        "auto",
+        "initial",
+        "INHERIT",
+        "unset",
+        "revert",
+        "revert-layer",
+        "default",
+    ] {
+        let html = format!("<p style=\"page/**/:{keyword}\"></p><p style=\"page:cover\"></p>");
+        assert_eq!(
+            first_authored_page_name(&html).as_deref(),
+            Some("cover"),
+            "{keyword}"
+        );
+    }
+}
+
+#[test]
+fn first_authored_page_name_needs_a_valid_important_suffix() {
+    assert_eq!(
+        first_authored_page_name("<p style=\"page/**/:Bad ! bogus; page:Good\"></p>").as_deref(),
+        Some("Good")
+    );
+    assert_eq!(
+        first_authored_page_name("<p style=\"page:Good !important\"></p>").as_deref(),
+        Some("Good")
+    );
+}
+
+/// A WPT checkout with Ahem and a 2×2 green PNG at `/images/green.png`.
+fn checkout_with_green_png() -> tempfile::TempDir {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join("fonts")).unwrap();
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../raikiri-dom/tests/data/text-autospace/Ahem.ttf"),
+        root.path().join("fonts/Ahem.ttf"),
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.path().join("images")).unwrap();
+    std::fs::create_dir_all(root.path().join("css")).unwrap();
+    let mut bytes = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut bytes, 2, 2);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().unwrap();
+        writer
+            .write_image_data(&[0, 128, 0, 255].repeat(4))
+            .unwrap();
+    }
+    std::fs::write(root.path().join("images/green.png"), bytes).unwrap();
+    root
+}
+
+fn render_in_checkout(root: &Path, html: &str) -> RenderedDocument {
+    let page_dir = root.join("css");
+    render_raikiri_pages_inner_with_canvases(
+        html,
+        100,
+        100,
+        Some(&page_dir),
+        Some(&page_dir),
+        InlineEngineChoice {
+            require_inline_fonts: false,
+        },
+        None,
+        None,
+        None,
+    )
+    .unwrap()
+}
+
+fn pixel(document: &RenderedDocument, x: u32, y: u32) -> [u8; 4] {
+    let page = &document.pages[0];
+    let offset = ((y * page.width + x) * 4) as usize;
+    page.rgba[offset..offset + 4].try_into().unwrap()
+}
+
+#[test]
+fn root_relative_element_and_page_backgrounds_load_from_the_checkout() {
+    let root = checkout_with_green_png();
+    let element = render_in_checkout(
+        root.path(),
+        "<style>@page{size:100px 100px;margin:0}html,body{margin:0}\
+         div{width:50px;height:50px;background-image:url(/images/green.png)}</style><div></div>",
+    );
+    assert_eq!(pixel(&element, 10, 10), [0, 128, 0, 255]);
+    assert_eq!(pixel(&element, 80, 80), [255, 255, 255, 255]);
+
+    let page = render_in_checkout(
+        root.path(),
+        "<style>@page{size:100px 100px;margin:0;background-image:url(/images/green.png)}</style>",
+    );
+    assert_eq!(pixel(&page, 80, 80), [0, 128, 0, 255]);
+}
+
+#[test]
+fn an_image_that_fails_to_load_does_not_fail_the_render() {
+    let root = checkout_with_green_png();
+    let document = render_in_checkout(
+        root.path(),
+        "<style>@page{size:100px 100px;margin:0}</style><img src=\"/images/missing.png\"><img src=\"\">",
+    );
+    assert_eq!(document.pages.len(), 1);
+}
+
+#[test]
+fn a_root_relative_border_image_loads_from_the_checkout() {
+    let root = checkout_with_green_png();
+    let document = render_in_checkout(
+        root.path(),
+        "<style>@page{size:100px 100px;margin:0}html,body{margin:0}\
+         div{width:40px;height:40px;border:10px solid red;\
+         border-image:url(/images/green.png) 1 stretch}</style><div></div>",
+    );
+    assert_eq!(pixel(&document, 2, 2), [0, 128, 0, 255]);
+}

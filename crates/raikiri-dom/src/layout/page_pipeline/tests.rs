@@ -2446,6 +2446,324 @@ fn layout_pages_coalesces_zero_height_named_boxes_at_same_position() {
 }
 
 #[test]
+fn layout_pages_joins_a_non_empty_named_box_to_a_preceding_zero_height_named_box() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let mut boxes = Vec::new();
+    for style in [
+        "display:block;page:a;height:10px",
+        "display:block;page:b;height:0px",
+        "display:block;page:c;height:10px",
+        "display:block;page:d;height:10px",
+    ] {
+        boxes.push(doc.append_element(Some(body), "div", Style::default(), Some(style)));
+    }
+
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let slices = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
+
+    // The zero-height `b` consumes no block-size, so `c` shares its page
+    // instead of leaving `b` alone on a page of its own.
+    let names: Vec<_> = slices
+        .iter()
+        .map(|slice| slice.page_name.as_deref())
+        .collect();
+    assert_eq!(names, [Some("a"), Some("c"), Some("d")]);
+    let c_y = doc.nodes[boxes[2]].unrounded_layout.location.y;
+    // cov:ignore: panic-message text is only executed when the assertion fails.
+    assert!((c_y - 100.0).abs() < 0.01, "c starts page 1: y={c_y}");
+}
+
+/// Lay out `children` (inline styles) under `body` on 100x100 pages and
+/// return the page names, with the body itself styled by `body_style`.
+fn named_page_slices(body_style: &str, children: &[(&str, &[&str])]) -> Vec<Option<String>> {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some(body_style));
+    for (style, grandchildren) in children {
+        let child = doc.append_element(Some(body), "div", Style::default(), Some(*style));
+        for grandchild in *grandchildren {
+            doc.append_element(Some(child), "div", Style::default(), Some(*grandchild));
+        }
+    }
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page)
+        .expect("pagination Ok")
+        .into_iter()
+        .map(|slice| slice.page_name)
+        .collect()
+}
+
+#[test]
+fn layout_pages_ignores_page_names_inside_monolithic_boxes() {
+    let named: &[&str] = &[
+        "display:block;page:a;height:10px",
+        "display:block;page:b;height:10px",
+    ];
+    for container in [
+        "display:inline-block;width:50px",
+        "display:inline-flex;flex-direction:column;width:50px",
+        "display:block;writing-mode:vertical-rl;height:50px",
+        "display:inline-table;width:50px",
+    ] {
+        assert_eq!(
+            named_page_slices("display:block", &[(container, named)]).len(),
+            1,
+            "{container}"
+        );
+    }
+}
+
+#[test]
+fn layout_pages_does_not_propagate_row_flex_item_page_names() {
+    let pages = named_page_slices(
+        "display:block",
+        &[
+            ("display:block;height:10px", &[]),
+            (
+                "display:flex",
+                &[
+                    "display:block;page:b;height:10px",
+                    "display:block;page:c;height:10px",
+                ],
+            ),
+            ("display:block;height:10px", &[]),
+        ],
+    );
+    assert_eq!(pages, [None]);
+}
+
+#[test]
+fn layout_pages_gives_an_inline_level_box_the_page_of_its_container() {
+    // `page` does not apply to the inline-block, so it stays on the body's
+    // page `a` and the following `b` box opens a new page.
+    let pages = named_page_slices(
+        "display:block;page:a",
+        &[
+            ("display:inline-block;page:b;width:10px;height:10px", &[]),
+            ("display:block;page:b;height:10px", &[]),
+        ],
+    );
+    assert_eq!(pages, [Some("a".to_owned()), Some("b".to_owned())]);
+}
+
+#[test]
+fn layout_pages_keeps_page_names_inside_a_static_position_absolute_box() {
+    let named: &[&str] = &[
+        "display:block;page:a;height:10px",
+        "display:block;page:b;height:10px",
+    ];
+    let static_position = named_page_slices("display:block", &[("position:absolute", named)]);
+    assert_eq!(
+        static_position,
+        [Some("a".to_owned()), Some("b".to_owned())]
+    );
+    // An inset moves the box out of the page flow, so its names are ignored.
+    let inset = named_page_slices("display:block", &[("position:absolute;top:0px", named)]);
+    assert_eq!(inset.len(), 1);
+    // Absolute positioning blockifies an inline-block, so it is not atomic.
+    let inline_block = named_page_slices(
+        "display:block",
+        &[("position:absolute;display:inline-block", named)],
+    );
+    assert_eq!(inline_block.len(), 2);
+    // A fixed box repeats on every page, even at its static position.
+    let fixed = named_page_slices("display:block", &[("position:fixed", named)]);
+    assert_eq!(fixed.len(), 1);
+}
+
+#[test]
+fn layout_pages_does_not_treat_a_display_contents_writing_mode_wrapper_as_orthogonal() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let contents = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:contents;writing-mode:vertical-rl"),
+    );
+    let block = doc.append_element(
+        Some(contents),
+        "div",
+        Style::default(),
+        Some("display:block;writing-mode:horizontal-tb"),
+    );
+    for style in [
+        "display:block;page:a;height:10px",
+        "display:block;page:b;height:10px",
+    ] {
+        doc.append_element(Some(block), "div", Style::default(), Some(style));
+    }
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let slices = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
+
+    // The wrapper generates no box, so the block is parallel to the body.
+    assert_eq!(slices.len(), 2);
+}
+
+/// Build `html > body > ...` from `(parent index, tag, style)` rows, where
+/// index 0 is the body and each row's own index is its position plus one,
+/// then paginate on 100x100 pages.
+fn paginate_tree(rows: &[(usize, &str, &str)]) -> (Document, Vec<PageSlice>) {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let mut ids = vec![doc.append_element(Some(html), "body", Style::default(), None::<&str>)];
+    for &(parent, tag, style) in rows {
+        let id = doc.append_element(Some(ids[parent]), tag, Style::default(), Some(style));
+        ids.push(id);
+    }
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let slices = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
+    (doc, slices)
+}
+
+#[test]
+fn layout_pages_ignores_page_names_inside_replaced_elements() {
+    let (_, slices) = paginate_tree(&[
+        (0, "canvas", "display:block;width:10px;height:10px"),
+        (1, "div", "display:block;page:a;height:10px"),
+        (1, "div", "display:block;page:b;height:10px"),
+    ]);
+    assert_eq!(slices.len(), 1);
+}
+
+#[test]
+fn layout_pages_ignores_monolithic_names_for_the_deferred_row_flex_break() {
+    let (_, slices) = paginate_tree(&[
+        (0, "div", "display:flex"),
+        (1, "div", "display:block;width:20px;height:10px"),
+        (2, "div", "display:inline-block;width:20px"),
+        (3, "div", "display:block;page:a;height:10px"),
+        (0, "div", "display:block;height:10px"),
+    ]);
+    assert_eq!(slices.len(), 1);
+}
+
+#[test]
+fn layout_pages_keeps_a_forced_break_before_a_box_with_a_negative_margin() {
+    let (_, slices) = paginate_tree(&[
+        (0, "div", "display:block;height:100px"),
+        (
+            0,
+            "div",
+            "display:block;margin-top:-10px;height:10px;break-before:page",
+        ),
+    ]);
+    // The first box fills page 1. The negative margin pulls the second box's
+    // border box back onto page 1, but its forced break still moves it to a
+    // new page.
+    assert_eq!(slices.len(), 2);
+}
+
+#[test]
+fn layout_pages_keeps_page_names_inside_a_blockified_inline_block_flex_item() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let flex = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:flex;flex-direction:column"),
+    );
+    let item = doc.append_element(
+        Some(flex),
+        "div",
+        Style::default(),
+        Some("display:inline-block"),
+    );
+    for style in [
+        "display:block;page:a;height:10px",
+        "display:block;page:b;height:10px",
+    ] {
+        doc.append_element(Some(item), "div", Style::default(), Some(style));
+    }
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let slices = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
+
+    // A flex item is blockified, so its `inline-block` display does not make
+    // its content monolithic.
+    assert_eq!(slices.len(), 2);
+}
+
+#[test]
+fn layout_pages_keeps_the_margin_of_a_forced_break_box_after_a_margin_filled_page() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;margin:25px 0;height:50px"),
+    );
+    let second = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;margin:25px 0;height:10px;break-before:page"),
+    );
+
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let slices = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
+
+    // The collapsed margin ends the first page exactly at its edge, so the
+    // border box lands on the page origin before pagination. The forced
+    // break still precedes the margin box, whose margin stays on page 1.
+    assert_eq!(slices.len(), 2);
+    let second_y = doc.nodes[second].unrounded_layout.location.y;
+    // cov:ignore: panic-message text is only executed when the assertion fails.
+    assert!(
+        (second_y - 125.0).abs() < 0.01,
+        "the kept margin places the box at 125: y={second_y}"
+    );
+}
+
+#[test]
 fn layout_pages_processes_mixed_auto_and_explicit_grid_rows_by_resolved_placement() {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;

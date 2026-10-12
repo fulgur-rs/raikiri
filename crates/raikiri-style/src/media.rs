@@ -616,10 +616,9 @@ fn parse_paper_feature_name<'i>(
     Ok((kind, prefixed))
 }
 
-// Capture one feature value, including a ratio's second component. Reparse
-// its complete source only after the name has supplied the required type.
-fn paper_component_source<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, &'i str> {
-    let start = input.position();
+// Skip one feature value, including a ratio's second component, before the
+// name that types it is known.
+fn skip_paper_component<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, ()> {
     match input.next()? {
         Token::Number { .. }
         | Token::Dimension { .. }
@@ -630,17 +629,34 @@ fn paper_component_source<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, &'i str
         }
         _ => return Err(input.new_custom_error(())),
     }
-    Ok(input.slice_from(start))
+    Ok(())
 }
 
-fn paper_value_source<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, &'i str> {
-    let start = input.position();
-    paper_component_source(input)?;
+fn skip_paper_value<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, ()> {
+    skip_paper_component(input)?;
     let _ = input.try_parse(|input| {
         input.expect_delim('/')?;
-        paper_component_source(input)
+        skip_paper_component(input)
     });
-    Ok(input.slice_from(start))
+    Ok(())
+}
+
+/// One math function whose source has the numeric type `ty` and no `var()`.
+fn parse_paper_math<'i>(
+    input: &mut Parser<'i, '_>,
+    ty: crate::property::MediaNumericType,
+) -> PResult<'i, ()> {
+    let start = input.position();
+    input.expect_function()?;
+    input.parse_nested_block(|input| Ok(input.expect_no_error_token()?))?;
+    let source = input.slice_from(start);
+    if !crate::property::contains_function_in_source(source, "var")
+        && crate::property::math_value_has_type(source, ty)
+    {
+        Ok(())
+    } else {
+        Err(input.new_custom_error(()))
+    }
 }
 
 fn parse_ratio_number<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, ()> {
@@ -651,80 +667,54 @@ fn parse_ratio_number<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, ()> {
             Err(input.new_custom_error(()))
         };
     }
-    let state = input.state();
-    input.expect_function()?;
-    input.reset(&state);
-    let source = paper_component_source(input)?;
-    if !crate::property::contains_function_in_source(source, "var")
-        && crate::property::math_value_has_type(source, crate::property::MediaNumericType::Number)
-    {
-        Ok(())
-    } else {
-        Err(input.new_custom_error(()))
-    }
+    parse_paper_math(input, crate::property::MediaNumericType::Number)
 }
 
-fn valid_paper_value(source: &str, kind: PaperFeatureKind) -> bool {
-    let mut parser_input = ParserInput::new(source);
-    let mut input = Parser::new(&mut parser_input);
+/// One feature value of `kind`, read in place.
+fn parse_paper_value<'i>(input: &mut Parser<'i, '_>, kind: PaperFeatureKind) -> PResult<'i, ()> {
     match kind {
-        PaperFeatureKind::Orientation => input
-            .parse_entirely(|input| {
-                let value = input.expect_ident()?;
-                if value.eq_ignore_ascii_case("portrait") || value.eq_ignore_ascii_case("landscape")
-                {
-                    Ok::<_, cssparser::ParseError<'_, ()>>(())
-                } else {
-                    Err(input.new_custom_error(()))
-                }
-            })
-            .is_ok(),
-        PaperFeatureKind::Ratio => input
-            .parse_entirely(|input| {
-                parse_ratio_number(input)?;
-                if !input.is_exhausted() {
-                    input.expect_delim('/')?;
-                    parse_ratio_number(input)?;
-                }
+        PaperFeatureKind::Orientation => {
+            let value = input.expect_ident()?;
+            if value.eq_ignore_ascii_case("portrait") || value.eq_ignore_ascii_case("landscape") {
                 Ok(())
-            })
-            .is_ok(),
+            } else {
+                Err(input.new_custom_error(()))
+            }
+        }
+        PaperFeatureKind::Ratio => {
+            parse_ratio_number(input)?;
+            if input.try_parse(|input| input.expect_delim('/')).is_ok() {
+                parse_ratio_number(input)?;
+            }
+            Ok(())
+        }
         PaperFeatureKind::Length => {
             if input
                 .try_parse(|input| {
-                    input.parse_entirely(|input| {
-                        parse_length_allow_negative(input)
-                            .ok_or_else(|| input.new_custom_error::<_, ()>(()))
-                    })
+                    parse_length_allow_negative(input)
+                        .ok_or_else(|| input.new_custom_error::<_, ()>(()))
                 })
                 .is_ok()
             {
-                return true;
+                return Ok(());
             }
             // Viewport lengths are syntactically valid before the adapter
             // resolves them, even though the native feature evaluator cannot.
             if input
-                .try_parse(|input| {
-                    input.parse_entirely(|input| match input.next()? {
-                        Token::Dimension { unit, .. }
-                            if crate::property::color_math_dimension_type(unit)
-                                == crate::property::ColorMathType::Length =>
-                        {
-                            Ok::<_, cssparser::ParseError<'_, ()>>(())
-                        }
-                        _ => Err(input.new_custom_error(())),
-                    })
+                .try_parse(|input| match input.next()? {
+                    Token::Dimension { unit, .. }
+                        if crate::property::color_math_dimension_type(unit)
+                            == crate::property::ColorMathType::Length =>
+                    {
+                        Ok::<_, cssparser::ParseError<'_, ()>>(())
+                    }
+                    _ => Err(input.new_custom_error(())),
                 })
                 .is_ok()
             {
-                return true;
+                return Ok(());
             }
-            input.expect_function().is_ok()
-                && !crate::property::contains_function_in_source(source, "var")
-                && crate::property::math_value_has_type(
-                    source,
-                    crate::property::MediaNumericType::Length,
-                )
+            parse_paper_math(input, crate::property::MediaNumericType::Length)
         }
     }
 }
@@ -736,12 +726,7 @@ fn parse_valid_paper_feature<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, ()> 
             &|input| {
                 let (kind, _) = parse_paper_feature_name(input)?;
                 input.expect_colon()?;
-                let source = paper_value_source(input)?;
-                if valid_paper_value(source, kind) {
-                    Ok(())
-                } else {
-                    Err(input.new_custom_error(()))
-                }
+                parse_paper_value(input, kind)
             },
             &|input| {
                 let (kind, prefixed) = parse_paper_feature_name(input)?;
@@ -749,23 +734,26 @@ fn parse_valid_paper_feature<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, ()> 
                     return Err(input.new_custom_error(()));
                 }
                 parse_mf_comparison(input)?;
-                let source = paper_value_source(input)?;
-                if valid_paper_value(source, kind) {
-                    Ok(())
-                } else {
-                    Err(input.new_custom_error(()))
-                }
+                parse_paper_value(input, kind)
             },
             &|input| {
-                let source = paper_value_source(input)?;
+                // The value comes before the name that types it, so it is
+                // skipped first and read once the name is known.
+                let value = input.state();
+                skip_paper_value(input)?;
+                let value_end = input.position();
                 let comparison = parse_mf_comparison(input)?;
                 let (kind, prefixed) = parse_paper_feature_name(input)?;
-                if prefixed
-                    || kind == PaperFeatureKind::Orientation
-                    || !valid_paper_value(source, kind)
-                {
+                if prefixed || kind == PaperFeatureKind::Orientation {
                     return Err(input.new_custom_error(()));
                 }
+                let after_name = input.state();
+                input.reset(&value);
+                parse_paper_value(input, kind)?;
+                if input.position() != value_end {
+                    return Err(input.new_custom_error(()));
+                }
+                input.reset(&after_name);
                 if input.is_exhausted() {
                     return Ok(());
                 }
@@ -776,12 +764,7 @@ fn parse_valid_paper_feature<'i>(input: &mut Parser<'i, '_>) -> PResult<'i, ()> 
                 {
                     return Err(input.new_custom_error(()));
                 }
-                let source = paper_value_source(input)?;
-                if valid_paper_value(source, kind) {
-                    Ok(())
-                } else {
-                    Err(input.new_custom_error(()))
-                }
+                parse_paper_value(input, kind)
             },
             &|input| {
                 let (_, prefixed) = parse_paper_feature_name(input)?;

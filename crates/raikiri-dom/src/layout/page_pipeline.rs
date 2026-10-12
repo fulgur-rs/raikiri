@@ -2821,14 +2821,45 @@ pub fn layout_pages_with_page_geometry_and_control(
         page_name: Option<String>,
         /// Column-flex descendants compare names within their containing flow.
         named_flex_context: Option<usize>,
-        /// An inline canvas with a named page is a boundary marker, but its
-        /// inline-level box does not itself establish the named page type.
-        inline_named_page: bool,
+        /// Whether the candidate takes part in page-name transitions. Floats
+        /// and out-of-flow subtrees are parallel flows whose names are
+        /// ignored, except for a named box inside an absolutely positioned
+        /// box left at its static position, which keeps its name in the page
+        /// flow.
+        page_name_in_flow: bool,
         deferred_named_break_after: bool,
         /// For a text node of an ifc paragraph: the paragraph root and the
         /// text's offset below the root's border-box top. The root's lines
         /// are painted from the root, so the text moves by moving the root.
         ifc_root: Option<(usize, f32)>,
+    }
+
+    /// Whether `node_id` or an ancestor is a fixed box, or an absolutely
+    /// positioned box with a non-auto block-start or block-end inset, which
+    /// moves it away from its static position in the page flow. A fixed box
+    /// repeats on every page, so it never joins the page flow.
+    fn in_inset_out_of_flow_subtree(
+        document: &Document,
+        cascade: &CascadeResult,
+        node_id: usize,
+    ) -> bool {
+        let mut current = Some(node_id);
+        while let Some(id) = current {
+            if document.nodes[id].kind() == NodeKind::Element {
+                match cascade.computed[id].position {
+                    PositionValue::Fixed => return true,
+                    PositionValue::Absolute => {
+                        let inset = &document.nodes[id].style.inset;
+                        if !inset.top.is_auto() || !inset.bottom.is_auto() {
+                            return true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            current = document.parent_of(id);
+        }
+        false
     }
 
     fn has_nested_named_page_descendant(
@@ -2857,8 +2888,15 @@ pub fn layout_pages_with_page_geometry_and_control(
             {
                 continue;
             }
-            if current_depth >= 2 && selected_page_name(cascade, current_id).is_some() {
+            if current_depth >= 2
+                && page_applies_to_box(document, cascade, current_id)
+                && selected_page_name(cascade, current_id).is_some()
+            {
                 return true;
+            }
+            // Names inside a monolithic box have no effect on pagination.
+            if is_monolithic_for_pagination(document, cascade, current_id) {
+                continue;
             }
             if let Some(node) = document.get_node(current_id) {
                 pending.extend(
@@ -3044,7 +3082,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                         is_out_of_flow_descendant: inside_out_of_flow,
                         page_name: inherited_page_name,
                         named_flex_context,
-                        inline_named_page: false,
+                        page_name_in_flow: !inside_float && !inside_out_of_flow,
                         deferred_named_break_after: false,
                         ifc_root,
                     });
@@ -3105,18 +3143,18 @@ pub fn layout_pages_with_page_geometry_and_control(
                         computed.position,
                         PositionValue::Absolute | PositionValue::Fixed
                     );
+                // An absolutely positioned box left at its static position
+                // still lays its in-flow descendants out where the page flow
+                // puts them, so their page names take part in pagination.
+                let inset_out_of_flow_subtree =
+                    out_of_flow_subtree && in_inset_out_of_flow_subtree(document, cascade, node_id);
                 let explicit_page_name = selected_page_name(cascade, node_id);
-                // Inline canvas boxes do not establish the named page type,
-                // but their `page` value still marks the boundary between the
-                // surrounding class-A boxes. This mirrors the inline canvas
-                // CSS Page cases without treating a replaced inline box as a
-                // block-level named-page candidate.
-                let inline_named_page = direct_body_child
-                    && explicit_page_name.is_some()
-                    && matches!(computed.display, DisplayValue::Inline)
-                    && node
-                        .tag_name()
-                        .is_some_and(|tag| tag.eq_ignore_ascii_case("canvas"));
+                // CSS Page 3 §4.1: `page` applies to boxes that create class A
+                // break points, which are block-level. An inline-level box,
+                // such as a replaced element in a line or an inline-block,
+                // takes the page type of its containing block; it is a
+                // candidate carrying that inherited name instead.
+                let inline_level = !page_applies_to_box(document, cascade, node_id);
                 // The `page` property on an out-of-flow box does not open a
                 // normal-flow page boundary. Keep its inherited page context,
                 // but do not use its explicit name to split pagination.
@@ -3127,12 +3165,15 @@ pub fn layout_pages_with_page_geometry_and_control(
                         DisplayValue::Flex | DisplayValue::InlineFlex
                     )
                 });
-                let own_page_name = if !inline_named_page
+                let own_page_name = if !inline_level
                     && !float_subtree
                     && (!inside_flex || named_flex_context.is_some())
                     && !is_direct_flex_item
-                    && !out_of_flow_subtree
-                {
+                    && !inset_out_of_flow_subtree
+                    && !matches!(
+                        computed.position,
+                        PositionValue::Absolute | PositionValue::Fixed
+                    ) {
                     explicit_page_name.clone()
                 } else {
                     None
@@ -3153,7 +3194,15 @@ pub fn layout_pages_with_page_geometry_and_control(
                 let deferred_named_break_after = matches!(computed.display, DisplayValue::Flex)
                     && !column_flex
                     && has_nested_named_page_descendant(document, cascade, node_id, 0);
+                // The items of a row flex container sit side by side rather
+                // than as class A siblings, so their names do not become the
+                // container's start page value.
+                let row_flex = matches!(
+                    computed.display,
+                    DisplayValue::Flex | DisplayValue::InlineFlex
+                ) && !column_flex;
                 let page_name = if column_flex
+                    || (row_flex && !deferred_named_break_after)
                     || (named_flex_context.is_some() && !deferred_named_break_after)
                 {
                     own_page_name.clone().or(inherited_page_name.clone())
@@ -3237,7 +3286,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                     && !inside_float
                     && ((participates_in_flow
                         && direct_body_child
-                        && explicit_page_name.is_none())
+                        && (explicit_page_name.is_none() || inline_level))
                         || is_tall_direct_absolute
                         || table_row_candidate
                         || flex_item_candidate
@@ -3245,7 +3294,6 @@ pub fn layout_pages_with_page_geometry_and_control(
                         || grid_item_candidate
                         || deferred_named_break_after
                         || own_page_name.is_some()
-                        || inline_named_page
                         || page_break_is_forced(document, node_id, computed.break_before)
                         || page_break_is_forced(document, node_id, computed.break_after));
                 if is_break_candidate {
@@ -3264,11 +3312,18 @@ pub fn layout_pages_with_page_geometry_and_control(
                         is_out_of_flow_descendant: out_of_flow_subtree,
                         page_name: page_name.clone(),
                         named_flex_context,
-                        inline_named_page,
+                        page_name_in_flow: !inside_float
+                            && (!out_of_flow_subtree || own_page_name.is_some()),
                         deferred_named_break_after,
                         ifc_root: None,
                     });
                 }
+                // An atomic inline-level box or an orthogonal flow is
+                // monolithic: like a float, its content offers no class A
+                // break points and its page names do not open pages. A
+                // blockified flex or grid item is no longer atomic.
+                let monolithic =
+                    !is_body && is_monolithic_for_pagination(document, cascade, node_id);
                 let child_order = pagination_child_order(document, cascade, node_id);
                 for child_id in child_order {
                     let child_parent_y =
@@ -3315,7 +3370,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                         } else {
                             named_flex_context
                         },
-                        float_subtree,
+                        float_subtree || monolithic,
                         out_of_flow_subtree,
                         out,
                         text_lines,
@@ -3485,8 +3540,7 @@ pub fn layout_pages_with_page_geometry_and_control(
         if table_headers.owner(node_id).is_some() {
             continue;
         }
-        let name_participates_in_flow =
-            !candidate.is_float_descendant && !candidate.is_out_of_flow_descendant;
+        let name_participates_in_flow = candidate.page_name_in_flow;
         if name_participates_in_flow
             && candidate.is_flex_item
             && let Some(context) = candidate.named_flex_context
@@ -3581,7 +3635,8 @@ pub fn layout_pages_with_page_geometry_and_control(
         if document.get_node(node_id).is_none() {
             continue;
         }
-        let participates_in_margin_adjacency = name_participates_in_flow
+        let participates_in_margin_adjacency = !candidate.is_float_descendant
+            && !candidate.is_out_of_flow_descendant
             && !is_floating_box_for_pagination(document, cascade, node_id);
         // Explicit positioned insets follow their containing box, not margin
         // changes in a parallel normal flow. Both-auto boxes keep static placement.
@@ -3919,8 +3974,7 @@ pub fn layout_pages_with_page_geometry_and_control(
             raw_y + flow_shift
         };
         materialize_y(document, node_id, effective_y, &parent_of);
-        let forced_before = page_break_is_forced(document, node_id, computed.break_before)
-            || candidate.inline_named_page;
+        let forced_before = page_break_is_forced(document, node_id, computed.break_before);
         let style = &document.nodes[node_id].style;
         let margin_top = used_style_length_percentage_auto(style.margin.top, content_width)
             .or_else(|| used_computed_length_percentage_or_auto(computed.margin.top, content_width))
@@ -3960,34 +4014,43 @@ pub fn layout_pages_with_page_geometry_and_control(
         // type in place; it does not manufacture a second break boundary.
         // Any non-empty class-A box with a different page name starts a new
         // page.  `None` is the anonymous/unnamed page type, so an anonymous
-        // box after a named one is a transition too.  Zero-height named boxes
-        // at the same source coordinate are coalesced into one transition;
-        // this matters for chains of empty named boxes with overflowing text.
+        // box after a named one is a transition too.  Named boxes that start
+        // at the coordinate of a preceding zero-height named box join its
+        // transition: no block-size has been consumed on that page yet, so a
+        // break there would only leave the zero-height boxes alone on a page.
+        // This matters for chains of empty named boxes with overflowing text,
+        // including the first non-empty box that follows the chain.
         let same_named_coordinate = candidate.is_named
             && (candidate.is_direct_body_element || candidate.named_flex_context.is_some())
             && candidate.named_flex_context == last_named_context
-            && height <= 0.001
             && last_named_was_zero_height
             && !last_named_had_display_none_descendant
             && last_named_raw_y.is_some_and(|previous| (raw_y - previous).abs() <= 0.001);
         let named_page_change = name_context_seen
             && candidate_page_name != comparison_page_name
             && !same_named_coordinate;
-        let at_page_start =
-            effective_y.is_finite() && (effective_y - page_origin(current_page)).abs() <= 0.001;
-        let natural_page_at_position = if effective_y.is_finite() && effective_y >= 0.0 {
-            page_index_for_y(effective_y)
-        } else {
-            current_page
-        };
         // A forced break at the start of a page already opened by natural
         // overflow describes the same boundary and must not create a blank
         // page.  This matters when the page height changes after page zero:
         // the fixed-height pass may have considered the box to be on the
         // current page, while the scheduled pass places it exactly at the
         // next page origin.
-        let forced_break_at_page_start =
-            forced_before && (at_page_start || natural_page_at_position > current_page);
+        // The forced break sits before the box's margin box, so the test uses
+        // its block-start margin edge. A border box that lands exactly on a
+        // page origin only because the preceding collapsed margin filled the
+        // previous page has not opened that page: the break still moves it,
+        // and the margin after the forced break is kept.
+        let forced_break_at_page_start = forced_before && {
+            let margin_box_y = effective_y - margin_top.max(0.0);
+            let margin_box_page = if margin_box_y.is_finite() && margin_box_y >= 0.0 {
+                page_index_for_y(margin_box_y)
+            } else {
+                current_page
+            };
+            margin_box_page > current_page
+                || (margin_box_y.is_finite()
+                    && (margin_box_y - page_origin(current_page)).abs() <= 0.001)
+        };
         // Keep an ordinary table row intact when it would cross the current
         // page. The row is a class-A boundary owned by the table engine; its
         // cells and descendants follow the same flow shift below. Rowspans,
@@ -4322,7 +4385,6 @@ pub fn layout_pages_with_page_geometry_and_control(
             preceding_flex_items.insert(context, (node_id, height, current_page));
         }
         let candidate_break_after = page_break_is_forced(document, node_id, computed.break_after)
-            || candidate.inline_named_page
             || candidate.deferred_named_break_after;
 
         let pending_source_is_ancestor = pending_break_source

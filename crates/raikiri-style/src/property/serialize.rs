@@ -2,7 +2,7 @@ use cssparser::{CowRcStr, ParseError, Parser, ParserInput, ToCss as _, Token};
 
 use super::calc_serialize::{
     CalcNode, CalcUnitKind, format_css_number, parse_calc_or_plain, serialize_calc_node,
-    serialize_calc_node_as_angle,
+    serialize_calc_node_as_angle, serialize_calc_number,
 };
 use super::parse::{channel_to_u8, parse_color, parse_color_float};
 use super::types::*;
@@ -1077,10 +1077,7 @@ fn serialize_lab_component(
     if let Some(max) = clamp_max {
         value = value.min(max);
     }
-    serialize_calc_node(&CalcNode::Number(value))
-        .trim_start_matches("calc(")
-        .trim_end_matches(')')
-        .to_owned()
+    serialize_calc_number(value)
 }
 
 fn serialize_lab_family_function(spec: &LabFamilySpec, raw_value: &str) -> Option<String> {

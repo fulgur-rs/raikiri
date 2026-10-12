@@ -113,6 +113,7 @@ pub(crate) fn prepare_cascade_images(
 ) {
     for computed in &mut cascade.computed {
         prepare_background_image(&mut computed.background_image, base_url, resolver);
+        prepare_background_image(&mut computed.border_image.source, base_url, resolver);
         prepare_background_image(&mut computed.list_style_image, base_url, resolver);
     }
     prefetch_generated_content_images(document, cascade, Some(base_url), resolver);

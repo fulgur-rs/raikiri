@@ -8,6 +8,7 @@
 
 mod dynamic;
 mod fuzzy;
+pub(crate) mod local_resources;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -765,21 +766,9 @@ fn absolutize_wpt_resource_urls(
     // The stylesheet keeps its `/fonts/Ahem.ttf` source URL; WptFontLoader
     // resolves that URL against the same WPT checkout.
     let fonts_root = wpt_root
-        .filter(|root| {
-            root.join("fonts").join("Ahem.ttf").is_file()
-                || root.join("fonts").join("ahem.css").is_file()
-        })
+        .filter(|root| local_resources::is_wpt_root(root))
         .map(Path::to_path_buf)
-        .or_else(|| {
-            page_base.and_then(|base| {
-                base.ancestors()
-                    .find(|candidate| {
-                        candidate.join("fonts").join("Ahem.ttf").is_file()
-                            || candidate.join("fonts").join("ahem.css").is_file()
-                    })
-                    .map(Path::to_path_buf)
-            })
-        });
+        .or_else(|| page_base.and_then(local_resources::wpt_root_above));
     // cov:ignore: absolute WPT stylesheet URLs are exercised only by ignored resource-enabled runs.
     if let Some(fonts_root) = fonts_root
         // cov:ignore: absolute WPT stylesheet URLs are exercised only by ignored resource-enabled runs.
@@ -797,8 +786,8 @@ fn absolutize_wpt_resource_urls(
 /// Warm the cache for URL backgrounds. The `<img>` side is resolved by the
 /// layout pre-pass; a reference made only from `background-image` has no
 /// replaced element that would otherwise populate the same cache entry.
-fn prime_image_resolver(
-    resolver: &raikiri_net::ImageResolver<raikiri_net::FileNetworkProvider>,
+fn prime_image_resolver<N: raikiri_traits::NetworkProvider>(
+    resolver: &raikiri_net::ImageResolver<N>,
     html: &str,
 ) {
     use raikiri_traits::{ReplacedResolver, ResolverRequest};
@@ -909,83 +898,433 @@ fn parse_print_length(token: &str, percent_basis: Option<f32>) -> Option<f32> {
     px.is_finite().then_some(px)
 }
 
-fn print_declaration(block: &str, name: &str) -> Option<String> {
-    let name = name.to_ascii_lowercase();
-    for declaration in block.split(';') {
-        let Some((key, value)) = declaration.split_once(':') else {
-            continue;
-        };
-        if key
-            .split_whitespace()
-            .last()
-            .is_some_and(|key| key.eq_ignore_ascii_case(name.as_str()))
-        {
-            return Some(value.trim().to_string());
-        }
+/// A page margin length; a number without a unit is a length only when it
+/// is zero.
+fn parse_page_margin(token: &str, page_width: f32) -> Option<f32> {
+    if token.trim().parse::<f32>().is_ok_and(|value| value != 0.0) {
+        return None;
     }
-    None
+    parse_print_length(token, Some(page_width))
 }
 
-fn balanced_css_block(input: &str, open: usize) -> Option<&str> {
-    let bytes = input.as_bytes();
-    let mut depth = 0_u32;
-    let mut quote = None;
-    for (index, &byte) in bytes.iter().enumerate().skip(open) {
-        if let Some(delimiter) = quote {
-            if byte == delimiter {
-                quote = None;
+/// A `size` value as the harness reads it.
+struct PageSize {
+    /// The width and height it names, if any.
+    size: Option<(f32, f32)>,
+    landscape: bool,
+    portrait: bool,
+}
+
+/// A `size` value, or `None` for one with a component the harness does not
+/// read, which drops the declaration.
+fn parse_page_size(value: &str) -> Option<PageSize> {
+    let tokens: Vec<_> = value.split_whitespace().collect();
+    if let [token] = tokens.as_slice()
+        && token.eq_ignore_ascii_case("auto")
+    {
+        return Some(PageSize {
+            size: None,
+            landscape: false,
+            portrait: false,
+        });
+    }
+    // `<length>{1,2} | [ <page-size> || [ portrait | landscape ] ]`
+    let mut lengths = Vec::new();
+    let mut named = None;
+    let mut orientation = None;
+    for token in tokens {
+        let lower = token.to_ascii_lowercase();
+        // CSS Paged Media 3 §7.1 `<page-size>`, in CSS px.
+        const MM: f32 = 96.0 / 25.4;
+        let named_size = match lower.as_str() {
+            "a5" => Some((148.0 * MM, 210.0 * MM)),
+            "a4" => Some((210.0 * MM, 297.0 * MM)),
+            "a3" => Some((297.0 * MM, 420.0 * MM)),
+            "b5" => Some((176.0 * MM, 250.0 * MM)),
+            "b4" => Some((250.0 * MM, 353.0 * MM)),
+            "jis-b5" => Some((182.0 * MM, 257.0 * MM)),
+            "jis-b4" => Some((257.0 * MM, 364.0 * MM)),
+            "letter" => Some((8.5 * 96.0, 11.0 * 96.0)),
+            "legal" => Some((8.5 * 96.0, 14.0 * 96.0)),
+            "ledger" => Some((11.0 * 96.0, 17.0 * 96.0)),
+            _ => None,
+        };
+        if let Some(size) = named_size {
+            if named.replace(size).is_some() {
+                return None;
             }
-            continue;
-        }
-        if byte == b'"' || byte == b'\'' {
-            quote = Some(byte);
-        } else if byte == b'{' {
-            depth += 1;
-        } else if byte == b'}' {
-            depth = depth.saturating_sub(1);
-            if depth == 0 {
-                return input.get(open + 1..index);
+        } else if lower == "landscape" || lower == "portrait" {
+            if orientation.replace(lower == "landscape").is_some() {
+                return None;
             }
+        } else {
+            // Page size lengths are non-negative, and a number without a
+            // unit is a length only when it is zero.
+            if token.parse::<f32>().is_ok_and(|value| value != 0.0) {
+                return None;
+            }
+            lengths.push(parse_print_length(token, None).filter(|length| *length >= 0.0)?);
         }
     }
-    None
+    let size = match (lengths.as_slice(), named, orientation) {
+        ([], None, None) => return None,
+        ([], named, _) => named,
+        ([side], None, None) => Some((*side, *side)),
+        ([width, height], None, None) => Some((*width, *height)),
+        _ => return None,
+    };
+    Some(PageSize {
+        size,
+        landscape: orientation == Some(true),
+        portrait: orientation == Some(false),
+    })
+}
+
+/// The value `parse` reads from the winning top-level `name` declaration in
+/// a declaration list, without its `!important` flag.
+///
+/// The list is read with the CSS declaration-list grammar, so semicolons in
+/// strings do not split declarations and declarations inside nested rules
+/// such as `@top-left { margin: 0 }` are not part of the list. As in the
+/// cascade, a declaration whose value `parse` rejects is dropped, and of the
+/// rest a later one wins unless an earlier one is `!important`.
+fn print_declaration<T>(block: &str, name: &str, parse: impl Fn(&str) -> Option<T>) -> Option<T> {
+    struct Declarations<'n> {
+        name: &'n str,
+    }
+
+    impl<'i> cssparser::DeclarationParser<'i> for Declarations<'_> {
+        type Declaration = (String, bool);
+        type Error = ();
+
+        fn parse_value<'t>(
+            &mut self,
+            name: cssparser::CowRcStr<'i>,
+            input: &mut cssparser::Parser<'i, 't>,
+            _declaration_start: &cssparser::ParserState,
+        ) -> Result<Self::Declaration, cssparser::ParseError<'i, ()>> {
+            if !name.eq_ignore_ascii_case(self.name) {
+                return Err(input.new_custom_error(()));
+            }
+            let start = input.position();
+            let mut end = start;
+            loop {
+                if input
+                    .try_parse(|input| {
+                        cssparser::parse_important(input)?;
+                        input.expect_exhausted()?;
+                        Ok::<_, cssparser::ParseError<'i, ()>>(())
+                    })
+                    .is_ok()
+                {
+                    let value = input.slice(start..end).trim().to_string();
+                    return Ok((value, true));
+                }
+                if input.next_including_whitespace_and_comments().is_err() {
+                    break;
+                }
+                end = input.position();
+            }
+            Ok((input.slice(start..end).trim().to_string(), false))
+        }
+    }
+
+    impl<'i> cssparser::AtRuleParser<'i> for Declarations<'_> {
+        type Prelude = ();
+        type AtRule = (String, bool);
+        type Error = ();
+    }
+
+    impl<'i> cssparser::QualifiedRuleParser<'i> for Declarations<'_> {
+        type Prelude = ();
+        type QualifiedRule = (String, bool);
+        type Error = ();
+    }
+
+    impl<'i> cssparser::RuleBodyItemParser<'i, (String, bool), ()> for Declarations<'_> {
+        fn parse_declarations(&self) -> bool {
+            true
+        }
+
+        fn parse_qualified(&self) -> bool {
+            false
+        }
+    }
+
+    let mut input = cssparser::ParserInput::new(block);
+    let mut parser = cssparser::Parser::new(&mut input);
+    let mut declarations = Declarations { name };
+    let mut normal = None;
+    let mut important = None;
+    for (value, is_important) in
+        cssparser::RuleBodyParser::new(&mut parser, &mut declarations).filter_map(Result::ok)
+    {
+        let Some(value) = parse(&value) else {
+            continue;
+        };
+        if is_important {
+            important = Some(value);
+        } else {
+            normal = Some(value);
+        }
+    }
+    important.or(normal)
+}
+
+/// One `@page` rule: the page names in its selector and its block contents.
+struct PageRule<'a> {
+    names: Vec<String>,
+    block: &'a str,
+}
+
+/// Every `@page` rule in `input`, including those nested in other blocks,
+/// in source order. Comments and strings are skipped by the tokenizer.
+fn page_rules(input: &str) -> Vec<PageRule<'_>> {
+    fn collect<'i>(
+        input: &mut cssparser::Parser<'i, '_>,
+        rules: &mut Vec<PageRule<'i>>,
+        depth: usize,
+    ) -> Result<(), cssparser::ParseError<'i, ()>> {
+        // `None` outside an `@page` prelude, else the names seen so far and
+        // whether the selector is still valid.
+        let mut page: Option<(Vec<String>, bool)> = None;
+        // Whether the current prelude belongs to a conditional group rule,
+        // the only blocks besides the top level that may hold `@page`.
+        let mut group = false;
+        let mut after_colon = false;
+        // Whether the selector after the last comma has no component yet,
+        // and whether the prelude is a comma-separated list.
+        let mut empty_selector = true;
+        let mut list = false;
+        while let Ok(token) = input.next_including_whitespace().cloned() {
+            match &token {
+                // Whitespace only matters inside an `@page` selector, where
+                // it may not separate a pseudo-class from the rest of its
+                // selector.
+                cssparser::Token::WhiteSpace(_) => {
+                    if let Some((_, valid)) = &mut page
+                        && !empty_selector
+                    {
+                        let state = input.state();
+                        if matches!(input.next(), Ok(cssparser::Token::Colon)) {
+                            *valid = false;
+                        }
+                        input.reset(&state);
+                    }
+                    continue;
+                }
+                cssparser::Token::AtKeyword(name) => {
+                    page = name
+                        .eq_ignore_ascii_case("page")
+                        .then(|| (Vec::new(), true));
+                    empty_selector = true;
+                    list = false;
+                    group = ["media", "supports", "layer"]
+                        .iter()
+                        .any(|known| name.eq_ignore_ascii_case(known));
+                }
+                cssparser::Token::Semicolon => {
+                    page = None;
+                    group = false;
+                }
+                cssparser::Token::CurlyBracketBlock => {
+                    if let Some((names, mut valid)) = page.take() {
+                        // A list may not end with an empty selector, and a
+                        // colon needs its pseudo-class name.
+                        valid &= !(after_colon || list && empty_selector);
+                        let block = input.parse_nested_block(|input| {
+                            let start = input.position();
+                            while input.next().is_ok() {}
+                            Ok::<_, cssparser::ParseError<'i, ()>>(input.slice_from(start))
+                        })?;
+                        // As in the cascade, a rule with an invalid selector
+                        // is dropped.
+                        if valid {
+                            rules.push(PageRule { names, block });
+                        }
+                    } else if std::mem::take(&mut group) && depth < 256 {
+                        input.parse_nested_block(|input| collect(input, rules, depth + 1))?;
+                    }
+                }
+                _ => {
+                    if let Some((names, valid)) = &mut page {
+                        let starts_selector = empty_selector;
+                        if matches!(token, cssparser::Token::Ident(_) | cssparser::Token::Colon) {
+                            empty_selector = false;
+                        }
+                        match &token {
+                            cssparser::Token::Ident(name) if after_colon => {
+                                *valid &= ["first", "left", "right", "blank"]
+                                    .iter()
+                                    .any(|class| name.eq_ignore_ascii_case(class));
+                            }
+                            // A selector has at most one page name, before
+                            // its pseudo-classes.
+                            cssparser::Token::Ident(name) => {
+                                *valid &= starts_selector;
+                                names.push(name.to_string());
+                            }
+                            // A pseudo-class name follows its colon directly.
+                            cssparser::Token::Colon => {
+                                let state = input.state();
+                                if matches!(
+                                    input.next_including_whitespace(),
+                                    Ok(cssparser::Token::WhiteSpace(_))
+                                ) {
+                                    *valid = false;
+                                }
+                                input.reset(&state);
+                            }
+                            // Each comma separates two non-empty selectors.
+                            cssparser::Token::Comma => {
+                                *valid &= !empty_selector && !after_colon;
+                                empty_selector = true;
+                                list = true;
+                            }
+                            _ => *valid = false,
+                        }
+                    }
+                }
+            }
+            after_colon = matches!(token, cssparser::Token::Colon);
+        }
+        Ok(())
+    }
+
+    let mut rules = Vec::new();
+    let mut source = cssparser::ParserInput::new(input);
+    let _ = collect(&mut cssparser::Parser::new(&mut source), &mut rules, 0);
+    rules
 }
 
 fn page_block(input: &str) -> Option<&str> {
-    let lower = input.to_ascii_lowercase();
-    let page_start = lower.find("@page")?;
-    let open = lower[page_start..].find('{')? + page_start;
-    balanced_css_block(input, open)
+    page_rules(input).into_iter().next().map(|rule| rule.block)
 }
 
 fn page_block_named<'a>(input: &'a str, name: &str) -> Option<&'a str> {
-    let lower = input.to_ascii_lowercase();
-    let name = name.to_ascii_lowercase();
-    let mut search = 0;
-    while let Some(relative) = lower[search..].find("@page") {
-        let page_start = search + relative;
-        let open = lower[page_start..].find('{')? + page_start;
-        let selector = lower[page_start + "@page".len()..open].trim();
-        if selector
-            .split_whitespace()
-            .any(|token| !token.starts_with(':') && token == name)
-        {
-            return balanced_css_block(input, open);
-        }
-        search = open + 1;
-    }
-    None
+    page_rules(input)
+        .into_iter()
+        .find(|rule| {
+            rule.names
+                .iter()
+                // Page names are `<custom-ident>`s, which match case-sensitively.
+                .any(|page| page == name)
+        })
+        .map(|rule| rule.block)
 }
 
+/// The value of the first `page` declaration in `input`, which is CSS or
+/// HTML whose `style` attributes and `<style>` contents carry the CSS.
+///
+/// Only an identifier at the start of a declaration names the property, so
+/// selectors such as `.page:hover` are not declarations.
 fn first_authored_page_name(input: &str) -> Option<String> {
-    let lower = input.to_ascii_lowercase();
-    let start = lower.find("page:")? + "page:".len();
-    let rest = &input[start..];
-    let end = rest
-        .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '-' || ch == '_'))
-        .unwrap_or(rest.len());
-    let name = rest[..end].trim();
-    (!name.is_empty()).then(|| name.to_string())
+    fn find<'i>(input: &mut cssparser::Parser<'i, '_>, depth: usize) -> Option<String> {
+        let mut declaration_start = true;
+        // The last two significant tokens, to recognize `style="…"`.
+        let mut previous: [Option<cssparser::Token<'i>>; 2] = [None, None];
+        while let Ok(token) = input.next().cloned() {
+            match &token {
+                cssparser::Token::Ident(name)
+                    if declaration_start && name.eq_ignore_ascii_case("page") =>
+                {
+                    // An unquoted `style=…` attribute value ends at
+                    // whitespace or the end of the tag.
+                    let unquoted = matches!(
+                        &previous,
+                        [Some(cssparser::Token::Ident(attribute)), Some(cssparser::Token::Delim('='))]
+                            if attribute.eq_ignore_ascii_case("style")
+                    );
+                    let value = input.try_parse(|input| {
+                        input.expect_colon()?;
+                        let value = input.expect_ident_cloned()?;
+                        // A declaration's value ends the declaration; a
+                        // selector such as `page :first-child {}` goes on.
+                        let end = input.state();
+                        if unquoted
+                            && matches!(
+                                input.next_including_whitespace(),
+                                Ok(cssparser::Token::WhiteSpace(_) | cssparser::Token::Delim('>'))
+                            )
+                        {
+                            input.reset(&end);
+                            return Ok(value.to_string());
+                        }
+                        input.reset(&end);
+                        // Only `!important` may follow the value.
+                        if input.try_parse(|input| input.expect_delim('!')).is_ok() {
+                            input.expect_ident_matching("important")?;
+                        }
+                        let end = input.state();
+                        match input.next() {
+                            Err(_) | Ok(cssparser::Token::Semicolon) => input.reset(&end),
+                            Ok(_) => return Err(input.new_custom_error(())),
+                        }
+                        Ok::<_, cssparser::ParseError<'i, ()>>(value.to_string())
+                    });
+                    // `auto` names no page, CSS-wide keywords are not names,
+                    // and `default` is reserved.
+                    if let Ok(value) = value
+                        && ![
+                            "auto",
+                            "default",
+                            "initial",
+                            "inherit",
+                            "unset",
+                            "revert",
+                            "revert-layer",
+                        ]
+                        .iter()
+                        .any(|keyword| value.eq_ignore_ascii_case(keyword))
+                    {
+                        return Some(value);
+                    }
+                }
+                cssparser::Token::QuotedString(value)
+                    if matches!(
+                        &previous,
+                        [Some(cssparser::Token::Ident(attribute)), Some(cssparser::Token::Delim('='))]
+                            if attribute.eq_ignore_ascii_case("style")
+                    ) =>
+                {
+                    let mut attribute = cssparser::ParserInput::new(value);
+                    if let Some(name) = find(&mut cssparser::Parser::new(&mut attribute), depth + 1)
+                    {
+                        return Some(name);
+                    }
+                }
+                cssparser::Token::CurlyBracketBlock if depth < 256 => {
+                    let name = input
+                        .parse_nested_block(|input| {
+                            let name = find(input, depth + 1);
+                            // The nested parser must be exhausted to succeed.
+                            while input.next().is_ok() {}
+                            Ok::<_, cssparser::ParseError<'i, ()>>(name)
+                        })
+                        .ok()
+                        .flatten();
+                    if name.is_some() {
+                        return name;
+                    }
+                }
+                _ => {}
+            }
+            // A declaration starts after `;` and after a nested rule's block.
+            declaration_start = matches!(
+                token,
+                cssparser::Token::Semicolon | cssparser::Token::CurlyBracketBlock
+            ) || matches!(
+                (&previous[1], &token),
+                (Some(cssparser::Token::Ident(attribute)), cssparser::Token::Delim('='))
+                    if attribute.eq_ignore_ascii_case("style")
+            );
+            previous = [previous[1].take(), Some(token)];
+        }
+        None
+    }
+
+    let mut source = cssparser::ParserInput::new(input);
+    find(&mut cssparser::Parser::new(&mut source), 0)
 }
 
 fn css_block_end(input: &str, open: usize) -> Option<usize> {
@@ -1418,7 +1757,6 @@ fn authored_page_viewport_for_name(
     // image size.  Keep the legacy fallback for pages without viewport units.
     let block_lower = block.to_ascii_lowercase();
     let has_page_viewport_units = block_lower.contains("vw") || block_lower.contains("vh");
-    let size_value = print_declaration(block, "size");
     let mut page_width = if has_page_viewport_units {
         480.0
     } else {
@@ -1429,42 +1767,16 @@ fn authored_page_viewport_for_name(
     } else {
         fallback_height
     };
-    if !has_page_viewport_units && let Some(size) = size_value.as_deref() {
-        let mut dimensions = Vec::new();
-        let mut landscape = false;
-        let mut portrait = false;
-        for token in size.split_whitespace() {
-            match token.to_ascii_lowercase().as_str() {
-                "landscape" => landscape = true,
-                "portrait" => portrait = true,
-                "a4" => {
-                    dimensions = vec![793.7008, 1122.5197];
-                }
-                "a3" => {
-                    dimensions = vec![1122.5197, 1587.4016];
-                }
-                "a5" => {
-                    dimensions = vec![559.3701, 793.7008];
-                }
-                "letter" => {
-                    dimensions = vec![612.0, 792.0];
-                }
-                "legal" => {
-                    dimensions = vec![612.0, 1008.0];
-                }
-                _ => {
-                    if let Some(value) = parse_print_length(token, None) {
-                        dimensions.push(value);
-                    }
-                }
-            }
-        }
-        if dimensions.len() == 1 {
-            page_width = dimensions[0];
-            page_height = dimensions[0];
-        } else if dimensions.len() >= 2 {
-            page_width = dimensions[0];
-            page_height = dimensions[1];
+    if !has_page_viewport_units
+        && let Some(PageSize {
+            size,
+            landscape,
+            portrait,
+        }) = print_declaration(block, "size", parse_page_size)
+    {
+        if let Some((width, height)) = size {
+            page_width = width;
+            page_height = height;
         }
         if (landscape && page_width < page_height) || (portrait && page_width > page_height) {
             std::mem::swap(&mut page_width, &mut page_height);
@@ -1472,22 +1784,20 @@ fn authored_page_viewport_for_name(
     }
 
     let mut margins = [0.0_f32; 4];
-    if let Some(value) = print_declaration(block, "margin") {
-        let tokens: Vec<_> = value.split_whitespace().collect();
-        let values: Vec<_> = tokens
-            .iter()
-            .map(|token| parse_print_length(token, Some(page_width)))
-            .collect();
-        if values.iter().all(Option::is_some) && !values.is_empty() {
-            let values: Vec<f32> = values.into_iter().map(Option::unwrap).collect();
-            margins = match values.as_slice() {
-                [one] => [*one, *one, *one, *one],
-                [vertical, horizontal] => [*vertical, *horizontal, *vertical, *horizontal],
-                [top, horizontal, bottom] => [*top, *horizontal, *bottom, *horizontal],
-                [top, right, bottom, left] => [*top, *right, *bottom, *left],
-                _ => margins,
-            };
+    if let Some(values) = print_declaration(block, "margin", |value| {
+        let values = value
+            .split_whitespace()
+            .map(|token| parse_page_margin(token, page_width))
+            .collect::<Option<Vec<_>>>()?;
+        match values.as_slice() {
+            [one] => Some([*one, *one, *one, *one]),
+            [vertical, horizontal] => Some([*vertical, *horizontal, *vertical, *horizontal]),
+            [top, horizontal, bottom] => Some([*top, *horizontal, *bottom, *horizontal]),
+            [top, right, bottom, left] => Some([*top, *right, *bottom, *left]),
+            _ => None,
         }
+    }) {
+        margins = values;
     }
     for (name, index) in [
         ("margin-top", 0),
@@ -1495,8 +1805,8 @@ fn authored_page_viewport_for_name(
         ("margin-bottom", 2),
         ("margin-left", 3),
     ] {
-        if let Some(value) = print_declaration(block, name)
-            && let Some(value) = parse_print_length(&value, Some(page_width))
+        if let Some(value) =
+            print_declaration(block, name, |value| parse_page_margin(value, page_width))
         {
             margins[index] = value;
         }
@@ -1675,7 +1985,20 @@ fn expand_css_viewport_units_with_axes(
     media_height: f32,
     vertical: bool,
 ) -> String {
-    fn unit_value(unit: &str, width: f32, height: f32, vertical: bool) -> Option<f32> {
+    /// The viewport a dimension resolves against.
+    #[derive(Clone, Copy)]
+    struct Basis {
+        width: f32,
+        height: f32,
+        vertical: bool,
+    }
+
+    fn unit_value(unit: &str, basis: Basis) -> Option<f32> {
+        let Basis {
+            width,
+            height,
+            vertical,
+        } = basis;
         let value = match unit {
             "vw" | "svw" | "lvw" | "dvw" => width / 100.0,
             "vh" | "svh" | "lvh" | "dvh" => height / 100.0,
@@ -1688,144 +2011,174 @@ fn expand_css_viewport_units_with_axes(
         Some(value)
     }
 
-    let bytes = input.as_bytes();
-    let mut result = String::with_capacity(input.len());
-    let mut i = 0;
-    let mut media_prelude = false;
-    let mut media_blocks = Vec::new();
-    while i < bytes.len() {
-        if bytes[i] == b'"' || bytes[i] == b'\'' {
-            // Token boundaries preserve string bytes and recover after a bad
-            // string ending at a newline, as the declaration parser does.
-            let mut string_input = cssparser::ParserInput::new(&input[i..]);
-            let mut parser = cssparser::Parser::new(&mut string_input);
-            let _ = parser.next().expect("opening quote begins a string token");
-            let end = i + parser.position().byte_index();
-            result.push_str(&input[i..end]);
-            i = end;
-            continue;
-        }
-        if bytes[i] == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
-            let start = i;
-            i += 2;
-            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
-                i += 1;
-            }
-            i = (i + 2).min(bytes.len());
-            result.push_str(&input[start..i]);
-            continue;
-        }
+    type Edits = Vec<(std::ops::Range<usize>, String)>;
 
-        // URL contents are opaque CSS tokens: punctuation and viewport-like
-        // text in them must not change prelude state or the resource URL.
-        let token_boundary = i == 0 || {
-            let previous = bytes[i - 1];
-            !previous.is_ascii_alphanumeric()
-                && !matches!(previous, b'_' | b'-' | b'\\')
-                && previous.is_ascii()
-        };
-        if token_boundary && matches!(bytes[i], b'u' | b'U' | b'\\') {
-            let mut url_input = cssparser::ParserInput::new(&input[i..]);
-            let mut parser = cssparser::Parser::new(&mut url_input);
-            let is_url = match parser.next() {
-                Ok(cssparser::Token::UnquotedUrl(_) | cssparser::Token::BadUrl(_)) => true,
-                Ok(cssparser::Token::Function(name)) if name.eq_ignore_ascii_case("url") => {
-                    let _: Result<(), cssparser::ParseError<'_, ()>> =
-                        parser.parse_nested_block(|nested| {
-                            nested.expect_no_error_token().map_err(Into::into)
-                        });
-                    true
-                }
-                _ => false,
-            };
-            if is_url {
-                let end = i + parser.position().byte_index();
-                result.push_str(&input[i..end]);
-                i = end;
-                continue;
-            }
-        }
+    // Bounds recursion on pathological nesting; deeper blocks stay as written.
+    const MAX_DEPTH: usize = 256;
 
-        // Copy complete name tokens before examining individual bytes. Only
-        // a Dimension token is a viewport-relative numeric length; digits in
-        // selectors, custom-property names, hashes and escaped identifiers are
-        // not lengths. The CSS tokenizer also handles exponents and unit escapes.
-        let mut token_input = cssparser::ParserInput::new(&input[i..]);
-        let mut parser = cssparser::Parser::new(&mut token_input);
-        let token = parser.next_including_whitespace_and_comments().cloned();
-        let token_end = i + parser.position().byte_index();
+    /// Expand the dimension `token`, which ended at the parser position,
+    /// and the dimensions inside it when it opens a block. URL contents are
+    /// opaque.
+    fn expand_token<'i>(
+        input: &mut cssparser::Parser<'i, '_>,
+        token: &cssparser::Token<'i>,
+        start: usize,
+        basis: Basis,
+        edits: &mut Edits,
+        depth: usize,
+    ) {
         match token {
-            Ok(cssparser::Token::AtKeyword(name)) => {
-                if name.eq_ignore_ascii_case("media") || name.eq_ignore_ascii_case("import") {
-                    media_prelude = true;
-                }
-                result.push_str(&input[i..token_end]);
-                i = token_end;
-                continue;
-            }
-            Ok(
-                cssparser::Token::Ident(_)
-                | cssparser::Token::Hash(_)
-                | cssparser::Token::IDHash(_)
-                | cssparser::Token::Number { .. }
-                | cssparser::Token::Percentage { .. },
-            ) => {
-                result.push_str(&input[i..token_end]);
-                i = token_end;
-                continue;
-            }
-            Ok(cssparser::Token::Function(_)) => {
-                if media_prelude {
-                    media_blocks.push(b')');
-                }
-                result.push_str(&input[i..token_end]);
-                i = token_end;
-                continue;
-            }
-            Ok(cssparser::Token::Dimension { value, unit, .. }) => {
-                let (unit_width, unit_height) = if media_prelude {
-                    (media_width, media_height)
-                } else {
-                    (width, height)
-                };
-                if let Some(scale) = unit_value(
-                    &unit.to_ascii_lowercase(),
-                    unit_width,
-                    unit_height,
-                    vertical && !media_prelude,
-                ) && (value * scale).is_finite()
+            cssparser::Token::Dimension { value, unit, .. } => {
+                if let Some(scale) = unit_value(&unit.to_ascii_lowercase(), basis)
+                    && (value * scale).is_finite()
                 {
-                    result.push_str(&format!("{:.6}px", value * scale));
-                } else {
-                    result.push_str(&input[i..token_end]);
+                    let end = input.position().byte_index();
+                    edits.push((start..end, format!("{:.6}px", value * scale)));
                 }
-                i = token_end;
-                continue;
+            }
+            cssparser::Token::Function(name) if name.eq_ignore_ascii_case("url") => {}
+            cssparser::Token::Function(_)
+            | cssparser::Token::ParenthesisBlock
+            | cssparser::Token::SquareBracketBlock
+            | cssparser::Token::CurlyBracketBlock
+                if depth < MAX_DEPTH =>
+            {
+                let _ = input.parse_nested_block(|input| {
+                    loop {
+                        let start = input.position().byte_index();
+                        let Ok(token) = input.next_including_whitespace_and_comments().cloned()
+                        else {
+                            break;
+                        };
+                        expand_token(input, &token, start, basis, edits, depth + 1);
+                    }
+                    Ok::<_, cssparser::ParseError<'i, ()>>(())
+                });
             }
             _ => {}
         }
+    }
 
-        // Strings and comments have already been copied above, so only actual
-        // media/import preludes select the output basis for their dimensions.
-        if media_prelude {
-            match bytes[i] {
-                b'(' => media_blocks.push(b')'),
-                b'[' => media_blocks.push(b']'),
-                b'{' if !media_blocks.is_empty() => media_blocks.push(b'}'),
-                b')' | b']' | b'}' if media_blocks.last() == Some(&bytes[i]) => {
-                    media_blocks.pop();
+    /// Expand the dimensions of a list of rules and declarations, the
+    /// contents of a stylesheet, a declaration block or a style attribute,
+    /// leaving qualified rule preludes (selectors) as written.
+    ///
+    /// `@media` and `@import` preludes resolve against the media basis.
+    fn expand_items<'i>(
+        input: &mut cssparser::Parser<'i, '_>,
+        basis: Basis,
+        media: Basis,
+        edits: &mut Edits,
+        depth: usize,
+    ) {
+        loop {
+            let start = input.position().byte_index();
+            let token = match input.next_including_whitespace_and_comments() {
+                Ok(cssparser::Token::WhiteSpace(_) | cssparser::Token::Comment(_)) => continue,
+                Ok(token) => token.clone(),
+                Err(_) => return,
+            };
+            if let cssparser::Token::AtKeyword(name) = &token {
+                let prelude =
+                    if name.eq_ignore_ascii_case("media") || name.eq_ignore_ascii_case("import") {
+                        media
+                    } else {
+                        basis
+                    };
+                loop {
+                    let start = input.position().byte_index();
+                    match input.next_including_whitespace_and_comments().cloned() {
+                        Err(_) => return,
+                        Ok(cssparser::Token::Semicolon) => break,
+                        Ok(cssparser::Token::CurlyBracketBlock) => {
+                            nested_items(input, basis, media, edits, depth);
+                            break;
+                        }
+                        Ok(token) => expand_token(input, &token, start, prelude, edits, depth),
+                    }
                 }
-                b'{' | b';' if media_blocks.is_empty() => media_prelude = false,
-                _ => {}
+                continue;
+            }
+            // A custom property value may hold `{}` blocks; any other item
+            // that reaches a `{}` block is a qualified rule, whose prelude is a
+            // selector rather than a value.
+            let custom_property =
+                matches!(&token, cssparser::Token::Ident(name) if name.starts_with("--"));
+            let mut pending = Vec::new();
+            let mut token = Some((start, token));
+            loop {
+                let (start, current) = match token.take() {
+                    Some(token) => token,
+                    None => {
+                        let start = input.position().byte_index();
+                        match input.next_including_whitespace_and_comments() {
+                            Ok(token) => (start, token.clone()),
+                            Err(_) => {
+                                edits.append(&mut pending);
+                                return;
+                            }
+                        }
+                    }
+                };
+                match current {
+                    cssparser::Token::Semicolon => {
+                        edits.append(&mut pending);
+                        break;
+                    }
+                    cssparser::Token::CurlyBracketBlock if !custom_property => {
+                        nested_items(input, basis, media, edits, depth);
+                        break;
+                    }
+                    current => expand_token(input, &current, start, basis, &mut pending, depth),
+                }
             }
         }
-
-        result.push(bytes[i] as char);
-        i += 1;
     }
+
+    fn nested_items(
+        input: &mut cssparser::Parser<'_, '_>,
+        basis: Basis,
+        media: Basis,
+        edits: &mut Edits,
+        depth: usize,
+    ) {
+        if depth < MAX_DEPTH {
+            let _ = input.parse_nested_block(|input| {
+                expand_items(input, basis, media, edits, depth + 1);
+                Ok::<_, cssparser::ParseError<'_, ()>>(())
+            });
+        }
+    }
+
+    let basis = Basis {
+        width,
+        height,
+        vertical,
+    };
+    let media = Basis {
+        width: media_width,
+        height: media_height,
+        vertical: false,
+    };
+    let mut edits = Vec::new();
+    let mut source = cssparser::ParserInput::new(input);
+    expand_items(
+        &mut cssparser::Parser::new(&mut source),
+        basis,
+        media,
+        &mut edits,
+        0,
+    );
+    let mut result = String::with_capacity(input.len());
+    let mut copied = 0;
+    for (range, replacement) in edits {
+        result.push_str(&input[copied..range.start]);
+        result.push_str(&replacement);
+        copied = range.end;
+    }
+    result.push_str(&input[copied..]);
     result
 }
-
 /// Resolve decoded CSS from every document stylesheet and inline-style slot.
 /// Screen and print adapters call this before their first rule-tree parse and
 /// after restoring authored animation styles on a freshly parsed document.
@@ -2117,7 +2470,8 @@ pub(crate) fn prepare_wpt_live_document(
 
     let page_base = std::fs::canonicalize(page_base).ok();
     let wpt_root = std::fs::canonicalize(wpt_root).ok();
-    let stylesheet_network = page_base.as_ref().map(|_| raikiri_net::FileNetworkProvider);
+    let network = local_resources::WptFileNetworkProvider::new(wpt_root.clone());
+    let stylesheet_network = page_base.as_ref().map(|_| network.clone());
     let stylesheet_base = page_base
         .as_deref()
         .and_then(|path| raikiri::Url::from_directory_path(path).ok());
@@ -2132,7 +2486,7 @@ pub(crate) fn prepare_wpt_live_document(
     let html = absolutize_wpt_resource_urls(html, page_base.as_deref(), wpt_root.as_deref());
     let image_resolver = wpt_root
         .as_ref()
-        .map(|_| raikiri_net::ImageResolver::new(raikiri_net::FileNetworkProvider));
+        .map(|_| raikiri_net::ImageResolver::new(network.clone()));
     if let Some(resolver) = image_resolver.as_ref() {
         prime_image_resolver(resolver, &html);
     }
@@ -2331,7 +2685,9 @@ pub(crate) fn parse_wpt_inner_html_fragment(
 ) -> Result<raikiri_html::UncascadedDocument, String> {
     let page_base = page_base.and_then(|base| std::fs::canonicalize(base).ok());
     let wpt_root = std::fs::canonicalize(wpt_root).ok();
-    let stylesheet_network = wpt_root.as_ref().map(|_| raikiri_net::FileNetworkProvider);
+    let stylesheet_network = wpt_root
+        .as_ref()
+        .map(|root| local_resources::WptFileNetworkProvider::new(Some(root.clone())));
     let opts = raikiri::ParseOptions {
         extra_stylesheets: &[],
         network: stylesheet_network
@@ -2454,13 +2810,17 @@ fn render_raikiri_pages_inner_with_canvases(
     let resource_base = resource_base_owned.as_deref();
     let font_base = font_base_owned.as_deref();
 
-    let image_resolver =
-        resource_base.map(|_| raikiri_net::ImageResolver::new(raikiri_net::FileNetworkProvider));
-    let stylesheet_network = resource_base.map(|_| raikiri_net::FileNetworkProvider);
+    let wpt_root = resource_base.and_then(local_resources::wpt_root_above);
+    let network = local_resources::WptFileNetworkProvider::new(wpt_root.clone());
+    let image_resolver = resource_base.map(|_| raikiri_net::ImageResolver::new(network.clone()));
+    let broken_image_fallback = image_resolver
+        .as_ref()
+        .map(|resolver| local_resources::BrokenImageFallback::new(resolver));
+    let stylesheet_network = resource_base.map(|_| network);
     let stylesheet_base =
         resource_base.and_then(|path| raikiri::Url::from_directory_path(path).ok());
     let font_loader = WptFontLoader::discover(font_base.or(resource_base));
-    let html = absolutize_wpt_resource_urls(html, resource_base, None);
+    let html = absolutize_wpt_resource_urls(html, resource_base, wpt_root.as_deref());
     if let Some(resolver) = image_resolver.as_ref() {
         prime_image_resolver(resolver, &html);
     }
@@ -2478,7 +2838,7 @@ fn render_raikiri_pages_inner_with_canvases(
                 .map(|provider| provider as &dyn raikiri_traits::NetworkProvider),
             parse_base_url: stylesheet_base.as_ref(),
             base_url: stylesheet_base.as_ref(),
-            replaced_resolver: image_resolver
+            replaced_resolver: broken_image_fallback
                 .as_ref()
                 .map(|resolver| resolver as &dyn raikiri_traits::ReplacedResolver),
             image_pixel_source: image_resolver
@@ -2501,7 +2861,7 @@ fn render_raikiri_pages_inner_with_canvases(
 /// Prepare inside marker images and generated content images before
 /// file-backed reftest layout.
 struct FileCascadeImagePreparer<'a> {
-    resolver: &'a raikiri_net::ImageResolver<raikiri_net::FileNetworkProvider>,
+    resolver: &'a raikiri_net::ImageResolver<local_resources::WptFileNetworkProvider>,
     base_url: &'a raikiri::Url,
 }
 
@@ -2512,6 +2872,16 @@ impl CascadeImagePreparer for FileCascadeImagePreparer<'_> {
         cascade: &mut raikiri_style::CascadeResult,
     ) {
         for computed in &mut cascade.computed {
+            crate::http_resources::prepare_background_image(
+                &mut computed.background_image,
+                self.base_url,
+                self.resolver,
+            );
+            crate::http_resources::prepare_background_image(
+                &mut computed.border_image.source,
+                self.base_url,
+                self.resolver,
+            );
             if computed.display == raikiri_style::DisplayValue::ListItem
                 && computed.list_style_position == raikiri_style::ListStylePosition::Inside
             {
@@ -2529,7 +2899,9 @@ impl CascadeImagePreparer for FileCascadeImagePreparer<'_> {
             self.resolver,
         );
     }
-    fn prepare_page(&self, _: &mut raikiri_style::PageCascadeResult) {}
+    fn prepare_page(&self, page: &mut raikiri_style::PageCascadeResult) {
+        crate::http_resources::prepare_page_images(page, self.base_url, self.resolver);
+    }
 }
 
 pub(crate) fn render_raikiri_pages_with_resources(

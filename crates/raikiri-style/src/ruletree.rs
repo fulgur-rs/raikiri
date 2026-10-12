@@ -8,8 +8,8 @@
 //! `@page` remains in the existing page view.
 
 use cssparser::{
-    DeclarationParser, Parser, ParserInput, RuleBodyItemParser, RuleBodyParser, SourceLocation,
-    StyleSheetParser, Token,
+    DeclarationParser, Delimiter, Parser, ParserInput, RuleBodyItemParser, RuleBodyParser,
+    SourceLocation, StyleSheetParser, Token,
 };
 use selectors::parser::{ParseRelative, Parser as SelectorParser, Selector, SelectorList};
 use std::cell::OnceCell;
@@ -776,13 +776,13 @@ impl RuleTree {
         condition: Option<&MediaCondition>,
         supports_context: &SupportsContext<'_>,
     ) {
-        let charset_name_end = leading_charset_name_end(source);
-        // A leading `@charset` is a rule of its own, so with no rule left its
-        // prelude is not read.
-        if charset_name_end.is_some() && !self.budget.rule_fits() {
+        let leading_charset = leading_charset(source);
+        // A leading `@charset` is a rule of its own, so with no rule left it
+        // is not kept.
+        if leading_charset.is_some() && !self.budget.rule_fits() {
             return;
         }
-        let charset = charset_name_end.and_then(|after_name| charset_prelude(source, after_name));
+        let charset = leading_charset.flatten();
         if charset.is_some() {
             // The room checked above holds its record.
             self.budget.rules(1);
@@ -1194,153 +1194,35 @@ fn walk_and_collect<D: StyleDom, F: FnMut(&str)>(dom: &D, id: StyleNodeId, on_st
     }
 }
 
-fn parse_css_ident(bytes: &[u8], source: &str, position: usize) -> Option<(usize, String)> {
-    let mut i = position;
-    let mut name = String::new();
-    while i < bytes.len() {
-        if is_css_ident_byte(bytes[i]) {
-            name.push(bytes[i] as char);
-            i += 1;
-            continue;
-        }
-        if bytes[i] != b'\\' {
-            break;
-        }
-        i += 1;
-        let first = *bytes.get(i)?;
-        if first.is_ascii_hexdigit() {
-            let mut value = 0u32;
-            let mut digits = 0;
-            while digits < 6 {
-                let Some(byte) = bytes.get(i) else { break };
-                let Some(digit) = (*byte as char).to_digit(16) else {
-                    break;
-                };
-                value = value * 16 + digit;
-                digits += 1;
-                i += 1;
-            }
-            if bytes.get(i).is_some_and(|byte| byte.is_ascii_whitespace()) {
-                if bytes[i] == b'\r' && bytes.get(i + 1) == Some(&b'\n') {
-                    i += 2;
-                } else {
-                    i += 1;
-                }
-            }
-            if let Some(ch) = char::from_u32(value) {
-                name.push(ch);
-            }
-        } else if let Some(ch) = source[i..].chars().next() {
-            name.push(ch);
-            i += ch.len_utf8();
-        } else {
-            return None;
-        }
-    }
-    (!name.is_empty()).then_some((i, name))
-}
-
-fn is_css_ident_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')
-}
-
-/// Where the prelude of a leading `@charset` starts, after its name.
-fn leading_charset_name_end(source: &str) -> Option<usize> {
-    let bytes = source.as_bytes();
-    let mut start = 0;
+/// The leading `@charset` of a stylesheet, which `StyleSheetParser` drops.
+///
+/// `None` when the first rule is not `@charset`. Otherwise the prelude of its
+/// statement, or `None` within when it is not a statement whose prelude is
+/// balanced component values. The source is read with the tokenization
+/// `StyleSheetParser` uses, so both agree on which rule is a `@charset`.
+fn leading_charset(source: &str) -> Option<Option<String>> {
+    let mut input = ParserInput::new(source);
+    let mut parser = Parser::new(&mut input);
+    // `StyleSheetParser` skips whitespace, comments, `<!--` and `-->`
+    // before each rule.
     loop {
-        while start < bytes.len() && bytes[start].is_ascii_whitespace() {
-            start += 1;
-        }
-        if source.get(start..)?.starts_with("/*") {
-            let end = source.get(start + 2..)?.find("*/")?;
-            start += end + 4;
-            continue;
-        }
-        if source.get(start..)?.starts_with("<!--") {
-            start += 4;
-            continue;
-        }
-        if source.get(start..)?.starts_with("-->") {
-            start += 3;
-            continue;
-        }
-        break;
-    }
-
-    let name_start = start.checked_add(1)?;
-    if bytes.get(start) != Some(&b'@') {
-        return None;
-    }
-    let (after_name, name) = parse_css_ident(bytes, source, name_start)?;
-    if !name.eq_ignore_ascii_case("charset") {
-        return None;
-    }
-    let next = source.get(after_name..)?.chars().next();
-    if next.is_some_and(|ch| {
-        !ch.is_ascii() || ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '\\')
-    }) {
-        return None;
-    }
-    Some(after_name)
-}
-
-/// The prelude of a leading `@charset` whose name ends at `after_name`.
-fn charset_prelude(source: &str, after_name: usize) -> Option<String> {
-    let bytes = source.as_bytes();
-    let mut i = after_name;
-    let mut stack = Vec::new();
-    while i < bytes.len() {
-        match bytes[i] {
-            b'/' if bytes.get(i + 1) == Some(&b'*') => {
-                let end = source.get(i + 2..)?.find("*/")?;
-                i += end + 4;
-            }
-            b'\\' => {
-                i += 1;
-                i += source.get(i..)?.chars().next()?.len_utf8();
-            }
-            b'\'' | b'"' => {
-                let quote = bytes[i];
-                i += 1;
-                while i < bytes.len() {
-                    match bytes[i] {
-                        b'\\' => {
-                            i += 1;
-                            i += source.get(i..)?.chars().next()?.len_utf8();
-                        }
-                        byte if byte == quote => {
-                            i += 1;
-                            break;
-                        }
-                        _ => i += 1,
-                    }
-                }
-            }
-            b'(' | b'[' => {
-                stack.push(bytes[i]);
-                i += 1;
-            }
-            b')' | b']' => {
-                let expected = if bytes[i] == b')' { b'(' } else { b'[' };
-                if stack.pop() != Some(expected) {
-                    return None;
-                }
-                i += 1;
-            }
-            b'{' | b'}' if stack.is_empty() => return None,
-            b'{' | b'}' => i += 1,
-            b';' if stack.is_empty() => {
-                let prelude = source.get(after_name..i)?.to_owned();
-                if css_component_values_are_balanced(&prelude) {
-                    return Some(prelude);
-                }
-                return None;
-            }
-            _ => i += 1,
+        match parser.next_including_whitespace_and_comments() {
+            Ok(Token::WhiteSpace(_) | Token::Comment(_) | Token::CDO | Token::CDC) => {}
+            Ok(Token::AtKeyword(name)) if name.eq_ignore_ascii_case("charset") => break,
+            _ => return None,
         }
     }
-    None
+    let start = parser.position();
+    let _ = parser.parse_until_before(
+        Delimiter::Semicolon | Delimiter::CurlyBracketBlock,
+        |input| -> Result<(), cssparser::ParseError<'_, ()>> {
+            while input.next_including_whitespace_and_comments().is_ok() {}
+            Ok(())
+        },
+    );
+    let prelude = parser.slice_from(start);
+    let statement = matches!(parser.next(), Ok(Token::Semicolon));
+    Some((statement && css_component_values_are_balanced(prelude)).then(|| prelude.to_owned()))
 }
 
 /// Consume the rest of `input` as raw component values and return their
