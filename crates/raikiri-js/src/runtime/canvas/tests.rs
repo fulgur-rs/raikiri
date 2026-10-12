@@ -438,6 +438,9 @@ fn fill_style_rejects_colors_outside_srgb() {
         "rgb(from red r g b)",
         "rgb(none 0 0)",
         "hsl(none 100% 50%)",
+        // Math the shared parser leaves deferred has no color to store.
+        "rgb(calc(255) 0 0)",
+        "hsl(calc(120) 100% 50%)",
     ] {
         ok(
             &mut rt,
@@ -451,6 +454,9 @@ fn fill_style_rejects_colors_outside_srgb() {
         ("hwb(0 0% 0%)", "#ff0000"),
         ("HSLA(0, 100%, 50%, 0.5)", "rgba(255, 0, 0, 0.5)"),
         ("Canvas", "#ffffff"),
+        // Math the shared parser resolves is stored as its result.
+        ("hsl(calc(60deg * 2) 100% 50%)", "#00ff00"),
+        ("rgba(calc(50%), 0%, 0%, 0.5)", "rgba(128, 0, 0, 0.5)"),
     ] {
         ok(
             &mut rt,
@@ -465,10 +471,18 @@ fn fill_style_rejects_colors_outside_srgb() {
 #[test]
 fn current_color_without_a_computed_color_is_black() {
     let mut rt = rt();
+    // A canvas outside the document has no computed style.
     ok(
         &mut rt,
         "var c = document.createElement('canvas'); var ctx = c.getContext('2d'); \
          ctx.fillStyle = 'blue'; ctx.fillStyle = 'currentcolor'; ctx.fillStyle === '#000000'",
+    );
+    // A connected canvas whose host cannot report `color` keeps its fill.
+    ok(
+        &mut rt,
+        "var c = document.body.appendChild(document.createElement('canvas')); \
+         var ctx = c.getContext('2d'); \
+         ctx.fillStyle = 'blue'; ctx.fillStyle = 'currentcolor'; ctx.fillStyle === '#0000ff'",
     );
 }
 
@@ -478,7 +492,7 @@ fn current_color_lookup_failure_is_a_host_error() {
     host.fail_computed = true;
     let mut rt = DomRuntime::new(host).unwrap();
     let result = rt.evaluate(
-        "var c = document.createElement('canvas'); \
+        "var c = document.body.appendChild(document.createElement('canvas')); \
          c.getContext('2d').fillStyle = 'currentcolor';",
     );
     assert!(result.is_err(), "got {result:?}");

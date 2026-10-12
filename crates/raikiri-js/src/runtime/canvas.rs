@@ -314,7 +314,10 @@ fn set_fill_style(this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
     let value = dom_string(args, 0, context)?;
     let rgba = match parse_fill_color(&value) {
         Some(FillColor::Rgba(rgba)) => rgba,
-        Some(FillColor::CurrentColor) => canvas_current_color(context, canvas)?,
+        Some(FillColor::CurrentColor) => match canvas_current_color(context, canvas)? {
+            Some(rgba) => rgba,
+            None => return Ok(JsValue::undefined()),
+        },
         None => return Ok(JsValue::undefined()),
     };
     // The getter returns the parsed color's serialization, not the text
@@ -326,19 +329,27 @@ fn set_fill_style(this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
     Ok(JsValue::undefined())
 }
 
-/// `currentcolor` for a canvas fill: the canvas element's computed `color`
-/// at assignment time, or opaque black when there is none (HTML Standard
-/// §4.12.5, `fillStyle`: `currentcolor` is resolved with the canvas
-/// element).
-fn canvas_current_color(context: &mut Context, canvas: usize) -> JsResult<[u8; 4]> {
+/// `currentcolor` for a canvas fill (HTML Standard §4.12.5, `fillStyle`:
+/// `currentcolor` is resolved with the canvas element): the element's
+/// computed `color` at assignment time, or opaque black when the element is
+/// not connected and so has no computed style. `None` when the host does
+/// not report a computed `color`; the assignment is then ignored rather
+/// than painted with a color the element does not have.
+fn canvas_current_color(context: &mut Context, canvas: usize) -> JsResult<Option<[u8; 4]>> {
+    let connected = with_state(context, |s| {
+        super::tree::node_is_connected(s.host.document(), canvas)
+    })?;
+    if !connected {
+        return Ok(Some([0, 0, 0, 255]));
+    }
     super::style::ensure_flushed(context)?;
     let computed =
         with_state(context, |s| s.host.computed_value(canvas, "color"))?.map_err(|error| {
             host_failure_with_message(context, error, "computed style lookup failed")
         })?;
     Ok(match computed.as_deref().and_then(parse_fill_color) {
-        Some(FillColor::Rgba(rgba)) => rgba,
-        _ => [0, 0, 0, 255],
+        Some(FillColor::Rgba(rgba)) => Some(rgba),
+        _ => None,
     })
 }
 
