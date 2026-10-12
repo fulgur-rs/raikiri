@@ -1640,3 +1640,6 @@ css/css-break/break-between-avoid-011.html
 css/css-break/break-between-avoid-012.html
 css/css-break/break-between-avoid-013.html
 css/css-break/break-between-avoid-014.html
+
+# --- orthogonal vertical block size 2026-10-12 ---
+css/css-flexbox/webkit-box-vertical-writing-mode.html

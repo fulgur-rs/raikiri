@@ -444,6 +444,15 @@ impl Document {
                     return compute_inline_block_shrink_wrap(tree, node_id, inputs, block_ctx);
                 }
             }
+            // A vertical box under a horizontal block container is sized by
+            // its content on the axis its container stretched it along.
+            if inputs.known_dimensions.width.is_some()
+                && inputs.sizing_mode == taffy::SizingMode::InherentSize
+                && tree.orthogonal_block_in_layout != Some(idx)
+                && orthogonal_flow::is_orthogonal_auto_block_size(tree, idx)
+            {
+                return orthogonal_flow::compute_orthogonal_block(tree, node_id, inputs);
+            }
             // CSS multicol is not a native Taffy display mode. Dispatch at
             // this seam so nested containers receive a local fragmentation
             // context instead of being repaired by a global post-pass.
@@ -584,6 +593,7 @@ impl Document {
 #[cfg(test)]
 mod tests;
 
+mod orthogonal_flow;
 mod vertical_oof;
 
 /// Lay out an ifc root: its paragraph is measured and broken into lines by

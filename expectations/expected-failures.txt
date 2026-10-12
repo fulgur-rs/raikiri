@@ -26,7 +26,6 @@ css/css-text/word-break/auto-phrase/word-break-auto-phrase-005.html | Phrase seg
 css/css-text/word-break/auto-phrase/word-break-auto-phrase-006.html | Phrase segmentation for word-break: auto-phrase is not implemented; the text breaks as word-break: normal | RAIKIRI-60 | 2026-10-11 | 2026-12-11
 css/css-backgrounds/background-clip/clip-border-area.html | background-clip: border-area skips background images and ignores border-style when clipping | RAIKIRI-61 | 2026-10-11 | 2026-12-11
 css/css-backgrounds/background-clip/clip-border-area-box-decoration-break.html | background-clip: border-area skips background images on fragmented inline boxes | RAIKIRI-61 | 2026-10-11 | 2026-12-11
-css/css-flexbox/webkit-box-vertical-writing-mode.html | Children of a vertical-rl flex container are placed from the left edge instead of block-start | RAIKIRI-62 | 2026-10-11 | 2026-12-11
 css/css-tables/visibility-collapse-rowspan-005.html | A rowspan cell spanning a collapsed row is not clipped to its reduced height | RAIKIRI-63 | 2026-10-11 | 2026-12-11
 css/css-text/letter-spacing/letter-spacing-ligatures-001.html | Inter-character justification keeps optional ligatures, and the reference inline-block loses its ligature | RAIKIRI-64 | 2026-10-11 | 2026-12-11
 css/css-text/text-transform/text-transform-upperlower-006.html | Full case mapping lowercases U+0130 to i plus U+0307; the reference expects a plain i | RAIKIRI-65 | 2026-10-11 | 2026-12-11
