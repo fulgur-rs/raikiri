@@ -702,3 +702,57 @@ fn whitespace_ending_an_escape_is_not_doubled() {
     // Braces at the top level of a style attribute make an invalid block.
     assert!(keys("<p style='{color: red; background: red; }'>").is_empty());
 }
+
+#[test]
+fn svg_style_contents_end_where_the_tree_builder_closes_them() {
+    // Elements inside an SVG style element do not end it; their text is not
+    // part of the style sheet.
+    let html = "<svg><style>p { a: 1 }<a>q</a><g/> r { b: 2 }</style></svg><i style='c: 3'>";
+    assert_eq!(keys(html), ["a:1", "b:2", "c:3"]);
+    let (out, removed) = remove_declarations(html, |key| key == "b:2");
+    assert_eq!(removed, 1);
+    assert_eq!(
+        out,
+        "<svg><style>p { a: 1 } r { }</style></svg><i style='c: 3'>"
+    );
+    // A breakout start tag leaves foreign content and closes the element.
+    let html = "<svg><style>p { a: 1 }<b style='b: 2'>";
+    assert_eq!(keys(html), ["a:1", "b:2"]);
+    // A self-closing SVG style element has no contents.
+    let html = "<svg><style/><i style='a: 1'></i></svg>";
+    assert_eq!(keys(html), ["a:1"]);
+}
+
+#[test]
+fn rewritten_markup_is_escaped() {
+    let html = "<svg><style>p { content: '&amp;\u{a0}>'; clear: both }</style><rect style=\"a: '&quot;'; b: 2\"/></svg>";
+    let (out, removed) = remove_declarations(html, |key| key == "clear:both" || key == "b:2");
+    assert_eq!(removed, 2);
+    assert_eq!(
+        out,
+        "<svg><style>p { content: '&amp;&nbsp;&gt;'; }</style><rect style=\"a: '&quot;'; \" /></svg>"
+    );
+}
+
+#[test]
+fn moved_and_foster_parented_elements_stay_connected() {
+    // Foster parenting moves the element out of the table.
+    assert_eq!(keys("<table><i style='a: 1'>x</i></table>"), ["a:1"]);
+    // The adoption agency clones and reparents formatting elements; only
+    // the start tags in the source count.
+    assert_eq!(
+        keys("<b style='a: 1'><p style='b: 2'>x</b>y</p><a><p><a style='c: 3'>"),
+        ["a:1", "b:2", "c:3"]
+    );
+    // An `annotation-xml` HTML integration point holds HTML style elements.
+    let html = "<math><annotation-xml encoding='text/html'><style>p { a: 1 }</style></annotation-xml></math>";
+    assert_eq!(keys(html), ["a:1"]);
+}
+
+#[test]
+fn style_attributes_hold_no_at_rules() {
+    assert_eq!(
+        keys("<i style='@media print { a: 1 } b: 2; c: 3'>"),
+        ["b:2", "c:3"]
+    );
+}

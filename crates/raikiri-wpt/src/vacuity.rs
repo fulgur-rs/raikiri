@@ -963,13 +963,11 @@ impl TreeSink for Dom {
     fn parse_error(&self, _msg: Cow<'static, str>) {}
 
     fn get_document(&self) -> Handle {
-        if self.nodes.borrow().is_empty() {
-            return self.add(
-                NodeKind::Document,
-                QualName::new(None, ns!(), local_name!("")),
-            );
-        }
-        Handle(Rc::new((0, QualName::new(None, ns!(), local_name!("")))))
+        // The tree builder asks for the document once, when it is created.
+        self.add(
+            NodeKind::Document,
+            QualName::new(None, ns!(), local_name!("")),
+        )
     }
 
     fn elem_name<'a>(&'a self, target: &'a Handle) -> &'a QualName {
