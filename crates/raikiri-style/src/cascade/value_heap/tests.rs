@@ -110,6 +110,30 @@ fn a_custom_property_environment_counts_once() {
 }
 
 #[test]
+fn a_reused_effective_environment_still_counts_its_local_map_once() {
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "div", Some(&format!("--custom: {LONG}")));
+    let child = doc.push_element(parent, "span", Some(&format!("--custom: {LONG}")));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+    let parent_values = &result.computed[parent];
+    let child_values = &result.computed[child];
+
+    assert!(Arc::ptr_eq(
+        &child_values.custom_properties,
+        &parent_values.custom_properties
+    ));
+    assert!(!Arc::ptr_eq(
+        &child_values.local_custom_properties,
+        &parent_values.local_custom_properties
+    ));
+    assert_eq!(
+        own_heap_bytes(child_values, parent_values),
+        child_values.local_custom_properties.local_heap_bytes()
+    );
+}
+
+#[test]
 fn values_held_with_the_parent_are_free_however_they_were_built() {
     // An element that holds its own gradient, track list and areas, measured
     // against a copy of itself, shares every one of them.
