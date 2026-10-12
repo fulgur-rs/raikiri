@@ -1923,7 +1923,7 @@ pub(crate) fn find_cycle_members(local: &HashMap<SmolStr, SmolStr>) -> HashSet<S
 }
 
 pub(crate) fn collect_var_references(input: &str, references: &mut Vec<SmolStr>) -> Result<(), ()> {
-    if input.len() > MAX_SUBSTITUTED_VALUE_BYTES || !css_literals_are_well_formed(input) {
+    if input.len() > MAX_SUBSTITUTED_VALUE_BYTES {
         return Err(());
     }
     let functions = find_function_tokens(input, &["var"]).ok_or(())?;
@@ -1949,10 +1949,7 @@ pub(crate) fn substitute_vars_with_budget(
     depth: usize,
     budget: &mut VariableResolutionBudget,
 ) -> Option<SmolStr> {
-    if depth > MAX_VARIABLE_RESOLUTION_DEPTH
-        || input.len() > MAX_SUBSTITUTED_VALUE_BYTES
-        || !css_literals_are_well_formed(input)
-    {
+    if depth > MAX_VARIABLE_RESOLUTION_DEPTH || input.len() > MAX_SUBSTITUTED_VALUE_BYTES {
         return None;
     }
     let mut output = String::with_capacity(input.len());
@@ -1991,44 +1988,30 @@ pub(crate) fn substitute_vars_with_budget(
     Some(output.into())
 }
 
-fn css_literals_are_well_formed(input: &str) -> bool {
-    let bytes = input.as_bytes();
-    let mut position = 0;
-    while position < bytes.len() {
-        if bytes[position] == b'\'' || bytes[position] == b'"' {
-            let Some(end) = skip_css_string(input, position) else {
-                return false;
-            };
-            position = end;
-            continue;
-        }
-        if bytes[position] == b'/' && bytes.get(position + 1) == Some(&b'*') {
-            let Some(end) = skip_css_comment(input, position) else {
-                return false;
-            };
-            position = end;
-            continue;
-        }
-        let Some(character) = input[position..].chars().next() else {
-            return false; // cov:ignore: a valid Rust str cannot end between UTF-8 scalar values.
-        };
-        position += character.len_utf8();
-    }
-    true
-}
-
+/// The end of the string token starting at `start`, as CSS Syntax 3
+/// "consume a string token" (§4.3.5) finds it.
+///
+/// The end of input closes the string, and an escaped newline continues it.
+/// An unescaped newline ends a bad-string token before the newline; callers
+/// that must reject bad strings rely on the tokenizer for that.
 pub(crate) fn skip_css_string(input: &str, start: usize) -> Option<usize> {
     let quote = input.as_bytes()[start];
     let bytes = input.as_bytes();
     let mut position = start + 1;
     while position < bytes.len() {
         match bytes[position] {
-            b'\\' => position = skip_css_escape(input, position)?,
+            b'\\' => match bytes.get(position + 1) {
+                None => return Some(bytes.len()),
+                Some(b'\r') if bytes.get(position + 2) == Some(&b'\n') => position += 3,
+                Some(&next) if is_css_newline_byte(next) => position += 2,
+                Some(_) => position = skip_css_escape(input, position)?,
+            },
             byte if byte == quote => return Some(position + 1),
+            byte if is_css_newline_byte(byte) => return Some(position),
             _ => position += 1,
         }
     }
-    None
+    Some(bytes.len())
 }
 
 pub(crate) fn skip_css_comment(input: &str, start: usize) -> Option<usize> {
