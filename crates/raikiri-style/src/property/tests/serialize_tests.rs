@@ -65,6 +65,18 @@ fn serialize_length_or_auto_formats_relative_calc_terms_in_canonical_order() {
         serialize_length_or_auto(&LengthOrAuto::RelativeCalc(term(-10.0, "dvh"))),
         "calc(-10vh)"
     );
+    for unit in [
+        "em", "rem", "lh", "rlh", "vw", "vh", "vi", "vb", "vmin", "vmax",
+    ] {
+        assert_eq!(
+            serialize_length_or_auto(&LengthOrAuto::RelativeCalc(term(2.0, unit))),
+            format!("calc(2{unit})")
+        );
+    }
+    assert_eq!(
+        serialize_relative_calc_length_percentage(&RelativeCalcLengthPercentage::default()),
+        "calc(0px)"
+    );
 }
 
 #[test]

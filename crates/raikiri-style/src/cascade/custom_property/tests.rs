@@ -2052,7 +2052,21 @@ fn relative_calc_parser_accepts_linear_sums_only() {
         value.relative_terms().collect::<Vec<_>>(),
         [(crate::property::RelativeCalcUnit::Em, 2.0)]
     );
+    // Plain-number arithmetic folds into the coefficient.
+    let value = parse("calc((2 + 3) * 1em / (4 / 2) - 1px * (1 - 3))").unwrap();
+    assert_eq!(value.px, 2.0);
+    assert_eq!(
+        value.relative_terms().collect::<Vec<_>>(),
+        [(crate::property::RelativeCalcUnit::Em, 2.5)]
+    );
+    let depth = MAX_VARIABLE_RESOLUTION_DEPTH + 1;
+    let too_deep = format!("calc({}1em{})", "(".repeat(depth), ")".repeat(depth));
     for rejected in [
+        too_deep.as_str(),
+        "calc((1em + 1px",
+        "calc((1e30 * 1e30) * 1em)",
+        "calc((3e38 + 3e38) * 1em)",
+        "calc(1em * (1 / 1e-40))",
         "calc(1em * 1px)",
         "calc(1em / 0)",
         "calc(1em / 1px)",
