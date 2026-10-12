@@ -2506,3 +2506,29 @@ fn first_authored_page_name_reads_unquoted_style_attributes() {
         Some("Cover")
     );
 }
+
+#[test]
+fn page_rules_drop_selector_lists_with_empty_entries() {
+    for css in [
+        "@page foo,,bar{size:10vw}@page foo{size:20vw}",
+        "@page ,foo{size:10vw}@page foo{size:20vw}",
+        "@page foo,{size:10vw}@page foo{size:20vw}",
+        "@page foo:{size:10vw}@page foo{size:20vw}",
+    ] {
+        assert_eq!(page_block_named(css, "foo"), Some("size:20vw"), "{css}");
+    }
+    assert_eq!(
+        page_block_named("@page :first, foo{size:10vw}", "foo"),
+        Some("size:10vw")
+    );
+    assert_eq!(page_block("@page{size:10vw}"), Some("size:10vw"));
+}
+
+#[test]
+fn page_rules_keep_pseudo_only_selectors_after_whitespace() {
+    assert_eq!(page_block("@page :first{size:10vw}"), Some("size:10vw"));
+    assert_eq!(
+        page_block_named("@page foo, :left{size:10vw}", "foo"),
+        Some("size:10vw")
+    );
+}

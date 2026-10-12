@@ -1103,12 +1103,19 @@ fn page_rules(input: &str) -> Vec<PageRule<'_>> {
         // the only blocks besides the top level that may hold `@page`.
         let mut group = false;
         let mut after_colon = false;
+        // Whether the selector after the last comma has no component yet,
+        // and whether the prelude is a comma-separated list.
+        let mut empty_selector = true;
+        let mut list = false;
         while let Ok(token) = input.next_including_whitespace().cloned() {
             match &token {
                 // Whitespace only matters inside an `@page` selector, where
-                // it may not precede a pseudo-class colon.
+                // it may not separate a pseudo-class from the rest of its
+                // selector.
                 cssparser::Token::WhiteSpace(_) => {
-                    if let Some((_, valid)) = &mut page {
+                    if let Some((_, valid)) = &mut page
+                        && !empty_selector
+                    {
                         let state = input.state();
                         if matches!(input.next(), Ok(cssparser::Token::Colon)) {
                             *valid = false;
@@ -1121,6 +1128,8 @@ fn page_rules(input: &str) -> Vec<PageRule<'_>> {
                     page = name
                         .eq_ignore_ascii_case("page")
                         .then(|| (Vec::new(), true));
+                    empty_selector = true;
+                    list = false;
                     group = ["media", "supports", "layer"]
                         .iter()
                         .any(|known| name.eq_ignore_ascii_case(known));
@@ -1130,7 +1139,10 @@ fn page_rules(input: &str) -> Vec<PageRule<'_>> {
                     group = false;
                 }
                 cssparser::Token::CurlyBracketBlock => {
-                    if let Some((names, valid)) = page.take() {
+                    if let Some((names, mut valid)) = page.take() {
+                        // A list may not end with an empty selector, and a
+                        // colon needs its pseudo-class name.
+                        valid &= !(after_colon || list && empty_selector);
                         let block = input.parse_nested_block(|input| {
                             let start = input.position();
                             while input.next().is_ok() {}
@@ -1147,6 +1159,9 @@ fn page_rules(input: &str) -> Vec<PageRule<'_>> {
                 }
                 _ => {
                     if let Some((names, valid)) = &mut page {
+                        if matches!(token, cssparser::Token::Ident(_) | cssparser::Token::Colon) {
+                            empty_selector = false;
+                        }
                         match &token {
                             cssparser::Token::Ident(name) if after_colon => {
                                 *valid &= ["first", "left", "right", "blank"]
@@ -1165,7 +1180,12 @@ fn page_rules(input: &str) -> Vec<PageRule<'_>> {
                                 }
                                 input.reset(&state);
                             }
-                            cssparser::Token::Comma => {}
+                            // Each comma separates two non-empty selectors.
+                            cssparser::Token::Comma => {
+                                *valid &= !empty_selector && !after_colon;
+                                empty_selector = true;
+                                list = true;
+                            }
                             _ => *valid = false,
                         }
                     }
