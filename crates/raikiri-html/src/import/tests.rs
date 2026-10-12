@@ -6,14 +6,6 @@ use raikiri_traits::{
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-thread_local! {
-    static IDENTIFIER_SCAN_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-pub(super) fn record_identifier_scan_step() {
-    IDENTIFIER_SCAN_STEPS.with(|steps| steps.set(steps.get() + 1));
-}
-
 #[test]
 fn unicode_root_and_live_sources_are_preserved_without_fetches() {
     let provider = MapProvider::new(&[]);
@@ -67,55 +59,102 @@ fn unicode_import_media_without_a_block_does_not_split_a_character() {
     assert_eq!(imports[0].media.as_deref(), Some("screen and (名:値)"));
 }
 
-fn assert_linear_identifier_work(malformed: bool) {
+/// The single import found after an unknown at-rule whose block is `block`,
+/// or `None` when the block hides it.
+fn import_after_unknown_block(block: &str) -> Option<String> {
+    let imports = scan_leading_imports(&format!("@unknown {block} @import \"top.css\";"));
+    match imports.as_slice() {
+        [] => None,
+        [import] => Some(import.url.clone()),
+        _ => panic!("more than one import after {block}"),
+    }
+}
+
+#[test]
+fn long_identifiers_in_a_skipped_block_do_not_hide_a_later_import() {
     for size in [128, 4096] {
-        let source = if malformed {
-            format!("{{{}\\", "a".repeat(size))
-        } else {
-            format!("{{{}:red}}", "a".repeat(size))
-        };
-        IDENTIFIER_SCAN_STEPS.with(|steps| steps.set(0));
-        assert_eq!(scan_block_end(&source, 0).is_some(), !malformed);
-        let steps = IDENTIFIER_SCAN_STEPS.with(std::cell::Cell::get);
-        assert!(
-            steps <= 2 * source.len(),
-            "identifier work {steps} for {} bytes",
-            source.len()
+        let block = format!("{{{}:red}}", "a".repeat(size));
+        assert_eq!(
+            import_after_unknown_block(&block).as_deref(),
+            Some("top.css")
         );
     }
 }
 
 #[test]
-fn identifier_scanning_work_is_linear_for_long_names() {
-    assert_linear_identifier_work(false);
+fn a_trailing_escape_in_a_block_swallows_the_rest_of_the_sheet() {
+    // A backslash before EOF is a delimiter, so the block runs to EOF and
+    // the import after it is part of the block.
+    let source = format!("@unknown {{{}\\", "a".repeat(4096));
+    assert!(scan_leading_imports(&source).is_empty());
 }
 
 #[test]
-fn identifier_scanning_work_is_linear_on_a_failed_escape() {
-    assert_linear_identifier_work(true);
-}
-
-#[test]
-fn component_scanners_preserve_complete_and_escaped_url_names() {
+fn skipped_blocks_preserve_complete_and_escaped_url_names() {
     for name in ["url", "URL", r"u\72l", r"\75rl"] {
-        let source = format!("{{background:{name}(data:,}})}}");
-        assert_eq!(scan_block_end(&source, 0), Some(source.len()), "{source}");
+        let block = format!("{{background:{name}(data:,}})}}");
+        assert_eq!(
+            import_after_unknown_block(&block).as_deref(),
+            Some("top.css"),
+            "{block}"
+        );
     }
     // `myurl(` opens a function, so its `}` does not close the block.
-    assert_eq!(scan_block_end("{x:myurl(data:,})}", 0), Some(18));
-    assert_eq!(scan_block_end("{x:url('unterminated)}", 0), None);
+    assert_eq!(
+        import_after_unknown_block("{x:myurl(data:,})}").as_deref(),
+        Some("top.css")
+    );
+    // A quoted `url(` is a function whose string runs to EOF, so the
+    // import after it is inside the block.
+    assert_eq!(import_after_unknown_block("{x:url('unterminated)}"), None);
 }
 
 #[test]
-fn component_scanners_preserve_strings_comments_and_escaped_delimiters() {
-    for source in [
+fn skipped_blocks_preserve_strings_comments_and_escaped_delimiters() {
+    for block in [
         "{x:'名}'; /* 🦀 } */ y:値}",
         r"{x:a\}b}",
         "{x:a\\\nb}",
         "{x:é; y:名; z:🦀}",
     ] {
-        assert_eq!(scan_block_end(source, 0), Some(source.len()), "{source}");
+        assert_eq!(
+            import_after_unknown_block(block).as_deref(),
+            Some("top.css"),
+            "{block}"
+        );
     }
+}
+
+#[test]
+fn import_urls_are_read_as_css_tokens() {
+    // `/*` inside an unquoted URL is part of the URL, not a comment.
+    let imports = scan_leading_imports("@import url(foo/*); @import 'b.css';");
+    let urls: Vec<_> = imports.iter().map(|import| import.url.as_str()).collect();
+    assert_eq!(urls, ["foo/*", "b.css"]);
+
+    // A quoted `url()` holds exactly one string.
+    assert!(scan_leading_imports(r#"@import url("a.css" x);"#).is_empty());
+}
+
+#[test]
+fn a_stray_closing_brace_starts_a_qualified_rule() {
+    // The brace begins a qualified rule's prelude, which runs to EOF without
+    // a block; the import is part of that prelude.
+    assert!(scan_leading_imports(r#"} @import "a.css";"#).is_empty());
+    // An earlier import is still found.
+    let imports = scan_leading_imports(r#"@import "a.css"; } @import "b.css";"#);
+    assert_eq!(imports.len(), 1);
+    assert_eq!(imports[0].url, "a.css");
+}
+
+#[test]
+fn import_barrier_names_ignore_ascii_case() {
+    assert!(scan_leading_imports(r#"@MEDIA print {} @import "a.css";"#).is_empty());
+    assert!(scan_leading_imports(r#"@NameSpace svg url(x); @import "a.css";"#).is_empty());
+    assert_eq!(
+        scan_leading_imports(r#"@CHARSET "utf-8"; @IMPORT "a.css";"#).len(),
+        1
+    );
 }
 
 struct MapProvider {
@@ -1067,4 +1106,49 @@ fn live_sheets_without_a_provider_keep_unresolved_imports_and_cascade_in_order()
             raikiri_style::DisplayValue::Inline
         );
     }
+}
+
+#[test]
+fn import_preludes_without_a_url_or_with_bad_media_are_not_expanded() {
+    for source in [
+        "@import foo;",
+        r#"@import "a.css" supports (display: grid);"#,
+        r#"@import "a.css" screen);"#,
+        r#"@import "a.css" screen <!--;"#,
+        "@import \"a.css\" (x: 'bad\n');",
+        r#"@import "a.css" (a (b ]));"#,
+        r#"@import "a.css" f(url(a b));"#,
+    ] {
+        assert!(scan_leading_imports(source).is_empty(), "{source}");
+    }
+}
+
+#[test]
+fn import_media_keeps_nested_blocks_as_written() {
+    let imports = scan_leading_imports(r#"@import "a.css" f([x] {y}), print;"#);
+    assert_eq!(imports.len(), 1);
+    assert_eq!(imports[0].media.as_deref(), Some("f([x] {y}), print"));
+}
+
+#[test]
+fn layer_blocks_block_imports_but_import_blocks_do_not() {
+    assert!(scan_leading_imports(r#"@layer x { p {} } @import "a.css";"#).is_empty());
+    let imports = scan_leading_imports(r#"@import "a.css" {} @import "b.css";"#);
+    assert_eq!(imports.len(), 1);
+    assert_eq!(imports[0].url, "b.css");
+}
+
+#[test]
+fn empty_import_urls_are_not_expanded() {
+    for source in ["@import url();", r#"@import "";"#, r#"@import url("");"#] {
+        assert!(scan_leading_imports(source).is_empty(), "{source}");
+    }
+}
+
+#[test]
+fn deeply_nested_import_media_is_rejected_without_recursing_through_it() {
+    let shallow = format!("@import \"a.css\" {}x{};", "(".repeat(32), ")".repeat(32));
+    assert_eq!(scan_leading_imports(&shallow).len(), 1);
+    let deep = format!("@import \"a.css\" {}x;", "(".repeat(100_000));
+    assert!(scan_leading_imports(&deep).is_empty());
 }
