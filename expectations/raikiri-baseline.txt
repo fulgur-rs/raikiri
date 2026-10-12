@@ -463,6 +463,7 @@ css/css-break/zero-height-page-break-001-print.html
 css/css-page/background-image-only-for-print.html
 css/css-page/page-background-image-print.html
 css/css-page/page-background-005-print.html
+css/css-page/page-box-005-print.html
 css/css-page/page-box-007-print.html
 css/css-page/page-box-011-print.html
 css/css-page/margin-boxes/background-001-print.html
