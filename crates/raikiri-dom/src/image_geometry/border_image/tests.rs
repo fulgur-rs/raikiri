@@ -175,6 +175,26 @@ fn outset_and_widths_resolve_against_the_border() {
 }
 
 #[test]
+fn a_calc_width_adds_its_percentage_of_the_area() {
+    let mut image = image(27.0, BorderImageRepeatKeyword::Stretch);
+    image.width = Sides::all(BorderImageWidthSide::LengthPercentage(
+        ComputedLengthPercentageOrCalc::Calc(raikiri_style::property::CalcLengthPercentage {
+            percent: 10.0,
+            px: 2.0,
+        }),
+    ));
+    let geometry = border_image_geometry(
+        (0.0, 0.0, 100.0, 100.0),
+        Sides::all(1.0),
+        &image,
+        natural(81.0, 81.0),
+    )
+    .expect("geometry");
+    // 10% of 100px plus 2px on every side.
+    part(&geometry, (0.0, 0.0, 12.0, 12.0));
+}
+
+#[test]
 fn overlapping_widths_scale_down_together() {
     let mut image = image(27.0, BorderImageRepeatKeyword::Stretch);
     image.width = Sides::all(BorderImageWidthSide::LengthPercentage(
