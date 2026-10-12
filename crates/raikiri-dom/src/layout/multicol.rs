@@ -23,10 +23,10 @@ pub(crate) fn compute_multicol_layout(
 ) -> LayoutOutput {
     let index = usize::from(node_id);
     if tree.fragment_tree.limit_exceeded {
-        return compute_block_layout(tree, node_id, inputs, block_ctx);
+        return crate::taffy_impl::block_layout(tree, node_id, inputs, block_ctx);
     }
     let Some(style) = tree.nodes[index].multicol else {
-        return compute_block_layout(tree, node_id, inputs, block_ctx);
+        return crate::taffy_impl::block_layout(tree, node_id, inputs, block_ctx);
     };
 
     // Taffy supplies the used border-box width to a block child. Do not fall
@@ -59,7 +59,7 @@ pub(crate) fn compute_multicol_layout(
     };
     let Some(context) = FragmentationContext::resolve(available_width, available_height, style)
     else {
-        return compute_block_layout(tree, node_id, inputs, block_ctx);
+        return crate::taffy_impl::block_layout(tree, node_id, inputs, block_ctx);
     };
 
     // Keep the existing foundational post-pass authoritative for standalone
@@ -87,7 +87,7 @@ pub(crate) fn compute_multicol_layout(
         && !multicol_has_out_of_flow_descendant(tree, index);
     let stack_depth = tree.fragmentation_stack.len();
     tree.fragmentation_stack.push(context);
-    let mut output = compute_block_layout(tree, node_id, inputs, block_ctx);
+    let mut output = crate::taffy_impl::block_layout(tree, node_id, inputs, block_ctx);
     if tree.fragment_tree.limit_exceeded {
         tree.fragmentation_stack.truncate(stack_depth);
         return output;
