@@ -1873,6 +1873,29 @@ pub(crate) fn page_fragment_events_from_pages(
                     && item.rect.height > 0.0
             })
             .collect();
+        let mut suppressed_boxes = HashSet::new();
+        if linked_items
+            .iter()
+            .any(|item| item.kind == PageFragmentKind::Box)
+        {
+            for item in &linked_items {
+                let node_id = usize::try_from(item.node_id.0)
+                    .expect("linked item NodeId must fit the local arena index");
+                let owner = owners.get(&node_id);
+                // Start at the parent: another fragment of this node is not
+                // a descendant. A marked ancestor's remaining chain has
+                // already been visited for this page and anchor identity.
+                let mut parent = parent_by_node.get(&node_id).copied();
+                while let Some(id) = parent {
+                    #[cfg(all(test, debug_assertions))]
+                    tests::link_ancestor_tests::note_probe();
+                    if owners.get(&id) != owner || !suppressed_boxes.insert(id) {
+                        break;
+                    }
+                    parent = parent_by_node.get(&id).copied();
+                }
+            }
+        }
         for item in linked_items.iter().copied() {
             // `linked_items` has already validated all three lookups above.
             // Keeping the invariant explicit here avoids a second set of
@@ -1885,16 +1908,12 @@ pub(crate) fn page_fragment_events_from_pages(
             let href = hrefs
                 .get(&anchor_id)
                 .expect("anchor owner must retain its href");
-            if item.kind == PageFragmentKind::Box
-                && linked_items.iter().any(|other| {
-                    let other_node_id = usize::try_from(other.node_id.0)
-                        .expect("linked item NodeId must fit the local arena index");
-                    other.node_id != item.node_id
-                        && owners.get(&other_node_id) == Some(&anchor_id)
-                        && is_descendant_of(other_node_id, placement_node_id, &parent_by_node)
-                })
-            {
-                continue;
+            if item.kind == PageFragmentKind::Box {
+                #[cfg(all(test, debug_assertions))]
+                tests::link_ancestor_tests::note_probe();
+                if suppressed_boxes.contains(&placement_node_id) {
+                    continue;
+                }
             }
             events.push(PageFragmentEvent::Link(PageFragmentLinkEvent::new(
                 NodeId::new(anchor_id as u64),
@@ -1920,20 +1939,6 @@ pub(crate) fn page_fragment_events_from_pages(
             .then_with(|| left.fragment_index.cmp(&right.fragment_index)),
     });
     events
-}
-
-fn is_descendant_of(
-    mut candidate: usize,
-    ancestor: usize,
-    parent_by_node: &HashMap<usize, usize>,
-) -> bool {
-    while let Some(parent) = parent_by_node.get(&candidate).copied() {
-        if parent == ancestor {
-            return true;
-        }
-        candidate = parent;
-    }
-    false
 }
 
 /// Group page snapshots into a deterministic NodeId-ordered geometry table.
