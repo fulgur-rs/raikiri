@@ -268,6 +268,30 @@ fn initial_svg_preflight_stops_recursive_use_expansion_and_excessive_depth() {
 }
 
 #[test]
+fn selector_free_use_expansion_is_bounded_before_the_backend_parse() {
+    let levels = 19;
+    let mut source = String::from("<svg><defs><g id=\"g0\"><rect/></g>");
+    for level in 1..=levels {
+        let previous = level - 1;
+        source.push_str(&format!(
+            "<g id=\"g{level}\"><use href=\"#g{previous}\"/><use href=\"#g{previous}\"/></g>"
+        ));
+    }
+    source.push_str(&format!("</defs><use href=\"#g{levels}\"/></svg>"));
+
+    let error = match preflight_initial_svg(&source) {
+        Ok(()) => panic!("selector-free use expansion must stop at its node budget"),
+        Err(error) => error,
+    };
+
+    assert!(
+        error
+            .to_string()
+            .contains("selector matching resource limit")
+    );
+}
+
+#[test]
 fn initial_xml_preflight_skips_non_element_markup_and_enforces_depth_limit() {
     super::preflight_initial_svg_xml(
         "<svg><!-- <g> --><![CDATA[<rect/>]]><?probe <use/> ?><g title=\">\"/></svg>",

@@ -225,7 +225,7 @@ pub struct SvgDocument {
 
 impl SvgDocument {
     /// Parses and validates a UTF-8 SVG document within fixed input-byte,
-    /// XML-node, and element-depth limits.
+    /// XML-node, use-expansion, and element-depth limits.
     pub fn parse(data: &[u8]) -> Result<Self, SvgError> {
         if data.len() as u64 > MAX_INITIAL_PARSE_XML_BYTES {
             return Err(SvgError::InputLimitExceeded {
@@ -1505,7 +1505,8 @@ fn preflight_initial_svg_selectors(xml: &roxmltree::Document<'_>) -> Result<(), 
         budget.charge_stylesheet_sort_work(total_rules)?;
         selectors.extend(stylesheet.rules.into_iter().map(|rule| rule.selector));
     }
-    if selectors.is_empty() {
+    // usvg expands same-document references even when no CSS selectors exist.
+    if selectors.is_empty() && !xml.descendants().any(is_initial_svg_use) {
         return Ok(());
     }
 
@@ -1869,6 +1870,15 @@ fn resolve_svg_use_reference<'a, 'input: 'a>(
     id_map.get(link_id).copied()
 }
 
+fn is_initial_svg_use(node: roxmltree::Node<'_, '_>) -> bool {
+    let tag_name = node.tag_name();
+    tag_name.name() == "use"
+        && match tag_name.namespace() {
+            None => true,
+            Some(namespace) => namespace == SVG_NAMESPACE,
+        }
+}
+
 fn svg_use_expansion_is_recursive<'a, 'input: 'a>(
     use_node: roxmltree::Node<'a, 'input>,
     link: roxmltree::Node<'a, 'input>,
@@ -1877,7 +1887,7 @@ fn svg_use_expansion_is_recursive<'a, 'input: 'a>(
 ) -> Result<bool, SvgError> {
     for link_child in link.descendants().skip(1) {
         budget.charge_work(1)?;
-        if link_child.has_tag_name((SVG_NAMESPACE, "use"))
+        if is_initial_svg_use(link_child)
             && resolve_svg_use_reference(link_child, id_map)
                 .is_some_and(|nested_link| nested_link == use_node || nested_link == link)
         {
