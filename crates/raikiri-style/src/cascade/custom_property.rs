@@ -1390,6 +1390,16 @@ impl<'a> MathParser<'a> {
         }
         if self.input.as_bytes().get(self.position) == Some(&b'.') {
             self.position += 1;
+            // A CSS number needs at least one digit after the decimal point
+            // (CSS Syntax 3 §4.3.12), so `1.em` is not `1em`.
+            if !self
+                .input
+                .as_bytes()
+                .get(self.position)
+                .is_some_and(u8::is_ascii_digit)
+            {
+                return None;
+            }
             while self
                 .input
                 .as_bytes()
@@ -1519,10 +1529,15 @@ impl<'a> MathParser<'a> {
         let rest = &self.input.as_bytes()[self.position..];
         let open = if rest.first() == Some(&b'(') {
             Some(1)
-        } else if rest.len() >= 5 && rest[..5].eq_ignore_ascii_case(b"calc(") {
-            Some(5)
         } else {
-            None
+            // Decode the function name with cssparser, so an escaped nested
+            // name such as `c\61 lc(` is recognized as `calc(`.
+            let mut tokens_input = ParserInput::new(&self.input[self.position..]);
+            let mut tokens = Parser::new(&mut tokens_input);
+            tokens
+                .expect_function()
+                .is_ok_and(|name| name.eq_ignore_ascii_case("calc"))
+                .then(|| tokens.position().byte_index())
         };
         if let Some(open) = open {
             if self.nesting_depth >= MAX_VARIABLE_RESOLUTION_DEPTH {

@@ -2088,6 +2088,7 @@ fn relative_calc_parser_accepts_linear_sums_only() {
         "calc((1em + 1px",
         "calc(calc(1em + 1px",
         r"c\61 lc(1em + 1px)",
+        r"calc(c\61 lc(1em + 1px))",
     ] {
         let value = parse(source).unwrap_or_else(|| panic!("{source}"));
         assert_eq!(value.px, 1.0, "{source}");
@@ -2110,6 +2111,8 @@ fn relative_calc_parser_accepts_linear_sums_only() {
         "calc(3e38px + 3e38px + 1em)",
         "calc(3e38px * 10 + 1em)",
         "calc(1em * 1px)",
+        "calc(1.em + 1px)",
+        "calc(1em + 1.px)",
         "calc(1em / 0)",
         "calc(1em / 1px)",
         "calc(2)",
