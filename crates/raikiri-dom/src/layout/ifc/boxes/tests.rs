@@ -8,6 +8,114 @@ use crate::layout::test_support::{
 };
 
 #[test]
+fn many_atomics_keep_placement_and_visibility_work_linear() {
+    const ATOMIC_COUNT: usize = 64;
+    let mut atomics = Vec::with_capacity(ATOMIC_COUNT);
+    let (mut doc, cascade, _root) =
+        crate::layout::test_support::ahem_paragraph_with("width:800px", |doc, root| {
+            for _ in 0..ATOMIC_COUNT {
+                atomics.push(doc.append_element(
+                    Some(root),
+                    "span",
+                    taffy::Style::default(),
+                    Some("display:inline-block;width:1px;height:10px"),
+                ));
+            }
+        });
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    crate::layout::test_support::IFC_ATOMIC_OUTPUT_LOOKUP_STEPS.with(|steps| steps.set(0));
+    crate::layout::test_support::IFC_ATOMIC_VISIBILITY_STEPS.with(|steps| steps.set(0));
+
+    crate::layout::layout_single_page(
+        with_ahem(&mut doc),
+        &cascade,
+        crate::layout::test_support::page_box_800x600(),
+    )
+    .expect("layout");
+
+    for pair in atomics.windows(2) {
+        let left = doc.nodes[pair[0]].unrounded_layout;
+        let right = doc.nodes[pair[1]].unrounded_layout;
+        assert_eq!(left.size.width, 1.0);
+        assert_eq!(right.location.x - left.location.x, 1.0);
+    }
+    for &atomic in &atomics {
+        assert!(
+            !doc.nodes[atomic]
+                .flags
+                .contains(crate::node::NodeFlags::HIDDEN_BY_TEXT_OVERFLOW)
+        );
+    }
+
+    let placement_steps =
+        crate::layout::test_support::IFC_ATOMIC_OUTPUT_LOOKUP_STEPS.with(std::cell::Cell::get);
+    let visibility_steps =
+        crate::layout::test_support::IFC_ATOMIC_VISIBILITY_STEPS.with(std::cell::Cell::get);
+    assert!(
+        placement_steps <= ATOMIC_COUNT * 8 && visibility_steps <= ATOMIC_COUNT * 8,
+        "atomic placement did {placement_steps} steps and visibility did {visibility_steps} steps for {ATOMIC_COUNT} atomics"
+    );
+}
+
+#[test]
+fn text_only_layout_skips_atomic_visibility_indexing() {
+    let (mut doc, cascade, _root) =
+        crate::layout::test_support::ahem_paragraph_with("width:100px", |doc, root| {
+            doc.append_text(root, "ordinary paragraph text");
+        });
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    crate::layout::test_support::IFC_ATOMIC_VISIBILITY_STEPS.with(|steps| steps.set(0));
+
+    crate::layout::layout_single_page(
+        with_ahem(&mut doc),
+        &cascade,
+        crate::layout::test_support::page_box_800x600(),
+    )
+    .expect("layout");
+
+    let visibility_steps =
+        crate::layout::test_support::IFC_ATOMIC_VISIBILITY_STEPS.with(std::cell::Cell::get);
+    assert_eq!(visibility_steps, 0);
+}
+
+#[test]
+fn ellipsis_hides_only_atomic_fragments_it_removes() {
+    let mut atomics = Vec::new();
+    let (mut doc, cascade, _root) = crate::layout::test_support::ahem_paragraph_with(
+        "width:25px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis",
+        |doc, root| {
+            for _ in 0..5 {
+                atomics.push(doc.append_element(
+                    Some(root),
+                    "span",
+                    taffy::Style::default(),
+                    Some("display:inline-block;width:10px;height:10px"),
+                ));
+            }
+        },
+    );
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+
+    crate::layout::layout_single_page(
+        with_ahem(&mut doc),
+        &cascade,
+        crate::layout::test_support::page_box_800x600(),
+    )
+    .expect("layout");
+
+    assert!(
+        atomics
+            .iter()
+            .any(|&id| doc.nodes[id].is_hidden_by_text_overflow())
+    );
+    assert!(
+        atomics
+            .iter()
+            .any(|&id| !doc.nodes[id].is_hidden_by_text_overflow())
+    );
+}
+
+#[test]
 fn unprojected_root_has_no_fragmentainer_tail() {
     let mut doc = Document::new();
     let geometry = FlowGeometry::horizontal(100.0, (0.0, 0.0), 0.0);

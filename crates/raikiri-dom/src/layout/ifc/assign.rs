@@ -17,6 +17,7 @@ use raikiri_style::{CascadeResult, ComputedColumnWidth};
 use raikiri_traits::{LayoutError, NodeKind};
 use rayon::prelude::*;
 use shodo::LayoutContext;
+use std::collections::HashSet;
 
 /// Whether `idx` generates a box of its own: any display other than `inline`,
 /// `contents` and `none`, an absolutely positioned or fixed inline element
@@ -454,9 +455,22 @@ fn collect_candidates(
             Ok(projected) => projected,
             Err(error) => return Err(projection_error(idx, error)),
         };
+        let projected_box_nodes = projected
+            .boxes
+            .iter()
+            .map(|box_| {
+                #[cfg(test)]
+                crate::layout::test_support::IFC_CANDIDATE_BOX_MEMBERSHIP_STEPS
+                    .with(|steps| steps.set(steps.get() + 1));
+                box_.node
+            })
+            .collect::<HashSet<_>>();
         let mut stack = doc.nodes[idx].children.clone();
         while let Some(id) = stack.pop() {
-            if projected.boxes.iter().any(|b| b.node == id) {
+            #[cfg(test)]
+            crate::layout::test_support::IFC_CANDIDATE_BOX_MEMBERSHIP_STEPS
+                .with(|steps| steps.set(steps.get() + 1));
+            if projected_box_nodes.contains(&id) {
                 continue;
             }
             taken[id] = true;
@@ -747,12 +761,24 @@ fn write_roots(doc: &mut Document, built: Vec<(usize, IfcRoot)>) {
     for (idx, paragraph) in built {
         // Boxes are laid out and painted as nodes of their own, so neither
         // they nor their content belong to the paragraph's subtree.
-        let boxes: Vec<usize> = paragraph.boxes.iter().map(|b| b.node).collect();
+        let boxes = paragraph
+            .boxes
+            .iter()
+            .map(|box_| {
+                #[cfg(test)]
+                crate::layout::test_support::IFC_ROOT_BOX_MEMBERSHIP_STEPS
+                    .with(|steps| steps.set(steps.get() + 1));
+                box_.node
+            })
+            .collect::<HashSet<_>>();
         let root = doc.table_layout_node_mut(idx);
         root.flags.insert(NodeFlags::IS_IFC_ROOT);
         root.ifc = Some(Box::new(paragraph));
         let mut stack = root.children.clone();
         while let Some(id) = stack.pop() {
+            #[cfg(test)]
+            crate::layout::test_support::IFC_ROOT_BOX_MEMBERSHIP_STEPS
+                .with(|steps| steps.set(steps.get() + 1));
             if boxes.contains(&id) {
                 continue;
             }
