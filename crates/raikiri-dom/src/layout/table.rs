@@ -2699,6 +2699,9 @@ fn resolve_length(lp: taffy::style::LengthPercentage, basis: Option<f32>) -> f32
     match raw.tag() {
         x if x == CompactLength::LENGTH_TAG => raw.value(),
         x if x == CompactLength::PERCENT_TAG => basis.map(|b| b * raw.value()).unwrap_or(0.0),
+        _ if raw.is_calc() => basis
+            .map(|b| crate::taffy_impl::resolve_calc(raw.calc_value(), b))
+            .unwrap_or(0.0),
         _ => 0.0,
     }
 }

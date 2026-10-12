@@ -1580,9 +1580,12 @@ impl Document {
     /// padding or border that depends on its percentage basis.
     fn has_percent_vertical_edge_child(&self, idx: usize) -> bool {
         use taffy::ResolveOrZero;
+        // A `calc()` edge always carries a percentage term (one without
+        // folds to a length) and may clamp to zero at small probe bases.
         let depends_on_basis = |edge: taffy::LengthPercentage| {
-            edge.resolve_or_zero(Some(0.0), resolve_calc)
-                != edge.resolve_or_zero(Some(1.0), resolve_calc)
+            edge.into_raw().is_calc()
+                || edge.resolve_or_zero(Some(0.0), resolve_calc)
+                    != edge.resolve_or_zero(Some(1.0), resolve_calc)
         };
         TaffyChildIter::new(self, NodeId::from(idx)).any(|child| {
             let Some(node) = self.nodes.get(usize::from(child)) else {
