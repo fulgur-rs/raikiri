@@ -242,8 +242,8 @@ fn context_canvas(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsRes
     wrap(context, canvas).map(JsValue::from)
 }
 
-/// `ctx.fillStyle` getter: the last successfully assigned serialization, or
-/// `"#000000"` per spec default.
+/// `ctx.fillStyle` getter: the serialization of the last successfully
+/// assigned color, or `"#000000"` per spec default.
 fn fill_style(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let canvas = with_canvas_context(this, context)?;
     let style = with_state(context, |s| {
@@ -260,18 +260,16 @@ fn fill_style(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<
 fn set_fill_style(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let canvas = with_canvas_context(this, context)?;
     let value = dom_string(args, 0, context)?;
-    // `currentcolor` reads back as the color it resolved to, since it no
-    // longer follows the element's `color` afterwards.
-    let (value, rgba) = match parse_fill_color(&value) {
-        Some(FillColor::Rgba(rgba)) => (value, rgba),
-        Some(FillColor::CurrentColor) => {
-            let rgba = canvas_current_color(context, canvas)?;
-            (serialize_canvas_color(rgba), rgba)
-        }
+    let rgba = match parse_fill_color(&value) {
+        Some(FillColor::Rgba(rgba)) => rgba,
+        Some(FillColor::CurrentColor) => canvas_current_color(context, canvas)?,
         None => return Ok(JsValue::undefined()),
     };
+    // The getter returns the parsed color's serialization, not the text
+    // that was assigned.
     with_state(context, |s| {
-        s.canvas_fill_styles.insert(canvas, (value, rgba));
+        s.canvas_fill_styles
+            .insert(canvas, (serialize_canvas_color(rgba), rgba));
     })?;
     Ok(JsValue::undefined())
 }

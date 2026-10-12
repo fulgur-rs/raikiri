@@ -142,12 +142,12 @@ fn fill_style_parses_named_hex_and_rgb_and_ignores_invalid() {
     ok(
         &mut rt,
         "var c = document.createElement('canvas'); var ctx = c.getContext('2d'); \
-         ctx.fillStyle = 'blue'; ctx.fillStyle === 'blue'",
+         ctx.fillStyle = 'blue'; ctx.fillStyle === '#0000ff'",
     );
     ok(
         &mut rt,
         "var c = document.createElement('canvas'); var ctx = c.getContext('2d'); \
-         ctx.fillStyle = 'blue'; ctx.fillStyle = 'not-a-color'; ctx.fillStyle === 'blue'",
+         ctx.fillStyle = 'blue'; ctx.fillStyle = 'not-a-color'; ctx.fillStyle === '#0000ff'",
     );
     ok(
         &mut rt,
@@ -157,7 +157,7 @@ fn fill_style_parses_named_hex_and_rgb_and_ignores_invalid() {
     ok(
         &mut rt,
         "var c = document.createElement('canvas'); var ctx = c.getContext('2d'); \
-         ctx.fillStyle = 'rgb(0, 128, 0)'; ctx.fillStyle === 'rgb(0, 128, 0)'",
+         ctx.fillStyle = 'rgb(0, 128, 0)'; ctx.fillStyle === '#008000'",
     );
 }
 
@@ -260,15 +260,15 @@ fn paint_canvases_helper_sequence_matches_wpt() {
 fn fill_style_accepts_every_supported_color_shape() {
     let mut rt = rt();
     for (input, expected) in [
-        ("transparent", "transparent"),
-        ("#f00", "#f00"),
-        ("#f008", "#f008"),
+        ("transparent", "rgba(0, 0, 0, 0)"),
+        ("#f00", "#ff0000"),
+        ("#f008", "rgba(255, 0, 0, 0.533)"),
         ("#ff0000", "#ff0000"),
-        ("#ff000080", "#ff000080"),
-        ("rgb(255, 0, 0)", "rgb(255, 0, 0)"),
+        ("#ff000080", "rgba(255, 0, 0, 0.5)"),
+        ("rgb(255, 0, 0)", "#ff0000"),
         ("rgba(255, 0, 0, 0.5)", "rgba(255, 0, 0, 0.5)"),
-        ("rgb(100%, 0%, 0%)", "rgb(100%, 0%, 0%)"),
-        ("rgb(255 0 0 / 50%)", "rgb(255 0 0 / 50%)"),
+        ("rgb(100%, 0%, 0%)", "#ff0000"),
+        ("rgb(255 0 0 / 50%)", "rgba(255, 0, 0, 0.5)"),
     ] {
         rt.evaluate(&format!(
             "var c = document.createElement('canvas'); var ctx = c.getContext('2d'); ctx.fillStyle = '{input}';"
@@ -280,17 +280,17 @@ fn fill_style_accepts_every_supported_color_shape() {
     ok(
         &mut rt,
         "var c = document.createElement('canvas'); var ctx = c.getContext('2d'); \
-         ctx.fillStyle = 'blue'; ctx.fillStyle = '#12'; ctx.fillStyle === 'blue' && \
-         (ctx.fillStyle = 'rgb(bogus)', ctx.fillStyle === 'blue')",
+         ctx.fillStyle = 'blue'; ctx.fillStyle = '#12'; ctx.fillStyle === '#0000ff' && \
+         (ctx.fillStyle = 'rgb(bogus)', ctx.fillStyle === '#0000ff')",
     );
     ok(
         &mut rt,
         "var c = document.createElement('canvas'); var ctx = c.getContext('2d'); \
-         ctx.fillStyle = 'blue'; ctx.fillStyle = 'rgb(inf%, 0%, 0%)'; ctx.fillStyle === 'blue' && \
-         (ctx.fillStyle = 'rgb(inf, 0, 0)', ctx.fillStyle === 'blue') && \
-         (ctx.fillStyle = 'rgb(255, 0 0)', ctx.fillStyle === 'blue') && \
-         (ctx.fillStyle = '#+12345', ctx.fillStyle === 'blue') && \
-         (ctx.fillStyle = 'var(--x)', ctx.fillStyle === 'blue')",
+         ctx.fillStyle = 'blue'; ctx.fillStyle = 'rgb(inf%, 0%, 0%)'; ctx.fillStyle === '#0000ff' && \
+         (ctx.fillStyle = 'rgb(inf, 0, 0)', ctx.fillStyle === '#0000ff') && \
+         (ctx.fillStyle = 'rgb(255, 0 0)', ctx.fillStyle === '#0000ff') && \
+         (ctx.fillStyle = '#+12345', ctx.fillStyle === '#0000ff') && \
+         (ctx.fillStyle = 'var(--x)', ctx.fillStyle === '#0000ff')",
     );
 }
 
@@ -351,18 +351,18 @@ fn translucent_fill_blends_in_js_bitmap() {
 fn fill_style_uses_the_css_color_parser() {
     let mut rt = rt();
     // CSS Color 4 shapes and comments the cascade also accepts.
-    for input in [
-        "rgba(255, 0, 0)",
-        "rgb(255,0,0,0.5)",
-        "rgb(255,0,0)/**/",
-        "rgb(255, /* c */ 0, 0)",
-        "hsl(0 100% 50%)",
+    for (input, expected) in [
+        ("rgba(255, 0, 0)", "#ff0000"),
+        ("rgb(255,0,0,0.5)", "rgba(255, 0, 0, 0.5)"),
+        ("rgb(255,0,0)/**/", "#ff0000"),
+        ("rgb(255, /* c */ 0, 0)", "#ff0000"),
+        ("hsl(0 100% 50%)", "#ff0000"),
     ] {
         ok(
             &mut rt,
             &format!(
                 "var c = document.createElement('canvas'); var ctx = c.getContext('2d'); \
-                 ctx.fillStyle = 'blue'; ctx.fillStyle = '{input}'; ctx.fillStyle === '{input}'"
+                 ctx.fillStyle = 'blue'; ctx.fillStyle = '{input}'; ctx.fillStyle === '{expected}'"
             ),
         );
     }
