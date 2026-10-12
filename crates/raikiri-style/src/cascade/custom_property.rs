@@ -1813,17 +1813,16 @@ pub(crate) fn resolve_custom_property_environment(
         .iter()
         .all(|(name, value)| inherited.local_binding_matches(name, value));
     if matches_inherited_layer {
-        ResolvedCustomProperties { // cov:ignore: no executable mapping for struct-literal boundary; fields are covered below
+        return ResolvedCustomProperties {
             effective: inherited.clone(),
             local: CustomPropertyEnvironment::from_local_only(entries),
-        } // cov:ignore: no executable mapping for expression-closing brace; fields above are covered
-    } else { // cov:ignore: no executable mapping for else boundary; both constructor bodies are covered
-        let effective = CustomPropertyEnvironment::from_local(inherited, entries);
-        ResolvedCustomProperties {
-            effective: Arc::clone(&effective),
-            local: effective,
-        }
-    } // cov:ignore: no executable mapping for branch-closing brace; overlay body is covered
+        }; // cov:ignore: expression-closing brace has no mapping; true fields are covered
+    } // cov:ignore: branch-closing brace has no mapping; false path continues below
+    let effective = CustomPropertyEnvironment::from_local(inherited, entries);
+    ResolvedCustomProperties {
+        effective: Arc::clone(&effective),
+        local: effective,
+    }
 }
 
 fn resolve_local_custom_properties(
