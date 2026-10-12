@@ -29,6 +29,7 @@ use crate::ruletree::{Origin, RuleTree, build_rule_tree};
 use crate::style_dom::StyleQuirksMode;
 use crate::test_dom::TestDoc;
 use smol_str::SmolStr;
+use std::sync::Arc;
 
 #[test]
 fn background_currentcolor_uses_the_elements_own_color() {
@@ -2033,6 +2034,21 @@ fn pseudo_element_entry_exists_with_empty_content_when_rule_sets_no_content() {
              empty (normal/none) representation, not panic or default to \
              something else"
     );
+}
+
+#[test]
+fn pseudo_element_content_none_remains_in_a_matched_entry() {
+    let mut doc = TestDoc::new();
+    let style = doc.push_element(0, "style", None);
+    doc.push_text(style, "p::before { content: none }");
+    let p = doc.push_element(0, "p", None);
+
+    let result = cascade(&doc, &build_rule_tree(&doc)).expect("cascade Ok");
+    let before = result
+        .pseudo
+        .get(&(StyleNodeId(p as u64), PseudoElem::Before))
+        .expect("matched ::before keeps an entry when content is none");
+    assert_eq!(*before.content, vec![ContentComponent::None]);
 }
 
 #[test]
@@ -9571,7 +9587,7 @@ struct ComparedWalkOutputs {
     computed: Vec<ComputedValues>,
     authored_writing_modes: Vec<Option<WritingMode>>,
     page_values: Vec<PageValue>,
-    pseudo: Vec<((u64, PseudoElem), ComputedValues)>,
+    pseudo: Vec<((u64, PseudoElem), crate::PseudoValueArc<ComputedValues>)>,
     svg_properties: HashMap<StyleNodeId, Vec<SvgStyleProperty>>,
 }
 
@@ -9728,6 +9744,115 @@ fn sibling_sharing_matches_the_unshared_walk() {
             "{quirks:?}: the repeated structure shared nothing"
         );
     }
+}
+
+#[test]
+fn sibling_sharing_reuses_pseudo_values() {
+    let mut doc = TestDoc::new();
+    let style = doc.push_element(0, "style", None);
+    doc.push_text(style, "p::before { content: 'x' }");
+    let parent = doc.push_element(0, "div", None);
+    let first = doc.push_element(parent, "p", None);
+    let same = doc.push_element(parent, "p", None);
+    let different = doc.push_element(parent, "p", Some("color: red"));
+    let tree = build_rule_tree(&doc);
+
+    let outputs = walk(
+        &doc,
+        &tree,
+        &MediaContext::default(),
+        WalkOptions::default(),
+    )
+    .expect("the walk succeeds");
+    assert!(
+        outputs.shared_nodes > 0,
+        "the identical sibling inputs share"
+    );
+
+    let first_before = &outputs.pseudo[&(StyleNodeId(first as u64), PseudoElem::Before)];
+    let same_before = &outputs.pseudo[&(StyleNodeId(same as u64), PseudoElem::Before)];
+    let different_before = &outputs.pseudo[&(StyleNodeId(different as u64), PseudoElem::Before)];
+    assert!(
+        std::ptr::eq::<ComputedValues>(first_before.as_ref(), same_before.as_ref()),
+        "identical sibling pseudo outputs should share their computed value"
+    );
+    assert_eq!(first_before.content, same_before.content);
+    assert_ne!(first_before.color, different_before.color);
+    assert!(
+        !std::ptr::eq::<ComputedValues>(first_before.as_ref(), different_before.as_ref()),
+        "different originating-element values should not share the pseudo value"
+    );
+}
+
+#[test]
+fn output_budget_charges_full_value_for_each_pseudo_entry() {
+    let mut doc = TestDoc::new();
+    let style = doc.push_element(0, "style", None);
+    doc.push_text(style, "p::before { content: 'x' }");
+    let parent = doc.push_element(0, "div", None);
+    let first = doc.push_element(parent, "p", None);
+    let second = doc.push_element(parent, "p", None);
+    let tree = build_rule_tree(&doc);
+    let added_output_bytes = |sibling_sharing| {
+        let options = WalkOptions {
+            sibling_sharing,
+            ..WalkOptions::default()
+        };
+        let without_pseudo = walk(&doc, &RuleTree::empty(), &MediaContext::default(), options)
+            .expect("the walk without pseudo rules succeeds");
+        let with_pseudo = walk(&doc, &tree, &MediaContext::default(), options)
+            .expect("the walk with pseudo rules succeeds");
+        assert_eq!(with_pseudo.pseudo.len(), 2);
+        for id in [first, second] {
+            assert!(
+                with_pseudo
+                    .pseudo
+                    .contains_key(&(StyleNodeId(id as u64), PseudoElem::Before,))
+            );
+        }
+        if sibling_sharing {
+            assert!(with_pseudo.shared_nodes > 0);
+            assert!(crate::PseudoValueArc::ptr_eq(
+                &with_pseudo.pseudo[&(StyleNodeId(first as u64), PseudoElem::Before)],
+                &with_pseudo.pseudo[&(StyleNodeId(second as u64), PseudoElem::Before)]
+            ));
+        }
+
+        let legacy_charge = with_pseudo
+            .pseudo
+            .iter()
+            .fold(0_u64, |total, ((id, _), values)| {
+                total
+                    .saturating_add(crate::cascade::limits::bytes_of::<(
+                        (StyleNodeId, PseudoElem),
+                        ComputedValues,
+                    )>(1))
+                    .saturating_add(crate::cascade::value_heap::own_heap_bytes(
+                        values.as_ref(),
+                        &with_pseudo.computed[id.0 as usize],
+                    ))
+            });
+        let added = with_pseudo
+            .counts
+            .output_bytes
+            .saturating_sub(without_pseudo.counts.output_bytes);
+        assert_eq!(added, legacy_charge);
+        (added, legacy_charge)
+    };
+
+    assert_eq!(added_output_bytes(false), added_output_bytes(true));
+}
+
+#[test]
+fn pseudo_value_allocation_failure_is_resource_exhausted() {
+    let error = try_pseudo_arc_with(17_u8, |_| Err(()))
+        .expect_err("a refused pseudo allocation is a cascade error");
+
+    assert!(matches!(
+        error,
+        crate::CascadeError::ResourceExhausted { bytes }
+            if bytes == pseudo_arc_allocation_bytes::<u8>()
+    ));
 }
 
 #[test]

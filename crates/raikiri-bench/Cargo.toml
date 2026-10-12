@@ -26,6 +26,7 @@ criterion = { workspace = true }
 # document and cascade it directly, without layout or painting.
 raikiri-html = { workspace = true }
 raikiri-style = { workspace = true }
+triomphe = "0.1.16"
 
 [[bench]]
 name = "fulgur_baseline"
@@ -37,6 +38,10 @@ harness = false
 
 [[bench]]
 name = "streaming_memory"
+harness = false
+
+[[bench]]
+name = "pseudo_output_sharing"
 harness = false
 
 [lints]

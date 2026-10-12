@@ -2585,6 +2585,7 @@ dependencies = [
  "raikiri",
  "raikiri-html",
  "raikiri-style",
+ "triomphe",
 ]
 
 [[package]]
@@ -2730,6 +2731,7 @@ dependencies = [
  "rustc-hash",
  "selectors",
  "smol_str",
+ "triomphe",
 ]
 
 [[package]]
@@ -3841,6 +3843,16 @@ name = "toml_writer"
 version = "1.1.1+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "756daf9b1013ebe47a8776667b466417e2d4c5679d441c26230efd9ef78692db"
+
+[[package]]
+name = "triomphe"
+version = "0.1.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d15f4f5898bcfc5d8a8e45ed30b2f108d710c1a2e5489dbf80e078f707181bc"
+dependencies = [
+ "serde",
+ "stable_deref_trait",
+]
 
 [[package]]
 name = "typenum"

@@ -2945,7 +2945,7 @@ impl Document {
                     raikiri_style::StyleNodeId::new(element as u64),
                     raikiri_style::PseudoElem::Marker,
                 ))
-                .unwrap_or(cv)
+                .map_or(cv, |style| style.as_ref())
                 .font_size
                 .0;
             let size = marker_image_size(intrinsic, em);

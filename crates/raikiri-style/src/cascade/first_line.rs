@@ -227,7 +227,7 @@ pub(crate) fn cascade_with_first_line_within<D: StyleDom>(
     };
     output.add(bytes_of::<Option<ComputedValues>>(dom.node_count()))?;
     let mut computed = try_filled(dom.node_count(), None)?;
-    computed[root.0 as usize] = Some(pseudo.clone());
+    computed[root.0 as usize] = Some(pseudo.as_ref().clone());
     let mut stack: Vec<_> = dom.child_ids(root).map(|child| (child, root)).collect();
     let mut winners = Vec::new();
     while let Some((id, parent_id)) = stack.pop() {

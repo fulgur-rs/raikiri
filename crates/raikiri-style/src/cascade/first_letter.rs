@@ -87,6 +87,7 @@ impl CascadeResult {
         let mut computed = self
             .pseudo
             .get(&(line_origin, crate::PseudoElem::FirstLine))?
+            .as_ref()
             .clone();
         computed.custom_properties = self.computed[line_origin.0 as usize]
             .custom_properties
@@ -137,7 +138,7 @@ impl CascadeResult {
         let ordinary = pseudo
             .filter(|&pseudo| pseudo != crate::PseudoElem::FirstLine)
             .and_then(|pseudo| self.pseudo.get(&(id, pseudo)))
-            .unwrap_or(&self.computed[id.0 as usize]);
+            .map_or(&self.computed[id.0 as usize], |style| style.as_ref());
         let mut specified = SpecifiedValues::inherit_from(inherited);
         let values = self
             .typographic_inheritance

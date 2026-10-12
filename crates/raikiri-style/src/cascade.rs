@@ -31,7 +31,6 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::PseudoElem;
 use crate::computed::ComputedValues;
 use crate::counter_style::CounterStyleRegistry;
 use crate::error::CascadeError;
@@ -42,6 +41,7 @@ use crate::page::{
 use crate::property::{CssColor, PropertyKey, WritingMode};
 use crate::ruletree::RuleTree;
 use crate::style_dom::{StyleDom, StyleNode, StyleNodeId, StyleNodeKind};
+use crate::{PseudoElem, PseudoValueArc};
 
 static NEXT_CASCADE_GENERATION: AtomicU64 = AtomicU64::new(1);
 
@@ -198,7 +198,12 @@ pub struct CascadeResult {
     /// accepts font, background, color, opacity, text decoration and
     /// supported inline typesetting/layout properties, while excluding
     /// box geometry, writing-mode, direction and text-orientation.
-    pub pseudo: HashMap<(StyleNodeId, PseudoElem), ComputedValues>,
+    ///
+    /// Values are held through [`PseudoValueArc`]. Identical complete sibling inputs may
+    /// share the same allocation. Cloning a map value clones the handle. Clone the
+    /// dereferenced [`ComputedValues`] for independent ownership, or use
+    /// [`PseudoValueArc::make_mut`] for copy-on-write mutation.
+    pub pseudo: HashMap<(StyleNodeId, PseudoElem), PseudoValueArc<ComputedValues>>,
 }
 
 impl CascadeResult {

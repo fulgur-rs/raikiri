@@ -103,7 +103,7 @@ fn inside_image_marker_scales_raster_pixels_to_css_dimensions() {
             raikiri_style::StyleNodeId::new(root as u64),
             raikiri_style::PseudoElem::Marker,
         ),
-        hidden,
+        raikiri_style::PseudoValueArc::new(hidden),
     );
     let mut invisible = Scene::new();
     draw_ifc_lines(
