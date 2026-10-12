@@ -2283,6 +2283,32 @@ fn print_declaration_reads_the_declaration_list_grammar() {
 }
 
 #[test]
+fn page_margins_reject_unitless_nonzero_lengths() {
+    assert_eq!(parse_page_margin("5", 300.0), None);
+    assert_eq!(parse_page_margin("0", 300.0), Some(0.0));
+    assert_eq!(parse_page_margin("5px", 300.0), Some(5.0));
+}
+
+#[test]
+fn page_rules_with_invalid_selectors_are_dropped() {
+    assert_eq!(
+        page_block_named("@page foo:bogus{margin:5px}@page foo{margin:10px}", "foo"),
+        Some("margin:10px")
+    );
+    assert_eq!(
+        page_block_named(
+            "@page foo:nth(1){margin:5px}@page foo:first{margin:10px}",
+            "foo"
+        ),
+        Some("margin:10px")
+    );
+    assert_eq!(
+        page_block("@page :bogus{size:1px}@page{size:2px}"),
+        Some("size:2px")
+    );
+}
+
+#[test]
 fn page_blocks_skip_comments_strings_and_escapes() {
     assert_eq!(
         page_block("/* @page{size:1px} */@page{size:2px}"),

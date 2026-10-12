@@ -909,6 +909,15 @@ fn parse_print_length(token: &str, percent_basis: Option<f32>) -> Option<f32> {
     px.is_finite().then_some(px)
 }
 
+/// A page margin length; a number without a unit is a length only when it
+/// is zero.
+fn parse_page_margin(token: &str, page_width: f32) -> Option<f32> {
+    if token.trim().parse::<f32>().is_ok_and(|value| value != 0.0) {
+        return None;
+    }
+    parse_print_length(token, Some(page_width))
+}
+
 /// A `size` value as the harness reads it.
 struct PageSize {
     /// The width and height it names, if any.
@@ -1054,33 +1063,48 @@ fn page_rules(input: &str) -> Vec<PageRule<'_>> {
         rules: &mut Vec<PageRule<'i>>,
         depth: usize,
     ) -> Result<(), cssparser::ParseError<'i, ()>> {
-        // `None` outside an `@page` prelude, else the names seen so far.
-        let mut page: Option<Vec<String>> = None;
+        // `None` outside an `@page` prelude, else the names seen so far and
+        // whether the selector is still valid.
+        let mut page: Option<(Vec<String>, bool)> = None;
         let mut after_colon = false;
         while let Ok(token) = input.next().cloned() {
             match &token {
                 cssparser::Token::AtKeyword(name) => {
-                    page = name.eq_ignore_ascii_case("page").then(Vec::new);
+                    page = name
+                        .eq_ignore_ascii_case("page")
+                        .then(|| (Vec::new(), true));
                 }
                 cssparser::Token::Semicolon => page = None,
-                cssparser::Token::Ident(name) if !after_colon => {
-                    if let Some(names) = &mut page {
-                        names.push(name.to_string());
-                    }
-                }
                 cssparser::Token::CurlyBracketBlock => {
-                    if let Some(names) = page.take() {
+                    if let Some((names, valid)) = page.take() {
                         let block = input.parse_nested_block(|input| {
                             let start = input.position();
                             while input.next().is_ok() {}
                             Ok::<_, cssparser::ParseError<'i, ()>>(input.slice_from(start))
                         })?;
-                        rules.push(PageRule { names, block });
+                        // As in the cascade, a rule with an invalid selector
+                        // is dropped.
+                        if valid {
+                            rules.push(PageRule { names, block });
+                        }
                     } else if depth < 256 {
                         input.parse_nested_block(|input| collect(input, rules, depth + 1))?;
                     }
                 }
-                _ => {}
+                _ => {
+                    if let Some((names, valid)) = &mut page {
+                        match &token {
+                            cssparser::Token::Ident(name) if after_colon => {
+                                *valid &= ["first", "left", "right", "blank"]
+                                    .iter()
+                                    .any(|class| name.eq_ignore_ascii_case(class));
+                            }
+                            cssparser::Token::Ident(name) => names.push(name.to_string()),
+                            cssparser::Token::Colon | cssparser::Token::Comma => {}
+                            _ => *valid = false,
+                        }
+                    }
+                }
             }
             after_colon = matches!(token, cssparser::Token::Colon);
         }
@@ -1645,7 +1669,7 @@ fn authored_page_viewport_for_name(
     if let Some(values) = print_declaration(block, "margin", |value| {
         let values = value
             .split_whitespace()
-            .map(|token| parse_print_length(token, Some(page_width)))
+            .map(|token| parse_page_margin(token, page_width))
             .collect::<Option<Vec<_>>>()?;
         match values.as_slice() {
             [one] => Some([*one, *one, *one, *one]),
@@ -1663,9 +1687,9 @@ fn authored_page_viewport_for_name(
         ("margin-bottom", 2),
         ("margin-left", 3),
     ] {
-        if let Some(value) = print_declaration(block, name, |value| {
-            parse_print_length(value, Some(page_width))
-        }) {
+        if let Some(value) =
+            print_declaration(block, name, |value| parse_page_margin(value, page_width))
+        {
             margins[index] = value;
         }
     }
