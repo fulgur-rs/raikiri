@@ -382,10 +382,9 @@ enum Site {
     /// The `style` attribute of the start tag with this index in
     /// [`Scan::tags`]. The CSS text is the decoded attribute value.
     Attribute(usize),
-    /// The contents of a style element at this byte range of the document.
-    /// `raw` means the CSS text is the source text itself; otherwise it is
-    /// the element's decoded child text.
-    Text { content: Range<usize>, raw: bool },
+    /// The style sheet of the style element whose start tag has this index
+    /// in [`Scan::tags`], from [`Tag::style_sheet`].
+    Sheet(usize),
 }
 
 /// Collect declarations from style element contents and `style` attributes.
@@ -419,16 +418,13 @@ fn declarations(html: &str, scan: &Scan, include_inert: bool) -> Vec<Declaration
                     }),
             );
         }
-        if let Some((content, text, raw)) = tag.style_sheet(html) {
+        if let Some((_, text, _)) = tag.style_sheet(html) {
             out.extend(
                 css_declarations(text, false)
                     .into_iter()
                     .map(|decl| Declaration {
                         key: decl.key,
-                        site: Site::Text {
-                            content: content.clone(),
-                            raw,
-                        },
+                        site: Site::Sheet(index),
                         range: decl.range,
                     }),
             );
@@ -468,14 +464,11 @@ pub fn remove_declarations(html: &str, remove: impl Fn(&str) -> bool) -> (String
                 let style = tag.applied_attribute("style").unwrap_or_default();
                 (tag.range.clone(), tag.serialize(&cut(style, &ranges)))
             }
-            Site::Text { content, raw } => {
-                let tag = scan
-                    .tags
-                    .iter()
-                    .find(|tag| tag.content.as_ref() == Some(&content));
-                let text = tag
-                    .and_then(|tag| tag.style_sheet(html))
-                    .map_or("", |(_, text, _)| text);
+            Site::Sheet(index) => {
+                let (content, text, raw) =
+                    scan.tags[index]
+                        .style_sheet(html)
+                        .unwrap_or((0..0, "", true));
                 let text = cut(text, &ranges);
                 let text = if raw { text } else { escape(&text, false) };
                 (content, text)
@@ -486,6 +479,10 @@ pub fn remove_declarations(html: &str, remove: impl Fn(&str) -> bool) -> (String
     let mut out = String::with_capacity(html.len());
     let mut last = 0;
     for (range, replacement) in edits {
+        // A rewritten SVG style sheet replaces any start tags inside it.
+        if range.start < last {
+            continue;
+        }
         out.push_str(&html[last..range.start]);
         out.push_str(&replacement);
         last = range.end;
@@ -578,14 +575,27 @@ impl Tag {
     }
 
     /// The contents of a style element that applies style sheets (HTML or
-    /// SVG): the content range, the CSS text and whether that text is the
-    /// source itself. HTML style contents are raw text; SVG style contents
-    /// are parsed as markup, so their CSS text is the decoded child text.
+    /// SVG): the range they replace when edited, the CSS text and whether
+    /// that text is the source itself. HTML style contents are raw text, and
+    /// like the renderer, an XHTML `<![CDATA[...]]>` wrapper around all of
+    /// them is dropped. SVG style contents are parsed as markup, so their
+    /// CSS text is the decoded child text.
     fn style_sheet<'a>(&'a self, html: &'a str) -> Option<(Range<usize>, &'a str, bool)> {
         let content = self.content.clone()?;
         let source = &html[content.clone()];
         if self.namespace == ns!(html) {
-            Some((content, source, true))
+            let start = content.start + source.len() - source.trim_start().len();
+            let inner = source
+                .trim()
+                .strip_prefix("<![CDATA[")
+                .and_then(|inner| inner.strip_suffix("]]>"));
+            Some(match inner {
+                Some(inner) => {
+                    let start = start + "<![CDATA[".len();
+                    (start..start + inner.len(), inner, true)
+                }
+                None => (content, source, true),
+            })
         } else {
             let raw = source == self.text;
             Some((content, &self.text, raw))
@@ -730,36 +740,46 @@ impl TokenSink for Recorder<'_> {
                 self.previous_end.set(end);
             }
         }
-        let end_tag = matches!(&token, HtmlToken::TagToken(tag) if tag.kind == TagKind::EndTag);
+        let end_tag = match &token {
+            HtmlToken::TagToken(tag) if tag.kind == TagKind::EndTag => Some(tag.name.to_string()),
+            _ => None,
+        };
         let eof = matches!(token, HtmlToken::EOFToken);
         let result = self.builder.process_token(token, line_number);
         let pending = dom.start_tag.borrow_mut().take();
         // The tree builder does not report every element it pops, so track
-        // the open style element from the tokens: an end tag that does not
-        // close an element inside it, a start tag outside it or the end of
-        // the input closes it.
-        if let Some((style, depth)) = dom.open_style.get() {
-            let inside = pending
-                .as_ref()
-                .and_then(|p| p.element)
-                .filter(|&element| element != style && dom.is_inside(element, style));
-            let next = if eof {
-                None
-            } else if end_tag {
-                depth.checked_sub(1).map(|depth| (style, depth))
-            } else if let Some(pending) = &pending {
-                match inside {
-                    Some(_) if pending.self_closing => Some((style, depth)),
-                    Some(_) => Some((style, depth + 1)),
-                    None => None,
+        // the open style element and the elements open inside it from the
+        // tokens. The end of the input, a start tag whose element lands
+        // outside it, and an end tag for it, for one of its ancestors or that
+        // breaks out of foreign content close it. Other end tags close an
+        // element inside it or are ignored.
+        let open = dom.open_style.take();
+        if let Some((style, mut inner)) = open {
+            let still_open = if eof {
+                false
+            } else if let Some(name) = &end_tag {
+                if let Some(at) = inner.iter().rposition(|open| open == name) {
+                    inner.truncate(at);
+                    true
+                } else {
+                    !dom.closes(style, name)
                 }
+            } else if let Some(pending) = &pending {
+                let inside = pending
+                    .element
+                    .is_some_and(|element| element != style && dom.is_inside(element, style));
+                if inside && !pending.self_closing {
+                    inner.push(pending.name.clone());
+                }
+                inside
             } else {
-                Some((style, depth))
+                true
             };
-            if next.is_none() {
+            if still_open {
+                dom.open_style.replace(Some((style, inner)));
+            } else {
                 dom.close(style);
             }
-            dom.open_style.set(next);
         }
         if let Some(pending) = pending {
             dom.record(pending);
@@ -823,6 +843,8 @@ struct Node {
     content: Option<Range<usize>>,
     /// For a style element, the text appended to it.
     text: String,
+    /// Local name of an element.
+    name: String,
 }
 
 /// A minimal tree sink that keeps what the scan needs: element parents,
@@ -835,8 +857,8 @@ struct Dom {
     token: Cell<(usize, usize)>,
     /// The start tag token the tree builder is processing.
     start_tag: RefCell<Option<PendingTag>>,
-    /// The open style element and the number of open elements inside it.
-    open_style: Cell<Option<(usize, usize)>>,
+    /// The open style element and the names of the elements open inside it.
+    open_style: RefCell<Option<(usize, Vec<String>)>>,
 }
 
 impl Dom {
@@ -851,6 +873,7 @@ impl Dom {
             tag: None,
             content: None,
             text: String::new(),
+            name: name.local.to_string(),
         });
         Handle(Rc::new((nodes.len() - 1, name)))
     }
@@ -875,7 +898,7 @@ impl Dom {
                 if pending.self_closing && pending.namespace != ns!(html) {
                     content.end = content.start;
                 } else {
-                    self.open_style.set(Some((id, 0)));
+                    self.open_style.replace(Some((id, Vec::new())));
                 }
             }
         }
@@ -905,6 +928,24 @@ impl Dom {
         let mut at = nodes[node].parent;
         while let Some(current) = at {
             if current == ancestor {
+                return true;
+            }
+            at = nodes[current].parent;
+        }
+        false
+    }
+
+    /// Whether an end tag named `name` closes the open `style` element: it
+    /// names the element or one of its ancestors, or it is `</br>` or `</p>`,
+    /// which break out of foreign content.
+    fn closes(&self, style: usize, name: &str) -> bool {
+        if matches!(name, "style" | "br" | "p") {
+            return true;
+        }
+        let nodes = self.nodes.borrow();
+        let mut at = nodes[style].parent;
+        while let Some(current) = at {
+            if nodes[current].name.eq_ignore_ascii_case(name) {
                 return true;
             }
             at = nodes[current].parent;

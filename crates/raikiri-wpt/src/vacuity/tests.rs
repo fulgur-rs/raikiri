@@ -756,3 +756,36 @@ fn style_attributes_hold_no_at_rules() {
         ["b:2", "c:3"]
     );
 }
+
+#[test]
+fn ignored_end_tags_leave_svg_style_open() {
+    let html = "<svg><style>p{color:red}</bogus>q{width:1px}</style></svg><i style='a: 1'>";
+    assert_eq!(keys(html), ["color:red", "width:1px", "a:1"]);
+    let (out, removed) = remove_declarations(html, |key| key == "width:1px");
+    assert_eq!(removed, 1);
+    assert_eq!(
+        out,
+        "<svg><style>p{color:red}q{}</style></svg><i style='a: 1'>"
+    );
+    // An end tag for an ancestor closes it.
+    let html = "<svg><g><style>p{color:red}</g><i style='a: 1'>";
+    let (out, _) = remove_declarations(html, |key| key == "color:red");
+    assert_eq!(out, "<svg><g><style>p{}</g><i style='a: 1'>");
+}
+
+#[test]
+fn rewritten_svg_style_text_swallows_nested_edits() {
+    let html = "<svg><style>p{color:red}<g style='color:red'></g>&amp;</style></svg>";
+    let (out, removed) = remove_declarations(html, |key| key == "color:red");
+    assert_eq!(removed, 2);
+    assert_eq!(out, "<svg><style>p{}&amp;</style></svg>");
+}
+
+#[test]
+fn xhtml_cdata_wrappers_around_style_sheets_are_dropped() {
+    let html = "<style>\n<![CDATA[\np { color: red; clear: both }\n]]>\n</style>";
+    assert_eq!(keys(html), ["color:red", "clear:both"]);
+    let (out, removed) = remove_declarations(html, |key| key == "color:red");
+    assert_eq!(removed, 1);
+    assert_eq!(out, "<style>\n<![CDATA[\np {  clear: both }\n]]>\n</style>");
+}
