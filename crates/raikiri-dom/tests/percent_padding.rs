@@ -126,3 +126,18 @@ fn vertical_percent_padding_of_an_abspos_box_uses_its_containing_block_width() {
     assert_close(height, 10.0 + 52.0, "border-box height", &html);
     assert_close(cy - y, 26.0, "content top inset", &html);
 }
+
+#[test]
+fn vertical_percent_padding_inside_an_auto_width_float_keeps_its_inset() {
+    // The float's width is not known when its children are listed, so the
+    // child's vertical padding is left to taffy, which resolves it against the
+    // float's 100px height here.
+    let html = format!(
+        "<!DOCTYPE html><style>{PAGE} div {{ float: left; height: 100px }}\
+         p {{ margin: 0; width: 100px; height: 10px }}</style>\
+         <div><p id=p style=\"padding: 10% 0\"></p></div>"
+    );
+    let ((_, y, _, height), (_, cy, _, _)) = boxes(&html, "p");
+    assert_close(cy - y, 10.0, "content top inset", &html);
+    assert_close(height, 10.0 + 20.0, "border-box height", &html);
+}

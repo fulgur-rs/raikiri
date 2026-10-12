@@ -1463,8 +1463,7 @@ impl Document {
     /// minus its padding, border and vertical scrollbar gutter. `None` when
     /// that width is not definite yet (while it is being measured).
     ///
-    /// Mirrors `compute_block_layout` and its `compute_inner` in
-    /// `taffy::compute::block`.
+    /// Mirrors [`taffy::compute_block_layout`] and its `compute_inner`.
     fn block_content_box_width(&self, idx: usize, inputs: &LayoutInput) -> Option<f32> {
         use taffy::{BoxSizing, MaybeMath, MaybeResolve, Overflow, ResolveOrZero, SizingMode};
 
@@ -1546,11 +1545,13 @@ pub struct BlockChildStyle<'a> {
 }
 
 impl<'a> BlockChildStyle<'a> {
-    fn new(style: &'a Style, percent_basis: Option<Option<f32>>) -> Self {
-        let resolve_vertical = |edges: taffy::Rect<taffy::LengthPercentage>, basis: Option<f32>| {
+    /// `percent_basis` is the container's content-box width, or `None` to
+    /// keep taffy's own resolution.
+    fn new(style: &'a Style, percent_basis: Option<f32>) -> Self {
+        let resolve_vertical = |edges: taffy::Rect<taffy::LengthPercentage>, basis: f32| {
             let resolve = |edge: taffy::LengthPercentage| {
                 use taffy::ResolveOrZero;
-                taffy::LengthPercentage::length(edge.resolve_or_zero(basis, resolve_calc))
+                taffy::LengthPercentage::length(edge.resolve_or_zero(Some(basis), resolve_calc))
             };
             taffy::Rect {
                 top: resolve(edges.top),
@@ -1659,7 +1660,10 @@ impl LayoutBlockContainer for Document {
     /// absolutely positioned box, against a different basis (the padding
     /// box of the containing block), so only in-flow children of the
     /// container on top of [`Document::block_item_percent_bases`] get their
-    /// vertical edges resolved here.
+    /// vertical edges resolved here. Neither do the children of a container
+    /// whose width is not known yet when taffy lists them (an auto-width
+    /// float, say): taffy sizes such a container from its contents only
+    /// afterwards, and a zero inset fixed now could not follow that width.
     fn get_block_child_style(&self, child_node_id: NodeId) -> Self::BlockItemStyle<'_> {
         let child = usize::from(child_node_id);
         let style = &self.nodes[child].style;
@@ -1670,7 +1674,7 @@ impl LayoutBlockContainer for Document {
                 style.position != TaffyPosition::Absolute
                     && self.taffy_parent_of(child) == Some(container)
             })
-            .map(|&(_, basis)| basis);
+            .and_then(|&(_, basis)| basis);
         BlockChildStyle::new(style, basis)
     }
 

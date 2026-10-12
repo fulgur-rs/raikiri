@@ -414,7 +414,7 @@ pub struct Document {
     pub(crate) vertical_oof_containing_blocks: Vec<(usize, f32)>,
     /// Block containers being laid out, each with the content-box width its
     /// children's percentage padding and borders resolve against; see
-    /// `taffy_impl::BlockChildStyle`.
+    /// [`crate::taffy_impl::BlockChildStyle`].
     pub(crate) block_item_percent_bases: Vec<(usize, Option<f32>)>,
     /// HTML5 quirks mode for this whole document. Default
     /// [`QuirksMode::NoQuirks`] (matching the type's own `#[default]`) for
