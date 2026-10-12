@@ -362,8 +362,8 @@ impl DocumentLayout {
         }
     }
 
-    /// In-document link destinations. Positions are in layout space until
-    /// paint-space positions are exposed.
+    /// In-document link destinations, at the positions where the built-in
+    /// painter draws them.
     pub fn anchors(&self) -> &AnchorIndex {
         &self.anchors
     }
