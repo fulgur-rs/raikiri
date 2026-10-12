@@ -315,24 +315,35 @@ impl Document {
     /// The boxes on projected page `page_index` that began on an earlier
     /// page, by node.
     pub fn crossing_boxes(&self, page_index: u32) -> Vec<CrossingBox> {
-        // Fragments are numbered in page order, so a box's first item on
-        // the page carries its count of earlier fragments.
-        let mut crossing: std::collections::BTreeMap<NodeId, CrossingBox> = Default::default();
+        // Fragments are numbered in page order, so a box's lowest-numbered
+        // fragment on the page carries its count of earlier fragments. A box
+        // that begins on the page, with several fragments there such as one
+        // per column, has its first fragment among them.
+        let mut lowest: std::collections::BTreeMap<NodeId, CrossingBox> = Default::default();
         let pages = self.page_projection.pages.iter();
         for item in pages
             .filter(|page| page.page_index == page_index)
             .flat_map(|page| &page.items)
-            .filter(|item| {
-                item.fragment_index > 0 && !item.is_repeat && !item.is_table_header_repeat
-            })
+            .filter(|item| !item.is_repeat && !item.is_table_header_repeat)
         {
-            crossing.entry(item.node_id).or_insert(CrossingBox {
+            let candidate = CrossingBox {
                 node: item.node_id,
                 earlier_fragments: item.fragment_index,
                 top: item.box_y,
-            });
+            };
+            lowest
+                .entry(item.node_id)
+                .and_modify(|current| {
+                    if candidate.earlier_fragments < current.earlier_fragments {
+                        *current = candidate;
+                    }
+                })
+                .or_insert(candidate);
         }
-        crossing.into_values().collect()
+        lowest
+            .into_values()
+            .filter(|crossing| crossing.earlier_fragments > 0)
+            .collect()
     }
 
     /// The display counters see for element `id` whose computed display is

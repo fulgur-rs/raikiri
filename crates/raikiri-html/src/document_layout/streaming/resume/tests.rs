@@ -485,3 +485,51 @@ fn events_of_elements_spanning_delivered_pages_arrive_once() {
     assert_eq!(distinct.len(), 3, "{seen:?}");
     assert!(summary.unplaced_events.is_empty());
 }
+
+#[test]
+fn a_box_that_begins_in_columns_on_a_page_does_not_cross_it() {
+    let mut words = String::new();
+    for word in 0..400 {
+        words.push_str(&format!("w{word} "));
+    }
+    let html = format!(
+        "<!doctype html><body><p>before</p>\
+         <div style='columns: 2; break-before: page'><p id=target>{words}</p></div></body>"
+    );
+    let resources = RenderResources::new();
+    let document = crate::parse_html_with_resources(html.as_bytes(), &resources).expect("parse");
+    let LayoutStatus::Completed(laid_out) = layout(
+        &document,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        LayoutOptions::new().resources(&resources),
+    )
+    .expect("layout") else {
+        panic!("aborted");
+    };
+    let dom = &document.uncascaded.dom;
+    let target = (0..dom.node_count())
+        .find(|&id| {
+            dom.get_node(id)
+                .and_then(|node| node.attribute("id"))
+                .is_some_and(|id| id == "target")
+        })
+        .expect("target");
+    let page = laid_out.page_at(1);
+    let pieces: Vec<u32> = page
+        .fragments()
+        .filter(|fragment| fragment.node().0 as usize == target)
+        .map(|fragment| fragment.fragment_index())
+        .collect();
+    assert!(
+        pieces.len() > 1,
+        "the paragraph fills both columns: {pieces:?}"
+    );
+    let (layout_document, _) = laid_out.out.layout_for_page(1);
+    assert!(
+        layout_document
+            .crossing_boxes(1)
+            .iter()
+            .all(|crossing| crossing.node.0 as usize != target)
+    );
+}
