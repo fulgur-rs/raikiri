@@ -3749,3 +3749,76 @@ fn border_top_and_bottom_expand_in_declaration_block_and_reset_omitted_parts() {
         ]
     );
 }
+
+/// Parse with the property grammar itself, past the deferral of math
+/// functions that `parse` applies.
+fn parse_grammar(css: &str, property: &str) -> Option<PropertyValue> {
+    let mut input = cssparser::ParserInput::new(css);
+    let mut parser = cssparser::Parser::new(&mut input);
+    let value = crate::property::parse::parse_property_grammar(property, &mut parser)?;
+    parser.expect_exhausted().ok()?;
+    Some(value)
+}
+
+#[test]
+fn padding_calc_folds_and_clamps_to_the_non_negative_range() {
+    let side = |css: &str| match parse_grammar(css, "padding-left") {
+        Some(PropertyValue::PaddingLeft(value)) => value,
+        other => panic!("{css}: {other:?}"),
+    };
+    assert_eq!(
+        side("calc(2px - 5px)"),
+        LengthPercentageOrCalc::Length(Length::Px(0.0))
+    );
+    assert_eq!(
+        side("calc(5% - 10%)"),
+        LengthPercentageOrCalc::Length(Length::Percent(0.0))
+    );
+    assert_eq!(
+        side("calc(10% - 5px)"),
+        LengthPercentageOrCalc::Calc(CalcLengthPercentage {
+            percent: 10.0,
+            px: -5.0,
+        })
+    );
+    assert!(matches!(
+        side("calc(10% + 1em)"),
+        LengthPercentageOrCalc::RelativeCalc(_)
+    ));
+}
+
+#[test]
+fn margin_calc_keeps_its_sign_and_folds_single_kinds() {
+    let side = |css: &str| match parse_grammar(css, "margin-left") {
+        Some(PropertyValue::MarginLeft(value)) => value,
+        other => panic!("{css}: {other:?}"),
+    };
+    assert_eq!(
+        side("calc(2px - 5px)"),
+        LengthOrAuto::Length(Length::Px(-3.0))
+    );
+    assert_eq!(
+        side("calc(5% + 10%)"),
+        LengthOrAuto::Length(Length::Percent(15.0))
+    );
+}
+
+#[test]
+fn padding_and_border_image_width_serialize_their_calc_sums() {
+    for (property, css, expected) in [
+        ("padding-left", "calc(10% + 5px)", "calc(10% + 5px)"),
+        ("padding", "calc(10% + 1em) 2px", "calc(10% + 1em) 2px"),
+        (
+            "border-image-width",
+            "calc(10% + 5px) 2",
+            "calc(10% + 5px) 2",
+        ),
+    ] {
+        let value = parse_grammar(css, property).unwrap_or_else(|| panic!("{css}"));
+        assert_eq!(
+            crate::property::serialize_value(&value).as_deref(),
+            Some(expected),
+            "{property}: {css}"
+        );
+    }
+}

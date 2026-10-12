@@ -379,11 +379,16 @@ pub enum ComputedLengthPercentageOrCalc {
 
 impl ComputedLengthPercentageOrCalc {
     /// The used value in px against the percentage `basis`.
+    ///
+    /// The properties that carry this type (`padding-*` and the length sides
+    /// of `border-image-width`) do not accept negative values, so a `calc()`
+    /// sum that resolves below zero clamps to zero (CSS Values 4 "Range
+    /// Checking", <https://www.w3.org/TR/css-values-4/#calc-range>).
     pub fn resolve(self, basis: f32) -> f32 {
         match self {
             Self::Px(px) => px,
             Self::Percent(percent) => basis * percent / 100.0,
-            Self::Calc(calc) => calc.px + basis * calc.percent / 100.0,
+            Self::Calc(calc) => (calc.px + basis * calc.percent / 100.0).max(0.0),
         }
     }
 }

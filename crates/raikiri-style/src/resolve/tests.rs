@@ -1982,3 +1982,94 @@ fn negative_relative_calc_sizes_clamp_to_zero_but_insets_keep_their_sign() {
         ComputedLengthPercentageOrAuto::Px(-4.0)
     );
 }
+
+#[test]
+fn non_negative_calc_resolution_clamps_and_keeps_percentages() {
+    let resolve = |value: LengthPercentageOrCalc, font_size: f32, line_height: Option<f32>| {
+        resolve_non_negative_length_percentage_or_calc(
+            value,
+            ComputedLength(font_size),
+            line_height.map(ComputedLength),
+            &CTX,
+        )
+    };
+    let em = RelativeCalcLengthPercentage::from_unit(1.0, "em").unwrap();
+    let percent = RelativeCalcLengthPercentage::from_unit(10.0, "%").unwrap();
+    // Font-relative terms fold to px and clamp at zero.
+    assert_eq!(
+        resolve(
+            LengthPercentageOrCalc::RelativeCalc(
+                em.add_scaled(
+                    RelativeCalcLengthPercentage::from_unit(30.0, "px").unwrap(),
+                    -1.0
+                )
+                .unwrap()
+            ),
+            20.0,
+            None,
+        ),
+        ComputedLengthPercentageOrCalc::Px(0.0)
+    );
+    // A term that resolves to zero leaves a plain percentage.
+    assert_eq!(
+        resolve(
+            LengthPercentageOrCalc::RelativeCalc(percent.add_scaled(em, 1.0).unwrap()),
+            0.0,
+            None,
+        ),
+        ComputedLengthPercentageOrCalc::Percent(10.0)
+    );
+    assert_eq!(
+        resolve(
+            LengthPercentageOrCalc::RelativeCalc(percent.add_scaled(em, 1.0).unwrap()),
+            5.0,
+            None,
+        ),
+        ComputedLengthPercentageOrCalc::Calc(CalcLengthPercentage {
+            percent: 10.0,
+            px: 5.0,
+        })
+    );
+    // An absolute calc without a percentage clamps; an `lh` term without a
+    // basis falls back to the initial zero.
+    assert_eq!(
+        resolve(
+            LengthPercentageOrCalc::Calc(CalcLengthPercentage {
+                percent: 0.0,
+                px: -5.0,
+            }),
+            16.0,
+            None,
+        ),
+        ComputedLengthPercentageOrCalc::Px(0.0)
+    );
+    assert_eq!(
+        resolve(
+            LengthPercentageOrCalc::RelativeCalc(relative_calc_plus_1px(1.0, "lh")),
+            16.0,
+            None,
+        ),
+        ComputedLengthPercentageOrCalc::Px(0.0)
+    );
+    // The computed value lifts back into the specified layer unchanged.
+    let calc = CalcLengthPercentage {
+        percent: 10.0,
+        px: 5.0,
+    };
+    assert_eq!(
+        lift_length_percentage_or_calc(ComputedLengthPercentageOrCalc::Calc(calc)),
+        LengthPercentageOrCalc::Calc(calc)
+    );
+    assert_eq!(
+        ComputedLengthPercentageOrCalc::Calc(calc).resolve(100.0),
+        15.0
+    );
+    assert_eq!(
+        ComputedLengthPercentageOrCalc::Calc(CalcLengthPercentage {
+            percent: 10.0,
+            px: -50.0,
+        })
+        .resolve(100.0),
+        0.0
+    );
+}

@@ -526,6 +526,28 @@ fn margin_box_text_runs_sit_inside_the_box() {
 }
 
 #[test]
+fn a_margin_box_padding_calc_resolves_against_its_width_basis() {
+    let origin = |padding: &str| {
+        let (doc, cascade) = page_cascade_fixture(&format!(
+            "@page {{ margin: 40px; \
+               @top-left {{ content: 'abc'; font-family: Ahem; font-size: 10px; \
+                           text-align: left; padding-left: {padding} }} }}"
+        ));
+        let boxes = layout_page(&doc, &cascade, small_page());
+        let [head] = boxes.as_slice() else {
+            panic!("one box: {boxes:?}");
+        };
+        head.text_runs()[0].origin.0
+    };
+    let none = origin("0px");
+    let em = origin("1em") - none;
+    let percent = origin("10%") - none;
+    assert!(em > 0.0 && percent > 0.0);
+    assert_eq!(origin("calc(10% + 1em)") - none, percent + em);
+    assert_eq!(origin("calc(10% + 10px)") - none, percent + 10.0);
+}
+
+#[test]
 fn vertical_margin_box_text_has_no_runs() {
     let (doc, cascade) = page_cascade_fixture(
         "@page { margin: 40px; \

@@ -219,6 +219,29 @@ fn page_auto_margins_keep_the_declared_page_area_inside_padding() {
 }
 
 #[test]
+fn page_calc_padding_resolves_against_the_page_box() {
+    use raikiri_style::{Origin, RuleTree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let _body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let mut rules = RuleTree::empty();
+    rules.add_stylesheet(
+        "@page { size: 400px 300px; margin: 0; padding-left: calc(10% + 1em);\
+         padding-top: calc(10% - 100px) }",
+        Origin::Author,
+    );
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let page = PageBox::from_page_size(cascade.page.size());
+    let insets = page_content_insets(&cascade, page);
+    // 10% of the 400px page width plus 1em (16px); the top sum is negative
+    // and clamps to zero.
+    assert_eq!(insets.left, 56.0);
+    assert_eq!(insets.top, 0.0);
+}
+
+#[test]
 fn page_geometry_helpers_delegate_to_the_page_only_variants() {
     use raikiri_style::{Origin, RuleTree, cascade};
     use raikiri_traits::PageBox;
@@ -419,11 +442,28 @@ fn used_style_length_helpers_cover_used_value_forms() {
         used_style_length_percentage(LengthPercentage::percent(0.25), 100.0),
         Some(25.0)
     );
-    let calc_value = CalcLengthPercentage {
-        percent: 10.0,
-        px: 2.0,
-    };
-    let calc_ptr = &calc_value as *const CalcLengthPercentage as *const ();
+    let mut arena = Vec::new();
+    let calc_ptr = crate::taffy_impl::push_calc(
+        &mut arena,
+        CalcLengthPercentage {
+            percent: 10.0,
+            px: 2.0,
+        },
+        false,
+    );
+    // A non-negative sum that resolves below zero clamps.
+    let clamped_ptr = crate::taffy_impl::push_calc(
+        &mut arena,
+        CalcLengthPercentage {
+            percent: 10.0,
+            px: -20.0,
+        },
+        true,
+    );
+    assert_eq!(
+        used_style_length_percentage(LengthPercentage::calc(clamped_ptr), 100.0),
+        Some(0.0)
+    );
     assert_eq!(
         used_style_length_percentage(LengthPercentage::calc(calc_ptr), 100.0),
         Some(12.0)

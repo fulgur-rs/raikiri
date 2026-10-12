@@ -30,6 +30,31 @@ fn leaf_intrinsic_size(node: &crate::node::Node) -> Option<Size<f32>> {
         .map(|(width, height)| Size { width, height })
 }
 
+/// A `calc()` payload held in the document arena for one layout pass.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ArenaCalc {
+    pub(crate) value: raikiri_style::property::CalcLengthPercentage,
+    /// The property's range is `[0,∞]`: a sum that resolves below zero once
+    /// its percentage basis is known clamps to zero (CSS Values 4 "Range
+    /// Checking", <https://www.w3.org/TR/css-values-4/#calc-range>).
+    pub(crate) non_negative: bool,
+}
+
+/// Keep `value` in the document arena and return its Taffy handle.
+pub(crate) fn push_calc(
+    arena: &mut Vec<std::sync::Arc<ArenaCalc>>,
+    value: raikiri_style::property::CalcLengthPercentage,
+    non_negative: bool,
+) -> *const () {
+    let payload = std::sync::Arc::new(ArenaCalc {
+        value,
+        non_negative,
+    });
+    let pointer = std::sync::Arc::as_ptr(&payload).cast();
+    arena.push(payload);
+    pointer
+}
+
 /// Resolve a `calc()` payload handle against `basis`.
 ///
 /// The handle does not depend on the document, so leaf measure callbacks that
@@ -38,9 +63,15 @@ fn leaf_intrinsic_size(node: &crate::node::Node) -> Option<Size<f32>> {
 pub(crate) fn resolve_calc(val: *const (), basis: f32) -> f32 {
     // `layout::apply_computed_to_style` owns the boxed payload for the
     // duration of this layout pass, so the Taffy handle is valid here.
-    let value = unsafe { &*(val as *const raikiri_style::property::CalcLengthPercentage) };
-    let resolved = basis * value.percent / 100.0 + value.px;
-    if resolved.is_finite() { resolved } else { 0.0 }
+    let calc = unsafe { &*(val as *const ArenaCalc) };
+    let resolved = basis * calc.value.percent / 100.0 + calc.value.px;
+    if !resolved.is_finite() {
+        0.0
+    } else if calc.non_negative {
+        resolved.max(0.0)
+    } else {
+        resolved
+    }
 }
 
 /// Resolve a padding or border length of an ifc root against the containing

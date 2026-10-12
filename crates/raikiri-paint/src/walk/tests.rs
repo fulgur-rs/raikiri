@@ -2355,6 +2355,21 @@ fn background_rounded_clip_pixel_corners() {
 }
 
 #[test]
+fn page_calc_padding_resolves_against_the_area_edge() {
+    let (_document, cascade) = canvas_fixture(
+        Some(
+            "@page { margin: 5px; padding-left: calc(10% + 1em); padding-top: calc(10% - 50px); }",
+        ),
+        None,
+    );
+    let area = kurbo::Rect::new(0.0, 0.0, 200.0, 100.0);
+    let (left, top, _, _) = page_padding_widths(&cascade, area);
+    // 10% of 200px plus 1em (16px); the top sum folds below zero and clamps.
+    assert_eq!(left, 36.0);
+    assert_eq!(top, 0.0);
+}
+
+#[test]
 fn page_background_borders_and_padding_inset_paint_and_position() {
     let (document, cascade) = canvas_fixture(
         Some("@page { margin: 5px; border: 4px solid black; padding: 3px; }"),
@@ -2977,6 +2992,14 @@ fn background_canvas_percent_padding_and_empty_painting() {
     percent_computed.padding.left = raikiri_style::ComputedLengthPercentageOrCalc::Percent(10.0);
     let (pl, _, _, _) = canvas_used_padding(&percent_computed, 200.0);
     assert!((pl - 20.0).abs() < 0.001);
+    percent_computed.padding.left = raikiri_style::ComputedLengthPercentageOrCalc::Calc(
+        raikiri_style::property::CalcLengthPercentage {
+            percent: 10.0,
+            px: 3.0,
+        },
+    );
+    let (pl, _, _, _) = canvas_used_padding(&percent_computed, 200.0);
+    assert!((pl - 23.0).abs() < 0.001);
 
     // Empty canvas painting (tiny area with large borders) skips silently.
     struct RedPixels;

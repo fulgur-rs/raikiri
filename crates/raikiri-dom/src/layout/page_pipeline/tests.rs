@@ -3766,6 +3766,22 @@ fn a_mixed_calc_padding_resolves_against_the_paragraph_width() {
 }
 
 #[test]
+fn a_mixed_calc_padding_below_zero_clamps_at_layout() {
+    // `calc(10% - 20px)` against the 100px paragraph is -10px; padding
+    // cannot be negative, so the used value is zero.
+    let (mut doc, cascade, float, _root) = ahem_paragraph_with_float(
+        "aa",
+        "float:left;width:30px;height:20px;padding-left:calc(10% - 20px)",
+        " bb",
+        "",
+    );
+    lay_out(&mut doc, &cascade);
+    let layout = doc.nodes[float].unrounded_layout;
+    assert_eq!(layout.padding.left, 0.0);
+    assert_eq!(layout.size.width, 30.0);
+}
+
+#[test]
 fn a_padded_formatting_context_does_not_count_its_top_edge_twice() {
     // The context measures floats from the border-box top, the box height from
     // the content-box top: a 15px top padding and a 50px float make a box that

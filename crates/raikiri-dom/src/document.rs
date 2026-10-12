@@ -32,7 +32,6 @@ use raikiri_traits::{QuirksMode, StylesheetKind};
 use crate::fragment::{FragmentTree, FragmentationContext};
 use crate::layout::LayoutWarn;
 use crate::node::{Attr, CanvasBitmap, CanvasBitmapError, Node, NodeData};
-use raikiri_style::property::CalcLengthPercentage;
 
 mod mutation;
 pub use mutation::DomMutationError;
@@ -423,7 +422,7 @@ pub struct Document {
     pub(crate) table_layout_error: Option<String>,
     /// Stable storage for Taffy calc resolver payloads used by the current
     /// layout pass. The heap allocations keep pointees stable while styles hold raw handles.
-    pub(crate) calc_values: Vec<Arc<CalcLengthPercentage>>,
+    pub(crate) calc_values: Vec<Arc<crate::taffy_impl::ArenaCalc>>,
     /// Fragments emitted by the active multicol strategy for this layout pass.
     pub(crate) fragment_tree: FragmentTree,
     /// Column rules retained from final placements, relative to each owner.

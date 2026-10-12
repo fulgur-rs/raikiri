@@ -52,12 +52,14 @@ fn cyclic_chains_are_rejected_without_returning_an_incomplete_path() {
 #[test]
 fn taffy_calc_margins_resolve_against_the_fragmentainer_width() {
     let (mut doc, mc, chain) = fixture(1);
-    let value = std::sync::Arc::new(raikiri_style::property::CalcLengthPercentage {
-        px: 1.0,
-        percent: 10.0,
-    });
-    let pointer = std::sync::Arc::as_ptr(&value).cast();
-    doc.calc_values.push(value);
+    let pointer = crate::taffy_impl::push_calc(
+        &mut doc.calc_values,
+        raikiri_style::property::CalcLengthPercentage {
+            px: 1.0,
+            percent: 10.0,
+        },
+        false,
+    );
     doc.nodes[chain[0]].style.margin.left = LengthPercentageAuto::calc(pointer);
     doc.fragment_tree.fragments.clear();
     let context = FragmentationContext {

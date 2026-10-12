@@ -17,8 +17,8 @@ use crate::{
 use raikiri_style::property::{
     BackgroundImage, BackgroundRepeat, Border, BorderColor, BorderStyle, ContentComponent,
     CounterStyle, CssColor, FontFamilyName, Length, LengthOrAuto, LengthPercentageOrCalc,
-    PropertyKey, PropertyValue, QuoteKeyword, Sides, StringFetchMode, TextAlign, VerticalAlign,
-    VisualBox, WritingMode,
+    PropertyKey, PropertyValue, QuoteKeyword, RelativeCalcUnit, Sides, StringFetchMode, TextAlign,
+    VerticalAlign, VisualBox, WritingMode,
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedCssPosition, ComputedLength, ComputedValues,
@@ -507,6 +507,23 @@ fn length_or_auto_to_px(value: LengthOrAuto, basis: f32, font_size: f32) -> Opti
             } else {
                 0.0
             }
+        }
+        // Font-relative terms use the box's font size, as `length_to_px`
+        // does for single lengths. Viewport units are rejected before the
+        // margin-box cascade keeps a declaration.
+        LengthOrAuto::RelativeCalc(value) => {
+            value.px
+                + basis * value.percent / 100.0
+                + value
+                    .relative_terms()
+                    .map(|(unit, coefficient)| match unit {
+                        RelativeCalcUnit::Em
+                        | RelativeCalcUnit::Rem
+                        | RelativeCalcUnit::Lh
+                        | RelativeCalcUnit::Rlh => font_size * coefficient,
+                        _ => 0.0,
+                    })
+                    .sum::<f32>()
         }
         _ => 0.0,
     };

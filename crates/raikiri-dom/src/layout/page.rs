@@ -336,12 +336,7 @@ fn page_box_side(
         // Page-context absolutization folds font-relative terms, leaving a
         // percentage with an absolute offset.
         LengthPercentageOrCalc::Calc(calc) => {
-            let value = calc.px + basis * calc.percent / 100.0;
-            if value.is_finite() {
-                value.max(0.0)
-            } else {
-                0.0
-            }
+            ComputedLengthPercentageOrCalc::Calc(calc).resolve(basis)
         }
         _ => 0.0,
     });

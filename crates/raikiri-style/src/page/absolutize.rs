@@ -19,8 +19,8 @@ use crate::resolve::{
     ComputedBackgroundSize, ComputedCssPositionOffset, ComputedFlexBasis,
     ComputedGridTemplateTracks, ComputedGridTrackBreadth, ComputedGridTrackList,
     ComputedGridTrackListComponent, ComputedGridTrackSize, ComputedLength,
-    ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc,
-    ComputedLengthPercentageOrNormal, ComputedTextIndent, ResolveContext, lift_border_spacing,
+    ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal,
+    ComputedTextIndent, ResolveContext, lift_border_spacing, lift_length_percentage_or_calc,
     lift_letter_spacing, lift_line_height, lift_tab_size, lift_text_indent, lift_word_spacing,
     resolve_background_size, resolve_border, resolve_border_radius, resolve_border_spacing,
     resolve_box_shadow_item, resolve_css_position, resolve_flex_basis,
@@ -54,18 +54,12 @@ impl PageLengthBasis<'_> {
     /// `<length-percentage [0,∞]>` that may be a mixed `calc()` — same
     /// mapping as [`Self::lp`], with a calc kept as one.
     fn lpc(self, specified: LengthPercentageOrCalc) -> LengthPercentageOrCalc {
-        match resolve_non_negative_length_percentage_or_calc(
+        lift_length_percentage_or_calc(resolve_non_negative_length_percentage_or_calc(
             specified,
             self.font_size,
             self.own_line_height,
             self.ctx,
-        ) {
-            ComputedLengthPercentageOrCalc::Px(v) => LengthPercentageOrCalc::Length(Length::Px(v)),
-            ComputedLengthPercentageOrCalc::Percent(p) => {
-                LengthPercentageOrCalc::Length(Length::Percent(p))
-            }
-            ComputedLengthPercentageOrCalc::Calc(calc) => LengthPercentageOrCalc::Calc(calc),
-        }
+        ))
     }
     /// `<length-percentage> | auto` — same mapping, `auto` preserved.
     fn lpa(self, specified: LengthOrAuto) -> LengthOrAuto {

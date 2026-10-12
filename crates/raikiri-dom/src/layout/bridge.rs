@@ -443,7 +443,7 @@ fn bridge_float(style: &mut taffy::Style, cv: &ComputedValues) {
 fn bridge_margin(
     style: &mut taffy::Style,
     cv: &ComputedValues,
-    calc_values: &mut Vec<std::sync::Arc<raikiri_style::property::CalcLengthPercentage>>,
+    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
     diag: &mut Vec<LayoutWarn>,
 ) {
     let m = cv.margin;
@@ -479,7 +479,7 @@ fn bridge_margin(
 fn bridge_padding(
     style: &mut taffy::Style,
     cv: &ComputedValues,
-    calc_values: &mut Vec<std::sync::Arc<raikiri_style::property::CalcLengthPercentage>>,
+    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
     diag: &mut Vec<LayoutWarn>,
 ) {
     let p = cv.padding;
@@ -501,11 +501,7 @@ fn bridge_padding(
         // A mixed percentage-and-length padding resolves against the
         // containing block in taffy, through the same arena as sizes.
         ComputedLengthPercentageOrCalc::Calc(value) => {
-            calc_values.push(std::sync::Arc::new(value));
-            let pointer = calc_values
-                .last()
-                .map(|value| (&**value) as *const _ as *const ())
-                .expect("calc value was just pushed");
+            let pointer = crate::taffy_impl::push_calc(calc_values, value, true);
             LengthPercentage::calc(pointer)
         }
     };
@@ -586,7 +582,7 @@ fn bridge_overflow(style: &mut taffy::Style, cv: &ComputedValues) {
 fn bridge_position(
     style: &mut taffy::Style,
     cv: &ComputedValues,
-    calc_values: &mut Vec<std::sync::Arc<raikiri_style::property::CalcLengthPercentage>>,
+    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
     diag: &mut Vec<LayoutWarn>,
 ) {
     style.position = match cv.position {
@@ -599,7 +595,7 @@ fn bridge_position(
     // Insets keep a mixed `calc()` in the document arena, like min/max sizes,
     // so its percentage resolves against the used containing block.
     let mut inset = |value: ComputedLengthPercentageOrAuto, site: &'static str| {
-        computed_length_percentage_or_auto_to_taffy_min_max(calc_values, value, site, diag)
+        computed_length_percentage_or_auto_to_taffy_min_max(calc_values, value, false, site, diag)
     };
     style.inset = Rect {
         top: inset(cv.top, "top"),
@@ -700,7 +696,7 @@ fn bridge_known_image_intrinsic_size(
 fn bridge_min_max_size(
     style: &mut taffy::Style,
     cv: &ComputedValues,
-    calc_values: &mut Vec<std::sync::Arc<raikiri_style::property::CalcLengthPercentage>>,
+    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
     diag: &mut Vec<LayoutWarn>,
 ) {
     // Use two struct literals to write each pair of min/max fields together
@@ -723,12 +719,14 @@ fn bridge_min_max_size(
         width: computed_length_percentage_or_auto_to_taffy_min_max(
             calc_values,
             cv.min_width,
+            true,
             "min-width",
             diag,
         ),
         height: computed_length_percentage_or_auto_to_taffy_min_max(
             calc_values,
             min_height,
+            true,
             "min-height",
             diag,
         ),
@@ -737,12 +735,14 @@ fn bridge_min_max_size(
         width: computed_length_percentage_or_auto_to_taffy_min_max(
             calc_values,
             cv.max_width,
+            true,
             "max-width",
             diag,
         ),
         height: computed_length_percentage_or_auto_to_taffy_min_max(
             calc_values,
             cv.max_height,
+            true,
             "max-height",
             diag,
         ),
@@ -1413,7 +1413,7 @@ pub(crate) fn computed_length_percentage_to_taffy_length_percentage(
 /// `site` distinguishes the two [`bridge_size`] callers (`"width"` /
 /// `"height"`) in [`LayoutWarn::NonFiniteClamped`] events.
 fn computed_length_percentage_or_auto_to_taffy_dimension(
-    calc_values: &mut Vec<std::sync::Arc<raikiri_style::property::CalcLengthPercentage>>,
+    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
     loa: ComputedLengthPercentageOrAuto,
     site: &'static str,
     diag: &mut Vec<LayoutWarn>,
@@ -1428,11 +1428,7 @@ fn computed_length_percentage_or_auto_to_taffy_dimension(
         // CSS Sizing 3 §3.1.1: the min-content size in that axis.
         ComputedLengthPercentageOrAuto::MinContent => Dimension::min_content(),
         ComputedLengthPercentageOrAuto::Calc(value) => {
-            calc_values.push(std::sync::Arc::new(value));
-            let pointer = calc_values
-                .last()
-                .map(|value| (&**value) as *const _ as *const ())
-                .expect("calc value was just pushed");
+            let pointer = crate::taffy_impl::push_calc(calc_values, value, true);
             Dimension::calc(pointer)
         }
     }
@@ -1446,8 +1442,9 @@ fn computed_length_percentage_or_auto_to_taffy_dimension(
 /// consumers such as table `<col>` sizing do not observe a false zero
 /// constraint.
 fn computed_length_percentage_or_auto_to_taffy_min_max(
-    calc_values: &mut Vec<std::sync::Arc<raikiri_style::property::CalcLengthPercentage>>,
+    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
     loa: ComputedLengthPercentageOrAuto,
+    non_negative: bool,
     site: &'static str,
     diag: &mut Vec<LayoutWarn>,
 ) -> LengthPercentageAuto {
@@ -1464,11 +1461,7 @@ fn computed_length_percentage_or_auto_to_taffy_min_max(
             LengthPercentageAuto::auto()
         }
         ComputedLengthPercentageOrAuto::Calc(value) => {
-            calc_values.push(std::sync::Arc::new(value));
-            let pointer = calc_values
-                .last()
-                .map(|value| (&**value) as *const _ as *const ())
-                .expect("calc value was just pushed");
+            let pointer = crate::taffy_impl::push_calc(calc_values, value, non_negative);
             LengthPercentageAuto::calc(pointer)
         }
     }
@@ -1482,7 +1475,7 @@ fn computed_length_percentage_or_auto_to_taffy_min_max(
 /// `LengthPercentageAuto::auto()` (delegating CSS Box 3 §3.1's "margin auto = distribute
 /// available space" to taffy; no `f32` means no guard is needed).
 fn computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
-    calc_values: &mut Vec<std::sync::Arc<raikiri_style::property::CalcLengthPercentage>>,
+    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
     loa: ComputedLengthPercentageOrAuto,
     site: &'static str,
     diag: &mut Vec<LayoutWarn>,
@@ -1501,11 +1494,7 @@ fn computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
         // A mixed percentage-and-length margin resolves against the
         // containing block in taffy, through the same arena as sizes.
         ComputedLengthPercentageOrAuto::Calc(value) => {
-            calc_values.push(std::sync::Arc::new(value));
-            let pointer = calc_values
-                .last()
-                .map(|value| (&**value) as *const _ as *const ())
-                .expect("calc value was just pushed");
+            let pointer = crate::taffy_impl::push_calc(calc_values, value, false);
             LengthPercentageAuto::calc(pointer)
         }
         // Margins never compute to `min-content`.
