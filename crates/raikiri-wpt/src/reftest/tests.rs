@@ -2241,3 +2241,111 @@ fn ignored_page_size_keeps_viewport_margin_basis_consistent() {
     assert_eq!(&actual.rgba[offset..offset + 4], &[0, 128, 0, 255]);
     assert_eq!(actual.rgba, expected.rgba);
 }
+
+#[test]
+fn print_declaration_reads_the_declaration_list_grammar() {
+    // Semicolons inside strings do not end a declaration.
+    assert_eq!(
+        print_declaration(r#"content:"a;size:9px";size:1px"#, "size").as_deref(),
+        Some("1px")
+    );
+    // The last declaration wins, unless an earlier one is important.
+    assert_eq!(
+        print_declaration("margin:1px;MARGIN : 2px 3px", "margin").as_deref(),
+        Some("2px 3px")
+    );
+    assert_eq!(
+        print_declaration("margin:1px !important;margin:2px", "margin").as_deref(),
+        Some("1px")
+    );
+    // Declarations of nested margin rules belong to those rules.
+    assert_eq!(
+        print_declaration("@top-left{content:'x';margin:5px}size:1px", "margin"),
+        None
+    );
+    assert_eq!(
+        print_declaration("@top-left{margin:5px}margin:1px", "margin").as_deref(),
+        Some("1px")
+    );
+}
+
+#[test]
+fn page_blocks_skip_comments_strings_and_escapes() {
+    assert_eq!(
+        page_block("/* @page{size:1px} */@page{size:2px}"),
+        Some("size:2px")
+    );
+    assert_eq!(
+        page_block(r#".a{content:"@page{size:1px}"}@page{size:2px}"#),
+        Some("size:2px")
+    );
+    assert_eq!(
+        page_block("@page{/* } */size:1px}"),
+        Some("/* } */size:1px")
+    );
+    assert_eq!(
+        page_block(r#"@page{content:"\"}";size:1px}"#),
+        Some(r#"content:"\"}";size:1px"#)
+    );
+    assert_eq!(
+        page_block_named("/* @page a{size:1px} */@page a{size:2px}", "a"),
+        Some("size:2px")
+    );
+    assert_eq!(
+        page_block_named("@page b{size:1px}@page A:first{size:2px}", "a"),
+        Some("size:2px")
+    );
+    assert_eq!(page_block_named("@page :a{size:1px}", "a"), None);
+}
+
+#[test]
+fn first_authored_page_name_reads_page_declarations_only() {
+    assert_eq!(
+        first_authored_page_name("<style>.page:hover{color:red}.box{page:named}</style>")
+            .as_deref(),
+        Some("named")
+    );
+    assert_eq!(
+        first_authored_page_name(r#"<style>.a{content:"page:quoted";page : b}</style>"#).as_deref(),
+        Some("b")
+    );
+    assert_eq!(
+        first_authored_page_name(r#"<div title="page:title" style="color:red;page:inline">"#)
+            .as_deref(),
+        Some("inline")
+    );
+    assert_eq!(
+        first_authored_page_name("<style>/* page:comment */ div.page:first-child{}</style>"),
+        None
+    );
+}
+
+#[test]
+fn viewport_expansion_leaves_selectors_unchanged() {
+    let source = r#"[data-x=1vw] .a:nth-child(2n),[data-y="1vw"]{width:1vw}@media (width:1vw){[data-z=1vw]{height:1vh}}.b{--x:{y:1vw}}"#;
+    assert_eq!(
+        expand_css_viewport_units_with_media_basis(source, 200.0, 100.0, 800.0, 600.0),
+        r#"[data-x=1vw] .a:nth-child(2n),[data-y="1vw"]{width:2.000000px}@media (width:8.000000px){[data-z=1vw]{height:1.000000px}}.b{--x:{y:2.000000px}}"#
+    );
+    // Declaration lists and bare media queries have no selectors.
+    assert_eq!(
+        expand_css_viewport_units_with_media_basis(
+            "width:1vw;height:1vh",
+            200.0,
+            100.0,
+            800.0,
+            600.0
+        ),
+        "width:2.000000px;height:1.000000px"
+    );
+    assert_eq!(
+        expand_css_viewport_units_with_media_basis(
+            "print and (max-width:1vw)",
+            800.0,
+            600.0,
+            800.0,
+            600.0
+        ),
+        "print and (max-width:8.000000px)"
+    );
+}

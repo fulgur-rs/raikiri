@@ -909,83 +909,227 @@ fn parse_print_length(token: &str, percent_basis: Option<f32>) -> Option<f32> {
     px.is_finite().then_some(px)
 }
 
+/// The value of the winning top-level `name` declaration in a declaration
+/// list, without its `!important` flag.
+///
+/// The list is read with the CSS declaration-list grammar, so semicolons in
+/// strings do not split declarations and declarations inside nested rules
+/// such as `@top-left { margin: 0 }` are not part of the list. As in the
+/// cascade, a later declaration wins unless an earlier one is `!important`.
 fn print_declaration(block: &str, name: &str) -> Option<String> {
-    let name = name.to_ascii_lowercase();
-    for declaration in block.split(';') {
-        let Some((key, value)) = declaration.split_once(':') else {
-            continue;
-        };
-        if key
-            .split_whitespace()
-            .last()
-            .is_some_and(|key| key.eq_ignore_ascii_case(name.as_str()))
-        {
-            return Some(value.trim().to_string());
+    struct Declarations<'n> {
+        name: &'n str,
+    }
+
+    impl<'i> cssparser::DeclarationParser<'i> for Declarations<'_> {
+        type Declaration = (String, bool);
+        type Error = ();
+
+        fn parse_value<'t>(
+            &mut self,
+            name: cssparser::CowRcStr<'i>,
+            input: &mut cssparser::Parser<'i, 't>,
+            _declaration_start: &cssparser::ParserState,
+        ) -> Result<Self::Declaration, cssparser::ParseError<'i, ()>> {
+            if !name.eq_ignore_ascii_case(self.name) {
+                return Err(input.new_custom_error(()));
+            }
+            let start = input.position();
+            let mut end = start;
+            loop {
+                if input
+                    .try_parse(|input| {
+                        cssparser::parse_important(input)?;
+                        input.expect_exhausted()?;
+                        Ok::<_, cssparser::ParseError<'i, ()>>(())
+                    })
+                    .is_ok()
+                {
+                    let value = input.slice(start..end).trim().to_string();
+                    return Ok((value, true));
+                }
+                if input.next_including_whitespace_and_comments().is_err() {
+                    break;
+                }
+                end = input.position();
+            }
+            Ok((input.slice(start..end).trim().to_string(), false))
         }
     }
-    None
+
+    impl<'i> cssparser::AtRuleParser<'i> for Declarations<'_> {
+        type Prelude = ();
+        type AtRule = (String, bool);
+        type Error = ();
+    }
+
+    impl<'i> cssparser::QualifiedRuleParser<'i> for Declarations<'_> {
+        type Prelude = ();
+        type QualifiedRule = (String, bool);
+        type Error = ();
+    }
+
+    impl<'i> cssparser::RuleBodyItemParser<'i, (String, bool), ()> for Declarations<'_> {
+        fn parse_declarations(&self) -> bool {
+            true
+        }
+
+        fn parse_qualified(&self) -> bool {
+            false
+        }
+    }
+
+    let mut input = cssparser::ParserInput::new(block);
+    let mut parser = cssparser::Parser::new(&mut input);
+    let mut declarations = Declarations { name };
+    let mut normal = None;
+    let mut important = None;
+    for (value, is_important) in
+        cssparser::RuleBodyParser::new(&mut parser, &mut declarations).filter_map(Result::ok)
+    {
+        if is_important {
+            important = Some(value);
+        } else {
+            normal = Some(value);
+        }
+    }
+    important.or(normal)
 }
 
-fn balanced_css_block(input: &str, open: usize) -> Option<&str> {
-    let bytes = input.as_bytes();
-    let mut depth = 0_u32;
-    let mut quote = None;
-    for (index, &byte) in bytes.iter().enumerate().skip(open) {
-        if let Some(delimiter) = quote {
-            if byte == delimiter {
-                quote = None;
+/// One `@page` rule: the page names in its selector and its block contents.
+struct PageRule<'a> {
+    names: Vec<String>,
+    block: &'a str,
+}
+
+/// Every `@page` rule in `input`, including those nested in other blocks,
+/// in source order. Comments and strings are skipped by the tokenizer.
+fn page_rules(input: &str) -> Vec<PageRule<'_>> {
+    fn collect<'i>(
+        input: &mut cssparser::Parser<'i, '_>,
+        rules: &mut Vec<PageRule<'i>>,
+        depth: usize,
+    ) -> Result<(), cssparser::ParseError<'i, ()>> {
+        // `None` outside an `@page` prelude, else the names seen so far.
+        let mut page: Option<Vec<String>> = None;
+        let mut after_colon = false;
+        while let Ok(token) = input.next().cloned() {
+            match &token {
+                cssparser::Token::AtKeyword(name) => {
+                    page = name.eq_ignore_ascii_case("page").then(Vec::new);
+                }
+                cssparser::Token::Semicolon => page = None,
+                cssparser::Token::Ident(name) if !after_colon => {
+                    if let Some(names) = &mut page {
+                        names.push(name.to_string());
+                    }
+                }
+                cssparser::Token::CurlyBracketBlock => {
+                    if let Some(names) = page.take() {
+                        let block = input.parse_nested_block(|input| {
+                            let start = input.position();
+                            while input.next().is_ok() {}
+                            Ok::<_, cssparser::ParseError<'i, ()>>(input.slice_from(start))
+                        })?;
+                        rules.push(PageRule { names, block });
+                    } else if depth < 256 {
+                        input.parse_nested_block(|input| collect(input, rules, depth + 1))?;
+                    }
+                }
+                _ => {}
             }
-            continue;
+            after_colon = matches!(token, cssparser::Token::Colon);
         }
-        if byte == b'"' || byte == b'\'' {
-            quote = Some(byte);
-        } else if byte == b'{' {
-            depth += 1;
-        } else if byte == b'}' {
-            depth = depth.saturating_sub(1);
-            if depth == 0 {
-                return input.get(open + 1..index);
-            }
-        }
+        Ok(())
     }
-    None
+
+    let mut rules = Vec::new();
+    let mut source = cssparser::ParserInput::new(input);
+    let _ = collect(&mut cssparser::Parser::new(&mut source), &mut rules, 0);
+    rules
 }
 
 fn page_block(input: &str) -> Option<&str> {
-    let lower = input.to_ascii_lowercase();
-    let page_start = lower.find("@page")?;
-    let open = lower[page_start..].find('{')? + page_start;
-    balanced_css_block(input, open)
+    page_rules(input).into_iter().next().map(|rule| rule.block)
 }
 
 fn page_block_named<'a>(input: &'a str, name: &str) -> Option<&'a str> {
-    let lower = input.to_ascii_lowercase();
-    let name = name.to_ascii_lowercase();
-    let mut search = 0;
-    while let Some(relative) = lower[search..].find("@page") {
-        let page_start = search + relative;
-        let open = lower[page_start..].find('{')? + page_start;
-        let selector = lower[page_start + "@page".len()..open].trim();
-        if selector
-            .split_whitespace()
-            .any(|token| !token.starts_with(':') && token == name)
-        {
-            return balanced_css_block(input, open);
-        }
-        search = open + 1;
-    }
-    None
+    page_rules(input)
+        .into_iter()
+        .find(|rule| {
+            rule.names
+                .iter()
+                .any(|page| page.eq_ignore_ascii_case(name))
+        })
+        .map(|rule| rule.block)
 }
 
+/// The value of the first `page` declaration in `input`, which is CSS or
+/// HTML whose `style` attributes and `<style>` contents carry the CSS.
+///
+/// Only an identifier at the start of a declaration names the property, so
+/// selectors such as `.page:hover` are not declarations.
 fn first_authored_page_name(input: &str) -> Option<String> {
-    let lower = input.to_ascii_lowercase();
-    let start = lower.find("page:")? + "page:".len();
-    let rest = &input[start..];
-    let end = rest
-        .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '-' || ch == '_'))
-        .unwrap_or(rest.len());
-    let name = rest[..end].trim();
-    (!name.is_empty()).then(|| name.to_string())
+    fn find<'i>(input: &mut cssparser::Parser<'i, '_>, depth: usize) -> Option<String> {
+        let mut declaration_start = true;
+        // The last two significant tokens, to recognize `style="…"`.
+        let mut previous: [Option<cssparser::Token<'i>>; 2] = [None, None];
+        while let Ok(token) = input.next().cloned() {
+            match &token {
+                cssparser::Token::Ident(name)
+                    if declaration_start && name.eq_ignore_ascii_case("page") =>
+                {
+                    let value = input.try_parse(|input| {
+                        input.expect_colon()?;
+                        let value = input.expect_ident_cloned()?;
+                        Ok::<_, cssparser::ParseError<'i, ()>>(value.to_string())
+                    });
+                    if let Ok(value) = value {
+                        return Some(value);
+                    }
+                }
+                cssparser::Token::QuotedString(value)
+                    if matches!(
+                        &previous,
+                        [Some(cssparser::Token::Ident(attribute)), Some(cssparser::Token::Delim('='))]
+                            if attribute.eq_ignore_ascii_case("style")
+                    ) =>
+                {
+                    let mut attribute = cssparser::ParserInput::new(value);
+                    if let Some(name) = find(&mut cssparser::Parser::new(&mut attribute), depth + 1)
+                    {
+                        return Some(name);
+                    }
+                }
+                cssparser::Token::CurlyBracketBlock if depth < 256 => {
+                    let name = input
+                        .parse_nested_block(|input| {
+                            let name = find(input, depth + 1);
+                            // The nested parser must be exhausted to succeed.
+                            while input.next().is_ok() {}
+                            Ok::<_, cssparser::ParseError<'i, ()>>(name)
+                        })
+                        .ok()
+                        .flatten();
+                    if name.is_some() {
+                        return name;
+                    }
+                }
+                _ => {}
+            }
+            declaration_start = matches!(token, cssparser::Token::Semicolon)
+                || matches!(
+                    (&previous[1], &token),
+                    (Some(cssparser::Token::Ident(attribute)), cssparser::Token::Delim('='))
+                        if attribute.eq_ignore_ascii_case("style")
+                );
+            previous = [previous[1].take(), Some(token)];
+        }
+        None
+    }
+
+    let mut source = cssparser::ParserInput::new(input);
+    find(&mut cssparser::Parser::new(&mut source), 0)
 }
 
 fn css_block_end(input: &str, open: usize) -> Option<usize> {
@@ -1675,7 +1819,20 @@ fn expand_css_viewport_units_with_axes(
     media_height: f32,
     vertical: bool,
 ) -> String {
-    fn unit_value(unit: &str, width: f32, height: f32, vertical: bool) -> Option<f32> {
+    /// The viewport a dimension resolves against.
+    #[derive(Clone, Copy)]
+    struct Basis {
+        width: f32,
+        height: f32,
+        vertical: bool,
+    }
+
+    fn unit_value(unit: &str, basis: Basis) -> Option<f32> {
+        let Basis {
+            width,
+            height,
+            vertical,
+        } = basis;
         let value = match unit {
             "vw" | "svw" | "lvw" | "dvw" => width / 100.0,
             "vh" | "svh" | "lvh" | "dvh" => height / 100.0,
@@ -1688,144 +1845,174 @@ fn expand_css_viewport_units_with_axes(
         Some(value)
     }
 
-    let bytes = input.as_bytes();
-    let mut result = String::with_capacity(input.len());
-    let mut i = 0;
-    let mut media_prelude = false;
-    let mut media_blocks = Vec::new();
-    while i < bytes.len() {
-        if bytes[i] == b'"' || bytes[i] == b'\'' {
-            // Token boundaries preserve string bytes and recover after a bad
-            // string ending at a newline, as the declaration parser does.
-            let mut string_input = cssparser::ParserInput::new(&input[i..]);
-            let mut parser = cssparser::Parser::new(&mut string_input);
-            let _ = parser.next().expect("opening quote begins a string token");
-            let end = i + parser.position().byte_index();
-            result.push_str(&input[i..end]);
-            i = end;
-            continue;
-        }
-        if bytes[i] == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
-            let start = i;
-            i += 2;
-            while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
-                i += 1;
-            }
-            i = (i + 2).min(bytes.len());
-            result.push_str(&input[start..i]);
-            continue;
-        }
+    type Edits = Vec<(std::ops::Range<usize>, String)>;
 
-        // URL contents are opaque CSS tokens: punctuation and viewport-like
-        // text in them must not change prelude state or the resource URL.
-        let token_boundary = i == 0 || {
-            let previous = bytes[i - 1];
-            !previous.is_ascii_alphanumeric()
-                && !matches!(previous, b'_' | b'-' | b'\\')
-                && previous.is_ascii()
-        };
-        if token_boundary && matches!(bytes[i], b'u' | b'U' | b'\\') {
-            let mut url_input = cssparser::ParserInput::new(&input[i..]);
-            let mut parser = cssparser::Parser::new(&mut url_input);
-            let is_url = match parser.next() {
-                Ok(cssparser::Token::UnquotedUrl(_) | cssparser::Token::BadUrl(_)) => true,
-                Ok(cssparser::Token::Function(name)) if name.eq_ignore_ascii_case("url") => {
-                    let _: Result<(), cssparser::ParseError<'_, ()>> =
-                        parser.parse_nested_block(|nested| {
-                            nested.expect_no_error_token().map_err(Into::into)
-                        });
-                    true
-                }
-                _ => false,
-            };
-            if is_url {
-                let end = i + parser.position().byte_index();
-                result.push_str(&input[i..end]);
-                i = end;
-                continue;
-            }
-        }
+    // Bounds recursion on pathological nesting; deeper blocks stay as written.
+    const MAX_DEPTH: usize = 256;
 
-        // Copy complete name tokens before examining individual bytes. Only
-        // a Dimension token is a viewport-relative numeric length; digits in
-        // selectors, custom-property names, hashes and escaped identifiers are
-        // not lengths. The CSS tokenizer also handles exponents and unit escapes.
-        let mut token_input = cssparser::ParserInput::new(&input[i..]);
-        let mut parser = cssparser::Parser::new(&mut token_input);
-        let token = parser.next_including_whitespace_and_comments().cloned();
-        let token_end = i + parser.position().byte_index();
+    /// Expand the dimension `token`, which ended at the parser position,
+    /// and the dimensions inside it when it opens a block. URL contents are
+    /// opaque.
+    fn expand_token<'i>(
+        input: &mut cssparser::Parser<'i, '_>,
+        token: &cssparser::Token<'i>,
+        start: usize,
+        basis: Basis,
+        edits: &mut Edits,
+        depth: usize,
+    ) {
         match token {
-            Ok(cssparser::Token::AtKeyword(name)) => {
-                if name.eq_ignore_ascii_case("media") || name.eq_ignore_ascii_case("import") {
-                    media_prelude = true;
-                }
-                result.push_str(&input[i..token_end]);
-                i = token_end;
-                continue;
-            }
-            Ok(
-                cssparser::Token::Ident(_)
-                | cssparser::Token::Hash(_)
-                | cssparser::Token::IDHash(_)
-                | cssparser::Token::Number { .. }
-                | cssparser::Token::Percentage { .. },
-            ) => {
-                result.push_str(&input[i..token_end]);
-                i = token_end;
-                continue;
-            }
-            Ok(cssparser::Token::Function(_)) => {
-                if media_prelude {
-                    media_blocks.push(b')');
-                }
-                result.push_str(&input[i..token_end]);
-                i = token_end;
-                continue;
-            }
-            Ok(cssparser::Token::Dimension { value, unit, .. }) => {
-                let (unit_width, unit_height) = if media_prelude {
-                    (media_width, media_height)
-                } else {
-                    (width, height)
-                };
-                if let Some(scale) = unit_value(
-                    &unit.to_ascii_lowercase(),
-                    unit_width,
-                    unit_height,
-                    vertical && !media_prelude,
-                ) && (value * scale).is_finite()
+            cssparser::Token::Dimension { value, unit, .. } => {
+                if let Some(scale) = unit_value(&unit.to_ascii_lowercase(), basis)
+                    && (value * scale).is_finite()
                 {
-                    result.push_str(&format!("{:.6}px", value * scale));
-                } else {
-                    result.push_str(&input[i..token_end]);
+                    let end = input.position().byte_index();
+                    edits.push((start..end, format!("{:.6}px", value * scale)));
                 }
-                i = token_end;
-                continue;
+            }
+            cssparser::Token::Function(name) if name.eq_ignore_ascii_case("url") => {}
+            cssparser::Token::Function(_)
+            | cssparser::Token::ParenthesisBlock
+            | cssparser::Token::SquareBracketBlock
+            | cssparser::Token::CurlyBracketBlock
+                if depth < MAX_DEPTH =>
+            {
+                let _ = input.parse_nested_block(|input| {
+                    loop {
+                        let start = input.position().byte_index();
+                        let Ok(token) = input.next_including_whitespace_and_comments().cloned()
+                        else {
+                            break;
+                        };
+                        expand_token(input, &token, start, basis, edits, depth + 1);
+                    }
+                    Ok::<_, cssparser::ParseError<'i, ()>>(())
+                });
             }
             _ => {}
         }
+    }
 
-        // Strings and comments have already been copied above, so only actual
-        // media/import preludes select the output basis for their dimensions.
-        if media_prelude {
-            match bytes[i] {
-                b'(' => media_blocks.push(b')'),
-                b'[' => media_blocks.push(b']'),
-                b'{' if !media_blocks.is_empty() => media_blocks.push(b'}'),
-                b')' | b']' | b'}' if media_blocks.last() == Some(&bytes[i]) => {
-                    media_blocks.pop();
+    /// Expand the dimensions of a list of rules and declarations, the
+    /// contents of a stylesheet, a declaration block or a style attribute,
+    /// leaving qualified rule preludes (selectors) as written.
+    ///
+    /// `@media` and `@import` preludes resolve against the media basis.
+    fn expand_items<'i>(
+        input: &mut cssparser::Parser<'i, '_>,
+        basis: Basis,
+        media: Basis,
+        edits: &mut Edits,
+        depth: usize,
+    ) {
+        loop {
+            let start = input.position().byte_index();
+            let token = match input.next_including_whitespace_and_comments() {
+                Ok(cssparser::Token::WhiteSpace(_) | cssparser::Token::Comment(_)) => continue,
+                Ok(token) => token.clone(),
+                Err(_) => return,
+            };
+            if let cssparser::Token::AtKeyword(name) = &token {
+                let prelude =
+                    if name.eq_ignore_ascii_case("media") || name.eq_ignore_ascii_case("import") {
+                        media
+                    } else {
+                        basis
+                    };
+                loop {
+                    let start = input.position().byte_index();
+                    match input.next_including_whitespace_and_comments().cloned() {
+                        Err(_) => return,
+                        Ok(cssparser::Token::Semicolon) => break,
+                        Ok(cssparser::Token::CurlyBracketBlock) => {
+                            nested_items(input, basis, media, edits, depth);
+                            break;
+                        }
+                        Ok(token) => expand_token(input, &token, start, prelude, edits, depth),
+                    }
                 }
-                b'{' | b';' if media_blocks.is_empty() => media_prelude = false,
-                _ => {}
+                continue;
+            }
+            // A custom property value may hold `{}` blocks; any other item
+            // that reaches a `{}` block is a qualified rule, whose prelude is a
+            // selector rather than a value.
+            let custom_property =
+                matches!(&token, cssparser::Token::Ident(name) if name.starts_with("--"));
+            let mut pending = Vec::new();
+            let mut token = Some((start, token));
+            loop {
+                let (start, current) = match token.take() {
+                    Some(token) => token,
+                    None => {
+                        let start = input.position().byte_index();
+                        match input.next_including_whitespace_and_comments() {
+                            Ok(token) => (start, token.clone()),
+                            Err(_) => {
+                                edits.append(&mut pending);
+                                return;
+                            }
+                        }
+                    }
+                };
+                match current {
+                    cssparser::Token::Semicolon => {
+                        edits.append(&mut pending);
+                        break;
+                    }
+                    cssparser::Token::CurlyBracketBlock if !custom_property => {
+                        nested_items(input, basis, media, edits, depth);
+                        break;
+                    }
+                    current => expand_token(input, &current, start, basis, &mut pending, depth),
+                }
             }
         }
-
-        result.push(bytes[i] as char);
-        i += 1;
     }
+
+    fn nested_items(
+        input: &mut cssparser::Parser<'_, '_>,
+        basis: Basis,
+        media: Basis,
+        edits: &mut Edits,
+        depth: usize,
+    ) {
+        if depth < MAX_DEPTH {
+            let _ = input.parse_nested_block(|input| {
+                expand_items(input, basis, media, edits, depth + 1);
+                Ok::<_, cssparser::ParseError<'_, ()>>(())
+            });
+        }
+    }
+
+    let basis = Basis {
+        width,
+        height,
+        vertical,
+    };
+    let media = Basis {
+        width: media_width,
+        height: media_height,
+        vertical: false,
+    };
+    let mut edits = Vec::new();
+    let mut source = cssparser::ParserInput::new(input);
+    expand_items(
+        &mut cssparser::Parser::new(&mut source),
+        basis,
+        media,
+        &mut edits,
+        0,
+    );
+    let mut result = String::with_capacity(input.len());
+    let mut copied = 0;
+    for (range, replacement) in edits {
+        result.push_str(&input[copied..range.start]);
+        result.push_str(&replacement);
+        copied = range.end;
+    }
+    result.push_str(&input[copied..]);
     result
 }
-
 /// Resolve decoded CSS from every document stylesheet and inline-style slot.
 /// Screen and print adapters call this before their first rule-tree parse and
 /// after restoring authored animation styles on a freshly parsed document.
