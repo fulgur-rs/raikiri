@@ -75,11 +75,72 @@ fn parse_fill_color(input: &str) -> Option<FillColor> {
     // apart from resolved colors.
     match super::style::parse_property_value("border-top-color", input)? {
         PropertyValue::BorderTopColor(BorderColor::Resolved(c)) => {
+            // The parser resolves a `currentcolor` nested in a color
+            // function (`color-mix()`, relative color syntax) to black, not
+            // to the canvas element's color, so such values are rejected
+            // rather than painted with the wrong color.
+            if mentions_current_color(input) {
+                return None;
+            }
             Some(FillColor::Rgba([c.r, c.g, c.b, c.a]))
         }
         PropertyValue::BorderTopColor(BorderColor::CurrentColor) => Some(FillColor::CurrentColor),
         _ => None,
     }
+}
+
+/// Whether `input` has a `currentcolor` identifier anywhere, including
+/// inside functions.
+fn mentions_current_color(input: &str) -> bool {
+    fn scan(parser: &mut cssparser::Parser<'_, '_>) -> bool {
+        while let Ok(token) = parser.next() {
+            match token {
+                cssparser::Token::Ident(name) if name.eq_ignore_ascii_case("currentcolor") => {
+                    return true;
+                }
+                cssparser::Token::Function(_)
+                | cssparser::Token::ParenthesisBlock
+                | cssparser::Token::SquareBracketBlock
+                | cssparser::Token::CurlyBracketBlock => {
+                    let found = parser
+                        .parse_nested_block(|block| {
+                            let found = scan(block);
+                            // A nested block must be consumed to its end.
+                            while block.next().is_ok() {}
+                            Ok::<_, cssparser::ParseError<'_, ()>>(found)
+                        })
+                        .unwrap_or(false);
+                    if found {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+    let mut input = cssparser::ParserInput::new(input);
+    scan(&mut cssparser::Parser::new(&mut input))
+}
+
+/// The canvas serialization of a resolved color (HTML Standard §4.12.5,
+/// "serialization of a color" for canvas): `#rrggbb` when opaque,
+/// `rgba(r, g, b, a)` otherwise.
+fn serialize_canvas_color([r, g, b, a]: [u8; 4]) -> String {
+    if a == 255 {
+        return format!("#{r:02x}{g:02x}{b:02x}");
+    }
+    // Shortest decimal that maps back to the same 8-bit alpha.
+    let alpha = (1..=3)
+        .map(|digits| format!("{:.*}", digits, f64::from(a) / 255.0))
+        .find(|text| {
+            text.parse::<f64>()
+                .is_ok_and(|value| (value * 255.0).round() as u8 == a)
+        })
+        .unwrap_or_else(|| format!("{:.3}", f64::from(a) / 255.0));
+    let alpha = alpha.trim_end_matches('0').trim_end_matches('.');
+    let alpha = if alpha.is_empty() { "0" } else { alpha };
+    format!("rgba({r}, {g}, {b}, {alpha})")
 }
 
 /// `canvas.width` (HTML Standard §4.12.5): the width content attribute value,
@@ -199,9 +260,14 @@ fn fill_style(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<
 fn set_fill_style(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let canvas = with_canvas_context(this, context)?;
     let value = dom_string(args, 0, context)?;
-    let rgba = match parse_fill_color(&value) {
-        Some(FillColor::Rgba(rgba)) => rgba,
-        Some(FillColor::CurrentColor) => canvas_current_color(context, canvas)?,
+    // `currentcolor` reads back as the color it resolved to, since it no
+    // longer follows the element's `color` afterwards.
+    let (value, rgba) = match parse_fill_color(&value) {
+        Some(FillColor::Rgba(rgba)) => (value, rgba),
+        Some(FillColor::CurrentColor) => {
+            let rgba = canvas_current_color(context, canvas)?;
+            (serialize_canvas_color(rgba), rgba)
+        }
         None => return Ok(JsValue::undefined()),
     };
     with_state(context, |s| {

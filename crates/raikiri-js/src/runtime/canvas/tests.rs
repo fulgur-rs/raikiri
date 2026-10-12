@@ -357,7 +357,6 @@ fn fill_style_uses_the_css_color_parser() {
         "rgb(255,0,0)/**/",
         "rgb(255, /* c */ 0, 0)",
         "hsl(0 100% 50%)",
-        "currentcolor",
     ] {
         ok(
             &mut rt,
@@ -382,13 +381,38 @@ fn current_color_fill_uses_the_canvas_color() {
         "var c = document.getElementsByTagName('canvas')[0]; \
          c.width = 2; c.height = 1; \
          var ctx = c.getContext('2d'); \
-         ctx.fillStyle = 'currentcolor'; ctx.fillRect(0, 0, 1, 1); \
+         ctx.fillStyle = 'currentcolor'; var serialized = ctx.fillStyle; ctx.fillRect(0, 0, 1, 1); \
+         ctx.fillStyle = 'color-mix(in srgb, currentcolor, blue)'; var mixed = ctx.fillStyle; \
          ctx.fillStyle = 'rgb(255 0 0 / 50%)'; ctx.fillRect(1, 0, 1, 1);",
     )
     .unwrap();
+    // `currentcolor` reads back as the color it resolved to; a nested
+    // `currentcolor` the parser cannot resolve is rejected.
+    assert!(
+        rt.evaluate("serialized === '#00ff00' && mixed === '#00ff00'")
+            .unwrap()
+            .to_boolean()
+    );
     let host = rt.into_host();
     let bitmap = host.document().canvas_bitmap(canvas).expect("bitmap");
     assert_eq!(&bitmap.rgba[..4], &[0, 255, 0, 255]);
     // `rgb(255 0 0 / 50%)` (space syntax with a slash alpha) is translucent.
     assert_eq!(bitmap.rgba[7], 128);
+}
+
+#[test]
+fn canvas_color_serialization_uses_hex_or_rgba() {
+    assert_eq!(super::serialize_canvas_color([0, 255, 0, 255]), "#00ff00");
+    assert_eq!(
+        super::serialize_canvas_color([255, 0, 0, 128]),
+        "rgba(255, 0, 0, 0.5)"
+    );
+    assert_eq!(
+        super::serialize_canvas_color([1, 2, 3, 0]),
+        "rgba(1, 2, 3, 0)"
+    );
+    assert_eq!(
+        super::serialize_canvas_color([1, 2, 3, 1]),
+        "rgba(1, 2, 3, 0.004)"
+    );
 }
