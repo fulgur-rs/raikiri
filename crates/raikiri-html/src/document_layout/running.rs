@@ -46,7 +46,16 @@ struct Placement {
 /// The running elements of one document, by name, in document order.
 #[derive(Debug, Default)]
 pub(crate) struct RunningIndex {
-    pools: HashMap<SmolStr, Vec<Placement>>,
+    pools: HashMap<SmolStr, Pool>,
+}
+
+/// The running elements of one name, in document order.
+#[derive(Debug, Default)]
+struct Pool {
+    placements: Vec<Placement>,
+    /// The placements are on non-decreasing pages, as they usually are, so
+    /// the elements of a page are found by binary search.
+    by_page: bool,
 }
 
 impl RunningIndex {
@@ -93,11 +102,15 @@ impl RunningIndex {
                 .pools
                 .entry(template.name.clone())
                 .or_default()
+                .placements
                 .push(Placement {
                     node: NodeId(node as u64),
                     page,
                     starts_page: previous.is_none_or(|last| last < page),
                 });
+        }
+        for pool in index.pools.values_mut() {
+            pool.by_page = pool.placements.is_sorted_by_key(|placement| placement.page);
         }
         index
     }
@@ -115,13 +128,23 @@ impl RunningIndex {
     /// - `first-except`: nothing on a page that has an assignment, else the
     ///   entry value.
     pub(crate) fn select(&self, name: &str, fetch: StringFetchMode, page: u32) -> Option<NodeId> {
-        let pool = self.pools.get(name)?;
-        let entry = pool
+        let Pool {
+            placements: pool,
+            by_page,
+        } = self.pools.get(name)?;
+        let (before, on_page) = if *by_page {
+            let start = pool.partition_point(|placement| placement.page < page);
+            let end = start + pool[start..].partition_point(|placement| placement.page == page);
+            (&pool[..start], &pool[start..end])
+        } else {
+            (&pool[..], &pool[..])
+        };
+        let entry = before
             .iter()
             .rev()
             .find(|placement| placement.page < page)
             .map(|placement| placement.node);
-        let mut on_page = pool.iter().filter(|placement| placement.page == page);
+        let mut on_page = on_page.iter().filter(|placement| placement.page == page);
         match fetch {
             StringFetchMode::Start => match on_page.next() {
                 Some(first) if first.starts_page => Some(first.node),
@@ -167,7 +190,7 @@ impl LayoutCache {
         let mut nodes: Vec<NodeId> = index
             .pools
             .values()
-            .flat_map(|pool| pool.iter().map(|placement| placement.node))
+            .flat_map(|pool| pool.placements.iter().map(|placement| placement.node))
             .collect();
         nodes.sort_unstable_by_key(|node| node.0);
         nodes.dedup();

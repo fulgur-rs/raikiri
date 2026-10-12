@@ -417,7 +417,7 @@ impl Document {
                         .collect();
                     if paint_rules::generates_box(cv)
                         && !paint_rules::is_visibility_hidden_table(cv)
-                        && !paint_rules::hides_empty_table_cell(self, cascade, node_id)
+                        && !node.hides_empty_table_cell
                     {
                         let replaced_content =
                             node.is_inline_svg_root() || self.is_canvas_element(node_id);

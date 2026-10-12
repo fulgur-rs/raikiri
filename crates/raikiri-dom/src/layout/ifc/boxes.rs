@@ -108,7 +108,7 @@ pub(crate) fn layout_with_boxes_in(
             escaping_margin: CollapsibleMarginSet::ZERO,
             leading_block_margin: None,
             block_line_starts: Vec::new(),
-            shifts: Vec::new(),
+            shifts: super::root::LineShifts::default(), // cov:ignore: empty IFC fallback has no runtime placement to measure.
             fragment_box_placements: Vec::new(), // cov:ignore: empty IFC fallback has no runtime placement to measure.
             fragmentainer_line_ranges: None, // cov:ignore: empty IFC fallback has no runtime placement to measure.
             unfragmented_tail_column: None,
@@ -159,7 +159,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
             escaping_margin: CollapsibleMarginSet::ZERO,
             leading_block_margin: None,
             block_line_starts: Vec::new(),
-            shifts: Vec::new(),
+            shifts: super::root::LineShifts::default(),
             fragment_box_placements: Vec::new(),
             fragmentainer_line_ranges: Some(Vec::new()),
             unfragmented_tail_column: None,
@@ -169,7 +169,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
     let mut token = root.paragraph.start_token();
     let mut all_lines = Vec::new();
     let mut block_line_starts = Vec::new();
-    let mut shifts = Vec::new();
+    let mut shifts = super::root::LineShifts::default();
     let mut fragment_box_placements = Vec::new();
     let mut fragmentainer_line_ranges = Vec::new();
     let mut unfragmented_tail_column = None;
@@ -272,7 +272,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
             block_line_starts.push((node, line_start + first));
         }
         for (first, shift) in outcome.lines.shifts {
-            shifts.push((line_start + first, shift));
+            shifts.push(line_start + first, shift);
         }
         if line_count > 0 {
             let first = outcome.lines.lines[0].block_offset();
@@ -853,7 +853,7 @@ fn run_boxes_segment(
             escaping_margin,
             leading_block_margin,
             block_line_starts,
-            shifts: Vec::new(),
+            shifts: super::root::LineShifts::default(),
             fragment_box_placements,
             fragmentainer_line_ranges: None,
             unfragmented_tail_column: None,

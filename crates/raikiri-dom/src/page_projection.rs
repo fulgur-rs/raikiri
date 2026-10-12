@@ -19,7 +19,7 @@ use records::{
     PageFragmentOrientation, PageFragmentPageGeometry, PageFragmentRect,
     PlacementOverflowClipSource, ProjectedTextRoot,
 };
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// One link of a page: the owning `<a>`, its target, its quads, and the
 /// placement each quad comes from.
@@ -226,13 +226,21 @@ impl Document {
             .collect();
         let events = crate::layout::page_fragment_events_from_pages(self, &pages);
         let mut links: Vec<Vec<PageLink>> = pages.iter().map(|_| Vec::new()).collect();
+        let page_positions: HashMap<u32, usize> = pages
+            .iter()
+            .enumerate()
+            .rev()
+            .map(|(position, page)| (page.page_index, position))
+            .collect();
+        // Position of each (anchor, target) group in its page's list.
+        let mut groups: HashMap<(usize, NodeId, String), usize> = HashMap::new();
         for event in events {
             let PageFragmentEvent::Link(link) = event;
             let target = link.link.href.trim();
             if target.is_empty() {
                 continue;
             }
-            let Some(page) = pages.iter().position(|p| p.page_index == link.page_index) else {
+            let Some(&page) = page_positions.get(&link.page_index) else {
                 continue;
             };
             let content_box = pages[page].content_box;
@@ -243,20 +251,21 @@ impl Document {
                 link.rect.height,
             );
             let entries = &mut links[page];
-            match entries
-                .iter_mut()
-                .find(|(owner, t, _, _)| *owner == link.anchor_node_id && t == target)
-            {
-                Some((_, _, quads, placements)) => {
+            match groups.entry((page, link.anchor_node_id, target.to_owned())) {
+                std::collections::hash_map::Entry::Occupied(group) => {
+                    let (_, _, quads, placements) = &mut entries[*group.get()];
                     quads.push(quad);
                     placements.push(link.placement_node_id);
                 }
-                None => entries.push((
-                    link.anchor_node_id,
-                    target.to_owned(),
-                    vec![quad],
-                    vec![link.placement_node_id],
-                )),
+                std::collections::hash_map::Entry::Vacant(group) => {
+                    group.insert(entries.len());
+                    entries.push((
+                        link.anchor_node_id,
+                        target.to_owned(),
+                        vec![quad],
+                        vec![link.placement_node_id],
+                    ));
+                }
             }
         }
         self.page_projection = PageProjection {

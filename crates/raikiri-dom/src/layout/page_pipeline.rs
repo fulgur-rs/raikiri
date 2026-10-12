@@ -2705,7 +2705,7 @@ pub fn layout_pages_with_page_geometry_and_control(
         let Some(lines) = ifc.lines.as_mut() else {
             return;
         };
-        lines.shifts.push((first.line, delta));
+        lines.shifts.push(first.line, delta);
         let boxes: Vec<usize> = ifc.boxes.iter().map(|b| b.node).collect();
         for b in boxes {
             let location = &mut document.nodes[b].unrounded_layout.location;
@@ -2742,7 +2742,7 @@ pub fn layout_pages_with_page_geometry_and_control(
         else {
             return;
         };
-        lines.shifts.push((first_after, delta));
+        lines.shifts.push(first_after, delta);
         let boxes: Vec<usize> = ifc
             .boxes
             .iter()

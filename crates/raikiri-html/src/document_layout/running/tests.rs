@@ -1,17 +1,22 @@
 use super::*;
 
 fn index(placements: &[(u64, u32, bool)]) -> RunningIndex {
+    let placements: Vec<_> = placements
+        .iter()
+        .map(|&(node, page, starts_page)| Placement {
+            node: NodeId(node),
+            page,
+            starts_page,
+        })
+        .collect();
+    let by_page = placements.is_sorted_by_key(|placement| placement.page);
     let mut index = RunningIndex::default();
     index.pools.insert(
         SmolStr::new("hdr"),
-        placements
-            .iter()
-            .map(|&(node, page, starts_page)| Placement {
-                node: NodeId(node),
-                page,
-                starts_page,
-            })
-            .collect(),
+        Pool {
+            placements,
+            by_page,
+        },
     );
     index
 }
@@ -70,4 +75,35 @@ fn unknown_names_select_nothing() {
         unreachable!("only running elements are laid out")
     });
     assert!(matches!(none, Ok(None)));
+}
+
+#[test]
+fn page_search_matches_a_scan_of_the_pool() {
+    let sorted = index(&[
+        (1, 0, true),
+        (2, 2, true),
+        (3, 2, false),
+        (4, 2, false),
+        (5, 5, true),
+    ]);
+    assert!(sorted.pools["hdr"].by_page);
+    let mut scanned = index(&[
+        (1, 0, true),
+        (2, 2, true),
+        (3, 2, false),
+        (4, 2, false),
+        (5, 5, true),
+    ]);
+    scanned.pools.get_mut("hdr").expect("pool").by_page = false;
+    for page in 0..7 {
+        assert_eq!(selections(&sorted, page), selections(&scanned, page));
+    }
+    // A pool out of page order is scanned.
+    let unsorted = index(&[(1, 3, true), (2, 1, true), (3, 3, false)]);
+    assert!(!unsorted.pools["hdr"].by_page);
+    assert_eq!(
+        selections(&unsorted, 3),
+        vec![Some(1), Some(1), Some(3), None]
+    );
+    assert_eq!(selections(&unsorted, 2), vec![Some(2); 4]);
 }

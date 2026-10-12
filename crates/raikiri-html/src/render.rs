@@ -1305,12 +1305,12 @@ impl PipelineOutput {
     }
 
     /// Which laid-out document holds `page_index`: `0` for the original
-    /// layout, `k + 1` for continuation `k`.
+    /// layout, `k + 1` for continuation `k`. The continuations are in page
+    /// order, so the last one starting at or before the page is found by
+    /// binary search.
     pub(crate) fn layout_slot_for_page(&self, page_index: u32) -> usize {
         self.continuations
-            .iter()
-            .rposition(|continuation| continuation.first_page <= page_index)
-            .map_or(0, |index| index + 1)
+            .partition_point(|continuation| continuation.first_page <= page_index)
     }
 }
 
