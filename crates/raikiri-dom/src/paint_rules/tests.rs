@@ -78,6 +78,37 @@ fn overflow_clip_does_not_apply_to_an_ordinary_inline_box() {
 }
 
 #[test]
+fn overflow_clip_applies_to_an_inline_flex_item() {
+    let mut doc = Document::new();
+    let parent = doc.append_element(
+        Some(doc.root_index()),
+        "div",
+        Style::default(),
+        Some("display:flex"),
+    );
+    let item = doc.append_element(
+        Some(parent),
+        "fieldset",
+        Style::default(),
+        Some("overflow:hidden"),
+    );
+    doc.mark_in_document_flags();
+    let cascade = cascaded(&doc);
+    // The cascade keeps `inline`; the flex container blockifies the item.
+    assert_eq!(cascade.computed[item].display, DisplayValue::Inline);
+    assert!(
+        overflow_clip(
+            &doc,
+            &cascade,
+            item,
+            PaintRect::new(0.0, 0.0, 100.0, 50.0),
+            PaintInsets::new(0.0, 0.0, 0.0, 0.0),
+        )
+        .is_some()
+    );
+}
+
+#[test]
 fn overflow_clip_propagates_a_block_root_to_the_viewport() {
     let mut doc = Document::new();
     let root = doc.append_element(

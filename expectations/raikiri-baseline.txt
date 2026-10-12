@@ -860,6 +860,7 @@ css/css-flexbox/auto-height-with-flex.html
 css/css-flexbox/auto-margins-003.html
 css/css-flexbox/css-flexbox-img-expand-evenly.html
 css/css-flexbox/display-flex-001.htm
+css/css-flexbox/fieldset-as-item-overflow.html
 css/css-flexbox/flex-align-content-end.html
 css/css-flexbox/flex-basis-011.html
 css/css-flexbox/flex-container-margin.html
@@ -868,6 +869,7 @@ css/css-flexbox/flex-direction-column.html
 css/css-flexbox/flex-direction-modify.html
 css/css-flexbox/flex-direction-row-vertical.html
 css/css-flexbox/flex-direction.html
+css/css-flexbox/flex-item-vertical-align.html
 css/css-flexbox/flex-vertical-align-effect.html
 css/css-flexbox/flexbox-align-self-horiz-005.xhtml
 css/css-flexbox/flexbox-baseline-nested-001.html
@@ -971,7 +973,9 @@ css/css-flexbox/gap-002-lr.html
 css/css-flexbox/gap-002-ltr.html
 css/css-flexbox/gap-002-rl.html
 css/css-flexbox/gap-002-rtl.html
+css/css-flexbox/gap-003-lr.html
 css/css-flexbox/gap-003-ltr.html
+css/css-flexbox/gap-003-rl.html
 css/css-flexbox/gap-004-lr.html
 css/css-flexbox/gap-004-ltr.html
 css/css-flexbox/gap-004-rl.html

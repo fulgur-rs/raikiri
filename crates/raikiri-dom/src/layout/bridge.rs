@@ -95,12 +95,23 @@ fn multicol_style_from_computed(cv: &ComputedValues) -> Option<MulticolStyle> {
 /// lays out vertical lines on its own axes. A multicol container and its
 /// contents run vertical writing on horizontal axes, so they keep the
 /// horizontal mapping in [`ComputedValues::width`] / [`ComputedValues::height`].
+/// So do flex and grid containers: their algorithms place items on physical
+/// axes, together with the horizontally mapped logical margins.
 pub(crate) fn vertical_logical_size<'a>(
     doc: &Document,
     cascade: &'a CascadeResult,
     idx: usize,
 ) -> Option<&'a raikiri_style::VerticalLogicalSize> {
     let size = cascade.computed[idx].vertical_logical_size.as_ref()?;
+    if matches!(
+        cascade.computed[idx].display,
+        DisplayValue::Flex
+            | DisplayValue::InlineFlex
+            | DisplayValue::Grid
+            | DisplayValue::InlineGrid
+    ) {
+        return None;
+    }
     let mut current = Some(idx);
     while let Some(id) = current {
         if cascade

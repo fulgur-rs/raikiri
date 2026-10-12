@@ -123,6 +123,24 @@ mod ifc_geometry_tests {
     }
 
     #[test]
+    fn vertical_flex_container_keeps_the_horizontal_logical_size_mapping() {
+        // Flex layout places items on physical axes together with the
+        // horizontally mapped logical margins, so `block-size` stays the
+        // physical height of a vertical flex container.
+        let layout = |size_css: &str| {
+            let css = format!("display:flex;writing-mode:vertical-lr;{size_css}");
+            let (mut doc, cascade, root) = ahem_paragraph("", &css);
+            doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+            layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+            crate::layout::test_support::absolute_rect(&doc, root)
+        };
+
+        let logical = layout("block-size:100px");
+        assert_eq!(logical, layout("height:100px"));
+        assert_eq!(logical.3, 100.0);
+    }
+
+    #[test]
     fn ifc_inline_boxes_are_reported_in_vertical_physical_coordinates() {
         let css = "box-sizing:border-box;width:100px;height:40px;writing-mode:vertical-rl";
         let (mut doc, _, root) = ahem_paragraph("", css);
