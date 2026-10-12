@@ -426,9 +426,9 @@ fn inline_svg_split_across_pages_is_prepared_once() {
     assert!(sources.iter().all(|source| *source == sources[0]));
     assert_eq!(
         layout
-            .svg_sources
+            .caches
             .iter()
-            .map(|cache| cache.len())
+            .map(|caches| caches.svg_sources.len())
             .sum::<usize>(),
         1
     );

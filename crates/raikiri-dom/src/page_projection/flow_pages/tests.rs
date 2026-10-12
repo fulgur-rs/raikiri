@@ -66,3 +66,19 @@ fn pages_around_a_center_keep_its_owner_at_large_coordinates() {
     assert_eq!(owners, [1]);
     assert!(indices(flow.around(center, center)).contains(&1));
 }
+
+#[test]
+fn pages_around_a_range_report_their_slots() {
+    let pages = pages(&[
+        Some((0.0, 100.0)),
+        None,
+        Some((100.0, 200.0)),
+        Some((200.0, 300.0)),
+    ]);
+    let flow = FlowPages::new(&pages);
+    let slots: Vec<_> = flow
+        .around_slots(150.0, 250.0)
+        .map(|(slot, _)| slot)
+        .collect();
+    assert_eq!(slots, [2, 3]);
+}

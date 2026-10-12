@@ -294,6 +294,7 @@ pub struct RunningElementLayout {
     style: PageCascadeResult,
     height: f32,
     pub(super) svg_sources: super::page::InlineSvgCache,
+    margin_values: raikiri_dom::MarginBoxNamedValues,
 }
 
 impl std::fmt::Debug for RunningElementLayout {
@@ -357,6 +358,7 @@ impl RunningElementLayout {
             paired_style: None,
             running: None,
             svg_sources: &self.svg_sources,
+            margin_values: &self.margin_values,
         }
     }
 }
@@ -500,6 +502,7 @@ pub(crate) fn layout_running_element(
         style,
         height,
         svg_sources: super::page::InlineSvgCache::default(),
+        margin_values: raikiri_dom::MarginBoxNamedValues::new(),
     }))
 }
 

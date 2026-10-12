@@ -318,9 +318,11 @@ pub(crate) fn assign_ifc_roots(
         return check_text_in_paragraphs(doc, cascade);
     }
     state.retained = None;
-    let built = collect_candidates(doc, cascade, &state).and_then(|mut candidates| {
+    // One set of counters serves the whole pass: the document does not
+    // change while its paragraphs are collected.
+    let counters = GeneratedCounters::default();
+    let built = collect_candidates(doc, cascade, &state, &counters).and_then(|mut candidates| {
         candidates.extend(collect_text_candidates(doc, cascade, &state)?);
-        let counters = GeneratedCounters::default();
         for (index, cell) in doc.table_objects.cells.iter().enumerate() {
             let projected = project_anonymous_cell_builder(
                 doc,
@@ -418,12 +420,12 @@ fn collect_candidates(
     doc: &Document,
     cascade: &CascadeResult,
     state: &IfcState,
+    counters: &GeneratedCounters,
 ) -> Result<Vec<Candidate>, LayoutError> {
     let mut candidates = Vec::new();
     // Elements inside a `display: none` subtree generate no boxes, so their
     // paragraphs would be shaped for nothing.
     let mut taken = inside_hidden_subtrees(doc, cascade);
-    let counters = GeneratedCounters::default();
     for idx in 0..doc.nodes.len() {
         let node = &doc.nodes[idx];
         // A root is any box that lays its own inline content out, whatever
@@ -438,7 +440,7 @@ fn collect_candidates(
         {
             continue;
         }
-        if !needs_ifc_layout(doc, cascade, idx, &state.fonts, &counters)
+        if !needs_ifc_layout(doc, cascade, idx, &state.fonts, counters)
             .map_err(|error| projection_error(idx, error))?
         {
             continue;
@@ -452,7 +454,7 @@ fn collect_candidates(
             idx,
             &state.fonts,
             &state.limits,
-            &counters,
+            counters,
         ) {
             Ok(projected) => projected,
             Err(error) => return Err(projection_error(idx, error)),

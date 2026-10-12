@@ -106,7 +106,8 @@ pub use layout::{
 pub use layout::{StandaloneAlign, StandaloneStyle, StandaloneText};
 pub use margin_boxes::{
     DeferredGlyph, DeferredSlot, DeferredValue, MarginBox, MarginBoxBackgroundImage,
-    MarginBoxBorder, MarginBoxPageContext, MarginBoxRunning, MarginBoxText, page_margin_boxes,
+    MarginBoxBorder, MarginBoxNamedValues, MarginBoxPageContext, MarginBoxRunning, MarginBoxText,
+    page_margin_boxes, page_margin_boxes_with_values,
 };
 pub use node::{CanvasBitmap, CanvasBitmapError, ElementData, Node, NodeData, NodeFlags, TextData};
 pub use page_projection::continuation::{CrossingBox, PageStart, PageStartToken};

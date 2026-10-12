@@ -320,6 +320,7 @@ fn every_text_align_keyword_reaches_the_spec() {
             100.0,
             40.0,
             MarginBoxPageContext::new(0, 1, false),
+            &MarginBoxNamedValues::new(),
         )
         .unwrap();
         assert_eq!(spec.alignment, expected, "{keyword}");
@@ -444,6 +445,53 @@ fn named_strings_and_running_elements_resolve_to_document_text() {
             (PageMarginBoxSlot::BottomLeft, String::new()),
         ]
     );
+}
+
+#[test]
+fn shared_named_values_take_the_last_assignment_on_every_page() {
+    let mut doc = engine_document();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let head = doc.append_element(Some(html), "head", Style::default(), Some("display:none"));
+    let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+    doc.append_text(
+        style,
+        "h1 { string-set: title content(), title 'Last ' content() } \
+         div { position: running(hdr) } \
+         @page { margin: 40px; \
+           @top-left { content: string(title) } \
+           @top-right { content: element(hdr) } }",
+    );
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    for (heading, running) in [("One", "First head"), ("Two", "Second head")] {
+        let h1 = doc.append_element(Some(body), "h1", Style::default(), None::<&str>);
+        doc.append_text(h1, heading);
+        let hdr = doc.append_element(Some(body), "div", Style::default(), None::<&str>);
+        doc.append_text(hdr, running);
+    }
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let values = MarginBoxNamedValues::new();
+    for page_index in 0..2 {
+        let contents: Vec<_> = page_margin_boxes_with_values(
+            &doc,
+            &cascade,
+            &cascade.page,
+            small_page(),
+            MarginBoxPageContext::new(page_index, 2, page_index % 2 == 1),
+            &values,
+        )
+        .into_iter()
+        .map(|margin_box| (margin_box.slot, margin_box.content))
+        .collect();
+        assert_eq!(
+            contents,
+            [
+                (PageMarginBoxSlot::TopLeft, "Last Two".to_owned()),
+                (PageMarginBoxSlot::TopRight, "Second head".to_owned()),
+            ],
+            "page {page_index}"
+        );
+    }
 }
 
 #[test]
