@@ -567,3 +567,43 @@ fn quirks_mode_a_line_break_takes_its_strut_font_from_a_contents_body() {
         .collect();
     assert_eq!(heights, [40.0, 20.0]);
 }
+
+fn intrinsic_measurements(doc: &Document) -> usize {
+    doc.ifc
+        .as_ref()
+        .map_or(0, |state| state.intrinsic_measurements)
+}
+
+#[test]
+fn a_stretched_horizontal_paragraph_is_not_measured_for_intrinsic_widths() {
+    // A block-level paragraph is stretched to its containing block's definite
+    // width, so its min- and max-content widths never decide its width.
+    let (mut doc, cascade, root) = ahem_paragraph("AAAA BBBB CCCC", "width:60px");
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    assert_eq!(intrinsic_measurements(&doc), 0);
+    let lines = doc.nodes[root].ifc_lines().expect("lines");
+    assert_eq!(lines.len(), 3, "breaks at the 60px width");
+    assert_eq!(doc.nodes[root].unrounded_layout.size.width, 60.0);
+}
+
+#[test]
+fn a_shrink_to_fit_paragraph_is_still_measured_for_intrinsic_widths() {
+    for css in ["float:left", "display:inline-block", "position:absolute"] {
+        let (mut doc, cascade, root) = ahem_paragraph("AAAA BBBB", css);
+        layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+        assert!(intrinsic_measurements(&doc) > 0, "{css}");
+        assert_eq!(
+            doc.nodes[root].unrounded_layout.size.width, 90.0,
+            "{css} shrinks to its max-content width"
+        );
+    }
+}
+
+#[test]
+fn a_stretched_vertical_paragraph_is_still_measured_for_intrinsic_widths() {
+    // In vertical flow the intrinsic widths still size the block extent.
+    let (mut doc, cascade, _root) =
+        ahem_paragraph("AAAA BBBB", "writing-mode:vertical-rl;height:60px");
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    assert!(intrinsic_measurements(&doc) > 0);
+}
