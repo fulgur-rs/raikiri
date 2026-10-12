@@ -64,6 +64,7 @@ cargo run --release --locked -p raikiri-wpt --bin audit-vacuous-passes -- \
 | `VACUOUS-BLANK` | The reference also matches an empty document. |
 | `VACUOUS-UNSTYLED` | The reference still matches after removing the test's subject properties (named in its file name or `rel=help` links), the properties the reference never uses, or the declarations the reference does not repeat. |
 | `VACUOUS-MISMATCH-ONLY` | The test has only `rel=mismatch` references. |
+| `INCONCLUSIVE` | A probe failed to render, so the PASS could not be judged. |
 | `NOT-PASS` | The test does not pass. |
 
 Only inline author declarations are ablated, so `KEEP` with "no test-only

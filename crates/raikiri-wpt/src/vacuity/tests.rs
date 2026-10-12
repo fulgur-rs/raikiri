@@ -319,3 +319,48 @@ fn a_missing_reference_is_a_probe_error() {
     std::fs::remove_file(root.join("css/a/gone.html")).unwrap();
     assert_eq!(passes(&pairs[0], small(), false, "", test), None);
 }
+
+#[test]
+fn metadata_and_styles_inside_comments_or_scripts_are_ignored() {
+    let html = r#"<!-- <meta name="fuzzy" content="0-255;0-480000"> -->
+<script>document.write('<meta name="fuzzy" content="0-255;0-480000"><link rel="match" href="x.html">')</script>
+<title><style>a { color: red }</style></title><meta name="assert" content="kept">"#;
+    let blank = blank_document(html);
+    assert!(!blank.contains("fuzzy"), "{blank}");
+    assert!(!blank.contains("x.html"), "{blank}");
+    assert!(blank.contains(r#"<meta name="assert" content="kept">"#));
+    assert!(keys(html).is_empty());
+}
+
+#[test]
+fn declaration_keys_keep_whitespace_in_strings_and_accept_escaped_names() {
+    let html = r#"<div style="content: 'a  b'  'c';  --caf\e9:  x   y; --café: 1">"#;
+    assert_eq!(
+        keys(html),
+        ["content:'a  b' 'c'", r"--caf\e9:x y", "--café:1"]
+    );
+    assert_eq!(collapse_whitespace(r#" "a\"  b"   c "#), r#""a\"  b" c"#);
+}
+
+#[test]
+fn inconclusive_verdicts_name_the_failing_probe() {
+    let verdict = Verdict::Inconclusive { probe: "blank" };
+    assert_eq!(verdict.label(), "INCONCLUSIVE");
+    assert_eq!(verdict.detail(), "the blank probe failed to render");
+}
+
+#[test]
+fn a_probe_that_fails_to_render_is_inconclusive() {
+    // The script throws once the subject declaration is ablated, so the
+    // feature probe errors instead of rendering.
+    let test = r#"<!DOCTYPE html><link rel="match" href="ref.html"><body style="margin:0"><div id="d" style="clear:both;width:8px;height:8px;background-color:green"></div>
+<script>if (!document.getElementById("d").getAttribute("style").includes("clear")) throw new Error("ablated");</script>"#;
+    let verdict = audit(
+        &[
+            ("css/a/clear-003.html", test),
+            ("css/a/ref.html", GREEN_REF),
+        ],
+        "css/a/clear-003.html",
+    );
+    assert_eq!(verdict, Verdict::Inconclusive { probe: "feature" });
+}

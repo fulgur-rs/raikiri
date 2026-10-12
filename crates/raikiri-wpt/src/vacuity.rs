@@ -67,6 +67,12 @@ pub enum Verdict {
     },
     /// The test has no `rel=match` reference.
     MismatchOnly,
+    /// A probe could not be rendered, so the audit cannot tell whether the
+    /// PASS is vacuous.
+    Inconclusive {
+        /// The probe that failed to render.
+        probe: &'static str,
+    },
     /// The test does not pass, so it is not a promotion candidate.
     NotPass {
         /// Status reported by the baseline runner.
@@ -84,6 +90,7 @@ impl Verdict {
             Verdict::Blank => "VACUOUS-BLANK",
             Verdict::Unstyled { .. } => "VACUOUS-UNSTYLED",
             Verdict::MismatchOnly => "VACUOUS-MISMATCH-ONLY",
+            Verdict::Inconclusive { .. } => "INCONCLUSIVE",
             Verdict::NotPass { .. } => "NOT-PASS",
         }
     }
@@ -98,6 +105,7 @@ impl Verdict {
             }
             Verdict::Blank => "reference matches an empty document".to_owned(),
             Verdict::MismatchOnly => "only rel=mismatch references".to_owned(),
+            Verdict::Inconclusive { probe } => format!("the {probe} probe failed to render"),
             Verdict::NotPass { status, detail } => format!("{}: {detail}", status.as_str()),
         }
     }
@@ -162,9 +170,13 @@ fn probe_passing(wpt_root: &Path, id: &str, config: ReftestConfig) -> Result<Ver
             continue;
         };
         let reference_html = read(&pair.reference)?;
-        if passes(pair, config, resolve_images, &variant_query, &blank) == Some(true) {
-            verdict.get_or_insert(Verdict::Blank);
-            continue;
+        match passes(pair, config, resolve_images, &variant_query, &blank) {
+            Some(true) => {
+                verdict.get_or_insert(Verdict::Blank);
+                continue;
+            }
+            Some(false) => {}
+            None => return Ok(Verdict::Inconclusive { probe: "blank" }),
         }
         let reference = author_declarations(&reference_html);
         let reference_keys: BTreeSet<&str> = reference.iter().map(|d| d.key.as_str()).collect();
@@ -181,15 +193,23 @@ fn probe_passing(wpt_root: &Path, id: &str, config: ReftestConfig) -> Result<Ver
             ("property", &by_property),
             ("declaration", &by_declaration),
         ];
-        let unstyled = probes.into_iter().find(|(_, (html, removed))| {
-            *removed > 0 && passes(pair, config, resolve_images, &variant_query, html) == Some(true)
-        });
-        if let Some((probe, (_, ablated))) = unstyled {
+        let mut unstyled = None;
+        for (probe, (html, removed)) in probes {
+            if *removed == 0 {
+                continue;
+            }
+            match passes(pair, config, resolve_images, &variant_query, html) {
+                Some(true) => {
+                    unstyled = Some((probe, *removed));
+                    break;
+                }
+                Some(false) => {}
+                None => return Ok(Verdict::Inconclusive { probe }),
+            }
+        }
+        if let Some((probe, ablated)) = unstyled {
             if !matches!(verdict, Some(Verdict::Unstyled { .. })) {
-                verdict = Some(Verdict::Unstyled {
-                    probe,
-                    ablated: *ablated,
-                });
+                verdict = Some(Verdict::Unstyled { probe, ablated });
             }
             continue;
         }
@@ -211,19 +231,14 @@ pub fn feature_properties(test_html: &str, test_id: &str) -> BTreeSet<String> {
     let mut subjects: Vec<String> = Vec::new();
     let file = test_id.rsplit('/').next().unwrap_or(test_id);
     subjects.push(file.split('.').next().unwrap_or(file).to_ascii_lowercase());
-    let lower = test_html.to_ascii_lowercase();
-    let mut from = 0;
-    while let Some(offset) = lower[from..].find("<link") {
-        let start = from + offset;
-        let Some(end) = tag_end(test_html, start) else {
-            break;
-        };
-        let attrs = tag_attributes(test_html, start, end);
-        let href = attrs
+    for tag in tags(test_html) {
+        let href = tag
+            .attributes
             .iter()
             .find(|(name, _)| name == "href")
-            .map(|(_, value)| lower[value.clone()].to_owned());
-        if has_rel(test_html, &attrs, "help")
+            .map(|(_, value)| test_html[value.clone()].to_ascii_lowercase());
+        if tag.name == "link"
+            && has_rel(test_html, &tag.attributes, "help")
             && let Some(href) = href
         {
             let (path, fragment) = href.split_once('#').unwrap_or((&href, ""));
@@ -236,7 +251,6 @@ pub fn feature_properties(test_html: &str, test_id: &str) -> BTreeSet<String> {
             );
             subjects.push(fragment.to_owned());
         }
-        from = end;
     }
     let words: Vec<Vec<&str>> = subjects
         .iter()
@@ -292,23 +306,13 @@ fn passes(
 /// An empty HTML document carrying the test's `<meta>` tags and reference
 /// `<link>` tags, so that fuzzy and page-range metadata still apply.
 pub fn blank_document(test_html: &str) -> String {
-    let lower = test_html.to_ascii_lowercase();
     let mut head = String::new();
-    for tag in ["<meta", "<link"] {
-        let mut from = 0;
-        while let Some(offset) = lower[from..].find(tag) {
-            let start = from + offset;
-            let Some(end) = tag_end(test_html, start) else {
-                break;
-            };
-            let attrs = tag_attributes(test_html, start, end);
-            let reference =
-                has_rel(test_html, &attrs, "match") || has_rel(test_html, &attrs, "mismatch");
-            if tag == "<meta" || reference {
-                head.push_str(&test_html[start..end]);
-                head.push('\n');
-            }
-            from = end;
+    for tag in tags(test_html) {
+        let reference = has_rel(test_html, &tag.attributes, "match")
+            || has_rel(test_html, &tag.attributes, "mismatch");
+        if tag.name == "meta" || (tag.name == "link" && reference) {
+            head.push_str(&test_html[tag.range]);
+            head.push('\n');
         }
     }
     format!("<!DOCTYPE html>\n<html><head>\n{head}</head><body></body></html>\n")
@@ -338,6 +342,42 @@ fn property_of(key: &str) -> &str {
 /// Collect declarations from `<style>` element contents and `style`
 /// attributes. Comments and `<script>` contents are skipped.
 pub fn author_declarations(html: &str) -> Vec<Declaration> {
+    let mut out = Vec::new();
+    for tag in tags(html) {
+        for (attr, value) in &tag.attributes {
+            if attr == "style" {
+                out.extend(css_declarations(&html[value.clone()], true, value.start));
+            }
+        }
+        if tag.name == "style"
+            && let Some(content) = tag.raw_text
+        {
+            out.extend(css_declarations(
+                &html[content.clone()],
+                false,
+                content.start,
+            ));
+        }
+    }
+    out
+}
+
+/// One start tag found by [`tags`].
+struct Tag {
+    /// Lowercased element name.
+    name: String,
+    /// Byte range of the whole start tag.
+    range: Range<usize>,
+    /// Attributes with the byte range of each value.
+    attributes: Vec<(String, Range<usize>)>,
+    /// Contents of a raw-text element (`style`, `script` and the like).
+    raw_text: Option<Range<usize>>,
+}
+
+/// Start tags of `html` in document order. Comments are skipped, and the
+/// contents of raw-text elements are not searched for tags, so markup inside
+/// a comment or a script string does not count as an element.
+fn tags(html: &str) -> Vec<Tag> {
     let lower = html.to_ascii_lowercase();
     let bytes = html.as_bytes();
     let mut out = Vec::new();
@@ -362,24 +402,27 @@ pub fn author_declarations(html: &str) -> Vec<Declaration> {
             i += 1;
             continue;
         }
-        let name = &lower[name_start..name_start + name_len];
+        let name = lower[name_start..name_start + name_len].to_owned();
         let Some(end) = tag_end(html, i) else {
             break;
         };
-        for (attr, value) in attributes(html, name_start + name_len, end) {
-            if attr == "style" {
-                out.extend(css_declarations(&html[value.clone()], true, value.start));
-            }
-        }
-        i = end;
-        if name == "style" || name == "script" {
+        let attributes = attributes(html, name_start + name_len, end);
+        let raw_text = matches!(
+            name.as_str(),
+            "style" | "script" | "title" | "textarea" | "xmp" | "noscript"
+        )
+        .then(|| {
             let close = format!("</{name}");
-            let content_end = lower[i..].find(&close).map_or(bytes.len(), |e| i + e);
-            if name == "style" {
-                out.extend(css_declarations(&html[i..content_end], false, i));
-            }
-            i = content_end;
-        }
+            end..lower[end..].find(&close).map_or(bytes.len(), |e| end + e)
+        });
+        let next = raw_text.as_ref().map_or(end, |content| content.end);
+        out.push(Tag {
+            name,
+            range: i..end,
+            attributes,
+            raw_text,
+        });
+        i = next;
     }
     out
 }
@@ -472,15 +515,6 @@ fn attributes(html: &str, attrs_start: usize, tag_end: usize) -> Vec<(String, Ra
     out
 }
 
-/// Attributes of the start tag beginning at `start` (`<name ...>`).
-fn tag_attributes(html: &str, start: usize, end: usize) -> Vec<(String, Range<usize>)> {
-    let name_len = html.as_bytes()[start + 1..end]
-        .iter()
-        .take_while(|b| b.is_ascii_alphanumeric() || **b == b'-')
-        .count();
-    attributes(html, start + 1 + name_len, end)
-}
-
 /// Whether the `rel` attribute among `attrs` has the token `token`.
 fn has_rel(html: &str, attrs: &[(String, Range<usize>)], token: &str) -> bool {
     attrs.iter().any(|(name, value)| {
@@ -560,15 +594,16 @@ fn push_declaration(css: &str, range: Range<usize>, base: usize, out: &mut Vec<D
     };
     let name = strip_comments(name);
     let name = name.trim();
+    // Identifier characters, including escapes and non-ASCII code points.
     if name.is_empty()
         || !name
             .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'\\') || !b.is_ascii())
     {
         return;
     }
     let value = strip_comments(value);
-    let value = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    let value = collapse_whitespace(&value);
     if value.is_empty() {
         return;
     }
@@ -584,6 +619,34 @@ fn push_declaration(css: &str, range: Range<usize>, base: usize, out: &mut Vec<D
             format!("{}:{value}", name.to_ascii_lowercase())
         },
     });
+}
+
+/// Trim `value` and collapse runs of whitespace to one space, except inside
+/// quoted strings, where whitespace is significant.
+fn collapse_whitespace(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut quote = None;
+    let mut escaped = false;
+    let mut pending_space = false;
+    for c in value.trim().chars() {
+        if quote.is_none() && c.is_whitespace() {
+            pending_space = true;
+            continue;
+        }
+        if pending_space {
+            out.push(' ');
+            pending_space = false;
+        }
+        out.push(c);
+        match (quote, c) {
+            (Some(_), _) if escaped => escaped = false,
+            (Some(_), '\\') => escaped = true,
+            (Some(q), c) if c == q => quote = None,
+            (None, '"' | '\'') => quote = Some(c),
+            _ => {}
+        }
+    }
+    out
 }
 
 fn strip_comments(text: &str) -> String {
