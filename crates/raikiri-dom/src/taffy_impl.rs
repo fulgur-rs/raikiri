@@ -871,6 +871,7 @@ fn measure_ifc_root(
     mut block_ctx: Option<&mut BlockContext<'_>>,
 ) -> (Size<f32>, Option<f32>, CollapsibleMarginSet) {
     use crate::layout::ifc::{flow, root::with_state};
+    let width_only = std::mem::take(&mut tree.ifc_width_probe);
     let Some((probe, writing_mode, fixed, direction)) = tree.nodes[idx].ifc.as_ref().map(|root| {
         (
             root.without_lines(),
@@ -964,6 +965,15 @@ fn measure_ifc_root(
     } else {
         width.min(inline_bounds.1).max(inline_bounds.0)
     };
+    // A width-only probe of a horizontal paragraph is answered here; its
+    // height is never read (the caller restores the node's layout cache).
+    if width_only && !vertical && measure.run_mode == RunMode::ComputeSize {
+        return (
+            Size { width, height: 0.0 },
+            None,
+            CollapsibleMarginSet::ZERO,
+        );
+    }
     // The content of a multicol container is broken at the column width and
     // split in its columns. A paragraph with boxes of its own is laid out in
     // one column as wide as the container.

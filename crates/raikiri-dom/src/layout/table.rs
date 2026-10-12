@@ -115,6 +115,16 @@ struct CellPlacement {
     resolved: Option<TaffyLayout>,
     natural_height: f32,
     baseline: f32,
+    /// The row-height pass's layout, kept when the final layout at the row
+    /// height would only repeat it (see [`row_pass_is_final`]).
+    row_pass: Option<RowPassLayout>,
+}
+
+/// What the final cell placement needs from a reusable row-height pass.
+#[derive(Debug, Clone, Copy)]
+struct RowPassLayout {
+    width: f32,
+    scrollable_overflow_rect: Rect<f32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1266,6 +1276,7 @@ fn build_table_grid(
                     resolved: None,
                     natural_height: 0.0,
                     baseline: 0.0,
+                    row_pass: None,
                 });
                 col = next_col;
             }
@@ -1518,6 +1529,7 @@ fn flush_pending(
             resolved: None,
             natural_height: 0.0,
             baseline: 0.0,
+            row_pass: None,
         });
         col = next_col;
     }
@@ -1561,6 +1573,7 @@ fn collect_cells_in_row(
             resolved: None,
             natural_height: 0.0,
             baseline: 0.0,
+            row_pass: None,
         });
         col = next_col;
     }
@@ -1627,6 +1640,13 @@ fn get_rowspan(doc: &Document, node_id: usize) -> u16 {
 // ---------------------------------------------------------------------------
 
 fn measure_cell_inline(doc: &mut Document, cell_id: usize, axis: AvailableSpace) -> f32 {
+    // Only the width is read. A cell whose content is one horizontal
+    // paragraph without boxes of its own gets it from the paragraph's
+    // intrinsic widths, without breaking it into lines; the size cached for
+    // that probe would carry no height, so the cell's cache is restored.
+    let width_only = is_plain_paragraph_cell(doc, cell_id);
+    let saved_cache = width_only.then(|| doc.table_layout_node_mut(cell_id).cache.clone());
+    doc.ifc_width_probe = width_only;
     // Use a fresh measure: indefinite parent size so that % widths resolve to auto (spec §2.3).
     // Height available is MAX_CONTENT (intrinsic).
     let output = doc.compute_child_layout(
@@ -1648,6 +1668,10 @@ fn measure_cell_inline(doc: &mut Document, cell_id: usize, axis: AvailableSpace)
             vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
         },
     );
+    doc.ifc_width_probe = false;
+    if let Some(cache) = saved_cache {
+        doc.table_layout_node_mut(cell_id).cache = cache;
+    }
     output.size.width
 }
 
@@ -2159,6 +2183,11 @@ fn resolve_row_heights(
             doc.table_layout_node_mut(cell.node_id).style.size.height = authored_height;
             doc.table_layout_node_mut(cell.node_id).cache.clear();
         }
+        cell.row_pass = (authored_height.is_auto() && row_pass_is_final(doc, cell.node_id))
+            .then_some(RowPassLayout {
+                width: cell_width,
+                scrollable_overflow_rect: output.scrollable_overflow_rect,
+            });
         // Distribute rowspan height across spanned rows (simple: equally)
         cell.natural_height = output.size.height;
         let style = &doc
@@ -2269,6 +2298,34 @@ fn track_origins(sizes: &[f32], overlaps: &[f32], origin: f32) -> Vec<f32> {
     out
 }
 
+/// Whether a cell's row-height layout is already its final content layout.
+///
+/// A horizontal inline formatting context with no boxes of its own (floats,
+/// atomic inlines, positioned children) breaks its lines at its width alone:
+/// the definite row height only changes the box, which the placement sets
+/// directly. Block content can depend on the height (percentage heights), so
+/// it is laid out again.
+fn row_pass_is_final(doc: &Document, cell_id: usize) -> bool {
+    is_plain_paragraph_cell(doc, cell_id)
+        && doc
+            .ifc_layout_node(cell_id)
+            .and_then(|node| node.ifc.as_ref())
+            .is_some_and(|root| root.lines.is_some())
+}
+
+/// Whether a cell's content is one horizontal paragraph with no boxes of its
+/// own, whose lines depend on nothing but the cell's width.
+fn is_plain_paragraph_cell(doc: &Document, cell_id: usize) -> bool {
+    let node = doc
+        .ifc_layout_node(cell_id)
+        .expect("table cell layout view");
+    node.is_ifc_root()
+        && node.multicol.is_none()
+        && node.ifc.as_ref().is_some_and(|root| {
+            root.writing_mode == shodo::geometry::WritingMode::HorizontalTb && root.boxes.is_empty()
+        })
+}
+
 fn place_cells(
     doc: &mut Document,
     grid: &mut TableGrid,
@@ -2308,32 +2365,40 @@ fn place_cells(
                 .filter(|gap| **gap != 0.0)
                 .count() as f32
                 * spacing.1;
-        // Final layout for cell contents with definite size
-        let output = doc.compute_child_layout(
-            NodeId::from(cell.node_id),
-            LayoutInput {
-                run_mode: RunMode::PerformLayout,
-                sizing_mode: SizingMode::InherentSize,
-                axis: taffy::tree::RequestedAxis::Horizontal,
-                known_dimensions: Size {
-                    width: Some(cell_width),
-                    height: Some(cell_height),
+        // Final layout for cell contents with definite size. A cell whose
+        // content does not depend on its height keeps its row-pass lines.
+        let reused = cell
+            .row_pass
+            .filter(|pass| pass.width == cell_width)
+            .map(|pass| pass.scrollable_overflow_rect);
+        let scrollable_overflow_rect = reused.unwrap_or_else(|| {
+            doc.compute_child_layout(
+                NodeId::from(cell.node_id),
+                LayoutInput {
+                    run_mode: RunMode::PerformLayout,
+                    sizing_mode: SizingMode::InherentSize,
+                    axis: taffy::tree::RequestedAxis::Horizontal,
+                    known_dimensions: Size {
+                        width: Some(cell_width),
+                        height: Some(cell_height),
+                    },
+                    parent_size: Size {
+                        width: Some(cell_width),
+                        height: Some(cell_height),
+                    },
+                    available_space: Size {
+                        width: AvailableSpace::Definite(cell_width),
+                        height: AvailableSpace::Definite(cell_height),
+                    },
+                    known_dimensions_are_definite: taffy::geometry::Size {
+                        width: true,
+                        height: true,
+                    },
+                    vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
                 },
-                parent_size: Size {
-                    width: Some(cell_width),
-                    height: Some(cell_height),
-                },
-                available_space: Size {
-                    width: AvailableSpace::Definite(cell_width),
-                    height: AvailableSpace::Definite(cell_height),
-                },
-                known_dimensions_are_definite: taffy::geometry::Size {
-                    width: true,
-                    height: true,
-                },
-                vertical_margins_are_collapsible: taffy::geometry::Line::FALSE,
-            },
-        );
+            )
+            .scrollable_overflow_rect
+        });
         // A cell laid out by the inline engine has no child layouts: its
         // lines are drawn from its content box, which its own border and
         // padding (as the engine measured them) place inside the cell.
@@ -2409,7 +2474,7 @@ fn place_cells(
                 width: cell_width,
                 height: cell_height,
             },
-            scrollable_overflow_rect: output.scrollable_overflow_rect,
+            scrollable_overflow_rect,
             scrollbar_size: Size::ZERO,
             padding,
             border,
@@ -2435,7 +2500,6 @@ fn place_cells(
                 doc.nodes[child].unrounded_layout.location.y += cell_y;
             }
         }
-        let _ = output;
     }
     Ok(())
 }
