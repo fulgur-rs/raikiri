@@ -55,7 +55,7 @@ use html5ever::tokenizer::{
     BufferQueue, TagKind, Token as HtmlToken, TokenSink, TokenSinkResult, Tokenizer, TokenizerOpts,
 };
 use html5ever::tree_builder::{
-    Attribute, ElementFlags, NodeOrText, QuirksMode, TreeBuilder, TreeBuilderOpts, TreeSink,
+    Attribute, ElementFlags, NodeOrText, QuirksMode, Tracer, TreeBuilder, TreeBuilderOpts, TreeSink,
 };
 use html5ever::{Namespace, QualName, TokenizerResult, local_name, ns};
 use std::borrow::Cow;
@@ -740,47 +740,25 @@ impl TokenSink for Recorder<'_> {
                 self.previous_end.set(end);
             }
         }
-        let end_tag = match &token {
-            HtmlToken::TagToken(tag) if tag.kind == TagKind::EndTag => Some(tag.name.to_string()),
-            _ => None,
-        };
-        let eof = matches!(token, HtmlToken::EOFToken);
         let result = self.builder.process_token(token, line_number);
-        let pending = dom.start_tag.borrow_mut().take();
-        // The tree builder does not report every element it pops, so track
-        // the open style element and the elements open inside it from the
-        // tokens. The end of the input, a start tag whose element lands
-        // outside it, and an end tag for it, for one of its ancestors or that
-        // breaks out of foreign content close it. Other end tags close an
-        // element inside it or are ignored.
-        let open = dom.open_style.take();
-        for (style, mut inner) in open {
-            let still_open = if eof {
-                false
-            } else if let Some(name) = &end_tag {
-                if let Some(at) = inner.iter().rposition(|open| open == name) {
-                    inner.truncate(at);
-                    true
+        // The tree builder does not report every element it pops, so ask it
+        // which style elements are still open. Its traced handles are the
+        // open elements plus the document, head, form and formatting
+        // elements, none of which is a style element.
+        if !dom.open_style.borrow().is_empty() {
+            let open = OpenElements::default();
+            self.builder.trace_handles(&open);
+            let open = open.0.into_inner();
+            let styles = dom.open_style.take();
+            for style in styles {
+                if open.contains(&style) {
+                    dom.open_style.borrow_mut().push(style);
                 } else {
-                    !dom.closes(style, name)
+                    dom.close(style);
                 }
-            } else if let Some(pending) = &pending {
-                let inside = pending
-                    .element
-                    .is_some_and(|element| element != style && dom.is_inside(element, style));
-                if inside && !pending.self_closing {
-                    inner.push(pending.name.clone());
-                }
-                inside
-            } else {
-                true
-            };
-            if still_open {
-                dom.open_style.borrow_mut().push((style, inner));
-            } else {
-                dom.close(style);
             }
         }
+        let pending = dom.start_tag.borrow_mut().take();
         if let Some(pending) = pending {
             dom.record(pending);
         }
@@ -794,6 +772,18 @@ impl TokenSink for Recorder<'_> {
     fn adjusted_current_node_present_but_not_in_html_namespace(&self) -> bool {
         self.builder
             .adjusted_current_node_present_but_not_in_html_namespace()
+    }
+}
+
+/// Collects the ids of the handles the tree builder traces.
+#[derive(Default)]
+struct OpenElements(RefCell<Vec<usize>>);
+
+impl Tracer for OpenElements {
+    type Handle = Handle;
+
+    fn trace_handle(&self, node: &Handle) {
+        self.0.borrow_mut().push(node.id());
     }
 }
 
@@ -843,8 +833,6 @@ struct Node {
     content: Option<Range<usize>>,
     /// For a style element, the text appended to it.
     text: String,
-    /// Local name of an element.
-    name: String,
 }
 
 /// A minimal tree sink that keeps what the scan needs: element parents,
@@ -857,9 +845,9 @@ struct Dom {
     token: Cell<(usize, usize)>,
     /// The start tag token the tree builder is processing.
     start_tag: RefCell<Option<PendingTag>>,
-    /// The open style elements, outermost first, each with the names of the
-    /// elements open inside it. An SVG style element can hold another one.
-    open_style: RefCell<Vec<(usize, Vec<String>)>>,
+    /// The open style elements, outermost first. An SVG style element can
+    /// hold another one.
+    open_style: RefCell<Vec<usize>>,
 }
 
 impl Dom {
@@ -874,7 +862,6 @@ impl Dom {
             tag: None,
             content: None,
             text: String::new(),
-            name: name.local.to_string(),
         });
         Handle(Rc::new((nodes.len() - 1, name)))
     }
@@ -899,7 +886,7 @@ impl Dom {
                 if pending.self_closing && pending.namespace != ns!(html) {
                     content.end = content.start;
                 } else {
-                    self.open_style.borrow_mut().push((id, Vec::new()));
+                    self.open_style.borrow_mut().push(id);
                 }
             }
         }
@@ -921,37 +908,6 @@ impl Dom {
             content: None,
             text: String::new(),
         });
-    }
-
-    /// Whether `node` is a descendant of `ancestor`.
-    fn is_inside(&self, node: usize, ancestor: usize) -> bool {
-        let nodes = self.nodes.borrow();
-        let mut at = nodes[node].parent;
-        while let Some(current) = at {
-            if current == ancestor {
-                return true;
-            }
-            at = nodes[current].parent;
-        }
-        false
-    }
-
-    /// Whether an end tag named `name` closes the open `style` element: it
-    /// names the element or one of its ancestors, or it is `</br>` or `</p>`,
-    /// which break out of foreign content.
-    fn closes(&self, style: usize, name: &str) -> bool {
-        if matches!(name, "style" | "br" | "p") {
-            return true;
-        }
-        let nodes = self.nodes.borrow();
-        let mut at = nodes[style].parent;
-        while let Some(current) = at {
-            if nodes[current].name.eq_ignore_ascii_case(name) {
-                return true;
-            }
-            at = nodes[current].parent;
-        }
-        false
     }
 
     /// End the contents of `style` at the start of the current token.

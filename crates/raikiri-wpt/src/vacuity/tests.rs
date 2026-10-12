@@ -798,3 +798,26 @@ fn nested_svg_style_elements_close_separately() {
     assert_eq!(removed, 1);
     assert_eq!(out, "<svg><style>p{a:1}r{}</style></svg><i style='d:4'>");
 }
+
+#[test]
+fn html_elements_written_self_closing_stay_open_in_svg_style() {
+    let html =
+        "<svg><style>p{color:red}<foreignObject><p/></p></foreignObject>q{width:1px}</style></svg>";
+    assert_eq!(keys(html), ["color:red", "width:1px"]);
+    let (out, removed) = remove_declarations(html, |key| key == "width:1px");
+    assert_eq!(removed, 1);
+    assert_eq!(out, "<svg><style>p{color:red}q{}</style></svg>");
+}
+
+#[test]
+fn breakout_end_tags_in_integration_points_leave_svg_style_open() {
+    for end in ["</p>", "</br>"] {
+        let html = format!(
+            "<svg><style>p{{color:red}}<foreignObject>{end}</foreignObject>q{{width:1px}}</style></svg>"
+        );
+        assert_eq!(keys(&html), ["color:red", "width:1px"], "{end}");
+        let (out, removed) = remove_declarations(&html, |key| key == "width:1px");
+        assert_eq!(removed, 1);
+        assert_eq!(out, "<svg><style>p{color:red}q{}</style></svg>", "{end}");
+    }
+}
