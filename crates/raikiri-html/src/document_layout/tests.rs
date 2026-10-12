@@ -1063,6 +1063,42 @@ fn link_paint_quads_of_text_follow_the_enclosing_transform() {
     );
 }
 
+// Inside columns, the boxes keep their layout location and the offsets of
+// the boxes move the lines of text instead.
+#[test]
+fn link_paint_quads_of_text_inside_columns_take_the_line_offsets() {
+    let layout = laid_out(
+        "<style>@page{size:300px 200px;margin:0} body{margin:0} \
+         div{columns:2;column-gap:0} p{margin:0;transform:translate(15px,3px)}</style>\
+         <div><p><a href=/go>x</a></p></div>",
+    );
+    let page = layout.page(0).unwrap();
+    let links: Vec<_> = page.links().collect();
+    let quad = links[0].quads[0];
+    assert_quad_near(
+        links[0].paint_quads[0],
+        [
+            (quad.x + 15.0, quad.y + 3.0),
+            (quad.x + quad.width + 15.0, quad.y + 3.0),
+            (quad.x + quad.width + 15.0, quad.y + quad.height + 3.0),
+            (quad.x + 15.0, quad.y + quad.height + 3.0),
+        ],
+    );
+    let p = find(&page.dom(), page.dom().root(), "p").unwrap();
+    assert_eq!(page.paint_transform(p), Some(PaintTransform::IDENTITY));
+    // The runs of the paragraph are drawn at the same offset.
+    let run = page
+        .text_runs()
+        .into_iter()
+        .find(|run| run.text == "x")
+        .unwrap();
+    assert!(run.transform.is_none());
+    assert!(
+        (run.origin.0 - (quad.x + 15.0)).abs() < 1e-3,
+        "{run:?} {quad:?}"
+    );
+}
+
 // The painter adds the body's relative offset, and places a fixed box in
 // the page area from its insets, apart from the offsets around it.
 #[test]

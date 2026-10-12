@@ -97,10 +97,11 @@ pub(crate) fn build_anchors(dom: DomView<'_>, out: &PipelineOutput) -> AnchorInd
             });
         }
     }
-    let mut index = AnchorIndex::default();
+    // Named nodes with a fragment, in document order.
+    let mut named: Vec<(NodeId, Vec<&str>)> = Vec::new();
     let mut stack = vec![dom.root()];
     while let Some(node) = stack.pop() {
-        if dom.kind(node) == Some(NodeKind::Element) {
+        if dom.kind(node) == Some(NodeKind::Element) && first_fragment.contains_key(&node) {
             let mut names = Vec::new();
             if let Some(id) = dom.attr(node, "id") {
                 names.push(id);
@@ -110,27 +111,40 @@ pub(crate) fn build_anchors(dom: DomView<'_>, out: &PipelineOutput) -> AnchorInd
             {
                 names.push(name);
             }
-            if let Some(anchor) = first_fragment.get(&node).filter(|_| !names.is_empty()) {
-                // Only named nodes become anchors, so only their points are
-                // moved to where the painter draws them.
-                let (document, cascade) = out.layout_for_page(anchor.page_index);
-                let point = document
-                    .page_paint_transform(cascade, anchor.page_index, node)
-                    .map_or(anchor.point, |transform| transform.apply(anchor.point));
-                let anchor = Anchor {
-                    point,
-                    ..anchor.clone()
-                };
-                for name in names {
-                    index
-                        .by_name
-                        .entry(name.to_owned())
-                        .or_insert_with(|| anchor.clone());
-                }
+            if !names.is_empty() {
+                named.push((node, names));
             }
         }
         let children: Vec<_> = dom.children(node).collect();
         stack.extend(children.into_iter().rev());
+    }
+    // Only named nodes become anchors, so only their points are moved to
+    // where the painter draws them, page by page.
+    let mut by_page: HashMap<u32, Vec<NodeId>> = HashMap::new();
+    for (node, _) in &named {
+        by_page
+            .entry(first_fragment[node].page_index)
+            .or_default()
+            .push(*node);
+    }
+    for (page_index, nodes) in by_page {
+        let (document, cascade) = out.layout_for_page(page_index);
+        let transforms = document.page_paint_transforms(cascade, page_index, nodes.iter().copied());
+        for (node, transform) in nodes.iter().zip(transforms) {
+            if let (Some(anchor), Some(transform)) = (first_fragment.get_mut(node), transform) {
+                anchor.point = transform.apply(anchor.point);
+            }
+        }
+    }
+    let mut index = AnchorIndex::default();
+    for (node, names) in named {
+        let anchor = &first_fragment[&node];
+        for name in names {
+            index
+                .by_name
+                .entry(name.to_owned())
+                .or_insert_with(|| anchor.clone());
+        }
     }
     index
 }

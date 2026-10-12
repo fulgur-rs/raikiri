@@ -660,13 +660,12 @@ fn paint_space_queries_without_motion_keep_layout_geometry() {
     }
     // The root element is above the body, where the paint order starts.
     assert_eq!(
-        doc.page_paint_transform(&cascade, 0, NodeId(1)),
-        Some(PaintTransform::IDENTITY)
+        doc.page_paint_transforms(&cascade, 0, [NodeId(1), NodeId(1_000_000)]),
+        [Some(PaintTransform::IDENTITY), None]
     );
-    assert_eq!(
-        doc.page_paint_transform(&cascade, 0, NodeId(1_000_000)),
-        None
+    assert!(
+        doc.page_paint_transforms(&cascade, 99, [NodeId(1)])
+            .is_empty()
     );
-    assert_eq!(doc.page_paint_transform(&cascade, 99, NodeId(1)), None);
     assert!(doc.page_link_paint_quads(&cascade, 99).is_empty());
 }

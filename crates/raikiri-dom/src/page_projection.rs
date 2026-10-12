@@ -399,7 +399,7 @@ impl Document {
         ) else {
             return Vec::new(); // cov:ignore: every projected page has a link list
         };
-        let mut cache = paint_transform::MotionCache::default();
+        let mut motion = paint_transform::PageMotion::new(self, cascade, page);
         links
             .iter()
             .map(|(_, _, quads, placements)| {
@@ -407,14 +407,7 @@ impl Document {
                     .iter()
                     .zip(placements)
                     .filter_map(|(quad, placement)| {
-                        let id = usize::try_from(placement.0).ok()?;
-                        let transform =
-                            match paint_transform::node_motion(self, cascade, &mut cache, page, id)
-                            {
-                                paint_transform::Motion::Still => PaintTransform::IDENTITY,
-                                paint_transform::Motion::Moved(transform) => transform,
-                                paint_transform::Motion::Hidden => return None,
-                            };
+                        let transform = motion.transform(usize::try_from(placement.0).ok()?)?;
                         Some(
                             [
                                 (quad.x, quad.y),
@@ -430,29 +423,35 @@ impl Document {
             .collect()
     }
 
-    /// The transform the built-in painter draws the box of `node` on page
-    /// `page_index` through: the [`crate::PaintEvent::PushTransform`] events
-    /// around the node's events in the paint order, composed, or the
-    /// identity when there are none. Text takes the transform of the element
-    /// it is in. `None` when the painter draws nothing of the node because a
-    /// transform on it or an ancestor is singular, and for a page that does
-    /// not exist or a node out of range.
+    /// The transforms the built-in painter draws the placements of `nodes`
+    /// on page `page_index` through, in the same order: the
+    /// [`crate::PaintEvent::PushTransform`] events around each node's events
+    /// in the paint order, composed, or the identity when there are none.
+    /// Text takes the transform of the element it is in and, inside columns,
+    /// the offsets that move its lines. `None` for a node the painter draws
+    /// nothing of because a transform on it or an ancestor is singular, and
+    /// for a node out of range. Empty for a page that does not exist.
+    ///
+    /// Each element's transform is found once, however many nodes share it.
     #[doc(hidden)]
-    pub fn page_paint_transform(
+    pub fn page_paint_transforms(
         &self,
         cascade: &CascadeResult,
         page_index: u32,
-        node: NodeId,
-    ) -> Option<PaintTransform> {
-        let page = self.page_projection.page(page_index)?;
-        let id = usize::try_from(node.0).ok()?;
-        self.get_node(id)?;
-        let mut cache = paint_transform::MotionCache::default();
-        match paint_transform::node_motion(self, cascade, &mut cache, page, id) {
-            paint_transform::Motion::Still => Some(PaintTransform::IDENTITY),
-            paint_transform::Motion::Moved(transform) => Some(transform),
-            paint_transform::Motion::Hidden => None,
-        }
+        nodes: impl IntoIterator<Item = NodeId>,
+    ) -> Vec<Option<PaintTransform>> {
+        let Some(page) = self.page_projection.page(page_index) else {
+            return Vec::new();
+        };
+        let mut motion = paint_transform::PageMotion::new(self, cascade, page);
+        nodes
+            .into_iter()
+            .map(|node| {
+                let id = usize::try_from(node.0).ok()?;
+                self.get_node(id)?;
+                motion.transform(id)
+            })
+            .collect()
     }
 }
 

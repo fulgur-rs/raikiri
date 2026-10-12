@@ -804,13 +804,16 @@ impl<'a> Page<'a> {
     /// node's events in [`Self::paint_order`], composed, or the identity
     /// when there are none. It maps [`Fragment::rect`] and the other layout
     /// space positions of the node to the page. Text takes the transform of
-    /// the element it is in.
+    /// the element it is in and, inside columns, the offsets that move its
+    /// lines.
     ///
     /// `None` when the painter draws nothing of `node` because a transform
     /// on it or an ancestor is singular, and for an out-of-range node.
     pub fn paint_transform(&self, node: NodeId) -> Option<PaintTransform> {
         self.document
-            .page_paint_transform(self.cascade, self.slice.page_index, node)
+            .page_paint_transforms(self.cascade, self.slice.page_index, [node])
+            .pop()
+            .flatten()
     }
 }
 

@@ -464,56 +464,152 @@ pub(super) fn element_motion(
     .map_or(Motion::Still, Motion::Moved)
 }
 
-/// What the paint order does with the box of node `id` on `page`: the
-/// transforms it lists around the node, composed outermost first. Text takes
-/// the transforms of the element it is in. A node outside the body, which the
-/// paint order does not list, is [`Motion::Still`].
-pub(super) fn node_motion(
-    document: &Document,
-    cascade: &CascadeResult,
-    cache: &mut MotionCache,
-    page: &PageFragment,
-    id: usize,
-) -> Motion {
-    let context = &document.page_projection.run_context;
-    let mut chain = Vec::new();
-    let mut current = Some(id);
-    let mut in_body = false;
-    while let Some(node) = current {
+/// Where the painter draws the content of an element on one page.
+#[derive(Debug, Clone, Copy)]
+struct Space {
+    /// The transforms the paint order lists around the element, composed;
+    /// `None` when a singular transform hides it.
+    transform: Option<PaintTransform>,
+    /// The offsets of the boxes inside columns down to the element, which
+    /// move text lines rather than the boxes (see [`super::text_runs`]).
+    columns: (f32, f32),
+}
+
+/// The paint spaces of the elements of one page, each found once, so that
+/// looking up many nodes costs time linear in the size of the tree.
+#[derive(Debug)]
+pub(super) struct PageMotion<'a> {
+    document: &'a Document,
+    cascade: &'a CascadeResult,
+    page: &'a PageFragment,
+    cache: MotionCache,
+    spaces: HashMap<usize, Space>,
+}
+
+impl<'a> PageMotion<'a> {
+    pub(super) fn new(
+        document: &'a Document,
+        cascade: &'a CascadeResult,
+        page: &'a PageFragment,
+    ) -> Self {
+        Self {
+            document,
+            cascade,
+            page,
+            cache: MotionCache::default(),
+            spaces: HashMap::new(),
+        }
+    }
+
+    /// The transform the painter draws the placement of node `id` through:
+    /// the transforms the paint order lists around the node, composed. Text
+    /// takes those of the element it is in and, inside columns, the offsets
+    /// that move its lines. A node outside the body, which the paint order
+    /// does not list, is drawn where layout put it. `None` when a singular
+    /// transform hides the node.
+    pub(super) fn transform(&mut self, id: usize) -> Option<PaintTransform> {
+        let text = self
+            .document
+            .get_node(id)
+            .is_some_and(|node| node.kind() != raikiri_traits::NodeKind::Element);
+        let element = if text {
+            self.document.parent_of(id)
+        } else {
+            Some(id)
+        };
+        let Some(space) = element.map(|element| self.space(element)) else {
+            return Some(PaintTransform::IDENTITY); // cov:ignore: placed text always has a parent
+        };
+        let transform = space.transform?;
+        Some(if text && space.columns != (0.0, 0.0) {
+            transform * PaintTransform::translate(space.columns.0, space.columns.1)
+        } else {
+            transform
+        })
+    }
+
+    /// The paint space of element `id`, from the nearest ancestor whose
+    /// space is known.
+    fn space(&mut self, id: usize) -> Space {
+        let body = self.document.page_projection.run_context.body;
+        let mut path = Vec::new();
+        let mut current = Some(id);
+        let mut space = loop {
+            let Some(node) = current else {
+                // Above the body, where the paint order starts, nothing moves.
+                path.clear();
+                break Space {
+                    transform: Some(PaintTransform::IDENTITY),
+                    columns: (0.0, 0.0),
+                };
+            };
+            if let Some(&known) = self.spaces.get(&node) {
+                break known;
+            }
+            path.push(node);
+            if Some(node) == body {
+                break Space {
+                    transform: Some(PaintTransform::IDENTITY),
+                    columns: (0.0, 0.0),
+                };
+            }
+            current = self.document.parent_of(node);
+        };
+        for &node in path.iter().rev() {
+            space = self.child_space(space, node);
+            self.spaces.insert(node, space);
+        }
+        space
+    }
+
+    /// The space of `node` inside its parent's `space`, as the paint order
+    /// derives it.
+    fn child_space(&mut self, space: Space, node: usize) -> Space {
+        let Some(mut transform) = space.transform else {
+            return space;
+        };
+        let (document, cascade) = (self.document, self.cascade);
         if document
             .get_node(node)
-            .is_some_and(|node| node.kind() == raikiri_traits::NodeKind::Element)
+            .is_none_or(|node| node.kind() != raikiri_traits::NodeKind::Element)
         {
-            chain.push(node);
+            return space; // cov:ignore: the walk visits elements only
         }
-        if Some(node) == context.body {
-            in_body = true;
-            break;
-        }
-        current = document.parent_of(node);
-    }
-    if !in_body {
-        return Motion::Still;
-    }
-    let mut space = PaintTransform::IDENTITY;
-    for &node in chain.iter().rev() {
         let Some(cv) = cascade.computed.get(node) else {
-            continue; // cov:ignore: the cascade has a value for every arena node
+            return space; // cov:ignore: the cascade has a value for every arena node
         };
+        let context = &document.page_projection.run_context;
+        let mut columns = space.columns;
         // As in the paint order: a fixed box in the page area leaves the
         // relative offsets around it.
-        if space != PaintTransform::IDENTITY && cache.viewport_fixed(document, cascade, node) {
-            space = space * PaintTransform::translate(-space.e, -space.f);
+        if self.cache.viewport_fixed(document, cascade, node) {
+            if transform != PaintTransform::IDENTITY {
+                transform = transform * PaintTransform::translate(-transform.e, -transform.f);
+            }
+            columns = (0.0, 0.0);
         }
-        match element_motion(document, cascade, context, cache, page, node, cv) {
-            Motion::Still => {}
-            Motion::Moved(transform) => space = space * transform,
-            Motion::Hidden => return Motion::Hidden,
+        if self.cache.in_columns(document, cascade, context, node) {
+            let fragmented = context.fragmented.contains(&node);
+            if let Ok(shift) =
+                box_paint_shift(document, cascade, context.body, node, cv, fragmented)
+                && !shift.general
+            {
+                columns = (columns.0 + shift.offset.0, columns.1 + shift.offset.1);
+            }
         }
-    }
-    if space == PaintTransform::IDENTITY {
-        Motion::Still
-    } else {
-        Motion::Moved(space)
+        let transform = match element_motion(
+            document,
+            cascade,
+            context,
+            &mut self.cache,
+            self.page,
+            node,
+            cv,
+        ) {
+            Motion::Still => Some(transform),
+            Motion::Moved(own) => Some(transform * own),
+            Motion::Hidden => None,
+        };
+        Space { transform, columns }
     }
 }
