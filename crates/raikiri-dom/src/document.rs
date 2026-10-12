@@ -319,6 +319,10 @@ pub struct Document {
     /// O(1) cost per mutation plus O(N) per layout batch gives amortized
     /// O(1) invalidation.
     pub(crate) layout_dirty: bool,
+    /// Set around a table's intrinsic width probe of a cell that is an ifc
+    /// root: the next ifc measurement only needs the cell's width, so it
+    /// skips breaking the paragraph into lines.
+    pub(crate) ifc_width_probe: bool,
     /// Inline-engine state; `None` until fonts are set or the first layout
     /// takes the installed fonts.
     pub(crate) ifc: Option<crate::layout::ifc::root::IfcState>,
@@ -522,6 +526,7 @@ impl Document {
             legacy_inside_marker_advances: Default::default(),
             root: 0,
             layout_dirty: false,
+            ifc_width_probe: false,
             ifc: None,
             layout_cascade_generation: None,
             body_inline_margins: (0.0, 0.0),
@@ -1800,6 +1805,7 @@ impl Document {
             legacy_inside_marker_advances: _,
             root: _,
             layout_dirty: _,
+            ifc_width_probe: _,
             ifc,
             layout_cascade_generation: _,
             body_inline_margins: _,
