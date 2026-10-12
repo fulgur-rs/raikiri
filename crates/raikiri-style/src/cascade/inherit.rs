@@ -39,7 +39,7 @@ use super::candidate::{
 use super::collect::{
     CASCADED_PSEUDO_ELEMENTS, Collector, RankedDecl, STORED_BLOCK_BUDGET, pick_winners,
 };
-use super::custom_property::{resolve_custom_properties, resolve_deferred_value};
+use super::custom_property::{DeferredResolver, resolve_custom_properties};
 use super::first_line::first_line_property_applies;
 use super::limits::{CascadeLimits, ResultBudget, WalkCounts, bytes_of, exhausted, try_filled};
 use super::rule_index::AncestorFilter;
@@ -998,7 +998,7 @@ fn find_rollback(
     key: crate::property::PropertyKey,
     winner_index: usize,
     keyword: CssWideKeyword,
-    custom_properties: &CustomPropertyEnvironment,
+    deferred_resolver: &mut DeferredResolver<'_>,
 ) -> Option<PropertyValue> {
     let index = super::rollback::select_layered_winner(candidates.decls(), |idx, candidate| {
         if candidate.key() != key && !candidate.is_all_revert_layer() {
@@ -1011,12 +1011,10 @@ fn find_rollback(
                 super::rollback::Rollback::Layer
             }
         } else if let PropertyValue::Deferred(deferred) = candidates.value(idx) {
-            resolve_deferred_value(deferred, custom_properties)
-                .as_ref()
-                .map_or(
-                    super::rollback::Rollback::None,
-                    super::rollback::rollback_kind,
-                )
+            deferred_resolver.inspect(deferred).as_ref().map_or(
+                super::rollback::Rollback::None,
+                super::rollback::rollback_kind,
+            )
         } else {
             candidate.rollback()
         };
@@ -1041,7 +1039,7 @@ fn resolve_border_css_wide(
     inherited: &ComputedValues,
     candidates: ElementCandidates<'_>,
     winner: RankedDecl,
-    custom_properties: &CustomPropertyEnvironment,
+    deferred_resolver: &mut DeferredResolver<'_>,
 ) -> Option<PropertyValue> {
     let parent_side = |side: &crate::resolve::ComputedBorder| -> Border {
         Border {
@@ -1113,12 +1111,12 @@ fn resolve_border_css_wide(
         CssWideKeyword::Inherit => Some(pick_field(parent_border())),
         CssWideKeyword::Initial | CssWideKeyword::Unset => Some(pick_field(initial_border())),
         CssWideKeyword::Revert | CssWideKeyword::RevertLayer => {
-            let rollback = find_rollback(candidates, key, winner.idx, keyword, custom_properties)?;
+            let rollback = find_rollback(candidates, key, winner.idx, keyword, deferred_resolver)?;
             // Resolve one level: Deferred needs custom-property substitution;
             // a surviving Inherit/Initial/Unset marker resolves without further rollback.
             match rollback {
                 PropertyValue::Deferred(deferred) => {
-                    let resolved = resolve_deferred_value(&deferred, custom_properties)?;
+                    let resolved = deferred_resolver.resolve(&deferred)?;
                     // A deferred var() may itself substitute to a CSS-wide keyword
                     // (e.g. `--x: inherit`). Resolve that single level directly
                     // against parent/initial to avoid rollback recursion.
@@ -1233,6 +1231,7 @@ pub(crate) fn apply_winners(
     mut svg_properties: Option<&mut Vec<SvgStyleProperty>>,
 ) {
     pick_winners(candidates, winners);
+    let mut deferred_resolver = DeferredResolver::new(custom_properties);
     // The drain below takes every slot, so the white-space winners are read
     // first; their applied values are collected during the drain.
     let white_space_winners = WhiteSpaceWinners::read(winners);
@@ -1263,7 +1262,7 @@ pub(crate) fn apply_winners(
                     ))
                 }
                 PropertyValue::Deferred(deferred) => {
-                    let resolved = resolve_deferred_value(deferred, custom_properties);
+                    let resolved = deferred_resolver.resolve(deferred);
                     let resolved = match resolved {
                         Some(PropertyValue::Deferred(marker)) => match marker.css_wide_keyword() {
                             Some(
@@ -1274,11 +1273,10 @@ pub(crate) fn apply_winners(
                                     winner_key,
                                     winner.idx,
                                     keyword,
-                                    custom_properties,
+                                    &mut deferred_resolver,
                                 ) {
                                     Some(PropertyValue::Deferred(fallback)) => {
-                                        resolve_deferred_value(&fallback, custom_properties)
-                                            .map(&mut default_value)
+                                        deferred_resolver.resolve(&fallback).map(&mut default_value)
                                     }
                                     Some(value) => Some(default_value(value)),
                                     None => None,
@@ -1312,7 +1310,7 @@ pub(crate) fn apply_winners(
                             inherited,
                             candidates,
                             winner,
-                            custom_properties,
+                            &mut deferred_resolver,
                         ),
                         Some(PropertyValue::TextDecorationThicknessInherit) => {
                             Some(PropertyValue::TextDecorationThickness(
@@ -1339,7 +1337,7 @@ pub(crate) fn apply_winners(
                     inherited,
                     candidates,
                     winner,
-                    custom_properties,
+                    &mut deferred_resolver,
                 ),
                 _ => Some(value.clone()),
             };

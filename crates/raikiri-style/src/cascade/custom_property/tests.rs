@@ -1724,3 +1724,219 @@ fn column_rule_projection_rejects_unrelated_components() {
     let value = parse_value("column-rule", &mut Parser::new(&mut input)).unwrap();
     assert!(project_deferred_value(value, PropertyKey::Color).is_none());
 }
+
+thread_local! {
+    static SOURCE_RESOLUTIONS: std::cell::RefCell<HashMap<(String, String), usize>> = std::cell::RefCell::new(HashMap::new());
+    static RESOLUTIONS: std::cell::RefCell<HashMap<String, usize>> = std::cell::RefCell::new(HashMap::new());
+}
+
+pub(super) fn note_resolution(deferred: &DeferredValue) {
+    RESOLUTIONS
+        .with_borrow_mut(|counts| *counts.entry(deferred.property.to_string()).or_default() += 1);
+    SOURCE_RESOLUTIONS.with_borrow_mut(|counts| {
+        *counts
+            .entry((deferred.property.to_string(), deferred.value.to_string()))
+            .or_default() += 1
+    });
+}
+
+fn resolution_count(property: &str, inline: &str) -> usize {
+    RESOLUTIONS.with_borrow_mut(HashMap::clear);
+    let _ = cascade_doc("", "div", Some(inline));
+    RESOLUTIONS.with_borrow(|counts| counts.get(property).copied().unwrap_or(0))
+}
+
+#[test]
+fn var_shorthand_resolves_once_for_all_winning_longhands() {
+    for (property, inline) in [
+        ("border", "--b: 2px solid red; border: var(--b)"),
+        ("font", "--f: italic bold 20px/1.5 serif; font: var(--f)"),
+        ("border", "border: var(--missing)"),
+        ("font", "--f: not-a-font; font: var(--f)"),
+    ] {
+        assert_eq!(resolution_count(property, inline), 1, "{inline}");
+    }
+}
+
+#[test]
+fn shorthand_cache_keeps_sources_and_properties_separate() {
+    let environment = CustomPropertyEnvironment::from_map(HashMap::from([
+        ("--a".into(), "2px 4px".into()),
+        ("--b".into(), "6px 8px".into()),
+    ]));
+    let mut resolver = DeferredResolver::new(&environment);
+    for (property, source, key, expected) in [
+        (
+            "margin",
+            "var(--a)",
+            PropertyKey::MarginRight,
+            PropertyValue::MarginRight(LengthOrAuto::Length(Length::Px(4.0))),
+        ),
+        (
+            "margin",
+            "var(--b)",
+            PropertyKey::MarginTop,
+            PropertyValue::MarginTop(LengthOrAuto::Length(Length::Px(6.0))),
+        ),
+        (
+            "padding",
+            "var(--a)",
+            PropertyKey::PaddingRight,
+            PropertyValue::PaddingRight(Length::Px(4.0)),
+        ),
+        (
+            "margin",
+            "var(--a)",
+            PropertyKey::MarginBottom,
+            PropertyValue::MarginBottom(LengthOrAuto::Length(Length::Px(2.0))),
+        ),
+    ] {
+        let deferred = DeferredValue {
+            property: property.into(),
+            value: source.into(),
+            key,
+        };
+        assert_eq!(resolver.resolve(&deferred), Some(expected));
+    }
+}
+
+#[test]
+fn shorthand_cache_does_not_cross_element_or_pseudo_environments() {
+    let mut doc = TestDoc::new();
+    let style = doc.push_element(0, "style", None);
+    doc.push_text(style, "div { border: var(--b) } div::before { --b: 7px solid red; border: var(--b); content: 'x' }");
+    let parent = doc.push_element(0, "section", None);
+    let first = doc.push_element(parent, "div", Some("--b: 2px solid red"));
+    let second = doc.push_element(parent, "div", Some("--b: 4px solid blue"));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).unwrap();
+    assert_eq!(
+        result.computed[first].border.top.width(),
+        ComputedLength(2.0)
+    );
+    assert_eq!(
+        result.computed[second].border.top.width(),
+        ComputedLength(4.0)
+    );
+    assert_eq!(
+        result.computed[second].border.top.color,
+        crate::property::BorderColor::Resolved(BLUE)
+    );
+    for id in [first, second] {
+        let pseudo = &result.pseudo[&(
+            crate::style_dom::StyleNodeId::new(id as u64),
+            crate::PseudoElem::Before,
+        )];
+        assert_eq!(pseudo.border.top.width(), ComputedLength(7.0));
+    }
+}
+
+#[test]
+fn shared_border_parsing_preserves_partial_important_winners() {
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some(
+            "--a: 2px solid red; --b: 5px dashed blue; border: var(--a) !important; border-left: var(--b) !important; border-right-width: 9px; border-top-width: 7px !important",
+        ),
+    );
+    assert_eq!(cv.border.top.width(), ComputedLength(7.0));
+    assert_eq!(cv.border.right.width(), ComputedLength(2.0));
+    assert_eq!(cv.border.bottom.width(), ComputedLength(2.0));
+    assert_eq!(cv.border.left.width(), ComputedLength(5.0));
+    assert_eq!(
+        cv.border.left.color,
+        crate::property::BorderColor::Resolved(BLUE)
+    );
+    assert_eq!(cv.border.left.style(), crate::property::BorderStyle::Dashed);
+}
+
+#[test]
+fn rollback_reuses_parsing_without_changing_origin_or_layer_winners() {
+    for (css, expected, selected_source) in [
+        (
+            "@layer low, high; @layer low { div { --b: 2px solid red; border: var(--b) } } @layer high { div { border: var(--missing, revert-layer) } }",
+            2.0,
+            "var(--b)",
+        ),
+        ("div { border: var(--missing, revert) }", 3.0, "var(--ua)"),
+    ] {
+        SOURCE_RESOLUTIONS.with_borrow_mut(HashMap::clear);
+        let cv = cascade_with_ua(
+            "div { --ua: 3px solid blue; border: var(--ua) }",
+            css,
+            "div",
+            None,
+        );
+        assert_eq!(cv.border.top.width(), ComputedLength(expected));
+        assert_eq!(cv.border.right.width(), ComputedLength(expected));
+        assert_eq!(cv.border.bottom.width(), ComputedLength(expected));
+        assert_eq!(cv.border.left.width(), ComputedLength(expected));
+        // The first inspection and the selected fallback each parse once;
+        // subsequent winning longhands share the admitted fallback payload.
+        assert_eq!(
+            SOURCE_RESOLUTIONS
+                .with_borrow(|counts| counts[&("border".to_owned(), selected_source.to_owned())]),
+            2
+        );
+    }
+}
+
+#[test]
+fn cached_radius_keywords_project_each_corner_marker() {
+    for keyword in ["inherit", "initial", "unset", "revert", "revert-layer"] {
+        let environment =
+            CustomPropertyEnvironment::from_map(HashMap::from([("--k".into(), keyword.into())]));
+        let mut resolver = DeferredResolver::new(&environment);
+        for (key, property) in [
+            (PropertyKey::BorderRadiusTopLeft, "border-top-left-radius"),
+            (PropertyKey::BorderRadiusTopRight, "border-top-right-radius"),
+            (
+                PropertyKey::BorderRadiusBottomRight,
+                "border-bottom-right-radius",
+            ),
+            (
+                PropertyKey::BorderRadiusBottomLeft,
+                "border-bottom-left-radius",
+            ),
+        ] {
+            let deferred = DeferredValue {
+                property: "border-radius".into(),
+                value: "var(--k)".into(),
+                key,
+            };
+            assert_eq!(
+                resolver.resolve(&deferred),
+                Some(PropertyValue::Deferred(DeferredValue {
+                    property: property.into(),
+                    value: keyword.into(),
+                    key
+                }))
+            );
+        }
+    }
+}
+
+thread_local! {
+    static PEAK_CACHE_ENTRIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+pub(super) fn note_cache_size(entries: usize) {
+    PEAK_CACHE_ENTRIES.with(|peak| peak.set(peak.get().max(entries)));
+}
+
+#[test]
+fn rollback_does_not_retain_parsed_non_winning_shorthands() {
+    let mut inline = String::from("--f: 20px serif;");
+    for index in 0..200 {
+        inline.push_str(&format!("font: var(--f, {index});"));
+    }
+    inline.push_str("font-size: revert");
+    PEAK_CACHE_ENTRIES.with(|peak| peak.set(0));
+    let cv = cascade_doc("", "div", Some(&inline));
+    assert_eq!(
+        cv.font_size.px(),
+        crate::ComputedValues::initial().font_size.px()
+    );
+    assert!(PEAK_CACHE_ENTRIES.with(|peak| peak.get()) <= 2);
+}
