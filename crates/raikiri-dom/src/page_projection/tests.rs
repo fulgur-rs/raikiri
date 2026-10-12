@@ -561,3 +561,76 @@ fn projection_is_cleared_by_text_relayout() {
 }
 
 mod column_rule_tests;
+
+// A paragraph's content images are looked for only on the pages its lines can
+// reach, so projection work grows with the paragraph and page counts rather
+// than with their product.
+#[test]
+fn generated_image_projection_work_stays_linear_in_page_count() {
+    use crate::layout::{ProjectionWork, project_slices_with_control};
+    use raikiri_traits::{DecodedImage, ImagePixelSource};
+    use std::sync::Arc;
+    struct Pixels;
+    impl ImagePixelSource for Pixels {
+        fn get_decoded(&self, _: &url::Url) -> Option<Arc<DecodedImage>> {
+            Some(Arc::new(DecodedImage {
+                width: 4,
+                height: 4,
+                rgba: [255, 0, 0, 255].repeat(16),
+            }))
+        }
+    }
+    let spent = |count: usize| {
+        let crate::layout::ifc::test_support::Fixture {
+            mut doc, cascade, ..
+        } = crate::layout::ifc::test_support::sheet_fixture(
+            "p::before{content:url(https://images.test/a.png)}",
+            "width:40px;line-height:10px",
+            |doc, root| {
+                for _ in 0..count {
+                    let paragraph = doc.append_element(
+                        Some(root),
+                        "p",
+                        Style::default(),
+                        Some("display:block;height:100px;margin:0"),
+                    );
+                    doc.append_text(paragraph, "A");
+                }
+            },
+        );
+        doc.prepare_list_marker_images(&cascade, &Pixels, None);
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 100.0;
+        layout_single_page(
+            crate::layout::test_support::with_ahem(&mut doc),
+            &cascade,
+            page,
+        )
+        .unwrap();
+        let slices: Vec<_> = (0..count)
+            .map(|index| PageSlice {
+                page_index: index as u32,
+                content_origin_y: index as f32 * 100.0,
+                page_name: None,
+            })
+            .collect();
+        let control = crate::PageLayoutControl::default();
+        let (pages, roots, _, _, cache, _) =
+            project_slices_with_control(&doc, &cascade, page, &slices, &[], &control).unwrap();
+        let budget = usize::MAX / 2;
+        let mut work = ProjectionWork::new(&control, budget);
+        let images =
+            super::generated_images::prepare(&doc, &cascade, &roots, &pages, &cache, &mut work)
+                .unwrap();
+        // One image on each page, owned by that page alone.
+        assert_eq!(images.len(), count);
+        assert!(images.values().all(|page| page.len() == 1));
+        budget - work.remaining()
+    };
+    let (small, large) = (spent(50), spent(200));
+    assert!(
+        large <= small * 5,
+        "four times the pages cost {large} work units against {small}"
+    );
+}

@@ -345,3 +345,28 @@ fn rastering_rejects_a_rectangle_that_overflows_css_pixels() {
     assert_eq!(ids.len(), 1);
     assert!(page.raster_generated_image(ids[0], &source).is_none());
 }
+
+// A long document with a content image in every paragraph completes within
+// the default layout work budget: each paragraph's images are projected onto
+// the pages its lines reach, not checked against every page.
+#[test]
+fn content_images_project_onto_long_documents() {
+    let pixels = Pixels::new();
+    let body = "<p>A</p>".repeat(300);
+    let document = lay_out(
+        &body,
+        "p{height:100px}p::before{content:url(a.png)}",
+        &pixels,
+    );
+    assert_eq!(document.page_count(), 300);
+    for index in [0, 149, 299] {
+        let page = document.page(index).unwrap();
+        let runs = page.text_runs();
+        let images = page
+            .paint_order_for_text_runs(&runs)
+            .iter()
+            .filter(|event| matches!(event, PaintEvent::GeneratedImage(_)))
+            .count();
+        assert_eq!(images, 1, "page {index}");
+    }
+}

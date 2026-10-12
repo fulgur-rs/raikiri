@@ -1,5 +1,6 @@
 //! Page ownership of the images of `::before` and `::after` content.
 
+use super::flow_pages::FlowPages;
 use super::records::{PageFragment, ProjectedTextRoot};
 use crate::{Document, GeneratedKind};
 use raikiri_style::{CascadeResult, PseudoElem};
@@ -112,13 +113,34 @@ pub(super) fn prepare(
             .unwrap_or((0.0, 0.0));
         roots.push((root, shift, images));
     }
-    for page in pages {
+    let flow_pages = FlowPages::new(pages);
+    for (root, paint_shift, prepared) in &roots {
         work.check()?;
-        let mut images = PageGeneratedImages::new();
-        for (root, paint_shift, prepared) in &roots {
+        let source = document.ifc_source_owner(root.node);
+        let offsets = document
+            .ifc_layout_node(root.node)
+            .map_or(&[][..], |node| node.ifc_relative_offsets());
+        // Fixed-position roots and repeated table headers can land on any
+        // page; a normal-flow root only on the pages its image lines reach.
+        let repeated = root.is_repeat || document.table_objects.headers.owner(source).is_some();
+        let candidates: Box<dyn Iterator<Item = &PageFragment>> = if repeated {
+            Box::new(pages.iter())
+        } else {
+            let mut centers = prepared
+                .iter()
+                .map(|&(top, height, _, _)| root.y + top + height * 0.5)
+                .filter(|center| center.is_finite());
+            let Some(first) = centers.next() else {
+                continue;
+            };
+            let (low, high) = centers.fold((first, first), |(low, high), center| {
+                (low.min(center), high.max(center))
+            });
+            Box::new(flow_pages.around(low, high))
+        };
+        for page in candidates {
             work.charge(1)?;
             let mut root = *root;
-            let source = document.ifc_source_owner(root.node);
             if let Some(shift) = document
                 .table_objects
                 .headers
@@ -135,9 +157,6 @@ pub(super) fn prepare(
                 } else {
                     page.content_origin_y
                 };
-            let offsets = document
-                .ifc_layout_node(root.node)
-                .map_or(&[][..], |node| node.ifc_relative_offsets());
             for &(top, height, line, image) in *prepared {
                 work.charge(1)?;
                 if !root.is_repeat {
@@ -155,7 +174,7 @@ pub(super) fn prepare(
                 // A pseudo-element moves with its relatively positioned
                 // inline ancestors, as its text does.
                 let relative = crate::cumulative_offset(document, root.node, offsets, image.owner);
-                images.insert(
+                placements.entry(page.page_index).or_default().insert(
                     (image.owner, image.pseudo == PseudoElem::After, image.index),
                     ImagePlacement {
                         root: root.node,
@@ -169,9 +188,6 @@ pub(super) fn prepare(
                     },
                 );
             }
-        }
-        if !images.is_empty() {
-            placements.insert(page.page_index, images);
         }
     }
     Ok(placements)
