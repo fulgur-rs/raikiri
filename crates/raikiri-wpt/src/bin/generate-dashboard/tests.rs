@@ -145,7 +145,7 @@ fn sweep_collapses_variants_to_the_worst_outcome() {
     let path = root.join("sweep.tsv");
     fs::write(
         &path,
-        "a.html?1\tPASS\t\na.html?2\tFAIL\tmismatch\nb.html\tXPASS\t\nc.html\tXFAIL\tknown\nd.html?x\tERROR\tboom\nd.html?y\tFAIL\t\ne.html\tSKIP\tskipped\nf.html#frag\tERROR\tunsupported\n",
+        "a.html?1\tPASS\t\na.html?2\tFAIL\tmismatch\nb.html\tXPASS\t\nc.html\tXFAIL\tknown\nd.html?x\tERROR\tboom\nd.html?y\tFAIL\t\ne.html\tSKIP\tskipped\nf.html#frag\tERROR\tunsupported\ng.html\tPASS\tpasses only without local resources\n",
     )
     .unwrap();
     let sweep = read_sweep(&path).unwrap();
@@ -155,6 +155,7 @@ fn sweep_collapses_variants_to_the_worst_outcome() {
     assert_eq!(sweep.get("d.html"), Some(&Outcome::Error));
     assert_eq!(sweep.get("e.html"), None);
     assert_eq!(sweep.get("f.html"), Some(&Outcome::Error));
+    assert_eq!(sweep.get("g.html"), Some(&Outcome::Fail));
     fs::write(&path, "a.html\tNOPE\t\n").unwrap();
     assert!(read_sweep(&path).is_err());
     assert!(read_sweep(&root.join("missing.tsv")).is_err());

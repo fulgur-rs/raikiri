@@ -29,7 +29,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use raikiri_wpt::baseline_report::Status;
+use raikiri_wpt::baseline_report::{FALLBACK_NOTE, Status};
 use time::{OffsetDateTime, UtcOffset};
 
 const DEFAULT_WPT_ROOT: &str = "target/wpt";
@@ -408,8 +408,9 @@ enum Outcome {
 }
 
 /// Read a `run-baseline-report` TSV. Variants (`file.html?query`) collapse to
-/// their file: the file passes only if every variant passes. Skipped rows are
-/// ignored, so a file with only skipped rows counts as not run.
+/// their file: the file passes only if every variant passes. A pass marked
+/// with [`FALLBACK_NOTE`] counts as a failure. Skipped rows are ignored, so a
+/// file with only skipped rows counts as not run.
 fn read_sweep(path: &Path) -> Result<BTreeMap<String, Outcome>, String> {
     let content = fs::read_to_string(path)
         .map_err(|error| format!("could not read sweep {}: {error}", path.display()))?;
@@ -418,6 +419,9 @@ fn read_sweep(path: &Path) -> Result<BTreeMap<String, Outcome>, String> {
     let mut outcomes = BTreeMap::new();
     for row in rows {
         let outcome = match row.status {
+            // A pass that only holds with local resources left out is a
+            // weaker claim than the rendering the dashboard reports on.
+            Status::Pass | Status::XPass if row.detail == FALLBACK_NOTE => Outcome::Fail,
             Status::Pass | Status::XPass => Outcome::Pass,
             Status::Fail | Status::XFail => Outcome::Fail,
             Status::Error => Outcome::Error,
@@ -811,7 +815,7 @@ h2 { font-size: 18px; }
         );
     }
     html.push_str(
-        "<p>PASS / FAIL / ERROR come from a <code>run-baseline-report</code> sweep over every runnable reftest; a file passes only if all of its variants pass. \"Not run\" counts reftests absent from the sweep. The baseline column counts reftests protected against regression. Run <code>scripts/wpt/update-dashboard.sh</code> to regenerate this page.</p>\n</div>\n",
+        "<p>PASS / FAIL / ERROR come from a <code>run-baseline-report</code> sweep over every runnable reftest; a file passes only if all of its variants pass, and a pass that holds only with local resources left out counts as FAIL. \"Not run\" counts reftests absent from the sweep. The baseline column counts reftests protected against regression. Run <code>scripts/wpt/update-dashboard.sh</code> to regenerate this page.</p>\n</div>\n",
     );
 
     let header = "<tr><th>Area</th><th>Reftests</th><th>PASS</th><th>FAIL</th><th>ERROR</th><th>Not run</th><th>Pass rate</th><th>Baseline</th></tr>\n";
