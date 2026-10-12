@@ -92,6 +92,11 @@ impl WptRunner {
         if self.expectations.expected_failures.get(test_id).is_some() {
             return None;
         }
+        // A baseline entry stays protected against regression even when a
+        // directory-level known-issue marks the rest of its area out of scope.
+        if self.expectations.baseline.entries.contains(test_id) {
+            return None;
+        }
         // known-issues => Skip (non-goal)
         if self
             .expectations

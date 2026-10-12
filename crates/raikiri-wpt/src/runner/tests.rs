@@ -110,6 +110,24 @@ fn classify_known_issue_pattern_returns_skip() {
 }
 
 #[test]
+fn baseline_entry_overrides_a_known_issue_prefix() {
+    let mut set = empty_set();
+    set.known_issues
+        .entries
+        .push(("css/scroll/".to_owned(), "out of scope".to_owned()));
+    set.baseline
+        .entries
+        .insert("css/scroll/parsing/guarded.html".to_owned());
+    let runner = WptRunner::new(set);
+
+    assert!(runner.classify("css/scroll/parsing/guarded.html").is_none());
+    assert!(matches!(
+        runner.classify("css/scroll/other.html"),
+        Some(TestOutcome::Skip(_))
+    ));
+}
+
+#[test]
 fn exact_expected_failure_overrides_only_a_matching_known_issue_prefix() {
     let id = "css/example/test.html?mode=ja";
     let mut set = empty_set();

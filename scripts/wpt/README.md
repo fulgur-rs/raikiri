@@ -202,8 +202,10 @@ over every structurally runnable reftest. From a working tree, run:
 
 The wrapper fetches the pinned WPT checkout, runs the `raikiri-wpt` smoke
 reftests, runs `scripts/wpt/sweep-reftests.sh` (slow: it renders every
-runnable reftest; `WPT_SWEEP_JOBS` sets the parallelism), and invokes
-`generate-dashboard`. Pass `--sweep FILE` instead to reuse an existing sweep
+runnable reftest and each declared `<meta name="variant">`;
+`WPT_SWEEP_JOBS` sets the parallelism), and invokes `generate-dashboard`. The
+sweep writes a `<sweep>.meta` sidecar with the WPT and Raikiri revisions; the
+generator refuses a sweep measured at a different WPT pin. Pass `--sweep FILE` instead to reuse an existing sweep
 TSV. Without either option the page shows reftest counts and baseline
 coverage only. To regenerate without rerunning the smoke tests, invoke the
 binary directly (the optional smoke count can be supplied when it is

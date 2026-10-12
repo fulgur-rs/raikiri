@@ -86,7 +86,13 @@ fn run() -> Result<(), String> {
     let baseline = read_baseline(&args.baseline, &files)?;
     let print_scope = read_print_scope(&args.print_scope)?;
     let known_issues = read_known_issues(&args.known_issues)?;
+    let pin = git_head(&args.wpt_root).unwrap_or_else(|| "unknown".to_owned());
     let sweep = args.sweep.as_deref().map(read_sweep).transpose()?;
+    let sweep_label = args
+        .sweep
+        .as_deref()
+        .map(|path| sweep_label(path, &pin))
+        .transpose()?;
     let reftests = find_reftests(&files, |file| read_wpt_file(&args.wpt_root, file));
     let summary = summarize(
         &files,
@@ -96,14 +102,7 @@ fn run() -> Result<(), String> {
         &known_issues,
         sweep.as_ref(),
     )?;
-    let pin = git_head(&args.wpt_root).unwrap_or_else(|| "unknown".to_owned());
     let generated_at = generated_at_jst();
-    let sweep_name = args.sweep.as_deref().map(|path| {
-        path.file_name().map_or_else(
-            || path.display().to_string(),
-            |name| name.to_string_lossy().into_owned(),
-        )
-    });
     let html = render_dashboard(
         &summary,
         &PageInfo {
@@ -111,7 +110,7 @@ fn run() -> Result<(), String> {
             generated_at: &generated_at,
             css_files: files.len(),
             baseline_entries: baseline.len(),
-            sweep_name: sweep_name.as_deref(),
+            sweep_label: sweep_label.as_deref(),
             basic_reftest_count: args.basic_reftest_count,
         },
     );
@@ -342,13 +341,10 @@ fn find_reftests(files: &[String], read: impl Fn(&str) -> Option<String>) -> Ref
 /// `support`, `resources`, `tools`, or `reference` directory, and files named
 /// as references (`-ref`, `-notref`, `ref-`, `notref-`).
 fn is_wpt_test_path(file: &str) -> bool {
-    let mut segments: Vec<&str> = file.split('/').collect();
-    let Some(name) = segments.pop() else {
-        return false;
-    };
-    if segments
-        .iter()
-        .any(|segment| matches!(*segment, "support" | "resources" | "tools" | "reference"))
+    let (directory, name) = file.rsplit_once('/').unwrap_or(("", file));
+    if directory
+        .split('/')
+        .any(|segment| matches!(segment, "support" | "resources" | "tools" | "reference"))
     {
         return false;
     }
@@ -434,6 +430,42 @@ fn read_sweep(path: &Path) -> Result<BTreeMap<String, Outcome>, String> {
             .or_insert(outcome);
     }
     Ok(outcomes)
+}
+
+/// Describe a sweep from its `<sweep>.meta` sidecar, written by
+/// `scripts/wpt/sweep-reftests.sh`, and refuse a sweep measured against a
+/// different WPT checkout than `pin`.
+fn sweep_label(sweep: &Path, pin: &str) -> Result<String, String> {
+    let mut meta_path = sweep.as_os_str().to_owned();
+    meta_path.push(".meta");
+    let meta_path = PathBuf::from(meta_path);
+    let content = fs::read_to_string(&meta_path).map_err(|error| {
+        format!(
+            "could not read sweep metadata {}: {error}",
+            meta_path.display()
+        )
+    })?;
+    let field = |key: &str| {
+        content.lines().find_map(|line| {
+            line.strip_prefix(key)
+                .and_then(|rest| rest.strip_prefix('='))
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
+    };
+    let wpt_sha =
+        field("wpt_sha").ok_or_else(|| format!("{}: missing wpt_sha", meta_path.display()))?;
+    if pin != "unknown" && wpt_sha != pin {
+        return Err(format!(
+            "sweep {} was measured at WPT {wpt_sha}, but {pin} is checked out",
+            sweep.display()
+        ));
+    }
+    let raikiri = field("raikiri_sha").map_or("unknown", |sha| &sha[..sha.len().min(10)]);
+    Ok(format!(
+        "raikiri {raikiri}, WPT {}",
+        &wpt_sha[..wpt_sha.len().min(10)]
+    ))
 }
 
 fn strip_query(id: &str) -> &str {
@@ -685,12 +717,13 @@ struct PageInfo<'a> {
     generated_at: &'a str,
     css_files: usize,
     baseline_entries: usize,
-    sweep_name: Option<&'a str>,
+    /// Where the sweep came from; `None` when no sweep was supplied.
+    sweep_label: Option<&'a str>,
     basic_reftest_count: Option<usize>,
 }
 
 fn render_dashboard(summary: &Summary, info: &PageInfo<'_>) -> String {
-    let has_sweep = info.sweep_name.is_some();
+    let has_sweep = info.sweep_label.is_some();
     let total = summary.in_scope_total();
     let mut html = String::with_capacity(32_768);
     html.push_str(
@@ -739,7 +772,7 @@ h2 { font-size: 18px; }
         let _ = write!(html, " | Basic reftest smoke: <code>{count}</code> passed");
     }
     html.push_str("</p>\n");
-    match info.sweep_name {
+    match info.sweep_label {
         Some(name) => {
             let _ = writeln!(
                 html,
@@ -864,421 +897,5 @@ fn generated_at_jst() -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parse_args_uses_defaults_and_accepts_overrides() {
-        let defaults = parse_args(&[]).unwrap();
-        assert_eq!(defaults, Args::default());
-        let args = parse_args(&[
-            "--wpt-root".to_owned(),
-            "wpt".to_owned(),
-            "--baseline=base.txt".to_owned(),
-            "--output".to_owned(),
-            "dashboard.html".to_owned(),
-            "--basic-reftest-count=12".to_owned(),
-        ])
-        .unwrap();
-        assert_eq!(args.wpt_root, PathBuf::from("wpt"));
-        assert_eq!(args.baseline, PathBuf::from("base.txt"));
-        assert_eq!(args.output, PathBuf::from("dashboard.html"));
-        assert_eq!(args.basic_reftest_count, Some(12));
-    }
-
-    #[test]
-    fn normalize_baseline_id_resolves_a_unique_bare_filename() {
-        let files = vec![
-            "css/css-grid/parsing/grid-row-valid.html".to_owned(),
-            "css/css-grid/grid-row-invalid.html".to_owned(),
-        ];
-        assert_eq!(
-            normalize_baseline_id("grid-row-valid.html", &files),
-            "css/css-grid/parsing/grid-row-valid.html"
-        );
-        assert_eq!(
-            normalize_baseline_id("unknown.html", &files),
-            "unknown.html"
-        );
-        let ambiguous = vec![
-            "css/one/duplicate.html".to_owned(),
-            "css/two/duplicate.html".to_owned(),
-        ];
-        assert_eq!(
-            normalize_baseline_id("duplicate.html", &ambiguous),
-            "duplicate.html"
-        );
-    }
-
-    #[test]
-    fn parse_args_rejects_unknown_and_missing_values() {
-        assert!(parse_args(&["--unknown".to_owned()]).is_err());
-        assert!(parse_args(&["--output".to_owned()]).is_err());
-        assert!(
-            parse_args(&[
-                "--basic-reftest-count".to_owned(),
-                "not-a-number".to_owned(),
-            ])
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn html_escape_and_timestamp_are_safe() {
-        assert_eq!(html_escape("<&>\"'"), "&lt;&amp;&gt;&quot;&#39;");
-        let timestamp = generated_at_jst();
-        assert!(timestamp.ends_with(" JST"));
-        assert_eq!(timestamp.len(), 20);
-    }
-
-    fn reftest_fixture() -> (Vec<String>, Reftests) {
-        let files: Vec<String> = [
-            "css/README.md",
-            "css/css-page/a.html",
-            "css/css-page/b.html",
-            "css/css-page/sub/c.html",
-            "css/css-page/sub/c-ref.html",
-            "css/css-page/sub/d.xht",
-            "css/css-page/reference/e.html",
-            "css/css-page/plain.html",
-            "css/css-page/waived.html",
-            "css/css-scroll-snap/f.html",
-            "css/css-new/g.html",
-            "css/support/h.html",
-        ]
-        .map(str::to_owned)
-        .to_vec();
-        let link = r#"<link rel="match" href="ref.html">"#.to_owned();
-        let reftests = find_reftests(&files, |file| match file {
-            "css/css-page/plain.html" => Some("<p>no reference</p>".to_owned()),
-            _ => Some(link.clone()),
-        });
-        (files, reftests)
-    }
-
-    #[test]
-    fn find_reftests_skips_references_support_files_and_non_reftests() {
-        let (_, reftests) = reftest_fixture();
-        assert_eq!(
-            reftests.runnable,
-            [
-                "css/css-page/a.html",
-                "css/css-page/b.html",
-                "css/css-page/sub/c.html",
-                "css/css-page/waived.html",
-                "css/css-scroll-snap/f.html",
-                "css/css-new/g.html",
-            ]
-        );
-        assert_eq!(reftests.xml, ["css/css-page/sub/d.xht"]);
-        let unreadable = find_reftests(&["css/a/b.html".to_owned()], |_| None);
-        assert_eq!(unreadable.unreadable, 1);
-        assert!(unreadable.runnable.is_empty());
-    }
-
-    #[test]
-    fn wpt_test_path_follows_manifest_naming_rules() {
-        assert!(is_wpt_test_path("css/a/test.html"));
-        assert!(is_wpt_test_path("css/a/reference-box.html"));
-        assert!(!is_wpt_test_path("css/a/test-ref.html"));
-        assert!(!is_wpt_test_path("css/a/test-notref.xht"));
-        assert!(!is_wpt_test_path("css/a/ref-test.html"));
-        assert!(!is_wpt_test_path("css/a/resources/x.html"));
-        assert!(!is_wpt_test_path("css/a/tools/x.html"));
-    }
-
-    #[test]
-    fn print_scope_accepts_area_prefixes_only() {
-        assert_eq!(
-            parse_print_scope("# comment\n\ncss/css-page/\n css/CSS2/ \n").unwrap(),
-            ["css/css-page/", "css/CSS2/"]
-        );
-        assert!(parse_print_scope("css/css-page").is_err());
-        assert!(parse_print_scope("css/css-page/sub/").is_err());
-        assert!(parse_print_scope("html/x/").is_err());
-        assert!(parse_print_scope("css//").is_err());
-        assert!(parse_print_scope("css/a/\ncss/a/\n").is_err());
-    }
-
-    #[test]
-    fn sweep_collapses_variants_to_the_worst_outcome() {
-        let root =
-            std::env::temp_dir().join(format!("raikiri-dashboard-sweep-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).unwrap();
-        let path = root.join("sweep.tsv");
-        fs::write(
-            &path,
-            "a.html?1\tPASS\t\na.html?2\tFAIL\tmismatch\nb.html\tXPASS\t\nc.html\tXFAIL\tknown\nd.html?x\tERROR\tboom\nd.html?y\tFAIL\t\ne.html\tSKIP\tskipped\n",
-        )
-        .unwrap();
-        let sweep = read_sweep(&path).unwrap();
-        assert_eq!(sweep.get("a.html"), Some(&Outcome::Fail));
-        assert_eq!(sweep.get("b.html"), Some(&Outcome::Pass));
-        assert_eq!(sweep.get("c.html"), Some(&Outcome::Fail));
-        assert_eq!(sweep.get("d.html"), Some(&Outcome::Error));
-        assert_eq!(sweep.get("e.html"), None);
-        fs::write(&path, "a.html\tNOPE\t\n").unwrap();
-        assert!(read_sweep(&path).is_err());
-        assert!(read_sweep(&root.join("missing.tsv")).is_err());
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    fn summary_fixture(sweep: Option<&BTreeMap<String, Outcome>>) -> Summary {
-        let (files, reftests) = reftest_fixture();
-        let baseline = ["css/css-page/a.html".to_owned(), "css/README.md".to_owned()]
-            .into_iter()
-            .collect();
-        let known_issues = vec![
-            (
-                "css/css-scroll-snap/".to_owned(),
-                "Out of print scope (scroll snapping)".to_owned(),
-            ),
-            ("css/css-page/waived.html".to_owned(), "waived".to_owned()),
-        ];
-        summarize(
-            &files,
-            &reftests,
-            &baseline,
-            &["css/css-page/".to_owned()],
-            &known_issues,
-            sweep,
-        )
-        .unwrap()
-    }
-
-    #[test]
-    fn summarize_splits_areas_and_counts_sweep_outcomes() {
-        let sweep: BTreeMap<String, Outcome> = [
-            ("css/css-page/a.html".to_owned(), Outcome::Pass),
-            ("css/css-page/sub/c.html".to_owned(), Outcome::Error),
-            ("css/css-page/waived.html".to_owned(), Outcome::Pass),
-            ("css/css-scroll-snap/f.html".to_owned(), Outcome::Pass),
-        ]
-        .into_iter()
-        .collect();
-        let summary = summary_fixture(Some(&sweep));
-        assert_eq!(summary.in_scope.len(), 1);
-        let page = &summary.in_scope[0];
-        assert_eq!(page.path, "css/css-page");
-        assert_eq!(
-            page.tally,
-            Tally {
-                reftests: 3,
-                pass: 1,
-                fail: 0,
-                error: 1,
-                baseline: 1,
-            }
-        );
-        assert_eq!(page.tally.not_run(), 1);
-        assert_eq!(page.children.len(), 1);
-        assert_eq!(page.children[0].0, "css/css-page/sub");
-        assert_eq!(page.children[0].1.error, 1);
-        assert_eq!(summary.waived, 1);
-        assert_eq!(summary.xml_reftests, 1);
-        assert_eq!(
-            summary
-                .unclassified
-                .iter()
-                .map(|row| row.path.as_str())
-                .collect::<Vec<_>>(),
-            ["css/css-new"]
-        );
-        assert_eq!(
-            summary.out_of_scope,
-            [OutOfScopeRow {
-                path: "css/css-scroll-snap".to_owned(),
-                reftests: 1,
-                reason: "Out of print scope (scroll snapping)".to_owned(),
-            }]
-        );
-        assert_eq!(summary.in_scope_total().reftests, 3);
-    }
-
-    #[test]
-    fn summarize_rejects_an_area_in_both_scope_lists() {
-        let (files, reftests) = reftest_fixture();
-        let error = summarize(
-            &files,
-            &reftests,
-            &HashSet::new(),
-            &["css/css-page/".to_owned()],
-            &[("css/css-page/".to_owned(), "reason".to_owned())],
-            None,
-        )
-        .unwrap_err();
-        assert!(error.contains("both print-scope.txt and known-issues.txt"));
-    }
-
-    #[test]
-    fn rate_cell_uses_expected_class_and_percentage() {
-        assert!(rate_cell(0, 0).contains("class=\"empty\""));
-        assert!(rate_cell(0, 10).contains("class=\"fail\""));
-        assert!(rate_cell(5, 10).contains("50.00%"));
-        assert!(rate_cell(10, 10).contains("class=\"pass\""));
-    }
-
-    fn page_info(sweep_name: Option<&str>) -> PageInfo<'_> {
-        PageInfo {
-            pin: "pin",
-            generated_at: "now",
-            css_files: 12,
-            baseline_entries: 2,
-            sweep_name,
-            basic_reftest_count: Some(7),
-        }
-    }
-
-    #[test]
-    fn render_dashboard_shows_sweep_counts_and_scope_sections() {
-        let sweep: BTreeMap<String, Outcome> = [("css/css-page/a.html".to_owned(), Outcome::Pass)]
-            .into_iter()
-            .collect();
-        let html = render_dashboard(&summary_fixture(Some(&sweep)), &page_info(Some("s.tsv")));
-        assert!(html.contains("WPT pin: <code>pin</code>"));
-        assert!(html.contains("Basic reftest smoke: <code>7</code> passed"));
-        assert!(html.contains("In-scope pass rate: 33.33%</strong> (1 of 3 reftests)"));
-        assert!(html.contains("sweep: <code>s.tsv</code>"));
-        assert!(html.contains("<h2>Unclassified</h2>"));
-        assert!(html.contains("<td>css/css-scroll-snap</td><td class=\"num\">1</td><td>Out of print scope (scroll snapping)</td>"));
-        assert!(html.contains("↳ css/css-page/sub"));
-        assert!(html.contains("1 in-scope reftests matching a narrower known-issues entry"));
-    }
-
-    #[test]
-    fn render_dashboard_without_sweep_falls_back_to_baseline_rate() {
-        let html = render_dashboard(&summary_fixture(None), &page_info(None));
-        assert!(html.contains("In-scope baseline rate: 33.33%"));
-        assert!(html.contains("<td class=\"num muted\">–</td>"));
-        assert!(!html.contains("sweep: <code>"));
-    }
-
-    #[test]
-    fn file_inventory_falls_back_without_git() {
-        let root =
-            std::env::temp_dir().join(format!("raikiri-dashboard-no-git-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(root.join("css/foo/nested")).unwrap();
-        fs::write(root.join("css/foo/a.html"), "a").unwrap();
-        fs::write(root.join("css/foo/nested/b.html"), "b").unwrap();
-        let files = list_wpt_files(&root).unwrap();
-        assert_eq!(files, ["css/foo/a.html", "css/foo/nested/b.html"]);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn file_inventory_uses_git_tree_and_reads_head() {
-        let root =
-            std::env::temp_dir().join(format!("raikiri-dashboard-git-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(root.join("css/foo")).unwrap();
-        fs::write(root.join("css/foo/a.html"), "a").unwrap();
-        let status = Command::new("git")
-            .arg("init")
-            .arg("-q")
-            .current_dir(&root)
-            .status()
-            .unwrap();
-        assert!(status.success());
-        let status = Command::new("git")
-            .args([
-                "-c",
-                "user.name=dashboard-test",
-                "-c",
-                "user.email=dashboard@test.invalid",
-            ])
-            .args(["add", "."])
-            .current_dir(&root)
-            .status()
-            .unwrap();
-        assert!(status.success());
-        let status = Command::new("git")
-            .args([
-                "-c",
-                "user.name=dashboard-test",
-                "-c",
-                "user.email=dashboard@test.invalid",
-            ])
-            .args(["commit", "-qm", "fixture"])
-            .current_dir(&root)
-            .status()
-            .unwrap();
-        assert!(status.success());
-        assert_eq!(list_wpt_files(&root).unwrap(), ["css/foo/a.html"]);
-        assert_eq!(git_head(&root).unwrap().len(), 40);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn file_inventory_falls_back_after_empty_git_inventory() {
-        let root = std::env::temp_dir().join(format!(
-            "raikiri-dashboard-empty-git-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).unwrap();
-        fs::write(root.join("README"), "fixture").unwrap();
-        let status = Command::new("git")
-            .arg("init")
-            .arg("-q")
-            .current_dir(&root)
-            .status()
-            .unwrap();
-        assert!(status.success());
-        let status = Command::new("git")
-            .args([
-                "-c",
-                "user.name=dashboard-test",
-                "-c",
-                "user.email=dashboard@test.invalid",
-            ])
-            .args(["add", "README"])
-            .current_dir(&root)
-            .status()
-            .unwrap();
-        assert!(status.success());
-        let status = Command::new("git")
-            .args([
-                "-c",
-                "user.name=dashboard-test",
-                "-c",
-                "user.email=dashboard@test.invalid",
-            ])
-            .args(["commit", "-qm", "fixture"])
-            .current_dir(&root)
-            .status()
-            .unwrap();
-        assert!(status.success());
-        fs::create_dir_all(root.join("css/foo")).unwrap();
-        fs::write(root.join("css/foo/a.html"), "a").unwrap();
-        assert_eq!(list_wpt_files(&root).unwrap(), ["css/foo/a.html"]);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn file_inventory_reports_empty_css_tree() {
-        let root =
-            std::env::temp_dir().join(format!("raikiri-dashboard-empty-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(root.join("css")).unwrap();
-        let error = list_wpt_files(&root).unwrap_err();
-        assert!(error.contains("no WPT CSS files found"));
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn read_baseline_normalizes_entries_and_reports_io_errors() {
-        let root =
-            std::env::temp_dir().join(format!("raikiri-dashboard-baseline-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).unwrap();
-        let path = root.join("baseline.txt");
-        fs::write(&path, "# comment\ncss/foo/a.html\na.html\n").unwrap();
-        let files = vec!["css/foo/a.html".to_owned()];
-        let entries = read_baseline(&path, &files).unwrap();
-        assert_eq!(entries.len(), 1);
-        assert!(read_baseline(&root.join("missing.txt"), &files).is_err());
-        fs::remove_dir_all(root).unwrap();
-    }
-}
+#[path = "generate-dashboard/tests.rs"]
+mod tests;
