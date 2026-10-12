@@ -799,7 +799,7 @@ fn stylesheet_strip_removes_semicolon_after_a_trailing_comment() {
 }
 
 #[test]
-fn stylesheet_strip_keeps_a_comment_without_a_following_semicolon() {
+fn stylesheet_strip_removes_the_last_declaration_without_a_semicolon() {
     let result = strip_stylesheet_properties(
         "rect { color:red; opacity:.5 /* x */ }",
         &["opacity"],

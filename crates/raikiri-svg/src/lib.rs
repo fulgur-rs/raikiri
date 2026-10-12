@@ -4094,31 +4094,18 @@ fn source_slice_offset(source: &str, slice: &str) -> usize {
     offset
 }
 
-/// Extends a declaration's removal range over the whitespace and comments
-/// that follow it, through its terminating `;` when one is present.
+/// Extends a declaration's removal range through its terminating `;`.
+///
+/// The recorded declaration already runs through any whitespace and comments
+/// before the `;`, because the declaration parser consumes every token up to
+/// that delimiter, so the `;` is the next token when present.
 fn declaration_removal_end(source: &str, declaration_end: usize) -> usize {
-    let tail = &source[declaration_end..];
-    let mut input = cssparser::ParserInput::new(tail);
+    let mut input = cssparser::ParserInput::new(&source[declaration_end..]);
     let mut parser = cssparser::Parser::new(&mut input);
-    let mut end = 0;
-    let mut seen_comment = false;
-    loop {
-        match parser.next_including_whitespace_and_comments() {
-            // Without a `;`, only the whitespace run directly after the
-            // declaration goes, so a trailing comment stays in place.
-            Ok(cssparser::Token::WhiteSpace(_)) if !seen_comment => {
-                end = parser.position().byte_index();
-            }
-            Ok(cssparser::Token::WhiteSpace(_)) => {}
-            Ok(cssparser::Token::Comment(_)) => seen_comment = true,
-            Ok(cssparser::Token::Semicolon) => {
-                end = parser.position().byte_index();
-                break;
-            }
-            _ => break,
-        }
+    match parser.next_including_whitespace_and_comments() {
+        Ok(cssparser::Token::Semicolon) => declaration_end + parser.position().byte_index(),
+        _ => declaration_end,
     }
-    declaration_end + end
 }
 
 /// Splits a selector list at its top-level commas. Commas inside strings,
