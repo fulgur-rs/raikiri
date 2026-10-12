@@ -15,12 +15,13 @@ fn run(doc: &HtmlDocument) -> PipelineOutput {
             consumer_properties: &[],
             property_observer: None,
             preload_background_images: true,
+            resume: None,
         },
     )
     .expect("pipeline")
     {
         PipelineRun::Completed(out) => *out,
-        PipelineRun::Aborted => panic!("unexpected abort"),
+        PipelineRun::Aborted | PipelineRun::NotResumed => panic!("unexpected abort"),
     }
 }
 
@@ -64,6 +65,7 @@ fn pipeline_propagates_a_resolver_error_during_initial_pagination() {
             consumer_properties: &[],
             property_observer: None,
             preload_background_images: true,
+            resume: None,
         },
     );
 
@@ -115,6 +117,7 @@ fn pipeline_rejects_excess_pages_at_the_first_excess_page() {
             consumer_properties: &[],
             property_observer: None,
             preload_background_images: true,
+            resume: None,
         },
     );
 
@@ -131,7 +134,7 @@ fn pipeline_rejects_excess_pages_at_the_first_excess_page() {
                 output.slices.len()
             )
         }
-        Ok(PipelineRun::Aborted) => panic!("unexpected abort"),
+        Ok(PipelineRun::Aborted) | Ok(PipelineRun::NotResumed) => panic!("unexpected abort"),
     }
 }
 
@@ -159,6 +162,7 @@ fn pipeline_rejects_excess_pages_from_break_after() {
             consumer_properties: &[],
             property_observer: None,
             preload_background_images: true,
+            resume: None,
         },
     );
 
@@ -175,7 +179,7 @@ fn pipeline_rejects_excess_pages_from_break_after() {
                 output.slices.len()
             )
         }
-        Ok(PipelineRun::Aborted) => panic!("unexpected abort"),
+        Ok(PipelineRun::Aborted) | Ok(PipelineRun::NotResumed) => panic!("unexpected abort"),
     }
 }
 
@@ -199,6 +203,7 @@ fn pipeline_reports_a_passed_cascade_limit() {
             consumer_properties: &[],
             property_observer: None,
             preload_background_images: true,
+            resume: None,
         },
     );
 
@@ -232,6 +237,7 @@ fn pipeline_reports_a_passed_rule_tree_limit() {
             consumer_properties: &[],
             property_observer: None,
             preload_background_images: true,
+            resume: None,
         },
     );
 
@@ -265,6 +271,7 @@ fn pipeline_rejects_a_zero_page_limit_before_layout() {
             consumer_properties: &[],
             property_observer: None,
             preload_background_images: true,
+            resume: None,
         },
     );
 
@@ -326,6 +333,7 @@ fn pipeline_returns_aborted_when_resolver_cancels_before_initial_pagination() {
             consumer_properties: &[],
             property_observer: None,
             preload_background_images: true,
+            resume: None,
         },
     );
 
@@ -386,6 +394,7 @@ fn pipeline_returns_aborted_when_resolver_cancels_during_scheduled_pagination() 
             consumer_properties: &[],
             property_observer: None,
             preload_background_images: true,
+            resume: None,
         },
     );
 
@@ -454,6 +463,7 @@ fn pipeline_returns_aborted_when_resolver_cancels_during_strict_page_confirmatio
             consumer_properties: &[],
             property_observer: None,
             preload_background_images: true,
+            resume: None,
         },
     );
 
@@ -516,6 +526,7 @@ fn pipeline_rechecks_the_page_limit_when_strict_confirmation_changes_page_names(
             consumer_properties: &[],
             property_observer: None,
             preload_background_images: true,
+            resume: None,
         },
     );
 
@@ -531,7 +542,7 @@ fn pipeline_rechecks_the_page_limit_when_strict_confirmation_changes_page_names(
             output.slices.len(),
             resolver.calls.load(Ordering::SeqCst)
         ),
-        Ok(PipelineRun::Aborted) => panic!("unexpected abort"),
+        Ok(PipelineRun::Aborted) | Ok(PipelineRun::NotResumed) => panic!("unexpected abort"),
     }
 }
 
@@ -559,6 +570,7 @@ fn pipeline_rejects_page_limit_during_scheduled_pagination() {
             consumer_properties: &[],
             property_observer: None,
             preload_background_images: true,
+            resume: None,
         },
     );
 
@@ -595,13 +607,14 @@ fn pipeline_applies_page_limit_after_geometry_stabilizes() {
             consumer_properties: &[],
             property_observer: None,
             preload_background_images: true,
+            resume: None,
         },
     );
 
     match result {
         Ok(PipelineRun::Completed(output)) => assert_eq!(output.slices.len(), 2),
         Err(error) => panic!("expected the stabilized two-page layout, got {error}"),
-        Ok(PipelineRun::Aborted) => panic!("unexpected abort"),
+        Ok(PipelineRun::Aborted) | Ok(PipelineRun::NotResumed) => panic!("unexpected abort"),
     }
 }
 
@@ -628,6 +641,7 @@ fn pipeline_discovers_nested_named_page_before_enforcing_page_limit() {
             consumer_properties: &[],
             property_observer: None,
             preload_background_images: true,
+            resume: None,
         },
     );
 
@@ -637,7 +651,7 @@ fn pipeline_discovers_nested_named_page_before_enforcing_page_limit() {
             assert_eq!(output.slices[1].page_name.as_deref(), Some("tall"));
         }
         Err(error) => panic!("expected the nested tall page to fit, got {error}"),
-        Ok(PipelineRun::Aborted) => panic!("unexpected abort"),
+        Ok(PipelineRun::Aborted) | Ok(PipelineRun::NotResumed) => panic!("unexpected abort"),
     }
 }
 
@@ -665,6 +679,7 @@ fn pipeline_discovers_named_page_after_oversized_text_before_enforcing_page_limi
             consumer_properties: &[],
             property_observer: None,
             preload_background_images: true,
+            resume: None,
         },
     );
 
@@ -674,7 +689,7 @@ fn pipeline_discovers_named_page_after_oversized_text_before_enforcing_page_limi
             assert_eq!(output.slices[1].page_name.as_deref(), Some("tall"));
         }
         Err(error) => panic!("expected the named tall page after text to fit, got {error}"),
-        Ok(PipelineRun::Aborted) => panic!("unexpected abort"),
+        Ok(PipelineRun::Aborted) | Ok(PipelineRun::NotResumed) => panic!("unexpected abort"),
     }
 }
 
@@ -702,13 +717,14 @@ fn pipeline_does_not_count_distant_absolute_percentage_boxes_as_pages() {
             consumer_properties: &[],
             property_observer: None,
             preload_background_images: true,
+            resume: None,
         },
     );
 
     match result {
         Ok(PipelineRun::Completed(output)) => assert_eq!(output.slices.len(), 2),
         Err(error) => panic!("an out-of-flow box must not increase the page count: {error}"),
-        Ok(PipelineRun::Aborted) => panic!("unexpected abort"),
+        Ok(PipelineRun::Aborted) | Ok(PipelineRun::NotResumed) => panic!("unexpected abort"),
     }
 }
 
@@ -886,12 +902,13 @@ fn pipeline_preloads_element_backgrounds_once_then_page_backgrounds_in_page_orde
             consumer_properties: &[],
             property_observer: None,
             preload_background_images: true,
+            resume: None,
         },
     )
     .expect("pipeline")
     {
         PipelineRun::Completed(out) => *out,
-        PipelineRun::Aborted => panic!("unexpected abort"),
+        PipelineRun::Aborted | PipelineRun::NotResumed => panic!("unexpected abort"),
     };
     assert_eq!(out.slices.len(), 3);
     let requests = provider
@@ -948,6 +965,7 @@ fn pipeline_selects_font_faces_using_layout_media_dimensions() {
             consumer_properties: &[],
             property_observer: None,
             preload_background_images: true,
+            resume: None,
         },
     )
     .unwrap();
@@ -976,12 +994,13 @@ fn pipeline_keeps_the_media_page_box_independent_of_authored_page_geometry() {
             consumer_properties: &[],
             property_observer: None,
             preload_background_images: true,
+            resume: None,
         },
     )
     .unwrap()
     {
         PipelineRun::Completed(out) => out,
-        PipelineRun::Aborted => panic!("unexpected abort"),
+        PipelineRun::Aborted | PipelineRun::NotResumed => panic!("unexpected abort"),
     };
     assert_eq!(out.geometries[0].page_box.width, 200.0);
     assert_eq!(out.geometries[0].page_box.height, 100.0);
@@ -1036,6 +1055,7 @@ fn pipeline_honors_cancellation_before_final_page_projection() {
             consumer_properties: &[],
             property_observer: None,
             preload_background_images: true,
+            resume: None,
         },
     );
     assert!(controller.signal.is_aborted());
@@ -1069,6 +1089,7 @@ fn pipeline_reports_a_column_projection_work_limit() {
                 consumer_properties: &[],
                 property_observer: None,
                 preload_background_images: false,
+                resume: None,
             },
         )
     };
@@ -1104,12 +1125,13 @@ fn many_columns_with_generated_decoration_prepare_one_source_piece() {
             consumer_properties: &[],
             property_observer: None,
             preload_background_images: false,
+            resume: None,
         },
     )
     .unwrap()
     {
         PipelineRun::Completed(out) => out,
-        PipelineRun::Aborted => panic!("completed layout"),
+        PipelineRun::Aborted | PipelineRun::NotResumed => panic!("completed layout"),
     };
     assert_eq!(
         out.document

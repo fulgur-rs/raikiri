@@ -11,8 +11,8 @@ use super::records::{PageFragmentItem, PageFragmentKind};
 use crate::Document;
 use crate::layout::is_floating_box_for_pagination;
 use raikiri_style::CascadeResult;
-use raikiri_style::property::{BreakBetween, BreakInside, PageValue, PositionValue};
-use raikiri_traits::NodeKind;
+use raikiri_style::property::{BreakBetween, BreakInside, DisplayValue, PageValue, PositionValue};
+use raikiri_traits::{NodeId, NodeKind};
 
 /// The first content of a page, in source order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -260,6 +260,45 @@ impl Document {
             self.continuation_break = at;
             self.layout_dirty = true;
         }
+    }
+
+    /// Lay the elements `roots` and their subtrees out as if they had
+    /// `display: none`, in `cascade`, while counters keep seeing them with
+    /// their own display.
+    ///
+    /// A relayout that resumes at a page start uses this for the content
+    /// wholly before the start, which an earlier layout already placed on
+    /// finished pages: the relayout spends no layout on it, but the counters
+    /// in effect after it, such as list item numbers, do not change.
+    pub fn skip_layout(&mut self, cascade: &mut CascadeResult, roots: &[usize]) {
+        for &id in roots {
+            if let Some(computed) = cascade.computed.get_mut(id)
+                && computed.display != DisplayValue::None
+            {
+                self.skipped_displays.insert(id, computed.display);
+                computed.display = DisplayValue::None;
+                self.layout_dirty = true;
+            }
+        }
+    }
+
+    /// Number the fragments of a relayout that resumes at a page start after
+    /// those an earlier layout placed on the pages before it.
+    ///
+    /// `earlier` holds, for each box that crosses the page start, how many
+    /// fragments it had before the start. The next projection numbers its
+    /// fragments from there on. A box that begins before the start but is not
+    /// listed did not reach the resumed page in the earlier layout, as the
+    /// body sized to the first page does not: its fragments on the first
+    /// projected page are left out.
+    pub fn continue_fragments(&mut self, earlier: impl IntoIterator<Item = (NodeId, u32)>) {
+        self.earlier_fragments = Some(earlier.into_iter().collect());
+    }
+
+    /// The display counters see for element `id` whose computed display is
+    /// `display`: its own display when [`Document::skip_layout`] hid it.
+    pub(crate) fn counter_display(&self, id: usize, display: DisplayValue) -> DisplayValue {
+        self.skipped_displays.get(&id).copied().unwrap_or(display)
     }
 
     /// Keep the content before `token` from adding breaks of its own in a

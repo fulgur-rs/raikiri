@@ -4,6 +4,7 @@ use raikiri_traits::{AbortController, LimitKind, ParseError, RenderLimits, Warni
 
 use super::*;
 use crate::StringFetchMode;
+use crate::layout;
 
 const PAGED: &str = "<style>div { break-after: page }</style>\
     <div id=a style='bookmark-level: 1'>one</div>\

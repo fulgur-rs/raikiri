@@ -631,10 +631,11 @@ pub(crate) fn build_target_registry(
                 }
 
                 let cv = cascade.computed.get(idx);
-                let is_display_none = matches!(cv, Some(cv) if cv.display == DisplayValue::None);
+                let display = cv.map(|cv| doc.counter_display(idx, cv.display));
+                let is_display_none = display == Some(DisplayValue::None);
 
                 match cv {
-                    Some(cv) if is_display_none || cv.display == DisplayValue::Contents => {
+                    Some(_) if is_display_none || display == Some(DisplayValue::Contents) => {
                         // CSS Lists 3 §4.5
                         // <https://www.w3.org/TR/css-lists-3/#counters-in-elements-that-do-not-generate-boxes>:
                         // an element that does not generate a box "cannot
@@ -770,9 +771,10 @@ pub fn counter_snapshots_with_budget(
                 }
 
                 let cv = cascade.computed.get(idx);
-                let is_display_none = matches!(cv, Some(cv) if cv.display == DisplayValue::None);
+                let display = cv.map(|cv| doc.counter_display(idx, cv.display));
+                let is_display_none = display == Some(DisplayValue::None);
                 match cv {
-                    Some(cv) if is_display_none || cv.display == DisplayValue::Contents => {}
+                    Some(_) if is_display_none || display == Some(DisplayValue::Contents) => {}
                     Some(cv) => scopes.apply(cv, pending_pops.last_mut()),
                     // cov:ignore: cascade output has one computed value per arena node
                     None => {}

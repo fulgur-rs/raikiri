@@ -694,12 +694,36 @@ pub(crate) struct PipelineOutput {
 pub(crate) enum PipelineRun {
     Completed(Box<PipelineOutput>),
     Aborted,
+    /// The layout could not resume at the [`ResumePoint`] it was given.
+    NotResumed,
 }
 pub(crate) struct PipelineInputs<'r, 'a> {
     pub(crate) resources: Option<&'r RenderResources<'a>>,
     pub(crate) consumer_properties: &'r [ConsumerPropertyRegistration],
     pub(crate) property_observer: Option<&'r mut dyn ConsumerPropertyObserver>,
     pub(crate) preload_background_images: bool,
+    pub(crate) resume: Option<&'r ResumePoint>,
+}
+
+/// Where a layout begins when an earlier layout of the same document's
+/// start already produced the pages before it.
+///
+/// The layout lays out only the pages from `first_page` on, resuming at
+/// `start` as a continuation does. The pages before `first_page` keep their
+/// page context (name, side, geometry and margin boxes) but no content.
+#[derive(Clone, Debug)]
+pub(crate) struct ResumePoint {
+    /// Index of the first page laid out.
+    pub(crate) first_page: u32,
+    /// Where that page begins, from the earlier layout.
+    pub(crate) start: raikiri_dom::PageStart,
+    /// Names of the pages `0..=first_page`, from the earlier layout.
+    pub(crate) page_names: Vec<Option<String>>,
+    /// Elements wholly before `start`, laid out as `display: none`.
+    pub(crate) skipped: Vec<usize>,
+    /// How many fragments each box crossing `start` had on the pages before
+    /// `first_page`, in the earlier layout.
+    pub(crate) earlier_fragments: Vec<(raikiri_traits::NodeId, u32)>,
 }
 
 pub(crate) fn run_pipeline(
@@ -807,7 +831,12 @@ pub(crate) fn run_pipeline(
     // The first class-A box can select a named page. Resolve that name before
     // the initial layout so a named `:first` page is not flattened to the
     // anonymous page geometry. Only the page context depends on the name.
-    if let Some(name) = first_page_name(&doc.uncascaded.dom, &first_cascade) {
+    // A resumed layout takes the first page's name from the earlier layout.
+    let first_name = match inputs.resume {
+        Some(resume) => resume.page_names.first().cloned().flatten(),
+        None => first_page_name(&doc.uncascaded.dom, &first_cascade),
+    };
+    if let Some(name) = first_name {
         first_query.page_name = Some(Atom::from(name.as_str()));
         let page = cascade_page_for_query(&tree, &first_cascade, media_context, &first_query);
         first_cascade.replace_page(page);
@@ -837,22 +866,30 @@ pub(crate) fn run_pipeline(
     if let Some(source) = resources.image_pixel_source_ref() {
         dom.prepare_list_marker_images(&first_cascade, source, runtime.effective_base_url);
     }
-    let resolved_initial_context = resolve_initial_page_context(
-        &dom,
-        first_query.page_name.as_ref().map(ToString::to_string),
-        first_cascade,
-        page_box,
-        InitialPageProbeResources::new(Some(&resolver), runtime.effective_base_url),
-        |page_name, cascade| {
-            first_query.page_name = page_name.map(Atom::from);
-            let page = cascade_page_for_query(&tree, cascade, media_context, &first_query);
-            let page_box = page_box_for_page(&page, &defaults);
-            (page, page_box)
-        },
-    )
-    .map_err(map_initial_page_context_error)?;
-    let mut first_cascade = resolved_initial_context.cascade;
-    let page_box = resolved_initial_context.page_box;
+    // A resumed layout already knows the first page's name, which the probe
+    // would look for in content the layout skips.
+    let (mut first_cascade, page_box) = if inputs.resume.is_some() {
+        (first_cascade, page_box)
+    } else {
+        let resolved_initial_context = resolve_initial_page_context(
+            &dom,
+            first_query.page_name.as_ref().map(ToString::to_string),
+            first_cascade,
+            page_box,
+            InitialPageProbeResources::new(Some(&resolver), runtime.effective_base_url),
+            |page_name, cascade| {
+                first_query.page_name = page_name.map(Atom::from);
+                let page = cascade_page_for_query(&tree, cascade, media_context, &first_query);
+                let page_box = page_box_for_page(&page, &defaults);
+                (page, page_box)
+            },
+        )
+        .map_err(map_initial_page_context_error)?;
+        (
+            resolved_initial_context.cascade,
+            resolved_initial_context.page_box,
+        )
+    };
     // A named first page, or page lengths relative to the root's font, can
     // give the first page another page area than the provisional one. The
     // element cascade is then run again in that viewport; the page context
@@ -911,77 +948,96 @@ pub(crate) fn run_pipeline(
     // again from a copy of the document as it is before any layout.
     let pristine = dom.clone();
     let mut document = dom;
-    let mut slices = match layout_pages_with_resolver_and_base_url_and_control(
-        &mut document,
-        &first_cascade,
-        page_box,
-        &resolver,
-        runtime.effective_base_url,
-        &discovery_control,
-    ) {
-        Ok(slices) => slices,
-        Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted),
-        Err(error) => return Err(RenderError::from(error)),
-    };
-    let mut pagination_truncated = discovery_control.page_limit_reached();
-    if is_aborted() {
-        return Ok(PipelineRun::Aborted); // cov:ignore: closes the race after the paginator's final cancellation poll.
-    }
-    const MAX_PAGE_GEOMETRY_PASSES: u32 = 3;
-    let mut page_geometries = resolve_page_geometries(&page_cascader, &defaults, &slices).0;
-    let mut geometry_converged = true;
-    let mut schedule_changed = false;
-    for pass in 0..MAX_PAGE_GEOMETRY_PASSES {
-        let Some(first_geometry) = page_geometries.first().copied() else {
-            break; // cov:ignore: a successful document with a body always emits a page slice.
-        };
-        let geometry_varies = page_geometries
+    let (slices, page_geometries, page_styles, continuations) = if let Some(resume) = inputs.resume
+    {
+        let mut slices: Vec<PageSlice> = resume
+            .page_names
             .iter()
-            .any(|geometry| geometry_differs(*geometry, first_geometry));
-        let schedule_must_be_applied = std::mem::take(&mut schedule_changed);
-        if !geometry_varies && !pagination_truncated && !schedule_must_be_applied {
-            break;
-        }
-
-        let schedule = page_geometry_schedule(&page_geometries, &slices);
-        // The first pagination pass establishes page count, names, and source
-        // coordinates. If page selectors resolve different used geometry, rerun
-        // the existing scheduled paginator with producer-owned page steps/widths.
-        // Provisional passes stop at the configured page count and return only
-        // the prefix needed to discover page geometry. Once the schedule is
-        // stable, a strict pass confirms the final count.
-        let scheduled_control = if geometry_varies {
-            &discovery_control
-        } else {
-            &page_control
+            .enumerate()
+            .map(|(index, name)| PageSlice {
+                page_index: index as u32,
+                content_origin_y: 0.0,
+                page_name: name.clone(),
+            })
+            .collect();
+        let mut page_geometries = resolve_page_geometries(&page_cascader, &defaults, &slices).0;
+        let resumed = continuation::resume_at(
+            &continuation::ContinuationInputs {
+                pristine: &pristine,
+                source: &doc.uncascaded.dom,
+                tree: &tree,
+                media_context,
+                cascade_options: &cascade_options,
+                cascader: &page_cascader,
+                defaults: &defaults,
+                resolver: &resolver,
+                base_url: runtime.effective_base_url,
+                max_pages: config.limits.max_document_pages,
+                abort_check: &is_aborted,
+                skipped: &resume.skipped,
+            },
+            &document,
+            &first_cascade,
+            &mut slices,
+            &mut page_geometries,
+            resume.first_page as usize,
+            resume.start,
+            &resume.earlier_fragments,
+        );
+        drop(pristine);
+        let continuations = match resumed {
+            Ok(Some(continuations)) => continuations,
+            Ok(None) => return Ok(PipelineRun::NotResumed),
+            Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted),
+            Err(error) => return Err(RenderError::from(error)),
         };
-        slices = match layout_pages_with_page_geometry_and_resolver_and_base_url_and_control(
+        let page_styles = resolve_page_geometries(&page_cascader, &defaults, &slices).1;
+        (slices, page_geometries, page_styles, continuations)
+    } else {
+        let mut slices = match layout_pages_with_resolver_and_base_url_and_control(
             &mut document,
             &first_cascade,
             page_box,
-            &schedule.page_steps,
-            &schedule.page_widths,
             &resolver,
             runtime.effective_base_url,
-            scheduled_control,
+            &discovery_control,
         ) {
             Ok(slices) => slices,
             Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted),
             Err(error) => return Err(RenderError::from(error)),
         };
+        let mut pagination_truncated = discovery_control.page_limit_reached();
         if is_aborted() {
             return Ok(PipelineRun::Aborted); // cov:ignore: closes the race after the paginator's final cancellation poll.
         }
-        pagination_truncated = geometry_varies && discovery_control.page_limit_reached();
-        // A scheduled pass can change both page count and page selectors. Re-
-        // resolve before the next iteration so the following schedule is
-        // derived from the slices it will actually replace.
-        page_geometries = resolve_page_geometries(&page_cascader, &defaults, &slices).0;
-        let mut refreshed_schedule = page_geometry_schedule(&page_geometries, &slices);
-        if refreshed_schedule == schedule && pagination_truncated {
-            // The soft pass confirmed the geometry schedule only for the
-            // configured prefix. Re-run it strictly before treating that
-            // prefix as a complete document.
+        const MAX_PAGE_GEOMETRY_PASSES: u32 = 3;
+        let mut page_geometries = resolve_page_geometries(&page_cascader, &defaults, &slices).0;
+        let mut geometry_converged = true;
+        let mut schedule_changed = false;
+        for pass in 0..MAX_PAGE_GEOMETRY_PASSES {
+            let Some(first_geometry) = page_geometries.first().copied() else {
+                break; // cov:ignore: a successful document with a body always emits a page slice.
+            };
+            let geometry_varies = page_geometries
+                .iter()
+                .any(|geometry| geometry_differs(*geometry, first_geometry));
+            let schedule_must_be_applied = std::mem::take(&mut schedule_changed);
+            if !geometry_varies && !pagination_truncated && !schedule_must_be_applied {
+                break;
+            }
+
+            let schedule = page_geometry_schedule(&page_geometries, &slices);
+            // The first pagination pass establishes page count, names, and source
+            // coordinates. If page selectors resolve different used geometry, rerun
+            // the existing scheduled paginator with producer-owned page steps/widths.
+            // Provisional passes stop at the configured page count and return only
+            // the prefix needed to discover page geometry. Once the schedule is
+            // stable, a strict pass confirms the final count.
+            let scheduled_control = if geometry_varies {
+                &discovery_control
+            } else {
+                &page_control
+            };
             slices = match layout_pages_with_page_geometry_and_resolver_and_base_url_and_control(
                 &mut document,
                 &first_cascade,
@@ -990,120 +1046,150 @@ pub(crate) fn run_pipeline(
                 &schedule.page_widths,
                 &resolver,
                 runtime.effective_base_url,
-                &page_control,
+                scheduled_control,
             ) {
                 Ok(slices) => slices,
                 Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted),
                 Err(error) => return Err(RenderError::from(error)),
             };
-            // A cancellation arriving after the paginator's final poll is a race-only case.
-            // cov:ignore: closes the cancellation race after strict confirmation completes.
             if is_aborted() {
-                return Ok(PipelineRun::Aborted);
+                return Ok(PipelineRun::Aborted); // cov:ignore: closes the race after the paginator's final cancellation poll.
             }
-            pagination_truncated = false;
+            pagination_truncated = geometry_varies && discovery_control.page_limit_reached();
+            // A scheduled pass can change both page count and page selectors. Re-
+            // resolve before the next iteration so the following schedule is
+            // derived from the slices it will actually replace.
             page_geometries = resolve_page_geometries(&page_cascader, &defaults, &slices).0;
-            refreshed_schedule = page_geometry_schedule(&page_geometries, &slices);
+            let mut refreshed_schedule = page_geometry_schedule(&page_geometries, &slices);
+            if refreshed_schedule == schedule && pagination_truncated {
+                // The soft pass confirmed the geometry schedule only for the
+                // configured prefix. Re-run it strictly before treating that
+                // prefix as a complete document.
+                slices = match layout_pages_with_page_geometry_and_resolver_and_base_url_and_control(
+                    &mut document,
+                    &first_cascade,
+                    page_box,
+                    &schedule.page_steps,
+                    &schedule.page_widths,
+                    &resolver,
+                    runtime.effective_base_url,
+                    &page_control,
+                ) {
+                    Ok(slices) => slices,
+                    Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted),
+                    Err(error) => return Err(RenderError::from(error)),
+                };
+                // A cancellation arriving after the paginator's final poll is a race-only case.
+                // cov:ignore: closes the cancellation race after strict confirmation completes.
+                if is_aborted() {
+                    return Ok(PipelineRun::Aborted);
+                }
+                pagination_truncated = false;
+                page_geometries = resolve_page_geometries(&page_cascader, &defaults, &slices).0;
+                refreshed_schedule = page_geometry_schedule(&page_geometries, &slices);
+            }
+            if refreshed_schedule == schedule && !pagination_truncated {
+                break;
+            }
+            // A refreshed schedule may differ due to page names or page count even
+            // when every page currently has the same geometry. Apply it before converging.
+            schedule_changed = refreshed_schedule != schedule;
+            // cov:ignore: no current public fixture can keep a static page-rule schedule
+            // changing through all three bounded passes; the terminal status has a
+            // direct contract test in raikiri-traits.
+            if pass + 1 == MAX_PAGE_GEOMETRY_PASSES {
+                geometry_converged = false;
+            }
         }
-        if refreshed_schedule == schedule && !pagination_truncated {
-            break;
+        // cov:ignore: see the bounded non-convergence branch above; no inconsistent
+        // pages are emitted, and the structured error variant is contract-tested.
+        if !geometry_converged {
+            return Err(RenderError::PageGeometryDidNotConverge {
+                iterations: MAX_PAGE_GEOMETRY_PASSES,
+            });
         }
-        // A refreshed schedule may differ due to page names or page count even
-        // when every page currently has the same geometry. Apply it before converging.
-        schedule_changed = refreshed_schedule != schedule;
-        // cov:ignore: no current public fixture can keep a static page-rule schedule
-        // changing through all three bounded passes; the terminal status has a
-        // direct contract test in raikiri-traits.
-        if pass + 1 == MAX_PAGE_GEOMETRY_PASSES {
-            geometry_converged = false;
+
+        let total_pages = u64::try_from(slices.len()).unwrap_or(u64::MAX);
+        if let Some(limit) = config
+            .limits
+            .max_document_pages
+            .filter(|limit| total_pages > u64::from(*limit))
+        // cov:ignore: the strict paginator rejects excess pages before returning its slice vector.
+        {
+            return Err(RenderError::LimitExceeded {
+                kind: raikiri_traits::LimitKind::Pages,
+                limit: u64::from(limit),
+                actual: u64::from(limit) + 1,
+            });
         }
-    }
-    // cov:ignore: see the bounded non-convergence branch above; no inconsistent
-    // pages are emitted, and the structured error variant is contract-tested.
-    if !geometry_converged {
-        return Err(RenderError::PageGeometryDidNotConverge {
-            iterations: MAX_PAGE_GEOMETRY_PASSES,
-        });
-    }
 
-    let total_pages = u64::try_from(slices.len()).unwrap_or(u64::MAX);
-    if let Some(limit) = config
-        .limits
-        .max_document_pages
-        .filter(|limit| total_pages > u64::from(*limit))
-    // cov:ignore: the strict paginator rejects excess pages before returning its slice vector.
-    {
-        return Err(RenderError::LimitExceeded {
-            kind: raikiri_traits::LimitKind::Pages,
-            limit: u64::from(limit),
-            actual: u64::from(limit) + 1,
-        });
-    }
+        // Resolve once more after the final bounded schedule pass so metadata and
+        // page names always describe the slices that will actually be emitted.
+        let (final_geometries, page_styles) =
+            resolve_page_geometries(&page_cascader, &defaults, &slices);
+        page_geometries = final_geometries;
 
-    // Resolve once more after the final bounded schedule pass so metadata and
-    // page names always describe the slices that will actually be emitted.
-    let (final_geometries, page_styles) =
-        resolve_page_geometries(&page_cascader, &defaults, &slices);
-    page_geometries = final_geometries;
-
-    let geometries: Vec<_> = page_geometries
-        .iter()
-        .map(|geometry| (geometry.page_box, geometry.margins, geometry.content_insets))
-        .collect();
-    match document.project_pages_with_control(
-        &first_cascade,
-        page_box,
-        &slices,
-        &geometries,
-        &page_control,
-    ) {
-        Ok(()) => {}
-        Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted),
-        Err(error) => return Err(RenderError::from(error)),
-    }
-
-    let continuations = match continuation::continue_at_page_widths(
-        &continuation::ContinuationInputs {
-            pristine: &pristine,
-            source: &doc.uncascaded.dom,
-            tree: &tree,
-            media_context,
-            cascade_options: &cascade_options,
-            cascader: &page_cascader,
-            defaults: &defaults,
-            resolver: &resolver,
-            base_url: runtime.effective_base_url,
-            max_pages: config.limits.max_document_pages,
-            abort_check: &is_aborted,
-        },
-        &document,
-        &first_cascade,
-        &mut slices,
-        &mut page_geometries,
-    ) {
-        Ok(continuations) => continuations,
-        Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted), // cov:ignore: needs a cancellation landing during a relayout
-        Err(error) => return Err(RenderError::from(error)),
-    };
-    drop(pristine);
-    let page_styles = if let Some(first) = continuations.first() {
-        // The first layout keeps only the pages before the first continuation.
-        let own = first.first_page as usize;
+        let geometries: Vec<_> = page_geometries
+            .iter()
+            .map(|geometry| (geometry.page_box, geometry.margins, geometry.content_insets))
+            .collect();
         match document.project_pages_with_control(
             &first_cascade,
             page_box,
-            &slices[..own],
-            &geometries[..own],
+            &slices,
+            &geometries,
             &page_control,
         ) {
             Ok(()) => {}
-            // These pages were projected once already with the same limits.
-            Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted), // cov:ignore: needs a cancellation landing during this projection
-            Err(error) => return Err(RenderError::from(error)), // cov:ignore: the same projection succeeded above
+            Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted),
+            Err(error) => return Err(RenderError::from(error)),
         }
-        resolve_page_geometries(&page_cascader, &defaults, &slices).1
-    } else {
-        page_styles
+
+        let continuations = match continuation::continue_at_page_widths(
+            &continuation::ContinuationInputs {
+                pristine: &pristine,
+                source: &doc.uncascaded.dom,
+                tree: &tree,
+                media_context,
+                cascade_options: &cascade_options,
+                cascader: &page_cascader,
+                defaults: &defaults,
+                resolver: &resolver,
+                base_url: runtime.effective_base_url,
+                max_pages: config.limits.max_document_pages,
+                abort_check: &is_aborted,
+                skipped: &[],
+            },
+            &document,
+            &first_cascade,
+            &mut slices,
+            &mut page_geometries,
+        ) {
+            Ok(continuations) => continuations,
+            Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted), // cov:ignore: needs a cancellation landing during a relayout
+            Err(error) => return Err(RenderError::from(error)),
+        };
+        drop(pristine);
+        let page_styles = if let Some(first) = continuations.first() {
+            // The first layout keeps only the pages before the first continuation.
+            let own = first.first_page as usize;
+            match document.project_pages_with_control(
+                &first_cascade,
+                page_box,
+                &slices[..own],
+                &geometries[..own],
+                &page_control,
+            ) {
+                Ok(()) => {}
+                // These pages were projected once already with the same limits.
+                Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted), // cov:ignore: needs a cancellation landing during this projection
+                Err(error) => return Err(RenderError::from(error)), // cov:ignore: the same projection succeeded above
+            }
+            resolve_page_geometries(&page_cascader, &defaults, &slices).1
+        } else {
+            page_styles
+        };
+        (slices, page_geometries, page_styles, continuations)
     };
 
     // Fetch CSS background sources only after the final page schedule is known.

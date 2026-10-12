@@ -13,7 +13,7 @@ use raikiri_dom::{
     layout_pages_with_page_geometry_and_resolver_and_base_url_and_control,
 };
 use raikiri_style::{CascadeOptions, CascadeResult, MediaContext, RuleTree, cascade_with_options};
-use raikiri_traits::{LayoutError, ReplacedResolver};
+use raikiri_traits::{LayoutError, NodeId, ReplacedResolver};
 
 use super::{PageCascader, ResolvedPageGeometry, content_width_for_geometry, page_query_for_slice};
 
@@ -40,6 +40,10 @@ pub(super) struct ContinuationInputs<'a> {
     pub(super) base_url: Option<&'a url::Url>,
     pub(super) max_pages: Option<u32>,
     pub(super) abort_check: &'a dyn Fn() -> bool,
+    /// Elements that every relayout lays out as `display: none`: content
+    /// wholly before the pages being laid out (see
+    /// [`raikiri_dom::Document::skip_layout`]).
+    pub(super) skipped: &'a [usize],
 }
 
 /// Content widths closer than this are the same width.
@@ -74,8 +78,63 @@ pub(super) fn continue_at_page_widths(
     slices: &mut Vec<PageSlice>,
     geometries: &mut Vec<ResolvedPageGeometry>,
 ) -> Result<Vec<Continuation>, LayoutError> {
-    let mut continuations: Vec<Continuation> = Vec::new();
-    let mut run_start = 0_usize;
+    continue_from(inputs, document, cascade, slices, geometries, Vec::new(), 0)
+}
+
+/// Lay the document out from page `page`, which begins at `start`, and
+/// relay out every later page run of another content width, as
+/// [`continue_at_page_widths`] does.
+///
+/// `slices` and `geometries` describe pages `0..=page`; the pages before
+/// `page` are left as they are, without content. On success they describe
+/// every page and the continuations hold the content of the pages from
+/// `page` on. `earlier` holds how many fragments each box crossing `start`
+/// had on the pages before `page`, from which the relayout numbers its
+/// fragments on. Returns `None` when the relayout does not reproduce the
+/// page start.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn resume_at(
+    inputs: &ContinuationInputs<'_>,
+    document: &Document,
+    cascade: &CascadeResult,
+    slices: &mut Vec<PageSlice>,
+    geometries: &mut Vec<ResolvedPageGeometry>,
+    page: usize,
+    start: PageStart,
+    earlier: &[(NodeId, u32)],
+) -> Result<Option<Vec<Continuation>>, LayoutError> {
+    let Some((continuation, pages)) =
+        relayout_from(inputs, slices, geometries, page, start, Some(earlier))?
+    else {
+        return Ok(None);
+    };
+    slices.truncate(page);
+    slices.extend(pages);
+    *geometries = super::resolve_page_geometries(inputs.cascader, inputs.defaults, slices).0;
+    continue_from(
+        inputs,
+        document,
+        cascade,
+        slices,
+        geometries,
+        vec![continuation],
+        page,
+    )
+    .map(Some)
+}
+
+/// [`continue_at_page_widths`] from the page run starting at `run_start`,
+/// whose pages come from the last of `continuations`, or from `document`
+/// when there is none.
+fn continue_from(
+    inputs: &ContinuationInputs<'_>,
+    document: &Document,
+    cascade: &CascadeResult,
+    slices: &mut Vec<PageSlice>,
+    geometries: &mut Vec<ResolvedPageGeometry>,
+    mut continuations: Vec<Continuation>,
+    mut run_start: usize,
+) -> Result<Vec<Continuation>, LayoutError> {
     loop {
         let run_width = content_width_for_geometry(geometries[run_start]);
         let segment = match continuations.last() {
@@ -97,7 +156,8 @@ pub(super) fn continue_at_page_widths(
             break;
         };
         let page = page as usize;
-        let Some((continuation, pages)) = relayout_from(inputs, slices, geometries, page, start)?
+        let Some((continuation, pages)) =
+            relayout_from(inputs, slices, geometries, page, start, None)?
         else {
             break;
         };
@@ -119,6 +179,7 @@ fn relayout_from(
     geometries: &[ResolvedPageGeometry],
     page: usize,
     start: PageStart,
+    earlier: Option<&[(NodeId, u32)]>,
 ) -> Result<Option<(Continuation, Vec<PageSlice>)>, LayoutError> {
     let geometry = geometries[page];
     // The run's element cascade already succeeded on the same input with the
@@ -132,6 +193,7 @@ fn relayout_from(
     )
     .expect("cascade は常に Ok のはず");
     let mut document = inputs.pristine.clone();
+    document.skip_layout(&mut cascade, inputs.skipped);
     if let PageStartToken::Line { text, offset } = start.token {
         document.set_continuation_break(Some((text, offset)));
     }
@@ -175,6 +237,9 @@ fn relayout_from(
     let lead = token_y - start.offset;
     let lead = (lead > POSITION_TOLERANCE).then_some(lead);
     let skipped = usize::from(lead.is_some());
+    if let Some(earlier) = earlier {
+        document.continue_fragments(earlier.iter().copied());
+    }
 
     let width = content_width_for_geometry(geometry);
     let schedule = |heights: &[ResolvedPageGeometry]| -> Vec<f32> {

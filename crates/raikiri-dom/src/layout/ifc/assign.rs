@@ -371,7 +371,9 @@ fn collect_candidates(
     state: &IfcState,
 ) -> Result<Vec<Candidate>, LayoutError> {
     let mut candidates = Vec::new();
-    let mut taken = vec![false; doc.nodes.len()];
+    // Elements inside a `display: none` subtree generate no boxes, so their
+    // paragraphs would be shaped for nothing.
+    let mut taken = inside_hidden_subtrees(doc, cascade);
     let counters = GeneratedCounters::default();
     for idx in 0..doc.nodes.len() {
         let node = &doc.nodes[idx];
@@ -418,6 +420,27 @@ fn collect_candidates(
         candidates.push(Candidate { idx, projected });
     }
     Ok(candidates)
+}
+
+/// Which nodes are descendants of an element with `display: none`.
+fn inside_hidden_subtrees(doc: &Document, cascade: &CascadeResult) -> Vec<bool> {
+    let mut inside = vec![false; doc.nodes.len()];
+    let mut stack = vec![(doc.root, false)];
+    while let Some((id, hidden)) = stack.pop() {
+        inside[id] = hidden;
+        let hides = doc.nodes[id].kind() == NodeKind::Element
+            && cascade
+                .computed
+                .get(id)
+                .is_some_and(|computed| computed.display == DisplayValue::None);
+        stack.extend(
+            doc.nodes[id]
+                .children
+                .iter()
+                .map(|&child| (child, hidden || hides)),
+        );
+    }
+    inside
 }
 
 /// Keep empty ruby items in multicol containers on the legacy projection

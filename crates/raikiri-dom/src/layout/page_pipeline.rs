@@ -1752,15 +1752,36 @@ pub(crate) fn project_slices_with_control(
         }
     }
 
+    // A relayout resumed at a page start continues the fragments the boxes
+    // crossing that start had before it. A box begun above the first page
+    // that did not cross the start in the earlier layout has no fragment
+    // after it.
+    if let Some(earlier) = &document.earlier_fragments
+        && let Some(first) = pages.first_mut()
+    {
+        first.items.retain(|item| {
+            item.is_repeat
+                || item.is_table_header_repeat
+                || item.box_y >= -0.01
+                || earlier.contains_key(&item.node_id)
+        });
+    }
+    let earlier = document.earlier_fragments.as_ref();
+    let before = |node: &NodeId| earlier.and_then(|earlier| earlier.get(node)).copied();
+
     // A source can have several column pieces on the same physical page.
     // Count all committed pieces together so edge ownership remains stable.
     let mut fragment_counts = HashMap::<NodeId, u32>::new();
     for item in pages.iter().flat_map(|page| &page.items) {
-        *fragment_counts.entry(item.node_id).or_default() += 1;
+        *fragment_counts
+            .entry(item.node_id)
+            .or_insert_with(|| before(&item.node_id).unwrap_or(0)) += 1;
     }
     let mut fragment_indices = HashMap::<NodeId, u32>::new();
     for item in pages.iter_mut().flat_map(|page| &mut page.items) {
-        let index = fragment_indices.entry(item.node_id).or_default();
+        let index = fragment_indices
+            .entry(item.node_id)
+            .or_insert_with(|| before(&item.node_id).unwrap_or(0));
         item.fragment_index = *index;
         item.fragment_count = fragment_counts[&item.node_id];
         *index += 1;
