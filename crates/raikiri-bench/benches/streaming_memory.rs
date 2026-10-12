@@ -99,21 +99,35 @@ unsafe impl GlobalAlloc for Counting {
 #[global_allocator]
 static ALLOCATOR: Counting = Counting;
 
-/// Peak live heap bytes of every thread during `f`, and its wall time.
+/// Peak live heap bytes of every thread during `f`.
 ///
 /// Memory released during the call that was allocated before it lowers the
 /// live count, so `f` should own everything it measures.
 // cov:ignore: bench harness — same reason as the file header.
-fn measure<T>(f: impl FnOnce() -> T) -> (T, usize, Duration) {
+fn peak<T>(f: impl FnOnce() -> T) -> (T, usize) {
     LIVE.store(0, Relaxed);
     PEAK.store(0, Relaxed);
     MEASURING.store(true, Relaxed);
-    let start = Instant::now();
     let value = f();
-    let elapsed = start.elapsed();
     MEASURING.store(false, Relaxed);
-    let peak = usize::try_from(PEAK.load(Relaxed)).unwrap_or(0);
-    (value, peak, elapsed)
+    (value, usize::try_from(PEAK.load(Relaxed)).unwrap_or(0))
+}
+
+/// Wall time of `f`, with the allocation counters off: counting makes every
+/// allocation on every thread update shared atomics, which would add to the
+/// time unevenly.
+// cov:ignore: bench harness — same reason as the file header.
+fn time<T>(f: impl FnOnce() -> T) -> Duration {
+    let start = Instant::now();
+    let _ = f();
+    start.elapsed()
+}
+
+/// Result, peak heap and wall time of `f`, from two runs.
+// cov:ignore: bench harness — same reason as the file header.
+fn measure<T>(f: impl Fn() -> T) -> (T, usize, Duration) {
+    let (value, peak) = peak(&f);
+    (value, peak, time(&f))
 }
 
 /// A document of `sections` times three paragraphs of about 120 words; the
@@ -213,10 +227,11 @@ fn kib(bytes: usize) -> f64 {
     bytes as f64 / 1024.0
 }
 
-/// Heap growth per page from `first` to `last`, in KiB.
+/// Heap growth per page from `first` to `last`, in KiB. `last` has more
+/// pages than `first`.
 // cov:ignore: bench harness — same reason as the file header.
 fn slope(first: (u32, usize), last: (u32, usize)) -> f64 {
-    let pages = f64::from(last.0.saturating_sub(first.0).max(1));
+    let pages = f64::from(last.0 - first.0);
     (kib(last.1) - kib(first.1)) / pages
 }
 
@@ -278,8 +293,10 @@ fn main() {
             row.stream_time.as_secs_f64() * 1000.0,
         );
     }
-    if let (Some(first), Some(last)) = (rows.first(), rows.last())
-        && rows.len() > 1
+    let first = rows.iter().min_by_key(|row| row.pages);
+    let last = rows.iter().max_by_key(|row| row.pages);
+    if let (Some(first), Some(last)) = (first, last)
+        && last.pages > first.pages
     {
         println!(
             "peak heap per page from {} to {} pages: batch {:.1} KiB, stream {:.1} KiB",

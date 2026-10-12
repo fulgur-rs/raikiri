@@ -936,7 +936,8 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
         // warnings only earlier layouts reported.
         let mut warnings = std::mem::take(&mut out.warnings);
         if settings.last_resumed.get() {
-            warnings.extend(earlier_warnings.missing_from(&warnings));
+            let missing = earlier_warnings.missing_from(&warnings);
+            warnings.extend(missing);
         }
         let summary = StreamSummary {
             page_count,
@@ -1084,14 +1085,15 @@ impl Warnings {
     }
 
     /// The warnings held that `warnings` does not hold.
-    fn missing_from(self, warnings: &[RenderWarning]) -> impl Iterator<Item = RenderWarning> {
+    fn missing_from(self, warnings: &[RenderWarning]) -> Vec<RenderWarning> {
         let present: HashSet<String> = warnings
             .iter()
             .map(|warning| format!("{warning:?}"))
             .collect();
         self.warnings
             .into_iter()
-            .filter(move |warning| !present.contains(&format!("{warning:?}")))
+            .filter(|warning| !present.contains(&format!("{warning:?}")))
+            .collect()
     }
 }
 
