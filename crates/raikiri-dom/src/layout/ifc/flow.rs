@@ -238,7 +238,7 @@ pub(crate) fn place_lines(
         escaping_margin: taffy::CollapsibleMarginSet::ZERO,
         leading_block_margin: None,
         block_line_starts: Vec::new(),
-        shifts: Vec::new(),
+        shifts: super::root::LineShifts::default(),
         fragment_box_placements: Vec::new(),
         fragmentainer_line_ranges: None,
         unfragmented_tail_column: None,

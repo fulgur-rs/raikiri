@@ -129,7 +129,7 @@ pub(crate) struct IfcLines {
     /// Block offsets added to the lines by pagination: `(first line, delta)`
     /// moves that line and every later one down by `delta`, when a box of the
     /// paragraph was moved to a later page.
-    pub(crate) shifts: Vec<(usize, f32)>,
+    pub(crate) shifts: LineShifts,
     /// Accepted float placements recorded by a fragmenting IFC layout.
     pub(crate) fragment_box_placements: Vec<IfcBoxFragment>,
     /// Line ranges already assigned to fragmentainers by a fragmenting IFC layout.
@@ -146,14 +146,79 @@ pub(crate) struct IfcBoxFragment {
     pub(crate) rect: crate::fragment::FragmentRect,
 }
 
+/// Block offsets added to the lines of a paragraph by pagination, as
+/// `(first line, delta)` entries in the order they were added.
+///
+/// The running totals of the deltas answer the shift of one line with a
+/// binary search while the entries are in line order, which is how
+/// pagination adds them; otherwise the entries are summed directly. Both
+/// add the same deltas in the same order, so the results are identical.
+#[derive(Clone, Debug)]
+pub(crate) struct LineShifts {
+    entries: Vec<(usize, f32)>,
+    /// `totals[k]` is the sum of the first `k` deltas.
+    totals: Vec<f32>,
+    /// Some entry starts at an earlier line than the one before it.
+    unordered: bool,
+}
+
+impl Default for LineShifts {
+    fn default() -> Self {
+        Self {
+            entries: Vec::new(),
+            totals: vec![std::iter::empty::<f32>().sum()],
+            unordered: false,
+        }
+    }
+}
+
+impl LineShifts {
+    /// Move line `first` and every later line down by `delta`.
+    pub(crate) fn push(&mut self, first: usize, delta: f32) {
+        self.unordered |= self.entries.last().is_some_and(|&(last, _)| last > first);
+        self.entries.push((first, delta));
+        let total = self.totals[self.totals.len() - 1] + delta;
+        self.totals.push(total);
+    }
+
+    /// The entries in the order they were added.
+    #[cfg(test)]
+    pub(crate) fn iter(&self) -> impl Iterator<Item = &(usize, f32)> {
+        self.entries.iter()
+    }
+
+    /// The sum of every delta.
+    pub(crate) fn total(&self) -> f32 {
+        self.totals[self.totals.len() - 1]
+    }
+
+    /// How far the entries move line `index` down.
+    fn of(&self, index: usize) -> f32 {
+        if self.unordered {
+            return self
+                .entries
+                .iter()
+                .filter(|(first, _)| *first <= index)
+                .map(|(_, delta)| delta)
+                .sum();
+        }
+        self.totals[self.entries.partition_point(|&(first, _)| first <= index)]
+    }
+}
+
+impl IntoIterator for LineShifts {
+    type Item = (usize, f32);
+    type IntoIter = std::vec::IntoIter<(usize, f32)>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.entries.into_iter()
+    }
+}
+
 impl IfcLines {
     /// How far pagination moved line `index` down.
     pub(crate) fn shift_of(&self, index: usize) -> f32 {
-        self.shifts
-            .iter()
-            .filter(|(first, _)| *first <= index)
-            .map(|(_, delta)| delta)
-            .sum()
+        self.shifts.of(index)
     }
 
     /// The block offset of line `index` from the content-box top, with the

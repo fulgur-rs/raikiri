@@ -87,7 +87,7 @@ fn indexed_owners_keep_shared_lines_and_read_current_pagination_shifts() {
         .as_mut()
         .unwrap()
         .shifts
-        .push((1, 7.0));
+        .push(1, 7.0);
     assert_eq!(
         positioned_owned_text_line_bounds(&doc, owned),
         Some(vec![(0.0, 10.0), (17.0, 27.0)])

@@ -13,7 +13,7 @@ fn debug_reports_fragment_box_placement_count() {
         escaping_margin: taffy::CollapsibleMarginSet::ZERO,
         leading_block_margin: None,
         block_line_starts: Vec::new(),
-        shifts: Vec::new(),
+        shifts: Default::default(),
         fragment_box_placements: vec![IfcBoxFragment {
             node_id: 1,
             fragmentainer: 0,
@@ -145,4 +145,34 @@ fn a_rebreak_keeps_the_lines_of_a_min_content_root() {
     crate::layout::relayout_text_for_width(with_ahem(&mut doc), &cascade, 800.0);
     // The min-content box stays 40px wide, so its text stays on 3 lines.
     assert_eq!(doc.nodes[root].ifc_lines().expect("lines").len(), 3);
+}
+
+#[test]
+fn line_shifts_match_a_direct_sum_in_and_out_of_line_order() {
+    fn direct(entries: &[(usize, f32)], index: usize) -> f32 {
+        entries
+            .iter()
+            .filter(|(first, _)| *first <= index)
+            .map(|(_, delta)| delta)
+            .sum()
+    }
+    for entries in [
+        vec![],
+        vec![(2, 0.1), (2, 0.2), (5, 0.3), (9, 1.0e7)],
+        vec![(5, 0.3), (2, 0.1), (9, 1.0e7), (2, 0.2)],
+    ] {
+        let mut shifts = LineShifts::default();
+        for &(first, delta) in &entries {
+            shifts.push(first, delta);
+        }
+        for index in 0..12 {
+            assert_eq!(
+                shifts.of(index).to_bits(),
+                direct(&entries, index).to_bits(),
+                "line {index} of {entries:?}"
+            );
+        }
+        let all: f32 = entries.iter().map(|(_, delta)| delta).sum();
+        assert_eq!(shifts.total().to_bits(), all.to_bits());
+    }
 }

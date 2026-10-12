@@ -971,7 +971,7 @@ impl Node {
     #[doc(hidden)]
     pub fn ifc_size(&self) -> Option<(f32, f32)> {
         let lines = self.ifc.as_ref()?.lines.as_ref()?;
-        let moved: f32 = lines.shifts.iter().map(|(_, delta)| delta).sum();
+        let moved = lines.shifts.total();
         Some((lines.width, lines.height + moved))
     }
 
