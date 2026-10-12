@@ -1063,6 +1063,27 @@ fn link_paint_quads_of_text_follow_the_enclosing_transform() {
     );
 }
 
+// The painter adds the body's relative offset, and places a fixed box in
+// the page area from its insets, apart from the offsets around it.
+#[test]
+fn link_paint_quads_of_a_fixed_box_leave_the_offsets_around_it() {
+    let layout = laid_out(
+        "<style>@page{size:200px 200px;margin:0} \
+         body{margin:0;position:relative;left:10px;top:4px} \
+         a{position:fixed;left:0;top:0;width:20px;height:10px}</style>\
+         <div><span>x</span><a href=/go></a></div>",
+    );
+    let page = layout.page(0).unwrap();
+    let span = find(&page.dom(), page.dom().root(), "span").unwrap();
+    let a = find(&page.dom(), page.dom().root(), "a").unwrap();
+    assert_eq!(
+        page.paint_transform(span),
+        Some(PaintTransform::translate(10.0, 4.0))
+    );
+    let fixed = page.paint_transform(a).unwrap();
+    assert_eq!((fixed.e, fixed.f), (0.0, 0.0));
+}
+
 // A rotation about the box center turns the clickable rectangle into a
 // quadrilateral in paint space.
 #[test]
