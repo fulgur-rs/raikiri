@@ -2416,7 +2416,7 @@ fn hidden_child_preserves_the_named_empty_run_boundary() {
 }
 
 #[test]
-fn inline_named_canvas_keeps_an_anonymous_page_boundary() {
+fn inline_named_canvas_takes_the_page_of_its_container() {
     let (mut doc, body, flex) = column_review_document();
     doc.set_element_inline_style(flex, Some("display:none".into()));
     let before = doc.append_element(
@@ -2431,9 +2431,11 @@ fn inline_named_canvas_keeps_an_anonymous_page_boundary() {
         Style::default(),
         Some("display:inline;page:a;width:10px;height:10px"),
     );
+    // `page` does not apply to an inline-level box, so the canvas stays on
+    // the anonymous page of the block before it.
     assert_eq!(
         column_review_pages(doc, &[before, canvas]),
-        (vec![None, None], vec![0, 1])
+        (vec![None], vec![0, 0])
     );
 }
 
