@@ -2,5 +2,6 @@
   "hooks": {},
   "worktree": {
     "baseRef": "head"
-  }
+  },
+  "attribution": false
 }
