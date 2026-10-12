@@ -2869,6 +2869,11 @@ impl CascadeImagePreparer for FileCascadeImagePreparer<'_> {
         cascade: &mut raikiri_style::CascadeResult,
     ) {
         for computed in &mut cascade.computed {
+            crate::http_resources::prepare_background_image(
+                &mut computed.background_image,
+                self.base_url,
+                self.resolver,
+            );
             if computed.display == raikiri_style::DisplayValue::ListItem
                 && computed.list_style_position == raikiri_style::ListStylePosition::Inside
             {
@@ -2886,7 +2891,9 @@ impl CascadeImagePreparer for FileCascadeImagePreparer<'_> {
             self.resolver,
         );
     }
-    fn prepare_page(&self, _: &mut raikiri_style::PageCascadeResult) {}
+    fn prepare_page(&self, page: &mut raikiri_style::PageCascadeResult) {
+        crate::http_resources::prepare_page_images(page, self.base_url, self.resolver);
+    }
 }
 
 pub(crate) fn render_raikiri_pages_with_resources(

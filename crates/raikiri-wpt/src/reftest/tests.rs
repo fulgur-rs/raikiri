@@ -2575,3 +2575,81 @@ fn first_authored_page_name_needs_a_valid_important_suffix() {
         Some("Good")
     );
 }
+
+/// A WPT checkout with Ahem and a 2×2 green PNG at `/images/green.png`.
+fn checkout_with_green_png() -> tempfile::TempDir {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join("fonts")).unwrap();
+    std::fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../raikiri-dom/tests/data/text-autospace/Ahem.ttf"),
+        root.path().join("fonts/Ahem.ttf"),
+    )
+    .unwrap();
+    std::fs::create_dir_all(root.path().join("images")).unwrap();
+    std::fs::create_dir_all(root.path().join("css")).unwrap();
+    let mut bytes = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut bytes, 2, 2);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().unwrap();
+        writer
+            .write_image_data(&[0, 128, 0, 255].repeat(4))
+            .unwrap();
+    }
+    std::fs::write(root.path().join("images/green.png"), bytes).unwrap();
+    root
+}
+
+fn render_in_checkout(root: &Path, html: &str) -> RenderedDocument {
+    let page_dir = root.join("css");
+    render_raikiri_pages_inner_with_canvases(
+        html,
+        100,
+        100,
+        Some(&page_dir),
+        Some(&page_dir),
+        InlineEngineChoice {
+            require_inline_fonts: false,
+        },
+        None,
+        None,
+        None,
+    )
+    .unwrap()
+}
+
+fn pixel(document: &RenderedDocument, x: u32, y: u32) -> [u8; 4] {
+    let page = &document.pages[0];
+    let offset = ((y * page.width + x) * 4) as usize;
+    page.rgba[offset..offset + 4].try_into().unwrap()
+}
+
+#[test]
+fn root_relative_element_and_page_backgrounds_load_from_the_checkout() {
+    let root = checkout_with_green_png();
+    let element = render_in_checkout(
+        root.path(),
+        "<style>@page{size:100px 100px;margin:0}html,body{margin:0}\
+         div{width:50px;height:50px;background-image:url(/images/green.png)}</style><div></div>",
+    );
+    assert_eq!(pixel(&element, 10, 10), [0, 128, 0, 255]);
+    assert_eq!(pixel(&element, 80, 80), [255, 255, 255, 255]);
+
+    let page = render_in_checkout(
+        root.path(),
+        "<style>@page{size:100px 100px;margin:0;background-image:url(/images/green.png)}</style>",
+    );
+    assert_eq!(pixel(&page, 80, 80), [0, 128, 0, 255]);
+}
+
+#[test]
+fn an_image_that_fails_to_load_does_not_fail_the_render() {
+    let root = checkout_with_green_png();
+    let document = render_in_checkout(
+        root.path(),
+        "<style>@page{size:100px 100px;margin:0}</style><img src=\"/images/missing.png\"><img src=\"\">",
+    );
+    assert_eq!(document.pages.len(), 1);
+}
