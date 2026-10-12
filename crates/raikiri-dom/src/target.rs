@@ -762,7 +762,7 @@ pub fn counter_snapshots(
 /// Counter snapshots shared between the stages that render one layout, or
 /// the limit error that building them hit.
 pub(crate) type SharedCounterSnapshots =
-    Result<std::sync::Arc<[CounterSnapshot]>, CounterSnapshotLimitExceeded>;
+    Result<std::sync::Arc<Vec<CounterSnapshot>>, CounterSnapshotLimitExceeded>;
 
 impl Document {
     /// The [`counter_snapshots`] of this document for `cascade`, built once
@@ -778,9 +778,11 @@ impl Document {
     pub fn shared_counter_snapshots(
         &self,
         cascade: &CascadeResult,
-    ) -> Result<std::sync::Arc<[CounterSnapshot]>, CounterSnapshotLimitExceeded> {
+    ) -> Result<std::sync::Arc<Vec<CounterSnapshot>>, CounterSnapshotLimitExceeded> {
         let generation = cascade.element_generation();
-        let build = || counter_snapshots(self, cascade).map(std::sync::Arc::from);
+        // The vector moves into the `Arc` without a copy, so the build peaks
+        // at the one array its budget charged.
+        let build = || counter_snapshots(self, cascade).map(std::sync::Arc::new);
         let (cached_generation, cached) = self
             .counter_snapshot_cache
             .get_or_init(|| (generation, build()));

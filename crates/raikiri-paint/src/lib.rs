@@ -404,13 +404,7 @@ fn paint_single_page_with_origin_and_page_context_impl(
         cascade.computed.len(),
         document.node_count(),
     );
-    let counter_snapshots = document
-        .shared_counter_snapshots(cascade)
-        .map_err(|error| raikiri_traits::RenderError::LimitExceeded {
-            kind: raikiri_traits::LimitKind::CounterSnapshots,
-            limit: error.limit,
-            actual: error.actual,
-        })?;
+    let counter_snapshots = shared_counter_snapshots(document, cascade)?;
     let image_cache = walk::ImageBrushCache::for_document(document);
     let mut warnings = Vec::new();
     walk::paint_canvas_background(
@@ -478,6 +472,21 @@ fn paint_single_page_with_origin_and_page_context_impl(
     Ok(())
 }
 
+/// The document's shared counter snapshots, or the paint error for a document
+/// whose snapshots exceed their memory limit.
+fn shared_counter_snapshots(
+    document: &Document,
+    cascade: &CascadeResult,
+) -> Result<std::sync::Arc<Vec<raikiri_dom::CounterSnapshot>>, raikiri_traits::RenderError> {
+    document.shared_counter_snapshots(cascade).map_err(|error| {
+        raikiri_traits::RenderError::LimitExceeded {
+            kind: raikiri_traits::LimitKind::CounterSnapshots,
+            limit: error.limit,
+            actual: error.actual,
+        }
+    })
+}
+
 /// One step of the body walk, recorded in paint order.
 #[doc(hidden)]
 #[derive(Debug, Clone, PartialEq)]
@@ -508,14 +517,7 @@ pub fn trace_paint_order(
     content_origin_y: f32,
     active_page_name: Option<Option<&str>>,
 ) -> Result<Vec<PaintTraceEvent>, raikiri_traits::RenderError> {
-    // cov:ignore: the counter snapshot limit error is the same mapping the paint entry points test; the trace only reuses it.
-    let counter_snapshots = document
-        .shared_counter_snapshots(cascade)
-        .map_err(|error| raikiri_traits::RenderError::LimitExceeded {
-            kind: raikiri_traits::LimitKind::CounterSnapshots,
-            limit: error.limit,
-            actual: error.actual,
-        })?;
+    let counter_snapshots = shared_counter_snapshots(document, cascade)?;
     let mut scene = anyrender::Scene::new();
     let mut warnings = Vec::new();
     let mut events = Vec::new();
@@ -571,13 +573,7 @@ pub fn paint_single_page_with_images_and_warnings(
         cascade.computed.len(),
         document.node_count(),
     );
-    let counter_snapshots = document
-        .shared_counter_snapshots(cascade)
-        .map_err(|error| raikiri_traits::RenderError::LimitExceeded {
-            kind: raikiri_traits::LimitKind::CounterSnapshots,
-            limit: error.limit,
-            actual: error.actual,
-        })?;
+    let counter_snapshots = shared_counter_snapshots(document, cascade)?;
     // Single-page only (no pagination integration, see this crate's design
     // non-goals) — mirrors `paint_single_page`'s own single-page defaults
     // (page 0 of 1, no named-page filtering, unpaired) rather than joining

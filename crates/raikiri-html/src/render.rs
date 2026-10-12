@@ -262,7 +262,7 @@ fn element_text_value(document: &raikiri_dom::Document, node_id: usize) -> Strin
 /// §1.1.2).
 struct ConsumerTextContext<'a> {
     cascade: &'a raikiri_style::CascadeResult,
-    counters: Option<Option<std::sync::Arc<[raikiri_dom::CounterSnapshot]>>>,
+    counters: Option<Option<std::sync::Arc<Vec<raikiri_dom::CounterSnapshot>>>>,
     strings: std::collections::HashMap<smol_str::SmolStr, String>,
 }
 

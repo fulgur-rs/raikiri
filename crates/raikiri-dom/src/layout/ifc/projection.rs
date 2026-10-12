@@ -211,7 +211,7 @@ impl GeneratedCounters {
             .counters
             .get_or_init(|| doc.shared_counter_snapshots(cascade))
         {
-            Ok(snapshots) => Ok(snapshots),
+            Ok(snapshots) => Ok(snapshots.as_slice()),
             Err(error) => Err(*error),
         }
     }
