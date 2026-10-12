@@ -40,3 +40,33 @@ fn fragment_root_with_non_html_or_foreign_html_child_is_not_flattened() {
     assert_eq!(foreign_html.get_node(root).unwrap().children, vec![html]);
     assert_eq!(foreign_html.get_node(html).unwrap().children, vec![child]);
 }
+
+#[test]
+fn parse_records_the_effective_document_base_url() {
+    let parse_with = |html: &str, base_url: Option<&str>| {
+        let options = ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: base_url.map(|base| Url::parse(base).unwrap()),
+        };
+        parse(html.as_bytes(), &options)
+            .unwrap()
+            .dom
+            .base_url()
+            .map(Url::to_string)
+    };
+    assert_eq!(parse_with("<p>x</p>", None), None);
+    assert_eq!(
+        parse_with("<p>x</p>", Some("https://example.test/a/page.html")).as_deref(),
+        Some("https://example.test/a/page.html")
+    );
+    // `<base href>` resolves against the caller's base and wins over it.
+    assert_eq!(
+        parse_with(
+            "<head><base href=\"../b/\"></head><p>x</p>",
+            Some("https://example.test/a/page.html"),
+        )
+        .as_deref(),
+        Some("https://example.test/b/")
+    );
+}

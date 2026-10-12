@@ -18,6 +18,9 @@ fn rich_document() -> Document {
         value: "value".into(),
     }];
     doc.set_quirks_mode(QuirksMode::LimitedQuirks);
+    doc.set_base_url(Some(
+        url::Url::parse("https://example.test/dir/page.html").unwrap(),
+    ));
     doc.add_stylesheet("p {color:blue}", StylesheetKind::Author);
     doc
 }
@@ -31,6 +34,13 @@ fn roundtrip_all_logical_kinds() {
             .logical_snapshot(),
         before
     );
+}
+
+#[test]
+fn reject_a_base_url_that_does_not_parse() {
+    let mut bad = minimal_snapshot();
+    bad.base_url = Some("not a url".to_owned());
+    assert!(Document::from_logical_snapshot(bad, 100).is_err());
 }
 
 #[test]
@@ -168,6 +178,7 @@ fn reject_empty_arena_and_root_out_of_bounds() {
         root: 0,
         nodes: Vec::new(),
         quirks: 0,
+        base_url: None,
         stylesheets: Vec::new(),
     };
     assert!(empty.validate(100).is_err());
@@ -202,6 +213,7 @@ fn reject_non_document_root_kind() {
             },
         ],
         quirks: 0,
+        base_url: None,
         stylesheets: Vec::new(),
     };
     // Root points at Text, so validation must fail even though node 0 is a Document.
@@ -267,6 +279,7 @@ fn reject_leaf_children() {
                 },
             ],
             quirks: 0,
+            base_url: None,
             stylesheets: Vec::new(),
         };
         assert!(bad.validate(100).is_err());
@@ -301,6 +314,7 @@ fn reject_template_link_variants() {
             },
         ],
         quirks: 0,
+        base_url: None,
         stylesheets: Vec::new(),
     };
     assert!(bad_tag.validate(100).is_err());
@@ -344,6 +358,7 @@ fn reject_template_link_variants() {
             },
         ],
         quirks: 0,
+        base_url: None,
         stylesheets: Vec::new(),
     };
     assert!(bad_target.validate(100).is_err());
@@ -368,6 +383,7 @@ fn reject_edge_to_root_and_self_loop() {
             },
         ],
         quirks: 0,
+        base_url: None,
         stylesheets: Vec::new(),
     };
     assert!(back_to_root.validate(100).is_err());
@@ -386,6 +402,7 @@ fn reject_edge_to_root_and_self_loop() {
             },
         ],
         quirks: 0,
+        base_url: None,
         stylesheets: Vec::new(),
     };
     assert!(self_loop.validate(100).is_err());
@@ -412,6 +429,7 @@ fn reject_detached_cycle_without_repeated_parent() {
             },
         ],
         quirks: 0,
+        base_url: None,
         stylesheets: Vec::new(),
     };
     assert!(cycle.validate(100).is_err());
@@ -447,6 +465,7 @@ fn snapshot_error_displays_its_reason() {
         root: 0,
         nodes: Vec::new(),
         quirks: 0,
+        base_url: None,
         stylesheets: Vec::new(),
     };
     let err = bad.validate(100).unwrap_err();

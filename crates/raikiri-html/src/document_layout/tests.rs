@@ -1566,3 +1566,45 @@ fn layout_auto_width_blocks_fill_the_page_area_inside_page_padding_and_border() 
         .rect();
     assert_eq!(rect, raikiri_traits::PaintRect::new(17.0, 17.0, 66.0, 10.0));
 }
+
+#[test]
+fn the_laid_out_document_keeps_the_base_url_its_images_were_fetched_with() {
+    let document = dom("<p style='background-image:url(bg.png)'>x</p>");
+    assert_eq!(document.dom().base_url(), None);
+    let base = url::Url::parse("https://example.test/dir/page.html").unwrap();
+    let resources = crate::RenderResources::new().base_url(base.clone());
+    let layout = completed(
+        layout(
+            &document,
+            PageDefaults::default(),
+            LayoutConfig::default(),
+            LayoutOptions::new().resources(&resources),
+        )
+        .unwrap(),
+    );
+    assert_eq!(layout.base_url(), Some(&base));
+    assert_eq!(layout.out.document.base_url(), Some(&base));
+}
+
+#[test]
+fn a_layout_without_a_base_url_uses_the_parse_time_base_url() {
+    let base = url::Url::parse("https://example.test/dir/page.html").unwrap();
+    let document = crate::parse_html_with_resources(
+        "<p style='background-image:url(bg.png)'>x</p>".as_bytes(),
+        &crate::RenderResources::new().base_url(base.clone()),
+    )
+    .expect("parse");
+    assert_eq!(document.dom().base_url(), Some(&base));
+    let layout = completed(
+        layout(
+            &document,
+            PageDefaults::default(),
+            LayoutConfig::default(),
+            LayoutOptions::new(),
+        )
+        .unwrap(),
+    );
+    // Images, fonts and paint all resolve against it.
+    assert_eq!(layout.base_url(), Some(&base));
+    assert_eq!(layout.out.document.base_url(), Some(&base));
+}

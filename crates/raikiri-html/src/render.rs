@@ -779,8 +779,11 @@ pub(crate) fn run_pipeline(
     let network_ref = network
         .as_ref()
         .map(|provider| provider as &dyn raikiri_traits::NetworkProvider);
+    // A fallback base in the layout resources replaces the parse-time one;
+    // without it the base found at parse time resolves the resources.
     let effective_base_url =
-        crate::effective_document_base_url(&doc.uncascaded, resources.fallback_base_url());
+        crate::effective_document_base_url(&doc.uncascaded, resources.fallback_base_url())
+            .or_else(|| doc.effective_base_url().cloned());
     let font_loader = NetworkFontFaceLoader::new(
         network_ref,
         effective_base_url.as_ref(),
@@ -878,6 +881,11 @@ pub(crate) fn run_pipeline(
     // lays out a clone of this document, so the probe and the layout below
     // use the same fonts.
     let mut dom = doc.uncascaded.dom.clone();
+    // Paint resolves relative `url()` values against the base the images
+    // were fetched with, which the resources' fallback base can change.
+    if let Some(base_url) = runtime.effective_base_url {
+        dom.set_base_url(Some(base_url.clone()));
+    }
     let font_report = enable_inline_engine(
         &mut dom,
         resources,

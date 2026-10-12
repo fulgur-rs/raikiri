@@ -1396,3 +1396,31 @@ fn the_first_layout_breaks_the_lines_of_the_placement_probes_paragraphs() {
     layout_single_page(&mut doc, &context.cascade, page_box).expect("layout");
     assert_ne!(doc.ifc_last_build(), Some(crate::IfcBuildMode::Retained));
 }
+
+#[test]
+fn layout_with_a_base_url_records_it_as_the_document_base_url() {
+    struct NoImages;
+    impl raikiri_traits::ReplacedResolver for NoImages {
+        fn resolve(
+            &self,
+            _request: raikiri_traits::ResolverRequest<'_>,
+        ) -> Result<raikiri_traits::ResolvedIntrinsic, raikiri_traits::ResolverError> {
+            unreachable!("the document has no images")
+        }
+    }
+    let (mut doc, cascade) = hello_world_doc();
+    let base = url::Url::parse("https://example.test/dir/page.html").unwrap();
+    layout_single_page_with_resolver_and_base_url(
+        &mut doc,
+        &cascade,
+        PageBox::A4,
+        &NoImages,
+        Some(&base),
+    )
+    .expect("layout Ok");
+    assert_eq!(doc.base_url(), Some(&base));
+    // A layout without a base keeps the one the document has.
+    layout_single_page_with_resolver_and_base_url(&mut doc, &cascade, PageBox::A4, &NoImages, None)
+        .expect("layout Ok");
+    assert_eq!(doc.base_url(), Some(&base));
+}

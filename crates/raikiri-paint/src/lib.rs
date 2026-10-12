@@ -434,7 +434,7 @@ fn paint_single_page_with_origin_and_page_context_impl(
         limit: error.limit,
         actual: error.actual,
     })?;
-    let image_cache = walk::ImageBrushCache::default();
+    let image_cache = walk::ImageBrushCache::for_document(document);
     let mut warnings = Vec::new();
     walk::paint_canvas_background(
         &image_cache,
@@ -543,7 +543,7 @@ pub fn trace_paint_order(
     let mut warnings = Vec::new();
     let mut events = Vec::new();
     walk::paint_document_impl(
-        &crate::walk::ImageBrushCache::default(),
+        &crate::walk::ImageBrushCache::for_document(document),
         &mut scene,
         document,
         cascade,
@@ -613,7 +613,7 @@ pub fn paint_single_page_with_images_and_warnings(
     // non-goals) — mirrors `paint_single_page`'s own single-page defaults
     // (page 0 of 1, no named-page filtering, unpaired) rather than joining
     // the `paint_single_page_with_origin_and_page_context*` chain.
-    let image_cache = walk::ImageBrushCache::default();
+    let image_cache = walk::ImageBrushCache::for_document(document);
     let mut warnings = Vec::new();
     walk::paint_canvas_background(
         &image_cache,
