@@ -7,7 +7,7 @@
 use anyrender::Scene;
 use anyrender::recording::RenderCommand;
 use kurbo::Point;
-use raikiri_dom::{CounterSnapshotBudget, PositionedLines};
+use raikiri_dom::PositionedLines;
 use raikiri_html::{
     DocumentLayout, FontCollectionBuilder, FragmentKind, GeneratedKind, LayoutConfig,
     LayoutOptions, LayoutStatus, NodeId, NodeKind, Page, PageDefaults, PaintTransform,
@@ -63,7 +63,6 @@ fn lay_out(body: &str, css: &str) -> DocumentLayout {
 fn drawn(page: &Page<'_>, page_count: u32) -> Vec<(u32, f64, f64)> {
     let (document, cascade, page_box, origin) = page.paint_inputs();
     let mut scene = Scene::new();
-    let mut budget = CounterSnapshotBudget::default();
     paint_single_page_with_origin_and_page(
         &mut scene,
         document,
@@ -73,7 +72,6 @@ fn drawn(page: &Page<'_>, page_count: u32) -> Vec<(u32, f64, f64)> {
         page.index(),
         page_count,
         page.index() % 2 == 1,
-        &mut budget,
     )
     .expect("paint");
     let mut out = Vec::new();
@@ -845,7 +843,6 @@ fn by_id(page: &Page<'_>, id: &str) -> NodeId {
 fn filled(page: &Page<'_>, page_count: u32) -> Vec<(f64, f64, f64, f64)> {
     let (document, cascade, page_box, origin) = page.paint_inputs();
     let mut scene = Scene::new();
-    let mut budget = CounterSnapshotBudget::default();
     paint_single_page_with_origin_and_page(
         &mut scene,
         document,
@@ -855,7 +852,6 @@ fn filled(page: &Page<'_>, page_count: u32) -> Vec<(f64, f64, f64, f64)> {
         page.index(),
         page_count,
         page.index() % 2 == 1,
-        &mut budget,
     )
     .expect("paint");
     scene
@@ -995,7 +991,6 @@ fn decoration_api_matches_the_builtin_painter_on_each_page() {
             page.index(),
             layout.page_count(),
             page.index() % 2 == 1,
-            &mut CounterSnapshotBudget::default(),
         )
         .unwrap();
         let mut rectangles: Vec<_> = scene

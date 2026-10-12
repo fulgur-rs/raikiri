@@ -311,6 +311,14 @@ pub struct Document {
     content_images: std::collections::HashMap<(usize, bool, usize), PreparedImage>,
     /// Measured marker advances reserved by the current legacy layout pass.
     pub(crate) legacy_inside_marker_advances: std::collections::HashMap<usize, f32>,
+    /// Named-counter snapshots of the tree, built once for the element
+    /// cascade whose [`CascadeResult::element_generation`] is stored beside
+    /// them and shared by layout, page projection and paint (see
+    /// [`Document::shared_counter_snapshots`]). Tree mutations clear it.
+    ///
+    /// [`CascadeResult::element_generation`]: raikiri_style::CascadeResult::element_generation
+    pub(crate) counter_snapshot_cache:
+        std::sync::OnceLock<(u64, crate::target::SharedCounterSnapshots)>,
     /// Arena index of the Document root (normally 0, stored explicitly to
     /// accommodate unusual future cases such as detaching the root).
     pub(crate) root: usize,
@@ -574,6 +582,7 @@ impl Document {
             list_marker_images: Default::default(),
             content_images: Default::default(),
             legacy_inside_marker_advances: Default::default(),
+            counter_snapshot_cache: std::sync::OnceLock::new(),
             root: 0,
             layout_dirty: false,
             ifc_width_probe: false,
@@ -1858,6 +1867,7 @@ impl Document {
             list_marker_images,
             content_images,
             legacy_inside_marker_advances: _,
+            counter_snapshot_cache: _,
             root: _,
             layout_dirty: _,
             ifc_width_probe: _,
@@ -2029,6 +2039,9 @@ impl Document {
             return;
         }
         self.flags_dirty = false;
+        // Counter snapshots skip nodes outside the document, so ones taken
+        // before the bits below were refreshed are stale.
+        self.counter_snapshot_cache.take();
         // Step 1: Clear every arena node's bit. Node::new_* constructors set
         // true by default as an optimistic "attached" value; clearing here
         // makes detached and unreachable nodes false.
@@ -2772,6 +2785,7 @@ impl Document {
     /// costs O(1); each layout batch incurs amortized O(N) clearing.
     pub(crate) fn invalidate_layout_cache(&mut self) {
         self.page_projection.clear();
+        self.counter_snapshot_cache.take();
         self.drop_retained_paragraphs();
         self.layout_dirty = true;
     }

@@ -93,7 +93,6 @@ pub fn render_screen_url(
     .map_err(|error| ScreenRenderError::new(format!("layout failed: {error:?}")))?;
 
     let mut paint_result = Ok(());
-    let mut counter_budget = raikiri_dom::CounterSnapshotBudget::default();
     let rgba = render_to_buffer::<VelloCpuImageRenderer, _>(
         |painter| {
             paint_result = raikiri_paint::paint_single_page_with_images(
@@ -102,7 +101,6 @@ pub fn render_screen_url(
                 &cascade,
                 page_box,
                 &image_resolver,
-                &mut counter_budget,
             );
         },
         size.width(),

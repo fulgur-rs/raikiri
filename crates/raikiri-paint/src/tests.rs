@@ -77,7 +77,6 @@ fn decorated_text_scene_with_text(style: &str, text: &str) -> Scene {
 fn named_page_paint_wrapper_uses_shared_context_entry_point() {
     let (document, cascade) = hello_world_paint_setup();
     let mut scene = Scene::new();
-    let mut budget = CounterSnapshotBudget::default();
     paint_single_page_with_origin_and_page_context_named(
         &mut scene,
         &document,
@@ -89,16 +88,14 @@ fn named_page_paint_wrapper_uses_shared_context_entry_point() {
         false,
         None,
         None,
-        &mut budget,
     )
     .expect("paint succeeds");
     assert!(!scene.commands.is_empty());
 }
 
 #[test]
-fn fixed_width_named_page_entry_points_share_the_snapshot_budget() {
+fn fixed_width_named_page_entry_points_paint_the_same_document() {
     let (document, cascade) = hello_world_paint_setup();
-    let mut budget = CounterSnapshotBudget::default();
     let mut scene = Scene::new();
     paint_single_page_with_origin_and_page_context_named_with_fixed_page_width(
         &mut scene,
@@ -112,7 +109,6 @@ fn fixed_width_named_page_entry_points_share_the_snapshot_budget() {
         None,
         None,
         PageBox::A4.width,
-        &mut budget,
     )
     .expect("fixed-width page paint succeeds");
 
@@ -140,7 +136,6 @@ fn fixed_width_named_page_entry_points_share_the_snapshot_budget() {
         None,
         PageBox::A4.width,
         &EmptyPixels,
-        &mut CounterSnapshotBudget::default(),
     )
     .expect("fixed-width page paint with images succeeds");
 }
@@ -263,7 +258,6 @@ fn custom_highlight_paints_selected_text_before_its_glyphs() {
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
     let mut scene = Scene::new();
-    let mut budget = CounterSnapshotBudget::default();
     paint_single_page_with_origin_and_page_context_named_with_fixed_page_width_and_highlights(
         &mut scene,
         &doc,
@@ -282,7 +276,6 @@ fn custom_highlight_paints_selected_text_before_its_glyphs() {
             start_byte: 1,
             end_byte: 2,
         }],
-        &mut budget,
     )
     .expect("paint succeeds");
 
@@ -1567,15 +1560,8 @@ fn img_element_paints_its_decoded_pixels() {
     // `walk::paint_document_with_images` it wraps, so this test also
     // covers `paint_single_page_with_images`'s own debug_assert and
     // canvas-background call.
-    paint_single_page_with_images(
-        &mut scene,
-        &doc,
-        &cr,
-        PageBox::A4,
-        &pixel_source,
-        &mut raikiri_dom::CounterSnapshotBudget::default(),
-    )
-    .expect("paint succeeds");
+    paint_single_page_with_images(&mut scene, &doc, &cr, PageBox::A4, &pixel_source)
+        .expect("paint succeeds");
 
     let fill = scene
         .commands
@@ -1697,7 +1683,6 @@ fn inline_svg_is_atomic_and_groups_root_opacity_with_decorations() {
         &cascade,
         PageBox::A4,
         &EmptyImageSource,
-        &mut raikiri_dom::CounterSnapshotBudget::default(),
     )
     .expect("test paint stays within the counter snapshot budget");
     let image = scene
@@ -1940,7 +1925,6 @@ fn paint_inline_svg_with_external_image(style: &str) -> Vec<raikiri_traits::Rend
         &cascade,
         PageBox::A4,
         &EmptyImageSource,
-        &mut raikiri_dom::CounterSnapshotBudget::default(),
     )
     .expect("test paint stays within the counter snapshot budget")
 }
@@ -2015,15 +1999,8 @@ fn img_padding_percentage_resolves_against_width_not_height() {
     let pixel_source = OneImageSource(url, decoded);
 
     let mut scene = Scene::new();
-    paint_single_page_with_images(
-        &mut scene,
-        &doc,
-        &cr,
-        PageBox::A4,
-        &pixel_source,
-        &mut raikiri_dom::CounterSnapshotBudget::default(),
-    )
-    .expect("paint succeeds");
+    paint_single_page_with_images(&mut scene, &doc, &cr, PageBox::A4, &pixel_source)
+        .expect("paint succeeds");
 
     let fill = scene
         .commands
@@ -2107,15 +2084,8 @@ fn img_ch_padding_uses_the_pre_taffy_used_value() {
     });
     let pixel_source = OneImageSource(url, decoded);
     let mut scene = Scene::new();
-    paint_single_page_with_images(
-        &mut scene,
-        &doc,
-        &cr,
-        PageBox::A4,
-        &pixel_source,
-        &mut raikiri_dom::CounterSnapshotBudget::default(),
-    )
-    .expect("paint succeeds");
+    paint_single_page_with_images(&mut scene, &doc, &cr, PageBox::A4, &pixel_source)
+        .expect("paint succeeds");
     let fill = scene
         .commands
         .iter()
@@ -2201,9 +2171,7 @@ fn trace_records_box_clip_opacity_and_text_in_walk_order() {
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
-    let mut budget = CounterSnapshotBudget::default();
-    let trace =
-        crate::trace_paint_order(&doc, &cr, PageBox::A4, 0.0, None, &mut budget).expect("trace");
+    let trace = crate::trace_paint_order(&doc, &cr, PageBox::A4, 0.0, None).expect("trace");
     let kinds: Vec<&'static str> = trace
         .iter()
         .map(|e| match e {
@@ -2260,7 +2228,6 @@ fn contextual_custom_highlight_uses_the_texts_inherited_foreground() {
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
     let mut scene = Scene::new();
-    let mut budget = CounterSnapshotBudget::default();
     paint_single_page_with_origin_and_page_context_named_with_fixed_page_width_and_highlights(
         &mut scene,
         &doc,
@@ -2279,7 +2246,6 @@ fn contextual_custom_highlight_uses_the_texts_inherited_foreground() {
             start_byte: 1,
             end_byte: 2,
         }],
-        &mut budget,
     )
     .expect("paint succeeds");
 

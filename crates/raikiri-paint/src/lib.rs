@@ -12,14 +12,14 @@
 //!   (Node.unrounded_layout and the paragraph lines have been populated).
 //! - `cascade.computed.len() == document.node_count()` (caller responsibility).
 //! - The caller must call `scene.reset()` (as in blitz-paint).
-//! - Counter snapshots are estimated before painting; exceeding their
-//!   cumulative limit returns `RenderError::LimitExceeded` before commands are
-//!   emitted. Page-slice entry points require a shared budget; keep one budget
-//!   for every page in a document render operation.
+//! - Counter snapshots come from [`Document::shared_counter_snapshots`], built
+//!   once per document and cascade and shared by every page slice. Exceeding
+//!   their limit returns `RenderError::LimitExceeded` before commands are
+//!   emitted.
 
 #![allow(rustdoc::private_intra_doc_links)]
 use anyrender::PaintScene;
-use raikiri_dom::{CounterSnapshotBudget, Document};
+use raikiri_dom::Document;
 use raikiri_style::CascadeResult;
 use raikiri_traits::PageBox;
 
@@ -75,8 +75,8 @@ mod walk;
 /// # Errors
 ///
 /// Returns `RenderError::LimitExceeded` with
-/// `LimitKind::CounterSnapshots` when the estimated cumulative counter
-/// snapshot cost exceeds [`raikiri_dom::MAX_COUNTER_SNAPSHOT_ESTIMATED_BYTES`].
+/// `LimitKind::CounterSnapshots` when the estimated counter snapshot cost
+/// exceeds [`raikiri_dom::MAX_COUNTER_SNAPSHOT_ESTIMATED_BYTES`].
 /// The check runs before this function emits scene commands.
 ///
 /// # Panics
@@ -98,8 +98,7 @@ pub fn paint_single_page(
     cascade: &CascadeResult,
     page_box: PageBox,
 ) -> Result<(), raikiri_traits::RenderError> {
-    let mut budget = CounterSnapshotBudget::default();
-    paint_single_page_with_origin(scene, document, cascade, page_box, 0.0, &mut budget)
+    paint_single_page_with_origin(scene, document, cascade, page_box, 0.0)
 }
 
 /// Paint one page from a document whose block flow may span several pages.
@@ -108,15 +107,13 @@ pub fn paint_single_page(
 /// The paper background is emitted at local `(0, 0)`; document boxes are
 /// translated by the origin before the normal walk.  This lets callers render
 /// independent page buffers without cloning the DOM or repainting another
-/// page's content into the current one. Reuse `budget` for every page slice in
-/// one document render operation.
+/// page's content into the current one.
 pub fn paint_single_page_with_origin(
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,
     page_box: PageBox,
     content_origin_y: f32,
-    budget: &mut CounterSnapshotBudget,
 ) -> Result<(), raikiri_traits::RenderError> {
     paint_single_page_with_origin_and_page(
         scene,
@@ -127,7 +124,6 @@ pub fn paint_single_page_with_origin(
         0,
         1,
         false,
-        budget,
     )
 }
 
@@ -135,8 +131,6 @@ pub fn paint_single_page_with_origin(
 /// content.
 ///
 /// `page_index` is zero based and `page_count` is the final number of pages.
-/// Reuse `budget` for every page slice in one document render operation. The
-/// [`paint_single_page`] entry point starts a one-page operation automatically.
 #[allow(clippy::too_many_arguments)]
 pub fn paint_single_page_with_origin_and_page(
     scene: &mut impl PaintScene,
@@ -147,7 +141,6 @@ pub fn paint_single_page_with_origin_and_page(
     page_index: u32,
     page_count: u32,
     page_is_left: bool,
-    budget: &mut CounterSnapshotBudget,
 ) -> Result<(), raikiri_traits::RenderError> {
     paint_single_page_with_origin_and_page_context(
         scene,
@@ -159,14 +152,12 @@ pub fn paint_single_page_with_origin_and_page(
         page_count,
         page_is_left,
         None,
-        budget,
     )
 }
 
 /// Paint one page while supplying the increment from the paired page side.
 ///
-/// This optional context keeps parity-sensitive page counters stateful. Reuse
-/// `budget` for every page slice in one document render operation.
+/// This optional context keeps parity-sensitive page counters stateful.
 #[allow(clippy::too_many_arguments)]
 pub fn paint_single_page_with_origin_and_page_context(
     scene: &mut impl PaintScene,
@@ -178,7 +169,6 @@ pub fn paint_single_page_with_origin_and_page_context(
     page_count: u32,
     page_is_left: bool,
     paired_page_increment: Option<i32>,
-    budget: &mut CounterSnapshotBudget,
 ) -> Result<(), raikiri_traits::RenderError> {
     paint_single_page_with_origin_and_page_context_impl(
         scene,
@@ -196,7 +186,6 @@ pub fn paint_single_page_with_origin_and_page_context(
         f32::NAN,
         None,
         &[],
-        budget,
     )
 }
 
@@ -204,8 +193,7 @@ pub fn paint_single_page_with_origin_and_page_context(
 /// the page slice being rendered.
 ///
 /// Provide the slice's selected page name so a named class-A box is not painted
-/// once on the preceding anonymous slice. Reuse `budget` for every page slice
-/// in one document render operation.
+/// once on the preceding anonymous slice.
 #[allow(clippy::too_many_arguments)]
 pub fn paint_single_page_with_origin_and_page_context_named(
     scene: &mut impl PaintScene,
@@ -218,7 +206,6 @@ pub fn paint_single_page_with_origin_and_page_context_named(
     page_is_left: bool,
     paired_page_increment: Option<i32>,
     active_page_name: Option<&str>,
-    budget: &mut CounterSnapshotBudget,
 ) -> Result<(), raikiri_traits::RenderError> {
     paint_single_page_with_origin_and_page_context_impl(
         scene,
@@ -236,7 +223,6 @@ pub fn paint_single_page_with_origin_and_page_context_named(
         f32::NAN,
         None,
         &[],
-        budget,
     )
 }
 
@@ -247,8 +233,7 @@ pub fn paint_single_page_with_origin_and_page_context_named(
 /// against: the first page's paper width minus its margins, border and
 /// padding. A non-finite or non-positive value falls back to this page's page
 /// area. Named pages may change the paper width after a fixed box has been laid out.
-/// This entry point keeps that fixed containing block stable. Reuse `budget`
-/// for every page slice in one document render operation.
+/// This entry point keeps that fixed containing block stable.
 #[allow(clippy::too_many_arguments)]
 pub fn paint_single_page_with_origin_and_page_context_named_with_fixed_page_width(
     scene: &mut impl PaintScene,
@@ -262,7 +247,6 @@ pub fn paint_single_page_with_origin_and_page_context_named_with_fixed_page_widt
     paired_page_increment: Option<i32>,
     active_page_name: Option<&str>,
     fixed_page_width: f32,
-    budget: &mut CounterSnapshotBudget, // cov:ignore: function parameter has no executable coverage mapping.
 ) -> Result<(), raikiri_traits::RenderError> {
     // cov:ignore: signature line has no executable coverage mapping.
     paint_single_page_with_origin_and_page_context_impl(
@@ -279,7 +263,6 @@ pub fn paint_single_page_with_origin_and_page_context_named_with_fixed_page_widt
         fixed_page_width,
         None,
         &[],
-        budget,
     )
 }
 
@@ -302,7 +285,6 @@ pub fn paint_single_page_with_origin_and_page_context_named_with_fixed_page_widt
     active_page_name: Option<&str>,
     fixed_page_width: f32,
     pixel_source: &dyn raikiri_traits::ImagePixelSource,
-    budget: &mut CounterSnapshotBudget, // cov:ignore: function parameter has no executable coverage mapping.
 ) -> Result<(), raikiri_traits::RenderError> {
     // cov:ignore: signature line has no executable coverage mapping.
     paint_single_page_with_origin_and_page_context_impl(
@@ -319,7 +301,6 @@ pub fn paint_single_page_with_origin_and_page_context_named_with_fixed_page_widt
         fixed_page_width,
         Some(pixel_source),
         &[],
-        budget,
     )
 }
 
@@ -338,7 +319,6 @@ pub fn paint_single_page_with_origin_and_page_context_named_with_fixed_page_widt
     active_page_name: Option<&str>,
     fixed_page_width: f32,
     custom_highlights: &[TextHighlightRange],
-    budget: &mut CounterSnapshotBudget,
 ) -> Result<(), raikiri_traits::RenderError> {
     paint_single_page_with_origin_and_page_context_impl(
         scene,
@@ -354,7 +334,6 @@ pub fn paint_single_page_with_origin_and_page_context_named_with_fixed_page_widt
         fixed_page_width,
         None,
         custom_highlights,
-        budget,
     )
 }
 
@@ -374,7 +353,6 @@ pub fn paint_single_page_with_origin_and_page_context_named_with_fixed_page_widt
     fixed_page_width: f32,
     pixel_source: &dyn raikiri_traits::ImagePixelSource,
     custom_highlights: &[TextHighlightRange],
-    budget: &mut CounterSnapshotBudget,
 ) -> Result<(), raikiri_traits::RenderError> {
     paint_single_page_with_origin_and_page_context_impl(
         scene,
@@ -390,7 +368,6 @@ pub fn paint_single_page_with_origin_and_page_context_named_with_fixed_page_widt
         fixed_page_width,
         Some(pixel_source),
         custom_highlights,
-        budget,
     )
 }
 
@@ -409,7 +386,6 @@ fn paint_single_page_with_origin_and_page_context_impl(
     fixed_page_width: f32,
     pixel_source: Option<&dyn raikiri_traits::ImagePixelSource>,
     custom_highlights: &[TextHighlightRange],
-    budget: &mut CounterSnapshotBudget,
 ) -> Result<(), raikiri_traits::RenderError> {
     // The walker (`walk::paint_document` / `ifc_text::draw_ifc_lines_with_resources`) has several
     // raw-index reads of `cascade.computed[node_id]`. Each assumes the caller
@@ -428,12 +404,7 @@ fn paint_single_page_with_origin_and_page_context_impl(
         cascade.computed.len(),
         document.node_count(),
     );
-    let counter_snapshots = raikiri_dom::counter_snapshots_with_budget(document, cascade, budget)
-        .map_err(|error| raikiri_traits::RenderError::LimitExceeded {
-        kind: raikiri_traits::LimitKind::CounterSnapshots,
-        limit: error.limit,
-        actual: error.actual,
-    })?;
+    let counter_snapshots = shared_counter_snapshots(document, cascade)?;
     let image_cache = walk::ImageBrushCache::for_document(document);
     let mut warnings = Vec::new();
     walk::paint_canvas_background(
@@ -501,6 +472,21 @@ fn paint_single_page_with_origin_and_page_context_impl(
     Ok(())
 }
 
+/// The document's shared counter snapshots, or the paint error for a document
+/// whose snapshots exceed their memory limit.
+fn shared_counter_snapshots(
+    document: &Document,
+    cascade: &CascadeResult,
+) -> Result<std::sync::Arc<Vec<raikiri_dom::CounterSnapshot>>, raikiri_traits::RenderError> {
+    document.shared_counter_snapshots(cascade).map_err(|error| {
+        raikiri_traits::RenderError::LimitExceeded {
+            kind: raikiri_traits::LimitKind::CounterSnapshots,
+            limit: error.limit,
+            actual: error.actual,
+        }
+    })
+}
+
 /// One step of the body walk, recorded in paint order.
 #[doc(hidden)]
 #[derive(Debug, Clone, PartialEq)]
@@ -530,15 +516,8 @@ pub fn trace_paint_order(
     page_box: PageBox,
     content_origin_y: f32,
     active_page_name: Option<Option<&str>>,
-    budget: &mut CounterSnapshotBudget,
 ) -> Result<Vec<PaintTraceEvent>, raikiri_traits::RenderError> {
-    // cov:ignore: the counter budget error is the same mapping the paint entry points test; the trace only reuses it.
-    let counter_snapshots = raikiri_dom::counter_snapshots_with_budget(document, cascade, budget)
-        .map_err(|error| raikiri_traits::RenderError::LimitExceeded {
-        kind: raikiri_traits::LimitKind::CounterSnapshots,
-        limit: error.limit,
-        actual: error.actual,
-    })?;
+    let counter_snapshots = shared_counter_snapshots(document, cascade)?;
     let mut scene = anyrender::Scene::new();
     let mut warnings = Vec::new();
     let mut events = Vec::new();
@@ -574,17 +553,9 @@ pub fn paint_single_page_with_images(
     cascade: &CascadeResult,
     page_box: PageBox,
     pixel_source: &dyn raikiri_traits::ImagePixelSource,
-    budget: &mut CounterSnapshotBudget,
 ) -> Result<(), raikiri_traits::RenderError> {
-    paint_single_page_with_images_and_warnings(
-        scene,
-        document,
-        cascade,
-        page_box,
-        pixel_source,
-        budget,
-    )
-    .map(|_| ())
+    paint_single_page_with_images_and_warnings(scene, document, cascade, page_box, pixel_source)
+        .map(|_| ())
 }
 
 /// [`paint_single_page_with_images`] plus non-fatal image rasterization
@@ -595,7 +566,6 @@ pub fn paint_single_page_with_images_and_warnings(
     cascade: &CascadeResult,
     page_box: PageBox,
     pixel_source: &dyn raikiri_traits::ImagePixelSource,
-    budget: &mut CounterSnapshotBudget,
 ) -> Result<Vec<raikiri_traits::RenderWarning>, raikiri_traits::RenderError> {
     debug_assert!(
         cascade.computed.len() == document.node_count(),
@@ -603,12 +573,7 @@ pub fn paint_single_page_with_images_and_warnings(
         cascade.computed.len(),
         document.node_count(),
     );
-    let counter_snapshots = raikiri_dom::counter_snapshots_with_budget(document, cascade, budget)
-        .map_err(|error| raikiri_traits::RenderError::LimitExceeded {
-        kind: raikiri_traits::LimitKind::CounterSnapshots,
-        limit: error.limit,
-        actual: error.actual,
-    })?;
+    let counter_snapshots = shared_counter_snapshots(document, cascade)?;
     // Single-page only (no pagination integration, see this crate's design
     // non-goals) — mirrors `paint_single_page`'s own single-page defaults
     // (page 0 of 1, no named-page filtering, unpaired) rather than joining

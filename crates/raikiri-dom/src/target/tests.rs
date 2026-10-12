@@ -109,6 +109,54 @@ fn counter_snapshots_resolve_named_reset_and_following_increments() {
 }
 
 #[test]
+fn shared_counter_snapshots_are_reused_until_the_tree_changes() {
+    let mut doc = Document::new();
+    let scope = doc.append_element(
+        Some(0),
+        "section",
+        Style::default(),
+        Some("counter-reset: step 4"),
+    );
+    let first = doc.append_element(
+        Some(scope),
+        "div",
+        Style::default(),
+        Some("counter-increment: step"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+
+    let shared = doc.shared_counter_snapshots(&cr).expect("snapshots");
+    assert_eq!(shared[first][&Symbol::new("step")], vec![5]);
+    let again = doc.shared_counter_snapshots(&cr).expect("snapshots");
+    assert!(std::sync::Arc::ptr_eq(&shared, &again));
+
+    // Another element cascade gets its own snapshots and leaves the shared
+    // ones in place.
+    let other = cascade(&doc, &rules).expect("cascade Ok");
+    let separate = doc.shared_counter_snapshots(&other).expect("snapshots");
+    assert!(!std::sync::Arc::ptr_eq(&shared, &separate));
+    assert_eq!(*separate, *shared);
+    let kept = doc.shared_counter_snapshots(&cr).expect("snapshots");
+    assert!(std::sync::Arc::ptr_eq(&shared, &kept));
+
+    // Laying the document out with another element cascade replaces them.
+    crate::layout_single_page(&mut doc, &other, raikiri_traits::PageBox::A4).ok();
+    let relaid = doc.shared_counter_snapshots(&other).expect("snapshots");
+    let reused = doc.shared_counter_snapshots(&other).expect("snapshots");
+    assert!(std::sync::Arc::ptr_eq(&relaid, &reused));
+    assert!(!std::sync::Arc::ptr_eq(&relaid, &shared));
+
+    // A tree mutation drops them, even for the same cascade.
+    doc.detach_from_parent(first);
+    doc.mark_in_document_flags();
+    let rebuilt = doc.shared_counter_snapshots(&cr).expect("snapshots");
+    assert!(rebuilt[first].is_empty());
+    assert_eq!(rebuilt[scope][&Symbol::new("step")], vec![4]);
+}
+
+#[test]
 fn counter_snapshots_include_implicit_list_item_ordinals() {
     let mut doc = Document::new();
     let list = doc.append_element(Some(doc.root_index()), "ol", Style::default(), None::<&str>);

@@ -194,15 +194,8 @@ fn first_letter_url_background_uses_the_image_pixel_source() {
     page.width = 100.0;
     page.height = 80.0;
     let mut scene = Scene::new();
-    raikiri_paint::paint_single_page_with_images(
-        &mut scene,
-        &doc,
-        &computed,
-        page,
-        &Pixels,
-        &mut raikiri_dom::CounterSnapshotBudget::default(),
-    )
-    .unwrap();
+    raikiri_paint::paint_single_page_with_images(&mut scene, &doc, &computed, page, &Pixels)
+        .unwrap();
     let rgba = scene_pixels(scene);
     let first = (15 * 100 + 5) * 4;
     assert_eq!(&rgba[first..first + 4], &[0, 128, 0, 255]);
@@ -1416,15 +1409,8 @@ fn split_first_letter_url_background_keeps_one_positioning_area() {
         let (joined, joined_cv, _) = fixture(&sheet, None, "“A");
         let paint = |doc: &Document, cv: &CascadeResult| {
             let mut scene = Scene::new();
-            raikiri_paint::paint_single_page_with_images(
-                &mut scene,
-                doc,
-                cv,
-                page,
-                &Pixels,
-                &mut raikiri_dom::CounterSnapshotBudget::default(),
-            )
-            .unwrap();
+            raikiri_paint::paint_single_page_with_images(&mut scene, doc, cv, page, &Pixels)
+                .unwrap();
             scene_pixels(scene)
         };
         let actual = paint(&split, &computed);

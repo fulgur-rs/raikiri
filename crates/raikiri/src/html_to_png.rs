@@ -73,8 +73,7 @@ pub(crate) fn html_to_png_impl<R: std::io::Read>(
     // remain until rasterize can operate on a true standalone snapshot.
     let dom = &uncascaded.dom;
     let scene = build_page_scene(dom, &cascade, page_box);
-    let mut counter_budget = raikiri_dom::CounterSnapshotBudget::default();
-    scene.rasterize(dom, &cascade, page_box, &mut counter_budget)
+    scene.rasterize(dom, &cascade, page_box)
 }
 
 /// Rasterize an HTML byte stream to a PNG of the first page (A4 fallback).
@@ -219,8 +218,7 @@ where
     )?;
     let dom = &uncascaded.dom;
     let scene = build_page_scene(dom, &cascade, page_box);
-    let mut counter_budget = raikiri_dom::CounterSnapshotBudget::default();
-    scene.rasterize_with_images(dom, &cascade, page_box, pixel_source, &mut counter_budget)
+    scene.rasterize_with_images(dom, &cascade, page_box, pixel_source)
 }
 
 #[cfg(test)]

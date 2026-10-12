@@ -34,14 +34,8 @@ fn raster(body: &str) -> Vec<Vec<u8>> {
         .map(|page| {
             let (doc, cascade, page_box, origin) = page.paint_inputs();
             let mut scene = Scene::new();
-            let mut budget = raikiri_dom::CounterSnapshotBudget::default();
             raikiri_paint::paint_single_page_with_origin(
-                &mut scene,
-                doc,
-                cascade,
-                page_box,
-                origin,
-                &mut budget,
+                &mut scene, doc, cascade, page_box, origin,
             )
             .unwrap();
             anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(

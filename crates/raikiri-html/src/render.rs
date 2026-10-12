@@ -262,7 +262,7 @@ fn element_text_value(document: &raikiri_dom::Document, node_id: usize) -> Strin
 /// §1.1.2).
 struct ConsumerTextContext<'a> {
     cascade: &'a raikiri_style::CascadeResult,
-    counters: Option<Option<Vec<raikiri_dom::CounterSnapshot>>>,
+    counters: Option<Option<std::sync::Arc<Vec<raikiri_dom::CounterSnapshot>>>>,
     strings: std::collections::HashMap<smol_str::SmolStr, String>,
 }
 
@@ -283,7 +283,7 @@ impl<'a> ConsumerTextContext<'a> {
         node_id: usize,
     ) -> Option<&raikiri_dom::CounterSnapshot> {
         self.counters
-            .get_or_insert_with(|| raikiri_dom::counter_snapshots(document, self.cascade).ok())
+            .get_or_insert_with(|| document.shared_counter_snapshots(self.cascade).ok())
             .as_ref()?
             .get(node_id)
     }

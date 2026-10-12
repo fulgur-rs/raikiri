@@ -1359,7 +1359,6 @@ fn replaced_inline_image_composes_own_and_ancestor_transform() {
         &cascade,
         PageBox::A4,
         &Pixels,
-        &mut raikiri_dom::CounterSnapshotBudget::default(),
     )
     .expect("test paint stays within the counter snapshot budget");
     assert!(warnings.is_empty());
@@ -3250,15 +3249,8 @@ fn margin_box_glyph_ys() -> (Vec<(f64, f64)>, usize) {
     document.set_font_collection(raikiri_dom::build_wpt_font_collection(dir).expect("collection"));
     raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4).expect("layout");
     let mut scene = Scene::new();
-    crate::paint_single_page_with_images(
-        &mut scene,
-        &document,
-        &cascade,
-        PageBox::A4,
-        &NoImages,
-        &mut raikiri_dom::CounterSnapshotBudget::default(),
-    )
-    .expect("paint succeeds");
+    crate::paint_single_page_with_images(&mut scene, &document, &cascade, PageBox::A4, &NoImages)
+        .expect("paint succeeds");
     let mut out = Vec::new();
     for command in &scene.commands {
         if let RenderCommand::GlyphRun(run) = command {
@@ -5207,7 +5199,6 @@ fn review_body_page_buffers(body_style: &str, content: &str) -> Vec<Vec<u8>> {
     page.height = 100.0;
     let pages = raikiri_dom::layout_pages(&mut parsed.dom, &cascade, page).unwrap();
     assert_eq!(pages.len(), 2);
-    let mut budget = crate::CounterSnapshotBudget::default();
     (0..2)
         .map(|index| {
             let mut scene = Scene::new();
@@ -5220,7 +5211,6 @@ fn review_body_page_buffers(body_style: &str, content: &str) -> Vec<Vec<u8>> {
                 index,
                 2,
                 index == 1,
-                &mut budget,
             )
             .unwrap();
             anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(

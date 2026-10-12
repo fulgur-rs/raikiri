@@ -550,8 +550,7 @@ fn anonymous_paragraph_trace_uses_real_source_owners() {
         };
         doc.append_text(owner, "A");
         let computed = layout(&mut doc);
-        let mut budget = raikiri_dom::CounterSnapshotBudget::default();
-        let trace = trace_paint_order(&doc, &computed, page(), 0.0, None, &mut budget).unwrap();
+        let trace = trace_paint_order(&doc, &computed, page(), 0.0, None).unwrap();
         let texts: Vec<_> = trace
             .into_iter()
             .filter_map(|event| match event {
@@ -606,8 +605,7 @@ fn anonymous_text_trace_interleaves_generated_and_real_text_with_cells() {
             doc.append_text(row, "B");
         }
         let computed = layout(&mut doc);
-        let mut budget = raikiri_dom::CounterSnapshotBudget::default();
-        let traced: Vec<_> = trace_paint_order(&doc, &computed, page(), 0.0, None, &mut budget)
+        let traced: Vec<_> = trace_paint_order(&doc, &computed, page(), 0.0, None)
             .unwrap()
             .into_iter()
             .filter(|event| match event {
@@ -687,8 +685,7 @@ fn anonymous_trace_excludes_whitespace_atomic_and_hidden_text() {
             }
         }
         let computed = layout(&mut doc);
-        let mut budget = raikiri_dom::CounterSnapshotBudget::default();
-        let trace = trace_paint_order(&doc, &computed, page(), 0.0, None, &mut budget).unwrap();
+        let trace = trace_paint_order(&doc, &computed, page(), 0.0, None).unwrap();
         assert!(
             !trace
                 .iter()
@@ -931,15 +928,8 @@ fn anonymous_text_uses_page_content_clip_and_skips_other_page_ink() {
         400
     );
     let mut later = Scene::new();
-    raikiri_paint::paint_single_page_with_origin(
-        &mut later,
-        &doc,
-        &computed,
-        page(),
-        100.0,
-        &mut Default::default(),
-    )
-    .unwrap();
+    raikiri_paint::paint_single_page_with_origin(&mut later, &doc, &computed, page(), 100.0)
+        .unwrap();
     assert_eq!(
         raster(later)
             .chunks_exact(4)
@@ -2075,7 +2065,6 @@ fn review_anonymous_named_page_probe_ignores_unprojected_hidden_text() {
         false,
         None,
         Some("good"),
-        &mut Default::default(),
     )
     .unwrap();
     let (mut reference, body) = document();
@@ -2559,10 +2548,8 @@ fn contents_overlay_keeps_projected_pseudos_and_real_cells_single() {
             raster(scene(&reference, &expected)),
         );
         if let Some(cell) = cell {
-            let mut budget = raikiri_dom::CounterSnapshotBudget::default();
             let trace =
-                raikiri_paint::trace_paint_order(&doc, &computed, page(), 0.0, None, &mut budget)
-                    .unwrap();
+                raikiri_paint::trace_paint_order(&doc, &computed, page(), 0.0, None).unwrap();
             assert_eq!(trace.iter().filter(|event| matches!(event, raikiri_paint::PaintTraceEvent::Box(id) if *id == cell)).count(), 1);
             let slices = raikiri_dom::layout_pages(&mut doc, &computed, page()).unwrap();
             doc.project_pages(&computed, page(), &slices, &[]).unwrap();

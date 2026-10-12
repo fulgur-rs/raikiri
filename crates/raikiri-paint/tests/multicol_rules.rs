@@ -49,12 +49,7 @@ fn raster(body: &str, css: &str) -> Vec<u8> {
     let (document, cascade, page_box, _) = page.paint_inputs();
     let mut scene = Scene::new();
     raikiri_paint::paint_single_page_with_images(
-        &mut scene,
-        document,
-        cascade,
-        page_box,
-        &NoPixels,
-        &mut raikiri_dom::CounterSnapshotBudget::default(),
+        &mut scene, document, cascade, page_box, &NoPixels,
     )
     .unwrap();
     anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
@@ -138,15 +133,8 @@ fn huge_dotted_rules_bound_scene_commands_without_truncating_the_pattern() {
     let page = document.page(0).unwrap();
     let (source, cascade, page_box, _) = page.paint_inputs();
     let mut scene = Scene::new();
-    raikiri_paint::paint_single_page_with_images(
-        &mut scene,
-        source,
-        cascade,
-        page_box,
-        &NoPixels,
-        &mut raikiri_dom::CounterSnapshotBudget::default(),
-    )
-    .unwrap();
+    raikiri_paint::paint_single_page_with_images(&mut scene, source, cascade, page_box, &NoPixels)
+        .unwrap();
     let fills = scene
         .commands
         .iter()
@@ -177,15 +165,8 @@ fn huge_dashed_rules_bound_backend_segments_and_keep_the_full_span() {
     let page = document.page(0).unwrap();
     let (source, cascade, page_box, _) = page.paint_inputs();
     let mut scene = Scene::new();
-    raikiri_paint::paint_single_page_with_images(
-        &mut scene,
-        source,
-        cascade,
-        page_box,
-        &NoPixels,
-        &mut raikiri_dom::CounterSnapshotBudget::default(),
-    )
-    .unwrap();
+    raikiri_paint::paint_single_page_with_images(&mut scene, source, cascade, page_box, &NoPixels)
+        .unwrap();
     let strokes = scene
         .commands
         .iter()
@@ -230,16 +211,7 @@ fn rule_page_slices_do_not_leak_into_page_margins() {
         let (source, cascade, page_box, origin) = page.paint_inputs();
         let mut scene = Scene::new();
         raikiri_paint::paint_single_page_with_origin_and_page_context(
-            &mut scene,
-            source,
-            cascade,
-            page_box,
-            origin,
-            index,
-            3,
-            false,
-            None,
-            &mut raikiri_dom::CounterSnapshotBudget::default(),
+            &mut scene, source, cascade, page_box, origin, index, 3, false, None,
         )
         .unwrap();
         let pixels = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(

@@ -192,11 +192,12 @@ fn line_height_quirk(doc: &Document) -> bool {
     )
 }
 
-/// The counters of the document, computed once per layout pass and only when
-/// some paragraph lays out generated text.
+/// The counters of the document, read from
+/// [`Document::shared_counter_snapshots`] only when some paragraph lays out
+/// generated text.
 #[derive(Default)]
 pub(crate) struct GeneratedCounters {
-    counters: std::cell::OnceCell<Result<Vec<CounterSnapshot>, CounterSnapshotLimitExceeded>>,
+    counters: std::cell::OnceCell<crate::target::SharedCounterSnapshots>,
     pub(super) predecessors: super::first_letter::PredecessorCache,
 }
 
@@ -208,9 +209,9 @@ impl GeneratedCounters {
     ) -> Result<&[CounterSnapshot], CounterSnapshotLimitExceeded> {
         match self
             .counters
-            .get_or_init(|| crate::target::counter_snapshots(doc, cascade))
+            .get_or_init(|| doc.shared_counter_snapshots(cascade))
         {
-            Ok(snapshots) => Ok(snapshots),
+            Ok(snapshots) => Ok(snapshots.as_slice()),
             Err(error) => Err(*error),
         }
     }
