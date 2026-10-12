@@ -133,3 +133,18 @@ fn a_file_url_with_another_host_is_not_rebased() {
     let url = raikiri::Url::parse("file://example.test/images/green.png").unwrap();
     assert_eq!(provider.rebase(get(url.clone())).url, url);
 }
+
+struct OverBudget;
+
+impl ReplacedResolver for OverBudget {
+    fn resolve(&self, _: ResolverRequest<'_>) -> Result<ResolvedIntrinsic, ResolverError> {
+        Err(ResolverError::Decode(CACHE_LIMIT_MESSAGE.to_owned()))
+    }
+}
+
+#[test]
+fn an_exhausted_image_cache_stays_a_render_error() {
+    let url = raikiri::Url::parse("file:///a.png").unwrap();
+    let result = BrokenImageFallback::new(&OverBudget).resolve(ResolverRequest::new(&url));
+    assert!(matches!(result, Err(ResolverError::Decode(ref m)) if m == CACHE_LIMIT_MESSAGE));
+}

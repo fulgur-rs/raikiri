@@ -2877,6 +2877,11 @@ impl CascadeImagePreparer for FileCascadeImagePreparer<'_> {
                 self.base_url,
                 self.resolver,
             );
+            crate::http_resources::prepare_background_image(
+                &mut computed.border_image.source,
+                self.base_url,
+                self.resolver,
+            );
             if computed.display == raikiri_style::DisplayValue::ListItem
                 && computed.list_style_position == raikiri_style::ListStylePosition::Inside
             {

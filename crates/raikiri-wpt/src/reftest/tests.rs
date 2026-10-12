@@ -2653,3 +2653,15 @@ fn an_image_that_fails_to_load_does_not_fail_the_render() {
     );
     assert_eq!(document.pages.len(), 1);
 }
+
+#[test]
+fn a_root_relative_border_image_loads_from_the_checkout() {
+    let root = checkout_with_green_png();
+    let document = render_in_checkout(
+        root.path(),
+        "<style>@page{size:100px 100px;margin:0}html,body{margin:0}\
+         div{width:40px;height:40px;border:10px solid red;\
+         border-image:url(/images/green.png) 1 stretch}</style><div></div>",
+    );
+    assert_eq!(pixel(&document, 2, 2), [0, 128, 0, 255]);
+}

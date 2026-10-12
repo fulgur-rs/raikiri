@@ -83,10 +83,18 @@ impl<'a> BrokenImageFallback<'a> {
     }
 }
 
+/// The error `raikiri_net::ImageResolver` reports once its cache budget is
+/// spent. That is a harness capacity failure, not a broken image, so it stays
+/// terminal rather than silently dropping the remaining images.
+const CACHE_LIMIT_MESSAGE: &str = "image cache resource limit exceeded";
+
 impl ReplacedResolver for BrokenImageFallback<'_> {
     fn resolve(&self, req: ResolverRequest<'_>) -> Result<ResolvedIntrinsic, ResolverError> {
         match self.inner.resolve(req) {
             Ok(resolved) => Ok(resolved),
+            Err(ResolverError::Decode(message)) if message == CACHE_LIMIT_MESSAGE => {
+                Err(ResolverError::Decode(message))
+            }
             Err(error) => Ok(ResolvedIntrinsic {
                 intrinsic: IntrinsicBox::default(),
                 disposition: ResolveDisposition::Fallback {
