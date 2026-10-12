@@ -190,8 +190,12 @@ its counters by hand. Its denominator is the number of reftests (test files
 linking a `match` or `mismatch` reference, excluding support and reference
 files) in the print-scope areas of `expectations/print-scope.txt`. Areas with
 no meaning for print are directory prefixes in `expectations/known-issues.txt`
-and appear in a separate out-of-scope table with their reasons; an area in
-neither file is shown as unclassified. XML reftests (`.xht`, `.xml`, `.svg`)
+and appear in a separate out-of-scope table with their reasons. Areas outside
+the print scope that are still worked on, such as form controls and UI
+properties, are listed in `expectations/tracked-areas.txt`: their tests run and
+the dashboard shows their PASS / FAIL / ERROR in a separate table, but they do
+not count toward the in-scope pass rate. An area in none of the three files is
+shown as unclassified. XML reftests (`.xht`, `.xml`, `.svg`)
 are left out of the denominator because they are judged by rendering review
 rather than pixel comparison.
 
