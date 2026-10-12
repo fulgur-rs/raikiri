@@ -3,8 +3,9 @@ name: WPT baseline
 # Runs every pinned WPT baseline and expected-failure id against the current
 # main. The regular CI job does not fetch WPT, so this is the only place the
 # pass baseline in expectations/raikiri-baseline.txt is checked. `--strict`
-# fails the run on FAIL, XPASS (a stale expected-failure row), or ERROR;
-# recorded XFAIL rows stay visible in the report without failing it.
+# fails the run on FAIL, XPASS (a stale expected-failure row), or ERROR, and a
+# later step fails it on SKIP; recorded XFAIL rows stay visible in the report
+# without failing it.
 #
 # Scheduled nightly rather than per PR: the release build of the runner takes
 # several minutes, while the report itself runs in well under a minute. Run it
@@ -64,6 +65,18 @@ jobs:
             --jobs "$(nproc)" \
             --strict 2>&1 | tee target/baseline-report.log
 
+      - name: Reject skipped baseline ids
+        # `--strict` accepts SKIP, but a pass-baseline id that no longer
+        # runs (for example a parsing page whose harness calls are no longer
+        # recognized) is a regression like any other non-PASS result.
+        run: |
+          skipped="$(awk -F '\t' '$2 == "SKIP" { print $1 }' target/baseline-report/report.tsv)"
+          if [ -n "$skipped" ]; then
+            echo "error: baseline ids reported SKIP:" >&2
+            echo "$skipped" >&2
+            exit 1
+          fi
+
       - name: Summarize non-passing results
         if: always()
         run: |
@@ -76,7 +89,7 @@ jobs:
             echo
             echo '| Status | Test | Detail |'
             echo '| --- | --- | --- |'
-            awk -F '\t' '$2 == "FAIL" || $2 == "XPASS" || $2 == "ERROR" {
+            awk -F '\t' '$2 == "FAIL" || $2 == "XPASS" || $2 == "ERROR" || $2 == "SKIP" {
               detail = substr($3, 1, 160); gsub(/\|/, "\\|", detail)
               printf "| %s | `%s` | %s |\n", $2, $1, detail
             }' "$report"
