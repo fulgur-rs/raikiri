@@ -118,7 +118,12 @@ pub(super) fn prepare(
         } else {
             let mut centers = pieces
                 .iter()
-                .map(|&(_, _, _, offset, _, top, height)| root.y + offset.1 + top + height * 0.5)
+                .map(|&(_, _, _, offset, _, top, height)| {
+                    // The arithmetic of `line_center_on_page`, so rounding at
+                    // large coordinates cannot prune the owning page.
+                    let top = root.y + offset.1 + top;
+                    (top + (top + height)) * 0.5
+                })
                 .filter(|center| center.is_finite());
             let Some(first) = centers.next() else {
                 continue;

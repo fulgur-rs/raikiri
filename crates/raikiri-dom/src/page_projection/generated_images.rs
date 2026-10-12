@@ -130,7 +130,12 @@ pub(super) fn prepare(
             // does the candidate list.
             let (low, high) = prepared
                 .iter()
-                .map(|&(top, height, _, _)| root.y + top + height * 0.5)
+                .map(|&(top, height, _, _)| {
+                    // The arithmetic of `line_center_on_page`, so rounding at
+                    // large coordinates cannot prune the owning page.
+                    let top = root.y + top;
+                    (top + (top + height)) * 0.5
+                })
                 .filter(|center| center.is_finite())
                 .fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), center| {
                     (low.min(center), high.max(center))

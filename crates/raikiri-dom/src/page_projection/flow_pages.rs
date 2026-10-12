@@ -28,8 +28,9 @@ impl<'p> FlowPages<'p> {
     /// `high`, in flow order. A page without a flow range cannot own a
     /// normal-flow line, so it is never a candidate.
     ///
-    /// The slack keeps the pruning conservative; callers still decide which
-    /// page owns each line with [`crate::layout::line_center_on_page`].
+    /// Callers compute each center with the arithmetic of
+    /// [`crate::layout::line_center_on_page`], which still decides which page
+    /// owns each line; the slack keeps the pruning conservative against it.
     pub(super) fn around(
         &self,
         low: f32,
@@ -95,5 +96,26 @@ mod tests {
         ]);
         let flow = FlowPages::new(&pages);
         assert_eq!(indices(flow.around(300.0, 300.0)), [0, 1]);
+    }
+
+    #[test]
+    fn pages_around_a_center_keep_its_owner_at_large_coordinates() {
+        // Above 2^26 the spacing of f32 values is 8, wider than the slack.
+        let start = 67_108_864.0_f32;
+        let pages = pages(&[Some((start - 8.0, start)), Some((start, start + 8.0))]);
+        let flow = FlowPages::new(&pages);
+        let (top, height) = (start, 10.0);
+        let bottom = top + height;
+        let center = (top + bottom) * 0.5;
+        let owners: Vec<_> = pages
+            .iter()
+            .filter(|page| {
+                let (start, end) = page.flow_range.unwrap();
+                crate::layout::line_center_on_page(top, bottom, start, end)
+            })
+            .map(|page| page.page_index)
+            .collect();
+        assert_eq!(owners, [1]);
+        assert!(indices(flow.around(center, center)).contains(&1));
     }
 }
