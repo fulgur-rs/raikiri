@@ -17,13 +17,15 @@ use crate::{
 use raikiri_style::property::{
     BackgroundImage, BackgroundRepeat, Border, BorderColor, BorderStyle, ContentComponent,
     CounterStyle, CssColor, FontFamilyName, Length, LengthOrAuto, LengthPercentageOrCalc,
-    PropertyKey, PropertyValue, QuoteKeyword, RelativeCalcUnit, Sides, StringFetchMode, TextAlign,
-    VerticalAlign, VisualBox, WritingMode,
+    PropertyKey, PropertyValue, QuoteKeyword, RelativeCalcLengthPercentage, Sides, StringFetchMode,
+    TextAlign, VerticalAlign, VisualBox, WritingMode,
 };
 use raikiri_style::{
-    CascadeResult, ComputedBackgroundSize, ComputedCssPosition, ComputedLength, ComputedValues,
+    CascadeResult, ComputedBackgroundSize, ComputedCssPosition, ComputedLength,
+    ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc, ComputedValues,
     CounterStyleRegistry, PageCascadeResult, PageMarginBoxCascadeResult, PageMarginBoxSlot,
-    ResolveContext, resolve_background_size, resolve_css_position,
+    ResolveContext, resolve_background_size, resolve_css_position, resolve_margin_length_or_auto,
+    resolve_non_negative_length_percentage_or_calc,
 };
 use raikiri_traits::{NodeId, NodeKind, PageBox, PaintInsets, PaintRect};
 use smol_str::SmolStr;
@@ -508,23 +510,6 @@ fn length_or_auto_to_px(value: LengthOrAuto, basis: f32, font_size: f32) -> Opti
                 0.0
             }
         }
-        // Font-relative terms use the box's font size, as `length_to_px`
-        // does for single lengths. Viewport units are rejected before the
-        // margin-box cascade keeps a declaration.
-        LengthOrAuto::RelativeCalc(value) => {
-            value.px
-                + basis * value.percent / 100.0
-                + value
-                    .relative_terms()
-                    .map(|(unit, coefficient)| match unit {
-                        RelativeCalcUnit::Em
-                        | RelativeCalcUnit::Rem
-                        | RelativeCalcUnit::Lh
-                        | RelativeCalcUnit::Rlh => font_size * coefficient,
-                        _ => 0.0,
-                    })
-                    .sum::<f32>()
-        }
         _ => 0.0,
     };
     Some(if value.is_finite() {
@@ -538,14 +523,43 @@ fn length_percentage_or_calc_to_px(
     value: LengthPercentageOrCalc,
     basis: f32,
     font_size: f32,
+    ctx: &ResolveContext,
 ) -> f32 {
-    let value = match value {
-        LengthPercentageOrCalc::Length(length) => LengthOrAuto::Length(length),
-        LengthPercentageOrCalc::Calc(calc) => LengthOrAuto::Calc(calc),
-        LengthPercentageOrCalc::RelativeCalc(calc) => LengthOrAuto::RelativeCalc(calc),
-        _ => return 0.0,
-    };
-    length_or_auto_to_px(value, basis, font_size).unwrap_or(0.0)
+    match value {
+        LengthPercentageOrCalc::Length(length) => length_to_px(length, basis, font_size),
+        LengthPercentageOrCalc::Calc(calc) => {
+            ComputedLengthPercentageOrCalc::Calc(calc).resolve(basis)
+        }
+        other => resolve_non_negative_length_percentage_or_calc(
+            other,
+            ComputedLength(font_size),
+            None,
+            ctx,
+        )
+        .resolve(basis),
+    }
+}
+
+/// The used px of a `calc()` with font-relative terms. The style resolver
+/// takes `rem` and `rlh` from the root; an `lh` term has no line-height basis
+/// here and falls back to zero, the initial margin.
+fn relative_calc_to_px(
+    value: RelativeCalcLengthPercentage,
+    basis: f32,
+    font_size: f32,
+    ctx: &ResolveContext,
+) -> f32 {
+    match resolve_margin_length_or_auto(
+        LengthOrAuto::RelativeCalc(value),
+        ComputedLength(font_size),
+        None,
+        ctx,
+    ) {
+        ComputedLengthPercentageOrAuto::Px(px) => px,
+        ComputedLengthPercentageOrAuto::Percent(percent) => basis * percent / 100.0,
+        ComputedLengthPercentageOrAuto::Calc(calc) => calc.px + basis * calc.percent / 100.0,
+        _ => 0.0,
+    }
 }
 
 fn root_computed<'a>(
@@ -1152,10 +1166,16 @@ fn margin_box_auto_margins(rule: &PageMarginBoxCascadeResult) -> [bool; 4] {
     ]
 }
 
-fn margin_box_length(value: &LengthOrAuto, basis: f32, font_size: f32) -> f32 {
+fn margin_box_length(
+    value: &LengthOrAuto,
+    basis: f32,
+    font_size: f32,
+    ctx: &ResolveContext,
+) -> f32 {
     let value = match value {
         LengthOrAuto::Length(length) => length_to_px(*length, basis, font_size),
         LengthOrAuto::Calc(value) => value.px + basis * value.percent / 100.0,
+        LengthOrAuto::RelativeCalc(value) => relative_calc_to_px(*value, basis, font_size, ctx),
         LengthOrAuto::Auto => 0.0,
         _ => 0.0,
     };
@@ -1168,6 +1188,7 @@ fn margin_box_side_margin(
     basis: f32,
     shorthand: Option<LengthOrAuto>,
     font_size: f32,
+    ctx: &ResolveContext,
 ) -> f32 {
     let value = margin_box_property(rule, key)
         .and_then(|value| match value {
@@ -1179,7 +1200,7 @@ fn margin_box_side_margin(
         })
         .or(shorthand.as_ref());
     value
-        .map(|value| margin_box_length(value, basis, font_size))
+        .map(|value| margin_box_length(value, basis, font_size, ctx))
         .unwrap_or(0.0)
 }
 
@@ -1188,6 +1209,7 @@ fn margin_box_margins(
     width_basis: f32,
     height_basis: f32,
     font_size: f32,
+    ctx: &ResolveContext,
 ) -> [f32; 4] {
     let shorthand = margin_box_property(rule, PropertyKey::Margin).and_then(|value| match value {
         PropertyValue::Margin(sides) => Some(*sides),
@@ -1200,6 +1222,7 @@ fn margin_box_margins(
             height_basis,
             shorthand.map(|sides| sides.top),
             font_size,
+            ctx,
         ),
         margin_box_side_margin(
             rule,
@@ -1207,6 +1230,7 @@ fn margin_box_margins(
             width_basis,
             shorthand.map(|sides| sides.right),
             font_size,
+            ctx,
         ),
         margin_box_side_margin(
             rule,
@@ -1214,6 +1238,7 @@ fn margin_box_margins(
             height_basis,
             shorthand.map(|sides| sides.bottom),
             font_size,
+            ctx,
         ),
         margin_box_side_margin(
             rule,
@@ -1221,6 +1246,7 @@ fn margin_box_margins(
             width_basis,
             shorthand.map(|sides| sides.left),
             font_size,
+            ctx,
         ),
     ]
 }
@@ -1229,6 +1255,7 @@ fn margin_box_padding(
     rule: &PageMarginBoxCascadeResult,
     width_basis: f32,
     font_size: f32,
+    ctx: &ResolveContext,
 ) -> [f32; 4] {
     let shorthand = margin_box_property(rule, PropertyKey::Padding).and_then(|value| match value {
         PropertyValue::Padding(sides) => Some(*sides),
@@ -1243,7 +1270,7 @@ fn margin_box_padding(
                 | PropertyValue::PaddingLeft(value) => Some(*value),
                 _ => fallback,
             })
-            .map(|value| length_percentage_or_calc_to_px(value, width_basis, font_size))
+            .map(|value| length_percentage_or_calc_to_px(value, width_basis, font_size, ctx))
             .unwrap_or(0.0)
     };
     [
@@ -1297,8 +1324,13 @@ fn margin_box_spec(
     });
     let (content, deferred) = margin_box_content(document, cascade, page, rule, context, values)?;
     let (font_size, font_family) = inherited_margin_box_font(document, cascade, page, rule);
-    let margin = margin_box_margins(rule, width_basis, height_basis, font_size);
-    let padding = margin_box_padding(rule, width_basis, font_size);
+    let initial = ComputedValues::initial();
+    let root_font_size = root_computed(document, cascade)
+        .map(|computed| computed.font_size)
+        .unwrap_or(initial.font_size);
+    let resolve_context = ResolveContext::new(root_font_size);
+    let margin = margin_box_margins(rule, width_basis, height_basis, font_size, &resolve_context);
+    let padding = margin_box_padding(rule, width_basis, font_size, &resolve_context);
     let background = match margin_box_property(rule, PropertyKey::BackgroundColor) {
         Some(PropertyValue::BackgroundColor(value)) if value.a != 0 => Some(*value),
         _ => None,
@@ -1310,11 +1342,6 @@ fn margin_box_spec(
     let background_image_lime = background_image_url
         .as_deref()
         .is_some_and(|url| url.ends_with("/green.png") || url == "green.png");
-    let initial = ComputedValues::initial();
-    let root_font_size = root_computed(document, cascade)
-        .map(|computed| computed.font_size)
-        .unwrap_or(initial.font_size);
-    let resolve_context = ResolveContext::new(root_font_size);
     let background_size = match margin_box_property(rule, PropertyKey::BackgroundSize) {
         Some(PropertyValue::BackgroundSize(size)) => {
             resolve_background_size(*size, ComputedLength(font_size), None, &resolve_context)

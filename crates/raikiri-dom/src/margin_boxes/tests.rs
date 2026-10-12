@@ -548,6 +548,36 @@ fn a_margin_box_padding_calc_resolves_against_its_width_basis() {
 }
 
 #[test]
+fn margin_box_calc_rem_terms_use_the_root_font_size() {
+    let origin = |declarations: &str| {
+        let (doc, cascade) = page_cascade_fixture(&format!(
+            "html {{ font-size: 20px }} @page {{ margin: 40px; \
+               @top-left {{ content: 'abc'; font-family: Ahem; font-size: 10px; \
+                           text-align: left; {declarations} }} }}"
+        ));
+        let boxes = layout_page(&doc, &cascade, small_page());
+        let [head] = boxes.as_slice() else {
+            panic!("one box: {boxes:?}");
+        };
+        head.text_runs()[0].origin.0
+    };
+    let none = origin("");
+    let percent = origin("padding-left: 10%") - none;
+    assert_eq!(
+        origin("padding-left: calc(10% + 1rem)") - none,
+        percent + 20.0
+    );
+    assert_eq!(
+        origin("margin-left: calc(10% + 1rem)") - none,
+        percent + 20.0
+    );
+    assert_eq!(
+        origin("margin-left: calc(10% + 1em)") - none,
+        percent + 10.0
+    );
+}
+
+#[test]
 fn vertical_margin_box_text_has_no_runs() {
     let (doc, cascade) = page_cascade_fixture(
         "@page { margin: 40px; \
