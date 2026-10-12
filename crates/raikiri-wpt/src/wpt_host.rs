@@ -110,7 +110,9 @@ fn expand_live_style_sources(
             .map(|(source, media)| raikiri_html::StylesheetSource::new(source, media))
             .collect();
     }
-    let network = raikiri_net::FileNetworkProvider;
+    let network = crate::reftest::local_resources::WptFileNetworkProvider::new(
+        std::fs::canonicalize(wpt_root).ok(),
+    );
     let (sources, media): (Vec<_>, Vec<_>) = raw.into_iter().unzip();
     raikiri_html::expand_live_stylesheet_imports(
         sources,
@@ -275,7 +277,11 @@ impl DocumentHost for WptDocumentHost {
             .uncascaded
             .dom
             .set_font_collection(self.setup.fonts.clone());
-        let image_resolver = raikiri_net::ImageResolver::new(raikiri_net::FileNetworkProvider);
+        let image_resolver = raikiri_net::ImageResolver::new(
+            crate::reftest::local_resources::WptFileNetworkProvider::new(
+                self.canonical_root.clone(),
+            ),
+        );
         for (element, computed) in cascade.computed.iter().enumerate() {
             if !raikiri_dom::generated_content::inside_marker_in_flow(&cascade, element)
                 || cascade

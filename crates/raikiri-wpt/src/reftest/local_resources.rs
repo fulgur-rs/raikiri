@@ -15,13 +15,13 @@ use raikiri_traits::{
 
 /// The WPT checkout root above `base`: the nearest ancestor holding the
 /// bundled Ahem font, which every checkout ships under `fonts/`.
-pub(super) fn wpt_root_above(base: &Path) -> Option<PathBuf> {
+pub(crate) fn wpt_root_above(base: &Path) -> Option<PathBuf> {
     base.ancestors()
         .find(|candidate| is_wpt_root(candidate))
         .map(Path::to_path_buf)
 }
 
-pub(super) fn is_wpt_root(candidate: &Path) -> bool {
+pub(crate) fn is_wpt_root(candidate: &Path) -> bool {
     candidate.join("fonts").join("Ahem.ttf").is_file()
         || candidate.join("fonts").join("ahem.css").is_file()
 }
@@ -32,22 +32,23 @@ pub(super) fn is_wpt_root(candidate: &Path) -> bool {
 /// `file:///images/x.png`; outside the checkout that path is rebased onto the
 /// checkout root, which is where the WPT server would have served it from.
 #[derive(Debug, Clone, Default)]
-pub(super) struct WptFileNetworkProvider {
+pub(crate) struct WptFileNetworkProvider {
     root: Option<PathBuf>,
 }
 
 impl WptFileNetworkProvider {
-    pub(super) fn new(root: Option<PathBuf>) -> Self {
+    pub(crate) fn new(root: Option<PathBuf>) -> Self {
         Self { root }
     }
 
     fn rebase(&self, mut request: raikiri_traits::Request) -> raikiri_traits::Request {
-        // `to_file_path` also rejects every scheme other than `file`.
+        // Rebase on the URL rather than a native path, so a root-relative
+        // URL without a drive letter also maps onto the checkout on Windows.
         if let Some(root) = self.root.as_deref()
-            && let Ok(path) = request.url.to_file_path()
-            && !path.starts_with(root)
-            && let Ok(relative) = path.strip_prefix("/")
-            && let Ok(mut url) = raikiri::Url::from_file_path(root.join(relative))
+            && request.url.scheme() == "file"
+            && let Ok(root_url) = raikiri::Url::from_directory_path(root)
+            && !request.url.path().starts_with(root_url.path())
+            && let Ok(mut url) = root_url.join(request.url.path().trim_start_matches('/'))
         {
             url.set_query(request.url.query());
             url.set_fragment(request.url.fragment());
@@ -71,12 +72,12 @@ impl NetworkProvider for WptFileNetworkProvider {
 /// A browser renders an image it cannot fetch or decode as a broken image
 /// with no natural size and goes on with the page; the reftest renderer would
 /// otherwise abort the whole render on the resolver error.
-pub(super) struct BrokenImageFallback<'a> {
+pub(crate) struct BrokenImageFallback<'a> {
     inner: &'a dyn ReplacedResolver,
 }
 
 impl<'a> BrokenImageFallback<'a> {
-    pub(super) fn new(inner: &'a dyn ReplacedResolver) -> Self {
+    pub(crate) fn new(inner: &'a dyn ReplacedResolver) -> Self {
         Self { inner }
     }
 }

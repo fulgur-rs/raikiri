@@ -8,7 +8,7 @@
 
 mod dynamic;
 mod fuzzy;
-mod local_resources;
+pub(crate) mod local_resources;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -2470,7 +2470,8 @@ pub(crate) fn prepare_wpt_live_document(
 
     let page_base = std::fs::canonicalize(page_base).ok();
     let wpt_root = std::fs::canonicalize(wpt_root).ok();
-    let stylesheet_network = page_base.as_ref().map(|_| raikiri_net::FileNetworkProvider);
+    let network = local_resources::WptFileNetworkProvider::new(wpt_root.clone());
+    let stylesheet_network = page_base.as_ref().map(|_| network.clone());
     let stylesheet_base = page_base
         .as_deref()
         .and_then(|path| raikiri::Url::from_directory_path(path).ok());
@@ -2485,7 +2486,7 @@ pub(crate) fn prepare_wpt_live_document(
     let html = absolutize_wpt_resource_urls(html, page_base.as_deref(), wpt_root.as_deref());
     let image_resolver = wpt_root
         .as_ref()
-        .map(|_| raikiri_net::ImageResolver::new(raikiri_net::FileNetworkProvider));
+        .map(|_| raikiri_net::ImageResolver::new(network.clone()));
     if let Some(resolver) = image_resolver.as_ref() {
         prime_image_resolver(resolver, &html);
     }
@@ -2684,7 +2685,9 @@ pub(crate) fn parse_wpt_inner_html_fragment(
 ) -> Result<raikiri_html::UncascadedDocument, String> {
     let page_base = page_base.and_then(|base| std::fs::canonicalize(base).ok());
     let wpt_root = std::fs::canonicalize(wpt_root).ok();
-    let stylesheet_network = wpt_root.as_ref().map(|_| raikiri_net::FileNetworkProvider);
+    let stylesheet_network = wpt_root
+        .as_ref()
+        .map(|root| local_resources::WptFileNetworkProvider::new(Some(root.clone())));
     let opts = raikiri::ParseOptions {
         extra_stylesheets: &[],
         network: stylesheet_network
