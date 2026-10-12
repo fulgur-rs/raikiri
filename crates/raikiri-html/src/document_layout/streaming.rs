@@ -784,7 +784,7 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
             .resume
             .as_ref()
             .filter(|_| can_resume(&document, self.late_nodes_from));
-        let Some((document, laid_out, events)) = self.settings.layout_without_late_boxes(
+        let Some((document, laid_out, mut events)) = self.settings.layout_without_late_boxes(
             document,
             self.late_nodes_from,
             self.delivered,
@@ -795,6 +795,7 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
             self.aborted = true;
             return Ok(());
         };
+        drop_delivered_events(&mut events, &self.delivered_nodes);
         self.earlier_warnings.merge(laid_out.warnings());
         let held = open_text_event_sources(&document, &traced, &events);
         let final_pages = final_page_count(
@@ -892,7 +893,7 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
         let resume = resume
             .as_ref()
             .filter(|_| can_resume(&document, late_nodes_from));
-        let Some((_, laid_out, events)) = settings.layout_without_late_boxes(
+        let Some((_, laid_out, mut events)) = settings.layout_without_late_boxes(
             document,
             late_nodes_from,
             delivered,
@@ -902,11 +903,9 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
         else {
             return Ok(StreamStatus::Aborted);
         };
+        drop_delivered_events(&mut events, &delivered_nodes);
         let signal = settings.config.signal.clone();
-        let (mut by_page, mut unplaced_events) = events_by_first_page(&laid_out, events);
-        // A resumed layout leaves the nodes of delivered pages out, which
-        // were placed all the same.
-        unplaced_events.retain(|event| !delivered_nodes.contains(&event.node_id));
+        let (mut by_page, unplaced_events) = events_by_first_page(&laid_out, events);
         let Some((page_count_margin_boxes, page_count_running_elements)) =
             page_count_margin_boxes(&laid_out, delivered, signal.as_ref())?
         else {
@@ -1099,6 +1098,14 @@ impl Warnings {
 
 fn failed_earlier() -> RenderError {
     RenderError::Configuration("streaming layout input already failed".to_owned())
+}
+
+/// Drop the events of the elements shown on delivered pages, `delivered`:
+/// the page of their first fragment carried them. A resumed layout leaves
+/// out their fragments on those pages, so its first fragment of an element
+/// that continues past them is not the element's first.
+fn drop_delivered_events(events: &mut Vec<ConsumerPropertyEvent>, delivered: &HashSet<NodeId>) {
+    events.retain(|event| !delivered.contains(&event.node_id));
 }
 
 /// Bucket `events` by the page of each element's first fragment. Events of

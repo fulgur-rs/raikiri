@@ -425,3 +425,63 @@ fn only_ancestors_sized_by_their_content_let_content_be_left_out() {
     assert!(skipped_before_target(&wrapped("min-height: 300px")).is_none());
     assert!(skipped_before_target(&wrapped("display: flex")).is_none());
 }
+
+/// The elements whose consumer property events a sink saw, in order.
+#[derive(Clone, Default)]
+struct Events(Rc<RefCell<Vec<NodeId>>>);
+
+impl PageSink for Events {
+    type Output = StreamSummary;
+
+    fn page(
+        &mut self,
+        _page: StreamPage<'_>,
+        events: Vec<ConsumerPropertyEvent>,
+    ) -> std::io::Result<()> {
+        self.0
+            .borrow_mut()
+            .extend(events.into_iter().map(|event| event.node_id));
+        Ok(())
+    }
+
+    fn finish(self, summary: StreamSummary) -> std::io::Result<StreamSummary> {
+        Ok(summary)
+    }
+}
+
+#[test]
+fn events_of_elements_spanning_delivered_pages_arrive_once() {
+    let mut html = String::from("<!doctype html><body>");
+    for _ in 0..3 {
+        html.push_str("<section style='bookmark-level: 1'>");
+        html.push_str(&paragraphs(40, 50));
+        html.push_str("</section>");
+    }
+    html.push_str("</body>");
+    let resources = RenderResources::new();
+    let registrations = [ConsumerPropertyRegistration::integer("bookmark-level")];
+    let events = Events::default();
+    let mut stream = StreamingLayout::new(
+        &resources,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        events.clone(),
+    )
+    .consumer_properties(&registrations)
+    .checkpoint_bytes(2048);
+    for piece in html.as_bytes().chunks(2048) {
+        stream.feed(piece).expect("feed");
+    }
+    assert!(stream.settings.resumed.get() > 0, "no layout resumed");
+    let StreamStatus::Completed(summary) = stream.finish().expect("finish") else {
+        panic!("aborted");
+    };
+    assert!(summary.page_count > 6, "sections span several pages");
+    let seen = events.0.borrow();
+    let mut distinct = seen.clone();
+    distinct.sort();
+    distinct.dedup();
+    assert_eq!(seen.len(), 3, "{seen:?}");
+    assert_eq!(distinct.len(), 3, "{seen:?}");
+    assert!(summary.unplaced_events.is_empty());
+}
