@@ -2173,3 +2173,34 @@ fn var_declarations_accept_strings_closed_by_eof_or_continued_by_escaped_newline
     );
     assert_eq!(literals(&cv), ["kept"]);
 }
+
+#[test]
+fn relative_color_detection_reads_tokens_not_source_text() {
+    // A relative color in a var() fallback is checked after substitution.
+    let cv = cascade_doc(
+        "",
+        "p",
+        Some("--c: blue; color: var(--c, rgb(from red r g b))"),
+    );
+    assert_eq!(cv.color, BLUE);
+    // Whitespace after `(` still starts a relative color, so its invalid
+    // channel list is rejected at parse time and the earlier value stays.
+    let cv = cascade_doc(
+        "",
+        "p",
+        Some("color: red; color: rgb( from var(--c) r g b q)"),
+    );
+    assert_eq!(cv.color, RED);
+    let cv = cascade_doc(
+        "",
+        "p",
+        Some("color: red; color: rgb(/**/from var(--c) r g b q)"),
+    );
+    assert_eq!(cv.color, RED);
+    let cv = cascade_doc(
+        "",
+        "p",
+        Some("--c: blue; color: red; color: rgb( from var(--c) r g b)"),
+    );
+    assert_eq!(cv.color, BLUE);
+}
