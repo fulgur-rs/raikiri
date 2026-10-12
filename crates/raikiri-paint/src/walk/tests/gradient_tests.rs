@@ -702,3 +702,102 @@ fn positioned_stops_clamp_before_the_others_are_spread() {
     let [r, g, b, _] = pixel(&rgba, 100, 89, 2);
     assert!(r > 200 && g > 200 && b < 100, "{r} {g} {b}");
 }
+
+#[test]
+fn border_area_gradients_paint_the_ring() {
+    let cv = computed_for(
+        "background: linear-gradient(to right, red 50%, blue 50%); \
+         background-clip: border-area; background-origin: border-box; \
+         border: 10px solid transparent",
+    );
+    let mut scene = Scene::new();
+    let mut warnings = Vec::new();
+    paint_element_background(
+        &ImageBrushCache::default(),
+        &mut scene,
+        40.0,
+        40.0,
+        0.0,
+        0.0,
+        cv.background_color,
+        &cv.background_image,
+        cv.color,
+        cv.background_clip,
+        cv.background_origin,
+        &cv.border_radius,
+        &cv.border,
+        &taffy::Rect {
+            left: 0.0,
+            right: 0.0,
+            top: 0.0,
+            bottom: 0.0,
+        },
+        &cv.background_size,
+        &cv.background_position,
+        &cv.background_repeat,
+        None,
+        &mut warnings,
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        40,
+        40,
+    );
+    assert_eq!(pixel(&rgba, 40, 5, 20), RED);
+    assert_eq!(pixel(&rgba, 40, 35, 20), BLUE);
+    assert_eq!(pixel(&rgba, 40, 20, 20)[3], 0);
+}
+
+#[test]
+fn the_tile_fallback_keeps_single_space_tiles_and_padding() {
+    let cv = computed_for(
+        "background-image: linear-gradient(red, red); background-size: 1px 60px; \
+         background-position: center; background-repeat: repeat space",
+    );
+    let area = Rect::new(0.0, 0.0, 20_000.0, 100.0);
+    let mut scene = Scene::new();
+    gradient::paint_gradient_layer(
+        &mut scene,
+        &gradient_of(&cv),
+        area,
+        area,
+        None,
+        &cv.background_size,
+        &cv.background_position,
+        &cv.background_repeat,
+        cv.color,
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        10,
+        100,
+    );
+    assert_eq!(pixel(&rgba, 10, 5, 10)[3], 0);
+    assert_eq!(pixel(&rgba, 10, 5, 50), RED);
+
+    // The padded red before the first stop counts toward the average.
+    let cv = computed_for(
+        "background-image: linear-gradient(to right in srgb, red 80%, blue 100%); \
+         background-size: 1px 1px",
+    );
+    let area = Rect::new(0.0, 0.0, 1000.0, 1000.0);
+    let mut scene = Scene::new();
+    gradient::paint_gradient_layer(
+        &mut scene,
+        &gradient_of(&cv),
+        area,
+        area,
+        None,
+        &cv.background_size,
+        &cv.background_position,
+        &cv.background_repeat,
+        cv.color,
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        10,
+        10,
+    );
+    let [r, _, b, _] = pixel(&rgba, 10, 5, 5);
+    assert!(r > 215 && b < 45, "{r} {b}");
+}

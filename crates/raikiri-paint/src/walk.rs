@@ -4319,6 +4319,19 @@ fn paint_element_background_slice(
                 radius_inset = (0.0, 0.0, 0.0, 0.0);
                 Rect::new(bx0, by0, bx1, by1)
             } else {
+                // A linear or radial gradient paints over the background
+                // color rather than standing in for it.
+                let ring_gradient = match bg_image {
+                    BackgroundImage::Gradient(gradient) if paints_gradient_image(bg_image) => {
+                        Some(gradient)
+                    }
+                    _ => None,
+                };
+                let color = if ring_gradient.is_some() {
+                    Color::from_rgba8(bg.r, bg.g, bg.b, bg.a)
+                } else {
+                    color
+                };
                 let top_rect = Rect::new(bx0, by0, bx1, inner_y0);
                 scene.fill(
                     Fill::NonZero,
@@ -4351,6 +4364,32 @@ fn paint_element_background_slice(
                     None,
                     &right_rect,
                 );
+                if let Some(gradient) = ring_gradient {
+                    // The outer edge runs clockwise and the inner one
+                    // counterclockwise, so the nonzero rule leaves the ring.
+                    let mut ring = kurbo::BezPath::new();
+                    ring.move_to((bx0, by0));
+                    ring.line_to((bx1, by0));
+                    ring.line_to((bx1, by1));
+                    ring.line_to((bx0, by1));
+                    ring.close_path();
+                    ring.move_to((inner_x0, inner_y0));
+                    ring.line_to((inner_x0, inner_y1));
+                    ring.line_to((inner_x1, inner_y1));
+                    ring.line_to((inner_x1, inner_y0));
+                    ring.close_path();
+                    gradient::paint_gradient_layer(
+                        scene,
+                        gradient,
+                        positioning,
+                        Rect::new(bx0, by0, bx1, by1),
+                        Some(&ring),
+                        background_size,
+                        background_position,
+                        background_repeat,
+                        current_color,
+                    );
+                }
                 if background_url.is_some() {
                     warnings.push(RenderWarning {
                     kind: WarningKind::ResourceFallback {
