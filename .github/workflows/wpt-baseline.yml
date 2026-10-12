@@ -1,0 +1,106 @@
+name: WPT baseline
+
+# Runs every pinned WPT baseline and expected-failure id against the current
+# main. The regular CI job does not fetch WPT, so this is the only place the
+# pass baseline in expectations/raikiri-baseline.txt is checked. `--strict`
+# fails the run on FAIL, XPASS (a stale expected-failure row), or ERROR, and a
+# later step fails it on SKIP; recorded XFAIL rows stay visible in the report
+# without failing it.
+#
+# Scheduled nightly rather than per PR: the release build of the runner takes
+# several minutes, while the report itself runs in well under a minute. Run it
+# by hand (workflow_dispatch) to check a branch before merging.
+
+on:
+  schedule:
+    # 18:00 UTC = 03:00 JST.
+    - cron: "0 18 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  baseline:
+    name: run-baseline-report --strict
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        # Same toolchain resolution as ci.yml (rust-toolchain.toml).
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Install system dependencies
+        # fontconfig headers are needed to build shodo's system-fonts feature.
+        run: |
+          apt_options=(-o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20)
+          sudo timeout --kill-after=10s 180s apt-get "${apt_options[@]}" --error-on=any update
+          sudo timeout --kill-after=10s 180s apt-get "${apt_options[@]}" install -y libfontconfig1-dev pkg-config
+
+      - name: Cache cargo registry + target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Fetch WPT at the pinned revision
+        run: scripts/wpt/fetch.sh
+
+      - name: Build the baseline runner
+        run: cargo build --release --locked -p raikiri-wpt --bin run-baseline-report --bin validate-expectations
+
+      - name: Validate expectations
+        run: ./target/release/validate-expectations
+
+      - name: Run the baseline report
+        run: |
+          set -o pipefail
+          ./target/release/run-baseline-report \
+            --wpt-root target/wpt \
+            --output target/baseline-report/report.tsv \
+            --jobs "$(nproc)" \
+            --strict 2>&1 | tee target/baseline-report.log
+
+      - name: Reject skipped baseline ids
+        # `--strict` accepts SKIP, but a pass-baseline id that no longer
+        # runs (for example a parsing page whose harness calls are no longer
+        # recognized) is a regression like any other non-PASS result.
+        run: |
+          skipped="$(awk -F '\t' '$2 == "SKIP" { print $1 }' target/baseline-report/report.tsv)"
+          if [ -n "$skipped" ]; then
+            echo "error: baseline ids reported SKIP:" >&2
+            echo "$skipped" >&2
+            exit 1
+          fi
+
+      - name: Summarize non-passing results
+        if: always()
+        run: |
+          report=target/baseline-report/report.tsv
+          [ -f "$report" ] || exit 0
+          {
+            echo '## WPT baseline'
+            echo
+            grep -E '^(-- PASS|error:)' target/baseline-report.log || true
+            echo
+            echo '| Status | Test | Detail |'
+            echo '| --- | --- | --- |'
+            awk -F '\t' '$2 == "FAIL" || $2 == "XPASS" || $2 == "ERROR" || $2 == "SKIP" {
+              detail = substr($3, 1, 160); gsub(/\|/, "\\|", detail)
+              printf "| %s | `%s` | %s |\n", $2, $1, detail
+            }' "$report"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wpt-baseline-report
+          path: |
+            target/baseline-report/report.tsv
+            target/baseline-report.log
+          if-no-files-found: ignore
