@@ -2105,7 +2105,19 @@ pub(crate) fn paint_document_impl(
                     .and_then(|parent| document.get_node(parent))
                     .is_some_and(|parent| parent.is_ifc_root())
                     && !node.in_ifc_subtree();
-                let own_shift = if placed_by_inline_engine {
+                // A flex or grid item is blockified (CSS Display 3 section
+                // 2.7), and `vertical-align` does not apply to it even though
+                // the cascade keeps its `inline` display.
+                let blockified_item = document.layout_parent_of(node_id).is_some_and(|parent| {
+                    matches!(
+                        cascade.computed[parent].display,
+                        DisplayValue::Flex
+                            | DisplayValue::InlineFlex
+                            | DisplayValue::Grid
+                            | DisplayValue::InlineGrid
+                    )
+                });
+                let own_shift = if placed_by_inline_engine || blockified_item {
                     0.0
                 } else {
                     vertical_align_shift_px(cv.vertical_align, cv.display, parent_font_size)

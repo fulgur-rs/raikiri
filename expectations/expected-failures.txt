@@ -56,7 +56,7 @@ css/css-backgrounds/background-attachment-fixed-block-002.html | Mismatches on L
 css/css-backgrounds/background-attachment-fixed-inline-002.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-backgrounds/background-attachment-local-block-002.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-backgrounds/background-attachment-local-inline-002.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
-css/css-backgrounds/background-clip/clip-border-area-corner-shape.html | Regressed by a layout or paint change unrelated to the inline engine | RAIKIRI-22 | 2026-10-12 | 2026-12-12
+css/css-backgrounds/background-clip/clip-border-area-corner-shape.html | background-clip: border-area skips url() background images; the earlier pass came from both sides ignoring the elliptical border-radius | RAIKIRI-61 | 2026-10-12 | 2026-12-12
 css/css-backgrounds/background-clip/clip-border-area-on-body-not-propagated-to-root.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-backgrounds/background-clip/clip-text-multi-line.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
 css/css-backgrounds/background-clip/clip-text-on-body-propagated-to-root.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
@@ -84,14 +84,12 @@ css/css-text/text-align/text-align-justify-tabs-001.html | Mismatches on Linux s
 css/css-text/text-align/text-align-last-010.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
 css/css-text/text-align/text-align-last-011.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
 css/css-text/text-align/text-align-match-parent-02.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
-css/css-text/white-space/trailing-ideographic-space-break-spaces-001.html | Regressed by a layout or paint change unrelated to the inline engine | RAIKIRI-22 | 2026-10-12 | 2026-12-12
-css/css-text/white-space/trailing-ideographic-space-break-spaces-003.html | Regressed by a layout or paint change unrelated to the inline engine | RAIKIRI-22 | 2026-10-12 | 2026-12-12
+css/css-text/white-space/trailing-ideographic-space-break-spaces-001.html | The inline engine has no break opportunity between preserved U+3000 under break-spaces | RAIKIRI-117 | 2026-10-12 | 2026-12-12
+css/css-text/white-space/trailing-ideographic-space-break-spaces-003.html | The inline engine has no break opportunity between preserved U+3000 under break-spaces | RAIKIRI-117 | 2026-10-12 | 2026-12-12
 css/css-text/word-break/word-break-keep-all-u002d.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-text/word-break/word-break-min-content-006.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-flexbox/abspos/position-absolute-005.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
 css/css-flexbox/content-height-with-scrollbars.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
-css/css-flexbox/fieldset-as-item-overflow.html | Regressed by a layout or paint change unrelated to the inline engine | RAIKIRI-22 | 2026-10-12 | 2026-12-12
-css/css-flexbox/flex-item-vertical-align.html | Regressed by a layout or paint change unrelated to the inline engine | RAIKIRI-22 | 2026-10-12 | 2026-12-12
 css/css-flexbox/flexbox-definite-cross-size-constrained-percentage.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-flexbox/flexbox-margin-auto-horiz-002.xhtml | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-flexbox/flexbox_flex-0-0-N-shrink.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
@@ -122,8 +120,6 @@ css/css-flexbox/flexbox_flex-N-N-auto-shrink.html | Mismatches the reference wit
 css/css-flexbox/flexbox_flex-initial.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
 css/css-flexbox/flexbox_justifycontent-left-001.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-flexbox/flexbox_quirks_body.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
-css/css-flexbox/gap-003-lr.html | Regressed by a layout or paint change unrelated to the inline engine | RAIKIRI-22 | 2026-10-12 | 2026-12-12
-css/css-flexbox/gap-003-rl.html | Regressed by a layout or paint change unrelated to the inline engine | RAIKIRI-22 | 2026-10-12 | 2026-12-12
 css/css-flexbox/gap-003-rtl.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-flexbox/gap-004-rtl.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-flexbox/scrollbars-auto.html | Scrollbar layout differs since the reftest script started running | RAIKIRI-20 | 2026-10-12 | 2026-12-12

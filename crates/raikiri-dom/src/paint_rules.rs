@@ -95,9 +95,13 @@ pub(crate) fn clips_element_overflow(
         || node.kind() != NodeKind::Element
         || !clips_overflow(cv)
         || matches!(cv.display, DisplayValue::None | DisplayValue::Contents)
+        // A non-replaced inline box has no overflow clip, but the cascade
+        // keeps `inline` on elements that layout blockifies (flex and grid
+        // items, absolutely positioned boxes) or lays out as atomic inlines.
         || (cv.display == DisplayValue::Inline
             && !node.is_inline_svg_root()
-            && !matches!(node.tag_name(), Some("img" | "canvas")))
+            && !matches!(node.tag_name(), Some("img" | "canvas"))
+            && !crate::layout::ifc::assign::generates_own_box(document, cascade, node_id))
     {
         return false;
     }
