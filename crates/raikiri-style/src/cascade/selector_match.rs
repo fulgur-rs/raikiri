@@ -19,6 +19,8 @@ use super::resolve_directionality;
 
 mod filtered_nth;
 use filtered_nth::FilteredNthCache;
+mod later_sibling;
+use later_sibling::{LaterSiblingCache, LaterSiblingKey, LaterSiblingPlan};
 
 /// The matching parameters that stay constant for one whole match call — a
 /// stylesheet cascade walk, or one [`crate::SelectorQuery`] entry-point call.
@@ -101,6 +103,8 @@ const SIBLING_CACHE_MIN_CHILDREN: usize = 8;
 pub(crate) struct MatchCaches {
     /// Filtered sibling ranks, bounded per immutable match operation.
     filtered_nth: RefCell<FilteredNthCache>,
+    /// Left-side results of `~` frames; see [`LaterSiblingCache`].
+    later_siblings: RefCell<LaterSiblingCache>,
     /// Keyed by `(parent_id, allow_detached)`; see [`SiblingInfo`].
     siblings: RefCell<HashMap<(StyleNodeId, bool), Rc<SiblingInfo>>>,
     /// Effective content language per element id; see [`effective_language`].
@@ -1004,9 +1008,15 @@ fn selector_matches_with_anchor<D: StyleDom, E: StyleElement>(
     compound_matches(ctx, &mut iter, elem, elem_id, ancestors, relative_anchor)
         && match iter.next_sequence() {
             None => true,
-            Some(combinator) => {
-                match_combinator_chain(ctx, combinator, elem_id, ancestors, iter, relative_anchor)
-            }
+            Some(combinator) => match_combinator_chain(
+                ctx,
+                combinator,
+                elem_id,
+                ancestors,
+                selector,
+                iter,
+                relative_anchor,
+            ),
         }
 }
 
@@ -1238,9 +1248,15 @@ pub(crate) fn selector_matches_pseudo_element<D: StyleDom, E: StyleElement>(
     let matches = compound_matches(ctx, &mut iter, elem, elem_id, ancestors, None)
         && match iter.next_sequence() {
             None => true,
-            Some(next_combinator) => {
-                match_combinator_chain(ctx, next_combinator, elem_id, ancestors, iter, None)
-            }
+            Some(next_combinator) => match_combinator_chain(
+                ctx,
+                next_combinator,
+                elem_id,
+                ancestors,
+                selector,
+                iter,
+                None,
+            ),
         };
     matches.then_some(pseudo)
 }
@@ -1498,6 +1514,7 @@ fn match_combinator_chain<D: StyleDom>(
     combinator: Combinator,
     current_id: StyleNodeId,
     ancestors: &[StyleNodeId],
+    selector: &Selector<RaikiriSelectorImpl>,
     iter: SelectorIter<'_, RaikiriSelectorImpl>,
     relative_anchor: Option<StyleNodeId>,
 ) -> bool {
@@ -1543,7 +1560,15 @@ fn match_combinator_chain<D: StyleDom>(
     // capacity 4 to 8.
     let mut stack = Vec::with_capacity(4);
     stack.push(Frame {
-        candidates: pending_candidates_for(ctx, combinator, current_id, ancestors),
+        candidates: pending_candidates_for(
+            ctx,
+            combinator,
+            current_id,
+            ancestors,
+            selector,
+            &iter,
+            relative_anchor,
+        ),
         ancestors_unchanged: ancestors,
         iter,
         origin: None,
@@ -1558,6 +1583,13 @@ fn match_combinator_chain<D: StyleDom>(
             // Outermost choice point exhausted with no full match found.
             return false;
         };
+        if matches!(frame.candidates, PendingCandidates::Satisfied) {
+            // A `~` frame whose left side an earlier sibling is already
+            // known to satisfy: everything right of it matched on the way
+            // here, so the whole selector matches.
+            record_later_sibling_matches(ctx, stack.iter().map(|frame| &frame.candidates));
+            return true;
+        }
         let Some((candidate_id, candidate_ancestors)) =
             frame.candidates.next(ctx, frame.ancestors_unchanged)
         else {
@@ -1605,7 +1637,10 @@ fn match_combinator_chain<D: StyleDom>(
             // No further combinator to the left: the whole complex
             // selector matched. Short-circuits immediately — nothing to
             // memoize, there is no later query this result could serve.
-            None => return true,
+            None => {
+                record_later_sibling_matches(ctx, stack.iter().map(|frame| &frame.candidates));
+                return true;
+            }
             Some(next_combinator) => {
                 // Compound matched and more remains further left — descend
                 // one level (push a new choice point) rather than recurse.
@@ -1615,6 +1650,9 @@ fn match_combinator_chain<D: StyleDom>(
                         next_combinator,
                         candidate_id,
                         candidate_ancestors,
+                        selector,
+                        &matched_iter,
+                        relative_anchor,
                     ),
                     ancestors_unchanged: candidate_ancestors,
                     iter: matched_iter,
@@ -1662,6 +1700,32 @@ enum PendingCandidates<'a, D: StyleDom + 'a> {
         child_iter: D::ChildIter<'a>,
         stop_at: StyleNodeId,
     },
+    /// A `~` frame over a wide parent: candidates `info.elements[next..end]`,
+    /// with progress shared through [`LaterSiblingCache`] under `key`.
+    IndexedLaterSibling {
+        info: Rc<SiblingInfo>,
+        key: LaterSiblingKey,
+        next: usize,
+        end: usize,
+    },
+    /// A `~` frame that [`LaterSiblingCache`] already knows is satisfied.
+    Satisfied,
+}
+
+/// Records, for every `~` frame on a successful path, that its current
+/// candidate satisfies the frame's left side. Each frame's current candidate
+/// is the one it yielded last, which is on the path.
+fn record_later_sibling_matches<'f, 'a: 'f, D: StyleDom + 'a>(
+    ctx: MatchContext<'_, D>,
+    frames: impl Iterator<Item = &'f PendingCandidates<'a, D>>,
+) {
+    for candidates in frames {
+        if let PendingCandidates::IndexedLaterSibling { key, next, .. } = candidates
+            && let Some(current) = next.checked_sub(1)
+        {
+            later_sibling::record_match(ctx.caches, key, current);
+        }
+    }
 }
 
 impl<'a, D: StyleDom + 'a> PendingCandidates<'a, D> {
@@ -1685,6 +1749,26 @@ impl<'a, D: StyleDom + 'a> PendingCandidates<'a, D> {
                 Some((candidate_id, further))
             }
             Self::NextSibling(slot) => slot.take().map(|id| (id, ancestors_unchanged)),
+            Self::IndexedLaterSibling {
+                info,
+                key,
+                next,
+                end,
+            } => {
+                // Asked for another candidate, so every one yielded so far
+                // failed the left side. Candidates are already filtered to
+                // `is_candidate_element`.
+                later_sibling::record_scanned(ctx.caches, key, *next);
+                if *next >= *end {
+                    return None;
+                }
+                let candidate_id = info.elements[*next];
+                *next += 1;
+                Some((candidate_id, ancestors_unchanged))
+            }
+            // cov:ignore: `match_combinator_chain` returns as soon as a
+            // satisfied frame is on top, before asking it for a candidate.
+            Self::Satisfied => None,
             Self::LaterSibling {
                 child_iter,
                 stop_at,
@@ -1729,6 +1813,9 @@ fn pending_candidates_for<'a, D: StyleDom + 'a>(
     combinator: Combinator,
     current_id: StyleNodeId,
     ancestors: &'a [StyleNodeId],
+    selector: &Selector<RaikiriSelectorImpl>,
+    iter: &SelectorIter<'_, RaikiriSelectorImpl>,
+    relative_anchor: Option<StyleNodeId>,
 ) -> PendingCandidates<'a, D> {
     let dom = ctx.dom;
     match combinator {
@@ -1756,6 +1843,24 @@ fn pending_candidates_for<'a, D: StyleDom + 'a>(
             else {
                 return PendingCandidates::Child(None);
             };
+            match later_sibling::plan(ctx, parent_id, current_id, selector, iter, relative_anchor) {
+                Some(LaterSiblingPlan::Known(true)) => return PendingCandidates::Satisfied,
+                Some(LaterSiblingPlan::Known(false)) => return PendingCandidates::Child(None),
+                Some(LaterSiblingPlan::Scan {
+                    info,
+                    key,
+                    start,
+                    end,
+                }) => {
+                    return PendingCandidates::IndexedLaterSibling {
+                        info,
+                        key,
+                        next: start,
+                        end,
+                    };
+                }
+                None => {}
+            }
             PendingCandidates::LaterSibling {
                 child_iter: dom.child_ids(parent_id),
                 stop_at: current_id,
