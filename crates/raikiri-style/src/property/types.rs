@@ -11797,8 +11797,8 @@ pub(crate) fn consume_math_component_values<'i>(
 /// The numeric type algebra of math functions in property values and color
 /// components.
 ///
-/// Percentages combine with lengths, and `var()` / `env()` stand for a value
-/// of any type until substitution. `channel` names the relative color channel
+/// Percentages combine with lengths, and `var()` stands for a value of any
+/// type until substitution. `channel` names the relative color channel
 /// keywords that may appear as numbers.
 #[derive(Default)]
 pub(crate) struct ValueMathTypes<'a> {

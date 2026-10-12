@@ -2246,3 +2246,15 @@ fn color_math_grammar_follows_the_tokenizer() {
         assert_eq!(color(invalid), RED, "{invalid}");
     }
 }
+
+#[test]
+fn env_inside_math_is_rejected_at_parse_time() {
+    // `env()` is never substituted, so a calc holding it could not be
+    // evaluated; the earlier declaration must win.
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("width:10px; width: calc(env(unknown, 4px) + 1px)"),
+    );
+    assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Px(10.0));
+}

@@ -198,7 +198,7 @@ fn value_types_share_the_grammar_with_percentages_and_substitutions() {
         Some(ColorMathType::LengthPercentage)
     );
     assert_eq!(kind("calc(var(--x) * 2px)"), Some(ColorMathType::Length));
-    assert_eq!(kind("calc(env(x) + 1)"), Some(ColorMathType::Number));
+    assert_eq!(kind("calc(env(x, 1) + 1)"), None);
     assert_eq!(kind("round(line-width, 1px)"), Some(ColorMathType::Length));
     assert_eq!(kind("round(line-width, 1deg)"), None);
     assert_eq!(kind("asin(1)"), Some(ColorMathType::Angle));

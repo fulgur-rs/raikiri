@@ -61,8 +61,8 @@ pub(crate) trait MathTypes {
     fn ident(&self, _name: &str) -> Option<Self::Kind> {
         None
     }
-    /// The type of an arbitrary substitution function (`var()`, `env()`)
-    /// whose value is only known later, or `None` where none is allowed.
+    /// The type of a `var()` whose value is only known after substitution,
+    /// or `None` where none is allowed.
     fn substitution(&self) -> Option<Self::Kind> {
         None
     }
@@ -258,9 +258,9 @@ fn parse_value<'i, T: MathTypes>(
         Token::ParenthesisBlock => {
             return input.parse_nested_block(|input| parse_sum(types, input, depth + 1));
         }
-        Token::Function(name)
-            if name.eq_ignore_ascii_case("var") || name.eq_ignore_ascii_case("env") =>
-        {
+        // Only `var()` is substituted before computed-value time; `env()` is
+        // not, so a math expression holding it can never be evaluated.
+        Token::Function(name) if name.eq_ignore_ascii_case("var") => {
             let kind = types
                 .substitution()
                 .ok_or_else(|| input.new_custom_error(()))?;
