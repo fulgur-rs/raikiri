@@ -6,9 +6,9 @@ use smol_str::SmolStr;
 
 use crate::computed::CustomPropertyEnvironment;
 use crate::property::{
-    CalcLengthPercentage, CssWideKeyword, CustomProperty, DeferredValue, FontFeatureSettings,
-    FontVariationSettings, LengthOrAuto, MAX_DEFERRED_VALUE_NESTING_DEPTH,
-    MAX_SUBSTITUTED_VALUE_BYTES, PropertyKey, PropertyValue, VerticalAlign,
+    CssWideKeyword, CustomProperty, DeferredValue, FontFeatureSettings, FontVariationSettings,
+    LengthOrAuto, MAX_DEFERRED_VALUE_NESTING_DEPTH, MAX_SUBSTITUTED_VALUE_BYTES, PropertyKey,
+    PropertyValue, RelativeCalcLengthPercentage, RelativeCalcUnit, VerticalAlign,
     is_custom_property_name, parse_value, property_key_for_name,
 };
 
@@ -106,7 +106,7 @@ impl<'a> DeferredResolver<'a> {
 #[derive(Clone)]
 enum ResolvedValue {
     Parsed(PropertyValue),
-    Calc(CalcLengthPercentage),
+    Calc(RelativeCalcLengthPercentage),
     RadiusKeyword(CssWideKeyword),
 }
 
@@ -158,7 +158,7 @@ fn resolve_substituted_value(deferred: &DeferredValue, substituted: &str) -> Opt
     let simplified = match simplify_math_functions(substituted) {
         Some(value) => value,
         None => {
-            let value = parse_simple_calc_length_percentage(substituted)?;
+            let value = parse_relative_calc_length_percentage(substituted)?;
             return Some(ResolvedValue::Calc(value));
         }
     };
@@ -178,11 +178,18 @@ fn resolve_substituted_value(deferred: &DeferredValue, substituted: &str) -> Opt
 /// Wrap a mixed-unit `calc()` in the value of the property it was declared
 /// for. Sizing, inset, and `vertical-align` values can carry one; for any
 /// other property the declaration is invalid at computed-value time.
+/// Font-relative and viewport terms are kept for computed-value time
+/// ([`LengthOrAuto::RelativeCalc`]); `vertical-align` has no such
+/// representation, so a calc with those terms is invalid there.
 fn calc_length_percentage_value(
     key: PropertyKey,
-    value: CalcLengthPercentage,
+    value: RelativeCalcLengthPercentage,
 ) -> Option<PropertyValue> {
-    let calc = LengthOrAuto::Calc(value);
+    let absolute = value.as_absolute();
+    let calc = match absolute {
+        Some(absolute) => LengthOrAuto::Calc(absolute),
+        None => LengthOrAuto::RelativeCalc(value),
+    };
     Some(match key {
         PropertyKey::Width => PropertyValue::Width(calc),
         PropertyKey::Height => PropertyValue::Height(calc),
@@ -197,62 +204,125 @@ fn calc_length_percentage_value(
         PropertyKey::Right => PropertyValue::Right(calc),
         PropertyKey::Bottom => PropertyValue::Bottom(calc),
         PropertyKey::Left => PropertyValue::Left(calc),
-        PropertyKey::VerticalAlign => PropertyValue::VerticalAlign(VerticalAlign::Calc(value)),
+        PropertyKey::VerticalAlign => PropertyValue::VerticalAlign(VerticalAlign::Calc(absolute?)),
         _ => return None,
     })
 }
 
-/// Parse mixed-unit calc forms that need a used containing-block basis.
-pub(crate) fn parse_simple_calc_length_percentage(input: &str) -> Option<CalcLengthPercentage> {
+/// Parse a `calc()` whose terms mix units that cannot be combined before
+/// computed-value time (percentages, font-relative and viewport lengths) into
+/// one coefficient per basis.
+///
+/// The body is a linear sum: `+` / `-` between terms, and `*` / `/` only with
+/// a plain number on one side (CSS Values 4 "Type Checking",
+/// <https://www.w3.org/TR/css-values-4/#calc-type-checking>). Nested
+/// parentheses and nested `calc()` are accepted; other math functions are not.
+pub(crate) fn parse_relative_calc_length_percentage(
+    input: &str,
+) -> Option<RelativeCalcLengthPercentage> {
     let trimmed = trim_css_whitespace_and_comments(input);
-    let open = trimmed.find('(')?;
-    if !trimmed[..open].eq_ignore_ascii_case("calc") {
+    // Read the function token with cssparser, so an escaped name such as
+    // `c\61 lc(` is recognized as `calc(` the way the parse-time check did.
+    let mut tokens_input = ParserInput::new(trimmed);
+    let mut tokens = Parser::new(&mut tokens_input);
+    if !tokens.expect_function().ok()?.eq_ignore_ascii_case("calc") {
         return None;
     }
+    let mut parser = MathParser::new(trimmed);
+    parser.position = tokens.position().byte_index();
+    let value = parser.parse_linear_sum()?;
+    parser.skip_whitespace()?;
     // A `calc(` left open at the end of input is closed there (CSS Syntax 3
-    // §5.4.9); a stray `)` inside the body still fails the depth check below.
-    let body = &trimmed[open + 1..];
-    let inner = body.strip_suffix(')').unwrap_or(body);
-    let mut depth = 0usize;
-    let mut operator = None;
-    for (index, byte) in inner.as_bytes().iter().copied().enumerate() {
-        match byte {
-            b'(' => depth = depth.checked_add(1)?,
-            b')' => depth = depth.checked_sub(1)?,
-            b'+' | b'-' if depth == 0 && index > 0 => {
-                operator = Some((index, byte));
-                break;
-            }
-            _ => {}
-        }
+    // §5.4.9).
+    if parser.input.as_bytes().get(parser.position) == Some(&b')') {
+        parser.position += 1;
     }
-    let (left, right, sign) = match operator {
-        Some((index, op)) => (&inner[..index], &inner[index + 1..], op),
-        None => (inner, "", b'+'),
-    };
-    let parse_term = |term: &str| -> Option<(f32, f32)> {
-        let value = MathParser::new(term.trim()).parse()?;
-        if !value.number.is_finite() {
-            return None;
+    if parser.position != parser.input.len() {
+        return None;
+    }
+    match value {
+        LinearValue::Length(terms) => terms.into_value(),
+        LinearValue::Number(_) => None,
+    }
+}
+
+/// A sub-expression of a linear `calc()`: a plain number, or a sum of
+/// length-percentage terms.
+#[derive(Clone, Copy)]
+enum LinearValue {
+    Number(f32),
+    Length(LinearTerms),
+}
+
+/// Length-percentage terms of a linear `calc()` with one coefficient per
+/// relative basis. Unlike [`RelativeCalcLengthPercentage`] it has room for
+/// every basis, so terms that cancel later in the expression do not count
+/// against that type's limit.
+#[derive(Clone, Copy, Default)]
+struct LinearTerms {
+    percent: f32,
+    px: f32,
+    relative: [f32; RelativeCalcUnit::ALL.len()],
+}
+
+impl LinearTerms {
+    fn from_unit(value: f32, unit: &str) -> Option<Self> {
+        let single = RelativeCalcLengthPercentage::from_unit(value, unit)?;
+        let mut terms = Self {
+            percent: single.percent,
+            px: single.px,
+            ..Self::default()
+        };
+        for (unit, coefficient) in single.relative_terms() {
+            terms.relative[unit as usize] = coefficient;
         }
-        match value.unit.as_deref()? {
-            "%" => Some((value.number, 0.0)),
-            "px" => Some((0.0, value.number)),
-            _ => None,
+        Some(terms)
+    }
+
+    fn coefficients_mut(&mut self) -> impl Iterator<Item = &mut f32> {
+        [&mut self.percent, &mut self.px]
+            .into_iter()
+            .chain(self.relative.iter_mut())
+    }
+
+    /// Add `sign * other` to every coefficient.
+    fn add_scaled(mut self, mut other: Self, sign: f32) -> Option<Self> {
+        for (left, right) in self.coefficients_mut().zip(other.coefficients_mut()) {
+            *left += sign * *right;
+            if !left.is_finite() {
+                return None;
+            }
         }
-    };
-    let (left_percent, left_px) = parse_term(left)?;
-    let (right_percent, right_px) = if right.trim().is_empty() {
-        (0.0, 0.0)
-    } else {
-        parse_term(right)?
-    };
-    let sign = if sign == b'-' { -1.0 } else { 1.0 };
-    let result = CalcLengthPercentage {
-        percent: left_percent + sign * right_percent,
-        px: left_px + sign * right_px,
-    };
-    (result.percent.is_finite() && result.px.is_finite()).then_some(result)
+        Some(self)
+    }
+
+    /// Multiply every coefficient by `factor`.
+    fn scale(mut self, factor: f32) -> Option<Self> {
+        for coefficient in self.coefficients_mut() {
+            *coefficient *= factor;
+            if !coefficient.is_finite() {
+                return None;
+            }
+        }
+        Some(self)
+    }
+
+    /// The compact value, or `None` when more relative bases remain than it
+    /// can hold.
+    fn into_value(self) -> Option<RelativeCalcLengthPercentage> {
+        let mut value = RelativeCalcLengthPercentage::default();
+        value.percent = self.percent;
+        value.px = self.px;
+        for (unit, coefficient) in RelativeCalcUnit::ALL.into_iter().zip(self.relative) {
+            if coefficient != 0.0 {
+                value = value.add_scaled(
+                    RelativeCalcLengthPercentage::relative(unit, coefficient)?,
+                    1.0,
+                )?;
+            }
+        }
+        Some(value)
+    }
 }
 
 fn radius_corner_property(key: PropertyKey) -> Option<&'static str> {
@@ -1320,6 +1390,16 @@ impl<'a> MathParser<'a> {
         }
         if self.input.as_bytes().get(self.position) == Some(&b'.') {
             self.position += 1;
+            // A CSS number needs at least one digit after the decimal point
+            // (CSS Syntax 3 §4.3.12), so `1.em` is not `1em`.
+            if !self
+                .input
+                .as_bytes()
+                .get(self.position)
+                .is_some_and(u8::is_ascii_digit)
+            {
+                return None;
+            }
             while self
                 .input
                 .as_bytes()
@@ -1377,6 +1457,114 @@ impl<'a> MathParser<'a> {
         let unit = (unit_start != self.position)
             .then(|| self.input[unit_start..self.position].to_ascii_lowercase());
         Some(MathValue { number, unit })
+    }
+
+    fn parse_linear_sum(&mut self) -> Option<LinearValue> {
+        let mut value = self.parse_linear_product()?;
+        loop {
+            self.skip_whitespace()?;
+            let Some(&operator) = self.input.as_bytes().get(self.position) else {
+                return Some(value);
+            };
+            if operator != b'+' && operator != b'-' {
+                return Some(value);
+            }
+            let operator_position = self.position;
+            if !self.has_css_whitespace_before(operator_position)
+                || !self.has_css_whitespace_after(operator_position + 1)
+            {
+                return None;
+            }
+            self.position += 1;
+            let right = self.parse_linear_product()?;
+            let sign = if operator == b'+' { 1.0 } else { -1.0 };
+            value = match (value, right) {
+                (LinearValue::Number(left), LinearValue::Number(right)) => {
+                    let sum = left + sign * right;
+                    LinearValue::Number(sum.is_finite().then_some(sum)?)
+                }
+                (LinearValue::Length(left), LinearValue::Length(right)) => {
+                    LinearValue::Length(left.add_scaled(right, sign)?)
+                }
+                _ => return None,
+            };
+        }
+    }
+
+    fn parse_linear_product(&mut self) -> Option<LinearValue> {
+        let mut value = self.parse_linear_primary()?;
+        loop {
+            self.skip_whitespace()?;
+            let operator = match self.input.as_bytes().get(self.position) {
+                Some(b'*') | Some(b'/') => self.input.as_bytes()[self.position],
+                _ => return Some(value),
+            };
+            self.position += 1;
+            let right = self.parse_linear_primary()?;
+            value = match (operator, value, right) {
+                (b'*', LinearValue::Number(left), LinearValue::Number(right)) => {
+                    let product = left * right;
+                    LinearValue::Number(product.is_finite().then_some(product)?)
+                }
+                (b'*', LinearValue::Number(factor), LinearValue::Length(length))
+                | (b'*', LinearValue::Length(length), LinearValue::Number(factor)) => {
+                    LinearValue::Length(length.scale(factor)?)
+                }
+                (b'/', LinearValue::Number(left), LinearValue::Number(right)) if right != 0.0 => {
+                    let quotient = left / right;
+                    LinearValue::Number(quotient.is_finite().then_some(quotient)?)
+                }
+                (b'/', LinearValue::Length(length), LinearValue::Number(divisor))
+                    if divisor != 0.0 =>
+                {
+                    LinearValue::Length(length.scale(divisor.recip())?)
+                }
+                _ => return None,
+            };
+        }
+    }
+
+    fn parse_linear_primary(&mut self) -> Option<LinearValue> {
+        self.skip_whitespace()?;
+        let rest = &self.input.as_bytes()[self.position..];
+        let open = if rest.first() == Some(&b'(') {
+            Some(1)
+        } else {
+            // Decode the function name with cssparser, so an escaped nested
+            // name such as `c\61 lc(` is recognized as `calc(`.
+            let mut tokens_input = ParserInput::new(&self.input[self.position..]);
+            let mut tokens = Parser::new(&mut tokens_input);
+            tokens
+                .expect_function()
+                .is_ok_and(|name| name.eq_ignore_ascii_case("calc"))
+                .then(|| tokens.position().byte_index())
+        };
+        if let Some(open) = open {
+            if self.nesting_depth >= MAX_VARIABLE_RESOLUTION_DEPTH {
+                return None;
+            }
+            self.position += open;
+            self.nesting_depth += 1;
+            let value = self.parse_linear_sum();
+            self.nesting_depth -= 1;
+            let value = value?;
+            self.skip_whitespace()?;
+            // The end of input closes every open block (CSS Syntax 3 §5.4.9).
+            match self.input.as_bytes().get(self.position) {
+                Some(b')') => self.position += 1,
+                None => {}
+                Some(_) => return None,
+            }
+            return Some(value);
+        }
+        let MathValue { number, unit } = self.parse_number()?;
+        if !number.is_finite() {
+            return None;
+        }
+        Some(match unit {
+            None => LinearValue::Number(number),
+            Some(unit) => LinearValue::Length(LinearTerms::from_unit(number, &unit)?),
+        })
     }
 
     fn skip_whitespace(&mut self) -> Option<()> {

@@ -1,7 +1,9 @@
 use super::*;
 use crate::cascade::test_support::*;
 use crate::cascade::{apply_value, cascade};
-use crate::property::{CssColor, Length, OutlineColor, OutlineStyle, PropertyKey, VerticalAlign};
+use crate::property::{
+    CalcLengthPercentage, CssColor, Length, OutlineColor, OutlineStyle, PropertyKey, VerticalAlign,
+};
 use crate::resolve::{
     ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLineHeight,
 };
@@ -1469,11 +1471,12 @@ fn calc_length_percentage_value_targets_sizing_inset_and_vertical_align() {
             PropertyValue::VerticalAlign(VerticalAlign::Calc(value)),
         ),
     ];
+    let relative = parse_relative_calc_length_percentage("calc(50% + 10px)").unwrap();
     for (key, expected) in cases {
-        assert_eq!(calc_length_percentage_value(key, value), Some(expected));
+        assert_eq!(calc_length_percentage_value(key, relative), Some(expected));
     }
     assert_eq!(
-        calc_length_percentage_value(PropertyKey::Color, value),
+        calc_length_percentage_value(PropertyKey::Color, relative),
         None
     );
 }
@@ -1497,6 +1500,10 @@ fn vertical_align_wpt_calc_expressions_resolve_to_px() {
             "{expression}" // cov:ignore: assertion diagnostic literal is formatted only on failure
         );
     }
+}
+
+fn parse_simple_calc_length_percentage(input: &str) -> Option<CalcLengthPercentage> {
+    parse_relative_calc_length_percentage(input)?.as_absolute()
 }
 
 #[test]
@@ -1939,4 +1946,185 @@ fn rollback_does_not_retain_parsed_non_winning_shorthands() {
         crate::ComputedValues::initial().font_size.px()
     );
     assert!(PEAK_CACHE_ENTRIES.with(|peak| peak.get()) <= 2);
+}
+
+#[test]
+fn mixed_calc_with_font_relative_terms_resolves_against_the_font_size() {
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("font-size: 10px; width: calc(2em + 10px); height: calc(10px + 5px)"),
+    );
+    assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Px(30.0));
+    assert_eq!(cv.height, ComputedLengthPercentageOrAuto::Px(15.0));
+
+    // `ex` uses the 0.5em fallback; `rem` uses the root font size, here the
+    // `div` itself.
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some(
+            "font-size: 10px; width: calc(4ex + 1in); height: calc(1in - 2rem); \
+             min-height: calc(2ex * 3)",
+        ),
+    );
+    assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Px(20.0 + 96.0));
+    assert_eq!(cv.height, ComputedLengthPercentageOrAuto::Px(96.0 - 20.0));
+    assert_eq!(cv.min_height, ComputedLengthPercentageOrAuto::Px(30.0));
+}
+
+#[test]
+fn mixed_calc_with_a_percentage_keeps_it_for_used_value_time() {
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("font-size: 10px; width: calc(100% - 2em - 4px); left: calc((50% + 1em) / 2)"),
+    );
+    assert_eq!(
+        cv.width,
+        ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage {
+            percent: 100.0,
+            px: -24.0,
+        })
+    );
+    assert_eq!(
+        cv.left,
+        ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage {
+            percent: 25.0,
+            px: 5.0,
+        })
+    );
+    // Without a length offset the percentage stands alone.
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("font-size: 10px; width: calc(50% + 1em - 10px)"),
+    );
+    assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Percent(50.0));
+}
+
+#[test]
+fn mixed_calc_with_viewport_terms_resolves_against_the_viewport() {
+    let media = crate::media::MediaContext::print();
+    let (width, height) = (
+        media.viewport_width() as f32,
+        media.viewport_height() as f32,
+    );
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some(
+            "width: calc(50vw - 20px); height: calc(100svh - 20px); max-width: calc(var(--x, 10vmin) + 1px)",
+        ),
+    );
+    assert_eq!(
+        cv.width,
+        ComputedLengthPercentageOrAuto::Px(width * 50.0 / 100.0 - 20.0)
+    );
+    assert_eq!(
+        cv.height,
+        ComputedLengthPercentageOrAuto::Px(height * 100.0 / 100.0 - 20.0)
+    );
+    assert_eq!(
+        cv.max_width,
+        ComputedLengthPercentageOrAuto::Px(width.min(height) * 10.0 / 100.0 + 1.0)
+    );
+}
+
+#[test]
+fn mixed_calc_bases_that_cancel_do_not_count_against_the_limit() {
+    for width in [
+        "calc(1em + 1vw - 1vw + 1px)",
+        "calc(1vw - 1vw + 1em + 1px)",
+        "calc(1em + 2rem + 1px - 2rem)",
+    ] {
+        let cv = cascade_doc("", "div", Some(&format!("font-size: 10px; width: {width}")));
+        assert_eq!(
+            cv.width,
+            ComputedLengthPercentageOrAuto::Px(11.0),
+            "{width}"
+        );
+    }
+}
+
+#[test]
+fn negative_mixed_calc_clamps_sizes_but_not_insets() {
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some(
+            "font-size: 16px; width: calc(1em - 20px); max-height: calc(1em - 20px); left: calc(1em - 20px)",
+        ),
+    );
+    assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Px(0.0));
+    assert_eq!(cv.max_height, ComputedLengthPercentageOrAuto::Px(0.0));
+    assert_eq!(cv.left, ComputedLengthPercentageOrAuto::Px(-4.0));
+}
+
+#[test]
+fn mixed_calc_beyond_one_relative_basis_or_on_vertical_align_stays_invalid() {
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("width: 7px; width: calc(100vh - 2em); vertical-align: calc(1em + 2px)"),
+    );
+    assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Auto);
+    assert_eq!(cv.vertical_align, VerticalAlign::Baseline);
+}
+
+#[test]
+fn relative_calc_parser_accepts_linear_sums_only() {
+    let parse = parse_relative_calc_length_percentage;
+    let value = parse("calc(2 * (1em + 3px) - calc(10% / 4))").unwrap();
+    assert_eq!(value.percent, -2.5);
+    assert_eq!(value.px, 6.0);
+    assert_eq!(
+        value.relative_terms().collect::<Vec<_>>(),
+        [(crate::property::RelativeCalcUnit::Em, 2.0)]
+    );
+    // The end of input closes nested blocks too, and an escaped function
+    // name is still `calc`.
+    for source in [
+        "calc((1em + 1px",
+        "calc(calc(1em + 1px",
+        r"c\61 lc(1em + 1px)",
+        r"calc(c\61 lc(1em + 1px))",
+    ] {
+        let value = parse(source).unwrap_or_else(|| panic!("{source}"));
+        assert_eq!(value.px, 1.0, "{source}");
+    }
+    // Plain-number arithmetic folds into the coefficient.
+    let value = parse("calc((2 + 3) * 1em / (4 / 2) - 1px * (1 - 3))").unwrap();
+    assert_eq!(value.px, 2.0);
+    assert_eq!(
+        value.relative_terms().collect::<Vec<_>>(),
+        [(crate::property::RelativeCalcUnit::Em, 2.5)]
+    );
+    let depth = MAX_VARIABLE_RESOLUTION_DEPTH + 1;
+    let too_deep = format!("calc({}1em{})", "(".repeat(depth), ")".repeat(depth));
+    for rejected in [
+        too_deep.as_str(),
+        "calc((1em + 1px) 2",
+        "calc((1e30 * 1e30) * 1em)",
+        "calc((3e38 + 3e38) * 1em)",
+        "calc(1em * (1 / 1e-40))",
+        "calc(3e38px + 3e38px + 1em)",
+        "calc(3e38px * 10 + 1em)",
+        "calc(1em * 1px)",
+        "calc(1.em + 1px)",
+        "calc(1em + 1.px)",
+        "calc(1em / 0)",
+        "calc(1em / 1px)",
+        "calc(2)",
+        "calc(1em + 2)",
+        "calc(1em+2px)",
+        "calc(1deg + 1em)",
+        "calc(1svx + 1px)",
+        "calc(1em + 1vw)",
+        "calc(1ch + 1px)",
+        "calc(1em) 2px",
+        "calc(min(1em, 2px) + 1px)",
+    ] {
+        assert_eq!(parse(rejected), None, "{rejected}");
+    }
 }
