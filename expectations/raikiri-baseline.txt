@@ -1416,6 +1416,22 @@ css/css-page/page-name-canvas-002-print.html
 # --- css-page nested named-page propagation exact 800x600 PASS-only (2026-09-23) ---
 css/css-page/page-name-propagated-001-print.html
 css/css-page/page-name-propagated-002-print.html
+# --- css-page named-page break candidates and forced-break margins (WPT 97ea26e2, 800x600 EXACT, 2026-10-12) ---
+# audit-vacuous-passes: page-name-003, img-001/002, inline-block-002 and zero-height-001 are KEEP.
+# The other six are negative tests whose subject must have no effect (page names inside
+# monolithic or row-flex content, background-clip on the root page), so the audit reports
+# them VACUOUS-UNSTYLED; each failed before the matching pagination fix and is kept as a guard.
+css/css-page/page-background-004-print.html
+css/css-page/page-name-003-print.html
+css/css-page/page-name-flex-002-print.html
+css/css-page/page-name-img-001-print.html
+css/css-page/page-name-img-002-print.html
+css/css-page/page-name-inline-block-001-print.html
+css/css-page/page-name-inline-block-002-print.html
+css/css-page/page-name-inline-block-003-print.html
+css/css-page/page-name-orthogonal-writing-001-print.html
+css/css-page/page-name-orthogonal-writing-003-print.html
+css/css-page/page-name-zero-height-001-print.html
 # --- CSS Text line-break:anywhere first-stage exact 800x600 PASS-only (+21) ---
 css/css-text/line-break/line-break-anywhere-004.html
 css/css-text/line-break/line-break-anywhere-006.html

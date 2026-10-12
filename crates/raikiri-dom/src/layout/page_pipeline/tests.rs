@@ -2472,11 +2472,109 @@ fn layout_pages_joins_a_non_empty_named_box_to_a_preceding_zero_height_named_box
 
     // The zero-height `b` consumes no block-size, so `c` shares its page
     // instead of leaving `b` alone on a page of its own.
-    let names: Vec<_> = slices.iter().map(|slice| slice.page_name.as_deref()).collect();
+    let names: Vec<_> = slices
+        .iter()
+        .map(|slice| slice.page_name.as_deref())
+        .collect();
     assert_eq!(names, [Some("a"), Some("c"), Some("d")]);
     let c_y = doc.nodes[boxes[2]].unrounded_layout.location.y;
     // cov:ignore: panic-message text is only executed when the assertion fails.
     assert!((c_y - 100.0).abs() < 0.01, "c starts page 1: y={c_y}");
+}
+
+/// Lay out `children` (inline styles) under `body` on 100x100 pages and
+/// return the page names, with the body itself styled by `body_style`.
+fn named_page_slices(body_style: &str, children: &[(&str, &[&str])]) -> Vec<Option<String>> {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some(body_style));
+    for (style, grandchildren) in children {
+        let child = doc.append_element(Some(body), "div", Style::default(), Some(*style));
+        for grandchild in *grandchildren {
+            doc.append_element(Some(child), "div", Style::default(), Some(*grandchild));
+        }
+    }
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page)
+        .expect("pagination Ok")
+        .into_iter()
+        .map(|slice| slice.page_name)
+        .collect()
+}
+
+#[test]
+fn layout_pages_ignores_page_names_inside_monolithic_boxes() {
+    let named: &[&str] = &[
+        "display:block;page:a;height:10px",
+        "display:block;page:b;height:10px",
+    ];
+    for container in [
+        "display:inline-block;width:50px",
+        "display:inline-flex;flex-direction:column;width:50px",
+        "display:block;writing-mode:vertical-rl;height:50px",
+    ] {
+        assert_eq!(
+            named_page_slices("display:block", &[(container, named)]).len(),
+            1,
+            "{container}"
+        );
+    }
+}
+
+#[test]
+fn layout_pages_does_not_propagate_row_flex_item_page_names() {
+    let pages = named_page_slices(
+        "display:block",
+        &[
+            ("display:block;height:10px", &[]),
+            (
+                "display:flex",
+                &[
+                    "display:block;page:b;height:10px",
+                    "display:block;page:c;height:10px",
+                ],
+            ),
+            ("display:block;height:10px", &[]),
+        ],
+    );
+    assert_eq!(pages, [None]);
+}
+
+#[test]
+fn layout_pages_gives_an_inline_level_box_the_page_of_its_container() {
+    // `page` does not apply to the inline-block, so it stays on the body's
+    // page `a` and the following `b` box opens a new page.
+    let pages = named_page_slices(
+        "display:block;page:a",
+        &[
+            ("display:inline-block;page:b;width:10px;height:10px", &[]),
+            ("display:block;page:b;height:10px", &[]),
+        ],
+    );
+    assert_eq!(pages, [Some("a".to_owned()), Some("b".to_owned())]);
+}
+
+#[test]
+fn layout_pages_keeps_page_names_inside_a_static_position_absolute_box() {
+    let named: &[&str] = &[
+        "display:block;page:a;height:10px",
+        "display:block;page:b;height:10px",
+    ];
+    let static_position = named_page_slices("display:block", &[("position:absolute", named)]);
+    assert_eq!(
+        static_position,
+        [Some("a".to_owned()), Some("b".to_owned())]
+    );
+    // An inset moves the box out of the page flow, so its names are ignored.
+    let inset = named_page_slices("display:block", &[("position:absolute;top:0px", named)]);
+    assert_eq!(inset.len(), 1);
 }
 
 #[test]

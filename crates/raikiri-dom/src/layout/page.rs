@@ -702,8 +702,9 @@ pub fn first_page_name(document: &Document, cascade: &CascadeResult) -> Option<S
                 {
                     continue;
                 }
-                if let Some(raikiri_style::property::PageValue::Named(name)) =
-                    cascade.page_values.get(child_id)
+                if page_applies_to_box(document, cascade, child_id)
+                    && let Some(raikiri_style::property::PageValue::Named(name)) =
+                        cascade.page_values.get(child_id)
                 {
                     return Some(name.to_string());
                 }
@@ -1207,6 +1208,62 @@ pub(crate) fn pagination_child_order(
     children
 }
 
+/// Whether the `page` property applies to the box of `node_id`.
+///
+/// CSS Page 3 §4.1 applies `page` to boxes that create class A break points,
+/// which are block-level. An inline-level box takes the page type of its
+/// containing block instead. A flex or grid item is blockified whatever its
+/// computed `display`.
+pub(crate) fn page_applies_to_box(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    let blockified = document.parent_of(node_id).is_some_and(|parent| {
+        cascade.computed.get(parent).is_some_and(|parent| {
+            matches!(
+                parent.display,
+                DisplayValue::Flex
+                    | DisplayValue::InlineFlex
+                    | DisplayValue::Grid
+                    | DisplayValue::InlineGrid
+            )
+        })
+    });
+    blockified
+        || !matches!(
+            cascade.computed[node_id].display,
+            DisplayValue::Inline
+                | DisplayValue::InlineBlock
+                | DisplayValue::InlineFlex
+                | DisplayValue::InlineGrid
+                | DisplayValue::InlineTable
+        )
+}
+
+/// Whether `node_id` establishes an orthogonal flow: its writing mode is
+/// vertical while its parent's is horizontal, or the reverse. Layout
+/// normalizes writing modes to horizontal, so the comparison uses the
+/// specified keyword kept for CSSOM. Pagination treats such a box as
+/// monolithic.
+pub(crate) fn establishes_orthogonal_flow(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    use raikiri_style::property::WritingMode;
+    let vertical = |id: usize| {
+        cascade
+            .computed
+            .get(id)
+            .is_some_and(|computed| computed.cssom_writing_mode != WritingMode::HorizontalTb)
+    };
+    document
+        .parent_of(node_id)
+        .filter(|&parent| document.nodes[parent].kind() == NodeKind::Element)
+        .is_some_and(|parent| vertical(parent) != vertical(node_id))
+}
+
 /// Return the start page value propagated from the first in-flow child box.
 ///
 /// CSS Page 3 derives a box's start page value from its first child when
@@ -1287,17 +1344,25 @@ fn propagated_start_page_name_with_order(
             continue;
         }
 
-        let display = cascade.computed[node_id].display;
-        let page_applies = !matches!(
-            display,
-            DisplayValue::Inline | DisplayValue::InlineFlex | DisplayValue::InlineGrid
-        );
+        let page_applies = page_applies_to_box(document, cascade, node_id);
         let explicit_page_name = if page_applies {
             selected_page_name(cascade, node_id)
         } else {
             None
         };
         let used_page_name = explicit_page_name.or_else(|| inherited_page_name.clone());
+        // Atomic inline-level boxes and orthogonal flows are monolithic, so
+        // they do not pass a descendant's page value up to the box.
+        if matches!(
+            cascade.computed[node_id].display,
+            DisplayValue::InlineBlock
+                | DisplayValue::InlineFlex
+                | DisplayValue::InlineGrid
+                | DisplayValue::InlineTable
+        ) || establishes_orthogonal_flow(document, cascade, node_id)
+        {
+            return (true, used_page_name);
+        }
         let child_order = if resolved_layout {
             pagination_child_order(document, cascade, node_id)
         } else {
