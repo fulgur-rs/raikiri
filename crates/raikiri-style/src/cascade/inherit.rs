@@ -258,7 +258,7 @@ pub(crate) struct WalkOutputs {
     pub(crate) computed: Vec<ComputedValues>,
     pub(crate) authored_writing_modes: Vec<Option<WritingMode>>,
     pub(crate) page_values: Vec<crate::property::PageValue>,
-    pub(crate) pseudo: HashMap<(StyleNodeId, PseudoElem), ComputedValues>,
+    pub(crate) pseudo: HashMap<(StyleNodeId, PseudoElem), Arc<ComputedValues>>,
     pub(crate) svg_properties: HashMap<StyleNodeId, Vec<SvgStyleProperty>>,
     pub(crate) first_letter_inputs: HashMap<StyleNodeId, super::first_letter::FirstLetterInputs>,
     /// The candidates the first-letter methods recompute first-line text from:
@@ -619,11 +619,11 @@ pub(crate) fn walk_from<D: StyleDom>(
             // the resolving path.
             for pseudo in CASCADED_PSEUDO_ELEMENTS {
                 if let Some(values) = out.pseudo.get(&(source, pseudo)) {
-                    budget.output(entry_bytes(
-                        &out.pseudo,
-                        own_heap_bytes(values, &out.computed[src]),
-                    ))?;
-                    let values = values.clone();
+                    budget.output(pseudo_entry_bytes(own_heap_bytes(
+                        values.as_ref(),
+                        &out.computed[src],
+                    )))?;
+                    let values = Arc::clone(values);
                     try_insert(&mut out.pseudo, (id, pseudo), values)?;
                 }
             }
@@ -844,11 +844,11 @@ pub(crate) fn walk_from<D: StyleDom>(
                     }
                     pseudo_computed.custom_properties = pseudo_custom_properties;
                     pseudo_computed.local_custom_properties = pseudo_local_custom_properties;
-                    budget.output(entry_bytes(
-                        &out.pseudo,
-                        own_heap_bytes(&pseudo_computed, &computed),
-                    ))?;
-                    try_insert(&mut out.pseudo, (id, pseudo), pseudo_computed)?;
+                    budget.output(pseudo_entry_bytes(own_heap_bytes(
+                        &pseudo_computed,
+                        &computed,
+                    )))?;
+                    try_insert(&mut out.pseudo, (id, pseudo), Arc::new(pseudo_computed))?;
                 }
             }
             (computed, custom_properties, child_ctx, id)
@@ -982,6 +982,12 @@ fn keep_copy<K: Eq + Hash>(
 /// once, so no entry is counted twice.
 fn entry_bytes<K, V>(_map: &HashMap<K, V>, heap: u64) -> u64 {
     bytes_of::<(K, V)>(1).saturating_add(heap)
+}
+
+/// The logical size charged for a pseudo entry, retaining its pre-Arc budget
+/// estimate even though the map now stores only a shared handle inline.
+fn pseudo_entry_bytes(heap: u64) -> u64 {
+    bytes_of::<((StyleNodeId, PseudoElem), ComputedValues)>(1).saturating_add(heap)
 }
 
 /// Inserts into `map`, failing instead when the allocator refuses to grow it.

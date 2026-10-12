@@ -288,10 +288,13 @@ pub fn marker_render_info_with_snapshots<'a>(
 ) -> Option<(&'a raikiri_style::ComputedValues, String)> {
     // cov:ignore: signature close has no executable mapping
     let computed = cascade.computed.get(node_id)?;
-    let marker_computed = cascade.pseudo.get(&(
-        raikiri_style::StyleNodeId::new(node_id as u64),
-        raikiri_style::PseudoElem::Marker,
-    ));
+    let marker_computed = cascade
+        .pseudo
+        .get(&(
+            raikiri_style::StyleNodeId::new(node_id as u64),
+            raikiri_style::PseudoElem::Marker,
+        ))
+        .map(|style| style.as_ref());
     let style = marker_computed.unwrap_or(computed);
     if style.display == DisplayValue::None {
         return None;

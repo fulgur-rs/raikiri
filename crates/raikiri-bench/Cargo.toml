@@ -39,5 +39,9 @@ harness = false
 name = "streaming_memory"
 harness = false
 
+[[bench]]
+name = "pseudo_output_sharing"
+harness = false
+
 [lints]
 workspace = true

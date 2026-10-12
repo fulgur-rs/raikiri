@@ -286,7 +286,9 @@ fn pseudo(css: &str) -> (ComputedValues, ComputedValues) {
     let result = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     (
         result.computed[p].clone(),
-        result.pseudo[&(StyleNodeId(p as u64), PseudoElem::FirstLine)].clone(),
+        result.pseudo[&(StyleNodeId(p as u64), PseudoElem::FirstLine)]
+            .as_ref()
+            .clone(),
     )
 }
 

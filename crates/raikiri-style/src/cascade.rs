@@ -29,6 +29,7 @@
 //! while winners are being applied.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::PseudoElem;
@@ -198,7 +199,12 @@ pub struct CascadeResult {
     /// accepts font, background, color, opacity, text decoration and
     /// supported inline typesetting/layout properties, while excluding
     /// box geometry, writing-mode, direction and text-orientation.
-    pub pseudo: HashMap<(StyleNodeId, PseudoElem), ComputedValues>,
+    ///
+    /// Values are held through [`std::sync::Arc`]. Identical complete sibling inputs may
+    /// share the same allocation. Cloning a map value clones the handle. Clone the
+    /// dereferenced [`ComputedValues`] for independent ownership, or use
+    /// [`std::sync::Arc::make_mut`] for copy-on-write mutation.
+    pub pseudo: HashMap<(StyleNodeId, PseudoElem), Arc<ComputedValues>>,
 }
 
 impl CascadeResult {

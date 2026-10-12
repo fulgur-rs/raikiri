@@ -838,7 +838,7 @@ impl<'a> RenderResources<'a> {
         let raw_urls = cascade
             .computed
             .iter()
-            .chain(pseudo.into_iter().map(|(_, computed)| computed))
+            .chain(pseudo.into_iter().map(|(_, computed)| computed.as_ref()))
             .filter(|computed| {
                 !matches!(
                     computed.display,

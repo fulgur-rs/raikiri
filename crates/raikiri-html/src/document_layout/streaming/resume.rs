@@ -156,7 +156,10 @@ pub(super) fn can_resume(document: &HtmlDocument, late_nodes_from: Option<usize>
         .computed
         .iter()
         .any(|computed| !computed.running_templates.is_empty() || looks_up_targets(computed))
-        || cascade.pseudo.values().any(looks_up_targets)
+        || cascade
+            .pseudo
+            .values()
+            .any(|computed| looks_up_targets(computed.as_ref()))
     {
         return false;
     }

@@ -121,6 +121,7 @@ pub fn computed_for_id(cascade: &CascadeResult, id: usize) -> Option<&ComputedVa
         Some((element, pseudo)) => cascade
             .pseudo
             .get(&(StyleNodeId::new(element as u64), pseudo))
+            .map(|style| style.as_ref())
             .or_else(|| {
                 (pseudo == PseudoElem::Marker)
                     .then(|| cascade.computed.get(element))
