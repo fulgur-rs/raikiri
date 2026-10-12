@@ -3410,6 +3410,33 @@ pub fn run_pair_with_images_and_variant(
     })
 }
 
+/// Execute a pair with `test_html` in place of the test file's contents.
+///
+/// The test keeps its own path, so relative resources and the reference
+/// resolve as they do for the unmodified file. Used by the vacuous-PASS audit
+/// to probe a passing pair with an edited test document.
+pub fn run_pair_with_test_html(
+    pair: &ReftestPair,
+    config: ReftestConfig,
+    resolve_images: bool,
+    variant_query: &str,
+    test_html: &str,
+) -> Result<ReftestResult, ReftestError> {
+    // The test is read before the reference. A self-referencing reftest
+    // (`href="?ref"`) shares the test's path, so only the first read of that
+    // path is replaced and the reference keeps the original document.
+    let served = std::cell::Cell::new(false);
+    run_pair_with_reader(pair, config, resolve_images, variant_query, |p| {
+        if p == pair.test.as_path() && !served.replace(true) {
+            return Ok(test_html.to_owned());
+        }
+        std::fs::read_to_string(p).map_err(|source| ReftestError::Io {
+            path: p.to_path_buf(),
+            source,
+        })
+    })
+}
+
 fn run_pair_with_reader<F>(
     pair: &ReftestPair,
     config: ReftestConfig,

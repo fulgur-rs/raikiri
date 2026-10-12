@@ -49,6 +49,36 @@ In contrast, removing test-side shadows from `box-shadow-005.html` and
 respectively. Those two pairs provide positive evidence for their outer shadow
 cases; they do not establish complete box-shadow conformance.
 
+## Promoting sweep passes
+
+A test that passes in a sweep is not promoted on that result alone. Run
+`audit-vacuous-passes` over the candidate ids first; it re-runs each id and
+probes every passing `rel=match` reference:
+
+```sh
+cargo run --release --locked -p raikiri-wpt --bin audit-vacuous-passes -- \
+    --wpt-root target/wpt --ids candidates.txt --output audit.tsv --jobs 4
+```
+
+| Verdict | Meaning |
+| --- | --- |
+| `KEEP` | Passes and survives every probe. Promotion candidate. |
+| `VACUOUS-BLANK` | The reference also matches an empty document. |
+| `VACUOUS-UNSTYLED` | The reference still matches after removing the test's subject properties (named in its file name or `rel=help` links), the properties the reference never uses, or the declarations the reference does not repeat. |
+| `VACUOUS-MISMATCH-ONLY` | The test has only `rel=mismatch` references. |
+| `INCONCLUSIVE` | A probe failed to render, so the PASS could not be judged. |
+| `NOT-PASS` | The test does not pass. |
+
+Only inline author declarations are ablated, so `KEEP` with "no test-only
+inline declarations" rests on markup or external-stylesheet differences. The
+subject-property probe also rejects negative tests whose subject correctly has
+no effect; promote one of those only after reviewing it individually.
+
+The 2026-10-12 sweep promotion audited 14,465 runnable, unregistered reftests
+at pinned WPT `97ea26e2` on Linux: 5,956 passed, of which 752 were blank,
+2,486 unstyled, and 151 mismatch-only. The 2,567 `KEEP` ids, identical in two
+runs, form the last section of `raikiri-baseline.txt`.
+
 ## Expected failures
 
 `expected-failures.txt` uses one exact test id per row:

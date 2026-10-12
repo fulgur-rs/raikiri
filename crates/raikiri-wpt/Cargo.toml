@@ -37,6 +37,7 @@ raikiri-js          = { workspace = true }
 time                = { workspace = true }
 png                 = { workspace = true }
 cssparser           = { workspace = true }
+markup5ever         = { workspace = true }
 
 [dev-dependencies]
 insta               = { workspace = true }
@@ -61,6 +62,10 @@ path = "src/bin/prepare-meta-assert-review.rs"
 [[bin]]
 name = "run-baseline-report"
 path = "src/bin/run-baseline-report.rs"
+
+[[bin]]
+name = "audit-vacuous-passes"
+path = "src/bin/audit-vacuous-passes.rs"
 
 [[bin]]
 name = "run-parsing-invalid"

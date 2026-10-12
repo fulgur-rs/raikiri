@@ -2786,6 +2786,7 @@ dependencies = [
  "blitz-traits",
  "cssparser",
  "insta",
+ "markup5ever 0.40.0",
  "png",
  "raikiri",
  "raikiri-dom",
