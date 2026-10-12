@@ -1888,6 +1888,21 @@ fn reject_external_css_tokens<'i>(
                     if !url.trim().starts_with('#') {
                         return Err(nested.new_custom_error(SvgError::ExternalReference));
                     }
+                    // `<url-modifier>*`: identifiers and functions.
+                    while let Ok(token) = nested.next() {
+                        match token {
+                            cssparser::Token::Ident(_) => {}
+                            cssparser::Token::Function(_) => {
+                                nested.parse_nested_block(|modifier| {
+                                    reject_external_css_tokens(modifier, depth + 1, false)
+                                })?
+                            }
+                            token => {
+                                let token = token.clone();
+                                return Err(nested.new_unexpected_token_error(token));
+                            }
+                        }
+                    }
                     Ok(())
                 })?;
             }

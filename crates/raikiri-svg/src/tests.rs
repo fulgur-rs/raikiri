@@ -1737,7 +1737,7 @@ fn exported_css_reference_validation_is_bounded_and_preserves_literal_strings() 
     )
     .unwrap();
     assert!(matches!(
-        reject_external_css_references("rect{fill:url(\"#paint\" trailing)}"),
+        reject_external_css_references("rect{fill:url(\"#paint\" 1px)}"),
         Err(SvgError::InvalidDocument(_))
     ));
     let nested = format!(
@@ -1760,6 +1760,7 @@ fn css_reference_validation_covers_src_and_image_set_strings() {
         "rect{fill:image-set(\"https://example.com/a.png\" 1x)}",
         "rect{fill:-webkit-image-set('a.png' 1x, \"b.png\" 2x)}",
         "rect{fill:image-set(url(#ok) 1x, \"b.png\" 2x)}",
+        "rect{fill:src(\"#paint\" type(src(\"https://example.com/a.svg\")))}",
     ] {
         assert!(
             matches!(
@@ -1771,6 +1772,8 @@ fn css_reference_validation_covers_src_and_image_set_strings() {
     }
     for source in [
         "rect{fill:src(\"#paint\")}",
+        "rect{fill:src(\"#paint\" type(\"image/svg+xml\"))}",
+        "rect{fill:url(\"#paint\" cross-origin(anonymous))}",
         "rect{fill:image-set(\"#paint\" 1x)}",
         "rect{fill:image-set(url(#paint) type(\"image/png\"))}",
         "rect{font-family:\"a.png\"}",

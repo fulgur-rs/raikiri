@@ -30,17 +30,13 @@ pub(super) fn absolutize_stylesheet_urls(source: &str, base_url: &Url) -> String
     let mut output = String::with_capacity(source.len());
     let mut cursor = 0;
     for replacement in replacements {
+        // The URL parser strips leading and trailing C0 controls and spaces.
+        let value = replacement.value.trim_matches(|c: char| c <= ' ');
         // An empty URL names no resource, so it is left as written too.
-        if replacement.start < cursor
-            || replacement.value.is_empty()
-            || replacement.value.starts_with('#')
-        {
+        if replacement.start < cursor || value.is_empty() || value.starts_with('#') {
             continue;
         }
-        let Some(absolute) = Url::parse(&replacement.value)
-            .ok()
-            .or_else(|| base_url.join(&replacement.value).ok())
-        else {
+        let Some(absolute) = Url::parse(value).ok().or_else(|| base_url.join(value).ok()) else {
             continue;
         };
         let mut string = String::new();

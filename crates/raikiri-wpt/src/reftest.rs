@@ -945,12 +945,19 @@ fn parse_page_size(value: &str) -> Option<PageSize> {
     let mut orientation = None;
     for token in tokens {
         let lower = token.to_ascii_lowercase();
+        // CSS Paged Media 3 §7.1 `<page-size>`, in CSS px.
+        const MM: f32 = 96.0 / 25.4;
         let named_size = match lower.as_str() {
-            "a4" => Some((793.7008, 1122.5197)),
-            "a3" => Some((1122.5197, 1587.4016)),
-            "a5" => Some((559.3701, 793.7008)),
-            "letter" => Some((612.0, 792.0)),
-            "legal" => Some((612.0, 1008.0)),
+            "a5" => Some((148.0 * MM, 210.0 * MM)),
+            "a4" => Some((210.0 * MM, 297.0 * MM)),
+            "a3" => Some((297.0 * MM, 420.0 * MM)),
+            "b5" => Some((176.0 * MM, 250.0 * MM)),
+            "b4" => Some((250.0 * MM, 353.0 * MM)),
+            "jis-b5" => Some((182.0 * MM, 257.0 * MM)),
+            "jis-b4" => Some((257.0 * MM, 364.0 * MM)),
+            "letter" => Some((8.5 * 96.0, 11.0 * 96.0)),
+            "legal" => Some((8.5 * 96.0, 14.0 * 96.0)),
+            "ledger" => Some((11.0 * 96.0, 17.0 * 96.0)),
             _ => None,
         };
         if let Some(size) = named_size {
@@ -1092,15 +1099,36 @@ fn page_rules(input: &str) -> Vec<PageRule<'_>> {
         // `None` outside an `@page` prelude, else the names seen so far and
         // whether the selector is still valid.
         let mut page: Option<(Vec<String>, bool)> = None;
+        // Whether the current prelude belongs to a conditional group rule,
+        // the only blocks besides the top level that may hold `@page`.
+        let mut group = false;
         let mut after_colon = false;
-        while let Ok(token) = input.next().cloned() {
+        while let Ok(token) = input.next_including_whitespace().cloned() {
             match &token {
+                // Whitespace only matters inside an `@page` selector, where
+                // it may not precede a pseudo-class colon.
+                cssparser::Token::WhiteSpace(_) => {
+                    if let Some((_, valid)) = &mut page {
+                        let state = input.state();
+                        if matches!(input.next(), Ok(cssparser::Token::Colon)) {
+                            *valid = false;
+                        }
+                        input.reset(&state);
+                    }
+                    continue;
+                }
                 cssparser::Token::AtKeyword(name) => {
                     page = name
                         .eq_ignore_ascii_case("page")
                         .then(|| (Vec::new(), true));
+                    group = ["media", "supports", "layer"]
+                        .iter()
+                        .any(|known| name.eq_ignore_ascii_case(known));
                 }
-                cssparser::Token::Semicolon => page = None,
+                cssparser::Token::Semicolon => {
+                    page = None;
+                    group = false;
+                }
                 cssparser::Token::CurlyBracketBlock => {
                     if let Some((names, valid)) = page.take() {
                         let block = input.parse_nested_block(|input| {
@@ -1113,7 +1141,7 @@ fn page_rules(input: &str) -> Vec<PageRule<'_>> {
                         if valid {
                             rules.push(PageRule { names, block });
                         }
-                    } else if depth < 256 {
+                    } else if std::mem::take(&mut group) && depth < 256 {
                         input.parse_nested_block(|input| collect(input, rules, depth + 1))?;
                     }
                 }
@@ -1185,12 +1213,29 @@ fn first_authored_page_name(input: &str) -> Option<String> {
                 cssparser::Token::Ident(name)
                     if declaration_start && name.eq_ignore_ascii_case("page") =>
                 {
+                    // An unquoted `style=…` attribute value ends at
+                    // whitespace or the end of the tag.
+                    let unquoted = matches!(
+                        &previous,
+                        [Some(cssparser::Token::Ident(attribute)), Some(cssparser::Token::Delim('='))]
+                            if attribute.eq_ignore_ascii_case("style")
+                    );
                     let value = input.try_parse(|input| {
                         input.expect_colon()?;
                         let value = input.expect_ident_cloned()?;
                         // A declaration's value ends the declaration; a
                         // selector such as `page :first-child {}` goes on.
                         let end = input.state();
+                        if unquoted
+                            && matches!(
+                                input.next_including_whitespace(),
+                                Ok(cssparser::Token::WhiteSpace(_) | cssparser::Token::Delim('>'))
+                            )
+                        {
+                            input.reset(&end);
+                            return Ok(value.to_string());
+                        }
+                        input.reset(&end);
                         match input.next() {
                             Err(_)
                             | Ok(cssparser::Token::Semicolon)

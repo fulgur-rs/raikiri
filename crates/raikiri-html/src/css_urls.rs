@@ -196,6 +196,8 @@ fn push_string(
 /// `value` resolved against `base` and serialized as a CSS string, or
 /// `None` when it is kept as written.
 fn absolute_string(value: &str, base: &Url) -> Option<String> {
+    // The URL parser strips leading and trailing C0 controls and spaces.
+    let value = value.trim_matches(|c: char| c <= ' ');
     if value.is_empty() || value.starts_with('#') || Url::parse(value).is_ok() {
         return None;
     }

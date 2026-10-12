@@ -51,6 +51,8 @@ fn keeps_fragment_only_and_empty_urls() {
         r##"p{a:src("#a");b:image-set("#b" 1x)}"##,
         // An empty URL names no resource.
         r#"p{a:src("");b:image-set("" 1x);c:url("")}"#,
+        // URL parsing strips surrounding whitespace first.
+        r##"p{a:src(" #icon");b:image-set(" " 1x)}"##,
     ] {
         assert_eq!(absolutize_stylesheet_urls(source, &base), source);
     }

@@ -2294,10 +2294,10 @@ fn page_sizes_reject_negative_lengths() {
     ] {
         assert!(parse_page_size(value).is_none(), "{value}");
     }
-    assert_eq!(
-        parse_page_size("landscape a4").and_then(|size| size.size),
-        Some((793.7008, 1122.5197))
-    );
+    let (width, height) = parse_page_size("landscape a4")
+        .and_then(|size| size.size)
+        .unwrap();
+    assert!((width - 793.7008).abs() < 0.01 && (height - 1122.5197).abs() < 0.01);
     assert_eq!(
         print_declaration("size:300px;size:-10px", "size", parse_page_size)
             .and_then(|size| size.size),
@@ -2452,4 +2452,57 @@ fn named_pages_match_case_sensitively() {
     assert_eq!(page_block_named(css, "Cover"), Some("size:200px"));
     assert_eq!(page_block_named(css, "cover"), Some("size:100px"));
     assert_eq!(page_block_named("@page cover{size:100px}", "COVER"), None);
+}
+
+#[test]
+fn page_sizes_read_every_named_size() {
+    for (value, size) in [
+        ("b5", (665.1968, 944.8819)),
+        ("B4", (944.8819, 1334.1732)),
+        ("jis-b5", (687.874, 971.3386)),
+        ("JIS-B4", (971.3386, 1375.748)),
+        ("letter", (816.0, 1056.0)),
+        ("legal", (816.0, 1344.0)),
+        ("ledger", (1056.0, 1632.0)),
+    ] {
+        let parsed = parse_page_size(value).and_then(|size| size.size).unwrap();
+        assert!(
+            (parsed.0 - size.0).abs() < 0.01 && (parsed.1 - size.1).abs() < 0.01,
+            "{value}: {parsed:?}"
+        );
+    }
+    let size = parse_page_size("b4 landscape").unwrap();
+    assert!(size.landscape && size.size.is_some());
+}
+
+#[test]
+fn page_rules_skip_style_rule_blocks_and_space_before_colons() {
+    assert_eq!(
+        page_block(".a{@page{margin:10vw}}@page{size:200px}"),
+        Some("size:200px")
+    );
+    assert_eq!(
+        page_block("@media print{@page{size:100px}}@page{size:200px}"),
+        Some("size:100px")
+    );
+    assert_eq!(
+        page_block_named("@page foo :first{margin:5vw}@page foo{margin:10vw}", "foo"),
+        Some("margin:10vw")
+    );
+    assert_eq!(
+        page_block_named("@page foo, bar:first{margin:5vw}", "bar"),
+        Some("margin:5vw")
+    );
+}
+
+#[test]
+fn first_authored_page_name_reads_unquoted_style_attributes() {
+    assert_eq!(
+        first_authored_page_name("<div style=page:Cover>x</div>").as_deref(),
+        Some("Cover")
+    );
+    assert_eq!(
+        first_authored_page_name("<div style=page:Cover class=a>x</div>").as_deref(),
+        Some("Cover")
+    );
 }

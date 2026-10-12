@@ -32,6 +32,8 @@ fn absolute_fragment_empty_and_namespace_urls_are_kept() {
         "a { background: url(data:image/png;base64,AAAA) }",
         "a { clip-path: url(#clip) }",
         "a { background: url() }",
+        "a { mask: src(\" #icon\") }",
+        "a { background: image-set(\" \" 1x) }",
         "@namespace svg url(svg-ns); a { color: red }",
         "a { content: 'url(x.png)' }",
     ] {
