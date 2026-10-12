@@ -246,21 +246,23 @@ fn owner_document(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsRes
 /// raikiri-dom).
 fn is_connected(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_node(this, context)?;
-    let connected = with_state(context, |s| {
-        let doc = s.host.document();
-        let root = doc.root_index();
-        let mut current = index;
-        loop {
-            if current == root {
-                break true;
-            }
-            match doc.parent_of(current) {
-                Some(parent) => current = parent,
-                None => break false,
-            }
-        }
-    })?;
+    let connected = with_state(context, |s| node_is_connected(s.host.document(), index))?;
     Ok(JsValue::from(connected))
+}
+
+/// Whether `index` is reachable from `doc`'s root by walking parents.
+pub(crate) fn node_is_connected(doc: &raikiri_dom::Document, index: usize) -> bool {
+    let root = doc.root_index();
+    let mut current = index;
+    loop {
+        if current == root {
+            return true;
+        }
+        match doc.parent_of(current) {
+            Some(parent) => current = parent,
+            None => return false,
+        }
+    }
 }
 
 fn has_child_nodes(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {

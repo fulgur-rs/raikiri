@@ -7,8 +7,8 @@
 //!
 //! Only the `2d` context is supported; any other mode returns `null` per the
 //! spec's "return null when the context id is not supported" rule. `fillStyle`
-//! accepts CSS `<color>` strings (named, hex, `rgb()`/`rgba()`,
-//! `transparent`); an unparsable assignment is ignored, retaining the
+//! accepts any CSS `<color>` the cascade's color parser accepts (including
+//! `currentcolor`); an unparsable assignment is ignored, retaining the
 //! previous value. Transforms, gradients, patterns, paths, text, and image
 //! smoothing are out of scope: `fillRect`/`clearRect` paint axis-aligned
 //! rectangles directly into the live [`raikiri_dom::Document`] bitmap, which
@@ -19,7 +19,7 @@ use boa_engine::{Context, Finalize, JsData, JsNativeError, JsResult, JsString, J
 
 use super::interfaces::{Members, protos, wrap};
 use super::node::mark_dirty;
-use super::webidl::{dom_string, this_element, with_state};
+use super::webidl::{dom_string, host_failure_with_message, this_element, with_state};
 
 /// Native data behind a `CanvasRenderingContext2D` instance: the arena index
 /// of its canvas element. The bitmap itself lives in
@@ -56,150 +56,143 @@ fn this_canvas(this: &JsValue, context: &mut Context) -> JsResult<usize> {
     }
 }
 
-/// Parse a CSS `<color>` for `fillStyle` (HTML Standard §4.12.5 "fillStyle").
-/// Returns premultiplied-free RGBA. Supports named colors (via cssparser's
-/// CSS Color 4 table, so `green` is `0,128,0`), `#rgb`/`#rrggbb`/`#rrggbbaa`,
-/// `rgb()`/`rgba()` with numbers or percentages, `transparent`, and the
-/// `grey`/`gray` aliases through the same table. Anything else is `None`
-/// (the assignment is ignored, per spec).
-fn parse_fill_color(input: &str) -> Option<[u8; 4]> {
-    let trimmed = input.trim();
-    if trimmed.eq_ignore_ascii_case("transparent") {
-        return Some([0, 0, 0, 0]);
-    }
-    if let Some(hex) = trimmed.strip_prefix('#') {
-        return parse_hex_color(hex);
-    }
-    // Named colors are ASCII case-insensitive per CSS.
-    let lower = trimmed.to_ascii_lowercase();
-    if let Ok((r, g, b)) = cssparser::color::parse_named_color(&lower) {
-        return Some([r, g, b, 255]);
-    }
-    parse_rgb_function(trimmed)
+/// A `fillStyle` value parsed as a CSS `<color>` (HTML Standard §4.12.5
+/// "fillStyle"), with the same color parser the cascade uses.
+enum FillColor {
+    Rgba([u8; 4]),
+    /// `currentcolor`, resolved against the canvas element when assigned.
+    CurrentColor,
 }
 
-fn parse_hex_color(hex: &str) -> Option<[u8; 4]> {
-    let bytes = hex.as_bytes();
-    let digit = |b: u8| (b as char).to_digit(16).map(|v| v as u8);
-    match bytes.len() {
-        3 => {
-            let r = digit(bytes[0])?;
-            let g = digit(bytes[1])?;
-            let b = digit(bytes[2])?;
-            Some([r * 17, g * 17, b * 17, 255])
+/// Parse a CSS `<color>` for `fillStyle`. The whole string must be one
+/// color (comments and surrounding whitespace aside); anything else, a
+/// `var()` reference included, is `None` (the assignment is ignored, per
+/// spec).
+fn parse_fill_color(input: &str) -> Option<FillColor> {
+    use raikiri_style::property::{BorderColor, PropertyValue};
+
+    // `border-top-color` takes a plain `<color>` and keeps `currentcolor`
+    // apart from resolved colors.
+    match super::style::parse_property_value("border-top-color", input)? {
+        PropertyValue::BorderTopColor(BorderColor::Resolved(c)) => {
+            // The parser resolves a `currentcolor` nested in a color
+            // function (`color-mix()`, relative color syntax) to black, not
+            // to the canvas element's color, so such values are rejected
+            // rather than painted with the wrong color.
+            if mentions_current_color(input) {
+                return None;
+            }
+            // Only sRGB colors serialize as `#rrggbb` / `rgba()`; a color in
+            // another space (`lab()`, `oklch()`, `color()`, a mix, or
+            // relative color syntax) keeps that space when read back, which
+            // 8-bit RGBA cannot represent, so such values are rejected.
+            if !is_srgb_color_form(input) {
+                return None;
+            }
+            Some(FillColor::Rgba([c.r, c.g, c.b, c.a]))
         }
-        4 => {
-            let r = digit(bytes[0])?;
-            let g = digit(bytes[1])?;
-            let b = digit(bytes[2])?;
-            let a = digit(bytes[3])?;
-            Some([r * 17, g * 17, b * 17, a * 17])
-        }
-        6 => {
-            let v = u32::from_str_radix(hex, 16).ok()?;
-            Some([
-                ((v >> 16) & 0xFF) as u8,
-                ((v >> 8) & 0xFF) as u8,
-                (v & 0xFF) as u8,
-                255,
-            ])
-        }
-        8 => {
-            let v = u32::from_str_radix(hex, 16).ok()?;
-            Some([
-                ((v >> 24) & 0xFF) as u8,
-                ((v >> 16) & 0xFF) as u8,
-                ((v >> 8) & 0xFF) as u8,
-                (v & 0xFF) as u8,
-            ])
-        }
+        PropertyValue::BorderTopColor(BorderColor::CurrentColor) => Some(FillColor::CurrentColor),
         _ => None,
     }
 }
 
-fn parse_rgb_component(token: &str, is_alpha: bool) -> Option<f32> {
-    let token = token.trim();
-    if let Some(percent) = token.strip_suffix('%') {
-        let v: f32 = percent.trim().parse().ok()?;
-        if !v.is_finite() {
-            return None;
-        }
-        if is_alpha {
-            Some((v / 100.0).clamp(0.0, 1.0))
-        } else {
-            Some((v * 255.0 / 100.0).clamp(0.0, 255.0))
-        }
-    } else {
-        let v: f32 = token.parse().ok()?;
-        if !v.is_finite() {
-            return None;
-        }
-        if is_alpha {
-            Some(v.clamp(0.0, 1.0))
-        } else {
-            Some(v.clamp(0.0, 255.0))
-        }
+/// Whether `input` (already known to be one `<color>`) is written as a hex
+/// color, a named or system color, or a non-relative `rgb()`, `rgba()`,
+/// `hsl()`, `hsla()` or `hwb()` function with no missing (`none`)
+/// component: the forms CSS Color serializes as sRGB with the
+/// HTML-compatible serialization.
+fn is_srgb_color_form(input: &str) -> bool {
+    use cssparser::Token;
+
+    let mut input = cssparser::ParserInput::new(input);
+    let mut parser = cssparser::Parser::new(&mut input);
+    // A `<color>` that is not a function is a hex, named, or system color.
+    let Ok(Token::Function(name)) = parser.next().cloned() else {
+        return true;
+    };
+    if !["rgb", "rgba", "hsl", "hsla", "hwb"]
+        .iter()
+        .any(|known| name.eq_ignore_ascii_case(known))
+    {
+        return false;
     }
+    parser
+        .parse_nested_block(|block| {
+            // `from` starts relative color syntax; `none` is a missing
+            // component, which only the `color()` serialization can keep.
+            // Reading every token also consumes the block to its end, as a
+            // nested block must be.
+            let mut legacy = true;
+            while let Ok(token) = block.next() {
+                if let Token::Ident(word) = token
+                    && (word.eq_ignore_ascii_case("from") || word.eq_ignore_ascii_case("none"))
+                {
+                    legacy = false;
+                }
+            }
+            Ok::<_, cssparser::ParseError<'_, ()>>(legacy)
+        })
+        .unwrap_or(false)
 }
 
-fn parse_rgb_function(input: &str) -> Option<[u8; 4]> {
-    let lower = input.to_ascii_lowercase();
-    let (name, args) = if let Some(rest) = lower.strip_prefix("rgba(") {
-        ("rgba", rest)
-    } else if let Some(rest) = lower.strip_prefix("rgb(") {
-        ("rgb", rest)
-    } else {
-        return None;
-    };
-    let args = args.strip_suffix(')')?;
-    // Legacy `rgba(r, g, b, a)` with commas takes precedence when present:
-    // four comma-separated parts parse directly, before any space/slash
-    // normalization that would otherwise merge them into four whitespace
-    // tokens and reject the shape.
-    if name == "rgba" && args.contains(',') {
-        let legacy: Vec<&str> = args.split(',').map(str::trim).collect();
-        if legacy.len() != 4 {
-            return None;
+/// Whether `input` has a `currentcolor` identifier anywhere, including
+/// inside functions. Blocks nested deeper than the scan follows count as a
+/// mention, so such values are rejected instead of overflowing the stack.
+fn mentions_current_color(input: &str) -> bool {
+    const MAX_NESTING_DEPTH: usize = 128;
+
+    fn scan(parser: &mut cssparser::Parser<'_, '_>, depth: usize) -> bool {
+        while let Ok(token) = parser.next() {
+            match token {
+                cssparser::Token::Ident(name) if name.eq_ignore_ascii_case("currentcolor") => {
+                    return true;
+                }
+                cssparser::Token::Function(_)
+                | cssparser::Token::ParenthesisBlock
+                | cssparser::Token::SquareBracketBlock
+                | cssparser::Token::CurlyBracketBlock => {
+                    if depth >= MAX_NESTING_DEPTH {
+                        return true;
+                    }
+                    let found = parser
+                        .parse_nested_block(|block| {
+                            let found = scan(block, depth + 1);
+                            // A nested block must be consumed to its end.
+                            while block.next().is_ok() {}
+                            Ok::<_, cssparser::ParseError<'_, ()>>(found)
+                        })
+                        .unwrap_or(false);
+                    if found {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
         }
-        let r = parse_rgb_component(legacy[0], false)?;
-        let g = parse_rgb_component(legacy[1], false)?;
-        let b = parse_rgb_component(legacy[2], false)?;
-        let a = parse_rgb_component(legacy[3], true)?;
-        return Some([
-            r.round() as u8,
-            g.round() as u8,
-            b.round() as u8,
-            (a * 255.0).round() as u8,
-        ]);
+        false
     }
-    // Modern space/slash syntax (`rgb(255 0 0 / 50%)`) and legacy `rgb()`
-    // with commas (three parts) both appear; normalize commas to spaces and
-    // split a slash-separated alpha.
-    let normalized = args.replace(',', " ");
-    let (rgb_part, alpha_part) = match normalized.split_once('/') {
-        Some((rgb, alpha)) => (rgb, Some(alpha)),
-        None => (normalized.as_str(), None),
-    };
-    let rgb_tokens: Vec<&str> = rgb_part
-        .split_whitespace()
-        .filter(|t| !t.is_empty())
-        .collect();
-    if rgb_tokens.len() != 3 {
-        return None;
+    let mut input = cssparser::ParserInput::new(input);
+    scan(&mut cssparser::Parser::new(&mut input), 0)
+}
+
+/// The canvas serialization of a resolved color (HTML Standard §4.12.5,
+/// "serialization of a color" for canvas): `#rrggbb` when opaque,
+/// `rgba(r, g, b, a)` otherwise.
+fn serialize_canvas_color([r, g, b, a]: [u8; 4]) -> String {
+    if a == 255 {
+        return format!("#{r:02x}{g:02x}{b:02x}");
     }
-    let r = parse_rgb_component(rgb_tokens[0], false)?;
-    let g = parse_rgb_component(rgb_tokens[1], false)?;
-    let b = parse_rgb_component(rgb_tokens[2], false)?;
-    let a = match alpha_part {
-        Some(alpha) => parse_rgb_component(alpha, true)?,
-        None => 1.0,
-    };
-    Some([
-        r.round() as u8,
-        g.round() as u8,
-        b.round() as u8,
-        (a * 255.0).round() as u8,
-    ])
+    // Shortest decimal that maps back to the same 8-bit alpha.
+    let alpha = (1..=3)
+        .map(|digits| format!("{:.*}", digits, f64::from(a) / 255.0))
+        .find(|text| {
+            text.parse::<f64>()
+                .is_ok_and(|value| (value * 255.0).round() as u8 == a)
+        })
+        .unwrap_or_else(|| format!("{:.3}", f64::from(a) / 255.0));
+    let alpha = alpha.trim_end_matches('0').trim_end_matches('.');
+    let alpha = if alpha.is_empty() { "0" } else { alpha };
+    format!("rgba({r}, {g}, {b}, {alpha})")
 }
 
 /// `canvas.width` (HTML Standard §4.12.5): the width content attribute value,
@@ -301,8 +294,8 @@ fn context_canvas(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsRes
     wrap(context, canvas).map(JsValue::from)
 }
 
-/// `ctx.fillStyle` getter: the last successfully assigned serialization, or
-/// `"#000000"` per spec default.
+/// `ctx.fillStyle` getter: the serialization of the last successfully
+/// assigned color, or `"#000000"` per spec default.
 fn fill_style(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let canvas = with_canvas_context(this, context)?;
     let style = with_state(context, |s| {
@@ -319,12 +312,45 @@ fn fill_style(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<
 fn set_fill_style(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let canvas = with_canvas_context(this, context)?;
     let value = dom_string(args, 0, context)?;
-    if let Some(rgba) = parse_fill_color(&value) {
-        with_state(context, |s| {
-            s.canvas_fill_styles.insert(canvas, (value, rgba));
-        })?;
-    }
+    let rgba = match parse_fill_color(&value) {
+        Some(FillColor::Rgba(rgba)) => rgba,
+        Some(FillColor::CurrentColor) => match canvas_current_color(context, canvas)? {
+            Some(rgba) => rgba,
+            None => return Ok(JsValue::undefined()),
+        },
+        None => return Ok(JsValue::undefined()),
+    };
+    // The getter returns the parsed color's serialization, not the text
+    // that was assigned.
+    with_state(context, |s| {
+        s.canvas_fill_styles
+            .insert(canvas, (serialize_canvas_color(rgba), rgba));
+    })?;
     Ok(JsValue::undefined())
+}
+
+/// `currentcolor` for a canvas fill (HTML Standard §4.12.5, `fillStyle`:
+/// `currentcolor` is resolved with the canvas element): the element's
+/// computed `color` at assignment time, or opaque black when the element is
+/// not connected and so has no computed style. `None` when the host does
+/// not report a computed `color`; the assignment is then ignored rather
+/// than painted with a color the element does not have.
+fn canvas_current_color(context: &mut Context, canvas: usize) -> JsResult<Option<[u8; 4]>> {
+    let connected = with_state(context, |s| {
+        super::tree::node_is_connected(s.host.document(), canvas)
+    })?;
+    if !connected {
+        return Ok(Some([0, 0, 0, 255]));
+    }
+    super::style::ensure_flushed(context)?;
+    let computed =
+        with_state(context, |s| s.host.computed_value(canvas, "color"))?.map_err(|error| {
+            host_failure_with_message(context, error, "computed style lookup failed")
+        })?;
+    Ok(match computed.as_deref().and_then(parse_fill_color) {
+        Some(FillColor::Rgba(rgba)) => Some(rgba),
+        _ => None,
+    })
 }
 
 fn arg_double(args: &[JsValue], i: usize, context: &mut Context) -> JsResult<f64> {

@@ -2297,3 +2297,47 @@ fn contextual_custom_highlight_uses_the_texts_inherited_foreground() {
         .expect("paragraph glyphs should be painted");
     assert!(highlight_index < glyph_index);
 }
+
+#[test]
+fn padded_dotted_page_border_stays_inside_the_right_page_margin() {
+    use kurbo::Shape as _;
+
+    // The page border box is the page area inset by the page margins on every
+    // side (CSS Paged Media 3 §3.2), whatever its padding and border style.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let _text = doc.append_text(body, "Hi");
+    let mut rules = build_rule_tree(&doc);
+    rules.add_stylesheet(
+        "@page { size: 400px; margin: 50px; color: hotpink; border: 10px dotted; padding: 20px }",
+        raikiri_style::Origin::Author,
+    );
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page_box = PageBox::new();
+    page_box.width = 400.0;
+    page_box.height = 400.0;
+    let mut scene = Scene::new();
+    paint_single_page(&mut scene, &doc, &cr, page_box).expect("paint succeeds");
+
+    let hotpink = anyrender::Paint::Solid(Color::from_rgba8(255, 105, 180, 255));
+    let border_bounds = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::Fill(fill) if fill.brush == hotpink => {
+                Some((fill.transform * fill.shape.clone()).bounding_box())
+            }
+            RenderCommand::Stroke(stroke) if stroke.brush == hotpink => {
+                Some((stroke.transform * stroke.shape.clone()).bounding_box())
+            }
+            _ => None,
+        })
+        .reduce(|a, b| a.union(b))
+        .expect("the dotted page border paints");
+    assert!(
+        (border_bounds.x0 - 50.0).abs() < 1.0 && (border_bounds.x1 - 350.0).abs() < 1.0,
+        "page border must span x=50..350, got {border_bounds:?}"
+    );
+}
