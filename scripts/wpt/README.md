@@ -185,23 +185,34 @@ The separate meta-assert review flow below is not part of this survey.
 
 ## Updating the CSS dashboard
 
-`docs/wpt-dashboard.html` is generated from the pinned WPT tree and
-`expectations/raikiri-baseline.txt`; do not edit its counters by hand. From a
-working tree, run:
+`docs/wpt-dashboard.html` is generated from the pinned WPT tree; do not edit
+its counters by hand. Its denominator is the number of reftests (test files
+linking a `match` or `mismatch` reference, excluding support and reference
+files) in the print-scope areas of `expectations/print-scope.txt`. Areas with
+no meaning for print are directory prefixes in `expectations/known-issues.txt`
+and appear in a separate out-of-scope table with their reasons; an area in
+neither file is shown as unclassified. XML reftests (`.xht`, `.xml`, `.svg`)
+are left out of the denominator because they are judged by rendering review
+rather than pixel comparison.
 
-    scripts/wpt/update-dashboard.sh
+PASS / FAIL / ERROR per area come from a sweep: one `run-baseline-report` run
+over every structurally runnable reftest. From a working tree, run:
+
+    scripts/wpt/update-dashboard.sh --run-sweep
 
 The wrapper fetches the pinned WPT checkout, runs the `raikiri-wpt` smoke
-reftests, records their passed count, and invokes `generate-dashboard`. The
-page reports that smoke count alongside the T2 baseline coverage. The
-generator reads the WPT Git tree rather than only the sparse working files, so
-the CSS denominator remains complete. To regenerate without rerunning the
-smoke tests, invoke the binary directly (the optional smoke count can be
-supplied when it is available):
+reftests, runs `scripts/wpt/sweep-reftests.sh` (slow: it renders every
+runnable reftest; `WPT_SWEEP_JOBS` sets the parallelism), and invokes
+`generate-dashboard`. Pass `--sweep FILE` instead to reuse an existing sweep
+TSV. Without either option the page shows reftest counts and baseline
+coverage only. To regenerate without rerunning the smoke tests, invoke the
+binary directly (the optional smoke count can be supplied when it is
+available):
 
     cargo run --locked -p raikiri-wpt --bin generate-dashboard -- \
         --wpt-root target/wpt \
         --baseline expectations/raikiri-baseline.txt \
+        --sweep target/wpt-sweep/sweep-SHA.tsv \
         --basic-reftest-count 12 \
         --output docs/wpt-dashboard.html
 

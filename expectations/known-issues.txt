@@ -17,6 +17,32 @@ css/css-animations/ | Non-goal (interactive, §2 Non-Goals + §12.9)
 css/css-transitions/ | Non-goal (interactive, §2 Non-Goals + §12.9)
 html/interaction/ | Non-goal (interactive rendering, §2 Non-Goals + §12.9)
 
+# ── Outside the print scope (no meaning for paged, non-interactive output) ──
+# expectations/print-scope.txt lists the css/ areas counted by the dashboard.
+css/css-view-transitions/ | Out of print scope (animated transitions between document states)
+css/css-easing/ | Out of print scope (timing functions used only by animations and transitions)
+css/css-image-animation/ | Out of print scope (animated image playback control)
+css/css-highlight-api/ | Out of print scope (script-registered highlights over live ranges)
+css/css-paint-api/ | Out of print scope (Houdini paint worklets)
+css/css-layout-api/ | Out of print scope (Houdini layout worklets)
+css/css-typed-om/ | Out of print scope (JavaScript object model for style values)
+css/css-parser-api/ | Out of print scope (JavaScript CSS parser API, not shipped)
+css/css-font-loading/ | Out of print scope (JavaScript FontFace loading API)
+css/geometry/ | Out of print scope (JavaScript DOMMatrix / DOMPoint / DOMRect API)
+css/cssom-view/ | Out of print scope (scrolling and viewport geometry APIs)
+css/css-scroll-snap/ | Out of print scope (scroll snapping)
+css/css-scrollbars/ | Out of print scope (scrollbar styling)
+css/css-scroll-anchoring/ | Out of print scope (scroll anchoring)
+css/css-overscroll-behavior/ | Out of print scope (overscroll and scroll chaining)
+css/css-overflow/scroll-markers/ | Out of print scope (scroll markers and scroll buttons for scroll containers)
+css/css-forced-color-adjust/ | Out of print scope (forced colors mode is a screen accessibility mode)
+css/css-size-adjust/ | Out of print scope (mobile text-size-adjust)
+css/css-round-display/ | Out of print scope (round screen displays)
+css/css-device-adapt/ | Out of print scope (@viewport, removed from the specification)
+css/css-speech/ | Out of print scope (aural rendering)
+css/css-exclusions/ | Out of print scope (CSS Exclusions, not shipped by current engines)
+css/fetching/ | Out of print scope (resource fetch timing checked by script)
+
 # ── §2 Non-Goals — Japanese vertical typesetting / ruby (MVP horizontal only) ──
 css/css-ruby/ | Non-goal for MVP (JIS X 4051 / 縦書き outside MVP scope, §2 Non-Goals)
 

@@ -5,18 +5,38 @@ use std::fs;
 use assert_cmd::Command;
 use tempfile::tempdir;
 
+/// Write scope files next to `root` and return the arguments that use them.
+fn scope_args(root: &std::path::Path) -> Vec<String> {
+    let print_scope = root.join("print-scope.txt");
+    fs::write(&print_scope, "css/foo/\n").unwrap();
+    let known_issues = root.join("known-issues.txt");
+    fs::write(&known_issues, "css/bar/ | Out of print scope (fixture)\n").unwrap();
+    vec![
+        "--print-scope".to_owned(),
+        print_scope.to_str().unwrap().to_owned(),
+        "--known-issues".to_owned(),
+        known_issues.to_str().unwrap().to_owned(),
+    ]
+}
+
 #[test]
 fn binary_generates_dashboard_from_a_non_git_wpt_tree() {
     let root = tempdir().unwrap();
-    fs::create_dir_all(root.path().join("css/foo/parsing")).unwrap();
-    fs::write(root.path().join("css/foo/a.html"), "a").unwrap();
-    fs::write(root.path().join("css/foo/parsing/b.html"), "b").unwrap();
+    let link = r#"<link rel="match" href="ref.html">"#;
+    fs::create_dir_all(root.path().join("css/foo/sub")).unwrap();
+    fs::create_dir_all(root.path().join("css/bar")).unwrap();
+    fs::write(root.path().join("css/foo/a.html"), link).unwrap();
+    fs::write(root.path().join("css/foo/sub/b.html"), link).unwrap();
+    fs::write(root.path().join("css/foo/parsing.html"), "no reference").unwrap();
+    fs::write(root.path().join("css/bar/c.html"), link).unwrap();
     fs::write(root.path().join("css/README.md"), "readme").unwrap();
 
     let baseline = root.path().join("baseline.txt");
+    fs::write(&baseline, "# comment\ncss/foo/a.html\nparsing.html\n").unwrap();
+    let sweep = root.path().join("sweep.tsv");
     fs::write(
-        &baseline,
-        "# comment\ncss/foo/a.html\nb.html\ncss/README.md\n",
+        &sweep,
+        "css/foo/a.html\tPASS\t\ncss/foo/sub/b.html\tFAIL\tmismatch\n",
     )
     .unwrap();
     let output = root.path().join("nested/dashboard.html");
@@ -28,17 +48,21 @@ fn binary_generates_dashboard_from_a_non_git_wpt_tree() {
             root.path().to_str().unwrap(),
             "--baseline",
             baseline.to_str().unwrap(),
+            "--sweep",
+            sweep.to_str().unwrap(),
             "--output",
             output.to_str().unwrap(),
         ])
+        .args(scope_args(root.path()))
         .assert()
         .success();
     let stdout = String::from_utf8(assertion.get_output().stdout.clone()).unwrap();
-    assert!(stdout.contains("3 WPT files, 3 baseline entries"));
+    assert!(stdout.contains("5 WPT files, 2 baseline entries, 2 in-scope reftests, 1 PASS"));
 
     let html = fs::read_to_string(output).unwrap();
-    assert!(html.contains("Total (css/)") && html.contains("3/3"));
-    assert!(html.contains("css/foo/parsing") && html.contains("1/1"));
+    assert!(html.contains("In-scope pass rate: 50.00%"));
+    assert!(html.contains("css/foo/sub"));
+    assert!(html.contains("Out of print scope (fixture)"));
 }
 
 #[test]
@@ -80,6 +104,7 @@ fn binary_reports_output_path_errors() {
             "--output",
             parent_file.join("dashboard.html").to_str().unwrap(),
         ])
+        .args(scope_args(root.path()))
         .output()
         .unwrap();
     assert!(!parent_error.status.success());
@@ -100,6 +125,7 @@ fn binary_reports_output_path_errors() {
             "--output",
             output_dir.to_str().unwrap(),
         ])
+        .args(scope_args(root.path()))
         .output()
         .unwrap();
     assert!(!output_error.status.success());
@@ -116,6 +142,7 @@ fn binary_reports_output_path_errors() {
             "--output",
             "dashboard.html",
         ])
+        .args(scope_args(root.path()))
         .output()
         .unwrap();
     assert!(no_parent.status.success());
