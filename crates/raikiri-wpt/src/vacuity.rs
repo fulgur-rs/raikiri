@@ -237,13 +237,15 @@ pub fn feature_properties(test_html: &str, test_id: &str) -> BTreeSet<String> {
         let Some(end) = tag_end(test_html, start) else {
             break;
         };
-        let tag = &lower[start..end];
-        if tag.contains("help")
-            && let Some(href) = tag.split("href=").nth(1)
+        let attrs = tag_attributes(test_html, start, end);
+        let href = attrs
+            .iter()
+            .find(|(name, _)| name == "href")
+            .map(|(_, value)| lower[value.clone()].to_owned());
+        if has_rel(test_html, &attrs, "help")
+            && let Some(href) = href
         {
-            let href = href.trim_start_matches(['"', '\'']);
-            let href = href.split(['"', '\'', ' ', '>']).next().unwrap_or_default();
-            let (path, fragment) = href.split_once('#').unwrap_or((href, ""));
+            let (path, fragment) = href.split_once('#').unwrap_or((&href, ""));
             subjects.push(
                 path.trim_end_matches('/')
                     .rsplit('/')
@@ -311,16 +313,18 @@ fn passes(
 pub fn blank_document(test_html: &str) -> String {
     let lower = test_html.to_ascii_lowercase();
     let mut head = String::new();
-    for (tag, keep) in [("<meta", None), ("<link", Some("match"))] {
+    for tag in ["<meta", "<link"] {
         let mut from = 0;
         while let Some(offset) = lower[from..].find(tag) {
             let start = from + offset;
             let Some(end) = tag_end(test_html, start) else {
                 break;
             };
-            let text = &test_html[start..end];
-            if keep.is_none_or(|needle| text.to_ascii_lowercase().contains(needle)) {
-                head.push_str(text);
+            let attrs = tag_attributes(test_html, start, end);
+            let reference =
+                has_rel(test_html, &attrs, "match") || has_rel(test_html, &attrs, "mismatch");
+            if tag == "<meta" || reference {
+                head.push_str(&test_html[start..end]);
                 head.push('\n');
             }
             from = end;
@@ -334,7 +338,8 @@ pub fn blank_document(test_html: &str) -> String {
 pub struct Declaration {
     /// Byte range in the document, including a trailing `;` when present.
     pub range: Range<usize>,
-    /// Lowercased property and whitespace-normalized value, `name:value`.
+    /// Property (lowercased unless custom) and whitespace-normalized value,
+    /// `name:value`.
     pub key: String,
 }
 
@@ -380,7 +385,11 @@ pub fn author_declarations(html: &str) -> Vec<Declaration> {
         let Some(end) = tag_end(html, i) else {
             break;
         };
-        style_attribute_declarations(html, &lower, name_start + name_len, end, &mut out);
+        for (attr, value) in attributes(html, name_start + name_len, end) {
+            if attr == "style" {
+                out.extend(css_declarations(&html[value.clone()], true, value.start));
+            }
+        }
         i = end;
         if name == "style" || name == "script" {
             let close = format!("</{name}");
@@ -428,16 +437,11 @@ fn tag_end(html: &str, start: usize) -> Option<usize> {
     None
 }
 
-/// Declarations inside the `style` attribute of the tag spanning
-/// `attrs_start..tag_end`.
-fn style_attribute_declarations(
-    html: &str,
-    lower: &str,
-    attrs_start: usize,
-    tag_end: usize,
-    out: &mut Vec<Declaration>,
-) {
+/// Attributes of the tag spanning `attrs_start..tag_end`, as lowercased
+/// names with the byte range of each value.
+fn attributes(html: &str, attrs_start: usize, tag_end: usize) -> Vec<(String, Range<usize>)> {
     let bytes = html.as_bytes();
+    let mut out = Vec::new();
     let mut i = attrs_start;
     while i < tag_end {
         while i < tag_end && (bytes[i].is_ascii_whitespace() || bytes[i] == b'/') {
@@ -450,7 +454,7 @@ fn style_attribute_declarations(
         {
             i += 1;
         }
-        let name = &lower[name_start..i];
+        let name = html[name_start..i].to_ascii_lowercase();
         while i < tag_end && bytes[i].is_ascii_whitespace() {
             i += 1;
         }
@@ -464,7 +468,7 @@ fn style_attribute_declarations(
         while i < tag_end && bytes[i].is_ascii_whitespace() {
             i += 1;
         }
-        let (value_start, value_end) = match bytes.get(i) {
+        let value = match bytes.get(i) {
             Some(&q @ (b'"' | b'\'')) => {
                 let start = i + 1;
                 let end = bytes[start..tag_end]
@@ -472,24 +476,38 @@ fn style_attribute_declarations(
                     .position(|&b| b == q)
                     .map_or(tag_end, |e| start + e);
                 i = end + 1;
-                (start, end)
+                start..end
             }
             _ => {
                 let start = i;
                 while i < tag_end && !bytes[i].is_ascii_whitespace() && bytes[i] != b'>' {
                     i += 1;
                 }
-                (start, i)
+                start..i
             }
         };
-        if name == "style" {
-            out.extend(css_declarations(
-                &html[value_start..value_end],
-                true,
-                value_start,
-            ));
-        }
+        out.push((name, value));
     }
+    out
+}
+
+/// Attributes of the start tag beginning at `start` (`<name ...>`).
+fn tag_attributes(html: &str, start: usize, end: usize) -> Vec<(String, Range<usize>)> {
+    let name_len = html.as_bytes()[start + 1..end]
+        .iter()
+        .take_while(|b| b.is_ascii_alphanumeric() || **b == b'-')
+        .count();
+    attributes(html, start + 1 + name_len, end)
+}
+
+/// Whether the `rel` attribute among `attrs` has the token `token`.
+fn has_rel(html: &str, attrs: &[(String, Range<usize>)], token: &str) -> bool {
+    attrs.iter().any(|(name, value)| {
+        name == "rel"
+            && html[value.clone()]
+                .split_ascii_whitespace()
+                .any(|t| t.eq_ignore_ascii_case(token))
+    })
 }
 
 /// Declarations in CSS text. `inline` treats the top level as a declaration
@@ -575,11 +593,15 @@ fn push_declaration(css: &str, range: Range<usize>, base: usize, out: &mut Vec<D
     }
     out.push(Declaration {
         range: base + range.start..base + range.end,
-        key: format!(
-            "{}:{}",
-            name.to_ascii_lowercase(),
-            value.to_ascii_lowercase()
-        ),
+        // Property names are ASCII case-insensitive, custom property names
+        // are not. Values keep their case: strings, URLs and custom property
+        // values are case-sensitive, and a keyword that differs only in case
+        // merely makes the declaration count as test-only.
+        key: if name.starts_with("--") {
+            format!("{name}:{value}")
+        } else {
+            format!("{}:{value}", name.to_ascii_lowercase())
+        },
     });
 }
 

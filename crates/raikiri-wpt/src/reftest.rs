@@ -3422,8 +3422,12 @@ pub fn run_pair_with_test_html(
     variant_query: &str,
     test_html: &str,
 ) -> Result<ReftestResult, ReftestError> {
+    // The test is read before the reference. A self-referencing reftest
+    // (`href="?ref"`) shares the test's path, so only the first read of that
+    // path is replaced and the reference keeps the original document.
+    let served = std::cell::Cell::new(false);
     run_pair_with_reader(pair, config, resolve_images, variant_query, |p| {
-        if p == pair.test.as_path() {
+        if p == pair.test.as_path() && !served.replace(true) {
             return Ok(test_html.to_owned());
         }
         std::fs::read_to_string(p).map_err(|source| ReftestError::Io {

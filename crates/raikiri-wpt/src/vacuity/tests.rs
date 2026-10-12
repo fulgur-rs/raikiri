@@ -19,7 +19,7 @@ fn collects_style_element_and_attribute_declarations() {
     assert_eq!(
         keys(html),
         [
-            "color:green",
+            "color:Green",
             "width:10px",
             "margin:0",
             "text-decoration:none",
@@ -92,4 +92,20 @@ fn feature_properties_come_from_file_name_and_help_links() {
         features.into_iter().collect::<Vec<_>>(),
         ["background-color", "border-radius", "box-shadow"]
     );
+}
+
+#[test]
+fn blank_document_keeps_only_reference_links_by_rel_token() {
+    let html = r#"<link rel="stylesheet" href="matching.css"><link rel=mismatch href="b.html">
+<link rel="help" href="https://example.test/#match">"#;
+    let blank = blank_document(html);
+    assert!(!blank.contains("matching.css"));
+    assert!(!blank.contains("help"));
+    assert!(blank.contains("<link rel=mismatch href=\"b.html\">"));
+}
+
+#[test]
+fn declaration_keys_keep_case_sensitive_parts() {
+    let html = r#"<div style="--Foo: Bar; COLOR: Green; content: 'A'">"#;
+    assert_eq!(keys(html), ["--Foo:Bar", "color:Green", "content:'A'"]);
 }
