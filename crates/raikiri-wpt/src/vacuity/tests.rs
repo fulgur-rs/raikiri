@@ -570,3 +570,31 @@ fn a_probe_that_fails_to_render_is_inconclusive() {
     );
     assert_eq!(verdict, Verdict::Inconclusive { probe: "feature" });
 }
+
+#[test]
+fn a_probe_error_for_one_reference_does_not_hide_another() {
+    // The property probe against `ref.html` removes `clear` and the script
+    // throws; `ref2.html` uses every test declaration and keeps the test.
+    let test = r#"<!DOCTYPE html><link rel="match" href="ref.html"><link rel="match" href="ref2.html"><body style="margin:0"><div id="d" style="clear:both;width:8px;height:8px;background-color:green"></div>
+<script>if (!document.getElementById("d").getAttribute("style").includes("clear")) throw new Error("ablated");</script>"#;
+    let ref2 = r#"<!DOCTYPE html><body style="margin:0"><div style="clear:both;width:8px;height:8px;background-color:green"></div>"#;
+    let verdict = audit(
+        &[
+            ("css/a/alt-003.html", test),
+            ("css/a/ref.html", GREEN_REF),
+            ("css/a/ref2.html", ref2),
+        ],
+        "css/a/alt-003.html",
+    );
+    assert_eq!(verdict, Verdict::Kept { ablated: 0 });
+}
+
+#[test]
+fn help_links_are_decoded_before_matching_features() {
+    let html = r#"<link rel="help" href="https://drafts.csswg.org/css-backgrounds/#background&#45;color"><style>p { background-color: red; color: red }</style>"#;
+    let features = feature_properties(html, "css/a/x-001.html");
+    assert_eq!(
+        features.into_iter().collect::<Vec<_>>(),
+        ["background-color"]
+    );
+}

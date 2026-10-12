@@ -163,7 +163,10 @@ fn probe_passing(wpt_root: &Path, id: &str, config: ReftestConfig) -> Result<Ver
     let features = feature_properties(&test_html, path);
     let by_feature = remove_declarations(&test_html, |key| features.contains(property_of(key)));
     let mut verdict: Option<Verdict> = None;
-    for pair in matches {
+    // A probe that errors for one reference leaves the verdict open; a later
+    // reference can still keep the test.
+    let mut inconclusive = None;
+    'pairs: for pair in matches {
         // Probe in the same resource mode in which the pair passes.
         let Some(resolve_images) = [true, false]
             .into_iter()
@@ -178,7 +181,10 @@ fn probe_passing(wpt_root: &Path, id: &str, config: ReftestConfig) -> Result<Ver
                 continue;
             }
             Some(false) => {}
-            None => return Ok(Verdict::Inconclusive { probe: "blank" }),
+            None => {
+                inconclusive.get_or_insert("blank");
+                continue;
+            }
         }
         let reference = author_declarations(&reference_html);
         let reference_keys: BTreeSet<&str> = reference.iter().map(|d| d.key.as_str()).collect();
@@ -206,7 +212,10 @@ fn probe_passing(wpt_root: &Path, id: &str, config: ReftestConfig) -> Result<Ver
                     break;
                 }
                 Some(false) => {}
-                None => return Ok(Verdict::Inconclusive { probe }),
+                None => {
+                    inconclusive.get_or_insert(probe);
+                    continue 'pairs;
+                }
             }
         }
         if let Some((probe, ablated)) = unstyled {
@@ -218,6 +227,9 @@ fn probe_passing(wpt_root: &Path, id: &str, config: ReftestConfig) -> Result<Ver
         return Ok(Verdict::Kept {
             ablated: by_declaration.1,
         });
+    }
+    if let Some(probe) = inconclusive {
+        return Ok(Verdict::Inconclusive { probe });
     }
     Ok(verdict.unwrap_or(Verdict::NotPass {
         status: Status::Fail,
@@ -238,7 +250,11 @@ pub fn feature_properties(test_html: &str, test_id: &str) -> BTreeSet<String> {
             .attributes
             .iter()
             .find(|(name, _)| name == "href")
-            .map(|(_, value)| test_html[value.clone()].to_ascii_lowercase());
+            .map(|(_, value)| {
+                decode_character_references(&test_html[value.clone()])
+                    .0
+                    .to_ascii_lowercase()
+            });
         if tag.name == "link"
             && has_rel(test_html, &tag.attributes, "help")
             && let Some(href) = href
