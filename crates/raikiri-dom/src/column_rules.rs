@@ -343,12 +343,17 @@ pub(crate) fn project(
                 row_rules.as_slice()
             };
             let in_order = document.nodes[owner].multicol_rows.is_empty()
-                && *ordered.entry(owner).or_insert_with(|| {
-                    source.windows(2).all(|pair| {
-                        pair[0].y <= pair[1].y
-                            && pair[0].y + pair[0].height <= pair[1].y + pair[1].height
-                    })
-                });
+                && match ordered.entry(owner) {
+                    std::collections::hash_map::Entry::Occupied(entry) => *entry.get(),
+                    std::collections::hash_map::Entry::Vacant(entry) => {
+                        // The ordering check reads every rule once per owner.
+                        work.charge(source.len())?;
+                        *entry.insert(source.windows(2).all(|pair| {
+                            pair[0].y <= pair[1].y
+                                && pair[0].y + pair[0].height <= pair[1].y + pair[1].height
+                        }))
+                    }
+                };
             let page_end = page.content_box.y + page.content_box.height;
             let source = if in_order {
                 // Rules ending above the page and rules starting below it
