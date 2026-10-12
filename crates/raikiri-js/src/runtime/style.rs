@@ -321,24 +321,27 @@ pub(crate) fn inline_style_value(style_attr: Option<&str>, property: &str) -> St
 /// Names are written as escaped identifiers, so a decoded name such as
 /// `--a;b` cannot end its declaration early, and every value has any
 /// string, URL, comment, or block it leaves open at its end closed, so it
-/// cannot swallow the declarations after it.
+/// cannot swallow the declarations after it. A declaration whose value
+/// nests blocks deeper than [`MAX_VALUE_NESTING_DEPTH`] is dropped, since
+/// its open blocks cannot be closed without unbounded recursion.
 fn serialize_declarations<'a>(
     declarations: impl IntoIterator<Item = (&'a str, &'a str, bool)>,
 ) -> String {
     declarations
         .into_iter()
-        .map(|(name, value, important)| {
+        .filter_map(|(name, value, important)| {
+            let suffix = unclosed_value_suffix(value)?;
             let mut text = String::new();
             // Writing into a `String` cannot fail.
             let _ = cssparser::serialize_identifier(name, &mut text);
             text.push_str(": ");
             text.push_str(value);
-            text.push_str(&unclosed_value_suffix(value));
+            text.push_str(&suffix);
             if important {
                 text.push_str(" !important");
             }
             text.push(';');
-            text
+            Some(text)
         })
         .collect::<Vec<_>>()
         .join(" ")
@@ -347,16 +350,27 @@ fn serialize_declarations<'a>(
 /// The text that closes whatever `value` leaves open when it is read to the
 /// end (CSS Syntax: an unterminated string, URL, comment, or block simply
 /// ends at EOF), so `value` followed by this suffix tokenizes the same way
-/// in a longer declaration block. Empty when nothing is left open.
-fn unclosed_value_suffix(value: &str) -> String {
+/// in a longer declaration block. Empty when nothing is left open; `None`
+/// when `value` nests blocks deeper than [`MAX_VALUE_NESTING_DEPTH`].
+fn unclosed_value_suffix(value: &str) -> Option<String> {
     let mut input = ParserInput::new(value);
     let mut parser = Parser::new(&mut input);
-    unclosed_suffix_in(&mut parser, value).0
+    unclosed_suffix_in(&mut parser, value, 0).map(|(suffix, _)| suffix)
 }
 
-/// [`unclosed_value_suffix`] for the rest of `input`, also returning the
-/// byte offset right after its last token.
-fn unclosed_suffix_in(input: &mut Parser<'_, '_>, source: &str) -> (String, usize) {
+/// How deeply [`unclosed_value_suffix`] follows nested blocks. Each level
+/// is a native stack frame, so the limit keeps hostile input such as
+/// `f(f(f(...` from overflowing the stack; it matches the nesting the style
+/// engine itself accepts in deferred values.
+const MAX_VALUE_NESTING_DEPTH: usize = 128;
+
+/// [`unclosed_value_suffix`] for the rest of `input`, `depth` blocks deep,
+/// also returning the byte offset right after its last token.
+fn unclosed_suffix_in(
+    input: &mut Parser<'_, '_>,
+    source: &str,
+    depth: usize,
+) -> Option<(String, usize)> {
     use cssparser::Token;
 
     let mut last_end = input.position().byte_index();
@@ -364,7 +378,7 @@ fn unclosed_suffix_in(input: &mut Parser<'_, '_>, source: &str) -> (String, usiz
         let start = input.position().byte_index();
         let token = match input.next_including_whitespace_and_comments() {
             Ok(token) => token.clone(),
-            Err(_) => return (String::new(), last_end),
+            Err(_) => return Some((String::new(), last_end)),
         };
         let closer = match token {
             Token::Function(_) | Token::ParenthesisBlock => Some(')'),
@@ -373,18 +387,24 @@ fn unclosed_suffix_in(input: &mut Parser<'_, '_>, source: &str) -> (String, usiz
             _ => None,
         };
         if let Some(closer) = closer {
+            if depth >= MAX_VALUE_NESTING_DEPTH {
+                return None;
+            }
             let inner = input
                 .parse_nested_block(|block| {
-                    Ok::<_, cssparser::ParseError<'_, ()>>(unclosed_suffix_in(block, source))
+                    let inner = unclosed_suffix_in(block, source, depth + 1);
+                    // A nested block must be consumed to its end.
+                    while block.next_including_whitespace_and_comments().is_ok() {}
+                    Ok::<_, cssparser::ParseError<'_, ()>>(inner)
                 })
-                .unwrap_or_default();
+                .unwrap_or(Some(Default::default()))?;
             let end = input.position().byte_index();
             // A closed block ends one byte (its closing token) after its
             // last inner token; a block cut off by EOF ends right there.
             if !inner.0.is_empty() || end == inner.1 {
                 let mut suffix = inner.0;
                 suffix.push(closer);
-                return (suffix, end);
+                return Some((suffix, end));
             }
             last_end = end;
             continue;
@@ -439,7 +459,7 @@ fn unclosed_suffix_in(input: &mut Parser<'_, '_>, source: &str) -> (String, usiz
             _ if odd_backslashes(text) => "\u{FFFD}".to_owned(),
             _ => String::new(),
         };
-        return (suffix, end);
+        return Some((suffix, end));
     }
 }
 

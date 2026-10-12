@@ -1231,3 +1231,29 @@ fn serialized_declarations_keep_their_boundaries() {
         "s.setProperty('--y', 'a; color: blue'); s.color === 'red' && s.length === 2",
     );
 }
+
+#[test]
+fn deeply_nested_values_do_not_overflow_the_stack() {
+    // A value nested past the limit is dropped rather than closed.
+    let deep = format!("--x: {}", "f(".repeat(20000));
+    assert_eq!(
+        with_inline_style_property(Some(&deep), "color", "red", false),
+        "color: red;"
+    );
+    // Nesting within the limit is still closed.
+    let shallow = format!("--x: {}", "f(".repeat(100));
+    assert_eq!(
+        with_inline_style_property(Some(&shallow), "color", "red", false),
+        format!("{}{}; color: red;", shallow, ")".repeat(100))
+    );
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "var s = document.body.style; \
+         document.body.setAttribute('style', '--x: ' + 'f('.repeat(20000)); \
+         s.color = 'red'; var text = s.cssText; \
+         s.cssText = '--y: ' + '['.repeat(20000); \
+         text === 'color: red;' && s.cssText === ''",
+    );
+}

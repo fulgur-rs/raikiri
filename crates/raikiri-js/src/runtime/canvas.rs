@@ -90,9 +90,12 @@ fn parse_fill_color(input: &str) -> Option<FillColor> {
 }
 
 /// Whether `input` has a `currentcolor` identifier anywhere, including
-/// inside functions.
+/// inside functions. Blocks nested deeper than the scan follows count as a
+/// mention, so such values are rejected instead of overflowing the stack.
 fn mentions_current_color(input: &str) -> bool {
-    fn scan(parser: &mut cssparser::Parser<'_, '_>) -> bool {
+    const MAX_NESTING_DEPTH: usize = 128;
+
+    fn scan(parser: &mut cssparser::Parser<'_, '_>, depth: usize) -> bool {
         while let Ok(token) = parser.next() {
             match token {
                 cssparser::Token::Ident(name) if name.eq_ignore_ascii_case("currentcolor") => {
@@ -102,9 +105,12 @@ fn mentions_current_color(input: &str) -> bool {
                 | cssparser::Token::ParenthesisBlock
                 | cssparser::Token::SquareBracketBlock
                 | cssparser::Token::CurlyBracketBlock => {
+                    if depth >= MAX_NESTING_DEPTH {
+                        return true;
+                    }
                     let found = parser
                         .parse_nested_block(|block| {
-                            let found = scan(block);
+                            let found = scan(block, depth + 1);
                             // A nested block must be consumed to its end.
                             while block.next().is_ok() {}
                             Ok::<_, cssparser::ParseError<'_, ()>>(found)
@@ -120,7 +126,7 @@ fn mentions_current_color(input: &str) -> bool {
         false
     }
     let mut input = cssparser::ParserInput::new(input);
-    scan(&mut cssparser::Parser::new(&mut input))
+    scan(&mut cssparser::Parser::new(&mut input), 0)
 }
 
 /// The canvas serialization of a resolved color (HTML Standard §4.12.5,

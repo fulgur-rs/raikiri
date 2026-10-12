@@ -438,3 +438,16 @@ fn current_color_lookup_failure_is_a_host_error() {
     );
     assert!(result.is_err(), "got {result:?}");
 }
+
+#[test]
+fn deeply_nested_fill_style_is_rejected() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var c = document.createElement('canvas'); var ctx = c.getContext('2d'); \
+         ctx.fillStyle = 'blue'; ctx.fillStyle = 'color-mix(in srgb, '.repeat(20000) + 'red'; \
+         ctx.fillStyle === '#0000ff'",
+    );
+    assert!(super::mentions_current_color(&"(".repeat(20000)));
+    assert!(!super::mentions_current_color(&"(".repeat(100)));
+}
