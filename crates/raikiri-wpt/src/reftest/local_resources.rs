@@ -42,22 +42,13 @@ impl WptFileNetworkProvider {
     }
 
     fn rebase(&self, mut request: raikiri_traits::Request) -> raikiri_traits::Request {
-        let Some(root) = self.root.as_deref() else {
-            return request;
-        };
-        if request.url.scheme() != "file" {
-            return request;
-        }
-        let Ok(path) = request.url.to_file_path() else {
-            return request;
-        };
-        if path.starts_with(root) {
-            return request;
-        }
-        let Ok(relative) = path.strip_prefix("/") else {
-            return request;
-        };
-        if let Ok(mut url) = raikiri::Url::from_file_path(root.join(relative)) {
+        // `to_file_path` also rejects every scheme other than `file`.
+        if let Some(root) = self.root.as_deref()
+            && let Ok(path) = request.url.to_file_path()
+            && !path.starts_with(root)
+            && let Ok(relative) = path.strip_prefix("/")
+            && let Ok(mut url) = raikiri::Url::from_file_path(root.join(relative))
+        {
             url.set_query(request.url.query());
             url.set_fragment(request.url.fragment());
             request.url = url;

@@ -106,3 +106,22 @@ fn a_loaded_image_passes_through() {
     assert_eq!(resolved.intrinsic, IntrinsicBox::new(4.0, 2.0));
     assert!(matches!(resolved.disposition, ResolveDisposition::Ok));
 }
+
+#[test]
+fn a_non_file_url_is_left_alone() {
+    let root = checkout();
+    let provider = WptFileNetworkProvider::new(Some(root.path().to_path_buf()));
+    let url = raikiri::Url::parse("about:invalid").unwrap();
+    assert_eq!(provider.rebase(get(url.clone())).url, url);
+}
+
+#[test]
+fn a_rebased_url_keeps_its_query_and_fragment() {
+    let root = checkout();
+    let provider = WptFileNetworkProvider::new(Some(root.path().to_path_buf()));
+    let url = raikiri::Url::parse("file:///images/green.png?a=1#b").unwrap();
+    let rebased = provider.rebase(get(url)).url;
+    assert_eq!(rebased.query(), Some("a=1"));
+    assert_eq!(rebased.fragment(), Some("b"));
+    assert!(rebased.path().ends_with("/images/green.png"));
+}
