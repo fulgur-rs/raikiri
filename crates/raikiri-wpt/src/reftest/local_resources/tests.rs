@@ -125,3 +125,11 @@ fn a_rebased_url_keeps_its_query_and_fragment() {
     assert_eq!(rebased.fragment(), Some("b"));
     assert!(rebased.path().ends_with("/images/green.png"));
 }
+
+#[test]
+fn a_file_url_with_another_host_is_not_rebased() {
+    let root = checkout();
+    let provider = WptFileNetworkProvider::new(Some(root.path().to_path_buf()));
+    let url = raikiri::Url::parse("file://example.test/images/green.png").unwrap();
+    assert_eq!(provider.rebase(get(url.clone())).url, url);
+}

@@ -326,7 +326,7 @@ impl DocumentHost for WptDocumentHost {
             &mut self.setup.uncascaded.dom,
             &cascade,
             self.setup.page_box,
-            &image_resolver,
+            &crate::reftest::local_resources::BrokenImageFallback::new(&image_resolver),
             self.setup.document_base_url.as_ref(),
         )
         .map_err(|error| HostError(format!("live DOM layout: {error:?}")))?;

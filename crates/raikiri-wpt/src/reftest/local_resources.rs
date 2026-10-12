@@ -47,6 +47,7 @@ impl WptFileNetworkProvider {
         if let Some(root) = self.root.as_deref()
             && request.url.scheme() == "file"
             && let Ok(root_url) = raikiri::Url::from_directory_path(root)
+            && request.url.host() == root_url.host()
             && !request.url.path().starts_with(root_url.path())
             && let Ok(mut url) = root_url.join(request.url.path().trim_start_matches('/'))
         {

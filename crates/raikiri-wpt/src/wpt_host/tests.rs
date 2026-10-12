@@ -1013,3 +1013,18 @@ fn live_flush_prepares_generated_content_images() {
     host.flush().unwrap();
     assert!(host.document().content_image(p, before, 0).is_some());
 }
+
+#[test]
+fn a_live_flush_lays_out_an_image_that_fails_to_load_as_broken() {
+    let dir = tempfile::tempdir().unwrap();
+    let setup = prepare_wpt_live_document(
+        "<img src=\"missing.png\"><img src=\"\">",
+        DEFAULT_REFTTEST_WIDTH,
+        DEFAULT_REFTTEST_HEIGHT,
+        dir.path(),
+        dir.path(),
+    )
+    .unwrap();
+    let mut host = WptDocumentHost::new(setup, dir.path());
+    host.flush().unwrap();
+}
