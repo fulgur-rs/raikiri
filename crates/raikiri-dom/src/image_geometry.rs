@@ -269,17 +269,14 @@ fn round_axis_tiles(
     if positioning_len.is_nan() || positioning_len <= 0.0 || base_len.is_nan() || base_len <= 0.0 {
         return (base_len, Some(1));
     }
-    let count = (positioning_len / base_len).round() as i64;
-    let count = count.max(1);
-    // Guard against absurd counts from tiny base sizes; tiling is bounded by
-    // the painting-area `repeat` path, but `round`/`space` allocate one entry
-    // per tile inside `positioning`.
-    // cov:ignore: defensive bound for degenerate tiny tiles; tested via empty-repeat guard
-    if count > 10_000 {
-        return (base_len, Some(1));
-    }
+    // A tiny base size is capped at a bounded number of larger tiles, which
+    // still fill the positioning area a whole number of times.
+    let count = ((positioning_len / base_len).round() as i64).clamp(1, MAX_ROUND_TILES);
     (positioning_len / count as f64, Some(count))
 }
+
+/// Most tiles `round` fits into one axis of the positioning area.
+const MAX_ROUND_TILES: i64 = 10_000;
 
 /// Tile origins for one axis.
 ///
@@ -358,7 +355,7 @@ fn axis_origins(
         BackgroundRepeatKeyword::Round => {
             let count = round_count.unwrap_or(1).max(1);
             // cov:ignore: defensive bound for degenerate tiny tiles
-            if count > 10_000 {
+            if count > MAX_ROUND_TILES {
                 let origin = positioning_origin + position_offset(*offset, positioning_len - tile);
                 return origin.is_finite().then(|| vec![origin]);
             }
@@ -369,7 +366,17 @@ fn axis_origins(
             if !origin.is_finite() {
                 return None;
             }
-            Some(covering_origins(origin, tile, painting_min, painting_max))
+            let origins = covering_origins(origin, tile, painting_min, painting_max);
+            if origins.is_empty() {
+                // A painting area too large to cover tile by tile keeps the
+                // tiles that fill the positioning area.
+                return Some(
+                    (0..count)
+                        .map(|index| positioning_origin + index as f64 * tile)
+                        .collect(),
+                );
+            }
+            Some(origins)
         }
         // cov:ignore: defensive fallback for future repeat keywords
         _ => {

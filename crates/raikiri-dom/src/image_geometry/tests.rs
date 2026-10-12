@@ -213,8 +213,32 @@ fn round_tiles_bound_degenerate_counts() {
     let position = raikiri_style::ComputedValues::initial().background_position;
     assert_eq!(
         round_axis_tiles(100_000.0, 1.0, BackgroundRepeatKeyword::Round),
-        (1.0, Some(1))
+        (10.0, Some(10_000))
     );
+    // Capped tiles still cover the painting area.
+    let mut repeat = raikiri_style::ComputedValues::initial().background_repeat;
+    repeat.x = BackgroundRepeatKeyword::Round;
+    let tiles = background_tiles(
+        (0.0, 0.0, 20_000.0, 10.0),
+        (0.0, 0.0, 20_000.0, 10.0),
+        (1.0, 10.0),
+        &position,
+        &repeat,
+    )
+    .expect("round tiles");
+    assert_eq!(tiles.x.len(), 10_000);
+    assert_eq!(tiles.width, 2.0);
+    // A painting area beyond the tile bound keeps the positioning tiles.
+    let tiles = background_tiles(
+        (0.0, 0.0, 10_000.0, 10.0),
+        (-20_000.0, 0.0, 40_000.0, 10.0),
+        (1.0, 10.0),
+        &position,
+        &repeat,
+    )
+    .expect("round tiles");
+    assert_eq!(tiles.x.len(), 10_000);
+    assert_eq!(tiles.x[0], 0.0);
     let origins = axis_origins(
         0.0,
         100.0,

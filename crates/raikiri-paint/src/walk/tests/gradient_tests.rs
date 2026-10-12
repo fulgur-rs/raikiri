@@ -908,3 +908,36 @@ fn many_coincident_stops_make_one_hard_edge() {
     assert_eq!(pixel(&rgba, 20, 5, 5), RED);
     assert_eq!(pixel(&rgba, 20, 11, 5), RED);
 }
+
+#[test]
+fn a_space_axis_too_short_for_two_enlarged_tiles_places_one() {
+    let cv = computed_for(
+        "background-image: linear-gradient(red, red); background-size: 0.4px 0.4px; \
+         background-position: center; background-repeat: space",
+    );
+    let area = Rect::new(0.0, 0.0, 1.5, 1.5);
+    let mut scene = Scene::new();
+    gradient::paint_gradient_layer(
+        &mut scene,
+        &gradient_of(&cv),
+        area,
+        area,
+        None,
+        &cv.background_size,
+        &cv.background_position,
+        &cv.background_repeat,
+        cv.color,
+    );
+    // One centered one-pixel tile, with its fractional edges kept.
+    let shapes: Vec<Rect> = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            anyrender::recording::RenderCommand::Fill(fill) => {
+                Some(kurbo::Shape::bounding_box(&fill.shape))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(shapes, [Rect::new(0.25, 0.25, 1.25, 1.25)]);
+}

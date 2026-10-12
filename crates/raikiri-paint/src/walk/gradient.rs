@@ -73,10 +73,15 @@ pub(super) fn paint_gradient_layer(
         return true;
     };
     // Repeated tiles below one pixel cannot be drawn without coverage gaps;
-    // like browsers, repeat such a gradient in one-pixel tiles. A single
-    // tile keeps its size.
-    // `space` with room for fewer than two tiles places one, like
-    // `no-repeat` (CSS Backgrounds 3 §2.4).
+    // like browsers, repeat such a gradient in one-pixel tiles. A
+    // `no-repeat` tile keeps its size.
+    let enlarge = |keyword, tile: f64| match keyword {
+        BackgroundRepeatKeyword::NoRepeat => tile,
+        _ => tile.max(1.0),
+    };
+    let (tile_w, tile_h) = (enlarge(repeat.x, tile_w), enlarge(repeat.y, tile_h));
+    // `space` with room for fewer than two of the used tiles places one,
+    // like `no-repeat` (CSS Backgrounds 3 §2.4).
     let repeats = |keyword, extent: f64, tile: f64| match keyword {
         BackgroundRepeatKeyword::NoRepeat => false,
         BackgroundRepeatKeyword::Space => extent >= 2.0 * tile,
@@ -86,8 +91,6 @@ pub(super) fn paint_gradient_layer(
         repeats(repeat.x, positioning.width(), tile_w),
         repeats(repeat.y, positioning.height(), tile_h),
     );
-    let tile_w = if repeat_x { tile_w.max(1.0) } else { tile_w };
-    let tile_h = if repeat_y { tile_h.max(1.0) } else { tile_h };
     // Too many tiles to fill one by one, such as one-pixel tiles over a
     // large box, are approximated by the average color of one tile, which
     // keeps the scene bounded.
