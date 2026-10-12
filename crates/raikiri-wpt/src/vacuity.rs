@@ -119,6 +119,15 @@ fn audit_id_with_config(wpt_root: &Path, id: &str, config: ReftestConfig) -> Ver
             detail: row.detail,
         };
     }
+    probe_passing(wpt_root, id, config).unwrap_or_else(|detail| Verdict::NotPass {
+        status: Status::Error,
+        detail,
+    })
+}
+
+/// Probe a test that the runner reported as passing. An `Err` carries the
+/// detail of a file that could not be resolved, discovered or read.
+fn probe_passing(wpt_root: &Path, id: &str, config: ReftestConfig) -> Result<Verdict, String> {
     let (path, query) = id.split_once('?').map_or((id, ""), |(p, q)| (p, q));
     let variant_query = if query.is_empty() {
         String::new()
@@ -126,46 +135,20 @@ fn audit_id_with_config(wpt_root: &Path, id: &str, config: ReftestConfig) -> Ver
         format!("?{query}")
     };
     // Dynamic reftests need absolute paths, as in the baseline runner.
-    let canonical = std::fs::canonicalize(wpt_root).and_then(|root| {
-        let test = std::fs::canonicalize(root.join(path))?;
-        Ok((root, test))
-    });
-    let (wpt_root, test_path) = match canonical {
-        Ok(paths) => paths,
-        Err(error) => {
-            return Verdict::NotPass {
-                status: Status::Error,
-                detail: format!("resolve: {error}"),
-            };
-        }
-    };
-    let wpt_root = wpt_root.as_path();
-    let pairs = match discover_pairs_for_file_with_wpt_root(&test_path, Some(wpt_root)) {
-        Ok(pairs) => pairs,
-        Err(error) => {
-            return Verdict::NotPass {
-                status: Status::Error,
-                detail: format!("discover: {error}"),
-            };
-        }
-    };
+    let resolve = |path: &Path| std::fs::canonicalize(path).map_err(|e| format!("resolve: {e}"));
+    let wpt_root = resolve(wpt_root)?;
+    let test_path = resolve(&wpt_root.join(path))?;
+    let pairs = discover_pairs_for_file_with_wpt_root(&test_path, Some(&wpt_root))
+        .map_err(|e| format!("discover: {e}"))?;
     let matches: Vec<&ReftestPair> = pairs
         .iter()
         .filter(|pair| pair.kind == ReftestKind::Match)
         .collect();
     if matches.is_empty() {
-        return Verdict::MismatchOnly;
+        return Ok(Verdict::MismatchOnly);
     }
-    let read = |path: &Path| std::fs::read_to_string(path).map_err(|e| e.to_string());
-    let test_html = match read(&test_path) {
-        Ok(html) => html,
-        Err(error) => {
-            return Verdict::NotPass {
-                status: Status::Error,
-                detail: format!("read test: {error}"),
-            };
-        }
-    };
+    let read = |path: &Path| std::fs::read_to_string(path).map_err(|e| format!("read: {e}"));
+    let test_html = read(&test_path)?;
     let blank = blank_document(&test_html);
     let features = feature_properties(&test_html, path);
     let by_feature = remove_declarations(&test_html, |key| features.contains(property_of(key)));
@@ -178,10 +161,7 @@ fn audit_id_with_config(wpt_root: &Path, id: &str, config: ReftestConfig) -> Ver
         else {
             continue;
         };
-        let reference_html = match read(&pair.reference) {
-            Ok(html) => html,
-            Err(_) => continue,
-        };
+        let reference_html = read(&pair.reference)?;
         if passes(pair, config, resolve_images, &variant_query, &blank) == Some(true) {
             verdict.get_or_insert(Verdict::Blank);
             continue;
@@ -213,13 +193,14 @@ fn audit_id_with_config(wpt_root: &Path, id: &str, config: ReftestConfig) -> Ver
             }
             continue;
         }
-        let ablated = by_declaration.1;
-        return Verdict::Kept { ablated };
+        return Ok(Verdict::Kept {
+            ablated: by_declaration.1,
+        });
     }
-    verdict.unwrap_or(Verdict::NotPass {
+    Ok(verdict.unwrap_or(Verdict::NotPass {
         status: Status::Fail,
         detail: "no rel=match reference passed when probed".to_owned(),
-    })
+    }))
 }
 
 /// Properties declared in `test_html` that the test names as its subject:

@@ -281,3 +281,41 @@ fn scanner_stops_at_unterminated_constructs() {
     assert_eq!(css_declarations("top: 1px; left: 2px", true, 10).len(), 2);
     assert_eq!(css_declarations("x { a: 1 } }", false, 0).len(), 1);
 }
+
+#[test]
+fn every_passing_alternative_must_be_vacuous() {
+    let test = r#"<!DOCTYPE html><link rel="match" href="red.html"><link rel="match" href="ref.html"><link rel="match" href="ref2.html"><body style="margin:0"><div style="clear:both;width:8px;height:8px;background-color:green"></div>"#;
+    let verdict = audit(
+        &[
+            ("css/a/clear-002.html", test),
+            ("css/a/red.html", RED_REF),
+            ("css/a/ref.html", GREEN_REF),
+            ("css/a/ref2.html", GREEN_REF),
+        ],
+        "css/a/clear-002.html",
+    );
+    assert!(matches!(verdict, Verdict::Unstyled { .. }), "{verdict:?}");
+
+    let blank = r#"<!DOCTYPE html><link rel="match" href="ref.html"><link rel="match" href="ref2.html"><p></p>"#;
+    let verdict = audit(
+        &[
+            ("css/a/blank-002.html", blank),
+            ("css/a/ref.html", "<!DOCTYPE html>"),
+            ("css/a/ref2.html", "<!DOCTYPE html>"),
+        ],
+        "css/a/blank-002.html",
+    );
+    assert_eq!(verdict, Verdict::Blank);
+}
+
+#[test]
+fn a_missing_reference_is_a_probe_error() {
+    let test = r#"<!DOCTYPE html><link rel="match" href="gone.html"><p></p>"#;
+    let tree = wpt_tree(&[("css/a/gone-ref.html", test), ("css/a/gone.html", "")]);
+    let root = std::fs::canonicalize(tree.path()).unwrap();
+    let pairs =
+        discover_pairs_for_file_with_wpt_root(&root.join("css/a/gone-ref.html"), Some(&root))
+            .unwrap();
+    std::fs::remove_file(root.join("css/a/gone.html")).unwrap();
+    assert_eq!(passes(&pairs[0], small(), false, "", test), None);
+}
