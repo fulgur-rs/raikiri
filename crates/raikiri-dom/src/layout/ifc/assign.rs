@@ -6,7 +6,7 @@ use super::projection::{
     GeneratedCounters, ProjectedBuilder, ProjectedIfc, box_kind, has_in_flow_generated_text,
     project_anonymous_cell_builder, project_ifc_builder_with, project_ifc_text_builder,
 };
-use super::root::{IfcBuildMode, IfcRoot, IfcState};
+use super::root::{IfcBuildMode, IfcRoot, IfcState, RetainedKey, RetainedParagraphs};
 use super::style;
 use crate::Document;
 use crate::node::NodeFlags;
@@ -287,6 +287,36 @@ pub(crate) fn assign_ifc_roots(
     // The roots are rebuilt on every pass, so a cached layout would skip the
     // measure callback that fills their lines.
     doc.layout_dirty = true;
+    let key = RetainedKey {
+        element_generation: cascade.element_generation(),
+        node_count: doc.nodes.len(),
+        continuation_break: doc.continuation_break,
+        anonymous_cells: doc.table_objects.cells.len(),
+    };
+    if state
+        .retained
+        .as_ref()
+        .is_some_and(|retained| retained.key == key)
+    {
+        // A pass over the same content and element cascade, such as another
+        // pass at other page sizes, builds the same paragraphs: only their
+        // lines are broken again. Paragraphs given to a document that does
+        // not keep them serve this pass only.
+        let roots = if state.retain_paragraphs {
+            state
+                .retained
+                .as_ref()
+                .map(|retained| retained.roots.clone())
+        } else {
+            state.retained.take().map(|retained| retained.roots)
+        }
+        .unwrap_or_default();
+        state.last_build = Some(IfcBuildMode::Retained);
+        doc.ifc = Some(state);
+        write_roots(doc, roots);
+        return check_text_in_paragraphs(doc, cascade);
+    }
+    state.retained = None;
     let built = collect_candidates(doc, cascade, &state).and_then(|mut candidates| {
         candidates.extend(collect_text_candidates(doc, cascade, &state)?);
         let counters = GeneratedCounters::default();
@@ -309,9 +339,27 @@ pub(crate) fn assign_ifc_roots(
         candidates.sort_by_key(|candidate| candidate.idx);
         build_all(&mut state, candidates)
     });
-    let result = built.map(|built| write_roots(doc, built));
+    let roots = built.map(|built| {
+        built
+            .into_iter()
+            .map(|(idx, projected)| (idx, IfcRoot::new(projected)))
+            .collect::<Vec<_>>()
+    });
+    if state.retain_paragraphs
+        && let Ok(roots) = &roots
+    {
+        state.retained = Some(RetainedParagraphs {
+            key,
+            roots: roots.clone(),
+        });
+    }
     doc.ifc = Some(state);
-    result?;
+    write_roots(doc, roots?);
+    check_text_in_paragraphs(doc, cascade)
+}
+
+/// Refuse a document with text that no paragraph lays out.
+fn check_text_in_paragraphs(doc: &Document, cascade: &CascadeResult) -> Result<(), LayoutError> {
     match text_outside_paragraphs(doc, cascade) {
         Some(node) => Err(LayoutError::IfcUnsupported {
             node,
@@ -718,14 +766,14 @@ fn build_all(
 }
 
 /// Store each shaped paragraph on its root and mark the root's subtree.
-fn write_roots(doc: &mut Document, built: Vec<(usize, ProjectedIfc)>) {
-    for (idx, projected) in built {
+fn write_roots(doc: &mut Document, built: Vec<(usize, IfcRoot)>) {
+    for (idx, paragraph) in built {
         // Boxes are laid out and painted as nodes of their own, so neither
         // they nor their content belong to the paragraph's subtree.
-        let boxes: Vec<usize> = projected.boxes.iter().map(|b| b.node).collect();
+        let boxes: Vec<usize> = paragraph.boxes.iter().map(|b| b.node).collect();
         let root = doc.table_layout_node_mut(idx);
         root.flags.insert(NodeFlags::IS_IFC_ROOT);
-        root.ifc = Some(Box::new(IfcRoot::new(projected)));
+        root.ifc = Some(Box::new(paragraph));
         let mut stack = root.children.clone();
         while let Some(id) = stack.pop() {
             if boxes.contains(&id) {

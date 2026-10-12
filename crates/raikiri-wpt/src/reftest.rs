@@ -2675,7 +2675,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
     // Keep the established 800×600 (or caller-supplied) test setup dimensions as
     // the fallback.  Only an authored page size changes the paper box.
     let first_page_box = page_box_or_fallback(&first_cascade.page, fallback_page_box);
-    let initial_context = raikiri_dom::resolve_initial_page_context(
+    let mut initial_context = raikiri_dom::resolve_initial_page_context(
         &uncascaded.dom,
         first_query.page_name.as_ref().map(ToString::to_string),
         first_cascade,
@@ -2689,6 +2689,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
         },
     )
     .map_err(|error| format!("initial page context: {error:?}"))?;
+    initial_context.give_paragraphs_to(&mut uncascaded.dom);
     let first_cascade = initial_context.cascade;
     let first_page_box = initial_context.page_box;
     // Fixed boxes are laid out against the first page's page area; later

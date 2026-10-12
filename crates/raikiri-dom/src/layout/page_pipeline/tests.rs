@@ -3,6 +3,7 @@ use crate::layout::test_support::{ahem_paragraph_with, with_ahem};
 use taffy::Style;
 
 mod candidate_text_tests;
+mod grid_parent_tests;
 pub(super) mod link_ancestor_tests;
 mod paged_spanning_tests;
 
@@ -6558,6 +6559,9 @@ fn a_relatively_positioned_inline_block_is_offset_from_its_place_on_the_line() {
     assert_eq!(moved, (25.0, 3.0));
     let moved = place("position:relative;right:5px;bottom:3px");
     assert_eq!(moved, (still.0 - 5.0, still.1 - 3.0));
+    // A mixed calc() inset keeps both its percentage and its length.
+    let moved = place("position:relative;font-size:10px;left:calc(10% + 1em - 25px)");
+    assert_eq!(moved, (still.0 + 5.0, still.1));
 }
 
 #[test]

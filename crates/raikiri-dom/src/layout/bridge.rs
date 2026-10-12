@@ -255,7 +255,7 @@ pub(crate) fn apply_computed_to_style(
         if is_multicol_container && style.display == Display::Block {
             style.display = Display::FlowRoot;
         }
-        bridge_position(style, cv, &mut doc.layout_warnings);
+        bridge_position(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
         bridge_overflow(style, cv);
         bridge_float(style, cv);
         bridge_margin(style, cv, &mut doc.layout_warnings);
@@ -536,7 +536,12 @@ fn bridge_overflow(style: &mut taffy::Style, cv: &ComputedValues) {
     };
 }
 
-fn bridge_position(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
+fn bridge_position(
+    style: &mut taffy::Style,
+    cv: &ComputedValues,
+    calc_values: &mut Vec<std::sync::Arc<raikiri_style::property::CalcLengthPercentage>>,
+    diag: &mut Vec<LayoutWarn>,
+) {
     style.position = match cv.position {
         PositionValue::Absolute | PositionValue::Fixed => TaffyPosition::Absolute,
         PositionValue::Static | PositionValue::Relative | PositionValue::Sticky => {
@@ -544,8 +549,10 @@ fn bridge_position(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec
         }
         _ => TaffyPosition::Relative,
     };
+    // Insets keep a mixed `calc()` in the document arena, like min/max sizes,
+    // so its percentage resolves against the used containing block.
     let mut inset = |value: ComputedLengthPercentageOrAuto, site: &'static str| {
-        computed_length_percentage_or_auto_to_taffy_length_percentage_auto(value, site, diag)
+        computed_length_percentage_or_auto_to_taffy_min_max(calc_values, value, site, diag)
     };
     style.inset = Rect {
         top: inset(cv.top, "top"),
@@ -1387,11 +1394,12 @@ fn computed_length_percentage_or_auto_to_taffy_dimension(
 }
 
 /// [`ComputedLengthPercentageOrAuto`] → [`taffy::LengthPercentageAuto`] bridge
-/// for min/max-size properties.
+/// for min/max-size properties and insets.
 ///
-/// Unlike the margin/inset bridge below, min/max preferred sizes can carry a
-/// calc() payload. Preserve that payload in the document arena so consumers
-/// such as table `<col>` sizing do not observe a false zero constraint.
+/// Unlike the margin bridge below, min/max preferred sizes and insets can
+/// carry a calc() payload. Preserve that payload in the document arena so
+/// consumers such as table `<col>` sizing do not observe a false zero
+/// constraint.
 fn computed_length_percentage_or_auto_to_taffy_min_max(
     calc_values: &mut Vec<std::sync::Arc<raikiri_style::property::CalcLengthPercentage>>,
     loa: ComputedLengthPercentageOrAuto,
@@ -1444,8 +1452,8 @@ fn computed_length_percentage_or_auto_to_taffy_length_percentage_auto(
             LengthPercentageAuto::percent(sanitize_taffy(p / 100.0, site, diag))
         }
         ComputedLengthPercentageOrAuto::Auto => LengthPercentageAuto::auto(),
-        // Calc payloads are currently produced only for preferred sizes;
-        // margin calc resolution will share the same arena in a later pass.
+        // Margins do not compute to a calc payload yet; margin calc
+        // resolution will share the same arena in a later pass.
         ComputedLengthPercentageOrAuto::Calc(_) => LengthPercentageAuto::length(0.0),
         // Margins never compute to `min-content`.
         ComputedLengthPercentageOrAuto::MinContent => LengthPercentageAuto::length(0.0), // cov:ignore: only the width / inline-size parser produces min-content

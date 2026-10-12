@@ -26,8 +26,9 @@ use crate::resolve::{
     resolve_flex_basis, resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
     resolve_length_percentage, resolve_length_percentage_or_auto,
     resolve_length_percentage_or_normal, resolve_letter_spacing, resolve_line_height,
-    resolve_margin_length_or_auto, resolve_outline, resolve_tab_size, resolve_text_indent_calc,
-    resolve_text_shadow_item, resolve_vertical_align, resolve_word_spacing,
+    resolve_margin_length_or_auto, resolve_outline, resolve_size_length_percentage_or_auto,
+    resolve_tab_size, resolve_text_indent_calc, resolve_text_shadow_item, resolve_vertical_align,
+    resolve_word_spacing,
 };
 
 /// Basis for resolving lengths in the page context: the page context's own
@@ -62,6 +63,21 @@ impl PageLengthBasis<'_> {
             ComputedLengthPercentageOrAuto::Percent(p) => LengthOrAuto::Length(Length::Percent(p)),
             ComputedLengthPercentageOrAuto::Calc(value) => LengthOrAuto::Calc(value),
             ComputedLengthPercentageOrAuto::MinContent => LengthOrAuto::MinContent,
+        }
+    }
+    /// `<length-percentage> | auto` for the sizing properties — same mapping
+    /// as [`Self::lpa`], routed through
+    /// [`resolve_size_length_percentage_or_auto`] so a negative mixed `calc()`
+    /// clamps to zero.
+    fn size_lpa(self, specified: LengthOrAuto) -> LengthOrAuto {
+        match resolve_size_length_percentage_or_auto(
+            specified,
+            self.font_size,
+            self.own_line_height,
+            self.ctx,
+        ) {
+            ComputedLengthPercentageOrAuto::Px(v) => LengthOrAuto::Length(Length::Px(v)),
+            _ => self.lpa(specified),
         }
     }
     /// `<length-percentage> | auto` for `margin-*` specifically —
@@ -806,15 +822,15 @@ pub(super) fn absolutize_in_page_context(
             ))
         }
         // ── width / height / max-* / min-* ──────────────────────────────
-        PropertyValue::Width(v) => PropertyValue::Width(basis.lpa(v)),
-        PropertyValue::Height(v) => PropertyValue::Height(basis.lpa(v)),
-        PropertyValue::MaxWidth(v) => PropertyValue::MaxWidth(basis.lpa(v)),
-        PropertyValue::MaxHeight(v) => PropertyValue::MaxHeight(basis.lpa(v)),
-        PropertyValue::MinWidth(v) => PropertyValue::MinWidth(basis.lpa(v)),
-        PropertyValue::MinHeight(v) => PropertyValue::MinHeight(basis.lpa(v)),
-        PropertyValue::MinBlockSize(v) => PropertyValue::MinBlockSize(basis.lpa(v)),
-        PropertyValue::InlineSize(v) => PropertyValue::InlineSize(basis.lpa(v)),
-        PropertyValue::BlockSize(v) => PropertyValue::BlockSize(basis.lpa(v)),
+        PropertyValue::Width(v) => PropertyValue::Width(basis.size_lpa(v)),
+        PropertyValue::Height(v) => PropertyValue::Height(basis.size_lpa(v)),
+        PropertyValue::MaxWidth(v) => PropertyValue::MaxWidth(basis.size_lpa(v)),
+        PropertyValue::MaxHeight(v) => PropertyValue::MaxHeight(basis.size_lpa(v)),
+        PropertyValue::MinWidth(v) => PropertyValue::MinWidth(basis.size_lpa(v)),
+        PropertyValue::MinHeight(v) => PropertyValue::MinHeight(basis.size_lpa(v)),
+        PropertyValue::MinBlockSize(v) => PropertyValue::MinBlockSize(basis.size_lpa(v)),
+        PropertyValue::InlineSize(v) => PropertyValue::InlineSize(basis.size_lpa(v)),
+        PropertyValue::BlockSize(v) => PropertyValue::BlockSize(basis.size_lpa(v)),
         PropertyValue::Top(v) => PropertyValue::Top(basis.lpa(v)),
         PropertyValue::Right(v) => PropertyValue::Right(basis.lpa(v)),
         PropertyValue::Bottom(v) => PropertyValue::Bottom(basis.lpa(v)),

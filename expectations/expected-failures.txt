@@ -38,3 +38,105 @@ css/css-text/overflow-wrap/overflow-wrap-anywhere-002.html | The WPT harness map
 css/css-text/overflow-wrap/overflow-wrap-break-word-002.html | The WPT harness maps monospace to Ahem; at the 13px monospace medium, hinting rounds Ahem's 10.4px ascent up so the glyph overflows its 13px line by one pixel row | RAIKIRI-76 | 2026-10-11 | 2026-12-11
 css/css-ui/text-overflow-027.html | The WPT harness maps monospace to Ahem; at the 13px monospace medium, hinting rounds Ahem's 10.4px ascent up so the glyph overflows its 13px line by one pixel row | RAIKIRI-76 | 2026-10-11 | 2026-12-11
 css/css-ui/text-overflow-028.html | The WPT harness maps monospace to Ahem; at the 13px monospace medium, hinting rounds Ahem's 10.4px ascent up so the glyph overflows its 13px line by one pixel row | RAIKIRI-76 | 2026-10-11 | 2026-12-11
+css/css-backgrounds/parsing/background-attachment-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
+css/css-backgrounds/parsing/background-clip-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
+css/css-backgrounds/parsing/background-origin-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
+css/css-backgrounds/parsing/background-position-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
+css/css-backgrounds/parsing/background-repeat-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
+css/css-backgrounds/parsing/background-size-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
+css/css-backgrounds/parsing/background-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
+css/css-content/parsing/content-counter-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
+css/css-content/parsing/content-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
+css/css-flexbox/parsing/flex-grow-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
+css/css-flexbox/parsing/flex-shrink-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
+css/css-fonts/parsing/font-family-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
+css/css-fonts/parsing/font-language-override-invalid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
+css/css-text/parsing/text-spacing-invalid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
+css/css-backgrounds/background-attachment-fixed-block-002.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
+css/css-backgrounds/background-attachment-fixed-inline-002.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
+css/css-backgrounds/background-attachment-local-block-002.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
+css/css-backgrounds/background-attachment-local-inline-002.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
+css/css-backgrounds/background-clip/clip-border-area-corner-shape.html | Regressed by a layout or paint change unrelated to the inline engine | RAIKIRI-22 | 2026-10-12 | 2026-12-12
+css/css-backgrounds/background-clip/clip-border-area-on-body-not-propagated-to-root.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
+css/css-backgrounds/background-clip/clip-text-multi-line.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-backgrounds/background-clip/clip-text-on-body-propagated-to-root.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-backgrounds/background-clip/clip-text-on-root.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-backgrounds/background-image-007.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
+css/css-backgrounds/background-position-calc-minmax-001.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
+css/css-backgrounds/border-radius-clipping-with-transform-001.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
+css/css-backgrounds/box-shadow/slice-inline-fragmentation-001.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
+css/css-backgrounds/ttwf-reftest-borderRadius.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
+css/css-color/parsing/opacity-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
+css/css-images/parsing/gradient-position-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
+css/css-images/parsing/object-position-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
+css/css-sizing/parsing/height-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
+css/css-sizing/parsing/max-height-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
+css/css-sizing/parsing/max-width-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
+css/css-sizing/parsing/width-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
+css/css-tables/height-distribution/percentage-sizing-of-table-cell-007.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
+css/css-text/hyphens/hyphens-shaping-001.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
+css/css-text/letter-spacing/letter-spacing-nesting-002.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
+css/css-text/letter-spacing/letter-spacing-percent-001.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
+css/css-text/overflow-wrap/overflow-wrap-min-content-size-002.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
+css/css-text/shaping/shaping-012.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
+css/css-text/shaping/shaping-013.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
+css/css-text/text-align/text-align-justify-tabs-001.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
+css/css-text/text-align/text-align-last-010.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-text/text-align/text-align-last-011.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-text/text-align/text-align-match-parent-02.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
+css/css-text/white-space/trailing-ideographic-space-break-spaces-001.html | Regressed by a layout or paint change unrelated to the inline engine | RAIKIRI-22 | 2026-10-12 | 2026-12-12
+css/css-text/white-space/trailing-ideographic-space-break-spaces-003.html | Regressed by a layout or paint change unrelated to the inline engine | RAIKIRI-22 | 2026-10-12 | 2026-12-12
+css/css-text/word-break/word-break-keep-all-u002d.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
+css/css-text/word-break/word-break-min-content-006.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
+css/css-flexbox/abspos/position-absolute-005.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-flexbox/content-height-with-scrollbars.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
+css/css-flexbox/fieldset-as-item-overflow.html | Regressed by a layout or paint change unrelated to the inline engine | RAIKIRI-22 | 2026-10-12 | 2026-12-12
+css/css-flexbox/flex-item-vertical-align.html | Regressed by a layout or paint change unrelated to the inline engine | RAIKIRI-22 | 2026-10-12 | 2026-12-12
+css/css-flexbox/flexbox-definite-cross-size-constrained-percentage.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
+css/css-flexbox/flexbox-margin-auto-horiz-002.xhtml | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
+css/css-flexbox/flexbox_flex-0-0-N-shrink.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-flexbox/flexbox_flex-0-0-N.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-flexbox/flexbox_flex-0-1-N-shrink.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-flexbox/flexbox_flex-0-1-N.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-flexbox/flexbox_flex-0-1-Npercent-shrink.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-flexbox/flexbox_flex-0-1-auto-shrink.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-flexbox/flexbox_flex-0-N-N-shrink.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-flexbox/flexbox_flex-0-N-N.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-flexbox/flexbox_flex-0-N-Npercent-shrink.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-flexbox/flexbox_flex-0-N-auto-shrink.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-flexbox/flexbox_flex-0-auto.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-flexbox/flexbox_flex-1-0-N-shrink.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-flexbox/flexbox_flex-1-1-N-shrink.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-flexbox/flexbox_flex-1-1-Npercent-shrink.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-flexbox/flexbox_flex-1-1-auto-shrink.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-flexbox/flexbox_flex-1-N-N-shrink.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-flexbox/flexbox_flex-1-N-Npercent-shrink.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-flexbox/flexbox_flex-1-N-auto-shrink.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-flexbox/flexbox_flex-N-0-N-shrink.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-flexbox/flexbox_flex-N-1-N-shrink.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-flexbox/flexbox_flex-N-1-Npercent-shrink.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-flexbox/flexbox_flex-N-1-auto-shrink.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-flexbox/flexbox_flex-N-N-N-shrink.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-flexbox/flexbox_flex-N-N-Npercent-shrink.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-flexbox/flexbox_flex-N-N-auto-shrink.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-flexbox/flexbox_flex-initial.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-flexbox/flexbox_justifycontent-left-001.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
+css/css-flexbox/flexbox_quirks_body.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
+css/css-flexbox/gap-003-lr.html | Regressed by a layout or paint change unrelated to the inline engine | RAIKIRI-22 | 2026-10-12 | 2026-12-12
+css/css-flexbox/gap-003-rl.html | Regressed by a layout or paint change unrelated to the inline engine | RAIKIRI-22 | 2026-10-12 | 2026-12-12
+css/css-flexbox/gap-003-rtl.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
+css/css-flexbox/gap-004-rtl.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
+css/css-flexbox/scrollbars-auto.html | Scrollbar layout differs since the reftest script started running | RAIKIRI-20 | 2026-10-12 | 2026-12-12
+css/css-flexbox/scrollbars-no-margin.html | Scrollbar layout differs since the reftest script started running | RAIKIRI-20 | 2026-10-12 | 2026-12-12
+css/css-flexbox/scrollbars.html | Scrollbar layout differs since the reftest script started running | RAIKIRI-20 | 2026-10-12 | 2026-12-12
+css/css-tables/parsing/border-spacing-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
+css/css-tables/paint/col-change-span-bg-invalidation-001.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
+css/css-text/overflow-wrap/overflow-wrap-min-content-size-001.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
+css/css-text/white-space/text-wrap-balance-004.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
+css/css-text/white-space/text-wrap-nowrap-001.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-text/white-space/white-space-applies-to-text-001.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
+css/css-text/word-break/word-break-min-content-001.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
+css/css-text/letter-spacing/letter-spacing-bengali-yaphala-001.html | Mismatches the reference with the bundled WPT fonts; passed only with system fonts | RAIKIRI-108 | 2026-10-12 | 2026-12-12
+css/css-page/fixedpos-004-print.html | Nested abspos height does not extend the page count; passed only while the nested fixed box sat at the bottom of its 300vh parent | RAIKIRI-86 | 2026-10-12 | 2026-12-12
+css/css-page/fixedpos-006-print.html | Nested abspos height does not extend the page count; passed only while the nested fixed box sat at the bottom of its 300vh parent | RAIKIRI-86 | 2026-10-12 | 2026-12-12
+css/css-page/fixedpos-008-print.html | Nested abspos height does not extend the page count; passed only while the nested fixed box sat at the bottom of its 300vh parent | RAIKIRI-86 | 2026-10-12 | 2026-12-12

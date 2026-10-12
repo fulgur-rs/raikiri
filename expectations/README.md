@@ -13,6 +13,14 @@ These files describe how Raikiri evaluates the pinned Web Platform Tests
 | `tracked-wpt.txt` | Informational test tracking categories. |
 | `meta-assert-baseline.txt` | Separate reviewed results for tests without a reftest. |
 
+## CI
+
+The `WPT baseline` workflow (`.github/workflows/wpt-baseline.yml`) runs
+nightly and on manual dispatch. It fetches the pinned WPT checkout, validates
+these files, and runs `run-baseline-report --strict` over the pass baseline and
+every expected-failure id on Linux with the bundled WPT fonts. A new `FAIL`,
+`XPASS`, or `ERROR` fails the run; the job summary lists them.
+
 ## Interpreting baseline PASS
 
 The pass baseline records reproducible output equality or parsing assertions,

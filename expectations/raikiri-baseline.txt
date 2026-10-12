@@ -66,17 +66,10 @@ css/css-animations/parsing/animation-play-state-invalid.html
 css/css-animations/parsing/animation-range-end-invalid.html
 css/css-animations/parsing/animation-range-start-invalid.html
 css/css-animations/parsing/animation-timing-function-invalid.html
-css/css-backgrounds/parsing/background-attachment-valid.html
 css/css-backgrounds/parsing/background-clip-invalid.html
-css/css-backgrounds/parsing/background-clip-valid.html
 css/css-backgrounds/parsing/background-origin-invalid.html
-css/css-backgrounds/parsing/background-origin-valid.html
-css/css-backgrounds/parsing/background-position-valid.html
 css/css-backgrounds/parsing/background-position-x-invalid.html
 css/css-backgrounds/parsing/background-position-y-invalid.html
-css/css-backgrounds/parsing/background-repeat-valid.html
-css/css-backgrounds/parsing/background-size-valid.html
-css/css-backgrounds/parsing/background-valid.html
 css/css-backgrounds/parsing/border-color-invalid.html
 css/css-backgrounds/parsing/border-image-invalid.html
 css/css-backgrounds/parsing/border-image-outset-invalid.html
@@ -87,11 +80,9 @@ css/css-backgrounds/parsing/border-image-width-invalid.html
 css/css-backgrounds/parsing/border-style-invalid.html
 css/css-backgrounds/parsing/border-width-invalid.html
 css/css-backgrounds/parsing/box-shadow-invalid.html
-css/css-box/parsing/margin-shorthand.html
 css/css-box/parsing/max-height-invalid.html
 css/css-box/parsing/max-width-invalid.html
 css/css-box/parsing/overflow-valid.html
-css/css-box/parsing/padding-shorthand.html
 css/css-box/parsing/visibility-valid.html
 css/css-break/parsing/box-decoration-break-invalid.html
 css/css-break/parsing/orphans-valid.html
@@ -99,22 +90,15 @@ css/css-break/parsing/widows-valid.html
 css/css-cascade/parsing/all-invalid.html
 css/css-color-adjust/parsing/color-scheme-invalid.html
 css/css-contain/parsing/contain-invalid.html
-css/css-content/parsing/content-counter-valid.html
-css/css-content/parsing/content-valid.html
 css/css-flexbox/parsing/flex-basis-valid.html
 css/css-flexbox/parsing/flex-direction-valid.html
 css/css-flexbox/parsing/flex-flow-invalid.html
-css/css-flexbox/parsing/flex-grow-valid.html
 css/css-flexbox/parsing/flex-invalid.html
-css/css-flexbox/parsing/flex-shorthand.html
-css/css-flexbox/parsing/flex-shrink-valid.html
 css/css-flexbox/parsing/flex-wrap-valid.html
 css/css-flexbox/parsing/order-invalid.html
-css/css-fonts/parsing/font-family-valid.html
 css/css-fonts/parsing/font-feature-settings-invalid.html
 css/css-fonts/parsing/font-invalid.html
 css/css-fonts/parsing/font-kerning-invalid.html
-css/css-fonts/parsing/font-language-override-invalid.html
 css/css-fonts/parsing/font-optical-sizing-invalid.html
 css/css-fonts/parsing/font-palette-invalid.html
 css/css-fonts/parsing/font-size-adjust-invalid.html
@@ -188,7 +172,6 @@ css/css-text/parsing/text-align-valid.html
 css/css-text/parsing/text-autospace-invalid.html
 css/css-text/parsing/text-group-align-invalid.html
 css/css-text/parsing/text-justify-invalid.html
-css/css-text/parsing/text-spacing-invalid.html
 css/css-text/parsing/text-spacing-trim-invalid.html
 css/css-text/parsing/text-wrap-invalid.html
 css/css-text/parsing/text-wrap-mode-invalid.html
@@ -196,13 +179,10 @@ css/css-text/parsing/text-wrap-style-invalid.html
 css/css-text/parsing/white-space-collapse-invalid.html
 css/css-text/parsing/word-space-transform-invalid.html
 css/css-text/parsing/word-wrap-valid.html
-css/css-ui/parsing/box-sizing-computed.html
 css/css-ui/parsing/box-sizing-valid.html
 css/css-ui/parsing/caret-color-invalid.html
 css/css-ui/parsing/cursor-invalid.html
 css/css-ui/parsing/field-sizing-invalid.html
-css/css-ui/parsing/outline-color-computed.html
-css/css-ui/parsing/outline-style-computed.html
 css/css-ui/parsing/outline-style-valid.html
 css/css-ui/parsing/resize-invalid.html
 css/css-ui/parsing/text-overflow-invalid.html
@@ -226,21 +206,15 @@ css/css-logical/parsing/border-inline-width-invalid.html
 css/css-logical/parsing/inline-size-invalid.html
 css/css-logical/parsing/inset-block-inline-invalid.html
 css/css-logical/parsing/inset-invalid.html
-css/css-logical/parsing/margin-block-inline-shorthand.html
 css/css-logical/parsing/max-block-size-invalid.html
 css/css-logical/parsing/max-inline-size-invalid.html
 css/css-logical/parsing/min-block-size-invalid.html
 css/css-logical/parsing/min-inline-size-invalid.html
-css/css-logical/parsing/padding-block-inline-shorthand.html
 
 # --- Goal B: css-backgrounds reftest 108 PASS (400x300 EXACT, 2026-09-16) ---
-css/css-backgrounds/background-attachment-fixed-block-002.html
 css/css-backgrounds/background-attachment-fixed-border-radius-offset.html
-css/css-backgrounds/background-attachment-fixed-inline-002.html
 css/css-backgrounds/background-attachment-fixed-inline-scrolled.html
 css/css-backgrounds/background-attachment-fixed-inside-transform-1.html
-css/css-backgrounds/background-attachment-local-block-002.html
-css/css-backgrounds/background-attachment-local-inline-002.html
 css/css-backgrounds/background-attachment-margin-root-001.html
 css/css-backgrounds/background-attachment-margin-root-002.html
 css/css-backgrounds/background-clip-007.html
@@ -257,31 +231,22 @@ css/css-backgrounds/background-clip/clip-border-area-background-geometry.html
 css/css-backgrounds/background-clip/clip-border-area-border-image.html
 css/css-backgrounds/background-clip/clip-border-area-border-shape-overflow.html
 css/css-backgrounds/background-clip/clip-border-area-border-shape.html
-css/css-backgrounds/background-clip/clip-border-area-corner-shape.html
-css/css-backgrounds/background-clip/clip-border-area-on-body-not-propagated-to-root.html
 css/css-backgrounds/background-clip/clip-border-area-on-body-propagated-to-root.html
 css/css-backgrounds/background-clip/clip-border-area-on-root.html
 css/css-backgrounds/background-clip/clip-rounded-corner.html
-css/css-backgrounds/background-clip/clip-text-animated-text.html
 css/css-backgrounds/background-clip/clip-text-background-table-cell.html
 css/css-backgrounds/background-clip/clip-text-composited-descendant-with-bg-color.html
 css/css-backgrounds/background-clip/clip-text-constrain-geometry.html
 css/css-backgrounds/background-clip/clip-text-dynamic-2.html
 css/css-backgrounds/background-clip/clip-text-dynamic-text-change.html
-css/css-backgrounds/background-clip/clip-text-multi-line.html
-css/css-backgrounds/background-clip/clip-text-on-body-propagated-to-root.html
-css/css-backgrounds/background-clip/clip-text-on-root.html
 css/css-backgrounds/background-clip/clip-text-transform.html
 css/css-backgrounds/background-clip_padding-box.html
 css/css-backgrounds/background-color-body-propagation-001.html
 css/css-backgrounds/background-gradient-interpolation-001.html
 css/css-backgrounds/background-gradient-subpixel-fills-area.html
-css/css-backgrounds/background-image-007.html
 css/css-backgrounds/background-image-centered-with-border-radius.html
 css/css-backgrounds/background-image-centered.html
 css/css-backgrounds/background-image-cover-zoomed-1.html
-css/css-backgrounds/background-image-first-letter.html
-css/css-backgrounds/background-image-first-line.html
 css/css-backgrounds/background-image-gradient-interpolation-repaint.html
 css/css-backgrounds/background-image-large-with-auto.html
 css/css-backgrounds/background-image-table-cells-zoomed.html
@@ -292,7 +257,6 @@ css/css-backgrounds/background-margin-transformed-root.html
 css/css-backgrounds/background-margin-will-change-root.html
 css/css-backgrounds/background-multiple-layers-table-cell.html
 css/css-backgrounds/background-paint-order-001.html
-css/css-backgrounds/background-position-calc-minmax-001.html
 css/css-backgrounds/background-position-negative-percentage-comparison-002.html
 css/css-backgrounds/background-position-negative-percentage-comparison.html
 css/css-backgrounds/background-position-subpixel-at-border.tentative.html
@@ -354,7 +318,6 @@ css/css-backgrounds/border-image-space-001.html
 css/css-backgrounds/border-image-width-001.htm
 css/css-backgrounds/border-image-width-008.html
 css/css-backgrounds/border-image-width-should-extend-to-padding.html
-css/css-backgrounds/border-radius-clipping-with-transform-001.html
 css/css-backgrounds/border-radius-horizontal-value-is-zero.html
 # Both sides ignore elliptical radii; this PASS does not establish elliptical radius support.
 css/css-backgrounds/border-radius-shorthand-002.html
@@ -364,9 +327,6 @@ css/css-backgrounds/border-width-small-values-001-b.html
 css/css-backgrounds/border-width-small-values-001-c.html
 css/css-backgrounds/border-width-small-values-001-d.html
 css/css-backgrounds/border-width-small-values-001-e.html
-css/css-backgrounds/box-shadow/slice-inline-fragmentation-001.html
-css/css-backgrounds/color-mix-currentcolor-outline-repaint-parent.html
-css/css-backgrounds/color-mix-currentcolor-outline-repaint.html
 css/css-backgrounds/css3-background-clip-border-box.html
 css/css-backgrounds/css3-background-clip-content-box.html
 css/css-backgrounds/css3-background-clip-padding-box.html
@@ -376,23 +336,8 @@ css/css-backgrounds/fieldset-inset-shadow.html
 css/css-backgrounds/inline-background-rtl-001.html
 css/css-backgrounds/subpixel-repeat-no-repeat-mix.html
 css/css-backgrounds/table-cell-background-local.html
-css/css-backgrounds/ttwf-reftest-borderRadius.html
 
 # --- css-values parsing pin 2026-09-14 goal D (14 files) ---
-css/css-values/acos-asin-atan-atan2-invalid.html
-css/css-values/calc-invalid-parsing.html
-css/css-values/calc-nesting.html
-css/css-values/clamp-color-invalid.html
-css/css-values/clamp-integer-invalid.html
-css/css-values/exp-log-invalid.html
-css/css-values/minmax-number-invalid.html
-css/css-values/minmax-time-invalid.html
-css/css-values/percentage-without-context.html
-css/css-values/progress-invalid.html
-css/css-values/random-invalid.tentative.html
-css/css-values/round-mod-rem-invalid.html
-css/css-values/sin-cos-tan-invalid.html
-css/css-values/urls/url-request-modifiers-invalid.sub.html
 #
 #    Quarantine handling section below); relaxing this exclusion becomes
 #    co-listing.
@@ -461,15 +406,12 @@ css/css-color/parsing/color-invalid-rgb.html
 css/css-color/parsing/color-invalid-contrast-color-function.html
 css/css-color/parsing/color-invalid.html
 css/css-color/parsing/opacity-invalid.html
-css/css-color/parsing/opacity-valid.html
 css/css-gaps/parsing/rule-overlap-invalid.html
-css/css-images/parsing/gradient-position-valid.html
 css/css-images/parsing/image-orientation-invalid.html
 css/css-images/parsing/image-rendering-invalid.html
 css/css-images/parsing/image-resolution-invalid.html
 css/css-images/parsing/object-fit-invalid.html
 css/css-images/parsing/object-position-invalid.html
-css/css-images/parsing/object-position-valid.html
 # --- css-images focused exact reftests (800x600, 2026-09-21) ---
 css/css-images/gradients-with-transparent.html
 css/css-images/gradient-border-box.html
@@ -568,15 +510,11 @@ css/css-size-adjust/parsing/text-size-adjust-invalid.html
 css/css-sizing/parsing/box-sizing-invalid.html
 css/css-sizing/parsing/box-sizing-valid.html
 css/css-sizing/parsing/height-invalid.html
-css/css-sizing/parsing/height-valid.html
 css/css-sizing/parsing/max-height-invalid.html
-css/css-sizing/parsing/max-height-valid.html
 css/css-sizing/parsing/max-width-invalid.html
-css/css-sizing/parsing/max-width-valid.html
 css/css-sizing/parsing/min-height-invalid.html
 css/css-sizing/parsing/min-width-invalid.html
 css/css-sizing/parsing/width-invalid.html
-css/css-sizing/parsing/width-valid.html
 css/css-transitions/parsing/transition-delay-invalid.html
 css/css-transitions/parsing/transition-duration-invalid.html
 css/css-transitions/parsing/transition-invalid.html
@@ -602,13 +540,9 @@ css/filter-effects/parsing/lighting-color-parsing-invalid.html
 
 # --- css-flexbox parsing pin 2026-09-14 retry F2 (15/27 PASS, 8 new) ---
 css/css-flexbox/parsing/flex-basis-invalid.html
-css/css-flexbox/parsing/flex-direction-computed.html
 css/css-flexbox/parsing/flex-direction-invalid.html
-css/css-flexbox/parsing/flex-grow-computed.html
 css/css-flexbox/parsing/flex-grow-invalid.html
-css/css-flexbox/parsing/flex-shrink-computed.html
 css/css-flexbox/parsing/flex-shrink-invalid.html
-css/css-flexbox/parsing/flex-wrap-computed.html
 css/css-flexbox/parsing/flex-wrap-invalid.html
 # --- css-grid parsing pin 2026-09-14 retry F1 (grid Level1, 62 files) ---
 css/css-grid/parsing/grid-area-invalid.html
@@ -621,24 +555,9 @@ css/css-grid/parsing/grid-template-areas-invalid.html
 
 
 # --- css/selectors parsing pin 2026-09-16 (14 files PASS, 8 Level4 quarantined) ---
-css/selectors/parsing/invalid-pseudos.html
-css/selectors/parsing/parse-anplusb.html
-css/selectors/parsing/parse-attribute.html
-css/selectors/parsing/parse-child.html
-css/selectors/parsing/parse-class.html
-css/selectors/parsing/parse-descendant.html
-css/selectors/parsing/parse-has-forgiving-selector.html
-css/selectors/parsing/parse-has.html
-css/selectors/parsing/parse-has-disallow-nesting-has-inside-has.html
-css/selectors/parsing/parse-id.html
-css/selectors/parsing/parse-is.html
-css/selectors/parsing/parse-sibling.html
-css/selectors/parsing/parse-universal.html
-css/selectors/parsing/parse-where.html
 
 # --- css-text-decor parsing pin 2026-09-15 (jqg8, 10 more files PASS, specified 200/201 vectors) ---
 css/css-text-decor/parsing/text-decoration-color-invalid.html
-css/css-text-decor/parsing/text-decoration-inset-valid.html
 css/css-text-decor/parsing/text-decoration-invalid.html
 css/css-text-decor/parsing/text-decoration-line-invalid.html
 css/css-text-decor/parsing/text-decoration-line-valid.html
@@ -649,7 +568,6 @@ css/css-text-decor/parsing/text-underline-position-valid.html
 # --- css-text-decor parsing pin 2026-09-14 (retry E1, 8 files PASS, 152/201 vectors) ---
 css/css-text-decor/parsing/text-decoration-color-valid.html
 css/css-text-decor/parsing/text-decoration-inset-invalid.html
-css/css-text-decor/parsing/text-decoration-shorthand.html
 css/css-text-decor/parsing/text-decoration-skip-ink-invalid.html
 css/css-text-decor/parsing/text-decoration-skip-spaces-invalid.html
 css/css-text-decor/parsing/text-decoration-style-valid.html
@@ -658,10 +576,6 @@ css/css-text-decor/parsing/text-underline-position-invalid.html
 css/css-writing-modes/parsing/text-combine-upright-valid.html
 css/css-writing-modes/parsing/text-orientation-valid.html
 css/css-writing-modes/parsing/unicode-bidi-valid.html
-css/css-writing-modes/parsing/direction-computed.html
-css/css-writing-modes/parsing/text-combine-upright-computed.html
-css/css-writing-modes/parsing/text-orientation-computed.html
-css/css-writing-modes/parsing/unicode-bidi-computed.html
 
 # --- css-tables pin 2026-09-14 (77 reftest pairs swept, 29 PASS EXACT 800x600 + 2 parsing-valid file-level) ---
 css/css-tables/baseline-empty-cell-001.html
@@ -680,7 +594,6 @@ css/css-tables/collapsed-border-sideways-rl-rtl-overflow.html
 css/css-tables/collapsed-border-vertical-lr-rtl-overflow.html
 css/css-tables/collapsed-border-vertical-rtl-overflow.html
 css/css-tables/empty-table-height.html
-css/css-tables/height-distribution/percentage-sizing-of-table-cell-007.html
 css/css-tables/html-display-table.html
 css/css-tables/max-height-table.html
 # Re-pinned 2026-09-16 after inline-block/table shrink-wrap support (hrgn)
@@ -732,14 +645,10 @@ css/css-text/boundary-shaping/boundary-shaping-006.html
 css/css-text/boundary-shaping/boundary-shaping-007.html
 css/css-text/boundary-shaping/boundary-shaping-008.html
 css/css-text/hyphens/hyphens-manual-010.html
-css/css-text/hyphens/hyphens-shaping-001.html
 css/css-text/hyphens/hyphens-span-002.html
-css/css-text/letter-spacing/letter-spacing-animating-letter-spacing.html
 css/css-text/letter-spacing/letter-spacing-cursive-001.html
 css/css-text/letter-spacing/letter-spacing-end-of-line-002.html
 css/css-text/letter-spacing/letter-spacing-ligatures-004.html
-css/css-text/letter-spacing/letter-spacing-nesting-002.html
-css/css-text/letter-spacing/letter-spacing-percent-001.html
 css/css-text/line-break/line-break-loose-hyphens-003.html
 css/css-text/line-break/line-break-normal-hyphens-003.html
 css/css-text/line-break/line-break-strict-hyphens-003.html
@@ -815,7 +724,6 @@ css/css-text/overflow-wrap/overflow-wrap-002.html
 css/css-text/overflow-wrap/overflow-wrap-004.html
 css/css-text/overflow-wrap/overflow-wrap-anywhere-fit-content-001.html
 css/css-text/overflow-wrap/overflow-wrap-break-word-fit-content-001.html
-css/css-text/overflow-wrap/overflow-wrap-min-content-size-002.html
 css/css-text/overflow-wrap/overflow-wrap-min-content-size-003.html
 css/css-text/overflow-wrap/word-wrap-004.html
 css/css-text/overflow-wrap/overflow-wrap-cluster-001.html
@@ -823,8 +731,6 @@ css/css-text/overflow-wrap/overflow-wrap-cluster-002.html
 css/css-text/overflow-wrap/overflow-wrap-min-content-size-006.html
 css/css-text/shaping/reference/shaping-000-ref.html
 css/css-text/shaping/reference/shaping-012-ref.html
-css/css-text/shaping/shaping-012.html
-css/css-text/shaping/shaping-013.html
 css/css-text/tab-size/tab-min-rendered-width-1.html
 css/css-text/text-align/text-align-end-001.html
 css/css-text/text-align/text-align-end-002.html
@@ -851,16 +757,12 @@ css/css-text/text-align/text-align-end-last-default.html
 css/css-text/text-align/text-align-justify-bidi-control.html
 css/css-text/text-align/text-align-justify-last-default.html
 css/css-text/text-align/text-align-justify-shy-001.html
-css/css-text/text-align/text-align-justify-tabs-001.html
-css/css-text/text-align/text-align-last-010.html
-css/css-text/text-align/text-align-last-011.html
 css/css-text/text-align/text-align-last-center.html
 css/css-text/text-align/text-align-last-end.html
 css/css-text/text-align/text-align-last-start.html
 css/css-text/text-align/text-align-last-wins-001.html
 css/css-text/text-align/text-align-match-parent-001.html
 css/css-text/text-align/text-align-match-parent-01.html
-css/css-text/text-align/text-align-match-parent-02.html
 css/css-text/text-align/text-align-match-parent-03.html
 css/css-text/text-align/text-align-match-parent-04.html
 css/css-text/text-align/text-align-match-parent-root-logical.html
@@ -910,8 +812,6 @@ css/css-text/white-space/text-wrap-balance-before-after-001.html
 css/css-text/white-space/text-wrap-balance-float-006.html
 css/css-text/white-space/text-wrap-balance-line-clamp-001.html
 css/css-text/white-space/textarea-always-preserves-spaces-001.tentative.html
-css/css-text/white-space/trailing-ideographic-space-break-spaces-001.html
-css/css-text/white-space/trailing-ideographic-space-break-spaces-003.html
 css/css-text/white-space/trailing-space-rtl-001.html
 css/css-text/white-space/white-space-pre-wrap-justify-001.html
 css/css-text/white-space/white-space-vs-joiners-001.html
@@ -926,10 +826,8 @@ css/css-text/word-break/break-boundary-2-chars-002.html
 css/css-text/word-break/word-break-break-all-014.html
 css/css-text/word-break/word-break-break-all-032.html
 css/css-text/word-break/word-break-break-word-overflow-wrap-interactions.html
-css/css-text/word-break/word-break-keep-all-u002d.html
 css/css-text/word-break/word-break-min-content-002.html
 css/css-text/word-break/word-break-min-content-005.html
-css/css-text/word-break/word-break-min-content-006.html
 css/css-text/word-spacing/word-spacing-003.html
 css/css-text/word-spacing/word-spacing-animating-word-spacing.html
 css/css-text/word-spacing/word-spacing-negative-value-001.html
@@ -937,7 +835,6 @@ css/css-text/word-spacing/word-spacing-percent-001.html
 # --- css-flexbox reftest pin 2026-09-14 (retry2, goal I2: 191/602 pair PASS at 400x300 EXACT, order + flex-flow impl, WPT 97ea26e) ---
 css/css-flexbox/abspos/flex-abspos-staticpos-align-self-safe-001.html
 css/css-flexbox/abspos/flex-abspos-staticpos-align-self-safe-002.html
-css/css-flexbox/abspos/position-absolute-005.html
 # --- flex abspos static-position follow-up pin 2026-09-19 (exact 800x600) ---
 css/css-flexbox/abspos/position-absolute-006.html
 css/css-flexbox/abspos/position-absolute-007.html
@@ -961,10 +858,8 @@ css/css-flexbox/aspect-ratio-intrinsic-size-007.html
 css/css-flexbox/auto-height-column-with-border-and-padding.html
 css/css-flexbox/auto-height-with-flex.html
 css/css-flexbox/auto-margins-003.html
-css/css-flexbox/content-height-with-scrollbars.html
 css/css-flexbox/css-flexbox-img-expand-evenly.html
 css/css-flexbox/display-flex-001.htm
-css/css-flexbox/fieldset-as-item-overflow.html
 css/css-flexbox/flex-align-content-end.html
 css/css-flexbox/flex-basis-011.html
 css/css-flexbox/flex-container-margin.html
@@ -973,14 +868,11 @@ css/css-flexbox/flex-direction-column.html
 css/css-flexbox/flex-direction-modify.html
 css/css-flexbox/flex-direction-row-vertical.html
 css/css-flexbox/flex-direction.html
-css/css-flexbox/flex-item-vertical-align.html
 css/css-flexbox/flex-vertical-align-effect.html
 css/css-flexbox/flexbox-align-self-horiz-005.xhtml
 css/css-flexbox/flexbox-baseline-nested-001.html
-css/css-flexbox/flexbox-definite-cross-size-constrained-percentage.html
 css/css-flexbox/flexbox-flex-wrap-default.htm
 css/css-flexbox/flexbox-flex-wrap-nowrap.htm
-css/css-flexbox/flexbox-margin-auto-horiz-002.xhtml
 css/css-flexbox/table-item-flex-percentage-width.html
 css/css-flexbox/flexbox-overflow-horiz-002.html
 css/css-flexbox/flexbox-overflow-horiz-003.html
@@ -1002,9 +894,7 @@ css/css-flexbox/flexbox_display.html
 css/css-flexbox/flexbox_flex-0-0-0-unitless.html
 css/css-flexbox/flexbox_flex-0-0-0.html
 css/css-flexbox/flexbox_flex-0-0-1-unitless-basis.html
-css/css-flexbox/flexbox_flex-0-0-N-shrink.html
 css/css-flexbox/flexbox_flex-0-0-N-unitless-basis.html
-css/css-flexbox/flexbox_flex-0-0-N.html
 css/css-flexbox/flexbox_flex-0-0-Npercent-shrink.html
 css/css-flexbox/flexbox_flex-0-0-Npercent.html
 css/css-flexbox/flexbox_flex-0-0-auto-shrink.html
@@ -1013,27 +903,17 @@ css/css-flexbox/flexbox_flex-0-0.html
 css/css-flexbox/flexbox_flex-0-1-0-unitless.html
 css/css-flexbox/flexbox_flex-0-1-0.html
 css/css-flexbox/flexbox_flex-0-1-1-unitless-basis.html
-css/css-flexbox/flexbox_flex-0-1-N-shrink.html
 css/css-flexbox/flexbox_flex-0-1-N-unitless-basis.html
-css/css-flexbox/flexbox_flex-0-1-N.html
-css/css-flexbox/flexbox_flex-0-1-Npercent-shrink.html
 css/css-flexbox/flexbox_flex-0-1-Npercent.html
-css/css-flexbox/flexbox_flex-0-1-auto-shrink.html
 css/css-flexbox/flexbox_flex-0-1-auto.html
 css/css-flexbox/flexbox_flex-0-1.html
 css/css-flexbox/flexbox_flex-0-N-0-unitless.html
 css/css-flexbox/flexbox_flex-0-N-0.html
-css/css-flexbox/flexbox_flex-0-N-N-shrink.html
-css/css-flexbox/flexbox_flex-0-N-N.html
-css/css-flexbox/flexbox_flex-0-N-Npercent-shrink.html
 css/css-flexbox/flexbox_flex-0-N-Npercent.html
-css/css-flexbox/flexbox_flex-0-N-auto-shrink.html
 css/css-flexbox/flexbox_flex-0-N-auto.html
 css/css-flexbox/flexbox_flex-0-N.html
-css/css-flexbox/flexbox_flex-0-auto.html
 css/css-flexbox/flexbox_flex-1-0-0-unitless.html
 css/css-flexbox/flexbox_flex-1-0-0.html
-css/css-flexbox/flexbox_flex-1-0-N-shrink.html
 css/css-flexbox/flexbox_flex-1-0-N.html
 css/css-flexbox/flexbox_flex-1-0-Npercent-shrink.html
 css/css-flexbox/flexbox_flex-1-0-Npercent.html
@@ -1042,25 +922,18 @@ css/css-flexbox/flexbox_flex-1-0-auto.html
 css/css-flexbox/flexbox_flex-1-0.html
 css/css-flexbox/flexbox_flex-1-1-0-unitless.html
 css/css-flexbox/flexbox_flex-1-1-0.html
-css/css-flexbox/flexbox_flex-1-1-N-shrink.html
 css/css-flexbox/flexbox_flex-1-1-N.html
-css/css-flexbox/flexbox_flex-1-1-Npercent-shrink.html
 css/css-flexbox/flexbox_flex-1-1-Npercent.html
-css/css-flexbox/flexbox_flex-1-1-auto-shrink.html
 css/css-flexbox/flexbox_flex-1-1-auto.html
 css/css-flexbox/flexbox_flex-1-1.html
 css/css-flexbox/flexbox_flex-1-N-0-unitless.html
 css/css-flexbox/flexbox_flex-1-N-0.html
-css/css-flexbox/flexbox_flex-1-N-N-shrink.html
 css/css-flexbox/flexbox_flex-1-N-N.html
-css/css-flexbox/flexbox_flex-1-N-Npercent-shrink.html
 css/css-flexbox/flexbox_flex-1-N-Npercent.html
-css/css-flexbox/flexbox_flex-1-N-auto-shrink.html
 css/css-flexbox/flexbox_flex-1-N-auto.html
 css/css-flexbox/flexbox_flex-1-N.html
 css/css-flexbox/flexbox_flex-N-0-0-unitless.html
 css/css-flexbox/flexbox_flex-N-0-0.html
-css/css-flexbox/flexbox_flex-N-0-N-shrink.html
 css/css-flexbox/flexbox_flex-N-0-N.html
 css/css-flexbox/flexbox_flex-N-0-Npercent-shrink.html
 css/css-flexbox/flexbox_flex-N-0-Npercent.html
@@ -1069,52 +942,39 @@ css/css-flexbox/flexbox_flex-N-0-auto.html
 css/css-flexbox/flexbox_flex-N-0.html
 css/css-flexbox/flexbox_flex-N-1-0-unitless.html
 css/css-flexbox/flexbox_flex-N-1-0.html
-css/css-flexbox/flexbox_flex-N-1-N-shrink.html
 css/css-flexbox/flexbox_flex-N-1-N.html
-css/css-flexbox/flexbox_flex-N-1-Npercent-shrink.html
 css/css-flexbox/flexbox_flex-N-1-Npercent.html
-css/css-flexbox/flexbox_flex-N-1-auto-shrink.html
 css/css-flexbox/flexbox_flex-N-1-auto.html
 css/css-flexbox/flexbox_flex-N-1.html
 css/css-flexbox/flexbox_flex-N-N-0-unitless.html
 css/css-flexbox/flexbox_flex-N-N-0.html
-css/css-flexbox/flexbox_flex-N-N-N-shrink.html
 css/css-flexbox/flexbox_flex-N-N-N.html
-css/css-flexbox/flexbox_flex-N-N-Npercent-shrink.html
 css/css-flexbox/flexbox_flex-N-N-Npercent.html
-css/css-flexbox/flexbox_flex-N-N-auto-shrink.html
 css/css-flexbox/flexbox_flex-N-N-auto.html
 css/css-flexbox/flexbox_flex-N-N.html
 css/css-flexbox/flexbox_flex-auto.html
 css/css-flexbox/flexbox_flex-basis-shrink.html
 css/css-flexbox/flexbox_flex-basis.html
 css/css-flexbox/flexbox_flex-initial-2.html
-css/css-flexbox/flexbox_flex-initial.html
 css/css-flexbox/flexbox_flex-natural-mixed-basis.html
 css/css-flexbox/flexbox_flex-natural.html
 css/css-flexbox/flexbox_flex-none.html
 css/css-flexbox/flexbox_generated-flex.html
 css/css-flexbox/flexbox_justifycontent-end-rtl.html
 css/css-flexbox/flexbox_justifycontent-end.html
-css/css-flexbox/flexbox_justifycontent-left-001.html
 css/css-flexbox/flexbox_justifycontent-start-rtl.html
 css/css-flexbox/flexbox_justifycontent-start.html
 css/css-flexbox/flexbox_margin.html
 css/css-flexbox/flexbox_object.html
-css/css-flexbox/flexbox_quirks_body.html
 css/css-flexbox/flexitem-stretch-range.html
 css/css-flexbox/gap-002-lr.html
 css/css-flexbox/gap-002-ltr.html
 css/css-flexbox/gap-002-rl.html
 css/css-flexbox/gap-002-rtl.html
-css/css-flexbox/gap-003-lr.html
 css/css-flexbox/gap-003-ltr.html
-css/css-flexbox/gap-003-rl.html
-css/css-flexbox/gap-003-rtl.html
 css/css-flexbox/gap-004-lr.html
 css/css-flexbox/gap-004-ltr.html
 css/css-flexbox/gap-004-rl.html
-css/css-flexbox/gap-004-rtl.html
 css/css-flexbox/gap-005-lr.html
 css/css-flexbox/gap-005-ltr.html
 css/css-flexbox/gap-005-rl.html
@@ -1136,9 +996,6 @@ css/css-flexbox/percentage-heights-004.html
 # with the flex definite-size fix. (Sibling content-height-with-scrollbars.html
 # fails identically with and without the bridge — pre-existing, untouched.)
 css/css-flexbox/percentage-size-subitems-001.html
-css/css-flexbox/scrollbars-auto.html
-css/css-flexbox/scrollbars-no-margin.html
-css/css-flexbox/scrollbars.html
 css/css-flexbox/stretch-flex-item-checkbox-input.html
 css/css-flexbox/stretch-flex-item-radio-input.html
 css/css-flexbox/stretch-input-in-column.html
@@ -1157,13 +1014,8 @@ css/css-flexbox/text-overflow-on-flexbox-001.html
 # (calc(10px +/- 0.5em) at font-size 40px) need mixed-unit calc resolution the
 # math evaluator intentionally lacks (measured: declaration drops to initial;
 # same class as cascade's mixed_length_percentage_math_is_intentionally_not_supported).
-css/css-tables/parsing/border-spacing-valid.html
 css/css-tables/parsing/caption-side-valid.html
 css/css-tables/parsing/empty-cells-valid.html
-css/css-tables/parsing/caption-side-computed.html
-css/css-tables/parsing/empty-cells-computed.html
-css/css-tables/parsing/table-layout-computed.html
-css/css-tables/parsing/border-collapse-computed.html
 # --- css-tables reftest pin 2026-09-15 (tables-sweep: rowspan=0 section-end + first-thead/first-tfoot order + css/reference unlock, EXACT 800x600) ---
 css/css-tables/zero-rowspan-001.html
 css/css-tables/row-group-order.html
@@ -1192,7 +1044,6 @@ css/css-tables/absolute-tables-012.html
 css/css-tables/caption-relative-positioning.html
 css/css-tables/height-distribution/percentage-sizing-of-table-cell-children-002.html
 css/css-tables/height-distribution/percentage-sizing-of-table-cell-replaced-children-001.html
-css/css-tables/paint/col-change-span-bg-invalidation-001.html
 css/css-tables/remove-colgroup-from-anon-table.html
 css/css-tables/subpixel-table-width-001.html
 css/css-tables/table-as-item-cell-percentage-002.html
@@ -1243,7 +1094,6 @@ css/css-flexbox/abspos/flex-abspos-staticpos-align-self-safe-003.html
 css/css-text/overflow-wrap/overflow-wrap-anywhere-011.html
 css/css-text/overflow-wrap/overflow-wrap-anywhere-span-001.html
 css/css-text/overflow-wrap/overflow-wrap-break-word-span-001.html
-css/css-text/overflow-wrap/overflow-wrap-min-content-size-001.html
 css/css-text/overflow-wrap/overflow-wrap-min-content-size-004.html
 css/css-text/tab-size/tab-size-integer-001.html
 css/css-text/tab-size/tab-size-integer-002.html
@@ -1258,10 +1108,7 @@ css/css-text/text-indent/anonymous-grid-item-001.html
 css/css-text/text-indent/text-indent-text-align-end.html
 css/css-text/white-space/full-width-leading-spaces-001.html
 css/css-text/white-space/lone-cr-001.tentative.html
-css/css-text/white-space/text-wrap-balance-004.html
-css/css-text/white-space/text-wrap-nowrap-001.html
 css/css-text/white-space/trailing-ideographic-space-break-spaces-008.html
-css/css-text/white-space/white-space-applies-to-text-001.html
 css/css-text/white-space/white-space-nowrap-011.html
 css/css-text/white-space/white-space-pre-011.html
 css/css-text/white-space/white-space-pre-wrap-justify-002.html
@@ -1271,7 +1118,6 @@ css/css-text/white-space/white-space-zero-fontsize-002.html
 css/css-text/white-space/ws-break-spaces-applies-to-012.html
 css/css-text/white-space/ws-break-spaces-applies-to-013.html
 css/css-text/word-break/word-break-manual-001.html
-css/css-text/word-break/word-break-min-content-001.html
 
 # --- text-align-last WPT PASS-only pins 2026-09-16 ---
 # final-line alignment implemented in raikiri-paint
@@ -1299,7 +1145,6 @@ css/css-text/hyphens/hyphens-auto-min-content.html
 css/css-text/hyphens/hyphens-none-shy-on-2nd-line-001.html
 css/css-text/hyphens/hyphens-out-of-flow-001.html
 css/css-text/hyphens/hyphens-out-of-flow-002.html
-css/css-text/letter-spacing/letter-spacing-bengali-yaphala-001.html
 
 # --- text-transform WPT PASS-only pins 2026-09-16 ---
 # case/width combinations, full-size-kana, and language tailoring
@@ -1354,7 +1199,6 @@ css/css-text/text-transform/text-transform-upperlower-101.html
 css/css-text/text-transform/text-transform-upperlower-102.html
 css/css-text/text-transform/text-transform-upperlower-103.html
 css/css-text/text-transform/text-transform-upperlower-104.html
-css/css-text/text-transform/text-transform-upperlower-105.html
 
 # --- CSS generated-content exact 800x600 PASS-only pins 2026-09-20 ---
 css/CSS2/generated-content/before-after-002.xht
@@ -1619,11 +1463,8 @@ css/css-break/widows-orphans-018.html
 css/css-page/fixedpos-001-print.html
 css/css-page/fixedpos-002-print.html
 css/css-page/fixedpos-003-print.html
-css/css-page/fixedpos-004-print.html
 css/css-page/fixedpos-005-print.html
-css/css-page/fixedpos-006-print.html
 css/css-page/fixedpos-007-print.html
-css/css-page/fixedpos-008-print.html
 css/css-page/fixedpos-009-print.html
 # --- css/printing fragmented-inline-block exact 800x600 PASS-only (+2) ---
 css/printing/fragmented-inline-block-001-print.html

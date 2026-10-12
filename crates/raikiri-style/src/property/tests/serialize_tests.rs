@@ -51,6 +51,41 @@ fn serialize_length_or_auto_formats_length_and_auto() {
 }
 
 #[test]
+fn serialize_length_or_auto_formats_relative_calc_terms_in_canonical_order() {
+    let term = |value, unit| RelativeCalcLengthPercentage::from_unit(value, unit).unwrap();
+    let calc = term(-2.0, "px")
+        .add_scaled(term(50.0, "%"), 1.0)
+        .and_then(|calc| calc.add_scaled(term(1.5, "em"), -1.0))
+        .unwrap();
+    assert_eq!(
+        serialize_length_or_auto(&LengthOrAuto::RelativeCalc(calc)),
+        "calc(50% - 1.5em - 2px)"
+    );
+    assert_eq!(
+        serialize_length_or_auto(&LengthOrAuto::RelativeCalc(term(-10.0, "dvh"))),
+        "calc(-10vh)"
+    );
+    for unit in [
+        "em", "rem", "lh", "rlh", "vw", "vh", "vi", "vb", "vmin", "vmax",
+    ] {
+        assert_eq!(
+            serialize_length_or_auto(&LengthOrAuto::RelativeCalc(term(2.0, unit))),
+            format!("calc(2{unit})")
+        );
+    }
+    assert_eq!(
+        serialize_length_or_auto(&LengthOrAuto::RelativeCalc(
+            term(50.0, "%").add_scaled(term(1.0, "vw"), 1.0).unwrap()
+        )),
+        "calc(50% + 1vw)"
+    );
+    assert_eq!(
+        serialize_relative_calc_length_percentage(&RelativeCalcLengthPercentage::default()),
+        "calc(0px)"
+    );
+}
+
+#[test]
 fn serialize_value_covers_simple_length_variants() {
     assert_eq!(
         serialize_value(&PropertyValue::PaddingTop(Length::Px(10.0))),

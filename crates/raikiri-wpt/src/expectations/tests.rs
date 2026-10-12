@@ -817,7 +817,9 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // - Fourteen pins whose PASS predated the WPT fonts, now expected failures (-14).
     // + text-spacing-trim-feature-001 pinned by its declared variants (-1, +8).
     // - Five Ahem reftests whose monospace text hints past a 13px line (-5).
-    assert_eq!(set.baseline.entries.len(), 1519);
+    // - Pins that fail on Linux with the WPT fonts, now expected failures (-102).
+    // - Testharness and JS-dependent pins the runner cannot evaluate, or already listed in known-issues (-57).
+    assert_eq!(set.baseline.entries.len(), 1360);
     for id in [
         "css/css-pseudo/first-letter-004.html",
         "css/css-pseudo/first-letter-005.html",

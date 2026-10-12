@@ -73,10 +73,11 @@ use crate::resolve::{
     resolve_length_percentage, resolve_length_percentage_or_auto,
     resolve_length_percentage_or_normal, resolve_length_percentage_with_ch, resolve_letter_spacing,
     resolve_letter_spacing_with_ch, resolve_line_height, resolve_margin_length_or_auto,
-    resolve_outline, resolve_tab_size, resolve_text_decoration_inset,
-    resolve_text_decoration_thickness, resolve_text_indent_calc, resolve_text_shadow_item,
-    resolve_text_underline_offset, resolve_transform_function, resolve_vertical_align,
-    resolve_word_spacing, resolve_word_spacing_with_ch, used_line_height_length,
+    resolve_outline, resolve_size_length_percentage_or_auto, resolve_tab_size,
+    resolve_text_decoration_inset, resolve_text_decoration_thickness, resolve_text_indent_calc,
+    resolve_text_shadow_item, resolve_text_underline_offset, resolve_transform_function,
+    resolve_vertical_align, resolve_word_spacing, resolve_word_spacing_with_ch,
+    used_line_height_length,
 };
 
 /// The `text-shadow` of a node's [`SpecifiedValues`].
@@ -1902,9 +1903,19 @@ impl SpecifiedValues {
         };
         let vertical_logical_size =
             vertical_logical_size.map(|(width, height)| VerticalLogicalSize {
-                width: resolve_length_percentage_or_auto(width, font_size, own_line_height, ctx),
+                width: resolve_size_length_percentage_or_auto(
+                    width,
+                    font_size,
+                    own_line_height,
+                    ctx,
+                ),
                 width_ch: size_ch(width),
-                height: resolve_length_percentage_or_auto(height, font_size, own_line_height, ctx),
+                height: resolve_size_length_percentage_or_auto(
+                    height,
+                    font_size,
+                    own_line_height,
+                    ctx,
+                ),
                 height_ch: size_ch(height),
             });
         let width_ch = match self.width {
@@ -1928,12 +1939,16 @@ impl SpecifiedValues {
                 }
             };
         let min_width =
-            resolve_length_percentage_or_auto(self.min_width, font_size, own_line_height, ctx);
-        let min_height =
-            resolve_length_percentage_or_auto(self.min_height, font_size, own_line_height, ctx);
-        let physical_min_block = self
-            .min_block_size
-            .map(|value| resolve_length_percentage_or_auto(value, font_size, own_line_height, ctx));
+            resolve_size_length_percentage_or_auto(self.min_width, font_size, own_line_height, ctx);
+        let min_height = resolve_size_length_percentage_or_auto(
+            self.min_height,
+            font_size,
+            own_line_height,
+            ctx,
+        );
+        let physical_min_block = self.min_block_size.map(|value| {
+            resolve_size_length_percentage_or_auto(value, font_size, own_line_height, ctx)
+        });
         let (min_width, min_height) = match self.writing_mode {
             WritingMode::HorizontalTb => (min_width, physical_min_block.unwrap_or(min_height)),
             WritingMode::VerticalRl
@@ -2068,18 +2083,28 @@ impl SpecifiedValues {
             },
             outline: resolve_outline(self.outline, font_size, own_line_height, ctx),
             outline_offset: resolve_length(self.outline_offset, font_size, own_line_height, ctx),
-            width: resolve_length_percentage_or_auto(self.width, font_size, own_line_height, ctx),
+            width: resolve_size_length_percentage_or_auto(
+                self.width,
+                font_size,
+                own_line_height,
+                ctx,
+            ),
             width_ch,
-            height: resolve_length_percentage_or_auto(self.height, font_size, own_line_height, ctx),
+            height: resolve_size_length_percentage_or_auto(
+                self.height,
+                font_size,
+                own_line_height,
+                ctx,
+            ),
             height_ch,
-            max_width: resolve_length_percentage_or_auto(
+            max_width: resolve_size_length_percentage_or_auto(
                 self.max_width,
                 font_size,
                 own_line_height,
                 ctx,
             ),
             max_width_ch,
-            max_height: resolve_length_percentage_or_auto(
+            max_height: resolve_size_length_percentage_or_auto(
                 self.max_height,
                 font_size,
                 own_line_height,
