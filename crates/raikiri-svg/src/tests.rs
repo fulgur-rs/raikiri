@@ -2537,3 +2537,50 @@ fn font_shorthand_expansion_fails_cleanly_at_intermediate_byte_limits() {
         }
     }
 }
+
+#[test]
+fn inline_style_strip_reserializes_retained_declarations() {
+    // An unterminated trailing comment would swallow appended overrides if the
+    // retained text were the raw source slice.
+    let retained = strip_inline_style_properties("fill:red /* note", &["width"]);
+    assert_eq!(retained, "fill:red");
+    assert_eq!(
+        append_inline_declarations(&retained, "width:1px"),
+        "fill:red;width:1px"
+    );
+
+    // Comments are dropped without gluing neighbouring tokens together, and
+    // unclosed blocks and strings are closed.
+    assert_eq!(
+        strip_inline_style_properties("stroke-dasharray:1/**/2;opacity:0.5", &["opacity"]),
+        "stroke-dasharray:1/**/2"
+    );
+    assert_eq!(
+        strip_inline_style_properties("font-family:\"a b", &[]),
+        "font-family:\"a b\""
+    );
+    assert_eq!(
+        strip_inline_style_properties("fill:url(#a) rgb(1 2 3", &[]),
+        "fill:url(#a) rgb(1 2 3)"
+    );
+    assert_eq!(
+        strip_inline_style_properties("color:green!important", &[]),
+        "color:green!important"
+    );
+}
+
+#[test]
+fn viewport_override_survives_an_unterminated_inline_comment() {
+    let source = br##"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" style="fill:red /* note"><rect width="100" height="100" fill="#ff0000"/></svg>"##;
+    let resized = super::with_root_viewport_size(
+        std::str::from_utf8(source).expect("SVG is UTF-8"),
+        200.0,
+        100.0,
+    )
+    .expect("viewport override succeeds");
+    let tree = super::parse_tree(&resized).expect("adjusted SVG parses");
+
+    assert!(resized.contains("style=\"fill:red;width:200px!important;height:100px!important\""));
+    assert_eq!(tree.size().width(), 200.0);
+    assert_eq!(tree.size().height(), 100.0);
+}
