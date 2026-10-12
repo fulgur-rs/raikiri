@@ -63,6 +63,10 @@ name = "run-baseline-report"
 path = "src/bin/run-baseline-report.rs"
 
 [[bin]]
+name = "audit-vacuous-passes"
+path = "src/bin/audit-vacuous-passes.rs"
+
+[[bin]]
 name = "run-parsing-invalid"
 path = "src/bin/run-parsing-invalid.rs"
 

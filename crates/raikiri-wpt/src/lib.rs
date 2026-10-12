@@ -20,6 +20,7 @@ mod test_http_server;
 mod test_support;
 pub mod testharness_page;
 pub mod text_css_i18n;
+pub mod vacuity;
 pub(crate) mod wpt_host;
 pub mod wpt_host_resolver;
 pub mod wptrunner_browser;
