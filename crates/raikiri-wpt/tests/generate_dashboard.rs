@@ -5,18 +5,43 @@ use std::fs;
 use assert_cmd::Command;
 use tempfile::tempdir;
 
+/// Write scope files next to `root` and return the arguments that use them.
+fn scope_args(root: &std::path::Path) -> Vec<String> {
+    let print_scope = root.join("print-scope.txt");
+    fs::write(&print_scope, "css/foo/\n").unwrap();
+    let known_issues = root.join("known-issues.txt");
+    fs::write(&known_issues, "css/bar/ | Out of print scope (fixture)\n").unwrap();
+    vec![
+        "--print-scope".to_owned(),
+        print_scope.to_str().unwrap().to_owned(),
+        "--known-issues".to_owned(),
+        known_issues.to_str().unwrap().to_owned(),
+    ]
+}
+
 #[test]
 fn binary_generates_dashboard_from_a_non_git_wpt_tree() {
     let root = tempdir().unwrap();
-    fs::create_dir_all(root.path().join("css/foo/parsing")).unwrap();
-    fs::write(root.path().join("css/foo/a.html"), "a").unwrap();
-    fs::write(root.path().join("css/foo/parsing/b.html"), "b").unwrap();
+    let link = r#"<link rel="match" href="ref.html">"#;
+    fs::create_dir_all(root.path().join("css/foo/sub")).unwrap();
+    fs::create_dir_all(root.path().join("css/bar")).unwrap();
+    fs::write(root.path().join("css/foo/a.html"), link).unwrap();
+    fs::write(root.path().join("css/foo/sub/b.html"), link).unwrap();
+    fs::write(root.path().join("css/foo/parsing.html"), "no reference").unwrap();
+    fs::write(root.path().join("css/bar/c.html"), link).unwrap();
     fs::write(root.path().join("css/README.md"), "readme").unwrap();
 
     let baseline = root.path().join("baseline.txt");
+    fs::write(&baseline, "# comment\ncss/foo/a.html\nparsing.html\n").unwrap();
+    let sweep = root.path().join("sweep.tsv");
     fs::write(
-        &baseline,
-        "# comment\ncss/foo/a.html\nb.html\ncss/README.md\n",
+        &sweep,
+        "css/foo/a.html\tPASS\t\ncss/foo/sub/b.html\tFAIL\tmismatch\n",
+    )
+    .unwrap();
+    fs::write(
+        root.path().join("sweep.tsv.meta"),
+        "wpt_sha=abc\nraikiri_sha=def\n",
     )
     .unwrap();
     let output = root.path().join("nested/dashboard.html");
@@ -28,17 +53,22 @@ fn binary_generates_dashboard_from_a_non_git_wpt_tree() {
             root.path().to_str().unwrap(),
             "--baseline",
             baseline.to_str().unwrap(),
+            "--sweep",
+            sweep.to_str().unwrap(),
             "--output",
             output.to_str().unwrap(),
         ])
+        .args(scope_args(root.path()))
         .assert()
         .success();
     let stdout = String::from_utf8(assertion.get_output().stdout.clone()).unwrap();
-    assert!(stdout.contains("3 WPT files, 3 baseline entries"));
+    assert!(stdout.contains("5 WPT files, 2 baseline entries, 2 in-scope reftests, 1 PASS"));
 
     let html = fs::read_to_string(output).unwrap();
-    assert!(html.contains("Total (css/)") && html.contains("3/3"));
-    assert!(html.contains("css/foo/parsing") && html.contains("1/1"));
+    assert!(html.contains("In-scope pass rate: 50.00%"));
+    assert!(html.contains("sweep: <code>raikiri def, WPT abc</code>"));
+    assert!(html.contains("css/foo/sub"));
+    assert!(html.contains("Out of print scope (fixture)"));
 }
 
 #[test]
@@ -80,6 +110,7 @@ fn binary_reports_output_path_errors() {
             "--output",
             parent_file.join("dashboard.html").to_str().unwrap(),
         ])
+        .args(scope_args(root.path()))
         .output()
         .unwrap();
     assert!(!parent_error.status.success());
@@ -100,6 +131,7 @@ fn binary_reports_output_path_errors() {
             "--output",
             output_dir.to_str().unwrap(),
         ])
+        .args(scope_args(root.path()))
         .output()
         .unwrap();
     assert!(!output_error.status.success());
@@ -116,6 +148,7 @@ fn binary_reports_output_path_errors() {
             "--output",
             "dashboard.html",
         ])
+        .args(scope_args(root.path()))
         .output()
         .unwrap();
     assert!(no_parent.status.success());
@@ -131,4 +164,62 @@ fn binary_reports_argument_errors() {
         .unwrap();
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("unknown argument"));
+}
+
+#[test]
+fn binary_reports_scope_and_sweep_errors() {
+    let root = tempdir().unwrap();
+    fs::create_dir_all(root.path().join("css/foo")).unwrap();
+    fs::write(
+        root.path().join("css/foo/a.html"),
+        r#"<link rel="match" href="ref.html">"#,
+    )
+    .unwrap();
+    let baseline = root.path().join("baseline.txt");
+    fs::write(&baseline, "css/foo/a.html\n").unwrap();
+    let output = root.path().join("dashboard.html");
+    let run = |extra: &[String]| {
+        Command::cargo_bin("generate-dashboard")
+            .unwrap()
+            .args([
+                "--wpt-root",
+                root.path().to_str().unwrap(),
+                "--baseline",
+                baseline.to_str().unwrap(),
+                "--output",
+                output.to_str().unwrap(),
+            ])
+            .args(extra)
+            .output()
+            .unwrap()
+    };
+    let stderr = |extra: &[String]| String::from_utf8_lossy(&run(extra).stderr).into_owned();
+    let missing = root.path().join("missing.txt").to_str().unwrap().to_owned();
+    let scope = scope_args(root.path());
+
+    let mut args = scope.clone();
+    args[1] = missing.clone();
+    assert!(stderr(&args).contains("could not read print scope"));
+
+    let mut args = scope.clone();
+    args[3] = missing.clone();
+    assert!(stderr(&args).contains("could not read known issues"));
+
+    let sweep = root.path().join("sweep.tsv");
+    fs::write(&sweep, "css/foo/a.html\tPASS\t\n").unwrap();
+    let mut args = scope.clone();
+    args.extend(["--sweep".to_owned(), sweep.to_str().unwrap().to_owned()]);
+    assert!(stderr(&args).contains("could not read sweep metadata"));
+
+    let print_scope = root.path().join("bad-scope.txt");
+    fs::write(&print_scope, "css/foo\n").unwrap();
+    let mut args = scope.clone();
+    args[1] = print_scope.to_str().unwrap().to_owned();
+    assert!(stderr(&args).contains("expected a `css/<area>/` prefix"));
+
+    let known_issues = root.path().join("overlap.txt");
+    fs::write(&known_issues, "css/foo/ | overlap\n").unwrap();
+    let mut args = scope;
+    args[3] = known_issues.to_str().unwrap().to_owned();
+    assert!(stderr(&args).contains("both print-scope.txt and known-issues.txt"));
 }
