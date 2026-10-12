@@ -221,12 +221,13 @@ fn catch_row(id: &str, body: impl FnOnce() -> (Status, String)) -> Row {
     }
 }
 
-fn reftest_status(wpt_root: &Path, test_path: &Path, variant_query: &str) -> (Status, String) {
-    let config = ReftestConfig {
+/// Configuration the baseline report runs reftests with: the default 800x600
+/// exact comparison, refusing to fall back from the WPT fonts.
+pub(crate) fn report_config() -> ReftestConfig {
+    ReftestConfig {
         require_inline_fonts: true,
         ..ReftestConfig::default()
-    };
-    reftest_status_at_path(wpt_root, test_path, variant_query, config)
+    }
 }
 
 #[cfg(test)]
@@ -445,7 +446,12 @@ fn wpt_test_path_error_detail(error: WptTestPathError, parsing: bool) -> String 
 /// known-issues prefix filter is deliberately not applied: it overlaps the
 /// baseline.
 pub fn run_id(wpt_root: &Path, id: &str) -> Row {
-    run_id_inner(wpt_root, id, None)
+    run_id_inner(wpt_root, id, None, report_config())
+}
+
+/// [`run_id`] with an explicit reftest configuration.
+pub(crate) fn run_id_with_config(wpt_root: &Path, id: &str, config: ReftestConfig) -> Row {
+    run_id_inner(wpt_root, id, None, config)
 }
 
 /// Run one baseline or expected-failure id and classify an exact recorded
@@ -455,10 +461,15 @@ pub fn run_id_with_expected_failures(
     id: &str,
     expected_failures: &ExpectedFailures,
 ) -> Row {
-    run_id_inner(wpt_root, id, Some(expected_failures))
+    run_id_inner(wpt_root, id, Some(expected_failures), report_config())
 }
 
-fn run_id_inner(wpt_root: &Path, id: &str, expected_failures: Option<&ExpectedFailures>) -> Row {
+fn run_id_inner(
+    wpt_root: &Path,
+    id: &str,
+    expected_failures: Option<&ExpectedFailures>,
+    config: ReftestConfig,
+) -> Row {
     let (path, query) = id
         .split_once('?')
         .map_or((id, None), |(path, query)| (path, Some(query)));
@@ -476,7 +487,9 @@ fn run_id_inner(wpt_root: &Path, id: &str, expected_failures: Option<&ExpectedFa
                     let variant_query = query
                         .filter(|query| !query.is_empty())
                         .map_or_else(String::new, |query| format!("?{query}"));
-                    catch_row(id, || reftest_status(&wpt_root, &test_path, &variant_query))
+                    catch_row(id, || {
+                        reftest_status_at_path(&wpt_root, &test_path, &variant_query, config)
+                    })
                 }
             }
             Err(error) => Row {

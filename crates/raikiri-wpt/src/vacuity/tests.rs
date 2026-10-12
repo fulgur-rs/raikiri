@@ -109,3 +109,175 @@ fn declaration_keys_keep_case_sensitive_parts() {
     let html = r#"<div style="--Foo: Bar; COLOR: Green; content: 'A'">"#;
     assert_eq!(keys(html), ["--Foo:Bar", "color:Green", "content:'A'"]);
 }
+
+fn wpt_tree(files: &[(&str, &str)]) -> tempfile::TempDir {
+    let directory = tempfile::tempdir().unwrap();
+    for (path, html) in files {
+        let path = directory.path().join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, html).unwrap();
+    }
+    directory
+}
+
+fn small() -> ReftestConfig {
+    ReftestConfig {
+        width: 16,
+        height: 16,
+        ..ReftestConfig::default()
+    }
+}
+
+const GREEN_REF: &str = r#"<!DOCTYPE html><body style="margin:0"><div style="width:8px;height:8px;background-color:green"></div>"#;
+const RED_REF: &str = r#"<!DOCTYPE html><body style="margin:0"><div style="width:8px;height:8px;background-color:red"></div>"#;
+
+fn audit(files: &[(&str, &str)], id: &str) -> Verdict {
+    let tree = wpt_tree(files);
+    audit_id_with_config(tree.path(), id, small())
+}
+
+#[test]
+fn a_test_whose_ablated_declarations_matter_is_kept() {
+    let test = r#"<!DOCTYPE html><link rel="match" href="ref.html"><body style="margin:0"><div style="width:8px;height:8px;background:green"></div>"#;
+    let verdict = audit(
+        &[("css/a/keep.html", test), ("css/a/ref.html", GREEN_REF)],
+        "css/a/keep.html",
+    );
+    assert_eq!(verdict, Verdict::Kept { ablated: 1 });
+    assert_eq!(verdict.label(), "KEEP");
+    assert_eq!(verdict.detail(), "1 test-only declaration(s) ablated");
+}
+
+#[test]
+fn a_test_sharing_every_declaration_is_kept_with_weaker_evidence() {
+    let test = r#"<!DOCTYPE html><link rel="match" href="ref.html"><body style="margin:0"><p style="margin:0"><span style="display:block;width:8px;height:8px;background-color:green"></span>"#;
+    let reference = r#"<!DOCTYPE html><body style="margin:0"><div style="display:block;width:8px;height:8px;background-color:green"></div>"#;
+    let verdict = audit(
+        &[("css/a/markup.html", test), ("css/a/ref.html", reference)],
+        "css/a/markup.html",
+    );
+    assert!(matches!(verdict, Verdict::Kept { .. }), "{verdict:?}");
+}
+
+#[test]
+fn a_blank_pair_is_vacuous() {
+    let test =
+        r#"<!DOCTYPE html><link rel="match" href="ref.html"><div style="color:green"></div>"#;
+    let verdict = audit(
+        &[
+            ("css/a/blank.html", test),
+            ("css/a/ref.html", "<!DOCTYPE html><p></p>"),
+        ],
+        "css/a/blank.html",
+    );
+    assert_eq!(verdict, Verdict::Blank);
+    assert_eq!(verdict.label(), "VACUOUS-BLANK");
+    assert_eq!(verdict.detail(), "reference matches an empty document");
+}
+
+#[test]
+fn a_subject_property_without_visible_effect_is_vacuous() {
+    let test = r#"<!DOCTYPE html><link rel="match" href="ref.html"><body style="margin:0"><div style="clear:both;width:8px;height:8px;background-color:green"></div>"#;
+    let verdict = audit(
+        &[
+            ("css/a/clear-001.html", test),
+            ("css/a/ref.html", GREEN_REF),
+        ],
+        "css/a/clear-001.html",
+    );
+    assert_eq!(
+        verdict,
+        Verdict::Unstyled {
+            probe: "feature",
+            ablated: 1
+        }
+    );
+    assert_eq!(verdict.label(), "VACUOUS-UNSTYLED");
+    assert_eq!(
+        verdict.detail(),
+        "still matches after the feature ablation of 1 declaration(s)"
+    );
+}
+
+#[test]
+fn mismatch_only_tests_are_vacuous_without_probing() {
+    let test = r#"<!DOCTYPE html><link rel="mismatch" href="ref.html"><body style="margin:0"><div style="width:8px;height:8px;background:green"></div>"#;
+    let verdict = audit(
+        &[("css/a/mismatch.html", test), ("css/a/ref.html", RED_REF)],
+        "css/a/mismatch.html",
+    );
+    assert_eq!(verdict, Verdict::MismatchOnly);
+    assert_eq!(verdict.label(), "VACUOUS-MISMATCH-ONLY");
+    assert_eq!(verdict.detail(), "only rel=mismatch references");
+}
+
+#[test]
+fn failing_and_missing_tests_are_not_pass() {
+    let test = r#"<!DOCTYPE html><link rel="match" href="ref.html"><body style="margin:0"><div style="width:8px;height:8px;background:green"></div>"#;
+    let verdict = audit(
+        &[("css/a/fail.html", test), ("css/a/ref.html", RED_REF)],
+        "css/a/fail.html",
+    );
+    assert!(
+        matches!(
+            verdict,
+            Verdict::NotPass {
+                status: Status::Fail,
+                ..
+            }
+        ),
+        "{verdict:?}"
+    );
+    assert_eq!(verdict.label(), "NOT-PASS");
+    assert!(verdict.detail().starts_with("FAIL: "));
+    let missing = audit(&[], "css/a/missing.html");
+    assert!(
+        matches!(
+            missing,
+            Verdict::NotPass {
+                status: Status::Error,
+                ..
+            }
+        ),
+        "{missing:?}"
+    );
+}
+
+#[test]
+fn a_self_reference_keeps_its_original_document() {
+    // The reference is the same file under a query that the page ignores, so
+    // probing the test must not rewrite the reference too.
+    let test = r#"<!DOCTYPE html><link rel="match" href="self.html?ref"><body style="margin:0"><div style="width:8px;height:8px;background:green"></div>"#;
+    let tree = wpt_tree(&[("css/a/self.html", test)]);
+    let root = std::fs::canonicalize(tree.path()).unwrap();
+    let pair = discover_pairs_for_file_with_wpt_root(&root.join("css/a/self.html"), Some(&root))
+        .unwrap()
+        .remove(0);
+    assert_eq!(passes(&pair, small(), false, "", test), Some(true));
+    assert_eq!(
+        passes(&pair, small(), false, "", &blank_document(test)),
+        Some(false)
+    );
+}
+
+#[test]
+fn scanner_handles_escapes_unquoted_and_valueless_attributes() {
+    let html = r#"<input disabled style=color:green><p data-x = 'a' style = "content: '\'}'; /* x */ width: 1px; : bad; 9:9; --e:">"#;
+    assert_eq!(
+        keys(html),
+        ["color:green", r"content:'\'}'", "width:1px", "9:9"]
+    );
+}
+
+#[test]
+fn scanner_stops_at_unterminated_constructs() {
+    assert_eq!(keys("<style>a { color: red; /* open"), ["color:red"]);
+    assert_eq!(keys("<div style='width: 1px"), Vec::<String>::new());
+    assert_eq!(
+        keys("<!-- never closed <div style='width: 1px'>"),
+        Vec::<String>::new()
+    );
+    assert_eq!(keys("a < b <1 <style>b { top: 0 }"), ["top:0"]);
+    assert_eq!(css_declarations("top: 1px; left: 2px", true, 10).len(), 2);
+    assert_eq!(css_declarations("x { a: 1 } }", false, 0).len(), 1);
+}

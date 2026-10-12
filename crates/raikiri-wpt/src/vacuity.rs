@@ -32,7 +32,7 @@
 //! is weaker evidence when [`Verdict::Kept`] reports no test-only
 //! declarations.
 
-use crate::baseline_report::{Status, run_id};
+use crate::baseline_report::{Status, report_config, run_id_with_config};
 use crate::reftest::{
     ReftestConfig, ReftestKind, ReftestPair, discover_pairs_for_file_with_wpt_root,
     run_pair_with_test_html,
@@ -108,7 +108,11 @@ impl Verdict {
 /// The id uses the baseline format: a root-relative WPT path with an optional
 /// declared variant query.
 pub fn audit_id(wpt_root: &Path, id: &str) -> Verdict {
-    let row = run_id(wpt_root, id);
+    audit_id_with_config(wpt_root, id, report_config())
+}
+
+fn audit_id_with_config(wpt_root: &Path, id: &str, config: ReftestConfig) -> Verdict {
+    let row = run_id_with_config(wpt_root, id, config);
     if row.status != Status::Pass {
         return Verdict::NotPass {
             status: row.status,
@@ -152,10 +156,6 @@ pub fn audit_id(wpt_root: &Path, id: &str) -> Verdict {
     if matches.is_empty() {
         return Verdict::MismatchOnly;
     }
-    let config = ReftestConfig {
-        require_inline_fonts: true,
-        ..ReftestConfig::default()
-    };
     let read = |path: &Path| std::fs::read_to_string(path).map_err(|e| e.to_string());
     let test_html = match read(&test_path) {
         Ok(html) => html,
