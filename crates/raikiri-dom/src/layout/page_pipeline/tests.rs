@@ -2575,6 +2575,47 @@ fn layout_pages_keeps_page_names_inside_a_static_position_absolute_box() {
     // An inset moves the box out of the page flow, so its names are ignored.
     let inset = named_page_slices("display:block", &[("position:absolute;top:0px", named)]);
     assert_eq!(inset.len(), 1);
+    // A fixed box repeats on every page, even at its static position.
+    let fixed = named_page_slices("display:block", &[("position:fixed", named)]);
+    assert_eq!(fixed.len(), 1);
+}
+
+#[test]
+fn layout_pages_keeps_page_names_inside_a_blockified_inline_block_flex_item() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let flex = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:flex;flex-direction:column"),
+    );
+    let item = doc.append_element(
+        Some(flex),
+        "div",
+        Style::default(),
+        Some("display:inline-block"),
+    );
+    for style in [
+        "display:block;page:a;height:10px",
+        "display:block;page:b;height:10px",
+    ] {
+        doc.append_element(Some(item), "div", Style::default(), Some(style));
+    }
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let slices = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
+
+    // A flex item is blockified, so its `inline-block` display does not make
+    // its content monolithic.
+    assert_eq!(slices.len(), 2);
 }
 
 #[test]

@@ -1219,7 +1219,7 @@ pub(crate) fn page_applies_to_box(
     cascade: &CascadeResult,
     node_id: usize,
 ) -> bool {
-    let blockified = document.parent_of(node_id).is_some_and(|parent| {
+    let blockified = pagination_box_parent(document, cascade, node_id).is_some_and(|parent| {
         cascade.computed.get(parent).is_some_and(|parent| {
             matches!(
                 parent.display,
@@ -1352,14 +1352,17 @@ fn propagated_start_page_name_with_order(
         };
         let used_page_name = explicit_page_name.or_else(|| inherited_page_name.clone());
         // Atomic inline-level boxes and orthogonal flows are monolithic, so
-        // they do not pass a descendant's page value up to the box.
-        if matches!(
-            cascade.computed[node_id].display,
-            DisplayValue::InlineBlock
-                | DisplayValue::InlineFlex
-                | DisplayValue::InlineGrid
-                | DisplayValue::InlineTable
-        ) || establishes_orthogonal_flow(document, cascade, node_id)
+        // they do not pass a descendant's page value up to the box. A
+        // blockified flex or grid item is no longer atomic.
+        if (!page_applies
+            && matches!(
+                cascade.computed[node_id].display,
+                DisplayValue::InlineBlock
+                    | DisplayValue::InlineFlex
+                    | DisplayValue::InlineGrid
+                    | DisplayValue::InlineTable
+            ))
+            || establishes_orthogonal_flow(document, cascade, node_id)
         {
             return (true, used_page_name);
         }

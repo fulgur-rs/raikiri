@@ -2834,9 +2834,10 @@ pub fn layout_pages_with_page_geometry_and_control(
         ifc_root: Option<(usize, f32)>,
     }
 
-    /// Whether `node_id` or an ancestor is an absolutely positioned box with a
-    /// non-auto block-start or block-end inset, which moves it away from its
-    /// static position in the page flow.
+    /// Whether `node_id` or an ancestor is a fixed box, or an absolutely
+    /// positioned box with a non-auto block-start or block-end inset, which
+    /// moves it away from its static position in the page flow. A fixed box
+    /// repeats on every page, so it never joins the page flow.
     fn in_inset_out_of_flow_subtree(
         document: &Document,
         cascade: &CascadeResult,
@@ -2844,15 +2845,16 @@ pub fn layout_pages_with_page_geometry_and_control(
     ) -> bool {
         let mut current = Some(node_id);
         while let Some(id) = current {
-            if document.nodes[id].kind() == NodeKind::Element
-                && matches!(
-                    cascade.computed[id].position,
-                    PositionValue::Absolute | PositionValue::Fixed
-                )
-            {
-                let inset = &document.nodes[id].style.inset;
-                if !inset.top.is_auto() || !inset.bottom.is_auto() {
-                    return true;
+            if document.nodes[id].kind() == NodeKind::Element {
+                match cascade.computed[id].position {
+                    PositionValue::Fixed => return true,
+                    PositionValue::Absolute => {
+                        let inset = &document.nodes[id].style.inset;
+                        if !inset.top.is_auto() || !inset.bottom.is_auto() {
+                            return true;
+                        }
+                    }
+                    _ => {}
                 }
             }
             current = document.parent_of(id);
@@ -3311,12 +3313,16 @@ pub fn layout_pages_with_page_geometry_and_control(
                 }
                 // An atomic inline-level box or an orthogonal flow is
                 // monolithic: like a float, its content offers no class A
-                // break points and its page names do not open pages.
-                let monolithic = matches!(
-                    computed.display,
-                    DisplayValue::InlineBlock | DisplayValue::InlineFlex | DisplayValue::InlineGrid
-                ) || (!is_body
-                    && establishes_orthogonal_flow(document, cascade, node_id));
+                // break points and its page names do not open pages. A
+                // blockified flex or grid item is no longer atomic.
+                let monolithic = (inline_level
+                    && matches!(
+                        computed.display,
+                        DisplayValue::InlineBlock
+                            | DisplayValue::InlineFlex
+                            | DisplayValue::InlineGrid
+                    ))
+                    || (!is_body && establishes_orthogonal_flow(document, cascade, node_id));
                 let child_order = pagination_child_order(document, cascade, node_id);
                 for child_id in child_order {
                     let child_parent_y =

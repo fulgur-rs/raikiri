@@ -556,6 +556,38 @@ fn first_page_name_uses_order_in_nested_flex_before_layout() {
 }
 
 #[test]
+fn first_page_name_blockifies_a_flex_item_inside_display_contents() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let flex = doc.append_element(
+        Some(body),
+        "section",
+        Style::default(),
+        Some("display:flex;flex-direction:column"),
+    );
+    let contents = doc.append_element(
+        Some(flex),
+        "div",
+        Style::default(),
+        Some("display:contents"),
+    );
+    doc.append_element(
+        Some(contents),
+        "div",
+        Style::default(),
+        Some("display:inline-block;page:narrow"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+
+    assert_eq!(first_page_name(&doc, &cascade).as_deref(), Some("narrow"));
+}
+
+#[test]
 fn resolved_image_intrinsic_size_changes_flex_grid_column_count_and_page_order() {
     struct FixedImageResolver(f32);
     impl raikiri_traits::ReplacedResolver for FixedImageResolver {
