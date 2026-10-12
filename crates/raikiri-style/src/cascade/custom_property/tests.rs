@@ -2481,3 +2481,81 @@ fn env_inside_math_is_rejected_at_parse_time() {
     );
     assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Px(10.0));
 }
+
+#[test]
+fn var_ending_in_hex_escape_keeps_the_following_whitespace() {
+    // `\6d` would consume the space that follows `var()` if the substituted
+    // text were reparsed as is, leaving `1em+ 1px`, which is not a valid sum.
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some(r"font-size: 20px; --a: 1e\6d; width: calc(var(--a) + 1px)"),
+    );
+    assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Px(21.0));
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some(r"font-size: 20px; --a: 1\65 m; width: calc(var(--a) + 1px + 10%)"),
+    );
+    assert_eq!(
+        cv.width,
+        ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage {
+            percent: 10.0,
+            px: 21.0,
+        })
+    );
+}
+
+#[test]
+fn escaped_unit_written_directly_still_consumes_its_whitespace() {
+    // Written in the source, the escape consumes the space before `+`, so
+    // the sum has no whitespace on one side of the operator and is invalid.
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some(r"font-size: 20px; width: calc(1e\6d + 1px)"),
+    );
+    assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Auto);
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some(r"font-size: 20px; width: calc(1e\6d  + 1px)"),
+    );
+    assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Px(21.0));
+}
+
+#[test]
+fn hex_escape_detection_at_end_of_substitution() {
+    assert!(ends_with_open_hex_escape(r"1e\6d"));
+    assert!(ends_with_open_hex_escape(r"\10FFFF"));
+    assert!(!ends_with_open_hex_escape(r"\1234567"));
+    assert!(!ends_with_open_hex_escape(r"1e\\6d"));
+    assert!(!ends_with_open_hex_escape(r"\6d "));
+    assert!(!ends_with_open_hex_escape("1em"));
+}
+
+#[test]
+fn calc_folding_to_a_negative_size_clamps_to_zero() {
+    for declaration in [
+        "width: calc(0em - 10px)",
+        "width: calc(-10px)",
+        "--a: 0em; width: calc(var(--a) - 10px)",
+        "--a: 1em; width: calc(var(--a) - 1em - 10px)",
+    ] {
+        let cv = cascade_doc("", "div", Some(&format!("font-size: 20px; {declaration}")));
+        assert_eq!(
+            cv.width,
+            ComputedLengthPercentageOrAuto::Px(0.0),
+            "{declaration}"
+        );
+    }
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("--a: 1em; min-height: calc(var(--a) - 1em - 10px)"),
+    );
+    assert_eq!(cv.min_height, ComputedLengthPercentageOrAuto::Px(0.0));
+    // A plain negative length stays invalid.
+    let cv = cascade_doc("", "div", Some("width: 5px; width: -10px"));
+    assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Px(5.0));
+}

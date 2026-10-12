@@ -2600,6 +2600,10 @@ pub fn resolve_size_length_percentage_or_auto(
         (LengthOrAuto::RelativeCalc(_), ComputedLengthPercentageOrAuto::Px(px)) => {
             ComputedLengthPercentageOrAuto::Px(px.max(0.0))
         }
+        // A calc without a percentage term is fully known now.
+        (LengthOrAuto::Calc(calc), _) if calc.percent == 0.0 && calc.px < 0.0 => {
+            ComputedLengthPercentageOrAuto::Px(0.0)
+        }
         _ => computed,
     }
 }

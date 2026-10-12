@@ -170,9 +170,18 @@ fn resolve_substituted_value(deferred: &DeferredValue, substituted: &str) -> Opt
     }
     let mut input = ParserInput::new(simplified.as_ref());
     let mut parser = Parser::new(&mut input);
-    let value = parse_value(&deferred.property, &mut parser)?;
-    parser.expect_exhausted().ok()?;
-    Some(ResolvedValue::Parsed(value))
+    if let Some(value) = parse_value(&deferred.property, &mut parser)
+        && parser.expect_exhausted().is_ok()
+    {
+        return Some(ResolvedValue::Parsed(value));
+    }
+    // Simplification drops the fact that the value came from a math
+    // function. A `calc()` that folds to a length outside the property's
+    // range, such as `width: calc(1em - 1em - 10px)` folding to `-10px`, is
+    // clamped rather than invalid (CSS Values 4 "Range Checking",
+    // <https://www.w3.org/TR/css-values-4/#calc-range>), so keep it as a calc
+    // and let the computed-value resolver clamp it.
+    parse_relative_calc_length_percentage(substituted).map(ResolvedValue::Calc)
 }
 
 /// The CSS-wide keyword `source` holds as its only component value.
@@ -1780,6 +1789,13 @@ pub(crate) fn substitute_vars_with_budget(
             },
         };
         push_bounded(&mut output, &replacement)?;
+        if ends_with_open_hex_escape(&replacement) {
+            // A hex escape consumes one whitespace character after it (CSS
+            // Syntax 3 "consume an escaped code point"). Terminate the escape
+            // here, so that it does not absorb the whitespace token that
+            // follows the `var()` in the source.
+            push_bounded(&mut output, " ")?;
+        }
         if needs_separator_after_replacement(&output, input.get(close + 1..).unwrap_or("")) {
             // Substitution preserves the original component-value token
             // boundaries. Add a separator only where reparsing the bounded
@@ -1790,6 +1806,28 @@ pub(crate) fn substitute_vars_with_budget(
     }
     push_bounded(&mut output, input.get(position..).unwrap_or(""))?;
     Some(output.into())
+}
+
+/// Whether `text` ends with a hex escape (a backslash and one to six hex digits)
+/// that would consume a whitespace character appended after it.
+fn ends_with_open_hex_escape(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let digits = bytes
+        .iter()
+        .rev()
+        .take_while(|byte| byte.is_ascii_hexdigit())
+        .count();
+    if digits == 0 || digits > 6 {
+        return false;
+    }
+    let before = &bytes[..bytes.len() - digits];
+    // The backslash starts an escape only when it is not itself escaped.
+    let backslashes = before
+        .iter()
+        .rev()
+        .take_while(|byte| **byte == b'\\')
+        .count();
+    backslashes % 2 == 1
 }
 
 /// `input` without its leading and trailing CSS whitespace and comments.
