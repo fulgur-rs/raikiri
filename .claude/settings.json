@@ -3,5 +3,9 @@
   "worktree": {
     "baseRef": "head"
   },
-  "attribution": false
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
+  }
 }
