@@ -721,9 +721,8 @@ pub(crate) struct ResumePoint {
     pub(crate) page_names: Vec<Option<String>>,
     /// Elements wholly before `start`, laid out as `display: none`.
     pub(crate) skipped: Vec<usize>,
-    /// How many fragments each box crossing `start` had on the pages before
-    /// `first_page`, in the earlier layout.
-    pub(crate) earlier_fragments: Vec<(raikiri_traits::NodeId, u32)>,
+    /// The boxes crossing `start` in the earlier layout.
+    pub(crate) earlier_fragments: Vec<raikiri_dom::CrossingBox>,
 }
 
 pub(crate) fn run_pipeline(

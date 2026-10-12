@@ -347,10 +347,15 @@ pub struct Document {
     /// elements with these displays.
     pub(crate) skipped_displays:
         std::collections::HashMap<usize, raikiri_style::property::DisplayValue>,
-    /// For a relayout that resumes at a page start, the number of fragments
-    /// each box crossing that start had on the pages before it (see
-    /// [`Document::continue_fragments`]). `None` for any other layout.
-    pub(crate) earlier_fragments: Option<std::collections::HashMap<raikiri_traits::NodeId, u32>>,
+    /// For a relayout that resumes at a page start, the boxes crossing that
+    /// start in an earlier layout (see [`Document::continue_fragments`]).
+    /// `None` for any other layout.
+    pub(crate) earlier_fragments: Option<
+        std::collections::HashMap<
+            raikiri_traits::NodeId,
+            crate::page_projection::continuation::CrossingBox,
+        >,
+    >,
     /// Dirty flag for the IS_IN_DOCUMENT bit. Any tree mutation primitive
     /// (append_* / attach_child / insert_child_before / detach_from_parent /
     /// reparent_children / retain_children) sets it. Observation APIs

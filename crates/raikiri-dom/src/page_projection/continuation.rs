@@ -14,6 +14,18 @@ use raikiri_style::CascadeResult;
 use raikiri_style::property::{BreakBetween, BreakInside, DisplayValue, PageValue, PositionValue};
 use raikiri_traits::{NodeId, NodeKind};
 
+/// A box that crosses the start of a page: it began on an earlier page.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CrossingBox {
+    /// The box's node.
+    pub node: NodeId,
+    /// How many fragments the box has on the pages before the page.
+    pub earlier_fragments: u32,
+    /// Offset of the box's top from the page's content origin; negative,
+    /// as the box began above the page.
+    pub top: f32,
+}
+
 /// The first content of a page, in source order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
@@ -282,17 +294,47 @@ impl Document {
         }
     }
 
-    /// Number the fragments of a relayout that resumes at a page start after
-    /// those an earlier layout placed on the pages before it.
+    /// Continue, in a relayout that resumes at a page start, the boxes that
+    /// cross that start in an earlier layout, as [`Document::crossing_boxes`]
+    /// lists them.
     ///
-    /// `earlier` holds, for each box that crosses the page start, how many
-    /// fragments it had before the start. The next projection numbers its
-    /// fragments from there on. A box that begins before the start but is not
-    /// listed did not reach the resumed page in the earlier layout, as the
-    /// body sized to the first page does not: its fragments on the first
-    /// projected page are left out.
-    pub fn continue_fragments(&mut self, earlier: impl IntoIterator<Item = (NodeId, u32)>) {
-        self.earlier_fragments = Some(earlier.into_iter().collect());
+    /// The next projection numbers their fragments after those of the
+    /// earlier pages and keeps the top the earlier layout gave them, which
+    /// the content left out of the relayout would otherwise move. The body,
+    /// which spans one page area from the top of the relayout's dropped
+    /// first page, has no fragment on the resumed page unless it is listed.
+    pub fn continue_fragments(&mut self, crossing: impl IntoIterator<Item = CrossingBox>) {
+        self.earlier_fragments = Some(
+            crossing
+                .into_iter()
+                .map(|crossing| (crossing.node, crossing))
+                .collect(),
+        );
+    }
+
+    /// The boxes on projected page `page_index` that began on an earlier
+    /// page, by node.
+    pub fn crossing_boxes(&self, page_index: u32) -> Vec<CrossingBox> {
+        let mut crossing: std::collections::BTreeMap<NodeId, CrossingBox> = Default::default();
+        let pages = self.page_projection.pages.iter();
+        for item in pages
+            .filter(|page| page.page_index == page_index)
+            .flat_map(|page| &page.items)
+            .filter(|item| {
+                item.fragment_index > 0 && !item.is_repeat && !item.is_table_header_repeat
+            })
+        {
+            let entry = crossing.entry(item.node_id).or_insert(CrossingBox {
+                node: item.node_id,
+                earlier_fragments: item.fragment_index,
+                top: item.box_y,
+            });
+            if item.fragment_index < entry.earlier_fragments {
+                entry.earlier_fragments = item.fragment_index;
+                entry.top = item.box_y;
+            }
+        }
+        crossing.into_values().collect()
     }
 
     /// The display counters see for element `id` whose computed display is

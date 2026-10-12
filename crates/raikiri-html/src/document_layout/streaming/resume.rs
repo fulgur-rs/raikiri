@@ -27,9 +27,8 @@
 //!   `target-counters()` or `target-text()`, which look up the pages of
 //!   earlier content;
 //! - no absolutely positioned element arrived after the first delivery,
-//!   whose pages are checked against the delivered ones.
-
-use std::collections::BTreeMap;
+//!   whose pages are checked against the delivered ones, unless it is
+//!   already left out for landing on a delivered page.
 
 use raikiri_dom::Document;
 use raikiri_dom::generated_content::{generated_image_origin, generated_origin};
@@ -104,17 +103,12 @@ pub(super) fn resume_point(
     // spans one page area from the top of the first page, so a relayout
     // that begins it above the resumed page cannot tell how far it reaches.
     let body = layout_root(dom, start.token.node());
-    let mut earlier_fragments = BTreeMap::new();
-    for fragment in laid_out.page_at(page as usize).fragments() {
-        if Some(fragment.node().0 as usize) == body {
-            return None;
-        }
-        if fragment.fragment_index() > 0 {
-            earlier_fragments
-                .entry(fragment.node())
-                .and_modify(|index: &mut u32| *index = (*index).min(fragment.fragment_index()))
-                .or_insert(fragment.fragment_index());
-        }
+    let earlier_fragments = layout_document.crossing_boxes(page);
+    if earlier_fragments
+        .iter()
+        .any(|crossing| Some(crossing.node.0 as usize) == body)
+    {
+        return None;
     }
     for index in page..laid_out.page_count() {
         for fragment in laid_out.page_at(index as usize).fragments() {
@@ -139,7 +133,7 @@ pub(super) fn resume_point(
         start,
         page_names,
         skipped,
-        earlier_fragments: earlier_fragments.into_iter().collect(),
+        earlier_fragments,
     })
 }
 
@@ -174,10 +168,10 @@ pub(super) fn can_resume(document: &HtmlDocument, late_nodes_from: Option<usize>
     !(from..dom.node_count()).any(|id| {
         dom.get_node(id)
             .is_some_and(|node| node.kind() == NodeKind::Element && node.is_in_document())
-            && cascade
-                .computed
-                .get(id)
-                .is_some_and(|computed| computed.position == PositionValue::Absolute)
+            && cascade.computed.get(id).is_some_and(|computed| {
+                computed.position == PositionValue::Absolute
+                    && computed.display != DisplayValue::None
+            })
     })
 }
 

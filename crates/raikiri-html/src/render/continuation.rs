@@ -9,11 +9,11 @@
 //! paragraph line that a forced break in the copy also starts.
 
 use raikiri_dom::{
-    Document, PageLayoutControl, PageSlice, PageStart, PageStartToken,
+    CrossingBox, Document, PageLayoutControl, PageSlice, PageStart, PageStartToken,
     layout_pages_with_page_geometry_and_resolver_and_base_url_and_control,
 };
 use raikiri_style::{CascadeOptions, CascadeResult, MediaContext, RuleTree, cascade_with_options};
-use raikiri_traits::{LayoutError, NodeId, ReplacedResolver};
+use raikiri_traits::{LayoutError, ReplacedResolver};
 
 use super::{PageCascader, ResolvedPageGeometry, content_width_for_geometry, page_query_for_slice};
 
@@ -88,9 +88,8 @@ pub(super) fn continue_at_page_widths(
 /// `slices` and `geometries` describe pages `0..=page`; the pages before
 /// `page` are left as they are, without content. On success they describe
 /// every page and the continuations hold the content of the pages from
-/// `page` on. `earlier` holds how many fragments each box crossing `start`
-/// had on the pages before `page`, from which the relayout numbers its
-/// fragments on. Returns `None` when the relayout does not reproduce the
+/// `page` on. `earlier` holds the boxes crossing `start` in the earlier
+/// layout, which the relayout continues. Returns `None` when the relayout does not reproduce the
 /// page start.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn resume_at(
@@ -101,7 +100,7 @@ pub(super) fn resume_at(
     geometries: &mut Vec<ResolvedPageGeometry>,
     page: usize,
     start: PageStart,
-    earlier: &[(NodeId, u32)],
+    earlier: &[CrossingBox],
 ) -> Result<Option<Vec<Continuation>>, LayoutError> {
     let Some((continuation, pages)) =
         relayout_from(inputs, slices, geometries, page, start, Some(earlier))?
@@ -179,7 +178,7 @@ fn relayout_from(
     geometries: &[ResolvedPageGeometry],
     page: usize,
     start: PageStart,
-    earlier: Option<&[(NodeId, u32)]>,
+    earlier: Option<&[CrossingBox]>,
 ) -> Result<Option<(Continuation, Vec<PageSlice>)>, LayoutError> {
     let geometry = geometries[page];
     // The run's element cascade already succeeded on the same input with the

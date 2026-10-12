@@ -7,13 +7,14 @@ use crate::layout;
 
 /// What a page shows: its name, every fragment with its geometry and
 /// position among the node's fragments, its text runs and its margin
-/// boxes.
+/// boxes. A box that continues on later pages is left open on a delivered
+/// page, so only the top of its content box is compared.
 fn digest(page: &Page<'_>) -> String {
     let mut out = format!("page {} {:?}\n", page.index(), page.name());
     for fragment in page.fragments() {
         let rect = fragment.rect();
         out.push_str(&format!(
-            "{:?} {:?} {} last={:?} lines={:?} [{} {} {} {}]\n",
+            "{:?} {:?} {} last={:?} lines={:?} [{} {} {} {}] content={:?}\n",
             fragment.node(),
             fragment.kind(),
             fragment.fragment_index(),
@@ -23,6 +24,9 @@ fn digest(page: &Page<'_>) -> String {
             rect.y,
             rect.width,
             rect.height,
+            fragment
+                .content_rect()
+                .map(|content| (content.x, content.y, content.width)),
         ));
     }
     for run in page.text_runs() {
@@ -251,4 +255,37 @@ fn fixed_height_ancestors_lay_out_the_whole_document() {
     let (pages, _, resumed) = stream(&html, 2048);
     assert_eq!(pages, expected);
     assert_eq!(resumed, 0);
+}
+
+#[test]
+fn layouts_resume_after_a_late_stamp_is_left_out() {
+    let head = format!(
+        "<!doctype html><body style='position: relative'>{}",
+        paragraphs(60, 60)
+    );
+    let stamp = "<div style='position: absolute; top: 0'>stamp</div>";
+    let tail = format!("{}</body>", paragraphs(40, 60));
+    let resources = RenderResources::new();
+    let pages = Digests::default();
+    let mut stream = StreamingLayout::new(
+        &resources,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        pages,
+    )
+    .checkpoint_bytes(2048);
+    for piece in head.as_bytes().chunks(2048) {
+        stream.feed(piece).expect("feed");
+    }
+    stream.feed(stamp.as_bytes()).expect("feed");
+    // The stamp lands on the first page, already delivered, and is left out.
+    let before = stream.settings.resumed.get();
+    for piece in tail.as_bytes().chunks(2048) {
+        stream.feed(piece).expect("feed");
+    }
+    assert!(!stream.hidden_late.is_empty(), "the stamp is left out");
+    assert!(
+        stream.settings.resumed.get() > before,
+        "layouts after the stamp resume"
+    );
 }
