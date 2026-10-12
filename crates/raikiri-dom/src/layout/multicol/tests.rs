@@ -399,7 +399,7 @@ fn authored_containing_width_uses_the_resolved_ch_style_width() {
     let taffy_width = style_dimension_length(doc.nodes[container].style.size.width)
         .expect("resolved ch width should be a finite length");
     assert_eq!(
-        authored_containing_width_with_resolved_ch(&doc, &cascade, &parent_of, text, 800.0),
+        ResolvedChWidths::new(&doc, &cascade, &parent_of, 800.0).authored_containing_width(text),
         Some(taffy_width),
     );
 }
@@ -435,11 +435,12 @@ fn authored_containing_width_preserves_percentage_fallback_behavior() {
         }
     }
     assert_eq!(
-        authored_containing_width_with_resolved_ch(&doc, &cascade, &parent_of, text, 800.0),
+        ResolvedChWidths::new(&doc, &cascade, &parent_of, 800.0).authored_containing_width(text),
         Some(100.0),
     );
     assert_eq!(
-        authored_containing_width_with_resolved_ch(&doc, &cascade, &parent_of, auto_text, 800.0,),
+        ResolvedChWidths::new(&doc, &cascade, &parent_of, 800.0)
+            .authored_containing_width(auto_text),
         None,
     );
 }

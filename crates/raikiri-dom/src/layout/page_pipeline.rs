@@ -2568,17 +2568,17 @@ pub fn layout_pages_with_page_geometry_and_control(
             .limit
             .saturating_sub(document.fragment_tree.break_flow_work_used),
     );
-    let mut spanning_owners: Vec<_> = document
+    // Each owner's position walks its ancestors; find it once per owner
+    // rather than once per comparison.
+    let mut spanning_owners: Vec<(f32, usize)> = document
         .nodes
         .iter()
         .enumerate()
         .filter(|(_, node)| !node.multicol_groups.is_empty())
-        .map(|(id, _)| id)
+        .map(|(id, _)| (current_abs_y(document, id, &parent_of), id))
         .collect();
-    spanning_owners.sort_by(|&a, &b| {
-        current_abs_y(document, a, &parent_of).total_cmp(&current_abs_y(document, b, &parent_of))
-    });
-    for owner in spanning_owners {
+    spanning_owners.sort_by(|a, b| a.0.total_cmp(&b.0));
+    for (_, owner) in spanning_owners {
         let owner_y = root_flow_offset + current_abs_y(document, owner, &parent_of);
         let delta = paginate_spanning_columns(
             document,
