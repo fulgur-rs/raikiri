@@ -17,12 +17,10 @@
 use taffy::tree::{RequestedAxis, RunMode};
 use taffy::{
     AvailableSpace, BlockContext, Display, LayoutInput, LayoutOutput, NodeId,
-    Position as TaffyPosition, Size, compute_flexbox_layout, compute_grid_layout,
+    Position as TaffyPosition, Size,
 };
 
-use super::{block_layout, compute_ifc_root};
 use crate::document::Document;
-use crate::node::NodeFlags;
 use raikiri_style::property::{DisplayValue, WritingMode};
 
 fn is_vertical(mode: WritingMode) -> bool {
@@ -33,28 +31,29 @@ fn is_vertical(mode: WritingMode) -> bool {
 /// authors a vertical writing mode under a horizontal block container.
 pub(super) fn is_orthogonal_auto_block_size(tree: &Document, idx: usize) -> bool {
     let node = &tree.nodes[idx];
-    if !node.authored_writing_mode.is_some_and(is_vertical)
-        || !node.style.size.width.is_auto()
-        || node.style.position == TaffyPosition::Absolute
-        || node.style.float != taffy::Float::None
-        || !matches!(
+    node.authored_writing_mode.is_some_and(is_vertical)
+        && node.style.size.width.is_auto()
+        && node.style.position != TaffyPosition::Absolute
+        && node.style.float == taffy::Float::None
+        && matches!(
             node.display,
             DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::Flex | DisplayValue::Grid
         )
-    {
-        return false;
-    }
-    let Some(parent) = tree.taffy_parent_of(idx) else {
-        return false;
-    };
-    matches!(
-        tree.nodes[parent].style.display,
-        Display::Block | Display::FlowRoot
-    ) && !is_vertical(super::vertical_oof::used_writing_mode(tree, parent))
+        && tree.taffy_parent_of(idx).is_some_and(|parent| {
+            matches!(
+                tree.nodes[parent].style.display,
+                Display::Block | Display::FlowRoot
+            ) && !is_vertical(super::vertical_oof::used_writing_mode(tree, parent))
+        })
 }
 
 /// Lay out `node_id` with its content-based width in place of the width
 /// its block container stretched it to.
+///
+/// Both passes go through the ordinary dispatch, so replaced leaves,
+/// multicol containers and the out-of-flow handling of vertical block
+/// containers keep their own paths. The final pass marks the node so that
+/// dispatch does not divert it here again.
 pub(super) fn compute_orthogonal_block(
     tree: &mut Document,
     node_id: NodeId,
@@ -62,14 +61,6 @@ pub(super) fn compute_orthogonal_block(
     block_ctx: Option<&mut BlockContext<'_>>,
 ) -> LayoutOutput {
     let idx = usize::from(node_id);
-    let ifc_root = tree.nodes[idx].flags.contains(NodeFlags::IS_IFC_ROOT);
-    let display = tree.nodes[idx].style.display;
-    let run = |tree: &mut Document, inputs: LayoutInput, block_ctx| match display {
-        Display::Flex => compute_flexbox_layout(tree, node_id, inputs),
-        Display::Grid => compute_grid_layout(tree, node_id, inputs),
-        _ if ifc_root => compute_ifc_root(tree, node_id, inputs, block_ctx),
-        _ => block_layout(tree, node_id, inputs, block_ctx),
-    };
     let measure_inputs = LayoutInput {
         run_mode: RunMode::ComputeSize,
         axis: RequestedAxis::Horizontal,
@@ -83,11 +74,20 @@ pub(super) fn compute_orthogonal_block(
         },
         ..inputs
     };
-    let width = run(tree, measure_inputs, None).size.width;
+    let width = tree
+        .compute_child_layout_with_block_ctx(node_id, measure_inputs, None)
+        .size
+        .width;
+    // The width comes from the box's own content, so its percentage-sized
+    // children do not resolve against it.
     let final_inputs = LayoutInput {
         known_dimensions: Size {
             width: Some(width),
             height: inputs.known_dimensions.height,
+        },
+        known_dimensions_are_definite: Size {
+            width: false,
+            ..inputs.known_dimensions_are_definite
         },
         available_space: Size {
             width: AvailableSpace::Definite(width),
@@ -95,7 +95,10 @@ pub(super) fn compute_orthogonal_block(
         },
         ..inputs
     };
-    run(tree, final_inputs, block_ctx)
+    let outer = tree.orthogonal_block_in_layout.replace(idx);
+    let output = tree.compute_child_layout_with_block_ctx(node_id, final_inputs, block_ctx);
+    tree.orthogonal_block_in_layout = outer;
+    output
 }
 
 #[cfg(test)]

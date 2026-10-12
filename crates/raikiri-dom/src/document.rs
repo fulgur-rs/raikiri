@@ -426,6 +426,9 @@ pub struct Document {
     /// children use the recorded physical height as their containing
     /// block's inline size; see `taffy_impl::vertical_oof`.
     pub(crate) vertical_oof_containing_blocks: Vec<(usize, f32)>,
+    /// The vertical box under a horizontal block container that is being
+    /// laid out at its content-based width; see `taffy_impl::orthogonal_flow`.
+    pub(crate) orthogonal_block_in_layout: Option<usize>,
     /// Block containers being laid out, each with the content-box width its
     /// children's percentage padding and borders resolve against; see
     /// [`crate::taffy_impl::BlockChildStyle`].
@@ -590,6 +593,7 @@ impl Document {
             column_rules: std::collections::BTreeMap::new(),
             fragmentation_stack: Vec::new(),
             vertical_oof_containing_blocks: Vec::new(),
+            orthogonal_block_in_layout: None,
             block_item_percent_bases: Vec::new(),
             quirks_mode: QuirksMode::default(),
         }
@@ -1869,6 +1873,7 @@ impl Document {
             column_rules: _,
             fragmentation_stack: _,
             vertical_oof_containing_blocks: _,
+            orthogonal_block_in_layout: _,
             block_item_percent_bases: _,
             quirks_mode,
         } = self;

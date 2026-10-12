@@ -448,6 +448,7 @@ impl Document {
             // its content on the axis its container stretched it along.
             if inputs.known_dimensions.width.is_some()
                 && inputs.sizing_mode == taffy::SizingMode::InherentSize
+                && tree.orthogonal_block_in_layout != Some(idx)
                 && orthogonal_flow::is_orthogonal_auto_block_size(tree, idx)
             {
                 return orthogonal_flow::compute_orthogonal_block(tree, node_id, inputs, block_ctx);

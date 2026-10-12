@@ -70,3 +70,42 @@ fn horizontal_block_still_fills_the_body() {
     let rect = rect_of("display:block", true);
     assert_eq!(rect, (8.0, 8.0, 784.0, 10.0));
 }
+
+#[test]
+fn vertical_rl_block_keeps_its_absolute_child_on_the_block_start_edge() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:8px"),
+    );
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some(
+            "display:block;writing-mode:vertical-rl;position:relative;\
+             font-family:Ahem;font-size:10px;line-height:10px",
+        ),
+    );
+    let absolute = doc.append_element(
+        Some(container),
+        "div",
+        Style::default(),
+        Some("display:block;position:absolute"),
+    );
+    doc.append_text(absolute, "dd ee");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    let container = absolute_rect(&doc, container);
+    let absolute = absolute_rect(&doc, absolute);
+    // The empty container has no width; the absolute box keeps "dd ee" on
+    // one 50px column and ends at the container's right (block-start) edge.
+    assert_eq!(container, (8.0, 8.0, 0.0, 0.0));
+    assert_eq!(absolute, (-2.0, 8.0, 10.0, 50.0));
+}
