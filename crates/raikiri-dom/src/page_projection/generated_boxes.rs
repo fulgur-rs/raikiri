@@ -1,5 +1,6 @@
 //! Page ownership of decorations from generated inline box pieces.
 
+use super::flow_pages::FlowPages;
 use super::records::{PageFragment, ProjectedTextRoot};
 use super::text_runs::{RunContext, placement};
 use crate::{Document, GeneratedKind};
@@ -103,15 +104,7 @@ pub(super) fn prepare(
         work.charge(pieces.len().saturating_add(1))?;
         prepared.push((*root, paint_shift, pieces));
     }
-    // Pages with a flow range, ordered by their start, so a paragraph that
-    // is not repeated on every page visits only the pages its lines can land on
-    // instead of every page.
-    let mut by_flow: Vec<_> = pages
-        .iter()
-        .filter_map(|page| page.flow_range.map(|(start, end)| (start, end, page)))
-        .collect();
-    by_flow.sort_by(|left, right| left.0.total_cmp(&right.0));
-    let ends_ordered = by_flow.windows(2).all(|pair| pair[0].1 <= pair[1].1);
+    let flow_pages = FlowPages::new(pages);
     let mut result = GeneratedBoxes::new();
     for (root, paint_shift, pieces) in &prepared {
         let source = document.ifc_source_owner(root.node);
@@ -125,7 +118,12 @@ pub(super) fn prepare(
         } else {
             let mut centers = pieces
                 .iter()
-                .map(|&(_, _, _, offset, _, top, height)| root.y + offset.1 + top + height * 0.5)
+                .map(|&(_, _, _, offset, _, top, height)| {
+                    // The arithmetic of `line_center_on_page`, so rounding at
+                    // large coordinates cannot prune the owning page.
+                    let top = root.y + offset.1 + top;
+                    (top + (top + height)) * 0.5
+                })
                 .filter(|center| center.is_finite());
             let Some(first) = centers.next() else {
                 continue;
@@ -133,15 +131,7 @@ pub(super) fn prepare(
             let (low, high) = centers.fold((first, first), |(low, high), center| {
                 (low.min(center), high.max(center))
             });
-            // The slack keeps the pruning conservative; the exact test below
-            // still decides which page owns each line.
-            let last = by_flow.partition_point(|&(start, _, _)| start - 1.0 <= high);
-            let first = if ends_ordered {
-                by_flow[..last].partition_point(|&(_, end, _)| end + 1.0 <= low)
-            } else {
-                0
-            };
-            Box::new(by_flow[first..last].iter().map(|&(_, _, page)| page))
+            Box::new(flow_pages.around(low, high))
         };
         for page in candidates {
             work.charge(1)?;
