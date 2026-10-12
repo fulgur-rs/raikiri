@@ -221,12 +221,15 @@ pub(crate) fn parse_relative_calc_length_percentage(
     input: &str,
 ) -> Option<RelativeCalcLengthPercentage> {
     let trimmed = trim_css_whitespace_and_comments(input);
-    let open = trimmed.find('(')?;
-    if !trimmed[..open].eq_ignore_ascii_case("calc") {
+    // Read the function token with cssparser, so an escaped name such as
+    // `c\61 lc(` is recognized as `calc(` the way the parse-time check did.
+    let mut tokens_input = ParserInput::new(trimmed);
+    let mut tokens = Parser::new(&mut tokens_input);
+    if !tokens.expect_function().ok()?.eq_ignore_ascii_case("calc") {
         return None;
     }
     let mut parser = MathParser::new(trimmed);
-    parser.position = open + 1;
+    parser.position = tokens.position().byte_index();
     let value = parser.parse_linear_sum()?;
     parser.skip_whitespace()?;
     // A `calc(` left open at the end of input is closed there (CSS Syntax 3
@@ -1531,10 +1534,12 @@ impl<'a> MathParser<'a> {
             self.nesting_depth -= 1;
             let value = value?;
             self.skip_whitespace()?;
-            if self.input.as_bytes().get(self.position) != Some(&b')') {
-                return None;
+            // The end of input closes every open block (CSS Syntax 3 §5.4.9).
+            match self.input.as_bytes().get(self.position) {
+                Some(b')') => self.position += 1,
+                None => {}
+                Some(_) => return None,
             }
-            self.position += 1;
             return Some(value);
         }
         let MathValue { number, unit } = self.parse_number()?;
