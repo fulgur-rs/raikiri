@@ -962,7 +962,11 @@ fn parse_page_size(value: &str) -> Option<PageSize> {
                 return None;
             }
         } else {
-            // Page size lengths are non-negative.
+            // Page size lengths are non-negative, and a number without a
+            // unit is a length only when it is zero.
+            if token.parse::<f32>().is_ok_and(|value| value != 0.0) {
+                return None;
+            }
             lengths.push(parse_print_length(token, None).filter(|length| *length >= 0.0)?);
         }
     }
@@ -1160,7 +1164,8 @@ fn page_block_named<'a>(input: &'a str, name: &str) -> Option<&'a str> {
         .find(|rule| {
             rule.names
                 .iter()
-                .any(|page| page.eq_ignore_ascii_case(name))
+                // Page names are `<custom-ident>`s, which match case-sensitively.
+                .any(|page| page == name)
         })
         .map(|rule| rule.block)
 }

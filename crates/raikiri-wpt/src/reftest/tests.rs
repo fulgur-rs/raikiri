@@ -2370,7 +2370,7 @@ fn page_blocks_skip_comments_strings_and_escapes() {
         Some("size:2px")
     );
     assert_eq!(
-        page_block_named("@page b{size:1px}@page A:first{size:2px}", "a"),
+        page_block_named("@page b{size:1px}@page A:first{size:2px}", "A"),
         Some("size:2px")
     );
     assert_eq!(page_block_named("@page :a{size:1px}", "a"), None);
@@ -2431,4 +2431,25 @@ fn viewport_expansion_leaves_selectors_unchanged() {
         ),
         "print and (max-width:8.000000px)"
     );
+}
+
+#[test]
+fn page_sizes_reject_unitless_nonzero_numbers() {
+    assert!(parse_page_size("5").is_none());
+    assert_eq!(
+        parse_page_size("0").and_then(|size| size.size),
+        Some((0.0, 0.0))
+    );
+    assert_eq!(
+        print_declaration("size:300px;size:5", "size", parse_page_size).and_then(|size| size.size),
+        Some((300.0, 300.0))
+    );
+}
+
+#[test]
+fn named_pages_match_case_sensitively() {
+    let css = "@page cover{size:100px}@page Cover{size:200px}";
+    assert_eq!(page_block_named(css, "Cover"), Some("size:200px"));
+    assert_eq!(page_block_named(css, "cover"), Some("size:100px"));
+    assert_eq!(page_block_named("@page cover{size:100px}", "COVER"), None);
 }
