@@ -1857,6 +1857,14 @@ fn reject_external_css_references(source: &str) -> Result<(), SvgError> {
 /// `in_image_set` is true directly inside `image-set()` or
 /// `-webkit-image-set()`, whose bare `<string>` arguments are URLs
 /// (CSS Images 4 §2.2).
+/// Whether a CSS URL names no resource or only a fragment of this document.
+/// URL parsing strips leading and trailing C0 controls and spaces, but not
+/// other whitespace.
+fn is_local_css_url(url: &str) -> bool {
+    let url = url.trim_matches(|c: char| c <= ' ');
+    url.is_empty() || url.starts_with('#')
+}
+
 fn reject_external_css_tokens<'i>(
     input: &mut cssparser::Parser<'i, '_>,
     depth: usize,
@@ -1872,10 +1880,10 @@ fn reject_external_css_tokens<'i>(
             cssparser::Token::AtKeyword(name) if name.eq_ignore_ascii_case("import") => {
                 return Err(input.new_custom_error(SvgError::ExternalReference));
             }
-            cssparser::Token::UnquotedUrl(url) if !url.trim().starts_with('#') => {
+            cssparser::Token::UnquotedUrl(url) if !is_local_css_url(&url) => {
                 return Err(input.new_custom_error(SvgError::ExternalReference));
             }
-            cssparser::Token::QuotedString(url) if in_image_set && !url.trim().starts_with('#') => {
+            cssparser::Token::QuotedString(url) if in_image_set && !is_local_css_url(&url) => {
                 return Err(input.new_custom_error(SvgError::ExternalReference));
             }
             // `src()` takes the same `<string>` argument as quoted `url()`
@@ -1885,7 +1893,7 @@ fn reject_external_css_tokens<'i>(
             {
                 input.parse_nested_block(|nested| {
                     let url = nested.expect_string_cloned()?;
-                    if !url.trim().starts_with('#') {
+                    if !is_local_css_url(&url) {
                         return Err(nested.new_custom_error(SvgError::ExternalReference));
                     }
                     // `<url-modifier>*`: identifiers and functions.

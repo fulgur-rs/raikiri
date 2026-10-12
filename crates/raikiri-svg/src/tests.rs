@@ -2701,3 +2701,19 @@ fn viewport_override_survives_an_unterminated_inline_comment() {
     assert_eq!(tree.size().width(), 200.0);
     assert_eq!(tree.size().height(), 100.0);
 }
+
+#[test]
+fn css_reference_validation_trims_only_c0_and_space() {
+    use super::reject_external_css_references;
+    for source in [
+        "rect{fill:src(\"\")}",
+        "rect{fill:image-set(\"\" 1x)}",
+        "rect{fill:src(\" #paint\")}",
+    ] {
+        reject_external_css_references(source).unwrap();
+    }
+    assert!(matches!(
+        reject_external_css_references("rect{fill:image-set(\"\u{a0}#paint\" 1x)}"),
+        Err(SvgError::ExternalReference)
+    ));
+}

@@ -2563,3 +2563,15 @@ fn first_authored_page_name_skips_keywords_that_name_no_page() {
         );
     }
 }
+
+#[test]
+fn first_authored_page_name_needs_a_valid_important_suffix() {
+    assert_eq!(
+        first_authored_page_name("<p style=\"page/**/:Bad ! bogus; page:Good\"></p>").as_deref(),
+        Some("Good")
+    );
+    assert_eq!(
+        first_authored_page_name("<p style=\"page:Good !important\"></p>").as_deref(),
+        Some("Good")
+    );
+}

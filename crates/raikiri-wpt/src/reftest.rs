@@ -1262,10 +1262,13 @@ fn first_authored_page_name(input: &str) -> Option<String> {
                             return Ok(value.to_string());
                         }
                         input.reset(&end);
+                        // Only `!important` may follow the value.
+                        if input.try_parse(|input| input.expect_delim('!')).is_ok() {
+                            input.expect_ident_matching("important")?;
+                        }
+                        let end = input.state();
                         match input.next() {
-                            Err(_)
-                            | Ok(cssparser::Token::Semicolon)
-                            | Ok(cssparser::Token::Delim('!')) => input.reset(&end),
+                            Err(_) | Ok(cssparser::Token::Semicolon) => input.reset(&end),
                             Ok(_) => return Err(input.new_custom_error(())),
                         }
                         Ok::<_, cssparser::ParseError<'i, ()>>(value.to_string())
