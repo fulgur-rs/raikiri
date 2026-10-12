@@ -21,11 +21,20 @@ use super::webidl::{
 
 // ---- inline style text ---------------------------------------------------
 
+/// One declaration of a `style` attribute or rule body as written: the
+/// decoded property name, the value text with surrounding whitespace and
+/// comments removed, and whether a trailing `!important` was present.
+struct RawDeclaration {
+    name: String,
+    value: String,
+    important: bool,
+}
+
 #[derive(Default)]
 struct RawStyleDeclarationParser;
 
 impl<'i> cssparser::DeclarationParser<'i> for RawStyleDeclarationParser {
-    type Declaration = (String, String);
+    type Declaration = RawDeclaration;
     type Error = ();
     fn parse_value<'t>(
         &mut self,
@@ -33,28 +42,28 @@ impl<'i> cssparser::DeclarationParser<'i> for RawStyleDeclarationParser {
         input: &mut cssparser::Parser<'i, 't>,
         _declaration_start: &cssparser::ParserState,
     ) -> Result<Self::Declaration, cssparser::ParseError<'i, Self::Error>> {
-        let start = input.position();
-        while input.next_including_whitespace_and_comments().is_ok() {}
-        Ok((
-            name.to_string(),
-            input.slice(start..input.position()).trim().to_owned(),
-        ))
+        let (value, important) = parse_value_and_priority(input)?;
+        Ok(RawDeclaration {
+            name: name.to_string(),
+            value,
+            important,
+        })
     }
 }
 
 impl<'i> cssparser::AtRuleParser<'i> for RawStyleDeclarationParser {
     type Prelude = ();
-    type AtRule = (String, String);
+    type AtRule = RawDeclaration;
     type Error = ();
 }
 
 impl<'i> cssparser::QualifiedRuleParser<'i> for RawStyleDeclarationParser {
     type Prelude = ();
-    type QualifiedRule = (String, String);
+    type QualifiedRule = RawDeclaration;
     type Error = ();
 }
 
-impl<'i> cssparser::RuleBodyItemParser<'i, (String, String), ()> for RawStyleDeclarationParser {
+impl<'i> cssparser::RuleBodyItemParser<'i, RawDeclaration, ()> for RawStyleDeclarationParser {
     fn parse_qualified(&self) -> bool {
         false
     }
@@ -64,7 +73,59 @@ impl<'i> cssparser::RuleBodyItemParser<'i, (String, String), ()> for RawStyleDec
     }
 }
 
-fn parse_inline_style(source: &str) -> Vec<(String, String)> {
+/// A declaration value up to an optional trailing `!important` (CSS Syntax
+/// "consume a declaration"): the value text without leading or trailing
+/// whitespace and comments, and whether `!important` followed it. A `!`
+/// that does not start a final `!important` makes the declaration invalid,
+/// matching the cascade's own declaration parser.
+fn parse_value_and_priority<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<(String, bool), cssparser::ParseError<'i, ()>> {
+    let value = input.parse_until_before(cssparser::Delimiter::Bang, |value| {
+        Ok::<_, cssparser::ParseError<'i, ()>>(trimmed_component_values(value))
+    })?;
+    let important = input.try_parse(cssparser::parse_important).is_ok();
+    input.expect_exhausted()?;
+    Ok((value, important))
+}
+
+/// The remaining component values of `input` as source text, excluding
+/// leading and trailing whitespace and comments.
+fn trimmed_component_values(input: &mut Parser<'_, '_>) -> String {
+    let mut range = None;
+    loop {
+        let start = input.position();
+        let Ok(token) = input.next_including_whitespace_and_comments() else {
+            break;
+        };
+        let insignificant = matches!(
+            token,
+            cssparser::Token::WhiteSpace(_) | cssparser::Token::Comment(_)
+        );
+        if matches!(
+            token,
+            cssparser::Token::Function(_)
+                | cssparser::Token::ParenthesisBlock
+                | cssparser::Token::SquareBracketBlock
+                | cssparser::Token::CurlyBracketBlock
+        ) {
+            // Consume the block body now so `position()` lands after its
+            // closing token rather than right after the opening one.
+            let _ = input.parse_nested_block(|block| {
+                while block.next_including_whitespace_and_comments().is_ok() {}
+                Ok::<_, cssparser::ParseError<'_, ()>>(())
+            });
+        }
+        if !insignificant {
+            range = Some((range.map_or(start, |(first, _)| first), input.position()));
+        }
+    }
+    range.map_or_else(String::new, |(start, end)| {
+        input.slice(start..end).to_owned()
+    })
+}
+
+fn parse_inline_style(source: &str) -> Vec<RawDeclaration> {
     let mut input = ParserInput::new(source);
     let mut parser = Parser::new(&mut input);
     let mut declarations = RawStyleDeclarationParser;
@@ -73,13 +134,21 @@ fn parse_inline_style(source: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-fn strip_important(value: &str) -> &str {
-    let trimmed = value.trim_end();
-    let lower = trimmed.to_ascii_lowercase();
-    lower
-        .rfind("!important")
-        .filter(|&start| lower[start + "!important".len()..].trim().is_empty())
-        .map_or(trimmed, |start| trimmed[..start].trim_end())
+/// `value` split into its value text and `!important` flag with the same
+/// rules as a declaration in a block, or `None` when it is not a valid
+/// declaration value (for example, a stray `!`, or a top-level `;` that
+/// would end the declaration inside a block).
+fn split_important(value: &str) -> Option<(String, bool)> {
+    let mut input = ParserInput::new(value);
+    let mut parser = Parser::new(&mut input);
+    let start = parser.state();
+    while let Ok(token) = parser.next() {
+        if matches!(token, cssparser::Token::Semicolon) {
+            return None;
+        }
+    }
+    parser.reset(&start);
+    parse_value_and_priority(&mut parser).ok()
 }
 
 fn same_property(declared: &str, property: &str) -> bool {
@@ -123,7 +192,7 @@ struct ValidatedDeclaration {
 /// The validated view of a `style` attribute (CSSOM §6.7): raw declarations
 /// parsed with [`parse_inline_style`], then each dropped when its name is
 /// empty or unsupported, its value is empty, or its value does not parse
-/// for its name (via [`declaration_value`); a trailing `!important` in the
+/// for its name (via [`declaration_value`]; a trailing `!important` in the
 /// raw text becomes `important`, not part of `value`). Duplicates collapse
 /// to the last occurrence (removed then re-pushed, so the survivor sits at
 /// the last position), matching [`with_inline_style_property`]'s write path.
@@ -135,16 +204,15 @@ fn validated_inline_declarations(style_attr: Option<&str>) -> Vec<ValidatedDecla
         return Vec::new();
     };
     let mut out: Vec<ValidatedDeclaration> = Vec::new();
-    for (raw_name, raw_value) in parse_inline_style(style) {
-        let Some(name) = validated_property_name(&raw_name) else {
+    for raw in parse_inline_style(style) {
+        let Some(name) = validated_property_name(&raw.name) else {
             continue;
         };
-        let important = strip_important(&raw_value) != raw_value.trim_end();
-        let value_part = strip_important(&raw_value).trim();
-        if value_part.is_empty() {
+        let important = raw.important;
+        if raw.value.is_empty() {
             continue;
         }
-        let Some(stored) = declaration_value(&name, value_part) else {
+        let Some(stored) = declaration_value(&name, &raw.value) else {
             continue;
         };
         if stored.trim().is_empty() {
@@ -249,30 +317,155 @@ pub(crate) fn inline_style_value(style_attr: Option<&str>, property: &str) -> St
 /// block". Shared by [`with_inline_style_property`]'s raw-preserving
 /// "replace one declaration" and the validated `cssText` getter/serializer
 /// below.
-fn serialize_declarations(declarations: &[(String, String)]) -> String {
+///
+/// Names are written as escaped identifiers, so a decoded name such as
+/// `--a;b` cannot end its declaration early, and every value has any
+/// string, URL, comment, or block it leaves open at its end closed, so it
+/// cannot swallow the declarations after it.
+fn serialize_declarations<'a>(
+    declarations: impl IntoIterator<Item = (&'a str, &'a str, bool)>,
+) -> String {
     declarations
-        .iter()
-        .map(|(n, v)| format!("{n}: {v};"))
+        .into_iter()
+        .map(|(name, value, important)| {
+            let mut text = String::new();
+            // Writing into a `String` cannot fail.
+            let _ = cssparser::serialize_identifier(name, &mut text);
+            text.push_str(": ");
+            text.push_str(value);
+            text.push_str(&unclosed_value_suffix(value));
+            if important {
+                text.push_str(" !important");
+            }
+            text.push(';');
+            text
+        })
         .collect::<Vec<_>>()
         .join(" ")
 }
 
-/// A `style` attribute with `property` replaced by `value` (removed when blank).
+/// The text that closes whatever `value` leaves open when it is read to the
+/// end (CSS Syntax: an unterminated string, URL, comment, or block simply
+/// ends at EOF), so `value` followed by this suffix tokenizes the same way
+/// in a longer declaration block. Empty when nothing is left open.
+fn unclosed_value_suffix(value: &str) -> String {
+    let mut input = ParserInput::new(value);
+    let mut parser = Parser::new(&mut input);
+    unclosed_suffix_in(&mut parser, value).0
+}
+
+/// [`unclosed_value_suffix`] for the rest of `input`, also returning the
+/// byte offset right after its last token.
+fn unclosed_suffix_in(input: &mut Parser<'_, '_>, source: &str) -> (String, usize) {
+    use cssparser::Token;
+
+    let mut last_end = input.position().byte_index();
+    loop {
+        let start = input.position().byte_index();
+        let token = match input.next_including_whitespace_and_comments() {
+            Ok(token) => token.clone(),
+            Err(_) => return (String::new(), last_end),
+        };
+        let closer = match token {
+            Token::Function(_) | Token::ParenthesisBlock => Some(')'),
+            Token::SquareBracketBlock => Some(']'),
+            Token::CurlyBracketBlock => Some('}'),
+            _ => None,
+        };
+        if let Some(closer) = closer {
+            let inner = input
+                .parse_nested_block(|block| {
+                    Ok::<_, cssparser::ParseError<'_, ()>>(unclosed_suffix_in(block, source))
+                })
+                .unwrap_or_default();
+            let end = input.position().byte_index();
+            // A closed block ends one byte (its closing token) after its
+            // last inner token; a block cut off by EOF ends right there.
+            if !inner.0.is_empty() || end == inner.1 {
+                let mut suffix = inner.0;
+                suffix.push(closer);
+                return (suffix, end);
+            }
+            last_end = end;
+            continue;
+        }
+        let end = input.position().byte_index();
+        last_end = end;
+        if end < source.len() {
+            continue;
+        }
+        let text = &source[start..end];
+        let odd_backslashes =
+            |text: &str| text.bytes().rev().take_while(|&byte| byte == b'\\').count() % 2 == 1;
+        let closed_by = |close: &str| {
+            text.len() > close.len()
+                && text.ends_with(close)
+                && !odd_backslashes(&text[..text.len() - close.len()])
+        };
+        let suffix = match token {
+            Token::QuotedString(_) => {
+                let quote = &text[..1];
+                if closed_by(quote) {
+                    String::new()
+                } else if odd_backslashes(text) {
+                    // A backslash before EOF in a string is dropped; an
+                    // escaped newline is likewise dropped, so the quote can
+                    // follow it.
+                    format!("\n{quote}")
+                } else {
+                    quote.to_owned()
+                }
+            }
+            Token::UnquotedUrl(_) => {
+                if closed_by(")") {
+                    String::new()
+                } else if odd_backslashes(text) {
+                    // A backslash before EOF in a URL escapes U+FFFD.
+                    "\u{FFFD})".to_owned()
+                } else {
+                    ")".to_owned()
+                }
+            }
+            Token::Comment(_) => {
+                if text.len() >= 4 && text.ends_with("*/") {
+                    String::new()
+                } else {
+                    "*/".to_owned()
+                }
+            }
+            // A backslash before EOF elsewhere escapes U+FFFD.
+            _ if odd_backslashes(text) => "\u{FFFD}".to_owned(),
+            _ => String::new(),
+        };
+        return (suffix, end);
+    }
+}
+
+/// A `style` attribute with `property` replaced by `value` (removed when
+/// blank), marked `!important` when `important` is set.
 pub(crate) fn with_inline_style_property(
     style_attr: Option<&str>,
     property: &str,
     value: &str,
+    important: bool,
 ) -> String {
     let property = property.trim();
     let mut declarations = style_attr.map(parse_inline_style).unwrap_or_default();
-    if property.is_empty() {
-        return serialize_declarations(&declarations);
+    if !property.is_empty() {
+        declarations.retain(|d| !same_property(&d.name, property));
+        if !value.trim().is_empty() {
+            declarations.push(RawDeclaration {
+                name: property.to_owned(),
+                value: value.trim().to_owned(),
+                important,
+            });
+        }
     }
-    declarations.retain(|(name, _)| !same_property(name, property));
-    if !value.trim().is_empty() {
-        declarations.push((property.to_owned(), value.to_owned()));
-    }
-    serialize_declarations(&declarations)
+    serialize_declarations(
+        declarations
+            .iter()
+            .map(|d| (d.name.as_str(), d.value.as_str(), d.important)),
+    )
 }
 
 /// `getPropertyPriority`'s return value (CSSOM): `"important"` when the
@@ -483,10 +676,21 @@ fn ascii_lowercase_property_name(property: String) -> String {
     }
 }
 
-fn is_css_wide_keyword(value: &str) -> bool {
+/// The CSS-wide keyword `value` consists of (ignoring whitespace and
+/// comments), ASCII-lowercased, or `None` when it is anything else.
+fn css_wide_keyword(value: &str) -> Option<&'static str> {
+    let mut input = ParserInput::new(value);
+    let mut parser = Parser::new(&mut input);
+    let ident = parser
+        .parse_entirely(|input| {
+            input
+                .expect_ident_cloned()
+                .map_err(cssparser::ParseError::<()>::from)
+        })
+        .ok()?;
     ["inherit", "initial", "unset", "revert", "revert-layer"]
-        .iter()
-        .any(|keyword| value.trim().eq_ignore_ascii_case(keyword))
+        .into_iter()
+        .find(|keyword| ident.eq_ignore_ascii_case(keyword))
 }
 
 /// CSSOM `setProperty` steps 2-6 ("parse a CSS value"): the text to store
@@ -513,12 +717,11 @@ fn declaration_value(property: &str, value: &str) -> Option<String> {
     if !is_custom && !raikiri_style::property::is_supported_property_name(property) {
         return None;
     }
-    let trimmed = value.trim();
-    if strip_important(trimmed) != trimmed {
+    if split_important(value)?.1 {
         return None;
     }
-    if !is_custom && is_css_wide_keyword(value) {
-        return Some(value.trim().to_ascii_lowercase());
+    if !is_custom && let Some(keyword) = css_wide_keyword(value) {
+        return Some(keyword.to_owned());
     }
     let parsed = parse_property_value(property, value)?;
     Some(
@@ -545,17 +748,12 @@ fn set_declaration(
     important: bool,
 ) -> JsResult<()> {
     if value.trim().is_empty() {
-        return write_declared(context, source, property, "");
+        return write_declared(context, source, property, "", false);
     }
     let Some(stored) = declaration_value(property.trim(), value) else {
         return Ok(());
     };
-    let stored = if important {
-        format!("{stored} !important")
-    } else {
-        stored
-    };
-    write_declared(context, source, property, &stored)
+    write_declared(context, source, property, &stored, important)
 }
 
 fn write_declared(
@@ -563,6 +761,7 @@ fn write_declared(
     source: &StyleSource,
     property: &str,
     value: &str,
+    important: bool,
 ) -> JsResult<()> {
     if property.trim().is_empty() {
         return Ok(());
@@ -572,7 +771,7 @@ fn write_declared(
             super::stylesheet::stylesheet_rule_body(s.host.document(), source.index, rule)
                 .unwrap_or_default()
         })?;
-        let next = with_inline_style_property(Some(&text), property, value);
+        let next = with_inline_style_property(Some(&text), property, value, important);
         return super::stylesheet::write_stylesheet_rule_body(context, source.index, rule, &next);
     }
     with_state(context, |s| {
@@ -580,6 +779,7 @@ fn write_declared(
             s.host.document().element_attribute(source.index, "style"),
             property,
             value,
+            important,
         );
         s.host
             .document_mut()
@@ -794,24 +994,18 @@ fn style_remove_property(
     }
     let name = ascii_lowercase_property_name(dom_string(args, 0, context)?);
     let previous = read_declared(context, &source, &name)?;
-    write_declared(context, &source, &name, "")?;
+    write_declared(context, &source, &name, "", false)?;
     Ok(JsValue::from(JsString::from(previous)))
 }
 
 /// Serialize one validated declaration, re-attaching `!important` when the
 /// raw block carried it.
 fn serialize_validated(declarations: &[ValidatedDeclaration]) -> String {
-    declarations
-        .iter()
-        .map(|d| {
-            if d.important {
-                format!("{}: {} !important;", d.name, d.value)
-            } else {
-                format!("{}: {};", d.name, d.value)
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+    serialize_declarations(
+        declarations
+            .iter()
+            .map(|d| (d.name.as_str(), d.value.as_str(), d.important)),
+    )
 }
 
 /// `cssText`, on getting: `""` for a computed declaration (CSSOM); the
@@ -1083,7 +1277,7 @@ fn css_supports(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsResul
     let property = dom_string(args, 0, context)?;
     let value = dom_string(args, 1, context)?;
     let parsed = parse_property_value(&property, &value).is_some();
-    let wide = is_css_wide_keyword(&value);
+    let wide = css_wide_keyword(&value).is_some();
     Ok(JsValue::from(
         parsed || (wide && raikiri_style::property::is_supported_property_name(&property)),
     ))

@@ -18,15 +18,15 @@ fn inline_style_helpers_match_the_previous_runner_semantics() {
     assert_eq!(inline_style_value(Some("--x: 1"), "--X"), "");
     assert_eq!(inline_style_value(None, "color"), "");
     assert_eq!(
-        with_inline_style_property(Some("color: red; margin: 0"), "COLOR", "blue"),
+        with_inline_style_property(Some("color: red; margin: 0"), "COLOR", "blue", false),
         "margin: 0; COLOR: blue;"
     );
     assert_eq!(
-        with_inline_style_property(Some("color: red;"), "color", " "),
+        with_inline_style_property(Some("color: red;"), "color", " ", false),
         ""
     );
     assert_eq!(
-        with_inline_style_property(Some("color: red;"), "  ", "blue"),
+        with_inline_style_property(Some("color: red;"), "  ", "blue", false),
         "color: red;"
     );
 }
@@ -1109,5 +1109,106 @@ fn stylesheet_list_finds_nested_html_and_svg_style_elements() {
         "document.styleSheets.length === 2 && document.styleSheets.item(9) === null && \
          document.styleSheets[0].cssRules[0].selectorText === 'p' && \
          document.styleSheets[1].cssRules[0].selectorText === 'circle'",
+    );
+}
+
+#[test]
+fn important_is_detected_with_tokens_not_text() {
+    // `! important` is still a priority, with whitespace between the tokens.
+    assert_eq!(
+        inline_style_value(Some("color: red ! important"), "color"),
+        "red"
+    );
+    // A trailing comment after `!important` does not hide it.
+    assert_eq!(
+        inline_style_value(Some("color: red !important /* c */"), "color"),
+        "red"
+    );
+    // A `!` that does not start a final `!important` invalidates the
+    // declaration, as in the cascade.
+    assert_eq!(inline_style_value(Some("color: red ! foo"), "color"), "");
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "document.body.setAttribute('style', 'color: red ! important; margin-top: 1px !important /* c */'); \
+         var s = document.body.style; \
+         s.color === 'red' && s.getPropertyPriority('color') === 'important' && \
+         s.marginTop === '1px' && s.getPropertyPriority('margin-top') === 'important'",
+    );
+    // The priority survives a write to another property.
+    ok(
+        &mut rt,
+        "s.paddingTop = '2px'; \
+         s.getPropertyPriority('color') === 'important' && s.paddingTop === '2px'",
+    );
+    // A value with a spaced `! important` is still not a priority.
+    ok(
+        &mut rt,
+        "s.setProperty('padding-top', '3px ! important'); s.paddingTop === '2px'",
+    );
+}
+
+#[test]
+fn css_wide_keywords_ignore_comments() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "var s = document.body.style; s.setProperty('color', 'INHERIT /**/'); \
+         s.color === 'inherit' && CSS.supports('color', '/**/ unset')",
+    );
+}
+
+#[test]
+fn serialized_declarations_keep_their_boundaries() {
+    // An unclosed string in a custom property must not swallow the
+    // declaration written after it.
+    assert_eq!(
+        with_inline_style_property(Some("--x: 'abc"), "color", "red", false),
+        "--x: 'abc'; color: red;"
+    );
+    // A decoded name is escaped back.
+    assert_eq!(
+        with_inline_style_property(Some(r"--a\;b: 1"), "color", "red", false),
+        r"--a\;b: 1; color: red;"
+    );
+    assert_eq!(
+        with_inline_style_property(Some("--x: f(a [b"), "color", "red", true),
+        "--x: f(a [b]); color: red !important;"
+    );
+    assert_eq!(
+        with_inline_style_property(None, "--x", "a /* b", false),
+        "--x: a /* b*/;"
+    );
+    assert_eq!(
+        with_inline_style_property(Some("--x: url(a"), "color", "red", false),
+        "--x: url(a); color: red;"
+    );
+    assert_eq!(
+        with_inline_style_property(Some("--x: 'a\\"), "color", "red", false),
+        "--x: 'a\\\n'; color: red;"
+    );
+    assert_eq!(
+        with_inline_style_property(Some("--x: a\\"), "color", "red", false),
+        "--x: a\\\u{FFFD}; color: red;"
+    );
+    // Closed values are left alone.
+    assert_eq!(
+        with_inline_style_property(Some("--x: f(a) 'b' url(c)"), "color", "red", false),
+        "--x: f(a) 'b' url(c); color: red;"
+    );
+
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "var s = document.body.style; s.setProperty('--x', \"'abc\"); s.setProperty('color', 'red'); \
+         s.color === 'red' && s.length === 2",
+    );
+    // A top-level `;` in a value would split it into two declarations.
+    ok(
+        &mut rt,
+        "s.setProperty('--y', 'a; color: blue'); s.color === 'red' && s.length === 2",
     );
 }
