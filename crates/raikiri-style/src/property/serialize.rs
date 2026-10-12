@@ -718,6 +718,57 @@ pub(crate) fn serialize_calc_length_percentage(calc: &CalcLengthPercentage) -> S
     }
 }
 
+/// Serializes a [`RelativeCalcLengthPercentage`] as a `calc()` sum, one term
+/// per non-zero coefficient in the canonical order of CSS Values 4 §10.12
+/// (percentage first, then dimensions sorted by unit name).
+pub(crate) fn serialize_relative_calc_length_percentage(
+    calc: &RelativeCalcLengthPercentage,
+) -> String {
+    let unit_name = |unit| match unit {
+        RelativeCalcUnit::Em => "em",
+        RelativeCalcUnit::Rem => "rem",
+        RelativeCalcUnit::Lh => "lh",
+        RelativeCalcUnit::Rlh => "rlh",
+        RelativeCalcUnit::Vw => "vw",
+        RelativeCalcUnit::Vh => "vh",
+        RelativeCalcUnit::Vi => "vi",
+        RelativeCalcUnit::Vb => "vb",
+        RelativeCalcUnit::Vmin => "vmin",
+        RelativeCalcUnit::Vmax => "vmax",
+    };
+    let mut terms = vec![(calc.px, "px")];
+    terms.extend(
+        calc.relative_terms()
+            .map(|(unit, coefficient)| (coefficient, unit_name(unit))),
+    );
+    terms.sort_by_key(|(_, unit)| *unit);
+    terms.insert(0, (calc.percent, "%"));
+    let mut expression = String::new();
+    for (coefficient, unit) in terms {
+        if coefficient == 0.0 {
+            continue;
+        }
+        if expression.is_empty() {
+            if coefficient.is_sign_negative() {
+                expression.push('-');
+            }
+        } else if coefficient.is_sign_negative() {
+            expression.push_str(" - ");
+        } else {
+            expression.push_str(" + ");
+        }
+        if unit == "%" {
+            expression.push_str(&serialize_percentage(coefficient.abs()));
+        } else {
+            expression.push_str(&serialize_dimension(coefficient.abs(), unit));
+        }
+    }
+    if expression.is_empty() {
+        expression.push_str("0px");
+    }
+    format!("calc({expression})")
+}
+
 /// Serializes a [`LengthOrAuto`] back to CSS text. Callers must confirm
 /// `Auto` is unambiguous for the property they are serializing before
 /// using this — see the `Width`/`Height`/`Min*`/`Max*` exclusion in
@@ -727,6 +778,7 @@ pub(crate) fn serialize_length_or_auto(value: &LengthOrAuto) -> String {
         LengthOrAuto::Length(l) => serialize_length(l),
         LengthOrAuto::Auto => "auto".to_owned(),
         LengthOrAuto::Calc(calc) => serialize_calc_length_percentage(calc),
+        LengthOrAuto::RelativeCalc(calc) => serialize_relative_calc_length_percentage(calc),
         LengthOrAuto::MinContent => "min-content".to_owned(),
     }
 }

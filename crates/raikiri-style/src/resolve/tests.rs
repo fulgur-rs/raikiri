@@ -1,8 +1,9 @@
 use super::*;
 use crate::property::{
     BorderRadius, BorderStyle, BoxShadowItem, CalcLengthPercentage, CssColor, Length,
-    LengthPercentageCalc, LetterSpacingValue, Outline, OutlineColor, OutlineStyle, Sides, TabSize,
-    TextDecorationThickness, TextShadowColor, TextUnderlineOffset,
+    LengthPercentageCalc, LetterSpacingValue, Outline, OutlineColor, OutlineStyle,
+    RelativeCalcLengthPercentage, Sides, TabSize, TextDecorationThickness, TextShadowColor,
+    TextUnderlineOffset,
 };
 use crate::specified::SpecifiedValues;
 
@@ -1810,4 +1811,116 @@ fn viewport_lengths_resolve_against_the_context_viewport() {
 fn the_default_viewport_is_the_nominal_print_page_box() {
     let ctx = ResolveContext::initial();
     assert_eq!((ctx.viewport_width, ctx.viewport_height), (480.0, 288.0));
+}
+
+/// `value` in `unit`, plus `1px`.
+fn relative_calc_plus_1px(value: f32, unit: &str) -> RelativeCalcLengthPercentage {
+    RelativeCalcLengthPercentage::from_unit(value, unit)
+        .and_then(|term| term.add_scaled(RelativeCalcLengthPercentage::from_unit(1.0, "px")?, 1.0))
+        .unwrap_or_else(|| panic!("{value}{unit}"))
+}
+
+#[test]
+fn relative_calc_terms_resolve_against_their_bases() {
+    let ctx = ResolveContext {
+        root_line_height: Some(ComputedLength(30.0)),
+        vertical_root: true,
+        ..CTX
+    };
+    let font_size = ComputedLength(10.0);
+    let own_line_height = Some(ComputedLength(12.0));
+    // A vertical root swaps the inline and block axes: `vi` follows the
+    // height and `vb` the width.
+    for (value, unit, expected) in [
+        (2.0, "em", 21.0),
+        (2.0, "ic", 21.0),
+        (2.0, "ex", 11.0),
+        (1.0, "rem", 17.0),
+        (2.0, "rex", 17.0),
+        (1.0, "ric", 17.0),
+        (1.0, "rch", 9.0),
+        (2.0, "lh", 25.0),
+        (1.0, "rlh", 31.0),
+        (10.0, "vw", 49.0),
+        (10.0, "lvh", 29.8),
+        (10.0, "vi", 29.8),
+        (10.0, "vb", 49.0),
+        (10.0, "vmin", 29.8),
+        (10.0, "dvmax", 49.0),
+        (1.0, "cm", 1.0 + 96.0 / 2.54),
+        (1.0, "mm", 1.0 + 96.0 / 25.4),
+        (4.0, "q", 1.0 + 96.0 / 25.4),
+        (3.0, "pt", 5.0),
+        (1.0, "pc", 17.0),
+    ] {
+        let resolved = resolve_length_percentage_or_auto(
+            LengthOrAuto::RelativeCalc(relative_calc_plus_1px(value, unit)),
+            font_size,
+            own_line_height,
+            &ctx,
+        );
+        let ComputedLengthPercentageOrAuto::Px(actual) = resolved else {
+            panic!("{value}{unit}: {resolved:?}");
+        };
+        assert!(
+            (actual - expected).abs() < 1e-3,
+            "{value}{unit}: {actual} != {expected}"
+        );
+    }
+    let percent = RelativeCalcLengthPercentage::from_unit(50.0, "%").unwrap();
+    let em = relative_calc_plus_1px(1.0, "em").scale(-1.0).unwrap();
+    assert_eq!(
+        resolve_length_percentage_or_auto(
+            LengthOrAuto::RelativeCalc(percent.add_scaled(em, 1.0).unwrap()),
+            ComputedLength(1.0),
+            None,
+            &CTX,
+        ),
+        ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage {
+            percent: 50.0,
+            px: -2.0,
+        })
+    );
+    // Without a line-height basis an `lh` term leaves the value unresolvable,
+    // and so does a sum that overflows.
+    for (calc, font_size, line_height) in [
+        (relative_calc_plus_1px(1.0, "lh"), font_size, None),
+        (
+            relative_calc_plus_1px(1e30, "em"),
+            ComputedLength(1e30),
+            None,
+        ),
+    ] {
+        assert_eq!(
+            resolve_length_percentage_or_auto(
+                LengthOrAuto::RelativeCalc(calc),
+                font_size,
+                line_height,
+                &CTX,
+            ),
+            ComputedLengthPercentageOrAuto::Auto
+        );
+    }
+    // Margins never hold a mixed calc; the resolver keeps their initial.
+    assert_eq!(
+        resolve_margin_length_or_auto(
+            LengthOrAuto::RelativeCalc(relative_calc_plus_1px(1.0, "em")),
+            font_size,
+            None,
+            &CTX,
+        ),
+        ComputedLengthPercentageOrAuto::Px(0.0)
+    );
+}
+
+#[test]
+fn relative_calc_arithmetic_rejects_non_finite_results() {
+    let calc = relative_calc_plus_1px(1e30, "em");
+    assert_eq!(calc.scale(1e30), None);
+    assert_eq!(calc.add_scaled(calc, 1e30), None);
+    let percent = RelativeCalcLengthPercentage::from_unit(1e30, "%").unwrap();
+    assert_eq!(percent.scale(1e30), None);
+    assert_eq!(RelativeCalcLengthPercentage::from_unit(1e38, "in"), None);
+    assert_eq!(RelativeCalcLengthPercentage::from_unit(1.0, "svx"), None);
+    assert_eq!(RelativeCalcLengthPercentage::from_unit(1.0, "ch"), None);
 }

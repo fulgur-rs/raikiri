@@ -182,9 +182,10 @@ use crate::property::{
     GridInflexibleBreadth, GridRepeatCount, GridTemplateTracks, GridTrackBreadth, GridTrackList,
     GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto, LengthOrNormal,
     LengthPercentageCalc, LetterSpacingValue, LineHeight, LinearGradient, Outline, OutlineColor,
-    OutlineStyle, RadialGradient, RadialSize, TabSize, TextDecorationInset,
-    TextDecorationThickness, TextIndentLength, TextShadowColor, TextShadowItem, TextShadowLength,
-    TextUnderlineOffset, TransformFunction, VerticalAlign, WordSpacingValue,
+    OutlineStyle, RadialGradient, RadialSize, RelativeCalcLengthPercentage, RelativeCalcUnit,
+    TabSize, TextDecorationInset, TextDecorationThickness, TextIndentLength, TextShadowColor,
+    TextShadowItem, TextShadowLength, TextUnderlineOffset, TransformFunction, VerticalAlign,
+    WordSpacingValue,
 };
 
 // ---------------------------------------------------------------------------
@@ -2555,6 +2556,10 @@ pub fn resolve_length_percentage_or_auto(
         LengthOrAuto::Auto => ComputedLengthPercentageOrAuto::Auto,
         LengthOrAuto::MinContent => ComputedLengthPercentageOrAuto::MinContent,
         LengthOrAuto::Calc(value) => ComputedLengthPercentageOrAuto::Calc(value),
+        LengthOrAuto::RelativeCalc(value) => {
+            resolve_relative_calc(value, font_size, own_line_height, ctx)
+                .unwrap_or(ComputedLengthPercentageOrAuto::Auto)
+        }
         LengthOrAuto::Length(Length::Lh(v)) => match resolve_lh_multiplier(v, own_line_height) {
             Some(c) => ComputedLengthPercentageOrAuto::Px(c.px()),
             None => ComputedLengthPercentageOrAuto::Auto,
@@ -2572,6 +2577,51 @@ pub fn resolve_length_percentage_or_auto(
             }
         }
     }
+}
+
+/// Absolutize the font-relative and viewport terms of a mixed `calc()`
+/// (CSS Values 4 §10.9 <https://www.w3.org/TR/css-values-4/#calc-computed-value>),
+/// keeping the percentage for used-value resolution. A result without a
+/// percentage collapses to `Px`, one without a length offset to `Percent`.
+///
+/// Returns `None` when an `lh` / `rlh` term has no basis because
+/// `line-height: normal` cannot be resolved; callers apply their own
+/// fallback, as for a plain `lh` length.
+fn resolve_relative_calc(
+    value: RelativeCalcLengthPercentage,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> Option<ComputedLengthPercentageOrAuto> {
+    let viewport = |length: Length| ctx.viewport_length(length).unwrap_or(0.0);
+    let mut px = value.px;
+    for (unit, coefficient) in value.relative_terms() {
+        px += match unit {
+            RelativeCalcUnit::Em => coefficient * font_size.0,
+            RelativeCalcUnit::Rem => coefficient * ctx.root_font_size.0,
+            RelativeCalcUnit::Lh => resolve_lh_multiplier(coefficient, own_line_height)?.px(),
+            RelativeCalcUnit::Rlh => resolve_lh_multiplier(coefficient, ctx.root_line_height)?.px(),
+            RelativeCalcUnit::Vw => viewport(Length::Vw(coefficient)),
+            RelativeCalcUnit::Vh => viewport(Length::Vh(coefficient)),
+            RelativeCalcUnit::Vi => viewport(Length::Vi(coefficient)),
+            RelativeCalcUnit::Vb => viewport(Length::Vb(coefficient)),
+            RelativeCalcUnit::Vmin => viewport(Length::Vmin(coefficient)),
+            RelativeCalcUnit::Vmax => viewport(Length::Vmax(coefficient)),
+        };
+    }
+    if !px.is_finite() {
+        return None;
+    }
+    Some(if value.percent == 0.0 {
+        ComputedLengthPercentageOrAuto::Px(px)
+    } else if px == 0.0 {
+        ComputedLengthPercentageOrAuto::Percent(value.percent)
+    } else {
+        ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage {
+            percent: value.percent,
+            px,
+        })
+    })
 }
 
 /// Absolutize a one-axis `<position>` offset (**phase 3**, using this node's
@@ -3073,7 +3123,9 @@ pub fn resolve_margin_length_or_auto(
         LengthOrAuto::Auto => ComputedLengthPercentageOrAuto::Auto,
         // Margin calc support is not yet wired into the taffy margin bridge;
         // retain the safe initial-equivalent until that bridge is added.
-        LengthOrAuto::Calc(_) => ComputedLengthPercentageOrAuto::Px(0.0),
+        LengthOrAuto::Calc(_) | LengthOrAuto::RelativeCalc(_) => {
+            ComputedLengthPercentageOrAuto::Px(0.0)
+        }
         // Only `width` / `inline-size` parse `min-content`; a margin never
         // holds it.
         LengthOrAuto::MinContent => ComputedLengthPercentageOrAuto::Px(0.0), // cov:ignore: only the width / inline-size parser produces min-content

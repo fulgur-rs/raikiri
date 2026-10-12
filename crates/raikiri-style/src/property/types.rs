@@ -779,6 +779,192 @@ pub struct CalcLengthPercentage {
     pub px: f32,
 }
 
+/// A `calc()` sum whose terms include font-relative or viewport-percentage
+/// lengths, kept until computed-value time.
+///
+/// CSS Values 4 §10.9 "Computed Value"
+/// (<https://www.w3.org/TR/css-values-4/#calc-computed-value>) absolutizes
+/// every length term of a math function at computed-value time, while
+/// percentages stay unresolved until used-value time. The cascade only knows
+/// the authored terms, so this keeps them until the element's font size,
+/// line height, and the viewport are known; the computed value is then a
+/// [`CalcLengthPercentage`] (or a plain length or percentage).
+///
+/// Units that share a basis are folded when the value is built: `ex` counts
+/// as `0.5em` and `ic` as `1em` (the style layer has no font metrics, as for
+/// [`Length::Ex`]), their root counterparts likewise fold into `rem`, and the
+/// small / large / dynamic viewport units fold into their default-viewport
+/// forms. `ch` is not accepted: a plain `ch` length is measured against the
+/// declaring font by layout, which this representation cannot carry.
+///
+/// At most [`Self::MAX_RELATIVE_TERMS`] distinct relative bases are kept, so
+/// the value stays small enough to be `Copy` inside [`LengthOrAuto`]; a sum
+/// with more is rejected like any other unsupported calc.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RelativeCalcLengthPercentage {
+    /// Percentage coefficient (`100%` is `100.0`).
+    pub percent: f32,
+    /// Absolute-length offset in CSS px.
+    pub px: f32,
+    /// Relative terms, sorted by unit, with empty slots last.
+    terms: [Option<RelativeCalcTerm>; RelativeCalcLengthPercentage::MAX_RELATIVE_TERMS],
+}
+
+/// The basis of one relative term in a [`RelativeCalcLengthPercentage`].
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum RelativeCalcUnit {
+    /// The element's computed font size.
+    Em,
+    /// The root element's computed font size.
+    Rem,
+    /// The element's own `lh`.
+    Lh,
+    /// The root element's `lh`.
+    Rlh,
+    /// 1% of the viewport width.
+    Vw,
+    /// 1% of the viewport height.
+    Vh,
+    /// 1% of the viewport size in the root's inline axis.
+    Vi,
+    /// 1% of the viewport size in the root's block axis.
+    Vb,
+    /// 1% of the smaller viewport dimension.
+    Vmin,
+    /// 1% of the larger viewport dimension.
+    Vmax,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct RelativeCalcTerm {
+    unit: RelativeCalcUnit,
+    coefficient: f32,
+}
+
+impl RelativeCalcLengthPercentage {
+    /// The number of distinct relative bases one value can hold.
+    pub const MAX_RELATIVE_TERMS: usize = 1;
+
+    /// A single term of `value` in `unit`, or `None` for a unit that is not a
+    /// length or percentage. `unit` is ASCII lowercase.
+    pub(crate) fn from_unit(value: f32, unit: &str) -> Option<Self> {
+        let default_viewport = match unit.as_bytes().first() {
+            Some(b's' | b'l' | b'd') if unit.len() > 2 && unit[1..].starts_with('v') => &unit[1..],
+            _ => unit,
+        };
+        let relative = |unit, factor: f32| {
+            let mut term = Self::default();
+            term.terms[0] = Some(RelativeCalcTerm {
+                unit,
+                coefficient: value * factor,
+            });
+            term
+        };
+        let absolute = |percent: f32, px: f32| Self {
+            percent,
+            px,
+            ..Self::default()
+        };
+        let term = match default_viewport {
+            "vw" => relative(RelativeCalcUnit::Vw, 1.0),
+            "vh" => relative(RelativeCalcUnit::Vh, 1.0),
+            "vi" => relative(RelativeCalcUnit::Vi, 1.0),
+            "vb" => relative(RelativeCalcUnit::Vb, 1.0),
+            "vmin" => relative(RelativeCalcUnit::Vmin, 1.0),
+            "vmax" => relative(RelativeCalcUnit::Vmax, 1.0),
+            _ if default_viewport.len() != unit.len() => return None,
+            "%" => absolute(value, 0.0),
+            "px" => absolute(0.0, value),
+            "in" => absolute(0.0, value * 96.0),
+            "cm" => absolute(0.0, value * 96.0 / 2.54),
+            "mm" => absolute(0.0, value * 96.0 / 25.4),
+            "q" => absolute(0.0, value * 96.0 / 101.6),
+            "pt" => absolute(0.0, value * 96.0 / 72.0),
+            "pc" => absolute(0.0, value * 16.0),
+            "em" | "ic" => relative(RelativeCalcUnit::Em, 1.0),
+            "ex" => relative(RelativeCalcUnit::Em, 0.5),
+            "rem" | "ric" => relative(RelativeCalcUnit::Rem, 1.0),
+            "rex" | "rch" => relative(RelativeCalcUnit::Rem, 0.5),
+            "lh" => relative(RelativeCalcUnit::Lh, 1.0),
+            "rlh" => relative(RelativeCalcUnit::Rlh, 1.0),
+            _ => return None,
+        };
+        term.normalized()
+    }
+
+    /// Add `sign * other`, or `None` when the sum is not finite or needs more
+    /// than [`Self::MAX_RELATIVE_TERMS`] relative bases.
+    pub(crate) fn add_scaled(mut self, other: Self, sign: f32) -> Option<Self> {
+        self.percent += sign * other.percent;
+        self.px += sign * other.px;
+        for term in other.terms.into_iter().flatten() {
+            let coefficient = sign * term.coefficient;
+            if let Some(existing) = self
+                .terms
+                .iter_mut()
+                .flatten()
+                .find(|existing| existing.unit == term.unit)
+            {
+                existing.coefficient += coefficient;
+            } else {
+                let slot = self.terms.iter_mut().find(|slot| slot.is_none())?;
+                *slot = Some(RelativeCalcTerm {
+                    unit: term.unit,
+                    coefficient,
+                });
+            }
+        }
+        self.normalized()
+    }
+
+    /// Multiply every coefficient by `factor`.
+    pub(crate) fn scale(mut self, factor: f32) -> Option<Self> {
+        self.percent *= factor;
+        self.px *= factor;
+        for term in self.terms.iter_mut().flatten() {
+            term.coefficient *= factor;
+        }
+        self.normalized()
+    }
+
+    /// Drop zero terms, sort the rest by unit, and reject non-finite values.
+    fn normalized(mut self) -> Option<Self> {
+        if !self.percent.is_finite() || !self.px.is_finite() {
+            return None;
+        }
+        for slot in &mut self.terms {
+            match slot {
+                Some(term) if !term.coefficient.is_finite() => return None,
+                Some(term) if term.coefficient == 0.0 => *slot = None,
+                _ => {}
+            }
+        }
+        self.terms
+            .sort_by_key(|slot| slot.map_or((1, None), |term| (0, Some(term.unit))));
+        Some(self)
+    }
+
+    /// The relative terms as `(unit, coefficient)` pairs, sorted by unit.
+    pub fn relative_terms(&self) -> impl Iterator<Item = (RelativeCalcUnit, f32)> + '_ {
+        self.terms
+            .iter()
+            .flatten()
+            .map(|term| (term.unit, term.coefficient))
+    }
+
+    /// The value without font-relative or viewport terms, when it has none.
+    pub fn as_absolute(self) -> Option<CalcLengthPercentage> {
+        self.terms
+            .iter()
+            .all(Option::is_none)
+            .then_some(CalcLengthPercentage {
+                percent: self.percent,
+                px: self.px,
+            })
+    }
+}
+
 /// `<length-percentage>` used by `text-indent`, including deferred mixed-unit math.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TextIndentLength {
@@ -850,6 +1036,9 @@ pub enum LengthOrAuto {
     Auto,
     /// A deferred mixed-unit `calc()` expression.
     Calc(CalcLengthPercentage),
+    /// A mixed-unit `calc()` with font-relative or viewport terms, absolutized
+    /// at computed-value time into [`Self::Calc`]'s computed counterpart.
+    RelativeCalc(RelativeCalcLengthPercentage),
     /// The `min-content` sizing keyword (CSS Sizing 3 §3.1.1). Only the
     /// `width` / `inline-size` parser produces it. Block-level boxes sized by
     /// Taffy honor it; inline-block shrink-to-fit, block children laid out
