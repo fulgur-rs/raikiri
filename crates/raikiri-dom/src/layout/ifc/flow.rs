@@ -301,33 +301,18 @@ pub(crate) fn rebreak_roots(doc: &mut Document, cascade: &CascadeResult, max_adv
     let roots: Vec<usize> = (0..doc.nodes.len())
         .filter(|&id| doc.nodes[id].ifc.is_some())
         .collect();
+    let widths =
+        crate::layout::multicol::ResolvedChWidths::new(doc, cascade, &parent_of, max_advance);
     for id in roots {
         // A root inside a `min-content` box keeps the lines its intrinsic
         // width was measured with; no page width applies to it.
-        let mut intrinsic = Some(id);
-        while let Some(node) = intrinsic {
-            if cascade.computed[node].width
-                == raikiri_style::ComputedLengthPercentageOrAuto::MinContent
-            {
-                break;
-            }
-            intrinsic = parent_of[node];
-        }
-        if intrinsic.is_some() {
+        if widths.in_min_content(id) {
             continue;
         }
         // The search starts at the parent of the text, so the root's first
         // text node is the starting point.
         let width = first_text_node(doc, id)
-            .and_then(|text| {
-                crate::layout::authored_containing_width_with_resolved_ch(
-                    doc,
-                    cascade,
-                    &parent_of,
-                    text,
-                    max_advance,
-                )
-            })
+            .and_then(|text| widths.authored_containing_width(text))
             .unwrap_or(max_advance);
         let Some(root) = doc.nodes[id].ifc.as_mut() else {
             continue;
