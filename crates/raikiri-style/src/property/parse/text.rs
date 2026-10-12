@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use cssparser::{ParseError, Parser, ParserInput, Token};
+use cssparser::{ParseError, Parser, Token};
 use smol_str::SmolStr;
 
 use crate::property::types::*;
@@ -1188,23 +1188,25 @@ pub(super) fn parse_text_spacing_shorthand(
 }
 
 fn parse_text_spacing_trim_component(component: &str) -> Option<TextSpacingTrim> {
-    let mut input = ParserInput::new(component);
-    let mut parser = Parser::new(&mut input);
-    let trim = parse_text_spacing_trim(&mut parser)?;
-    parser.expect_exhausted().ok()?;
-    Some(trim)
+    TextSpacingTrim::from_css_ident(component)
 }
 
+/// The `text-autospace` value the lowercase identifiers `components` make,
+/// as `text-autospace` reads them.
 fn parse_text_autospace_components(components: &[String]) -> Option<TextAutospace> {
+    if let [component] = components
+        && let Some(keyword) = text_autospace_keyword(component)
+    {
+        return Some(keyword);
+    }
     if components.is_empty() {
         return None;
     }
-    let source = components.join(" ");
-    let mut input = ParserInput::new(&source);
-    let mut parser = Parser::new(&mut input);
-    let autospace = parse_text_autospace(&mut parser)?;
-    parser.expect_exhausted().ok()?;
-    Some(autospace)
+    let mut custom = CustomAutospace::default();
+    for component in components {
+        custom.push(component)?;
+    }
+    Some(custom.finish())
 }
 
 pub(super) fn parse_hyphens(input: &mut Parser<'_, '_>) -> Option<Hyphens> {
@@ -1313,49 +1315,79 @@ pub(super) fn parse_text_justify(input: &mut Parser<'_, '_>) -> Option<TextJusti
 /// `<autospace>` is `no-autospace | [ ideograph-alpha || ideograph-numeric ||
 /// punctuation ] || [ insert | replace ]`.
 pub(super) fn parse_text_autospace(input: &mut Parser<'_, '_>) -> Option<TextAutospace> {
-    let first = input.expect_ident().ok()?.clone();
-    let first = first.to_ascii_lowercase();
-    match first.as_str() {
-        "normal" => return Some(TextAutospace::Normal),
-        "auto" => return Some(TextAutospace::Auto),
-        "no-autospace" => return Some(TextAutospace::NoAutospace),
-        _ => {}
+    let first = input.expect_ident().ok()?.to_ascii_lowercase();
+    if let Some(keyword) = text_autospace_keyword(&first) {
+        return Some(keyword);
     }
 
-    let mut ideograph_alpha = false;
-    let mut ideograph_numeric = false;
-    let mut punctuation = false;
-    let mut mode = TextAutospaceMode::None;
-
-    let mut consume = |ident: &str| -> Option<()> {
-        match ident {
-            "ideograph-alpha" if !ideograph_alpha => ideograph_alpha = true,
-            "ideograph-numeric" if !ideograph_numeric => ideograph_numeric = true,
-            "punctuation" if !punctuation => punctuation = true,
-            "insert" if matches!(mode, TextAutospaceMode::None) => mode = TextAutospaceMode::Insert,
-            "replace" if matches!(mode, TextAutospaceMode::None) => {
-                mode = TextAutospaceMode::Replace
-            }
-            _ => return None,
-        }
-        Some(())
-    };
-    consume(first.as_str())?;
-
+    let mut custom = CustomAutospace::default();
+    custom.push(&first)?;
     loop {
         match input.next() {
-            Ok(Token::Ident(ident)) => consume(ident.to_ascii_lowercase().as_str())?,
+            Ok(Token::Ident(ident)) => custom.push(&ident.to_ascii_lowercase())?,
             Ok(_) => return None,
             Err(_) => break,
         }
     }
+    Some(custom.finish())
+}
 
-    Some(TextAutospace::Custom {
-        ideograph_alpha,
-        ideograph_numeric,
-        punctuation,
-        mode,
-    })
+fn text_autospace_keyword(ident: &str) -> Option<TextAutospace> {
+    match ident {
+        "normal" => Some(TextAutospace::Normal),
+        "auto" => Some(TextAutospace::Auto),
+        "no-autospace" => Some(TextAutospace::NoAutospace),
+        _ => None,
+    }
+}
+
+/// The boundary keywords and mode of a custom `<autospace>` value, each at
+/// most once, in any order.
+struct CustomAutospace {
+    ideograph_alpha: bool,
+    ideograph_numeric: bool,
+    punctuation: bool,
+    mode: TextAutospaceMode,
+}
+
+impl Default for CustomAutospace {
+    fn default() -> Self {
+        Self {
+            ideograph_alpha: false,
+            ideograph_numeric: false,
+            punctuation: false,
+            mode: TextAutospaceMode::None,
+        }
+    }
+}
+
+impl CustomAutospace {
+    /// Adds one lowercase keyword, or `None` when it is no component or
+    /// repeats one.
+    fn push(&mut self, ident: &str) -> Option<()> {
+        match ident {
+            "ideograph-alpha" if !self.ideograph_alpha => self.ideograph_alpha = true,
+            "ideograph-numeric" if !self.ideograph_numeric => self.ideograph_numeric = true,
+            "punctuation" if !self.punctuation => self.punctuation = true,
+            "insert" if matches!(self.mode, TextAutospaceMode::None) => {
+                self.mode = TextAutospaceMode::Insert
+            }
+            "replace" if matches!(self.mode, TextAutospaceMode::None) => {
+                self.mode = TextAutospaceMode::Replace
+            }
+            _ => return None,
+        }
+        Some(())
+    }
+
+    fn finish(self) -> TextAutospace {
+        TextAutospace::Custom {
+            ideograph_alpha: self.ideograph_alpha,
+            ideograph_numeric: self.ideograph_numeric,
+            punctuation: self.punctuation,
+            mode: self.mode,
+        }
+    }
 }
 
 /// Parse CSS Text 4's `word-space-transform` keyword combination.

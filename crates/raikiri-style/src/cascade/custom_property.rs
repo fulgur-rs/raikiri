@@ -163,7 +163,7 @@ fn resolve_substituted_value(deferred: &DeferredValue, substituted: &str) -> Opt
         }
     };
     if deferred.property.as_str() == "border-radius"
-        && let Some(keyword) = CssWideKeyword::from_css_ident(simplified.trim())
+        && let Some(keyword) = css_wide_keyword_source(&simplified)
         && radius_corner_property(deferred.key).is_some()
     {
         return Some(ResolvedValue::RadiusKeyword(keyword));
@@ -173,6 +173,18 @@ fn resolve_substituted_value(deferred: &DeferredValue, substituted: &str) -> Opt
     let value = parse_value(&deferred.property, &mut parser)?;
     parser.expect_exhausted().ok()?;
     Some(ResolvedValue::Parsed(value))
+}
+
+/// The CSS-wide keyword `source` holds as its only component value.
+fn css_wide_keyword_source(source: &str) -> Option<CssWideKeyword> {
+    let mut input = ParserInput::new(source);
+    Parser::new(&mut input)
+        .parse_entirely(|parser| {
+            let ident = parser.expect_ident()?.clone();
+            CssWideKeyword::from_css_ident(&ident)
+                .ok_or_else(|| parser.new_custom_error::<_, ()>(()))
+        })
+        .ok()
 }
 
 /// Wrap a mixed-unit `calc()` in the value of the property it was declared

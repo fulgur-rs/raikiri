@@ -473,6 +473,10 @@ fn invalid_paper_feature_values_do_not_qualify_matching_query_arms() {
         "print, (width: clamp(1px))",
         "print, (width: 1px/2)",
         "print, (device-width: 1px/2)",
+        // A value before the name is read whole with the name's type.
+        "print, (1px/2 < device-width)",
+        "print, (1/2 < device-width)",
+        "print, (1px < aspect-ratio)",
         "print, (width: clamp(1px, 2px))",
         "print, (width: clamp(1px, 2px, 3px, 4px))",
         "print, (width: min())",

@@ -1,4 +1,4 @@
-use cssparser::{Parser, ToCss as _, Token};
+use cssparser::{ParseError, Parser, ToCss as _, Token};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CalcUnitKind {
@@ -168,12 +168,15 @@ fn parse_calc_product(
 ) -> Option<BoundedCalcNode> {
     let mut node = parse_calc_value(input, unit_kind, budget, nesting)?;
     loop {
-        input.skip_whitespace();
-        let is_multiply = if input.try_parse(|i| i.expect_delim('*')).is_ok() {
-            true
-        } else if input.try_parse(|i| i.expect_delim('/')).is_ok() {
-            false
-        } else {
+        // Whitespace before an operator is left for a sum to check when
+        // no `*` or `/` follows it.
+        let Ok(is_multiply) = input.try_parse(|i| -> Result<bool, ParseError<'_, ()>> {
+            match i.next()? {
+                Token::Delim('*') => Ok(true),
+                Token::Delim('/') => Ok(false),
+                _ => Err(i.new_custom_error(())),
+            }
+        }) else {
             break;
         };
         budget.consume()?;
@@ -205,12 +208,19 @@ fn parse_calc_sum(
 ) -> Option<BoundedCalcNode> {
     let mut node = parse_calc_product(input, unit_kind, budget, nesting)?;
     loop {
-        input.skip_whitespace();
-        let is_add = if input.try_parse(|i| i.expect_delim('+')).is_ok() {
-            true
-        } else if input.try_parse(|i| i.expect_delim('-')).is_ok() {
-            false
-        } else {
+        // `+` and `-` need whitespace on both sides, so that they are told
+        // apart from a number's sign.
+        let Ok(is_add) = input.try_parse(|i| -> Result<bool, ParseError<'_, ()>> {
+            i.expect_whitespace()?;
+            i.skip_whitespace();
+            let is_add = match i.next_including_whitespace()? {
+                Token::Delim('+') => true,
+                Token::Delim('-') => false,
+                _ => return Err(i.new_custom_error(())),
+            };
+            i.expect_whitespace()?;
+            Ok(is_add)
+        }) else {
             break;
         };
         budget.consume()?;
@@ -270,6 +280,18 @@ fn integer_value(value: f32) -> Option<i32> {
 
 fn format_number(value: f64) -> String {
     format_css_number(value as f32)
+}
+
+/// Serializes a folded `<number>` as a calculation's contents: the number,
+/// or the keyword a non-finite value is spelled with.
+pub(crate) fn serialize_calc_number(value: f64) -> String {
+    if value.is_nan() {
+        "NaN".to_owned()
+    } else if value.is_infinite() {
+        if value > 0.0 { "infinity" } else { "-infinity" }.to_owned()
+    } else {
+        format_number(value)
+    }
 }
 
 /// Formats the percentage's own number rather than a `value / 100` fraction,
@@ -375,19 +397,11 @@ fn render_parenthesized_if_needed(node: &CalcNode, is_top_level: bool) -> String
 /// canonical order (see `render`'s `Product` arm).
 pub(crate) fn serialize_calc_node(node: &CalcNode) -> String {
     if let Some(value) = try_evaluate(node) {
-        if value.is_nan() {
-            return "calc(NaN)".to_owned();
-        }
-        if value.is_infinite() {
-            return if value > 0.0 {
-                "calc(infinity)".to_owned()
-            } else {
-                "calc(-infinity)".to_owned()
-            };
-        }
         return match node {
-            CalcNode::Percentage(_) => format!("calc({})", format_percentage(value)),
-            _ => format!("calc({})", format_number(value)),
+            CalcNode::Percentage(_) if value.is_finite() => {
+                format!("calc({})", format_percentage(value))
+            }
+            _ => format!("calc({})", serialize_calc_number(value)),
         };
     }
     match node {
@@ -426,15 +440,8 @@ fn contains_angle(node: &CalcNode) -> bool {
 
 pub(crate) fn serialize_calc_node_as_angle(node: &CalcNode) -> String {
     if let Some(value) = try_evaluate(node) {
-        if value.is_nan() {
-            return "calc(NaN)".to_owned();
-        }
-        if value.is_infinite() {
-            return if value > 0.0 {
-                "calc(infinity)".to_owned()
-            } else {
-                "calc(-infinity)".to_owned()
-            };
+        if !value.is_finite() {
+            return format!("calc({})", serialize_calc_number(value));
         }
         return if contains_angle(node) {
             format!("calc({}deg)", format_number(value))

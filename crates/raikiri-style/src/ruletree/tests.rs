@@ -1876,6 +1876,44 @@ fn escaped_leading_charset_name_is_retained() {
 }
 
 #[test]
+fn leading_charset_name_follows_cssparser_escapes() {
+    // A surrogate escape decodes to U+FFFD, so this is not `@charset`: it
+    // is one unknown at-rule, listed once.
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(r#"@char\D800 set "x"; p { color: red }"#, Origin::Author);
+
+    assert_eq!(tree.opaque_at_rules().len(), 1);
+    assert_eq!(tree.opaque_at_rules()[0].name, "char\u{FFFD}set");
+    assert_eq!(tree.rules().len(), 2);
+}
+
+#[test]
+fn leading_charset_prelude_is_read_as_tokens() {
+    for (source, prelude) in [
+        // A `;` inside a string or a comment does not end the prelude.
+        (r#"@charset "a;b"; p{}"#, Some(r#" "a;b""#)),
+        (r#"@charset /* ; */ "x"; p{}"#, Some(r#" /* ; */ "x""#)),
+        (r#"<!-- @charset "x"; p{}"#, Some(r#" "x""#)),
+        // A block or EOF ends no statement.
+        (r#"@charset "x" {} p{}"#, None),
+        (r#"@charset "x""#, None),
+        // A stray closing bracket is a parse error.
+        (r#"@charset "x" ); p{}"#, None),
+        // `@charsetx` is another rule.
+        (r#"@charsetx "x"; p{}"#, None),
+    ] {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(source, Origin::Author);
+        let charset = tree
+            .opaque_at_rules()
+            .iter()
+            .find(|rule| rule.name == "charset")
+            .map(|rule| rule.prelude.as_str());
+        assert_eq!(charset, prelude, "{source:?}");
+    }
+}
+
+#[test]
 fn namespace_at_rules_feed_prefixed_and_default_selectors() {
     let mut tree = RuleTree::empty();
     tree.add_stylesheet(

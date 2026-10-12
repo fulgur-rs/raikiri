@@ -123,6 +123,26 @@ fn parse(source: &str, unit_kind: CalcUnitKind) -> Option<CalcNode> {
 }
 
 #[test]
+fn calc_sum_operators_need_whitespace_on_both_sides() {
+    for source in [
+        "calc((1)-(2))",
+        "calc((1) -(2))",
+        "calc((1)- (2))",
+        "calc((1)+(2))",
+    ] {
+        assert!(parse(source, CalcUnitKind::Number).is_none(), "{source}");
+    }
+    for source in [
+        "calc((1) - (2))",
+        "calc((1) /* a */ - /* b */ (2))",
+        "calc((1)/**/ - (2))",
+    ] {
+        let node = parse(source, CalcUnitKind::Number).unwrap();
+        assert_eq!(serialize_calc_node(&node), "calc(-1)", "{source}");
+    }
+}
+
+#[test]
 fn parses_a_bare_number() {
     assert!(matches!(
         parse("50", CalcUnitKind::Number),

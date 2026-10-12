@@ -4440,6 +4440,27 @@ fn elliptical_radius_custom_property_fallback_can_select_inherited_axes() {
 }
 
 #[test]
+fn radius_custom_property_keyword_is_read_as_tokens() {
+    for fallback in [r"\69nherit", "/* a */ inherit /* b */"] {
+        let (parent, child) = cascade_parent_child(
+            "p",
+            Some("border-radius:30px / 15px"),
+            "span",
+            Some(&format!("border-radius:var(--radius,{fallback})")),
+        );
+        assert_eq!(child.border_radius, parent.border_radius, "{fallback:?}");
+    }
+    // U+00A0 is no CSS whitespace, so it is part of the identifier.
+    let (parent, child) = cascade_parent_child(
+        "p",
+        Some("border-radius:30px / 15px"),
+        "span",
+        Some("border-radius:var(--radius,inherit\u{a0})"),
+    );
+    assert_ne!(child.border_radius, parent.border_radius);
+}
+
+#[test]
 fn independent_elliptical_corner_longhands_are_cascaded_without_a_shorthand() {
     let cv = cascade_doc(
         "",

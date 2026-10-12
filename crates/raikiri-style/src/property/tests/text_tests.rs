@@ -1146,6 +1146,9 @@ fn text_spacing_reuses_full_autospace_component_grammar_and_rejects_invalid_valu
         "trim-start trim-start",
         "no-autospace punctuation",
         "trim-start no-autospace punctuation",
+        // An escaped space makes one identifier, not two keywords.
+        r"ideograph-alpha\ ideograph-numeric",
+        r"trim-start ideograph-alpha\ punctuation",
     ] {
         assert_eq!(parse_entire(source, "text-spacing"), None, "{source}");
     }
