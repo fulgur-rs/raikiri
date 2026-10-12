@@ -1107,3 +1107,33 @@ fn live_sheets_without_a_provider_keep_unresolved_imports_and_cascade_in_order()
         );
     }
 }
+
+#[test]
+fn import_preludes_without_a_url_or_with_bad_media_are_not_expanded() {
+    for source in [
+        "@import foo;",
+        r#"@import "a.css" supports (display: grid);"#,
+        r#"@import "a.css" screen);"#,
+        r#"@import "a.css" screen <!--;"#,
+        "@import \"a.css\" (x: 'bad\n');",
+        r#"@import "a.css" (a (b ]));"#,
+        r#"@import "a.css" f(url(a b));"#,
+    ] {
+        assert!(scan_leading_imports(source).is_empty(), "{source}");
+    }
+}
+
+#[test]
+fn import_media_keeps_nested_blocks_as_written() {
+    let imports = scan_leading_imports(r#"@import "a.css" f([x] {y}), print;"#);
+    assert_eq!(imports.len(), 1);
+    assert_eq!(imports[0].media.as_deref(), Some("f([x] {y}), print"));
+}
+
+#[test]
+fn layer_blocks_block_imports_but_import_blocks_do_not() {
+    assert!(scan_leading_imports(r#"@layer x { p {} } @import "a.css";"#).is_empty());
+    let imports = scan_leading_imports(r#"@import "a.css" {} @import "b.css";"#);
+    assert_eq!(imports.len(), 1);
+    assert_eq!(imports[0].url, "b.css");
+}
