@@ -58,8 +58,10 @@ fn has_result_is_recorded_once_per_anchor() {
             "paragraph {p} in card {card}"
         );
     }
-    // One record per card, however many paragraphs asked.
+    // One record per card, however many paragraphs asked, and the argument
+    // list's selectors are kept once for all of them.
     assert_eq!(caches.has_entries(), card_ids.len());
+    assert_eq!(caches.has_lists(), 1);
 }
 
 #[test]
@@ -111,7 +113,7 @@ fn has_records_are_kept_apart_per_argument_list() {
 
 #[test]
 fn content_language_records_the_ancestors_it_walks() {
-    // html[lang=en] > div > div > div > span, then a second span under the
+    // An html element with lang=en, three nested divs and a span, then a second span under the
     // innermost div answers from the recorded ancestors.
     let mut doc = TestDoc::new();
     let html = doc.push_element(0, "html", None);

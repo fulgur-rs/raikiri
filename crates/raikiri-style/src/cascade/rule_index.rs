@@ -216,7 +216,7 @@ impl SelectorEntry {
 pub(crate) struct RuleIndex<'a> {
     rules: Vec<IndexedRule<'a>>,
     entries: Vec<SelectorEntry>,
-    // The keys are already well-mixed hashes ([`hash_folded`]), so a cheap
+    // The keys are already well-mixed hashes (`hash_folded`), so a cheap
     // hasher suffices; SipHash would only hash them a second time.
     by_id: FxHashMap<u32, Vec<u32>>,
     by_class: FxHashMap<u32, Vec<u32>>,
