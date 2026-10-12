@@ -2283,6 +2283,28 @@ fn print_declaration_reads_the_declaration_list_grammar() {
 }
 
 #[test]
+fn page_sizes_reject_negative_lengths() {
+    assert!(parse_page_size("-10px").is_none());
+    assert_eq!(
+        print_declaration("size:300px;size:-10px", "size", parse_page_size)
+            .and_then(|size| size.size),
+        Some((300.0, 300.0))
+    );
+}
+
+#[test]
+fn page_declarations_follow_nested_rule_blocks() {
+    assert_eq!(
+        first_authored_page_name("<style>.a{& b{} page:named}</style>").as_deref(),
+        Some("named")
+    );
+    assert_eq!(
+        first_authored_page_name("<style>.a{}page :first-child{}</style>"),
+        None
+    );
+}
+
+#[test]
 fn page_margins_reject_unitless_nonzero_lengths() {
     assert_eq!(parse_page_margin("5", 300.0), None);
     assert_eq!(parse_page_margin("0", 300.0), Some(0.0));

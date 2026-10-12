@@ -43,12 +43,14 @@ fn rewrites_src_and_image_set_string_urls() {
 }
 
 #[test]
-fn keeps_fragment_only_urls() {
+fn keeps_fragment_only_and_empty_urls() {
     let base = Url::parse("http://web-platform.test/styles/sheet.css").unwrap();
     for source in [
         "p{clip-path:url(#clip)}",
         r##"p{mask:url("#mask")}"##,
         r##"p{a:src("#a");b:image-set("#b" 1x)}"##,
+        // An empty URL names no resource.
+        r#"p{a:src("");b:image-set("" 1x);c:url("")}"#,
     ] {
         assert_eq!(absolutize_stylesheet_urls(source, &base), source);
     }

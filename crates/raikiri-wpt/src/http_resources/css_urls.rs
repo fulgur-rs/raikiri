@@ -15,7 +15,8 @@ struct Replacement {
 ///
 /// `url()`, `src()` and the bare `<string>` URLs of `image-set()` are
 /// rewritten. Fragment-only references (`url(#id)`) name an element of the
-/// document that uses the stylesheet, so they are left as written.
+/// document that uses the stylesheet, and empty URLs name no resource, so
+/// both are left as written.
 pub(super) fn absolutize_stylesheet_urls(source: &str, base_url: &Url) -> String {
     let mut input = ParserInput::new(source);
     let mut parser = Parser::new(&mut input);
@@ -29,7 +30,11 @@ pub(super) fn absolutize_stylesheet_urls(source: &str, base_url: &Url) -> String
     let mut output = String::with_capacity(source.len());
     let mut cursor = 0;
     for replacement in replacements {
-        if replacement.start < cursor || replacement.value.starts_with('#') {
+        // An empty URL names no resource, so it is left as written too.
+        if replacement.start < cursor
+            || replacement.value.is_empty()
+            || replacement.value.starts_with('#')
+        {
             continue;
         }
         let Some(absolute) = Url::parse(&replacement.value)

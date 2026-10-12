@@ -942,7 +942,8 @@ fn parse_page_size(value: &str) -> Option<PageSize> {
             "a5" => dimensions = vec![559.3701, 793.7008],
             "letter" => dimensions = vec![612.0, 792.0],
             "legal" => dimensions = vec![612.0, 1008.0],
-            _ => dimensions.push(parse_print_length(token, None)?),
+            // Page size lengths are non-negative.
+            _ => dimensions.push(parse_print_length(token, None).filter(|length| *length >= 0.0)?),
         }
     }
     let size = match dimensions.as_slice() {
@@ -1194,12 +1195,15 @@ fn first_authored_page_name(input: &str) -> Option<String> {
                 }
                 _ => {}
             }
-            declaration_start = matches!(token, cssparser::Token::Semicolon)
-                || matches!(
-                    (&previous[1], &token),
-                    (Some(cssparser::Token::Ident(attribute)), cssparser::Token::Delim('='))
-                        if attribute.eq_ignore_ascii_case("style")
-                );
+            // A declaration starts after `;` and after a nested rule's block.
+            declaration_start = matches!(
+                token,
+                cssparser::Token::Semicolon | cssparser::Token::CurlyBracketBlock
+            ) || matches!(
+                (&previous[1], &token),
+                (Some(cssparser::Token::Ident(attribute)), cssparser::Token::Delim('='))
+                    if attribute.eq_ignore_ascii_case("style")
+            );
             previous = [previous[1].take(), Some(token)];
         }
         None
