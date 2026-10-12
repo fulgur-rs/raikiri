@@ -11,6 +11,11 @@ use crate::ruletree::build_rule_tree;
 use crate::specified::SpecifiedValues;
 use crate::test_dom::TestDoc;
 
+fn evaluate_calc(input: &str) -> Option<MathValue> {
+    let mut values = evaluate_math_arguments(input)?;
+    (values.len() == 1).then(|| values.remove(0))
+}
+
 #[test]
 fn var_in_margin_shorthand_preserves_later_longhand_cascade() {
     let cv = cascade_doc(
@@ -751,90 +756,78 @@ fn math_helpers_cover_nested_and_rejected_forms() {
         None
     );
 
-    assert!(MathParser::new("1px 2px").parse().is_none());
-    assert!(MathParser::new("1px+2px").parse().is_none());
-    assert!(MathParser::new("1px +2px").parse().is_none());
-    assert!(MathParser::new("1px + 2em").parse().is_none());
+    assert!(evaluate_calc("1px 2px").is_none());
+    assert!(evaluate_calc("1px+2px").is_none());
+    assert!(evaluate_calc("1px +2px").is_none());
+    assert!(evaluate_calc("1px + 2em").is_none());
+    assert_eq!(evaluate_calc("-2px").map(|value| value.number), Some(-2.0));
     assert_eq!(
-        MathParser::new("-2px").parse().map(|value| value.number),
-        Some(-2.0)
-    );
-    assert_eq!(
-        MathParser::new("5px - 2px")
-            .parse()
-            .map(|value| value.number),
+        evaluate_calc("5px - 2px").map(|value| value.number),
         Some(3.0)
     );
-    assert!(MathParser::new("3e38px + 3e38px").parse().is_none());
-    assert!(MathParser::new("2px *").parse().is_none());
+    assert!(evaluate_calc("3e38px + 3e38px").is_none());
+    assert!(evaluate_calc("2px *").is_none());
     assert_eq!(
-        MathParser::new("2 * 3px").parse().map(|value| value.unit),
+        evaluate_calc("2 * 3px").map(|value| value.unit),
         Some(Some("px".to_owned()))
     );
     assert_eq!(
-        MathParser::new("2px * 3").parse().map(|value| value.number),
+        evaluate_calc("2px * 3").map(|value| value.number),
         Some(6.0)
     );
     assert_eq!(
-        MathParser::new("6px / 2").parse().map(|value| value.number),
+        evaluate_calc("6px / 2").map(|value| value.number),
         Some(3.0)
     );
-    assert!(MathParser::new("2px * 3px").parse().is_none());
-    assert!(MathParser::new("2px / 0").parse().is_none());
-    assert!(MathParser::new("3e38 * 3").parse().is_none());
+    assert!(evaluate_calc("2px * 3px").is_none());
+    assert!(evaluate_calc("2px / 0").is_none());
+    assert!(evaluate_calc("3e38 * 3").is_none());
     assert_eq!(
-        MathParser::new("(1px + 2px)")
-            .parse()
-            .map(|value| value.number),
+        evaluate_calc("(1px + 2px)").map(|value| value.number),
         Some(3.0)
     );
-    assert!(MathParser::new("(1px").parse().is_none());
-    assert!(MathParser::new(".").parse().is_none());
+    // The end of input closes an open block (CSS Syntax 3 §5.4.9).
+    assert_eq!(evaluate_calc("(1px").map(|value| value.number), Some(1.0));
+    // Comments are not the whitespace a binary `+` or `-` needs (CSS Values
+    // 4 §10.1), and escaped units are decoded by the tokenizer.
+    assert!(evaluate_calc("1px/**/+/**/2px").is_none());
     assert_eq!(
-        MathParser::new("1.5px").parse().map(|value| value.number),
-        Some(1.5)
+        evaluate_calc("1px /**/ + /**/ 2px").map(|value| value.number),
+        Some(3.0)
     );
     assert_eq!(
-        MathParser::new("1e-2px").parse().map(|value| value.number),
+        evaluate_calc(r"1p\78  + 2px").map(|value| value.number),
+        Some(3.0)
+    );
+    assert_eq!(evaluate_calc("33.3%").map(|value| value.number), Some(33.3));
+    assert_eq!(
+        evaluate_calc(" /**/ 33.3% ").map(|value| value.number),
+        Some(33.3)
+    );
+    assert!(evaluate_calc(".").is_none());
+    assert_eq!(evaluate_calc("1.5px").map(|value| value.number), Some(1.5));
+    assert_eq!(
+        evaluate_calc("1e-2px").map(|value| value.number),
         Some(0.01)
     );
-    assert!(MathParser::new("1e+px").parse().is_none());
+    assert!(evaluate_calc("1e+px").is_none());
     assert_eq!(
-        MathParser::new("50%").parse().map(|value| value.unit),
+        evaluate_calc("50%").map(|value| value.unit),
         Some(Some("%".to_owned()))
     );
 
     assert_eq!(
-        split_top_level_commas(r#""a,b", 1px"#),
-        Some(vec![r#""a,b""#, "1px"])
+        evaluate_math_function("min", r#"1px /*,*/, 2px"#),
+        Some("1px".to_owned())
     );
-    assert_eq!(
-        split_top_level_commas("1px /*,*/, 2px"),
-        Some(vec!["1px /*,*/", "2px"])
-    );
-    assert_eq!(
-        split_top_level_commas("min(1px, 2px), 3px"),
-        Some(vec!["min(1px, 2px)", "3px"])
-    );
-    assert_eq!(
-        split_top_level_commas(r"foo\,bar, baz"),
-        Some(vec![r"foo\,bar", "baz"])
-    );
-    assert_eq!(split_top_level_commas("{a,b}, c"), Some(vec!["{a,b}", "c"]));
-    assert_eq!(split_top_level_commas(")"), None);
-    assert_eq!(split_top_level_commas("[a,b"), None);
+    assert_eq!(evaluate_math_function("min", "1px,, 2px"), None);
+    assert_eq!(evaluate_math_function("calc", "1px, 2px"), None);
     let nested = format!(
         "{}1{}",
         "(".repeat(MAX_VARIABLE_RESOLUTION_DEPTH + 1),
         ")".repeat(MAX_VARIABLE_RESOLUTION_DEPTH + 1)
     );
-    assert!(MathParser::new(&nested).parse().is_none());
-    let too_deep = format!(
-        "{}1{}",
-        "[".repeat(MAX_VARIABLE_RESOLUTION_DEPTH + 1),
-        "]".repeat(MAX_VARIABLE_RESOLUTION_DEPTH + 1)
-    );
-    assert_eq!(split_top_level_commas(&too_deep), None);
+    assert!(evaluate_calc(&nested).is_none());
 }
 
 #[test]
@@ -951,18 +944,6 @@ fn variable_scanner_handles_literals_bounds_and_fallbacks() {
         None
     );
 
-    assert_eq!(skip_css_string(r#""a\"b""#, 0), Some(6));
-    assert_eq!(skip_css_string("\"unterminated", 0), Some(13));
-    assert_eq!(skip_css_string("\"a\\\nb\"", 0), Some(6));
-    assert_eq!(skip_css_string("\"a\\\r\nb\"", 0), Some(7));
-    assert_eq!(skip_css_string("\"a\nb\"", 0), Some(2));
-    assert_eq!(skip_css_string("\"a\\", 0), Some(3));
-    assert_eq!(skip_css_comment("/* comment */", 0), Some(13));
-    assert_eq!(skip_css_comment("/* unterminated", 0), None);
-    assert_eq!(skip_css_escape("x", 0), None);
-    assert_eq!(skip_css_escape("\\\n", 0), None);
-    assert_eq!(skip_css_escape(r"\31 ", 0), Some(4));
-    assert_eq!(skip_css_escape("\\31\r\n", 0), Some(5));
     assert_eq!(
         split_var_arguments("--x, var(--y, red)"),
         Some((SmolStr::from("--x"), Some("var(--y, red)")))
@@ -986,6 +967,21 @@ fn variable_scanner_handles_literals_bounds_and_fallbacks() {
     assert_eq!(escaped_name, "--x,");
     assert_eq!(escaped_fallback, Some("red"));
     assert_eq!(split_var_arguments("--x)"), None);
+    assert_eq!(split_var_arguments("--x, a) b"), None);
+    assert_eq!(
+        split_var_arguments("--x, \"open"),
+        Some((SmolStr::from("--x"), Some("\"open")))
+    );
+    assert_eq!(
+        split_var_arguments("--x,\u{a0}red "),
+        Some((SmolStr::from("--x"), Some("\u{a0}red")))
+    );
+    assert_eq!(
+        trim_css_whitespace_and_comments(" /* a */ b(c) /* d"),
+        "b(c)"
+    );
+    assert_eq!(trim_css_whitespace_and_comments("\u{3000}x "), "\u{3000}x");
+    assert_eq!(trim_css_whitespace_and_comments("/**/"), "");
 }
 
 #[test]
@@ -1008,7 +1004,6 @@ fn component_value_scanners_bound_nesting_and_blocks() {
         "]".repeat(MAX_VARIABLE_RESOLUTION_DEPTH + 1)
     );
     assert_eq!(find_function_tokens(&nested, &["var"]), None);
-    assert_eq!(split_top_level_commas("[a,b], c"), Some(vec!["[a,b]", "c"]));
 }
 
 #[test]
@@ -1649,11 +1644,6 @@ fn variable_resolution_budget_rejects_excess_expansions() {
 }
 
 #[test]
-fn has_css_whitespace_before_at_start_returns_false() {
-    assert!(!MathParser::new("1px").has_css_whitespace_before(0));
-}
-
-#[test]
 fn compatible_absolute_length_units_are_normalized_in_math() {
     let cv = cascade_doc("", "div", Some("width: calc(1in + 96px)"));
     assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Px(192.0));
@@ -1693,7 +1683,7 @@ fn mixed_length_percentage_math_is_preserved_until_used_value_resolution() {
 fn oversized_variable_and_math_inputs_are_rejected() {
     let oversized = "x".repeat(MAX_SUBSTITUTED_VALUE_BYTES + 1);
     assert!(collect_var_references(&oversized, &mut Vec::new()).is_err());
-    assert_eq!(split_top_level_commas(&oversized), None);
+    assert_eq!(evaluate_math_function("min", &oversized), None);
     assert_eq!(split_var_arguments(&oversized), None);
 }
 
@@ -2203,4 +2193,56 @@ fn relative_color_detection_reads_tokens_not_source_text() {
         Some("--c: blue; color: red; color: rgb( from var(--c) r g b)"),
     );
     assert_eq!(cv.color, BLUE);
+}
+
+#[test]
+fn math_grammar_follows_the_tokenizer() {
+    // CSS Values 4 §10.1: binary `+` / `-` need whitespace on both sides,
+    // and comments are not whitespace; units are decoded by the tokenizer.
+    let width =
+        |value: &str| cascade_doc("", "div", Some(&format!("width:10px; width:{value}"))).width;
+    let px = ComputedLengthPercentageOrAuto::Px;
+    assert_eq!(width(r"calc(1p\78  + 2px)"), px(3.0));
+    assert_eq!(width("calc(1px /**/ + /**/ 2px)"), px(3.0));
+    for invalid in [
+        "calc(1px/**/+/**/2px)",
+        "calc(1px 2px)",
+        "calc(1px+ 2px)",
+        "calc(1px, 2px)",
+        "min(1px,, 2px)",
+        "calc(foo(1px) + 1px)",
+        "calc(1px + 1)",
+        "calc(1unknown + 1px)",
+    ] {
+        assert_eq!(width(invalid), px(10.0), "{invalid}");
+    }
+    assert_eq!(width("calc(1em + 5%)"), width("calc(1em /**/ + 5%)"));
+    assert_ne!(width("calc(1em + 5%)"), px(10.0));
+}
+
+#[test]
+fn color_math_grammar_follows_the_tokenizer() {
+    let color =
+        |value: &str| cascade_doc("", "p", Some(&format!("color:red; color:{value}"))).color;
+    for valid in [
+        "rgb(calc(1 + 2) 0 0)",
+        "rgb(calc(100 /**/ + /**/ 2) 0 0)",
+        "rgb(from blue calc(r + g) g b)",
+    ] {
+        let mut input = ParserInput::new(valid);
+        let mut parser = Parser::new(&mut input);
+        assert!(
+            crate::property::parse_value("color", &mut parser).is_some(),
+            "{valid}"
+        );
+    }
+    for invalid in [
+        "rgb(calc(1+ 2) 0 0)",
+        "rgb(calc(100/**/+/**/2) 0 0)",
+        "rgb(from blue calc(r+g) g b)",
+        "rgb(calc(1, 2) 0 0)",
+        "rgb(calc(foo(1)) 0 0)",
+    ] {
+        assert_eq!(color(invalid), RED, "{invalid}");
+    }
 }

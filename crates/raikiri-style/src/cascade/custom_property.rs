@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use cssparser::{Parser, ParserInput, Token};
+use cssparser::{ParseError, Parser, ParserInput, Token};
 use smol_str::SmolStr;
 
 use crate::computed::CustomPropertyEnvironment;
@@ -9,7 +9,7 @@ use crate::property::{
     CssWideKeyword, CustomProperty, DeferredValue, FontFeatureSettings, FontVariationSettings,
     LengthOrAuto, MAX_DEFERRED_VALUE_NESTING_DEPTH, MAX_SUBSTITUTED_VALUE_BYTES, PropertyKey,
     PropertyValue, RelativeCalcLengthPercentage, RelativeCalcUnit, VerticalAlign,
-    is_custom_property_name, parse_value, property_key_for_name,
+    is_custom_property_name, parse_value, product_operator, property_key_for_name, sum_operator,
 };
 
 use super::candidate::CustomCandidates;
@@ -220,26 +220,18 @@ fn calc_length_percentage_value(
 pub(crate) fn parse_relative_calc_length_percentage(
     input: &str,
 ) -> Option<RelativeCalcLengthPercentage> {
-    let trimmed = trim_css_whitespace_and_comments(input);
-    // Read the function token with cssparser, so an escaped name such as
-    // `c\61 lc(` is recognized as `calc(` the way the parse-time check did.
-    let mut tokens_input = ParserInput::new(trimmed);
-    let mut tokens = Parser::new(&mut tokens_input);
-    if !tokens.expect_function().ok()?.eq_ignore_ascii_case("calc") {
-        return None;
-    }
-    let mut parser = MathParser::new(trimmed);
-    parser.position = tokens.position().byte_index();
-    let value = parser.parse_linear_sum()?;
-    parser.skip_whitespace()?;
+    let mut parser_input = ParserInput::new(input);
+    let mut parser = Parser::new(&mut parser_input);
     // A `calc(` left open at the end of input is closed there (CSS Syntax 3
-    // §5.4.9).
-    if parser.input.as_bytes().get(parser.position) == Some(&b')') {
-        parser.position += 1;
-    }
-    if parser.position != parser.input.len() {
-        return None;
-    }
+    // §5.4.9); the tokenizer closes it the same way.
+    let value = parser
+        .parse_entirely(|parser| {
+            if !parser.expect_function()?.eq_ignore_ascii_case("calc") {
+                return Err(parser.new_custom_error(()));
+            }
+            parser.parse_nested_block(|nested| evaluate_linear_sum(nested, 1))
+        })
+        .ok()?;
     match value {
         LinearValue::Length(terms) => terms.into_value(),
         LinearValue::Number(_) => None,
@@ -1129,18 +1121,12 @@ pub(crate) fn evaluate_math_function(name: &str, input: &str) -> Option<String> 
     }
     match name.to_ascii_lowercase().as_str() {
         "calc" => {
-            let value = MathParser::new(input).parse()?;
+            let value = evaluate_math_arguments(input)?;
+            let [value] = <[MathValue; 1]>::try_from(value).ok()?;
             serialize_math_value(value)
         }
         "min" | "max" => {
-            let arguments = split_top_level_commas(input)?;
-            if arguments.is_empty() {
-                return None; // cov:ignore: split_top_level_commas always returns at least one part when it succeeds.
-            }
-            let mut values = arguments
-                .into_iter()
-                .map(|argument| MathParser::new(argument).parse())
-                .collect::<Option<Vec<_>>>()?;
+            let mut values = evaluate_math_arguments(input)?;
             normalize_math_values(&mut values)?;
             let is_min = name.eq_ignore_ascii_case("min");
             let mut selected = values.remove(0);
@@ -1157,15 +1143,10 @@ pub(crate) fn evaluate_math_function(name: &str, input: &str) -> Option<String> 
             serialize_math_value(selected)
         }
         "clamp" => {
-            let arguments = split_top_level_commas(input)?;
-            if arguments.len() != 3 {
+            let mut values = evaluate_math_arguments(input)?;
+            if values.len() != 3 {
                 return None;
             }
-            let values = arguments
-                .into_iter()
-                .map(|argument| MathParser::new(argument).parse())
-                .collect::<Option<Vec<_>>>()?;
-            let mut values = values;
             normalize_math_values(&mut values)?;
             let selected = if values[0].number > values[2].number {
                 // CSS Values 4 §10.2: when the bounds are reversed, the
@@ -1272,386 +1253,168 @@ pub(crate) fn serialize_math_value(value: MathValue) -> Option<String> {
     Some(format!("{}{}", number, unit))
 }
 
-pub(crate) struct MathParser<'a> {
-    input: &'a str,
-    position: usize,
-    nesting_depth: usize,
+type EvalResult<'i, T> = Result<T, ParseError<'i, ()>>;
+
+/// Evaluate the comma-separated arguments of a math function whose nested
+/// math functions were already replaced by their values.
+fn evaluate_math_arguments(input: &str) -> Option<Vec<MathValue>> {
+    let mut parser_input = ParserInput::new(input);
+    let mut parser = Parser::new(&mut parser_input);
+    parser
+        .parse_entirely(|parser| parser.parse_comma_separated(|argument| evaluate_sum(argument, 0)))
+        .ok()
 }
 
-impl<'a> MathParser<'a> {
-    pub(crate) fn new(input: &'a str) -> Self {
-        Self {
-            input,
-            position: 0,
-            nesting_depth: 0,
-        }
-    }
-
-    pub(crate) fn parse(mut self) -> Option<MathValue> {
-        let value = self.parse_sum()?;
-        self.skip_whitespace()?;
-        (self.position == self.input.len()).then_some(value)
-    }
-
-    fn parse_sum(&mut self) -> Option<MathValue> {
-        let mut value = self.parse_product()?;
-        loop {
-            self.skip_whitespace()?;
-            let Some(&operator) = self.input.as_bytes().get(self.position) else {
-                return Some(value);
-            };
-            if operator != b'+' && operator != b'-' {
-                return Some(value);
-            }
-            let operator_position = self.position;
-            if !self.has_css_whitespace_before(operator_position)
-                || !self.has_css_whitespace_after(operator_position + 1)
-            {
-                return None;
-            }
-            self.position += 1;
-            let mut right = self.parse_product()?;
-            normalize_math_pair(&mut value, &mut right)?;
-            value.number = if operator == b'+' {
-                value.number + right.number
-            } else {
-                value.number - right.number
-            };
-            if !value.number.is_finite() {
-                return None;
-            }
-        }
-    }
-
-    fn parse_product(&mut self) -> Option<MathValue> {
-        let mut value = self.parse_primary()?;
-        loop {
-            self.skip_whitespace()?;
-            let operator = match self.input.as_bytes().get(self.position) {
-                Some(b'*') | Some(b'/') => self.input.as_bytes()[self.position],
-                _ => return Some(value),
-            };
-            self.position += 1;
-            let right = self.parse_primary()?;
-            match operator {
-                b'*' if value.unit.is_none() => {
-                    value = MathValue {
-                        number: value.number * right.number,
-                        unit: right.unit,
-                    }
-                }
-                b'*' if right.unit.is_none() => value.number *= right.number,
-                b'/' if right.unit.is_none() && right.number != 0.0 => value.number /= right.number,
-                _ => return None,
-            }
-            if !value.number.is_finite() {
-                return None;
-            }
-        }
-    }
-
-    fn parse_primary(&mut self) -> Option<MathValue> {
-        self.skip_whitespace()?;
-        if self.input.as_bytes().get(self.position) == Some(&b'(') {
-            if self.nesting_depth >= MAX_VARIABLE_RESOLUTION_DEPTH {
-                return None;
-            }
-            self.position += 1;
-            self.nesting_depth += 1;
-            let value = self.parse_sum();
-            self.nesting_depth -= 1;
-            let value = value?;
-            self.skip_whitespace()?;
-            if self.input.as_bytes().get(self.position) != Some(&b')') {
-                return None;
-            }
-            self.position += 1;
-            return Some(value);
-        }
-        self.parse_number()
-    }
-
-    fn parse_number(&mut self) -> Option<MathValue> {
-        let start = self.position;
-        if matches!(
-            self.input.as_bytes().get(self.position),
-            Some(b'+') | Some(b'-')
-        ) {
-            self.position += 1;
-        }
-        let digits_start = self.position;
-        while self
-            .input
-            .as_bytes()
-            .get(self.position)
-            .is_some_and(u8::is_ascii_digit)
-        {
-            self.position += 1;
-        }
-        if self.input.as_bytes().get(self.position) == Some(&b'.') {
-            self.position += 1;
-            // A CSS number needs at least one digit after the decimal point
-            // (CSS Syntax 3 §4.3.12), so `1.em` is not `1em`.
-            if !self
-                .input
-                .as_bytes()
-                .get(self.position)
-                .is_some_and(u8::is_ascii_digit)
-            {
-                return None;
-            }
-            while self
-                .input
-                .as_bytes()
-                .get(self.position)
-                .is_some_and(u8::is_ascii_digit)
-            {
-                self.position += 1;
-            }
-        }
-        if self.position == digits_start
-            || (self.position == digits_start + 1
-                && self.input.as_bytes().get(digits_start) == Some(&b'.'))
-        {
-            return None;
-        }
-        if matches!(
-            self.input.as_bytes().get(self.position),
-            Some(b'e') | Some(b'E')
-        ) {
-            let exponent_start = self.position;
-            self.position += 1;
-            if matches!(
-                self.input.as_bytes().get(self.position),
-                Some(b'+') | Some(b'-')
-            ) {
-                self.position += 1;
-            }
-            let exponent_digits = self.position;
-            while self
-                .input
-                .as_bytes()
-                .get(self.position)
-                .is_some_and(u8::is_ascii_digit)
-            {
-                self.position += 1;
-            }
-            if self.position == exponent_digits {
-                self.position = exponent_start;
-            }
-        }
-        let number = self.input[start..self.position].parse::<f32>().ok()?;
-        let unit_start = self.position;
-        if self.input.as_bytes().get(self.position) == Some(&b'%') {
-            self.position += 1;
+fn evaluate_sum<'i>(input: &mut Parser<'i, '_>, depth: usize) -> EvalResult<'i, MathValue> {
+    let mut value = evaluate_product(input, depth)?;
+    while let Ok(operator) = input.try_parse(sum_operator) {
+        let mut right = evaluate_product(input, depth)?;
+        normalize_math_pair(&mut value, &mut right).ok_or_else(|| input.new_custom_error(()))?;
+        value.number = if operator == '+' {
+            value.number + right.number
         } else {
-            while self
-                .input
-                .as_bytes()
-                .get(self.position)
-                .is_some_and(u8::is_ascii_alphabetic)
-            {
-                self.position += 1;
-            }
-        }
-        let unit = (unit_start != self.position)
-            .then(|| self.input[unit_start..self.position].to_ascii_lowercase());
-        Some(MathValue { number, unit })
-    }
-
-    fn parse_linear_sum(&mut self) -> Option<LinearValue> {
-        let mut value = self.parse_linear_product()?;
-        loop {
-            self.skip_whitespace()?;
-            let Some(&operator) = self.input.as_bytes().get(self.position) else {
-                return Some(value);
-            };
-            if operator != b'+' && operator != b'-' {
-                return Some(value);
-            }
-            let operator_position = self.position;
-            if !self.has_css_whitespace_before(operator_position)
-                || !self.has_css_whitespace_after(operator_position + 1)
-            {
-                return None;
-            }
-            self.position += 1;
-            let right = self.parse_linear_product()?;
-            let sign = if operator == b'+' { 1.0 } else { -1.0 };
-            value = match (value, right) {
-                (LinearValue::Number(left), LinearValue::Number(right)) => {
-                    let sum = left + sign * right;
-                    LinearValue::Number(sum.is_finite().then_some(sum)?)
-                }
-                (LinearValue::Length(left), LinearValue::Length(right)) => {
-                    LinearValue::Length(left.add_scaled(right, sign)?)
-                }
-                _ => return None,
-            };
-        }
-    }
-
-    fn parse_linear_product(&mut self) -> Option<LinearValue> {
-        let mut value = self.parse_linear_primary()?;
-        loop {
-            self.skip_whitespace()?;
-            let operator = match self.input.as_bytes().get(self.position) {
-                Some(b'*') | Some(b'/') => self.input.as_bytes()[self.position],
-                _ => return Some(value),
-            };
-            self.position += 1;
-            let right = self.parse_linear_primary()?;
-            value = match (operator, value, right) {
-                (b'*', LinearValue::Number(left), LinearValue::Number(right)) => {
-                    let product = left * right;
-                    LinearValue::Number(product.is_finite().then_some(product)?)
-                }
-                (b'*', LinearValue::Number(factor), LinearValue::Length(length))
-                | (b'*', LinearValue::Length(length), LinearValue::Number(factor)) => {
-                    LinearValue::Length(length.scale(factor)?)
-                }
-                (b'/', LinearValue::Number(left), LinearValue::Number(right)) if right != 0.0 => {
-                    let quotient = left / right;
-                    LinearValue::Number(quotient.is_finite().then_some(quotient)?)
-                }
-                (b'/', LinearValue::Length(length), LinearValue::Number(divisor))
-                    if divisor != 0.0 =>
-                {
-                    LinearValue::Length(length.scale(divisor.recip())?)
-                }
-                _ => return None,
-            };
-        }
-    }
-
-    fn parse_linear_primary(&mut self) -> Option<LinearValue> {
-        self.skip_whitespace()?;
-        let rest = &self.input.as_bytes()[self.position..];
-        let open = if rest.first() == Some(&b'(') {
-            Some(1)
-        } else {
-            // Decode the function name with cssparser, so an escaped nested
-            // name such as `c\61 lc(` is recognized as `calc(`.
-            let mut tokens_input = ParserInput::new(&self.input[self.position..]);
-            let mut tokens = Parser::new(&mut tokens_input);
-            tokens
-                .expect_function()
-                .is_ok_and(|name| name.eq_ignore_ascii_case("calc"))
-                .then(|| tokens.position().byte_index())
+            value.number - right.number
         };
-        if let Some(open) = open {
-            if self.nesting_depth >= MAX_VARIABLE_RESOLUTION_DEPTH {
-                return None;
-            }
-            self.position += open;
-            self.nesting_depth += 1;
-            let value = self.parse_linear_sum();
-            self.nesting_depth -= 1;
-            let value = value?;
-            self.skip_whitespace()?;
-            // The end of input closes every open block (CSS Syntax 3 §5.4.9).
-            match self.input.as_bytes().get(self.position) {
-                Some(b')') => self.position += 1,
-                None => {}
-                Some(_) => return None,
-            }
-            return Some(value);
-        }
-        let MathValue { number, unit } = self.parse_number()?;
-        if !number.is_finite() {
-            return None;
-        }
-        Some(match unit {
-            None => LinearValue::Number(number),
-            Some(unit) => LinearValue::Length(LinearTerms::from_unit(number, &unit)?),
-        })
-    }
-
-    fn skip_whitespace(&mut self) -> Option<()> {
-        loop {
-            while self
-                .input
-                .as_bytes()
-                .get(self.position)
-                .is_some_and(u8::is_ascii_whitespace)
-            {
-                self.position += 1;
-            }
-            if self.input.as_bytes().get(self.position..self.position + 2) == Some(b"/*") {
-                self.position = skip_css_comment(self.input, self.position)?;
-                continue;
-            }
-            return Some(());
+        if !value.number.is_finite() {
+            return Err(input.new_custom_error(()));
         }
     }
-
-    pub(crate) fn has_css_whitespace_before(&self, position: usize) -> bool {
-        if position == 0 {
-            return false;
-        }
-        if self.input.as_bytes()[position - 1].is_ascii_whitespace() {
-            return true;
-        }
-        self.input[..position].ends_with("*/")
-    }
-
-    fn has_css_whitespace_after(&self, position: usize) -> bool {
-        self.input
-            .as_bytes()
-            .get(position)
-            .is_some_and(u8::is_ascii_whitespace)
-            || self.input.as_bytes().get(position..position + 2) == Some(b"/*")
-    }
+    Ok(value)
 }
 
-pub(crate) fn split_top_level_commas(input: &str) -> Option<Vec<&str>> {
-    if input.len() > MAX_SUBSTITUTED_VALUE_BYTES {
-        return None;
-    }
-    let bytes = input.as_bytes();
-    let mut parts = Vec::new();
-    let mut start = 0;
-    let mut closers = Vec::new();
-    let mut position = 0;
-    while position < bytes.len() {
-        match bytes[position] {
-            b'\'' | b'"' => position = skip_css_string(input, position)?,
-            b'/' if bytes.get(position + 1) == Some(&b'*') => {
-                position = skip_css_comment(input, position)?
-            }
-            b'\\' => position = skip_css_escape(input, position)?,
-            b'(' | b'[' | b'{' => {
-                if closers.len() >= MAX_DEFERRED_VALUE_NESTING_DEPTH {
-                    return None;
+fn evaluate_product<'i>(input: &mut Parser<'i, '_>, depth: usize) -> EvalResult<'i, MathValue> {
+    let mut value = evaluate_primary(input, depth)?;
+    while let Ok(operator) = input.try_parse(product_operator) {
+        let right = evaluate_primary(input, depth)?;
+        match operator {
+            '*' if value.unit.is_none() => {
+                value = MathValue {
+                    number: value.number * right.number,
+                    unit: right.unit,
                 }
-                let closer = if bytes[position] == b'(' {
-                    b')'
-                } else if bytes[position] == b'[' {
-                    b']'
-                } else {
-                    b'}'
-                };
-                closers.push(closer);
-                position += 1;
             }
-            b')' | b']' | b'}' if closers.last() == Some(&bytes[position]) => {
-                closers.pop();
-                position += 1;
-            }
-            b')' | b']' | b'}' if closers.is_empty() => return None,
-            b',' if closers.is_empty() => {
-                parts.push(input[start..position].trim());
-                start = position + 1;
-                position += 1;
-            }
-            _ => position += 1,
+            '*' if right.unit.is_none() => value.number *= right.number,
+            '/' if right.unit.is_none() && right.number != 0.0 => value.number /= right.number,
+            _ => return Err(input.new_custom_error(())),
+        }
+        if !value.number.is_finite() {
+            return Err(input.new_custom_error(()));
         }
     }
-    if !closers.is_empty() {
-        return None;
+    Ok(value)
+}
+
+fn evaluate_primary<'i>(input: &mut Parser<'i, '_>, depth: usize) -> EvalResult<'i, MathValue> {
+    if depth >= MAX_VARIABLE_RESOLUTION_DEPTH {
+        return Err(input.new_custom_error(()));
     }
-    parts.push(input[start..].trim());
-    parts.iter().all(|part| !part.is_empty()).then_some(parts)
+    input.skip_whitespace();
+    let start = input.position();
+    let value = match input.next()?.clone() {
+        Token::Number { value, .. } => MathValue {
+            number: value,
+            unit: None,
+        },
+        // The token keeps only the fraction; read the source digits so that
+        // `33.3%` stays exactly `33.3`.
+        Token::Percentage { .. } => MathValue {
+            number: input
+                .slice_from(start)
+                .strip_suffix('%')
+                .and_then(|number| number.parse::<f32>().ok())
+                .ok_or_else(|| input.new_custom_error(()))?,
+            unit: Some("%".to_owned()),
+        },
+        Token::Dimension { value, unit, .. } => MathValue {
+            number: value,
+            unit: Some(unit.to_ascii_lowercase()),
+        },
+        Token::ParenthesisBlock => {
+            return input.parse_nested_block(|nested| evaluate_sum(nested, depth + 1));
+        }
+        _ => return Err(input.new_custom_error(())),
+    };
+    if !value.number.is_finite() {
+        return Err(input.new_custom_error(()));
+    }
+    Ok(value)
+}
+
+fn evaluate_linear_sum<'i>(
+    input: &mut Parser<'i, '_>,
+    depth: usize,
+) -> EvalResult<'i, LinearValue> {
+    let mut value = evaluate_linear_product(input, depth)?;
+    while let Ok(operator) = input.try_parse(sum_operator) {
+        let right = evaluate_linear_product(input, depth)?;
+        let sign = if operator == '+' { 1.0 } else { -1.0 };
+        value = match (value, right) {
+            (LinearValue::Number(left), LinearValue::Number(right)) => Some(left + sign * right)
+                .filter(|sum| sum.is_finite())
+                .map(LinearValue::Number),
+            (LinearValue::Length(left), LinearValue::Length(right)) => {
+                left.add_scaled(right, sign).map(LinearValue::Length)
+            }
+            _ => None,
+        }
+        .ok_or_else(|| input.new_custom_error(()))?;
+    }
+    Ok(value)
+}
+
+fn evaluate_linear_product<'i>(
+    input: &mut Parser<'i, '_>,
+    depth: usize,
+) -> EvalResult<'i, LinearValue> {
+    let mut value = evaluate_linear_primary(input, depth)?;
+    while let Ok(operator) = input.try_parse(product_operator) {
+        let right = evaluate_linear_primary(input, depth)?;
+        let finite = |number: f32| number.is_finite().then_some(number);
+        value = match (operator, value, right) {
+            ('*', LinearValue::Number(left), LinearValue::Number(right)) => {
+                finite(left * right).map(LinearValue::Number)
+            }
+            ('*', LinearValue::Number(factor), LinearValue::Length(length))
+            | ('*', LinearValue::Length(length), LinearValue::Number(factor)) => {
+                length.scale(factor).map(LinearValue::Length)
+            }
+            ('/', LinearValue::Number(left), LinearValue::Number(right)) if right != 0.0 => {
+                finite(left / right).map(LinearValue::Number)
+            }
+            ('/', LinearValue::Length(length), LinearValue::Number(divisor)) if divisor != 0.0 => {
+                length.scale(divisor.recip()).map(LinearValue::Length)
+            }
+            _ => None,
+        }
+        .ok_or_else(|| input.new_custom_error(()))?;
+    }
+    Ok(value)
+}
+
+fn evaluate_linear_primary<'i>(
+    input: &mut Parser<'i, '_>,
+    depth: usize,
+) -> EvalResult<'i, LinearValue> {
+    if depth >= MAX_VARIABLE_RESOLUTION_DEPTH {
+        return Err(input.new_custom_error(()));
+    }
+    let start = input.state();
+    match input.next()?.clone() {
+        Token::ParenthesisBlock => {
+            return input.parse_nested_block(|nested| evaluate_linear_sum(nested, depth + 1));
+        }
+        Token::Function(name) if name.eq_ignore_ascii_case("calc") => {
+            return input.parse_nested_block(|nested| evaluate_linear_sum(nested, depth + 1));
+        }
+        _ => input.reset(&start),
+    }
+    let MathValue { number, unit } = evaluate_primary(input, depth)?;
+    match unit {
+        None => Ok(LinearValue::Number(number)),
+        Some(unit) => LinearTerms::from_unit(number, &unit)
+            .map(LinearValue::Length)
+            .ok_or_else(|| input.new_custom_error(())),
+    }
 }
 
 // CSS Variables 1 §3.3 requires a UA-defined expansion limit to prevent
@@ -1988,38 +1751,6 @@ pub(crate) fn substitute_vars_with_budget(
     Some(output.into())
 }
 
-/// The end of the string token starting at `start`, as CSS Syntax 3
-/// "consume a string token" (§4.3.5) finds it.
-///
-/// The end of input closes the string, and an escaped newline continues it.
-/// An unescaped newline ends a bad-string token before the newline; callers
-/// that must reject bad strings rely on the tokenizer for that.
-pub(crate) fn skip_css_string(input: &str, start: usize) -> Option<usize> {
-    let quote = input.as_bytes()[start];
-    let bytes = input.as_bytes();
-    let mut position = start + 1;
-    while position < bytes.len() {
-        match bytes[position] {
-            b'\\' => match bytes.get(position + 1) {
-                None => return Some(bytes.len()),
-                Some(b'\r') if bytes.get(position + 2) == Some(&b'\n') => position += 3,
-                Some(&next) if is_css_newline_byte(next) => position += 2,
-                Some(_) => position = skip_css_escape(input, position)?,
-            },
-            byte if byte == quote => return Some(position + 1),
-            byte if is_css_newline_byte(byte) => return Some(position),
-            _ => position += 1,
-        }
-    }
-    Some(bytes.len())
-}
-
-pub(crate) fn skip_css_comment(input: &str, start: usize) -> Option<usize> {
-    input[start + 2..]
-        .find("*/")
-        .map(|offset| start + 2 + offset + 2)
-}
-
 /// `input` without its leading and trailing CSS whitespace and comments.
 ///
 /// Comments produce no tokens (CSS Syntax 3 §4.3.2), so a declaration's
@@ -2028,111 +1759,65 @@ pub(crate) fn skip_css_comment(input: &str, start: usize) -> Option<usize> {
 /// U+00A0 and U+3000 are ident code points. A comment left open at the end of
 /// input runs to the end, and strings and escapes are kept whole.
 pub(crate) fn trim_css_whitespace_and_comments(input: &str) -> &str {
-    let bytes = input.as_bytes();
+    let mut parser_input = ParserInput::new(input);
+    let mut parser = Parser::new(&mut parser_input);
     let mut text = None::<(usize, usize)>;
-    let mut position = 0;
-    while position < bytes.len() {
-        let next = match bytes[position] {
-            byte if is_css_whitespace_byte(byte) => {
-                position += 1;
-                continue;
-            }
-            b'/' if bytes.get(position + 1) == Some(&b'*') => {
-                position = skip_css_comment(input, position).unwrap_or(bytes.len());
-                continue;
-            }
-            b'\'' | b'"' => skip_css_string(input, position).unwrap_or(bytes.len()),
-            b'\\' => skip_css_escape(input, position).unwrap_or(position + 1),
-            _ => position + 1,
+    loop {
+        parser.skip_whitespace();
+        let start = parser.position().byte_index();
+        let Ok(token) = parser.next_including_whitespace_and_comments() else {
+            break;
         };
-        text = Some((text.map_or(position, |(start, _)| start), next));
-        position = next;
+        if matches!(
+            token,
+            Token::Function(_)
+                | Token::ParenthesisBlock
+                | Token::SquareBracketBlock
+                | Token::CurlyBracketBlock
+        ) {
+            let _ = parser.parse_nested_block(|nested| {
+                while nested.next_including_whitespace_and_comments().is_ok() {}
+                Ok::<_, ParseError<'_, ()>>(())
+            });
+        }
+        let end = parser.position().byte_index();
+        text = Some((text.map_or(start, |(start, _)| start), end));
     }
     text.map_or("", |(start, end)| &input[start..end])
 }
 
+/// The custom property name of a `var()` and its fallback, if any: the
+/// argument text after the first top-level comma, without the whitespace
+/// around it (CSS Variables 1 §3).
 pub(crate) fn split_var_arguments(input: &str) -> Option<(SmolStr, Option<&str>)> {
     if input.len() > MAX_SUBSTITUTED_VALUE_BYTES {
         return None;
     }
-    let bytes = input.as_bytes();
-    let mut depth = 0usize;
-    let mut position = 0;
-    while position < bytes.len() {
-        match bytes[position] {
-            b'\'' | b'"' => position = skip_css_string(input, position)?,
-            b'/' if bytes.get(position + 1) == Some(&b'*') => {
-                position = skip_css_comment(input, position)?
-            }
-            b'(' => {
-                depth += 1;
-                position += 1;
-            }
-            b')' => {
-                depth = depth.checked_sub(1)?;
-                position += 1;
-            }
-            b'\\' => position = skip_css_escape(input, position)?,
-            b',' if depth == 0 => {
-                let name = parse_custom_property_reference(&input[..position])?;
-                return Some((name, Some(input[position + 1..].trim())));
-            }
-            _ => position += 1,
-        }
-    }
-    let name = parse_custom_property_reference(input)?;
-    Some((name, None))
-}
-
-fn parse_custom_property_reference(input: &str) -> Option<SmolStr> {
     let mut parser_input = ParserInput::new(input);
     let mut parser = Parser::new(&mut parser_input);
     let name = parser.expect_ident_cloned().ok()?;
     if !is_custom_property_name(name.as_ref()) {
         return None;
     }
-    parser.expect_exhausted().ok()?;
-    Some(name.as_ref().into())
-}
-
-fn is_css_whitespace_byte(byte: u8) -> bool {
-    matches!(byte, b' ' | b'\t' | b'\n' | b'\x0C' | b'\r')
-}
-
-fn is_css_newline_byte(byte: u8) -> bool {
-    matches!(byte, b'\n' | b'\x0C' | b'\r')
-}
-
-pub(crate) fn skip_css_escape(input: &str, start: usize) -> Option<usize> {
-    let bytes = input.as_bytes();
-    if bytes.get(start) != Some(&b'\\') {
-        return None;
+    if parser.is_exhausted() {
+        return Some((name.as_ref().into(), None));
     }
-    let mut position = start + 1;
-    let first = *bytes.get(position)?;
-    if is_css_newline_byte(first) {
-        return None;
-    }
-    if first.is_ascii_hexdigit() {
-        let mut digits = 0;
-        while digits < 6 && bytes.get(position).is_some_and(u8::is_ascii_hexdigit) {
-            digits += 1;
-            position += 1;
+    parser.expect_comma().ok()?;
+    let fallback_start = parser.position().byte_index();
+    while let Ok(token) = parser.next() {
+        if matches!(
+            token,
+            Token::CloseParenthesis | Token::CloseSquareBracket | Token::CloseCurlyBracket
+        ) {
+            return None;
         }
-        if bytes
-            .get(position)
-            .is_some_and(|byte| is_css_whitespace_byte(*byte))
-        {
-            if bytes.get(position) == Some(&b'\r') && bytes.get(position + 1) == Some(&b'\n') {
-                position += 2;
-            } else {
-                position += 1;
-            }
-        } // cov:ignore: this block terminator has no executable statement; both escape branches are covered above.
-        return Some(position);
     }
-    let character = input[position..].chars().next()?;
-    Some(position + character.len_utf8())
+    let fallback = input[fallback_start..].trim_matches(is_css_whitespace_char);
+    Some((name.as_ref().into(), Some(fallback)))
+}
+
+fn is_css_whitespace_char(character: char) -> bool {
+    matches!(character, ' ' | '\t' | '\n' | '\x0C' | '\r')
 }
 
 #[cfg(test)]

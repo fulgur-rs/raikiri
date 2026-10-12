@@ -556,129 +556,7 @@ fn relative_component_is_hue(kind: RelativeColorKind, index: usize) -> bool {
 }
 
 pub(crate) fn relative_math_function(name: &str) -> bool {
-    matches!(
-        name.to_ascii_lowercase().as_str(),
-        "calc"
-            | "min"
-            | "max"
-            | "clamp"
-            | "sign"
-            | "abs"
-            | "round"
-            | "mod"
-            | "rem"
-            | "pow"
-            | "sqrt"
-            | "hypot"
-            | "log"
-            | "exp"
-            | "sin"
-            | "cos"
-            | "tan"
-            | "asin"
-            | "acos"
-            | "atan"
-            | "atan2"
-    )
-}
-
-fn relative_ident_math_type(
-    kind: RelativeColorKind,
-    _index: usize,
-    name: &str,
-) -> Option<ColorMathType> {
-    if relative_ident_allowed(kind, name) {
-        // Relative channel identifiers are exposed as unitless channel values.
-        // A percentage or angle can still be produced by multiplying/dividing
-        // them inside calc(), but it cannot be added directly to a number.
-        Some(ColorMathType::Number)
-    } else {
-        None
-    }
-}
-
-fn relative_math_expression_type<'i>(
-    input: &mut Parser<'i, '_>,
-    kind: RelativeColorKind,
-    index: usize,
-    allow_comma: bool,
-) -> Result<ColorMathType, ParseError<'i, ()>> {
-    let mut terms = Vec::new();
-    loop {
-        let token = match input.next() {
-            Ok(token) => token.clone(),
-            Err(_) => break,
-        };
-        match token {
-            Token::Number { .. } => terms.push(MathTerm::Value(ColorMathType::Number)),
-            Token::Percentage { .. } => terms.push(MathTerm::Value(ColorMathType::Percentage)),
-            Token::Dimension { ref unit, .. } => {
-                terms.push(MathTerm::Value(color_math_dimension_type(unit.as_ref())))
-            }
-            Token::Ident(ref name) if is_math_constant(name.as_ref()) => {
-                terms.push(MathTerm::Value(ColorMathType::Number));
-            }
-            Token::Ident(ref name) => terms.push(MathTerm::Value(
-                relative_ident_math_type(kind, index, name.as_ref())
-                    .unwrap_or(ColorMathType::Invalid),
-            )),
-            Token::Function(ref name) => {
-                let name_lower = name.as_ref().to_ascii_lowercase();
-                let function_type = if name_lower == "var" || name_lower == "env" {
-                    input.parse_nested_block(|nested| {
-                        consume_math_component_values(nested)?;
-                        Ok::<_, ParseError<'_, ()>>(ColorMathType::Unknown)
-                    })?
-                } else {
-                    let nested_allows_comma = matches!(
-                        name_lower.as_str(),
-                        "min" | "max" | "clamp" | "round" | "mod" | "rem" | "atan2"
-                    );
-                    let nested = input
-                        .parse_nested_block(|nested| {
-                            relative_math_expression_type(nested, kind, index, nested_allows_comma)
-                        })
-                        .unwrap_or(ColorMathType::Invalid);
-                    if !relative_math_function(name_lower.as_ref()) {
-                        ColorMathType::Invalid
-                    } else {
-                        match name_lower.as_str() {
-                            "calc" | "min" | "max" | "clamp" | "abs" | "round" | "mod" | "rem" => {
-                                nested
-                            }
-                            "sign" | "pow" | "sqrt" | "hypot" | "log" | "exp" | "sin" | "cos"
-                            | "tan" | "asin" | "acos" | "atan" | "atan2" => {
-                                if nested == ColorMathType::Invalid {
-                                    ColorMathType::Invalid
-                                } else {
-                                    ColorMathType::Number
-                                }
-                            }
-                            _ => ColorMathType::Invalid,
-                        }
-                    }
-                };
-                terms.push(MathTerm::Value(function_type));
-            }
-            Token::ParenthesisBlock => {
-                let nested = input
-                    .parse_nested_block(|nested| {
-                        relative_math_expression_type(nested, kind, index, false)
-                    })
-                    .unwrap_or(ColorMathType::Invalid);
-                terms.push(MathTerm::Value(nested));
-            }
-            Token::Delim('+' | '-' | '*' | '/') => {
-                if let Token::Delim(operator) = token {
-                    terms.push(MathTerm::Operator(operator));
-                }
-            }
-            Token::Comma if allow_comma => terms.push(MathTerm::Comma),
-            Token::WhiteSpace(_) | Token::Comment(_) => {}
-            _ => terms.push(MathTerm::Value(ColorMathType::Invalid)),
-        }
-    }
-    Ok(MathTermsParser::new(terms).parse_all(allow_comma))
+    crate::property::is_math_function_name(name)
 }
 
 fn parse_relative_component<'i>(
@@ -706,13 +584,13 @@ fn parse_relative_component<'i>(
                     Ok::<_, ParseError<'_, ()>>(ColorMathType::Unknown)
                 })?
             } else {
-                let allows_comma = matches!(
-                    name_lower.as_str(),
-                    "min" | "max" | "clamp" | "round" | "mod" | "rem" | "atan2"
-                );
+                let channel = |name: &str| relative_ident_allowed(kind, name);
+                let types = ValueMathTypes {
+                    channel: Some(&channel),
+                };
                 input
                     .parse_nested_block(|nested| {
-                        relative_math_expression_type(nested, kind, index, allows_comma)
+                        crate::property::parse_math_function(&types, nested, &name_lower)
                     })
                     .map_err(|_| input.new_custom_error(()))?
             };
