@@ -21,6 +21,15 @@ mkdir -p "$work_dir" "$(dirname "$output")"
 # The WPT cache is shared by every worktree. Record its revision before the
 # sweep and refuse the result if another fetch moved it while tests ran.
 wpt_sha="$(git -C target/wpt rev-parse HEAD)"
+# The metadata names commits, so both trees must match them exactly.
+require_clean() {
+  if ! git -C "$1" diff --quiet HEAD --; then
+    echo "$1 has uncommitted changes; the sweep would not match its commit" >&2
+    exit 1
+  fi
+}
+require_clean "$REPO_ROOT"
+require_clean target/wpt
 
 python3 "$SCRIPT_DIR/survey_reftests.py" --wpt-root target/wpt --format json \
   --output "$work_dir/survey.json"
@@ -78,6 +87,7 @@ cargo run --release --locked -p raikiri-wpt --bin run-baseline-report -- \
   --output "$output"
 # Record what was measured so the dashboard can refuse a sweep from another
 # WPT pin and name the Raikiri revision it reflects.
+require_clean target/wpt
 if [[ "$(git -C target/wpt rev-parse HEAD)" != "$wpt_sha" ]]; then
   echo "WPT checkout moved from $wpt_sha during the sweep; rerun it" >&2
   rm -f "$output"
