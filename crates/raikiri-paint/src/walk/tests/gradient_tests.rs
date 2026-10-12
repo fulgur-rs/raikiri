@@ -217,6 +217,7 @@ fn degenerate_radial_gradients_follow_their_thin_ending_shape() {
         40,
     );
     assert_eq!(pixel(&rgba, 40, 30, 30), BLUE);
+    assert_eq!(pixel(&rgba, 40, 21, 20), BLUE);
     // Lengths keep their size, so the circle still grows to them.
     let rgba = raster_layer(
         "background-image: radial-gradient(circle 0px, red 10px, blue 10px)",
@@ -252,6 +253,14 @@ fn degenerate_radial_gradients_follow_their_thin_ending_shape() {
     );
     let average = pixel(&rgba, 40, 20, 20);
     assert!((127..=128).contains(&average[0]) && (127..=128).contains(&average[2]));
+    // The average of a period weighs each pair by the distance it spans.
+    let rgba = raster_layer(
+        "background-image: repeating-radial-gradient(20px 0px, red 0px, white 1px, blue 10px)",
+        40,
+        40,
+    );
+    let [r, g, b, a] = pixel(&rgba, 40, 20, 20);
+    assert!(r.abs_diff(140) <= 1 && g.abs_diff(128) <= 1 && b.abs_diff(242) <= 1 && a == 255);
 }
 
 #[test]
@@ -277,6 +286,14 @@ fn radial_stops_before_the_center_are_cut_at_zero() {
     // Halfway between the stops the center is the mix of both colors.
     let center = pixel(&rgba, 40, 20, 20);
     assert!(center[0] > 64 && center[2] > 64, "{center:?}");
+    // The mix follows the gradient's Oklab interpolation, so the colors
+    // next to the center continue it without a jump.
+    assert!(center[1] > 30, "{center:?}");
+    let next = pixel(&rgba, 40, 21, 20);
+    assert!(
+        (0..3).all(|channel| center[channel].abs_diff(next[channel]) <= 12),
+        "{center:?} {next:?}"
+    );
     // The mix at the center is premultiplied, so a transparent stop does
     // not darken it.
     let rgba = raster_layer(
@@ -452,23 +469,51 @@ fn canvas_background_paints_a_propagated_body_gradient() {
 }
 
 #[test]
-fn canvas_gradient_with_an_unsupported_clip_warns() {
-    let (document, cascade) = canvas_fixture(
-        None,
-        Some("background: linear-gradient(red, blue); background-clip: text"),
+fn canvas_gradient_ignores_background_clip() {
+    for clip in ["text", "content-box"] {
+        let (document, cascade) = canvas_fixture(
+            Some("@page { size: 100px 40px; margin: 0 }"),
+            Some(&format!(
+                "background: linear-gradient(red, red); background-clip: {clip}; \
+                 padding: 10px; border: 5px solid transparent"
+            )),
+        );
+        let mut page_box = PageBox::A4;
+        page_box.width = 100.0;
+        page_box.height = 40.0;
+        let mut scene = Scene::new();
+        let mut warnings = Vec::new();
+        paint_canvas_background(
+            &ImageBrushCache::default(),
+            &mut scene,
+            &document,
+            &cascade,
+            page_box,
+            None,
+            &mut warnings,
+        );
+        assert!(warnings.is_empty(), "{clip}: {warnings:?}");
+        let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+            |out| out.append_scene(scene, Affine::IDENTITY),
+            100,
+            40,
+        );
+        assert_eq!(pixel(&rgba, 100, 1, 1), RED, "{clip}");
+    }
+}
+
+#[test]
+fn longer_hue_turns_between_equal_stops() {
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to right in lch longer hue, red, red)",
+        100,
+        4,
     );
-    let mut scene = Scene::new();
-    let mut warnings = Vec::new();
-    paint_canvas_background(
-        &ImageBrushCache::default(),
-        &mut scene,
-        &document,
-        &cascade,
-        PageBox::A4,
-        None,
-        &mut warnings,
+    let [r, g, b, _] = pixel(&rgba, 100, 50, 2);
+    assert!(
+        r < 100 && g.max(b) > 100,
+        "the middle of the turn is not red: {r} {g} {b}"
     );
-    assert_eq!(warnings.len(), 1);
 }
 
 #[test]

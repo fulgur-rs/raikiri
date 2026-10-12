@@ -6,8 +6,9 @@
 
 use super::*;
 use raikiri_style::property::{
-    BackgroundRepeatKeyword, GradientColorStop, HorizontalSide, LinearGradient,
-    LinearGradientDirection, RadialExtent, RadialGradient, RadialShape, RadialSize, VerticalSide,
+    BackgroundRepeatKeyword, GradientColorInterpolation, GradientColorStop, HorizontalSide,
+    LinearGradient, LinearGradientDirection, RadialExtent, RadialGradient, RadialShape, RadialSize,
+    VerticalSide,
 };
 
 /// What one gradient tile is filled with.
@@ -339,8 +340,8 @@ fn radial_fill(
                 stop.0 += shift;
             }
         }
-    } else {
-        clip_stops_at_zero(&mut stops);
+    } else if let Some(color) = clip_stops_at_zero(&mut stops, &radial.interpolation) {
+        return Some(GradientFill::Solid(color));
     }
     let (first, last, stops) = match normalize_stops(stops, radial.repeating)? {
         Normalized::Solid(color) => return Some(GradientFill::Solid(color)),
@@ -412,6 +413,14 @@ fn resolved_stops(
             })
         })
         .collect();
+    let mut raw = raw;
+    // An unpositioned last stop sits at 100%, which a degenerate radial
+    // gradient also resolves to zero.
+    if let Some(last @ None) = raw.last_mut()
+        && length > 0.0
+    {
+        *last = Some((percent_basis / length) as f32);
+    }
     fixup_conic_offsets(&raw)
         .into_iter()
         .zip(stops)
@@ -426,18 +435,19 @@ fn resolved_stops(
 
 /// Drop stops below zero from a radial gradient, keeping the color the line
 /// has at zero.
-fn clip_stops_at_zero(stops: &mut Vec<(f64, CssColor)>) {
+///
+/// Returns the solid color the gradient paints when every stop lies before
+/// the center.
+fn clip_stops_at_zero(
+    stops: &mut Vec<(f64, CssColor)>,
+    interpolation: &GradientColorInterpolation,
+) -> Option<Color> {
     let Some(index) = stops.iter().position(|stop| stop.0 >= 0.0) else {
-        // Every stop lies before the center: the whole shape shows the last color.
-        if let Some(&(_, color)) = stops.last() {
-            stops.clear();
-            stops.push((0.0, color));
-            stops.push((1.0, color));
-        }
-        return;
+        let &(_, last) = stops.last()?;
+        return Some(Color::from_rgba8(last.r, last.g, last.b, last.a));
     };
     if index == 0 {
-        return;
+        return None;
     }
     let (before_offset, before) = stops[index - 1];
     let (after_offset, after) = stops[index];
@@ -447,38 +457,66 @@ fn clip_stops_at_zero(stops: &mut Vec<(f64, CssColor)>) {
         // cov:ignore: fixup keeps offsets non-decreasing, so a gap below zero is positive
         1.0
     };
-    let color = lerp_color(before, after, t);
+    let color = lerp_color(before, after, t, interpolation);
     stops.drain(..index);
     stops.insert(0, (0.0, color));
+    None
 }
 
-/// The color `t` of the way from `from` to `to`, interpolated with
-/// premultiplied alpha (CSS Images 3 §3.4.2).
-fn lerp_color(from: CssColor, to: CssColor, t: f64) -> CssColor {
-    let (from, to) = (premultiply(from), premultiply(to));
-    let [r, g, b, a] = unpremultiply(std::array::from_fn(|channel| {
-        from[channel] + (to[channel] - from[channel]) * t
-    }));
-    CssColor { r, g, b, a }
+/// The color `t` of the way from `from` to `to` in the gradient's
+/// interpolation space, with premultiplied alpha (CSS Images 4 §3.5.2).
+fn lerp_color(
+    from: CssColor,
+    to: CssColor,
+    t: f64,
+    interpolation: &GradientColorInterpolation,
+) -> CssColor {
+    let color = css_color_to_dynamic(from)
+        .interpolate(
+            css_color_to_dynamic(to),
+            conic_interpolation_tag(interpolation.color_space),
+            conic_hue_direction(interpolation.hue_method),
+        )
+        .eval(t as f32)
+        .to_alpha_color::<Srgb>()
+        .to_rgba8();
+    CssColor {
+        r: color.r,
+        g: color.g,
+        b: color.b,
+        a: color.a,
+    }
 }
 
-/// The average color of stops spread evenly over one period (CSS Images 4
-/// §3.5.3): each pair of neighboring stops contributes the mean of its two
-/// colors, weighted equally, in premultiplied sRGB.
+/// The average color of one period of stops (CSS Images 4 §3.5.3): each pair
+/// of neighboring stops contributes the mean of its two colors, weighted by
+/// the distance between them, in premultiplied sRGB. Stops that share one
+/// position are spread evenly, so each pair weighs the same.
 fn average_color(stops: &[(f64, CssColor)]) -> Color {
     let premultiplied: Vec<[f64; 4]> = stops.iter().map(|(_, color)| premultiply(*color)).collect();
+    let period = match stops {
+        [first, .., last] => last.0 - first.0,
+        _ => 0.0,
+    };
+    let weights: Vec<f64> = stops
+        .windows(2)
+        .map(|pair| {
+            if period > 1e-6 {
+                (pair[1].0 - pair[0].0) / period
+            } else {
+                1.0 / (stops.len() - 1) as f64
+            }
+        })
+        .collect();
     let [r, g, b, a] = match premultiplied.as_slice() {
         [] => return Color::TRANSPARENT,
         [only] => unpremultiply(*only),
-        many => {
-            let pairs = (many.len() - 1) as f64;
-            unpremultiply(std::array::from_fn(|channel| {
-                many.windows(2)
-                    .map(|pair| (pair[0][channel] + pair[1][channel]) / 2.0)
-                    .sum::<f64>()
-                    / pairs
-            }))
-        }
+        many => unpremultiply(std::array::from_fn(|channel| {
+            many.windows(2)
+                .zip(&weights)
+                .map(|(pair, weight)| (pair[0][channel] + pair[1][channel]) / 2.0 * weight)
+                .sum::<f64>()
+        })),
     };
     Color::from_rgba8(r, g, b, a)
 }
@@ -616,7 +654,8 @@ fn expand_stops(
     for pair in stops.windows(2) {
         let ((from_offset, from), (to_offset, to)) = (pair[0], pair[1]);
         let span = to_offset - from_offset;
-        if span < MIN_EXPANDED_SEGMENT || from == to {
+        // Equal colors still turn a full circle with `longer hue`.
+        if span < MIN_EXPANDED_SEGMENT || (from == to && direction != HueDirection::Longer) {
             expanded.push((from_offset, from));
             continue;
         }

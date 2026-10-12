@@ -783,19 +783,9 @@ fn paint_canvas_gradient(
         None,
         warnings,
     );
-    let Some(painting) = clip_inset_rect(area, computed.background_clip, border, padding) else {
-        warnings.push(RenderWarning {
-            kind: WarningKind::ResourceFallback {
-                kind: raikiri_traits::ResourceKind::Image,
-                url: None,
-            },
-            node_id: None,
-            details:
-                "canvas background-clip has an unsupported visual box; the gradient was skipped"
-                    .into(),
-        });
-        return;
-    };
+    // The canvas background covers the whole canvas, so the root's
+    // background-clip has no effect (CSS Backgrounds 3 §2.11.1).
+    let painting = area;
     if painting.x1 <= painting.x0 || painting.y1 <= painting.y0 {
         return;
     }
