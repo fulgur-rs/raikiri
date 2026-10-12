@@ -7,6 +7,10 @@
 //! or depth-limited imports are copied unchanged so the style parser can retain
 //! them as opaque at-rules.
 
+use cssparser::{
+    AtRuleParser, CowRcStr, ParseError, Parser, ParserInput, ParserState, QualifiedRuleParser,
+    StyleSheetParser, Token, match_ignore_ascii_case,
+};
 use raikiri_traits::{
     Body, Method, NetworkError, NetworkProvider, PolicyViolation, RenderWarning, Request,
     ResourceKind, ViolationType, WarningKind,
@@ -43,14 +47,6 @@ struct ImportStatement {
     end: usize,
     url: String,
     media: Option<String>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum RuleEnd {
-    Statement(usize),
-    Block(usize),
-    EndOfInput(usize),
-    Invalid,
 }
 
 #[derive(Debug, Default)]
@@ -411,621 +407,294 @@ impl ImportExpander<'_> {
     }
 }
 
-/// Find top-level imports before the first recognized rule that blocks them.
+/// At-rules that make a later `@import` misplaced.
 ///
 /// CSS import placement is checked against recognized rules. Unknown at-rules
 /// are retained by the style parser but, like browser error recovery, do not
-/// by themselves make a later import unusable. The scan is intentionally
-/// source-preserving: it records byte spans and the decoded URL, while leaving
-/// every non-replaced byte untouched.
+/// by themselves make a later import unusable.
 fn is_import_barrier(name: &str) -> bool {
-    matches!(
-        name.to_ascii_lowercase().as_str(),
-        "color-profile"
-            | "container"
-            | "counter-style"
-            | "custom-media"
-            | "document"
-            | "font-face"
-            | "font-feature-values"
-            | "font-palette-values"
-            | "keyframes"
-            | "namespace"
-            | "page"
-            | "property"
-            | "scope"
-            | "starting-style"
-            | "supports"
-            | "scroll-timeline"
-            | "timeline-scope"
-            | "viewport"
-            | "view-timeline"
-            | "view-transition"
-            | "position-try"
-            | "nest"
-            | "when"
-            | "else"
-            | "media"
-            | "-moz-document"
-            | "-webkit-keyframes"
-    )
+    match_ignore_ascii_case! { name,
+        "color-profile" | "container" | "counter-style" | "custom-media" | "document"
+        | "font-face" | "font-feature-values" | "font-palette-values" | "keyframes"
+        | "namespace" | "page" | "property" | "scope" | "starting-style" | "supports"
+        | "scroll-timeline" | "timeline-scope" | "viewport" | "view-timeline"
+        | "view-transition" | "position-try" | "nest" | "when" | "else" | "media"
+        | "-moz-document" | "-webkit-keyframes" => true,
+        _ => false,
+    }
 }
 
-fn scan_leading_imports(source: &str) -> Vec<ImportStatement> {
-    let mut imports = Vec::new();
-    let mut cursor = 0;
-    let mut imports_allowed = true;
+/// How one top-level rule affects the imports that follow it.
+enum LeadingRule {
+    /// A statement-form `@import`. `target` is `None` when the prelude is
+    /// malformed or uses a clause this layer does not expand; the rule is then
+    /// kept as written.
+    Import {
+        start: usize,
+        target: Option<(String, Option<String>)>,
+    },
+    /// `@charset`, a `@layer` statement, or an unrecognized at-rule.
+    Neutral,
+    /// A recognized rule after which imports are ignored.
+    Barrier,
+}
 
-    while cursor < source.len() {
-        let Some(next) = skip_ignored_prefix(source, cursor) else {
-            break;
+enum LeadingPrelude {
+    Import(Option<(String, Option<String>)>),
+    Layer,
+    Neutral,
+    Barrier,
+}
+
+/// Classifies top-level rules for [`scan_leading_imports`].
+struct LeadingRuleParser;
+
+impl<'i> AtRuleParser<'i> for LeadingRuleParser {
+    type Prelude = LeadingPrelude;
+    type AtRule = LeadingRule;
+    type Error = ();
+
+    fn parse_prelude<'t>(
+        &mut self,
+        name: CowRcStr<'i>,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<LeadingPrelude, ParseError<'i, ()>> {
+        let prelude = match_ignore_ascii_case! { &name,
+            "import" => LeadingPrelude::Import(parse_import_prelude(input)),
+            "layer" => LeadingPrelude::Layer,
+            "charset" => LeadingPrelude::Neutral,
+            _ => if is_import_barrier(&name) {
+                LeadingPrelude::Barrier
+            } else {
+                LeadingPrelude::Neutral
+            },
         };
-        cursor = next;
-        if cursor >= source.len() {
-            break;
-        }
-
-        if source.as_bytes()[cursor] == b'@' {
-            let start = cursor;
-            let Some((after_name, name)) = parse_identifier(source, cursor + 1) else {
-                break;
-            };
-            match scan_at_rule_end(source, after_name) {
-                RuleEnd::Statement(delimiter) => {
-                    let end = delimiter + 1;
-                    if imports_allowed && name.eq_ignore_ascii_case("import") {
-                        if let Some((url, media)) =
-                            parse_import_prelude(&source[after_name..delimiter])
-                        {
-                            imports.push(ImportStatement {
-                                start,
-                                end,
-                                url,
-                                media,
-                            });
-                        }
-                    } else if imports_allowed && name.eq_ignore_ascii_case("charset") {
-                        // `@charset` is ignored for import placement. This
-                        // matches CSS error recovery, including repeated
-                        // declarations before the first import.
-                    } else if imports_allowed
-                        && name.eq_ignore_ascii_case("layer")
-                        && !source[after_name..delimiter].trim().is_empty()
-                    {
-                        // A layer statement with a non-empty layer name is
-                        // permitted before imports. The prelude is not
-                        // interpreted here; malformed component values were
-                        // already rejected by scan_at_rule_end.
-                    } else if imports_allowed && is_import_barrier(&name) {
-                        imports_allowed = false;
-                    }
-                    cursor = end;
-                }
-                RuleEnd::EndOfInput(end) => {
-                    if imports_allowed
-                        && name.eq_ignore_ascii_case("import")
-                        && let Some((url, media)) = parse_import_prelude(&source[after_name..end])
-                    {
-                        imports.push(ImportStatement {
-                            start,
-                            end,
-                            url,
-                            media,
-                        });
-                    }
-                    break;
-                }
-                RuleEnd::Block(open_brace) => {
-                    // Imports nested in any block are not top-level imports.
-                    // Unknown wrappers are otherwise ignored by browsers and
-                    // do not prevent a later top-level import from being
-                    // processed; recognized at-rules do.
-                    let Some(end) = scan_block_end(source, open_brace) else {
-                        break;
-                    };
-                    if is_import_barrier(&name) || name.eq_ignore_ascii_case("layer") {
-                        imports_allowed = false;
-                    }
-                    cursor = end;
-                }
-                RuleEnd::Invalid => break,
-            }
-        } else {
-            // A qualified rule before an import makes the import misplaced.
-            imports_allowed = false;
-            let Some(end) = scan_qualified_rule_end(source, cursor) else {
-                break;
-            };
-            cursor = end;
-        }
+        skip_rest(input);
+        Ok(prelude)
     }
 
+    fn rule_without_block(
+        &mut self,
+        prelude: LeadingPrelude,
+        start: &ParserState,
+    ) -> Result<LeadingRule, ()> {
+        Ok(match prelude {
+            LeadingPrelude::Import(target) => LeadingRule::Import {
+                start: start.position().byte_index(),
+                target,
+            },
+            // A layer statement is permitted before imports.
+            LeadingPrelude::Layer | LeadingPrelude::Neutral => LeadingRule::Neutral,
+            LeadingPrelude::Barrier => LeadingRule::Barrier,
+        })
+    }
+
+    fn parse_block<'t>(
+        &mut self,
+        prelude: LeadingPrelude,
+        _start: &ParserState,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<LeadingRule, ParseError<'i, ()>> {
+        skip_rest(input);
+        // Imports nested in any block are not top-level imports. Unknown
+        // wrappers do not prevent a later top-level import from being
+        // processed; recognized block at-rules, a `@layer` block included, do.
+        Ok(match prelude {
+            LeadingPrelude::Import(_) | LeadingPrelude::Neutral => LeadingRule::Neutral,
+            LeadingPrelude::Layer | LeadingPrelude::Barrier => LeadingRule::Barrier,
+        })
+    }
+}
+
+impl<'i> QualifiedRuleParser<'i> for LeadingRuleParser {
+    type Prelude = ();
+    type QualifiedRule = LeadingRule;
+    type Error = ();
+
+    fn parse_prelude<'t>(&mut self, input: &mut Parser<'i, 't>) -> Result<(), ParseError<'i, ()>> {
+        skip_rest(input);
+        Ok(())
+    }
+
+    fn parse_block<'t>(
+        &mut self,
+        _prelude: (),
+        _start: &ParserState,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<LeadingRule, ParseError<'i, ()>> {
+        skip_rest(input);
+        Ok(LeadingRule::Barrier)
+    }
+}
+
+/// Consume the remaining tokens so a nested or delimited parser ends
+/// exhausted. Nested blocks are skipped by the next call to `next`.
+fn skip_rest(input: &mut Parser<'_, '_>) {
+    while input.next().is_ok() {}
+}
+
+/// Find top-level imports before the first recognized rule that blocks them.
+///
+/// The scan is source-preserving: it records byte spans and the decoded URL,
+/// while leaving every non-replaced byte untouched.
+fn scan_leading_imports(source: &str) -> Vec<ImportStatement> {
+    // A byte order mark is not part of the stylesheet's token stream.
+    let offset = if source.starts_with('\u{feff}') {
+        '\u{feff}'.len_utf8()
+    } else {
+        0
+    };
+    let mut input = ParserInput::new(&source[offset..]);
+    let mut parser = Parser::new(&mut input);
+    let mut rules = LeadingRuleParser;
+    let mut sheet = StyleSheetParser::new(&mut parser, &mut rules);
+    let mut imports = Vec::new();
+    while let Some(rule) = sheet.next() {
+        match rule {
+            Ok(LeadingRule::Import { start, target }) => {
+                if let Some((url, media)) = target {
+                    imports.push(ImportStatement {
+                        start: offset + start,
+                        end: offset + sheet.input.position().byte_index(),
+                        url,
+                        media,
+                    });
+                }
+            }
+            Ok(LeadingRule::Neutral) => {}
+            // A qualified rule, valid or not, makes later imports misplaced.
+            Ok(LeadingRule::Barrier) | Err(_) => break,
+        }
+    }
     imports
 }
 
-fn skip_ignored_prefix(source: &str, mut cursor: usize) -> Option<usize> {
-    loop {
-        let bytes = source.as_bytes();
-        while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
-            cursor += 1;
-        }
-        if source.get(cursor..)?.starts_with('\u{feff}') {
-            cursor += '\u{feff}'.len_utf8();
-            continue;
-        }
-        if source.get(cursor..)?.starts_with("/*") {
-            let rest = source.get(cursor + 2..)?;
-            let end = rest.find("*/")?;
-            cursor += end + 4;
-            continue;
-        }
-        // CDO/CDC tokens are ignored at the top level by cssparser.
-        if source.get(cursor..)?.starts_with("<!--") {
-            cursor += 4;
-            continue;
-        }
-        if source.get(cursor..)?.starts_with("-->") {
-            cursor += 3;
-            continue;
-        }
-        return Some(cursor);
-    }
-}
-
-fn parse_identifier(source: &str, cursor: usize) -> Option<(usize, String)> {
-    let (next, value) = scan_identifier(source, cursor)?;
-    (!value.is_empty()).then_some((next, value))
-}
-
-fn scan_identifier(source: &str, mut cursor: usize) -> Option<(usize, String)> {
-    let mut value = String::new();
-    while cursor < source.len() {
-        #[cfg(test)]
-        tests::record_identifier_scan_step();
-        let byte = source.as_bytes()[cursor];
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_') {
-            value.push(byte as char);
-            cursor += 1;
-            continue;
-        }
-        if byte == b'\\' {
-            let (next, decoded) = consume_escape(source, cursor)?;
-            if let Some(ch) = decoded {
-                value.push(ch);
-            }
-            cursor = next;
-            continue;
-        }
-        if byte >= 0x80 {
-            let ch = source[cursor..].chars().next()?;
-            value.push(ch);
-            cursor += ch.len_utf8();
-            continue;
-        }
-        break;
-    }
-    Some((cursor, value))
-}
-
-fn skip_component_name(source: &str, cursor: usize) -> Option<usize> {
-    let (after_name, name) = scan_identifier(source, cursor)?;
-    if name.eq_ignore_ascii_case("url")
-        && source.as_bytes().get(after_name) == Some(&b'(')
-        && let Some((_, next)) = parse_url_function(source, after_name)
-    {
-        return Some(next);
-    }
-    Some(after_name)
-}
-
-fn scan_at_rule_end(source: &str, mut cursor: usize) -> RuleEnd {
-    let bytes = source.as_bytes();
-    let mut parentheses = 0u32;
-    let mut brackets = 0u32;
-    while cursor < bytes.len() {
-        match bytes[cursor] {
-            b'/' if bytes.get(cursor + 1) == Some(&b'*') => {
-                let Some(end) = source[cursor + 2..].find("*/") else {
-                    return RuleEnd::Invalid;
-                };
-                cursor += end + 4;
-            }
-            b'\'' | b'"' => {
-                let Some(next) = skip_string(source, cursor) else {
-                    return RuleEnd::Invalid;
-                };
-                cursor = next;
-            }
-            b'\\' => {
-                let Some((next, _)) = consume_escape(source, cursor) else {
-                    return RuleEnd::Invalid;
-                };
-                cursor = next;
-            }
-            b'(' => {
-                parentheses = parentheses.saturating_add(1);
-                cursor += 1;
-            }
-            b')' => {
-                if parentheses == 0 {
-                    return RuleEnd::Invalid;
-                }
-                parentheses -= 1;
-                cursor += 1;
-            }
-            b'[' => {
-                brackets = brackets.saturating_add(1);
-                cursor += 1;
-            }
-            b']' => {
-                if brackets == 0 {
-                    return RuleEnd::Invalid;
-                }
-                brackets -= 1;
-                cursor += 1;
-            }
-            b'{' if parentheses == 0 && brackets == 0 => return RuleEnd::Block(cursor),
-            b';' if parentheses == 0 && brackets == 0 => return RuleEnd::Statement(cursor),
-            b'}' if parentheses == 0 && brackets == 0 => return RuleEnd::Invalid,
-            _ => cursor += 1,
-        }
-    }
-    if parentheses == 0 && brackets == 0 {
-        RuleEnd::EndOfInput(cursor)
-    } else {
-        RuleEnd::Invalid
-    }
-}
-
-fn scan_qualified_rule_end(source: &str, mut cursor: usize) -> Option<usize> {
-    let bytes = source.as_bytes();
-    let mut parentheses = 0u32;
-    let mut brackets = 0u32;
-    while cursor < bytes.len() {
-        match bytes[cursor] {
-            b'/' if bytes.get(cursor + 1) == Some(&b'*') => {
-                let end = source[cursor + 2..].find("*/")?;
-                cursor += end + 4;
-            }
-            b'\'' | b'"' => cursor = skip_string(source, cursor)?,
-            b'\\' => cursor = consume_escape(source, cursor)?.0,
-            b'(' => {
-                parentheses = parentheses.saturating_add(1);
-                cursor += 1;
-            }
-            b')' if parentheses > 0 => {
-                parentheses -= 1;
-                cursor += 1;
-            }
-            b'[' => {
-                brackets = brackets.saturating_add(1);
-                cursor += 1;
-            }
-            b']' if brackets > 0 => {
-                brackets -= 1;
-                cursor += 1;
-            }
-            b'{' if parentheses == 0 && brackets == 0 => return scan_block_end(source, cursor),
-            b';' if parentheses == 0 && brackets == 0 => return Some(cursor + 1),
-            _ => cursor += 1,
-        }
-    }
-    Some(cursor)
-}
-
-fn scan_block_end(source: &str, open_brace: usize) -> Option<usize> {
-    let bytes = source.as_bytes();
-    let mut cursor = open_brace + 1;
-    let mut braces = 1u32;
-    let mut parentheses = 0u32;
-    let mut brackets = 0u32;
-    while cursor < bytes.len() {
-        if bytes[cursor] == b'/' && bytes.get(cursor + 1) == Some(&b'*') {
-            let end = source[cursor + 2..].find("*/")?;
-            cursor += end + 4;
-            continue;
-        }
-        if matches!(bytes[cursor], b'\'' | b'"') {
-            cursor = skip_string(source, cursor)?;
-            continue;
-        }
-        let next = skip_component_name(source, cursor)?;
-        if next > cursor {
-            cursor = next;
-            continue;
-        }
-        match bytes[cursor] {
-            b'{' => braces = braces.checked_add(1)?,
-            b'}' if parentheses == 0 && brackets == 0 => {
-                braces -= 1;
-                cursor += 1;
-                if braces == 0 {
-                    return Some(cursor);
-                }
-                continue;
-            }
-            b'(' => parentheses = parentheses.checked_add(1)?,
-            b')' => {
-                if parentheses == 0 {
-                    return None;
-                }
-                parentheses -= 1;
-            }
-            b'[' => brackets = brackets.checked_add(1)?,
-            b']' => {
-                if brackets == 0 {
-                    return None;
-                }
-                brackets -= 1;
-            }
-            _ => {}
-        }
-        cursor += 1;
-    }
-    None
-}
-
-fn skip_string(source: &str, quote_start: usize) -> Option<usize> {
-    let quote = source.as_bytes().get(quote_start).copied()?;
-    let mut cursor = quote_start + 1;
-    while cursor < source.len() {
-        match source.as_bytes()[cursor] {
-            byte if byte == quote => return Some(cursor + 1),
-            b'\\' => cursor = consume_escape(source, cursor)?.0,
-            b'\n' | b'\r' | b'\x0c' => return None,
-            _ => cursor += 1,
-        }
-    }
-    None
-}
-
-fn consume_escape(source: &str, slash: usize) -> Option<(usize, Option<char>)> {
-    let bytes = source.as_bytes();
-    let mut cursor = slash + 1;
-    let first = *bytes.get(cursor)?;
-    if matches!(first, b'\n' | b'\r' | b'\x0c') {
-        if first == b'\r' && bytes.get(cursor + 1) == Some(&b'\n') {
-            cursor += 1;
-        }
-        return Some((cursor + 1, None));
-    }
-    if first.is_ascii_hexdigit() {
-        let mut value = 0u32;
-        let mut digits = 0;
-        while digits < 6 {
-            let Some(byte) = bytes.get(cursor) else { break };
-            let Some(digit) = (*byte as char).to_digit(16) else {
-                break;
-            };
-            value = value * 16 + digit;
-            digits += 1;
-            cursor += 1;
-        }
-        if bytes
-            .get(cursor)
-            .is_some_and(|byte| byte.is_ascii_whitespace())
-        {
-            if bytes[cursor] == b'\r' && bytes.get(cursor + 1) == Some(&b'\n') {
-                cursor += 2;
-            } else {
-                cursor += 1;
-            }
-        }
-        let decoded = char::from_u32(value)
-            .filter(|character| *character != '\0')
-            .unwrap_or('\u{fffd}');
-        return Some((cursor, Some(decoded)));
-    }
-    let ch = source[cursor..].chars().next()?;
-    Some((cursor + ch.len_utf8(), Some(ch)))
-}
-
-fn parse_import_prelude(source: &str) -> Option<(String, Option<String>)> {
-    let mut cursor = skip_whitespace_comments(source, 0)?;
-    let (url, after_url) = if source.as_bytes().get(cursor) == Some(&b'\'')
-        || source.as_bytes().get(cursor) == Some(&b'"')
-    {
-        parse_string_value(source, cursor)?
-    } else {
-        let (after_name, name) = parse_identifier(source, cursor)?;
-        if !name.eq_ignore_ascii_case("url") || source.as_bytes().get(after_name) != Some(&b'(') {
-            return None;
-        }
-        parse_url_function(source, after_name)?
-    };
-    cursor = skip_whitespace_comments(source, after_url)?;
-    if cursor == source.len() {
+/// Parse the prelude of `@import` into its URL and optional media list.
+///
+/// Returns `None` for a malformed prelude and for `layer` / `supports()`
+/// clauses, which are not expanded here.
+fn parse_import_prelude(input: &mut Parser<'_, '_>) -> Option<(String, Option<String>)> {
+    let url = parse_import_url(input)?;
+    if input.is_exhausted() {
         return Some((url, None));
     }
-    let media = source[cursor..].trim();
-    if media.is_empty() || starts_unsupported_import_clause(media) || !media_tail_is_valid(media) {
+    if starts_unsupported_import_clause(input) {
         return None;
     }
-    Some((url, Some(media.to_owned())))
+    let start = input.position();
+    if !media_tail_is_valid(input) {
+        return None;
+    }
+    let media = input.slice_from(start).trim();
+    (!media.is_empty()).then(|| (url, Some(media.to_owned())))
 }
 
-fn media_tail_is_valid(source: &str) -> bool {
-    let bytes = source.as_bytes();
-    let mut cursor = 0;
-    let mut parentheses = 0u32;
-    let mut brackets = 0u32;
+/// `<url>` or `<string>`. Unlike [`Parser::expect_url_or_string`], a quoted
+/// `url()` must hold exactly one string.
+fn parse_import_url(input: &mut Parser<'_, '_>) -> Option<String> {
+    match input.next().ok()?.clone() {
+        Token::QuotedString(url) | Token::UnquotedUrl(url) => Some(url.as_ref().to_owned()),
+        Token::Function(name) if name.eq_ignore_ascii_case("url") => input
+            .parse_nested_block(|input| {
+                let url = input.expect_string()?.as_ref().to_owned();
+                input.expect_exhausted()?;
+                Ok::<_, ParseError<'_, ()>>(url)
+            })
+            .ok(),
+        _ => None,
+    }
+}
+
+fn starts_unsupported_import_clause(input: &mut Parser<'_, '_>) -> bool {
+    let state = input.state();
+    let unsupported = match input.next() {
+        Ok(Token::Ident(name)) if name.eq_ignore_ascii_case("layer") => true,
+        Ok(Token::Function(name)) => {
+            name.eq_ignore_ascii_case("layer") || name.eq_ignore_ascii_case("supports")
+        }
+        // `supports (...)` is not the `supports()` function, but it is kept
+        // opaque rather than misread as a media query.
+        Ok(Token::Ident(name)) if name.eq_ignore_ascii_case("supports") => {
+            matches!(input.next(), Ok(Token::ParenthesisBlock))
+        }
+        _ => false,
+    };
+    input.reset(&state);
+    unsupported
+}
+
+/// Whether the rest of the prelude is a comma-separated list of non-empty
+/// component sequences without bad or unmatched tokens.
+fn media_tail_is_valid(input: &mut Parser<'_, '_>) -> bool {
     let mut component = false;
-    while cursor < bytes.len() {
-        if bytes[cursor..].starts_with(b"<!--") || bytes[cursor..].starts_with(b"-->") {
-            return false;
-        }
-        if bytes[cursor] == b'/' && bytes.get(cursor + 1) == Some(&b'*') {
-            let Some(end) = source[cursor + 2..].find("*/") else {
-                return false;
-            };
-            cursor += end + 4;
-            continue;
-        }
-        if matches!(bytes[cursor], b'\'' | b'"') {
-            let Some(next) = skip_string(source, cursor) else {
-                return false;
-            };
-            component = true;
-            cursor = next;
-            continue;
-        }
-        if bytes[cursor] == b'\\' {
-            let Some((next, _)) = consume_escape(source, cursor) else {
-                return false;
-            };
-            component = true;
-            cursor = next;
-            continue;
-        }
-        match bytes[cursor] {
-            b'(' => {
-                parentheses = parentheses.saturating_add(1);
-                component = true;
-            }
-            b')' => {
-                if parentheses == 0 {
-                    return false;
-                }
-                parentheses -= 1;
-            }
-            b'[' => {
-                brackets = brackets.saturating_add(1);
-                component = true;
-            }
-            b']' => {
-                if brackets == 0 {
-                    return false;
-                }
-                brackets -= 1;
-            }
-            b',' if parentheses == 0 && brackets == 0 => {
+    loop {
+        let Ok(token) = input.next() else {
+            return component;
+        };
+        match token {
+            Token::Comma => {
                 if !component {
                     return false;
                 }
                 component = false;
             }
-            b'{' | b'}' | b';' => return false,
-            byte if !byte.is_ascii_whitespace() => component = true,
+            Token::Function(_) | Token::ParenthesisBlock | Token::SquareBracketBlock => {
+                component = true;
+                if input
+                    .parse_nested_block(|input| {
+                        if block_tokens_are_valid(input) {
+                            Ok(())
+                        } else {
+                            Err(input.new_custom_error::<_, ()>(()))
+                        }
+                    })
+                    .is_err()
+                {
+                    return false;
+                }
+            }
+            token if is_invalid_media_token(token) => return false,
+            _ => component = true,
+        }
+    }
+}
+
+fn block_tokens_are_valid(input: &mut Parser<'_, '_>) -> bool {
+    while let Ok(token) = input.next() {
+        match token {
+            Token::Function(_)
+            | Token::ParenthesisBlock
+            | Token::SquareBracketBlock
+            | Token::CurlyBracketBlock => {
+                let nested = input.parse_nested_block(|input| {
+                    if block_tokens_are_valid(input) {
+                        Ok(())
+                    } else {
+                        Err(input.new_custom_error::<_, ()>(()))
+                    }
+                });
+                if nested.is_err() {
+                    return false;
+                }
+            }
+            token if is_invalid_media_token(token) => return false,
             _ => {}
         }
-        cursor += 1;
     }
-    parentheses == 0 && brackets == 0 && component
+    true
 }
 
-fn starts_unsupported_import_clause(source: &str) -> bool {
-    let Some(cursor) = skip_ignored_prefix(source, 0) else {
-        return true;
-    };
-    let Some((after_name, name)) = parse_identifier(source, cursor) else {
-        return false;
-    };
-    if name.eq_ignore_ascii_case("layer") {
-        return true;
-    }
-    if !name.eq_ignore_ascii_case("supports") {
-        return false;
-    }
-    let Some(after_name) = skip_ignored_prefix(source, after_name) else {
-        return true;
-    };
-    source.as_bytes().get(after_name) == Some(&b'(')
-}
-
-fn parse_string_value(source: &str, quote_start: usize) -> Option<(String, usize)> {
-    let quote = *source.as_bytes().get(quote_start)?;
-    let mut cursor = quote_start + 1;
-    let mut value = String::new();
-    while cursor < source.len() {
-        match source.as_bytes()[cursor] {
-            byte if byte == quote => return Some((value, cursor + 1)),
-            b'\\' => {
-                let (next, decoded) = consume_escape(source, cursor)?;
-                if let Some(ch) = decoded {
-                    value.push(ch);
-                }
-                cursor = next;
-            }
-            b'\n' | b'\r' | b'\x0c' => return None,
-            _ => {
-                let ch = source[cursor..].chars().next()?;
-                value.push(ch);
-                cursor += ch.len_utf8();
-            }
-        }
-    }
-    None
-}
-
-fn skip_ascii_whitespace(source: &str, mut cursor: usize) -> Option<usize> {
-    let bytes = source.as_bytes();
-    while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
-        cursor += 1;
-    }
-    Some(cursor)
-}
-
-fn skip_whitespace_comments(source: &str, mut cursor: usize) -> Option<usize> {
-    loop {
-        let bytes = source.as_bytes();
-        while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
-            cursor += 1;
-        }
-        if source.get(cursor..)?.starts_with("/*") {
-            let end = source[cursor + 2..].find("*/")?;
-            cursor += end + 4;
-            continue;
-        }
-        return Some(cursor);
-    }
-}
-
-fn parse_url_function(source: &str, open_paren: usize) -> Option<(String, usize)> {
-    let mut cursor = skip_ascii_whitespace(source, open_paren + 1)?;
-    if source.as_bytes().get(cursor) == Some(&b'\'') || source.as_bytes().get(cursor) == Some(&b'"')
-    {
-        let (value, after_string) = parse_string_value(source, cursor)?;
-        cursor = skip_whitespace_comments(source, after_string)?;
-        return (source.as_bytes().get(cursor) == Some(&b')')).then_some((value, cursor + 1));
-    }
-
-    let mut value = String::new();
-    let mut trailing_whitespace = false;
-    while cursor < source.len() {
-        match source.as_bytes()[cursor] {
-            b')' => {
-                let trimmed = value.trim_end_matches(|ch: char| ch.is_ascii_whitespace());
-                if trimmed.is_empty() {
-                    return None;
-                }
-                return Some((trimmed.to_owned(), cursor + 1));
-            }
-            byte if byte.is_ascii_whitespace() => {
-                if !value.is_empty() {
-                    trailing_whitespace = true;
-                }
-                cursor += 1;
-            }
-            b'\\' => {
-                if trailing_whitespace {
-                    return None;
-                }
-                let (next, decoded) = consume_escape(source, cursor)?;
-                if let Some(ch) = decoded {
-                    value.push(ch);
-                }
-                cursor = next;
-            }
-            b'\'' | b'"' | b'(' | b'\n' | b'\r' | b'\x0c' | 0 => return None,
-            _ if trailing_whitespace => return None,
-            _ => {
-                let ch = source[cursor..].chars().next()?;
-                value.push(ch);
-                cursor += ch.len_utf8();
-            }
-        }
-    }
-    None
+fn is_invalid_media_token(token: &Token<'_>) -> bool {
+    matches!(
+        token,
+        Token::BadUrl(_)
+            | Token::BadString(_)
+            | Token::CloseParenthesis
+            | Token::CloseSquareBracket
+            | Token::CloseCurlyBracket
+            | Token::CDO
+            | Token::CDC
+    )
 }
 
 fn is_css_content_type(content_type: &str) -> bool {
