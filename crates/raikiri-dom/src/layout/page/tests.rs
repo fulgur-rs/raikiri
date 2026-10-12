@@ -556,6 +556,32 @@ fn first_page_name_uses_order_in_nested_flex_before_layout() {
 }
 
 #[test]
+fn first_page_name_reads_a_static_position_absolute_box() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let absolute = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("position:absolute;page:wide"),
+    );
+    doc.append_element(
+        Some(absolute),
+        "div",
+        Style::default(),
+        Some("display:block;page:narrow"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+
+    assert_eq!(first_page_name(&doc, &cascade).as_deref(), Some("narrow"));
+}
+
+#[test]
 fn first_page_name_blockifies_a_flex_item_inside_display_contents() {
     use raikiri_style::{build_rule_tree, cascade};
 

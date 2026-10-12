@@ -2624,6 +2624,67 @@ fn layout_pages_does_not_treat_a_display_contents_writing_mode_wrapper_as_orthog
     assert_eq!(slices.len(), 2);
 }
 
+/// Build `html > body > ...` from `(parent index, tag, style)` rows, where
+/// index 0 is the body and each row's own index is its position plus one,
+/// then paginate on 100x100 pages.
+fn paginate_tree(rows: &[(usize, &str, &str)]) -> (Document, Vec<PageSlice>) {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let mut ids = vec![doc.append_element(Some(html), "body", Style::default(), None::<&str>)];
+    for &(parent, tag, style) in rows {
+        let id = doc.append_element(Some(ids[parent]), tag, Style::default(), Some(style));
+        ids.push(id);
+    }
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let slices = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
+    (doc, slices)
+}
+
+#[test]
+fn layout_pages_ignores_page_names_inside_replaced_elements() {
+    let (_, slices) = paginate_tree(&[
+        (0, "canvas", "display:block;width:10px;height:10px"),
+        (1, "div", "display:block;page:a;height:10px"),
+        (1, "div", "display:block;page:b;height:10px"),
+    ]);
+    assert_eq!(slices.len(), 1);
+}
+
+#[test]
+fn layout_pages_ignores_monolithic_names_for_the_deferred_row_flex_break() {
+    let (_, slices) = paginate_tree(&[
+        (0, "div", "display:flex"),
+        (1, "div", "display:block;width:20px;height:10px"),
+        (2, "div", "display:inline-block;width:20px"),
+        (3, "div", "display:block;page:a;height:10px"),
+        (0, "div", "display:block;height:10px"),
+    ]);
+    assert_eq!(slices.len(), 1);
+}
+
+#[test]
+fn layout_pages_keeps_a_forced_break_before_a_box_with_a_negative_margin() {
+    let (_, slices) = paginate_tree(&[
+        (0, "div", "display:block;height:100px"),
+        (
+            0,
+            "div",
+            "display:block;margin-top:-10px;height:10px;break-before:page",
+        ),
+    ]);
+    // The first box fills page 1. The negative margin pulls the second box's
+    // border box back onto page 1, but its forced break still moves it to a
+    // new page.
+    assert_eq!(slices.len(), 2);
+}
+
 #[test]
 fn layout_pages_keeps_page_names_inside_a_blockified_inline_block_flex_item() {
     use raikiri_style::{build_rule_tree, cascade};

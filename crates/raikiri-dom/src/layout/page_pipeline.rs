@@ -2888,8 +2888,15 @@ pub fn layout_pages_with_page_geometry_and_control(
             {
                 continue;
             }
-            if current_depth >= 2 && selected_page_name(cascade, current_id).is_some() {
+            if current_depth >= 2
+                && page_applies_to_box(document, cascade, current_id)
+                && selected_page_name(cascade, current_id).is_some()
+            {
                 return true;
+            }
+            // Names inside a monolithic box have no effect on pagination.
+            if is_monolithic_for_pagination(document, cascade, current_id) {
+                continue;
             }
             if let Some(node) = document.get_node(current_id) {
                 pending.extend(
@@ -3315,15 +3322,8 @@ pub fn layout_pages_with_page_geometry_and_control(
                 // monolithic: like a float, its content offers no class A
                 // break points and its page names do not open pages. A
                 // blockified flex or grid item is no longer atomic.
-                let monolithic = (inline_level
-                    && matches!(
-                        computed.display,
-                        DisplayValue::InlineBlock
-                            | DisplayValue::InlineFlex
-                            | DisplayValue::InlineGrid
-                            | DisplayValue::InlineTable
-                    ))
-                    || (!is_body && establishes_orthogonal_flow(document, cascade, node_id));
+                let monolithic =
+                    !is_body && is_monolithic_for_pagination(document, cascade, node_id);
                 let child_order = pagination_child_order(document, cascade, node_id);
                 for child_id in child_order {
                     let child_parent_y =

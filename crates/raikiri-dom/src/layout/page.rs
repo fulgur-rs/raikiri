@@ -693,6 +693,32 @@ pub fn first_page_name(document: &Document, cascade: &CascadeResult) -> Option<S
             }
             NodeKind::Element => {
                 let computed = &cascade.computed[child_id];
+                // An absolutely positioned box left at its static position
+                // keeps the page names of its in-flow descendants, so a named
+                // first descendant selects the initial page as it does in the
+                // page pipeline. Its own `page` value is ignored.
+                if is_static_position_absolute(document, cascade, child_id) {
+                    let first_child = pagination_child_order(document, cascade, child_id)
+                        .into_iter()
+                        .find(|&grandchild| {
+                            !matches!(
+                                cascade.computed[grandchild].position,
+                                PositionValue::Absolute | PositionValue::Fixed
+                            ) && !is_floating_box_for_pagination(document, cascade, grandchild)
+                        });
+                    if let Some(first_child) = first_child
+                        && let (_, Some(name)) = propagated_start_page_name_with_order(
+                            document,
+                            cascade,
+                            first_child,
+                            None,
+                            resolved_layout,
+                        )
+                    {
+                        return Some(name);
+                    }
+                    continue;
+                }
                 if !matches!(
                     computed.position,
                     raikiri_style::property::PositionValue::Static
@@ -1245,6 +1271,50 @@ pub(crate) fn page_applies_to_box(
         )
 }
 
+/// Whether `node_id` is an absolutely positioned box whose block-start and
+/// block-end insets are both `auto`, which leaves it at its static position
+/// in the page flow.
+pub(crate) fn is_static_position_absolute(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    let inset = &document.nodes[node_id].style.inset;
+    cascade.computed[node_id].position == PositionValue::Absolute
+        && inset.top.is_auto()
+        && inset.bottom.is_auto()
+}
+
+/// Whether pagination treats the box of `node_id` as monolithic: a replaced
+/// element, an atomic inline-level box or an orthogonal flow. Its content
+/// offers no class A break points, and its descendants' page names neither
+/// open pages nor propagate to the box.
+pub(crate) fn is_monolithic_for_pagination(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
+    let node = &document.nodes[node_id];
+    let replaced = node
+        .flags
+        .contains(crate::node::NodeFlags::IS_INLINE_SVG_ROOT)
+        || node.tag_name().is_some_and(|tag| {
+            let tag = tag.to_ascii_lowercase();
+            ATOMIC_TAGS.contains(&tag.as_str()) || REPLACED_BOX_TAGS.contains(&tag.as_str())
+        });
+    replaced
+        || (!page_applies_to_box(document, cascade, node_id)
+            && matches!(
+                cascade.computed[node_id].display,
+                DisplayValue::InlineBlock
+                    | DisplayValue::InlineFlex
+                    | DisplayValue::InlineGrid
+                    | DisplayValue::InlineTable
+            ))
+        || establishes_orthogonal_flow(document, cascade, node_id)
+}
+
 /// Whether `node_id` establishes an orthogonal flow: its writing mode is
 /// vertical while its parent's is horizontal, or the reverse. Layout
 /// normalizes writing modes to horizontal, so the comparison uses the
@@ -1362,19 +1432,8 @@ fn propagated_start_page_name_with_order(
             None
         };
         let used_page_name = explicit_page_name.or_else(|| inherited_page_name.clone());
-        // Atomic inline-level boxes and orthogonal flows are monolithic, so
-        // they do not pass a descendant's page value up to the box. A
-        // blockified flex or grid item is no longer atomic.
-        if (!page_applies
-            && matches!(
-                cascade.computed[node_id].display,
-                DisplayValue::InlineBlock
-                    | DisplayValue::InlineFlex
-                    | DisplayValue::InlineGrid
-                    | DisplayValue::InlineTable
-            ))
-            || establishes_orthogonal_flow(document, cascade, node_id)
-        {
+        // A monolithic box does not pass a descendant's page value up.
+        if is_monolithic_for_pagination(document, cascade, node_id) {
             return (true, used_page_name);
         }
         let child_order = if resolved_layout {
