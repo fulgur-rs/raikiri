@@ -541,8 +541,9 @@ struct Tag {
     attributes: Vec<(String, String, bool)>,
     /// Whether the tag ends with `/>`.
     self_closing: bool,
-    /// Whether the element is not connected to the document, which happens
-    /// inside `<template>` contents.
+    /// Whether the element has no effect on rendering: it is not connected
+    /// to the document, which happens inside `<template>` contents, or it is
+    /// inside a style element.
     inert: bool,
     /// Byte range of the element's contents, from the end of its start tag
     /// to the start of the token that closed it. Only kept for style
@@ -930,17 +931,21 @@ impl Dom {
         for id in 0..nodes.len() {
             let Some(index) = nodes[id].tag else { continue };
             // An element is connected when its ancestors reach the document.
-            let mut at = Some(id);
-            let mut connected = false;
+            // Elements inside a style element are never rendered, and the
+            // renderer does not look for style sheets inside one either.
+            let mut at = nodes[id].parent;
+            let mut connected = nodes[id].kind == NodeKind::Document;
+            let mut in_style = false;
             while let Some(current) = at {
                 if nodes[current].kind == NodeKind::Document {
                     connected = true;
                     break;
                 }
+                in_style |= nodes[current].content.is_some();
                 at = nodes[current].parent;
             }
             let tag = &mut tags[index];
-            tag.inert = !connected;
+            tag.inert = !connected || in_style;
             tag.content = nodes[id].content.clone().map(|content| {
                 // Never closed: the contents run to the end of the input.
                 content.start..content.end.min(len)
@@ -985,7 +990,10 @@ impl TreeSink for Dom {
             }
         }
         if let Some(pending) = self.start_tag.borrow_mut().as_mut()
-            && (*name.local).eq_ignore_ascii_case(pending.name.as_str())
+            && ((*name.local).eq_ignore_ascii_case(pending.name.as_str())
+                // In HTML content an `image` start tag creates an `img`.
+                || (name.local == local_name!("img")
+                    && pending.name.eq_ignore_ascii_case("image")))
         {
             // The token's own element is created last, after any implied or
             // reconstructed elements.

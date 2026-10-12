@@ -793,7 +793,7 @@ fn xhtml_cdata_wrappers_around_style_sheets_are_dropped() {
 #[test]
 fn nested_svg_style_elements_close_separately() {
     let html = "<svg><style>p{a:1}<style>q{b:2}</style>r{c:3}</style></svg><i style='d:4'>";
-    assert_eq!(keys(html), ["a:1", "c:3", "b:2", "d:4"]);
+    assert_eq!(keys(html), ["a:1", "c:3", "d:4"]);
     let (out, removed) = remove_declarations(html, |key| key == "c:3");
     assert_eq!(removed, 1);
     assert_eq!(out, "<svg><style>p{a:1}r{}</style></svg><i style='d:4'>");
@@ -820,4 +820,39 @@ fn breakout_end_tags_in_integration_points_leave_svg_style_open() {
         assert_eq!(removed, 1);
         assert_eq!(out, "<svg><style>p{color:red}q{}</style></svg>", "{end}");
     }
+}
+
+#[test]
+fn image_start_tags_count_as_the_img_they_create() {
+    assert_eq!(keys("<image style='color:red'>"), ["color:red"]);
+    let (out, removed) = remove_declarations("<image style='color:red'>", |_| true);
+    assert_eq!(removed, 1);
+    assert_eq!(out, "<image style=\"\">");
+    assert_eq!(keys("<svg><image style='a:1'/></svg>"), ["a:1"]);
+}
+
+#[test]
+fn elements_inside_style_elements_are_inert() {
+    let html = "<svg><style>p{a:1}<g style='b:2'/><style>q{c:3}</style></style></svg>";
+    let scan = scan(html);
+    let inert: Vec<_> = scan
+        .tags
+        .iter()
+        .map(|tag| (tag.name.as_str(), tag.inert))
+        .collect();
+    assert_eq!(
+        inert,
+        [
+            ("svg", false),
+            ("style", false),
+            ("g", true),
+            ("style", true)
+        ]
+    );
+    // Reference declarations leave them out; tests still ablate them.
+    let keys: Vec<_> = declarations(html, &scan, false)
+        .into_iter()
+        .map(|decl| decl.key)
+        .collect();
+    assert_eq!(keys, ["a:1"]);
 }
