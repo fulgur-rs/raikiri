@@ -105,14 +105,9 @@ fn is_srgb_color_form(input: &str) -> bool {
 
     let mut input = cssparser::ParserInput::new(input);
     let mut parser = cssparser::Parser::new(&mut input);
-    let name = match parser.next() {
-        Ok(Token::Function(name)) => name.clone(),
-        other => {
-            return matches!(
-                other,
-                Ok(Token::Hash(_) | Token::IDHash(_) | Token::Ident(_))
-            );
-        }
+    // A `<color>` that is not a function is a hex, named, or system color.
+    let Ok(Token::Function(name)) = parser.next().cloned() else {
+        return true;
     };
     if !["rgb", "rgba", "hsl", "hsla", "hwb"]
         .iter()
