@@ -241,7 +241,7 @@ fn descriptor_error_recovery_keeps_later_valid_values() {
 }
 
 #[test]
-fn root_descriptor_eof_recovery_keeps_existing_registration_behavior() {
+fn root_descriptor_eof_recovery_keeps_registration_and_record() {
     for source in [
         "@font-face {font-family:demo;src:url(red.woff)",
         "@counter-style demo {system:cyclic;symbols:\"red\"",
@@ -253,7 +253,8 @@ fn root_descriptor_eof_recovery_keeps_existing_registration_behavior() {
         assert_eq!(fonts.len() + counters.len(), 1);
         assert_eq!(tree.font_faces().get("demo"), fonts.first());
         assert_eq!(tree.counter_styles().get("demo"), counters.first());
-        assert!(tree.opaque_at_rules().is_empty());
+        assert_eq!(tree.opaque_at_rules().len(), 1, "{source:?}");
+        assert_record_round_trips(&tree.opaque_at_rules()[0]);
     }
 }
 
@@ -287,7 +288,7 @@ fn escaped_descriptor_and_group_names_use_css_tokens() {
 }
 
 #[test]
-fn descriptor_groups_respect_depth_and_unclosed_container_limits() {
+fn descriptor_groups_respect_depth_limits_and_recover_at_eof() {
     let body = descriptors("demo", "red");
     for (depth, expected) in [(2, Some("red")), (MAX_OPAQUE_RULE_NESTING_DEPTH + 2, None)] {
         let mut tree = RuleTree::empty();
@@ -307,8 +308,10 @@ fn descriptor_groups_respect_depth_and_unclosed_container_limits() {
     ] {
         let mut tree = RuleTree::empty();
         tree.add_stylesheet(&source, Origin::Author);
-        assert_registration(&tree, &MediaContext::print(), "demo", None);
-        assert!(tree.opaque_at_rules().is_empty());
+        assert_registration(&tree, &MediaContext::print(), "demo", Some("red"));
+        assert_eq!(tree.opaque_at_rules().len(), 1, "{source:?}");
+        assert_eq!(tree.opaque_at_rules()[0].children().len(), 2, "{source:?}");
+        assert_record_round_trips(&tree.opaque_at_rules()[0]);
     }
 }
 

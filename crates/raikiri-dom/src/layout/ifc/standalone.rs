@@ -6,12 +6,14 @@
 //! preserved spaces), with the caller's writing mode, orientation and direction.
 
 use crate::Document;
+use crate::layout::ifc::style::map_font_family;
+use raikiri_style::FontFamilyName;
 use shodo::font::FontCollection;
 use shodo::geometry::{Direction, PhysicalSize, WritingMode};
 use shodo::limits::Limits;
 use shodo::style::{
-    FontFamily, GenericFamily, InlineStyle, LineHeight, LineOptions, ParagraphStyle, TextAlign,
-    TextOrientation, TextWrapMode, WhiteSpaceCollapse,
+    InlineStyle, LineHeight, LineOptions, ParagraphStyle, TextAlign, TextOrientation, TextWrapMode,
+    WhiteSpaceCollapse,
 };
 use shodo::{AtomicSizes, LayoutContext, Line, Paragraph, RichText};
 use std::sync::atomic::Ordering;
@@ -22,9 +24,9 @@ const UNBOUNDED_WIDTH: f32 = 1.0e7;
 /// Style of a standalone run.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StandaloneStyle {
-    /// CSS family names in order. A generic keyword is matched
-    /// case-insensitively; anything else is a named family.
-    pub families: Vec<String>,
+    /// The `font-family` list in order, as parsed: each entry keeps whether
+    /// it is a generic keyword or a named family.
+    pub families: Vec<FontFamilyName>,
     /// Font size in px; must be finite and positive.
     pub font_size: f32,
     /// Block and inline flow of the text.
@@ -134,24 +136,6 @@ impl StandaloneText {
     }
 }
 
-fn family_from_css(name: &str) -> FontFamily {
-    let trimmed = name.trim().trim_matches(['"', '\'']);
-    let generic = match trimmed.to_ascii_lowercase().as_str() {
-        "serif" => Some(GenericFamily::Serif),
-        "sans-serif" => Some(GenericFamily::SansSerif),
-        "monospace" => Some(GenericFamily::Monospace),
-        "cursive" => Some(GenericFamily::Cursive),
-        "fantasy" => Some(GenericFamily::Fantasy),
-        "system-ui" => Some(GenericFamily::SystemUi),
-        _ => None,
-    };
-    match generic {
-        // A quoted keyword names a family called "serif", not the generic one.
-        Some(generic) if !name.trim().starts_with(['"', '\'']) => FontFamily::Generic(generic),
-        _ => FontFamily::Named(trimmed.to_owned()),
-    }
-}
-
 fn align_of(align: StandaloneAlign) -> TextAlign {
     match align {
         StandaloneAlign::Start => TextAlign::Start,
@@ -188,11 +172,7 @@ impl Shaped {
         style: &StandaloneStyle,
     ) -> Option<Self> {
         let inline = InlineStyle {
-            font_families: style
-                .families
-                .iter()
-                .map(|name| family_from_css(name))
-                .collect(),
+            font_families: style.families.iter().filter_map(map_font_family).collect(),
             font_size: style.font_size,
             direction: style.direction,
             text_orientation: style.text_orientation,

@@ -5,8 +5,10 @@
 #
 # The WPT dashboard (`generate-dashboard`) uses these areas as the
 # denominator of the in-scope pass rate. Areas without meaning for print are
-# listed in known-issues.txt instead, with a reason; an area may not appear
-# in both files. An area in neither file is reported as unclassified.
+# listed in known-issues.txt instead, with a reason. Areas outside the print
+# scope whose results are still tracked are listed in tracked-areas.txt. An
+# area may appear in only one of the three files; an area in none of them is
+# reported as unclassified.
 
 # ── Paged media and fragmentation ──
 css/css-page/
@@ -78,7 +80,3 @@ css/css-values/
 css/css-variables/
 css/cssom/
 css/selectors/
-
-# ── Form controls and UI properties with static rendering ──
-css/css-forms/
-css/css-ui/

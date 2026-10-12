@@ -29,15 +29,15 @@ h2 { font-size: 18px; }
 <body>
 <div id="header"><h1>Raikiri - WPT CSS Dashboard</h1><p style="color:#ccc;">Reftests in the print scope of the pinned WPT tree</p></div>
 <div class="intro">
-<p>Generated: 2026-10-12 21:05 JST | WPT pin: <code>97ea26e26a2aac3eec7e770650b25e7049ed4a4e</code> | css/ files: <code>52675</code> | T2 baseline: <code>1364</code> entries</p>
-<p><strong>In-scope pass rate: 45.24%</strong> (6636 of 14669 reftests) | PASS <code>6636</code> | FAIL <code>7349</code> | ERROR <code>671</code> | not run <code>13</code> | sweep: <code>raikiri b07609129f, WPT 97ea26e26a</code></p>
-<p>The denominator is the number of reftests (test files linking a <code>match</code> or <code>mismatch</code> reference, excluding support and reference files) in the print-scope areas listed in <code>expectations/print-scope.txt</code>. Areas without meaning for print are listed in <code>expectations/known-issues.txt</code> and reported separately below. 509 in-scope reftests matching a narrower known-issues entry are waived, and 7673 XML reftests (<code>.xht</code>, <code>.xml</code>, <code>.svg</code>) are left out because they are judged by rendering review rather than pixel comparison.</p>
+<p>Generated: 2026-10-12 21:46 JST | WPT pin: <code>97ea26e26a2aac3eec7e770650b25e7049ed4a4e</code> | css/ files: <code>52675</code> | T2 baseline: <code>1365</code> entries</p>
+<p><strong>In-scope pass rate: 42.01%</strong> (5743 of 13671 reftests) | PASS <code>5743</code> | FAIL <code>7272</code> | ERROR <code>643</code> | not run <code>13</code> | sweep: <code>raikiri b07609129f, WPT 97ea26e26a</code></p>
+<p>The denominator is the number of reftests (test files linking a <code>match</code> or <code>mismatch</code> reference, excluding support and reference files) in the print-scope areas listed in <code>expectations/print-scope.txt</code>. Areas without meaning for print are listed in <code>expectations/known-issues.txt</code> and reported separately below, and areas outside the print scope that are still worked on are tracked in their own table from <code>expectations/tracked-areas.txt</code>. 509 in-scope reftests matching a narrower known-issues entry are waived, and 7673 XML reftests (<code>.xht</code>, <code>.xml</code>, <code>.svg</code>) are left out because they are judged by rendering review rather than pixel comparison.</p>
 <p>PASS / FAIL / ERROR come from a <code>run-baseline-report</code> sweep over every runnable reftest; a file passes only if all of its variants pass, and a pass that holds only with local resources left out counts as FAIL. "Not run" counts reftests absent from the sweep. The baseline column counts reftests protected against regression. Run <code>scripts/wpt/update-dashboard.sh</code> to regenerate this page.</p>
 </div>
 <h2>In scope (print)</h2>
 <table>
 <tr><th>Area</th><th>Reftests</th><th>PASS</th><th>FAIL</th><th>ERROR</th><th>Not run</th><th>Pass rate</th><th>Baseline</th></tr>
-<tr class="total"><td>Total (print scope)</td><td class="num">14669</td><td class="num">6636</td><td class="num">7349</td><td class="num">671</td><td class="num">13</td><td class="partial">45.24%<span class="ratio">6636/14669</span></td><td class="num">993</td></tr>
+<tr class="total"><td>Total (print scope)</td><td class="num">13671</td><td class="num">5743</td><td class="num">7272</td><td class="num">643</td><td class="num">13</td><td class="partial">42.01%<span class="ratio">5743/13671</span></td><td class="num">976</td></tr>
 <tr class="area"><td>css/css-text</td><td class="num">1300</td><td class="num">1007</td><td class="num">285</td><td class="num">7</td><td class="num">1</td><td class="partial">77.46%<span class="ratio">1007/1300</span></td><td class="num">341</td></tr>
 <tr class="child"><td>↳ css/css-text/white-space</td><td class="num">415</td><td class="num">297</td><td class="num">117</td><td class="num">1</td><td class="num">0</td><td class="partial">71.57%<span class="ratio">297/415</span></td><td class="num">30</td></tr>
 <tr class="child"><td>↳ css/css-text/i18n</td><td class="num">158</td><td class="num">158</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="pass">100.00%<span class="ratio">158/158</span></td><td class="num">0</td></tr>
@@ -54,9 +54,7 @@ h2 { font-size: 18px; }
 <tr class="child"><td>↳ css/css-break/flexbox</td><td class="num">318</td><td class="num">44</td><td class="num">274</td><td class="num">0</td><td class="num">0</td><td class="partial">13.84%<span class="ratio">44/318</span></td><td class="num">16</td></tr>
 <tr class="child"><td>↳ css/css-break/table</td><td class="num">135</td><td class="num">31</td><td class="num">103</td><td class="num">1</td><td class="num">0</td><td class="partial">22.96%<span class="ratio">31/135</span></td><td class="num">0</td></tr>
 <tr class="child"><td>↳ css/css-break/grid</td><td class="num">95</td><td class="num">43</td><td class="num">52</td><td class="num">0</td><td class="num">0</td><td class="partial">45.26%<span class="ratio">43/95</span></td><td class="num">0</td></tr>
-<tr class="area"><td>css/css-ui</td><td class="num">983</td><td class="num">891</td><td class="num">66</td><td class="num">26</td><td class="num">0</td><td class="partial">90.64%<span class="ratio">891/983</span></td><td class="num">18</td></tr>
-<tr class="child"><td>↳ css/css-ui/compute-kind-widget-generated</td><td class="num">802</td><td class="num">802</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="pass">100.00%<span class="ratio">802/802</span></td><td class="num">0</td></tr>
-<tr class="area"><td>css/css-flexbox</td><td class="num">921</td><td class="num">568</td><td class="num">350</td><td class="num">3</td><td class="num">0</td><td class="partial">61.67%<span class="ratio">568/921</span></td><td class="num">169</td></tr>
+<tr class="area"><td>css/css-flexbox</td><td class="num">921</td><td class="num">568</td><td class="num">350</td><td class="num">3</td><td class="num">0</td><td class="partial">61.67%<span class="ratio">568/921</span></td><td class="num">170</td></tr>
 <tr class="child"><td>↳ css/css-flexbox/abspos</td><td class="num">29</td><td class="num">28</td><td class="num">1</td><td class="num">0</td><td class="num">0</td><td class="partial">96.55%<span class="ratio">28/29</span></td><td class="num">15</td></tr>
 <tr class="child"><td>↳ css/css-flexbox/intrinsic-size</td><td class="num">23</td><td class="num">5</td><td class="num">18</td><td class="num">0</td><td class="num">0</td><td class="partial">21.74%<span class="ratio">5/23</span></td><td class="num">0</td></tr>
 <tr class="child"><td>↳ css/css-flexbox/flex-lines</td><td class="num">4</td><td class="num">4</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="pass">100.00%<span class="ratio">4/4</span></td><td class="num">0</td></tr>
@@ -202,7 +200,6 @@ h2 { font-size: 18px; }
 <tr class="area"><td>css/css-rhythm</td><td class="num">18</td><td class="num">5</td><td class="num">13</td><td class="num">0</td><td class="num">0</td><td class="partial">27.78%<span class="ratio">5/18</span></td><td class="num">0</td></tr>
 <tr class="child"><td>↳ css/css-rhythm/replaced-elements</td><td class="num">7</td><td class="num">2</td><td class="num">5</td><td class="num">0</td><td class="num">0</td><td class="partial">28.57%<span class="ratio">2/7</span></td><td class="num">0</td></tr>
 <tr class="area"><td>css/css-nesting</td><td class="num">17</td><td class="num">11</td><td class="num">1</td><td class="num">5</td><td class="num">0</td><td class="partial">64.71%<span class="ratio">11/17</span></td><td class="num">0</td></tr>
-<tr class="area"><td>css/css-forms</td><td class="num">15</td><td class="num">2</td><td class="num">11</td><td class="num">2</td><td class="num">0</td><td class="partial">13.33%<span class="ratio">2/15</span></td><td class="num">0</td></tr>
 <tr class="area"><td>css/cssom</td><td class="num">11</td><td class="num">0</td><td class="num">0</td><td class="num">11</td><td class="num">0</td><td class="fail">0.00%<span class="ratio">0/11</span></td><td class="num">0</td></tr>
 <tr class="area"><td>css/css-properties-values-api</td><td class="num">7</td><td class="num">1</td><td class="num">5</td><td class="num">1</td><td class="num">0</td><td class="partial">14.29%<span class="ratio">1/7</span></td><td class="num">0</td></tr>
 <tr class="area"><td>css/css-logical</td><td class="num">6</td><td class="num">1</td><td class="num">5</td><td class="num">0</td><td class="num">0</td><td class="partial">16.67%<span class="ratio">1/6</span></td><td class="num">0</td></tr>
@@ -216,6 +213,15 @@ h2 { font-size: 18px; }
 <tr class="area"><td>css/css-gcpm</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="empty">0.00%<span class="ratio">0/0</span></td><td class="num">0</td></tr>
 <tr class="area"><td>css/css-mixins</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="empty">0.00%<span class="ratio">0/0</span></td><td class="num">0</td></tr>
 <tr class="area"><td>css/css-namespaces</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="empty">0.00%<span class="ratio">0/0</span></td><td class="num">0</td></tr>
+</table>
+<h2>Tracked outside the print scope</h2>
+<p>These areas from <code>expectations/tracked-areas.txt</code> are not part of the print scope and are not counted above, but their results are still tracked.</p>
+<table>
+<tr><th>Area</th><th>Reftests</th><th>PASS</th><th>FAIL</th><th>ERROR</th><th>Not run</th><th>Pass rate</th><th>Baseline</th></tr>
+<tr class="total"><td>Total (tracked)</td><td class="num">998</td><td class="num">893</td><td class="num">77</td><td class="num">28</td><td class="num">0</td><td class="partial">89.48%<span class="ratio">893/998</span></td><td class="num">18</td></tr>
+<tr class="area"><td>css/css-ui</td><td class="num">983</td><td class="num">891</td><td class="num">66</td><td class="num">26</td><td class="num">0</td><td class="partial">90.64%<span class="ratio">891/983</span></td><td class="num">18</td></tr>
+<tr class="child"><td>↳ css/css-ui/compute-kind-widget-generated</td><td class="num">802</td><td class="num">802</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="pass">100.00%<span class="ratio">802/802</span></td><td class="num">0</td></tr>
+<tr class="area"><td>css/css-forms</td><td class="num">15</td><td class="num">2</td><td class="num">11</td><td class="num">2</td><td class="num">0</td><td class="partial">13.33%<span class="ratio">2/15</span></td><td class="num">0</td></tr>
 </table>
 <h2>Out of scope</h2>
 <table>

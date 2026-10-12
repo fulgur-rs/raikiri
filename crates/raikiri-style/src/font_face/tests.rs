@@ -228,3 +228,42 @@ fn unknown_descriptors_are_dropped() {
     assert_eq!(rule.family.as_str(), "F");
     assert_eq!(rule.src.len(), 1);
 }
+
+#[test]
+fn oblique_accepts_only_angles() {
+    let rule = |style: &str| {
+        parse_one(&format!(
+            "@font-face {{ font-family: F; src: url(a.ttf); font-style: italic; font-style: {style}; }}"
+        ))
+        .expect("rule must parse")
+        .style
+    };
+    assert_eq!(rule("oblique"), FontFaceStyle::Oblique);
+    assert_eq!(rule("oblique 10deg"), FontFaceStyle::Oblique);
+    assert_eq!(rule("oblique -5deg 0.1turn"), FontFaceStyle::Oblique);
+    // Non-angle trailing tokens invalidate the declaration, so the earlier
+    // `italic` survives.
+    assert_eq!(rule("oblique 1px"), FontFaceStyle::Italic);
+    assert_eq!(rule("oblique foo"), FontFaceStyle::Italic);
+    assert_eq!(rule("oblique 10deg 20deg 30deg"), FontFaceStyle::Italic);
+}
+
+#[test]
+fn stretch_percentage_keeps_authored_value() {
+    let stretch = |value: &str| {
+        parse_one(&format!(
+            "@font-face {{ font-family: F; src: url(a.ttf); font-stretch: {value}; }}"
+        ))
+        .expect("rule must parse")
+        .stretch
+    };
+    assert_eq!(stretch("75%"), FontFaceStretch(SmolStr::new("75%")));
+    assert_eq!(stretch("112.5%"), FontFaceStretch(SmolStr::new("112.5%")));
+    assert_eq!(stretch("0%"), FontFaceStretch(SmolStr::new("0%")));
+    assert_eq!(
+        stretch("Condensed"),
+        FontFaceStretch(SmolStr::new("condensed"))
+    );
+    // Negative percentages are invalid and drop the declaration.
+    assert_eq!(stretch("-10%"), FontFaceStretch(SmolStr::new("normal")));
+}

@@ -1,5 +1,6 @@
 use crate::text::{measure_margin_text_advance, measure_margin_text_height};
 use raikiri_dom::{Document, StandaloneAlign};
+use raikiri_style::FontFamilyName;
 use shodo::limits::Limits;
 
 const FONT_DIR: &str = concat!(
@@ -15,8 +16,13 @@ fn engine_document() -> Document {
     doc
 }
 
+fn ahem() -> [FontFamilyName; 1] {
+    [FontFamilyName::named("Ahem")]
+}
+
 fn measure_margin_text(doc: &Document, text: &str, size: f32, family: &str) -> f32 {
-    super::shape(doc, text, size, family, None, StandaloneAlign::Start)
+    let family = [FontFamilyName::named(family)];
+    super::shape(doc, text, size, &family, None, StandaloneAlign::Start)
         .unwrap()
         .width()
 }
@@ -25,8 +31,11 @@ fn measure_margin_text(doc: &Document, text: &str, size: f32, family: &str) -> f
 fn measurements_use_the_document_font_when_the_engine_is_on() {
     let doc = engine_document();
     assert_eq!(measure_margin_text(&doc, "ab ", 10.0, "Ahem"), 20.0);
-    assert_eq!(measure_margin_text_advance(&doc, "ab ", 10.0, "Ahem"), 30.0);
-    assert_eq!(measure_margin_text_height(&doc, "abc", 10.0, "Ahem"), 10.0);
+    assert_eq!(
+        measure_margin_text_advance(&doc, "ab ", 10.0, &ahem()),
+        30.0
+    );
+    assert_eq!(measure_margin_text_height(&doc, "abc", 10.0, &ahem()), 10.0);
     assert_eq!(doc.standalone_text_calls(), 3);
 }
 
@@ -87,7 +96,7 @@ fn draw(
         40.0,
         Color::from_rgba8(0, 0, 0, 255),
         10.0,
-        "Ahem",
+        &ahem(),
         align,
         vertical,
     );
@@ -129,7 +138,7 @@ fn the_colour_is_the_colour_the_caller_gave() {
         20.0,
         Color::from_rgba8(255, 0, 0, 255),
         10.0,
-        "Ahem",
+        &ahem(),
         StandaloneAlign::Start,
         crate::text::MarginTextVerticalAlign::Top,
     );
@@ -160,7 +169,7 @@ fn a_second_line_is_drawn_one_line_below_the_first() {
         40.0,
         Color::from_rgba8(0, 0, 0, 255),
         10.0,
-        "Ahem",
+        &ahem(),
         StandaloneAlign::Start,
         crate::text::MarginTextVerticalAlign::Top,
     );
@@ -181,7 +190,7 @@ fn aligned_xs(doc: &Document, content: &str, align: StandaloneAlign) -> Vec<f64>
         40.0,
         Color::from_rgba8(0, 0, 0, 255),
         10.0,
-        "Ahem",
+        &ahem(),
         align,
         crate::text::MarginTextVerticalAlign::Top,
     );
@@ -222,8 +231,15 @@ fn standalone_text_is_laid_out_by_the_engine_only() {
     // still shaped by the engine, over the installed fonts. There is no other
     // path to fall back to.
     let doc = Document::new();
-    let run = super::shape(&doc, "abc", 16.0, "serif", None, StandaloneAlign::Start)
-        .expect("the engine shapes the run");
+    let run = super::shape(
+        &doc,
+        "abc",
+        16.0,
+        &[FontFamilyName::generic("serif")],
+        None,
+        StandaloneAlign::Start,
+    )
+    .expect("the engine shapes the run");
     let glyphs: usize = run.lines()[0]
         .fragments()
         .map(|fragment| match fragment {
@@ -254,7 +270,7 @@ fn styled_scene(
     cross_align: crate::text::MarginTextVerticalAlign,
 ) -> Scene {
     let doc = engine_document();
-    let mut style = super::style(10.0, "Ahem");
+    let mut style = super::style(10.0, &ahem());
     style.writing_mode = mode;
     style.text_orientation = orientation;
     style.direction = direction;

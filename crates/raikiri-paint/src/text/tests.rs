@@ -190,13 +190,11 @@ fn decoration_spans_collapse_equal_endpoint_translation() {
 #[test]
 fn generated_text_measurements_handle_empty_and_nonfinite_inputs() {
     let doc = raikiri_dom::Document::new();
-    assert_eq!(
-        measure_margin_text_advance(&doc, "", f32::NAN, "serif"),
-        0.0
-    );
-    assert!(measure_margin_text_advance(&doc, "A", f32::NAN, "serif") > 0.0);
-    assert_eq!(measure_margin_text_height(&doc, "", f32::NAN, "serif"), 0.0);
-    assert!(measure_margin_text_height(&doc, "A", f32::NAN, "serif") > 0.0);
+    let serif = [raikiri_style::FontFamilyName::generic("serif")];
+    assert_eq!(measure_margin_text_advance(&doc, "", f32::NAN, &serif), 0.0);
+    assert!(measure_margin_text_advance(&doc, "A", f32::NAN, &serif) > 0.0);
+    assert_eq!(measure_margin_text_height(&doc, "", f32::NAN, &serif), 0.0);
+    assert!(measure_margin_text_height(&doc, "A", f32::NAN, &serif) > 0.0);
 }
 
 fn ancestor_context() -> DecorationContext {

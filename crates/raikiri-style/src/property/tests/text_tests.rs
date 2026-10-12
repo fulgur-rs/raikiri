@@ -4435,6 +4435,11 @@ fn tab_size_rejects_percentage_calc_terms() {
     // also invalid (same guard as the `parse_value` deferred path).
     assert_eq!(parse("calc(10px + 5%)", "tab-size"), None);
     assert_eq!(parse("calc(50%)", "tab-size"), None);
+    // A `%` inside a comment is not a percentage token.
+    assert_eq!(
+        parse("calc(1em /*%*/ + 1px)", "tab-size"),
+        parse("calc(1em + 1px)", "tab-size")
+    );
 }
 
 #[test]

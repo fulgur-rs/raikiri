@@ -652,6 +652,63 @@ fn imported_stylesheet_rules_reach_cascade_in_source_order() {
 }
 
 #[test]
+fn imported_stylesheet_closed_by_eof_reaches_cascade_without_absorbing_parent_rules() {
+    use raikiri::{
+        Bytes, FetchOutcome, FetchedResource, NetworkError, NetworkProvider, ParseOptions, Request,
+        Url, build_cascaded, parse,
+    };
+
+    struct ImportProvider;
+
+    impl NetworkProvider for ImportProvider {
+        fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
+            let css = match request.url.as_str() {
+                "https://example.test/main.css" => {
+                    r#"@import "open.css"; @import "block.css"; p { display: inline }"#
+                }
+                // CSS Syntax 3 §4.3.2 ends this comment at EOF.
+                "https://example.test/open.css" => "span { display: none } /* open",
+                // CSS Syntax 3 §5.4.8 closes this block at EOF.
+                "https://example.test/block.css" => "em { display: none",
+                _ => return Err(NetworkError::Other("not found".to_owned())),
+            };
+            Ok(FetchOutcome::Body(FetchedResource {
+                bytes: Bytes::from(css),
+                content_type: Some("text/css".to_owned()),
+                final_url: request.url,
+                encoding: None,
+            }))
+        }
+    }
+
+    let opts = ParseOptions {
+        extra_stylesheets: &[],
+        network: Some(&ImportProvider as &dyn NetworkProvider),
+        base_url: Some(Url::parse("https://example.test/").unwrap()),
+    };
+    let html = br#"<!DOCTYPE html><html><head><link rel="stylesheet" href="main.css"></head>
+        <body><p>Hi</p><span>x</span><em>y</em></body></html>"#;
+    let doc = parse(&html[..], &opts).expect("parse");
+    assert!(doc.warnings.is_empty(), "{:?}", doc.warnings);
+    let result = build_cascaded(&doc).expect("the cascade succeeds");
+    let p_id = find_by_tag(&doc.dom, "p").expect("<p> exists");
+    let span_id = find_by_tag(&doc.dom, "span").expect("<span> exists");
+    let em_id = find_by_tag(&doc.dom, "em").expect("<em> exists");
+    assert_eq!(
+        result.computed[span_id.0 as usize].display,
+        DisplayValue::None
+    );
+    assert_eq!(
+        result.computed[em_id.0 as usize].display,
+        DisplayValue::None
+    );
+    assert_eq!(
+        result.computed[p_id.0 as usize].display,
+        DisplayValue::Inline
+    );
+}
+
+#[test]
 fn imported_media_condition_is_evaluated_by_the_selected_cascade_context() {
     use raikiri::{
         Bytes, FetchOutcome, FetchedResource, MediaContext, NetworkError, NetworkProvider,

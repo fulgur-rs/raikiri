@@ -16,8 +16,8 @@ use crate::{
 };
 use raikiri_style::property::{
     BackgroundImage, BackgroundRepeat, Border, BorderColor, BorderStyle, ContentComponent,
-    CounterStyle, CssColor, Length, LengthOrAuto, PropertyKey, PropertyValue, QuoteKeyword, Sides,
-    StringFetchMode, TextAlign, VerticalAlign, VisualBox, WritingMode,
+    CounterStyle, CssColor, FontFamilyName, Length, LengthOrAuto, PropertyKey, PropertyValue,
+    QuoteKeyword, Sides, StringFetchMode, TextAlign, VerticalAlign, VisualBox, WritingMode,
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedCssPosition, ComputedLength, ComputedValues,
@@ -425,16 +425,10 @@ struct MarginBoxSpec {
     running: Option<(SmolStr, StringFetchMode)>,
 }
 
-/// Horizontal standalone style for a `font-family` string. Family names keep
-/// their quotes: the engine tells a quoted `"serif"` (a named family) from
-/// the generic keyword.
-fn text_style(font_size: f32, font_family: &str) -> StandaloneStyle {
+/// Horizontal standalone style for a parsed `font-family` list.
+fn text_style(font_size: f32, font_family: &[FontFamilyName]) -> StandaloneStyle {
     StandaloneStyle {
-        families: font_family
-            .split(',')
-            .map(|name| name.trim().to_owned())
-            .filter(|name| !name.is_empty())
-            .collect(),
+        families: font_family.to_vec(),
         font_size: if font_size.is_finite() && font_size > 0.0 {
             font_size
         } else {
@@ -551,7 +545,7 @@ fn inherited_margin_box_font(
     cascade: &CascadeResult,
     page: &PageCascadeResult,
     rule: &PageMarginBoxCascadeResult,
-) -> (f32, String) {
+) -> (f32, FontFamilyName) {
     let root = root_computed(document, cascade);
     let root_size = root.map_or(16.0, |computed| computed.font_size.px());
     let page_size = match page_property(page, PropertyKey::FontSize) {
@@ -568,15 +562,10 @@ fn inherited_margin_box_font(
     let family = match margin_box_property(rule, PropertyKey::FontFamily)
         .or_else(|| page_property(page, PropertyKey::FontFamily))
     {
-        Some(PropertyValue::FontFamily(families)) => families
-            .first()
-            .map(|family| family.as_str().to_string())
-            .unwrap_or_else(|| "serif".to_string()),
-        _ => root
-            .and_then(|computed| computed.font_family.first())
-            .map(|family| family.as_str().to_string())
-            .unwrap_or_else(|| "serif".to_string()),
-    };
+        Some(PropertyValue::FontFamily(families)) => families.first().cloned(),
+        _ => root.and_then(|computed| computed.font_family.first().cloned()),
+    }
+    .unwrap_or_else(|| FontFamilyName::generic("serif"));
     (font_size.max(0.1), family)
 }
 
@@ -1376,7 +1365,7 @@ fn margin_box_spec(
         Some(PropertyValue::Direction(value)) => *value,
         _ => root.direction,
     };
-    let mut text_style = text_style(font_size, &font_family);
+    let mut text_style = text_style(font_size, std::slice::from_ref(&font_family));
     text_style.writing_mode = match mode {
         WritingMode::VerticalRl => shodo::geometry::WritingMode::VerticalRl,
         WritingMode::VerticalLr => shodo::geometry::WritingMode::VerticalLr,

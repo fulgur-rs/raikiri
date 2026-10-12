@@ -908,8 +908,12 @@ fn variable_scanner_handles_literals_bounds_and_fallbacks() {
         .is_ok()
     );
     assert_eq!(references, vec![SmolStr::from("--used")]);
-    assert!(collect_var_references("\"unterminated", &mut Vec::new()).is_err());
-    assert!(collect_var_references("/* unterminated", &mut Vec::new()).is_err());
+    // The end of input closes strings and comments (CSS Syntax 3 §4.3.2,
+    // §4.3.5), so neither hides nor invalidates a reference before it.
+    let mut references = Vec::new();
+    assert!(collect_var_references("var(--a) \"unterminated", &mut references).is_ok());
+    assert!(collect_var_references("var(--b) /* unterminated", &mut references).is_ok());
+    assert_eq!(references, vec![SmolStr::from("--a"), SmolStr::from("--b")]);
 
     fn no_resolution(_: &str) -> Option<SmolStr> {
         None
@@ -948,7 +952,11 @@ fn variable_scanner_handles_literals_bounds_and_fallbacks() {
     );
 
     assert_eq!(skip_css_string(r#""a\"b""#, 0), Some(6));
-    assert_eq!(skip_css_string("\"unterminated", 0), None);
+    assert_eq!(skip_css_string("\"unterminated", 0), Some(13));
+    assert_eq!(skip_css_string("\"a\\\nb\"", 0), Some(6));
+    assert_eq!(skip_css_string("\"a\\\r\nb\"", 0), Some(7));
+    assert_eq!(skip_css_string("\"a\nb\"", 0), Some(2));
+    assert_eq!(skip_css_string("\"a\\", 0), Some(3));
     assert_eq!(skip_css_comment("/* comment */", 0), Some(13));
     assert_eq!(skip_css_comment("/* unterminated", 0), None);
     assert_eq!(skip_css_escape("x", 0), None);
@@ -2350,4 +2358,72 @@ fn relative_calc_parser_accepts_linear_sums_only() {
     ] {
         assert_eq!(parse(rejected), None, "{rejected}");
     }
+}
+
+#[test]
+fn var_declarations_accept_strings_closed_by_eof_or_continued_by_escaped_newlines() {
+    // CSS Syntax 3 §4.3.5: a string closed by the end of input and a string
+    // containing an escaped newline are both string tokens, so a declaration
+    // that also references a custom property must still apply.
+    use crate::property::ContentComponent;
+    let literals = |cv: &crate::computed::ComputedValues| -> Vec<String> {
+        cv.content
+            .iter()
+            .map(|component| match component {
+                ContentComponent::Literal(text) => text.to_string(),
+                other => format!("{other:?}"),
+            })
+            .collect()
+    };
+    let cv = cascade_doc("", "p", Some("--a:\"x\"; content: var(--a) \"foo"));
+    assert_eq!(literals(&cv), ["x", "foo"]);
+    let cv = cascade_doc("", "p", Some("--a:\"x\"; content: var(--a) \"foo\\\nbar\""));
+    assert_eq!(literals(&cv), ["x", "foobar"]);
+    let cv = cascade_doc(
+        "",
+        "p",
+        Some("--a:\"x\"; content: var(--a) \"foo\\\r\nbar\""),
+    );
+    assert_eq!(literals(&cv), ["x", "foobar"]);
+    let cv = cascade_doc("", "p", Some("--a:\"x\"; content: var(--missing, \"foo"));
+    assert_eq!(literals(&cv), ["foo"]);
+    // A string broken by an unescaped newline is a bad-string token, which
+    // still invalidates the declaration.
+    let cv = cascade_doc(
+        "",
+        "p",
+        Some("content: \"kept\"; --a:\"x\"; content: var(--a) \"foo\nbar\""),
+    );
+    assert_eq!(literals(&cv), ["kept"]);
+}
+
+#[test]
+fn relative_color_detection_reads_tokens_not_source_text() {
+    // A relative color in a var() fallback is checked after substitution.
+    let cv = cascade_doc(
+        "",
+        "p",
+        Some("--c: blue; color: var(--c, rgb(from red r g b))"),
+    );
+    assert_eq!(cv.color, BLUE);
+    // Whitespace after `(` still starts a relative color, so its invalid
+    // channel list is rejected at parse time and the earlier value stays.
+    let cv = cascade_doc(
+        "",
+        "p",
+        Some("color: red; color: rgb( from var(--c) r g b q)"),
+    );
+    assert_eq!(cv.color, RED);
+    let cv = cascade_doc(
+        "",
+        "p",
+        Some("color: red; color: rgb(/**/from var(--c) r g b q)"),
+    );
+    assert_eq!(cv.color, RED);
+    let cv = cascade_doc(
+        "",
+        "p",
+        Some("--c: blue; color: red; color: rgb( from var(--c) r g b)"),
+    );
+    assert_eq!(cv.color, BLUE);
 }

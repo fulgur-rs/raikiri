@@ -1,6 +1,7 @@
 use super::*;
 use crate::Document;
 use crate::layout::test_support::ifc_ahem_fonts;
+use raikiri_style::FontFamilyName;
 use shodo::limits::Limits;
 
 fn enabled() -> Document {
@@ -11,7 +12,7 @@ fn enabled() -> Document {
 
 fn ahem(size: f32) -> StandaloneStyle {
     StandaloneStyle {
-        families: vec!["Ahem".to_owned()],
+        families: vec![FontFamilyName::named("Ahem")],
         font_size: size,
         ..StandaloneStyle::default()
     }
@@ -92,7 +93,10 @@ fn alignment_moves_the_line_inside_the_width() {
 fn a_family_list_uses_the_first_family_the_collection_has() {
     let doc = enabled();
     let style = StandaloneStyle {
-        families: vec!["No Such Family".to_owned(), "Ahem".to_owned()],
+        families: vec![
+            FontFamilyName::named("No Such Family"),
+            FontFamilyName::named("Ahem"),
+        ],
         font_size: 10.0,
         ..StandaloneStyle::default()
     };
@@ -106,7 +110,7 @@ fn a_family_list_uses_the_first_family_the_collection_has() {
 fn a_generic_keyword_resolves_in_the_document_layer() {
     let doc = enabled();
     let style = StandaloneStyle {
-        families: vec!["SERIF".to_owned()],
+        families: vec![FontFamilyName::generic("SERIF")],
         font_size: 10.0,
         ..StandaloneStyle::default()
     };
@@ -285,9 +289,9 @@ fn a_generic_keyword_matches_in_any_case_and_a_quoted_one_names_a_family() {
     .expect("two faces");
     let mut doc = Document::new();
     doc.set_font_collection_with_limits(fonts, Limits::default());
-    let font_of = |family: &str| {
+    let font_of = |family: FontFamilyName| {
         let style = StandaloneStyle {
-            families: vec![family.to_owned()],
+            families: vec![family],
             font_size: 10.0,
             ..StandaloneStyle::default()
         };
@@ -296,14 +300,28 @@ fn a_generic_keyword_matches_in_any_case_and_a_quoted_one_names_a_family() {
             .expect("shaped");
         run_font_sizes(&text)
     };
-    assert_eq!(font_of("SERIF"), [CANVAS_TEST.len()], "generic, any case");
-    assert_eq!(font_of("serif"), [CANVAS_TEST.len()], "generic");
     assert_eq!(
-        font_of("'serif'"),
+        font_of(FontFamilyName::generic("SERIF")),
+        [CANVAS_TEST.len()],
+        "generic, any case"
+    );
+    assert_eq!(
+        font_of(FontFamilyName::generic("serif")),
+        [CANVAS_TEST.len()],
+        "generic"
+    );
+    assert_eq!(
+        font_of(FontFamilyName::named("serif")),
         [AHEM.len()],
         "a quoted keyword is a name"
     );
-    assert_eq!(font_of("\"serif\""), [AHEM.len()], "double quotes too");
+    // A parsed name is one family even when it contains a comma: split, its
+    // first part would select CanvasTest.
+    assert_eq!(
+        font_of(FontFamilyName::named("CanvasTest, Ahem")),
+        [AHEM.len()],
+        "a comma inside a quoted name does not split it"
+    );
 }
 
 #[test]

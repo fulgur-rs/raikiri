@@ -97,7 +97,7 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         input.reset(&start);
         let value = consume_deferred_value(input)?;
         let is_color_property = matches!(normalized_name.as_str(), "color" | "background-color");
-        if is_color_property && value.to_ascii_lowercase().contains("(from") {
+        if is_color_property && contains_relative_color_function(&value) {
             // Relative colors may use var() as their origin. Validate their
             // complete grammar before deferring; the generic property math
             // path cannot distinguish an invalid channel from a variable.
@@ -248,7 +248,7 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
                 // Tab-size never allows percentages, even inside calc (Percentages: N/A).
                 // Border-spacing likewise (CSS Tables 3 §6.1 Percentages: N/A).
                 if (normalized_name == "tab-size" || normalized_name == "border-spacing")
-                    && value.contains('%')
+                    && math_source_has_percentage(value.as_ref())
                 {
                     return None;
                 }
@@ -268,7 +268,7 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
             // Tab-size never allows percentages, even inside calc (Percentages: N/A).
             // Border-spacing likewise (CSS Tables 3 §6.1 Percentages: N/A).
             if (normalized_name == "tab-size" || normalized_name == "border-spacing")
-                && value.contains('%')
+                && math_source_has_percentage(value.as_ref())
             {
                 return None;
             }
@@ -1268,6 +1268,43 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         }),
         _ => None,
     }
+}
+
+/// Whether `input` has a relative color function (CSS Color 5 §4), whose
+/// argument list starts with the `from` keyword, outside any `var()`.
+///
+/// A relative color in a `var()` fallback is checked only after
+/// substitution, like every other part of a declaration that uses `var()`.
+fn contains_relative_color_function(input: &str) -> bool {
+    fn scan(parser: &mut Parser<'_, '_>) -> bool {
+        let mut found = false;
+        while let Ok(token) = parser.next() {
+            let starts_relative_color = match token {
+                Token::Function(name) if name.eq_ignore_ascii_case("var") => continue,
+                Token::Function(_) => true,
+                Token::ParenthesisBlock | Token::SquareBracketBlock | Token::CurlyBracketBlock => {
+                    false
+                }
+                _ => continue,
+            };
+            let nested_found = parser
+                .parse_nested_block(|nested| {
+                    let is_relative = starts_relative_color
+                        && nested
+                            .try_parse(|nested| nested.expect_ident_matching("from"))
+                            .is_ok();
+                    let inner = scan(nested);
+                    Ok::<_, ParseError<'_, ()>>(is_relative || inner)
+                })
+                .unwrap_or(false);
+            found = found || nested_found;
+        }
+        found
+    }
+
+    let mut parser_input = ParserInput::new(input);
+    let mut parser = Parser::new(&mut parser_input);
+    scan(&mut parser)
 }
 
 pub(crate) fn contains_function_in_source(input: &str, wanted: &str) -> bool {

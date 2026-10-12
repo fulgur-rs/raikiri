@@ -6,18 +6,9 @@ use anyrender::{Glyph as AnyrenderGlyph, PaintScene};
 use kurbo::Affine;
 use peniko::{Color, Fill};
 use raikiri_dom::{Document, StandaloneAlign, StandaloneStyle, StandaloneText};
+use raikiri_style::FontFamilyName;
 use shodo::Fragment;
 use shodo::geometry::PhysicalConverter;
-
-/// The family names of a CSS `font-family` string, in order. Quotes are kept:
-/// the engine side tells a quoted `"serif"` (a named family) from the generic
-/// keyword.
-fn families(list: &str) -> Vec<String> {
-    list.split(',')
-        .map(|name| name.trim().to_owned())
-        .filter(|name| !name.is_empty())
-        .collect()
-}
 
 /// The font size a run is shaped at: `font_size`, or 16px when it is not
 /// finite and positive.
@@ -35,7 +26,7 @@ pub(crate) fn shape(
     document: &Document,
     content: &str,
     font_size: f32,
-    font_family: &str,
+    font_family: &[FontFamilyName],
     width: Option<f32>,
     align: StandaloneAlign,
 ) -> Option<StandaloneText> {
@@ -44,9 +35,9 @@ pub(crate) fn shape(
 }
 
 /// Horizontal defaults for callers that only know the font.
-pub(crate) fn style(font_size: f32, font_family: &str) -> StandaloneStyle {
+pub(crate) fn style(font_size: f32, font_family: &[FontFamilyName]) -> StandaloneStyle {
     StandaloneStyle {
-        families: families(font_family),
+        families: font_family.to_vec(),
         font_size: usable_size(font_size),
         ..StandaloneStyle::default()
     }

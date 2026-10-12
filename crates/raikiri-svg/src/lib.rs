@@ -4386,22 +4386,37 @@ fn strip_inline_style_properties(style: &str, properties: &[&str]) -> String {
             &mut self,
             name: cssparser::CowRcStr<'i>,
             input: &mut cssparser::Parser<'i, 't>,
-            declaration_start: &cssparser::ParserState,
+            _declaration_start: &cssparser::ParserState,
         ) -> Result<Self::Declaration, cssparser::ParseError<'i, Self::Error>> {
             let remove = self
                 .properties
                 .iter()
                 .any(|property| name.eq_ignore_ascii_case(property));
-            while input.next_including_whitespace_and_comments().is_ok() {}
             if remove {
+                while input.next_including_whitespace_and_comments().is_ok() {}
                 return Ok(None);
             }
 
-            let declaration = input
-                .slice(declaration_start.position()..input.position())
-                .trim()
-                .to_owned();
-            Ok((!declaration.is_empty()).then_some(declaration))
+            // Rebuild the declaration from its tokens rather than slicing the
+            // source: a raw slice can end inside a comment, string or block,
+            // which would swallow whatever the caller appends after it.
+            let mut value = String::new();
+            serialize_declaration_value(
+                input,
+                &mut value,
+                cssparser::TokenSerializationType::default(),
+            )
+            .map_err(|()| input.new_custom_error(()))?;
+            let value = value.trim();
+            if value.is_empty() {
+                return Ok(None);
+            }
+            let mut declaration = String::new();
+            // Writing to a `String` cannot fail.
+            let _ = cssparser::serialize_identifier(&name, &mut declaration);
+            declaration.push(':');
+            declaration.push_str(value);
+            Ok(Some(declaration))
         }
     }
 
@@ -4435,6 +4450,54 @@ fn strip_inline_style_properties(style: &str, properties: &[&str]) -> String {
         .flatten()
         .collect::<Vec<_>>()
         .join(";")
+}
+
+/// Serialize the remaining tokens of `input` into `out`, dropping comments,
+/// closing every block that the source leaves open, and separating tokens
+/// that would otherwise run together. Fails on a bad string or bad URL, which
+/// makes the declaration invalid anyway. Returns the serialization type of the
+/// last token written.
+fn serialize_declaration_value(
+    input: &mut cssparser::Parser<'_, '_>,
+    out: &mut String,
+    mut previous: cssparser::TokenSerializationType,
+) -> Result<cssparser::TokenSerializationType, ()> {
+    use cssparser::{ToCss, Token};
+
+    loop {
+        let token = match input.next_including_whitespace() {
+            Ok(token) => token.clone(),
+            Err(_) => return Ok(previous),
+        };
+        let closing = match token {
+            Token::BadString(_) | Token::BadUrl(_) => return Err(()),
+            Token::Function(_) | Token::ParenthesisBlock => Some(Token::CloseParenthesis),
+            Token::SquareBracketBlock => Some(Token::CloseSquareBracket),
+            Token::CurlyBracketBlock => Some(Token::CloseCurlyBracket),
+            _ => None,
+        };
+        let kind = token.serialization_type();
+        if previous.needs_separator_when_before(kind) {
+            out.push_str("/**/");
+        }
+        // Writing to a `String` cannot fail.
+        let _ = token.to_css(out);
+        previous = kind;
+        if let Some(closing) = closing {
+            let inner = input
+                .parse_nested_block(|input| {
+                    serialize_declaration_value(input, out, previous)
+                        .map_err(|()| input.new_custom_error::<(), ()>(()))
+                })
+                .map_err(|_| ())?;
+            let kind = closing.serialization_type();
+            if inner.needs_separator_when_before(kind) {
+                out.push_str("/**/");
+            }
+            let _ = closing.to_css(out);
+            previous = kind;
+        }
+    }
 }
 
 fn escape_xml_attribute(value: &str) -> String {
