@@ -6,14 +6,14 @@ use super::{
     charge_initial_parse_node_count, estimate_initial_stylesheet_resources,
     freeze_svg_stylesheet_selectors, is_simplecss_name_start, normalize_svg_opacity_cascade,
     preflight_initial_svg_selectors, scope_stylesheet_properties, scoped_property_rule_len,
-    simplecss_comment_end, simplecss_function_end, simplecss_recovery_declaration_tokens,
-    simplecss_recovery_delimiter_counts, simplecss_recovery_rule_body_end,
-    simplecss_recovery_rule_body_requires_raw_recovery,
+    selector_scope_insertion, simplecss_comment_end, simplecss_function_end,
+    simplecss_recovery_declaration_tokens, simplecss_recovery_delimiter_counts,
+    simplecss_recovery_rule_body_end, simplecss_recovery_rule_body_requires_raw_recovery,
     simplecss_recovery_selector_header_requires_raw_recovery,
     simplecss_recovery_selector_segment_is_valid, simplecss_recovery_string_end,
     simplecss_string_end, skip_simplecss_at_rule, skip_simplecss_spaces_and_comments,
-    strip_inline_style_properties, strip_stylesheet_properties, unique_attribute_name,
-    with_root_style_overrides, xml_attribute_escape_allocation_bytes,
+    split_css_selector_list, strip_inline_style_properties, strip_stylesheet_properties,
+    unique_attribute_name, with_root_style_overrides, xml_attribute_escape_allocation_bytes,
 };
 
 const HALF_RED_RECT: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1" viewBox="0 0 2 1"><rect width="1" height="1" fill="#ff0000" fill-opacity="0.5"/></svg>"##;
@@ -747,6 +747,68 @@ fn scoped_property_rule_omits_selectors_without_a_scopeable_component() {
         scoped_property_rule_len("/* only a comment */", "scope", &["background:red".into()]),
         None
     );
+}
+
+#[test]
+fn selector_list_split_ignores_commas_in_strings_comments_and_blocks() {
+    assert_eq!(
+        split_css_selector_list(
+            r#"rect[title="a,b"], g /* x, y */ > circle, :is(a, b), .c\,d,path"#
+        ),
+        [
+            r#"rect[title="a,b"]"#,
+            " g /* x, y */ > circle",
+            " :is(a, b)",
+            r" .c\,d",
+            "path",
+        ]
+    );
+    assert_eq!(
+        split_css_selector_list("rect[title='a,b"),
+        ["rect[title='a,b"]
+    );
+}
+
+#[test]
+fn selector_scope_insertion_skips_trailing_whitespace_and_comments() {
+    let cases = [
+        ("rect", 4),
+        ("rect  /* c */ ", 4),
+        (r#"rect[title="a b"] /* c */"#, r#"rect[title="a b"]"#.len()),
+        (":is(a, b) ", ":is(a, b)".len()),
+        (r"rect\ ", r"rect\ ".len()),
+        ("rect[x", "rect[x".len()),
+        ("/* c */ ", 0),
+    ];
+    for (selector, expected) in cases {
+        assert_eq!(selector_scope_insertion(selector), expected, "{selector:?}");
+    }
+}
+
+#[test]
+fn stylesheet_strip_removes_semicolon_after_a_trailing_comment() {
+    let result = strip_stylesheet_properties(
+        "rect { opacity:.5 /* x */ ; color:red }",
+        &["opacity"],
+        &mut SelectorFreezeBudget::new(),
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(result, "rect {  color:red }");
+}
+
+#[test]
+fn stylesheet_strip_removes_the_last_declaration_without_a_semicolon() {
+    let result = strip_stylesheet_properties(
+        "rect { color:red; opacity:.5 /* x */ }",
+        &["opacity"],
+        &mut SelectorFreezeBudget::new(),
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(result, "rect { color:red; }");
 }
 
 #[test]
