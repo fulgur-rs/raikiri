@@ -486,6 +486,43 @@ fn semicolonless_character_references_decode_like_html() {
 }
 
 #[test]
+fn named_references_use_the_full_html_table() {
+    // `&NewLine;` ends the string, so the next declaration is found.
+    let html = r#"<i style="content:'bad&NewLine;; clear:both">"#;
+    assert_eq!(keys(html)[1], "clear:both");
+    // Two-code-point references, C1 replacements and unknown names.
+    let html = r#"<i style="a: &nvlt;; b: &#x80;; c: &nope x">"#;
+    assert_eq!(keys(html), ["a:<\u{20d2}", "b:\u{20ac}", "c:&nope x"]);
+    assert_eq!(keys(r#"<i style="d: &#0;">"#), ["d:\u{fffd}"]);
+}
+
+#[test]
+fn escaped_custom_property_names_hold_value_blocks() {
+    let html = r"<style>p { \2d\2d tokens: { color: red }; clear: both }</style>";
+    assert_eq!(keys(html), ["--tokens:{ color: red }", "clear:both"]);
+    // A trailing backslash does not end an identifier.
+    assert!(keys(r"<i style='a\: x'>").is_empty());
+}
+
+#[test]
+fn an_escaped_crlf_stays_inside_the_string() {
+    let html = "<style>p { content: \"a\\\r\n;b\"; clear: both }</style>";
+    assert_eq!(keys(html)[1], "clear:both");
+}
+
+#[test]
+fn cdata_sections_in_foreign_content_hide_their_markup() {
+    let html = "<svg><![CDATA[x > <style>p{color:red}</style>]]></svg><i style='clear: both'>";
+    assert_eq!(keys(html), ["clear:both"]);
+    // Outside foreign content `<![CDATA[` is a bogus comment ending at `>`.
+    let html = "<![CDATA[x > <i style='clear: both'>";
+    assert_eq!(keys(html), ["clear:both"]);
+    // A self-closing `<svg/>` opens no foreign content.
+    let html = "<svg/><![CDATA[x > <i style='clear: both'>";
+    assert_eq!(keys(html), ["clear:both"]);
+}
+
+#[test]
 fn hyphen_only_property_names_are_not_features() {
     let html = "<style>p { -: x; --: y; clear: both }</style>";
     let features = feature_properties(html, "css/a/clear-001.html");

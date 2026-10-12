@@ -37,6 +37,7 @@ raikiri-js          = { workspace = true }
 time                = { workspace = true }
 png                 = { workspace = true }
 cssparser           = { workspace = true }
+markup5ever         = { workspace = true }
 
 [dev-dependencies]
 insta               = { workspace = true }

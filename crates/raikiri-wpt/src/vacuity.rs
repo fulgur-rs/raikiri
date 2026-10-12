@@ -421,6 +421,9 @@ fn tags_with(html: &str, include_inert: bool) -> Vec<Tag> {
     // attach declarative shadow roots, so `shadowrootmode` templates stay
     // inert too.
     let mut inert_depth = 0usize;
+    // Open `<svg>` and `<math>` elements. In foreign content `<![CDATA[`
+    // starts text that runs to `]]>`.
+    let mut foreign_depth = 0usize;
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] != b'<' {
@@ -429,6 +432,15 @@ fn tags_with(html: &str, include_inert: bool) -> Vec<Tag> {
         }
         if lower[i..].starts_with("<!--") {
             i = comment_end(&lower, i + 4);
+            continue;
+        }
+        if foreign_depth > 0 && html[i..].starts_with("<![CDATA[") {
+            i = html[i..].find("]]>").map_or(bytes.len(), |e| i + e + 3);
+            continue;
+        }
+        if foreign_depth > 0 && (end_tag_at(&lower, i, "svg") || end_tag_at(&lower, i, "math")) {
+            foreign_depth -= 1;
+            i += 2;
             continue;
         }
         // `<!...>` (a doctype or bogus comment), `<?...>` and `</` not
@@ -484,6 +496,9 @@ fn tags_with(html: &str, include_inert: bool) -> Vec<Tag> {
         let inert = inert_depth > 0;
         if name == "template" {
             inert_depth += 1;
+        }
+        if matches!(name.as_str(), "svg" | "math") && !html[..end].ends_with("/>") {
+            foreign_depth += 1;
         }
         if !inert || include_inert {
             out.push(Tag {
@@ -650,7 +665,7 @@ pub fn css_declarations(css: &str, inline: bool, base: usize) -> Vec<Declaration
                 continue;
             }
             b'\\' => {
-                i += 2;
+                i += escape_len(bytes, i);
                 continue;
             }
             // An unescaped newline ends a string (a bad-string token).
@@ -658,7 +673,11 @@ pub fn css_declarations(css: &str, inline: bool, base: usize) -> Vec<Declaration
                 i += 1;
                 while i < bytes.len() && bytes[i] != q && !matches!(bytes[i], b'\n' | b'\r' | 0x0c)
                 {
-                    i += if bytes[i] == b'\\' { 2 } else { 1 };
+                    i += if bytes[i] == b'\\' {
+                        escape_len(bytes, i)
+                    } else {
+                        1
+                    };
                 }
             }
             b'(' | b'[' => nesting += 1,
@@ -699,11 +718,22 @@ pub fn css_declarations(css: &str, inline: bool, base: usize) -> Vec<Declaration
     out
 }
 
+/// The length of the escape starting with the `\\` at `at`. CSS normalizes
+/// CRLF to one newline, so an escaped CRLF is consumed whole.
+fn escape_len(bytes: &[u8], at: usize) -> usize {
+    if bytes[at + 1..].starts_with(b"\r\n") {
+        3
+    } else {
+        2
+    }
+}
+
 /// Whether `segment`, the text of a declaration up to the current position,
 /// already names a custom property and has reached its value.
 fn is_custom_property(segment: &str) -> bool {
-    colon_outside_comments(segment)
-        .is_some_and(|colon| strip_comments(&segment[..colon]).trim().starts_with("--"))
+    colon_outside_comments(segment).is_some_and(|colon| {
+        css_unescape(strip_comments(&segment[..colon]).trim()).starts_with("--")
+    })
 }
 
 fn push_declaration(css: &str, range: Range<usize>, base: usize, out: &mut Vec<Declaration>) {
@@ -717,12 +747,7 @@ fn push_declaration(css: &str, range: Range<usize>, base: usize, out: &mut Vec<D
     let (name, value) = (&text[..colon], &text[colon + 1..]);
     let name = strip_comments(name);
     let name = name.trim();
-    // Identifier characters, including escapes and non-ASCII code points.
-    if name.is_empty()
-        || !name
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'\\') || !b.is_ascii())
-    {
+    if !is_identifier(name) {
         return;
     }
     let value = collapse_whitespace(value);
@@ -742,6 +767,33 @@ fn push_declaration(css: &str, range: Range<usize>, base: usize, out: &mut Vec<D
             format!("{}:{value}", name.to_ascii_lowercase())
         },
     });
+}
+
+/// Whether `name` is made of identifier characters, escapes (whose hex form
+/// may end with one whitespace character) and non-ASCII code points.
+fn is_identifier(name: &str) -> bool {
+    let mut chars = name.chars().peekable();
+    let mut empty = true;
+    while let Some(c) = chars.next() {
+        empty = false;
+        if c == '\\' {
+            let mut hex = 0;
+            while hex < 6 && chars.peek().is_some_and(char::is_ascii_hexdigit) {
+                chars.next();
+                hex += 1;
+            }
+            if hex == 0 {
+                if chars.next().is_none_or(|c| c == '\n') {
+                    return false;
+                }
+            } else if chars.peek().is_some_and(|c| c.is_ascii_whitespace()) {
+                chars.next();
+            }
+        } else if !(c.is_ascii_alphanumeric() || matches!(c, '-' | '_') || !c.is_ascii()) {
+            return false;
+        }
+    }
+    !empty
 }
 
 /// Resolve CSS escapes in an identifier: `\` with one to six hex digits and
@@ -792,83 +844,92 @@ fn colon_outside_comments(text: &str) -> Option<usize> {
     None
 }
 
-/// Decode numeric character references and the named references that can
-/// change CSS tokenization; others are kept as written. The map gives the
-/// source offset of every decoded byte, plus one entry for the end.
+/// Decode character references as the HTML tokenizer does in an attribute
+/// value. The map gives the source offset of every decoded byte, plus one
+/// entry for the end.
 fn decode_character_references(text: &str) -> (String, Vec<usize>) {
     let mut out = String::with_capacity(text.len());
     let mut map = Vec::with_capacity(text.len() + 1);
     let mut i = 0;
     while i < text.len() {
         let rest = &text[i..];
-        let reference = rest.strip_prefix('&').and_then(|after| {
-            let body_len = after
-                .bytes()
-                .take_while(|b| b.is_ascii_alphanumeric() || *b == b'#')
-                .count();
-            let body = &after[..body_len];
-            let semicolon = after[body_len..].starts_with(';');
-            // Numeric references decode without a `;`, and so do the
-            // legacy named ones unless an alphanumeric or `=` follows.
-            let c = match body.strip_prefix('#') {
-                Some(number) => {
-                    let (digits, radix) = match number.strip_prefix(['x', 'X']) {
-                        Some(hex) => (hex, 16),
-                        None => (number, 10),
-                    };
-                    let valid = digits
-                        .bytes()
-                        .take_while(|b| (*b as char).is_digit(radix))
-                        .count();
-                    if valid == 0 {
-                        return None;
-                    }
-                    let len = body_len - (digits.len() - valid);
-                    let c = u32::from_str_radix(&digits[..valid], radix)
-                        .ok()
-                        .and_then(char::from_u32)
-                        .unwrap_or('\u{fffd}');
-                    let semicolon = after[len..].starts_with(';');
-                    return Some((c, 1 + len + usize::from(semicolon)));
-                }
-                None if !semicolon => {
-                    let legacy = [("quot", '"'), ("amp", '&'), ("lt", '<'), ("gt", '>')];
-                    return legacy.iter().find_map(|(name, c)| {
-                        let next = after.as_bytes().get(name.len());
-                        (after.starts_with(name)
-                            && !next.is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'='))
-                        .then_some((*c, 1 + name.len()))
-                    });
-                }
-                None => match body {
-                    "quot" => Some('"'),
-                    "apos" => Some('\''),
-                    "amp" => Some('&'),
-                    "lt" => Some('<'),
-                    "gt" => Some('>'),
-                    "colon" => Some(':'),
-                    "semi" => Some(';'),
-                    "lpar" => Some('('),
-                    "rpar" => Some(')'),
-                    "lbrace" => Some('{'),
-                    "rbrace" => Some('}'),
-                    "sol" => Some('/'),
-                    "ast" => Some('*'),
-                    _ => None,
-                },
-            }?;
-            Some((c, body_len + 2))
-        });
-        let (c, len) = reference.unwrap_or_else(|| {
-            let c = rest.chars().next().unwrap_or_default();
-            (c, c.len_utf8())
-        });
-        map.extend(std::iter::repeat_n(i, c.len_utf8()));
-        out.push(c);
+        let (decoded, len) = rest
+            .strip_prefix('&')
+            .and_then(|after| match after.strip_prefix('#') {
+                Some(number) => numeric_reference(number).map(|(c, len)| ([c, None], 2 + len)),
+                None => named_reference(after).map(|(chars, len)| (chars, 1 + len)),
+            })
+            .unwrap_or_else(|| {
+                let c = rest.chars().next().unwrap_or_default();
+                ([Some(c), None], c.len_utf8())
+            });
+        for c in decoded.into_iter().flatten() {
+            map.extend(std::iter::repeat_n(i, c.len_utf8()));
+            out.push(c);
+        }
         i += len;
     }
     map.push(text.len());
     (out, map)
+}
+
+/// A numeric reference after `&#`: the character and the length consumed,
+/// including an optional `;`.
+fn numeric_reference(number: &str) -> Option<(Option<char>, usize)> {
+    let (digits, radix, prefix) = match number.strip_prefix(['x', 'X']) {
+        Some(hex) => (hex, 16, 1),
+        None => (number, 10, 0),
+    };
+    let valid = digits
+        .bytes()
+        .take_while(|b| (*b as char).is_digit(radix))
+        .count();
+    if valid == 0 {
+        return None;
+    }
+    let code = u32::from_str_radix(&digits[..valid], radix).unwrap_or(u32::MAX);
+    let c = match code {
+        0x80..=0x9f => markup5ever::data::C1_REPLACEMENTS[(code - 0x80) as usize]
+            .unwrap_or_else(|| char::from_u32(code).unwrap_or('\u{fffd}')),
+        0 => '\u{fffd}',
+        _ => char::from_u32(code).unwrap_or('\u{fffd}'),
+    };
+    let semicolon = digits[valid..].starts_with(';');
+    Some((Some(c), prefix + valid + usize::from(semicolon)))
+}
+
+/// The longest named reference at the start of `after` (the text after `&`):
+/// its characters and the length consumed. A name without `;` is not decoded
+/// when an alphanumeric or `=` follows, as in an attribute value.
+fn named_reference(after: &str) -> Option<([Option<char>; 2], usize)> {
+    let longest = after
+        .bytes()
+        .take_while(|b| b.is_ascii_alphanumeric() || *b == b';')
+        .take(40)
+        .count();
+    (1..=longest)
+        .rev()
+        .find_map(|len| {
+            let name = &after[..len];
+            let &(first, second) = markup5ever::data::NAMED_ENTITIES.get(name)?;
+            if !name.ends_with(';')
+                && after
+                    .as_bytes()
+                    .get(len)
+                    .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'=')
+            {
+                // Not a reference; HTML keeps the text as written.
+                return Some(([None, None], 0));
+            }
+            Some((
+                [
+                    char::from_u32(first),
+                    char::from_u32(second).filter(|_| second != 0),
+                ],
+                len,
+            ))
+        })
+        .filter(|(_, len)| *len > 0)
 }
 
 /// Normalize a declaration value: drop comments, trim, and collapse runs of
