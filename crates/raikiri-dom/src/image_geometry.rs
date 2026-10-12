@@ -332,8 +332,9 @@ fn round_axis_tiles(
     (positioning_len / count as f64, Some(count))
 }
 
-/// Most tiles one background layer places.
-const MAX_BACKGROUND_TILES: usize = 1 << 18;
+/// Most tiles one background layer places: enough for one-pixel tiles over
+/// a whole page at 96 dpi, with room to spare.
+const MAX_BACKGROUND_TILES: usize = 1 << 22;
 
 /// Most tiles `round` fits into one axis of the positioning area.
 const MAX_ROUND_TILES: i64 = 10_000;

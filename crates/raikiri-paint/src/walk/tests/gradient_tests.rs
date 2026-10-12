@@ -941,3 +941,47 @@ fn a_space_axis_too_short_for_two_enlarged_tiles_places_one() {
         .collect();
     assert_eq!(shapes, [Rect::new(0.25, 0.25, 1.25, 1.25)]);
 }
+
+#[test]
+fn a_narrow_ellipse_keeps_its_tall_period() {
+    let cv = computed_for(
+        "background-image: repeating-radial-gradient(ellipse 0.01px 100px, red 0%, blue 100%)",
+    );
+    let area = Rect::new(0.0, 0.0, 100.0, 100.0);
+    assert!(matches!(
+        gradient::gradient_fill(&gradient_of(&cv), area, cv.color),
+        Some(gradient::GradientFill::Brush(..))
+    ));
+}
+
+#[test]
+fn a_lone_round_tile_keeps_its_fractional_edge() {
+    let cv = computed_for(
+        "background-image: linear-gradient(red, red); background-size: 20px 20px; \
+         background-repeat: round",
+    );
+    let area = Rect::new(0.0, 0.0, 10.4, 10.4);
+    let mut scene = Scene::new();
+    gradient::paint_gradient_layer(
+        &mut scene,
+        &gradient_of(&cv),
+        area,
+        area,
+        None,
+        &cv.background_size,
+        &cv.background_position,
+        &cv.background_repeat,
+        cv.color,
+    );
+    let shapes: Vec<Rect> = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            anyrender::recording::RenderCommand::Fill(fill) => {
+                Some(kurbo::Shape::bounding_box(&fill.shape))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(shapes, [area]);
+}

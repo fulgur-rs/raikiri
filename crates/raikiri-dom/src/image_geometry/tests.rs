@@ -250,21 +250,21 @@ fn round_tiles_bound_degenerate_counts() {
         &both,
     )
     .expect("round tiles");
-    assert!(tiles.x.len() * tiles.y.len() <= 1 << 18);
-    assert_eq!(tiles.x.len(), 512);
+    assert!(tiles.x.len() * tiles.y.len() <= 1 << 22);
+    assert_eq!(tiles.x.len(), 2_048);
     // Offset tiles that spill past both edges still fit the budget.
     let mut shifted = position;
     shifted.horizontal = ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(0.5));
     shifted.vertical = ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(0.5));
     let tiles = background_tiles(
-        (0.0, 0.0, 512.0, 512.0),
-        (0.0, 0.0, 512.0, 512.0),
+        (0.0, 0.0, 2_048.0, 2_048.0),
+        (0.0, 0.0, 2_048.0, 2_048.0),
         (1.0, 1.0),
         &shifted,
         &both,
     )
     .expect("round tiles");
-    assert!(tiles.x.len() * tiles.y.len() <= 1 << 18);
+    assert!(tiles.x.len() * tiles.y.len() <= 1 << 22);
     // One `round` axis gives up tiles to a repeated one.
     let mut mixed = both;
     mixed.y = BackgroundRepeatKeyword::Repeat;
@@ -277,15 +277,25 @@ fn round_tiles_bound_degenerate_counts() {
     )
     .expect("round tiles");
     assert_eq!(tiles.y.len(), 2_000);
-    assert!(tiles.x.len() * tiles.y.len() <= 1 << 18);
-    // Repeated tiny tiles over a large area paint nothing.
+    assert!(tiles.x.len() * tiles.y.len() <= 1 << 22);
     let mut repeated = both;
     repeated.x = BackgroundRepeatKeyword::Repeat;
     repeated.y = BackgroundRepeatKeyword::Repeat;
+    // One-pixel tiles over a page-sized box are all placed.
+    let tiles = background_tiles(
+        (0.0, 0.0, 794.0, 1_123.0),
+        (0.0, 0.0, 794.0, 1_123.0),
+        (1.0, 1.0),
+        &position,
+        &repeated,
+    )
+    .expect("repeated tiles");
+    assert_eq!((tiles.x.len(), tiles.y.len()), (794, 1_123));
+    // Repeated tiny tiles over a far larger area paint nothing.
     assert!(
         background_tiles(
-            (0.0, 0.0, 5_000.0, 5_000.0),
-            (0.0, 0.0, 5_000.0, 5_000.0),
+            (0.0, 0.0, 9_000.0, 9_000.0),
+            (0.0, 0.0, 9_000.0, 9_000.0),
             (1.0, 1.0),
             &position,
             &repeated,

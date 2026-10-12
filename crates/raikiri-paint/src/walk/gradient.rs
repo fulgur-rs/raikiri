@@ -180,7 +180,7 @@ pub(super) fn paint_gradient_layer(
             // meet without antialiased seams; a single tile and the
             // painting area keep their own edges.
             let snap = |edge: f64, snaps: bool| if snaps { edge.round() } else { edge };
-            let (snap_x, snap_y) = (repeat_x, repeat_y);
+            let (snap_x, snap_y) = (repeat_x && tiles.x.len() > 1, repeat_y && tiles.y.len() > 1);
             let shape = Rect::new(
                 snap(*tile_x, snap_x),
                 snap(*tile_y, snap_y),
@@ -469,7 +469,9 @@ fn radial_fill(
     } else if let Some(color) = clip_stops_at_zero(&mut stops, &radial.interpolation) {
         return Some(GradientFill::Solid(color));
     }
-    let (first, last, stops) = match normalize_stops(stops, radial.repeating, rx)? {
+    // An ellipse stretches the period along its longer radius, where it is
+    // most visible.
+    let (first, last, stops) = match normalize_stops(stops, radial.repeating, rx.max(ry))? {
         Normalized::Solid(color) => return Some(GradientFill::Solid(color)),
         Normalized::Stops { first, last, stops } => (first, last, stops),
     };
