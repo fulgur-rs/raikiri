@@ -620,7 +620,7 @@ fn paint_page_background_image(
     ) else {
         return;
     };
-    let Some(url) = background_image_url(raw_url) else {
+    let Some(url) = image_cache.image_url(raw_url) else {
         return;
     };
     let initial = ComputedValues::initial();
@@ -722,7 +722,7 @@ fn paint_canvas_background_image(
     let BackgroundImage::Url(raw_url) = &computed.background_image else {
         return;
     };
-    let Some(url) = background_image_url(raw_url) else {
+    let Some(url) = image_cache.image_url(raw_url) else {
         return;
     };
     // Canvas paint/position areas with nonzero page margins and root borders
@@ -774,12 +774,6 @@ fn paint_canvas_background_image(
         warnings,
     );
 }
-fn background_image_url(raw_url: &str) -> Option<url::Url> {
-    let mut url = url::Url::parse(raw_url).ok()?;
-    url.set_fragment(None);
-    Some(url)
-}
-
 fn background_color_with_image_source(
     background_color: CssColor,
     background_image: &BackgroundImage,
@@ -899,9 +893,14 @@ fn generated_pseudo_text_advance(
     let family = computed
         .font_family
         .first()
-        .map(|family| family.as_str().to_string())
-        .unwrap_or_else(|| "serif".to_string());
-    text::measure_margin_text_advance(document, &content, computed.font_size.px(), &family)
+        .cloned()
+        .unwrap_or_else(|| raikiri_style::FontFamilyName::generic("serif"));
+    text::measure_margin_text_advance(
+        document,
+        &content,
+        computed.font_size.px(),
+        std::slice::from_ref(&family),
+    )
 }
 
 fn generated_flow_height(
@@ -1056,9 +1055,14 @@ fn generated_pseudo_text_height(
     let family = computed
         .font_family
         .first()
-        .map(|family| family.as_str().to_string())
-        .unwrap_or_else(|| "serif".to_string());
-    text::measure_margin_text_height(document, &content, computed.font_size.px(), &family)
+        .cloned()
+        .unwrap_or_else(|| raikiri_style::FontFamilyName::generic("serif"));
+    text::measure_margin_text_height(
+        document,
+        &content,
+        computed.font_size.px(),
+        std::slice::from_ref(&family),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1088,10 +1092,14 @@ fn paint_generated_pseudo(
     let family = computed
         .font_family
         .first()
-        .map(|family| family.as_str().to_string())
-        .unwrap_or_else(|| "serif".to_string());
-    let advance =
-        text::measure_margin_text_advance(document, &content, computed.font_size.px(), &family);
+        .cloned()
+        .unwrap_or_else(|| raikiri_style::FontFamilyName::generic("serif"));
+    let advance = text::measure_margin_text_advance(
+        document,
+        &content,
+        computed.font_size.px(),
+        std::slice::from_ref(&family),
+    );
     text::draw_margin_text(
         document,
         scene,
@@ -1102,7 +1110,7 @@ fn paint_generated_pseudo(
         height,
         css_color(computed.color),
         computed.font_size.px(),
-        &family,
+        std::slice::from_ref(&family),
         StandaloneAlign::Start,
         text::MarginTextVerticalAlign::Top,
     );
@@ -1125,7 +1133,7 @@ fn paint_list_marker(
     let snapshots = raikiri_dom::counter_snapshots(document, cascade)
         .expect("test counter snapshots stay within budget");
     paint_list_marker_with_snapshots(
-        &crate::walk::ImageBrushCache::default(),
+        &crate::walk::ImageBrushCache::for_document(document),
         scene,
         document,
         cascade,
@@ -1181,8 +1189,8 @@ fn paint_list_marker_with_snapshots(
     let resolved = if let (BackgroundImage::Url(raw_url), Some(source)) =
         (&computed.list_style_image, pixel_source)
     {
-        url::Url::parse(raw_url)
-            .ok()
+        image_cache
+            .resolve_url(raw_url)
             .and_then(|url| source.get_decoded(&url))
     } else {
         None
@@ -1269,7 +1277,7 @@ fn paint_margin_box(
     }
     let borders = margin_box.border_widths();
     if let (Some(image), Some(source)) = (&margin_box.background_image, pixel_source) {
-        if let Some(url) = background_image_url(&image.url) {
+        if let Some(url) = image_cache.image_url(&image.url) {
             // Margin-box paint/position areas honor `background-origin`/`background-clip`
             // like elements (border box is `rect`). Unsupported `text`/`border-area`
             // clips warn and skip the image instead of silently omitting pixels.
@@ -3094,13 +3102,13 @@ pub(crate) fn paint_document_impl(
                     let family = cv
                         .font_family
                         .first()
-                        .map(|family| family.as_str().to_string())
-                        .unwrap_or_else(|| "serif".to_string());
+                        .cloned()
+                        .unwrap_or_else(|| raikiri_style::FontFamilyName::generic("serif"));
                     let collapsed_space = text::measure_margin_text_advance(
                         document,
                         " ",
                         cv.font_size.px(),
-                        &family,
+                        std::slice::from_ref(&family),
                     );
                     let mut flow_advance = 0.0;
                     let mut saw_generated_inline = false;
@@ -4010,7 +4018,7 @@ fn paint_element_background_slice(
         return;
     }
     let background_url = match bg_image {
-        BackgroundImage::Url(raw_url) => url::Url::parse(raw_url).ok(),
+        BackgroundImage::Url(raw_url) => image_cache.resolve_url(raw_url),
         _ => None,
     };
     let effective = background_color_with_image_source(bg, bg_image, current_color, pixel_source);
@@ -4489,7 +4497,7 @@ pub(crate) fn paint_element_border_image(
     };
     match &image.source {
         BackgroundImage::Url(raw_url) => {
-            let Some((url, pixel_source)) = background_image_url(raw_url).zip(pixel_source) else {
+            let Some((url, pixel_source)) = image_cache.image_url(raw_url).zip(pixel_source) else {
                 return false;
             };
             let Some(natural) = pixel_source.intrinsic_size(&url) else {

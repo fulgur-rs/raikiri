@@ -368,7 +368,7 @@ pub(crate) fn draw_ifc_lines(
     custom_highlights: &[crate::TextHighlightRange],
 ) {
     draw_ifc_lines_with_resources(
-        &crate::walk::ImageBrushCache::default(),
+        &crate::walk::ImageBrushCache::for_document(document),
         scene,
         document,
         cascade,

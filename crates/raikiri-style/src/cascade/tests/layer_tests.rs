@@ -500,7 +500,8 @@ fn layer_block_error_recovery_and_depth_limits_preserve_following_rules() {
     assert_eq!(tree.style_rules().len(), 1);
     assert_eq!(color(&tree, &MediaContext::print()), BLUE);
     let tree = author_tree(&["@layer a{p{color:red}"]);
-    assert!(tree.style_rules().is_empty());
+    assert_eq!(tree.style_rules().len(), 1);
+    assert_eq!(color(&tree, &MediaContext::print()), RED);
 }
 
 #[test]

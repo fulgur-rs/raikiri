@@ -225,8 +225,8 @@ pub(crate) fn layout_resumed<'r>(
     let anchors = navigation::build_anchors(DomView::new(&out.document), &out);
     let running = build_running_index(&out);
     let running_layouts = running::LayoutCache::new(&running);
-    let svg_sources = (0..=out.continuations.len())
-        .map(|_| page::InlineSvgCache::default())
+    let caches = (0..=out.continuations.len())
+        .map(|_| DocumentCaches::default())
         .collect();
     if signal.as_ref().is_some_and(|signal| signal.is_aborted()) {
         return Ok(Some(LayoutStatus::Aborted)); // cov:ignore: needs the abort signal to fire while the running elements are indexed
@@ -237,7 +237,7 @@ pub(crate) fn layout_resumed<'r>(
         rendered,
         running,
         running_layouts,
-        svg_sources,
+        caches,
     })))
 }
 
@@ -248,9 +248,18 @@ pub struct DocumentLayout {
     rendered: std::collections::HashSet<raikiri_traits::NodeId>,
     running: running::RunningIndex,
     running_layouts: running::LayoutCache,
-    /// Prepared inline SVG sources, one cache per laid-out document in
+    /// Caches shared by the pages of each laid-out document, in
     /// [`crate::render::PipelineOutput::layout_slot_for_page`] order.
-    svg_sources: Vec<page::InlineSvgCache>,
+    caches: Vec<DocumentCaches>,
+}
+
+/// What the pages of one laid-out document share.
+#[derive(Debug, Default)]
+struct DocumentCaches {
+    /// Prepared inline SVG sources.
+    svg_sources: page::InlineSvgCache,
+    /// The values of page-margin `element()` and `string()` references.
+    margin_values: raikiri_dom::MarginBoxNamedValues,
 }
 
 /// Index the running elements by the pages the rendered content around them
@@ -301,7 +310,7 @@ impl DocumentLayout {
     fn page_at(&self, i: usize) -> Page<'_> {
         let page_index = self.out.slices[i].page_index;
         let (document, cascade) = self.out.layout_for_page(page_index);
-        let svg_sources = &self.svg_sources[self.out.layout_slot_for_page(page_index)];
+        let caches = &self.caches[self.out.layout_slot_for_page(page_index)];
         // A right page pairs with the left page before it; the first page,
         // which has none, pairs with the one after it.
         let paired_style = if self.out.slices[i].page_index % 2 == 1 {
@@ -321,7 +330,8 @@ impl DocumentLayout {
             page_count_deferred: false,
             paired_style,
             running: Some(self.running_source()),
-            svg_sources,
+            svg_sources: &caches.svg_sources,
+            margin_values: &caches.margin_values,
         }
     }
 
@@ -352,8 +362,8 @@ impl DocumentLayout {
         }
     }
 
-    /// In-document link destinations. Positions are in layout space until
-    /// paint-space positions are exposed.
+    /// In-document link destinations, at the positions where the built-in
+    /// painter draws them.
     pub fn anchors(&self) -> &AnchorIndex {
         &self.anchors
     }

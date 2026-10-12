@@ -16,8 +16,8 @@ use crate::{
 };
 use raikiri_style::property::{
     BackgroundImage, BackgroundRepeat, Border, BorderColor, BorderStyle, ContentComponent,
-    CounterStyle, CssColor, Length, LengthOrAuto, PropertyKey, PropertyValue, QuoteKeyword, Sides,
-    StringFetchMode, TextAlign, VerticalAlign, VisualBox, WritingMode,
+    CounterStyle, CssColor, FontFamilyName, Length, LengthOrAuto, PropertyKey, PropertyValue,
+    QuoteKeyword, Sides, StringFetchMode, TextAlign, VerticalAlign, VisualBox, WritingMode,
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedCssPosition, ComputedLength, ComputedValues,
@@ -425,16 +425,10 @@ struct MarginBoxSpec {
     running: Option<(SmolStr, StringFetchMode)>,
 }
 
-/// Horizontal standalone style for a `font-family` string. Family names keep
-/// their quotes: the engine tells a quoted `"serif"` (a named family) from
-/// the generic keyword.
-fn text_style(font_size: f32, font_family: &str) -> StandaloneStyle {
+/// Horizontal standalone style for a parsed `font-family` list.
+fn text_style(font_size: f32, font_family: &[FontFamilyName]) -> StandaloneStyle {
     StandaloneStyle {
-        families: font_family
-            .split(',')
-            .map(|name| name.trim().to_owned())
-            .filter(|name| !name.is_empty())
-            .collect(),
+        families: font_family.to_vec(),
         font_size: if font_size.is_finite() && font_size > 0.0 {
             font_size
         } else {
@@ -551,7 +545,7 @@ fn inherited_margin_box_font(
     cascade: &CascadeResult,
     page: &PageCascadeResult,
     rule: &PageMarginBoxCascadeResult,
-) -> (f32, String) {
+) -> (f32, FontFamilyName) {
     let root = root_computed(document, cascade);
     let root_size = root.map_or(16.0, |computed| computed.font_size.px());
     let page_size = match page_property(page, PropertyKey::FontSize) {
@@ -568,15 +562,10 @@ fn inherited_margin_box_font(
     let family = match margin_box_property(rule, PropertyKey::FontFamily)
         .or_else(|| page_property(page, PropertyKey::FontFamily))
     {
-        Some(PropertyValue::FontFamily(families)) => families
-            .first()
-            .map(|family| family.as_str().to_string())
-            .unwrap_or_else(|| "serif".to_string()),
-        _ => root
-            .and_then(|computed| computed.font_family.first())
-            .map(|family| family.as_str().to_string())
-            .unwrap_or_else(|| "serif".to_string()),
-    };
+        Some(PropertyValue::FontFamily(families)) => families.first().cloned(),
+        _ => root.and_then(|computed| computed.font_family.first().cloned()),
+    }
+    .unwrap_or_else(|| FontFamilyName::generic("serif"));
     (font_size.max(0.1), family)
 }
 
@@ -756,49 +745,112 @@ fn element_string_value(document: &Document, root: usize) -> String {
     raw.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-fn running_element_value(document: &Document, cascade: &CascadeResult, name: &str) -> String {
-    for (idx, computed) in cascade.computed.iter().enumerate().rev() {
-        if computed
-            .running_templates
-            .iter()
-            .any(|template| template.name.as_str() == name)
-        {
-            return element_string_value(document, idx);
-        }
+/// The document-wide values that page-margin `element()` and `string()`
+/// references show, keyed by name.
+///
+/// The values do not depend on the page, so one table serves every page of
+/// a laid-out document. It is built on first use, with a single pass over
+/// the cascade, so documents whose margin boxes reference neither function
+/// never pay for it. Keep one per `(document, cascade)` pair.
+#[derive(Debug, Default)]
+pub struct MarginBoxNamedValues {
+    table: std::sync::OnceLock<NamedValues>,
+}
+
+#[derive(Debug, Default)]
+struct NamedValues {
+    elements: std::collections::HashMap<SmolStr, String>,
+    strings: std::collections::HashMap<SmolStr, String>,
+}
+
+impl MarginBoxNamedValues {
+    /// An empty table, filled from the document and cascade it is first
+    /// used with.
+    pub fn new() -> Self {
+        Self::default()
     }
-    String::new()
+
+    fn table(&self, document: &Document, cascade: &CascadeResult) -> &NamedValues {
+        self.table
+            .get_or_init(|| NamedValues::build(document, cascade))
+    }
+}
+
+impl NamedValues {
+    fn build(document: &Document, cascade: &CascadeResult) -> Self {
+        // The last element in document order with a running template of a
+        // name, and the last `string-set` entry of a name.
+        let mut last_elements = std::collections::HashMap::<&SmolStr, usize>::new();
+        let mut last_strings =
+            std::collections::HashMap::<&SmolStr, (usize, &[ContentComponent])>::new();
+        for (idx, computed) in cascade.computed.iter().enumerate() {
+            for template in &computed.running_templates {
+                last_elements.insert(&template.name, idx);
+            }
+            for (name, components) in computed.string_set.iter() {
+                last_strings.insert(name, (idx, components.as_slice()));
+            }
+        }
+        let elements = last_elements
+            .into_iter()
+            .map(|(name, idx)| (name.clone(), element_string_value(document, idx)))
+            .collect();
+        let strings = last_strings
+            .into_iter()
+            .map(|(name, (idx, components))| {
+                let mut value = String::new();
+                for component in components {
+                    match component {
+                        ContentComponent::Literal(text) => value.push_str(text.as_str()),
+                        ContentComponent::Content { .. } => {
+                            value.push_str(&element_string_value(document, idx));
+                        }
+                        _ => {}
+                    }
+                }
+                (name.clone(), value)
+            })
+            .collect();
+        Self { elements, strings }
+    }
+}
+
+/// The text of the last element in document order whose running template
+/// is named `name`.
+fn running_element_value<'v>(
+    document: &Document,
+    cascade: &CascadeResult,
+    values: &'v MarginBoxNamedValues,
+    name: &str,
+) -> &'v str {
+    values
+        .table(document, cascade)
+        .elements
+        .get(name)
+        .map_or("", String::as_str)
 }
 
 /// Resolve the last document-order `string-set` value for a page-margin
 /// `string()` reference. This is the minimal single-page bridge; paginated
 /// first/start/last scoping remains a PageContext follow-up.
-fn named_string_value(document: &Document, cascade: &CascadeResult, name: &str) -> String {
-    let mut resolved = String::new();
-    for (idx, computed) in cascade.computed.iter().enumerate() {
-        for (entry_name, components) in computed.string_set.iter() {
-            if entry_name.as_str() != name {
-                continue;
-            }
-            let mut value = String::new();
-            for component in components {
-                match component {
-                    ContentComponent::Literal(text) => value.push_str(text.as_str()),
-                    ContentComponent::Content { .. } => {
-                        value.push_str(&element_string_value(document, idx));
-                    }
-                    _ => {}
-                }
-            }
-            resolved = value;
-        }
-    }
-    resolved
+fn named_string_value<'v>(
+    document: &Document,
+    cascade: &CascadeResult,
+    values: &'v MarginBoxNamedValues,
+    name: &str,
+) -> &'v str {
+    values
+        .table(document, cascade)
+        .strings
+        .get(name)
+        .map_or("", String::as_str)
 }
 
 /// How many characters per decimal digit a deferred page count placeholder
 /// may take in its counter style; Roman numerals take up to four.
 const MAX_PLACEHOLDER_WIDENING: usize = 4;
 
+#[allow(clippy::too_many_arguments)]
 fn resolved_margin_content(
     components: &[ContentComponent],
     document: &Document,
@@ -807,6 +859,7 @@ fn resolved_margin_content(
     rule: &PageMarginBoxCascadeResult,
     context: MarginBoxPageContext,
     quotes: &[(String, String)],
+    values: &MarginBoxNamedValues,
 ) -> (String, Vec<(Range<usize>, CounterStyle)>) {
     let mut deferred = Vec::new();
     let mut text = String::new();
@@ -853,10 +906,15 @@ fn resolved_margin_content(
                 let _ = separator;
             }
             ContentComponent::Element { name, .. } => {
-                text.push_str(&running_element_value(document, cascade, name.as_str()));
+                text.push_str(running_element_value(
+                    document,
+                    cascade,
+                    values,
+                    name.as_str(),
+                ));
             }
             ContentComponent::String { name, .. } => {
-                text.push_str(&named_string_value(document, cascade, name.as_str()));
+                text.push_str(named_string_value(document, cascade, values, name.as_str()));
             }
             ContentComponent::Quote(keyword) => match keyword {
                 QuoteKeyword::OpenQuote => {
@@ -890,14 +948,16 @@ fn margin_box_content(
     page: &PageCascadeResult,
     rule: &PageMarginBoxCascadeResult,
     context: MarginBoxPageContext,
+    values: &MarginBoxNamedValues,
 ) -> Option<(String, Vec<DeferredSlot>)> {
     let Some(PropertyValue::Content(components)) = margin_box_property(rule, PropertyKey::Content)
     else {
         return None;
     };
     let quotes = inherited_margin_box_quotes(document, cascade, page, rule);
-    let (text, deferred) =
-        resolved_margin_content(components, document, cascade, page, rule, context, &quotes);
+    let (text, deferred) = resolved_margin_content(
+        components, document, cascade, page, rule, context, &quotes, values,
+    );
     let registry = (!deferred.is_empty()).then(|| {
         Arc::new(fallback_chains(
             &cascade.counter_styles,
@@ -1168,6 +1228,7 @@ fn margin_box_padding(
     ]
 }
 
+#[allow(clippy::too_many_arguments)]
 fn margin_box_spec(
     document: &Document,
     cascade: &CascadeResult,
@@ -1176,6 +1237,7 @@ fn margin_box_spec(
     width_basis: f32,
     height_basis: f32,
     context: MarginBoxPageContext,
+    values: &MarginBoxNamedValues,
 ) -> Option<MarginBoxSpec> {
     let Some(PropertyValue::Content(components)) = margin_box_property(rule, PropertyKey::Content)
     else {
@@ -1201,7 +1263,7 @@ fn margin_box_spec(
                 if url.ends_with("/green.png") || url == "green.png"
         )
     });
-    let (content, deferred) = margin_box_content(document, cascade, page, rule, context)?;
+    let (content, deferred) = margin_box_content(document, cascade, page, rule, context, values)?;
     let (font_size, font_family) = inherited_margin_box_font(document, cascade, page, rule);
     let margin = margin_box_margins(rule, width_basis, height_basis, font_size);
     let padding = margin_box_padding(rule, width_basis, font_size);
@@ -1303,7 +1365,7 @@ fn margin_box_spec(
         Some(PropertyValue::Direction(value)) => *value,
         _ => root.direction,
     };
-    let mut text_style = text_style(font_size, &font_family);
+    let mut text_style = text_style(font_size, std::slice::from_ref(&font_family));
     text_style.writing_mode = match mode {
         WritingMode::VerticalRl => shodo::geometry::WritingMode::VerticalRl,
         WritingMode::VerticalLr => shodo::geometry::WritingMode::VerticalLr,
@@ -1950,6 +2012,28 @@ pub fn page_margin_boxes(
     page_box: PageBox,
     context: MarginBoxPageContext,
 ) -> Vec<MarginBox> {
+    page_margin_boxes_with_values(
+        document,
+        cascade,
+        page,
+        page_box,
+        context,
+        &MarginBoxNamedValues::new(),
+    )
+}
+
+/// [`page_margin_boxes`], reading `element()` and `string()` values from
+/// `values`, so that the pages of one document share a single scan of it.
+///
+/// `values` must only ever be used with this `document` and `cascade`.
+pub fn page_margin_boxes_with_values(
+    document: &Document,
+    cascade: &CascadeResult,
+    page: &PageCascadeResult,
+    page_box: PageBox,
+    context: MarginBoxPageContext,
+    values: &MarginBoxNamedValues,
+) -> Vec<MarginBox> {
     let mut out = Vec::new();
     let margins = page_margins_for_page(page, page_box);
     if margins.is_zero() || page.margin_boxes().is_empty() {
@@ -2000,6 +2084,7 @@ pub fn page_margin_boxes(
             width_basis,
             height_basis,
             context,
+            values,
         ) {
             specs.push(spec);
         }

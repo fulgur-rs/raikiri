@@ -4,7 +4,7 @@ use super::{
 use crate::RenderError;
 use raikiri_style::property::StringFetchMode;
 use raikiri_style::{ComputedValues, PageCascadeResult};
-use raikiri_traits::{NodeId, PaintInsets, PaintRect};
+use raikiri_traits::{NodeId, PaintInsets, PaintRect, PaintTransform};
 
 /// How the page is laid out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,6 +89,9 @@ pub struct Page<'a> {
     pub(super) running: Option<super::running::RunningSource<'a>>,
     /// Prepared inline SVG sources of [`Self::document`].
     pub(super) svg_sources: &'a InlineSvgCache,
+    /// The `element()` and `string()` values of [`Self::document`], shared
+    /// by its pages.
+    pub(super) margin_values: &'a raikiri_dom::MarginBoxNamedValues,
 }
 
 /// A running element placed in a page-margin box.
@@ -656,12 +659,13 @@ impl<'a> Page<'a> {
         if self.page_count_deferred {
             context = context.with_deferred_page_count();
         }
-        raikiri_dom::page_margin_boxes(
+        raikiri_dom::page_margin_boxes_with_values(
             self.document,
             self.cascade,
             self.style,
             self.geometry.page_box,
             context,
+            self.margin_values,
         )
     }
 
@@ -782,16 +786,38 @@ impl<'a> Page<'a> {
     pub fn page_style(&self) -> &'a PageCascadeResult {
         self.style
     }
-    /// Links on this page. Quads are in layout space until paint-space
-    /// positions are exposed.
+    /// Links on this page, with their clickable areas both in layout space
+    /// and where the built-in painter draws them.
     pub fn links(&self) -> impl Iterator<Item = super::Link<'a>> + 'a + use<'a> {
+        let paint_quads = self
+            .document
+            .page_link_paint_quads(self.cascade, self.slice.page_index);
         self.document
             .page_links(self.slice.page_index)
-            .map(|(owner, target, quads)| super::Link {
+            .zip(paint_quads)
+            .map(|((owner, target, quads), paint_quads)| super::Link {
                 owner,
                 target,
                 quads,
+                paint_quads,
             })
+    }
+
+    /// The transform the built-in painter draws the box of `node` on this
+    /// page through: the [`PaintEvent::PushTransform`] events around the
+    /// node's events in [`Self::paint_order`], composed, or the identity
+    /// when there are none. It maps [`Fragment::rect`] and the other layout
+    /// space positions of the node to the page. Text takes the transform of
+    /// the element it is in and, inside columns, the offsets that move its
+    /// lines.
+    ///
+    /// `None` when the painter draws nothing of `node` because a transform
+    /// on it or an ancestor is singular, and for an out-of-range node.
+    pub fn paint_transform(&self, node: NodeId) -> Option<PaintTransform> {
+        self.document
+            .page_paint_transforms(self.cascade, self.slice.page_index, [node])
+            .pop()
+            .flatten()
     }
 }
 

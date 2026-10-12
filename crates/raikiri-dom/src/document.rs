@@ -426,6 +426,9 @@ pub struct Document {
     /// children use the recorded physical height as their containing
     /// block's inline size; see `taffy_impl::vertical_oof`.
     pub(crate) vertical_oof_containing_blocks: Vec<(usize, f32)>,
+    /// The vertical box under a horizontal block container that is being
+    /// laid out at its content-based width; see `taffy_impl::orthogonal_flow`.
+    pub(crate) orthogonal_block_in_layout: Option<usize>,
     /// Block containers being laid out, each with the content-box width its
     /// children's percentage padding and borders resolve against; see
     /// [`crate::taffy_impl::BlockChildStyle`].
@@ -442,6 +445,10 @@ pub struct Document {
     /// `raikiri_style::StyleQuirksMode` for cascade's id/class
     /// case-folding (CSS Selectors L4).
     quirks_mode: QuirksMode,
+    /// The document base URL (HTML §2.4.1), against which paint resolves
+    /// the relative `url()` values left in computed values, such as those
+    /// of a `style` attribute.
+    base_url: Option<url::Url>,
 }
 
 impl Document {
@@ -590,8 +597,10 @@ impl Document {
             column_rules: std::collections::BTreeMap::new(),
             fragmentation_stack: Vec::new(),
             vertical_oof_containing_blocks: Vec::new(),
+            orthogonal_block_in_layout: None,
             block_item_percent_bases: Vec::new(),
             quirks_mode: QuirksMode::default(),
+            base_url: None,
         }
     }
 
@@ -1869,8 +1878,10 @@ impl Document {
             column_rules: _,
             fragmentation_stack: _,
             vertical_oof_containing_blocks: _,
+            orthogonal_block_in_layout: _,
             block_item_percent_bases: _,
             quirks_mode,
+            base_url,
         } = self;
 
         let new_of_old: std::collections::HashMap<usize, usize> = nodes
@@ -1918,6 +1929,7 @@ impl Document {
         document.ifc = ifc.clone();
         document.stylesheets = stylesheets.clone();
         document.quirks_mode = *quirks_mode;
+        document.base_url = base_url.clone();
         document.layout_dirty = true;
         document.flags_dirty = true;
         document
@@ -2804,6 +2816,20 @@ impl Document {
     /// `StyleQuirksMode` and passes it to cascade (`dom_impl.rs`).
     pub fn quirks_mode(&self) -> QuirksMode {
         self.quirks_mode
+    }
+
+    // ─── base URL ───────────────────
+
+    /// Set the document base URL. The raikiri-html parse sets the effective
+    /// base: the `<base href>` resolved against the caller's base URL.
+    pub fn set_base_url(&mut self, base_url: Option<url::Url>) {
+        self.base_url = base_url;
+    }
+
+    /// The document base URL. `None` for a document parsed without a base
+    /// URL or `<base href>`, and for a manually constructed `Document`.
+    pub fn base_url(&self) -> Option<&url::Url> {
+        self.base_url.as_ref()
     }
 }
 

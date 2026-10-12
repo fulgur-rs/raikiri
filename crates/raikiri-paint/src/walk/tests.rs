@@ -4152,7 +4152,7 @@ fn inside_ruby_multicol_markers_paint_on_the_legacy_path() {
                 &doc,
                 if image { " " } else { &marker_text },
                 marker_cv.font_size.px(),
-                marker_cv.font_family.first().unwrap().as_str(),
+                std::slice::from_ref(marker_cv.font_family.first().unwrap()),
             );
         assert_eq!(doc.legacy_inside_marker_advance(item), paint_advance);
         raikiri_dom::layout_single_page(&mut doc, &cascade, PageBox::A4).unwrap();
@@ -5344,6 +5344,86 @@ fn a_url_border_image_draws_each_part_instead_of_the_border() {
     let pixels = BorderImagePixels::opaque();
     // Nine parts of one stretched tile each.
     assert_eq!(root_border_fills(URL_BORDER_IMAGE, Some(&pixels)), (9, 0));
+}
+
+/// Pixels for `url` only, so a test sees which URL paint asked for.
+struct PixelsAt {
+    url: url::Url,
+    pixels: BorderImagePixels,
+}
+
+impl ImagePixelSource for PixelsAt {
+    fn get_decoded(&self, url: &url::Url) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+        (*url == self.url)
+            .then(|| self.pixels.get_decoded(url))
+            .flatten()
+    }
+    fn intrinsic_size(&self, url: &url::Url) -> Option<raikiri_traits::ImageIntrinsicSize> {
+        (*url == self.url)
+            .then(|| self.pixels.intrinsic_size(url))
+            .flatten()
+    }
+}
+
+#[test]
+fn a_relative_border_image_url_resolves_against_the_document_base_url() {
+    let source = PixelsAt {
+        url: url::Url::parse("https://images.test/dir/border.png").unwrap(),
+        pixels: BorderImagePixels::opaque(),
+    };
+    let fills = |base_url: Option<&str>| {
+        let mut document = Document::new();
+        document.set_base_url(base_url.map(|base| url::Url::parse(base).unwrap()));
+        document.append_element(
+            Some(document.root_index()),
+            "html",
+            Style::default(),
+            Some("border: 5px solid red; border-image: url(border.png#part) 1 fill"),
+        );
+        let rules = build_rule_tree(&document);
+        let cascade = cascade(&document, &rules).expect("cascade Ok");
+        let mut scene = Scene::new();
+        let mut warnings = Vec::new();
+        paint_root_element_border(
+            &crate::walk::ImageBrushCache::for_document(&document),
+            &mut scene,
+            &document,
+            &cascade,
+            PageBox::A4,
+            Some(&source),
+            &mut warnings,
+        );
+        scene
+            .commands
+            .iter()
+            .filter(|command| matches!(command, RenderCommand::Fill(_)))
+            .count()
+    };
+    // The nine parts of the image replace the border.
+    assert_eq!(fills(Some("https://images.test/dir/page.html")), 9);
+    // Without a base the URL names nothing, so the border is painted.
+    assert_eq!(fills(None), 4);
+}
+
+#[test]
+fn empty_and_fragment_only_image_urls_name_no_image_even_with_a_base_url() {
+    let mut document = Document::new();
+    document.set_base_url(Some(
+        url::Url::parse("https://images.test/page.html").unwrap(),
+    ));
+    let cache = crate::walk::ImageBrushCache::for_document(&document);
+    for raw in ["", "  ", "#part", " #part"] {
+        assert_eq!(cache.resolve_url(raw), None, "{raw:?}");
+    }
+    // An invalid absolute URL does not fall back to the base either.
+    assert_eq!(cache.resolve_url("https://"), None);
+    assert_eq!(
+        cache
+            .image_url("a.png#x")
+            .map(|url| url.to_string())
+            .as_deref(),
+        Some("https://images.test/a.png")
+    );
 }
 
 #[test]

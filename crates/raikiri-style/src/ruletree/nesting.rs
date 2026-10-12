@@ -360,9 +360,6 @@ impl<'i> cssparser::AtRuleParser<'i> for StyleBodyParser<'_> {
             self.supports_context,
             self.budget,
         );
-        if !nested_block_has_closing_brace(self.source, input) {
-            return Err(input.new_custom_error(()));
-        }
         Ok(BodyItem::Rule(GroupItem::Group(prelude, items)))
     }
 }
@@ -457,9 +454,6 @@ impl<'i> cssparser::QualifiedRuleParser<'i> for StyleBodyParser<'_> {
             self.supports_context,
             self.budget,
         );
-        if !nested_block_has_closing_brace(self.source, input) {
-            return Err(input.new_custom_error(()));
-        }
         Ok(BodyItem::Rule(GroupItem::Sequence(items)))
     }
 }

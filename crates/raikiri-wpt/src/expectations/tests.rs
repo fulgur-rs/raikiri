@@ -820,8 +820,9 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // - Pins that fail on Linux with the WPT fonts, now expected failures (-102).
     // - Testharness and JS-dependent pins the runner cannot evaluate, or already listed in known-issues (-57).
     // + Vertical flex gaps, a fieldset flex item's overflow clip, and flex item vertical-align fixed (+4).
+    // + A vertical flex container under a horizontal block sized by its content (+1).
     // + Sweep passes that survive the vacuous-PASS audit (+2,572).
-    assert_eq!(set.baseline.entries.len(), 3936);
+    assert_eq!(set.baseline.entries.len(), 3937);
     for id in [
         "css/css-pseudo/first-letter-004.html",
         "css/css-pseudo/first-letter-005.html",

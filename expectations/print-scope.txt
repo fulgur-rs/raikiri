@@ -1,0 +1,82 @@
+# expectations/print-scope.txt — WPT css/ areas that matter for paged output.
+#
+# Format: one `css/<area>/` directory prefix per line.
+# Lines starting with '#' are comments. Empty lines are ignored.
+#
+# The WPT dashboard (`generate-dashboard`) uses these areas as the
+# denominator of the in-scope pass rate. Areas without meaning for print are
+# listed in known-issues.txt instead, with a reason. Areas outside the print
+# scope whose results are still tracked are listed in tracked-areas.txt. An
+# area may appear in only one of the three files; an area in none of them is
+# reported as unclassified.
+
+# ── Paged media and fragmentation ──
+css/css-page/
+css/css-break/
+css/css-multicol/
+css/css-gcpm/
+css/printing/
+css/mediaqueries/
+css/css-color-adjust/
+
+# ── Box layout ──
+css/CSS1/
+css/CSS2/
+css/css-align/
+css/css-anchor-position/
+css/css-box/
+css/css-contain/
+css/css-display/
+css/css-flexbox/
+css/css-gaps/
+css/css-grid/
+css/css-inline/
+css/css-logical/
+css/css-overflow/
+css/css-position/
+css/css-shapes/
+css/css-sizing/
+css/css-tables/
+css/css-viewport/
+css/css-writing-modes/
+
+# ── Text and fonts ──
+css/WOFF2/
+css/css-counter-styles/
+css/css-fonts/
+css/css-lists/
+css/css-rhythm/
+css/css-text/
+css/css-text-decor/
+
+# ── Painting ──
+css/compositing/
+css/css-backgrounds/
+css/css-borders/
+css/css-color/
+css/css-color-hdr/
+css/css-images/
+css/css-masking/
+css/css-transforms/
+css/css-will-change/
+css/fill-stroke/
+css/filter-effects/
+css/motion/
+
+# ── Cascade, values, and selectors ──
+css/css-cascade/
+css/css-conditional/
+css/css-content/
+css/css-env/
+css/css-mixins/
+css/css-namespaces/
+css/css-nesting/
+css/css-properties-values-api/
+css/css-pseudo/
+css/css-shadow/
+css/css-style-attr/
+css/css-syntax/
+css/css-values/
+css/css-variables/
+css/cssom/
+css/selectors/

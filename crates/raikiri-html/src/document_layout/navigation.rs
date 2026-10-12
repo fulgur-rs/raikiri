@@ -10,7 +10,9 @@ pub struct Anchor {
     /// Zero-based page index.
     pub page_index: u32,
     /// Top-left of the target's first fragment, CSS px from the page box
-    /// origin.
+    /// origin, where the built-in painter draws it: the layout corner mapped
+    /// through the fragment's transform (see [`super::Page::paint_transform`]).
+    /// A target a singular transform hides keeps its layout corner.
     pub point: (f32, f32),
 }
 
@@ -56,8 +58,17 @@ pub struct Link<'a> {
     pub owner: NodeId,
     /// The `href`, trimmed.
     pub target: &'a str,
-    /// Clickable areas, CSS px from the page box origin.
+    /// Clickable areas in layout space, CSS px from the page box origin,
+    /// before relative offsets and transforms move them.
     pub quads: &'a [PaintRect],
+    /// The clickable areas where the built-in painter draws them, CSS px
+    /// from the page box origin: the corners of each of [`Self::quads`]
+    /// (top-left, top-right, bottom-right, bottom-left of the layout
+    /// rectangle) mapped through the transform of its placement, as
+    /// [`super::Page::paint_transform`] reports it. A rotated or skewed
+    /// placement gives a quadrilateral that is not a rectangle. Quads of
+    /// placements a singular transform hides are left out.
+    pub paint_quads: Vec<[(f32, f32); 4]>,
 }
 
 pub(crate) fn build_rendered(out: &PipelineOutput) -> HashSet<NodeId> {
@@ -86,10 +97,11 @@ pub(crate) fn build_anchors(dom: DomView<'_>, out: &PipelineOutput) -> AnchorInd
             });
         }
     }
-    let mut index = AnchorIndex::default();
+    // Named nodes with a fragment, in document order.
+    let mut named: Vec<(NodeId, Vec<&str>)> = Vec::new();
     let mut stack = vec![dom.root()];
     while let Some(node) = stack.pop() {
-        if dom.kind(node) == Some(NodeKind::Element) {
+        if dom.kind(node) == Some(NodeKind::Element) && first_fragment.contains_key(&node) {
             let mut names = Vec::new();
             if let Some(id) = dom.attr(node, "id") {
                 names.push(id);
@@ -99,17 +111,40 @@ pub(crate) fn build_anchors(dom: DomView<'_>, out: &PipelineOutput) -> AnchorInd
             {
                 names.push(name);
             }
-            if let Some(anchor) = first_fragment.get(&node) {
-                for name in names {
-                    index
-                        .by_name
-                        .entry(name.to_owned())
-                        .or_insert_with(|| anchor.clone());
-                }
+            if !names.is_empty() {
+                named.push((node, names));
             }
         }
         let children: Vec<_> = dom.children(node).collect();
         stack.extend(children.into_iter().rev());
+    }
+    // Only named nodes become anchors, so only their points are moved to
+    // where the painter draws them, page by page.
+    let mut by_page: HashMap<u32, Vec<NodeId>> = HashMap::new();
+    for (node, _) in &named {
+        by_page
+            .entry(first_fragment[node].page_index)
+            .or_default()
+            .push(*node);
+    }
+    for (page_index, nodes) in by_page {
+        let (document, cascade) = out.layout_for_page(page_index);
+        let transforms = document.page_paint_transforms(cascade, page_index, nodes.iter().copied());
+        for (node, transform) in nodes.iter().zip(transforms) {
+            if let (Some(anchor), Some(transform)) = (first_fragment.get_mut(node), transform) {
+                anchor.point = transform.apply(anchor.point);
+            }
+        }
+    }
+    let mut index = AnchorIndex::default();
+    for (node, names) in named {
+        let anchor = &first_fragment[&node];
+        for name in names {
+            index
+                .by_name
+                .entry(name.to_owned())
+                .or_insert_with(|| anchor.clone());
+        }
     }
     index
 }

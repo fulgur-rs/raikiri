@@ -61,12 +61,16 @@ pub(crate) fn resolve_images(
 }
 
 /// Resolve replaced-element URLs against the document base when they are not
-/// already absolute.
+/// already absolute. A given base also becomes the document's base URL, so
+/// paint resolves the relative `url()` values of computed styles the same way.
 pub(crate) fn resolve_images_with_base(
     document: &mut Document,
     resolver: &dyn ReplacedResolver,
     base_url: Option<&Url>,
 ) -> Result<(), ResolverError> {
+    if let Some(base_url) = base_url {
+        document.set_base_url(Some(base_url.clone()));
+    }
     let mut intrinsic_size_changed = false;
     document.resolved_image_urls.clear();
     let result = (|| {

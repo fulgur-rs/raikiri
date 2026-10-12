@@ -496,15 +496,47 @@ fn page_box_for_page(page: &PageCascadeResult, defaults: &PageDefaults) -> PageB
 /// The element cascade does not depend on the page query, and the rule tree
 /// and media context are fixed for the run, so per-page geometry and styles
 /// only need the page-context cascade inheriting from `base`'s root element.
+/// Pages share few distinct queries (a name, whether the page is the first,
+/// and its side), so each query's result is computed once and reused. The
+/// results are grouped by page name, and a cached result is reused only for
+/// an equal query.
 struct PageCascader<'a> {
     tree: &'a RuleTree,
     base: &'a CascadeResult,
     media_context: &'a MediaContext,
+    cache: std::cell::RefCell<PageCascadeCache>,
 }
 
-impl PageCascader<'_> {
+/// `@page` cascade results by page name, each with the query it answers.
+type PageCascadeCache =
+    rustc_hash::FxHashMap<Option<Atom>, Vec<(PageContextQuery, PageCascadeResult)>>;
+
+impl<'a> PageCascader<'a> {
+    fn new(tree: &'a RuleTree, base: &'a CascadeResult, media_context: &'a MediaContext) -> Self {
+        Self {
+            tree,
+            base,
+            media_context,
+            cache: std::cell::RefCell::default(),
+        }
+    }
+
     fn page(&self, query: &PageContextQuery) -> PageCascadeResult {
-        cascade_page_for_query(self.tree, self.base, self.media_context, query)
+        if let Some((_, page)) = self
+            .cache
+            .borrow()
+            .get(&query.page_name)
+            .and_then(|cached| cached.iter().find(|(cached, _)| cached == query))
+        {
+            return page.clone();
+        }
+        let page = cascade_page_for_query(self.tree, self.base, self.media_context, query);
+        self.cache
+            .borrow_mut()
+            .entry(query.page_name.clone())
+            .or_default()
+            .push((query.clone(), page.clone()));
+        page
     }
 }
 
@@ -747,8 +779,11 @@ pub(crate) fn run_pipeline(
     let network_ref = network
         .as_ref()
         .map(|provider| provider as &dyn raikiri_traits::NetworkProvider);
+    // A fallback base in the layout resources replaces the parse-time one;
+    // without it the base found at parse time resolves the resources.
     let effective_base_url =
-        crate::effective_document_base_url(&doc.uncascaded, resources.fallback_base_url());
+        crate::effective_document_base_url(&doc.uncascaded, resources.fallback_base_url())
+            .or_else(|| doc.effective_base_url().cloned());
     let font_loader = NetworkFontFaceLoader::new(
         network_ref,
         effective_base_url.as_ref(),
@@ -846,6 +881,11 @@ pub(crate) fn run_pipeline(
     // lays out a clone of this document, so the probe and the layout below
     // use the same fonts.
     let mut dom = doc.uncascaded.dom.clone();
+    // Paint resolves relative `url()` values against the base the images
+    // were fetched with, which the resources' fallback base can change.
+    if let Some(base_url) = runtime.effective_base_url {
+        dom.set_base_url(Some(base_url.clone()));
+    }
     let font_report = enable_inline_engine(
         &mut dom,
         resources,
@@ -923,11 +963,7 @@ pub(crate) fn run_pipeline(
     let first_cascade = first_cascade;
     // Only `page` in a cascade result depends on the page query, so the
     // first-page cascade serves as the element cascade of every later page.
-    let page_cascader = PageCascader {
-        tree: &tree,
-        base: &first_cascade,
-        media_context,
-    };
+    let page_cascader = PageCascader::new(&tree, &first_cascade, media_context);
 
     for family in font_report.skipped {
         push_resource_warning(

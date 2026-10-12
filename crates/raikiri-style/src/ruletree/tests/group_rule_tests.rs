@@ -450,7 +450,7 @@ fn tokenizer_errors_in_groups_drop_only_bad_declarations() {
 }
 
 #[test]
-fn group_depth_and_unclosed_blocks_do_not_execute_partial_content() {
+fn group_depth_is_bounded_and_unclosed_blocks_recover_at_eof() {
     let depth = MAX_OPAQUE_RULE_NESTING_DEPTH + 2;
     let source = format!(
         "{}p {{color:red}}{} div {{color:blue}}",
@@ -461,15 +461,30 @@ fn group_depth_and_unclosed_blocks_do_not_execute_partial_content() {
     tree.add_stylesheet(&source, Origin::Author);
     assert_eq!(tree.style_rules().len(), 1);
     assert_eq!(selector_text(&tree.style_rules()[0]), "div");
-    for source in [
-        "@supports (color:red) {p {color:red}",
-        "@supports (color:red) {p {color:red",
-        "@supports (color:red) {u {color:blue} @layer a {p {color:red}}",
+    for (source, count) in [
+        ("@supports (color:red) {p {color:red}", 1),
+        ("@supports (color:red) {p {color:red", 1),
+        (
+            "@supports (color:red) {u {color:blue} @layer a {p {color:red}}",
+            2,
+        ),
     ] {
         let mut tree = RuleTree::empty();
         tree.add_stylesheet(source, Origin::Author);
-        assert!(tree.style_rules().is_empty());
-        assert!(tree.opaque_at_rules().is_empty());
+        assert_eq!(tree.style_rules().len(), count, "{source:?}");
+        assert!(
+            tree.style_rules()
+                .iter()
+                .all(|rule| rule.declarations.len() == 1),
+            "{source:?}"
+        );
+        assert_eq!(tree.opaque_at_rules().len(), 1, "{source:?}");
+        assert_eq!(
+            tree.opaque_at_rules()[0].children().len(),
+            count,
+            "{source:?}"
+        );
+        assert_record_round_trips(&tree.opaque_at_rules()[0]);
     }
 }
 

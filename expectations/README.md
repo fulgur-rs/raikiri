@@ -8,6 +8,8 @@ These files describe how Raikiri evaluates the pinned Web Platform Tests
 | `raikiri-baseline.txt` | Tests expected to pass. A result other than `PASS` is a regression. |
 | `expected-failures.txt` | Exact tests that still run and currently produce a known, deterministic failure. |
 | `known-issues.txt` | Tests outside current scope. Matching tests are skipped. A directory prefix ends in `/`. |
+| `print-scope.txt` | `css/<area>/` prefixes that matter for print. The WPT dashboard counts reftests in these areas; areas without print meaning go in `known-issues.txt`. |
+| `tracked-areas.txt` | `css/<area>/` prefixes outside the print scope whose results are still tracked. The WPT dashboard shows them in a separate table, outside the in-scope pass rate. |
 | `quarantine.txt` | Tests with intermittent failures, scoped by platform and renderer. |
 | `deprecated.txt` | Tests excluded from evaluation, such as known crashers. |
 | `tracked-wpt.txt` | Informational test tracking categories. |

@@ -163,6 +163,7 @@ impl DocumentHost for ScriptFragmentHost {
                         },
                     ],
                     quirks: 0,
+                    base_url: None,
                     stylesheets: vec![],
                 },
                 3,

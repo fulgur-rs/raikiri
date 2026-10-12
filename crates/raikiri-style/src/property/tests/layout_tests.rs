@@ -2693,6 +2693,11 @@ fn border_spacing_rejects_invalid_values() {
     // The deferred-path guard rejects a calc expression containing `%`
     // (the same pattern as the Percentages: N/A guard for `tab-size`).
     assert_eq!(parse_entire("calc(10% + 5px)", "border-spacing"), None);
+    // A `%` inside a comment is not a percentage token.
+    assert!(matches!(
+        parse_entire("calc(1em /*%*/ + 1px)", "border-spacing"),
+        Some(PropertyValue::Deferred(_))
+    ));
 }
 
 // ── caption-side (CSS Tables 3 §7) ─────────────────────────────────────

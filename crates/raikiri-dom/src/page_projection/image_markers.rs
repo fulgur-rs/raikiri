@@ -1,5 +1,6 @@
 //! Prepared marker placements shared by page paint events and raster consumers.
 
+use super::flow_pages::FlowPages;
 use super::records::{PageFragment, ProjectedTextRoot};
 use crate::generated_content::{computed_for_id, generated_origin};
 use crate::{Document, PositionedMarker};
@@ -78,14 +79,58 @@ pub(super) fn prepare(
             }
         }
     }
-    for page in pages {
+    let flow_pages = FlowPages::new(pages);
+    let mut per_page: Vec<BTreeMap<NodeId, PaintRect>> = vec![BTreeMap::new(); pages.len()];
+    for (root, paint_shift, kind) in &roots {
         work.check()?;
-        let mut markers = BTreeMap::new();
-        for (root, paint_shift, kind) in &roots {
+        let source = generated_origin(root.node)
+            .map_or_else(|| document.ifc_source_owner(root.node), |(owner, _)| owner);
+        // Fixed-position roots and repeated table headers can land on any
+        // page; any other marker lands only on the pages its owner's first
+        // fragment or its lines are on.
+        let repeated = root.is_repeat || document.table_objects.headers.owner(source).is_some();
+        let candidates: Box<dyn Iterator<Item = (usize, &PageFragment)>> = if repeated {
+            Box::new(pages.iter().enumerate())
+        } else {
+            match kind {
+                MarkerRoot::Standalone { owner, .. } => {
+                    let Some(&first_page) = first_pages.get(&NodeId::new(*owner as u64)) else {
+                        continue;
+                    };
+                    let start = pages.partition_point(|page| page.page_index < first_page);
+                    Box::new(
+                        pages
+                            .iter()
+                            .enumerate()
+                            .skip(start)
+                            .take_while(move |(_, page)| page.page_index == first_page),
+                    )
+                }
+                MarkerRoot::Inline(inline_markers) => {
+                    let mut centers = inline_markers
+                        .iter()
+                        .map(|&(top, height, _)| {
+                            // The arithmetic of `line_center_on_page`, so
+                            // rounding at large coordinates cannot prune the
+                            // owning page.
+                            let top = root.y + top;
+                            (top + (top + height)) * 0.5
+                        })
+                        .filter(|center| center.is_finite());
+                    let Some(first) = centers.next() else {
+                        continue;
+                    };
+                    let (low, high) = centers.fold((first, first), |(low, high), center| {
+                        (low.min(center), high.max(center))
+                    });
+                    Box::new(flow_pages.around_slots(low, high))
+                }
+            }
+        };
+        for (page_slot, page) in candidates {
             work.charge(1)?;
+            let markers = &mut per_page[page_slot];
             let mut root = *root;
-            let source = generated_origin(root.node)
-                .map_or_else(|| document.ifc_source_owner(root.node), |(owner, _)| owner);
             if let Some(shift) = document
                 .table_objects
                 .headers
@@ -160,6 +205,8 @@ pub(super) fn prepare(
                 }
             }
         }
+    }
+    for (page, markers) in pages.iter().zip(per_page) {
         placements.insert(page.page_index, markers);
     }
     Ok(placements)

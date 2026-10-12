@@ -21,6 +21,7 @@ fn margin_spec(css: &str) -> MarginBoxSpec {
         100.0,
         40.0,
         MarginBoxPageContext::new(0, 1, false),
+        &MarginBoxNamedValues::new(),
     )
     .unwrap()
 }

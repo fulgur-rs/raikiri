@@ -4,7 +4,8 @@ use crate::{
 };
 use raikiri_style::{CascadeResult, build_rule_tree, cascade};
 use raikiri_traits::{
-    NodeId, PageBox, ReplacedResolver, ResolvedIntrinsic, ResolverError, ResolverRequest,
+    NodeId, PageBox, PaintTransform, ReplacedResolver, ResolvedIntrinsic, ResolverError,
+    ResolverRequest,
 };
 use taffy::Style;
 
@@ -633,4 +634,38 @@ fn generated_image_projection_work_stays_linear_in_page_count() {
         large <= small * 5,
         "four times the pages cost {large} work units against {small}"
     );
+}
+
+#[test]
+fn paint_space_queries_without_motion_keep_layout_geometry() {
+    let (mut doc, cascade, page, slices, _, _) = fixture();
+    project(&mut doc, &cascade, page, &slices);
+    let links: Vec<_> = doc.page_links(0).collect();
+    assert!(!links.is_empty());
+    let paint = doc.page_link_paint_quads(&cascade, 0);
+    assert_eq!(paint.len(), links.len());
+    for ((_, _, quads), paint) in links.iter().zip(&paint) {
+        let corners: Vec<_> = quads
+            .iter()
+            .map(|q| {
+                [
+                    (q.x, q.y),
+                    (q.x + q.width, q.y),
+                    (q.x + q.width, q.y + q.height),
+                    (q.x, q.y + q.height),
+                ]
+            })
+            .collect();
+        assert_eq!(paint, &corners);
+    }
+    // The root element is above the body, where the paint order starts.
+    assert_eq!(
+        doc.page_paint_transforms(&cascade, 0, [NodeId(1), NodeId(1_000_000)]),
+        [Some(PaintTransform::IDENTITY), None]
+    );
+    assert!(
+        doc.page_paint_transforms(&cascade, 99, [NodeId(1)])
+            .is_empty()
+    );
+    assert!(doc.page_link_paint_quads(&cascade, 99).is_empty());
 }
