@@ -417,7 +417,7 @@ fn character_references_in_style_attributes_do_not_split_declarations() {
     assert_eq!(keys(html), [r#"content:"x""#, "color:red"]);
     assert_eq!(
         keys(r#"<i style="width&#58;1px; height&colon;2px; x: &unknown; &#x26;">"#),
-        ["width:1px", "height:2px", "x:&unknown; &"]
+        ["width:1px", "height:2px", "x:&unknown"]
     );
     let (out, removed) = remove_declarations(html, |key| key.starts_with("color"));
     assert_eq!(removed, 1);
@@ -440,6 +440,28 @@ fn text_only_elements_hide_their_markup() {
 fn colons_inside_comments_do_not_split_declarations() {
     let html = "<style>p { /* expected: red */ color: red; /* a:b */ }</style>";
     assert_eq!(keys(html), ["color:red"]);
+}
+
+#[test]
+fn character_references_are_decoded_before_scanning_style_attributes() {
+    let html = r#"<i style="content:&quot;a;b&quot;; color:red&semi;width:1px">"#;
+    assert_eq!(keys(html), [r#"content:"a;b""#, "color:red", "width:1px"]);
+    let (out, removed) = remove_declarations(html, |key| key.starts_with("color"));
+    assert_eq!(removed, 1);
+    assert_eq!(out, r#"<i style="content:&quot;a;b&quot;;width:1px">"#);
+}
+
+#[test]
+fn only_valid_shadow_root_modes_make_templates_active() {
+    let html = r#"<template shadowrootmode="bogus"><i style="a: 1"></template><template shadowrootmode="CLOSED"><i style="b: 2"></template>"#;
+    assert_eq!(keys(html), ["b:2"]);
+}
+
+#[test]
+fn hyphen_only_property_names_are_not_features() {
+    let html = "<style>p { -: x; --: y; clear: both }</style>";
+    let features = feature_properties(html, "css/a/clear-001.html");
+    assert_eq!(features.into_iter().collect::<Vec<_>>(), ["clear"]);
 }
 
 #[test]

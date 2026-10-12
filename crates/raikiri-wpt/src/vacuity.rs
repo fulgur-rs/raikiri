@@ -266,6 +266,9 @@ pub fn feature_properties(test_html: &str, test_id: &str) -> BTreeSet<String> {
     let named = |property: &str| {
         // Vendor prefixes start with a hyphen; match their words only.
         let parts: Vec<&str> = property.split('-').filter(|p| !p.is_empty()).collect();
+        if parts.is_empty() {
+            return false;
+        }
         words.iter().any(|w| {
             w.windows(parts.len())
                 .any(|window| window == parts.as_slice())
@@ -349,7 +352,18 @@ pub fn author_declarations(html: &str) -> Vec<Declaration> {
     for tag in tags(html) {
         for (attr, value) in &tag.attributes {
             if attr == "style" {
-                out.extend(css_declarations(&html[value.clone()], true, value.start));
+                // The attribute value is decoded before CSS parsing; scan the
+                // decoded text and map ranges back to the source.
+                let (css, map) = decode_character_references(&html[value.clone()]);
+                out.extend(
+                    css_declarations(&css, true, 0)
+                        .into_iter()
+                        .map(|decl| Declaration {
+                            range: value.start + map[decl.range.start]
+                                ..value.start + map[decl.range.end],
+                            key: decl.key,
+                        }),
+                );
             }
         }
         if tag.name == "style"
@@ -440,7 +454,13 @@ fn tags(html: &str) -> Vec<Tag> {
         let next = raw_text.as_ref().map_or(end, |content| content.end);
         let inert = inert_depth > 0;
         if name == "template"
-            && (inert || !attributes.iter().any(|(name, _)| name == "shadowrootmode"))
+            && (inert
+                || !attributes.iter().any(|(name, value)| {
+                    name == "shadowrootmode"
+                        && ["open", "closed"]
+                            .iter()
+                            .any(|mode| html[value.clone()].eq_ignore_ascii_case(mode))
+                }))
         {
             inert_depth += 1;
         }
@@ -618,17 +638,6 @@ pub fn css_declarations(css: &str, inline: bool, base: usize) -> Vec<Declaration
                     i += if bytes[i] == b'\\' { 2 } else { 1 };
                 }
             }
-            // A character reference in a `style` attribute is decoded
-            // before CSS parsing, so its `;` does not end a declaration.
-            b'&' if inline => {
-                let run = bytes[i + 1..]
-                    .iter()
-                    .take_while(|b| b.is_ascii_alphanumeric() || **b == b'#')
-                    .count();
-                if run > 0 && bytes.get(i + 1 + run) == Some(&b';') {
-                    i += run + 1;
-                }
-            }
             b'(' | b'[' => nesting += 1,
             b')' | b']' => nesting = nesting.saturating_sub(1),
             // A `{}` block in a value (custom properties may hold one) is
@@ -642,7 +651,7 @@ pub fn css_declarations(css: &str, inline: bool, base: usize) -> Vec<Declaration
             _ if nesting > 0 => {}
             b';' => {
                 if in_declarations(depth) {
-                    push_declaration(css, segment_start..i + 1, base, inline, &mut out);
+                    push_declaration(css, segment_start..i + 1, base, &mut out);
                 }
                 segment_start = i + 1;
             }
@@ -652,7 +661,7 @@ pub fn css_declarations(css: &str, inline: bool, base: usize) -> Vec<Declaration
             }
             b'}' => {
                 if in_declarations(depth) {
-                    push_declaration(css, segment_start..i, base, inline, &mut out);
+                    push_declaration(css, segment_start..i, base, &mut out);
                 }
                 depth = depth.saturating_sub(1);
                 segment_start = i + 1;
@@ -662,7 +671,7 @@ pub fn css_declarations(css: &str, inline: bool, base: usize) -> Vec<Declaration
         i += 1;
     }
     if in_declarations(depth) && segment_start < bytes.len() {
-        push_declaration(css, segment_start..bytes.len(), base, inline, &mut out);
+        push_declaration(css, segment_start..bytes.len(), base, &mut out);
     }
     out
 }
@@ -675,24 +684,9 @@ fn is_custom_property(segment: &str) -> bool {
         .is_some_and(|(name, _)| strip_comments(name).trim().starts_with("--"))
 }
 
-fn push_declaration(
-    css: &str,
-    range: Range<usize>,
-    base: usize,
-    inline: bool,
-    out: &mut Vec<Declaration>,
-) {
+fn push_declaration(css: &str, range: Range<usize>, base: usize, out: &mut Vec<Declaration>) {
     let Some(text) = css.get(range.clone()) else {
         return;
-    };
-    // A `style` attribute is decoded before CSS parsing; the key uses the
-    // decoded text, the removal range the source.
-    let decoded;
-    let text = if inline && text.contains('&') {
-        decoded = decode_character_references(text);
-        decoded.as_str()
-    } else {
-        text
     };
     let text = text.trim_end_matches(';');
     let Some(colon) = colon_outside_comments(text) else {
@@ -745,20 +739,24 @@ fn colon_outside_comments(text: &str) -> Option<usize> {
 }
 
 /// Decode numeric character references and the named references that can
-/// change CSS tokenization. Others are kept as written.
-fn decode_character_references(text: &str) -> String {
+/// change CSS tokenization; others are kept as written. The map gives the
+/// source offset of every decoded byte, plus one entry for the end.
+fn decode_character_references(text: &str) -> (String, Vec<usize>) {
     let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(at) = rest.find('&') {
-        out.push_str(&rest[..at]);
-        rest = &rest[at..];
-        let body_len = rest[1..]
-            .bytes()
-            .take_while(|b| b.is_ascii_alphanumeric() || *b == b'#')
-            .count();
-        let body = &rest[1..1 + body_len];
-        let decoded = if rest[1 + body_len..].starts_with(';') {
-            match body.strip_prefix('#') {
+    let mut map = Vec::with_capacity(text.len() + 1);
+    let mut i = 0;
+    while i < text.len() {
+        let rest = &text[i..];
+        let reference = rest.strip_prefix('&').and_then(|after| {
+            let body_len = after
+                .bytes()
+                .take_while(|b| b.is_ascii_alphanumeric() || *b == b'#')
+                .count();
+            let body = &after[..body_len];
+            if !after[body_len..].starts_with(';') {
+                return None;
+            }
+            let c = match body.strip_prefix('#') {
                 Some(number) => match number.strip_prefix(['x', 'X']) {
                     Some(hex) => u32::from_str_radix(hex, 16).ok(),
                     None => number.parse().ok(),
@@ -774,27 +772,25 @@ fn decode_character_references(text: &str) -> String {
                     "semi" => Some(';'),
                     "lpar" => Some('('),
                     "rpar" => Some(')'),
+                    "lbrace" => Some('{'),
+                    "rbrace" => Some('}'),
                     "sol" => Some('/'),
                     "ast" => Some('*'),
                     _ => None,
                 },
-            }
-        } else {
-            None
-        };
-        match decoded {
-            Some(c) => {
-                out.push(c);
-                rest = &rest[1 + body_len + 1..];
-            }
-            None => {
-                out.push('&');
-                rest = &rest[1..];
-            }
-        }
+            }?;
+            Some((c, body_len + 2))
+        });
+        let (c, len) = reference.unwrap_or_else(|| {
+            let c = rest.chars().next().unwrap_or_default();
+            (c, c.len_utf8())
+        });
+        map.extend(std::iter::repeat_n(i, c.len_utf8()));
+        out.push(c);
+        i += len;
     }
-    out.push_str(rest);
-    out
+    map.push(text.len());
+    (out, map)
 }
 
 /// Normalize a declaration value: drop comments, trim, and collapse runs of
