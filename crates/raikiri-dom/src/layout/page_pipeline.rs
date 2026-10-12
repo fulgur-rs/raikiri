@@ -3960,34 +3960,43 @@ pub fn layout_pages_with_page_geometry_and_control(
         // type in place; it does not manufacture a second break boundary.
         // Any non-empty class-A box with a different page name starts a new
         // page.  `None` is the anonymous/unnamed page type, so an anonymous
-        // box after a named one is a transition too.  Zero-height named boxes
-        // at the same source coordinate are coalesced into one transition;
-        // this matters for chains of empty named boxes with overflowing text.
+        // box after a named one is a transition too.  Named boxes that start
+        // at the coordinate of a preceding zero-height named box join its
+        // transition: no block-size has been consumed on that page yet, so a
+        // break there would only leave the zero-height boxes alone on a page.
+        // This matters for chains of empty named boxes with overflowing text,
+        // including the first non-empty box that follows the chain.
         let same_named_coordinate = candidate.is_named
             && (candidate.is_direct_body_element || candidate.named_flex_context.is_some())
             && candidate.named_flex_context == last_named_context
-            && height <= 0.001
             && last_named_was_zero_height
             && !last_named_had_display_none_descendant
             && last_named_raw_y.is_some_and(|previous| (raw_y - previous).abs() <= 0.001);
         let named_page_change = name_context_seen
             && candidate_page_name != comparison_page_name
             && !same_named_coordinate;
-        let at_page_start =
-            effective_y.is_finite() && (effective_y - page_origin(current_page)).abs() <= 0.001;
-        let natural_page_at_position = if effective_y.is_finite() && effective_y >= 0.0 {
-            page_index_for_y(effective_y)
-        } else {
-            current_page
-        };
         // A forced break at the start of a page already opened by natural
         // overflow describes the same boundary and must not create a blank
         // page.  This matters when the page height changes after page zero:
         // the fixed-height pass may have considered the box to be on the
         // current page, while the scheduled pass places it exactly at the
         // next page origin.
-        let forced_break_at_page_start =
-            forced_before && (at_page_start || natural_page_at_position > current_page);
+        // The forced break sits before the box's margin box, so the test uses
+        // its block-start margin edge. A border box that lands exactly on a
+        // page origin only because the preceding collapsed margin filled the
+        // previous page has not opened that page: the break still moves it,
+        // and the margin after the forced break is kept.
+        let forced_break_at_page_start = forced_before && {
+            let margin_box_y = effective_y - margin_top.max(0.0);
+            let margin_box_page = if margin_box_y.is_finite() && margin_box_y >= 0.0 {
+                page_index_for_y(margin_box_y)
+            } else {
+                current_page
+            };
+            margin_box_page > current_page
+                || (margin_box_y.is_finite()
+                    && (margin_box_y - page_origin(current_page)).abs() <= 0.001)
+        };
         // Keep an ordinary table row intact when it would cross the current
         // page. The row is a class-A boundary owned by the table engine; its
         // cells and descendants follow the same flow shift below. Rowspans,

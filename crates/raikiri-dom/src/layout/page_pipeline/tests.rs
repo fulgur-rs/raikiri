@@ -2446,6 +2446,80 @@ fn layout_pages_coalesces_zero_height_named_boxes_at_same_position() {
 }
 
 #[test]
+fn layout_pages_joins_a_non_empty_named_box_to_a_preceding_zero_height_named_box() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let mut boxes = Vec::new();
+    for style in [
+        "display:block;page:a;height:10px",
+        "display:block;page:b;height:0px",
+        "display:block;page:c;height:10px",
+        "display:block;page:d;height:10px",
+    ] {
+        boxes.push(doc.append_element(Some(body), "div", Style::default(), Some(style)));
+    }
+
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let slices = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
+
+    // The zero-height `b` consumes no block-size, so `c` shares its page
+    // instead of leaving `b` alone on a page of its own.
+    let names: Vec<_> = slices.iter().map(|slice| slice.page_name.as_deref()).collect();
+    assert_eq!(names, [Some("a"), Some("c"), Some("d")]);
+    let c_y = doc.nodes[boxes[2]].unrounded_layout.location.y;
+    // cov:ignore: panic-message text is only executed when the assertion fails.
+    assert!((c_y - 100.0).abs() < 0.01, "c starts page 1: y={c_y}");
+}
+
+#[test]
+fn layout_pages_keeps_the_margin_of_a_forced_break_box_after_a_margin_filled_page() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;margin:25px 0;height:50px"),
+    );
+    let second = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;margin:25px 0;height:10px;break-before:page"),
+    );
+
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let slices = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
+
+    // The collapsed margin ends the first page exactly at its edge, so the
+    // border box lands on the page origin before pagination. The forced
+    // break still precedes the margin box, whose margin stays on page 1.
+    assert_eq!(slices.len(), 2);
+    let second_y = doc.nodes[second].unrounded_layout.location.y;
+    // cov:ignore: panic-message text is only executed when the assertion fails.
+    assert!(
+        (second_y - 125.0).abs() < 0.01,
+        "the kept margin places the box at 125: y={second_y}"
+    );
+}
+
+#[test]
 fn layout_pages_processes_mixed_auto_and_explicit_grid_rows_by_resolved_placement() {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
