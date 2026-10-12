@@ -6,6 +6,8 @@ use raikiri_style::property::ContentComponent;
 use raikiri_style::{build_rule_tree, cascade};
 use taffy::Style;
 
+mod image_sharing_tests;
+
 /// The conic gradient a computed `background-image` holds.
 fn conic_of(
     image: &raikiri_style::property::BackgroundImage,
@@ -628,8 +630,9 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
     let end_percent = cascade.computed[end_percent_id].background_position;
     let mut scene = Scene::new();
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut scene,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         100.0,
@@ -638,8 +641,9 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
         &repeat,
     );
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut scene,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         100.0,
@@ -648,8 +652,9 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
         &repeat,
     );
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut scene,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         20.0,
@@ -658,8 +663,9 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
         &repeat,
     );
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut scene,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         50.0,
@@ -668,8 +674,9 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
         &repeat,
     );
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut scene,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         12.0,
@@ -678,8 +685,9 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
         &repeat,
     );
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut scene,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         22.0,
@@ -688,8 +696,9 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
         &repeat,
     );
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut scene,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         2.0,
@@ -701,8 +710,9 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
 
     let before = scene.commands.len();
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut scene,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         kurbo::Rect::new(0.0, 0.0, 0.0, 50.0),
         kurbo::Rect::new(0.0, 0.0, 0.0, 50.0),
         100.0,
@@ -716,8 +726,9 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
         rgba: Vec::new(),
     };
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut scene,
-        &zero,
+        &std::sync::Arc::new(zero.clone()),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         100.0,
@@ -726,8 +737,9 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
         &repeat,
     );
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut scene,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         -1.0,
@@ -871,6 +883,7 @@ fn paint_root_element_border_without_html_is_noop() {
     let cascade = cascade(&document, &rules).expect("cascade Ok");
     let mut scene = Scene::new();
     paint_root_element_border(
+        &crate::walk::ImageBrushCache::default(),
         &mut scene,
         &document,
         &cascade,
@@ -894,6 +907,7 @@ fn paint_root_element_border_paints_html_border_sides() {
     let cascade = cascade(&document, &rules).expect("cascade Ok");
     let mut scene = Scene::new();
     paint_root_element_border(
+        &crate::walk::ImageBrushCache::default(),
         &mut scene,
         &document,
         &cascade,
@@ -928,6 +942,7 @@ fn fill_count(document: &Document, cascade: &CascadeResult) -> usize {
     let mut scene = Scene::new();
     let mut warnings = Vec::new();
     paint_canvas_background(
+        &crate::walk::ImageBrushCache::default(),
         &mut scene,
         document,
         cascade,
@@ -1489,8 +1504,9 @@ fn background_repeat_tiles_cover_area_with_clipping() {
     let (position, repeat) = background_repeat_fixture("repeat", "0px 0px");
     let mut scene = Scene::new();
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut scene,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         20.0,
@@ -1520,8 +1536,9 @@ fn background_repeat_tiles_cover_area_with_clipping() {
     // needs an origin at 20px clipped to 25px.
     let mut clipped = Scene::new();
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut clipped,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         kurbo::Rect::new(0.0, 0.0, 25.0, 12.0),
         kurbo::Rect::new(0.0, 0.0, 25.0, 12.0),
         20.0,
@@ -1544,8 +1561,9 @@ fn background_no_repeat_paints_single_origin_tile() {
     let (position, repeat) = background_repeat_fixture("no-repeat", "0px 0px");
     let mut scene = Scene::new();
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut scene,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         20.0,
@@ -1560,8 +1578,9 @@ fn background_no_repeat_paints_single_origin_tile() {
     let (offset_position, offset_repeat) = background_repeat_fixture("no-repeat", "3px 4px");
     let mut offset = Scene::new();
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut offset,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         20.0,
@@ -1583,8 +1602,9 @@ fn background_repeat_x_and_y_tile_single_axis() {
     let (repeat_x_position, repeat_x) = background_repeat_fixture("repeat-x", "0px 0px");
     let mut scene = Scene::new();
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut scene,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         20.0,
@@ -1600,8 +1620,9 @@ fn background_repeat_x_and_y_tile_single_axis() {
     let (repeat_y_position, repeat_y) = background_repeat_fixture("repeat-y", "0px 0px");
     let mut scene = Scene::new();
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut scene,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         20.0,
@@ -1627,8 +1648,9 @@ fn background_repeat_with_offset_covers_both_directions() {
     let (position, repeat) = background_repeat_fixture("repeat", "90px 40px");
     let mut scene = Scene::new();
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut scene,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         20.0,
@@ -1653,8 +1675,9 @@ fn background_space_tiles_without_clipping_and_spaces_gaps() {
     let (position, repeat) = background_repeat_fixture("space", "0px 0px");
     let mut scene = Scene::new();
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut scene,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         20.0,
@@ -1671,8 +1694,9 @@ fn background_space_tiles_without_clipping_and_spaces_gaps() {
     // 0, 37, 74 pinned to both edges without clipping or scaling.
     let mut spaced = Scene::new();
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut spaced,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         kurbo::Rect::new(0.0, 0.0, 106.0, 106.0),
         kurbo::Rect::new(0.0, 0.0, 106.0, 106.0),
         32.0,
@@ -1690,8 +1714,9 @@ fn background_space_tiles_without_clipping_and_spaces_gaps() {
     let (single_position, single_repeat) = background_repeat_fixture("space", "3px 4px");
     let mut single = Scene::new();
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut single,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         kurbo::Rect::new(0.0, 0.0, 25.0, 12.0),
         kurbo::Rect::new(0.0, 0.0, 25.0, 12.0),
         20.0,
@@ -1714,8 +1739,9 @@ fn background_round_rescales_to_whole_tiles() {
     // Exact fit keeps the base size.
     let mut exact = Scene::new();
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut exact,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         20.0,
@@ -1728,8 +1754,9 @@ fn background_round_rescales_to_whole_tiles() {
     // 100px positioning with 30px tiles rounds to 3 tiles of 33.333px.
     let mut rescaled = Scene::new();
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut rescaled,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         kurbo::Rect::new(0.0, 0.0, 100.0, 30.0),
         kurbo::Rect::new(0.0, 0.0, 100.0, 30.0),
         30.0,
@@ -1747,8 +1774,9 @@ fn background_round_rescales_to_whole_tiles() {
         let (mixed_position, mixed) = background_repeat_fixture(style, "0px 0px");
         let mut mixed_scene = Scene::new();
         paint_background_image(
+            &crate::walk::ImageBrushCache::default(),
             &mut mixed_scene,
-            &decoded,
+            &std::sync::Arc::new(decoded.clone()),
             kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
             kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
             20.0,
@@ -1780,8 +1808,9 @@ fn background_repeat_rejects_nonfinite_tile_geometry() {
     ] {
         let mut scene = Scene::new();
         paint_background_image(
+            &crate::walk::ImageBrushCache::default(),
             &mut scene,
-            &decoded,
+            &std::sync::Arc::new(decoded.clone()),
             kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
             kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
             image_w,
@@ -1794,8 +1823,9 @@ fn background_repeat_rejects_nonfinite_tile_geometry() {
     // A non-finite painting area cannot place the origin tile.
     let mut scene = Scene::new();
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut scene,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         kurbo::Rect::new(f64::INFINITY, 0.0, f64::INFINITY, 50.0),
         kurbo::Rect::new(f64::INFINITY, 0.0, f64::INFINITY, 50.0),
         20.0,
@@ -1816,8 +1846,9 @@ fn background_repeat_tiles_paint_contiguous_pixels() {
     let (repeat_position, repeat) = background_repeat_fixture("repeat", "0px 0px");
     let mut repeat_scene = Scene::new();
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut repeat_scene,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         kurbo::Rect::new(0.0, 0.0, 4.0, 4.0),
         kurbo::Rect::new(0.0, 0.0, 4.0, 4.0),
         2.0,
@@ -1839,8 +1870,9 @@ fn background_repeat_tiles_paint_contiguous_pixels() {
     let (single_position, single) = background_repeat_fixture("no-repeat", "0px 0px");
     let mut single_scene = Scene::new();
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut single_scene,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         kurbo::Rect::new(0.0, 0.0, 4.0, 4.0),
         kurbo::Rect::new(0.0, 0.0, 4.0, 4.0),
         2.0,
@@ -1874,8 +1906,9 @@ fn background_origin_positions_independently_from_clip() {
     let painting = kurbo::Rect::new(0.0, 0.0, 100.0, 50.0);
     let mut scene = Scene::new();
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut scene,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         positioning,
         painting,
         20.0,
@@ -1891,8 +1924,9 @@ fn background_origin_positions_independently_from_clip() {
     let (_, repeat_all) = background_repeat_fixture("repeat", "0px 0px");
     let mut tiled = Scene::new();
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut tiled,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         positioning,
         painting,
         20.0,
@@ -2044,6 +2078,7 @@ fn background_clip_text_and_border_area_warn_and_skip_images() {
     let mut scene = Scene::new();
     let mut warnings = Vec::new();
     paint_element_background(
+        &crate::walk::ImageBrushCache::default(),
         &mut scene,
         100.0,
         50.0,
@@ -2092,6 +2127,7 @@ fn background_clip_text_and_border_area_warn_and_skip_images() {
     let mut ring = Scene::new();
     let mut ring_warnings = Vec::new();
     paint_element_background(
+        &crate::walk::ImageBrushCache::default(),
         &mut ring,
         100.0,
         50.0,
@@ -2192,8 +2228,9 @@ fn background_space_and_round_paint_spec_correct_pixels() {
     let (space_position, space) = background_repeat_fixture("space", "0px 0px");
     let mut space_scene = Scene::new();
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut space_scene,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         kurbo::Rect::new(0.0, 0.0, 3.0, 2.0),
         kurbo::Rect::new(0.0, 0.0, 3.0, 2.0),
         2.0,
@@ -2217,8 +2254,9 @@ fn background_space_and_round_paint_spec_correct_pixels() {
     let (round_position, round) = background_repeat_fixture("round", "0px 0px");
     let mut round_scene = Scene::new();
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut round_scene,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         kurbo::Rect::new(0.0, 0.0, 4.0, 4.0),
         kurbo::Rect::new(0.0, 0.0, 4.0, 4.0),
         3.0,
@@ -2246,8 +2284,9 @@ fn background_origin_clip_pixel_separation() {
     let (position, repeat) = background_repeat_fixture("no-repeat", "0px 0px");
     let mut scene = Scene::new();
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut scene,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         kurbo::Rect::new(10.0, 10.0, 30.0, 30.0),
         kurbo::Rect::new(0.0, 0.0, 40.0, 40.0),
         20.0,
@@ -2292,7 +2331,15 @@ fn background_rounded_clip_pixel_corners() {
     let mut scene = Scene::new();
     scene.push_clip_layer(kurbo::Affine::IDENTITY, &rounded);
     paint_background_image(
-        &mut scene, &decoded, painting, painting, 20.0, 20.0, &position, &repeat,
+        &crate::walk::ImageBrushCache::default(),
+        &mut scene,
+        &std::sync::Arc::new(decoded.clone()),
+        painting,
+        painting,
+        20.0,
+        20.0,
+        &position,
+        &repeat,
     );
     scene.pop_layer();
     let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
@@ -2410,6 +2457,7 @@ fn background_page_unsupported_clip_warns_and_empty_painting_skips() {
     let mut scene = Scene::new();
     let mut warnings = Vec::new();
     paint_page_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut scene,
         &document,
         &cascade,
@@ -2430,6 +2478,7 @@ fn background_page_unsupported_clip_warns_and_empty_painting_skips() {
     let mut empty_scene = Scene::new();
     let mut empty_warnings = Vec::new();
     paint_page_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut empty_scene,
         &document,
         &empty_cascade,
@@ -2468,6 +2517,7 @@ fn background_canvas_image_paints_inside_margins_with_origin_clip() {
     let mut scene = Scene::new();
     let mut warnings = Vec::new();
     paint_canvas_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut scene,
         &document,
         &cascade,
@@ -2486,6 +2536,7 @@ fn background_canvas_image_paints_inside_margins_with_origin_clip() {
     let mut text_scene = Scene::new();
     let mut text_warnings = Vec::new();
     paint_canvas_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut text_scene,
         &document,
         &text_cascade,
@@ -2562,6 +2613,7 @@ fn background_element_origins_clips_and_rounded_images() {
         let mut scene = Scene::new();
         let mut warnings = Vec::new();
         paint_element_background(
+            &crate::walk::ImageBrushCache::default(),
             &mut scene,
             100.0,
             50.0,
@@ -2595,6 +2647,7 @@ fn background_element_origins_clips_and_rounded_images() {
     let mut warn_scene = Scene::new();
     let mut warn_warnings = Vec::new();
     paint_element_background(
+        &crate::walk::ImageBrushCache::default(),
         &mut warn_scene,
         100.0,
         50.0,
@@ -2625,6 +2678,7 @@ fn background_element_origins_clips_and_rounded_images() {
     let mut fallback = Scene::new();
     let mut fallback_warnings = Vec::new();
     paint_element_background(
+        &crate::walk::ImageBrushCache::default(),
         &mut fallback,
         100.0,
         50.0,
@@ -2656,6 +2710,7 @@ fn background_element_origins_clips_and_rounded_images() {
     let mut rounded = Scene::new();
     let mut rounded_warnings = Vec::new();
     paint_element_background(
+        &crate::walk::ImageBrushCache::default(),
         &mut rounded,
         20.0,
         20.0,
@@ -2763,7 +2818,13 @@ fn background_margin_box_origin_clip_and_unsupported_images() {
     let source = RedPixels;
     let mut scene = Scene::new();
     let mut warnings = Vec::new();
-    paint_margin_box(&mut scene, &margin_box, Some(&source), &mut warnings);
+    paint_margin_box(
+        &crate::walk::ImageBrushCache::default(),
+        &mut scene,
+        &margin_box,
+        Some(&source),
+        &mut warnings,
+    );
     assert!(warnings.is_empty());
     let fills = scene
         .commands
@@ -2778,6 +2839,7 @@ fn background_margin_box_origin_clip_and_unsupported_images() {
     let mut unsupported_scene = Scene::new();
     let mut unsupported_warnings = Vec::new();
     paint_margin_box(
+        &crate::walk::ImageBrushCache::default(),
         &mut unsupported_scene,
         &unsupported,
         Some(&source),
@@ -2791,7 +2853,13 @@ fn margin_box_without_area_paints_nothing() {
     let mut margin_box = fixed_margin_box();
     margin_box.rect = PaintRect::new(0.0, 0.0, 0.0, 50.0);
     let mut scene = Scene::new();
-    paint_margin_box(&mut scene, &margin_box, None, &mut Vec::new());
+    paint_margin_box(
+        &crate::walk::ImageBrushCache::default(),
+        &mut scene,
+        &margin_box,
+        None,
+        &mut Vec::new(),
+    );
     assert!(scene.commands.is_empty());
 }
 
@@ -2802,7 +2870,13 @@ fn lime_margin_box_placeholders_fill_inside_the_box() {
     margin_box.lime_background = true;
     margin_box.lime_content_image = Some(PaintRect::new(10.0, 0.0, 50.0, 20.0));
     let mut scene = Scene::new();
-    paint_margin_box(&mut scene, &margin_box, None, &mut Vec::new());
+    paint_margin_box(
+        &crate::walk::ImageBrushCache::default(),
+        &mut scene,
+        &margin_box,
+        None,
+        &mut Vec::new(),
+    );
     let fills = scene
         .commands
         .iter()
@@ -2822,8 +2896,9 @@ fn background_tiling_edge_cases_cover_defensive_branches() {
     // Non-finite positioning with finite painting skips without crashing.
     let mut nonfinite = Scene::new();
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut nonfinite,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         kurbo::Rect::new(f64::INFINITY, 0.0, f64::INFINITY + 100.0, 50.0),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         20.0,
@@ -2835,8 +2910,9 @@ fn background_tiling_edge_cases_cover_defensive_branches() {
     // Finite positioning with non-finite painting skips without crashing.
     let mut nonfinite_paint = Scene::new();
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut nonfinite_paint,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         kurbo::Rect::new(0.0, 0.0, f64::INFINITY, 50.0),
         20.0,
@@ -2850,8 +2926,9 @@ fn background_tiling_edge_cases_cover_defensive_branches() {
     let (round_position, round) = background_repeat_fixture("round", "0px 0px");
     let mut zero_round = Scene::new();
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut zero_round,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         kurbo::Rect::new(0.0, 0.0, 0.0, 50.0),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         20.0,
@@ -2864,8 +2941,9 @@ fn background_tiling_edge_cases_cover_defensive_branches() {
     let (zero_space_position, zero_space) = background_repeat_fixture("space", "0px 0px");
     let mut zero_space_scene = Scene::new();
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut zero_space_scene,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         kurbo::Rect::new(0.0, 0.0, 0.0, 50.0),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         20.0,
@@ -2877,8 +2955,9 @@ fn background_tiling_edge_cases_cover_defensive_branches() {
     // Tiny tiles hitting the repeat fan-out bound skip without allocating.
     let mut tiny = Scene::new();
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut tiny,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         0.001,
@@ -2926,6 +3005,7 @@ fn background_canvas_percent_padding_and_empty_painting() {
     let mut scene = Scene::new();
     let mut warnings = Vec::new();
     paint_canvas_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut scene,
         &document,
         &cascade,
@@ -2946,8 +3026,9 @@ fn background_space_tiny_tiles_fall_back_to_single_without_allocating() {
     let (position, space) = background_repeat_fixture("space", "0px 0px");
     let mut scene = Scene::new();
     paint_background_image(
+        &crate::walk::ImageBrushCache::default(),
         &mut scene,
-        &decoded,
+        &std::sync::Arc::new(decoded.clone()),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
         0.001,
@@ -3112,6 +3193,7 @@ fn a_vertical_margin_box_is_drawn_down_its_column() {
     let mut scene = Scene::new();
     let mut warnings = Vec::new();
     paint_page_margin_boxes(
+        &crate::walk::ImageBrushCache::default(),
         &mut scene,
         &doc,
         &cascade,
@@ -3821,6 +3903,7 @@ fn conic_background_element_paint_covers_opaque_and_transparent_bases() {
     let mut scene = Scene::new();
     let mut warnings = Vec::new();
     paint_element_background(
+        &crate::walk::ImageBrushCache::default(),
         &mut scene,
         200.0,
         200.0,
@@ -3849,6 +3932,7 @@ fn conic_background_element_paint_covers_opaque_and_transparent_bases() {
     let mut transparent_scene = Scene::new();
     let mut transparent_warnings = Vec::new();
     paint_element_background(
+        &crate::walk::ImageBrushCache::default(),
         &mut transparent_scene,
         200.0,
         200.0,
@@ -4078,6 +4162,7 @@ fn inside_ruby_multicol_markers_paint_on_the_legacy_path() {
         );
         let mut scene = Scene::new();
         paint_list_marker_with_snapshots(
+            &crate::walk::ImageBrushCache::default(),
             &mut scene,
             &doc,
             &cascade,
@@ -4159,6 +4244,7 @@ fn explicit_marker_content_suppresses_legacy_image_paint() {
         );
         let mut scene = Scene::new();
         paint_list_marker_with_snapshots(
+            &crate::walk::ImageBrushCache::default(),
             &mut scene,
             &doc,
             &cascade,
@@ -5234,6 +5320,7 @@ fn root_border_fills(style: &str, pixel_source: Option<&dyn ImagePixelSource>) -
     let mut scene = Scene::new();
     let mut warnings = Vec::new();
     paint_root_element_border(
+        &crate::walk::ImageBrushCache::default(),
         &mut scene,
         &document,
         &cascade,
@@ -5336,6 +5423,7 @@ fn root_border_brush_sizes(style: &str) -> Vec<(u32, u32)> {
     let cascade = cascade(&document, &build_rule_tree(&document)).expect("cascade Ok");
     let mut scene = Scene::new();
     paint_root_element_border(
+        &crate::walk::ImageBrushCache::default(),
         &mut scene,
         &document,
         &cascade,
