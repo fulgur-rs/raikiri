@@ -254,23 +254,37 @@ pub fn background_tiles(
     };
     let mut x = x_origins(tile_w, x_count)?;
     let mut y = y_origins(tile_h, y_count)?;
-    // A single `round` axis gives up tiles until the product fits.
+    // `round` axes give up tiles until the placed tiles fit; positioning can
+    // add a partial tile at each edge, so the count is checked after placing.
     let product = |x: &[f64], y: &[f64]| x.len() as f64 * y.len() as f64;
-    let excess = product(&x, &y) / MAX_BACKGROUND_TILES as f64;
-    if excess > 1.0 {
-        let fewer = |count: i64| ((count as f64 / excess).floor() as i64).max(1);
+    for _ in 0..4 {
+        let excess = product(&x, &y) / MAX_BACKGROUND_TILES as f64;
+        if excess <= 1.0 {
+            break;
+        }
+        let fewer =
+            |count: i64, factor: f64| ((count as f64 / factor).floor() as i64).clamp(1, count - 1);
         match (x_count, y_count) {
-            (Some(nx), None) => {
-                let nx = fewer(nx);
-                tile_w = pos_w / nx as f64;
-                x = x_origins(tile_w, Some(nx))?;
+            (Some(nx), Some(ny)) if nx > 1 || ny > 1 => {
+                let factor = excess.sqrt();
+                if nx > 1 {
+                    x_count = Some(fewer(nx, factor));
+                }
+                if ny > 1 {
+                    y_count = Some(fewer(ny, factor));
+                }
             }
-            (None, Some(ny)) => {
-                let ny = fewer(ny);
-                tile_h = pos_h / ny as f64;
-                y = y_origins(tile_h, Some(ny))?;
-            }
-            _ => {}
+            (Some(nx), None) if nx > 1 => x_count = Some(fewer(nx, excess)),
+            (None, Some(ny)) if ny > 1 => y_count = Some(fewer(ny, excess)),
+            _ => break,
+        }
+        if let Some(nx) = x_count {
+            tile_w = pos_w / nx as f64;
+            x = x_origins(tile_w, x_count)?;
+        }
+        if let Some(ny) = y_count {
+            tile_h = pos_h / ny as f64;
+            y = y_origins(tile_h, y_count)?;
         }
     }
     // Beyond the budget, like an axis with too many tiles, nothing paints

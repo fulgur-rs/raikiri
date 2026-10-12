@@ -252,6 +252,19 @@ fn round_tiles_bound_degenerate_counts() {
     .expect("round tiles");
     assert!(tiles.x.len() * tiles.y.len() <= 1 << 18);
     assert_eq!(tiles.x.len(), 512);
+    // Offset tiles that spill past both edges still fit the budget.
+    let mut shifted = position;
+    shifted.horizontal = ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(0.5));
+    shifted.vertical = ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(0.5));
+    let tiles = background_tiles(
+        (0.0, 0.0, 512.0, 512.0),
+        (0.0, 0.0, 512.0, 512.0),
+        (1.0, 1.0),
+        &shifted,
+        &both,
+    )
+    .expect("round tiles");
+    assert!(tiles.x.len() * tiles.y.len() <= 1 << 18);
     // One `round` axis gives up tiles to a repeated one.
     let mut mixed = both;
     mixed.y = BackgroundRepeatKeyword::Repeat;
