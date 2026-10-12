@@ -145,11 +145,10 @@ fn realign_grid_abspos_static_positions(document: &mut Document, cascade: &Casca
         {
             continue;
         }
-        let Some(parent_id) = document
-            .nodes
-            .iter()
-            .position(|node| node.children.contains(&child_id))
-        else {
+        #[cfg(all(test, debug_assertions))]
+        crate::layout::test_support::GRID_PARENT_LOOKUP_STEPS
+            .with(|steps| steps.set(steps.get() + 1));
+        let Some(parent_id) = document.parent_of(child_id) else {
             continue;
         };
         let parent = &cascade.computed[parent_id];
