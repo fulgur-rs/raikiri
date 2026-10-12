@@ -1099,6 +1099,31 @@ fn link_paint_quads_of_text_inside_columns_take_the_line_offsets() {
     );
 }
 
+// Each quad of a link that spans several lines is moved on its own.
+#[test]
+fn link_paint_quads_cover_every_line_of_a_link() {
+    let layout = laid_out(
+        "<style>@page{size:200px 200px;margin:0} body{margin:0} \
+         p{margin:0;transform:translate(4px,2px)}</style><p><a href=/go>One<br>Two</a></p>",
+    );
+    let page = layout.page(0).unwrap();
+    let links: Vec<_> = page.links().collect();
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].quads.len(), 2);
+    assert_eq!(links[0].paint_quads.len(), 2);
+    for (quad, paint) in links[0].quads.iter().zip(&links[0].paint_quads) {
+        assert_quad_near(
+            *paint,
+            [
+                (quad.x + 4.0, quad.y + 2.0),
+                (quad.x + quad.width + 4.0, quad.y + 2.0),
+                (quad.x + quad.width + 4.0, quad.y + quad.height + 2.0),
+                (quad.x + 4.0, quad.y + quad.height + 2.0),
+            ],
+        );
+    }
+}
+
 // The painter adds the body's relative offset, and places a fixed box in
 // the page area from its insets, apart from the offsets around it.
 #[test]
