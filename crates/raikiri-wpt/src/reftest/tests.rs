@@ -2532,3 +2532,34 @@ fn page_rules_keep_pseudo_only_selectors_after_whitespace() {
         Some("size:10vw")
     );
 }
+
+#[test]
+fn page_rules_drop_selectors_with_two_page_names() {
+    for css in [
+        "@page foo/**/bar{margin:10vw}@page foo{margin:20vw}",
+        "@page foo bar{margin:10vw}@page foo{margin:20vw}",
+        "@page :first foo{margin:10vw}@page foo{margin:20vw}",
+    ] {
+        assert_eq!(page_block_named(css, "foo"), Some("margin:20vw"), "{css}");
+    }
+}
+
+#[test]
+fn first_authored_page_name_skips_keywords_that_name_no_page() {
+    for keyword in [
+        "auto",
+        "initial",
+        "INHERIT",
+        "unset",
+        "revert",
+        "revert-layer",
+        "default",
+    ] {
+        let html = format!("<p style=\"page/**/:{keyword}\"></p><p style=\"page:cover\"></p>");
+        assert_eq!(
+            first_authored_page_name(&html).as_deref(),
+            Some("cover"),
+            "{keyword}"
+        );
+    }
+}

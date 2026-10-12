@@ -1159,6 +1159,7 @@ fn page_rules(input: &str) -> Vec<PageRule<'_>> {
                 }
                 _ => {
                     if let Some((names, valid)) = &mut page {
+                        let starts_selector = empty_selector;
                         if matches!(token, cssparser::Token::Ident(_) | cssparser::Token::Colon) {
                             empty_selector = false;
                         }
@@ -1168,7 +1169,12 @@ fn page_rules(input: &str) -> Vec<PageRule<'_>> {
                                     .iter()
                                     .any(|class| name.eq_ignore_ascii_case(class));
                             }
-                            cssparser::Token::Ident(name) => names.push(name.to_string()),
+                            // A selector has at most one page name, before
+                            // its pseudo-classes.
+                            cssparser::Token::Ident(name) => {
+                                *valid &= starts_selector;
+                                names.push(name.to_string());
+                            }
                             // A pseudo-class name follows its colon directly.
                             cssparser::Token::Colon => {
                                 let state = input.state();
@@ -1264,7 +1270,21 @@ fn first_authored_page_name(input: &str) -> Option<String> {
                         }
                         Ok::<_, cssparser::ParseError<'i, ()>>(value.to_string())
                     });
-                    if let Ok(value) = value {
+                    // `auto` names no page, CSS-wide keywords are not names,
+                    // and `default` is reserved.
+                    if let Ok(value) = value
+                        && ![
+                            "auto",
+                            "default",
+                            "initial",
+                            "inherit",
+                            "unset",
+                            "revert",
+                            "revert-layer",
+                        ]
+                        .iter()
+                        .any(|keyword| value.eq_ignore_ascii_case(keyword))
+                    {
                         return Some(value);
                     }
                 }
