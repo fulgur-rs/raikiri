@@ -46,3 +46,54 @@ impl<'p> FlowPages<'p> {
         self.by_flow[first..last].iter().map(|&(_, _, page)| page)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::FlowPages;
+    use crate::page_projection::records::PageFragment;
+
+    fn pages(ranges: &[Option<(f32, f32)>]) -> Vec<PageFragment> {
+        ranges
+            .iter()
+            .enumerate()
+            .map(|(index, &range)| {
+                let mut page = PageFragment::new();
+                page.page_index = index as u32;
+                page.flow_range = range;
+                page
+            })
+            .collect()
+    }
+
+    fn indices<'p>(found: impl Iterator<Item = &'p PageFragment>) -> Vec<u32> {
+        found.map(|page| page.page_index).collect()
+    }
+
+    #[test]
+    fn pages_around_a_range_skip_pages_without_flow_and_far_pages() {
+        let pages = pages(&[
+            Some((0.0, 100.0)),
+            None,
+            Some((100.0, 200.0)),
+            Some((200.0, 300.0)),
+        ]);
+        let flow = FlowPages::new(&pages);
+        assert_eq!(indices(flow.around(150.0, 150.0)), [2]);
+        assert_eq!(indices(flow.around(50.0, 250.0)), [0, 2, 3]);
+        // An empty range, as left by lines without a finite center.
+        assert!(indices(flow.around(f32::INFINITY, f32::NEG_INFINITY)).is_empty());
+    }
+
+    #[test]
+    fn pages_with_unordered_ends_are_searched_from_the_first_page() {
+        // The first range ends after the second, so ends cannot be
+        // binary-searched and every page starting before the range is kept.
+        let pages = pages(&[
+            Some((0.0, 500.0)),
+            Some((100.0, 200.0)),
+            Some((600.0, 700.0)),
+        ]);
+        let flow = FlowPages::new(&pages);
+        assert_eq!(indices(flow.around(300.0, 300.0)), [0, 1]);
+    }
+}

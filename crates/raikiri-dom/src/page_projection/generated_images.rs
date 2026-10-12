@@ -126,16 +126,15 @@ pub(super) fn prepare(
         let candidates: Box<dyn Iterator<Item = &PageFragment>> = if repeated {
             Box::new(pages.iter())
         } else {
-            let mut centers = prepared
+            // Without a finite line center the range stays empty, and so
+            // does the candidate list.
+            let (low, high) = prepared
                 .iter()
                 .map(|&(top, height, _, _)| root.y + top + height * 0.5)
-                .filter(|center| center.is_finite());
-            let Some(first) = centers.next() else {
-                continue;
-            };
-            let (low, high) = centers.fold((first, first), |(low, high), center| {
-                (low.min(center), high.max(center))
-            });
+                .filter(|center| center.is_finite())
+                .fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), center| {
+                    (low.min(center), high.max(center))
+                });
             Box::new(flow_pages.around(low, high))
         };
         for page in candidates {
