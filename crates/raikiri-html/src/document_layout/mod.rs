@@ -229,7 +229,7 @@ pub(crate) fn layout_resumed<'r>(
         .map(|_| page::InlineSvgCache::default())
         .collect();
     if signal.as_ref().is_some_and(|signal| signal.is_aborted()) {
-        return Ok(Some(LayoutStatus::Aborted));
+        return Ok(Some(LayoutStatus::Aborted)); // cov:ignore: needs the abort signal to fire while the running elements are indexed
     }
     Ok(Some(LayoutStatus::Completed(DocumentLayout {
         out,

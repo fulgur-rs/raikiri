@@ -31,7 +31,7 @@
 //!   already left out for landing on a delivered page.
 
 use raikiri_dom::Document;
-use raikiri_dom::generated_content::{generated_image_origin, generated_origin};
+use raikiri_dom::generated_content::generated_origin;
 use raikiri_style::computed::ComputedValues;
 use raikiri_style::property::{ContentComponent, DisplayValue, FloatValue, PositionValue};
 use raikiri_style::{CascadeResult, ComputedLengthPercentageOrAuto};
@@ -116,9 +116,7 @@ pub(super) fn resume_point(
             let owner = if id < node_count {
                 Some(id)
             } else {
-                generated_origin(id)
-                    .map(|(element, _)| element)
-                    .or_else(|| generated_image_origin(id).map(|(element, _, _)| element))
+                generated_origin(id).map(|(element, _)| element)
             };
             match owner {
                 Some(owner) if !inside.get(owner).copied().unwrap_or(true) => {}
@@ -162,9 +160,7 @@ pub(super) fn can_resume(document: &HtmlDocument, late_nodes_from: Option<usize>
     {
         return false;
     }
-    let Some(from) = late_nodes_from else {
-        return true;
-    };
+    let from = late_nodes_from.unwrap_or(dom.node_count());
     !(from..dom.node_count()).any(|id| {
         dom.get_node(id)
             .is_some_and(|node| node.kind() == NodeKind::Element && node.is_in_document())
@@ -234,13 +230,13 @@ fn skipped_before(
 /// block container in the normal flow.
 fn is_flow_block_container(computed: &ComputedValues) -> bool {
     matches!(
-        computed.display,
-        DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
-    ) && computed.float == FloatValue::None
-        && matches!(
-            computed.position,
-            PositionValue::Static | PositionValue::Relative
+        (computed.display, computed.float, &computed.position),
+        (
+            DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem,
+            FloatValue::None,
+            PositionValue::Static | PositionValue::Relative,
         )
+    )
 }
 
 /// Whether an element with these computed values takes the height of its

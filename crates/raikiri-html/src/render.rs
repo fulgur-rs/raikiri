@@ -1140,7 +1140,7 @@ pub(crate) fn run_pipeline(
             &page_control,
         ) {
             Ok(()) => {}
-            Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted),
+            Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted), // cov:ignore: needs a cancellation landing during this projection
             Err(error) => return Err(RenderError::from(error)),
         }
 

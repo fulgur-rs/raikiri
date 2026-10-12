@@ -315,6 +315,8 @@ impl Document {
     /// The boxes on projected page `page_index` that began on an earlier
     /// page, by node.
     pub fn crossing_boxes(&self, page_index: u32) -> Vec<CrossingBox> {
+        // Fragments are numbered in page order, so a box's first item on
+        // the page carries its count of earlier fragments.
         let mut crossing: std::collections::BTreeMap<NodeId, CrossingBox> = Default::default();
         let pages = self.page_projection.pages.iter();
         for item in pages
@@ -324,15 +326,11 @@ impl Document {
                 item.fragment_index > 0 && !item.is_repeat && !item.is_table_header_repeat
             })
         {
-            let entry = crossing.entry(item.node_id).or_insert(CrossingBox {
+            crossing.entry(item.node_id).or_insert(CrossingBox {
                 node: item.node_id,
                 earlier_fragments: item.fragment_index,
                 top: item.box_y,
             });
-            if item.fragment_index < entry.earlier_fragments {
-                entry.earlier_fragments = item.fragment_index;
-                entry.top = item.box_y;
-            }
         }
         crossing.into_values().collect()
     }

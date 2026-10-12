@@ -3,7 +3,9 @@ use std::rc::Rc;
 
 use super::super::*;
 use crate::document_layout::Page;
+use crate::document_layout::layout_resumed;
 use crate::layout;
+use crate::render::ResumePoint;
 
 /// What a page shows: its name, every fragment with its geometry and
 /// position among the node's fragments, its text runs and its margin
@@ -182,7 +184,8 @@ fn plain_paragraphs_resume_like_batch() {
 #[test]
 fn nested_sections_resume_like_batch() {
     let mut html = String::from(
-        "<!doctype html><style>section { border: 2px solid; padding: 4px } \
+        "<!doctype html><style>section { border: 2px solid; padding: 4px; min-height: 0 } \
+         p::before { content: '> ' } \
          h2 { break-after: avoid }</style><body>",
     );
     for section in 0..16 {
@@ -288,4 +291,137 @@ fn layouts_resume_after_a_late_stamp_is_left_out() {
         stream.settings.resumed.get() > before,
         "layouts after the stamp resume"
     );
+}
+
+#[test]
+fn one_long_paragraph_lays_out_the_whole_document() {
+    // Every page starts inside the one paragraph, so nothing lies wholly
+    // before a page start to leave out.
+    let mut html = String::from("<!doctype html><body><p>");
+    for word in 0..6000 {
+        html.push_str(&format!("w{word} "));
+    }
+    html.push_str("</p></body>");
+    let (expected, _) = batch(&html);
+    let (pages, _, resumed) = stream(&html, 2048);
+    assert_eq!(pages, expected);
+    assert_eq!(resumed, 0);
+}
+
+/// The parsed `html`, and the first page start at or after page `page`
+/// that its batch layout could resume at.
+fn resume_point_of(html: &str, page: u32) -> (HtmlDocument, ResumePoint) {
+    let resources = RenderResources::new();
+    let document = crate::parse_html_with_resources(html.as_bytes(), &resources).expect("parse");
+    let LayoutStatus::Completed(laid_out) = layout(
+        &document,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        LayoutOptions::new().resources(&resources),
+    )
+    .expect("layout") else {
+        panic!("aborted");
+    };
+    let point = (1..laid_out.page_count())
+        .filter(|&index| index >= page)
+        .find_map(|index| {
+            let names: Vec<_> = laid_out
+                .pages()
+                .take(index as usize)
+                .map(|page| page.name().map(str::to_owned))
+                .collect();
+            resume_point(&document, &laid_out, index, &names)
+        })
+        .expect("a page start to resume at");
+    (document, point)
+}
+
+fn resumed_layout(
+    document: &HtmlDocument,
+    point: &ResumePoint,
+    config: LayoutConfig,
+) -> Result<Option<LayoutStatus>, RenderError> {
+    let resources = RenderResources::new();
+    layout_resumed(
+        document,
+        PageDefaults::default(),
+        config,
+        LayoutOptions::new().resources(&resources),
+        Some(point),
+    )
+}
+
+#[test]
+fn a_page_start_the_relayout_misses_is_not_resumed() {
+    let html = format!("<!doctype html><body>{}</body>", paragraphs(40, 60));
+    let (document, mut point) = resume_point_of(&html, 1);
+    point.start.offset += 37.0;
+    let status = resumed_layout(&document, &point, LayoutConfig::default()).expect("layout");
+    assert!(status.is_none());
+}
+
+#[test]
+fn a_resumed_layout_reports_the_page_limit() {
+    let html = format!("<!doctype html><body>{}</body>", paragraphs(40, 60));
+    let (document, point) = resume_point_of(&html, 1);
+    let config = LayoutConfig::builder()
+        .limits(
+            raikiri_traits::RenderLimits::builder()
+                .max_document_pages(Some(point.first_page + 1))
+                .build(),
+        )
+        .build();
+    let result = resumed_layout(&document, &point, config);
+    assert!(
+        matches!(
+            result,
+            Err(RenderError::LimitExceeded {
+                kind: raikiri_traits::LimitKind::Pages,
+                ..
+            })
+        ),
+        "{:?}",
+        result.err()
+    );
+}
+
+/// The elements a layout of `html` can leave out before the element with
+/// id `target`.
+fn skipped_before_target(html: &str) -> Option<Vec<usize>> {
+    let resources = RenderResources::new();
+    let document = crate::parse_html_with_resources(html.as_bytes(), &resources).expect("parse");
+    let LayoutStatus::Completed(laid_out) = layout(
+        &document,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        LayoutOptions::new().resources(&resources),
+    )
+    .expect("layout") else {
+        panic!("aborted");
+    };
+    let dom = &document.uncascaded.dom;
+    let target = (0..dom.node_count())
+        .find(|&id| {
+            dom.get_node(id)
+                .and_then(|node| node.attribute("id"))
+                .is_some_and(|id| id == "target")
+        })
+        .expect("target");
+    let (layout_document, _) = laid_out.out.layout_for_page(0);
+    super::skipped_before(dom, layout_document, &document.cascade, target)
+}
+
+#[test]
+fn only_ancestors_sized_by_their_content_let_content_be_left_out() {
+    let wrapped = |style: &str| {
+        format!(
+            "<!doctype html><body><p>before</p><div style='{style}'><p>a</p><p id=target>b</p></div></body>"
+        )
+    };
+    let skipped = skipped_before_target(&wrapped("")).expect("left out");
+    assert!(skipped.len() >= 2, "{skipped:?}");
+    assert!(skipped_before_target(&wrapped("min-height: 0")).is_some());
+    assert!(skipped_before_target(&wrapped("height: 300px")).is_none());
+    assert!(skipped_before_target(&wrapped("min-height: 300px")).is_none());
+    assert!(skipped_before_target(&wrapped("display: flex")).is_none());
 }
