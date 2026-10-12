@@ -2964,6 +2964,18 @@ impl Document {
             .map(|image| image.pixels.as_ref())
     }
 
+    /// Shared pixels of [`Self::content_image`], so a painter can retain
+    /// the prepared raster without copying its pixel buffer.
+    pub fn content_image_shared(
+        &self,
+        element: usize,
+        pseudo: raikiri_style::PseudoElem,
+        index: usize,
+    ) -> Option<&std::sync::Arc<raikiri_traits::DecodedImage>> {
+        self.content_image_entry(element, pseudo, index)
+            .map(|image| &image.pixels)
+    }
+
     /// Absolute source URL retained with a prepared content image.
     pub fn content_image_url(
         &self,
@@ -3006,6 +3018,17 @@ impl Document {
         self.list_marker_images
             .get(&element)
             .map(|marker| marker.pixels.as_ref())
+    }
+
+    /// Shared pixels of [`Self::list_marker_image`], so a painter can retain
+    /// the prepared raster without copying its pixel buffer.
+    pub fn list_marker_image_shared(
+        &self,
+        element: usize,
+    ) -> Option<&std::sync::Arc<raikiri_traits::DecodedImage>> {
+        self.list_marker_images
+            .get(&element)
+            .map(|marker| &marker.pixels)
     }
 
     /// Absolute source URL retained with a prepared marker's pixels.

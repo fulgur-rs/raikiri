@@ -41,6 +41,9 @@ use raikiri_traits::{
 };
 use std::f64::consts::{FRAC_PI_2, PI};
 
+mod image_brush;
+pub(crate) use image_brush::ImageBrushCache;
+
 use crate::text;
 
 use raikiri_dom::generated_content::markers::marker_render_info_with_snapshots;
@@ -53,6 +56,7 @@ use raikiri_dom::generated_content::markers::marker_render_info_with_snapshots;
 /// from a zero-margin page.  With zero page margins the historical canvas
 /// propagation remains a single full-page fill.
 pub(crate) fn paint_canvas_background(
+    image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,
@@ -81,11 +85,27 @@ pub(crate) fn paint_canvas_background(
         // A canvas color may be translucent; selecting it with `or` would
         // discard the opaque page color instead of compositing over it.
         fill_rect(scene, page_color.unwrap_or(white), page_rect);
-        paint_page_background_image(scene, document, cascade, page_rect, pixel_source, warnings);
+        paint_page_background_image(
+            image_cache,
+            scene,
+            document,
+            cascade,
+            page_rect,
+            pixel_source,
+            warnings,
+        );
         if let Some(color) = canvas_color {
             fill_rect(scene, color, page_rect);
         }
-        paint_canvas_background_image(scene, document, cascade, page_rect, pixel_source, warnings);
+        paint_canvas_background_image(
+            image_cache,
+            scene,
+            document,
+            cascade,
+            page_rect,
+            pixel_source,
+            warnings,
+        );
         return;
     }
 
@@ -93,7 +113,15 @@ pub(crate) fn paint_canvas_background(
     // transparent; the UA canvas default is white in that case.
     let page_rect = kurbo::Rect::new(0.0, 0.0, page_box.width as f64, page_box.height as f64);
     fill_rect(scene, page_color.unwrap_or(white), page_rect);
-    paint_page_background_image(scene, document, cascade, page_rect, pixel_source, warnings);
+    paint_page_background_image(
+        image_cache,
+        scene,
+        document,
+        cascade,
+        page_rect,
+        pixel_source,
+        warnings,
+    );
     let canvas_rect = kurbo::Rect::new(
         margins.left as f64,
         margins.top as f64,
@@ -104,6 +132,7 @@ pub(crate) fn paint_canvas_background(
         fill_rect(scene, color, canvas_rect);
     }
     paint_canvas_background_image(
+        image_cache,
         scene,
         document,
         cascade,
@@ -117,6 +146,7 @@ pub(crate) fn paint_canvas_background(
 /// as the page-box reference.  The document walk starts at `body`, so the
 /// root decoration needs this separate page-local paint site.
 pub(crate) fn paint_root_element_border(
+    image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,
@@ -133,6 +163,7 @@ pub(crate) fn paint_root_element_border(
     // The root element's border image replaces its border styles like any
     // other box's (CSS Backgrounds 3 §6.1).
     if paint_element_border_image(
+        image_cache,
         scene,
         page_box.width,
         page_box.height,
@@ -575,6 +606,7 @@ fn clip_inset_rect(
 }
 
 fn paint_page_background_image(
+    image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,
@@ -644,6 +676,7 @@ fn paint_page_background_image(
         return;
     }
     paint_background_from_source(
+        image_cache,
         scene,
         &url,
         positioning,
@@ -670,6 +703,7 @@ fn canvas_used_padding(computed: &ComputedValues, area_width: f64) -> (f64, f64,
 }
 
 fn paint_canvas_background_image(
+    image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,
@@ -728,6 +762,7 @@ fn paint_canvas_background_image(
         return;
     }
     paint_background_from_source(
+        image_cache,
         scene,
         &url,
         positioning,
@@ -1090,6 +1125,7 @@ fn paint_list_marker(
     let snapshots = raikiri_dom::counter_snapshots(document, cascade)
         .expect("test counter snapshots stay within budget");
     paint_list_marker_with_snapshots(
+        &crate::walk::ImageBrushCache::default(),
         scene,
         document,
         cascade,
@@ -1106,6 +1142,7 @@ fn paint_list_marker(
 
 #[allow(clippy::too_many_arguments)] // cov:ignore: attribute has no executable mapping
 fn paint_list_marker_with_snapshots(
+    image_cache: &crate::walk::ImageBrushCache,
     // cov:ignore: signature line has no executable mapping
     scene: &mut impl PaintScene, // cov:ignore: signature line has no executable mapping
     document: &Document,         // cov:ignore: signature line has no executable mapping
@@ -1151,7 +1188,9 @@ fn paint_list_marker_with_snapshots(
         None
     };
     if !explicit_content
-        && let Some(decoded) = document.list_marker_image(node_id).or(resolved.as_deref())
+        && let Some(decoded) = document
+            .list_marker_image_shared(node_id)
+            .or(resolved.as_ref())
         && decoded.width > 0
         && decoded.height > 0
     {
@@ -1168,14 +1207,7 @@ fn paint_list_marker_with_snapshots(
                 height: marker_height,
             },
         );
-        let image_data = peniko::ImageData {
-            data: peniko::Blob::from(decoded.rgba.clone()),
-            format: peniko::ImageFormat::Rgba8,
-            alpha_type: peniko::ImageAlphaType::Alpha,
-            width: decoded.width,
-            height: decoded.height,
-        };
-        let brush = peniko::ImageBrush::new(image_data);
+        let brush = image_cache.whole(decoded);
         scene.fill(
             peniko::Fill::NonZero,
             Affine::translate((marker_rect.x as f64, marker_rect.y as f64))
@@ -1209,6 +1241,7 @@ fn paint_list_marker_with_snapshots(
 /// Paint one laid-out page-margin box: background color, background image,
 /// borders, then its text clipped to the border box.
 fn paint_margin_box(
+    image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,
     margin_box: &raikiri_dom::MarginBox,
     pixel_source: Option<&dyn ImagePixelSource>,
@@ -1258,6 +1291,7 @@ fn paint_margin_box(
                 Some(painting) => {
                     if painting.x1 > painting.x0 && painting.y1 > painting.y0 {
                         paint_background_from_source(
+                            image_cache,
                             scene,
                             &url,
                             positioning,
@@ -1367,6 +1401,7 @@ fn paint_margin_box(
 /// for the page context in `cascade.page`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_page_margin_boxes(
+    image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,
@@ -1383,7 +1418,7 @@ pub(crate) fn paint_page_margin_boxes(
     for margin_box in
         raikiri_dom::page_margin_boxes(document, cascade, &cascade.page, page_box, context)
     {
-        paint_margin_box(scene, &margin_box, pixel_source, warnings);
+        paint_margin_box(image_cache, scene, &margin_box, pixel_source, warnings);
     }
 }
 
@@ -1427,6 +1462,7 @@ fn box_intersects_page(y: f32, height: f32, page_top: f32, page_bottom: f32) -> 
 /// in the Element arm (which reserves the site for that work).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_document(
+    image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,
@@ -1439,6 +1475,7 @@ pub(crate) fn paint_document(
 ) {
     let mut warnings = Vec::new();
     paint_document_impl(
+        image_cache,
         scene,
         document,
         cascade,
@@ -1456,6 +1493,7 @@ pub(crate) fn paint_document(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_document_with_images_and_warnings(
+    image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,
@@ -1469,6 +1507,7 @@ pub(crate) fn paint_document_with_images_and_warnings(
     custom_highlights: &[crate::TextHighlightRange],
 ) {
     paint_document_impl(
+        image_cache,
         scene,
         document,
         cascade,
@@ -1486,6 +1525,7 @@ pub(crate) fn paint_document_with_images_and_warnings(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_document_impl(
+    image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,
@@ -1847,6 +1887,7 @@ pub(crate) fn paint_document_impl(
                 }
                 let paint_transform = scene.transform;
                 crate::ifc_text::draw_ifc_lines_with_resources(
+                    image_cache,
                     scene,
                     document,
                     cascade,
@@ -2504,6 +2545,7 @@ pub(crate) fn paint_document_impl(
                             );
                         }
                         paint_element_background(
+                            image_cache,
                             scene,
                             own_background_width,
                             own_background_height,
@@ -2589,6 +2631,7 @@ pub(crate) fn paint_document_impl(
                                 ),
                             );
                             let drawn = paint_element_border_image(
+                                image_cache,
                                 scene,
                                 own_paint_width,
                                 own_paint_y + own_paint_height - unfragmented_top,
@@ -2604,6 +2647,7 @@ pub(crate) fn paint_document_impl(
                             drawn
                         } else {
                             paint_element_border_image(
+                                image_cache,
                                 scene,
                                 own_paint_width,
                                 own_paint_height,
@@ -2723,6 +2767,7 @@ pub(crate) fn paint_document_impl(
                         && let Some(intrinsic) = source.intrinsic_size(&src_url)
                     {
                         paint_image(
+                            image_cache,
                             scene,
                             source,
                             &src_url,
@@ -2764,6 +2809,7 @@ pub(crate) fn paint_document_impl(
                             scene.scene.push_clip_layer(Affine::IDENTITY, &clip);
                         }
                         paint_element_background(
+                            image_cache,
                             scene,
                             layout.size.width,
                             layout.size.height,
@@ -2848,6 +2894,7 @@ pub(crate) fn paint_document_impl(
                             layout.size.height
                         };
                         paint_list_marker_with_snapshots(
+                            image_cache,
                             scene,
                             document,
                             cascade,
@@ -3174,6 +3221,7 @@ pub(crate) fn paint_document_impl(
                     }
                     let paint_transform = scene.transform;
                     crate::ifc_text::draw_ifc_lines_with_resources(
+                        image_cache,
                         scene,
                         document,
                         cascade,
@@ -3312,6 +3360,7 @@ pub(crate) fn paint_document_impl(
                         }
                         let paint_transform = scene.transform;
                         crate::ifc_text::draw_ifc_lines_with_resources(
+                            image_cache,
                             scene,
                             document,
                             cascade,
@@ -3437,6 +3486,7 @@ fn used_padding_for_paint(
 /// CSS object size selected by `object-fit`.
 #[allow(clippy::too_many_arguments)]
 fn paint_image(
+    image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,
     source: &dyn ImagePixelSource,
     url: &url::Url,
@@ -3508,14 +3558,7 @@ fn paint_image(
         });
         return true;
     }
-    let image_data = peniko::ImageData {
-        data: peniko::Blob::from(decoded.rgba.clone()),
-        format: peniko::ImageFormat::Rgba8,
-        alpha_type: peniko::ImageAlphaType::Alpha,
-        width: decoded.width,
-        height: decoded.height,
-    };
-    let brush = peniko::ImageBrush::new(image_data);
+    let brush = image_cache.whole(&decoded);
     let clip = Rect::new(
         content_x,
         content_y,
@@ -3884,6 +3927,7 @@ fn vertical_table_cell_background_width(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_element_background(
+    image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,
     width: f32,
     height: f32,
@@ -3904,6 +3948,7 @@ pub(crate) fn paint_element_background(
     warnings: &mut Vec<RenderWarning>,
 ) {
     paint_element_background_slice(
+        image_cache,
         scene,
         width,
         height,
@@ -3928,6 +3973,7 @@ pub(crate) fn paint_element_background(
 
 #[allow(clippy::too_many_arguments)]
 fn paint_element_background_slice(
+    image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,
     width: f32,
     height: f32,
@@ -4203,6 +4249,7 @@ fn paint_element_background_slice(
         ) {
             scene.push_clip_layer(Affine::IDENTITY, &rounded);
             paint_background_from_source(
+                image_cache,
                 scene,
                 url,
                 positioning,
@@ -4216,6 +4263,7 @@ fn paint_element_background_slice(
             scene.pop_layer();
         } else {
             paint_background_from_source(
+                image_cache,
                 scene,
                 url,
                 positioning,
@@ -4269,6 +4317,7 @@ fn redacted_image_url(url: &url::Url) -> url::Url {
 /// a borderless element with default origin/clip) pass the same [`Rect`] twice.
 #[allow(clippy::too_many_arguments)]
 fn paint_background_from_source(
+    image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,
     url: &url::Url,
     positioning: Rect,
@@ -4293,6 +4342,7 @@ fn paint_background_from_source(
     };
     if let Some(decoded) = pixel_source.get_decoded_at_size(url, raster_size, None) {
         paint_background_image(
+            image_cache,
             scene,
             &decoded,
             positioning,
@@ -4337,8 +4387,9 @@ fn paint_background_from_source(
 /// `space`/`round` axes stay inside `positioning` and clip to `painting`.
 #[allow(clippy::too_many_arguments)]
 fn paint_background_image(
+    image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,
-    decoded: &raikiri_traits::DecodedImage,
+    decoded: &std::sync::Arc<raikiri_traits::DecodedImage>,
     positioning: Rect,
     painting: Rect,
     image_w: f64,
@@ -4369,14 +4420,7 @@ fn paint_background_image(
         return;
     };
     let (tile_w, tile_h) = (tiles.width, tiles.height);
-    let image_data = peniko::ImageData {
-        data: peniko::Blob::from(decoded.rgba.clone()),
-        format: peniko::ImageFormat::Rgba8,
-        alpha_type: peniko::ImageAlphaType::Alpha,
-        width: decoded.width,
-        height: decoded.height,
-    };
-    let brush = peniko::ImageBrush::new(image_data);
+    let brush = image_cache.whole(decoded);
     let tile_shape = Rect::new(0.0, 0.0, decoded.width as f64, decoded.height as f64);
     let tile_scale = Affine::scale_non_uniform(
         tile_w / decoded.width as f64,
@@ -4407,6 +4451,7 @@ fn paint_background_image(
 /// gradient backgrounds in this painter.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_element_border_image(
+    image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,
     width: f32,
     height: f32,
@@ -4516,9 +4561,7 @@ pub(crate) fn paint_element_border_image(
             // slices overlap, the copies would hold more pixels than the
             // image, so every part samples one shared copy instead.
             let shared = (cropped_pixels > u64::from(decoded.width) * u64::from(decoded.height))
-                .then(|| PixelCrop::whole(&decoded).brush(&decoded))
-                .flatten();
-            let mut brushes: Vec<(PixelCrop, peniko::ImageBrush)> = Vec::new();
+                .then(|| image_cache.whole(&decoded));
             for (part, crop) in geometry.parts.iter().zip(crops) {
                 let (src_x, src_y, src_w, src_h) = part.source;
                 let (area_x, area_y, area_w, area_h) = part.area;
@@ -4530,15 +4573,8 @@ pub(crate) fn paint_element_border_image(
                     let pixels = Affine::scale_non_uniform(1.0 / scale_x, 1.0 / scale_y);
                     (brush.clone(), pixels)
                 } else {
-                    let brush = match brushes.iter().find(|(seen, _)| *seen == crop) {
-                        Some((_, brush)) => brush.clone(),
-                        None => {
-                            let Some(brush) = crop.brush(&decoded) else {
-                                continue;
-                            };
-                            brushes.push((crop, brush.clone()));
-                            brush
-                        }
+                    let Some(brush) = image_cache.crop(&decoded, crop) else {
+                        continue;
                     };
                     // Cropped pixels to image coordinates.
                     let pixels = Affine::translate((src_x, src_y))
@@ -4610,7 +4646,7 @@ pub(crate) fn paint_element_border_image(
 }
 
 /// A rectangle of whole decoded pixels, as `[x0, x1) × [y0, y1)`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct PixelCrop {
     x0: u32,
     y0: u32,
@@ -4902,6 +4938,7 @@ pub(crate) fn paintable_border_radius(
 /// what the piece leaves around its content box once the border is taken off.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_inline_box(
+    image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,
     cv: &ComputedValues,
     piece: &raikiri_dom::InlineBoxPiece,
@@ -5069,6 +5106,7 @@ pub(crate) fn paint_inline_box(
         radius
     };
     paint_element_background_slice(
+        image_cache,
         scene,
         background_outer.width,
         background_outer.height,
@@ -5125,6 +5163,7 @@ pub(crate) fn paint_inline_box(
             &Rect::new(left, -UNBOUNDED, right, UNBOUNDED),
         );
         let drawn = paint_element_border_image(
+            image_cache,
             scene,
             joined.outer.width,
             outer.height,
@@ -5160,6 +5199,7 @@ pub(crate) fn paint_inline_box(
             &cut
         };
         paint_element_border_image(
+            image_cache,
             scene,
             outer.width,
             outer.height,

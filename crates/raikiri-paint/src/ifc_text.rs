@@ -55,6 +55,7 @@ struct RunDraw<'a> {
 /// overlines below the text, line-throughs over it).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_ifc_lines_with_resources(
+    image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,
@@ -108,17 +109,11 @@ pub(crate) fn draw_ifc_lines_with_resources(
         let mut paint = typographic::TypographicPaint::new(root_node, &pieces_by_line[line_index]);
         let background_slices = typographic::background_slices(&pieces_by_line[line_index]);
         for marker in &positioned_line.markers {
-            let Some(image) = document.list_marker_image(marker.owner) else {
+            let Some(image) = document.list_marker_image_shared(marker.owner) else {
                 continue;
             };
             let rect = marker.rect;
-            let brush = peniko::ImageBrush::new(peniko::ImageData {
-                data: peniko::Blob::from(image.rgba.clone()),
-                format: peniko::ImageFormat::Rgba8,
-                alpha_type: peniko::ImageAlphaType::Alpha,
-                width: image.width,
-                height: image.height,
-            });
+            let brush = image_cache.whole(image);
             paint.target(None).fill(
                 Fill::NonZero,
                 Affine::translate((
@@ -160,6 +155,7 @@ pub(crate) fn draw_ifc_lines_with_resources(
             let line_shift = shifts.get(line_index).copied().unwrap_or(0.0);
             let group = paint.piece_group(piece);
             crate::walk::paint_inline_box(
+                image_cache,
                 paint.target(group),
                 cv,
                 piece,
@@ -177,7 +173,8 @@ pub(crate) fn draw_ifc_lines_with_resources(
         // below the line's text. They move with the pseudo-element's
         // relatively positioned inline ancestors.
         for image in &positioned_line.content_images {
-            let Some(pixels) = document.content_image(image.owner, image.pseudo, image.index)
+            let Some(pixels) =
+                document.content_image_shared(image.owner, image.pseudo, image.index)
             else {
                 continue; // cov:ignore: positioned lines list only the content images whose pixels the document holds
             };
@@ -189,13 +186,7 @@ pub(crate) fn draw_ifc_lines_with_resources(
                 .and_then(|piece| paint.piece_group(piece));
             let (dx, dy) = cumulative_offset(document, root_id, offsets, image.owner);
             let rect = image.rect;
-            let brush = peniko::ImageBrush::new(peniko::ImageData {
-                data: peniko::Blob::from(pixels.rgba.clone()),
-                format: peniko::ImageFormat::Rgba8,
-                alpha_type: peniko::ImageAlphaType::Alpha,
-                width: pixels.width,
-                height: pixels.height,
-            });
+            let brush = image_cache.whole(pixels);
             paint.target(group).fill(
                 Fill::NonZero,
                 Affine::translate((
@@ -377,6 +368,7 @@ pub(crate) fn draw_ifc_lines(
     custom_highlights: &[crate::TextHighlightRange],
 ) {
     draw_ifc_lines_with_resources(
+        &crate::walk::ImageBrushCache::default(),
         scene,
         document,
         cascade,
