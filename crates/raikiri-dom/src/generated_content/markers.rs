@@ -296,9 +296,8 @@ pub fn marker_render_info_with_snapshots<'a>(
     }
     let base = snapshots.get(node_id).unwrap_or(&EMPTY_COUNTER_SNAPSHOT);
     let counters = CounterSnapshotView::new(base, marker_computed);
-    // The sibling scan is only a fallback for a missing `list-item` counter.
-    // Skipping it when the counter exists keeps a long list linear instead of
-    // rescanning every preceding sibling for each item.
+    // Counter snapshots carry the implicit ordinal for ordinary list items.
+    // This fallback remains for callers that supply snapshots without one.
     let ordinal = if counters.values_for("list-item").is_empty() {
         list_item_ordinal(document, cascade, node_id)
     } else {

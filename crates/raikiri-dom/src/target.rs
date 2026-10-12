@@ -219,6 +219,18 @@ impl CounterSnapshotBudget {
             .and_then(|count| count.checked_mul(size_of::<CounterSnapshot>() as u64));
         self.charge(bytes)
     }
+
+    fn charge_implicit_list_item(&mut self) -> Result<(), CounterSnapshotLimitExceeded> {
+        // Reserve for a small hash table with capacity slack and the one-value
+        // vector allocation added to an otherwise empty snapshot.
+        let entry_bytes = (size_of::<(Symbol, Vec<i32>)>() as u64)
+            .checked_mul(2)
+            .and_then(|bytes| bytes.checked_add(16));
+        let bytes = entry_bytes
+            .and_then(|bytes| bytes.checked_mul(4))
+            .and_then(|bytes| bytes.checked_add(size_of::<i32>() as u64 + 16));
+        self.charge(bytes)
+    }
 }
 
 /// Counter-scope tracker implementing CSS Lists 3 §4.3's nested-scope model
@@ -727,6 +739,8 @@ pub(crate) fn build_target_registry(
 /// apply their own directives; descendants of `display: none` are omitted.
 /// This is an owned snapshot so paint can resolve counters without borrowing
 /// the DOM walk's transient scope state.
+/// List-item nodes also carry their sibling ordinal when no explicit
+/// `list-item` counter is in scope.
 pub type CounterSnapshot = HashMap<Symbol, Vec<i32>>;
 
 /// Build named-counter snapshots in document order for marker and generated
@@ -736,6 +750,8 @@ pub type CounterSnapshot = HashMap<Symbol, Vec<i32>>;
 /// [`build_target_registry`], including sibling obscuring, self-nesting,
 /// saturating arithmetic, and `display: none` / `display: contents` rules.
 /// `snapshots[idx]` is empty for an unreachable or skipped node.
+/// Ordinary list items receive their one-based sibling ordinal in the
+/// `list-item` entry so marker consumers can reuse it without rescanning.
 pub fn counter_snapshots(
     doc: &Document,
     cascade: &CascadeResult,
@@ -754,17 +770,18 @@ pub fn counter_snapshots_with_budget(
     budget.charge_base(doc.node_count())?;
     let mut snapshots = vec![HashMap::new(); doc.node_count()];
     let mut scopes = CounterScopes::default();
+    let list_item_counter = Symbol::new("list-item");
 
     enum WalkStep {
-        Enter(usize),
+        Enter(usize, u32),
         Exit,
     }
 
-    let mut stack = vec![WalkStep::Enter(doc.root)];
+    let mut stack = vec![WalkStep::Enter(doc.root, 1)];
     let mut pending_pops: Vec<Vec<Symbol>> = Vec::new();
     while let Some(step) = stack.pop() {
         match step {
-            WalkStep::Enter(idx) => {
+            WalkStep::Enter(idx, list_item_ordinal) => {
                 let node = &doc.nodes[idx];
                 if !node.is_in_document() {
                     continue;
@@ -790,6 +807,13 @@ pub fn counter_snapshots_with_budget(
                 // element's real children, while the pseudo's own content
                 // applies those directives locally in paint.
                 snapshots[idx] = scopes.snapshot(budget)?;
+                if display == Some(DisplayValue::ListItem)
+                    && !snapshots[idx].contains_key(&list_item_counter)
+                {
+                    budget.charge_implicit_list_item()?;
+                    snapshots[idx]
+                        .insert(list_item_counter.clone(), vec![list_item_ordinal as i32]);
+                }
                 stack.push(WalkStep::Exit);
                 pending_pops.push(Vec::new());
                 if let Some(before) = cascade.pseudo.get(&(
@@ -802,9 +826,21 @@ pub fn counter_snapshots_with_budget(
                 {
                     scopes.apply(before, pending_pops.last_mut());
                 }
-                for &child in node.children.iter().rev() {
-                    stack.push(WalkStep::Enter(child));
+                let children_start = stack.len();
+                let mut sibling_ordinal = 0_u32;
+                for &child in &node.children {
+                    let is_list_item = cascade.computed.get(child).is_some_and(|computed| {
+                        doc.counter_display(child, computed.display) == DisplayValue::ListItem
+                    });
+                    if is_list_item {
+                        sibling_ordinal = sibling_ordinal.saturating_add(1);
+                    }
+                    stack.push(WalkStep::Enter(
+                        child,
+                        if is_list_item { sibling_ordinal } else { 0 },
+                    ));
                 }
+                stack[children_start..].reverse();
             }
             WalkStep::Exit => {
                 if let Some(names) = pending_pops.pop() {

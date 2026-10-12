@@ -109,6 +109,80 @@ fn counter_snapshots_resolve_named_reset_and_following_increments() {
 }
 
 #[test]
+fn counter_snapshots_include_implicit_list_item_ordinals() {
+    let mut doc = Document::new();
+    let list = doc.append_element(Some(doc.root_index()), "ol", Style::default(), None::<&str>);
+    let first = doc.append_element(
+        Some(list),
+        "li",
+        Style::default(),
+        Some("display: list-item; list-style-type: decimal"),
+    );
+    doc.append_element(Some(list), "span", Style::default(), Some("display: block"));
+    let second = doc.append_element(
+        Some(list),
+        "li",
+        Style::default(),
+        Some("display: list-item; list-style-type: decimal"),
+    );
+    let third = doc.append_element(
+        Some(list),
+        "li",
+        Style::default(),
+        Some("display: list-item; list-style-type: decimal"),
+    );
+    let explicit_list =
+        doc.append_element(Some(doc.root_index()), "ol", Style::default(), None::<&str>);
+    let explicit = doc.append_element(
+        Some(explicit_list),
+        "li",
+        Style::default(),
+        Some("display: list-item; list-style-type: decimal; counter-reset: list-item 7"),
+    );
+    let explicit_following = doc.append_element(
+        Some(explicit_list),
+        "li",
+        Style::default(),
+        Some("display: list-item; list-style-type: decimal"),
+    );
+    let nested_list = doc.append_element(Some(first), "ol", Style::default(), None::<&str>);
+    let nested = doc.append_element(
+        Some(nested_list),
+        "li",
+        Style::default(),
+        Some("display: list-item; list-style-type: decimal"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    let snapshots = counter_snapshots(&doc, &cr).expect("counter snapshots");
+
+    assert_eq!(snapshots[first][&Symbol::new("list-item")], vec![1]);
+    assert_eq!(snapshots[second][&Symbol::new("list-item")], vec![2]);
+    assert_eq!(snapshots[third][&Symbol::new("list-item")], vec![3]);
+    assert_eq!(snapshots[explicit][&Symbol::new("list-item")], vec![7]);
+    assert_eq!(
+        snapshots[explicit_following][&Symbol::new("list-item")],
+        vec![7]
+    );
+    assert_eq!(snapshots[nested][&Symbol::new("list-item")], vec![1]);
+    for (node, expected) in [
+        (first, "1. "),
+        (second, "2. "),
+        (third, "3. "),
+        (explicit, "7. "),
+        (explicit_following, "7. "),
+        (nested, "1. "),
+    ] {
+        let (_, marker) = crate::generated_content::markers::marker_render_info_with_snapshots(
+            &doc, &cr, node, &snapshots,
+        )
+        .expect("list marker");
+        assert_eq!(marker, expected);
+    }
+}
+
+#[test]
 fn counter_snapshot_budget_accounts_for_nested_stack_capacity_before_clone() {
     const DEPTH: usize = 32;
 
