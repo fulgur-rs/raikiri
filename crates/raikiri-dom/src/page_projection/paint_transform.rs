@@ -463,3 +463,57 @@ pub(super) fn element_motion(
     )
     .map_or(Motion::Still, Motion::Moved)
 }
+
+/// What the paint order does with the box of node `id` on `page`: the
+/// transforms it lists around the node, composed outermost first. Text takes
+/// the transforms of the element it is in. A node outside the body, which the
+/// paint order does not list, is [`Motion::Still`].
+pub(super) fn node_motion(
+    document: &Document,
+    cascade: &CascadeResult,
+    cache: &mut MotionCache,
+    page: &PageFragment,
+    id: usize,
+) -> Motion {
+    let context = &document.page_projection.run_context;
+    let mut chain = Vec::new();
+    let mut current = Some(id);
+    let mut in_body = false;
+    while let Some(node) = current {
+        if document
+            .get_node(node)
+            .is_some_and(|node| node.kind() == raikiri_traits::NodeKind::Element)
+        {
+            chain.push(node);
+        }
+        if Some(node) == context.body {
+            in_body = true;
+            break;
+        }
+        current = document.parent_of(node);
+    }
+    if !in_body {
+        return Motion::Still;
+    }
+    let mut space = PaintTransform::IDENTITY;
+    for &node in chain.iter().rev() {
+        let Some(cv) = cascade.computed.get(node) else {
+            continue; // cov:ignore: the cascade has a value for every arena node
+        };
+        // As in the paint order: a fixed box in the page area leaves the
+        // relative offsets around it.
+        if space != PaintTransform::IDENTITY && cache.viewport_fixed(document, cascade, node) {
+            space = space * PaintTransform::translate(-space.e, -space.f);
+        }
+        match element_motion(document, cascade, context, cache, page, node, cv) {
+            Motion::Still => {}
+            Motion::Moved(transform) => space = space * transform,
+            Motion::Hidden => return Motion::Hidden,
+        }
+    }
+    if space == PaintTransform::IDENTITY {
+        Motion::Still
+    } else {
+        Motion::Moved(space)
+    }
+}

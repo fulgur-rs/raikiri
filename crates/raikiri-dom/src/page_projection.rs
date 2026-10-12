@@ -13,7 +13,7 @@ pub(crate) mod text_runs;
 
 use crate::{Document, Fragment, OverflowClip, PageContentInsets, PageMargins, PageSlice};
 use raikiri_style::CascadeResult;
-use raikiri_traits::{NodeId, PageBox, PaintRect};
+use raikiri_traits::{NodeId, PageBox, PaintRect, PaintTransform};
 use records::{
     OverflowClipSource, PageFragment, PageFragmentEvent, PageFragmentInsets,
     PageFragmentOrientation, PageFragmentPageGeometry, PageFragmentRect,
@@ -21,10 +21,14 @@ use records::{
 };
 use std::collections::{BTreeMap, HashSet};
 
+/// One link of a page: the owning `<a>`, its target, its quads, and the
+/// placement each quad comes from.
+type PageLink = (NodeId, String, Vec<PaintRect>, Vec<NodeId>);
+
 #[derive(Debug, Default, Clone)]
 pub(crate) struct PageProjection {
     pages: Vec<PageFragment>,
-    links: Vec<Vec<(NodeId, String, Vec<PaintRect>)>>,
+    links: Vec<Vec<PageLink>>,
     /// Paragraphs and standalone markers, in document order.
     text_roots: Vec<ProjectedTextRoot>,
     /// For each page fragment, the indices of the text roots that can draw
@@ -221,8 +225,7 @@ impl Document {
             .map(|(id, _)| id)
             .collect();
         let events = crate::layout::page_fragment_events_from_pages(self, &pages);
-        let mut links: Vec<Vec<(NodeId, String, Vec<PaintRect>)>> =
-            pages.iter().map(|_| Vec::new()).collect();
+        let mut links: Vec<Vec<PageLink>> = pages.iter().map(|_| Vec::new()).collect();
         for event in events {
             let PageFragmentEvent::Link(link) = event;
             let target = link.link.href.trim();
@@ -242,10 +245,18 @@ impl Document {
             let entries = &mut links[page];
             match entries
                 .iter_mut()
-                .find(|(owner, t, _)| *owner == link.anchor_node_id && t == target)
+                .find(|(owner, t, _, _)| *owner == link.anchor_node_id && t == target)
             {
-                Some((_, _, quads)) => quads.push(quad),
-                None => entries.push((link.anchor_node_id, target.to_owned(), vec![quad])),
+                Some((_, _, quads, placements)) => {
+                    quads.push(quad);
+                    placements.push(link.placement_node_id);
+                }
+                None => entries.push((
+                    link.anchor_node_id,
+                    target.to_owned(),
+                    vec![quad],
+                    vec![link.placement_node_id],
+                )),
             }
         }
         self.page_projection = PageProjection {
@@ -365,7 +376,83 @@ impl Document {
             .and_then(|index| self.page_projection.links.get(index))
             .into_iter()
             .flatten()
-            .map(|(owner, target, quads)| (*owner, target.as_str(), quads.as_slice()))
+            .map(|(owner, target, quads, _)| (*owner, target.as_str(), quads.as_slice()))
+    }
+
+    /// The quads of [`Self::page_links`] where the built-in painter draws
+    /// them, in the same order: each quad's corners (top-left, top-right,
+    /// bottom-right, bottom-left of the layout rectangle) mapped through
+    /// [`Self::page_paint_transform`] of the placement it comes from. A quad
+    /// whose placement is not painted is left out.
+    #[doc(hidden)]
+    pub fn page_link_paint_quads(
+        &self,
+        cascade: &CascadeResult,
+        page_index: u32,
+    ) -> Vec<Vec<[(f32, f32); 4]>> {
+        let Some(position) = self.page_projection.page_position(page_index) else {
+            return Vec::new();
+        };
+        let (Some(page), Some(links)) = (
+            self.page_projection.pages.get(position),
+            self.page_projection.links.get(position),
+        ) else {
+            return Vec::new(); // cov:ignore: every projected page has a link list
+        };
+        let mut cache = paint_transform::MotionCache::default();
+        links
+            .iter()
+            .map(|(_, _, quads, placements)| {
+                quads
+                    .iter()
+                    .zip(placements)
+                    .filter_map(|(quad, placement)| {
+                        let id = usize::try_from(placement.0).ok()?;
+                        let transform =
+                            match paint_transform::node_motion(self, cascade, &mut cache, page, id)
+                            {
+                                paint_transform::Motion::Still => PaintTransform::IDENTITY,
+                                paint_transform::Motion::Moved(transform) => transform,
+                                paint_transform::Motion::Hidden => return None,
+                            };
+                        Some(
+                            [
+                                (quad.x, quad.y),
+                                (quad.x + quad.width, quad.y),
+                                (quad.x + quad.width, quad.y + quad.height),
+                                (quad.x, quad.y + quad.height),
+                            ]
+                            .map(|corner| transform.apply(corner)),
+                        )
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// The transform the built-in painter draws the box of `node` on page
+    /// `page_index` through: the [`crate::PaintEvent::PushTransform`] events
+    /// around the node's events in the paint order, composed, or the
+    /// identity when there are none. Text takes the transform of the element
+    /// it is in. `None` when the painter draws nothing of the node because a
+    /// transform on it or an ancestor is singular, and for a page that does
+    /// not exist or a node out of range.
+    #[doc(hidden)]
+    pub fn page_paint_transform(
+        &self,
+        cascade: &CascadeResult,
+        page_index: u32,
+        node: NodeId,
+    ) -> Option<PaintTransform> {
+        let page = self.page_projection.page(page_index)?;
+        let id = usize::try_from(node.0).ok()?;
+        self.get_node(id)?;
+        let mut cache = paint_transform::MotionCache::default();
+        match paint_transform::node_motion(self, cascade, &mut cache, page, id) {
+            paint_transform::Motion::Still => Some(PaintTransform::IDENTITY),
+            paint_transform::Motion::Moved(transform) => Some(transform),
+            paint_transform::Motion::Hidden => None,
+        }
     }
 }
 

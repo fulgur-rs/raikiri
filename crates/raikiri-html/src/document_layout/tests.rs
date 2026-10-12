@@ -1,5 +1,5 @@
 use super::*;
-use raikiri_traits::{NodeId, NodeKind};
+use raikiri_traits::{NodeId, NodeKind, PaintRect, PaintTransform};
 
 fn dom(html: &str) -> crate::HtmlDocument {
     crate::parse_html_with_resources(html.as_bytes(), &crate::RenderResources::new())
@@ -997,6 +997,118 @@ fn layout_page_origin_is_applied_once_to_fragments_and_links() {
     assert_eq!(links.len(), 1);
     assert_eq!(links[0].target, "/go");
     assert_eq!(links[0].quads, &[text]);
+}
+
+fn transformed_link_page(transform: &str) -> DocumentLayout {
+    laid_out(&format!(
+        "<style>@page{{size:200px 200px;margin:0}} body{{margin:0}} \
+         div{{width:20px;height:20px;transform:{transform}}} \
+         a{{display:block;width:20px;height:10px}}</style>\
+         <div id=t><a href=/go></a></div>"
+    ))
+}
+
+fn assert_quad_near(actual: [(f32, f32); 4], expected: [(f32, f32); 4]) {
+    for (actual, expected) in actual.iter().zip(expected) {
+        assert!(
+            (actual.0 - expected.0).abs() < 1e-3 && (actual.1 - expected.1).abs() < 1e-3,
+            "{actual:?} != {expected:?}"
+        );
+    }
+}
+
+// spec: https://www.w3.org/TR/css-transforms-1/#transform-rendering
+// A transform moves the clickable area with the painted box.
+#[test]
+fn link_paint_quads_follow_a_translation() {
+    let layout = transformed_link_page("translate(10px,5px)");
+    let page = layout.page(0).unwrap();
+    let links: Vec<_> = page.links().collect();
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].quads, &[PaintRect::new(0.0, 0.0, 20.0, 10.0)]);
+    assert_eq!(links[0].paint_quads.len(), 1);
+    assert_quad_near(
+        links[0].paint_quads[0],
+        [(10.0, 5.0), (30.0, 5.0), (30.0, 15.0), (10.0, 15.0)],
+    );
+    let div = find(&page.dom(), page.dom().root(), "div").unwrap();
+    assert_eq!(
+        page.paint_transform(div),
+        Some(PaintTransform::translate(10.0, 5.0))
+    );
+    assert_eq!(
+        layout.anchors().get("t").map(|anchor| anchor.point),
+        Some((10.0, 5.0))
+    );
+}
+
+// Text takes the transform of the element it is in.
+#[test]
+fn link_paint_quads_of_text_follow_the_enclosing_transform() {
+    let layout = laid_out(
+        "<style>@page{size:200px 200px;margin:0} body{margin:0} \
+         div{transform:translate(7px,3px)}</style><div><a href=/go>x</a></div>",
+    );
+    let page = layout.page(0).unwrap();
+    let links: Vec<_> = page.links().collect();
+    let quad = links[0].quads[0];
+    assert_quad_near(
+        links[0].paint_quads[0],
+        [
+            (quad.x + 7.0, quad.y + 3.0),
+            (quad.x + quad.width + 7.0, quad.y + 3.0),
+            (quad.x + quad.width + 7.0, quad.y + quad.height + 3.0),
+            (quad.x + 7.0, quad.y + quad.height + 3.0),
+        ],
+    );
+}
+
+// A rotation about the box center turns the clickable rectangle into a
+// quadrilateral in paint space.
+#[test]
+fn link_paint_quads_follow_a_rotation() {
+    let layout = transformed_link_page("rotate(90deg)");
+    let page = layout.page(0).unwrap();
+    let links: Vec<_> = page.links().collect();
+    assert_eq!(links[0].paint_quads.len(), 1);
+    assert_quad_near(
+        links[0].paint_quads[0],
+        [(20.0, 0.0), (20.0, 20.0), (10.0, 20.0), (10.0, 0.0)],
+    );
+    let anchor = layout.anchors().get("t").unwrap().point;
+    assert!((anchor.0 - 20.0).abs() < 1e-3 && anchor.1.abs() < 1e-3);
+}
+
+// spec: https://www.w3.org/TR/css-transforms-1/#transform-function-lists
+// A singular transform paints nothing, so nothing is clickable.
+#[test]
+fn link_paint_quads_omit_a_singular_transform() {
+    let layout = transformed_link_page("scale(0)");
+    let page = layout.page(0).unwrap();
+    let links: Vec<_> = page.links().collect();
+    assert_eq!(links[0].quads.len(), 1);
+    assert!(links[0].paint_quads.is_empty());
+    let div = find(&page.dom(), page.dom().root(), "div").unwrap();
+    assert_eq!(page.paint_transform(div), None);
+    assert_eq!(
+        layout.anchors().get("t").map(|anchor| anchor.point),
+        Some((0.0, 0.0)),
+        "a hidden target keeps its layout corner"
+    );
+}
+
+#[test]
+fn link_paint_quads_equal_layout_quads_without_motion() {
+    let layout = transformed_link_page("none");
+    let page = layout.page(0).unwrap();
+    let links: Vec<_> = page.links().collect();
+    assert_eq!(
+        links[0].paint_quads,
+        vec![[(0.0, 0.0), (20.0, 0.0), (20.0, 10.0), (0.0, 10.0)]]
+    );
+    let div = find(&page.dom(), page.dom().root(), "div").unwrap();
+    assert_eq!(page.paint_transform(div), Some(PaintTransform::IDENTITY));
+    assert_eq!(page.paint_transform(NodeId(1_000_000)), None);
 }
 
 // HTML LS §15.3.8 gives tables a 2px border-spacing, which separates

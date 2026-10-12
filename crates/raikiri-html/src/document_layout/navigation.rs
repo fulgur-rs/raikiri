@@ -10,7 +10,9 @@ pub struct Anchor {
     /// Zero-based page index.
     pub page_index: u32,
     /// Top-left of the target's first fragment, CSS px from the page box
-    /// origin.
+    /// origin, where the built-in painter draws it: the layout corner mapped
+    /// through the fragment's transform (see [`super::Page::paint_transform`]).
+    /// A target a singular transform hides keeps its layout corner.
     pub point: (f32, f32),
 }
 
@@ -56,8 +58,17 @@ pub struct Link<'a> {
     pub owner: NodeId,
     /// The `href`, trimmed.
     pub target: &'a str,
-    /// Clickable areas, CSS px from the page box origin.
+    /// Clickable areas in layout space, CSS px from the page box origin,
+    /// before relative offsets and transforms move them.
     pub quads: &'a [PaintRect],
+    /// The clickable areas where the built-in painter draws them, CSS px
+    /// from the page box origin: the corners of each of [`Self::quads`]
+    /// (top-left, top-right, bottom-right, bottom-left of the layout
+    /// rectangle) mapped through the transform of its placement, as
+    /// [`super::Page::paint_transform`] reports it. A rotated or skewed
+    /// placement gives a quadrilateral that is not a rectangle. Quads of
+    /// placements a singular transform hides are left out.
+    pub paint_quads: Vec<[(f32, f32); 4]>,
 }
 
 pub(crate) fn build_rendered(out: &PipelineOutput) -> HashSet<NodeId> {
@@ -99,7 +110,17 @@ pub(crate) fn build_anchors(dom: DomView<'_>, out: &PipelineOutput) -> AnchorInd
             {
                 names.push(name);
             }
-            if let Some(anchor) = first_fragment.get(&node) {
+            if let Some(anchor) = first_fragment.get(&node).filter(|_| !names.is_empty()) {
+                // Only named nodes become anchors, so only their points are
+                // moved to where the painter draws them.
+                let (document, cascade) = out.layout_for_page(anchor.page_index);
+                let point = document
+                    .page_paint_transform(cascade, anchor.page_index, node)
+                    .map_or(anchor.point, |transform| transform.apply(anchor.point));
+                let anchor = Anchor {
+                    point,
+                    ..anchor.clone()
+                };
                 for name in names {
                     index
                         .by_name
