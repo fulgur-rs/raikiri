@@ -6379,16 +6379,21 @@ fn fixed_position_px(
     if !matches!(cv.position, PositionValue::Fixed) {
         return None;
     }
-    let to_px = |v: raikiri_style::resolve::ComputedLengthPercentageOrAuto| match v {
-        raikiri_style::resolve::ComputedLengthPercentageOrAuto::Px(px) if px.is_finite() => {
-            Some(px)
-        }
-        _ => None,
+    // Percentages resolve against the fixed containing block, the page area.
+    let to_px = |v: raikiri_style::resolve::ComputedLengthPercentageOrAuto, basis: f32| {
+        use raikiri_style::resolve::ComputedLengthPercentageOrAuto as Inset;
+        let px = match v {
+            Inset::Px(px) => px,
+            Inset::Percent(percent) => basis * percent / 100.0,
+            Inset::Calc(calc) => basis * calc.percent / 100.0 + calc.px,
+            _ => return None,
+        };
+        px.is_finite().then_some(px)
     };
-    let left = to_px(cv.left);
-    let right = to_px(cv.right);
-    let top = to_px(cv.top);
-    let bottom = to_px(cv.bottom);
+    let left = to_px(cv.left, content_width);
+    let right = to_px(cv.right, content_width);
+    let top = to_px(cv.top, content_height);
+    let bottom = to_px(cv.bottom, content_height);
     let (width, height, margin) = (layout.size.width, layout.size.height, layout.margin);
     // Layout puts the margin box against the insets.
     let from_right = |value: f32| content_width - value - width - margin.right;

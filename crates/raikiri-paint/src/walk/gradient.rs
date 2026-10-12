@@ -79,6 +79,25 @@ pub(super) fn paint_gradient_layer(
     let (repeat_x, repeat_y) = (repeats(repeat.x), repeats(repeat.y));
     let tile_w = if repeat_x { tile_w.max(1.0) } else { tile_w };
     let tile_h = if repeat_y { tile_h.max(1.0) } else { tile_h };
+    // Too many tiles to fill one by one, such as one-pixel tiles over a
+    // large box, are approximated by the average color of one tile, which
+    // keeps the scene bounded.
+    let estimate = |repeats: bool, extent: f64, tile: f64| {
+        if repeats {
+            (extent / tile).ceil() + 2.0
+        } else {
+            1.0
+        }
+    };
+    if estimate(repeat_x, painting.width(), tile_w) * estimate(repeat_y, painting.height(), tile_h)
+        > MAX_GRADIENT_TILES as f64
+    {
+        let tile = Rect::new(0.0, 0.0, tile_w, tile_h);
+        if let Some(fill) = gradient_fill(gradient, tile, current_color) {
+            fill_average(scene, &fill, painting, clip);
+        }
+        return true;
+    }
     let Some(tiles) = background_tiles(
         (
             positioning.x0,
@@ -103,32 +122,21 @@ pub(super) fn paint_gradient_layer(
     let Some(fill) = gradient_fill(gradient, tile, current_color) else {
         return true;
     };
+    if tiles.x.len().saturating_mul(tiles.y.len()) > MAX_GRADIENT_TILES {
+        fill_average(scene, &fill, painting, clip);
+        return true;
+    }
     match clip {
         Some(path) => scene.push_clip_layer(Affine::IDENTITY, path),
         None => scene.push_clip_layer(Affine::IDENTITY, &painting),
     }
-    // Too many tiles to fill one by one, such as one-pixel tiles over a
-    // large box, are approximated by the average color of one tile, which
-    // keeps the scene bounded.
-    if tiles.x.len().saturating_mul(tiles.y.len()) > MAX_GRADIENT_TILES {
-        let color = match &fill {
-            GradientFill::Brush(brush, _) => brush_average_color(brush),
-            GradientFill::Solid(color) => *color,
-        };
-        scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &painting);
-        scene.pop_layer();
-        return true;
-    }
     for tile_y in &tiles.y {
         for tile_x in &tiles.x {
-            // Tile edges snap to whole pixels so neighboring tiles meet
-            // without antialiased seams; a single tile thinner than a pixel
-            // and the painting area keep their own edges.
+            // Repeated tile edges snap to whole pixels so neighboring tiles
+            // meet without antialiased seams; a single tile and the
+            // painting area keep their own edges.
             let snap = |edge: f64, snaps: bool| if snaps { edge.round() } else { edge };
-            let (snap_x, snap_y) = (
-                repeat_x || tiles.width >= 1.0,
-                repeat_y || tiles.height >= 1.0,
-            );
+            let (snap_x, snap_y) = (repeat_x, repeat_y);
             let shape = Rect::new(
                 snap(*tile_x, snap_x),
                 snap(*tile_y, snap_y),
@@ -156,6 +164,25 @@ pub(super) fn paint_gradient_layer(
     }
     scene.pop_layer();
     true
+}
+
+/// Fill the painting area once with the average color of a tile.
+fn fill_average(
+    scene: &mut impl PaintScene,
+    fill: &GradientFill,
+    painting: Rect,
+    clip: Option<&BezPath>,
+) {
+    let color = match fill {
+        GradientFill::Brush(brush, _) => brush_average_color(brush),
+        GradientFill::Solid(color) => *color,
+    };
+    match clip {
+        Some(path) => scene.push_clip_layer(Affine::IDENTITY, path),
+        None => scene.push_clip_layer(Affine::IDENTITY, &painting),
+    }
+    scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &painting);
+    scene.pop_layer();
 }
 
 /// Most gradient tiles one background layer fills one by one.
@@ -457,6 +484,16 @@ fn resolved_stops(
         && length > 0.0
     {
         *last = Some((percent_basis / length) as f32);
+    }
+    if let Some(first @ None) = raw.first_mut() {
+        *first = Some(0.0);
+    }
+    // Positioned stops clamp up to the largest position before them before
+    // the unpositioned ones are spread between them (CSS Images 3 §3.4.3).
+    let mut largest = f32::NEG_INFINITY;
+    for position in raw.iter_mut().flatten() {
+        largest = largest.max(*position);
+        *position = largest;
     }
     fixup_conic_offsets(&raw)
         .into_iter()

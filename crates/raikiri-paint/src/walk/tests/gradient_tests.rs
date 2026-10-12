@@ -626,3 +626,57 @@ fn many_tiny_tiles_paint_their_average_color() {
     let [r, g, b, a] = pixel(&rgba, 10, 5, 5);
     assert!(r.abs_diff(128) <= 1 && g == 0 && b.abs_diff(128) <= 1 && a == 255);
 }
+
+#[test]
+fn a_long_row_of_tiny_tiles_still_paints() {
+    let cv = computed_for(
+        "background-image: linear-gradient(to right, red 50%, blue 50%); \
+         background-size: 1px 10px; background-repeat: repeat-x",
+    );
+    let area = Rect::new(0.0, 0.0, 20_000.0, 10.0);
+    let mut scene = Scene::new();
+    assert!(gradient::paint_gradient_layer(
+        &mut scene,
+        &gradient_of(&cv),
+        area,
+        area,
+        None,
+        &cv.background_size,
+        &cv.background_position,
+        &cv.background_repeat,
+        cv.color,
+    ));
+    assert!(!scene.commands.is_empty());
+    assert!(
+        scene.commands.len() < 10,
+        "{} commands",
+        scene.commands.len()
+    );
+}
+
+#[test]
+fn single_tiles_keep_fractional_edges() {
+    let rgba = raster_layer(
+        "background-image: linear-gradient(red, red); background-size: 10px 10px; \
+         background-position: 0.5px 0; background-repeat: no-repeat",
+        20,
+        10,
+    );
+    let [.., left] = pixel(&rgba, 20, 0, 5);
+    let [.., right] = pixel(&rgba, 20, 10, 5);
+    assert!((100..=160).contains(&left), "{left}");
+    assert_eq!(pixel(&rgba, 20, 5, 5), RED);
+    assert!((100..=160).contains(&right), "{right}");
+}
+
+#[test]
+fn positioned_stops_clamp_before_the_others_are_spread() {
+    // Blue clamps to 80%, so yellow sits halfway to black at 90%.
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to right, red 80%, green, blue 40%, yellow, black 100%)",
+        100,
+        4,
+    );
+    let [r, g, b, _] = pixel(&rgba, 100, 89, 2);
+    assert!(r > 200 && g > 200 && b < 100, "{r} {g} {b}");
+}

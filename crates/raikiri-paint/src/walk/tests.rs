@@ -5611,6 +5611,18 @@ fn fixed_box_with_auto_insets_keeps_its_static_position_on_every_page() {
         taffy::Style::default(),
         Some("position: fixed; left: 10px"),
     );
+    let percent_id = document.append_element(
+        Some(document.root_index()),
+        "div",
+        taffy::Style::default(),
+        Some("position: fixed; top: calc(10% + 5px)"),
+    );
+    let bottom_id = document.append_element(
+        Some(document.root_index()),
+        "div",
+        taffy::Style::default(),
+        Some("position: fixed; bottom: calc(50% - 10px)"),
+    );
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
     let layout = taffy::Layout::new();
@@ -5631,4 +5643,7 @@ fn fixed_box_with_auto_insets_keeps_its_static_position_on_every_page() {
     assert_eq!(place(auto_id, 1000.0), Some((8.0, 1048.0)));
     // Only the axis whose insets are both auto keeps the static position.
     assert_eq!(place(left_id, 1000.0), Some((10.0, 1048.0)));
+    // Percentages resolve against the page area instead.
+    assert_eq!(place(percent_id, 1000.0), Some((8.0, 1105.0)));
+    assert_eq!(place(bottom_id, 1000.0), Some((8.0, 1510.0)));
 }
