@@ -588,7 +588,7 @@ fn a_reftest_that_only_passes_without_local_images_still_reports_pass() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
     let row = run_id(
         &root,
-        "css/css-backgrounds/background-position-three-four-values.html",
+        "css/css-backgrounds/border-image-repeat-round-1.html",
     );
     assert_eq!(row.status, Status::Pass, "{}", row.detail);
 }
@@ -654,7 +654,7 @@ fn a_reftest_that_only_passes_without_local_images_carries_the_note() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
     let row = run_id(
         &root,
-        "css/css-backgrounds/background-position-three-four-values.html",
+        "css/css-backgrounds/border-image-repeat-round-1.html",
     );
     assert_eq!(row.status, Status::Pass, "{}", row.detail);
     assert_eq!(row.detail, FALLBACK_NOTE);
