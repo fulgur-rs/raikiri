@@ -343,6 +343,35 @@ fn declaration_keys_keep_whitespace_in_strings_and_accept_escaped_names() {
 }
 
 #[test]
+fn comment_markers_inside_strings_and_urls_are_value_data() {
+    let html =
+        r#"<style>p { content: "/*a*/"; background: url(x/*b*/.png) /* gone */ red; }</style>"#;
+    assert_eq!(
+        keys(html),
+        [r#"content:"/*a*/""#, "background:url(x/*b*/.png) red"]
+    );
+    assert_eq!(
+        collapse_whitespace("url( 'a  b' ) /* c */"),
+        "url( 'a  b' )"
+    );
+    assert_eq!(collapse_whitespace(r"a\  b /* open"), r"a\  b");
+}
+
+#[test]
+fn braces_inside_custom_property_values_stay_in_the_declaration() {
+    let html = "<style>p { --tokens: { color: red }; width: 1px } q { --x: [{}]; }</style><i style=\"--y: {a:b}\">";
+    assert_eq!(
+        keys(html),
+        [
+            "--tokens:{ color: red }",
+            "width:1px",
+            "--x:[{}]",
+            "--y:{a:b}"
+        ]
+    );
+}
+
+#[test]
 fn inconclusive_verdicts_name_the_failing_probe() {
     let verdict = Verdict::Inconclusive { probe: "blank" };
     assert_eq!(verdict.label(), "INCONCLUSIVE");

@@ -556,6 +556,14 @@ pub fn css_declarations(css: &str, inline: bool, base: usize) -> Vec<Declaration
             }
             b'(' | b'[' => nesting += 1,
             b')' | b']' => nesting = nesting.saturating_sub(1),
+            // A `{}` block in a value (custom properties may hold one) is
+            // part of the declaration, not a nested rule.
+            b'{' if nesting > 0
+                || (in_declarations(depth) && is_custom_property(&css[segment_start..i])) =>
+            {
+                nesting += 1;
+            }
+            b'}' if nesting > 0 => nesting -= 1,
             _ if nesting > 0 => {}
             b';' => {
                 if in_declarations(depth) {
@@ -584,6 +592,14 @@ pub fn css_declarations(css: &str, inline: bool, base: usize) -> Vec<Declaration
     out
 }
 
+/// Whether `segment`, the text of a declaration up to the current position,
+/// already names a custom property and has reached its value.
+fn is_custom_property(segment: &str) -> bool {
+    segment
+        .split_once(':')
+        .is_some_and(|(name, _)| strip_comments(name).trim().starts_with("--"))
+}
+
 fn push_declaration(css: &str, range: Range<usize>, base: usize, out: &mut Vec<Declaration>) {
     let Some(text) = css.get(range.clone()) else {
         return;
@@ -602,8 +618,7 @@ fn push_declaration(css: &str, range: Range<usize>, base: usize, out: &mut Vec<D
     {
         return;
     }
-    let value = strip_comments(value);
-    let value = collapse_whitespace(&value);
+    let value = collapse_whitespace(value);
     if value.is_empty() {
         return;
     }
@@ -621,30 +636,63 @@ fn push_declaration(css: &str, range: Range<usize>, base: usize, out: &mut Vec<D
     });
 }
 
-/// Trim `value` and collapse runs of whitespace to one space, except inside
-/// quoted strings, where whitespace is significant.
+/// Normalize a declaration value: drop comments, trim, and collapse runs of
+/// whitespace to one space. Quoted strings and unquoted `url()` contents are
+/// data, not comments or insignificant whitespace, and are kept verbatim.
 fn collapse_whitespace(value: &str) -> String {
+    let chars: Vec<char> = value.chars().collect();
     let mut out = String::with_capacity(value.len());
-    let mut quote = None;
-    let mut escaped = false;
     let mut pending_space = false;
-    for c in value.trim().chars() {
-        if quote.is_none() && c.is_whitespace() {
+    let mut i = 0;
+    let push = |out: &mut String, text: &[char], pending_space: &mut bool| {
+        if *pending_space && !out.is_empty() {
+            out.push(' ');
+        }
+        *pending_space = false;
+        out.extend(text);
+    };
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '/' && chars.get(i + 1) == Some(&'*') {
+            i += 2;
+            while i < chars.len() && !(chars[i] == '*' && chars.get(i + 1) == Some(&'/')) {
+                i += 1;
+            }
+            i += 2;
             pending_space = true;
             continue;
         }
-        if pending_space {
-            out.push(' ');
-            pending_space = false;
+        if c.is_whitespace() {
+            pending_space = true;
+            i += 1;
+            continue;
         }
-        out.push(c);
-        match (quote, c) {
-            (Some(_), _) if escaped => escaped = false,
-            (Some(_), '\\') => escaped = true,
-            (Some(q), c) if c == q => quote = None,
-            (None, '"' | '\'') => quote = Some(c),
-            _ => {}
+        let start = i;
+        if c == '"' || c == '\'' {
+            i += 1;
+            while i < chars.len() && chars[i] != c {
+                i += if chars[i] == '\\' { 2 } else { 1 };
+            }
+            i = (i + 1).min(chars.len());
+        } else if c == '\\' {
+            i = (i + 2).min(chars.len());
+        } else if c == '(' && out.to_ascii_lowercase().ends_with("url") && !pending_space {
+            // An unquoted URL runs to the closing parenthesis as one token.
+            let mut j = i + 1;
+            while j < chars.len() && chars[j].is_whitespace() {
+                j += 1;
+            }
+            i += 1;
+            if !matches!(chars.get(j), Some('"' | '\'')) {
+                while i < chars.len() && chars[i] != ')' {
+                    i += if chars[i] == '\\' { 2 } else { 1 };
+                }
+                i = i.min(chars.len());
+            }
+        } else {
+            i += 1;
         }
+        push(&mut out, &chars[start..i], &mut pending_space);
     }
     out
 }

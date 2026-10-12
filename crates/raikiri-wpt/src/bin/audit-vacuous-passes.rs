@@ -6,7 +6,7 @@
 //! ```
 //!
 //! Each id is run once; a passing reftest is then probed as described in
-//! `raikiri_wpt::vacuity`. The report has one `id<TAB>VERDICT<TAB>detail`
+//! [`raikiri_wpt::vacuity`]. The report has one `id<TAB>VERDICT<TAB>detail`
 //! line per id. Ids marked `KEEP` are candidates for the pass baseline; the
 //! `VACUOUS-*` verdicts name why a PASS does not show the feature working.
 
