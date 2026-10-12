@@ -2519,6 +2519,7 @@ fn layout_pages_ignores_page_names_inside_monolithic_boxes() {
         "display:inline-block;width:50px",
         "display:inline-flex;flex-direction:column;width:50px",
         "display:block;writing-mode:vertical-rl;height:50px",
+        "display:inline-table;width:50px",
     ] {
         assert_eq!(
             named_page_slices("display:block", &[(container, named)]).len(),
@@ -2575,9 +2576,52 @@ fn layout_pages_keeps_page_names_inside_a_static_position_absolute_box() {
     // An inset moves the box out of the page flow, so its names are ignored.
     let inset = named_page_slices("display:block", &[("position:absolute;top:0px", named)]);
     assert_eq!(inset.len(), 1);
+    // Absolute positioning blockifies an inline-block, so it is not atomic.
+    let inline_block = named_page_slices(
+        "display:block",
+        &[("position:absolute;display:inline-block", named)],
+    );
+    assert_eq!(inline_block.len(), 2);
     // A fixed box repeats on every page, even at its static position.
     let fixed = named_page_slices("display:block", &[("position:fixed", named)]);
     assert_eq!(fixed.len(), 1);
+}
+
+#[test]
+fn layout_pages_does_not_treat_a_display_contents_writing_mode_wrapper_as_orthogonal() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let contents = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:contents;writing-mode:vertical-rl"),
+    );
+    let block = doc.append_element(
+        Some(contents),
+        "div",
+        Style::default(),
+        Some("display:block;writing-mode:horizontal-tb"),
+    );
+    for style in [
+        "display:block;page:a;height:10px",
+        "display:block;page:b;height:10px",
+    ] {
+        doc.append_element(Some(block), "div", Style::default(), Some(style));
+    }
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let slices = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
+
+    // The wrapper generates no box, so the block is parallel to the body.
+    assert_eq!(slices.len(), 2);
 }
 
 #[test]

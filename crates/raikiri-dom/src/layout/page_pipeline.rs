@@ -3321,6 +3321,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                         DisplayValue::InlineBlock
                             | DisplayValue::InlineFlex
                             | DisplayValue::InlineGrid
+                            | DisplayValue::InlineTable
                     ))
                     || (!is_body && establishes_orthogonal_flow(document, cascade, node_id));
                 let child_order = pagination_child_order(document, cascade, node_id);

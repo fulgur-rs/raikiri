@@ -1212,8 +1212,8 @@ pub(crate) fn pagination_child_order(
 ///
 /// CSS Page 3 §4.1 applies `page` to boxes that create class A break points,
 /// which are block-level. An inline-level box takes the page type of its
-/// containing block instead. A flex or grid item is blockified whatever its
-/// computed `display`.
+/// containing block instead. A flex or grid item and an absolutely
+/// positioned box are blockified whatever their computed `display`.
 pub(crate) fn page_applies_to_box(
     document: &Document,
     cascade: &CascadeResult,
@@ -1231,6 +1231,10 @@ pub(crate) fn page_applies_to_box(
         })
     });
     blockified
+        || matches!(
+            cascade.computed[node_id].position,
+            PositionValue::Absolute | PositionValue::Fixed
+        )
         || !matches!(
             cascade.computed[node_id].display,
             DisplayValue::Inline
@@ -1245,7 +1249,8 @@ pub(crate) fn page_applies_to_box(
 /// vertical while its parent's is horizontal, or the reverse. Layout
 /// normalizes writing modes to horizontal, so the comparison uses the
 /// specified keyword kept for CSSOM. Pagination treats such a box as
-/// monolithic.
+/// monolithic. A `display: contents` element generates no box, so it never
+/// establishes a flow, and the comparison uses the box parent.
 pub(crate) fn establishes_orthogonal_flow(
     document: &Document,
     cascade: &CascadeResult,
@@ -1258,8 +1263,14 @@ pub(crate) fn establishes_orthogonal_flow(
             .get(id)
             .is_some_and(|computed| computed.cssom_writing_mode != WritingMode::HorizontalTb)
     };
-    document
-        .parent_of(node_id)
+    if cascade
+        .computed
+        .get(node_id)
+        .is_none_or(|computed| computed.display == DisplayValue::Contents)
+    {
+        return false;
+    }
+    pagination_box_parent(document, cascade, node_id)
         .filter(|&parent| document.nodes[parent].kind() == NodeKind::Element)
         .is_some_and(|parent| vertical(parent) != vertical(node_id))
 }
