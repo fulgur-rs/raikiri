@@ -41,11 +41,13 @@ impl Document {
     ) -> Option<(crate::StandaloneText, f32)> {
         let size = computed.font_size.px();
         let style = crate::StandaloneStyle {
-            families: computed
-                .font_family
-                .first()
-                .map(|family| vec![family.as_str().to_owned()])
-                .unwrap_or_else(|| vec!["serif".to_owned()]),
+            families: vec![
+                computed
+                    .font_family
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| raikiri_style::FontFamilyName::generic("serif")),
+            ],
             font_size: if size.is_finite() && size > 0.0 {
                 size
             } else {

@@ -4152,7 +4152,7 @@ fn inside_ruby_multicol_markers_paint_on_the_legacy_path() {
                 &doc,
                 if image { " " } else { &marker_text },
                 marker_cv.font_size.px(),
-                marker_cv.font_family.first().unwrap().as_str(),
+                std::slice::from_ref(marker_cv.font_family.first().unwrap()),
             );
         assert_eq!(doc.legacy_inside_marker_advance(item), paint_advance);
         raikiri_dom::layout_single_page(&mut doc, &cascade, PageBox::A4).unwrap();

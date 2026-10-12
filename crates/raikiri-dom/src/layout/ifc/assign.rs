@@ -593,16 +593,11 @@ pub(crate) fn prepare_legacy_inside_markers_before_taffy(
         let family = cv
             .font_family
             .first()
-            .map(|family| family.as_str())
-            .unwrap_or("serif");
+            .cloned()
+            .unwrap_or_else(|| raikiri_style::FontFamilyName::generic("serif"));
         let font_size = cv.font_size.px();
         let style = crate::StandaloneStyle {
-            families: family
-                .split(',')
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-                .map(str::to_owned)
-                .collect(),
+            families: vec![family],
             font_size: if font_size.is_finite() && font_size > 0.0 {
                 font_size
             } else {
