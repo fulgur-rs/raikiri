@@ -415,6 +415,49 @@ fn canvas_color_serialization_uses_hex_or_rgba() {
         super::serialize_canvas_color([1, 2, 3, 1]),
         "rgba(1, 2, 3, 0.004)"
     );
+    // CSS Color 4 "serializing legacy alpha values": an integer percentage
+    // when one maps to the byte, otherwise thousandths.
+    assert_eq!(
+        super::serialize_canvas_color([0, 0, 0, 237]),
+        "rgba(0, 0, 0, 0.93)"
+    );
+    assert_eq!(
+        super::serialize_canvas_color([0, 0, 0, 236]),
+        "rgba(0, 0, 0, 0.925)"
+    );
+}
+
+#[test]
+fn fill_style_rejects_colors_outside_srgb() {
+    let mut rt = rt();
+    for input in [
+        "lab(29% 39 20)",
+        "oklch(60% 0.1 30)",
+        "color(srgb 1 0 0)",
+        "color-mix(in srgb, red, blue)",
+        "rgb(from red r g b)",
+    ] {
+        ok(
+            &mut rt,
+            &format!(
+                "var c = document.createElement('canvas'); var ctx = c.getContext('2d'); \
+                 ctx.fillStyle = 'blue'; ctx.fillStyle = '{input}'; ctx.fillStyle === '#0000ff'"
+            ),
+        );
+    }
+    for (input, expected) in [
+        ("hwb(0 0% 0%)", "#ff0000"),
+        ("HSLA(0, 100%, 50%, 0.5)", "rgba(255, 0, 0, 0.5)"),
+        ("Canvas", "#ffffff"),
+    ] {
+        ok(
+            &mut rt,
+            &format!(
+                "var c = document.createElement('canvas'); var ctx = c.getContext('2d'); \
+                 ctx.fillStyle = 'blue'; ctx.fillStyle = '{input}'; ctx.fillStyle === '{expected}'"
+            ),
+        );
+    }
 }
 
 #[test]

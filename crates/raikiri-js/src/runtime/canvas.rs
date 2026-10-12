@@ -82,11 +82,53 @@ fn parse_fill_color(input: &str) -> Option<FillColor> {
             if mentions_current_color(input) {
                 return None;
             }
+            // Only sRGB colors serialize as `#rrggbb` / `rgba()`; a color in
+            // another space (`lab()`, `oklch()`, `color()`, a mix, or
+            // relative color syntax) keeps that space when read back, which
+            // 8-bit RGBA cannot represent, so such values are rejected.
+            if !is_srgb_color_form(input) {
+                return None;
+            }
             Some(FillColor::Rgba([c.r, c.g, c.b, c.a]))
         }
         PropertyValue::BorderTopColor(BorderColor::CurrentColor) => Some(FillColor::CurrentColor),
         _ => None,
     }
+}
+
+/// Whether `input` (already known to be one `<color>`) is written as a hex
+/// color, a named or system color, or a non-relative `rgb()`, `rgba()`,
+/// `hsl()`, `hsla()` or `hwb()` function: the forms CSS Color serializes as
+/// sRGB with the HTML-compatible serialization.
+fn is_srgb_color_form(input: &str) -> bool {
+    use cssparser::Token;
+
+    let mut input = cssparser::ParserInput::new(input);
+    let mut parser = cssparser::Parser::new(&mut input);
+    let name = match parser.next() {
+        Ok(Token::Function(name)) => name.clone(),
+        other => {
+            return matches!(
+                other,
+                Ok(Token::Hash(_) | Token::IDHash(_) | Token::Ident(_))
+            );
+        }
+    };
+    if !["rgb", "rgba", "hsl", "hsla", "hwb"]
+        .iter()
+        .any(|known| name.eq_ignore_ascii_case(known))
+    {
+        return false;
+    }
+    parser
+        .parse_nested_block(|block| {
+            let relative =
+                matches!(block.next(), Ok(Token::Ident(word)) if word.eq_ignore_ascii_case("from"));
+            // A nested block must be consumed to its end.
+            while block.next().is_ok() {}
+            Ok::<_, cssparser::ParseError<'_, ()>>(!relative)
+        })
+        .unwrap_or(false)
 }
 
 /// Whether `input` has a `currentcolor` identifier anywhere, including
