@@ -712,8 +712,8 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
     /// - `RenderError::Parse(ParseError::Encoding)`: the input is not UTF-8.
     /// - `RenderError::LimitExceeded { kind: LimitKind::InputBytes, .. }`:
     ///   more input than the configured input byte cap.
-    /// - The cascade and layout errors of [`layout`] at a checkpoint, and
-    ///   [`RenderError::Io`] when the sink fails.
+    /// - The cascade and layout errors of [`layout`](super::layout) at a
+    ///   checkpoint, and [`RenderError::Io`] when the sink fails.
     pub fn feed(&mut self, bytes: &[u8]) -> Result<(), RenderError> {
         if !matches!(self.failure, Failure::None) {
             return Err(failed_earlier());
@@ -857,9 +857,9 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
     /// # Errors
     ///
     /// Returns the parse, limit, cascade and layout errors of
-    /// [`crate::parse_html_with_resources`] and [`layout`], an input error
-    /// kept from [`std::io::Write`], and [`RenderError::Io`] when the sink
-    /// fails.
+    /// [`crate::parse_html_with_resources`] and [`layout`](super::layout), an
+    /// input error kept from [`std::io::Write`], and [`RenderError::Io`] when
+    /// the sink fails.
     pub fn finish(self) -> Result<StreamStatus<S::Output>, RenderError> {
         match self.failure {
             Failure::None => {}
