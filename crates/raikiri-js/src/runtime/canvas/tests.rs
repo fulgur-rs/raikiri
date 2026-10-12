@@ -288,7 +288,9 @@ fn fill_style_accepts_every_supported_color_shape() {
         "var c = document.createElement('canvas'); var ctx = c.getContext('2d'); \
          ctx.fillStyle = 'blue'; ctx.fillStyle = 'rgb(inf%, 0%, 0%)'; ctx.fillStyle === 'blue' && \
          (ctx.fillStyle = 'rgb(inf, 0, 0)', ctx.fillStyle === 'blue') && \
-         (ctx.fillStyle = 'rgba(255, 0, 0)', ctx.fillStyle === 'blue')",
+         (ctx.fillStyle = 'rgb(255, 0 0)', ctx.fillStyle === 'blue') && \
+         (ctx.fillStyle = '#+12345', ctx.fillStyle === 'blue') && \
+         (ctx.fillStyle = 'var(--x)', ctx.fillStyle === 'blue')",
     );
 }
 
@@ -343,4 +345,50 @@ fn translucent_fill_blends_in_js_bitmap() {
     let host = rt.into_host();
     let bitmap = host.document().canvas_bitmap(canvas).expect("bitmap");
     assert_eq!(bitmap.rgba.as_slice(), &[128, 0, 127, 255]);
+}
+
+#[test]
+fn fill_style_uses_the_css_color_parser() {
+    let mut rt = rt();
+    // CSS Color 4 shapes and comments the cascade also accepts.
+    for input in [
+        "rgba(255, 0, 0)",
+        "rgb(255,0,0,0.5)",
+        "rgb(255,0,0)/**/",
+        "rgb(255, /* c */ 0, 0)",
+        "hsl(0 100% 50%)",
+        "currentcolor",
+    ] {
+        ok(
+            &mut rt,
+            &format!(
+                "var c = document.createElement('canvas'); var ctx = c.getContext('2d'); \
+                 ctx.fillStyle = 'blue'; ctx.fillStyle = '{input}'; ctx.fillStyle === '{input}'"
+            ),
+        );
+    }
+}
+
+#[test]
+fn current_color_fill_uses_the_canvas_color() {
+    let (mut host, _, _, body) = StubHost::page();
+    let canvas = host.document.create_detached_element("canvas").unwrap();
+    host.document.append_child(body, canvas).unwrap();
+    host.document.mark_in_document_flags();
+    host.computed
+        .insert((canvas, "color".to_owned()), "rgb(0, 255, 0)".to_owned());
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var c = document.getElementsByTagName('canvas')[0]; \
+         c.width = 2; c.height = 1; \
+         var ctx = c.getContext('2d'); \
+         ctx.fillStyle = 'currentcolor'; ctx.fillRect(0, 0, 1, 1); \
+         ctx.fillStyle = 'rgb(255 0 0 / 50%)'; ctx.fillRect(1, 0, 1, 1);",
+    )
+    .unwrap();
+    let host = rt.into_host();
+    let bitmap = host.document().canvas_bitmap(canvas).expect("bitmap");
+    assert_eq!(&bitmap.rgba[..4], &[0, 255, 0, 255]);
+    // `rgb(255 0 0 / 50%)` (space syntax with a slash alpha) is translucent.
+    assert_eq!(bitmap.rgba[7], 128);
 }

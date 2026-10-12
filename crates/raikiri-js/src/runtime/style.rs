@@ -649,7 +649,7 @@ fn read_declared(context: &mut Context, source: &StyleSource, property: &str) ->
 
 /// `value` parsed as `property` with the same grammar the cascade uses, or
 /// `None` when it does not parse.
-fn parse_property_value(
+pub(crate) fn parse_property_value(
     property: &str,
     value: &str,
 ) -> Option<raikiri_style::property::PropertyValue> {
@@ -796,7 +796,11 @@ fn write_declared(
 /// fixed message instead, while the harness-facing host failure keeps the
 /// original, more specific one (the same shape `node.rs`'s `inner_html`
 /// getter uses for its own host-failure path).
-fn read_computed(context: &mut Context, index: usize, property: &str) -> JsResult<Option<String>> {
+pub(crate) fn read_computed(
+    context: &mut Context,
+    index: usize,
+    property: &str,
+) -> JsResult<Option<String>> {
     if raikiri_style::ComputedProperty::from_name(property).is_none() {
         return Ok(None);
     }
