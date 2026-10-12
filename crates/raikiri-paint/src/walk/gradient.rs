@@ -226,6 +226,10 @@ fn fill_average(
     scene.pop_layer();
 }
 
+/// Shortest repeating-gradient period, in CSS pixels, painted as a pattern:
+/// under a tenth of a device pixel even at 600 dpi.
+const MIN_REPEATING_PERIOD: f64 = 1.0 / 64.0;
+
 /// Most gradient tiles one background layer fills one by one.
 const MAX_GRADIENT_TILES: usize = 16_384;
 
@@ -335,7 +339,7 @@ fn linear_fill(
     let start = center - direction * (length / 2.0);
     let line = direction * length;
     let stops = resolved_stops(&linear.stops, length, length, current_color);
-    let (first, last, stops) = match normalize_stops(stops, linear.repeating)? {
+    let (first, last, stops) = match normalize_stops(stops, linear.repeating, length)? {
         Normalized::Solid(color) => return Some(GradientFill::Solid(color)),
         Normalized::Stops { first, last, stops } => (first, last, stops),
     };
@@ -462,7 +466,7 @@ fn radial_fill(
     } else if let Some(color) = clip_stops_at_zero(&mut stops, &radial.interpolation) {
         return Some(GradientFill::Solid(color));
     }
-    let (first, last, stops) = match normalize_stops(stops, radial.repeating)? {
+    let (first, last, stops) = match normalize_stops(stops, radial.repeating, rx)? {
         Normalized::Solid(color) => return Some(GradientFill::Solid(color)),
         Normalized::Stops { first, last, stops } => (first, last, stops),
     };
@@ -691,10 +695,21 @@ enum Normalized {
 /// widened to reach stops outside it; pad extension shows the first and last
 /// colors beyond the stops as CSS requires. A repeating brush spans one
 /// period, from the first stop to the last. A repeating gradient whose stops
-/// share one position paints the average color (CSS Images 3 §3.6).
-fn normalize_stops(stops: Vec<(f64, CssColor)>, repeating: bool) -> Option<Normalized> {
+/// share one position paints the average color (CSS Images 3 §3.6); so does
+/// one whose period, measured along `length` CSS pixels, is too short for any
+/// output resolution to show.
+fn normalize_stops(
+    stops: Vec<(f64, CssColor)>,
+    repeating: bool,
+    length: f64,
+) -> Option<Normalized> {
     let (first, last) = (stops.first()?.0, stops.last()?.0);
-    if repeating && last - first <= 1e-6 {
+    let period = if length > 0.0 {
+        (last - first) * length
+    } else {
+        last - first
+    };
+    if repeating && period <= MIN_REPEATING_PERIOD {
         return Some(Normalized::Solid(average_color(&stops)));
     }
     let (start, end) = if repeating {

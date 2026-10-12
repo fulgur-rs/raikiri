@@ -1710,7 +1710,7 @@ pub(crate) fn paint_document_impl(
         /// The lines of one paragraph, drawn where this frame pops: in place
         /// for most paragraphs, or at the end of the enclosing layer for a
         /// block whose inline content is deferred (see
-        /// `paint_rules::defers_inline_content`).
+        /// [`raikiri_dom::paint_rules::defers_inline_content`]).
         Lines {
             node_id: usize,
             x: f32,

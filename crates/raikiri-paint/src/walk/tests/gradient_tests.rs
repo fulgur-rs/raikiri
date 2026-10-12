@@ -833,3 +833,35 @@ fn page_gradients_resolve_font_lengths_with_the_page_font() {
     assert_eq!(pixel(&rgba, 100, 24, 20), RED);
     assert_eq!(pixel(&rgba, 100, 40, 20), BLUE);
 }
+
+#[test]
+fn short_periods_in_long_gradients_still_repeat() {
+    let cv = computed_for(
+        "background-image: repeating-linear-gradient(to right in srgb, red 0, blue 5px); \
+         background-size: 10000000px 10px",
+    );
+    let area = Rect::new(0.0, 0.0, 100.0, 10.0);
+    let mut scene = Scene::new();
+    gradient::paint_gradient_layer(
+        &mut scene,
+        &gradient_of(&cv),
+        area,
+        area,
+        None,
+        &cv.background_size,
+        &cv.background_position,
+        &cv.background_repeat,
+        cv.color,
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        100,
+        10,
+    );
+    let [r0, _, b0, _] = pixel(&rgba, 100, 0, 5);
+    let [r4, _, b4, _] = pixel(&rgba, 100, 4, 5);
+    let [r5, _, b5, _] = pixel(&rgba, 100, 5, 5);
+    assert!(r0 > 200 && b0 < 60, "start of a period: {r0} {b0}");
+    assert!(b4 > 150 && r4 < 100, "end of a period: {r4} {b4}");
+    assert!(r5 > 200 && b5 < 60, "next period: {r5} {b5}");
+}
