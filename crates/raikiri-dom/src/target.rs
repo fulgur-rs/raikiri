@@ -771,8 +771,9 @@ impl Document {
     ///
     /// Counters read only the element cascade, so the snapshots are reused
     /// for every cascade with the same
-    /// [`CascadeResult::element_generation`]. A cascade with another
-    /// generation gets snapshots of its own, which are not kept. The memory
+    /// [`CascadeResult::element_generation`]. A layout with a cascade of
+    /// another generation replaces them; outside layout, such a cascade gets
+    /// snapshots of its own, which are not kept. The memory
     /// budget is charged once for the shared build, so a multi-page render no
     /// longer pays it per page.
     pub fn shared_counter_snapshots(

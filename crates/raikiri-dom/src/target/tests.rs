@@ -141,6 +141,13 @@ fn shared_counter_snapshots_are_reused_until_the_tree_changes() {
     let kept = doc.shared_counter_snapshots(&cr).expect("snapshots");
     assert!(std::sync::Arc::ptr_eq(&shared, &kept));
 
+    // Laying the document out with another element cascade replaces them.
+    crate::layout_single_page(&mut doc, &other, raikiri_traits::PageBox::A4).ok();
+    let relaid = doc.shared_counter_snapshots(&other).expect("snapshots");
+    let reused = doc.shared_counter_snapshots(&other).expect("snapshots");
+    assert!(std::sync::Arc::ptr_eq(&relaid, &reused));
+    assert!(!std::sync::Arc::ptr_eq(&relaid, &shared));
+
     // A tree mutation drops them, even for the same cascade.
     doc.detach_from_parent(first);
     doc.mark_in_document_flags();
