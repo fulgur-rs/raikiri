@@ -1723,6 +1723,8 @@ fn nth_child_query_workload(n_elems: usize) -> (NthChildQuery, u64) {
 
 // The wrapper makes these elements actual siblings. Equal declarations can
 // use sibling sharing; distinct inline custom values force per-element work.
+// cov:ignore: bench harness — `cargo test`/`cargo llvm-cov --workspace`
+// do not build or instrument benchmark targets.
 fn deferred_shorthand_workload(
     n_elems: usize,
     shared: bool,
@@ -1782,6 +1784,8 @@ fn deferred_shorthand_workload(
 fn bench_cascade(c: &mut Criterion) {
     let mut group = c.benchmark_group("cascade");
 
+    // cov:ignore: bench harness — `cargo test`/`cargo llvm-cov --workspace`
+    // do not build or instrument benchmark targets.
     for (name, n_elems, shared, variables) in [
         ("var_shorthand_unique_1", 1, false, true),
         ("var_shorthand_unique_256", 256, false, true),
