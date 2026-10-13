@@ -2167,3 +2167,16 @@ fn a_grid_stretched_multicol_keeps_its_area_height() {
     assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 200.0);
     assert_eq!(fragment_rects(&doc, child), vec![(0, 0.0, 0.0, 200.0)]);
 }
+
+#[test]
+fn an_inset_positioned_multicol_keeps_its_containing_block_height() {
+    let (doc, parent, children) = lineless_fixture(
+        "display:block;position:absolute;top:0;bottom:0;width:100px;columns:2;column-gap:0",
+        &["display:block;height:200px"],
+    );
+    assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 600.0);
+    assert_eq!(
+        fragment_rects(&doc, children[0]),
+        vec![(0, 0.0, 0.0, 200.0)]
+    );
+}

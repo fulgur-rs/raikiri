@@ -226,23 +226,29 @@ pub(crate) fn compute_multicol_layout(
             }
         });
         // A row flex container or a grid container stretches an auto-height
-        // item to its line or area, and the columns then take that height.
-        // Other known heights come from the item's own content and are
-        // rebalanced here.
+        // item to its line or area, and an absolutely positioned box with
+        // both block insets fills its containing block; the columns then
+        // take that height. Other known heights come from the item's own
+        // content and are rebalanced here.
+        let css = &tree.nodes[index].style;
+        let inset_height = css.position == TaffyPosition::Absolute
+            && !css.inset.top.is_auto()
+            && !css.inset.bottom.is_auto();
         let stretched_height = inputs.known_dimensions.height.is_some()
-            && tree.parent_of(index).is_some_and(|parent| {
-                let container = &tree.nodes[parent].style;
-                let align = tree.nodes[index].style.align_self.or(container.align_items);
-                let block_axis_cross = match container.display {
-                    Display::Flex => matches!(
-                        container.flex_direction,
-                        taffy::FlexDirection::Row | taffy::FlexDirection::RowReverse
-                    ),
-                    Display::Grid => true,
-                    _ => false,
-                };
-                block_axis_cross && matches!(align, None | Some(taffy::AlignItems::STRETCH))
-            });
+            && (inset_height
+                || tree.parent_of(index).is_some_and(|parent| {
+                    let container = &tree.nodes[parent].style;
+                    let align = tree.nodes[index].style.align_self.or(container.align_items);
+                    let block_axis_cross = match container.display {
+                        Display::Flex => matches!(
+                            container.flex_direction,
+                            taffy::FlexDirection::Row | taffy::FlexDirection::RowReverse
+                        ),
+                        Display::Grid => true,
+                        _ => false,
+                    };
+                    block_axis_cross && matches!(align, None | Some(taffy::AlignItems::STRETCH))
+                }));
         let used_height = if let Some(children) = &lineless_children {
             lineless::layout(
                 tree,
