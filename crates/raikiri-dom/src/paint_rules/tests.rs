@@ -449,3 +449,11 @@ fn flex_grid_paint_order_uses_order_with_stable_source_order_ties() {
     );
     assert_eq!(block_children, block_items);
 }
+
+#[test]
+fn inline_deferral_rejects_a_node_without_cascaded_values() {
+    let doc = Document::new();
+    let cascade = cascaded(&doc);
+    assert!(!defers_inline_content(&doc, &cascade, usize::MAX));
+    assert!(!closes_deferred_inline_content(&doc, &cascade, usize::MAX));
+}

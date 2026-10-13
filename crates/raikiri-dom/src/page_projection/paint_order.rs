@@ -90,6 +90,13 @@ const LEGACY_COLUMN_CLIPS: &str = "legacy column clipping may be incomplete";
 enum Frame {
     Visit(usize),
     Paragraph(usize),
+    /// The inline content of a paragraph root, listed where this frame pops:
+    /// at the end of the enclosing layer when the block defers it (see
+    /// [`paint_rules::defers_inline_content`]).
+    Content(usize),
+    /// Close a layer of deferred inline content: list what its blocks
+    /// deferred, then drop the layer.
+    EndDeferral,
     /// An inline opacity group of a paragraph, by paragraph root and element.
     InlineGroup(usize, usize),
     PopClip,
@@ -295,12 +302,59 @@ impl Document {
         let mut events = Vec::new();
         // An explicit stack, like the painter's, so a deep DOM cannot
         // overflow the call stack.
-        let mut stack = vec![Frame::Visit(root)];
+        let mut stack = vec![Frame::EndDeferral, Frame::Visit(root)];
+        // Each open layer collects the inline content its plain blocks
+        // defer, in tree order, and whether blocks inside it may defer: the
+        // content of a block in columns stays with its column clip, as in
+        // the painter.
+        let mut layers: Vec<(Vec<Frame>, bool)> = vec![(Vec::new(), true)];
         let mut motion = super::paint_transform::MotionCache::default();
         // The transforms open around the current event, composed.
         let mut spaces = vec![PaintTransform::IDENTITY];
         while let Some(frame) = stack.pop() {
+            // A box that does not defer, such as a positioned one, paints after
+            // the inline content deferred before it.
+            if let Frame::Visit(node_id) = frame
+                && layers
+                    .last()
+                    .is_some_and(|(pending, _)| !pending.is_empty())
+                && paint_rules::closes_deferred_inline_content(self, cascade, node_id)
+            {
+                let pending = layers
+                    .last_mut()
+                    .map(|(pending, _)| std::mem::take(pending))
+                    .unwrap_or_default();
+                stack.push(frame);
+                stack.extend(pending.into_iter().rev());
+                continue;
+            }
             let node_id = match frame {
+                Frame::EndDeferral => {
+                    let pending = layers
+                        .last_mut()
+                        .map(|(pending, _)| std::mem::take(pending))
+                        .unwrap_or_default();
+                    if pending.is_empty() {
+                        layers.pop();
+                    } else {
+                        stack.push(Frame::EndDeferral);
+                        stack.extend(pending.into_iter().rev());
+                    }
+                    continue;
+                }
+                Frame::Content(node_id) => {
+                    if self.has_inline_marker_image(cascade, page_index, node_id) {
+                        events.push(PaintEvent::MarkerImage(NodeId::new(node_id as u64)));
+                    }
+                    let groups = push_paragraph(self, &items, node_id, None, lines, &mut events);
+                    let boxes = self.ifc_boxes_in_group(cascade, node_id, None);
+                    stack.extend(
+                        self.paragraph_frames(cascade, node_id, boxes, groups)
+                            .into_iter()
+                            .rev(),
+                    );
+                    continue;
+                }
                 Frame::Paragraph(key) => {
                     let groups = push_paragraph(self, &items, key, None, lines, &mut events);
                     stack.extend(
@@ -495,6 +549,7 @@ impl Document {
                     if image_marker && !inline_marker {
                         events.push(PaintEvent::MarkerImage(NodeId::new(node_id as u64)));
                     }
+                    let mut clipped = false;
                     if let Some(lines) = lines {
                         let marker = crate::generated_content::generated_node_id(
                             node_id,
@@ -522,30 +577,43 @@ impl Document {
                         }
                         events.push(PaintEvent::PushClip(entry.clip, ClipKind::Overflow));
                         stack.push(Frame::PopClip);
+                        clipped = true;
                     }
-                    let mut groups = Vec::new();
-                    if node.is_ifc_root() {
-                        if image_marker && inline_marker {
-                            events.push(PaintEvent::MarkerImage(NodeId::new(node_id as u64)));
+                    // A plain block in a block container leaves its inline
+                    // content to the end of the layer (CSS 2.1 Appendix E),
+                    // after the backgrounds of the blocks that follow it.
+                    let deferring = layers.last().is_some_and(|(_, allowed)| *allowed);
+                    let defers = deferring
+                        && !clipped
+                        && paint_rules::defers_inline_content(self, cascade, node_id);
+                    if defers && node.is_ifc_root() {
+                        if let Some((pending, _)) = layers.last_mut() {
+                            pending.push(Frame::Content(node_id));
                         }
-                        groups = push_paragraph(self, &items, node_id, None, lines, &mut events);
+                        continue;
                     }
                     if node.is_inline_svg_root()
                         || self.anonymous_table_contents_paint_only(node_id)
                     {
+                        if node.is_ifc_root() {
+                            stack.push(Frame::Content(node_id));
+                        }
                         continue;
                     }
+                    // A `display: contents` element has no box, so its
+                    // children share the enclosing layer.
+                    if !defers && paint_rules::generates_box(cv) {
+                        let columns = !matches!(cv.column_count, ColumnCountValue::Auto)
+                            || !matches!(cv.column_width, raikiri_style::ComputedColumnWidth::Auto);
+                        layers.push((Vec::new(), deferring && !columns));
+                        stack.push(Frame::EndDeferral);
+                    }
                     if node.is_ifc_root() {
-                        // The paragraph's own text and inline elements were
-                        // listed above; only the boxes laid out beside its
+                        // The paragraph's own text and inline elements are
+                        // listed first; only the boxes laid out beside its
                         // lines are visited like ordinary children. Those in
                         // an inline opacity group are visited in the group.
-                        let boxes = self.ifc_boxes_in_group(cascade, node_id, None);
-                        stack.extend(
-                            self.paragraph_frames(cascade, node_id, boxes, groups)
-                                .into_iter()
-                                .rev(),
-                        );
+                        stack.push(Frame::Content(node_id));
                         continue;
                     }
                     let mut children =
@@ -712,6 +780,22 @@ impl Document {
 
     /// The boxes laid out beside the lines of paragraph `root` (floats and
     /// atomic inlines) whose innermost inline opacity group is `group`.
+    /// Whether paragraph root `node_id` places its raster marker on this page
+    /// inside its first line, so the marker paints with its lines.
+    fn has_inline_marker_image(
+        &self,
+        cascade: &CascadeResult,
+        page_index: u32,
+        node_id: usize,
+    ) -> bool {
+        self.page_marker_image(page_index, NodeId::new(node_id as u64))
+            .is_some()
+            && crate::generated_content::inside_marker_in_flow(cascade, node_id)
+            && self
+                .get_node(node_id)
+                .is_some_and(|node| node.is_ifc_root())
+    }
+
     /// The frame that visits paint child `key`: an anonymous paragraph key
     /// stands for a paragraph laid out outside the source DOM arena.
     fn child_frame(&self, key: usize) -> Frame {
@@ -759,7 +843,11 @@ impl Document {
                             Frame::Visit(id) | Frame::Paragraph(id) | Frame::InlineGroup(_, id) => {
                                 position.get(&id).is_some_and(|&at| at > group_at)
                             }
-                            Frame::PopClip | Frame::PopOpacity | Frame::PopTransform => false, // cov:ignore: never listed here
+                            Frame::PopClip
+                            | Frame::PopOpacity
+                            | Frame::PopTransform
+                            | Frame::Content(_)
+                            | Frame::EndDeferral => false, // cov:ignore: never listed here
                         })
                         .unwrap_or(entries.len())
                 });

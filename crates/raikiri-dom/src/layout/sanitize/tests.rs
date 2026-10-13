@@ -4,16 +4,14 @@ use taffy::Style;
 #[test]
 fn multicol_definite_dimension_resolves_calc_via_the_taffy_calc_resolver() {
     let mut doc = Document::new();
-    doc.calc_values
-        .push(std::sync::Arc::new(CalcLengthPercentage {
+    let pointer = crate::taffy_impl::push_calc(
+        &mut doc.calc_values,
+        CalcLengthPercentage {
             percent: 50.0,
             px: 10.0,
-        }));
-    let pointer = doc
-        .calc_values
-        .last()
-        .map(|value| (&**value) as *const _ as *const ())
-        .expect("calc value was just pushed");
+        },
+        true,
+    );
     assert_eq!(
         multicol_definite_dimension(&doc, Dimension::calc(pointer), Some(200.0)),
         Some(110.0)

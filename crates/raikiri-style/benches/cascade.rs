@@ -15,8 +15,8 @@ use std::cell::OnceCell;
 
 use criterion::{Criterion, Throughput};
 use raikiri_style::{
-    ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedValues, CssColor, Origin,
-    RuleTree, SelectorQuery, StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind,
+    ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc, ComputedValues, CssColor,
+    Origin, RuleTree, SelectorQuery, StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind,
     cascade,
 };
 
@@ -950,7 +950,7 @@ fn workload(n_rules: usize, n_elems: usize, wrapped: bool) -> (BenchDoc, RuleTre
     // The sweep is O(node), once per config at setup, against a measurement
     // that runs for a minute.
     let want_margin = ComputedLengthPercentageOrAuto::Px(want.box_px);
-    let want_padding = ComputedLengthPercentage::Px(want.box_px);
+    let want_padding = ComputedLengthPercentageOrCalc::Px(want.box_px);
     // The wrapping `section` (node 1) matches none of the `div` rules.
     let first_checked = if wrapped { 2 } else { 1 };
     for (idx, cv) in probe.computed.iter().enumerate().skip(first_checked) {
@@ -1070,7 +1070,7 @@ fn combinator_chain_workload(selector_depth: usize, doc_depth: usize) -> (BenchD
     );
 
     let want_margin = ComputedLengthPercentageOrAuto::Px(want.box_px);
-    let want_padding = ComputedLengthPercentage::Px(want.box_px);
+    let want_padding = ComputedLengthPercentageOrCalc::Px(want.box_px);
 
     for i in 1..=doc_depth {
         let cv = &probe.computed[i];
@@ -1171,7 +1171,7 @@ fn mixed_combinator_workload(n_articles: usize) -> (BenchDoc, RuleTree, u64) {
     );
 
     let want_margin = ComputedLengthPercentageOrAuto::Px(want.box_px);
-    let want_padding = ComputedLengthPercentage::Px(want.box_px);
+    let want_padding = ComputedLengthPercentageOrCalc::Px(want.box_px);
 
     for (level, &div_id) in positive_div_ids.iter().enumerate() {
         let cv = &probe.computed[div_id];
@@ -1244,7 +1244,7 @@ fn check_wide_div(
 ) {
     let cv = &probe.computed[div_id];
     let want_margin = ComputedLengthPercentageOrAuto::Px(want.box_px);
-    let want_padding = ComputedLengthPercentage::Px(want.box_px);
+    let want_padding = ComputedLengthPercentageOrCalc::Px(want.box_px);
     if matches {
         assert_eq!(
             cv.font_size.px(),
@@ -1574,7 +1574,7 @@ fn first_child_chain_workload(depth: usize) -> (BenchDoc, RuleTree, u64) {
     );
 
     let want_margin = ComputedLengthPercentageOrAuto::Px(want.box_px);
-    let want_padding = ComputedLengthPercentage::Px(want.box_px);
+    let want_padding = ComputedLengthPercentageOrCalc::Px(want.box_px);
     for i in 1..=depth {
         let cv = &probe.computed[i];
         assert_eq!(

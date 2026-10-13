@@ -220,12 +220,33 @@ fn lengths_resolve_every_unit_to_css_px() {
         length_or_auto_to_px(calc(-50.0, 0.0), 200.0, 10.0),
         Some(0.0)
     );
-    assert_eq!(margin_box_length(&calc(10.0, 10.0), 200.0, 10.0), 30.0);
     assert_eq!(
-        margin_box_length(&calc(f32::INFINITY, 0.0), 200.0, 10.0),
+        margin_box_length(
+            &calc(10.0, 10.0),
+            200.0,
+            10.0,
+            &ResolveContext::new(ComputedLength(16.0))
+        ),
+        30.0
+    );
+    assert_eq!(
+        margin_box_length(
+            &calc(f32::INFINITY, 0.0),
+            200.0,
+            10.0,
+            &ResolveContext::new(ComputedLength(16.0))
+        ),
         0.0
     );
-    assert_eq!(margin_box_length(&LengthOrAuto::Auto, 200.0, 10.0), 0.0);
+    assert_eq!(
+        margin_box_length(
+            &LengthOrAuto::Auto,
+            200.0,
+            10.0,
+            &ResolveContext::new(ComputedLength(16.0))
+        ),
+        0.0
+    );
 }
 
 #[test]

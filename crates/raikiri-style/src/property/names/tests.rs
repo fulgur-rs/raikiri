@@ -3,12 +3,12 @@ use std::collections::BTreeSet;
 use super::supported_property_names;
 use crate::property::is_supported_property_name;
 
-/// `parse_value`'s dispatch match, `crates/raikiri-style/src/property/parse/mod.rs`:
-/// the scanned block starts right after `match normalized_name.as_str() {`
+/// `parse_property_grammar`'s dispatch match, `crates/raikiri-style/src/property/parse/mod.rs`:
+/// the scanned block starts right after `match normalized_name {`
 /// and ends at that match's closing arm and braces (`_ => None,` / `}` /
 /// `}`, at the 8/4/0-space indents the source uses for them).
 const PARSE_MOD_SOURCE: &str = include_str!("../parse/mod.rs");
-const PARSE_VALUE_START_MARKER: &str = "match normalized_name.as_str() {\n";
+const PARSE_VALUE_START_MARKER: &str = "match normalized_name {\n";
 const PARSE_VALUE_END_MARKER: &str = "\n        _ => None,\n    }\n}";
 
 /// `property_key_for_name`'s match, `crates/raikiri-style/src/property/types.rs`:

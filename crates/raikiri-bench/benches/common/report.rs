@@ -6,7 +6,7 @@
 use std::fmt::Write as _;
 
 use raikiri_style::property::BorderColor;
-use raikiri_style::{CascadeResult, ComputedLengthPercentage, ComputedValues, CssColor};
+use raikiri_style::{CascadeResult, ComputedLengthPercentageOrCalc, ComputedValues, CssColor};
 
 /// Color of the warning cells.
 // cov:ignore: bench harness — same reason as `REPORT_RULES` below.
@@ -136,7 +136,7 @@ pub fn check_report(result: &CascadeResult, pages: usize, rows: usize) {
         count(&|cv| {
             cv.border.left.width().px() == 1.0
                 && cv.border.left.color == BorderColor::Resolved(RULE)
-                && cv.padding.left == ComputedLengthPercentage::Px(4.0)
+                && cv.padding.left == ComputedLengthPercentageOrCalc::Px(4.0)
         }),
         pages * (6 + 6 * rows + 3),
         "cells with the var() border and padding"

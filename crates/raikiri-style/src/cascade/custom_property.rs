@@ -9,7 +9,8 @@ use crate::property::{
     CssWideKeyword, CustomProperty, DeferredValue, FontFeatureSettings, FontVariationSettings,
     LengthOrAuto, MAX_DEFERRED_VALUE_NESTING_DEPTH, MAX_SUBSTITUTED_VALUE_BYTES, PropertyKey,
     PropertyValue, RelativeCalcLengthPercentage, RelativeCalcUnit, VerticalAlign,
-    is_custom_property_name, parse_value, product_operator, property_key_for_name, sum_operator,
+    is_custom_property_name, parse_property_grammar, parse_value, product_operator,
+    property_key_for_name, sum_operator,
 };
 
 use super::candidate::CustomCandidates;
@@ -155,24 +156,40 @@ fn resolve_substituted_value(deferred: &DeferredValue, substituted: &str) -> Opt
         parser.expect_exhausted().ok()?;
         return Some(ResolvedValue::Parsed(value));
     }
-    let simplified = match simplify_math_functions(substituted) {
-        Some(value) => value,
-        None => {
-            let value = parse_relative_calc_length_percentage(substituted)?;
-            return Some(ResolvedValue::Calc(value));
+    if let Some(simplified) = simplify_math_functions(substituted) {
+        if deferred.property.as_str() == "border-radius"
+            && let Some(keyword) = css_wide_keyword_source(&simplified)
+            && radius_corner_property(deferred.key).is_some()
+        {
+            return Some(ResolvedValue::RadiusKeyword(keyword));
         }
-    };
-    if deferred.property.as_str() == "border-radius"
-        && let Some(keyword) = css_wide_keyword_source(&simplified)
-        && radius_corner_property(deferred.key).is_some()
-    {
-        return Some(ResolvedValue::RadiusKeyword(keyword));
+        let mut input = ParserInput::new(simplified.as_ref());
+        let mut parser = Parser::new(&mut input);
+        if let Some(value) = parse_value(&deferred.property, &mut parser)
+            && parser.expect_exhausted().is_ok()
+        {
+            return Some(ResolvedValue::Parsed(value));
+        }
     }
-    let mut input = ParserInput::new(simplified.as_ref());
+    // The math functions are left as written when one cannot be folded to a
+    // single dimension, such as `calc(10% + 1px)`, or when the folded value
+    // is outside the property's range, such as `calc(1em - 1em - 10px)`
+    // folding to `-10px`: a math function is clamped to the range rather than
+    // invalid (CSS Values 4 "Range Checking",
+    // <https://www.w3.org/TR/css-values-4/#calc-range>). Properties whose
+    // grammar keeps a `calc()`, such as the margin and padding sides, read it
+    // themselves.
+    let mut input = ParserInput::new(substituted);
     let mut parser = Parser::new(&mut input);
-    let value = parse_value(&deferred.property, &mut parser)?;
-    parser.expect_exhausted().ok()?;
-    Some(ResolvedValue::Parsed(value))
+    if let Some(value) =
+        parse_property_grammar(&deferred.property.to_ascii_lowercase(), &mut parser)
+        && parser.expect_exhausted().is_ok()
+    {
+        return Some(ResolvedValue::Parsed(value));
+    }
+    // A single sizing, inset, or `vertical-align` calc is kept for the
+    // computed-value resolver, which clamps sizes.
+    parse_relative_calc_length_percentage(substituted).map(ResolvedValue::Calc)
 }
 
 /// The CSS-wide keyword `source` holds as its only component value.
@@ -236,18 +253,32 @@ pub(crate) fn parse_relative_calc_length_percentage(
     let mut parser = Parser::new(&mut parser_input);
     // A `calc(` left open at the end of input is closed there (CSS Syntax 3
     // §5.4.9); the tokenizer closes it the same way.
-    let value = parser
+    parser
         .parse_entirely(|parser| {
+            parse_relative_calc_function(parser).ok_or_else(|| parser.new_custom_error::<_, ()>(()))
+        })
+        .ok()
+}
+
+/// Consume one `calc()` function from `input` and read it like
+/// [`parse_relative_calc_length_percentage`]. The parser is left where it
+/// was when the next component value is not such a `calc()`.
+pub(crate) fn parse_relative_calc_function(
+    input: &mut Parser<'_, '_>,
+) -> Option<RelativeCalcLengthPercentage> {
+    input
+        .try_parse(|parser| {
             if !parser.expect_function()?.eq_ignore_ascii_case("calc") {
                 return Err(parser.new_custom_error(()));
             }
-            parser.parse_nested_block(|nested| evaluate_linear_sum(nested, 1))
+            match parser.parse_nested_block(|nested| evaluate_linear_sum(nested, 1))? {
+                LinearValue::Length(terms) => terms
+                    .into_value()
+                    .ok_or_else(|| parser.new_custom_error(())),
+                LinearValue::Number(_) => Err(parser.new_custom_error(())),
+            }
         })
-        .ok()?;
-    match value {
-        LinearValue::Length(terms) => terms.into_value(),
-        LinearValue::Number(_) => None,
-    }
+        .ok()
 }
 
 /// A sub-expression of a linear `calc()`: a plain number, or a sum of
@@ -1780,6 +1811,13 @@ pub(crate) fn substitute_vars_with_budget(
             },
         };
         push_bounded(&mut output, &replacement)?;
+        if ends_with_open_hex_escape(&replacement) {
+            // A hex escape consumes one whitespace character after it (CSS
+            // Syntax 3 "consume an escaped code point"). Terminate the escape
+            // here, so that it does not absorb the whitespace token that
+            // follows the `var()` in the source.
+            push_bounded(&mut output, " ")?;
+        }
         if needs_separator_after_replacement(&output, input.get(close + 1..).unwrap_or("")) {
             // Substitution preserves the original component-value token
             // boundaries. Add a separator only where reparsing the bounded
@@ -1790,6 +1828,28 @@ pub(crate) fn substitute_vars_with_budget(
     }
     push_bounded(&mut output, input.get(position..).unwrap_or(""))?;
     Some(output.into())
+}
+
+/// Whether `text` ends with a hex escape (a backslash and one to six hex digits)
+/// that would consume a whitespace character appended after it.
+fn ends_with_open_hex_escape(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let digits = bytes
+        .iter()
+        .rev()
+        .take_while(|byte| byte.is_ascii_hexdigit())
+        .count();
+    if digits == 0 || digits > 6 {
+        return false;
+    }
+    let before = &bytes[..bytes.len() - digits];
+    // The backslash starts an escape only when it is not itself escaped.
+    let backslashes = before
+        .iter()
+        .rev()
+        .take_while(|byte| **byte == b'\\')
+        .count();
+    backslashes % 2 == 1
 }
 
 /// `input` without its leading and trailing CSS whitespace and comments.

@@ -139,3 +139,29 @@ fn vertical_percent_padding_inside_an_auto_width_float_uses_its_derived_width() 
     assert_close(cy - y, 10.0, "content top inset", &html);
     assert_close(height, 10.0 + 20.0, "border-box height", &html);
 }
+
+#[test]
+fn calc_vertical_padding_inside_an_auto_width_float_uses_its_derived_width() {
+    // At the 1px probe basis `calc(100% - 20px)` clamps to zero, but against
+    // the float's derived 100px width it is 80px.
+    let html = format!(
+        "<!DOCTYPE html><style>{PAGE} div {{ float: left; height: 50px }}\
+         p {{ margin: 0; width: 100px; height: 10px }}</style>\
+         <div><p id=p style=\"padding: calc(100% - 20px) 0 0\"></p></div>"
+    );
+    let ((_, y, _, _), (_, cy, _, _)) = boxes(&html, "p");
+    assert_close(cy - y, 80.0, "content top inset", &html);
+}
+
+#[test]
+fn calc_padding_on_a_table_resolves_against_its_containing_block() {
+    let html = format!(
+        "<!DOCTYPE html><style>{PAGE} div {{ width: 200px }}\
+         table {{ border-spacing: 0; padding-left: calc(10% + 2px) }}\
+         td {{ padding: 0; width: 10px; height: 10px }}</style>\
+         <div><table id=t><tr><td id=c></td></tr></table></div>"
+    );
+    let ((x, _, _, _), _) = boxes(&html, "t");
+    let ((cx, _, _, _), _) = boxes(&html, "c");
+    assert_close(cx - x, 22.0, "table content left inset", &html);
+}

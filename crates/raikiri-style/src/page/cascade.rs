@@ -189,7 +189,19 @@ impl PageMarginBoxCascadeResult {
             if let PropertyValue::Deferred(deferred) = value
                 && matches!(
                     deferred.key,
-                    PropertyKey::Color | PropertyKey::BackgroundColor | PropertyKey::FontSize
+                    PropertyKey::Color
+                        | PropertyKey::BackgroundColor
+                        | PropertyKey::FontSize
+                        | PropertyKey::Margin
+                        | PropertyKey::MarginTop
+                        | PropertyKey::MarginRight
+                        | PropertyKey::MarginBottom
+                        | PropertyKey::MarginLeft
+                        | PropertyKey::Padding
+                        | PropertyKey::PaddingTop
+                        | PropertyKey::PaddingRight
+                        | PropertyKey::PaddingBottom
+                        | PropertyKey::PaddingLeft
                 )
             {
                 resolve_page_deferred_value(deferred, custom_properties.as_ref())

@@ -30,8 +30,9 @@ pub use crate::property::{CornerRadius, CssColor, Sides};
 pub use crate::resolve::{
     ComputedBackgroundSize, ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem,
     ComputedCssPosition, ComputedCssPositionOffset, ComputedLength, ComputedLengthPercentage,
-    ComputedLengthPercentageOrAuto, ComputedOutline, ComputedTextDecorationInset,
-    ComputedTextDecorationThickness, ComputedTextShadow, ComputedTransformFunction,
+    ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc, ComputedOutline,
+    ComputedTextDecorationInset, ComputedTextDecorationThickness, ComputedTextShadow,
+    ComputedTransformFunction,
 };
 
 // Payload types that appear inside the computed field types above and below.

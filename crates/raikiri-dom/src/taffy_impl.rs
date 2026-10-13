@@ -30,6 +30,31 @@ fn leaf_intrinsic_size(node: &crate::node::Node) -> Option<Size<f32>> {
         .map(|(width, height)| Size { width, height })
 }
 
+/// A `calc()` payload held in the document arena for one layout pass.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ArenaCalc {
+    pub(crate) value: raikiri_style::property::CalcLengthPercentage,
+    /// The property's range is `[0,∞]`: a sum that resolves below zero once
+    /// its percentage basis is known clamps to zero (CSS Values 4 "Range
+    /// Checking", <https://www.w3.org/TR/css-values-4/#calc-range>).
+    pub(crate) non_negative: bool,
+}
+
+/// Keep `value` in the document arena and return its Taffy handle.
+pub(crate) fn push_calc(
+    arena: &mut Vec<std::sync::Arc<ArenaCalc>>,
+    value: raikiri_style::property::CalcLengthPercentage,
+    non_negative: bool,
+) -> *const () {
+    let payload = std::sync::Arc::new(ArenaCalc {
+        value,
+        non_negative,
+    });
+    let pointer = std::sync::Arc::as_ptr(&payload).cast();
+    arena.push(payload);
+    pointer
+}
+
 /// Resolve a `calc()` payload handle against `basis`.
 ///
 /// The handle does not depend on the document, so leaf measure callbacks that
@@ -38,9 +63,15 @@ fn leaf_intrinsic_size(node: &crate::node::Node) -> Option<Size<f32>> {
 pub(crate) fn resolve_calc(val: *const (), basis: f32) -> f32 {
     // `layout::apply_computed_to_style` owns the boxed payload for the
     // duration of this layout pass, so the Taffy handle is valid here.
-    let value = unsafe { &*(val as *const raikiri_style::property::CalcLengthPercentage) };
-    let resolved = basis * value.percent / 100.0 + value.px;
-    if resolved.is_finite() { resolved } else { 0.0 }
+    let calc = unsafe { &*(val as *const ArenaCalc) };
+    let resolved = basis * calc.value.percent / 100.0 + calc.value.px;
+    if !resolved.is_finite() {
+        0.0
+    } else if calc.non_negative {
+        resolved.max(0.0)
+    } else {
+        resolved
+    }
 }
 
 /// Resolve a padding or border length of an ifc root against the containing
@@ -534,26 +565,21 @@ impl Document {
             if is_leaf {
                 let style = tree.nodes[idx].style.clone();
                 let leaf_intrinsic = leaf_intrinsic_size(&tree.nodes[idx]);
-                compute_leaf_layout(
-                    inputs,
-                    &style,
-                    |_val, _basis| 0.0,
-                    |known, _available| {
-                        // An explicit size from the style wins; otherwise an
-                        // image's intrinsic size; a text node outside every
-                        // paragraph and any other leaf measure zero.
-                        Size {
-                            width: known
-                                .width
-                                .or(leaf_intrinsic.map(|s| s.width))
-                                .unwrap_or(0.0),
-                            height: known
-                                .height
-                                .or(leaf_intrinsic.map(|s| s.height))
-                                .unwrap_or(0.0),
-                        }
-                    },
-                )
+                compute_leaf_layout(inputs, &style, resolve_calc, |known, _available| {
+                    // An explicit size from the style wins; otherwise an
+                    // image's intrinsic size; a text node outside every
+                    // paragraph and any other leaf measure zero.
+                    Size {
+                        width: known
+                            .width
+                            .or(leaf_intrinsic.map(|s| s.width))
+                            .unwrap_or(0.0),
+                        height: known
+                            .height
+                            .or(leaf_intrinsic.map(|s| s.height))
+                            .unwrap_or(0.0),
+                    }
+                })
             } else {
                 match display {
                     Display::Block | Display::FlowRoot => {
@@ -1554,9 +1580,12 @@ impl Document {
     /// padding or border that depends on its percentage basis.
     fn has_percent_vertical_edge_child(&self, idx: usize) -> bool {
         use taffy::ResolveOrZero;
+        // A `calc()` edge always carries a percentage term (one without
+        // folds to a length) and may clamp to zero at small probe bases.
         let depends_on_basis = |edge: taffy::LengthPercentage| {
-            edge.resolve_or_zero(Some(0.0), resolve_calc)
-                != edge.resolve_or_zero(Some(1.0), resolve_calc)
+            edge.into_raw().is_calc()
+                || edge.resolve_or_zero(Some(0.0), resolve_calc)
+                    != edge.resolve_or_zero(Some(1.0), resolve_calc)
         };
         TaffyChildIter::new(self, NodeId::from(idx)).any(|child| {
             let Some(node) = self.nodes.get(usize::from(child)) else {

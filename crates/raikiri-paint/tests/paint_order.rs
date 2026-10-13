@@ -410,6 +410,105 @@ fn float_and_in_flow_siblings() {
     );
 }
 
+/// CSS 2.1 Appendix E paints every in-flow block background of a layer
+/// before the inline content of those blocks, and positioned boxes after
+/// both. Text overflowing an empty block stays above the next block's
+/// background, and below a later positioned box.
+#[test]
+fn overflowing_text_paints_above_later_block_backgrounds() {
+    let result = assert_same_order(
+        "<div id=a style=\"height: 0\">over flow</div>\
+         <div id=b style=\"height: 20px; background: yellow\"></div>\
+         <div id=c style=\"position: relative; height: 5px; background: lime\"></div>\
+         <div id=d style=\"background: gray\">after</div>\
+         <div id=e style=\"overflow: hidden; background: teal\"><p id=f>clipped</p></div>",
+        "",
+    );
+    let page = result.pages().next().expect("a page");
+    let steps = walker_steps(&page);
+    let at = |step: Step| {
+        steps
+            .iter()
+            .position(|s| *s == step)
+            .unwrap_or_else(|| panic!("{step:?} in {}", describe(&page, &steps)))
+    };
+    let [a, b, c, d, e, f] = ["a", "b", "c", "d", "e", "f"].map(|id| by_id(&result, id));
+    assert!(at(Step::Box(b)) < at(Step::Text(a)));
+    assert!(at(Step::Text(a)) < at(Step::Box(c)));
+    assert!(at(Step::Box(d)) < at(Step::Text(d)));
+    // A clipping block closes its own layer, so its content stays inside
+    // the clip, before the blocks that follow it.
+    assert!(at(Step::Box(e)) < at(Step::Text(f)));
+}
+
+/// Floats and in-flow blocks that clip paint below the inline content of
+/// their layer (CSS 2.1 Appendix E steps 4, 5 and 7), and blocks inside an
+/// inline-block or a table cell defer their content like any other block.
+#[test]
+fn floats_clipping_blocks_and_atomic_containers_keep_text_above() {
+    let result = assert_same_order(
+        "<div id=a style=\"height: 0\">over flow</div>\
+         <div id=b style=\"float: left; width: 50px; height: 20px; background: yellow\"></div>\
+         <div id=c style=\"overflow: hidden; height: 20px; background: teal\"></div>",
+        "",
+    );
+    let page = result.pages().next().expect("a page");
+    let steps = walker_steps(&page);
+    let at = |step: Step| {
+        steps
+            .iter()
+            .position(|s| *s == step)
+            .unwrap_or_else(|| panic!("{step:?} in {}", describe(&page, &steps)))
+    };
+    let [a, b, c] = ["a", "b", "c"].map(|id| by_id(&result, id));
+    assert!(at(Step::Box(b)) < at(Step::Text(a)));
+    assert!(at(Step::Box(c)) < at(Step::Text(a)));
+
+    let result = assert_same_order(
+        "<div style=\"display: inline-block; width: 80px\">\
+         <div id=e style=\"height: 0\">inside</div>\
+         <div id=f style=\"height: 20px; background: gray\"></div></div>\
+         <table><tr><td><div id=h style=\"height: 0\">cell</div>\
+         <div id=i style=\"height: 20px; background: lime\"></div></td></tr></table>",
+        "",
+    );
+    let page = result.pages().next().expect("a page");
+    let steps = walker_steps(&page);
+    let at = |step: Step| {
+        steps
+            .iter()
+            .position(|s| *s == step)
+            .unwrap_or_else(|| panic!("{step:?} in {}", describe(&page, &steps)))
+    };
+    let [e, f, h, i] = ["e", "f", "h", "i"].map(|id| by_id(&result, id));
+    assert!(at(Step::Box(f)) < at(Step::Text(e)));
+    assert!(at(Step::Box(i)) < at(Step::Text(h)));
+}
+
+/// A `display: contents` element has no box, so the blocks inside it defer
+/// their content and stay in the layer of its parent.
+#[test]
+fn display_contents_stays_inside_the_deferral_layer() {
+    let result = assert_same_order(
+        "<div id=a style=\"height: 0\">over flow</div>\
+         <section style=\"display: contents\">\
+         <div id=b style=\"height: 0\">inner</div>\
+         <div id=c style=\"height: 20px; background: teal\"></div></section>",
+        "",
+    );
+    let page = result.pages().next().expect("a page");
+    let steps = walker_steps(&page);
+    let at = |step: Step| {
+        steps
+            .iter()
+            .position(|s| *s == step)
+            .unwrap_or_else(|| panic!("{step:?} in {}", describe(&page, &steps)))
+    };
+    let [a, b, c] = ["a", "b", "c"].map(|id| by_id(&result, id));
+    assert!(at(Step::Box(c)) < at(Step::Text(a)));
+    assert!(at(Step::Box(c)) < at(Step::Text(b)));
+}
+
 /// The walker draws an inline element's background with the paragraph's
 /// lines and records only the paragraph's `Text`; `paint_order` lists the
 /// inline element's `Box` on its own, before the paragraph's text. The

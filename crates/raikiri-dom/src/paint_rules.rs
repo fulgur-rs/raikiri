@@ -3,11 +3,11 @@
 
 use crate::Document;
 use raikiri_style::property::{
-    BackgroundImage, BorderCollapseValue, ContentComponent, DisplayValue, EmptyCellsValue,
-    FloatValue, OverflowValue, OverflowXY, PositionValue, Visibility, WhiteSpaceCollapse,
-    ZIndexValue,
+    BackgroundImage, BorderCollapseValue, ColumnCountValue, ContentComponent, DisplayValue,
+    EmptyCellsValue, FloatValue, OverflowValue, OverflowXY, PositionValue, Visibility,
+    WhiteSpaceCollapse, ZIndexValue,
 };
-use raikiri_style::{CascadeResult, ComputedValues, PseudoElem, StyleNodeId};
+use raikiri_style::{CascadeResult, ComputedColumnWidth, ComputedValues, PseudoElem, StyleNodeId};
 use raikiri_traits::{NodeKind, PaintClip, PaintInsets, PaintRect};
 
 /// Whether `node_id` is painted on the page whose name is `active_page_name`.
@@ -227,6 +227,100 @@ pub fn generates_box(cv: &ComputedValues) -> bool {
 /// they were children of its parent.
 pub fn opacity_layer(cv: &ComputedValues) -> Option<f32> {
     (cv.opacity < 1.0 && cv.display != DisplayValue::Contents).then_some(cv.opacity)
+}
+
+/// Whether an in-flow block's inline content (its lines and the atomic
+/// inlines and floats laid out beside them) waits for the enclosing layer.
+///
+/// CSS 2.1 Appendix E paints the backgrounds of all in-flow, non-positioned
+/// block-level descendants of a stacking context (step 4) before any of
+/// their inline content (step 7), so a later sibling's background never
+/// covers an earlier sibling's overflowing text. The painters defer the
+/// inline content of a plain block in a block container until the end of
+/// the nearest ancestor that does not defer, which closes the layer.
+///
+/// A block that clips, groups, transforms, fragments into columns, floats or
+/// is positioned paints its content in place: deferring past it would move
+/// the content out of its clip or group.
+pub fn defers_inline_content(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
+    let Some(cv) = cascade.computed.get(node_id) else {
+        return false;
+    };
+    let block_container = |display: DisplayValue| {
+        matches!(
+            display,
+            DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
+        )
+    };
+    block_container(cv.display)
+        && matches!(cv.position, PositionValue::Static)
+        && matches!(cv.float, FloatValue::None)
+        && opacity_layer(cv).is_none()
+        && cv.transform.is_empty()
+        && cv.filter.is_empty()
+        && !clips_overflow(cv)
+        && matches!(cv.column_count, ColumnCountValue::Auto)
+        && matches!(cv.column_width, ComputedColumnWidth::Auto)
+        && box_parent(document, cascade, node_id)
+            .and_then(|parent| cascade.computed.get(parent))
+            .is_some_and(|parent| {
+                block_container(parent.display)
+                    || matches!(
+                        parent.display,
+                        DisplayValue::InlineBlock
+                            | DisplayValue::TableCell
+                            | DisplayValue::TableCaption
+                    )
+            })
+}
+
+/// The nearest ancestor that generates a box, skipping `display: contents`
+/// elements, whose children take their place (CSS Display 3 §2.5).
+fn box_parent(document: &Document, cascade: &CascadeResult, node_id: usize) -> Option<usize> {
+    let mut parent = document.parent_of(node_id)?;
+    while cascade
+        .computed
+        .get(parent)
+        .is_some_and(|cv| cv.display == DisplayValue::Contents)
+    {
+        parent = document.parent_of(parent)?;
+    }
+    Some(parent)
+}
+
+/// Whether the inline content deferred in front of an element paints
+/// before it.
+///
+/// Positioned boxes and other stacking contexts paint above inline content
+/// (CSS 2.1 Appendix E steps 8 and 9), and so do tables, flex containers,
+/// atomic inlines and other boxes that are not block containers, which keep
+/// the inline content before them in tree order. Floats (step 5) and in-flow
+/// blocks that clip or fragment into columns (step 4) paint below it, so
+/// the earlier text stays above them. An element without a box, such as a
+/// `display: none` or `display: contents` one, closes nothing.
+pub fn closes_deferred_inline_content(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    let Some(cv) = cascade.computed.get(node_id) else {
+        return false;
+    };
+    let below_inline_content = matches!(cv.position, PositionValue::Static)
+        && opacity_layer(cv).is_none()
+        && cv.transform.is_empty()
+        && cv.filter.is_empty()
+        && (!matches!(cv.float, FloatValue::None)
+            || matches!(
+                cv.display,
+                DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
+            ));
+    document
+        .get_node(node_id)
+        .is_some_and(|node| node.kind() == NodeKind::Element)
+        && generates_box(cv)
+        && !below_inline_content
+        && !defers_inline_content(document, cascade, node_id)
 }
 
 /// A `visibility: hidden` table does not paint its own box.

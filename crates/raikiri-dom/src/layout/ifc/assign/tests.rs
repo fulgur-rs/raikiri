@@ -69,12 +69,14 @@ fn legacy_marker_fixture() -> Fixture {
 #[test]
 fn legacy_marker_reservation_preserves_registered_calc_padding() {
     let mut fixture = legacy_marker_fixture();
-    let value = std::sync::Arc::new(raikiri_style::property::CalcLengthPercentage {
-        percent: 10.0,
-        px: 4.0,
-    });
-    let pointer = std::sync::Arc::as_ptr(&value).cast();
-    fixture.doc.calc_values.push(value);
+    let pointer = crate::taffy_impl::push_calc(
+        &mut fixture.doc.calc_values,
+        raikiri_style::property::CalcLengthPercentage {
+            percent: 10.0,
+            px: 4.0,
+        },
+        true,
+    );
     fixture.doc.nodes[fixture.root].style.padding.left = taffy::LengthPercentage::calc(pointer);
     prepare_legacy_inside_markers_before_taffy(&mut fixture.doc, &fixture.cascade).unwrap();
     let padding = fixture.doc.nodes[fixture.root]
@@ -89,14 +91,14 @@ fn legacy_marker_reservation_preserves_registered_calc_padding() {
         54.0
     );
     assert_eq!(
-        *fixture.doc.calc_values[0],
+        fixture.doc.calc_values[0].value,
         raikiri_style::property::CalcLengthPercentage {
             percent: 10.0,
             px: 4.0
         }
     );
     assert_eq!(
-        *fixture.doc.calc_values[1],
+        fixture.doc.calc_values[1].value,
         raikiri_style::property::CalcLengthPercentage {
             percent: 10.0,
             px: 34.0

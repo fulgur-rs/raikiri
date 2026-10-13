@@ -213,7 +213,107 @@ fn round_tiles_bound_degenerate_counts() {
     let position = raikiri_style::ComputedValues::initial().background_position;
     assert_eq!(
         round_axis_tiles(100_000.0, 1.0, BackgroundRepeatKeyword::Round),
-        (1.0, Some(1))
+        (10.0, Some(10_000))
+    );
+    // Capped tiles still cover the painting area.
+    let mut repeat = raikiri_style::ComputedValues::initial().background_repeat;
+    repeat.x = BackgroundRepeatKeyword::Round;
+    let tiles = background_tiles(
+        (0.0, 0.0, 20_000.0, 10.0),
+        (0.0, 0.0, 20_000.0, 10.0),
+        (1.0, 10.0),
+        &position,
+        &repeat,
+    )
+    .expect("round tiles");
+    assert_eq!(tiles.x.len(), 10_000);
+    assert_eq!(tiles.width, 2.0);
+    // A painting area beyond the tile bound keeps the positioning tiles.
+    let tiles = background_tiles(
+        (0.0, 0.0, 10_000.0, 10.0),
+        (-20_000.0, 0.0, 40_000.0, 10.0),
+        (1.0, 10.0),
+        &position,
+        &repeat,
+    )
+    .expect("round tiles");
+    assert_eq!(tiles.x.len(), 10_000);
+    assert_eq!(tiles.x[0], 0.0);
+    // Two `round` axes share the tile budget.
+    let mut both = repeat;
+    both.y = BackgroundRepeatKeyword::Round;
+    let tiles = background_tiles(
+        (0.0, 0.0, 20_000.0, 20_000.0),
+        (0.0, 0.0, 20_000.0, 20_000.0),
+        (1.0, 1.0),
+        &position,
+        &both,
+    )
+    .expect("round tiles");
+    assert!(tiles.x.len() * tiles.y.len() <= 1 << 22);
+    assert_eq!(tiles.x.len(), 2_048);
+    // Offset tiles that spill past both edges still fit the budget.
+    let mut shifted = position;
+    shifted.horizontal = ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(0.5));
+    shifted.vertical = ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(0.5));
+    let tiles = background_tiles(
+        (0.0, 0.0, 2_048.0, 2_048.0),
+        (0.0, 0.0, 2_048.0, 2_048.0),
+        (1.0, 1.0),
+        &shifted,
+        &both,
+    )
+    .expect("round tiles");
+    assert!(tiles.x.len() * tiles.y.len() <= 1 << 22);
+    // One `round` axis gives up tiles to a repeated one.
+    let mut mixed = both;
+    mixed.y = BackgroundRepeatKeyword::Repeat;
+    let tiles = background_tiles(
+        (0.0, 0.0, 20_000.0, 2_000.0),
+        (0.0, 0.0, 20_000.0, 2_000.0),
+        (1.0, 1.0),
+        &position,
+        &mixed,
+    )
+    .expect("round tiles");
+    assert_eq!(tiles.y.len(), 2_000);
+    assert!(tiles.x.len() * tiles.y.len() <= 1 << 22);
+    let mut repeated = both;
+    repeated.x = BackgroundRepeatKeyword::Repeat;
+    repeated.y = BackgroundRepeatKeyword::Repeat;
+    // One-pixel tiles over a page-sized box are all placed.
+    let tiles = background_tiles(
+        (0.0, 0.0, 794.0, 1_123.0),
+        (0.0, 0.0, 794.0, 1_123.0),
+        (1.0, 1.0),
+        &position,
+        &repeated,
+    )
+    .expect("repeated tiles");
+    assert_eq!((tiles.x.len(), tiles.y.len()), (794, 1_123));
+    // A vertical `round` axis gives up tiles the same way.
+    let mut vertical = repeated;
+    vertical.y = BackgroundRepeatKeyword::Round;
+    let tiles = background_tiles(
+        (0.0, 0.0, 2_000.0, 20_000.0),
+        (0.0, 0.0, 2_000.0, 20_000.0),
+        (1.0, 1.0),
+        &position,
+        &vertical,
+    )
+    .expect("round tiles");
+    assert_eq!(tiles.x.len(), 2_000);
+    assert!(tiles.x.len() * tiles.y.len() <= 1 << 22);
+    // Repeated tiny tiles over a far larger area paint nothing.
+    assert!(
+        background_tiles(
+            (0.0, 0.0, 9_000.0, 9_000.0),
+            (0.0, 0.0, 9_000.0, 9_000.0),
+            (1.0, 1.0),
+            &position,
+            &repeated,
+        )
+        .is_none()
     );
     let origins = axis_origins(
         0.0,
@@ -227,4 +327,39 @@ fn round_tiles_bound_degenerate_counts() {
         Some(20_000),
     );
     assert_eq!(origins, Some(vec![0.0]));
+}
+
+#[test]
+fn round_tiles_follow_position_and_space_tiles_cover_the_painting_area() {
+    let computed = raikiri_style::ComputedValues::initial();
+    let mut position = computed.background_position;
+    position.horizontal = ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(5.0));
+    // A rescaled `round` tile is placed by `background-position` and repeats
+    // over the painting area like `repeat`.
+    let round = axis_origins(
+        1.0,
+        72.0,
+        0.0,
+        74.0,
+        36.0,
+        32.0,
+        &position.horizontal,
+        &BackgroundRepeatKeyword::Round,
+        Some(2),
+    );
+    assert_eq!(round, Some(vec![-30.0, 6.0, 42.0]));
+    // Spaced tiles keep their pitch over a painting area larger than the
+    // positioning area.
+    let space = axis_origins(
+        35.0,
+        65.0,
+        0.0,
+        135.0,
+        30.0,
+        30.0,
+        &computed.background_position.horizontal,
+        &BackgroundRepeatKeyword::Space,
+        None,
+    );
+    assert_eq!(space, Some(vec![0.0, 35.0, 70.0, 105.0]));
 }

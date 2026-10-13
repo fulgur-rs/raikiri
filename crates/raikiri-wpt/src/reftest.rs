@@ -8,6 +8,7 @@
 
 mod dynamic;
 mod fuzzy;
+pub(crate) mod local_resources;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -765,21 +766,9 @@ fn absolutize_wpt_resource_urls(
     // The stylesheet keeps its `/fonts/Ahem.ttf` source URL; WptFontLoader
     // resolves that URL against the same WPT checkout.
     let fonts_root = wpt_root
-        .filter(|root| {
-            root.join("fonts").join("Ahem.ttf").is_file()
-                || root.join("fonts").join("ahem.css").is_file()
-        })
+        .filter(|root| local_resources::is_wpt_root(root))
         .map(Path::to_path_buf)
-        .or_else(|| {
-            page_base.and_then(|base| {
-                base.ancestors()
-                    .find(|candidate| {
-                        candidate.join("fonts").join("Ahem.ttf").is_file()
-                            || candidate.join("fonts").join("ahem.css").is_file()
-                    })
-                    .map(Path::to_path_buf)
-            })
-        });
+        .or_else(|| page_base.and_then(local_resources::wpt_root_above));
     // cov:ignore: absolute WPT stylesheet URLs are exercised only by ignored resource-enabled runs.
     if let Some(fonts_root) = fonts_root
         // cov:ignore: absolute WPT stylesheet URLs are exercised only by ignored resource-enabled runs.
@@ -797,8 +786,8 @@ fn absolutize_wpt_resource_urls(
 /// Warm the cache for URL backgrounds. The `<img>` side is resolved by the
 /// layout pre-pass; a reference made only from `background-image` has no
 /// replaced element that would otherwise populate the same cache entry.
-fn prime_image_resolver(
-    resolver: &raikiri_net::ImageResolver<raikiri_net::FileNetworkProvider>,
+fn prime_image_resolver<N: raikiri_traits::NetworkProvider>(
+    resolver: &raikiri_net::ImageResolver<N>,
     html: &str,
 ) {
     use raikiri_traits::{ReplacedResolver, ResolverRequest};
@@ -2481,7 +2470,8 @@ pub(crate) fn prepare_wpt_live_document(
 
     let page_base = std::fs::canonicalize(page_base).ok();
     let wpt_root = std::fs::canonicalize(wpt_root).ok();
-    let stylesheet_network = page_base.as_ref().map(|_| raikiri_net::FileNetworkProvider);
+    let network = local_resources::WptFileNetworkProvider::new(wpt_root.clone());
+    let stylesheet_network = page_base.as_ref().map(|_| network.clone());
     let stylesheet_base = page_base
         .as_deref()
         .and_then(|path| raikiri::Url::from_directory_path(path).ok());
@@ -2496,7 +2486,7 @@ pub(crate) fn prepare_wpt_live_document(
     let html = absolutize_wpt_resource_urls(html, page_base.as_deref(), wpt_root.as_deref());
     let image_resolver = wpt_root
         .as_ref()
-        .map(|_| raikiri_net::ImageResolver::new(raikiri_net::FileNetworkProvider));
+        .map(|_| raikiri_net::ImageResolver::new(network.clone()));
     if let Some(resolver) = image_resolver.as_ref() {
         prime_image_resolver(resolver, &html);
     }
@@ -2695,7 +2685,9 @@ pub(crate) fn parse_wpt_inner_html_fragment(
 ) -> Result<raikiri_html::UncascadedDocument, String> {
     let page_base = page_base.and_then(|base| std::fs::canonicalize(base).ok());
     let wpt_root = std::fs::canonicalize(wpt_root).ok();
-    let stylesheet_network = wpt_root.as_ref().map(|_| raikiri_net::FileNetworkProvider);
+    let stylesheet_network = wpt_root
+        .as_ref()
+        .map(|root| local_resources::WptFileNetworkProvider::new(Some(root.clone())));
     let opts = raikiri::ParseOptions {
         extra_stylesheets: &[],
         network: stylesheet_network
@@ -2818,13 +2810,17 @@ fn render_raikiri_pages_inner_with_canvases(
     let resource_base = resource_base_owned.as_deref();
     let font_base = font_base_owned.as_deref();
 
-    let image_resolver =
-        resource_base.map(|_| raikiri_net::ImageResolver::new(raikiri_net::FileNetworkProvider));
-    let stylesheet_network = resource_base.map(|_| raikiri_net::FileNetworkProvider);
+    let wpt_root = resource_base.and_then(local_resources::wpt_root_above);
+    let network = local_resources::WptFileNetworkProvider::new(wpt_root.clone());
+    let image_resolver = resource_base.map(|_| raikiri_net::ImageResolver::new(network.clone()));
+    let broken_image_fallback = image_resolver
+        .as_ref()
+        .map(|resolver| local_resources::BrokenImageFallback::new(resolver));
+    let stylesheet_network = resource_base.map(|_| network);
     let stylesheet_base =
         resource_base.and_then(|path| raikiri::Url::from_directory_path(path).ok());
     let font_loader = WptFontLoader::discover(font_base.or(resource_base));
-    let html = absolutize_wpt_resource_urls(html, resource_base, None);
+    let html = absolutize_wpt_resource_urls(html, resource_base, wpt_root.as_deref());
     if let Some(resolver) = image_resolver.as_ref() {
         prime_image_resolver(resolver, &html);
     }
@@ -2842,7 +2838,7 @@ fn render_raikiri_pages_inner_with_canvases(
                 .map(|provider| provider as &dyn raikiri_traits::NetworkProvider),
             parse_base_url: stylesheet_base.as_ref(),
             base_url: stylesheet_base.as_ref(),
-            replaced_resolver: image_resolver
+            replaced_resolver: broken_image_fallback
                 .as_ref()
                 .map(|resolver| resolver as &dyn raikiri_traits::ReplacedResolver),
             image_pixel_source: image_resolver
@@ -2865,7 +2861,7 @@ fn render_raikiri_pages_inner_with_canvases(
 /// Prepare inside marker images and generated content images before
 /// file-backed reftest layout.
 struct FileCascadeImagePreparer<'a> {
-    resolver: &'a raikiri_net::ImageResolver<raikiri_net::FileNetworkProvider>,
+    resolver: &'a raikiri_net::ImageResolver<local_resources::WptFileNetworkProvider>,
     base_url: &'a raikiri::Url,
 }
 
@@ -2876,6 +2872,16 @@ impl CascadeImagePreparer for FileCascadeImagePreparer<'_> {
         cascade: &mut raikiri_style::CascadeResult,
     ) {
         for computed in &mut cascade.computed {
+            crate::http_resources::prepare_background_image(
+                &mut computed.background_image,
+                self.base_url,
+                self.resolver,
+            );
+            crate::http_resources::prepare_background_image(
+                &mut computed.border_image.source,
+                self.base_url,
+                self.resolver,
+            );
             if computed.display == raikiri_style::DisplayValue::ListItem
                 && computed.list_style_position == raikiri_style::ListStylePosition::Inside
             {
@@ -2893,7 +2899,9 @@ impl CascadeImagePreparer for FileCascadeImagePreparer<'_> {
             self.resolver,
         );
     }
-    fn prepare_page(&self, _: &mut raikiri_style::PageCascadeResult) {}
+    fn prepare_page(&self, page: &mut raikiri_style::PageCascadeResult) {
+        crate::http_resources::prepare_page_images(page, self.base_url, self.resolver);
+    }
 }
 
 pub(crate) fn render_raikiri_pages_with_resources(
