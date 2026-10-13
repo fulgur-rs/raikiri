@@ -368,6 +368,26 @@ fn a_first_letter_box_stays_inside_its_inline_opacity_group() {
     assert!(push < letters[0].0 && letters[0].0 < pop);
 }
 
+/// A first letter taken from an inline element is painted above that
+/// element's background, as its box nests inside the element's.
+#[test]
+fn a_first_letter_box_follows_the_box_of_its_inline_source() {
+    let document = lay_out(
+        "<p><span>AB</span></p>",
+        "p{margin:0}span{background:blue}p::first-letter{background:red}",
+    );
+    let page = document.page(0).unwrap();
+    let events = page.paint_order_for_text_runs(&page.text_runs());
+    let letters = first_letter_boxes(&events);
+    assert_eq!(letters.len(), 1);
+    // The span's box is the last box listed.
+    let span = events
+        .iter()
+        .rposition(|event| matches!(event, PaintEvent::Box(_)))
+        .unwrap();
+    assert!(span < letters[0].0);
+}
+
 /// A relatively positioned `::before` moves its own text and box, as a
 /// relatively positioned inline element does (CSS 2.1 §9.4.3).
 #[test]

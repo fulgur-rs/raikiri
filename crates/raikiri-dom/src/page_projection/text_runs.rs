@@ -994,11 +994,11 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
             // A flex or grid container orders its items itself. A flex
             // layout records the first baseline they give it; a grid
             // container is left to the fallback. The middle of that line
-            // comes from the item whose first line has the baseline; when
-            // none matches, the baseline stands in.
+            // comes from the first item, in layout order, whose first line
+            // has the baseline; when none matches, the baseline stands in.
             let baseline = node.flex_first_baseline?;
             let center = node
-                .children
+                .layout_children()
                 .iter()
                 .filter(|&&child| in_flow(child))
                 .find_map(|&child| {

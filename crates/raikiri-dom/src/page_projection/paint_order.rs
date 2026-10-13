@@ -1122,9 +1122,8 @@ fn push_paragraph<'a>(
         elements.push((first, None));
     }
     elements.push((first, Some(GeneratedKind::Before)));
-    // The `::first-letter` boxes wrap the paragraph's first letter, which
-    // can come from the root's `::before`. Each pass lists the boxes whose
-    // letters its inline opacity group holds.
+    // A `::first-letter` box wraps letters inside the element they come
+    // from, so it follows that element's box and `::before` box.
     elements.push((first, Some(GeneratedKind::FirstLetter)));
     let mut nested = Vec::new();
     let mut texts = Vec::new();
@@ -1156,6 +1155,7 @@ fn push_paragraph<'a>(
                 }
                 elements.push((node_id, None));
                 elements.push((node_id, Some(GeneratedKind::Before)));
+                elements.push((node_id, Some(GeneratedKind::FirstLetter)));
                 stack.push((node_id, true));
                 stack.extend(node.children.iter().rev().map(|&id| (id, false)));
             }
@@ -1165,6 +1165,39 @@ fn push_paragraph<'a>(
     }
     elements.push((first, Some(GeneratedKind::After)));
     let root_node_ifc = document.ifc_layout_node(root);
+    // The `::first-letter` pieces this pass lists: those whose letters its
+    // inline opacity group holds, as it holds their glyph runs. A
+    // `::first-letter` box belongs to the block whose first letter it is,
+    // which can be an ancestor of the paragraph. Pieces whose letters come
+    // from no element listed here, such as the root's own text, go first.
+    let listed: HashSet<usize> = elements
+        .iter()
+        .filter(|&&(id, kind)| kind.is_none() && id != first)
+        .map(|&(id, _)| id)
+        .collect();
+    let letters: Vec<(usize, usize, &super::generated_boxes::BoxPiece)> = items
+        .generated_boxes
+        .into_iter()
+        .flat_map(|boxes| {
+            boxes.range(
+                (root, 0, GeneratedKind::FirstLetter)
+                    ..=(root, usize::MAX, GeneratedKind::FirstLetter),
+            )
+        })
+        .filter(|((_, _, kind), _)| *kind == GeneratedKind::FirstLetter)
+        .flat_map(|(&(_, owner, _), pieces)| pieces.iter().map(move |piece| (owner, piece)))
+        .filter_map(|(owner, piece)| {
+            let anchor = first_letter_anchor(document, root, piece);
+            let held = anchor
+                .and_then(|anchor| document.inline_opacity_group(items.cascade, root, anchor));
+            (held == group).then(|| {
+                let anchor = anchor
+                    .filter(|anchor| listed.contains(anchor))
+                    .unwrap_or(first);
+                (anchor, owner, piece)
+            })
+        })
+        .collect();
     for (node_id, kind) in elements {
         match kind {
             None if items
@@ -1177,45 +1210,42 @@ fn push_paragraph<'a>(
             }
             None => {}
             Some(kind) => {
-                // A `::first-letter` box belongs to the block whose first
-                // letter it is, which can be an ancestor of the paragraph.
-                let range = if kind == GeneratedKind::FirstLetter {
-                    (root, 0, kind)..=(root, usize::MAX, kind)
-                } else {
-                    (root, node_id, kind)..=(root, node_id, kind)
-                };
-                for (&(_, owner, _), pieces) in items
-                    .generated_boxes
-                    .into_iter()
-                    .flat_map(|boxes| boxes.range(range.clone()))
-                    .filter(|((_, _, piece_kind), _)| *piece_kind == kind)
-                {
+                let pieces: Vec<(usize, &super::generated_boxes::BoxPiece)> =
+                    if kind == GeneratedKind::FirstLetter {
+                        letters
+                            .iter()
+                            .filter(|&&(anchor, _, _)| anchor == node_id)
+                            .map(|&(_, owner, piece)| (owner, piece))
+                            .collect()
+                    } else {
+                        items
+                            .generated_boxes
+                            .and_then(|boxes| boxes.get(&(root, node_id, kind)))
+                            .into_iter()
+                            .flatten()
+                            .map(|piece| (node_id, piece))
+                            .collect()
+                    };
+                for (owner, piece) in pieces {
                     let owner_id = NodeId::new(owner as u64);
-                    for piece in pieces {
-                        if kind == GeneratedKind::FirstLetter
-                            && first_letter_group(document, items.cascade, root, piece) != group
-                        {
-                            continue;
-                        }
-                        let Some(style) = root_node_ifc
-                            .and_then(|node| column_projection_style(node, items.cascade, piece))
-                        else {
-                            continue; // cov:ignore: pieces are prepared only for boxes with a style
-                        };
-                        events.push(PaintEvent::GeneratedBox(GeneratedBox {
-                            owner: owner_id,
-                            line: crate::TextLineId {
-                                root: NodeId::new(root as u64),
-                                index: piece.line,
-                            },
-                            kind,
-                            rect: piece.rect,
-                            style,
-                            clip_owner: owner_id,
-                            has_start_edge: piece.has_start_edge,
-                            has_end_edge: piece.has_end_edge,
-                        }));
-                    }
+                    let Some(style) = root_node_ifc
+                        .and_then(|node| column_projection_style(node, items.cascade, piece))
+                    else {
+                        continue; // cov:ignore: pieces are prepared only for boxes with a style
+                    };
+                    events.push(PaintEvent::GeneratedBox(GeneratedBox {
+                        owner: owner_id,
+                        line: crate::TextLineId {
+                            root: NodeId::new(root as u64),
+                            index: piece.line,
+                        },
+                        kind,
+                        rect: piece.rect,
+                        style,
+                        clip_owner: owner_id,
+                        has_start_edge: piece.has_start_edge,
+                        has_end_edge: piece.has_end_edge,
+                    }));
                 }
                 let after = match kind {
                     GeneratedKind::Before => false,
@@ -1250,12 +1280,11 @@ fn push_paragraph<'a>(
     nested
 }
 
-/// The inline opacity group of paragraph `root` that holds the letters of a
-/// `::first-letter` piece, as it holds their glyph runs: the innermost group
-/// around the element the letters come from.
-fn first_letter_group(
+/// The element of paragraph `root` whose letters a `::first-letter` piece
+/// wraps: the parent of the text, or the originating element of the
+/// `::before` or `::after` text, they come from.
+fn first_letter_anchor(
     document: &Document,
-    cascade: &CascadeResult,
     root: usize,
     piece: &super::generated_boxes::BoxPiece,
 ) -> Option<usize> {
@@ -1263,11 +1292,13 @@ fn first_letter_group(
         .ifc_layout_node(root)?
         .ifc_typographic_fragment(piece.node, piece.source_container, piece.source_owner)?
         .1;
-    let start = match document.get_node(source)?.kind() {
-        NodeKind::Text => document.parent_of(source)?,
-        _ => source,
-    };
-    document.inline_opacity_group(cascade, root, start)
+    if let Some((element, _)) = crate::generated_content::generated_origin(source) {
+        return Some(element);
+    }
+    match document.get_node(source)?.kind() {
+        NodeKind::Text => document.parent_of(source),
+        _ => Some(source),
+    }
 }
 
 /// The paragraph line that holds a content image placed on the page.
