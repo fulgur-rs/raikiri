@@ -89,11 +89,23 @@ fn ifc_edge(value: taffy::LengthPercentage, parent_inline_size: Option<f32>) -> 
 /// The physical dimension used by percentage margins, padding, and borders
 /// depends on the containing block's writing mode. Sideways values use the
 /// horizontal IFC fallback, so they retain the horizontal inline-size basis.
+///
+/// Taffy's flexbox measures an item's flex base size and automatic minimum
+/// size without a main-axis parent size, so that a percentage *size* does not
+/// contribute to them (CSS Sizing 3 §5.2.1). Percentage edges still refer to
+/// the containing block's width, which a definite flex container knows; it is
+/// read from [`Document::flex_item_percent_bases`] then.
 fn ifc_parent_inline_size(
     tree: &Document,
     node: usize,
     parent_size: Size<Option<f32>>,
 ) -> Option<f32> {
+    let width = || {
+        parent_size
+            .width
+            .or_else(|| flex_item_percent_basis(tree, node))
+            .unwrap_or(0.0)
+    };
     let mut ancestor = tree.nodes[node].parent;
     while let Some(id) = ancestor {
         if let Some(mode) = tree.nodes[id].authored_writing_mode {
@@ -102,12 +114,54 @@ fn ifc_parent_inline_size(
                 | raikiri_style::property::WritingMode::VerticalLr => {
                     parent_size.height.unwrap_or(0.0)
                 }
-                _ => parent_size.width.unwrap_or(0.0),
+                _ => width(),
             });
         }
         ancestor = tree.nodes[id].parent;
     }
-    Some(parent_size.width.unwrap_or(0.0))
+    Some(width())
+}
+
+/// The content-box width of the flex container being laid out, when `node`
+/// is one of its items and that width is definite.
+fn flex_item_percent_basis(tree: &Document, node: usize) -> Option<f32> {
+    tree.flex_item_percent_bases
+        .last()
+        .filter(|&&(container, _)| {
+            tree.nodes[node].style.position != TaffyPosition::Absolute
+                && tree.taffy_parent_of(node) == Some(container)
+        })
+        .and_then(|&(_, basis)| basis)
+}
+
+/// Whether a margin, padding or border of `style` depends on its percentage
+/// basis.
+fn has_percent_edge(style: &Style) -> bool {
+    use taffy::ResolveOrZero;
+    // A `calc()` edge always carries a percentage term (one without folds
+    // to a length) and may clamp to zero at small probe bases.
+    let depends_on_basis = |edge: taffy::LengthPercentage| {
+        edge.into_raw().is_calc()
+            || edge.resolve_or_zero(Some(0.0), resolve_calc)
+                != edge.resolve_or_zero(Some(1.0), resolve_calc)
+    };
+    let margin_depends_on_basis = |edge: taffy::LengthPercentageAuto| {
+        edge.into_raw().is_calc()
+            || edge.resolve_to_option(0.0, resolve_calc)
+                != edge.resolve_to_option(1.0, resolve_calc)
+    };
+    [style.padding, style.border].into_iter().any(|edges| {
+        [edges.left, edges.right, edges.top, edges.bottom]
+            .into_iter()
+            .any(depends_on_basis)
+    }) || [
+        style.margin.left,
+        style.margin.right,
+        style.margin.top,
+        style.margin.bottom,
+    ]
+    .into_iter()
+    .any(margin_depends_on_basis)
 }
 
 /// Give Taffy pixel edge values resolved against the containing block's
@@ -427,7 +481,16 @@ impl Document {
             self.layout_dirty = false;
         }
         let inputs = vertical_oof::absolute_child_inputs(self, usize::from(node_id), inputs);
-        let mut output = compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
+        // Taffy's cache does not key on the parent size, so an ifc root item
+        // whose edges take their basis from the flex container instead is
+        // measured afresh: the same container may be laid out at another
+        // width.
+        let idx = usize::from(node_id);
+        let uncached = inputs.parent_size.width.is_none()
+            && self.nodes[idx].flags.contains(NodeFlags::IS_IFC_ROOT)
+            && flex_item_percent_basis(self, idx).is_some()
+            && has_percent_edge(&self.nodes[idx].style);
+        let compute = |tree: &mut Document, node_id: NodeId, inputs: LayoutInput| {
             let idx = usize::from(node_id);
             // Table dispatch uses preserved DisplayValue (not taffy's collapsed Display::Block).
             // Taffy 0.12 has no table layout; we route to native table engine in parallel with
@@ -597,12 +660,17 @@ impl Document {
                         }
                         output
                     }
-                    Display::Flex => compute_flexbox_layout(tree, node_id, inputs),
+                    Display::Flex => flex_layout(tree, node_id, inputs),
                     Display::Grid => compute_grid_layout(tree, node_id, inputs),
                     Display::None => unreachable!("Display::None handled above"),
                 }
             }
-        });
+        };
+        let mut output = if uncached {
+            compute(self, node_id, inputs)
+        } else {
+            compute_cached_layout(self, node_id, inputs, compute)
+        };
         // A flex container keeps the first baseline of its performed layout,
         // which a list item's outside marker aligns with. A grid container's
         // baseline is found from the first-row items its detailed grid
@@ -1396,11 +1464,7 @@ fn compute_inline_block_shrink_wrap(
                 ..inputs
             };
             match display {
-                DisplayValue::InlineFlex => {
-                    compute_flexbox_layout(tree, node_id, intrinsic_inputs)
-                        .size
-                        .width
-                }
+                DisplayValue::InlineFlex => flex_layout(tree, node_id, intrinsic_inputs).size.width,
                 DisplayValue::InlineGrid => {
                     compute_grid_layout(tree, node_id, intrinsic_inputs)
                         .size
@@ -1463,7 +1527,7 @@ fn compute_inline_block_shrink_wrap(
         )
     } else {
         match display {
-            DisplayValue::InlineFlex => compute_flexbox_layout(tree, node_id, final_inputs),
+            DisplayValue::InlineFlex => flex_layout(tree, node_id, final_inputs),
             DisplayValue::InlineGrid => compute_grid_layout(tree, node_id, final_inputs),
             _ if ifc_root => compute_ifc_root(tree, node_id, final_inputs, block_ctx),
             _ => block_layout(tree, node_id, final_inputs, block_ctx),
@@ -1505,6 +1569,24 @@ pub(crate) fn block_layout(
         output = compute_block_layout(tree, node_id, inputs, None);
         tree.block_item_percent_bases.pop();
     }
+    output
+}
+
+/// Lay out the flex container `node_id` with taffy's flexbox algorithm,
+/// recording the content-box width its items' percentage edges resolve
+/// against while taffy measures them without one; see
+/// [`ifc_parent_inline_size`].
+pub(crate) fn flex_layout(
+    tree: &mut Document,
+    node_id: NodeId,
+    inputs: LayoutInput,
+) -> LayoutOutput {
+    let idx = usize::from(node_id);
+    let (width, inline_inset) = tree.block_definite_width(idx, &inputs);
+    let basis = width.map(|width| (width - inline_inset).max(0.0));
+    tree.flex_item_percent_bases.push((idx, basis));
+    let output = compute_flexbox_layout(tree, node_id, inputs);
+    tree.flex_item_percent_bases.pop();
     output
 }
 
