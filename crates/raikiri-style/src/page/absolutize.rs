@@ -639,7 +639,10 @@ pub(super) fn absolutize_in_page_context(
 
         | PropertyValue::ObjectFit(_)
         | PropertyValue::Isolation(_)
+        | PropertyValue::BoxDecorationBreak(_)
         | PropertyValue::MixBlendMode(_)
+        | PropertyValue::Contain(_)
+        | PropertyValue::WillChange(_)
 
         | PropertyValue::ClipPath(_)
         // `filter`'s computed value is as specified: embedded lengths stay untouched.

@@ -49,6 +49,7 @@ pub(super) const PROPERTY_NAMES: &[&str] = &[
     "border-top-width",
     "border-width",
     "bottom",
+    "box-decoration-break",
     "box-shadow",
     "box-sizing",
     "break-after",

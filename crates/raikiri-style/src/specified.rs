@@ -35,13 +35,13 @@ use crate::property::{
     BORDER_WIDTH_MEDIUM_PX, BackgroundAttachment, BackgroundImage, BackgroundRepeat,
     BackgroundRepeatKeyword, BackgroundSize, Border, BorderCollapseValue, BorderColor,
     BorderImageOutsetSide, BorderImageRepeat, BorderImageSlice, BorderImageWidthSide, BorderRadius,
-    BorderSpacingValue, BorderStyle, BoxShadowItem, BoxSizing, BreakBetween, BreakInside,
-    CaptionSideValue, ClearValue, ClipPath, ColumnCountValue, ColumnFillValue, ColumnSpanValue,
-    ColumnWidthValue, ContentAlignmentValue, ContentComponent, CssColor, CssPosition,
-    CssPositionOffset, Direction, DisplayValue, EmptyCellsValue, FilterFunction, FlexBasisValue,
-    FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyName, FontFeatureSettings,
-    FontKerning, FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontStyle,
-    FontSynthesisValue, FontVariantCaps, FontVariantEastAsian, FontVariantEmoji,
+    BorderSpacingValue, BorderStyle, BoxDecorationBreak, BoxShadowItem, BoxSizing, BreakBetween,
+    BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue, ColumnFillValue,
+    ColumnSpanValue, ColumnWidthValue, Contain, ContentAlignmentValue, ContentComponent, CssColor,
+    CssPosition, CssPositionOffset, Direction, DisplayValue, EmptyCellsValue, FilterFunction,
+    FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyName,
+    FontFeatureSettings, FontKerning, FontLanguageOverride, FontOpticalSizing, FontPaletteValue,
+    FontStyle, FontSynthesisValue, FontVariantCaps, FontVariantEastAsian, FontVariantEmoji,
     FontVariantLigatures, FontVariantNumeric, FontVariantPosition, FontVariationSettings,
     GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, GridTemplateTracks, GridTrackSize,
     HangingPunctuation, HyphenateCharacter, HyphenateLimitChars, Hyphens, Isolation, Length,
@@ -55,7 +55,7 @@ use crate::property::{
     TextEmphasisStyle, TextEmphasisVEdge, TextIndentLength, TextJustify, TextOrientation,
     TextOverflowValue, TextShadowItem, TextSpacingTrim, TextTransform, TextUnderlineOffset,
     TextUnderlinePosition, TextWrapMode, TextWrapStyle, TransformFunction, UnicodeBidi,
-    VerticalAlign, Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse, WordBreak,
+    VerticalAlign, Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse, WillChange, WordBreak,
     WordSpaceTransform, WordSpacingValue, WritingMode, ZIndexValue, empty_box_shadow_list,
     empty_content_list, empty_counter_entries, empty_filter_list, empty_quotes_entries,
     empty_string_set_entries, empty_text_shadow_list, empty_transform_list, initial_font_family,
@@ -656,8 +656,15 @@ pub struct SpecifiedValues {
     /// **Specified** `isolation`; always a keyword. It passes through without absolutization, as
     /// with `object_fit`.
     pub isolation: Isolation,
+    /// `box-decoration-break`. **non-inherited**, initial:
+    /// [`BoxDecorationBreak::Slice`] (CSS Fragmentation 3 §5.4).
+    pub box_decoration_break: BoxDecorationBreak,
     /// **Specified** `mix-blend-mode`; same pass-through shape as `isolation`.
     pub mix_blend_mode: MixBlendMode,
+    /// **Specified** `contain`; same pass-through shape as `isolation`.
+    pub contain: Contain,
+    /// **Specified** `will-change`; same pass-through shape as `isolation`.
+    pub will_change: WillChange,
     /// **Specified** `mask-image`; `None` / `Url(String)` are computed-equivalent. As for
     /// `background_image`, phase 3 absolutizes font-relative parts of `<length-percentage>` in
     /// `Gradient(..)` but leaves percentages unchanged (see the `resolve_background_image` docs).
@@ -1059,8 +1066,13 @@ impl SpecifiedValues {
             opacity: 1.0,
             // CSS Compositing and Blending Level 1 §3.4.2: isolation is initially `auto`.
             isolation: Isolation::Auto,
+            box_decoration_break: BoxDecorationBreak::Slice,
             // CSS Compositing and Blending Level 1 §3.4.1: mix-blend-mode is initially `normal`.
             mix_blend_mode: MixBlendMode::Normal,
+            // CSS Containment 2 §2: contain is initially `none`.
+            contain: Contain::NONE,
+            // CSS Will Change 1 §3: will-change is initially `auto`.
+            will_change: WillChange::AUTO,
             // CSS Masking Level 1 §7.1: mask-image is initially `none`.
             mask_image: MaskImage::None,
             // CSS Masking Level 1 §5.1: clip-path is initially `none`.
@@ -1449,9 +1461,14 @@ impl SpecifiedValues {
             // non-inherited (CSS Compositing and Blending Level 1 §3.4.2
             // "Inherited: no").
             isolation: Isolation::Auto,
+            box_decoration_break: BoxDecorationBreak::Slice,
             // non-inherited (CSS Compositing and Blending Level 1 §3.4.1
             // "Inherited: no").
             mix_blend_mode: MixBlendMode::Normal,
+            // non-inherited (CSS Containment 2 §2 "Inherited: no").
+            contain: Contain::NONE,
+            // non-inherited (CSS Will Change 1 §3 "Inherited: no").
+            will_change: WillChange::AUTO,
             // non-inherited (CSS Masking Level 1 §7.1 "Inherited: no").
             mask_image: MaskImage::None,
             // non-inherited (CSS Masking Level 1 §5.1 "Inherited: no").
@@ -2510,9 +2527,12 @@ impl SpecifiedValues {
             // CSS Compositing and Blending Level 1 §3.4.2: always a keyword; pass through without
             // a phase 3 transform, as for object_fit.
             isolation: self.isolation,
+            box_decoration_break: self.box_decoration_break,
             // CSS Compositing and Blending Level 1 §3.4.1: same shape as
             // `isolation` above.
             mix_blend_mode: self.mix_blend_mode,
+            contain: self.contain,
+            will_change: self.will_change,
             // CSS Masking Level 1 §7.1: `None` and `Url(String)` are computed-equivalent. As for
             // background_image, phase 3 absolutizes font-relative parts of `<length-percentage>`
             // in `Gradient(..)` but leaves percentages unchanged (see resolve_background_image

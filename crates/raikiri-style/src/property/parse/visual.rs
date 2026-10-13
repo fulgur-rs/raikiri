@@ -2113,6 +2113,108 @@ pub(super) fn parse_isolation(input: &mut Parser<'_, '_>) -> Option<Isolation> {
     Isolation::from_css_ident(input.expect_ident().ok()?)
 }
 
+/// Parse `box-decoration-break: slice | clone` (see [`BoxDecorationBreak`]).
+pub(super) fn parse_box_decoration_break(input: &mut Parser<'_, '_>) -> Option<BoxDecorationBreak> {
+    BoxDecorationBreak::from_css_ident(input.expect_ident().ok()?)
+}
+
+/// Parse `contain` (see the [`Contain`] grammar: `none | strict | content |
+/// [ [ size | inline-size ] || layout || style || paint ]`).
+pub(super) fn parse_contain(input: &mut Parser<'_, '_>) -> Option<Contain> {
+    let mut value = Contain::NONE;
+    let mut first = true;
+    while !input.is_exhausted() {
+        let ident = input.expect_ident().ok()?.clone();
+        let keyword = if ident.eq_ignore_ascii_case("size") {
+            Contain::SIZE
+        } else if ident.eq_ignore_ascii_case("inline-size") {
+            Contain::INLINE_SIZE
+        } else if ident.eq_ignore_ascii_case("layout") {
+            Contain::LAYOUT
+        } else if ident.eq_ignore_ascii_case("style") {
+            Contain::STYLE
+        } else if ident.eq_ignore_ascii_case("paint") {
+            Contain::PAINT
+        } else if first && input.is_exhausted() {
+            // The single keywords stand alone.
+            return if ident.eq_ignore_ascii_case("none") {
+                Some(Contain::NONE)
+            } else if ident.eq_ignore_ascii_case("strict") {
+                Some(Contain::STRICT)
+            } else if ident.eq_ignore_ascii_case("content") {
+                Some(Contain::CONTENT)
+            } else {
+                None
+            };
+        } else {
+            return None;
+        };
+        // Each keyword appears once, and `size` excludes `inline-size`.
+        let size_axes = Contain::SIZE.union(Contain::INLINE_SIZE);
+        if value.contains(keyword)
+            || (size_axes.contains(keyword)
+                && (value.contains(Contain::SIZE) || value.contains(Contain::INLINE_SIZE)))
+        {
+            return None;
+        }
+        value = value.union(keyword);
+        first = false;
+    }
+    (!first).then_some(value)
+}
+
+/// Parse `will-change` (see the [`WillChange`] grammar: `auto |
+/// <animateable-feature>#`, where `<animateable-feature> = scroll-position |
+/// contents | <custom-ident>`).
+pub(super) fn parse_will_change(input: &mut Parser<'_, '_>) -> Option<WillChange> {
+    if input
+        .try_parse(|input| input.expect_ident_matching("auto"))
+        .is_ok()
+    {
+        return Some(WillChange::AUTO);
+    }
+    let features = input
+        .parse_comma_separated(|input| {
+            let ident = input.expect_ident()?.clone();
+            let name = ident.to_ascii_lowercase();
+            // CSS Will Change 1 §3 and CSS Values 4 §4.2: these keywords
+            // and the CSS-wide keywords are excluded from the
+            // `<custom-ident>`.
+            if matches!(
+                name.as_str(),
+                "will-change"
+                    | "none"
+                    | "all"
+                    | "auto"
+                    | "initial"
+                    | "inherit"
+                    | "unset"
+                    | "revert"
+                    | "revert-layer"
+                    | "revert-rule"
+                    | "default"
+            ) {
+                return Err(input.new_custom_error::<_, ()>(()));
+            }
+            // spec: https://www.w3.org/TR/css-will-change-1/#valdef-will-change-custom-ident
+            Ok(match name.as_str() {
+                "position" => WillChange::POSITION,
+                "transform" | "translate" | "rotate" | "scale" | "perspective" => {
+                    WillChange::TRANSFORM
+                }
+                "filter" | "backdrop-filter" => WillChange::FILTER,
+                "contain" => WillChange::CONTAIN,
+                _ => WillChange::AUTO,
+            })
+        })
+        .ok()?;
+    Some(
+        features
+            .into_iter()
+            .fold(WillChange::AUTO, WillChange::union),
+    )
+}
+
 /// Parse `mix-blend-mode: <blend-mode>` (see the [`MixBlendMode`]
 /// grammar: 16 keywords).
 pub(super) fn parse_mix_blend_mode(input: &mut Parser<'_, '_>) -> Option<MixBlendMode> {

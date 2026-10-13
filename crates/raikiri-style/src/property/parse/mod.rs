@@ -82,6 +82,7 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
                 | PropertyKey::BorderImageWidth
                 | PropertyKey::BorderImageOutset
                 | PropertyKey::BorderImageRepeat
+                | PropertyKey::BoxDecorationBreak
         )
     ) && let Ok(keyword) = input.try_parse(|parser| {
         let keyword = parse_css_wide_keyword_res(parser)?;
@@ -1247,10 +1248,18 @@ pub(crate) fn parse_property_grammar(
         // <https://www.w3.org/TR/compositing-1/#isolation>. Grammar:
         // `auto | isolate`.
         "isolation" => parse_isolation(input).map(PropertyValue::Isolation),
+        // CSS Fragmentation 3 §5.4. Grammar: `slice | clone`.
+        "box-decoration-break" => {
+            parse_box_decoration_break(input).map(PropertyValue::BoxDecorationBreak)
+        }
         // CSS Compositing and Blending Level 1 §3.4.1
         // <https://www.w3.org/TR/compositing-1/#mix-blend-mode>. Grammar:
         // `<blend-mode>` — see `MixBlendMode` doc for the 16-keyword list.
         "mix-blend-mode" => parse_mix_blend_mode(input).map(PropertyValue::MixBlendMode),
+        // CSS Containment 2 §2 <https://www.w3.org/TR/css-contain-2/#contain-property>.
+        "contain" => parse_contain(input).map(PropertyValue::Contain),
+        // CSS Will Change 1 §3 <https://www.w3.org/TR/css-will-change-1/#will-change>.
+        "will-change" => parse_will_change(input).map(PropertyValue::WillChange),
         // CSS Masking Level 1 §7.1 <https://www.w3.org/TR/css-masking-1/#the-mask-image>.
         // Grammar (single-layer subset — see `MaskImage` doc's scope
         // carving note): `none | <image> | <mask-source>`.

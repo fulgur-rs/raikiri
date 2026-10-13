@@ -2038,7 +2038,7 @@ fn background_rounded_corners_clip_url_images() {
 }
 
 #[test]
-fn background_clip_text_and_border_area_warn_and_skip_images() {
+fn background_clip_text_warns_and_border_area_masks_images() {
     struct RedPixels;
     impl raikiri_traits::ImagePixelSource for RedPixels {
         fn get_decoded(
@@ -2106,8 +2106,7 @@ fn background_clip_text_and_border_area_warn_and_skip_images() {
     assert!(!warnings.is_empty());
     assert_eq!(background_fill_count(&scene), 0);
 
-    // `border-area` keeps the color ring but skips the image with a warning.
-    // Nonzero borders establish a real ring; zero borders fall back to border-box.
+    // `border-area` paints color and image into a mask of the borders.
     let mut authored = Border::new();
     authored.width = Length::Px(10.0);
     authored.style = BorderStyle::Solid;
@@ -2152,13 +2151,26 @@ fn background_clip_text_and_border_area_warn_and_skip_images() {
         Some(&source),
         &mut ring_warnings,
     );
-    assert!(!ring_warnings.is_empty());
-    // Color ring paints but no image tiles in the ring.
-    assert!(!ring.commands.is_empty());
-    assert!(ring
+    assert!(ring_warnings.is_empty(), "{ring_warnings:?}");
+    let source_in = ring
         .commands
         .iter()
-        .all(|command| !matches!(command, RenderCommand::Fill(fill) if matches!(fill.brush, anyrender::Paint::Image(_)))));
+        .position(|command| {
+            matches!(command, RenderCommand::PushLayer(layer)
+                if layer.blend.compose == peniko::Compose::SrcIn)
+        })
+        .expect("the background is composited into the border mask");
+    let (mask, background) = ring.commands.split_at(source_in);
+    assert!(
+        mask.iter().any(|command| {
+            matches!(command, RenderCommand::Fill(fill)
+                if fill.brush == anyrender::Paint::Solid(Color::BLACK))
+        }),
+        "the borders are drawn opaque as the mask"
+    );
+    assert!(background.iter().any(|command| {
+        matches!(command, RenderCommand::Fill(fill) if matches!(fill.brush, anyrender::Paint::Image(_)))
+    }));
 }
 
 #[test]
@@ -3242,6 +3254,76 @@ fn a_vertical_margin_box_is_drawn_down_its_column() {
     assert_eq!(glyphs.len(), 3);
     assert_eq!(glyphs[0].0, glyphs[1].0);
     assert_eq!(glyphs[1].1 - glyphs[0].1, 10.0);
+}
+
+#[test]
+fn margin_box_text_shadows_are_drawn_below_the_text() {
+    let mut doc = engine_document();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let style = doc.append_element(Some(html), "style", Style::default(), Some("display:none"));
+    doc.append_text(
+        style,
+        "@page { margin: 40px; @top-left { content: 'a'; font-family: Ahem; \
+           font-size: 10px; color: black; text-shadow: 2px 3px red, 1px 1px 4px blue } }",
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut scene = Scene::new();
+    let mut warnings = Vec::new();
+    paint_page_margin_boxes(
+        &crate::walk::ImageBrushCache::default(),
+        &mut scene,
+        &doc,
+        &cascade,
+        PageBox::A4,
+        0,
+        1,
+        false,
+        None,
+        None,
+        &mut warnings,
+    );
+    assert!(warnings.is_empty());
+    let runs: Vec<_> = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::GlyphRun(run) => Some((
+                run.transform.translation()
+                    + kurbo::Vec2::new(f64::from(run.glyphs[0].x), f64::from(run.glyphs[0].y)),
+                run.brush.clone(),
+            )),
+            _ => None,
+        })
+        .collect();
+    let brushes: Vec<_> = runs.iter().map(|(_, brush)| brush.clone()).collect();
+    assert_eq!(
+        brushes,
+        [
+            anyrender::Paint::Solid(Color::from_rgba8(0, 0, 255, 255)),
+            anyrender::Paint::Solid(Color::from_rgba8(255, 0, 0, 255)),
+            anyrender::Paint::Solid(Color::from_rgba8(0, 0, 0, 255)),
+        ],
+        "the last shadow first, the text on top"
+    );
+    let text = runs[2].0;
+    assert_eq!(runs[1].0 - text, kurbo::Vec2::new(2.0, 3.0));
+    assert_eq!(runs[0].0 - text, kurbo::Vec2::new(1.0, 1.0));
+    let filters: Vec<_> = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::PushLayer(layer) => layer.filter.as_deref().cloned(),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        filters,
+        [anyrender::filters::Filter::single(
+            anyrender::filters::FilterEffect::blur(2.0)
+        )],
+        "only the blurred shadow uses a filter layer, with a standard deviation of half its radius"
+    );
 }
 
 struct NoImages;

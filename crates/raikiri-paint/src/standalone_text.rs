@@ -2,13 +2,15 @@
 //! pseudo-element text, list markers), shaped by the inline engine with the
 //! document's fonts.
 
+use anyrender::filters::{Filter, FilterEffect};
 use anyrender::{Glyph as AnyrenderGlyph, PaintScene};
-use kurbo::Affine;
-use peniko::{Color, Fill};
-use raikiri_dom::{Document, StandaloneAlign, StandaloneStyle, StandaloneText};
+use kurbo::{Affine, Rect};
+use peniko::{Color, Fill, Mix};
+use raikiri_dom::{Document, StandaloneAlign, StandaloneStyle, StandaloneText, TextShadow};
 use raikiri_style::FontFamilyName;
 use shodo::Fragment;
 use shodo::geometry::PhysicalConverter;
+use std::sync::Arc;
 
 /// The font size a run is shaped at: `font_size`, or 16px when it is not
 /// finite and positive.
@@ -40,6 +42,52 @@ pub(crate) fn style(font_size: f32, font_family: &[FontFamilyName]) -> Standalon
         families: font_family.to_vec(),
         font_size: usable_size(font_size),
         ..StandaloneStyle::default()
+    }
+}
+
+/// Draw the text shadows of a shaped run with its origin at (`x`, `y`),
+/// below where [`draw`] puts its glyphs.
+///
+/// CSS Text Decoration 3 §4 paints the first shadow on top, so the list is
+/// drawn in reverse. A blurred shadow is drawn inside a filter layer clipped
+/// to `bounds` moved by the shadow offset and grown by three times the blur
+/// radius, which isolates the blur from the rest of the page. The Gaussian's
+/// standard deviation is half the blur radius (CSS Backgrounds 3 §7.1).
+pub(crate) fn draw_shadows(
+    scene: &mut impl PaintScene,
+    shaped: &StandaloneText,
+    x: f32,
+    y: f32,
+    shadows: &[TextShadow],
+    bounds: Rect,
+) {
+    for shadow in shadows.iter().rev() {
+        let (dx, dy) = shadow.offset;
+        let blur = shadow.blur_radius;
+        let use_blur_layer = blur.is_finite() && blur > 0.0;
+        if use_blur_layer {
+            let extent = f64::from((blur * 3.0).max(1.0));
+            let clip =
+                (bounds + kurbo::Vec2::new(f64::from(dx), f64::from(dy))).inflate(extent, extent);
+            scene.push_layer(
+                Mix::Normal,
+                1.0,
+                Affine::IDENTITY,
+                &clip,
+                Some(Arc::new(Filter::single(FilterEffect::blur(blur / 2.0)))),
+                None,
+            );
+        }
+        draw(
+            scene,
+            shaped,
+            x + dx,
+            y + dy,
+            crate::text::css_color_to_peniko(shadow.color),
+        );
+        if use_blur_layer {
+            scene.pop_layer();
+        }
     }
 }
 
