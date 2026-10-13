@@ -205,3 +205,11 @@ fn balancing_keeps_every_column_within_the_height() {
     };
     assert_eq!(balanced_height(&[first, avoid(40.0)], 2, usize::MAX), 70.0);
 }
+
+#[test]
+fn balancing_does_not_mistake_the_fragment_budget_for_short_columns() {
+    // Two 50px pieces exceed a one-piece budget; the final placement reports
+    // that instead of the search settling on one taller column.
+    assert_eq!(balanced_height(&[split(100.0)], 2, 1), 50.0);
+    assert!(place(&[split(100.0)], 50.0, 1).is_none());
+}

@@ -168,6 +168,17 @@ struct Placement {
 /// pieces or skipped columns would be needed, so a tall box in short columns
 /// cannot allocate or loop past the fragment budget.
 fn place(items: &[Item], column_height: f32, max_pieces: usize) -> Option<Placement> {
+    place_within(items, column_height, max_pieces, usize::MAX)
+}
+
+/// [`place`], also returning `None` once the stream needs more than
+/// `max_columns` columns.
+fn place_within(
+    items: &[Item],
+    column_height: f32,
+    max_pieces: usize,
+    max_columns: usize,
+) -> Option<Placement> {
     let mut column = 0usize;
     let mut cursor = 0.0_f32;
     let mut pending_margin = 0.0_f32;
@@ -204,6 +215,9 @@ fn place(items: &[Item], column_height: f32, max_pieces: usize) -> Option<Placem
             && (item.height > 0.0 || !item.splittable)
         {
             column += 1;
+            if column >= max_columns {
+                return None;
+            }
             cursor = 0.0;
             gap = 0.0;
         }
@@ -221,6 +235,9 @@ fn place(items: &[Item], column_height: f32, max_pieces: usize) -> Option<Placem
                         return None;
                     }
                     column += 1;
+                    if column >= max_columns {
+                        return None;
+                    }
                     cursor = 0.0;
                     continue;
                 }
@@ -244,6 +261,9 @@ fn place(items: &[Item], column_height: f32, max_pieces: usize) -> Option<Placem
                 });
                 left -= room;
                 column += 1;
+                if column >= max_columns {
+                    return None;
+                }
                 cursor = 0.0;
             }
         } else {
@@ -294,11 +314,17 @@ fn stacked_height(items: &[Item], max_pieces: usize) -> Option<f32> {
 
 /// The smallest column height that fits `items` in `column_count` columns.
 /// Content that may break anywhere shares the columns equally; boxes that
-/// avoid breaks can need taller columns (CSS Multi-column 1, 7.1).
+/// avoid breaks can need taller columns (CSS Multi-column 1, 7.1). The
+/// search ignores the fragment budget, which the final placement enforces,
+/// so running out of fragments is not mistaken for columns that are too
+/// short. A placement needs at least one piece per column, so columns past
+/// `max_pieces` already exceed the budget and bound each probe.
 fn balanced_height(items: &[Item], column_count: usize, max_pieces: usize) -> f32 {
+    let max_columns = column_count.min(max_pieces.saturating_add(1));
+    let probe = |height: f32| place_within(items, height, usize::MAX, max_columns);
     // Every column holds its content, and the last one the trailing margin.
     let fits = |height: f32| {
-        place(items, height, max_pieces).is_some_and(|placement| {
+        probe(height).is_some_and(|placement| {
             placement.columns_used() <= column_count && placement.extent() <= height + EPSILON
         })
     };
@@ -314,7 +340,7 @@ fn balanced_height(items: &[Item], column_count: usize, max_pieces: usize) -> f3
     if low > 0.0 && fits(low) {
         return low;
     }
-    let Some(mut high) = stacked_height(items, max_pieces) else {
+    let Some(mut high) = stacked_height(items, usize::MAX) else {
         return low;
     };
     // Each probe places the children once; the bound keeps the search linear
@@ -329,7 +355,7 @@ fn balanced_height(items: &[Item], column_count: usize, max_pieces: usize) -> f3
     }
     // The search stops near the answer; the content extent of the columns
     // it found is the exact height when that still fits.
-    let extent = place(items, high, max_pieces).map_or(0.0, |placement| placement.extent());
+    let extent = probe(high).map_or(0.0, |placement| placement.extent());
     if extent > 0.0 && fits(extent) {
         extent
     } else {
