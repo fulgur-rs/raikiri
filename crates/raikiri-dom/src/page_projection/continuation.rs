@@ -226,6 +226,38 @@ impl Document {
         std::iter::successors(Some(node), |&id| self.parent_of(id)).any(|id| id == ancestor)
     }
 
+    /// The nodes whose content starts on projected page `page_index` but
+    /// come before `token` in source order, apart from the token's
+    /// ancestors, in source order.
+    ///
+    /// A relayout that resumes at the token compares these with the earlier
+    /// layout's, so that content the earlier layout ended before the page,
+    /// such as a float hanging below its block, does not spill onto it.
+    pub fn page_content_before(&self, page_index: u32, token: PageStartToken) -> Vec<usize> {
+        let Some(page) = self
+            .page_projection
+            .pages
+            .iter()
+            .find(|page| page.page_index == page_index)
+        else {
+            return Vec::new();
+        };
+        let order = preorder(self);
+        let target = token.node();
+        let mut nodes: Vec<usize> = page
+            .items
+            .iter()
+            .filter(|item| !item.is_repeat && !item.is_table_header_repeat)
+            // An empty box shows nothing wherever it lands.
+            .filter(|item| item.fragment_index == 0 && item.rect.height > 0.0)
+            .map(|item| item.node_id.0 as usize)
+            .filter(|&node| order[node] < order[target] && !self.is_ancestor_or_self(node, target))
+            .collect();
+        nodes.sort_by_key(|&node| order[node]);
+        nodes.dedup();
+        nodes
+    }
+
     /// Block offset of `token`'s top edge from the content origin of
     /// projected page `page_index`, or `None` when the page does not hold
     /// the token's start.
