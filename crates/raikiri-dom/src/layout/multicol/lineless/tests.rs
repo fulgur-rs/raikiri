@@ -20,6 +20,7 @@ fn split(height: f32) -> Item {
         margin_top: 0.0,
         margin_bottom: 0.0,
         splittable: true,
+        whole: false,
     }
 }
 
@@ -117,11 +118,11 @@ fn a_gap_taller_than_the_column_moves_the_box_to_the_next_column() {
 
 #[test]
 fn placement_stops_at_the_piece_budget() {
-    assert!(place(&[split(1_000_000_000.0)], 1.0, 8).is_none());
-    assert!(place(&[avoid(10.0), avoid(10.0)], 10.0, 1).is_none());
-    assert!(place(&[split(4.0)], 1.0, 4).is_some());
+    assert!(place(&[split(1_000_000_000.0)], 1.0, 8).is_err());
+    assert!(place(&[avoid(10.0), avoid(10.0)], 10.0, 1).is_err());
+    assert!(place(&[split(4.0)], 1.0, 4).is_ok());
     // Columns too short to hold any of the box count against the budget.
-    assert!(place(&[split(1.0)], 0.0005, 8).is_none());
+    assert!(place(&[split(1.0)], 0.0005, 8).is_err());
 }
 
 #[test]
@@ -211,5 +212,34 @@ fn balancing_does_not_mistake_the_fragment_budget_for_short_columns() {
     // Two 50px pieces exceed a one-piece budget; the final placement reports
     // that instead of the search settling on one taller column.
     assert_eq!(balanced_height(&[split(100.0)], 2, 1), 50.0);
-    assert!(place(&[split(100.0)], 50.0, 1).is_none());
+    assert!(place(&[split(100.0)], 50.0, 1).is_err());
+}
+
+#[test]
+fn a_box_that_must_stay_whole_stops_the_placement_only_when_cut() {
+    let whole = |height| Item {
+        whole: true,
+        ..split(height)
+    };
+    // Cut at the first column end, long before the budget runs out.
+    assert_eq!(
+        place(&[whole(100.0)], 10.0, 64).err(),
+        Some(super::Stop::Cut)
+    );
+    // Whole in one column, with the budget spent on the plain box after it.
+    assert_eq!(
+        place(&[whole(1.0), split(100.0)], 1.0, 8).err(),
+        Some(super::Stop::Exhausted)
+    );
+    // The budget runs out on a plain box before the whole box is reached.
+    assert_eq!(
+        place(&[split(100.0), whole(1.0)], 1.0, 8).err(),
+        Some(super::Stop::Exhausted)
+    );
+    // The budget runs out exactly on a whole box that is not cut.
+    assert_eq!(
+        place(&[split(8.0), whole(1.0)], 1.0, 8).err(),
+        Some(super::Stop::Exhausted)
+    );
+    assert!(place(&[whole(1.0), split(3.0)], 1.0, 8).is_ok());
 }

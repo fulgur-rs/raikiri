@@ -2141,6 +2141,45 @@ fn a_decorated_block_too_long_for_the_budget_falls_back_whole() {
 }
 
 #[test]
+fn a_decorated_block_that_stays_whole_does_not_hide_an_exhausted_budget() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::{LayoutError, PageBox};
+
+    const DECORATED: &str = "display:block;height:1px;background-image:linear-gradient(red,blue)";
+    for children in [
+        [DECORATED, "display:block;height:100000px"],
+        // The budget runs out on the decorated block, which is not cut.
+        ["display:block;height:63px", DECORATED],
+    ] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+        let parent = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;width:100px;height:1px;columns:2;column-gap:0;column-fill:auto"),
+        );
+        for child in children {
+            doc.append_element(Some(parent), "div", Style::default(), Some(child));
+        }
+        doc.fragment_tree.limit = 64;
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = PageBox::new();
+        page.width = 800.0;
+        page.height = 600.0;
+        assert!(
+            matches!(
+                layout_single_page(&mut doc, &cascade, page),
+                Err(LayoutError::FragmentLimitExceeded { limit: 64 })
+            ),
+            "{children:?}"
+        );
+    }
+}
+
+#[test]
 fn a_grid_stretched_multicol_keeps_its_area_height() {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);

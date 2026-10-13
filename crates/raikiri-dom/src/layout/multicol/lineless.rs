@@ -139,17 +139,27 @@ struct Piece {
     height: f32,
 }
 
-/// A child box in the stream: its block size, its block margins, and
-/// whether it may break.
+/// A child box in the stream: its block size, its block margins, whether
+/// it may break, and whether cutting it at a column end is refused.
 #[derive(Clone, Copy)]
 struct Item {
     height: f32,
     margin_top: f32,
     margin_bottom: f32,
     splittable: bool,
+    whole: bool,
 }
 
 const EPSILON: f32 = 0.001;
+
+/// Why a placement stopped before the end of the stream.
+#[derive(Debug, PartialEq)]
+enum Stop {
+    /// More pieces or columns were needed than allowed.
+    Exhausted,
+    /// A box that must stay whole reached a column end.
+    Cut,
+}
 
 /// The pieces of every child, and where the stream ends.
 struct Placement {
@@ -164,21 +174,24 @@ struct Placement {
 /// to the next column when it does not fit below earlier content, and
 /// overflows a column it starts at the top of (CSS Fragmentation 3, 4.4).
 /// Adjoining sibling margins collapse, and a margin at a break is truncated
-/// (CSS Fragmentation 3, 5.2). Returns `None` once more than `max_pieces`
-/// pieces or skipped columns would be needed, so a tall box in short columns
-/// cannot allocate or loop past the fragment budget.
-fn place(items: &[Item], column_height: f32, max_pieces: usize) -> Option<Placement> {
-    place_within(items, column_height, max_pieces, usize::MAX)
+/// (CSS Fragmentation 3, 5.2). Stops with [`Stop::Exhausted`] once more
+/// than `max_pieces` pieces or skipped columns would be needed, so a tall box
+/// in short columns cannot allocate or loop past the fragment budget, and
+/// with [`Stop::Cut`] as soon as a box that must stay whole would be cut.
+fn place(items: &[Item], column_height: f32, max_pieces: usize) -> Result<Placement, Stop> {
+    place_within(items, column_height, max_pieces, usize::MAX, true)
 }
 
-/// [`place`], also returning `None` once the stream needs more than
-/// `max_columns` columns.
+/// [`place`], also stopping once the stream needs more than `max_columns`
+/// columns. Boxes that must stay whole are cut like any other unless
+/// `keep_whole` is set.
 fn place_within(
     items: &[Item],
     column_height: f32,
     max_pieces: usize,
     max_columns: usize,
-) -> Option<Placement> {
+    keep_whole: bool,
+) -> Result<Placement, Stop> {
     let mut column = 0usize;
     let mut cursor = 0.0_f32;
     let mut pending_margin = 0.0_f32;
@@ -190,7 +203,7 @@ fn place_within(
         if item.height <= 0.0 {
             piece_count += 1;
             if piece_count > max_pieces {
-                return None;
+                return Err(Stop::Exhausted);
             }
             placements.push(vec![Piece {
                 column,
@@ -216,7 +229,7 @@ fn place_within(
         {
             column += 1;
             if column >= max_columns {
-                return None;
+                return Err(Stop::Exhausted);
             }
             cursor = 0.0;
             gap = 0.0;
@@ -232,18 +245,18 @@ fn place_within(
                 if room < -EPSILON || (room <= EPSILON && left > EPSILON) {
                     piece_count += 1;
                     if piece_count > max_pieces {
-                        return None;
+                        return Err(Stop::Exhausted);
                     }
                     column += 1;
                     if column >= max_columns {
-                        return None;
+                        return Err(Stop::Exhausted);
                     }
                     cursor = 0.0;
                     continue;
                 }
                 piece_count += 1;
                 if piece_count > max_pieces {
-                    return None;
+                    return Err(Stop::Exhausted);
                 }
                 if left <= room + EPSILON {
                     pieces.push(Piece {
@@ -254,6 +267,9 @@ fn place_within(
                     cursor += left;
                     break;
                 }
+                if keep_whole && item.whole {
+                    return Err(Stop::Cut);
+                }
                 pieces.push(Piece {
                     column,
                     top: cursor,
@@ -262,14 +278,14 @@ fn place_within(
                 left -= room;
                 column += 1;
                 if column >= max_columns {
-                    return None;
+                    return Err(Stop::Exhausted);
                 }
                 cursor = 0.0;
             }
         } else {
             piece_count += 1;
             if piece_count > max_pieces {
-                return None;
+                return Err(Stop::Exhausted);
             }
             pieces.push(Piece {
                 column,
@@ -280,7 +296,7 @@ fn place_within(
         }
         placements.push(pieces);
     }
-    Some(Placement {
+    Ok(Placement {
         pieces: placements,
         end: cursor + pending_margin,
     })
@@ -309,7 +325,9 @@ impl Placement {
 /// The block size of the stream in one column of unlimited height, with
 /// adjoining margins collapsed.
 fn stacked_height(items: &[Item], max_pieces: usize) -> Option<f32> {
-    place(items, f32::INFINITY, max_pieces).map(|placement| placement.end)
+    place(items, f32::INFINITY, max_pieces)
+        .ok()
+        .map(|placement| placement.end)
 }
 
 /// The smallest column height that fits `items` in `column_count` columns.
@@ -321,7 +339,7 @@ fn stacked_height(items: &[Item], max_pieces: usize) -> Option<f32> {
 /// `max_pieces` already exceed the budget and bound each probe.
 fn balanced_height(items: &[Item], column_count: usize, max_pieces: usize) -> f32 {
     let max_columns = column_count.min(max_pieces.saturating_add(1));
-    let probe = |height: f32| place_within(items, height, usize::MAX, max_columns);
+    let probe = |height: f32| place_within(items, height, usize::MAX, max_columns, false).ok();
     // Every column holds its content, and the last one the trailing margin.
     let fits = |height: f32| {
         probe(height).is_some_and(|placement| {
@@ -435,6 +453,15 @@ pub(super) fn layout(
                     tree.nodes[child].break_inside,
                     BreakInside::Avoid | BreakInside::AvoidColumn
                 ),
+                // Painting draws every fragment's decorations whole, so a box
+                // with block-axis borders or padding, or with effects sized
+                // from the whole box, would repeat them at each break instead
+                // of slicing them (CSS Fragmentation 3, 5.4). Such a box may
+                // still sit whole in one column.
+                whole: {
+                    let node = &tree.nodes[child];
+                    has_block_edge_decorations(node) || node.paints_whole_box_effects
+                },
             }
         })
         .collect();
@@ -444,17 +471,13 @@ pub(super) fn layout(
         .limit
         .saturating_sub(tree.fragment_tree.fragments.len())
         .saturating_sub(1);
-    // A box that may not be cut falls back to the other strategies whole, so
-    // running out of fragments while cutting it is not a layout failure.
-    let unsliceable = children.iter().any(|&child| {
-        let node = &tree.nodes[child];
-        has_block_edge_decorations(node) || node.paints_whole_box_effects
-    });
     let column_height = match definite_height {
         Some(height) => height,
         None if context.column_fill == ColumnFillValue::Auto => {
+            // A single unbounded column cuts nothing, so only the number of
+            // boxes can run out of fragments.
             let Some(height) = stacked_height(&items, max_pieces) else {
-                tree.fragment_tree.limit_exceeded |= !unsliceable;
+                tree.fragment_tree.limit_exceeded = true;
                 return None;
             };
             height
@@ -473,26 +496,17 @@ pub(super) fn layout(
     if !column_height.is_finite() || column_height <= 0.0 {
         return None;
     }
-    let Some(placements) = place(&items, column_height, max_pieces) else {
-        tree.fragment_tree.limit_exceeded |= !unsliceable;
-        return None;
+    // A box that must stay whole falls back to the other strategies whole
+    // when it would be cut, which is not a layout failure; running out of
+    // fragments before that is.
+    let placements = match place(&items, column_height, max_pieces) {
+        Ok(placements) => placements,
+        Err(Stop::Cut) => return None,
+        Err(Stop::Exhausted) => {
+            tree.fragment_tree.limit_exceeded = true;
+            return None;
+        }
     };
-    // Painting draws every fragment's decorations whole, so a box with
-    // block-axis borders or padding, or with effects sized from the whole
-    // box, would repeat them at each break instead of slicing them (CSS
-    // Fragmentation 3, 5.4). Such a box may still sit whole in one column.
-    let repeats_decorations = children
-        .iter()
-        .zip(&placements.pieces)
-        .any(|(&child, pieces)| {
-            pieces.len() > 1 && {
-                let node = &tree.nodes[child];
-                has_block_edge_decorations(node) || node.paints_whole_box_effects
-            }
-        });
-    if repeats_decorations {
-        return None;
-    }
     tree.fragment_tree.retire_previous_roots(parent);
     let used_height = if definite_height.is_some() {
         border_box.height
