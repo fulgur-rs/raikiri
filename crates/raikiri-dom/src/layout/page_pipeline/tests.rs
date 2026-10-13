@@ -12583,3 +12583,89 @@ fn a_float_too_wide_to_sit_beside_a_moved_float_stays_below_it() {
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
     assert_eq!(ys, vec![100.0, 100.0, 160.0]);
 }
+
+#[test]
+fn a_trailing_margin_does_not_move_a_nested_avoiding_box() {
+    let mut id = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:20px"),
+        );
+        let parent = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        id = doc.append_element(
+            Some(parent),
+            "div",
+            Style::default(),
+            Some("display:block;height:80px;margin-bottom:20px;break-inside:avoid"),
+        );
+    });
+    // The block-end margin is truncated at the page end, so no break falls
+    // inside the box.
+    assert_eq!(page_flow_y(&doc, id), 20.0);
+}
+
+#[test]
+fn an_ancestors_relative_offset_does_not_lower_a_moved_floats_floor() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:50px"),
+        );
+        let wrapper = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;position:relative;top:30px"),
+        );
+        ids.push(doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("float:left;width:40px;height:60px;break-inside:avoid"),
+        ));
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:80px"),
+        );
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;clear:left;height:10px"),
+        ));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    // The float keeps the wrapper's offset; the clearing box outside the
+    // wrapper clears its normal-flow bottom.
+    assert_eq!(ys, vec![130.0, 160.0]);
+}
+
+#[test]
+fn a_float_stays_below_moved_floats_whose_combined_width_leaves_no_room() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        for css in [
+            "float:left;width:10px;height:60px;break-inside:avoid",
+            "float:left;width:80px;height:60px;break-inside:avoid",
+            "float:right;width:15px;height:10px",
+        ] {
+            ids.push(doc.append_element(Some(body), "div", Style::default(), Some(css)));
+        }
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 100.0, 160.0]);
+}

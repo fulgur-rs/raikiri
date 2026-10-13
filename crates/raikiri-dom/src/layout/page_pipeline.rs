@@ -189,6 +189,22 @@ fn layout_relative_offset_y(
     offset - painted_relative_offset_y(document, cascade, body_id, node_id)
 }
 
+/// The relative offsets that layout applied to `node_id` and to its
+/// ancestors inside the body. They all moved the box away from its
+/// normal-flow position.
+fn accumulated_relative_offset_y(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    parent_of: &[Option<usize>],
+    node_id: usize,
+) -> f32 {
+    std::iter::successors(Some(node_id), |&id| parent_of[id])
+        .take_while(|&id| id != body_id)
+        .map(|id| layout_relative_offset_y(document, cascade, body_id, id))
+        .sum()
+}
+
 /// The block offset of a relatively positioned box that layout leaves to
 /// the painter: that of the body, of floats and of table parts, and of boxes
 /// placed by manual column placement. The painter takes `top` over
@@ -4332,7 +4348,7 @@ pub fn layout_pages_with_page_geometry_and_control(
     // otherwise start above one of them, or above its bottom when it clears
     // that side or does not fit beside it. Floats in other contexts do not
     // interact.
-    let mut later_float_edges: HashMap<usize, [FloatEdge; 2]> = HashMap::new();
+    let mut later_float_edges: HashMap<usize, Vec<FloatEdge>> = HashMap::new();
     // A nested box that moved inside an ancestor whose height cannot grow
     // to hold it overflows that ancestor: the part of the shift the
     // ancestor did not absorb ends where its subtree does, and the page the
@@ -4515,7 +4531,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                 let context = float_context_root(document, cascade, node_id, body_id);
                 later_float_edges
                     .get(&context)
-                    .map(|edges| (context, *edges))
+                    .map(|edges| (context, edges.clone()))
             })
             .flatten();
         if let Some((float_context, float_edges)) = float_edges {
@@ -4533,27 +4549,52 @@ pub fn layout_pages_with_page_geometry_and_control(
                 - context_layout.padding.right
                 - context_layout.border.left
                 - context_layout.border.right;
-            let cleared = [FloatValue::Left, FloatValue::Right]
-                .into_iter()
-                .zip(float_edges)
-                .filter(|&(side, _)| clears_float_side(computed.clear, side))
-                .map(|(_, edge)| edge.bottom)
+            let cleared = float_edges
+                .iter()
+                .filter(|edge| {
+                    clears_float_side(
+                        computed.clear,
+                        [FloatValue::Left, FloatValue::Right][edge.side],
+                    )
+                })
+                .map(|edge| edge.bottom)
                 .reduce(f32::max);
             let floor = if floating {
                 let top = float_edges
                     .iter()
                     .map(|edge| edge.top)
                     .fold(f32::NEG_INFINITY, f32::max);
-                // The highest level, among the floats' bottoms, from which
-                // the float fits beside the floats that reach below it.
-                let fits_from = std::iter::once(f32::NEG_INFINITY)
-                    .chain(float_edges.iter().map(|edge| edge.bottom))
-                    .filter(|&level| {
-                        let beside: f32 = float_edges
+                let outer_height = layout.size.height + layout.margin.top + layout.margin.bottom;
+                // The width the floats take at `level`: those that started
+                // at or above it and still reach below it sit side by side.
+                let width_at = |level: f32| -> f32 {
+                    float_edges
+                        .iter()
+                        .filter(|edge| edge.top <= level + 0.001 && edge.bottom > level + 0.001)
+                        .map(|edge| edge.width)
+                        .sum()
+                };
+                // The highest level, from the floats' top down through their
+                // bottoms, from which the float fits beside the floats along
+                // its whole height.
+                let fits_from = std::iter::once(top)
+                    .chain(
+                        float_edges
                             .iter()
-                            .filter(|edge| edge.bottom > level + 0.001)
-                            .map(|edge| edge.width)
-                            .sum();
+                            .map(|edge| edge.bottom)
+                            .filter(|&bottom| bottom > top),
+                    )
+                    .filter(|&level| {
+                        let end = level + outer_height.max(0.0);
+                        let beside = std::iter::once(level)
+                            .chain(
+                                float_edges
+                                    .iter()
+                                    .map(|edge| edge.top)
+                                    .filter(|&edge_top| edge_top > level && edge_top < end),
+                            )
+                            .map(width_at)
+                            .fold(0.0, f32::max);
                         outer_width + beside <= context_width + 0.001
                     })
                     .fold(f32::INFINITY, f32::min);
@@ -4568,8 +4609,13 @@ pub fn layout_pages_with_page_geometry_and_control(
             } else {
                 0.0
             };
+            // Floors are in normal-flow coordinates, without the relative
+            // offsets of the box and its ancestors.
+            let follower_offset =
+                accumulated_relative_offset_y(document, cascade, body_id, &parent_of, node_id);
+            let flow_raw_y = candidate.raw_y - follower_offset;
             let shift = floor.map_or(0.0, |floor| {
-                (floor - (candidate.raw_y + flow_shift - margin_top)).clamp(0.0, later_float_shift)
+                (floor - (flow_raw_y + flow_shift - margin_top)).clamp(0.0, later_float_shift)
             });
             if shift > 0.0 {
                 flow_shift += shift;
@@ -4579,12 +4625,12 @@ pub fn layout_pages_with_page_geometry_and_control(
                     // side keep below.
                     if let Some(index) = float_side_index(cascade.computed[node_id].float) {
                         let layout = &document.nodes[node_id].unrounded_layout;
-                        let top = candidate.raw_y + flow_shift;
+                        let top = flow_raw_y + flow_shift;
                         record_float_edge(
                             &mut later_float_edges,
                             float_context,
-                            index,
                             FloatEdge {
+                                side: index,
                                 top: top - layout.margin.top,
                                 bottom: top + layout.size.height + layout.margin.bottom,
                                 width: outer_width,
@@ -4975,12 +5021,19 @@ pub fn layout_pages_with_page_geometry_and_control(
         let margin_top = used_style_length_percentage_auto(style.margin.top, content_width)
             .or_else(|| used_computed_length_percentage_or_auto(computed.margin.top, content_width))
             .unwrap_or(0.0);
-        let margin_bottom = used_style_length_percentage_auto(style.margin.bottom, content_width)
-            .or_else(|| {
-                used_computed_length_percentage_or_auto(computed.margin.bottom, content_width)
-            })
-            .unwrap_or(0.0)
-            .max(0.0);
+        // The block-end margin of an in-flow box is truncated at the break
+        // after it (CSS Fragmentation 3 §5.2), so it does not break the box.
+        // A float's margin box stays whole.
+        let trailing_margin = if is_floating_box_for_pagination(document, cascade, node_id) {
+            used_style_length_percentage_auto(style.margin.bottom, content_width)
+                .or_else(|| {
+                    used_computed_length_percentage_or_auto(computed.margin.bottom, content_width)
+                })
+                .unwrap_or(0.0)
+                .max(0.0)
+        } else {
+            0.0
+        };
         // A block with `break-inside: avoid-page` stays intact when its used
         // block size plus its trailing margin would cross the current page.
         // This is the direct block-flow case; nested formatting contexts still
@@ -4998,12 +5051,8 @@ pub fn layout_pages_with_page_geometry_and_control(
         });
         // Whether the box fits is decided at its normal-flow position,
         // before any relative offset.
-        // The relative offsets of the box and of its ancestors inside the
-        // body all moved it away from its normal-flow position.
-        let relative_offset = std::iter::successors(Some(node_id), |&id| parent_of[id])
-            .take_while(|&id| id != body_id)
-            .map(|id| layout_relative_offset_y(document, cascade, body_id, id))
-            .sum::<f32>();
+        let relative_offset =
+            accumulated_relative_offset_y(document, cascade, body_id, &parent_of, node_id);
         let flow_y = effective_y - relative_offset;
         // `break-inside` does not apply to inline boxes (CSS Fragmentation 3
         // §3.2): the block boxes inside an avoiding inline box break as they
@@ -5021,7 +5070,7 @@ pub fn layout_pages_with_page_geometry_and_control(
             && flow_y.is_finite()
             && flow_y >= page_origin(current_page)
             && flow_y < page_origin(current_page) + page_step_at(current_page)
-            && flow_y + height + margin_bottom
+            && flow_y + height + trailing_margin
                 > page_origin(current_page) + page_step_at(current_page);
         // A named page requested by a class-A box starts a new page when it
         // differs from the current named page. `auto` leaves the current page
@@ -5290,23 +5339,26 @@ pub fn layout_pages_with_page_geometry_and_control(
                         // which a negative block-end margin pulls up.
                         if let Some(index) = float_side_index(computed.float) {
                             let context = float_context_root(document, cascade, node_id, body_id);
-                            let outer_bottom = node_target_y
+                            // Floors are kept in normal-flow coordinates,
+                            // without the relative offsets of the ancestors.
+                            let flow_target_y = node_target_y - relative_offset;
+                            let outer_bottom = flow_target_y
                                 + height
                                 + document.nodes[node_id].unrounded_layout.margin.bottom;
                             // An unforced break truncates the block-start
                             // margin (CSS Fragmentation 3 §5.2), so the margin
                             // box then starts at the border box.
                             let outer_top = if forced_transition {
-                                node_target_y - margin_top
+                                flow_target_y - margin_top
                             } else {
-                                node_target_y
+                                flow_target_y
                             };
                             let layout = &document.nodes[node_id].unrounded_layout;
                             record_float_edge(
                                 &mut later_float_edges,
                                 context,
-                                index,
                                 FloatEdge {
+                                    side: index,
                                     top: outer_top,
                                     bottom: outer_bottom,
                                     width: layout.size.width
@@ -5336,12 +5388,8 @@ pub fn layout_pages_with_page_geometry_and_control(
                             let context = float_context_root(document, cascade, node_id, body_id);
                             let flow_top = node_target_y - relative_offset;
                             if let Some(edges) = later_float_edges.get_mut(&context) {
-                                for edge in edges.iter_mut() {
-                                    if edge.bottom <= flow_top + 0.001 {
-                                        *edge = NO_FLOAT_EDGE;
-                                    }
-                                }
-                                if *edges == [NO_FLOAT_EDGE; 2] {
+                                edges.retain(|edge| edge.bottom > flow_top + 0.001);
+                                if edges.is_empty() {
                                     later_float_edges.remove(&context);
                                 }
                             }
@@ -6025,37 +6073,19 @@ fn grow_ancestors_for_shift(
     bounded
 }
 
-/// The page-flow outer top, bottom and width of the moved floats on one
-/// side of a formatting context.
+/// The side and the normal-flow outer top, bottom and width of a moved
+/// float.
 #[derive(Clone, Copy, PartialEq)]
 struct FloatEdge {
+    side: usize,
     top: f32,
     bottom: f32,
     width: f32,
 }
 
-/// No moved float on a side.
-const NO_FLOAT_EDGE: FloatEdge = FloatEdge {
-    top: f32::NEG_INFINITY,
-    bottom: f32::NEG_INFINITY,
-    width: 0.0,
-};
-
-/// Adds a moved float to the edges of its side. A later float stays below
-/// every earlier one, so each edge keeps the lowest top and bottom, and the
-/// widest float, of the floats it covers.
-fn record_float_edge(
-    edges: &mut HashMap<usize, [FloatEdge; 2]>,
-    context: usize,
-    index: usize,
-    edge: FloatEdge,
-) {
-    let slot = &mut edges.entry(context).or_insert([NO_FLOAT_EDGE; 2])[index];
-    *slot = FloatEdge {
-        top: slot.top.max(edge.top),
-        bottom: slot.bottom.max(edge.bottom),
-        width: slot.width.max(edge.width),
-    };
+/// Adds a moved float to the floats of its formatting context.
+fn record_float_edge(edges: &mut HashMap<usize, Vec<FloatEdge>>, context: usize, edge: FloatEdge) {
+    edges.entry(context).or_default().push(edge);
 }
 
 /// The box whose block formatting context places the floats and clearance
@@ -6113,7 +6143,7 @@ fn establishes_containment_context(computed: &raikiri_style::ComputedValues) -> 
             .contains(raikiri_style::property::Contain::PAINT)
 }
 
-/// The index of a float side in the per-side float edges.
+/// The index of a float side in `FloatEdge::side`.
 fn float_side_index(side: FloatValue) -> Option<usize> {
     match side {
         FloatValue::Left => Some(0),
