@@ -35,20 +35,14 @@ css/css-text/overflow-wrap/overflow-wrap-anywhere-002.html | The WPT harness map
 css/css-text/overflow-wrap/overflow-wrap-break-word-002.html | The WPT harness maps monospace to Ahem; at the 13px monospace medium, hinting rounds Ahem's 10.4px ascent up so the glyph overflows its 13px line by one pixel row | RAIKIRI-76 | 2026-10-11 | 2026-12-11
 css/css-ui/text-overflow-027.html | The WPT harness maps monospace to Ahem; at the 13px monospace medium, hinting rounds Ahem's 10.4px ascent up so the glyph overflows its 13px line by one pixel row | RAIKIRI-76 | 2026-10-11 | 2026-12-11
 css/css-ui/text-overflow-028.html | The WPT harness maps monospace to Ahem; at the 13px monospace medium, hinting rounds Ahem's 10.4px ascent up so the glyph overflows its 13px line by one pixel row | RAIKIRI-76 | 2026-10-11 | 2026-12-11
-css/css-backgrounds/parsing/background-attachment-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
-css/css-backgrounds/parsing/background-clip-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
-css/css-backgrounds/parsing/background-origin-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
-css/css-backgrounds/parsing/background-position-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
-css/css-backgrounds/parsing/background-repeat-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
-css/css-backgrounds/parsing/background-size-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
-css/css-backgrounds/parsing/background-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
-css/css-content/parsing/content-counter-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
-css/css-content/parsing/content-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
-css/css-flexbox/parsing/flex-grow-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
-css/css-flexbox/parsing/flex-shrink-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
-css/css-fonts/parsing/font-family-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
-css/css-fonts/parsing/font-language-override-invalid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
-css/css-text/parsing/text-spacing-invalid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
+css/css-backgrounds/parsing/background-attachment-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-160 | 2026-10-12 | 2026-12-12
+css/css-backgrounds/parsing/background-clip-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-160 | 2026-10-12 | 2026-12-12
+css/css-backgrounds/parsing/background-origin-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-160 | 2026-10-12 | 2026-12-12
+css/css-backgrounds/parsing/background-repeat-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-160 | 2026-10-12 | 2026-12-12
+css/css-backgrounds/parsing/background-size-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-160 | 2026-10-12 | 2026-12-12
+css/css-backgrounds/parsing/background-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-160 | 2026-10-12 | 2026-12-12
+css/css-content/parsing/content-counter-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-161 | 2026-10-12 | 2026-12-12
+css/css-content/parsing/content-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-161 | 2026-10-12 | 2026-12-12
 css/css-backgrounds/background-attachment-fixed-block-002.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-backgrounds/background-attachment-fixed-inline-002.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-backgrounds/background-attachment-local-block-002.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
@@ -62,13 +56,6 @@ css/css-backgrounds/background-position-calc-minmax-001.html | Mismatches on Lin
 css/css-backgrounds/border-radius-clipping-with-transform-001.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-backgrounds/box-shadow/slice-inline-fragmentation-001.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-backgrounds/ttwf-reftest-borderRadius.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
-css/css-color/parsing/opacity-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
-css/css-images/parsing/gradient-position-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
-css/css-images/parsing/object-position-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
-css/css-sizing/parsing/height-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
-css/css-sizing/parsing/max-height-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
-css/css-sizing/parsing/max-width-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
-css/css-sizing/parsing/width-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
 css/css-tables/height-distribution/percentage-sizing-of-table-cell-007.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-text/hyphens/hyphens-shaping-001.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-text/letter-spacing/letter-spacing-nesting-002.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
@@ -121,7 +108,7 @@ css/css-flexbox/gap-004-rtl.html | Mismatches on Linux since the baseline was pi
 css/css-flexbox/scrollbars-auto.html | Scrollbar layout differs since the reftest script started running | RAIKIRI-20 | 2026-10-12 | 2026-12-12
 css/css-flexbox/scrollbars-no-margin.html | Scrollbar layout differs since the reftest script started running | RAIKIRI-20 | 2026-10-12 | 2026-12-12
 css/css-flexbox/scrollbars.html | Scrollbar layout differs since the reftest script started running | RAIKIRI-20 | 2026-10-12 | 2026-12-12
-css/css-tables/parsing/border-spacing-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-107 | 2026-10-12 | 2026-12-12
+css/css-tables/parsing/border-spacing-valid.html | Testharness parsing test: some valid values serialize differently or some invalid values are accepted | RAIKIRI-162 | 2026-10-12 | 2026-12-12
 css/css-tables/paint/col-change-span-bg-invalidation-001.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-text/overflow-wrap/overflow-wrap-min-content-size-001.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-text/white-space/text-wrap-balance-004.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12

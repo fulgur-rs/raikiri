@@ -789,6 +789,18 @@ fn declaration_value(property: &str, value: &str, page: bool) -> Option<String> 
                     value,
                 )
             })
+            .or_else(|| {
+                raikiri_style::property::serialize_position_value(
+                    &property.to_ascii_lowercase(),
+                    value,
+                )
+            })
+            .or_else(|| {
+                raikiri_style::property::serialize_alpha_value(
+                    &property.to_ascii_lowercase(),
+                    value,
+                )
+            })
             .unwrap_or_else(|| value.trim().to_owned()),
     )
 }

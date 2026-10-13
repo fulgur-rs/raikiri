@@ -826,7 +826,8 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // - Pins that matched only while gradients painted their first color (-14).
     // + Named-page break candidates and forced-break margins in css-page (+11).
     // + background-clip: border-area images clipped to the border shape (+3).
-    assert_eq!(set.baseline.entries.len(), 3933);
+    // + Parsing tests passing with canonical position, alpha, sizing, flex and font-family serialization (+13).
+    assert_eq!(set.baseline.entries.len(), 3946);
     for id in [
         "css/css-pseudo/first-letter-004.html",
         "css/css-pseudo/first-letter-005.html",
