@@ -2073,3 +2073,32 @@ fn non_negative_calc_resolution_clamps_and_keeps_percentages() {
         0.0
     );
 }
+
+#[test]
+fn a_calc_gap_that_folds_to_one_term_computes_as_that_term() {
+    let ctx = ResolveContext::new(ComputedLength(16.0));
+    let gap = |specified| {
+        resolve_length_percentage_or_normal(
+            LengthOrNormal::Calc(specified),
+            ComputedLength(16.0),
+            None,
+            &ctx,
+        )
+    };
+    assert_eq!(
+        gap(LengthPercentageOrCalc::Length(Length::Px(4.0))),
+        ComputedLengthPercentageOrNormal::Px(4.0)
+    );
+    assert_eq!(
+        gap(LengthPercentageOrCalc::Length(Length::Percent(10.0))),
+        ComputedLengthPercentageOrNormal::Percent(10.0)
+    );
+    let calc = CalcLengthPercentage {
+        percent: 10.0,
+        px: 5.0,
+    };
+    assert_eq!(
+        gap(LengthPercentageOrCalc::Calc(calc)),
+        ComputedLengthPercentageOrNormal::Calc(calc)
+    );
+}
