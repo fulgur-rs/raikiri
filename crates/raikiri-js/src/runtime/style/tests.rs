@@ -2085,3 +2085,22 @@ fn rule_objects_are_detached_when_the_style_element_is_moved() {
     .unwrap();
     ok(&mut rt, "styleElement.sheet.cssRules[0] !== rule");
 }
+
+#[test]
+fn rule_objects_are_detached_when_a_failed_variadic_insert_moves_the_style_element() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var styleElement = document.createElement('style'); \
+         styleElement.textContent = 'p { color: red }'; \
+         document.head.appendChild(styleElement); var rule = styleElement.sheet.cssRules[0]; \
+         var style = rule.style; var failed = false; var threw = false; \
+         try { document.body.append(styleElement, document); } catch (e) { failed = true; } \
+         try { style.color = 'blue'; } catch (e) { threw = true; }",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "failed && threw && styleElement.textContent === 'p { color: red }'",
+    );
+}

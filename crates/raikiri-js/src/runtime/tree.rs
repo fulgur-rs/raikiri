@@ -112,7 +112,13 @@ fn nodes_into_a_node(context: &mut Context, items: Vec<NodeOrText>) -> JsResult<
         }
         let fragment = doc.create_detached_fragment();
         for node in indices {
-            doc.pre_insert(fragment, node, None)?;
+            // Moving `node` into the fragment removes it from its parent
+            // even when a later argument then fails to insert.
+            let old_parent = s.host.document().parent_of(node);
+            s.host.document_mut().pre_insert(fragment, node, None)?;
+            if let Some(old_parent) = old_parent {
+                super::stylesheet::note_child_list_change(s, old_parent, &[node]);
+            }
         }
         Ok(fragment)
     })?;
