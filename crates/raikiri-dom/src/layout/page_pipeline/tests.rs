@@ -10368,6 +10368,40 @@ fn a_hidden_root_prints_one_page_without_laying_out_its_body() {
 }
 
 #[test]
+fn a_hidden_root_does_not_resolve_its_images() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::{ReplacedResolver, ResolvedIntrinsic, ResolverError, ResolverRequest};
+
+    struct Fails;
+    impl ReplacedResolver for Fails {
+        fn resolve(&self, _: ResolverRequest<'_>) -> Result<ResolvedIntrinsic, ResolverError> {
+            Err(ResolverError::Decode("failed".into()))
+        }
+    }
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:none"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let img = doc.append_element(Some(body), "img", Style::default(), None::<&str>);
+    doc.set_element_attributes(img, vec![("src".into(), "file:///x.png".into())]);
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+
+    let slices = layout_pages_with_resolver_and_base_url_and_control(
+        &mut doc,
+        &cascade,
+        page,
+        &Fails,
+        None,
+        &PageLayoutControl::default(),
+    )
+    .expect("a hidden root resolves no images");
+    assert_eq!(slices.len(), 1);
+}
+
+#[test]
 fn a_hidden_root_drops_the_projection_of_an_earlier_layout() {
     use raikiri_style::{build_rule_tree, cascade};
 

@@ -2864,13 +2864,7 @@ pub fn layout_pages_with_resolver_and_base_url_and_control(
     super::validate_layout_depth(document)?;
     document.page_projection.clear();
     document.mark_in_document_flags();
-    match base_url {
-        Some(base_url) => {
-            crate::image_resolve::resolve_images_with_base(document, resolver, Some(base_url))
-        }
-        None => crate::image_resolve::resolve_images(document, resolver),
-    }
-    .map_err(LayoutError::Resolver)?;
+    resolve_document_images(document, cascade, resolver, base_url)?;
     layout_pages_with_page_geometry_and_control(document, cascade, page_box, &[], &[], control)
 }
 
@@ -2935,13 +2929,7 @@ pub fn layout_pages_with_page_geometry_and_resolver_and_base_url_and_control(
     super::validate_layout_depth(document)?;
     document.page_projection.clear();
     document.mark_in_document_flags();
-    match base_url {
-        Some(base_url) => {
-            crate::image_resolve::resolve_images_with_base(document, resolver, Some(base_url))
-        }
-        None => crate::image_resolve::resolve_images(document, resolver),
-    }
-    .map_err(LayoutError::Resolver)?;
+    resolve_document_images(document, cascade, resolver, base_url)?;
     layout_pages_with_page_geometry_and_control(
         document,
         cascade,
@@ -2950,6 +2938,27 @@ pub fn layout_pages_with_page_geometry_and_resolver_and_base_url_and_control(
         page_widths,
         control,
     )
+}
+
+/// Resolve the intrinsic sizes of the document's `<img>` elements. A root
+/// with `display: none` generates no boxes, so none of its images are
+/// rendered and the resolver is not asked for them.
+fn resolve_document_images(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    resolver: &dyn ReplacedResolver,
+    base_url: Option<&url::Url>,
+) -> Result<(), LayoutError> {
+    if cascade.root_element_computed().display == DisplayValue::None {
+        return Ok(());
+    }
+    match base_url {
+        Some(base_url) => {
+            crate::image_resolve::resolve_images_with_base(document, resolver, Some(base_url))
+        }
+        None => crate::image_resolve::resolve_images(document, resolver),
+    }
+    .map_err(LayoutError::Resolver)
 }
 
 /// Layout ordinary block flow with an optional per-page content-height schedule.
@@ -5196,13 +5205,7 @@ pub fn layout_single_page_with_resolver_and_base_url(
     // See “Execution order” above — this must precede `resolve_images`, whose
     // membership gate reads the flags this refreshes.
     document.mark_in_document_flags();
-    match base_url {
-        Some(base_url) => {
-            crate::image_resolve::resolve_images_with_base(document, resolver, Some(base_url))
-        }
-        None => crate::image_resolve::resolve_images(document, resolver),
-    }
-    .map_err(LayoutError::Resolver)?;
+    resolve_document_images(document, cascade, resolver, base_url)?;
     layout_single_page(document, cascade, page_box)
 }
 
