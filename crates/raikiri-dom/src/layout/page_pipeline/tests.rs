@@ -10333,3 +10333,36 @@ fn forced_break_clearance_applies_to_paged_layout_only() {
     assert_eq!(doc.nodes[second].style.clear, taffy::Clear::None);
     assert_eq!(doc.nodes[second].unrounded_layout.location.y, 0.0);
 }
+
+#[test]
+fn a_hidden_root_prints_one_page_without_laying_out_its_body() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:none"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let columns = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;column-count:2;width:100px"),
+    );
+    for _ in 0..4 {
+        doc.append_element(
+            Some(columns),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        );
+    }
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    // The body's boxes would not fit this budget, so a layout of it fails.
+    doc.fragment_tree.limit = 0;
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+
+    let slices = layout_pages(&mut doc, &cascade, page).expect("a hidden root needs no layout");
+    assert_eq!(slices.len(), 1);
+}

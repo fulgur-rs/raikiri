@@ -2962,10 +2962,9 @@ pub fn layout_pages_with_page_geometry_and_control(
 ) -> Result<Vec<PageSlice>, LayoutError> {
     control.page_limit_reached.set(false);
     control.check_page_index(0)?;
-    layout_single_page_with_table_projection(document, cascade, page_box, true, true)?;
-    control.check_page_index(0)?;
-    // A root with `display: none` generates no boxes, so nothing breaks into
-    // later pages: the document prints as a single blank page.
+    // A root with `display: none` generates no boxes, so there is nothing to
+    // lay out or break into later pages: the document prints as a single
+    // blank page.
     if cascade.root_element_computed().display == DisplayValue::None {
         return Ok(vec![PageSlice {
             page_index: 0,
@@ -2973,6 +2972,8 @@ pub fn layout_pages_with_page_geometry_and_control(
             page_name: None,
         }]);
     }
+    layout_single_page_with_table_projection(document, cascade, page_box, true, true)?;
+    control.check_page_index(0)?;
 
     let body_id = find_body(document).ok_or_else(|| LayoutError::Internal {
         message: "no <body> element found (fragment parse not supported yet)".to_string(),
