@@ -10,13 +10,13 @@ use crate::computed::{
 use crate::property::{
     Border, BorderColor, BorderRadius, BorderStyle, CornerRadius, CssWideKeyword, FontWeightValue,
     GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, Length, LengthOrAuto,
-    LetterSpacingValue, PositionValue, PropertyValue, RelativeFontSize, Sides, TextIndentLength,
-    TextWrapMode, WhiteSpace, WhiteSpaceCollapse, WordSpacingValue, WritingMode,
-    initial_grid_auto_track_list, resolve_text_align_internal_center,
+    LengthPercentageOrCalc, LetterSpacingValue, PositionValue, PropertyValue, RelativeFontSize,
+    Sides, TextIndentLength, TextWrapMode, WhiteSpace, WhiteSpaceCollapse, WordSpacingValue,
+    WritingMode, initial_grid_auto_track_list, resolve_text_align_internal_center,
     resolve_text_align_match_parent,
 };
 use crate::resolve::{
-    ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ResolveContext,
+    ComputedLength, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc, ResolveContext,
     calc_ch_factor,
 };
 use crate::rule::{
@@ -1294,9 +1294,9 @@ pub(crate) fn apply_winners(
                 resolve_defaulting_value(value, inherited)
             };
             let value = match value {
-                PropertyValue::BorderRadiusInherit => Some(PropertyValue::BorderRadius(
+                PropertyValue::BorderRadiusInherit => Some(PropertyValue::BorderRadius(Box::new(
                     inherited_border_radius_value(inherited),
-                )),
+                ))),
                 PropertyValue::TextDecorationThicknessInherit => {
                     Some(PropertyValue::TextDecorationThickness(
                         inherited_text_decoration_thickness(inherited),
@@ -1329,9 +1329,11 @@ pub(crate) fn apply_winners(
                     };
                     match resolved {
                         None => None,
-                        Some(PropertyValue::BorderRadiusInherit) => Some(
-                            PropertyValue::BorderRadius(inherited_border_radius_value(inherited)),
-                        ),
+                        Some(PropertyValue::BorderRadiusInherit) => {
+                            Some(PropertyValue::BorderRadius(Box::new(
+                                inherited_border_radius_value(inherited),
+                            )))
+                        }
                         Some(
                             PropertyValue::BorderTopWidthCssWide(kw)
                             | PropertyValue::BorderRightWidthCssWide(kw)
@@ -1523,13 +1525,13 @@ struct BorderRadiusWinners {
 #[derive(Default)]
 struct BorderRadiusApplied {
     shorthand: Option<BorderRadius>,
-    corners: [Option<CornerRadius<Length>>; 4],
+    corners: [Option<CornerRadius<LengthPercentageOrCalc>>; 4],
 }
 
 impl BorderRadiusApplied {
     fn note(&mut self, value: &PropertyValue) {
         match value {
-            PropertyValue::BorderRadius(radius) => self.shorthand = Some(*radius),
+            PropertyValue::BorderRadius(radius) => self.shorthand = Some(**radius),
             PropertyValue::BorderRadiusTopLeft(corner) => self.corners[0] = Some(*corner),
             PropertyValue::BorderRadiusTopRight(corner) => self.corners[1] = Some(*corner),
             PropertyValue::BorderRadiusBottomRight(corner) => self.corners[2] = Some(*corner),
@@ -1890,12 +1892,9 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
 /// [`crate::page`]). Because `inherited` is unchanged throughout the function,
 /// computing it twice would yield the same result (see the caller's docs).
 pub(crate) fn inherited_border_radius(
-    value: crate::property::CornerRadius<ComputedLengthPercentage>,
-) -> crate::property::CornerRadius<Length> {
-    value.map(|axis| match axis {
-        ComputedLengthPercentage::Px(px) => Length::Px(px),
-        ComputedLengthPercentage::Percent(percent) => Length::Percent(percent),
-    })
+    value: crate::property::CornerRadius<ComputedLengthPercentageOrCalc>,
+) -> crate::property::CornerRadius<LengthPercentageOrCalc> {
+    value.map(crate::resolve::lift_length_percentage_or_calc)
 }
 
 /// Resolve one border width longhand CSS-wide marker for the page path
@@ -2335,7 +2334,7 @@ pub(crate) fn resolve_against_inherited(
 ) -> ResolvedAgainstInherited {
     ResolvedAgainstInherited(match resolve_defaulting_value(value, inherited) {
         PropertyValue::BorderRadiusInherit => {
-            PropertyValue::BorderRadius(inherited_border_radius_value(inherited))
+            PropertyValue::BorderRadius(Box::new(inherited_border_radius_value(inherited)))
         },
         PropertyValue::MarginTopInherit => {
             PropertyValue::MarginTop(inherited_margin_length(inherited.margin.top))
@@ -3331,7 +3330,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::TextShadow(shadows) => {
             target.text_shadow = crate::specified::SpecifiedTextShadow::Specified(shadows);
         }
-        PropertyValue::BorderRadius(v) => target.border_radius = v,
+        PropertyValue::BorderRadius(v) => target.border_radius = *v,
         PropertyValue::BorderRadiusTopLeft(v) => target.border_radius.top_left = v,
         PropertyValue::BorderRadiusTopRight(v) => target.border_radius.top_right = v,
         PropertyValue::BorderRadiusBottomRight(v) => target.border_radius.bottom_right = v,

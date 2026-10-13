@@ -1109,7 +1109,8 @@ pub(crate) fn parse_property_grammar(
                     }))
                 }
             } else {
-                parse_border_radius(input).map(PropertyValue::BorderRadius)
+                parse_border_radius(input)
+                    .map(|radius| PropertyValue::BorderRadius(Box::new(radius)))
             }
         }
         "border-top-left-radius" => {

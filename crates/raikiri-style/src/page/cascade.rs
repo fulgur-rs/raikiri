@@ -11,8 +11,8 @@ use crate::cascade::{
 use crate::computed::{ComputedValues, CustomPropertyEnvironment, empty_custom_properties};
 use crate::media::MediaContext;
 use crate::property::{
-    BackgroundImage, BorderStyle, CssColor, CustomProperty, Length, OutlineStyle, OverflowValue,
-    OverflowXY, PropertyKey, PropertyValue, Sides,
+    BackgroundImage, BorderStyle, CssColor, CustomProperty, Length, LengthPercentageOrCalc,
+    OutlineStyle, OverflowValue, OverflowXY, PropertyKey, PropertyValue, Sides,
 };
 use crate::resolve::{
     ComputedLength, ResolveContext, resolve_length, resolve_line_height, used_line_height_length_or,
@@ -1301,12 +1301,14 @@ pub fn cascade_page_with_media_context(
     // that no longer carries declaration order. Invalid winning values reset
     // their corners instead of revealing an older declaration.
     if !radius_precedence.is_empty() {
-        let zero = crate::property::CornerRadius::circular(Length::Px(0.0));
+        let zero = crate::property::CornerRadius::circular(LengthPercentageOrCalc::Length(
+            Length::Px(0.0),
+        ));
         let shorthand = match resolved
             .get(&PropertyKey::BorderRadius)
             .map(ResolvedAgainstInherited::as_property_value)
         {
-            Some(PropertyValue::BorderRadius(radius)) => *radius,
+            Some(PropertyValue::BorderRadius(radius)) => **radius,
             _ => crate::property::BorderRadius::elliptical(
                 [Length::Px(0.0); 4],
                 [Length::Px(0.0); 4],
@@ -1318,7 +1320,8 @@ pub fn cascade_page_with_media_context(
             shorthand.bottom_right,
             shorthand.bottom_left,
         ];
-        let values: [fn(crate::property::CornerRadius<Length>) -> PropertyValue; 4] = [
+        let values: [fn(crate::property::CornerRadius<LengthPercentageOrCalc>) -> PropertyValue;
+            4] = [
             PropertyValue::BorderRadiusTopLeft,
             PropertyValue::BorderRadiusTopRight,
             PropertyValue::BorderRadiusBottomRight,
@@ -1355,12 +1358,12 @@ pub fn cascade_page_with_media_context(
         resolved.insert(
             PropertyKey::BorderRadius,
             resolve_against_inherited(
-                PropertyValue::BorderRadius(crate::property::BorderRadius {
+                PropertyValue::BorderRadius(Box::new(crate::property::BorderRadius {
                     top_left,
                     top_right,
                     bottom_right,
                     bottom_left,
-                }),
+                })),
                 inherited,
                 &ctx,
             ),

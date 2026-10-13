@@ -26,6 +26,22 @@ fn border_radius_used_values_resolve_percentages_on_each_axis() {
 }
 
 #[test]
+fn border_radius_used_values_resolve_a_calc_against_its_axis() {
+    let calc =
+        |percent, px| ComputedLengthPercentageOrCalc::Calc(CalcLengthPercentage { percent, px });
+    let radius = ComputedBorderRadius::elliptical([calc(50.0, -10.0); 4], [calc(10.0, 5.0); 4]);
+    assert_eq!(radius.used(100.0, 50.0), [[40.0, 10.0]; 4]);
+    // A sum below zero makes the corner square.
+    let radius = ComputedBorderRadius::corners(
+        calc(10.0, -50.0),
+        calc(10.0, 0.0),
+        calc(10.0, 0.0),
+        calc(10.0, 0.0),
+    );
+    assert_eq!(radius.used(100.0, 100.0)[0], [0.0, 0.0]);
+}
+
+#[test]
 fn border_radius_used_values_scale_both_axes_by_one_edge_ratio() {
     let radius = ComputedBorderRadius::elliptical(
         [ComputedLengthPercentage::Px(80.0); 4],
@@ -1164,10 +1180,10 @@ fn border_radius_and_box_shadow_resolve_all_length_components() {
             &CTX,
         ),
         ComputedBorderRadius {
-            top_left: ComputedLengthPercentage::Px(20.0).into(),
-            top_right: ComputedLengthPercentage::Px(8.0).into(),
-            bottom_right: ComputedLengthPercentage::Px(16.0).into(),
-            bottom_left: ComputedLengthPercentage::Px(20.0).into(),
+            top_left: crate::resolve::ComputedLengthPercentageOrCalc::Px(20.0).into(),
+            top_right: crate::resolve::ComputedLengthPercentageOrCalc::Px(8.0).into(),
+            bottom_right: crate::resolve::ComputedLengthPercentageOrCalc::Px(16.0).into(),
+            bottom_left: crate::resolve::ComputedLengthPercentageOrCalc::Px(20.0).into(),
         }
     );
 

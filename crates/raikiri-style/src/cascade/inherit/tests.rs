@@ -4483,10 +4483,10 @@ fn border_radius_box_shadow_and_outline_compute_through_cascade() {
     assert_eq!(
         cv.border_radius,
         ComputedBorderRadius {
-            top_left: ComputedLengthPercentage::Px(16.0).into(),
-            top_right: ComputedLengthPercentage::Px(32.0).into(),
-            bottom_right: ComputedLengthPercentage::Px(48.0).into(),
-            bottom_left: ComputedLengthPercentage::Px(64.0).into(),
+            top_left: crate::resolve::ComputedLengthPercentageOrCalc::Px(16.0).into(),
+            top_right: crate::resolve::ComputedLengthPercentageOrCalc::Px(32.0).into(),
+            bottom_right: crate::resolve::ComputedLengthPercentageOrCalc::Px(48.0).into(),
+            bottom_left: crate::resolve::ComputedLengthPercentageOrCalc::Px(64.0).into(),
         }
     );
     assert_eq!(
@@ -4539,11 +4539,13 @@ fn elliptical_border_radius_inherits_computed_axes_without_resolving_percentages
     assert_eq!(parent.border_radius, child.border_radius);
     assert_eq!(
         child.border_radius.top_left.horizontal,
-        ComputedLengthPercentage::Px(40.0)
+        crate::resolve::ComputedLengthPercentageOrCalc::from(ComputedLengthPercentage::Px(40.0))
     );
     assert_eq!(
         child.border_radius.top_left.vertical,
-        ComputedLengthPercentage::Percent(25.0)
+        crate::resolve::ComputedLengthPercentageOrCalc::from(ComputedLengthPercentage::Percent(
+            25.0
+        ))
     );
     assert_eq!(child.border_radius.used(200.0, 100.0), [[40.0, 25.0]; 4]);
 }
@@ -4557,19 +4559,21 @@ fn elliptical_corner_longhands_and_shorthands_respect_declaration_order() {
     );
     assert_eq!(
         cv.border_radius.top_left.horizontal,
-        ComputedLengthPercentage::Percent(5.0)
+        crate::resolve::ComputedLengthPercentageOrCalc::from(ComputedLengthPercentage::Percent(
+            5.0
+        ))
     );
     assert_eq!(
         cv.border_radius.top_left.vertical,
-        ComputedLengthPercentage::Px(40.0)
+        crate::resolve::ComputedLengthPercentageOrCalc::from(ComputedLengthPercentage::Px(40.0))
     );
     assert_eq!(
         cv.border_radius.top_right.horizontal,
-        ComputedLengthPercentage::Px(30.0)
+        crate::resolve::ComputedLengthPercentageOrCalc::from(ComputedLengthPercentage::Px(30.0))
     );
     assert_eq!(
         cv.border_radius.top_right.vertical,
-        ComputedLengthPercentage::Px(15.0)
+        crate::resolve::ComputedLengthPercentageOrCalc::from(ComputedLengthPercentage::Px(15.0))
     );
     let cv = cascade_doc(
         "",
@@ -7513,10 +7517,10 @@ fn apply_winners_direct_border_radius_inherit() {
     let mut specified = SpecifiedValues::initial();
     let mut inherited = ComputedValues::initial();
     inherited.border_radius = ComputedBorderRadius {
-        top_left: ComputedLengthPercentage::Percent(10.0).into(),
-        top_right: ComputedLengthPercentage::Px(2.0).into(),
-        bottom_right: ComputedLengthPercentage::Percent(30.0).into(),
-        bottom_left: ComputedLengthPercentage::Px(4.0).into(),
+        top_left: crate::resolve::ComputedLengthPercentageOrCalc::Percent(10.0).into(),
+        top_right: crate::resolve::ComputedLengthPercentageOrCalc::Px(2.0).into(),
+        bottom_right: crate::resolve::ComputedLengthPercentageOrCalc::Percent(30.0).into(),
+        bottom_left: crate::resolve::ComputedLengthPercentageOrCalc::Px(4.0).into(),
     };
     let custom_properties = CustomPropertyEnvironment::from_map(HashMap::new());
     apply_winners(
@@ -9010,11 +9014,13 @@ fn clear_non_inherited_child_starts_from_initial() {
 #[test]
 fn inherited_border_radius_handles_percent() {
     assert_eq!(
-        inherited_border_radius(ComputedLengthPercentage::Percent(25.0).into()),
+        inherited_border_radius(
+            crate::resolve::ComputedLengthPercentageOrCalc::Percent(25.0).into()
+        ),
         Length::Percent(25.0).into()
     );
     assert_eq!(
-        inherited_border_radius(ComputedLengthPercentage::Px(4.0).into()),
+        inherited_border_radius(crate::resolve::ComputedLengthPercentageOrCalc::Px(4.0).into()),
         Length::Px(4.0).into()
     );
 }

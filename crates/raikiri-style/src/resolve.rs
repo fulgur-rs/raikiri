@@ -528,6 +528,9 @@ pub enum ComputedCssPositionOffset {
     Start(ComputedLengthPercentage),
     /// Offset from the end edge (`right`/`bottom`).
     End(ComputedLengthPercentage),
+    /// A percentage with an absolute-length offset, measured from the start
+    /// edge (see [`crate::property::CssPositionOffset::Calc`]).
+    Calc(CalcLengthPercentage),
 }
 
 /// Computed `<position>` (counterpart of [`crate::property::CssPosition`]).
@@ -1135,25 +1138,25 @@ pub fn lift_text_shadow_item(computed: ComputedTextShadow) -> TextShadowItem {
     }
 }
 
-/// Computed `border-radius`. Absolutize lengths to px and retain percentages
-/// until used-value layout.
+/// Computed `border-radius`. Absolutize lengths to px and retain percentages,
+/// and the percentage of a mixed-unit `calc()`, until used-value layout.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ComputedBorderRadius {
     /// Top-left corner radius.
-    pub top_left: crate::property::CornerRadius<ComputedLengthPercentage>,
+    pub top_left: crate::property::CornerRadius<ComputedLengthPercentageOrCalc>,
     /// Top-right corner radius.
-    pub top_right: crate::property::CornerRadius<ComputedLengthPercentage>,
+    pub top_right: crate::property::CornerRadius<ComputedLengthPercentageOrCalc>,
     /// Bottom-right corner radius.
-    pub bottom_right: crate::property::CornerRadius<ComputedLengthPercentage>,
+    pub bottom_right: crate::property::CornerRadius<ComputedLengthPercentageOrCalc>,
     /// Bottom-left corner radius.
-    pub bottom_left: crate::property::CornerRadius<ComputedLengthPercentage>,
+    pub bottom_left: crate::property::CornerRadius<ComputedLengthPercentageOrCalc>,
 }
 
 impl ComputedBorderRadius {
     /// Fill all corners with the same computed length.
     pub fn all(value: ComputedLength) -> Self {
-        let value = ComputedLengthPercentage::Px(value.0);
+        let value = ComputedLengthPercentageOrCalc::Px(value.0);
         Self {
             top_left: value.into(),
             top_right: value.into(),
@@ -1163,36 +1166,35 @@ impl ComputedBorderRadius {
     }
 
     /// Build a radius from the four physical corner values.
-    pub const fn corners(
-        top_left: ComputedLengthPercentage,
-        top_right: ComputedLengthPercentage,
-        bottom_right: ComputedLengthPercentage,
-        bottom_left: ComputedLengthPercentage,
+    pub fn corners<T: Into<ComputedLengthPercentageOrCalc>>(
+        top_left: T,
+        top_right: T,
+        bottom_right: T,
+        bottom_left: T,
     ) -> Self {
-        Self {
-            top_left: crate::property::CornerRadius::circular(top_left),
-            top_right: crate::property::CornerRadius::circular(top_right),
-            bottom_right: crate::property::CornerRadius::circular(bottom_right),
-            bottom_left: crate::property::CornerRadius::circular(bottom_left),
-        }
+        let values = [top_left, top_right, bottom_right, bottom_left].map(Into::into);
+        Self::elliptical(values, values)
     }
 
     /// Build four corners from independent horizontal and vertical axes.
-    pub const fn elliptical(
-        horizontal: [ComputedLengthPercentage; 4],
-        vertical: [ComputedLengthPercentage; 4],
+    pub fn elliptical<T: Into<ComputedLengthPercentageOrCalc>>(
+        horizontal: [T; 4],
+        vertical: [T; 4],
     ) -> Self {
+        let [h0, h1, h2, h3] = horizontal.map(Into::into);
+        let [v0, v1, v2, v3] = vertical.map(Into::into);
         Self {
-            top_left: crate::property::CornerRadius::new(horizontal[0], vertical[0]),
-            top_right: crate::property::CornerRadius::new(horizontal[1], vertical[1]),
-            bottom_right: crate::property::CornerRadius::new(horizontal[2], vertical[2]),
-            bottom_left: crate::property::CornerRadius::new(horizontal[3], vertical[3]),
+            top_left: crate::property::CornerRadius::new(h0, v0),
+            top_right: crate::property::CornerRadius::new(h1, v1),
+            bottom_right: crate::property::CornerRadius::new(h2, v2),
+            bottom_left: crate::property::CornerRadius::new(h3, v3),
         }
     }
 
     /// Resolve clockwise corner pairs against the border-box width and height.
     ///
-    /// Percentages use their corresponding axis. CSS Backgrounds 3 §4.5
+    /// Percentages, including the percentage of a `calc()`, use their
+    /// corresponding axis. CSS Backgrounds 3 §4.5
     /// scales every radius by the same factor when adjacent corners exceed
     /// an edge. A zero on either axis makes that corner square. Negative or
     /// non-finite dimensions and radii are treated as zero.
@@ -1206,10 +1208,15 @@ impl ComputedBorderRadius {
         };
         let width = finite_non_negative(width as f64);
         let height = finite_non_negative(height as f64);
-        let axis = |value: ComputedLengthPercentage, reference: f64| {
+        let axis = |value: ComputedLengthPercentageOrCalc, reference: f64| {
             finite_non_negative(match value {
-                ComputedLengthPercentage::Px(px) => px as f64,
-                ComputedLengthPercentage::Percent(percent) => reference * percent as f64 / 100.0,
+                ComputedLengthPercentageOrCalc::Px(px) => px as f64,
+                ComputedLengthPercentageOrCalc::Percent(percent) => {
+                    reference * percent as f64 / 100.0
+                }
+                ComputedLengthPercentageOrCalc::Calc(calc) => {
+                    calc.px as f64 + reference * calc.percent as f64 / 100.0
+                }
             })
         };
         let radii = [
@@ -1379,11 +1386,8 @@ pub fn resolve_border_radius(
     own_line_height: Option<ComputedLength>,
     ctx: &ResolveContext,
 ) -> ComputedBorderRadius {
-    let resolve_corner = |value: Length| match value {
-        Length::Percent(percent) => ComputedLengthPercentage::Percent(percent),
-        value => ComputedLengthPercentage::Px(
-            resolve_length(value, font_size, own_line_height, ctx).px(),
-        ),
+    let resolve_corner = |value: LengthPercentageOrCalc| {
+        resolve_non_negative_length_percentage_or_calc(value, font_size, own_line_height, ctx)
     };
     ComputedBorderRadius {
         top_left: specified.top_left.map(resolve_corner),
@@ -2787,6 +2791,26 @@ fn resolve_css_position_offset(
             own_line_height,
             ctx,
         )),
+        CssPositionOffset::Calc(calc) => ComputedCssPositionOffset::Calc(calc),
+        CssPositionOffset::RelativeCalc(calc) => match resolve_length_percentage_or_auto(
+            LengthOrAuto::RelativeCalc(calc),
+            font_size,
+            own_line_height,
+            ctx,
+        ) {
+            ComputedLengthPercentageOrAuto::Px(px) => {
+                ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(px))
+            }
+            ComputedLengthPercentageOrAuto::Percent(percent) => {
+                ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(percent))
+            }
+            ComputedLengthPercentageOrAuto::Calc(calc) => ComputedCssPositionOffset::Calc(calc),
+            // An `lh` term without a basis falls back to zero, as for a plain
+            // `lh` offset.
+            ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::MinContent => {
+                ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(0.0))
+            }
+        },
     }
 }
 
@@ -2850,10 +2874,26 @@ pub fn resolve_background_size(
     match specified {
         BackgroundSize::Cover => ComputedBackgroundSize::Cover,
         BackgroundSize::Contain => ComputedBackgroundSize::Contain,
-        BackgroundSize::Explicit { width, height } => ComputedBackgroundSize::Explicit {
-            width: resolve_length_percentage_or_auto(width, font_size, own_line_height, ctx),
-            height: resolve_length_percentage_or_auto(height, font_size, own_line_height, ctx),
-        },
+        BackgroundSize::Explicit { width, height } => {
+            // Each axis is `<length-percentage [0,∞]>`, so a `calc()` is
+            // clamped like a sizing property. A font-relative calc() whose
+            // length terms cancel leaves a bare percentage, clamped as well.
+            let axis = |value| match resolve_size_length_percentage_or_auto(
+                value,
+                font_size,
+                own_line_height,
+                ctx,
+            ) {
+                ComputedLengthPercentageOrAuto::Percent(percent) => {
+                    ComputedLengthPercentageOrAuto::Percent(percent.max(0.0))
+                }
+                computed => computed,
+            };
+            ComputedBackgroundSize::Explicit {
+                width: axis(width),
+                height: axis(height),
+            }
+        }
     }
 }
 
@@ -2938,6 +2978,7 @@ fn absolutized_css_position(
         match c {
             ComputedCssPositionOffset::Start(l) => CssPositionOffset::Start(lift(l)),
             ComputedCssPositionOffset::End(l) => CssPositionOffset::End(lift(l)),
+            ComputedCssPositionOffset::Calc(calc) => CssPositionOffset::Calc(calc),
         }
     }
     CssPosition {

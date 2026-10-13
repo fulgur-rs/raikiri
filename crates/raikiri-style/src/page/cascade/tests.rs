@@ -3309,12 +3309,12 @@ fn cascade_page_computes_border_radius_box_shadow_and_outline() {
 
     assert_eq!(
         result.declarations().get(&PropertyKey::BorderRadius),
-        Some(&PropertyValue::BorderRadius(BorderRadius {
+        Some(&PropertyValue::BorderRadius(Box::new(BorderRadius {
             top_left: Length::Percent(10.0).into(),
             top_right: Length::Px(40.0).into(),
             bottom_right: Length::Px(60.0).into(),
             bottom_left: Length::Px(80.0).into(),
-        }))
+        })))
     );
     assert_eq!(
         result.declarations().get(&PropertyKey::BoxShadow),
@@ -3362,15 +3362,27 @@ fn cascade_page_preserves_both_elliptical_axes_and_percentage_longhands() {
     else {
         panic!("missing radius")
     };
-    assert_eq!(radius.top_left.horizontal, Length::Percent(50.0));
-    assert_eq!(radius.top_left.vertical, Length::Px(20.0));
+    assert_eq!(
+        radius.top_left.horizontal,
+        crate::property::LengthPercentageOrCalc::from(Length::Percent(50.0))
+    );
+    assert_eq!(
+        radius.top_left.vertical,
+        crate::property::LengthPercentageOrCalc::from(Length::Px(20.0))
+    );
     let Some(PropertyValue::BorderRadiusTopLeft(corner)) =
         result.declarations().get(&PropertyKey::BorderRadiusTopLeft)
     else {
         panic!("missing corner")
     };
-    assert_eq!(corner.horizontal, Length::Percent(50.0));
-    assert_eq!(corner.vertical, Length::Px(20.0));
+    assert_eq!(
+        corner.horizontal,
+        crate::property::LengthPercentageOrCalc::from(Length::Percent(50.0))
+    );
+    assert_eq!(
+        corner.vertical,
+        crate::property::LengthPercentageOrCalc::from(Length::Px(20.0))
+    );
 }
 
 /// CSS Basic User Interface Module Level 3 §4: page-context outline
@@ -3933,12 +3945,12 @@ property_key_samples! {
     // Font-relative lengths exercise the page phase-3 conversion for the
     // supported static-side properties; percentage radii remain symbolic
     // through this page conversion.
-    BorderRadius => PropertyValue::BorderRadius(BorderRadius {
+    BorderRadius => PropertyValue::BorderRadius(Box::new(BorderRadius {
         top_left: Length::Em(0.5).into(),
         top_right: Length::Rem(0.25).into(),
         bottom_right: Length::Pt(6.0).into(),
         bottom_left: Length::Px(1.0).into(),
-    }),
+    })),
     BorderRadiusTopLeft => PropertyValue::BorderRadiusTopLeft(Length::Em(0.5).into()),
     BorderRadiusTopRight => PropertyValue::BorderRadiusTopRight(Length::Rem(0.25).into()),
     BorderRadiusBottomRight => PropertyValue::BorderRadiusBottomRight(Length::Pt(6.0).into()),
@@ -5392,11 +5404,11 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                 radius.bottom_left,
             ]
             .into_iter()
-            .find_map(|corner| length(corner.horizontal).or_else(|| length(corner.vertical))),
+            .find_map(|corner| length_percentage_or_calc(corner.horizontal).or_else(|| length_percentage_or_calc(corner.vertical))),
             PropertyValue::BorderRadiusTopLeft(radius)
             | PropertyValue::BorderRadiusTopRight(radius)
             | PropertyValue::BorderRadiusBottomRight(radius)
-            | PropertyValue::BorderRadiusBottomLeft(radius) => length(radius.horizontal).or_else(|| length(radius.vertical)),
+            | PropertyValue::BorderRadiusBottomLeft(radius) => length_percentage_or_calc(radius.horizontal).or_else(|| length_percentage_or_calc(radius.vertical)),
             // `box-shadow` stores four length components per item. Colors do
             // not participate in the layer check.
             PropertyValue::BoxShadow(shadows) => shadows.iter().find_map(|s| {
@@ -5426,6 +5438,8 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                 fn offset_residue(o: CssPositionOffset) -> Option<&'static str> {
                     match o {
                         CssPositionOffset::Start(l) | CssPositionOffset::End(l) => length(l),
+                        CssPositionOffset::Calc(_) => None,
+                        CssPositionOffset::RelativeCalc(_) => Some("CssPositionOffset::RelativeCalc"),
                     }
                 }
                 pos.iter().find_map(|pos| {
@@ -5449,6 +5463,8 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                         let offset_residue = |o: crate::property::CssPositionOffset| match o {
                             crate::property::CssPositionOffset::Start(l)
                             | crate::property::CssPositionOffset::End(l) => length(l),
+                          crate::property::CssPositionOffset::Calc(_) => None,
+                          crate::property::CssPositionOffset::RelativeCalc(_) => Some("CssPositionOffset::RelativeCalc"),
                         };
                         match g {
                             crate::property::Gradient::Linear(lg) => {
@@ -5489,6 +5505,8 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                         fn offset_residue(o: CssPositionOffset) -> Option<&'static str> {
                             match o {
                                 CssPositionOffset::Start(l) | CssPositionOffset::End(l) => length(l),
+                                CssPositionOffset::Calc(_) => None,
+                                CssPositionOffset::RelativeCalc(_) => Some("CssPositionOffset::RelativeCalc"),
                             }
                         }
                         offset_residue(layer.position.horizontal)
@@ -5511,6 +5529,8 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                     let offset_residue = |o: crate::property::CssPositionOffset| match o {
                         crate::property::CssPositionOffset::Start(l)
                         | crate::property::CssPositionOffset::End(l) => length(l),
+                      crate::property::CssPositionOffset::Calc(_) => None,
+                      crate::property::CssPositionOffset::RelativeCalc(_) => Some("CssPositionOffset::RelativeCalc"),
                     };
                     match g {
                         crate::property::Gradient::Linear(lg) => lg.stops.iter().find_map(&stop_residue),
@@ -5543,6 +5563,8 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                     let offset_residue = |o: crate::property::CssPositionOffset| match o {
                         crate::property::CssPositionOffset::Start(l)
                         | crate::property::CssPositionOffset::End(l) => length(l),
+                      crate::property::CssPositionOffset::Calc(_) => None,
+                      crate::property::CssPositionOffset::RelativeCalc(_) => Some("CssPositionOffset::RelativeCalc"),
                     };
                     match g {
                         crate::property::Gradient::Linear(lg) => lg.stops.iter().find_map(&stop_residue),
@@ -5572,6 +5594,8 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             PropertyValue::TransformOrigin(pos, z) => {
                 let offset = |o| match o {
                     CssPositionOffset::Start(l) | CssPositionOffset::End(l) => length(l),
+                    CssPositionOffset::Calc(_) => None,
+                    CssPositionOffset::RelativeCalc(_) => Some("CssPositionOffset::RelativeCalc"),
                 };
                 offset(pos.horizontal).or_else(|| offset(pos.vertical)).or_else(|| length(*z))
             }
@@ -5579,6 +5603,8 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                 fn offset_residue(o: CssPositionOffset) -> Option<&'static str> {
                     match o {
                         CssPositionOffset::Start(l) | CssPositionOffset::End(l) => length(l),
+                        CssPositionOffset::Calc(_) => None,
+                        CssPositionOffset::RelativeCalc(_) => Some("CssPositionOffset::RelativeCalc"),
                     }
                 }
                 offset_residue(pos.horizontal).or_else(|| offset_residue(pos.vertical))
@@ -7051,6 +7077,56 @@ fn cascade_page_min_content_width_is_kept() {
 }
 
 #[test]
+fn page_mixed_calc_radius_size_and_position_keep_their_percentage() {
+    let calc = |percent, px| CalcLengthPercentage { percent, px };
+    let result = page(
+        "@page { border-radius: calc(50% - 1em) 10px; border-top-left-radius: calc(25% + 1em) 5px; \
+         background-size: calc(50% - 1em) auto; background-position: right calc(10% + 1em) top }",
+        &root_with_font_size(20.0),
+    );
+    let declarations = result.declarations();
+    let Some(PropertyValue::BorderRadius(radius)) = declarations.get(&PropertyKey::BorderRadius)
+    else {
+        panic!("effective radius")
+    };
+    assert_eq!(
+        radius.top_left,
+        crate::property::CornerRadius::new(
+            LengthPercentageOrCalc::Calc(calc(25.0, 20.0)),
+            LengthPercentageOrCalc::Length(Length::Px(5.0)),
+        )
+    );
+    assert_eq!(
+        radius.bottom_right,
+        crate::property::CornerRadius::circular(LengthPercentageOrCalc::Calc(calc(50.0, -20.0)))
+    );
+    assert_eq!(
+        radius.top_right,
+        crate::property::CornerRadius::circular(LengthPercentageOrCalc::Length(Length::Px(10.0)))
+    );
+    let Some(PropertyValue::BackgroundSize(sizes)) = declarations.get(&PropertyKey::BackgroundSize)
+    else {
+        panic!("background-size")
+    };
+    assert_eq!(
+        sizes[0],
+        BackgroundSize::Explicit {
+            width: LengthOrAuto::Calc(calc(50.0, -20.0)),
+            height: LengthOrAuto::Auto,
+        }
+    );
+    let Some(PropertyValue::BackgroundPosition(positions)) =
+        declarations.get(&PropertyKey::BackgroundPosition)
+    else {
+        panic!("background-position")
+    };
+    assert_eq!(
+        positions[0].horizontal,
+        CssPositionOffset::Calc(calc(90.0, -20.0))
+    );
+}
+
+#[test]
 fn page_elliptical_radius_settles_shorthand_and_longhand_precedence() {
     for (declarations, expected) in [
         (
@@ -7093,7 +7169,8 @@ fn page_elliptical_radius_settles_shorthand_and_longhand_precedence() {
         };
         assert_eq!(
             radius.top_left,
-            crate::property::CornerRadius::new(Length::Px(expected[0]), Length::Px(expected[1])),
+            crate::property::CornerRadius::new(Length::Px(expected[0]), Length::Px(expected[1]))
+                .map(crate::property::LengthPercentageOrCalc::from),
             "{declarations}"
         );
         if let Some(PropertyValue::BorderRadiusTopLeft(corner)) =
@@ -7134,6 +7211,7 @@ fn page_elliptical_radius_longhands_work_independently_on_all_corners() {
         assert_eq!(
             corner,
             crate::property::CornerRadius::new(horizontal, vertical)
+                .map(crate::property::LengthPercentageOrCalc::from)
         );
     }
 }
@@ -7152,10 +7230,12 @@ fn page_elliptical_radius_rollback_restores_cross_property_precedence() {
     assert_eq!(
         radius.top_left,
         crate::property::CornerRadius::new(Length::Px(5.0), Length::Px(10.0))
+            .map(crate::property::LengthPercentageOrCalc::from)
     );
     assert_eq!(
         radius.top_right,
         crate::property::CornerRadius::new(Length::Px(30.0), Length::Px(15.0))
+            .map(crate::property::LengthPercentageOrCalc::from)
     );
 }
 
@@ -7306,6 +7386,7 @@ fn page_deferred_radius_shorthand_rolls_back_each_corner() {
     assert_eq!(
         radius.top_left,
         crate::property::CornerRadius::new(Length::Px(20.0), Length::Px(30.0))
+            .map(crate::property::LengthPercentageOrCalc::from)
     );
 }
 
@@ -7329,6 +7410,7 @@ fn page_corner_rollback_restores_static_radius_shorthands() {
         assert_eq!(
             radius.top_left,
             crate::property::CornerRadius::new(Length::Px(expected.0), Length::Px(expected.1))
+                .map(crate::property::LengthPercentageOrCalc::from)
         );
     }
 }

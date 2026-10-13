@@ -4021,6 +4021,15 @@ fn conic_axis_center_covers_start_end_px_and_percent() {
         conic_axis_center(&CssPositionOffset::End(Length::Percent(25.0)), 0.0, 200.0),
         150.0
     );
+    // A calc() is measured from the start edge.
+    let calc = raikiri_style::property::CalcLengthPercentage {
+        percent: 50.0,
+        px: -10.0,
+    };
+    assert_eq!(
+        conic_axis_center(&CssPositionOffset::Calc(calc), 100.0, 300.0),
+        190.0
+    );
 }
 
 #[test]

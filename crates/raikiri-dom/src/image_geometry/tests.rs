@@ -65,6 +65,58 @@ fn end_percent_positions_resolve_from_the_end_edge() {
 }
 
 #[test]
+fn calc_positions_resolve_from_the_start_edge() {
+    let calc = raikiri_style::property::CalcLengthPercentage {
+        percent: 50.0,
+        px: -10.0,
+    };
+    assert_eq!(
+        position_offset(ComputedCssPositionOffset::Calc(calc), 200.0),
+        90.0
+    );
+    // Positions are not clamped.
+    let calc = raikiri_style::property::CalcLengthPercentage {
+        percent: 10.0,
+        px: -50.0,
+    };
+    assert_eq!(
+        position_offset(ComputedCssPositionOffset::Calc(calc), 200.0),
+        -30.0
+    );
+}
+
+#[test]
+fn calc_background_sizes_resolve_against_the_area_and_clamp_at_zero() {
+    let calc = |percent, px| {
+        ComputedLengthPercentageOrAuto::Calc(raikiri_style::property::CalcLengthPercentage {
+            percent,
+            px,
+        })
+    };
+    let natural = ImageIntrinsicSize {
+        width: Some(10.0),
+        height: Some(10.0),
+        aspect_ratio: Some(1.0),
+    };
+    let size = ComputedBackgroundSize::Explicit {
+        width: calc(50.0, -10.0),
+        height: calc(25.0, 5.0),
+    };
+    assert_eq!(
+        background_image_dimensions(&size, 200.0, 100.0, natural),
+        Some((90.0, 30.0))
+    );
+    let size = ComputedBackgroundSize::Explicit {
+        width: calc(10.0, -50.0),
+        height: calc(25.0, 5.0),
+    };
+    assert_eq!(
+        background_image_dimensions(&size, 200.0, 100.0, natural),
+        None
+    );
+}
+
+#[test]
 fn background_axis_helpers_reject_non_finite_edges() {
     let computed = raikiri_style::ComputedValues::initial();
     let position = &computed.background_layers()[0].position;
