@@ -3073,8 +3073,11 @@ impl Document {
                 // area of its visible part so its existence does not depend
                 // on the clipped part.
                 let object_area = f64::from(object.width) * f64::from(object.height);
-                let visible_area = f64::from(object.width.min(size.width))
-                    * f64::from(object.height.min(size.height));
+                let visible = |start: f32, length: f32, limit: f32| {
+                    f64::from(((start + length).min(limit) - start.max(0.0)).max(0.0))
+                };
+                let visible_area = visible(object.x, object.width, size.width)
+                    * visible(object.y, object.height, size.height);
                 let full = raikiri_traits::ImageRasterSize {
                     width: object.width,
                     height: object.height,

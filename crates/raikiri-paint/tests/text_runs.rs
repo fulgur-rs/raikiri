@@ -1091,7 +1091,35 @@ fn a_marker_whose_first_line_moves_on_matches_paint() {
              <ol><li style=\"padding-top: 130px\">A</li></ol></div>",
             "body { margin: 0 }",
         ),
+        // A repeated table header draws its marker on every page.
+        (
+            "<table><thead><tr><td><ol><li>H</li></ol></td></tr></thead><tbody>\
+             <tr><td style=\"height: 120px\">a</td></tr>\
+             <tr><td style=\"height: 120px\">b</td></tr>\
+             <tr><td style=\"height: 120px\">c</td></tr></tbody></table>",
+            "body { margin: 0 }",
+        ),
     ]);
+}
+
+/// A fixed list repeats on every page with its marker.
+#[test]
+fn a_fixed_list_draws_its_marker_on_every_page() {
+    let result = lay_out(
+        "<ol style=\"position: fixed; top: 0\"><li>A</li></ol>\
+         <div style=\"height: 500px\"></div>",
+        "body { margin: 0 }",
+    );
+    assert!(result.page_count() > 1);
+    let glyphs: Vec<_> = result
+        .pages()
+        .map(|page| drawn(&page, result.page_count()))
+        .collect();
+    // The marker's glyphs and the item's letter.
+    assert!(glyphs[0].len() > 1);
+    for page in &glyphs[1..] {
+        assert_eq!(page, &glyphs[0]);
+    }
 }
 
 #[test]

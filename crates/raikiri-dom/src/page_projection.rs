@@ -115,8 +115,10 @@ impl Document {
     }
 
     /// Where an outside text marker is drawn on the page whose flow starts
-    /// at `content_origin_y`, as in [`crate::PositionedGlyphRun`]s of the
-    /// page: `Some(None)` on any page but the item's first, else the top of
+    /// at `page.0`, as in [`crate::PositionedGlyphRun`]s of the page, where
+    /// `page.1` tells that the painter is drawing content repeated on every
+    /// page, such as a fixed box: `Some(None)` on any page but the item's
+    /// first, unless the item is repeated there, else the top of
     /// the marker's line for a list item whose border edge is painted at
     /// `top` on a page whose content ends at `page_bottom`. Its baseline
     /// meets the item's first line, and it stays on the page when that line
@@ -128,12 +130,20 @@ impl Document {
         &self,
         cascade: &CascadeResult,
         owner: usize,
-        content_origin_y: f32,
+        page: (f32, bool),
         top: f32,
         page_bottom: f32,
     ) -> Option<Option<f32>> {
+        let (content_origin_y, repeated) = page;
+        // A marker in a table header repeated on this page belongs to it,
+        // as the page's runs place it.
+        let repeated = repeated
+            || matches!(
+                self.table_objects.headers.shift(owner, content_origin_y),
+                Some(Some(_))
+            );
         self.page_projection.markers.get(&owner).map(|marker| {
-            marker.is_on_page(content_origin_y).then(|| {
+            (repeated || marker.is_on_page(content_origin_y)).then(|| {
                 let moved = text_runs::run_translation_y(
                     self,
                     cascade,
