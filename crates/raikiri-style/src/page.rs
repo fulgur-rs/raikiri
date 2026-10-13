@@ -98,7 +98,9 @@ pub use types::*;
 
 mod parse;
 pub(crate) use parse::*;
-pub use parse::{PAGE_DESCRIPTOR_NAMES, is_valid_page_descriptor, page_rule_drops_value};
+pub use parse::{
+    PAGE_DESCRIPTOR_NAMES, is_valid_page_descriptor, is_valid_page_selector, page_rule_drops_value,
+};
 
 mod absolutize;
 

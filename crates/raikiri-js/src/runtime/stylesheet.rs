@@ -53,11 +53,13 @@ pub(crate) fn parse_css_rules(source: &str) -> Vec<CssRuleInfo> {
     out
 }
 
-/// Whether `prelude` is an `@page` rule's prelude. The at-keyword is
+/// Whether `prelude` is a valid `@page` rule's prelude. The at-keyword is
 /// compared after tokenization, so escaped spellings match like the cascade
-/// sees them (ASCII case-insensitive).
+/// sees them (ASCII case-insensitive), and the selector must parse as the
+/// cascade requires; a rule the cascade drops gets no `CSSPageRule`.
 pub(crate) fn is_page_prelude(prelude: &str) -> bool {
-    page_selector_text(prelude).is_some()
+    page_selector_text(prelude)
+        .is_some_and(|selector| raikiri_style::is_valid_page_selector(&selector))
 }
 
 /// The page selector list of an `@page` prelude, serialized from its tokens:
@@ -474,6 +476,19 @@ pub(crate) fn document_style_sheets(
 /// `CSSStyleSheet` while it is in the document, otherwise `null`.
 fn style_element_sheet(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = super::webidl::this_element(this, context)?;
+    let is_style = with_state(context, |state| {
+        let document = state.host.document();
+        document.get_node(index).and_then(|node| node.tag_name()) == Some("style")
+            && matches!(
+                document.element_namespace_uri(index),
+                Some("http://www.w3.org/1999/xhtml") | Some("http://www.w3.org/2000/svg")
+            )
+    })?;
+    if !is_style {
+        return Err(JsNativeError::typ()
+            .with_message("'this' is not an HTMLStyleElement or SVGStyleElement")
+            .into());
+    }
     let connected = with_state(context, |state| {
         stylesheet_nodes(state.host.document()).contains(&index)
     })?;

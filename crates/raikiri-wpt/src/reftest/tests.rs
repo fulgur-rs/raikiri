@@ -2691,11 +2691,20 @@ fn page_orientation_rotates_the_presented_page_a_quarter_turn() {
     let upright = rotate_presented_page(page(), Some(raikiri_style::PageRotation::Upright));
     assert_eq!((upright.width, upright.height), (2, 1));
     assert_eq!(rotate_presented_page(page(), None).rgba, page().rgba);
-    assert!(rotates_presented_page(Some(
-        raikiri_style::PageRotation::RotateLeft
-    )));
-    assert!(!rotates_presented_page(Some(
-        raikiri_style::PageRotation::Upright
-    )));
-    assert!(!rotates_presented_page(None));
+    // A 3x2 page with distinct pixels exercises cycles longer than two.
+    let wide = || RenderedImage {
+        width: 3,
+        height: 2,
+        rgba: (0u8..6).flat_map(|v| [v, v, v, 255]).collect(),
+    };
+    let pixels =
+        |image: &RenderedImage| -> Vec<u8> { image.rgba.chunks(4).map(|px| px[0]).collect() };
+    // 0 1 2      3 0      2 5
+    // 3 4 5  ->  4 1  or  1 4
+    //            5 2      0 3
+    let right = rotate_presented_page(wide(), Some(raikiri_style::PageRotation::RotateRight));
+    assert_eq!((right.width, right.height), (2, 3));
+    assert_eq!(pixels(&right), vec![3, 0, 4, 1, 5, 2]);
+    let left = rotate_presented_page(wide(), Some(raikiri_style::PageRotation::RotateLeft));
+    assert_eq!(pixels(&left), vec![2, 5, 1, 4, 0, 3]);
 }

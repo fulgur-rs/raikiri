@@ -1512,3 +1512,38 @@ fn style_sheets_skip_non_css_style_types_and_inserts_ignore_comments() {
            catch (e) { return e.name === 'SyntaxError'; } })()",
     );
 }
+
+#[test]
+fn page_rules_need_a_valid_page_selector() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var s = document.createElement('style'); \
+         s.textContent = '@page :bogus { margin: 1px } @page named:first { margin: 2px }'; \
+         document.head.appendChild(s);",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "Object.prototype.toString.call(s.sheet.cssRules[0]) !== '[object CSSPageRule]' && \
+         s.sheet.cssRules[0].style === undefined && \
+         Object.prototype.toString.call(s.sheet.cssRules[1]) === '[object CSSPageRule]' && \
+         s.sheet.cssRules[1].selectorText === 'named:first'",
+    );
+}
+
+#[test]
+fn style_sheet_getter_rejects_non_style_receivers() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var st = document.createElement('style'); document.head.appendChild(st); \
+         var getter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(st), 'sheet').get; \
+         var thrown = null; try { getter.call(document.body); } catch (e) { thrown = e; }",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "thrown instanceof TypeError && getter.call(st) === st.sheet",
+    );
+}

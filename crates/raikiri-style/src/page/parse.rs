@@ -529,6 +529,17 @@ pub(crate) fn parse_page_declaration_block(
     }
 }
 
+/// Whether `selector` is a valid `@page` prelude after the at-keyword: a
+/// `<page-selector-list>`, or empty (every page). This is the grammar
+/// [`parse_page_prelude`] applies when it decides whether to keep the rule.
+pub fn is_valid_page_selector(selector: &str) -> bool {
+    let mut budget = ParseBudget::new(&crate::ruletree::RuleTreeLimits::default(), 0);
+    let mut input = ParserInput::new(selector);
+    Parser::new(&mut input)
+        .parse_entirely(|input| parse_page_prelude(input, &mut budget))
+        .is_ok()
+}
+
 /// The `@page` descriptors that are not CSS properties (CSS Paged Media
 /// Level 3 §7): they are only valid inside a page rule's declaration block.
 pub const PAGE_DESCRIPTOR_NAMES: [&str; 4] = ["size", "marks", "bleed", "page-orientation"];
