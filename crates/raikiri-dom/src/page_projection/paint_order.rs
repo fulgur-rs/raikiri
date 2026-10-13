@@ -153,6 +153,10 @@ struct TextLines {
     letters: HashMap<(usize, usize), Option<usize>>,
 }
 
+mod letters;
+
+use letters::LetterGroups;
+
 /// The fragments of one page, grouped by source node.
 struct PageItems<'a> {
     by_node: HashMap<usize, Vec<&'a PageFragmentItem>>,
@@ -166,9 +170,22 @@ struct PageItems<'a> {
     /// The elements with inline boxes on lines after the first, by
     /// paragraph root, built when a paragraph is first split by line.
     later_line_boxes: RefCell<HashMap<usize, Rc<HashSet<usize>>>>,
+    /// The `::first-letter` opacity groups, by paragraph root, built when a
+    /// paragraph's first letters are first listed.
+    letter_groups: RefCell<HashMap<usize, Rc<LetterGroups>>>,
 }
 
 impl<'a> PageItems<'a> {
+    /// The `::first-letter` opacity groups of paragraph `root`.
+    fn letter_groups(&self, root: usize) -> Rc<LetterGroups> {
+        Rc::clone(
+            self.letter_groups
+                .borrow_mut()
+                .entry(root)
+                .or_insert_with(|| Rc::new(self.document.letter_groups(self.cascade, root))),
+        )
+    }
+
     /// The elements of paragraph `root` with inline boxes on lines after
     /// the first.
     fn later_line_boxes(&self, root: usize, root_node: &Node) -> Rc<HashSet<usize>> {
@@ -242,19 +259,23 @@ impl Document {
     ) -> Vec<PaintEvent<'a>> {
         let mut lines = TextLines::default();
         let mut seen = HashSet::new();
+        let mut letter_groups = HashMap::new();
         for run in runs {
             let group = self.text_run_opacity_group(cascade, run);
-            if let (Some(letter), Ok(root)) = (
-                run.letter_box
-                    .filter(|&letter| group.is_some_and(|group| group.0 == letter as u64)),
+            // The letters of a `::first-letter` group, its own or that of an
+            // ancestor block's first letter around them.
+            if let (Some(_), Some(Ok(group)), Ok(root)) = (
+                run.letter_box,
+                group.map(|group| usize::try_from(group.0)),
                 usize::try_from(run.line.root.0),
-            ) {
-                lines.letters.entry((root, letter)).or_insert_with(|| {
-                    self.enclosing_letter_group(cascade, root, letter)
-                        .or_else(|| {
-                            self.run_group_outside_letter(cascade, run)
-                                .and_then(|group| usize::try_from(group.0).ok())
-                        })
+            ) && crate::generated_content::generated_origin(group)
+                .is_some_and(|(_, pseudo)| pseudo == PseudoElem::FirstLetter)
+            {
+                lines.letters.entry((root, group)).or_insert_with(|| {
+                    letter_groups
+                        .entry(root)
+                        .or_insert_with(|| self.letter_groups(cascade, root))
+                        .around(group)
                 });
             }
             if seen.insert((run.line, group)) {
@@ -296,33 +317,23 @@ impl Document {
         cascade: &CascadeResult,
         run: &PositionedGlyphRun<'_>,
     ) -> Option<NodeId> {
-        if let Some(letter) = run
-            .letter_box
-            .and_then(|letter| pseudo_opacity_group(cascade, letter))
-        {
-            return Some(NodeId::new(letter as u64));
+        if let Some((letter, owner)) = run.letter_box {
+            if let Some(group) = usize::try_from(run.line.root.0)
+                .ok()
+                .and_then(|root| self.letter_groups(cascade, root).nearest(letter, owner))
+            {
+                return group.map(|group| NodeId::new(group as u64));
+            }
+            // cov:ignore: the paragraph retains the fragment of every run
+            if let Some(letter) = pseudo_opacity_group(cascade, letter) {
+                return Some(NodeId::new(letter as u64));
+            }
         }
         self.run_group_outside_letter(cascade, run)
     }
 
-    /// The opacity group of the innermost `::first-letter` of an ancestor
-    /// block around the letters of `letter`, a `::first-letter` box of
-    /// paragraph `root`, if any.
-    fn enclosing_letter_group(
-        &self,
-        cascade: &CascadeResult,
-        root: usize,
-        letter: usize,
-    ) -> Option<usize> {
-        let node = self.ifc_layout_node(root)?;
-        std::iter::successors(node.ifc_typographic_parent(letter), |&parent| {
-            node.ifc_typographic_parent(parent)
-        })
-        .find_map(|parent| pseudo_opacity_group(cascade, parent))
-    }
-
-    /// The opacity group of `run` apart from that of a `::first-letter`
-    /// around its letters.
+    /// The opacity group of `run`, text outside every `::first-letter`
+    /// group.
     fn run_group_outside_letter(
         &self,
         cascade: &CascadeResult,
@@ -406,6 +417,7 @@ impl Document {
             document: self,
             page,
             later_line_boxes: RefCell::default(),
+            letter_groups: RefCell::default(),
         };
         for item in &page.items {
             if let Ok(node_id) = usize::try_from(item.node_id.0) {
@@ -538,8 +550,15 @@ impl Document {
                     // like other z-index: auto stacking contexts: its inline
                     // boxes and text, then its atomic inlines and floats,
                     // then the groups nested in it.
-                    let Some(alpha) = crate::generated_content::computed_for_id(cascade, group)
-                        .and_then(paint_rules::opacity_layer)
+                    let letter = crate::generated_content::generated_origin(group)
+                        .is_some_and(|(_, pseudo)| pseudo == PseudoElem::FirstLetter);
+                    let Some(alpha) = letter
+                        .then(|| items.letter_groups(root).opacity(group))
+                        .flatten()
+                        .or_else(|| {
+                            crate::generated_content::computed_for_id(cascade, group)
+                                .and_then(paint_rules::opacity_layer)
+                        })
                     else {
                         continue; // cov:ignore: groups are found by their opacity
                     };
@@ -1658,13 +1677,14 @@ fn push_paragraph<'a>(
 
 /// The element of paragraph `root` whose letters a `::first-letter` piece
 /// wraps: the parent of the text, or the originating element of the
-/// `::before` or `::after` text, they come from; and which of those
-/// pseudo-elements, if any, the letters are the text of.
+/// `::before` or `::after` text, they come from; which of those
+/// pseudo-elements, if any, the letters are the text of; and the node that
+/// supplies the letters.
 fn first_letter_anchor(
     document: &Document,
     root: usize,
     piece: &super::generated_boxes::BoxPiece,
-) -> Option<(usize, Option<GeneratedKind>)> {
+) -> Option<(usize, Option<GeneratedKind>, usize)> {
     let source = document
         .ifc_layout_node(root)?
         .ifc_typographic_fragment(piece.node, piece.source_container, piece.source_owner)?
@@ -1674,11 +1694,13 @@ fn first_letter_anchor(
             PseudoElem::After => GeneratedKind::After,
             _ => GeneratedKind::Before,
         };
-        return Some((element, Some(kind)));
+        return Some((element, Some(kind), source));
     }
     match document.get_node(source)?.kind() {
-        NodeKind::Text => document.parent_of(source).map(|parent| (parent, None)),
-        _ => Some((source, None)),
+        NodeKind::Text => document
+            .parent_of(source)
+            .map(|parent| (parent, None, source)),
+        _ => Some((source, None, source)),
     }
 }
 
@@ -1707,6 +1729,7 @@ fn first_letter_pieces<'p>(
     items: &PageItems<'p>,
     root: usize,
 ) -> Vec<LetterPiece<'p>> {
+    let groups = items.letter_groups(root);
     items
         .generated_boxes
         .into_iter()
@@ -1720,18 +1743,16 @@ fn first_letter_pieces<'p>(
         .flat_map(|(&(_, owner, _), pieces)| pieces.iter().map(move |piece| (owner, piece)))
         .map(|(owner, piece)| {
             let source = first_letter_anchor(document, root, piece);
-            let anchor = source.map(|(anchor, _)| anchor);
-            let pseudo = source.and_then(|(_, pseudo)| pseudo);
-            let held = document
-                .enclosing_letter_group(items.cascade, root, piece.node)
-                .or_else(|| match (anchor, pseudo) {
-                    (Some(anchor), Some(kind)) => generated_group(items.cascade, anchor, kind),
-                    _ => None,
-                })
-                .or_else(|| {
-                    anchor.and_then(|anchor| {
-                        document.inline_opacity_group(items.cascade, root, anchor)
-                    })
+            let anchor = source.map(|(anchor, _, _)| anchor);
+            let pseudo = source.and_then(|(_, pseudo, _)| pseudo);
+            let (own, held) = source
+                .and_then(|(_, _, letters)| groups.fragment(piece.node, letters))
+                // cov:ignore: the paragraph retains the fragment of every piece
+                .unwrap_or_else(|| {
+                    let held = source.and_then(|(_, _, letters)| {
+                        document.letter_source_group(items.cascade, root, letters)
+                    });
+                    (pseudo_opacity_group(items.cascade, piece.node), held)
                 });
             LetterPiece {
                 anchor,
@@ -1739,7 +1760,7 @@ fn first_letter_pieces<'p>(
                 owner,
                 piece,
                 held,
-                own: pseudo_opacity_group(items.cascade, piece.node),
+                own,
             }
         })
         .collect()

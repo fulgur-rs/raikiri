@@ -777,3 +777,79 @@ fn nested_translucent_first_letters_nest_their_groups() {
         ]
     );
 }
+
+/// The fragments of a `::first-letter` keep the opacity of the style they
+/// retain for the text they wrap: fragments resolving `opacity` to
+/// different values composite apart, and one resolving it to 1 is no group.
+#[test]
+fn first_letter_fragments_composite_with_their_retained_opacity() {
+    let document = lay_out(
+        "<p><span id=a>'</span><span id=b>AB</span></p>",
+        "p{margin:0;--o:.5}#a{--o:0}#b{--o:1}p::first-letter{background:red;opacity:var(--o)}",
+    );
+    let page = document.page(0).unwrap();
+    assert_eq!(
+        composited(&page),
+        [
+            "box FirstLetter",
+            "text AB",
+            "push 0",
+            "box FirstLetter",
+            "text '",
+            "pop"
+        ]
+    );
+    let document = lay_out(
+        "<p><span id=a>'</span><span id=b>AB</span></p>",
+        "p{margin:0;--o:.5}#a{--o:.25}#b{--o:.75}p::first-letter{background:red;opacity:var(--o)}",
+    );
+    let page = document.page(0).unwrap();
+    assert_eq!(
+        composited(&page),
+        [
+            "text B",
+            "push 0.25",
+            "box FirstLetter",
+            "text '",
+            "pop",
+            "push 0.75",
+            "box FirstLetter",
+            "text A",
+            "pop"
+        ]
+    );
+    let runs = page.text_runs();
+    let group = |text: &str| {
+        page.text_run_opacity_group(runs.iter().find(|run| run.text == text).unwrap())
+            .unwrap()
+    };
+    assert_ne!(group("'"), group("A"));
+}
+
+/// A first letter whose letters are partly inside a translucent inline
+/// element composites that part inside the element's group and the rest
+/// apart, each letter drawn once.
+#[test]
+fn first_letter_split_by_an_inline_group_composites_in_both() {
+    let document = lay_out(
+        "<p><span id=a>'</span>AB</p>",
+        "p{margin:0}#a{opacity:.5}p::first-letter{background:red;opacity:.25}",
+    );
+    let page = document.page(0).unwrap();
+    assert_eq!(
+        composited(&page),
+        [
+            "text B",
+            "push 0.25",
+            "box FirstLetter",
+            "text A",
+            "pop",
+            "push 0.5",
+            "push 0.25",
+            "box FirstLetter",
+            "text '",
+            "pop",
+            "pop"
+        ]
+    );
+}
