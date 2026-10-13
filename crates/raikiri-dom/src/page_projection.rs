@@ -114,6 +114,18 @@ impl Document {
         ))
     }
 
+    /// How far down from its list item's border edge an outside text marker
+    /// is drawn so its baseline meets the item's first line, as in
+    /// [`crate::PositionedGlyphRun`]s of the page. `None` when layout
+    /// prepared no text marker for `owner`.
+    #[doc(hidden)]
+    pub fn list_marker_text_offset_y(&self, owner: usize) -> Option<f32> {
+        self.page_projection
+            .markers
+            .get(&owner)
+            .map(|marker| marker.offset_y())
+    }
+
     /// The line holding one image of `::before` or `::after` content placed
     /// on one page, and the UTF-8 offset of the image in that line's
     /// processed text when it is known. The offset orders the image among

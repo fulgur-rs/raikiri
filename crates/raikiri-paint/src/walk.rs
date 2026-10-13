@@ -1326,11 +1326,14 @@ fn paint_list_marker_with_snapshots(
     else {
         return;
     };
+    // The marker's baseline meets the item's first line (CSS Lists 3
+    // §3.1), at the offset the page's text runs use.
+    let offset_y = document.list_marker_text_offset_y(node_id).unwrap_or(0.0);
     crate::standalone_text::draw(
         scene,
         &shaped,
         paint_x + offset_x,
-        paint_y,
+        paint_y + offset_y,
         css_color(computed.color),
     );
 }

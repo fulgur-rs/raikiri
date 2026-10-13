@@ -176,6 +176,7 @@ pub(crate) fn apply_computed_to_style(
             doc.nodes[idx].table_grid_box = None;
             doc.nodes[idx].table_first_baseline = None;
         }
+        doc.nodes[idx].flex_first_baseline = None;
         doc.nodes[idx].border_collapse = cv.border_collapse;
         doc.nodes[idx].computed_border = Some(cv.border);
         doc.nodes[idx].collapsed_border = None;

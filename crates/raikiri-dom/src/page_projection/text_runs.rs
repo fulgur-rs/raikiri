@@ -39,6 +39,11 @@ impl MarkerText {
     pub(super) fn line_count(&self) -> usize {
         self.shaped.lines().len()
     }
+
+    /// How far the marker's line moves down from the item's border edge.
+    pub(super) fn offset_y(&self) -> f32 {
+        self.offset_y
+    }
 }
 
 impl fmt::Debug for MarkerText {
@@ -954,8 +959,9 @@ struct FirstLine {
 /// The first line may belong to the first in-flow block child, and so on
 /// down (CSS Pseudo 4 §2.1.1); if that child has no line, neither has the
 /// item. Floats, absolutely positioned boxes and the marker itself are
-/// passed over, and a relative offset moves only the box it applies to. A flex or grid container orders its items itself, so tree
-/// order does not find its first line, and it is left to the fallback.
+/// passed over, and a relative offset moves only the box it applies to. A
+/// flex container orders its items itself, so its first line is the first
+/// baseline its layout recorded; a grid container is left to the fallback.
 fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Option<FirstLine> {
     let in_flow = |id: usize| {
         document.nodes.get(id).is_some_and(|node| {
@@ -985,7 +991,13 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
             node.style.display,
             taffy::Display::Flex | taffy::Display::Grid
         ) {
-            return None;
+            // A flex or grid container orders its items itself. A flex
+            // layout records the first baseline they give it; a grid
+            // container is left to the fallback.
+            return node.flex_first_baseline.map(|baseline| FirstLine {
+                baseline: y + baseline,
+                center: y + baseline,
+            });
         }
         let child = match node.ifc.as_ref().and_then(|root| root.lines.as_ref()) {
             Some(lines) if !lines.lines.is_empty() => {
