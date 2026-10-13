@@ -11616,3 +11616,95 @@ fn a_smaller_follower_shift_keeps_the_moved_floats_floor() {
         vec![60.0, 100.0, 100.0, 160.0]
     );
 }
+
+#[test]
+fn a_nested_avoiding_box_taller_than_a_page_stays_at_the_page_top() {
+    let mut child = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let wrapper =
+            doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        child = doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:150px;break-inside:avoid"),
+        );
+    });
+    // Moving it would leave the first page blank and still break it.
+    assert_eq!(page_flow_y(&doc, child), 0.0);
+}
+
+#[test]
+fn a_calc_bound_resolves_against_a_definite_containing_block() {
+    let mut wrapper = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let container = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:200px"),
+        );
+        doc.append_element(
+            Some(container),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        wrapper = doc.append_element(
+            Some(container),
+            "div",
+            Style::default(),
+            Some("display:block;max-height:calc(30% + 10px)"),
+        );
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        );
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:50px;break-inside:avoid"),
+        );
+    });
+    // The box crosses the page end at 100 and moves 30px; the wrapper's
+    // content would end at 90, but its bound is 30% of 200 plus 10.
+    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 70.0);
+}
+
+#[test]
+fn a_float_in_another_formatting_context_ignores_a_moved_float() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("float:left;width:40px;height:60px;break-inside:avoid"),
+        ));
+        let root = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flow-root;width:50px"),
+        );
+        ids.push(doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("float:left;width:10px;height:20px;break-inside:avoid"),
+        ));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    // The flow-root's own float fits beside the moved one's old place and
+    // is not held below it.
+    assert_eq!(ys, vec![100.0, 60.0]);
+}

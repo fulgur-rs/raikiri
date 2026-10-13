@@ -3978,6 +3978,9 @@ pub fn layout_pages_with_page_geometry_and_control(
     // would otherwise start above the bottom of one on its own side, or
     // above the top of one on the other side unless it clears that side.
     let mut later_float_edges = [(f32::NEG_INFINITY, f32::NEG_INFINITY); 2];
+    // The formatting context those floats are placed in: only floats and
+    // clearance in the same one keep below them.
+    let mut later_float_context = body_id;
     // A nested box that moved inside an ancestor whose height cannot grow
     // to hold it overflows that ancestor: the part of the shift the
     // ancestor did not absorb ends where its subtree does, and the page the
@@ -4155,7 +4158,10 @@ pub fn layout_pages_with_page_geometry_and_control(
             // larger budget, which the other side's floor may still need.
             later_float_shift = later_float_shift.max(delta);
         }
-        if later_float_shift != 0.0 && pending_float_shift.is_none() {
+        if later_float_shift != 0.0
+            && pending_float_shift.is_none()
+            && float_context_root(document, cascade, node_id, body_id) == later_float_context
+        {
             let floating = is_floating_box_for_pagination(document, cascade, node_id);
             let computed = &cascade.computed[node_id];
             // A later float's outer top stays below a float on its own side
@@ -4602,10 +4608,9 @@ pub fn layout_pages_with_page_geometry_and_control(
                 | raikiri_style::property::BreakInside::AvoidPage
         ) && (computed.display != DisplayValue::Inline
             || page_applies_to_box(document, cascade, node_id))
-            // A float already at the top of its page would break inside on
+            // A box already at the top of its page would break inside on
             // any page, so moving it would only leave a blank page.
-            && (!is_floating_box_for_pagination(document, cascade, node_id)
-                || effective_y - margin_top.max(0.0) > page_origin(current_page) + 0.001)
+            && effective_y - margin_top.max(0.0) > page_origin(current_page) + 0.001
             && effective_y.is_finite()
             && effective_y >= page_origin(current_page)
             && effective_y < page_origin(current_page) + page_step_at(current_page)
@@ -4900,6 +4905,11 @@ pub fn layout_pages_with_page_geometry_and_control(
                         pending_float_shift = Some((node_id, inherited + node_delta, flow_page));
                         // A clearing follower stays below the margin box.
                         if let Some(index) = float_side_index(computed.float) {
+                            let context = float_context_root(document, cascade, node_id, body_id);
+                            if context != later_float_context {
+                                later_float_edges = [(f32::NEG_INFINITY, f32::NEG_INFINITY); 2];
+                                later_float_context = context;
+                            }
                             later_float_edges[index] = (
                                 node_target_y - margin_top,
                                 node_target_y + height + margin_bottom,
@@ -5312,14 +5322,18 @@ fn grown_auto_height(
     // height (CSS 2.1 §10.7).
     let containing_height =
         box_parent(document, parent).and_then(|block| definite_content_height(document, block));
-    // One that does not resolve, and a `calc()` bound, behave as `0` for
-    // `min-height` and as `none` for `max-height`.
+    // One that does not resolve behaves as `0` for `min-height` and as
+    // `none` for `max-height`.
     let bound = |value: taffy::LengthPercentageAuto, auto: f32| {
         let raw = value.into_raw();
-        if value.is_auto() || raw.is_calc() {
+        if value.is_auto() {
             auto
         } else if raw.tag() == taffy::CompactLength::LENGTH_TAG {
             raw.value() + box_sizing_edges
+        } else if raw.is_calc() {
+            containing_height.map_or(auto, |height| {
+                crate::taffy_impl::resolve_calc(raw.calc_value(), height) + box_sizing_edges
+            })
         } else {
             // The remaining tag is a percentage.
             containing_height.map_or(auto, |height| raw.value() * height + box_sizing_edges)
@@ -5517,6 +5531,49 @@ fn last_in_flow_box(document: &Document, cascade: &CascadeResult, node_id: usize
             .find_map(|&id| last_in_flow_box(document, cascade, id));
     }
     Some(node_id)
+}
+
+/// The box whose block formatting context places the floats and clearance
+/// of `node_id`: its nearest ancestor that establishes an independent one
+/// (CSS 2.1 §9.4.1), or `body_id`. Floats in different contexts do not
+/// interact.
+fn float_context_root(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    body_id: usize,
+) -> usize {
+    let mut current = node_id;
+    while let Some(parent) = box_parent(document, current)
+        && parent != body_id
+    {
+        let computed = &cascade.computed[parent];
+        let style = &document.nodes[parent].style;
+        let item = box_parent(document, parent).is_some_and(|container| {
+            matches!(
+                cascade.computed[container].display,
+                DisplayValue::Flex
+                    | DisplayValue::InlineFlex
+                    | DisplayValue::Grid
+                    | DisplayValue::InlineGrid
+            )
+        });
+        if item
+            || !matches!(
+                computed.display,
+                DisplayValue::Block | DisplayValue::ListItem | DisplayValue::Inline
+            )
+            || !matches!(computed.float, FloatValue::None)
+            || matches!(style.position, taffy::Position::Absolute)
+            || style.overflow.x.is_scroll_container()
+            || style.overflow.y.is_scroll_container()
+            || document.nodes[parent].multicol.is_some()
+        {
+            return parent;
+        }
+        current = parent;
+    }
+    body_id
 }
 
 /// The index of a float side in the per-side float edges.
