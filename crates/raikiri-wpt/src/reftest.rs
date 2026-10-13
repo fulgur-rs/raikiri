@@ -2414,9 +2414,12 @@ fn page_box_from_cascade(
         .and_then(|value| page_descriptor_dimension(value, base.height));
     match (width, height) {
         (Some(width), Some(height)) => {
+            // Like any box, the page box adds its border and padding around
+            // the page area that `width`/`height` size.
+            let insets = raikiri_dom::page_content_insets_for_page(page, base);
             let mut page_box = raikiri_traits::PageBox::new();
-            page_box.width = width + margins.left + margins.right;
-            page_box.height = height + margins.top + margins.bottom;
+            page_box.width = width + insets.left + insets.right + margins.left + margins.right;
+            page_box.height = height + insets.top + insets.bottom + margins.top + margins.bottom;
             page_box
         }
         _ => base,
@@ -3306,14 +3309,72 @@ pub(crate) fn render_raikiri_pages_with_resources(
             page_height,
         );
         paint_result?;
-        pages.push(RenderedImage {
-            width: page_width,
-            height: page_height,
-            rgba,
-        });
+        pages.push(rotate_presented_page(
+            RenderedImage {
+                width: page_width,
+                height: page_height,
+                rgba,
+            },
+            cascade.page.page_orientation(),
+        ));
     }
     Ok(RenderedDocument { pages })
 }
+
+/// Rotate a laid-out page for presentation per its `page-orientation`
+/// descriptor (CSS Paged Media 3 §7.4): the page is laid out unrotated and
+/// only turned by a quarter when it is output.
+fn rotate_presented_page(
+    mut page: RenderedImage,
+    rotation: Option<raikiri_style::PageRotation>,
+) -> RenderedImage {
+    let clockwise = match rotation {
+        Some(raikiri_style::PageRotation::RotateRight) => true,
+        Some(raikiri_style::PageRotation::RotateLeft) => false,
+        _ => return page,
+    };
+    let (width, height) = (page.width as usize, page.height as usize);
+    // Where pixel `index` of the unrotated page lands; the rotated image is
+    // `height` pixels wide and `width` tall.
+    let destination = |index: usize| {
+        let (x, y) = (index % width, index / width);
+        let (rx, ry) = if clockwise {
+            (height - 1 - y, x)
+        } else {
+            (y, width - 1 - x)
+        };
+        ry * height + rx
+    };
+    // Permute the pixels in place by following each cycle once, so the
+    // rotation needs a bit per pixel rather than a second page buffer.
+    let pixel_count = width * height;
+    let mut placed = vec![0u64; pixel_count.div_ceil(64)];
+    let rgba = &mut page.rgba;
+    for start in 0..pixel_count {
+        if placed[start / 64] & (1 << (start % 64)) != 0 {
+            continue;
+        }
+        let mut carried: [u8; 4] = rgba[start * 4..start * 4 + 4].try_into().unwrap();
+        let mut index = start;
+        loop {
+            let to = destination(index);
+            placed[to / 64] |= 1 << (to % 64);
+            let displaced: [u8; 4] = rgba[to * 4..to * 4 + 4].try_into().unwrap();
+            rgba[to * 4..to * 4 + 4].copy_from_slice(&carried);
+            carried = displaced;
+            index = to;
+            if index == start {
+                break;
+            }
+        }
+    }
+    RenderedImage {
+        width: page.height,
+        height: page.width,
+        rgba: std::mem::take(&mut page.rgba),
+    }
+}
+
 /// Load `@font-face` `src: url(...)` bytes from the WPT tree.
 ///
 /// Server-absolute WPT URLs, resource-base-relative URLs, and the `file://`

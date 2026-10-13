@@ -1858,6 +1858,14 @@ fn legacy_page_width_and_height_size_the_page_area_inside_the_margins() {
     let page = page_context("@page { size: 500px 700px; width: 300px }");
     let page_box = page_box_from_cascade(&page, page_box_of(1.0, 1.0));
     assert_eq!((page_box.width, page_box.height), (500.0, 700.0));
+    // The page box's border and padding sit between the margins and the
+    // page area.
+    let page = page_context(
+        "@page { margin: 50px 0 0; border: solid white; border-width: 0 300px; \
+         padding: 1px; width: 100px; height: 100px }",
+    );
+    let page_box = page_box_from_cascade(&page, page_box_of(1.0, 1.0));
+    assert_eq!((page_box.width, page_box.height), (702.0, 152.0));
 }
 
 #[test]
@@ -2664,4 +2672,39 @@ fn a_root_relative_border_image_loads_from_the_checkout() {
          border-image:url(/images/green.png) 1 stretch}</style><div></div>",
     );
     assert_eq!(pixel(&document, 2, 2), [0, 128, 0, 255]);
+}
+
+#[test]
+fn page_orientation_rotates_the_presented_page_a_quarter_turn() {
+    // A 2x1 page: red then green.
+    let page = || RenderedImage {
+        width: 2,
+        height: 1,
+        rgba: vec![255, 0, 0, 255, 0, 255, 0, 255],
+    };
+    let right = rotate_presented_page(page(), Some(raikiri_style::PageRotation::RotateRight));
+    assert_eq!((right.width, right.height), (1, 2));
+    assert_eq!(right.rgba, vec![255, 0, 0, 255, 0, 255, 0, 255]);
+    let left = rotate_presented_page(page(), Some(raikiri_style::PageRotation::RotateLeft));
+    assert_eq!((left.width, left.height), (1, 2));
+    assert_eq!(left.rgba, vec![0, 255, 0, 255, 255, 0, 0, 255]);
+    let upright = rotate_presented_page(page(), Some(raikiri_style::PageRotation::Upright));
+    assert_eq!((upright.width, upright.height), (2, 1));
+    assert_eq!(rotate_presented_page(page(), None).rgba, page().rgba);
+    // A 3x2 page with distinct pixels exercises cycles longer than two.
+    let wide = || RenderedImage {
+        width: 3,
+        height: 2,
+        rgba: (0u8..6).flat_map(|v| [v, v, v, 255]).collect(),
+    };
+    let pixels =
+        |image: &RenderedImage| -> Vec<u8> { image.rgba.chunks(4).map(|px| px[0]).collect() };
+    // 0 1 2      3 0      2 5
+    // 3 4 5  ->  4 1  or  1 4
+    //            5 2      0 3
+    let right = rotate_presented_page(wide(), Some(raikiri_style::PageRotation::RotateRight));
+    assert_eq!((right.width, right.height), (2, 3));
+    assert_eq!(pixels(&right), vec![3, 0, 4, 1, 5, 2]);
+    let left = rotate_presented_page(wide(), Some(raikiri_style::PageRotation::RotateLeft));
+    assert_eq!(pixels(&left), vec![2, 5, 1, 4, 0, 3]);
 }

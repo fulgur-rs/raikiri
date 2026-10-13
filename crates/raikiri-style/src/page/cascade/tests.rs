@@ -363,6 +363,37 @@ fn cascade_page_descriptor_marks_bleed_and_margin_boxes_are_exposed() {
 }
 
 #[test]
+fn cascade_page_orientation_descriptor_follows_page_selector_cascade() {
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "@page { page-orientation: rotate-left } @page :first { page-orientation: ROTATE-RIGHT } \
+         @page { page-orientation: sideways } @page { page-orientation: upright extra }",
+        Origin::Author,
+    );
+    let first = PageContextQuery {
+        is_first: true,
+        ..Default::default()
+    };
+    let result = cascade_page(&tree, &first, PageInheritance::LegacyInitialValues);
+    assert_eq!(result.page_orientation(), Some(PageRotation::RotateRight));
+    let result = cascade_page(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::LegacyInitialValues,
+    );
+    assert_eq!(result.page_orientation(), Some(PageRotation::RotateLeft));
+
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet("@page { margin: 0 }", Origin::Author);
+    let result = cascade_page(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::LegacyInitialValues,
+    );
+    assert_eq!(result.page_orientation(), None);
+}
+
+#[test]
 fn cascade_page_margin_box_source_order_and_selector_metadata_are_retained() {
     let mut tree = RuleTree::empty();
     tree.add_stylesheet("@page { @top-left { content: \"A\" } }", Origin::Author);

@@ -26,7 +26,10 @@ fn from_name_is_ascii_case_insensitive_and_maps_legacy_aliases() {
         ComputedProperty::from_name("FONT"),
         Some(ComputedProperty::Font)
     );
-    assert_eq!(ComputedProperty::from_name("color"), None);
+    assert_eq!(
+        ComputedProperty::from_name("COLOR"),
+        Some(ComputedProperty::Color)
+    );
     assert_eq!(ComputedProperty::from_name(""), None);
 }
 
@@ -208,6 +211,28 @@ fn font_feature_settings_serializes_the_canonical_computed_value() {
     assert_eq!(
         ComputedProperty::FontFeatureSettings.serialize(&computed, &mut ch_advance),
         Some(r#""kern" 0, "liga" 0"#.to_owned())
+    );
+}
+
+#[test]
+fn color_serializes_as_a_resolved_rgb_value() {
+    let mut computed = ComputedValues::initial();
+    let mut ch_advance = |_: &ChFontKey| -> f32 { panic!("color does not use ch lengths") };
+
+    assert_eq!(
+        ComputedProperty::Color.serialize(&computed, &mut ch_advance),
+        Some("rgb(0, 0, 0)".to_owned())
+    );
+
+    computed.color = CssColor {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 128,
+    };
+    assert_eq!(
+        ComputedProperty::Color.serialize(&computed, &mut ch_advance),
+        Some("rgba(255, 0, 0, 0.5)".to_owned())
     );
 }
 

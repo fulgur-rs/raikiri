@@ -1,5 +1,5 @@
 use cssparser::{
-    AtRuleParser, CowRcStr, DeclarationParser, ParseError, Parser, ParserState,
+    AtRuleParser, CowRcStr, DeclarationParser, ParseError, Parser, ParserInput, ParserState,
     QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser, Token, match_ignore_ascii_case,
 };
 
@@ -187,6 +187,8 @@ pub(crate) enum PageBodyItem {
     Marks(PageMarksDeclaration),
     /// A `bleed:` declaration.
     Bleed(PageBleedDeclaration),
+    /// A `page-orientation:` declaration.
+    PageOrientation(PageRotationDeclaration),
     /// A margin-box at-rule (`@top-left { … }` etc.).
     MarginBox(PageMarginBoxRule),
 }
@@ -247,6 +249,14 @@ impl<'i> DeclarationParser<'i> for PageDeclParser<'_> {
             let value = parse_page_marks_value(input)?;
             let important = parse_important_and_exhaust(input)?;
             return Ok(PageBodyItem::Marks(PageMarksDeclaration {
+                value,
+                important,
+            }));
+        }
+        if name.eq_ignore_ascii_case("page-orientation") {
+            let value = parse_page_rotation_value(input)?;
+            let important = parse_important_and_exhaust(input)?;
+            return Ok(PageBodyItem::PageOrientation(PageRotationDeclaration {
                 value,
                 important,
             }));
@@ -422,6 +432,7 @@ pub(crate) struct PageBlockBody {
     pub(crate) size_declarations: Vec<PageSizeDeclaration>,
     pub(crate) marks_declarations: Vec<PageMarksDeclaration>,
     pub(crate) bleed_declarations: Vec<PageBleedDeclaration>,
+    pub(crate) page_orientation_declarations: Vec<PageRotationDeclaration>,
     pub(crate) margin_box_rules: Vec<PageMarginBoxRule>,
 }
 
@@ -470,6 +481,7 @@ pub(crate) fn parse_page_declaration_block(
     let mut size_declarations = Vec::new();
     let mut marks_declarations = Vec::new();
     let mut bleed_declarations = Vec::new();
+    let mut page_orientation_declarations = Vec::new();
     let mut margin_box_rules = Vec::new();
     let mut body = RuleBodyParser::new(input, &mut parser);
     while let Some(item) = body.next() {
@@ -491,6 +503,10 @@ pub(crate) fn parse_page_declaration_block(
                 bleed_declarations.push(decl);
                 1
             }
+            Ok(PageBodyItem::PageOrientation(decl)) => {
+                page_orientation_declarations.push(decl);
+                1
+            }
             // A margin box counted itself and its declarations as it was
             // parsed.
             Ok(PageBodyItem::MarginBox(rule)) => {
@@ -508,8 +524,66 @@ pub(crate) fn parse_page_declaration_block(
         size_declarations,
         marks_declarations,
         bleed_declarations,
+        page_orientation_declarations,
         margin_box_rules,
     }
+}
+
+/// Whether `selector` is a valid `@page` prelude after the at-keyword: a
+/// `<page-selector-list>`, or empty (every page). This is the grammar
+/// [`parse_page_prelude`] applies when it decides whether to keep the rule.
+pub fn is_valid_page_selector(selector: &str) -> bool {
+    let mut budget = ParseBudget::new(&crate::ruletree::RuleTreeLimits::default(), 0);
+    let mut input = ParserInput::new(selector);
+    Parser::new(&mut input)
+        .parse_entirely(|input| parse_page_prelude(input, &mut budget))
+        .is_ok()
+}
+
+/// The `@page` descriptors that are not CSS properties (CSS Paged Media
+/// Level 3 §7): they are only valid inside a page rule's declaration block.
+pub const PAGE_DESCRIPTOR_NAMES: [&str; 4] = ["size", "marks", "bleed", "page-orientation"];
+
+/// Whether a page rule drops the declaration `name: value` before its
+/// grammar is even consulted: page-context lengths are resolved without a
+/// viewport, so a non-custom declaration using a viewport-percentage length
+/// is invalid there.
+pub fn page_rule_drops_value(name: &str, value: &str) -> bool {
+    !name.starts_with("--") && crate::property::has_viewport_length_in(value)
+}
+
+/// Whether `value` is a valid value for the `@page` descriptor `name`
+/// (ASCII case-insensitive), with no trailing `!important`. Any name outside
+/// [`PAGE_DESCRIPTOR_NAMES`] is not a descriptor and yields `false`.
+pub fn is_valid_page_descriptor(name: &str, value: &str) -> bool {
+    if page_rule_drops_value(name, value) {
+        return false;
+    }
+    let mut input = ParserInput::new(value);
+    let mut parser = Parser::new(&mut input);
+    let parsed = match name.to_ascii_lowercase().as_str() {
+        "size" => parse_page_size_value(&mut parser).is_ok(),
+        "marks" => parse_page_marks_value(&mut parser).is_ok(),
+        "bleed" => parse_page_bleed_value(&mut parser).is_ok(),
+        "page-orientation" => parse_page_rotation_value(&mut parser).is_ok(),
+        _ => false,
+    };
+    parsed && parser.expect_exhausted().is_ok()
+}
+
+/// Parse the `page-orientation` descriptor's value: `upright |
+/// rotate-left | rotate-right` (CSS Paged Media Level 3 §7.4).
+pub(crate) fn parse_page_rotation_value<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<PageRotation, ParseError<'i, ()>> {
+    let location = input.current_source_location();
+    let ident = input.expect_ident()?.clone();
+    Ok(match_ignore_ascii_case! { &ident,
+        "upright" => PageRotation::Upright,
+        "rotate-left" => PageRotation::RotateLeft,
+        "rotate-right" => PageRotation::RotateRight,
+        _ => return Err(location.new_custom_error(())),
+    })
 }
 
 /// Parse the `size` descriptor's value grammar — CSS Paged Media Level 3
@@ -736,3 +810,6 @@ pub(crate) fn parse_page_bleed_value<'i>(
     let length = parse_length_allow_negative(input).ok_or_else(|| input.new_custom_error(()))?;
     Ok(PageBleed::Length(length))
 }
+
+#[cfg(test)]
+mod tests;

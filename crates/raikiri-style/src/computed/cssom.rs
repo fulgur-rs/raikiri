@@ -57,6 +57,7 @@ pub enum ComputedProperty {
     TextShadow,
     TextDecorationInset,
     TextDecorationColor,
+    Color,
     TextUnderlinePosition,
     TextUnderlineOffset,
     TextEmphasisPosition,
@@ -119,6 +120,7 @@ impl ComputedProperty {
         Self::TextShadow,
         Self::TextDecorationInset,
         Self::TextDecorationColor,
+        Self::Color,
         Self::TextUnderlinePosition,
         Self::TextUnderlineOffset,
         Self::TextEmphasisPosition,
@@ -185,6 +187,7 @@ impl ComputedProperty {
             "text-shadow" => Self::TextShadow,
             "text-decoration-inset" => Self::TextDecorationInset,
             "text-decoration-color" => Self::TextDecorationColor,
+            "color" => Self::Color,
             "text-underline-position" => Self::TextUnderlinePosition,
             "text-underline-offset" => Self::TextUnderlineOffset,
             "text-emphasis-position" => Self::TextEmphasisPosition,
@@ -464,6 +467,7 @@ impl ComputedProperty {
             ComputedProperty::TextUnderlineOffset => {
                 return Some(computed.text_underline_offset.to_css_string());
             }
+            ComputedProperty::Color => return Some(computed.color.to_css_string()),
             ComputedProperty::TextDecorationColor => {
                 let color = match computed.text_decoration_color {
                     crate::property::TextDecorationColor::CurrentColor => computed.color,

@@ -12,11 +12,11 @@ fn ok(rt: &mut DomRuntime, src: &str) {
 #[test]
 fn inline_style_helpers_match_the_previous_runner_semantics() {
     assert_eq!(
-        inline_style_value(Some("color: red; color: blue !important"), "color"),
+        inline_style_value(Some("color: red; color: blue !important"), "color", false),
         "blue"
     );
-    assert_eq!(inline_style_value(Some("--x: 1"), "--X"), "");
-    assert_eq!(inline_style_value(None, "color"), "");
+    assert_eq!(inline_style_value(Some("--x: 1"), "--X", false), "");
+    assert_eq!(inline_style_value(None, "color", false), "");
     assert_eq!(
         with_inline_style_property(Some("color: red; margin: 0"), "COLOR", "blue", false),
         "margin: 0; COLOR: blue;"
@@ -1116,17 +1116,20 @@ fn stylesheet_list_finds_nested_html_and_svg_style_elements() {
 fn important_is_detected_with_tokens_not_text() {
     // `! important` is still a priority, with whitespace between the tokens.
     assert_eq!(
-        inline_style_value(Some("color: red ! important"), "color"),
+        inline_style_value(Some("color: red ! important"), "color", false),
         "red"
     );
     // A trailing comment after `!important` does not hide it.
     assert_eq!(
-        inline_style_value(Some("color: red !important /* c */"), "color"),
+        inline_style_value(Some("color: red !important /* c */"), "color", false),
         "red"
     );
     // A `!` that does not start a final `!important` invalidates the
     // declaration, as in the cascade.
-    assert_eq!(inline_style_value(Some("color: red ! foo"), "color"), "");
+    assert_eq!(
+        inline_style_value(Some("color: red ! foo"), "color", false),
+        ""
+    );
     let (host, ..) = StubHost::page();
     let mut rt = DomRuntime::new(host).unwrap();
     ok(
@@ -1255,5 +1258,314 @@ fn deeply_nested_values_do_not_overflow_the_stack() {
          s.color = 'red'; var text = s.cssText; \
          s.cssText = '--y: ' + '['.repeat(20000); \
          text === 'color: red;' && s.cssText === ''",
+    );
+}
+
+#[test]
+fn page_rules_expose_style_and_margin_rule_insertion() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var styleElement = document.createElement('style'); \
+         styleElement.textContent = '@page :first { margin: 1px; @top-left { content: \"a\" } } p { color: red; }'; \
+         document.head.appendChild(styleElement); \
+         var sheet = styleElement.sheet; var pageRule = sheet.rules[0];",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "sheet === document.styleSheets[0] && sheet.rules === sheet.cssRules && \
+         Object.prototype.toString.call(pageRule) === '[object CSSPageRule]' && \
+         Object.prototype.toString.call(sheet.rules[1]) === '[object CSSStyleRule]' && \
+         sheet.rules[1].insertRule === undefined && \
+         pageRule.selectorText === ':first' && pageRule.style.margin === '1px' && \
+         document.createElement('style').sheet === null && \
+         Object.prototype.toString.call(styleElement) === '[object HTMLStyleElement]'",
+    );
+
+    rt.evaluate(
+        "pageRule.style.setProperty('margin', '50px 0 0'); \
+         pageRule.insertRule('@bottom-center { content: \"b\" }', 1); \
+         pageRule.insertRule(' @top-center { content: \"c\" } ');",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "pageRule.style.margin === '50px 0px 0px' && \
+         styleElement.textContent.includes('@top-left { content: \"a\" }') && \
+         styleElement.textContent.indexOf('@top-center') < styleElement.textContent.indexOf('@top-left') && \
+         styleElement.textContent.indexOf('@top-left') < styleElement.textContent.indexOf('@bottom-center')",
+    );
+
+    rt.evaluate("pageRule.deleteRule(1);").unwrap();
+    ok(
+        &mut rt,
+        "!styleElement.textContent.includes('@top-left') && \
+         styleElement.textContent.includes('@bottom-center') && \
+         sheet.rules[1].selectorText === 'p'",
+    );
+    ok(
+        &mut rt,
+        "(function() { try { pageRule.insertRule('p { color: red }'); return false; } \
+           catch (e) { return e.name === 'SyntaxError'; } })() && \
+         (function() { try { pageRule.insertRule('@top-left {}', 9); return false; } \
+           catch (e) { return e.name === 'IndexSizeError'; } })() && \
+         (function() { try { pageRule.deleteRule(9); return false; } \
+           catch (e) { return e.name === 'IndexSizeError'; } })()",
+    );
+}
+
+#[test]
+fn page_rule_style_reads_and_writes_page_descriptors() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var styleElement = document.createElement('style'); \
+         styleElement.textContent = '@page { size: A4; page-orientation: rotate-left; margin: 1px } p { size: A4 }'; \
+         document.head.appendChild(styleElement); \
+         var pageRule = styleElement.sheet.cssRules[0]; var styleRule = styleElement.sheet.cssRules[1];",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "pageRule.style.getPropertyValue('page-orientation') === 'rotate-left' && \
+         pageRule.style.getPropertyValue('size') === 'A4' && \
+         pageRule.style.length === 3 && \
+         pageRule.style.cssText.includes('page-orientation: rotate-left') && \
+         styleRule.style.getPropertyValue('size') === '' && styleRule.style.length === 0",
+    );
+    rt.evaluate(
+        "pageRule.style.setProperty('page-orientation', 'rotate-right'); \
+         pageRule.style.setProperty('marks', 'not-a-mark'); \
+         styleRule.style.setProperty('page-orientation', 'rotate-right');",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "pageRule.style.getPropertyValue('page-orientation') === 'rotate-right' && \
+         pageRule.style.getPropertyValue('marks') === '' && \
+         styleRule.style.getPropertyValue('page-orientation') === '' && \
+         !styleElement.textContent.includes('p { page-orientation')",
+    );
+    rt.evaluate("pageRule.style.cssText = 'bleed: 6pt; page-orientation: sideways';")
+        .unwrap();
+    ok(
+        &mut rt,
+        "pageRule.style.cssText === 'bleed: 6pt;' && pageRule.style.getPropertyPriority('bleed') === ''",
+    );
+}
+
+#[test]
+fn page_rule_selector_text_comes_from_tokens() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var styleElement = document.createElement('style'); \
+         styleElement.textContent = '@page/**/:first {} @PAGE  named:left ,  :right {} @p\\\\61ge {}'; \
+         document.head.appendChild(styleElement); var rules = styleElement.sheet.cssRules;",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "rules[0].selectorText === ':first' && rules[1].selectorText === 'named:left , :right' && \
+         Object.prototype.toString.call(rules[2]) === '[object CSSPageRule]' && rules[2].selectorText === ''",
+    );
+}
+
+#[test]
+fn rule_objects_follow_a_rule_kind_change_after_text_replacement() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var styleElement = document.createElement('style'); styleElement.textContent = 'p { color: red }'; \
+         document.head.appendChild(styleElement); var before = styleElement.sheet.cssRules[0]; \
+         var beforeTag = Object.prototype.toString.call(before); \
+         styleElement.textContent = '@page { margin: 1px }'; var after = styleElement.sheet.cssRules[0];",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "beforeTag === '[object CSSStyleRule]' && \
+         Object.prototype.toString.call(after) === '[object CSSPageRule]' && \
+         typeof after.insertRule === 'function' && after.style.margin === '1px' && \
+         styleElement.sheet.cssRules[0] === after",
+    );
+}
+
+#[test]
+fn page_rule_css_rules_lists_margin_rules_live() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var styleElement = document.createElement('style'); \
+         styleElement.textContent = '@page { margin: 1px; @TOP-LEFT { content: \"a\" } }'; \
+         document.head.appendChild(styleElement); var pageRule = styleElement.sheet.cssRules[0]; \
+         var list = pageRule.cssRules; var first = list[0];",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "list === pageRule.cssRules && list.length === 1 && \
+         Object.prototype.toString.call(list) === '[object CSSRuleList]' && \
+         Object.prototype.toString.call(first) === '[object CSSMarginRule]' && \
+         first.name === 'top-left' && first.cssText === '@TOP-LEFT { content: \"a\" }' && \
+         list.item(1) === null && list[1] === undefined",
+    );
+    rt.evaluate(
+        "pageRule.insertRule('@bottom-center { content: \"b\" }', 1); pageRule.deleteRule(0);",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "list.length === 1 && list[0].name === 'bottom-center' && first.name === 'bottom-center'",
+    );
+    rt.evaluate("styleElement.textContent = 'p {}';").unwrap();
+    ok(
+        &mut rt,
+        "list.length === 0 && first.cssText === '' && first.name === ''",
+    );
+}
+
+#[test]
+fn page_rule_margin_rules_follow_the_page_grammar() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var styleElement = document.createElement('style'); \
+         styleElement.textContent = '@page { @foo {} @top-left x {} @top-right; @top-center { content: \"a\" } }'; \
+         document.head.appendChild(styleElement); var pageRule = styleElement.sheet.cssRules[0];",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "pageRule.cssRules.length === 1 && pageRule.cssRules[0].name === 'top-center'",
+    );
+    rt.evaluate(
+        "pageRule.insertRule('@top-l\\\\65 ft {}'); pageRule.insertRule('@bottom-left/**/{}', 2);",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "pageRule.cssRules.length === 3 && pageRule.cssRules[0].name === 'top-left' && \
+         pageRule.cssRules[2].name === 'bottom-left' && \
+         (function() { try { pageRule.insertRule('@top-left x {}'); return false; } \
+           catch (e) { return e.name === 'SyntaxError'; } })()",
+    );
+    rt.evaluate(
+        "pageRule.style.setProperty('size', '50vw'); pageRule.style.setProperty('margin', '1vh');",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "pageRule.style.getPropertyValue('size') === '' && pageRule.style.getPropertyValue('margin') === ''",
+    );
+}
+
+#[test]
+fn svg_style_elements_expose_their_sheet() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var svgStyle = document.createElementNS('http://www.w3.org/2000/svg', 'style'); \
+         svgStyle.textContent = 'rect { fill: red }'; document.body.appendChild(svgStyle);",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "Object.prototype.toString.call(svgStyle) === '[object SVGStyleElement]' && \
+         svgStyle.sheet === document.styleSheets[0] && svgStyle.sheet.cssRules[0].selectorText === 'rect'",
+    );
+}
+
+#[test]
+fn style_sheets_skip_non_css_style_types_and_inserts_ignore_comments() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var plain = document.createElement('style'); plain.setAttribute('type', 'text/plain'); \
+         plain.textContent = 'p { color: red }'; document.head.appendChild(plain); \
+         var css = document.createElement('style'); css.setAttribute('type', 'TEXT/CSS'); \
+         css.textContent = '@page { margin: 1px }'; document.head.appendChild(css);",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "plain.sheet === null && document.styleSheets.length === 1 && \
+         document.styleSheets[0] === css.sheet",
+    );
+    rt.evaluate("plain.removeAttribute('type');").unwrap();
+    ok(
+        &mut rt,
+        "plain.sheet !== null && document.styleSheets.length === 2",
+    );
+    rt.evaluate(
+        "var pageRule = css.sheet.cssRules[0]; \
+         pageRule.insertRule(' /* lead */ @top-left { content: \"a\" } /* tail */ ');",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "pageRule.cssRules.length === 1 && pageRule.cssRules[0].cssText === '@top-left { content: \"a\" }' && \
+         pageRule.style.margin === '1px' && \
+         !css.textContent.includes('lead') && \
+         (function() { try { pageRule.insertRule('@top-left {} x'); return false; } \
+           catch (e) { return e.name === 'SyntaxError'; } })()",
+    );
+}
+
+#[test]
+fn page_rules_need_a_valid_page_selector() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var s = document.createElement('style'); \
+         s.textContent = '@page :bogus { margin: 1px } @page named:first { margin: 2px } \
+         @page f/**/oo { margin: 3px }'; \
+         document.head.appendChild(s);",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "Object.prototype.toString.call(s.sheet.cssRules[0]) !== '[object CSSPageRule]' && \
+         s.sheet.cssRules[0].style === undefined && \
+         Object.prototype.toString.call(s.sheet.cssRules[1]) === '[object CSSPageRule]' && \
+         s.sheet.cssRules[1].selectorText === 'named:first' && \
+         Object.prototype.toString.call(s.sheet.cssRules[2]) !== '[object CSSPageRule]'",
+    );
+}
+
+#[test]
+fn style_sheet_getter_rejects_non_style_receivers() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var st = document.createElement('style'); document.head.appendChild(st); \
+         var getter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(st), 'sheet').get; \
+         var thrown = null; try { getter.call(document.body); } catch (e) { thrown = e; }",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "thrown instanceof TypeError && getter.call(st) === st.sheet",
+    );
+}
+
+#[test]
+fn page_rule_insert_rule_closes_blocks_left_open_at_eof() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var s = document.createElement('style'); \
+         s.textContent = '@page { margin: 1px } p { color: blue }'; \
+         document.head.appendChild(s); \
+         s.sheet.cssRules[0].insertRule('@top-left { content: \"a');",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "s.sheet.cssRules.length === 2 && \
+         s.sheet.cssRules[0].cssRules.length === 1 && \
+         s.sheet.cssRules[0].cssRules[0].name === 'top-left' && \
+         s.sheet.cssRules[1].selectorText === 'p'",
     );
 }

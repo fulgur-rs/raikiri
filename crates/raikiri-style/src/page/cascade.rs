@@ -395,6 +395,9 @@ pub struct PageCascadeResult {
     marks: Option<PageMarks>,
     /// Winning `bleed` descriptor, if one of the matching rules declared it.
     bleed: Option<PageBleed>,
+    /// Winning `page-orientation` descriptor, if one of the matching rules
+    /// declared it.
+    page_orientation: Option<PageRotation>,
     /// Matching margin-box at-rules in source order.
     margin_boxes: Vec<PageMarginBoxCascadeResult>,
     margin_box_inheritance: MarginBoxInheritance,
@@ -685,6 +688,12 @@ impl PageCascadeResult {
         self.bleed
     }
 
+    /// The winning `page-orientation` descriptor for this page context, if
+    /// declared.
+    pub fn page_orientation(&self) -> Option<PageRotation> {
+        self.page_orientation
+    }
+
     /// Cascade a margin-box slot against this page's computed inheritance values.
     ///
     /// Color, background-color and font-size defaulting and variable substitution
@@ -905,6 +914,7 @@ pub fn cascade_page_with_media_context(
     let mut size_best: Option<(u8, u32, PageSpecificity, u32, u32, PageSize)> = None;
     let mut marks_best: Option<(u8, u32, PageSpecificity, u32, u32, PageMarks)> = None;
     let mut bleed_best: Option<(u8, u32, PageSpecificity, u32, u32, PageBleed)> = None;
+    let mut rotation_best: Option<(u8, u32, PageSpecificity, u32, u32, PageRotation)> = None;
     let mut margin_boxes: Vec<PageMarginBoxCascadeResult> = Vec::new();
     for rule in &rule_tree.page_rules {
         if rule
@@ -967,6 +977,22 @@ pub fn cascade_page_with_media_context(
                     .is_none_or(|existing| descriptor_beats(&candidate, existing))
                 {
                     marks_best = Some(candidate);
+                }
+            }
+            for (index, decl) in rule.page_orientation_declarations.iter().enumerate() {
+                let candidate = (
+                    cascade_rank(rule.origin, decl.important),
+                    page_layer_rank(rule, decl.important, &layers),
+                    spec,
+                    rule.source_order,
+                    index as u32,
+                    decl.value(),
+                );
+                if rotation_best
+                    .as_ref()
+                    .is_none_or(|existing| descriptor_beats(&candidate, existing))
+                {
+                    rotation_best = Some(candidate);
                 }
             }
             for (index, decl) in rule.bleed_declarations.iter().enumerate() {
@@ -1435,6 +1461,7 @@ pub fn cascade_page_with_media_context(
         marks: marks_best.map(|candidate| candidate.5),
         bleed: bleed_best
             .map(|candidate| absolutize_page_bleed(candidate.5, font_size, own_line_height, &ctx)),
+        page_orientation: rotation_best.map(|candidate| candidate.5),
         margin_boxes,
         margin_box_inheritance,
     }
