@@ -17,22 +17,22 @@ use crate::property::{
     BackgroundRepeatKeyword, BorderCollapseValue, BorderColor, BorderImageOutsetSide,
     BorderImageRepeat, BorderImageSlice, BorderImageWidthSide, BorderStyle, BoxSizing,
     BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
-    ColumnFillValue, ColumnSpanValue, ContentAlignmentValue, ContentComponent, CssColor, Direction,
-    DisplayValue, EmptyCellsValue, FilterFunction, FlexDirectionValue, FlexWrapValue, FloatValue,
-    FontFamilyKind, FontFamilyName, FontFeatureSettings, FontKerning, FontLanguageOverride,
-    FontOpticalSizing, FontPaletteValue, FontStyle, FontSynthesisValue, FontVariantCaps,
-    FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures, FontVariantNumeric,
-    FontVariantPosition, FontVariationSettings, GridAutoFlowValue, GridLineValue,
-    GridTemplateAreasValue, HangingPunctuation, HyphenateCharacter, HyphenateLimitChars, Hyphens,
-    Isolation, LineBreak, ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit,
-    OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PositionValue,
-    RubyPosition, SelfAlignmentValue, Sides, TableLayoutValue, TextAlign, TextAlignLast,
-    TextAutospace, TextCombineUpright, TextDecorationColor, TextDecorationLine,
-    TextDecorationSkipInk, TextDecorationSkipSpaces, TextDecorationStyle, TextEmphasisHEdge,
-    TextEmphasisPosition, TextEmphasisStyle, TextEmphasisVEdge, TextJustify, TextOrientation,
-    TextOverflowValue, TextSpacingTrim, TextTransform, TextUnderlinePosition, TextWrapMode,
-    TextWrapStyle, UnicodeBidi, VerticalAlign, Visibility, VisualBox, WhiteSpace,
-    WhiteSpaceCollapse, WordBreak, WordSpaceTransform, WritingMode, ZIndexValue,
+    ColumnFillValue, ColumnSpanValue, Contain, ContentAlignmentValue, ContentComponent, CssColor,
+    Direction, DisplayValue, EmptyCellsValue, FilterFunction, FlexDirectionValue, FlexWrapValue,
+    FloatValue, FontFamilyKind, FontFamilyName, FontFeatureSettings, FontKerning,
+    FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontStyle, FontSynthesisValue,
+    FontVariantCaps, FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures,
+    FontVariantNumeric, FontVariantPosition, FontVariationSettings, GridAutoFlowValue,
+    GridLineValue, GridTemplateAreasValue, HangingPunctuation, HyphenateCharacter,
+    HyphenateLimitChars, Hyphens, Isolation, LineBreak, ListStylePosition, ListStyleType,
+    MaskImage, MixBlendMode, ObjectFit, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap,
+    OverflowXY, PositionValue, RubyPosition, SelfAlignmentValue, Sides, TableLayoutValue,
+    TextAlign, TextAlignLast, TextAutospace, TextCombineUpright, TextDecorationColor,
+    TextDecorationLine, TextDecorationSkipInk, TextDecorationSkipSpaces, TextDecorationStyle,
+    TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisStyle, TextEmphasisVEdge, TextJustify,
+    TextOrientation, TextOverflowValue, TextSpacingTrim, TextTransform, TextUnderlinePosition,
+    TextWrapMode, TextWrapStyle, UnicodeBidi, VerticalAlign, Visibility, VisualBox, WhiteSpace,
+    WhiteSpaceCollapse, WillChange, WordBreak, WordSpaceTransform, WritingMode, ZIndexValue,
     empty_content_list, empty_counter_entries, empty_filter_list, empty_quotes_entries,
     empty_string_set_entries, initial_font_family,
 };
@@ -1854,6 +1854,14 @@ pub struct ComputedValues {
     /// as [`Self::isolation`] above — actual blending compositing is
     /// `raikiri-paint`'s responsibility, this field is plain data.
     pub mix_blend_mode: MixBlendMode,
+    /// `contain`. **non-inherited**, initial: [`Contain::NONE`] (CSS
+    /// Containment 2 §2 <https://www.w3.org/TR/css-contain-2/#contain-property>).
+    /// Identity pass-through from [`crate::specified::SpecifiedValues::contain`].
+    pub contain: Contain,
+    /// `will-change`. **non-inherited**, initial: [`WillChange::AUTO`] (CSS
+    /// Will Change 1 §3 <https://www.w3.org/TR/css-will-change-1/#will-change>).
+    /// Identity pass-through from [`crate::specified::SpecifiedValues::will_change`].
+    pub will_change: WillChange,
     /// `mask-image`. **non-inherited**, initial: [`MaskImage::None`] (CSS
     /// Masking Level 1 §7.1 "Image Masking: the mask-image property"
     /// <https://www.w3.org/TR/css-masking-1/#the-mask-image>). Identity
@@ -2351,6 +2359,10 @@ impl ComputedValues {
             // CSS Compositing and Blending 1 §3.4.1: initial
             // mix-blend-mode is `normal`.
             mix_blend_mode: MixBlendMode::Normal,
+            // CSS Containment 2 §2: initial contain is `none`.
+            contain: Contain::NONE,
+            // CSS Will Change 1 §3: initial will-change is `auto`.
+            will_change: WillChange::AUTO,
             // CSS Masking 1 §7.1: initial mask-image is `none`.
             mask_image: MaskImage::None,
             // CSS Masking 1 §5.1: initial clip-path is `none`.
