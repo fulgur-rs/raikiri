@@ -148,7 +148,8 @@ fn basic_pagination_pairs_are_pixel_exact_at_800x600() {
 
 /// Monolithic overflow: oversized unbreakable content overflows its page
 /// instead of fragmenting (001-004 image/viewport-sized, 006 table caption,
-/// 005/007/008 flex and grid items taller than a page, 026 overflow out of a
+/// 005/007/008 flex and grid items taller than a page, 023 a table row kept
+/// beside its repeated header, 026 overflow out of a
 /// `contain: size` box extending the page count).
 #[test]
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
@@ -168,6 +169,7 @@ fn monolithic_overflow_pairs_are_pixel_exact_at_800x600() {
         "monolithic-overflow-006-print.html",
         "monolithic-overflow-007-print.html",
         "monolithic-overflow-008-print.html",
+        "monolithic-overflow-023-print.html",
         "monolithic-overflow-026-print.html",
     ] {
         run_exact_pair(&root, "css/css-page", name, config);

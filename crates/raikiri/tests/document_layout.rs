@@ -360,8 +360,10 @@ fn layout_relayouts_until_page_geometry_converges() {
         .expect("render"),
     );
 
-    assert_eq!(result.page_count(), 4);
-    assert_eq!(result.pages().collect::<Vec<_>>().len(), 4);
+    // The first box runs onto the 240px left page, so the forced break opens
+    // the third page (`wide`); the unnamed tail changes the page type again.
+    assert_eq!(result.page_count(), 5);
+    assert_eq!(result.pages().collect::<Vec<_>>().len(), 5);
     assert_eq!(
         result.pages().collect::<Vec<_>>()[0]
             .geometry()
@@ -374,14 +376,14 @@ fn layout_relayouts_until_page_geometry_converges() {
             .geometry()
             .page_box
             .height,
-        180.0
+        240.0
     );
     assert_eq!(
         result.pages().collect::<Vec<_>>()[2]
             .geometry()
             .page_box
             .height,
-        100.0
+        180.0
     );
     assert_eq!(
         result.pages().collect::<Vec<_>>()[3]
@@ -390,7 +392,7 @@ fn layout_relayouts_until_page_geometry_converges() {
             .height,
         240.0
     );
-    assert_eq!(result.pages().collect::<Vec<_>>()[1].name(), Some("wide"));
+    assert_eq!(result.pages().collect::<Vec<_>>()[2].name(), Some("wide"));
 
     // Every emitted item must fit the resolved page-local geometry. Before the
     // schedule refresh, page 1 used the 240px item projection with a 180px
