@@ -161,6 +161,8 @@ fn api_steps(page: &Page<'_>) -> Vec<Step> {
             PaintEvent::PopOpacity => Step::PopOpacity,
             // The walker records no step for a transform.
             PaintEvent::PushTransform(_) | PaintEvent::PopTransform => continue,
+            // The walker draws a table part's outer shadows with its box.
+            PaintEvent::OuterBoxShadow(_) => continue,
             PaintEvent::Box(fragment) => {
                 let node = node_index(fragment.node());
                 if table_background_clip && !table_background_nodes.insert(node) {
@@ -321,6 +323,39 @@ fn table_part_cell_clips_stay_on_their_page() {
     assert!(per_page.iter().sum::<usize>() >= 9, "{per_page:?}");
     let plain = assert_same_order(&format!("<table><tbody>{rows}</tbody></table>"), css);
     assert!(plain.pages().all(|page| clips(&page) == 0));
+}
+
+/// The outer shadows of a separated-borders row or row group are listed
+/// once, outside the per-cell clips of its background, which would clip
+/// them away. The collapsing model ignores them (CSS Backgrounds 3 §7.1).
+#[test]
+fn separated_table_part_shadows_precede_the_cell_clips() {
+    let css = "@page{size:100px 100px;margin:0}body{margin:0}table{border-spacing:2px}td{padding:0;width:20px;height:18px}";
+    let shadows = |result: &DocumentLayout| {
+        let page = result.page(0).unwrap();
+        let events = page.paint_order();
+        let first_clip = events
+            .iter()
+            .position(|event| matches!(event, PaintEvent::PushClip(_, ClipKind::TableCell)));
+        let shadows: Vec<_> = events
+            .iter()
+            .enumerate()
+            .filter_map(|(index, event)| match event {
+                PaintEvent::OuterBoxShadow(fragment) => Some((index, fragment.node())),
+                _ => None,
+            })
+            .collect();
+        if let (Some(&(index, _)), Some(clip)) = (shadows.first(), first_clip) {
+            assert!(index < clip, "the shadow precedes the cell clips");
+        }
+        shadows.len()
+    };
+    let body = "<table><tr style='box-shadow:4px 4px red;background:blue'><td>X</td><td>Y</td></tr>\
+                <tbody style='box-shadow:inset 0 0 0 2px red'><tr><td>Z</td></tr></tbody></table>";
+    let separate = assert_same_order(body, css);
+    assert_eq!(shadows(&separate), 1);
+    let collapse = assert_same_order(body, &format!("{css}table{{border-collapse:collapse}}"));
+    assert_eq!(shadows(&collapse), 0);
 }
 
 /// The walker draws the body's box on every page, as the root of the page's

@@ -57,6 +57,12 @@ pub enum PaintEvent<'a> {
     /// the fragment's kind is `Replaced` and the same fragment follows in a
     /// [`PaintEvent::Replaced`] event.
     Box(Fragment<'a>),
+    /// The outer `box-shadow`s of a table row or row group of the separated
+    /// borders model, whose [`PaintEvent::Box`] events follow inside
+    /// [`ClipKind::TableCell`] clips. Only the shadows that are not `inset`
+    /// are painted here, once around the whole box, as no cell clip reaches
+    /// outside the border box where they show (CSS Backgrounds 3 §7.1).
+    OuterBoxShadow(Fragment<'a>),
     /// The lines of a text node.
     Text(Fragment<'a>),
     /// One paragraph line from the supplied positioned glyph runs, including
@@ -482,6 +488,15 @@ impl Document {
                                 .filter(|_| !paint_rules::is_visibility_hidden_table_part(cv))
                                 .filter(|_| paint_rules::paints_table_part_decoration(cv))
                             {
+                                // Box shadows are ignored on internal table
+                                // elements only in the collapsing borders
+                                // model (CSS Backgrounds 3 §7.1).
+                                if cv.border_collapse
+                                    == raikiri_style::property::BorderCollapseValue::Separate
+                                    && cv.box_shadow.iter().any(|shadow| !shadow.inset)
+                                {
+                                    events.push(PaintEvent::OuterBoxShadow(fragment));
+                                }
                                 let rect = fragment.paint_rect();
                                 let top = rect.y - item.rect.y + item.box_y;
                                 // The cells cover the whole part, but this
@@ -716,6 +731,7 @@ impl Document {
         for event in events {
             let mut chain = match event {
                 PaintEvent::Box(fragment)
+                | PaintEvent::OuterBoxShadow(fragment)
                 | PaintEvent::Text(fragment)
                 | PaintEvent::Replaced(fragment) => fragment.overflow_chain(),
                 PaintEvent::TextLine(line) | PaintEvent::GroupTextLine(line, _) => {
@@ -751,6 +767,7 @@ impl Document {
             }
             let clip = match event {
                 PaintEvent::Box(fragment)
+                | PaintEvent::OuterBoxShadow(fragment)
                 | PaintEvent::Text(fragment)
                 | PaintEvent::Replaced(fragment) => fragment.fragmentainer_clip(),
                 PaintEvent::TextLine(line) | PaintEvent::GroupTextLine(line, _) => {
