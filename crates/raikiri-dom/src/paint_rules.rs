@@ -249,6 +249,30 @@ pub fn pseudo_opacity_layer(cascade: &CascadeResult, id: usize) -> Option<f32> {
     .flatten()
 }
 
+/// The group opacity the `::first-line` boxes around the first line of
+/// paragraph `root` paint that line's content with, if any.
+///
+/// A `::first-line` is a fictional inline box wrapping the content of its
+/// block's first formatted line, inside the block and outside the inline
+/// elements on the line, which it splits at the line's end (CSS Pseudo 4
+/// §2.1.1). Its opacity composites that content as one group (§2.1.2, CSS
+/// Color 4 §3.3). The first line of a paragraph is also the first formatted
+/// line of each ancestor block it starts, so their `::first-line` boxes
+/// nest around the same content, and their opacities multiply. A paragraph
+/// that starts with a block child has no first line of its own.
+pub fn first_line_opacity_layer(document: &Document, root: usize) -> Option<f32> {
+    let node = document.get_node(root)?;
+    if node.kind() != NodeKind::Element || !node.is_ifc_root() {
+        return None;
+    }
+    let ifc = node.ifc.as_ref()?;
+    let lines = ifc.lines.as_ref()?;
+    if lines.lines.is_empty() || lines.block_line_starts.iter().any(|&(_, line)| line == 0) {
+        return None;
+    }
+    ifc.first_line_opacity
+}
+
 /// The stack level a pseudo-element group of [`pseudo_opacity_layer`]
 /// composites at among the other groups of its paragraph: the `z-index` of a
 /// relatively positioned pseudo-element, and 0 otherwise, the level of the

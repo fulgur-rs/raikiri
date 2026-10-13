@@ -115,18 +115,39 @@ pub(crate) fn draw_ifc_lines_with_resources(
     let root_node = document
         .ifc_layout_node(root_id)
         .expect("positioned lines require an existing IFC root");
-    // One set of groups serves every line, so an element or pseudo-element
-    // split over lines composites its complete paint at once (CSS Color 4
-    // §3.3).
-    let all_pieces: Vec<_> = pieces_by_line.iter().flatten().cloned().collect();
     let paragraph = typographic::Paragraph {
         document,
         cascade,
         root_id,
     };
-    let mut paint = typographic::TypographicPaint::new(paragraph, root_node, &all_pieces);
+    // A translucent `::first-line` composites the paint of the first line
+    // as one group. It splits the inline elements on that line from their
+    // other lines (CSS Pseudo 4 §2.1.1), so the first line has groups of its
+    // own.
+    let first_line_opacity = raikiri_dom::paint_rules::first_line_opacity_layer(document, root_id);
+    let mut first_line = first_line_opacity.map(|opacity| {
+        let pieces = pieces_by_line.first().map_or(&[][..], Vec::as_slice);
+        (
+            typographic::TypographicPaint::new(paragraph, root_node, pieces),
+            opacity,
+        )
+    });
+    // One set of groups serves every other line, so an element or
+    // pseudo-element split over lines composites its complete paint at once
+    // (CSS Color 4 §3.3).
+    let rest_pieces: Vec<_> = pieces_by_line
+        .iter()
+        .skip(usize::from(first_line.is_some()))
+        .flatten()
+        .cloned()
+        .collect();
+    let mut rest = typographic::TypographicPaint::new(paragraph, root_node, &rest_pieces);
     for positioned_line in positioned.lines() {
         let line_index = positioned_line.index;
+        let paint = match first_line.as_mut() {
+            Some((first, _)) if line_index == 0 => first,
+            _ => &mut rest,
+        };
         let line = positioned_line.line;
         let (column_x, column_y) = positioned_line.offset;
         let position = IfcPosition {
@@ -265,7 +286,7 @@ pub(crate) fn draw_ifc_lines_with_resources(
         }
         if !vertical && let Some(hit_layout) = hit_layout.as_ref() {
             draw_custom_highlights(
-                &mut paint,
+                paint,
                 paragraph,
                 line_index,
                 line,
@@ -436,7 +457,7 @@ pub(crate) fn draw_ifc_lines_with_resources(
             }
         }
     }
-    paint.finish(
+    rest.finish(
         scene,
         Rect::new(
             0.0,
@@ -445,6 +466,7 @@ pub(crate) fn draw_ifc_lines_with_resources(
             f64::from(page_box.height.max(0.0)),
         ),
         paint_transform,
+        first_line,
     );
 }
 

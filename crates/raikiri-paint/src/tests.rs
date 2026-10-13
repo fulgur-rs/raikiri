@@ -2760,3 +2760,78 @@ fn custom_highlight_in_a_translucent_inline_element_paints_in_its_group() {
         ["fill", "glyphs 1", "push 0.5", "fill", "glyphs 2", "pop"]
     );
 }
+
+/// A translucent `::first-line` composites the paint of the first line as
+/// one group, after the paragraph's other lines.
+#[test]
+fn translucent_first_line_is_one_group() {
+    let scene = painted_html(
+        br#"<html><head><style>p::first-line{opacity:.5}</style></head><body><p>First<br>Second</p></body></html>"#,
+    );
+    assert_eq!(
+        command_kinds(&scene),
+        [
+            "fill", "glyphs 2", "glyphs 4", "push 0.5", "glyphs 5", "pop"
+        ]
+    );
+}
+
+/// The `::first-line` box splits the inline elements on its line: their
+/// first-line part is a group of its own inside the line's group, which
+/// comes first in tree order.
+#[test]
+fn first_line_splits_the_groups_of_inline_elements() {
+    let scene = painted_html(
+        br#"<html><head><style>p::first-line{opacity:.5}</style></head><body><p>A<span style="opacity:.25;background:red">B<br>C</span>D</p></body></html>"#,
+    );
+    assert_eq!(
+        command_kinds(&scene),
+        [
+            "fill",
+            "glyphs 1",
+            "push 0.5",
+            "glyphs 1",
+            "push 0.25",
+            "fill",
+            "clip",
+            "pop",
+            "glyphs 1",
+            "pop",
+            "pop",
+            "push 0.25",
+            "fill",
+            "clip",
+            "pop",
+            "glyphs 1",
+            "pop"
+        ]
+    );
+}
+
+/// The first line of a paragraph is also the first formatted line of the
+/// blocks it starts, whose `::first-line` boxes nest around it; a block
+/// after other content of its parent starts no line of the parent's.
+#[test]
+fn first_line_of_ancestor_blocks() {
+    let nested = painted_html(
+        br#"<html><head><style>div::first-line{opacity:.5} p::first-line{opacity:.5}</style></head><body><div><p>A<br>B</p></div></body></html>"#,
+    );
+    assert_eq!(
+        command_kinds(&nested),
+        ["fill", "glyphs 1", "push 0.25", "glyphs 1", "pop"]
+    );
+    let after_text = painted_html(
+        br#"<html><head><style>div::first-line{opacity:.5}</style></head><body><div>A<p>BB</p></div></body></html>"#,
+    );
+    assert_eq!(
+        command_kinds(&after_text),
+        ["fill", "push 0.5", "glyphs 1", "pop", "glyphs 2"]
+    );
+    let after_block = painted_html(
+        br#"<html><head><style>div::first-line{opacity:.5}</style></head><body><div><p>A</p>BB</div></body></html>"#,
+    );
+    assert_eq!(
+        command_kinds(&after_block),
+        ["fill", "glyphs 2", "push 0.5", "glyphs 1", "pop"]
+    );
+}

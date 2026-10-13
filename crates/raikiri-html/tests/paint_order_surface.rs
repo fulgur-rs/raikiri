@@ -566,3 +566,161 @@ fn negative_opacity_groups_paint_below_anonymous_paragraph_text() {
         ]
     );
 }
+
+/// Like `content_order`, with each group's opacity and each text line's
+/// index: `push <alpha>`, `text <line>` and `text <id> <line>`.
+fn line_order(body: &str, style: &str) -> Vec<String> {
+    let result = lay_out_with_font(body, &format!("p {{margin:0}} {style}"));
+    let page = result.page(0).unwrap();
+    let dom = page.dom();
+    let runs = page.text_runs();
+    let mut order: Vec<String> = Vec::new();
+    for event in page.paint_order_for_text_runs(&runs) {
+        match event {
+            PaintEvent::PushOpacity(alpha) => order.push(format!("push {alpha}")),
+            PaintEvent::PopOpacity => order.push("pop".into()),
+            PaintEvent::Box(fragment) => {
+                if let Some(name) = dom.attr(fragment.node(), "id") {
+                    order.push(format!("box {name}"));
+                }
+            }
+            PaintEvent::GeneratedBox(generated) => {
+                order.push(format!("generated {}", generated.line.index));
+            }
+            PaintEvent::TextLine(line) => order.push(format!("text {}", line.index)),
+            PaintEvent::GroupTextLine(line, group) => {
+                order.push(format!(
+                    "text {} {}",
+                    dom.attr(group, "id").unwrap_or("pseudo"),
+                    line.index
+                ));
+            }
+            _ => {}
+        }
+    }
+    order
+}
+
+/// A translucent `::first-line` composites the first line's content as one
+/// group, listed after the paragraph's other lines, and splits the groups
+/// of the inline elements on it.
+#[test]
+fn translucent_first_line_lists_the_first_line_in_a_group() {
+    assert_eq!(
+        line_order("<p id=p>A<br>B</p>", "#p::first-line {opacity:.5}"),
+        ["box p", "text 1", "push 0.5", "text 0", "pop"]
+    );
+    assert_eq!(
+        line_order(
+            "<p id=p>A<span id=s>B<br>C</span><i id=i>D</i></p>",
+            "#p::first-line {opacity:.5} #s, #i {opacity:.25;background:red}",
+        ),
+        [
+            "box p",
+            "push 0.5",
+            "text 0",
+            "push 0.25",
+            "text s 0",
+            "pop",
+            "pop",
+            "push 0.25",
+            "box s",
+            "text s 1",
+            "pop",
+            "push 0.25",
+            "box i",
+            "text i 1",
+            "pop"
+        ]
+    );
+}
+
+/// A `::before` on the first line is inside the `::first-line` group, with
+/// its decoration.
+#[test]
+fn translucent_first_line_holds_generated_content() {
+    assert_eq!(
+        line_order(
+            "<p id=p>A<br>B</p>",
+            "#p::first-line {opacity:.5} #p::before {content:'X';background:red}",
+        ),
+        [
+            "box p",
+            "text 1",
+            "push 0.5",
+            "generated 0",
+            "text 0",
+            "pop"
+        ]
+    );
+}
+
+/// Groups only on the first line are listed in the `::first-line` group
+/// alone, nested groups included, and translucent pseudo-elements on the
+/// first line too.
+#[test]
+fn translucent_first_line_holds_the_groups_on_its_line() {
+    assert_eq!(
+        line_order(
+            "<p id=p><b id=b>A<i id=i>B</i></b><br>C</p>",
+            "#p::first-line {opacity:.5} #b, #i {opacity:.25}",
+        ),
+        [
+            "box p",
+            "text 1",
+            "push 0.5",
+            "push 0.25",
+            "box b",
+            "text b 0",
+            "push 0.25",
+            "box i",
+            "text i 0",
+            "pop",
+            "pop",
+            "pop"
+        ]
+    );
+    assert_eq!(
+        line_order(
+            "<p id=p>A<br>B</p>",
+            "#p::first-line {opacity:.5} #p::before {content:'X';opacity:.25;background:red}",
+        ),
+        [
+            "box p",
+            "text 1",
+            "push 0.5",
+            "text 0",
+            "push 0.25",
+            "generated 0",
+            "text pseudo 0",
+            "pop",
+            "pop"
+        ]
+    );
+}
+
+/// A group whose only content outside the first line is a box laid out
+/// beside the lines, such as a float, is listed with the other lines.
+#[test]
+fn translucent_first_line_leaves_floats_to_the_other_lines() {
+    assert_eq!(
+        line_order(
+            "<p id=p><b id=b>A<i id=i></i></b><br>C</p>",
+            "#p::first-line {opacity:.5} #b {opacity:.25} \
+             #i {float:left;width:5px;height:5px;background:red}",
+        ),
+        [
+            "box p",
+            "text 1",
+            "push 0.5",
+            "push 0.25",
+            "box b",
+            "text b 0",
+            "pop",
+            "pop",
+            "push 0.25",
+            "box i",
+            "pop"
+        ]
+    );
+}
