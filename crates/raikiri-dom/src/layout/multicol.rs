@@ -1,5 +1,6 @@
 mod break_flow;
 mod constrained_chain;
+mod lineless;
 mod paged_spanning;
 mod paragraph_group;
 mod spanning;
@@ -85,6 +86,16 @@ pub(crate) fn compute_multicol_layout(
             || multicol_has_direct_break_flow(tree, index))
         && style.horizontal
         && !multicol_has_out_of_flow_descendant(tree, index);
+    // Children that hold no lines are sliced at the column edges. Only an
+    // outermost container takes this path; a nested one is fragmented by its
+    // outer context as well.
+    let lineless_children = (inputs.run_mode == RunMode::PerformLayout
+        && !span_scope
+        && style.horizontal
+        && tree.fragmentation_stack.is_empty())
+    .then(|| lineless::supported(tree, index))
+    .flatten();
+    let custom_scope = custom_scope && lineless_children.is_none();
     let stack_depth = tree.fragmentation_stack.len();
     tree.fragmentation_stack.push(context);
     let mut output = crate::taffy_impl::block_layout(tree, node_id, inputs, block_ctx);
@@ -145,10 +156,12 @@ pub(crate) fn compute_multicol_layout(
             .fold(0.0_f32, f32::max);
         output.size.height = output.size.height.min(min_child_height);
     }
-    let break_flow_scope = !span_scope && break_flow::supports(tree, index, context);
+    let break_flow_scope =
+        !span_scope && lineless_children.is_none() && break_flow::supports(tree, index, context);
     let constrained_chain = (inputs.run_mode == RunMode::PerformLayout
         && !custom_scope
         && !break_flow_scope
+        && lineless_children.is_none()
         && available_height.is_some_and(|height| height > 0.0)
         && style.horizontal
         && !multicol_has_out_of_flow_descendant(tree, index))
@@ -160,11 +173,16 @@ pub(crate) fn compute_multicol_layout(
     let plain_block_scope = inputs.run_mode == RunMode::PerformLayout
         && !custom_scope
         && !break_flow_scope
+        && lineless_children.is_none()
         && available_height.is_some_and(|height| height > 0.0)
         && style.horizontal
         && !multicol_has_out_of_flow_descendant(tree, index)
         && multicol_has_plain_paragraph_chain(tree, index);
-    if (custom_scope || break_flow_scope || plain_block_scope || constrained_chain.is_some())
+    if (custom_scope
+        || break_flow_scope
+        || plain_block_scope
+        || constrained_chain.is_some()
+        || lineless_children.is_some())
         && inputs.run_mode == RunMode::PerformLayout
     {
         // Taffy's input width is normally already the content width for this
@@ -188,7 +206,93 @@ pub(crate) fn compute_multicol_layout(
         };
         let block_end_inset = multicol_resolve_inset(tree, css.padding.bottom, basis)
             + multicol_resolve_inset(tree, css.border.bottom, basis);
-        let used_height = if let Some(chain) = constrained_chain {
+        // The authored minimum border-box height of the container.
+        let minimum = multicol_definite_dimension(
+            tree,
+            tree.nodes[index].style.min_size.height.into(),
+            inputs.parent_size.height,
+        )
+        .map_or(0.0, |height| {
+            let css = &tree.nodes[index].style;
+            if css.box_sizing == TaffyBoxSizing::BorderBox {
+                height
+            } else {
+                let basis = parent_width.unwrap_or(output.size.width).max(0.0);
+                height
+                    + multicol_resolve_inset(tree, css.padding.top, basis)
+                    + multicol_resolve_inset(tree, css.padding.bottom, basis)
+                    + multicol_resolve_inset(tree, css.border.top, basis)
+                    + multicol_resolve_inset(tree, css.border.bottom, basis)
+            }
+        });
+        // A row flex container or a grid container stretches an auto-height
+        // item to its line or area, a column flex container grows or bases
+        // it on its flex properties, and an absolutely positioned box with
+        // both block insets fills its containing block; the columns then
+        // take that height. Other known heights come from the item's own
+        // content and are rebalanced here.
+        let css = &tree.nodes[index].style;
+        let positioned = css.position == TaffyPosition::Absolute;
+        let inset_height = positioned && !css.inset.top.is_auto() && !css.inset.bottom.is_auto();
+        // The layout mode of the container that places this box in flow.
+        let placement = tree.parent_of(index).filter(|_| !positioned).map(|parent| {
+            let container = &tree.nodes[parent].style;
+            let item = &tree.nodes[index].style;
+            let stretched = matches!(
+                item.align_self.or(container.align_items),
+                None | Some(taffy::AlignItems::STRETCH)
+            );
+            match container.display {
+                Display::Flex => match container.flex_direction {
+                    taffy::FlexDirection::Row | taffy::FlexDirection::RowReverse => {
+                        FlowPlacement::Stretched(stretched)
+                    }
+                    taffy::FlexDirection::Column | taffy::FlexDirection::ColumnReverse => {
+                        FlowPlacement::ColumnFlex {
+                            flexed: item.flex_grow > 0.0 || item.flex_basis != Dimension::auto(),
+                        }
+                    }
+                },
+                Display::Grid => FlowPlacement::Stretched(stretched),
+                _ => FlowPlacement::Stretched(false),
+            }
+        });
+        let stretched_height = inputs.known_dimensions.height.is_some()
+            && (inset_height
+                || matches!(
+                    placement,
+                    Some(
+                        FlowPlacement::Stretched(true) | FlowPlacement::ColumnFlex { flexed: true }
+                    )
+                ));
+        let lineless_definite = available_height.is_some() || stretched_height;
+        // An auto-basis item of a column flex container that does not grow
+        // keeps its content height unless flexing shrinks it, so its known
+        // height bounds the balanced columns like a maximum height.
+        let flexed_maximum = inputs
+            .known_dimensions
+            .height
+            .filter(|_| matches!(placement, Some(FlowPlacement::ColumnFlex { flexed: false })))
+            .map(|height| (height - content_origin.y - block_end_inset).max(0.0));
+        let lineless_maximum = match (fragmentainer_height, flexed_maximum) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        let used_height = if let Some(children) = &lineless_children {
+            lineless::layout(
+                tree,
+                index,
+                children,
+                resolved,
+                output.size,
+                content_origin,
+                block_end_inset,
+                minimum,
+                lineless_definite,
+                lineless_maximum,
+            )
+            .unwrap_or(output.size.height)
+        } else if let Some(chain) = constrained_chain {
             constrained_chain::layout(tree, index, &chain, resolved, output.size, content_origin)
                 .unwrap_or(output.size.height)
         } else if break_flow_scope {
@@ -204,25 +308,9 @@ pub(crate) fn compute_multicol_layout(
                 block_end_inset,
             )
         };
-        if fragmentainer_height.is_none() {
-            let minimum = multicol_definite_dimension(
-                tree,
-                tree.nodes[index].style.min_size.height.into(),
-                inputs.parent_size.height,
-            )
-            .map_or(0.0, |height| {
-                let css = &tree.nodes[index].style;
-                if css.box_sizing == TaffyBoxSizing::BorderBox {
-                    height
-                } else {
-                    let basis = parent_width.unwrap_or(output.size.width).max(0.0);
-                    height
-                        + multicol_resolve_inset(tree, css.padding.top, basis)
-                        + multicol_resolve_inset(tree, css.padding.bottom, basis)
-                        + multicol_resolve_inset(tree, css.border.top, basis)
-                        + multicol_resolve_inset(tree, css.border.bottom, basis)
-                }
-            });
+        // Balanced columns size an auto-height container even under a
+        // maximum height, which only bounds the balanced columns.
+        if fragmentainer_height.is_none() || (lineless_children.is_some() && !lineless_definite) {
             output.size.height = used_height.max(minimum);
             for fragment in &mut tree.fragment_tree.fragments {
                 if fragment.node_id == index && fragment.parent.is_none() {
@@ -235,6 +323,16 @@ pub(crate) fn compute_multicol_layout(
     // future child strategy starts pushing a nested context of its own.
     tree.fragmentation_stack.truncate(stack_depth);
     output
+}
+
+/// How the parent of an in-flow multicol container sizes its block axis.
+#[derive(Clone, Copy)]
+enum FlowPlacement {
+    /// A row flex line or a grid area; `true` when the item stretches to it.
+    Stretched(bool),
+    /// A column flex container; `flexed` when the item grows or has a
+    /// non-auto flex basis.
+    ColumnFlex { flexed: bool },
 }
 
 fn multicol_max_fragmentainer_height(

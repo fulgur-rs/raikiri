@@ -365,15 +365,18 @@ fn collect(
 }
 
 fn reserve_measurement_work(tree: &mut Document, root: usize) -> bool {
-    let available = tree
-        .fragment_tree
-        .limit
-        .saturating_sub(tree.fragment_tree.fragments.len())
-        .min(
-            tree.fragment_tree
-                .limit
-                .saturating_sub(tree.fragment_tree.break_flow_work_used),
-        );
+    // The remaining fragment capacity also bounds measurement, unless the
+    // document is large enough that its work allowance outgrows the cap.
+    let work_limit = tree.fragment_tree.work_limit(tree.nodes.len());
+    let work = work_limit.saturating_sub(tree.fragment_tree.break_flow_work_used);
+    let available = if work_limit > tree.fragment_tree.limit {
+        work
+    } else {
+        tree.fragment_tree
+            .limit
+            .saturating_sub(tree.fragment_tree.fragments.len())
+            .min(work)
+    };
     let mut remaining = available;
     // Store one child cursor per ancestor, never an entire fanout. Each
     // nonatomic collection ancestor remeasures its subtree. Taffy's filtered

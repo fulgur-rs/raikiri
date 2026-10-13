@@ -200,6 +200,12 @@ impl LayoutFragment {
 // break-flow measurement work before paint construction.
 const MAX_LAYOUT_FRAGMENTS: usize = 65_536;
 
+// Estimated multicol work each document node adds to the default work
+// budget. The column strategies cost a bounded amount per node, so a budget
+// proportional to the document still rejects superlinear work while long
+// documents with many column containers complete.
+const LAYOUT_WORK_PER_NODE: usize = 32;
+
 /// Per-layout-pass fragment storage.
 #[derive(Clone, Debug)]
 pub(crate) struct FragmentTree {
@@ -241,6 +247,18 @@ impl FragmentTree {
         self.break_tokens.clear();
         self.break_flow_work_used = 0;
         self.limit_exceeded = false;
+    }
+
+    /// The budget for estimated multicol measurement and projection work in a
+    /// document of `node_count` nodes: the fragment cap, or a fixed amount per
+    /// node when that is larger. A cap lowered below the default bounds the
+    /// work as given.
+    pub(crate) fn work_limit(&self, node_count: usize) -> usize {
+        if self.limit < MAX_LAYOUT_FRAGMENTS {
+            return self.limit;
+        }
+        self.limit
+            .max(node_count.saturating_mul(LAYOUT_WORK_PER_NODE))
     }
 
     pub(crate) fn try_push(&mut self, fragment: LayoutFragment) -> Option<usize> {

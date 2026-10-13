@@ -1420,3 +1420,21 @@ fn review_full_width_float_preserves_vertically_displaced_text_lines() {
         assert_eq!(lines.line_top(0), 40.0, "edge={edge:?}");
     }
 }
+
+#[test]
+fn measurement_work_in_a_large_document_does_not_need_free_fragment_slots() {
+    // Enough nodes that the work allowance outgrows the fragment cap.
+    let (mut doc, root, _) = fanout_flow(3000, false);
+    assert!(doc.fragment_tree.work_limit(doc.nodes.len()) > doc.fragment_tree.limit);
+    let rect = FragmentRect {
+        x: 0.0,
+        y: 0.0,
+        width: 0.0,
+        height: 0.0,
+    };
+    let filler = fragment(root, None, 0, rect);
+    let limit = doc.fragment_tree.limit;
+    doc.fragment_tree.fragments = vec![filler; limit];
+    assert!(reserve_measurement_work(&mut doc, root));
+    assert!(!doc.fragment_tree.limit_exceeded);
+}

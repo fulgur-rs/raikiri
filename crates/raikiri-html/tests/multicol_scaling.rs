@@ -75,6 +75,17 @@ fn many_paged_containers_with_spanners_stay_within_the_work_budget() {
     assert_eq!(pages, 46);
 }
 
+// The work budget grows with the document. Linear work for many column
+// containers, or for a long ruled one, must not exhaust a budget sized for a
+// short document.
+#[test]
+fn long_documents_with_columns_stay_within_the_work_budget() {
+    let (page, css, body) = case("owners", 1000);
+    assert_eq!(lay_out(&page, &css, &body).1, 151);
+    let (page, css, body) = case("ruled", 6000);
+    assert_eq!(lay_out(&page, &css, &body).1, 76);
+}
+
 fn case(kind: &str, n: usize) -> (String, String, String) {
     match kind {
         // One single-line paragraph per column.
