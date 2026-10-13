@@ -226,11 +226,17 @@ fn build_page_scene_is_empty_for_a_hidden_root() {
         network: None,
         base_url: None,
     };
-    let hidden = parse(&b"<html style='display:none'><p>Hi</p>"[..], &opts).expect("parse Ok");
+    let hidden = parse(
+        &b"<html style='display:none'><style>@page { @top-left { content: \"A\" } }</style><p>Hi</p>"[..],
+        &opts,
+    )
+    .expect("parse Ok");
     let cascade = build_cascaded(&hidden).expect("the cascade succeeds");
+    assert_eq!(cascade.page.margin_boxes().len(), 1);
     let scene = build_page_scene(&dom, &cascade, PageBox::A4);
     assert!(scene.node_ids.is_empty());
     assert!(scene.fragments.is_empty());
+    assert!(scene.margin_boxes.is_empty());
 }
 
 /// Check that build_page_scene populates `drawables` with Element node →

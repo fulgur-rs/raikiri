@@ -1783,6 +1783,28 @@ fn pipeline_clears_a_named_page_after_a_non_rendered_element() {
 }
 
 #[test]
+fn pipeline_clears_a_named_page_after_preserved_white_space() {
+    // Pagination takes no page value from white space, even preserved, so
+    // the parent starts on page `b` with its named child. The parent then
+    // starts the new page clear of the float before it, and its white space
+    // and child go to that page together.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div class='f'></div>\
+         <div style='white-space:pre'>   <div style='page:b; display:flow-root; height:50px'>b</div></div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 2);
+    let (document, _) = out.layout_for_page(1);
+    let block = document
+        .page_fragments(1)
+        .find(|fragment| fragment.rect().height == 50.0)
+        .expect("the block is on the second page");
+    assert_eq!(block.rect().width, 400.0);
+}
+
+#[test]
 fn pipeline_ignores_running_elements_between_boxes_on_one_named_page() {
     // A running element generates no box where it stands, so the boxes on
     // page `b` around it share one page and the second stays beside the

@@ -468,7 +468,7 @@ pub fn build_page_scene_for_page_named(
     let mut drawables = PageDrawables::default();
 
     // A root with `display: none` generates no boxes, whatever an earlier
-    // layout left on its descendants.
+    // layout left on its descendants, and prints blank paper.
     let root_generates_box =
         cascade.root_element_computed().display != raikiri_style::property::DisplayValue::None;
     if let Some(body_idx) = body_arena_idx.filter(|_| root_generates_box) {
@@ -661,7 +661,12 @@ pub fn build_page_scene_for_page_named(
             margins.left + insets.left + body_left_extra,
             margins.top + insets.top + body_top_extra,
         ),
-        margin_boxes: cascade.page.margin_boxes().to_vec(),
+        // Nor does it draw the page's margin boxes.
+        margin_boxes: if root_generates_box {
+            cascade.page.margin_boxes().to_vec()
+        } else {
+            Vec::new()
+        },
         content_origin_y,
     }
 }
