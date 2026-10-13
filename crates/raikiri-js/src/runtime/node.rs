@@ -162,12 +162,18 @@ fn set_text_content(this: &JsValue, args: &[JsValue], context: &mut Context) -> 
                 guard_node_budget(context)?;
             }
             let result = with_state(context, |s| {
+                let removed = s
+                    .host
+                    .document()
+                    .get_node(index)
+                    .map(|n| n.children.clone())
+                    .unwrap_or_default();
                 let result = s
                     .host
                     .document_mut()
                     .set_element_text_content(index, &value);
                 if result.is_ok() {
-                    super::stylesheet::note_child_list_change(s, index);
+                    super::stylesheet::note_child_list_change(s, index, &removed);
                 }
                 result
             })?;
@@ -430,10 +436,16 @@ fn set_inner_html(this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
         return Err(super::event_loop::abort_error(reason));
     }
     with_state(context, |s| {
+        let removed = s
+            .host
+            .document()
+            .get_node(index)
+            .map(|n| n.children.clone())
+            .unwrap_or_default();
         s.host
             .document_mut()
             .replace_children_from(index, &fragment, root);
-        super::stylesheet::note_child_list_change(s, index);
+        super::stylesheet::note_child_list_change(s, index, &removed);
     })?;
     mark_dirty(context)?;
     super::dispatch::sync_event_handlers_in_subtree(context, index)?;

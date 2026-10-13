@@ -2036,3 +2036,52 @@ fn inserting_empty_fragments_keeps_rule_objects_attached() {
     .unwrap();
     ok(&mut rt, "styleElement.sheet.cssRules[0] !== rule");
 }
+
+#[test]
+fn page_rule_arguments_that_replace_the_sheet_throw_instead_of_splicing() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var styleElement = document.createElement('style'); \
+         styleElement.textContent = '@page { @top-left { color: red } }'; \
+         document.head.appendChild(styleElement); var page = styleElement.sheet.cssRules[0]; \
+         var insertError = null; var deleteError = null; \
+         try { page.insertRule({ toString() { styleElement.textContent = ''; \
+             return '@top-right { color: blue }'; } }); } catch (e) { insertError = e; } \
+         styleElement.textContent = '@page { @top-left { color: red } }'; \
+         page = styleElement.sheet.cssRules[0]; \
+         try { page.deleteRule({ valueOf() { styleElement.textContent = ''; return 0; } }); } \
+         catch (e) { deleteError = e; }",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "insertError instanceof TypeError && deleteError instanceof TypeError && \
+         styleElement.textContent === ''",
+    );
+}
+
+#[test]
+fn rule_objects_are_detached_when_the_style_element_is_moved() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var styleElement = document.createElement('style'); \
+         styleElement.textContent = 'p { color: red }'; \
+         document.head.appendChild(styleElement); var rule = styleElement.sheet.cssRules[0]; \
+         document.head.appendChild(document.createElement('meta'));",
+    )
+    .unwrap();
+    ok(&mut rt, "styleElement.sheet.cssRules[0] === rule");
+    rt.evaluate("styleElement.remove(); document.head.append(styleElement);")
+        .unwrap();
+    ok(&mut rt, "styleElement.sheet.cssRules[0] !== rule");
+    rt.evaluate(
+        "rule = styleElement.sheet.cssRules[0]; var container = document.createElement('div'); \
+         document.body.appendChild(container); container.appendChild(styleElement); \
+         rule = styleElement.sheet.cssRules[0]; \
+         document.body.removeChild(container); document.body.appendChild(container);",
+    )
+    .unwrap();
+    ok(&mut rt, "styleElement.sheet.cssRules[0] !== rule");
+}

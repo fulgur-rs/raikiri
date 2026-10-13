@@ -391,27 +391,57 @@ pub(crate) struct SheetVersion {
 /// content change).
 pub(crate) fn note_character_data_change(state: &mut State, node: usize) {
     if let Some(parent) = state.host.document().parent_of(node) {
-        note_child_list_change(state, parent);
+        note_child_list_change(state, parent, &[]);
     }
 }
 
 /// Notes a change to the children of `parent` (an insertion, removal, or
-/// replacement, even one that leaves the same nodes behind). When `parent`
-/// is a style element whose sheet the CSSOM has handed out objects for,
-/// that sheet was replaced (HTML "update a style block").
-pub(crate) fn note_child_list_change(state: &mut State, parent: usize) {
-    if let Some(version) = state.css_sheet_versions.get_mut(&parent) {
-        version.stale = true;
+/// replacement, even one that leaves the same nodes behind) that inserted
+/// or removed the subtrees rooted at `moved`. The CSSOM objects handed out
+/// for a sheet are detached when that sheet is replaced: when `parent` is
+/// its style element (HTML "update a style block"), and when the style
+/// element itself is inside a moved subtree, since removing it from its
+/// parent removes its sheet and inserting it creates a new one.
+pub(crate) fn note_child_list_change(state: &mut State, parent: usize, moved: &[usize]) {
+    let document = state.host.document();
+    let replaced: Vec<usize> = state
+        .css_sheet_versions
+        .keys()
+        .copied()
+        .filter(|&style_element| {
+            style_element == parent
+                || moved
+                    .iter()
+                    .any(|&root| is_inclusive_ancestor(document, root, style_element))
+        })
+        .collect();
+    for style_element in replaced {
+        if let Some(version) = state.css_sheet_versions.get_mut(&style_element) {
+            version.stale = true;
+        }
     }
 }
 
-/// Whether inserting `node` adds any children. Inserting an empty
-/// `DocumentFragment` returns before the children changed steps run (DOM
-/// "insert", step 3), so it leaves the sheet in place.
-pub(crate) fn inserts_nodes(document: &Document, node: usize) -> bool {
-    document
-        .get_node(node)
-        .is_none_or(|n| !(matches!(n.kind(), NodeKind::DocumentFragment) && n.children.is_empty()))
+fn is_inclusive_ancestor(document: &Document, ancestor: usize, node: usize) -> bool {
+    let mut current = Some(node);
+    while let Some(index) = current {
+        if index == ancestor {
+            return true;
+        }
+        current = document.parent_of(index);
+    }
+    false
+}
+
+/// The nodes inserting `node` adds as children: a `DocumentFragment`'s
+/// children, or `node` itself. Inserting an empty fragment returns before
+/// the children changed steps run (DOM "insert", step 3), so it leaves the
+/// sheet in place.
+pub(crate) fn inserted_nodes(document: &Document, node: usize) -> Vec<usize> {
+    match document.get_node(node) {
+        Some(n) if matches!(n.kind(), NodeKind::DocumentFragment) => n.children.clone(),
+        _ => vec![node],
+    }
 }
 
 /// The style element's child node indices. Replacing its contents (a
@@ -1162,16 +1192,19 @@ fn page_rule_insert_rule(
     args: &[JsValue],
     context: &mut Context,
 ) -> JsResult<JsValue> {
-    let PageRuleParts {
-        slot,
-        body,
-        margins,
-    } = page_rule_parts(this, context)?;
+    css_rule_data(this)?;
+    // Converting the arguments can run script that rewrites the sheet, so
+    // the rule is located only afterwards.
     let rule = dom_string(args, 0, context)?;
     let index = match args.get(1) {
         Some(value) if !value.is_undefined() => value.to_u32(context)? as usize,
         _ => 0,
     };
+    let PageRuleParts {
+        slot,
+        body,
+        margins,
+    } = page_rule_parts(this, context)?;
     if index > margins.len() {
         return Err(throw_dom_exception(
             context,
@@ -1207,12 +1240,15 @@ fn page_rule_delete_rule(
     args: &[JsValue],
     context: &mut Context,
 ) -> JsResult<JsValue> {
+    css_rule_data(this)?;
+    // Converting the index can run script that rewrites the sheet, so the
+    // rule is located only afterwards.
+    let index = arg_unsigned_long(args, 0, context)?;
     let PageRuleParts {
         slot,
         body,
         margins,
     } = page_rule_parts(this, context)?;
-    let index = arg_unsigned_long(args, 0, context)?;
     let Some(range) = margins.get(index).cloned() else {
         return Err(throw_dom_exception(
             context,
