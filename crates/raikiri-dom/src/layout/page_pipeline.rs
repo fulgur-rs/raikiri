@@ -651,6 +651,9 @@ fn layout_single_page_with_table_projection(
     apply_computed_to_style(document, cascade)?;
     if paged {
         clear_floats_at_forced_breaks(document, cascade);
+    } else if !document.forced_break_clearance.is_empty() {
+        document.forced_break_clearance.clear();
+        document.layout_dirty = true;
     }
     document.table_objects.project_explicit_parts = project_explicit_table_parts;
 
@@ -2494,8 +2497,24 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
             None => break name,
         }
     };
+    // Whether a forced break follows the box: its own `break-after`, or that
+    // of its last in-flow descendant, which pagination carries out to the
+    // next box.
+    let ends_with_forced_break = |document: &Document, mut id: usize| loop {
+        if page_break_is_forced(document, id, cascade.computed[id].break_after) {
+            break true;
+        }
+        if is_monolithic_for_pagination(document, cascade, id) {
+            break false;
+        }
+        match child_boxes(document, id).last() {
+            Some(&child) => id = child,
+            None => break false,
+        }
+    };
     // Walk the boxes with the page value each inherits, leaving floats out:
     // their page values do not take part in pagination.
+    let mut cleared = Vec::new();
     let mut pending = vec![(0_usize, None::<String>)];
     while let Some((parent, inherited)) = pending.pop() {
         let mut after_forced_break = false;
@@ -2513,7 +2532,7 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
             let forced = after_forced_break
                 || named_break
                 || page_break_is_forced(document, child, computed.break_before);
-            after_forced_break = page_break_is_forced(document, child, computed.break_after);
+            after_forced_break = ends_with_forced_break(document, child);
             previous_page_name = Some(end_page_name(document, child, inherited.clone()));
             let own_page_name = if page_applies_to_box(document, cascade, child) {
                 selected_page_name(cascade, child).or_else(|| inherited.clone())
@@ -2525,8 +2544,14 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
             // one-sided clear is widened too.
             if forced {
                 document.nodes[child].style.clear = taffy::Clear::Both;
+                cleared.push(child);
             }
         }
+    }
+    cleared.sort_unstable();
+    if cleared != document.forced_break_clearance {
+        document.forced_break_clearance = cleared;
+        document.layout_dirty = true;
     }
 }
 

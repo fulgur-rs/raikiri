@@ -354,13 +354,16 @@ fn relayout_from(
         }
         // The copy drops the forced breaks before the token, so content that
         // the earlier layout kept on an earlier page, such as a float below
-        // the end of its block, can run onto the resumed page.
+        // the end of its block, can run onto the resumed page. Content can
+        // also move up onto the dropped lead page and be painted nowhere.
+        // Either way the page no longer starts with what it did.
         if content_before.is_some_and(|earlier| {
             let earlier: std::collections::HashSet<usize> = earlier.iter().copied().collect();
-            document
+            let copy: std::collections::HashSet<usize> = document
                 .page_content_before(page as u32, start.token)
-                .iter()
-                .any(|node| !earlier.contains(node))
+                .into_iter()
+                .collect();
+            copy != earlier
         }) {
             return Ok(None);
         }
