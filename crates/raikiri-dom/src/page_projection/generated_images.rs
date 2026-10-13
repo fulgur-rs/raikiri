@@ -39,7 +39,7 @@ impl GeneratedImageId {
         let after = match self.kind {
             GeneratedKind::Before => false,
             GeneratedKind::After => true,
-            GeneratedKind::Marker => return None,
+            GeneratedKind::Marker | GeneratedKind::FirstLetter => return None,
         };
         Some((usize::try_from(self.owner.0).ok()?, after, self.index))
     }
@@ -62,6 +62,8 @@ pub(super) struct ImagePlacement {
     /// Image rectangle in page-local CSS pixels, in the coordinates of the
     /// paragraph's lines.
     pub rect: PaintRect,
+    /// Offset of the image in its line's processed text, when known.
+    pub text_offset: Option<usize>,
 }
 
 /// Element, whether the pseudo-element is `::after`, and image index.
@@ -175,9 +177,14 @@ pub(super) fn prepare(
                         continue;
                     }
                 }
-                // A pseudo-element moves with its relatively positioned
-                // inline ancestors, as its text does.
-                let relative = crate::cumulative_offset(document, root.node, offsets, image.owner);
+                // A pseudo-element moves by its own relative offset and with
+                // its relatively positioned inline ancestors, as its text does.
+                let relative = crate::cumulative_offset(
+                    document,
+                    root.node,
+                    offsets,
+                    crate::generated_content::generated_node_id(image.owner, image.pseudo),
+                );
                 placements.entry(page.page_index).or_default().insert(
                     (image.owner, image.pseudo == PseudoElem::After, image.index),
                     ImagePlacement {
@@ -189,6 +196,7 @@ pub(super) fn prepare(
                             image.rect.width,
                             image.rect.height,
                         ),
+                        text_offset: image.text_offset,
                     },
                 );
             }

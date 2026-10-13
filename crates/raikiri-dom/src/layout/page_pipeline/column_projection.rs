@@ -55,7 +55,7 @@ impl<'a, 'b> ProjectionWork<'a, 'b> {
 pub(crate) type ParagraphCache = HashMap<usize, ParagraphProjection>;
 pub(crate) type PreparedGeneratedPiece = (
     usize,
-    bool,
+    crate::GeneratedKind,
     crate::layout::InlineBoxPiece,
     (f32, f32),
     f32,
@@ -251,21 +251,37 @@ impl ParagraphProjection {
                 .copied()
                 .unwrap_or(0.0);
             let column = line_columns[piece.line];
-            if let Some((owner, pseudo)) = crate::generated_content::generated_origin(piece.node)
-                && matches!(
-                    pseudo,
-                    raikiri_style::PseudoElem::Before | raikiri_style::PseudoElem::After
-                )
+            if let Some((owner, kind)) = crate::generated_content::generated_origin(piece.node)
+                .and_then(|(owner, pseudo)| {
+                    Some((
+                        owner,
+                        match pseudo {
+                            raikiri_style::PseudoElem::Before => crate::GeneratedKind::Before,
+                            raikiri_style::PseudoElem::After => crate::GeneratedKind::After,
+                            raikiri_style::PseudoElem::FirstLetter => {
+                                crate::GeneratedKind::FirstLetter
+                            }
+                            _ => return None,
+                        },
+                    ))
+                })
                 && piece.border_box.width > 0.0
                 && piece.border_box.height > 0.0
-                && crate::generated_content::computed_for_id(cascade, piece.node).is_some_and(
-                    |style| style.visibility == raikiri_style::property::Visibility::Visible,
+                && generated_piece_style(
+                    node,
+                    cascade,
+                    piece.node,
+                    piece.source_container,
+                    piece.source_owner,
                 )
+                .is_some_and(|style| {
+                    style.visibility == raikiri_style::property::Visibility::Visible
+                })
             {
                 let line = &positioned.as_ref().unwrap().all_lines()[piece.line];
                 let data = (
                     owner,
-                    pseudo == raikiri_style::PseudoElem::After,
+                    kind,
                     piece,
                     offset,
                     shift,
@@ -495,4 +511,19 @@ impl ParagraphProjection {
         }
         Ok(result)
     }
+}
+
+/// The style of a generated inline box piece: the retained style of a
+/// typographic pseudo-element such as `::first-letter`, which depends on the
+/// text it wraps, or else the pseudo-element's computed style.
+pub(crate) fn generated_piece_style<'a>(
+    root: &'a crate::Node,
+    cascade: &'a CascadeResult,
+    node: usize,
+    source_container: Option<usize>,
+    source_owner: Option<usize>,
+) -> Option<&'a raikiri_style::ComputedValues> {
+    root.ifc_typographic_fragment(node, source_container, source_owner)
+        .map(|(style, _)| style)
+        .or_else(|| crate::generated_content::computed_for_id(cascade, node))
 }

@@ -206,22 +206,53 @@ pub(crate) fn draw_ifc_lines_with_resources(
                 .iter()
                 .find(|piece| piece.node == pseudo_node)
                 .and_then(|piece| paint.piece_group(piece));
-            let (dx, dy) = cumulative_offset(document, root_id, offsets, image.owner);
+            let (dx, dy) = cumulative_offset(document, root_id, offsets, pseudo_node);
             let rect = image.rect;
+            let (left, top) = (
+                f64::from(position.x + dx + rect.x),
+                f64::from(position.y + position.shift_y + dy + rect.y),
+            );
+            // An image that replaces its pseudo-element is drawn at its
+            // `object-fit` rectangle, clipped to its box.
+            let object = document
+                .content_image_object_rect(image.owner, image.pseudo, image.index)
+                .unwrap_or(raikiri_traits::PaintRect::new(
+                    0.0,
+                    0.0,
+                    rect.width,
+                    rect.height,
+                ));
+            let clipped = object.x < 0.0
+                || object.y < 0.0
+                || object.x + object.width > rect.width
+                || object.y + object.height > rect.height;
+            let target = paint.target(group);
+            if clipped {
+                target.push_clip_layer(
+                    Affine::IDENTITY,
+                    &Rect::new(
+                        left,
+                        top,
+                        left + f64::from(rect.width),
+                        top + f64::from(rect.height),
+                    ),
+                );
+            }
             let brush = image_cache.whole(pixels);
-            paint.target(group).fill(
+            target.fill(
                 Fill::NonZero,
-                Affine::translate((
-                    f64::from(position.x + dx + rect.x),
-                    f64::from(position.y + position.shift_y + dy + rect.y),
-                )) * Affine::scale_non_uniform(
-                    f64::from(rect.width) / f64::from(pixels.width),
-                    f64::from(rect.height) / f64::from(pixels.height),
-                ),
+                Affine::translate((left + f64::from(object.x), top + f64::from(object.y)))
+                    * Affine::scale_non_uniform(
+                        f64::from(object.width) / f64::from(pixels.width),
+                        f64::from(object.height) / f64::from(pixels.height),
+                    ),
                 brush.as_ref(),
                 None,
                 &Rect::new(0.0, 0.0, f64::from(pixels.width), f64::from(pixels.height)),
             );
+            if clipped {
+                target.pop_layer();
+            }
         }
         if !vertical && let Some(hit_layout) = hit_layout.as_ref() {
             draw_custom_highlights(

@@ -9,7 +9,7 @@ use crate::{
     paint_rules,
 };
 use raikiri_style::property::{ColumnCountValue, DisplayValue, PositionValue};
-use raikiri_style::{CascadeResult, PseudoElem, StyleNodeId};
+use raikiri_style::{CascadeResult, PseudoElem};
 use raikiri_traits::{NodeId, NodeKind, PaintClip, PaintRect, PaintTransform};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -57,6 +57,12 @@ pub enum PaintEvent<'a> {
     /// the fragment's kind is `Replaced` and the same fragment follows in a
     /// [`PaintEvent::Replaced`] event.
     Box(Fragment<'a>),
+    /// The outer `box-shadow`s of a table row or row group of the separated
+    /// borders model, whose [`PaintEvent::Box`] events follow inside
+    /// [`ClipKind::TableCell`] clips. Only the shadows that are not `inset`
+    /// are painted here, once around the whole box, as no cell clip reaches
+    /// outside the border box where they show (CSS Backgrounds 3 §7.1).
+    OuterBoxShadow(Fragment<'a>),
     /// The lines of a text node.
     Text(Fragment<'a>),
     /// One paragraph line from the supplied positioned glyph runs, including
@@ -482,6 +488,15 @@ impl Document {
                                 .filter(|_| !paint_rules::is_visibility_hidden_table_part(cv))
                                 .filter(|_| paint_rules::paints_table_part_decoration(cv))
                             {
+                                // Box shadows are ignored on internal table
+                                // elements only in the collapsing borders
+                                // model (CSS Backgrounds 3 §7.1).
+                                if cv.border_collapse
+                                    == raikiri_style::property::BorderCollapseValue::Separate
+                                    && cv.box_shadow.iter().any(|shadow| !shadow.inset)
+                                {
+                                    events.push(PaintEvent::OuterBoxShadow(fragment));
+                                }
                                 let rect = fragment.paint_rect();
                                 let top = rect.y - item.rect.y + item.box_y;
                                 // The cells cover the whole part, but this
@@ -716,6 +731,7 @@ impl Document {
         for event in events {
             let mut chain = match event {
                 PaintEvent::Box(fragment)
+                | PaintEvent::OuterBoxShadow(fragment)
                 | PaintEvent::Text(fragment)
                 | PaintEvent::Replaced(fragment) => fragment.overflow_chain(),
                 PaintEvent::TextLine(line) | PaintEvent::GroupTextLine(line, _) => {
@@ -751,6 +767,7 @@ impl Document {
             }
             let clip = match event {
                 PaintEvent::Box(fragment)
+                | PaintEvent::OuterBoxShadow(fragment)
                 | PaintEvent::Text(fragment)
                 | PaintEvent::Replaced(fragment) => fragment.fragmentainer_clip(),
                 PaintEvent::TextLine(line) | PaintEvent::GroupTextLine(line, _) => {
@@ -1104,13 +1121,17 @@ fn push_paragraph<'a>(
     if group.is_some() {
         elements.push((first, None));
     }
-    elements.push((first, Some(false)));
+    elements.push((first, Some(GeneratedKind::Before)));
+    // A `::first-letter` box wraps letters inside the element they come
+    // from, so it follows that element's box and `::before` box, or its
+    // `::after` box when the letters are that pseudo-element's.
+    elements.push((first, Some(GeneratedKind::FirstLetter)));
     let mut nested = Vec::new();
     let mut texts = Vec::new();
     let mut stack: Vec<_> = children.iter().rev().map(|&id| (id, false)).collect();
     while let Some((node_id, after)) = stack.pop() {
         if after {
-            elements.push((node_id, Some(true)));
+            elements.push((node_id, Some(GeneratedKind::After)));
             continue;
         }
         if beside_lines.contains(&node_id) {
@@ -1134,7 +1155,8 @@ fn push_paragraph<'a>(
                     continue;
                 }
                 elements.push((node_id, None));
-                elements.push((node_id, Some(false)));
+                elements.push((node_id, Some(GeneratedKind::Before)));
+                elements.push((node_id, Some(GeneratedKind::FirstLetter)));
                 stack.push((node_id, true));
                 stack.extend(node.children.iter().rev().map(|&id| (id, false)));
             }
@@ -1142,9 +1164,48 @@ fn push_paragraph<'a>(
             _ => {}
         }
     }
-    elements.push((first, Some(true)));
-    for (node_id, after) in elements {
-        match after {
+    elements.push((first, Some(GeneratedKind::After)));
+    let root_node_ifc = document.ifc_layout_node(root);
+    // The `::first-letter` pieces this pass lists: those whose letters its
+    // inline opacity group holds, as it holds their glyph runs. A
+    // `::first-letter` box belongs to the block whose first letter it is,
+    // which can be an ancestor of the paragraph. Pieces whose letters come
+    // from no element listed here, such as the root's own text, go first.
+    let listed: HashSet<usize> = elements
+        .iter()
+        .filter(|&&(id, kind)| kind.is_none() && id != first)
+        .map(|&(id, _)| id)
+        .collect();
+    // Each first-letter piece with the element it is listed under, whether
+    // its letters come from `::after`, its owner, and the element that holds
+    // its letters, which clips it.
+    let letters: Vec<(usize, bool, usize, usize, &super::generated_boxes::BoxPiece)> = items
+        .generated_boxes
+        .into_iter()
+        .flat_map(|boxes| {
+            boxes.range(
+                (root, 0, GeneratedKind::FirstLetter)
+                    ..=(root, usize::MAX, GeneratedKind::FirstLetter),
+            )
+        })
+        .filter(|((_, _, kind), _)| *kind == GeneratedKind::FirstLetter)
+        .flat_map(|(&(_, owner, _), pieces)| pieces.iter().map(move |piece| (owner, piece)))
+        .filter_map(|(owner, piece)| {
+            let (anchor, after) = first_letter_anchor(document, root, piece)
+                .map_or((None, false), |(anchor, after)| (Some(anchor), after));
+            let held = anchor
+                .and_then(|anchor| document.inline_opacity_group(items.cascade, root, anchor));
+            (held == group).then(|| {
+                let clip = anchor.unwrap_or(owner);
+                let anchor = anchor
+                    .filter(|anchor| listed.contains(anchor))
+                    .unwrap_or(first);
+                (anchor, after, owner, clip, piece)
+            })
+        })
+        .collect();
+    for (node_id, kind) in elements {
+        match kind {
             None if items
                 .cascade
                 .computed
@@ -1154,40 +1215,62 @@ fn push_paragraph<'a>(
                 push_kind(events, node_id, PageFragmentKind::Box);
             }
             None => {}
-            Some(after) => {
-                let pseudo = if after {
-                    PseudoElem::After
-                } else {
-                    PseudoElem::Before
-                };
-                for piece in items
+            Some(kind) => {
+                let own = items
                     .generated_boxes
-                    .and_then(|boxes| boxes.get(&(root, node_id, after)))
+                    .and_then(|boxes| boxes.get(&(root, node_id, kind)))
                     .into_iter()
                     .flatten()
-                {
-                    let owner = NodeId::new(node_id as u64);
+                    .filter(|_| kind != GeneratedKind::FirstLetter)
+                    .map(|piece| (node_id, kind, node_id, piece));
+                // The first letters held by this element's text, or by its
+                // `::after` text, which come after the `::after` box.
+                let held = letters
+                    .iter()
+                    .filter(|&&(anchor, after, _, _, _)| {
+                        anchor == node_id
+                            && match kind {
+                                GeneratedKind::FirstLetter => !after,
+                                GeneratedKind::After => after,
+                                _ => false,
+                            }
+                    })
+                    .map(|&(_, _, owner, clip, piece)| {
+                        (owner, GeneratedKind::FirstLetter, clip, piece)
+                    });
+                for (owner, kind, clip, piece) in own.chain(held) {
+                    let owner_id = NodeId::new(owner as u64);
+                    let Some(style) = root_node_ifc
+                        .and_then(|node| column_projection_style(node, items.cascade, piece))
+                    else {
+                        continue; // cov:ignore: pieces are prepared only for boxes with a style
+                    };
                     events.push(PaintEvent::GeneratedBox(GeneratedBox {
-                        owner,
+                        owner: owner_id,
                         line: crate::TextLineId {
                             root: NodeId::new(root as u64),
                             index: piece.line,
                         },
-                        kind: if after {
-                            crate::GeneratedKind::After
-                        } else {
-                            crate::GeneratedKind::Before
-                        },
+                        kind,
                         rect: piece.rect,
-                        style: &items.cascade.pseudo[&(StyleNodeId::new(node_id as u64), pseudo)],
-                        clip_owner: owner,
+                        style,
+                        clip_owner: NodeId::new(clip as u64),
                         has_start_edge: piece.has_start_edge,
                         has_end_edge: piece.has_end_edge,
                     }));
                 }
+                // The `::before` images wait for the first-letter slot that
+                // always follows, so that first-letter boxes come first.
+                let after = match kind {
+                    GeneratedKind::FirstLetter => false,
+                    GeneratedKind::After => true,
+                    _ => continue,
+                };
                 // The images are replaced content inside the pseudo-element's
-                // inline box, painted above its decoration (CSS 2.1 Appendix
-                // E, inline-level content in tree order).
+                // inline box, painted above its decoration and above the
+                // first-letter boxes wrapping its letters, as the inline
+                // boxes of a line are painted before its replaced content
+                // (CSS 2.1 Appendix E, inline-level content in tree order).
                 events.extend(
                     items
                         .generated_images
@@ -1213,6 +1296,28 @@ fn push_paragraph<'a>(
     nested
 }
 
+/// The element of paragraph `root` whose letters a `::first-letter` piece
+/// wraps: the parent of the text, or the originating element of the
+/// `::before` or `::after` text, they come from; and whether they are its
+/// `::after` text.
+fn first_letter_anchor(
+    document: &Document,
+    root: usize,
+    piece: &super::generated_boxes::BoxPiece,
+) -> Option<(usize, bool)> {
+    let source = document
+        .ifc_layout_node(root)?
+        .ifc_typographic_fragment(piece.node, piece.source_container, piece.source_owner)?
+        .1;
+    if let Some((element, pseudo)) = crate::generated_content::generated_origin(source) {
+        return Some((element, pseudo == PseudoElem::After));
+    }
+    match document.get_node(source)?.kind() {
+        NodeKind::Text => document.parent_of(source).map(|parent| (parent, false)),
+        _ => Some((source, false)),
+    }
+}
+
 /// The paragraph line that holds a content image placed on the page.
 fn generated_image_line(items: &PageItems<'_>, image: GeneratedImageId) -> Option<TextLineId> {
     let placement = items.generated_images?.get(&image.key()?)?;
@@ -1230,3 +1335,18 @@ fn is_inline_opacity_group(cv: &raikiri_style::ComputedValues) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+/// The style of a prepared generated box piece.
+fn column_projection_style<'a>(
+    root: &'a crate::Node,
+    cascade: &'a CascadeResult,
+    piece: &super::generated_boxes::BoxPiece,
+) -> Option<&'a raikiri_style::ComputedValues> {
+    crate::layout::generated_piece_style(
+        root,
+        cascade,
+        piece.node,
+        piece.source_container,
+        piece.source_owner,
+    )
+}

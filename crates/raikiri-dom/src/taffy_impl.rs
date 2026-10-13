@@ -603,6 +603,15 @@ impl Document {
                 }
             }
         });
+        // A flex container keeps the first baseline of its performed layout,
+        // which a list item's outside marker aligns with. Taffy's grid
+        // baseline does not yet follow the first row's items, so a grid
+        // container records none.
+        if inputs.run_mode == RunMode::PerformLayout
+            && self.nodes[usize::from(node_id)].style.display == Display::Flex
+        {
+            self.nodes[usize::from(node_id)].flex_first_baseline = output.baselines.first;
+        }
         // An ifc root measured its baseline from the lines of this very call;
         // the stored lines may be those of another width.
         if !self.nodes[usize::from(node_id)]

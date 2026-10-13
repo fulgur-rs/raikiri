@@ -169,6 +169,79 @@ fn a_typographic_box_is_not_reported_as_generated_before_text() {
     }
 }
 
+/// A flex container of Ahem items, each given as its style and text, with
+/// 7px of padding above them.
+fn flex_items(items: &[&str]) -> (Document, CascadeResult, usize) {
+    let mut document = Document::new();
+    let body = document.append_element(
+        Some(0),
+        "body",
+        taffy::Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let flex = document.append_element(
+        Some(body),
+        "div",
+        taffy::Style::default(),
+        Some("display:flex;align-items:baseline;padding-top:7px;font:10px Ahem"),
+    );
+    for style in items {
+        let item = document.append_element(
+            Some(flex),
+            "p",
+            taffy::Style::default(),
+            Some(&format!("display:block;margin:0;{style}")),
+        );
+        document.append_text(item, "X".to_string());
+    }
+    document.mark_in_document_flags();
+    let fonts = crate::build_wpt_font_collection(std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/text-autospace"
+    )))
+    .unwrap();
+    document.set_font_collection(fonts);
+    let cascade =
+        raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
+    crate::layout_single_page(&mut document, &cascade, raikiri_traits::PageBox::A4).unwrap();
+    (document, cascade, flex)
+}
+
+/// A flex container's first line is the one its layout took the first
+/// baseline from; the middle of that line decides its page, not the baseline.
+#[test]
+fn a_flex_first_line_keeps_the_center_of_its_item_line() {
+    let (document, cascade, flex) = flex_items(&["line-height:50px"]);
+    let line = first_line(&document, &cascade, flex).unwrap();
+    // Ahem's ascent is 0.8em, and the 40px of leading is split evenly.
+    assert_eq!(line.baseline, 7.0 + 20.0 + 8.0);
+    assert_eq!(line.center, 7.0 + 25.0);
+}
+
+/// Items that share the baseline are searched in layout order, so the line
+/// is the one of the item `order` places first.
+#[test]
+fn a_flex_first_line_follows_the_order_of_the_items() {
+    let (document, cascade, flex) = flex_items(&[
+        "line-height:50px",
+        "order:-1;font-size:20px;line-height:20px",
+    ]);
+    let line = first_line(&document, &cascade, flex).unwrap();
+    // The 20px item's baseline, 16px down, aligns with the other's at 28px.
+    assert_eq!(line.baseline, 7.0 + 28.0);
+    assert_eq!(line.center, 7.0 + 12.0 + 10.0);
+}
+
+/// A relative offset moves the item's box, not the line the flex layout
+/// aligned, so the item still supplies the line's middle.
+#[test]
+fn a_flex_first_line_ignores_the_relative_offset_of_its_item() {
+    let (document, cascade, flex) = flex_items(&["line-height:50px;position:relative;top:9px"]);
+    let line = first_line(&document, &cascade, flex).unwrap();
+    assert_eq!(line.baseline, 7.0 + 20.0 + 8.0);
+    assert_eq!(line.center, 7.0 + 25.0);
+}
+
 /// Two Ahem paragraphs, one X per 10px line: 25 lines, then 3 lines below.
 fn tall_paragraphs() -> (Document, CascadeResult, [usize; 2]) {
     let mut document = Document::new();
@@ -286,4 +359,13 @@ fn pages_without_ordered_flow_slices_are_each_checked() {
         page_lines(&document, &cascade, 2),
         second_lines.collect::<Vec<_>>()
     );
+}
+
+/// `float` does not apply to a flex item, which still gives the line.
+#[test]
+fn a_flex_first_line_includes_a_floated_item() {
+    let (document, cascade, flex) = flex_items(&["line-height:50px;float:left"]);
+    let line = first_line(&document, &cascade, flex).unwrap();
+    assert_eq!(line.baseline, 7.0 + 20.0 + 8.0);
+    assert_eq!(line.center, 7.0 + 25.0);
 }

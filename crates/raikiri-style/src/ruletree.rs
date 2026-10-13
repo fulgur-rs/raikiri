@@ -592,7 +592,7 @@ impl RuleTree {
     ///   the former Author-only gate used to drop it unconditionally.
     ///
     /// CSS nesting is parsed directly from the stylesheet. Style and supported
-    /// group bodies share a cumulative nesting limit of 128 levels. Nested
+    /// group bodies share a cumulative nesting limit of 75 levels. Nested
     /// selector lists are limited to 32,768 weighted components, counting repeated
     /// parent references. Token nesting is limited to 32 levels before recursive
     /// nested-selector parsing or contextual revalidation. Contextual revalidation
@@ -1512,7 +1512,7 @@ enum NestedParsedRule {
     Qualified(QualifiedRuleRecord),
 }
 
-const MAX_OPAQUE_RULE_NESTING_DEPTH: usize = 128;
+const MAX_OPAQUE_RULE_NESTING_DEPTH: usize = crate::MAX_CSS_NESTING_DEPTH;
 // Descendant bodies overlap their ancestors, so cap their aggregate owned copies.
 const MAX_CUMULATIVE_NESTED_OPAQUE_BODY_BYTES: usize = 8 * 1024 * 1024;
 // Statements and empty blocks copy no body, so cap the nodes too. As many as the
