@@ -8525,6 +8525,33 @@ fn avoiding_block_in_wrapper(
 }
 
 #[test]
+fn a_moved_box_after_a_wrappers_text_still_lengthens_it() {
+    let (mut wrapper, mut avoiding) = (0, 0);
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:50px"),
+        );
+        wrapper = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        doc.append_text(wrapper, " ");
+        avoiding = doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        );
+    });
+    let (wrapper_y, avoiding_y) = (page_flow_y(&doc, wrapper), page_flow_y(&doc, avoiding));
+    assert_eq!(avoiding_y, 100.0);
+    assert_eq!(
+        doc.nodes[wrapper].unrounded_layout.size.height,
+        avoiding_y + 60.0 - wrapper_y
+    );
+}
+
+#[test]
 fn a_moved_box_shifts_what_follows_only_as_far_as_its_ancestors_grow() {
     // Auto-height ancestors grow with the moved box and push the block after
     // them down; a fixed-height wrapper keeps its size, so the box overflows
@@ -8544,6 +8571,15 @@ fn a_moved_box_shifts_what_follows_only_as_far_as_its_ancestors_grow() {
     );
     assert_eq!(
         avoiding_block_in_wrapper("height:200px", "max-height:30%", "display:block"),
+        (100.0, 260.0, 60.0)
+    );
+    // A bound that does not resolve to a length keeps the wrapper's size.
+    assert_eq!(
+        avoiding_block_in_wrapper(
+            "height:200px",
+            "max-height:calc(50% + 10px)",
+            "display:block"
+        ),
         (100.0, 260.0, 60.0)
     );
     // A moved float does not lengthen the block around it.

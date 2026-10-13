@@ -5280,10 +5280,8 @@ fn grown_auto_height(
             after = after.max(bottom);
         }
     }
-    if !shifted || !before.is_finite() {
-        // The moved box is laid out by an inline formatting context or
-        // another layout the children's boxes do not describe.
-        return (!bounded).then_some(old + delta);
+    if !shifted {
+        return None;
     }
     let growth = (after - before).max(0.0);
     let unconstrained = if bounded { before + edges_below } else { old };

@@ -628,6 +628,9 @@ fn percentage_heights_in_a_paragraph_resolve_against_its_definite_height() {
             ("box-sizing:border-box;height:120px;padding:10px", expected),
             // `max-height` clamps the basis too.
             ("height:200px;max-height:100px", expected),
+            // A horizontal scrollbar's gutter, when there is one, leaves the
+            // basis too.
+            ("height:100px;overflow-x:scroll", expected),
             ("", 10.0),
             // The body fills the 600px page, so half of it is definite too.
             ("height:50%", expected * 3.0),
