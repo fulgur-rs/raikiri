@@ -241,5 +241,11 @@ fn a_box_that_must_stay_whole_stops_the_placement_only_when_cut() {
         place(&[split(8.0), whole(1.0)], 1.0, 8).err(),
         Some(super::Stop::Exhausted)
     );
+    // Columns too short for any of the box cut it rather than spend the
+    // budget skipping them.
+    assert_eq!(
+        place(&[whole(1.0)], 0.0005, 8).err(),
+        Some(super::Stop::Cut)
+    );
     assert!(place(&[whole(1.0), split(3.0)], 1.0, 8).is_ok());
 }

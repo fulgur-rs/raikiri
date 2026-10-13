@@ -243,6 +243,11 @@ fn place_within(
                 // A gap that fills the column leaves no room for the box,
                 // which then starts in the next column.
                 if room < -EPSILON || (room <= EPSILON && left > EPSILON) {
+                    // Columns too short for any of the box at their top
+                    // would cut it at every one of them.
+                    if keep_whole && item.whole && cursor <= 0.0 {
+                        return Err(Stop::Cut);
+                    }
                     piece_count += 1;
                     if piece_count > max_pieces {
                         return Err(Stop::Exhausted);
