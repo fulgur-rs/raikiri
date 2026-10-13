@@ -1232,3 +1232,45 @@ fn pipeline_named_page_after_paper_fit_box_ignores_absolute_boxes() {
     let with = page_count("<div style='position:absolute;top:0;height:150px;width:10px'></div>");
     assert_eq!(with, without);
 }
+
+#[test]
+fn pipeline_counts_boxes_under_boxless_overflow_hidden_elements() {
+    // `display: contents` generates no box and so clips nothing.
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} body{margin:0}</style>\
+         <div style='position:relative'>text<div style='display:contents;overflow:hidden'>\
+         <div style='position:absolute;top:250px;width:10px;height:10px'></div></div></div>",
+    );
+    assert_eq!(run(&doc).slices.len(), 3);
+}
+
+#[test]
+fn pipeline_resolves_body_percentage_height_against_a_definite_root() {
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} html{height:500px} body{margin:0;height:100%}</style>",
+    );
+    assert_eq!(run(&doc).slices.len(), 5);
+}
+
+#[test]
+fn pipeline_names_continuation_pages_after_the_innermost_box() {
+    // The outer box runs onto every page and names them `a`; the nested `b`
+    // box starts the second page and runs onto the third and fourth, which
+    // take its page type.
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} @page a{size:200px 100px;margin:0}\
+         @page b{size:300px 100px;margin:0} body{margin:0}</style>\
+         <div style='page:a;height:1000px'><div style='height:50px'></div><div style='page:b;height:250px'></div></div>",
+    );
+    let out = run(&doc);
+    let names: Vec<_> = out
+        .slices
+        .iter()
+        .map(|slice| slice.page_name.as_deref())
+        .collect();
+    assert_eq!(
+        names[..5],
+        [Some("a"), Some("b"), Some("b"), Some("b"), Some("a")],
+        "{names:?}"
+    );
+}

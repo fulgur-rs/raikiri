@@ -89,7 +89,17 @@ fn content_overflow_end(
         if bottom.is_finite() {
             end = end.max(bottom);
         }
-        let clips = !matches!(computed.overflow.y, OverflowValue::Visible);
+        // A `display: contents` element generates no box and clips nothing,
+        // as in painting. The body's overflow, or the root's, clips at the
+        // viewport, which stays within the paginated flow.
+        let clips = if node_id == body_id {
+            std::iter::once(body_id)
+                .chain(document.parent_of(body_id))
+                .any(|id| !matches!(cascade.computed[id].overflow.y, OverflowValue::Visible))
+        } else {
+            !matches!(computed.overflow.y, OverflowValue::Visible)
+                && crate::paint_rules::clips_element_overflow(document, cascade, node_id)
+        };
         if clips || node.multicol.is_some() {
             continue;
         }
@@ -102,9 +112,8 @@ fn content_overflow_end(
 ///
 /// Layout sizes the body to the page content box, so its laid-out height
 /// says nothing about the height the author gave it. A definite `height`,
-/// clamped by `max-height` and `min-height`, gives the content height;
-/// percentages resolve against the root's auto height and so behave as
-/// `auto`. An auto-height body ends with its last in-flow child, followed by
+/// clamped by `max-height` and `min-height`, gives the content height. An
+/// auto-height body ends with its last in-flow child, followed by
 /// its own block-end padding and border. The body's border box starts after
 /// the root's margin (`root_flow_offset`) and its own block-start margin.
 fn body_border_box_end(
@@ -114,15 +123,29 @@ fn body_border_box_end(
     root_flow_offset: f32,
 ) -> f32 {
     let computed = &cascade.computed[body_id];
-    let px = |value: &ComputedLengthPercentageOrAuto| match value {
-        ComputedLengthPercentageOrAuto::Px(value) => value.max(0.0),
-        _ => 0.0,
+    // Percentages resolve against the root's height only when it is a
+    // definite length; otherwise they behave as `auto`.
+    let root_height =
+        document
+            .parent_of(body_id)
+            .and_then(|root| match cascade.computed[root].height {
+                ComputedLengthPercentageOrAuto::Px(height) => Some(height.max(0.0)),
+                _ => None,
+            });
+    let used = |value: ComputedLengthPercentageOrAuto| {
+        match value {
+            ComputedLengthPercentageOrAuto::Px(value) => Some(value),
+            ComputedLengthPercentageOrAuto::Percent(_)
+            | ComputedLengthPercentageOrAuto::Calc(_) => {
+                root_height.and_then(|basis| used_computed_length_percentage_or_auto(value, basis))
+            }
+            _ => None,
+        }
+        .map(|value| value.max(0.0))
     };
-    let height = match computed.max_height {
-        ComputedLengthPercentageOrAuto::Px(max) => px(&computed.height).min(max.max(0.0)),
-        _ => px(&computed.height),
-    };
-    let content = height.max(px(&computed.min_height));
+    let height = used(computed.height).unwrap_or(0.0);
+    let height = used(computed.max_height).map_or(height, |max| height.min(max));
+    let content = height.max(used(computed.min_height).unwrap_or(0.0));
     let body = &document.nodes[body_id];
     let layout = &body.unrounded_layout;
     let edges_top = layout.padding.top + layout.border.top;
@@ -4059,9 +4082,15 @@ pub fn layout_pages_with_page_geometry_and_control(
                         flow_max_page = flow_max_page.max(end_page);
                     }
                     // The pages a box continues onto keep the page type it
-                    // started on until a later box names another.
+                    // started on until a later box names another, even when
+                    // an enclosing box running onto them named them first.
                     if page_names.len() <= end_page as usize {
                         page_names.resize(end_page as usize + 1, current_page_name.clone());
+                    }
+                    if !candidate.is_out_of_flow_descendant && end_page > current_page {
+                        for name in &mut page_names[current_page as usize + 1..=end_page as usize] {
+                            name.clone_from(&current_page_name);
+                        }
                     }
                 }
             }
@@ -4561,9 +4590,15 @@ pub fn layout_pages_with_page_geometry_and_control(
                         flow_max_page = flow_max_page.max(end_page);
                     }
                     // The pages a box continues onto keep the page type it
-                    // started on until a later box names another.
+                    // started on until a later box names another, even when
+                    // an enclosing box running onto them named them first.
                     if page_names.len() <= end_page as usize {
                         page_names.resize(end_page as usize + 1, current_page_name.clone());
+                    }
+                    if !candidate.is_out_of_flow_descendant && end_page > current_page {
+                        for name in &mut page_names[current_page as usize + 1..=end_page as usize] {
+                            name.clone_from(&current_page_name);
+                        }
                     }
                 }
             }
@@ -4598,9 +4633,14 @@ pub fn layout_pages_with_page_geometry_and_control(
         }
     }
 
+    super::table::headers::finish_boxes(document, &table_headers);
+    table_headers.index();
+    document.table_objects.headers = table_headers;
+
     // The candidates above stand for the paginated flow only. Boxes outside
     // it, such as a nested absolutely positioned box or the overflow of a
-    // monolithic box, still need pages to paint on.
+    // monolithic box, still need pages to paint on, and so do table edges
+    // that `finish_boxes` grew over repeated headers.
     if !control.page_limit_reached.get() {
         // Pagination materialized the moved boxes in page coordinates, which
         // already include `root_flow_offset`; boxes it left alone paint where
@@ -4617,10 +4657,6 @@ pub fn layout_pages_with_page_geometry_and_control(
             }
         }
     }
-
-    super::table::headers::finish_boxes(document, &table_headers);
-    table_headers.index();
-    document.table_objects.headers = table_headers;
 
     // Truncating margins can move an ancestor of a fixed box. Restore only
     // its block position, preserving the already-corrected subtree layout.
