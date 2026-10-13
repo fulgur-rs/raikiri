@@ -15,7 +15,7 @@ fn computed_for(style: &str) -> ComputedValues {
 }
 
 fn gradient_of(cv: &ComputedValues) -> Gradient {
-    match &cv.background_image {
+    match &cv.background_layers()[0].image {
         BackgroundImage::Gradient(gradient) => (**gradient).clone(),
         other => panic!("expected a gradient, got {other:?}"),
     }
@@ -33,9 +33,9 @@ fn raster_layer(style: &str, width: u32, height: u32) -> Vec<u8> {
         area,
         area,
         None,
-        &cv.background_size,
-        &cv.background_position,
-        &cv.background_repeat,
+        &cv.background_layers()[0].size,
+        &cv.background_layers()[0].position,
+        &cv.background_layers()[0].repeat,
         cv.color,
     ));
     anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
@@ -331,9 +331,9 @@ fn conic_gradients_are_left_to_their_own_painter() {
         area,
         area,
         None,
-        &cv.background_size,
-        &cv.background_position,
-        &cv.background_repeat,
+        &cv.background_layers()[0].size,
+        &cv.background_layers()[0].position,
+        &cv.background_layers()[0].repeat,
         cv.color,
     ));
     assert!(scene.commands.is_empty());
@@ -343,8 +343,9 @@ fn conic_gradients_are_left_to_their_own_painter() {
 #[test]
 fn gradient_size_ignores_natural_dimensions() {
     let area = Rect::new(0.0, 0.0, 80.0, 40.0);
-    let size =
-        |style: &str| gradient::gradient_image_size(&computed_for(style).background_size, area);
+    let size = |style: &str| {
+        gradient::gradient_image_size(&computed_for(style).background_layers()[0].size, area)
+    };
     assert_eq!(size("background-size: auto"), Some((80.0, 40.0)));
     assert_eq!(size("background-size: contain"), Some((80.0, 40.0)));
     assert_eq!(size("background-size: 25% auto"), Some((20.0, 40.0)));
@@ -367,10 +368,8 @@ fn element_background_paints_the_gradient_over_its_color() {
         0.0,
         0.0,
         cv.background_color,
-        &cv.background_image,
+        cv.background_layers(),
         cv.color,
-        cv.background_clip,
-        cv.background_origin,
         &cv.border_radius,
         &cv.border,
         &taffy::Rect {
@@ -379,9 +378,6 @@ fn element_background_paints_the_gradient_over_its_color() {
             top: 0.0,
             bottom: 0.0,
         },
-        &cv.background_size,
-        &cv.background_position,
-        &cv.background_repeat,
         None,
         &mut warnings,
     );
@@ -411,10 +407,8 @@ fn gradient_keeps_its_clip_inside_a_matching_border() {
         0.0,
         0.0,
         cv.background_color,
-        &cv.background_image,
+        cv.background_layers(),
         cv.color,
-        cv.background_clip,
-        cv.background_origin,
         &cv.border_radius,
         &cv.border,
         &taffy::Rect {
@@ -423,9 +417,6 @@ fn gradient_keeps_its_clip_inside_a_matching_border() {
             top: 0.0,
             bottom: 0.0,
         },
-        &cv.background_size,
-        &cv.background_position,
-        &cv.background_repeat,
         None,
         &mut warnings,
     );
@@ -435,6 +426,69 @@ fn gradient_keeps_its_clip_inside_a_matching_border() {
         40,
     );
     assert_eq!(pixel(&rgba, 40, 20, 20), RED);
+    assert_eq!(pixel(&rgba, 40, 5, 20)[3], 0);
+}
+
+/// Paint `cv`'s element background over a `width` by `height` box at the
+/// origin and rasterize it.
+fn raster_element_background(cv: &ComputedValues, width: u32, height: u32) -> Vec<u8> {
+    let mut scene = Scene::new();
+    let mut warnings = Vec::new();
+    paint_element_background(
+        &ImageBrushCache::default(),
+        &mut scene,
+        width as f32,
+        height as f32,
+        0.0,
+        0.0,
+        cv.background_color,
+        cv.background_layers(),
+        cv.color,
+        &cv.border_radius,
+        &cv.border,
+        &taffy::Rect {
+            left: 0.0,
+            right: 0.0,
+            top: 0.0,
+            bottom: 0.0,
+        },
+        None,
+        &mut warnings,
+    );
+    assert!(warnings.is_empty(), "{warnings:?}");
+    anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        width,
+        height,
+    )
+}
+
+#[test]
+fn background_layers_stack_first_on_top_over_the_color() {
+    // CSS Backgrounds 3 §2.1: the first layer is closest to the user and the
+    // background color is painted below every layer.
+    let cv = computed_for(
+        "background: linear-gradient(red, red) 0 0 / 10px 10px no-repeat, \
+         linear-gradient(blue, blue) 0 0 / 20px 10px no-repeat rgb(0, 255, 0)",
+    );
+    assert_eq!(cv.background_layers().len(), 2);
+    let rgba = raster_element_background(&cv, 40, 10);
+    assert_eq!(pixel(&rgba, 40, 5, 5), RED);
+    assert_eq!(pixel(&rgba, 40, 15, 5), BLUE);
+    assert_eq!(pixel(&rgba, 40, 35, 5), [0, 255, 0, 255]);
+}
+
+#[test]
+fn background_color_takes_the_final_layer_clip() {
+    // CSS Backgrounds 3 §2.10: the color is clipped like the final layer,
+    // whatever the clips of the layers above it.
+    let cv = computed_for(
+        "background: linear-gradient(transparent, transparent) border-box, \
+         linear-gradient(transparent, transparent) content-box rgb(0, 255, 0); \
+         border: 10px solid red",
+    );
+    let rgba = raster_element_background(&cv, 40, 40);
+    assert_eq!(pixel(&rgba, 40, 20, 20), [0, 255, 0, 255]);
     assert_eq!(pixel(&rgba, 40, 5, 20)[3], 0);
 }
 
@@ -608,9 +662,9 @@ fn many_tiny_tiles_paint_their_average_color() {
         area,
         area,
         None,
-        &cv.background_size,
-        &cv.background_position,
-        &cv.background_repeat,
+        &cv.background_layers()[0].size,
+        &cv.background_layers()[0].position,
+        &cv.background_layers()[0].repeat,
         cv.color,
     ));
     assert!(
@@ -641,9 +695,9 @@ fn a_long_row_of_tiny_tiles_still_paints() {
         area,
         area,
         None,
-        &cv.background_size,
-        &cv.background_position,
-        &cv.background_repeat,
+        &cv.background_layers()[0].size,
+        &cv.background_layers()[0].position,
+        &cv.background_layers()[0].repeat,
         cv.color,
     ));
     assert!(!scene.commands.is_empty());
@@ -662,9 +716,9 @@ fn a_long_row_of_tiny_tiles_still_paints() {
         area,
         area,
         None,
-        &cv.background_size,
-        &cv.background_position,
-        &cv.background_repeat,
+        &cv.background_layers()[0].size,
+        &cv.background_layers()[0].position,
+        &cv.background_layers()[0].repeat,
         cv.color,
     );
     let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
@@ -720,10 +774,8 @@ fn border_area_gradients_paint_the_ring() {
         0.0,
         0.0,
         cv.background_color,
-        &cv.background_image,
+        cv.background_layers(),
         cv.color,
-        cv.background_clip,
-        cv.background_origin,
         &cv.border_radius,
         &cv.border,
         &taffy::Rect {
@@ -732,9 +784,6 @@ fn border_area_gradients_paint_the_ring() {
             top: 0.0,
             bottom: 0.0,
         },
-        &cv.background_size,
-        &cv.background_position,
-        &cv.background_repeat,
         None,
         &mut warnings,
     );
@@ -762,9 +811,9 @@ fn the_tile_fallback_keeps_single_space_tiles_and_padding() {
         area,
         area,
         None,
-        &cv.background_size,
-        &cv.background_position,
-        &cv.background_repeat,
+        &cv.background_layers()[0].size,
+        &cv.background_layers()[0].position,
+        &cv.background_layers()[0].repeat,
         cv.color,
     );
     let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
@@ -788,9 +837,9 @@ fn the_tile_fallback_keeps_single_space_tiles_and_padding() {
         area,
         area,
         None,
-        &cv.background_size,
-        &cv.background_position,
-        &cv.background_repeat,
+        &cv.background_layers()[0].size,
+        &cv.background_layers()[0].position,
+        &cv.background_layers()[0].repeat,
         cv.color,
     );
     let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
@@ -879,9 +928,9 @@ fn short_periods_in_long_gradients_still_repeat() {
         area,
         area,
         None,
-        &cv.background_size,
-        &cv.background_position,
-        &cv.background_repeat,
+        &cv.background_layers()[0].size,
+        &cv.background_layers()[0].position,
+        &cv.background_layers()[0].repeat,
         cv.color,
     );
     let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
@@ -920,9 +969,9 @@ fn many_coincident_stops_make_one_hard_edge() {
         area,
         area,
         None,
-        &cv.background_size,
-        &cv.background_position,
-        &cv.background_repeat,
+        &cv.background_layers()[0].size,
+        &cv.background_layers()[0].position,
+        &cv.background_layers()[0].repeat,
         cv.color,
     );
     let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
@@ -954,9 +1003,9 @@ fn a_space_axis_too_short_for_two_enlarged_tiles_places_one() {
         area,
         area,
         None,
-        &cv.background_size,
-        &cv.background_position,
-        &cv.background_repeat,
+        &cv.background_layers()[0].size,
+        &cv.background_layers()[0].position,
+        &cv.background_layers()[0].repeat,
         cv.color,
     );
     // One centered one-pixel tile, with its fractional edges kept.
@@ -999,9 +1048,9 @@ fn a_lone_round_tile_keeps_its_fractional_edge() {
         area,
         area,
         None,
-        &cv.background_size,
-        &cv.background_position,
-        &cv.background_repeat,
+        &cv.background_layers()[0].size,
+        &cv.background_layers()[0].position,
+        &cv.background_layers()[0].repeat,
         cv.color,
     );
     let shapes: Vec<Rect> = scene
@@ -1027,9 +1076,9 @@ fn layer_scene(style: &str, area: Rect, painting: Rect, clip: Option<&BezPath>) 
         area,
         painting,
         clip,
-        &cv.background_size,
-        &cv.background_position,
-        &cv.background_repeat,
+        &cv.background_layers()[0].size,
+        &cv.background_layers()[0].position,
+        &cv.background_layers()[0].repeat,
         cv.color,
     ));
     scene

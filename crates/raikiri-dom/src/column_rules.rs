@@ -72,7 +72,7 @@ pub(crate) fn prepare(
     }) {
         return Ok(BTreeMap::new());
     }
-    let limit = document.fragment_tree.limit;
+    let limit = document.fragment_tree.work_limit(document.nodes.len());
     let mut remaining = limit.saturating_sub(document.fragment_tree.break_flow_work_used);
     let mut charge = |amount: usize| -> Result<(), LayoutError> {
         remaining = remaining

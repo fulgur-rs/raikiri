@@ -529,25 +529,25 @@ fn parent_fixture() -> ComputedValues {
         widows: 7,
         // CSS Backgrounds and Borders 3 §2.4/§2.5/§2.6/§2.7/§2.8/§2.9: these are all
         // non-inherited, so the fixture sets them to non-initial values.
-        background_repeat: BackgroundRepeat {
-            x: BackgroundRepeatKeyword::Round,
-            y: BackgroundRepeatKeyword::Space,
-        },
-        background_attachment: BackgroundAttachment::Fixed,
-        background_clip: VisualBox::ContentBox,
-        background_origin: VisualBox::ContentBox,
-        background_size: crate::resolve::ComputedBackgroundSize::Cover,
-        background_position: crate::resolve::ComputedCssPosition {
-            horizontal: crate::resolve::ComputedCssPositionOffset::End(
-                ComputedLengthPercentage::Px(5.0),
-            ),
-            vertical: crate::resolve::ComputedCssPositionOffset::Start(
-                ComputedLengthPercentage::Percent(25.0),
-            ),
-        },
-        // CSS Backgrounds and Borders 3 §2.3: non-inherited; use a non-initial value as required
-        // by this fixture.
-        background_image: BackgroundImage::Url("fixture.png".into()),
+        background_layers: Arc::from([crate::computed::ComputedBackgroundLayer {
+            image: BackgroundImage::Url("fixture.png".into()),
+            repeat: BackgroundRepeat {
+                x: crate::property::BackgroundRepeatKeyword::Round,
+                y: crate::property::BackgroundRepeatKeyword::Space,
+            },
+            attachment: BackgroundAttachment::Fixed,
+            clip: VisualBox::ContentBox,
+            origin: VisualBox::ContentBox,
+            size: crate::resolve::ComputedBackgroundSize::Cover,
+            position: crate::resolve::ComputedCssPosition {
+                horizontal: crate::resolve::ComputedCssPositionOffset::End(
+                    ComputedLengthPercentage::Px(5.0),
+                ),
+                vertical: crate::resolve::ComputedCssPositionOffset::Start(
+                    ComputedLengthPercentage::Percent(25.0),
+                ),
+            },
+        }]),
         // CSS Backgrounds 3 §6: non-inherited; use a non-initial value.
         border_image: {
             let mut image = crate::computed::ComputedBorderImage::initial();

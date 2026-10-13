@@ -12,7 +12,7 @@ use crate::text::{
     synthetic_embolden,
 };
 use anyrender::filters::{Filter, FilterEffect};
-use anyrender::{Glyph as AnyrenderGlyph, PaintScene};
+use anyrender::{Glyph as AnyrenderGlyph, PaintScene, Scene};
 use kurbo::{Affine, Rect};
 use peniko::{Fill, Mix};
 use raikiri_dom::generated_content::{computed_for_id, generated_origin};
@@ -22,11 +22,12 @@ use raikiri_style::property::TextShadowColor;
 use shodo::geometry::{PhysicalConverter, WritingMode};
 use shodo::hit::{LineLayout, TextPosition};
 use shodo::node::NodeId;
+use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::sync::Arc;
 
 mod typographic;
-pub(crate) use typographic::BackgroundSlice;
+pub(crate) use typographic::{BackgroundSlice, Paragraph, enclosing_inline_opacities};
 
 /// Content-box origin of an ifc root in page coordinates.
 #[derive(Clone, Copy, Debug)]
@@ -74,9 +75,132 @@ pub(crate) fn draw_ifc_lines_with_resources(
     page_box: raikiri_traits::PageBox,
     paint_transform: Affine,
 ) {
-    let Some(positioned) = PositionedLines::new(document, cascade, root_id, fragmentainer) else {
-        return;
-    };
+    if let Some(lines) = hold_ifc_lines(
+        image_cache,
+        document,
+        cascade,
+        root_id,
+        position,
+        base_decorations,
+        fragmentainer,
+        custom_highlights,
+        pixel_source,
+        warnings,
+        page_box,
+        paint_transform,
+    ) {
+        lines.finish(scene);
+    }
+}
+
+/// The painted lines of a paragraph whose groups are not composited yet, so
+/// the boxes laid out beside the lines can still join them.
+pub(crate) struct HeldLines<'a> {
+    paragraph: Paragraph<'a>,
+    rest: typographic::TypographicPaint,
+    /// The paint of a translucent first line, with its opacity.
+    first_line: Option<(typographic::TypographicPaint, f32)>,
+    clip: Rect,
+    paint_transform: Affine,
+    /// The preorder positions of the paragraph's nodes, once a positioned
+    /// box needs its tree order among the groups.
+    positions: Option<HashMap<usize, usize>>,
+}
+
+impl HeldLines<'_> {
+    /// Whether the boxes beside the lines can join a group: the paragraph
+    /// has a translucent inline element, typographic pseudo or first line.
+    pub(crate) fn has_groups(&self) -> bool {
+        self.first_line.is_some() || self.rest.has_groups()
+    }
+
+    /// The paragraph root whose lines these are.
+    pub(crate) fn root_id(&self) -> usize {
+        self.paragraph.root_id
+    }
+
+    /// Place the paint of `id`, a box laid out beside the lines, painted in
+    /// page space. It joins the groups of the translucent inline elements
+    /// around it and, for an atomic inline on the first line, the group of
+    /// a translucent `::first-line` (CSS Color 4 §3.3; CSS Pseudo 4
+    /// §2.1.1), at the box's stack level (CSS 2.1 Appendix E).
+    pub(crate) fn place_box(&mut self, id: usize, content: Scene) {
+        let paragraph = self.paragraph;
+        let on_first_line = self.first_line.is_some()
+            && raikiri_dom::paint_rules::atomic_on_first_line(
+                paragraph.document,
+                paragraph.root_id,
+                id,
+            );
+        let paint = match self.first_line.as_mut() {
+            Some((first, _)) if on_first_line => first,
+            _ => &mut self.rest,
+        };
+        let group = paragraph
+            .document
+            .parent_of(id)
+            .and_then(|parent| paint.element_group(paragraph, parent));
+        let positioned = computed_for_id(paragraph.cascade, id)
+            .filter(|cv| cv.position != raikiri_style::property::PositionValue::Static)
+            .map(|_| {
+                let positions = self.positions.get_or_insert_with(|| {
+                    paragraph.document.preorder_positions(paragraph.root_id)
+                });
+                let at = positions.get(&id).map_or((usize::MAX, 0), |&at| (at, 0));
+                let before = paint.groups_before(|owner| {
+                    paragraph
+                        .document
+                        .group_tree_position(positions, owner)
+                        .is_some_and(|group_at| group_at < at)
+                });
+                (
+                    typographic::element_stack_level(paragraph.cascade, id),
+                    before,
+                )
+            });
+        // The groups are recorded before the paragraph's paint transform,
+        // which composites them; the box was painted after it.
+        let inverse = self.paint_transform.inverse();
+        if !inverse.as_coeffs().iter().all(|value| value.is_finite()) {
+            // A singular transform leaves no two-dimensional ink to place.
+            return;
+        }
+        let mut local = Scene::new();
+        local.append_scene(content, inverse);
+        paint.add_box(group, positioned, local);
+    }
+
+    /// The transform the lines were painted in, which [`Self::finish`]
+    /// expects on `scene`.
+    pub(crate) fn paint_transform(&self) -> Affine {
+        self.paint_transform
+    }
+
+    /// Composite the paragraph's groups into `scene`.
+    pub(crate) fn finish(self, scene: &mut impl PaintScene) {
+        self.rest
+            .finish(scene, self.clip, self.paint_transform, self.first_line);
+    }
+}
+
+/// Paint the lines of `root_id` like [`draw_ifc_lines_with_resources`], but
+/// hold their groups open; `None` when the paragraph has no lines.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn hold_ifc_lines<'a>(
+    image_cache: &crate::walk::ImageBrushCache,
+    document: &'a Document,
+    cascade: &'a CascadeResult,
+    root_id: usize,
+    position: IfcPosition,
+    base_decorations: &DecorationContext,
+    fragmentainer: Option<usize>,
+    custom_highlights: &[crate::TextHighlightRange],
+    pixel_source: Option<&dyn raikiri_traits::ImagePixelSource>,
+    warnings: &mut Vec<raikiri_traits::RenderWarning>,
+    page_box: raikiri_traits::PageBox,
+    paint_transform: Affine,
+) -> Option<HeldLines<'a>> {
+    let positioned = PositionedLines::new(document, cascade, root_id, fragmentainer)?;
     let writing_mode = positioned.writing_mode;
     let shifts = &positioned.shifts;
     let base = position;
@@ -115,12 +239,39 @@ pub(crate) fn draw_ifc_lines_with_resources(
     let root_node = document
         .ifc_layout_node(root_id)
         .expect("positioned lines require an existing IFC root");
-    // One set of groups serves every line, so a pseudo-element split over
-    // lines composites its complete paint at once (CSS Color 4 §3.3).
-    let all_pieces: Vec<_> = pieces_by_line.iter().flatten().cloned().collect();
-    let mut paint = typographic::TypographicPaint::new(root_node, &all_pieces, cascade);
+    let paragraph = typographic::Paragraph {
+        document,
+        cascade,
+        root_id,
+    };
+    // A translucent `::first-line` composites the paint of the first line
+    // as one group. It splits the inline elements on that line from their
+    // other lines (CSS Pseudo 4 §2.1.1), so the first line has groups of its
+    // own.
+    let first_line_opacity = raikiri_dom::paint_rules::first_line_opacity_layer(document, root_id);
+    let mut first_line = first_line_opacity.map(|opacity| {
+        let pieces = pieces_by_line.first().map_or(&[][..], Vec::as_slice);
+        (
+            typographic::TypographicPaint::new(paragraph, root_node, pieces),
+            opacity,
+        )
+    });
+    // One set of groups serves every other line, so an element or
+    // pseudo-element split over lines composites its complete paint at once
+    // (CSS Color 4 §3.3).
+    let rest_pieces: Vec<_> = pieces_by_line
+        .iter()
+        .skip(usize::from(first_line.is_some()))
+        .flatten()
+        .cloned()
+        .collect();
+    let mut rest = typographic::TypographicPaint::new(paragraph, root_node, &rest_pieces);
     for positioned_line in positioned.lines() {
         let line_index = positioned_line.index;
+        let paint = match first_line.as_mut() {
+            Some((first, _)) if line_index == 0 => first,
+            _ => &mut rest,
+        };
         let line = positioned_line.line;
         let (column_x, column_y) = positioned_line.offset;
         let position = IfcPosition {
@@ -181,7 +332,7 @@ pub(crate) fn draw_ifc_lines_with_resources(
             let group = paint.piece_group(piece);
             crate::walk::paint_inline_box(
                 image_cache,
-                paint.target(group),
+                paint.box_target(group, piece),
                 cv,
                 piece,
                 (!vertical)
@@ -259,10 +410,8 @@ pub(crate) fn draw_ifc_lines_with_resources(
         }
         if !vertical && let Some(hit_layout) = hit_layout.as_ref() {
             draw_custom_highlights(
-                paint.target(None),
-                document,
-                cascade,
-                root_id,
+                paint,
+                paragraph,
                 line_index,
                 line,
                 hit_layout,
@@ -296,7 +445,17 @@ pub(crate) fn draw_ifc_lines_with_resources(
                 })
                 .collect();
             let offset = positioned_run.offset;
-            let group = paint.nearest(positioned_run.style_owner, positioned_run.owner);
+            let paint_box = paint_box(
+                document,
+                cascade,
+                positioned_run.owner,
+                positioned_run.style_owner,
+            );
+            // Text outside every typographic box is in the groups of the
+            // inline elements around it.
+            let group = paint
+                .nearest(positioned_run.style_owner, positioned_run.owner)
+                .or_else(|| paint.element_group(paragraph, paint_box));
             runs.push(RunDraw {
                 run,
                 style: cv,
@@ -305,12 +464,7 @@ pub(crate) fn draw_ifc_lines_with_resources(
                 decorations,
                 offset,
                 group,
-                paint_box: paint_box(
-                    document,
-                    cascade,
-                    positioned_run.owner,
-                    positioned_run.style_owner,
-                ),
+                paint_box,
             });
         }
         // Consecutive runs of one box paint in phases: every shadow, then
@@ -427,16 +581,19 @@ pub(crate) fn draw_ifc_lines_with_resources(
             }
         }
     }
-    paint.finish(
-        scene,
-        Rect::new(
+    Some(HeldLines {
+        paragraph,
+        rest,
+        first_line,
+        clip: Rect::new(
             0.0,
             0.0,
             f64::from(page_box.width.max(0.0)),
             f64::from(page_box.height.max(0.0)),
         ),
         paint_transform,
-    );
+        positions: None,
+    })
 }
 
 #[cfg(test)]
@@ -492,10 +649,8 @@ fn physical_glyph_transform(
 
 #[allow(clippy::too_many_arguments)]
 fn draw_custom_highlights(
-    scene: &mut impl PaintScene,
-    document: &Document,
-    cascade: &CascadeResult,
-    root_id: usize,
+    paint: &mut typographic::TypographicPaint,
+    paragraph: Paragraph<'_>,
     line_index: usize,
     line: &shodo::Line,
     hit_layout: &LineLayout<'_>,
@@ -503,6 +658,11 @@ fn draw_custom_highlights(
     offsets: &[(usize, (f32, f32))],
     custom_highlights: &[crate::TextHighlightRange],
 ) {
+    let Paragraph {
+        document,
+        cascade,
+        root_id,
+    } = paragraph;
     let line_range = line.text_range();
     let Some(offset_mapping) = line.offset_mapping() else {
         return;
@@ -552,6 +712,13 @@ fn draw_custom_highlights(
         }
         let color = css_color_to_peniko(color);
         let (offset_x, offset_y) = cumulative_offset(document, root_id, offsets, highlight.node);
+        // The highlight paints with its text, in the groups of the inline
+        // elements around it.
+        let group = paint.element_group(
+            paragraph,
+            paint_box(document, cascade, highlight.node, highlight.node),
+        );
+        let scene = paint.target(group);
         for selected in selection {
             let rect = Rect::new(
                 f64::from(position.x + offset_x + selected.inline_start),

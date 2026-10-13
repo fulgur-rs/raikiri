@@ -112,7 +112,13 @@ fn nodes_into_a_node(context: &mut Context, items: Vec<NodeOrText>) -> JsResult<
         }
         let fragment = doc.create_detached_fragment();
         for node in indices {
-            doc.pre_insert(fragment, node, None)?;
+            // Moving `node` into the fragment removes it from its parent
+            // even when a later argument then fails to insert.
+            let old_parent = s.host.document().parent_of(node);
+            s.host.document_mut().pre_insert(fragment, node, None)?;
+            if let Some(old_parent) = old_parent {
+                super::stylesheet::note_child_list_change(s, old_parent, &[node]);
+            }
         }
         Ok(fragment)
     })?;
@@ -140,11 +146,15 @@ pub(crate) fn replace_all(
     node: Option<usize>,
 ) -> JsResult<()> {
     let result = with_state(context, |s| -> Result<(), DomMutationError> {
+        let mut moved = node.map_or_else(Vec::new, |node| {
+            super::stylesheet::inserted_nodes(s.host.document(), node)
+        });
         let doc = s.host.document_mut();
         let previous_children = doc
             .get_node(parent)
             .map(|n| n.children.clone())
             .unwrap_or_default();
+        moved.extend(previous_children.iter().copied());
         if let Some(node) = node {
             doc.pre_insert(parent, node, None)?;
         }
@@ -153,6 +163,7 @@ pub(crate) fn replace_all(
                 doc.detach_from_parent(child);
             }
         }
+        super::stylesheet::note_child_list_change(s, parent, &moved);
         Ok(())
     })?;
     result.map_err(|e| map_mutation_error(context, e))
@@ -311,7 +322,11 @@ fn set_node_value(this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
     })?;
     if is_character_data {
         let result = with_state(context, |s| {
-            s.host.document_mut().set_character_data(index, &value)
+            let result = s.host.document_mut().set_character_data(index, &value);
+            if result.is_ok() {
+                super::stylesheet::note_character_data_change(s, index);
+            }
+            result
         })?;
         if result.is_err() {
             // cov:ignore: `is_character_data` above already confirmed a Text,
@@ -328,7 +343,12 @@ fn insert_before(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
     let node = arg_node(args, 0, context)?;
     let before = arg_required_node_or_null(args, 1, context)?;
     let result = with_state(context, |s| {
-        s.host.document_mut().pre_insert(parent, node, before)
+        let moved = super::stylesheet::inserted_nodes(s.host.document(), node);
+        let result = s.host.document_mut().pre_insert(parent, node, before);
+        if result.is_ok() && !moved.is_empty() {
+            super::stylesheet::note_child_list_change(s, parent, &moved);
+        }
+        result
     })?;
     result.map_err(|e| map_mutation_error(context, e))?;
     mark_dirty(context)?;
@@ -339,7 +359,12 @@ fn append_child(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
     let parent = this_node(this, context)?;
     let node = arg_node(args, 0, context)?;
     let result = with_state(context, |s| {
-        s.host.document_mut().pre_insert(parent, node, None)
+        let moved = super::stylesheet::inserted_nodes(s.host.document(), node);
+        let result = s.host.document_mut().pre_insert(parent, node, None);
+        if result.is_ok() && !moved.is_empty() {
+            super::stylesheet::note_child_list_change(s, parent, &moved);
+        }
+        result
     })?;
     result.map_err(|e| map_mutation_error(context, e))?;
     mark_dirty(context)?;
@@ -349,7 +374,13 @@ fn append_child(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
 fn remove_child(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let parent = this_node(this, context)?;
     let child = arg_node(args, 0, context)?;
-    let result = with_state(context, |s| s.host.document_mut().pre_remove(parent, child))?;
+    let result = with_state(context, |s| {
+        let result = s.host.document_mut().pre_remove(parent, child);
+        if result.is_ok() {
+            super::stylesheet::note_child_list_change(s, parent, &[child]);
+        }
+        result
+    })?;
     result.map_err(|e| map_mutation_error(context, e))?;
     mark_dirty(context)?;
     Ok(args[0].clone())
@@ -360,7 +391,13 @@ fn replace_child(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
     let node = arg_node(args, 0, context)?;
     let child = arg_node(args, 1, context)?;
     let result = with_state(context, |s| {
-        s.host.document_mut().replace_child(parent, node, child)
+        let mut moved = super::stylesheet::inserted_nodes(s.host.document(), node);
+        moved.push(child);
+        let result = s.host.document_mut().replace_child(parent, node, child);
+        if result.is_ok() {
+            super::stylesheet::note_child_list_change(s, parent, &moved);
+        }
+        result
     })?;
     result.map_err(|e| map_mutation_error(context, e))?;
     mark_dirty(context)?;
@@ -477,7 +514,12 @@ fn append(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<J
     let items = convert_args(context, args)?;
     let node = nodes_into_a_node(context, items)?;
     let result = with_state(context, |s| {
-        s.host.document_mut().pre_insert(parent, node, None)
+        let moved = super::stylesheet::inserted_nodes(s.host.document(), node);
+        let result = s.host.document_mut().pre_insert(parent, node, None);
+        if result.is_ok() && !moved.is_empty() {
+            super::stylesheet::note_child_list_change(s, parent, &moved);
+        }
+        result
     })?;
     result.map_err(|e| map_mutation_error(context, e))?;
     mark_dirty(context)?;
@@ -495,7 +537,12 @@ fn prepend(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<
             .and_then(|n| n.children.first().copied())
     })?;
     let result = with_state(context, |s| {
-        s.host.document_mut().pre_insert(parent, node, before)
+        let moved = super::stylesheet::inserted_nodes(s.host.document(), node);
+        let result = s.host.document_mut().pre_insert(parent, node, before);
+        if result.is_ok() && !moved.is_empty() {
+            super::stylesheet::note_child_list_change(s, parent, &moved);
+        }
+        result
     })?;
     result.map_err(|e| map_mutation_error(context, e))?;
     mark_dirty(context)?;
@@ -577,7 +624,12 @@ fn before(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<J
         }
     })?;
     let result = with_state(context, |s| {
-        s.host.document_mut().pre_insert(parent, node, reference)
+        let moved = super::stylesheet::inserted_nodes(s.host.document(), node);
+        let result = s.host.document_mut().pre_insert(parent, node, reference);
+        if result.is_ok() && !moved.is_empty() {
+            super::stylesheet::note_child_list_change(s, parent, &moved);
+        }
+        result
     })?;
     result.map_err(|e| map_mutation_error(context, e))?;
     mark_dirty(context)?;
@@ -596,7 +648,12 @@ fn after(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<Js
     })?;
     let node = nodes_into_a_node(context, items)?;
     let result = with_state(context, |s| {
-        s.host.document_mut().pre_insert(parent, node, viable_next)
+        let moved = super::stylesheet::inserted_nodes(s.host.document(), node);
+        let result = s.host.document_mut().pre_insert(parent, node, viable_next);
+        if result.is_ok() && !moved.is_empty() {
+            super::stylesheet::note_child_list_change(s, parent, &moved);
+        }
+        result
     })?;
     result.map_err(|e| map_mutation_error(context, e))?;
     mark_dirty(context)?;
@@ -621,13 +678,23 @@ fn replace_with(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
         s.host.document().parent_of(this_index) == Some(parent)
     })?;
     let result = with_state(context, |s| -> Result<(), DomMutationError> {
+        // Replacing `this` always changes the children; a plain insertion
+        // changes them only when `node` brings any.
+        let mut moved = super::stylesheet::inserted_nodes(s.host.document(), node);
         if still_child {
+            moved.push(this_index);
+        }
+        let result = if still_child {
             s.host
                 .document_mut()
                 .replace_child(parent, node, this_index)
         } else {
             s.host.document_mut().pre_insert(parent, node, viable_next)
+        };
+        if result.is_ok() && !moved.is_empty() {
+            super::stylesheet::note_child_list_change(s, parent, &moved);
         }
+        result
     })?;
     result.map_err(|e| map_mutation_error(context, e))?;
     mark_dirty(context)?;
@@ -639,7 +706,13 @@ fn remove(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsVa
     let Some(parent) = with_state(context, |s| s.host.document().parent_of(index))? else {
         return Ok(JsValue::undefined());
     };
-    let result = with_state(context, |s| s.host.document_mut().pre_remove(parent, index))?;
+    let result = with_state(context, |s| {
+        let result = s.host.document_mut().pre_remove(parent, index);
+        if result.is_ok() {
+            super::stylesheet::note_child_list_change(s, parent, &[index]);
+        }
+        result
+    })?;
     if let Err(error) = result {
         // cov:ignore: `parent` was confirmed to be `index`'s current parent immediately above.
         return Err(map_mutation_error(context, error));
@@ -735,7 +808,11 @@ fn set_data(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult
         _ => dom_string(args, 0, context)?,
     };
     let result = with_state(context, |s| {
-        s.host.document_mut().set_character_data(index, &value)
+        let result = s.host.document_mut().set_character_data(index, &value);
+        if result.is_ok() {
+            super::stylesheet::note_character_data_change(s, index);
+        }
+        result
     })?;
     if result.is_err() {
         // cov:ignore: `this_character_data` above already confirmed a Text,
@@ -772,7 +849,11 @@ fn append_data(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRes
     })?;
     let updated = current + &addition;
     let result = with_state(context, |s| {
-        s.host.document_mut().set_character_data(index, &updated)
+        let result = s.host.document_mut().set_character_data(index, &updated);
+        if result.is_ok() {
+            super::stylesheet::note_character_data_change(s, index);
+        }
+        result
     })?;
     if result.is_err() {
         // cov:ignore: `this_character_data` above already confirmed a Text,

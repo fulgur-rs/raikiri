@@ -25,7 +25,7 @@
 //! lengths), a later release may replace the alias with a dedicated computed
 //! type; that is a breaking change for code that names the variant payloads.
 
-pub use crate::computed::{ComputedBorderImage, ComputedValues};
+pub use crate::computed::{ComputedBackgroundLayer, ComputedBorderImage, ComputedValues};
 pub use crate::property::{CornerRadius, CssColor, Sides};
 pub use crate::resolve::{
     ComputedBackgroundSize, ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem,
@@ -84,17 +84,17 @@ pub type ComputedTextDecorationColor = property::TextDecorationColor;
 /// Computed `overflow` ([`ComputedValues::overflow`]), one value per axis.
 pub type ComputedOverflow = property::OverflowXY;
 
-/// Computed `background-repeat` ([`ComputedValues::background_repeat`]).
+/// Computed `background-repeat` ([`ComputedBackgroundLayer::repeat`]).
 pub type ComputedBackgroundRepeat = property::BackgroundRepeat;
 
-/// Computed `background-attachment` ([`ComputedValues::background_attachment`]).
+/// Computed `background-attachment` ([`ComputedBackgroundLayer::attachment`]).
 pub type ComputedBackgroundAttachment = property::BackgroundAttachment;
 
 /// Computed `<visual-box>` of `background-clip` and `background-origin`
-/// ([`ComputedValues::background_clip`], [`ComputedValues::background_origin`]).
+/// ([`ComputedBackgroundLayer::clip`], [`ComputedBackgroundLayer::origin`]).
 pub type ComputedVisualBox = property::VisualBox;
 
-/// Computed `background-image` ([`ComputedValues::background_image`]) and
+/// Computed `background-image` ([`ComputedBackgroundLayer::image`]) and
 /// `list-style-image` ([`ComputedValues::list_style_image`]).
 ///
 /// `Url` holds the URL as written; resolving it against a base URL is the

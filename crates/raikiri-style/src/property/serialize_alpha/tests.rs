@@ -35,16 +35,7 @@ fn math_functions_fold_to_one_calc_keeping_their_type() {
 fn unfoldable_text_and_other_properties_are_left_alone() {
     assert_eq!(opacity("calc(50% + 1)"), None);
     assert_eq!(opacity("calc(50% * 50%)"), None);
-    assert_eq!(opacity("calc(1 / 0)"), None);
-    assert_eq!(opacity("calc(1e38 * 10)"), None);
-    assert_eq!(opacity("calc(-1e38 * 10)"), None);
     assert_eq!(opacity("1e400"), None);
-    assert_eq!(opacity("min(calc(0 / 0), 1)"), None);
-    assert_eq!(opacity("max(1, calc(0 / 0))"), None);
-    assert_eq!(opacity("clamp(0, calc(0 / 0), 1)"), None);
-    assert_eq!(opacity("calc(InFiNiTy)"), None);
-    assert_eq!(opacity("calc(-infinity)"), None);
-    assert_eq!(opacity("calc(nan)"), None);
     assert_eq!(opacity("calc(foo)"), None);
     assert_eq!(opacity("-1e400"), None);
     assert_eq!(opacity("1e400%"), None);
@@ -72,4 +63,55 @@ fn zero_mantissa_exponents_read_back_as_zero() {
     assert_eq!(opacity("0e999").as_deref(), Some("0"));
     assert_eq!(opacity("0e999%").as_deref(), Some("0"));
     assert_eq!(opacity("calc(0e999 + 0.5)").as_deref(), Some("calc(0.5)"));
+}
+
+#[test]
+fn non_finite_results_read_back_as_canonical_keywords() {
+    assert_eq!(opacity("calc(InFiNiTy)").as_deref(), Some("calc(infinity)"));
+    assert_eq!(
+        opacity("calc(-INFINITY)").as_deref(),
+        Some("calc(-infinity)")
+    );
+    assert_eq!(opacity("calc(nan)").as_deref(), Some("calc(NaN)"));
+    assert_eq!(opacity("calc(1 / 0)").as_deref(), Some("calc(infinity)"));
+    assert_eq!(opacity("calc(-1 / 0)").as_deref(), Some("calc(-infinity)"));
+    assert_eq!(opacity("calc(0 / 0)").as_deref(), Some("calc(NaN)"));
+    assert_eq!(
+        opacity("calc(infinity - infinity)").as_deref(),
+        Some("calc(NaN)")
+    );
+    // Past the `f32` range a finite intermediate overflows to infinity.
+    assert_eq!(
+        opacity("calc(1e38 * 10)").as_deref(),
+        Some("calc(infinity)")
+    );
+    assert_eq!(
+        opacity("calc(-1e38 * 10)").as_deref(),
+        Some("calc(-infinity)")
+    );
+    // NaN is infectious through min / max / clamp.
+    assert_eq!(opacity("min(calc(0 / 0), 1)").as_deref(), Some("calc(NaN)"));
+    assert_eq!(opacity("max(1, calc(0 / 0))").as_deref(), Some("calc(NaN)"));
+    assert_eq!(
+        opacity("clamp(0, calc(0 / 0), 1)").as_deref(),
+        Some("calc(NaN)")
+    );
+    assert_eq!(opacity("min(infinity, 1)").as_deref(), Some("calc(1)"));
+    // A non-finite percentage keeps its type as a product with `1%`.
+    assert_eq!(
+        opacity("calc(infinity * 1%)").as_deref(),
+        Some("calc(infinity * 1%)")
+    );
+    assert_eq!(
+        opacity("calc(50% / 0)").as_deref(),
+        Some("calc(infinity * 1%)")
+    );
+    assert_eq!(opacity("calc(NaN * 1%)").as_deref(), Some("calc(NaN * 1%)"));
+    // The other alpha properties share the rule.
+    assert_eq!(
+        serialize_alpha_value("fill-opacity", "calc(Infinity)").as_deref(),
+        Some("calc(infinity)")
+    );
+    // A bare out-of-range literal is not a math function and keeps its text.
+    assert_eq!(opacity("1e400"), None);
 }

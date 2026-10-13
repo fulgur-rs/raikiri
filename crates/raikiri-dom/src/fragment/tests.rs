@@ -30,6 +30,29 @@ fn fragment_origins_use_the_fragment_parent_or_the_source_node() {
 }
 
 #[test]
+fn a_calc_gap_adds_its_pixel_and_percentage_terms() {
+    let style = |gap: f32| MulticolStyle {
+        count: Some(2),
+        width: None,
+        column_fill: raikiri_style::property::ColumnFillValue::Balance,
+        gap,
+        gap_percent: Some(10.0),
+        height_definite: true,
+        horizontal: true,
+        orphans: 2,
+        widows: 2,
+    };
+    let context = FragmentationContext::resolve(200.0, Some(60.0), style(5.0))
+        .expect("positive used width should resolve");
+    assert!((context.column_gap - 25.0).abs() < f32::EPSILON);
+    assert!((context.column_width - 87.5).abs() < f32::EPSILON);
+    // A negative sum clamps to zero.
+    let context = FragmentationContext::resolve(200.0, Some(60.0), style(-30.0))
+        .expect("positive used width should resolve");
+    assert_eq!(context.column_gap, 0.0);
+}
+
+#[test]
 fn resolves_count_and_percentage_gap_against_used_width() {
     let context = FragmentationContext::resolve(
         100.0,

@@ -308,7 +308,7 @@ impl PageMarginBoxCascadeResult {
         merged.declarations = winners
             .into_iter()
             .filter_map(|(_, _, _, decl)| {
-                let value = resolved_value(&decl.value)?;
+                let value = margin_box_text_shadow_default(resolved_value(&decl.value)?)?;
                 Some(Declaration::new(
                     resolve_css_wide_color_font(
                         value,
@@ -354,6 +354,21 @@ impl PageMarginBoxCascadeResult {
         }
         Some(merged)
     }
+}
+
+/// Settle a CSS-wide keyword on a margin box's `text-shadow`. The property
+/// is inherited (CSS Text Decoration 3 §4), so every keyword other than
+/// `initial` drops the declaration and the box takes the page context's
+/// value; `initial` is `none`.
+fn margin_box_text_shadow_default(value: PropertyValue) -> Option<PropertyValue> {
+    if let PropertyValue::Deferred(marker) = &value
+        && marker.key == PropertyKey::TextShadow
+        && let Some(keyword) = marker.css_wide_keyword()
+    {
+        return (keyword == crate::property::CssWideKeyword::Initial)
+            .then(|| PropertyValue::TextShadow(crate::property::empty_text_shadow_list()));
+    }
+    Some(value)
 }
 
 /// Winning values from an `@page` cascade pass.
@@ -655,17 +670,17 @@ impl PageCascadeResult {
     /// resource URLs. This narrow visitor lets the embedder replace those URLs
     /// without exposing the declaration maps for unrestricted mutation.
     pub fn for_each_background_image_mut(&mut self, mut visitor: impl FnMut(&mut BackgroundImage)) {
-        if let Some(PropertyValue::BackgroundImage(image)) =
+        if let Some(PropertyValue::BackgroundImage(images)) =
             self.declarations.get_mut(&PropertyKey::BackgroundImage)
         {
-            visitor(image);
+            Arc::make_mut(images).iter_mut().for_each(&mut visitor);
         }
         for margin_box in &mut self.margin_boxes {
             for declaration in &mut margin_box.declarations {
                 if matches!(declaration.value, PropertyValue::BackgroundImage(_)) {
                     declaration.update_value(|value| {
-                        if let PropertyValue::BackgroundImage(image) = value {
-                            visitor(image);
+                        if let PropertyValue::BackgroundImage(images) = value {
+                            Arc::make_mut(images).iter_mut().for_each(&mut visitor);
                         }
                     });
                 }

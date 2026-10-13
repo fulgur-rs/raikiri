@@ -125,6 +125,7 @@ impl PageLengthBasis<'_> {
             ComputedFlexBasis::FitContent => FlexBasisValue::FitContent,
             ComputedFlexBasis::Px(v) => FlexBasisValue::Length(Length::Px(v)),
             ComputedFlexBasis::Percent(p) => FlexBasisValue::Length(Length::Percent(p)),
+            ComputedFlexBasis::Calc(calc) => FlexBasisValue::Calc(calc),
         }
     }
     /// `background-size: <bg-size>` — same round-trip as [`Self::lpa`], applied
@@ -190,6 +191,9 @@ impl PageLengthBasis<'_> {
             ComputedLengthPercentageOrNormal::Px(v) => LengthOrNormal::Length(Length::Px(v)),
             ComputedLengthPercentageOrNormal::Percent(p) => {
                 LengthOrNormal::Length(Length::Percent(p))
+            }
+            ComputedLengthPercentageOrNormal::Calc(calc) => {
+                LengthOrNormal::Calc(LengthPercentageOrCalc::Calc(calc))
             }
         }
     }
@@ -680,7 +684,16 @@ pub(super) fn absolutize_in_page_context(
         }),
         // ── background-image / mask-image ───────────────────────────────
         PropertyValue::BackgroundImage(img) => PropertyValue::BackgroundImage(
-            crate::resolve::resolve_background_image(img, font_size, own_line_height, ctx),
+            img.iter()
+                .map(|image| {
+                    crate::resolve::resolve_background_image(
+                        image.clone(),
+                        font_size,
+                        own_line_height,
+                        ctx,
+                    )
+                })
+                .collect(),
         ),
         PropertyValue::MaskImage(img) => PropertyValue::MaskImage(
             crate::resolve::resolve_background_image(img, font_size, own_line_height, ctx),
@@ -852,19 +865,23 @@ pub(super) fn absolutize_in_page_context(
         PropertyValue::Bottom(v) => PropertyValue::Bottom(basis.lpa(v)),
         PropertyValue::Left(v) => PropertyValue::Left(basis.lpa(v)),
         // ── background-size / background-position ───────────────────────
-        PropertyValue::BackgroundSize(v) => PropertyValue::BackgroundSize(basis.background_size(v)),
+        PropertyValue::BackgroundSize(v) => PropertyValue::BackgroundSize(
+            v.iter().map(|size| basis.background_size(*size)).collect(),
+        ),
         PropertyValue::BackgroundPosition(v) => {
-            PropertyValue::BackgroundPosition(basis.css_position(v))
+            PropertyValue::BackgroundPosition(v.iter().map(|p| basis.css_position(*p)).collect())
         }
         PropertyValue::Background(mut shorthand) => {
-            shorthand.image = crate::resolve::resolve_background_image(
-                shorthand.image,
-                font_size,
-                own_line_height,
-                ctx,
-            );
-            shorthand.position = basis.css_position(shorthand.position);
-            shorthand.size = basis.background_size(shorthand.size);
+            for layer in shorthand.layers.iter_mut() {
+                layer.image = crate::resolve::resolve_background_image(
+                    std::mem::replace(&mut layer.image, crate::property::BackgroundImage::None),
+                    font_size,
+                    own_line_height,
+                    ctx,
+                );
+                layer.position = basis.css_position(layer.position);
+                layer.size = basis.background_size(layer.size);
+            }
             PropertyValue::Background(shorthand)
         }
         // ── text-decoration-thickness / text-decoration-inset ────────────

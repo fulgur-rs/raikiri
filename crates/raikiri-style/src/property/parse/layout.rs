@@ -104,6 +104,11 @@ pub(crate) fn parse_flex_basis(input: &mut Parser<'_, '_>) -> Option<FlexBasisVa
     {
         return Some(FlexBasisValue::FitContent);
     }
+    // A mixed-unit `calc()` reaches this parser only after substitution or
+    // simplification failed to fold it to one dimension; keep its terms.
+    if let Some(calc) = crate::cascade::parse_relative_calc_function(input) {
+        return Some(FlexBasisValue::from_non_negative_calc(calc));
+    }
     let length = parse_length_value(input, true)?;
     // Reuse `<'width'>` with the CSS Sizing 3 §3.1.1 `[0,∞]` non-negative
     // constraint, following the same pattern as `parse_width`.
@@ -417,6 +422,14 @@ pub(crate) fn parse_gap_value(input: &mut Parser<'_, '_>) -> Option<LengthOrNorm
         .is_ok()
     {
         return Some(LengthOrNormal::Normal);
+    }
+    // A mixed-unit `calc()` reaches this parser only after substitution or
+    // simplification failed to fold it to one dimension. A math function is
+    // clamped to the range rather than rejected.
+    if let Some(calc) = crate::cascade::parse_relative_calc_function(input) {
+        return Some(LengthOrNormal::Calc(
+            LengthPercentageOrCalc::from_non_negative_calc(calc),
+        ));
     }
     let length = parse_length_value(input, true)?;
     (length.payload() >= 0.0).then_some(LengthOrNormal::Length(length))

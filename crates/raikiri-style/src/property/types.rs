@@ -1216,6 +1216,9 @@ pub enum LengthOrNormal {
     Length(Length),
     /// `normal` keyword. Its semantics are property-specific.
     Normal,
+    /// A mixed-unit `calc()` that keeps its percentage until used-value
+    /// time. Only the gap properties parse one.
+    Calc(LengthPercentageOrCalc),
 }
 
 /// Four-sided box-model value. Field order matches CSS Box 3 §4.2’s
@@ -3516,6 +3519,27 @@ pub enum FlexBasisValue {
     /// `<length-percentage [0,∞]>` — the same non-negative constraint as `width`
     /// (see the [`parse_flex_basis`] doc).
     Length(Length),
+    /// A mixed-unit `calc()` such as `calc(50% - 10px)`, kept until the flex
+    /// container's inner main size is known and clamped to `[0,∞]` there.
+    Calc(CalcLengthPercentage),
+    /// A mixed-unit `calc()` with font-relative or viewport terms, absolutized
+    /// at computed-value time into [`Self::Calc`]'s computed counterpart.
+    RelativeCalc(RelativeCalcLengthPercentage),
+}
+
+impl FlexBasisValue {
+    /// The value of a mixed-unit `calc()`. A math function is clamped to the
+    /// `[0,∞]` range rather than rejected (CSS Values 4 "Range Checking",
+    /// <https://www.w3.org/TR/css-values-4/#calc-range>); one that still
+    /// depends on a percentage basis, a font or a viewport is clamped when it
+    /// is resolved.
+    pub(crate) fn from_non_negative_calc(value: RelativeCalcLengthPercentage) -> Self {
+        match LengthPercentageOrCalc::from_non_negative_calc(value) {
+            LengthPercentageOrCalc::Length(length) => Self::Length(length),
+            LengthPercentageOrCalc::Calc(calc) => Self::Calc(calc),
+            LengthPercentageOrCalc::RelativeCalc(calc) => Self::RelativeCalc(calc),
+        }
+    }
 }
 
 /// The specified value of the `flex` shorthand.
@@ -7382,6 +7406,7 @@ impl DeferredValue {
                 | PropertyKey::BorderImageOutset
                 | PropertyKey::BorderImageRepeat
                 | PropertyKey::BoxDecorationBreak
+                | PropertyKey::TextShadow
         ) {
             return None;
         }
@@ -7626,12 +7651,11 @@ pub struct CssPosition {
 ///
 /// CSS Backgrounds and Borders 3 §2.3 "Image Sources: the background-image
 /// property" <https://www.w3.org/TR/css-backgrounds-3/#the-background-image>.
-/// Grammar: `<bg-image>#`, `<bg-image> = <image> | none`. This property permits
-/// a comma-separated list (`#` multiplier) of multiple background layers,
-/// but this implementation accepts only one layer (the same "multiple-layer
-/// compositing is follow-up work" scope carve-out as in the
-/// [`BackgroundRepeat`] docs). To support comma lists later, wrap this enum
-/// in `Arc<Vec<BackgroundImage>>`.
+/// Grammar: `<bg-image>#`, `<bg-image> = <image> | none`. This enum is one
+/// item of that comma-separated list: [`PropertyValue::BackgroundImage`]
+/// holds one per background layer, and the number of items sets the number
+/// of layers (CSS Backgrounds 3 §2.1). `mask-image`, `list-style-image` and
+/// `border-image-source` reuse it as a single value.
 ///
 /// Both alternatives of `<image> = <url> | <gradient>` (CSS Images 4
 /// <https://www.w3.org/TR/css-images-4/#typedef-image>) are implemented.
@@ -7684,12 +7708,6 @@ pub struct CssPosition {
 /// provides a benefit. Conic filling is implemented (see
 /// [`Gradient::Conic`] paint), which is why its double-angle form is
 /// accepted while the linear and radial counterparts stay deferred.
-///
-/// The comma-separated list (`#` multiplier) for multiple background layers
-/// is also restricted to a single layer by this enum (the same "multiple-layer
-/// compositing is follow-up work" scope carve-out as in the
-/// [`BackgroundRepeat`] docs). To extend it to comma lists later, wrap
-/// this enum in `Arc<Vec<BackgroundImage>>`.
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq)]
 pub enum BackgroundImage {
@@ -8073,14 +8091,9 @@ css_keywords!(BackgroundRepeatKeyword {
 /// Specified value of `background-repeat`.
 ///
 /// CSS Backgrounds and Borders 3 §2.4 "Tiling Images: the
-/// background-repeat property". Grammar: `<repeat-style>#` — this
-/// property allows a comma-separated list (`#` multiplier) for multiple
-/// background layers, but this implementation accepts only a single layer.
-/// `background-image` itself is not implemented yet (a separate task), so
-/// there is no way to observe multiple layers. Once `background-image`
-/// supports comma-separated lists, this struct can be extended simply by
-/// wrapping it in `Arc<Vec<BackgroundRepeat>>` (the same shape as converting
-/// `BoxShadowItem` to `Arc<Vec<..>>`).
+/// background-repeat property". Grammar: `<repeat-style>#`. This struct is
+/// one item of that comma-separated list:
+/// [`PropertyValue::BackgroundRepeat`] holds one per background layer.
 ///
 /// `repeat-x` = `{x: Repeat, y: NoRepeat}`, `repeat-y` = `{x: NoRepeat, y:
 /// Repeat}` (the computed values defined by the spec for these two-keyword
@@ -8264,8 +8277,8 @@ impl BorderImageShorthand {
 /// Specified value of `background-attachment`.
 ///
 /// CSS Backgrounds and Borders 3 §2.5 "Affixing Images: the
-/// background-attachment property". Grammar: `<attachment>#` — see
-/// [`BackgroundRepeat`] docs for why comma-separated lists are out of scope.
+/// background-attachment property". Grammar: `<attachment>#`; this enum
+/// is one item of that list (see [`BackgroundRepeat`]).
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BackgroundAttachment {
@@ -8289,9 +8302,13 @@ css_keywords!(BackgroundAttachment {
 /// Box keyword shared by `background-clip` and `background-origin`
 /// (CSS Backgrounds and Borders 3 §2.7 "Painting Area: the
 /// background-clip property" / "Positioning Area: the
-/// background-origin property"). Both properties have the grammar
-/// `<visual-box>#`; see [`BackgroundRepeat`] docs for why comma-separated
-/// lists are out of scope.
+/// background-origin property"). Each property takes a comma-separated
+/// list (`#` multiplier) with one item per background layer.
+///
+/// `background-origin` accepts only `<visual-box>` (`border-box |
+/// padding-box | content-box`). `background-clip` (CSS Backgrounds 4 §2.6)
+/// also accepts `border-area`, `text`, and the pair `border-area text`
+/// ([`Self::BorderAreaText`]).
 ///
 /// The spec initial value differs by property: `background-clip` uses
 /// `border-box`, while `background-origin` uses `padding-box`
@@ -8310,21 +8327,42 @@ pub enum VisualBox {
     BorderArea,
     /// `text` — clips to the shape of the text (CSS Backgrounds 4 §2.6, `background-clip: text`).
     Text,
+    /// `border-area text` — the union of the border area and the text shape
+    /// (CSS Backgrounds 4 §2.6 `[border-area || text]`). The two
+    /// keywords parse in either order and serialize as `border-area text`.
+    BorderAreaText,
 }
 
-css_keywords!(VisualBox {
+css_keywords!(@serialize VisualBox {
     BorderBox => "border-box",
     PaddingBox => "padding-box",
     ContentBox => "content-box",
     BorderArea => "border-area",
     Text => "text",
+    BorderAreaText => "border-area text",
 });
+
+impl VisualBox {
+    /// Parses one single-keyword visual box, ASCII case-insensitively. The
+    /// two-keyword [`Self::BorderAreaText`] is assembled by the
+    /// `background-clip` parser instead.
+    pub(crate) fn from_css_ident(ident: &str) -> Option<Self> {
+        cssparser::match_ignore_ascii_case! { ident,
+            "border-box" => Some(Self::BorderBox),
+            "padding-box" => Some(Self::PaddingBox),
+            "content-box" => Some(Self::ContentBox),
+            "border-area" => Some(Self::BorderArea),
+            "text" => Some(Self::Text),
+            _ => None,
+        }
+    }
+}
 
 /// Specified value of `background-size`.
 ///
 /// CSS Backgrounds and Borders 3 §2.9 "Sizing Images: the
-/// background-size property". Grammar: `<bg-size>#` — see
-/// [`BackgroundRepeat`] docs for why comma-separated lists are out of scope.
+/// background-size property". Grammar: `<bg-size>#`; this enum is one
+/// item of that list (see [`BackgroundRepeat`]).
 ///
 /// `<bg-size> = [ <length-percentage [0,∞]> | auto ]{1,2} | cover |
 /// contain`. If only one value is specified, the second axis defaults to
@@ -8351,7 +8389,57 @@ pub enum BackgroundSize {
     Contain,
 }
 
-/// Temporary carrier for the parse result of the `background` shorthand.
+/// One layer of the `background` shorthand (CSS Backgrounds 3 §2.10): the
+/// seven per-layer longhand components, with every omitted component
+/// already filled with its longhand's initial value.
+///
+/// How `<visual-box>` occurrences set origin and clip is described in
+/// [`BackgroundShorthand`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct BackgroundLayerSpec {
+    /// `background-image` component: [`BackgroundImage::None`] if omitted.
+    pub image: BackgroundImage,
+    /// `background-repeat` component: `repeat` on both axes if omitted.
+    pub repeat: BackgroundRepeat,
+    /// `background-attachment` component: [`BackgroundAttachment::Scroll`]
+    /// if omitted.
+    pub attachment: BackgroundAttachment,
+    /// `background-position` component: `0% 0%` if omitted.
+    pub position: CssPosition,
+    /// `background-size` component: `auto` on both axes if omitted. Size
+    /// can occur only directly after position, separated by `/`.
+    pub size: BackgroundSize,
+    /// `background-clip` component: [`VisualBox::BorderBox`] if omitted.
+    pub clip: VisualBox,
+    /// `background-origin` component: [`VisualBox::PaddingBox`] if omitted.
+    pub origin: VisualBox,
+}
+
+impl BackgroundLayerSpec {
+    /// A layer with every component at its longhand's initial value.
+    pub fn initial() -> Self {
+        Self {
+            image: BackgroundImage::None,
+            repeat: BackgroundRepeat {
+                x: BackgroundRepeatKeyword::Repeat,
+                y: BackgroundRepeatKeyword::Repeat,
+            },
+            attachment: BackgroundAttachment::Scroll,
+            position: CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(0.0)),
+            },
+            size: BackgroundSize::Explicit {
+                width: LengthOrAuto::Auto,
+                height: LengthOrAuto::Auto,
+            },
+            clip: VisualBox::BorderBox,
+            origin: VisualBox::PaddingBox,
+        }
+    }
+}
+
+/// Carrier for the parse result of the `background` shorthand.
 ///
 /// CSS Backgrounds and Borders 3 §2.10 "Backgrounds Shorthand: the
 /// background property"
@@ -8366,13 +8454,17 @@ pub enum BackgroundSize {
 /// background-color is set to the specified color, if any, else set to its
 /// initial value."
 ///
-/// Grammar (single layer — this crate's scope carving, see below):
+/// Grammar:
 ///
 /// ```text
-/// <final-bg-layer> = <bg-image> || <bg-position> [ / <bg-size> ]? ||
-///                     <repeat-style> || <attachment> || <visual-box> ||
-///                     <visual-box> || <'background-color'>
+/// <'background'> = <bg-layer>#? , <final-bg-layer>
+/// <bg-layer> = <bg-image> || <bg-position> [ / <bg-size> ]? ||
+///              <repeat-style> || <attachment> || <visual-box> || <visual-box>
+/// <final-bg-layer> = <bg-layer> || <'background-color'>
 /// ```
+///
+/// "A color is permitted in `<final-bg-layer>`, but not in `<bg-layer>`" —
+/// so `red, url(a.png)` is invalid while `url(a.png), red` is valid.
 ///
 /// `<bg-position> [ / <bg-size> ]?` is a single `||` alternative, not two
 /// independently-orderable ones — `<bg-size>` may only follow a position,
@@ -8384,46 +8476,15 @@ pub enum BackgroundSize {
 /// verbatim: "If one `<visual-box>` value is present then it sets both
 /// background-origin and background-clip to that value. If two values are
 /// present, then the first sets background-origin and the second
-/// background-clip." — i.e. up to 2 occurrences are accepted (in document
-/// order, interleaved freely with the other components), not 2
-/// independently-named slots.
-///
-/// # Single layer only (Non-goal: comma-separated multi-layer)
-///
-/// The full grammar is `<bg-layer>#? , <final-bg-layer>` — a comma-separated
-/// list of layers, where every layer but the last is a `<bg-layer>` (same as
-/// `<final-bg-layer>` minus the `<'background-color'>` alternative — spec
-/// verbatim: "A color is permitted in `<final-bg-layer>`, but not in
-/// `<bg-layer>`."). This crate accepts only a single layer, matching the
-/// existing single-layer scope carving already in place on
-/// [`BackgroundImage`] / [`BackgroundRepeat`] / [`BackgroundSize`] /
-/// [`CssPosition`] etc. Since there is only ever one layer, it is always the
-/// *final* one, so `<'background-color'>` is always a valid component —
-/// there is no separate "non-final" grammar to support.
-///
-/// A comma anywhere in the value is therefore **not** consumed by
-/// [`parse_background_shorthand`] — the parser stops at the first
-/// unrecognized token (the comma) after parsing everything before it, and
-/// the leftover comma (plus any further layers) makes the whole declaration
-/// invalid at the [`crate::rule::parse_declaration_block_within`] call site's
-/// `expect_exhausted` check, so it is dropped entirely. This is a deliberate
-/// divergence from the spec's per-layer compositing: this crate never
-/// renders a first-layer-only approximation of a multi-layer declaration
-/// (which would be wrong-but-plausible), it rejects the declaration outright
-/// (silently, per this crate's general "invalid declaration → drop" policy).
+/// background-clip." CSS Backgrounds 4 §2.10 extends the clip slot with
+/// `border-area` and `border-area text`: when one of them is the only box,
+/// it sets background-clip, and background-origin becomes `border-box`.
 ///
 /// # Initial value fill (omitted components)
 ///
-/// Spec §2.10 verbatim: "the shorthand first sets the corresponding value of
-/// each of background-image, background-position, background-size,
-/// background-repeat, background-origin, background-clip and
-/// background-attachment to that property's initial value, then assigns any
-/// explicit values specified for this layer" — and "background-color is set
-/// to the specified color, if any, else set to its initial value."
-/// [`parse_background_shorthand`] applies this fill for every component
-/// omitted from the declaration, using the same initial values as the 8
-/// standalone longhands ([`crate::specified::SpecifiedValues::initial`]'s
-/// `background_*` fields are the canonical source for each).
+/// [`parse_background_shorthand`] fills every component omitted from a
+/// layer with the same initial value as the standalone longhand
+/// ([`BackgroundLayerSpec::initial`]); the color defaults to `transparent`.
 ///
 /// [`crate::rule::expand_shorthand_into`] expands
 /// [`PropertyValue::Background`] into the 8 longhand
@@ -8431,15 +8492,14 @@ pub enum BackgroundSize {
 /// [`PropertyValue::BackgroundRepeat`] / [`PropertyValue::BackgroundAttachment`] /
 /// [`PropertyValue::BackgroundPosition`] / [`PropertyValue::BackgroundSize`] /
 /// [`PropertyValue::BackgroundClip`] / [`PropertyValue::BackgroundOrigin`]
-/// declarations — margin/padding/border/outline shorthand precedent, same
-/// "parse-time expansion, never reaches cascade" design (details on that
-/// function's doc).
+/// declarations, each holding one item per layer — margin/padding/border/
+/// outline shorthand precedent, same "parse-time expansion, never reaches
+/// cascade" design (details on that function's doc).
 ///
 /// `#[non_exhaustive]` is intentionally omitted, matching sibling
 /// shorthand-only carriers [`GridLineShorthand`] / [`TextDecorationShorthand`]:
-/// this type exists only as [`PropertyValue::Background`]'s payload, is
-/// never held by [`ComputedValues`] / [`SpecifiedValues`], and is not
-/// re-exported by the `raikiri` umbrella crate.
+/// this type exists only as [`PropertyValue::Background`]'s payload and is
+/// never held by [`ComputedValues`] / [`SpecifiedValues`].
 ///
 /// [`ComputedValues`]: crate::computed::ComputedValues
 /// [`SpecifiedValues`]: crate::specified::SpecifiedValues
@@ -8447,31 +8507,55 @@ pub enum BackgroundSize {
 pub struct BackgroundShorthand {
     /// Symbolic color component, when it contains `currentcolor`.
     pub(crate) color_expression: Option<SmolStr>,
-    /// `background-color` component: [`CssColor::TRANSPARENT`] if omitted (the spec
-    /// initial value).
+    /// `background-color` component, from the final layer:
+    /// [`CssColor::TRANSPARENT`] if omitted (the spec initial value).
     pub color: CssColor,
-    /// `background-image` component: [`BackgroundImage::None`] if omitted (the spec
-    /// initial value).
-    pub image: BackgroundImage,
-    /// `background-repeat` component: [`BackgroundRepeatKeyword::Repeat`] on both axes
-    /// if omitted (the spec initial value).
-    pub repeat: BackgroundRepeat,
-    /// `background-attachment` component: [`BackgroundAttachment::Scroll`]
-    /// if omitted (the spec initial value).
-    pub attachment: BackgroundAttachment,
-    /// `background-position` component — defaults to `0% 0%` (the spec's initial value).
-    pub position: CssPosition,
-    /// `background-size` component: `auto` on both axes if omitted. Size
-    /// can occur only directly after position, separated by `/` (see the
-    /// position+size section in the [`Self`] documentation).
-    pub size: BackgroundSize,
-    /// `background-clip` component — defaults to [`VisualBox::BorderBox`] (the spec's
-    /// initial value). The number of `<visual-box>` occurrences and the rules for assigning them to origin/clip
-    /// are described in the [`Self`] docs.
-    pub clip: VisualBox,
-    /// `background-origin` component — defaults to [`VisualBox::PaddingBox`] (the spec's
-    /// initial value).
-    pub origin: VisualBox,
+    /// The layers in declaration order (the first is painted on top). Never
+    /// empty.
+    pub layers: Box<[BackgroundLayerSpec]>,
+}
+
+impl BackgroundShorthand {
+    /// One longhand's list: `item` applied to every layer, in order.
+    pub(crate) fn column<T>(&self, item: impl Fn(&BackgroundLayerSpec) -> T) -> Arc<[T]> {
+        self.layers.iter().map(item).collect()
+    }
+
+    /// The longhand declaration the shorthand sets for `key`, or `None` when
+    /// `key` is not one of its eight longhands.
+    pub(crate) fn longhand(&self, key: PropertyKey) -> Option<PropertyValue> {
+        Some(match key {
+            PropertyKey::BackgroundColor => match &self.color_expression {
+                Some(source) => PropertyValue::ContextualColor(ContextualColor {
+                    source: source.clone(),
+                    key,
+                }),
+                None => PropertyValue::BackgroundColor(self.color),
+            },
+            PropertyKey::BackgroundImage => {
+                PropertyValue::BackgroundImage(self.column(|layer| layer.image.clone()))
+            }
+            PropertyKey::BackgroundRepeat => {
+                PropertyValue::BackgroundRepeat(self.column(|layer| layer.repeat))
+            }
+            PropertyKey::BackgroundAttachment => {
+                PropertyValue::BackgroundAttachment(self.column(|layer| layer.attachment))
+            }
+            PropertyKey::BackgroundPosition => {
+                PropertyValue::BackgroundPosition(self.column(|layer| layer.position))
+            }
+            PropertyKey::BackgroundSize => {
+                PropertyValue::BackgroundSize(self.column(|layer| layer.size))
+            }
+            PropertyKey::BackgroundClip => {
+                PropertyValue::BackgroundClip(self.column(|layer| layer.clip))
+            }
+            PropertyKey::BackgroundOrigin => {
+                PropertyValue::BackgroundOrigin(self.column(|layer| layer.origin))
+            }
+            _ => return None,
+        })
+    }
 }
 
 /// Specified value of `object-fit`.
@@ -8990,10 +9074,9 @@ pub enum ClipPath {
 /// # Scope limit — only one layer
 ///
 /// Comma-separated lists of multiple `<mask-reference>#` layers are not
-/// supported. This follows the same scope decision and leaves the same room
-/// for extension as the [`BackgroundImage`] docs: "comma-separated lists for
-/// multiple background layers are unsupported; future support needs only an
-/// `Arc<Vec<..>>` wrapper".
+/// supported: `mask-image` holds a single [`BackgroundImage`]. Multiple mask
+/// layers would wrap it in a list, as [`PropertyValue::BackgroundImage`]
+/// does for background layers.
 ///
 /// # `<mask-source>` and the `<image>` `url` alternative share concrete syntax
 ///
@@ -9009,9 +9092,8 @@ pub enum ClipPath {
 /// another property. An existing example is [`FilterFunction::DropShadow`],
 /// which reuses [`TextShadowItem`] verbatim. `MaskImage` and [`BackgroundImage`]
 /// have identical variant shapes (`None` / `Url(String)` / `Gradient(Gradient)`),
-/// so this is a type alias rather than a duplicate enum. It will also pick
-/// up any future multi-layer support or other extension to [`BackgroundImage`]
-/// automatically, avoiding drift.
+/// so this is a type alias rather than a duplicate enum. It picks up any
+/// extension to [`BackgroundImage`] automatically, avoiding drift.
 pub type MaskImage = BackgroundImage;
 
 /// One `transform` function (CSS Transforms Level 1 §9.1 "Two-dimensional
@@ -10558,47 +10640,52 @@ pub enum PropertyValue {
     RubyPosition(RubyPosition),
     /// `background-repeat` — **non-inherited**, initial:
     /// [`BackgroundRepeat`]`{x: Repeat, y: Repeat}` (CSS Backgrounds 3 §2.4;
-    /// see [`BackgroundRepeat`]). Appended as a new 1:1 disjoint field under
-    /// the placement rule in [`PropertyKey`].
-    BackgroundRepeat(BackgroundRepeat),
+    /// see [`BackgroundRepeat`]). One item per comma-separated layer; the
+    /// list is never empty. Appended as a new 1:1 disjoint field under the
+    /// placement rule in [`PropertyKey`].
+    BackgroundRepeat(Arc<[BackgroundRepeat]>),
     /// `background-attachment` — **non-inherited**, initial:
     /// [`BackgroundAttachment::Scroll`] (CSS Backgrounds 3 §2.5; see
-    /// [`BackgroundAttachment`]).
-    BackgroundAttachment(BackgroundAttachment),
+    /// [`BackgroundAttachment`]). One item per layer.
+    BackgroundAttachment(Arc<[BackgroundAttachment]>),
     /// `background-clip` — **non-inherited**, initial:
     /// [`VisualBox::BorderBox`] (CSS Backgrounds 3 §2.7; see [`VisualBox`]).
-    /// Note that sibling [`Self::BackgroundOrigin`] has a different initial value.
-    BackgroundClip(VisualBox),
+    /// One item per layer. Note that sibling [`Self::BackgroundOrigin`] has a
+    /// different initial value.
+    BackgroundClip(Arc<[VisualBox]>),
     /// `background-origin` — **non-inherited**, initial:
     /// [`VisualBox::PaddingBox`] (CSS Backgrounds 3 §2.8; see [`VisualBox`]).
-    /// Note that sibling [`Self::BackgroundClip`] has a different initial value.
-    BackgroundOrigin(VisualBox),
+    /// One item per layer, each a plain `<visual-box>`. Note that sibling
+    /// [`Self::BackgroundClip`] has a different initial value.
+    BackgroundOrigin(Arc<[VisualBox]>),
     /// `background-size` — **non-inherited**, initial:
     /// [`BackgroundSize::Explicit`]`{width: Auto, height: Auto}` (CSS
-    /// Backgrounds 3 §2.9; see [`BackgroundSize`]). Since this contains
-    /// `<length-percentage>`, absolutization is deferred to phase 3 (as with
-    /// `padding` and `width`).
-    BackgroundSize(BackgroundSize),
+    /// Backgrounds 3 §2.9; see [`BackgroundSize`]). One item per layer. Since
+    /// this contains `<length-percentage>`, absolutization is deferred to
+    /// phase 3 (as with `padding` and `width`).
+    BackgroundSize(Arc<[BackgroundSize]>),
     /// `background-position` — **non-inherited**, initial:
     /// [`CssPosition`]`{horizontal: Start(Percent(0.0)), vertical:
     /// Start(Percent(0.0))}` (CSS Backgrounds 3 §2.6 "Initial: 0% 0%"; see
-    /// [`CssPosition`]). Since this contains `<length-percentage>`,
-    /// absolutization is deferred to phase 3.
-    BackgroundPosition(CssPosition),
+    /// [`CssPosition`]). One item per layer. Since this contains
+    /// `<length-percentage>`, absolutization is deferred to phase 3.
+    BackgroundPosition(Arc<[CssPosition]>),
     /// `background-image` — **non-inherited**, initial: [`BackgroundImage::None`]
-    /// (CSS Backgrounds 3 §2.3; see [`BackgroundImage`]). Appended as a new 1:1
-    /// disjoint field under the placement rule in [`PropertyKey`].
-    BackgroundImage(BackgroundImage),
-    /// `background` shorthand — non-inherited. Retains eight components
-    /// (color/image/repeat/attachment/position/size/clip/origin; see
-    /// [`BackgroundShorthand`]). Only one layer is supported (see its Non-goal
-    /// section). [`crate::rule::expand_shorthand_into`] expands it into eight
-    /// longhands: [`Self::BackgroundColor`] / [`Self::BackgroundImage`] /
-    /// [`Self::BackgroundRepeat`] / [`Self::BackgroundAttachment`] /
-    /// [`Self::BackgroundPosition`] / [`Self::BackgroundSize`] /
-    /// [`Self::BackgroundClip`] / [`Self::BackgroundOrigin`]. Appended despite
-    /// not being 1:1 disjoint (the eight existing longhands have their own
-    /// fields): shorthands do not reach the cascade stage (see
+    /// (CSS Backgrounds 3 §2.3; see [`BackgroundImage`]). One item per layer;
+    /// the number of items is the number of background layers (CSS
+    /// Backgrounds 3 §2.1). Appended as a new 1:1 disjoint field under the
+    /// placement rule in [`PropertyKey`].
+    BackgroundImage(Arc<[BackgroundImage]>),
+    /// `background` shorthand — non-inherited. Retains the color and one
+    /// [`BackgroundLayerSpec`] per comma-separated layer (see
+    /// [`BackgroundShorthand`]). [`crate::rule::expand_shorthand_into`]
+    /// expands it into eight longhands: [`Self::BackgroundColor`] /
+    /// [`Self::BackgroundImage`] / [`Self::BackgroundRepeat`] /
+    /// [`Self::BackgroundAttachment`] / [`Self::BackgroundPosition`] /
+    /// [`Self::BackgroundSize`] / [`Self::BackgroundClip`] /
+    /// [`Self::BackgroundOrigin`]. Appended despite not being 1:1 disjoint
+    /// (the eight existing longhands have their own fields): shorthands do
+    /// not reach the cascade stage (see
     /// [`crate::rule::expand_shorthand_into`]), so discriminant order does not
     /// matter. Avoiding shifts of existing variants takes priority (see the
     /// declaration-order section of [`PropertyKey`]). Boxed so that it does

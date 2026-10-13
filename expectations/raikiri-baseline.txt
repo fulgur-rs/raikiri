@@ -66,11 +66,16 @@ css/css-animations/parsing/animation-play-state-invalid.html
 css/css-animations/parsing/animation-range-end-invalid.html
 css/css-animations/parsing/animation-range-start-invalid.html
 css/css-animations/parsing/animation-timing-function-invalid.html
+css/css-backgrounds/parsing/background-attachment-valid.html
 css/css-backgrounds/parsing/background-clip-invalid.html
+css/css-backgrounds/parsing/background-clip-valid.html
 css/css-backgrounds/parsing/background-origin-invalid.html
+css/css-backgrounds/parsing/background-origin-valid.html
 css/css-backgrounds/parsing/background-position-valid.html
 css/css-backgrounds/parsing/background-position-x-invalid.html
 css/css-backgrounds/parsing/background-position-y-invalid.html
+css/css-backgrounds/parsing/background-repeat-valid.html
+css/css-backgrounds/parsing/background-size-valid.html
 css/css-backgrounds/parsing/border-color-invalid.html
 css/css-backgrounds/parsing/border-image-invalid.html
 css/css-backgrounds/parsing/border-image-outset-invalid.html
@@ -223,7 +228,6 @@ css/css-logical/parsing/min-inline-size-invalid.html
 css/css-backgrounds/background-attachment-fixed-border-radius-offset.html
 css/css-backgrounds/background-attachment-fixed-inline-scrolled.html
 css/css-backgrounds/background-attachment-fixed-inside-transform-1.html
-css/css-backgrounds/background-attachment-margin-root-001.html
 css/css-backgrounds/background-attachment-margin-root-002.html
 css/css-backgrounds/background-clip-007.html
 css/css-backgrounds/background-clip-008.html
@@ -440,7 +444,6 @@ css/css-break/border-image-000.html
 css/css-break/overflowed-abs-pos-with-percentage-height-print.html
 css/css-break/widows-block-in-inline-001.html
 # --- css-break min-block-size Fulgur v0.40.0 PASS slice (exact, 800x600, 2026-09-22) ---
-css/css-break/break-inside-avoid-min-block-size-1.html
 css/css-break/break-inside-avoid-min-block-size-2.html
 # --- css-break flexbox print Fulgur v0.40.0 PASS slice (exact, 800x600, 2026-09-22) ---
 css/css-break/flexbox/multi-line-row-flex-fragmentation-080-print.html
@@ -1699,6 +1702,26 @@ css/css-break/break-between-avoid-014.html
 # --- orthogonal vertical block size 2026-10-12 ---
 css/css-flexbox/webkit-box-vertical-writing-mode.html
 
+# --- multicol blocks without lines sliced at column edges (exact 800x600, bundled WPT fonts, audit KEEP, 2026-10-13) ---
+css/css-break/box-shadow-001.html
+css/css-break/change-block-background.html
+css/css-break/change-break-after2.html
+css/css-break/change-break-inside.html
+css/css-break/out-of-flow-in-multicolumn-076.html
+css/css-multicol/change-fragmentainer-size-001.html
+css/css-multicol/change-fragmentainer-size-002.html
+css/css-multicol/change-fragmentainer-size-003.html
+css/css-multicol/column-height-011.html
+css/css-multicol/multicol-fill-auto-block-children-003.html
+css/css-multicol/multicol-fill-balance-018.html
+css/css-multicol/nested-at-outer-boundary-as-fieldset.html
+css/css-multicol/nested-past-fragmentation-line.html
+css/css-multicol/resize-multicol-with-fixed-size-children.html
+
+# --- ::first-line opacity group (WPT pin 97ea26e2, 800x600 EXACT, Linux, 2026-10-13) ---
+# KEEP in two audit-vacuous-passes runs.
+css/css-pseudo/first-line-opacity-001.html
+
 # --- vacuity-audited sweep promotion (WPT pin 97ea26e2, 800x600 EXACT, Linux, 2026-10-12) ---
 # Every id passed and was KEEP in two audit-vacuous-passes runs (see README.md).
 css/CSS2/abspos/between-float-and-text.html
@@ -2954,7 +2977,6 @@ css/css-multicol/no-balancing-after-column-span.html
 css/css-multicol/oof-nested-in-single-column.html
 css/css-multicol/remove-child-in-strict-containment-also-spanner.html
 css/css-multicol/subpixel-column-rule-width.tentative.html
-css/css-multicol/with-custom-layout-on-same-element.https.html
 css/css-nesting/conditional-properties.html
 css/css-nesting/conditional-rules.html
 css/css-nesting/contextually-invalid-selectors-001.html

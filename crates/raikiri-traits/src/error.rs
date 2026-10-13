@@ -151,7 +151,18 @@ impl std::error::Error for RenderError {
 
 impl From<ParseError> for RenderError {
     fn from(e: ParseError) -> Self {
-        Self::Parse(e)
+        match e {
+            ParseError::LimitExceeded {
+                kind,
+                limit,
+                actual,
+            } => Self::LimitExceeded {
+                kind,
+                limit,
+                actual,
+            },
+            error => Self::Parse(error),
+        }
     }
 }
 
@@ -486,9 +497,8 @@ pub struct TargetDiscrepancy {
 /// aggregated into the summary inside raikiri-html; this enum excludes them.
 /// Its variants are genuine terminal errors that halt rendering.
 ///
-/// `Io` / `Encoding` are populated. html5ever-specific error variants
-/// remain crate-private in raikiri-html and can be added here when needed
-/// using `#[non_exhaustive]`.
+/// `Io`, `Encoding`, and input/DOM budget errors are populated.
+/// html5ever-specific error variants remain crate-private in raikiri-html.
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum ParseError {
@@ -501,6 +511,15 @@ pub enum ParseError {
         /// Human-readable description of the failure.
         reason: String,
     },
+    /// A parser input or DOM node budget was exceeded.
+    LimitExceeded {
+        /// The budget that was exceeded.
+        kind: LimitKind,
+        /// Maximum permitted value.
+        limit: u64,
+        /// Observed value, capped at the first value over the limit.
+        actual: u64,
+    },
 }
 
 impl std::fmt::Display for ParseError {
@@ -510,6 +529,14 @@ impl std::fmt::Display for ParseError {
             Self::Encoding { label, reason } => {
                 write!(f, "HTML source encoding error ({label}): {reason}")
             }
+            Self::LimitExceeded {
+                kind,
+                limit,
+                actual,
+            } => write!(
+                f,
+                "HTML parse limit exceeded: {kind:?} (limit={limit}, actual={actual})"
+            ),
         }
     }
 }
@@ -518,7 +545,7 @@ impl std::error::Error for ParseError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Io(e) => Some(e),
-            Self::Encoding { .. } => None,
+            Self::Encoding { .. } | Self::LimitExceeded { .. } => None,
         }
     }
 }

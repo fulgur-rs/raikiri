@@ -100,8 +100,8 @@ pub use ruletree::{
 
 pub mod computed;
 pub use computed::{
-    ChFontKey, ChLengthProvenance, ComputedBorderImage, ComputedProperty, ComputedValues,
-    FontSizeKeywordInfo, VerticalLogicalSize,
+    ChFontKey, ChLengthProvenance, ComputedBackgroundLayer, ComputedBorderImage, ComputedProperty,
+    ComputedValues, FontSizeKeywordInfo, MAX_PAINTED_BACKGROUND_LAYERS, VerticalLogicalSize,
 };
 pub use triomphe::Arc as PseudoValueArc;
 pub mod computed_api;

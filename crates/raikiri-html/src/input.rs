@@ -13,7 +13,7 @@
 use std::io::{ErrorKind, Read};
 
 use html5ever::tendril::{StrTendril, TendrilSink};
-use raikiri_traits::ParseError;
+use raikiri_traits::{LimitKind, ParseError};
 
 /// Bytes requested from a reader per read call.
 const READ_CHUNK_BYTES: usize = 64 * 1024;
@@ -91,16 +91,40 @@ impl<P: TendrilSink<html5ever::tendril::fmt::UTF8>> Utf8Feed<P> {
         }
     }
 
-    /// Reads `input` to its end, feeding each chunk as it arrives.
-    ///
-    /// Read failures return [`ParseError::Io`]; an [`ErrorKind::Interrupted`]
-    /// read is retried, as [`Read::read_to_end`] does.
-    pub(crate) fn feed_reader(&mut self, mut input: impl Read) -> Result<(), ParseError> {
+    /// Reads from `input`, stopping when `should_continue` becomes false or
+    /// after probing one byte beyond `max_bytes`.
+    pub(crate) fn feed_reader_limited(
+        &mut self,
+        mut input: impl Read,
+        max_bytes: Option<u64>,
+        mut should_continue: impl FnMut(&P) -> bool,
+    ) -> Result<(), ParseError> {
         let mut buf = vec![0; READ_CHUNK_BYTES];
+        let mut read_bytes = 0u64;
         loop {
-            match input.read(&mut buf) {
+            if !should_continue(&self.parser) {
+                return Ok(());
+            }
+            let read_limit = max_bytes.map_or(buf.len(), |cap| {
+                cap.saturating_sub(read_bytes)
+                    .saturating_add(1)
+                    .min(buf.len() as u64) as usize
+            });
+            match input.read(&mut buf[..read_limit]) {
                 Ok(0) => return Ok(()),
-                Ok(read) => self.feed(&buf[..read])?,
+                Ok(read) => {
+                    read_bytes = read_bytes.saturating_add(read as u64);
+                    if let Some(cap) = max_bytes
+                        && read_bytes > cap
+                    {
+                        return Err(ParseError::LimitExceeded {
+                            kind: LimitKind::InputBytes,
+                            limit: cap,
+                            actual: read_bytes,
+                        });
+                    }
+                    self.feed(&buf[..read])?;
+                }
                 Err(error) if error.kind() == ErrorKind::Interrupted => {}
                 Err(error) => return Err(ParseError::Io(error)),
             }

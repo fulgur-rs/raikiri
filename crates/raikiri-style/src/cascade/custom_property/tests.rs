@@ -146,15 +146,18 @@ fn var_in_background_shorthand_projects_each_deferred_longhand() {
     );
     assert_eq!(cv.background_color, RED);
     assert_eq!(
-        cv.background_repeat,
+        cv.background_layers()[0].repeat,
         BackgroundRepeat {
             x: BackgroundRepeatKeyword::Round,
             y: BackgroundRepeatKeyword::Round,
         }
     );
-    assert_eq!(cv.background_attachment, BackgroundAttachment::Fixed);
-    assert_eq!(cv.background_clip, VisualBox::BorderBox);
-    assert_eq!(cv.background_origin, VisualBox::BorderBox);
+    assert_eq!(
+        cv.background_layers()[0].attachment,
+        BackgroundAttachment::Fixed
+    );
+    assert_eq!(cv.background_layers()[0].clip, VisualBox::BorderBox);
+    assert_eq!(cv.background_layers()[0].origin, VisualBox::BorderBox);
 }
 
 #[test]
@@ -2222,6 +2225,49 @@ fn mixed_calc_with_a_percentage_keeps_it_for_used_value_time() {
         Some("font-size: 10px; width: calc(50% + 1em - 10px)"),
     );
     assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Percent(50.0));
+}
+
+#[test]
+fn mixed_calc_in_flex_basis_keeps_its_percentage_for_used_value_time() {
+    use crate::resolve::ComputedFlexBasis;
+    let expected = ComputedFlexBasis::Calc(CalcLengthPercentage {
+        percent: 50.0,
+        px: -10.0,
+    });
+    for declarations in [
+        "font-size: 10px; flex-basis: calc(50% - 1em)",
+        "font-size: 10px; flex: 1 1 calc(50% - 1em)",
+        "font-size: 10px; --basis: calc(50% - 1em); flex-basis: var(--basis)",
+        "font-size: 10px; --basis: calc(50% - 1em); flex: 1 var(--basis)",
+    ] {
+        let cv = cascade_doc("", "div", Some(declarations));
+        assert_eq!(cv.flex_basis, expected, "{declarations}");
+    }
+    // A calc() that is a length once its font-relative terms are known is
+    // clamped to the `[0,∞]` range rather than rejected.
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("font-size: 10px; flex-basis: calc(1em - 20px)"),
+    );
+    assert_eq!(cv.flex_basis, ComputedFlexBasis::Px(0.0));
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("font-size: 10px; flex-basis: calc(-10% + 1em - 10px)"),
+    );
+    assert_eq!(cv.flex_basis, ComputedFlexBasis::Percent(0.0));
+    // Terms that cancel leave a negative length, clamped as well.
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("font-size: 10px; flex-basis: calc(1em - 1em - 10px)"),
+    );
+    assert_eq!(cv.flex_basis, ComputedFlexBasis::Px(0.0));
+    // An `lh` that `line-height: normal` leaves unresolved falls back to
+    // `auto`, as for `width`.
+    let cv = cascade_doc("", "div", Some("line-height: normal; flex-basis: 1lh"));
+    assert_eq!(cv.flex_basis, ComputedFlexBasis::Auto);
 }
 
 #[test]
