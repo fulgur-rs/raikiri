@@ -3953,13 +3953,11 @@ pub fn layout_pages_with_page_geometry_and_control(
     // The page the flow was on before the float moved is restored with it.
     let mut pending_float_shift: Option<(usize, f32, u32)> = None;
     let mut later_float_shift = 0.0_f32;
-    // The page-flow bottom of the last moved float: a later float needs to
-    // move only as far as it would otherwise start above it.
-    let mut later_float_bottom = f32::NEG_INFINITY;
-    // Its page-flow top and side: a later float on the other side only may
-    // not start above it, unless it clears that side.
-    let mut later_float_top = f32::NEG_INFINITY;
-    let mut later_float_side = FloatValue::None;
+    // The page-flow outer top and bottom of the last moved float on each
+    // side (left, right): a later float needs to move only as far as it
+    // would otherwise start above the bottom of one on its own side, or
+    // above the top of one on the other side unless it clears that side.
+    let mut later_float_edges = [(f32::NEG_INFINITY, f32::NEG_INFINITY); 2];
     // A nested box that moved inside an ancestor whose height cannot grow
     // to hold it overflows that ancestor: the part of the shift the
     // ancestor did not absorb ends where its subtree does, and the page the
@@ -4137,36 +4135,49 @@ pub fn layout_pages_with_page_geometry_and_control(
         }
         if later_float_shift != 0.0 && pending_float_shift.is_none() {
             let floating = is_floating_box_for_pagination(document, cascade, node_id);
-            let clears = clears_float_side(cascade.computed[node_id].clear, later_float_side);
-            // A later float stays below a float on its own side; one on the
-            // other side only may not start above it (CSS 2.1 §9.5.1). An
-            // in-flow box that clears the moved float stays below it
+            let computed = &cascade.computed[node_id];
+            // A later float's outer top stays below a float on its own side
+            // and not above one on the other side (CSS 2.1 §9.5.1). An
+            // in-flow box's border box stays below a float it clears
             // (CSS 2.1 §9.5.2).
-            let floor = if floating {
-                Some(
-                    if clears || cascade.computed[node_id].float == later_float_side {
-                        later_float_bottom
+            let floor = [FloatValue::Left, FloatValue::Right]
+                .into_iter()
+                .zip(later_float_edges)
+                .filter_map(|(side, (top, bottom))| {
+                    let clears = clears_float_side(computed.clear, side);
+                    if floating {
+                        Some(if clears || computed.float == side {
+                            bottom
+                        } else {
+                            top
+                        })
                     } else {
-                        later_float_top
-                    },
-                )
+                        (!candidate.is_float_descendant && clears).then_some(bottom)
+                    }
+                })
+                .reduce(f32::max);
+            let margin_top = if floating {
+                document.nodes[node_id].unrounded_layout.margin.top
             } else {
-                (!candidate.is_float_descendant && clears).then_some(later_float_bottom)
+                0.0
             };
             let shift = floor.map_or(0.0, |floor| {
-                (floor - (candidate.raw_y + flow_shift)).clamp(0.0, later_float_shift)
+                (floor - (candidate.raw_y + flow_shift - margin_top)).clamp(0.0, later_float_shift)
             });
             if shift > 0.0 {
                 flow_shift += shift;
                 if floating {
                     pending_float_shift = Some((node_id, shift, current_page));
-                    // The shifted float is now the one later floats keep
-                    // below.
-                    let layout = &document.nodes[node_id].unrounded_layout;
-                    later_float_top = candidate.raw_y + flow_shift;
-                    later_float_bottom =
-                        later_float_top + layout.size.height + layout.margin.bottom;
-                    later_float_side = cascade.computed[node_id].float;
+                    // The shifted float is now the one later floats on its
+                    // side keep below.
+                    if let Some(index) = float_side_index(cascade.computed[node_id].float) {
+                        let layout = &document.nodes[node_id].unrounded_layout;
+                        let top = candidate.raw_y + flow_shift;
+                        later_float_edges[index] = (
+                            top - layout.margin.top,
+                            top + layout.size.height + layout.margin.bottom,
+                        );
+                    }
                 }
                 // The box may now start on a later page than the flow.
                 current_page = current_page.max(page_index_for_y(candidate.raw_y + flow_shift));
@@ -4812,6 +4823,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                                 child,
                                 delta,
                                 child == node_id,
+                                body_id,
                             )
                             .map_or(0.0, |grown| (grown - height).clamp(0.0, delta));
                             if absorbed < delta - 0.001 {
@@ -4865,13 +4877,17 @@ pub fn layout_pages_with_page_geometry_and_control(
                             });
                         pending_float_shift = Some((node_id, inherited + node_delta, flow_page));
                         // A clearing follower stays below the margin box.
-                        later_float_bottom = node_target_y + height + margin_bottom;
-                        later_float_top = node_target_y;
-                        later_float_side = computed.float;
+                        if let Some(index) = float_side_index(computed.float) {
+                            later_float_edges[index] = (
+                                node_target_y - margin_top,
+                                node_target_y + height + margin_bottom,
+                            );
+                        }
                     } else if !candidate.is_float_descendant
                         && !is_floating_box_for_pagination(document, cascade, node_id)
                     {
                         later_float_shift = 0.0;
+                        later_float_edges = [(f32::NEG_INFINITY, f32::NEG_INFINITY); 2];
                     }
                     effective_y += node_delta;
                 }
@@ -5255,6 +5271,7 @@ fn grown_auto_height(
     moved: usize,
     delta: f32,
     lines_moved: bool,
+    body_id: usize,
 ) -> Option<f32> {
     let node = &document.nodes[parent];
     let style = &node.style;
@@ -5305,6 +5322,7 @@ fn grown_auto_height(
     let mut before = f32::NEG_INFINITY;
     let mut after = f32::NEG_INFINITY;
     let mut shifted = false;
+    let mut last = None;
     // `display: contents` children generate no box: their children are laid
     // out as this box's children.
     let mut children: Vec<usize> = node.children.iter().rev().copied().collect();
@@ -5322,25 +5340,43 @@ fn grown_auto_height(
             continue;
         }
         let child_layout = &child_node.unrounded_layout;
-        let margin = if contains_margins {
-            child_layout.margin.bottom
+        // A relative offset that layout applied moves the box but not the
+        // flow around it (CSS 2.1 §9.4.3).
+        let computed = &cascade.computed[child];
+        let relative_offset = if computed.position == PositionValue::Relative {
+            let offset = match (computed.top, computed.bottom) {
+                (ComputedLengthPercentageOrAuto::Px(top), _) => top,
+                (_, ComputedLengthPercentageOrAuto::Px(bottom)) => -bottom,
+                _ => 0.0,
+            };
+            offset - painted_relative_offset_y(document, cascade, body_id, child)
         } else {
             0.0
         };
         let bottom = pagination_child_parent_y(document, parent, child, child_layout.location.y)
             + child_layout.size.height
-            + margin;
-        if child == moved {
-            before = before.max(bottom - delta);
-            after = after.max(bottom);
+            - relative_offset;
+        let edges = if child == moved {
             shifted = true;
+            (bottom - delta, bottom)
         } else if shifted {
-            before = before.max(bottom);
-            after = after.max(bottom + delta);
+            (bottom, bottom + delta)
         } else {
-            before = before.max(bottom);
-            after = after.max(bottom);
+            (bottom, bottom)
+        };
+        if let Some(((old_bottom, new_bottom), _)) =
+            last.replace((edges, child_layout.margin.bottom))
+        {
+            before = before.max(old_bottom);
+            after = after.max(new_bottom);
         }
+    }
+    // Only the last child's bottom margin, which may be negative, ends the
+    // content; earlier margins collapse with the boxes after them.
+    if let Some(((old_bottom, new_bottom), margin)) = last {
+        let margin = if contains_margins { margin } else { 0.0 };
+        before = before.max(old_bottom + margin);
+        after = after.max(new_bottom + margin);
     }
     // The lines of a paragraph laid out around block children end the
     // content too; those after the moved box move with it.
@@ -5457,6 +5493,15 @@ fn last_in_flow_box(document: &Document, cascade: &CascadeResult, node_id: usize
             .find_map(|&id| last_in_flow_box(document, cascade, id));
     }
     Some(node_id)
+}
+
+/// The index of a float side in the per-side float edges.
+fn float_side_index(side: FloatValue) -> Option<usize> {
+    match side {
+        FloatValue::Left => Some(0),
+        FloatValue::Right => Some(1),
+        _ => None,
+    }
 }
 
 /// Whether `clear` requires a box to start below a float on `side`. The

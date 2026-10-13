@@ -11428,3 +11428,111 @@ fn a_percentage_bound_under_a_contents_element_resolves_against_its_box() {
     });
     assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 50.0);
 }
+
+/// `body > [div 60px, floats…]` on 100px pages; returns each float's
+/// page-flow y.
+fn floats_after_a_moved_float(floats: &[&str]) -> Vec<f32> {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        for css in floats {
+            ids.push(doc.append_element(Some(body), "div", Style::default(), Some(*css)));
+        }
+    });
+    ids.iter().map(|&id| page_flow_y(&doc, id)).collect()
+}
+
+#[test]
+fn a_later_floats_top_margin_stays_below_the_moved_float() {
+    // The follower's margin box, not its border box, starts below the
+    // moved float's bottom.
+    assert_eq!(
+        floats_after_a_moved_float(&[
+            "float:left;width:40px;height:60px;break-inside:avoid",
+            "float:left;clear:left;width:40px;height:30px;margin-top:20px",
+        ]),
+        vec![100.0, 180.0]
+    );
+}
+
+#[test]
+fn each_float_side_keeps_its_own_floor() {
+    // The right float only moves level with the moved left float. The left
+    // float that sat beside the first one moves with them rather than
+    // staying above the moved float's top.
+    assert_eq!(
+        floats_after_a_moved_float(&[
+            "float:left;width:40px;height:60px;break-inside:avoid",
+            "float:right;width:40px;height:30px",
+            "float:left;width:40px;height:30px",
+        ]),
+        vec![100.0, 100.0, 130.0]
+    );
+}
+
+/// `body > [div lead_px, wrapper(wrapper_css) > children]` on 100px pages.
+/// Returns the wrapper's height.
+fn bounded_wrapper_height(lead_px: f32, wrapper_css: &str, children: &[&str]) -> f32 {
+    let mut wrapper = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;height:{lead_px}px")),
+        );
+        wrapper = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;{wrapper_css}")),
+        );
+        for css in children {
+            doc.append_element(
+                Some(wrapper),
+                "div",
+                Style::default(),
+                Some(&format!("display:block;{css}")),
+            );
+        }
+    });
+    doc.nodes[wrapper].unrounded_layout.size.height
+}
+
+#[test]
+fn an_earlier_childs_collapsed_margin_does_not_grow_the_box() {
+    // The first child's bottom margin collapses with the negative top
+    // margin after it, so the content ends at the moved child's bottom,
+    // 20px lower than before and still within the minimum height.
+    assert_eq!(
+        bounded_wrapper_height(
+            20.0,
+            "display:flow-root;min-height:150px",
+            &[
+                "height:60px;margin-bottom:100px",
+                "height:60px;margin-top:-100px;break-inside:avoid",
+            ],
+        ),
+        150.0
+    );
+}
+
+#[test]
+fn a_relative_offset_does_not_grow_a_bounded_box() {
+    // The box, drawn 30px low, crosses the page end and moves 20px; its
+    // flow position then ends 80px into the wrapper, under the minimum
+    // height, as the offset does not count.
+    assert_eq!(
+        bounded_wrapper_height(
+            50.0,
+            "min-height:100px",
+            &["position:relative;top:30px;height:60px;break-inside:avoid"],
+        ),
+        100.0
+    );
+}
