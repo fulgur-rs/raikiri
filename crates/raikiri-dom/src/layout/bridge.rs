@@ -23,6 +23,12 @@ fn multicol_style_from_computed(cv: &ComputedValues) -> Option<MulticolStyle> {
     let (gap, gap_percent) = match cv.column_gap {
         ComputedLengthPercentageOrNormal::Px(value) if value.is_finite() => (value.max(0.0), None),
         ComputedLengthPercentageOrNormal::Percent(value) if value.is_finite() => (0.0, Some(value)),
+        // The column width clamps the sum to zero once the basis is known.
+        ComputedLengthPercentageOrNormal::Calc(calc)
+            if calc.px.is_finite() && calc.percent.is_finite() =>
+        {
+            (calc.px, Some(calc.percent))
+        }
         ComputedLengthPercentageOrNormal::Normal => {
             let em = cv.font_size.px();
             let resolved = if em.is_finite() { em.max(0.0) } else { 0.0 };
@@ -277,7 +283,7 @@ pub(crate) fn apply_computed_to_style(
         bridge_box_sizing(style, cv);
         bridge_flex(style, cv, &mut doc.layout_warnings);
         bridge_alignment(style, cv);
-        bridge_gap(style, cv, &mut doc.layout_warnings);
+        bridge_gap(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
         bridge_grid(style, cv, &mut doc.layout_warnings);
         if cv.display == DisplayValue::Contents {
             // A `display: contents` element generates no box (CSS Display 3
@@ -1029,10 +1035,15 @@ fn self_alignment_to_taffy(v: SelfAlignmentValue) -> Option<TaffyAlignItems> {
 /// [`computed_length_percentage_to_taffy_length_percentage`], which handles
 /// percent `/100.0` conversion and the non-finite [`sanitize_taffy`] guard.
 /// This reuses [`bridge_padding`]'s helper instead of duplicating it.
-fn bridge_gap(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
+fn bridge_gap(
+    style: &mut taffy::Style,
+    cv: &ComputedValues,
+    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
+    diag: &mut Vec<LayoutWarn>,
+) {
     style.gap = Size {
-        width: computed_gap_component_to_taffy(cv.column_gap, "column-gap", diag),
-        height: computed_gap_component_to_taffy(cv.row_gap, "row-gap", diag),
+        width: computed_gap_component_to_taffy(calc_values, cv.column_gap, "column-gap", diag),
+        height: computed_gap_component_to_taffy(calc_values, cv.row_gap, "row-gap", diag),
     };
 }
 
@@ -1041,6 +1052,7 @@ fn bridge_gap(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<Layo
 /// to the block axis (`row-gap`). This follows taffy `Size` conventions and
 /// the axis mapping of `width`/`height` in [`bridge_size`].
 fn computed_gap_component_to_taffy(
+    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
     gap: ComputedLengthPercentageOrNormal,
     site: &'static str,
     diag: &mut Vec<LayoutWarn>,
@@ -1049,6 +1061,11 @@ fn computed_gap_component_to_taffy(
         ComputedLengthPercentageOrNormal::Normal => ComputedLengthPercentage::Px(0.0),
         ComputedLengthPercentageOrNormal::Px(v) => ComputedLengthPercentage::Px(v),
         ComputedLengthPercentageOrNormal::Percent(p) => ComputedLengthPercentage::Percent(p),
+        // Gaps are non-negative, so the sum clamps to zero once resolved.
+        ComputedLengthPercentageOrNormal::Calc(calc) => {
+            let pointer = crate::taffy_impl::push_calc(calc_values, calc, true);
+            return LengthPercentage::calc(pointer);
+        }
     };
     computed_length_percentage_to_taffy_length_percentage(lp, site, diag)
 }

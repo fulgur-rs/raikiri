@@ -1329,6 +1329,34 @@ fn author_flex_container_longhands_compute_through_cascade() {
 }
 
 #[test]
+fn author_mixed_calc_gap_computes_through_cascade() {
+    let cv = cascade_with_ua(
+        "",
+        "div { row-gap: calc(1em + 10%); column-gap: calc(50% - 20px); }",
+        "div",
+        None,
+    );
+    assert_eq!(
+        cv.row_gap,
+        crate::resolve::ComputedLengthPercentageOrNormal::Calc(
+            crate::property::CalcLengthPercentage {
+                percent: 10.0,
+                px: 16.0,
+            }
+        )
+    );
+    assert_eq!(
+        cv.column_gap,
+        crate::resolve::ComputedLengthPercentageOrNormal::Calc(
+            crate::property::CalcLengthPercentage {
+                percent: 50.0,
+                px: -20.0,
+            }
+        )
+    );
+}
+
+#[test]
 fn author_flex_item_longhands_compute_through_cascade() {
     let cv = cascade_with_ua(
         "",

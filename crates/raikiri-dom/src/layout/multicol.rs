@@ -2479,6 +2479,11 @@ fn multicol_metrics_with_width(
         ComputedLengthPercentageOrNormal::Percent(value) if value.is_finite() => {
             (container_width * value / 100.0).max(0.0)
         }
+        ComputedLengthPercentageOrNormal::Calc(calc)
+            if calc.px.is_finite() && calc.percent.is_finite() =>
+        {
+            (calc.px + container_width * calc.percent / 100.0).max(0.0)
+        }
         ComputedLengthPercentageOrNormal::Normal => {
             let em = cv.font_size.px();
             if em.is_finite() { em.max(0.0) } else { 0.0 }
