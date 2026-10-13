@@ -15,8 +15,11 @@
 //! both `auto` keeps the static position taffy gave it.
 //!
 //! A transformed or filtered ancestor is the containing block of its fixed
-//! descendants (CSS Transforms 1 §3, Filter Effects 1 §5), so those keep the
-//! layout taffy gave them against their parent.
+//! descendants (CSS Transforms 1 §3, Filter Effects 1 §5), and a positioned
+//! ancestor that of its absolutely positioned descendants (CSS 2.1 §10.1).
+//! When that ancestor is not the box's parent, the box is laid out again the
+//! same way against the ancestor's padding box. A containing block that is an
+//! inline box keeps the layout taffy gave.
 //!
 //! An absolutely positioned box with no positioned, transformed or filtered
 //! ancestor has the initial containing block as its containing block (CSS 2.1
@@ -117,11 +120,40 @@ fn establishes_absolute_containing_block(
         || establishes_fixed_containing_block(document, id, cv)
 }
 
+/// The containing block an out-of-flow box is laid out against.
+#[derive(Clone, Copy)]
+enum ContainingBlock {
+    /// The page area, which also stands in for the initial containing block.
+    Page,
+    /// The padding box of the box `id`, at `origin` from the root's border
+    /// box origin.
+    Box {
+        id: usize,
+        origin: Point<f32>,
+        size: Size<f32>,
+        direction: TaffyDirection,
+    },
+    /// A containing block the layout taffy gave stays against: an inline box,
+    /// or an ancestor of the root.
+    Kept,
+}
+
+/// The area an out-of-flow box is placed in: its origin, measured from the
+/// root's border box origin, its size, and its direction.
+#[derive(Clone, Copy)]
+struct Area {
+    origin: Point<f32>,
+    size: Size<f32>,
+    direction: TaffyDirection,
+}
+
 /// Lay out the fixed boxes below the taffy root `root`, and the nested
 /// absolutely positioned boxes whose containing block is the initial
 /// containing block, against the page area of size `area_size`, which starts
-/// at the root's border box origin. Run it after the root layout and before
-/// anything reads the positions of those boxes.
+/// at the root's border box origin. Out-of-flow boxes whose containing block
+/// is an ancestor other than their parent are laid out again against that
+/// ancestor's padding box. Run it after the root layout and before anything
+/// reads the positions of those boxes.
 pub(crate) fn place_fixed_boxes_in_page_area(
     document: &mut Document,
     cascade: &CascadeResult,
@@ -138,9 +170,33 @@ pub(crate) fn place_fixed_boxes_in_page_area(
         Some(_) => TaffyDirection::Ltr,
         None => document.nodes[root].style.direction,
     };
-    visit_page_fixed_boxes(document, cascade, root, |document, id, parent_origin| {
-        place_fixed_box(document, id, parent_origin, area_size, direction);
-    });
+    let page = Area {
+        origin: Point::ZERO,
+        size: area_size,
+        direction,
+    };
+    visit_out_of_flow_boxes(
+        document,
+        cascade,
+        root,
+        |document, id, parent_origin, cb| {
+            let area = match cb {
+                ContainingBlock::Page => page,
+                ContainingBlock::Box {
+                    origin,
+                    size,
+                    direction,
+                    ..
+                } => Area {
+                    origin,
+                    size,
+                    direction,
+                },
+                ContainingBlock::Kept => return, // cov:ignore: kept boxes are not visited
+            };
+            place_fixed_box(document, id, parent_origin, area);
+        },
+    );
 }
 
 /// Restore explicit fixed block insets after pagination moves ancestors,
@@ -151,57 +207,113 @@ pub(super) fn restore_fixed_box_block_positions(
     root: usize,
     area_height: f32,
 ) {
-    visit_page_fixed_boxes(document, cascade, root, |document, id, parent_origin| {
-        let style = &document.nodes[id].style;
-        let layout = document.nodes[id].unrounded_layout;
-        let calc = crate::taffy_impl::resolve_calc;
-        let top = style.inset.top.maybe_resolve(Some(area_height), calc);
-        let bottom = style.inset.bottom.maybe_resolve(Some(area_height), calc);
-        let page_y = top.map(|top| top + layout.margin.top).or_else(|| {
-            bottom.map(|bottom| area_height - layout.size.height - bottom - layout.margin.bottom)
-        });
-        if let Some(page_y) = page_y {
-            document.nodes[id].unrounded_layout.location.y = page_y - parent_origin.y;
-        }
-    });
+    visit_out_of_flow_boxes(
+        document,
+        cascade,
+        root,
+        |document, id, parent_origin, cb| {
+            if !matches!(cb, ContainingBlock::Page) {
+                return;
+            }
+            let style = &document.nodes[id].style;
+            let layout = document.nodes[id].unrounded_layout;
+            let calc = crate::taffy_impl::resolve_calc;
+            let top = style.inset.top.maybe_resolve(Some(area_height), calc);
+            let bottom = style.inset.bottom.maybe_resolve(Some(area_height), calc);
+            let page_y = top.map(|top| top + layout.margin.top).or_else(|| {
+                bottom
+                    .map(|bottom| area_height - layout.size.height - bottom - layout.margin.bottom)
+            });
+            if let Some(page_y) = page_y {
+                document.nodes[id].unrounded_layout.location.y = page_y - parent_origin.y;
+            }
+        },
+    );
 }
 
-/// Visit the fixed boxes whose containing block is the page area, and the
-/// absolutely positioned boxes below a child of the root whose containing
-/// block is the initial containing block.
-fn visit_page_fixed_boxes(
+/// The containing block `id` establishes for its descendants, whose box
+/// starts at `origin` from the root's border box origin.
+fn containing_block_of(
+    document: &Document,
+    id: usize,
+    cv: &ComputedValues,
+    origin: Point<f32>,
+) -> ContainingBlock {
+    if generates_inline_box(document, id, cv) {
+        return ContainingBlock::Kept;
+    }
+    let layout = document.nodes[id].unrounded_layout;
+    let border = layout.border;
+    ContainingBlock::Box {
+        id,
+        origin: Point {
+            x: origin.x + border.left,
+            y: origin.y + border.top,
+        },
+        size: Size {
+            width: (layout.size.width - border.left - border.right).max(0.0),
+            height: (layout.size.height - border.top - border.bottom).max(0.0),
+        },
+        direction: if cv.direction == Direction::Rtl {
+            TaffyDirection::Rtl
+        } else {
+            TaffyDirection::Ltr
+        },
+    }
+}
+
+/// Visit the fixed and absolutely positioned boxes below the root whose
+/// layout taffy got wrong: those whose containing block is the page area or
+/// the initial containing block, and those whose containing block is an
+/// ancestor other than their taffy parent. Each is visited before its
+/// descendants, with the origin its location is relative to and its
+/// containing block.
+fn visit_out_of_flow_boxes(
     document: &mut Document,
     cascade: &CascadeResult,
     root: usize,
-    mut visit: impl FnMut(&mut Document, usize, Point<f32>),
+    mut visit: impl FnMut(&mut Document, usize, Point<f32>, ContainingBlock),
 ) {
-    if let Some(cv) = cascade.computed.get(root)
-        && establishes_fixed_containing_block(document, root, cv)
-    {
-        // A transformed or filtered body contains its fixed descendants.
-        return;
-    }
+    let root_cv = cascade.computed.get(root);
+    // A transformed or filtered body contains its fixed descendants.
+    let fixed_cb = match root_cv {
+        Some(cv) if establishes_fixed_containing_block(document, root, cv) => {
+            containing_block_of(document, root, cv, Point::ZERO)
+        }
+        _ => ContainingBlock::Page,
+    };
     // Taffy places absolutely positioned boxes against their taffy parent;
     // those that no ancestor contains are placed again against the initial
     // containing block, which the page area stands in for.
-    let root_contains_absolute = std::iter::successors(Some(root), |&id| document.parent_of(id))
-        .any(|id| {
-            cascade
-                .computed
-                .get(id)
-                .is_some_and(|cv| establishes_absolute_containing_block(document, id, cv))
-        });
+    let abs_cb = match root_cv {
+        Some(cv) if establishes_absolute_containing_block(document, root, cv) => {
+            containing_block_of(document, root, cv, Point::ZERO)
+        }
+        _ if std::iter::successors(document.parent_of(root), |&id| document.parent_of(id)).any(
+            |id| {
+                cascade
+                    .computed
+                    .get(id)
+                    .is_some_and(|cv| establishes_absolute_containing_block(document, id, cv))
+            },
+        ) =>
+        {
+            ContainingBlock::Kept
+        }
+        _ => ContainingBlock::Page,
+    };
     // (node, the origin its location is relative to, measured from the
-    // root's border box, whether it is content of a paragraph, whether no
-    // ancestor contains its absolutely positioned descendants)
+    // root's border box, whether it is content of a paragraph, the
+    // containing blocks of absolutely positioned and fixed descendants)
     let in_paragraph = document.nodes[root].is_ifc_root();
-    let mut stack: Vec<(usize, Point<f32>, bool, bool)> = document.nodes[root]
+    let mut stack: Vec<(usize, Point<f32>, bool, ContainingBlock, ContainingBlock)> = document
+        .nodes[root]
         .children
         .iter()
         .rev()
-        .map(|&child| (child, Point::ZERO, in_paragraph, !root_contains_absolute))
+        .map(|&child| (child, Point::ZERO, in_paragraph, abs_cb, fixed_cb))
         .collect();
-    while let Some((id, parent_origin, in_paragraph, uncontained)) = stack.pop() {
+    while let Some((id, parent_origin, in_paragraph, abs_cb, fixed_cb)) = stack.pop() {
         let node = &document.nodes[id];
         if !node.is_in_document() || node.style.display == Display::None {
             continue;
@@ -210,17 +322,19 @@ fn visit_page_fixed_boxes(
             continue; // cov:ignore: the cascade has a value for every arena node
         };
         let out_of_flow = node.style.position == TaffyPosition::Absolute;
-        if out_of_flow
-            && (cv.position == PositionValue::Fixed
-                || (cv.position == PositionValue::Absolute && uncontained))
-        {
-            visit(document, id, parent_origin);
-        }
-        let uncontained = uncontained && !establishes_absolute_containing_block(document, id, cv);
-        // The box's own transform or filter contains its descendants, not
-        // the box itself.
-        if establishes_fixed_containing_block(document, id, cv) {
-            continue;
+        let cb = match cv.position {
+            PositionValue::Fixed => fixed_cb,
+            PositionValue::Absolute => abs_cb,
+            _ => ContainingBlock::Kept,
+        };
+        let visited = match cb {
+            ContainingBlock::Page => true,
+            // Taffy and the inline engine place a box against its parent.
+            ContainingBlock::Box { id: cb_id, .. } => document.taffy_parent_of(id) != Some(cb_id),
+            ContainingBlock::Kept => false,
+        };
+        if out_of_flow && visited {
+            visit(document, id, parent_origin, cb);
         }
         let node = &document.nodes[id];
         // The inline engine places the boxes of a paragraph relative to the
@@ -239,26 +353,33 @@ fn visit_page_fixed_boxes(
             };
             (origin, node.is_ifc_root())
         };
+        // The box's own transform or filter contains its descendants, not
+        // the box itself.
+        let contains_fixed = establishes_fixed_containing_block(document, id, cv);
+        let abs_cb = if contains_fixed || establishes_absolute_containing_block(document, id, cv) {
+            containing_block_of(document, id, cv, origin)
+        } else {
+            abs_cb
+        };
+        let fixed_cb = if contains_fixed { abs_cb } else { fixed_cb };
         stack.extend(
             node.children
                 .iter()
                 .rev()
-                .map(|&child| (child, origin, in_paragraph, uncontained)),
+                .map(|&child| (child, origin, in_paragraph, abs_cb, fixed_cb)),
         );
     }
 }
 
-/// Lay out the absolutely positioned box `id` against the area of size
-/// `area_size` at the root's origin, as taffy lays out the
-/// absolutely positioned children of a block container, and store its
-/// location relative to its parent at `parent_origin`.
-fn place_fixed_box(
-    tree: &mut Document,
-    id: usize,
-    parent_origin: Point<f32>,
-    area_size: Size<f32>,
-    direction: TaffyDirection,
-) {
+/// Lay out the absolutely positioned box `id` against `area`, as taffy lays
+/// out the absolutely positioned children of a block container, and store
+/// its location relative to its parent at `parent_origin`.
+fn place_fixed_box(tree: &mut Document, id: usize, parent_origin: Point<f32>, area: Area) {
+    let Area {
+        origin: area_origin,
+        size: area_size,
+        direction,
+    } = area;
     let calc = crate::taffy_impl::resolve_calc;
     let style = &tree.nodes[id].style;
     let area_width = Some(area_size.width);
@@ -491,8 +612,8 @@ fn place_fixed_box(
             new_alignment.height,
         );
     let location = Point {
-        x: page_x.map_or(static_x, |x| x - parent_origin.x),
-        y: page_y.map_or(static_y, |y| y - parent_origin.y),
+        x: page_x.map_or(static_x, |x| area_origin.x + x - parent_origin.x),
+        y: page_y.map_or(static_y, |y| area_origin.y + y - parent_origin.y),
     };
     let layout = TaffyLayout {
         location,
