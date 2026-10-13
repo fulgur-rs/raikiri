@@ -422,6 +422,12 @@ pub struct ChLengthProvenance {
     pub font: ChFontKey,
 }
 
+/// The most background layers a renderer paints for one box, top first.
+/// Further layers lie under these; renderers skip them, and resource loading
+/// fetches no images for them, which bounds the work a single declaration
+/// can request.
+pub const MAX_PAINTED_BACKGROUND_LAYERS: usize = 64;
+
 /// One computed background layer (CSS Backgrounds and Borders 3 §2.1): the
 /// item of each per-layer longhand that applies to this layer, after the
 /// lists are reconciled to the number of `background-image` items.

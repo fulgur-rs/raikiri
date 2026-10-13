@@ -9,7 +9,7 @@ use std::time::Instant;
 use image::{DynamicImage, ImageDecoder, ImageReader, Limits};
 use raikiri_dom::FontFaceLoader;
 use raikiri_style::{
-    PageCascadeResult,
+    MAX_PAINTED_BACKGROUND_LAYERS, PageCascadeResult,
     property::{BackgroundImage, DisplayValue, PropertyKey, PropertyValue, Visibility},
 };
 use raikiri_svg::{SvgDocument, SvgRootStyle, SvgViewport};
@@ -901,10 +901,13 @@ impl<'a> RenderResources<'a> {
                 ) && computed.visibility == Visibility::Visible
                     && computed.opacity > 0.0
             })
-            // Every background layer, top first, then the border image.
+            // Every painted background layer, top first, then the border
+            // image. Layers under the painted ones are never drawn, so they
+            // do not spend the shared request budget.
             .flat_map(|computed| {
                 computed
                     .background_images()
+                    .take(MAX_PAINTED_BACKGROUND_LAYERS)
                     .chain(std::iter::once(&computed.border_image.source))
             })
             .filter_map(|image| match image {
@@ -1001,7 +1004,12 @@ impl<'a> RenderResources<'a> {
         if let Some(PropertyValue::BackgroundImage(images)) =
             page.declarations().get(&PropertyKey::BackgroundImage)
         {
-            raw_urls.extend(images.iter().filter_map(background_url));
+            raw_urls.extend(
+                images
+                    .iter()
+                    .take(MAX_PAINTED_BACKGROUND_LAYERS)
+                    .filter_map(background_url),
+            );
         }
         let margin_box_rules = page.margin_boxes();
         let mut seen_slots = Vec::new();
@@ -1019,7 +1027,12 @@ impl<'a> RenderResources<'a> {
             if let Some(PropertyValue::BackgroundImage(images)) =
                 winning_background.map(|declaration| declaration.value())
             {
-                raw_urls.extend(images.iter().filter_map(background_url));
+                raw_urls.extend(
+                    images
+                        .iter()
+                        .take(MAX_PAINTED_BACKGROUND_LAYERS)
+                        .filter_map(background_url),
+                );
             }
         }
         self.preload_background_urls(raw_urls, base_url, warnings, seen, attempts, signal);

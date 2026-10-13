@@ -8305,8 +8305,8 @@ pub enum VisualBox {
     BorderArea,
     /// `text` — clips to the shape of the text (CSS Backgrounds 4 §2.6, `background-clip: text`).
     Text,
-    /// `border-area text` — the intersection of the border area and the
-    /// text shape (CSS Backgrounds 4 §2.6 `[border-area || text]`). The two
+    /// `border-area text` — the union of the border area and the text shape
+    /// (CSS Backgrounds 4 §2.6 `[border-area || text]`). The two
     /// keywords parse in either order and serialize as `border-area text`.
     BorderAreaText,
 }

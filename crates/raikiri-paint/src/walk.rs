@@ -33,8 +33,8 @@ use raikiri_style::property::{
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedBorderImage, ComputedBorderRadius,
     ComputedCssPosition, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
-    ComputedTransformFunction, ComputedValues, ResolveContext, resolve_background_size,
-    resolve_border, resolve_css_position,
+    ComputedTransformFunction, ComputedValues, MAX_PAINTED_BACKGROUND_LAYERS, ResolveContext,
+    resolve_background_size, resolve_border, resolve_css_position,
 };
 use raikiri_traits::{
     ImageIntrinsicSize, ImagePixelSource, ImageRasterSize, NodeId, NodeKind, PageBox, PaintInsets,
@@ -630,11 +630,6 @@ fn clip_inset_rect(
         _ => Some(area),
     }
 }
-
-/// The most background layers painted for one box. Further layers lie under
-/// these and are skipped with a warning, which bounds the paint work a
-/// single declaration can request.
-const MAX_PAINTED_BACKGROUND_LAYERS: usize = 64;
 
 /// The layers of `layers` that are painted, top first: all of them, or the
 /// top [`MAX_PAINTED_BACKGROUND_LAYERS`] with a warning.
@@ -4538,8 +4533,8 @@ fn paint_element_background_slice(
     // background-clip: text trims to glyph shapes (CSS Backgrounds 4 section 2.6).
     // Glyph-path clipping is not implemented; warn and skip so the gap is
     // visible instead of silently mispainting an opaque rect. `border-area
-    // text` intersects the border area with the glyphs and needs the same
-    // glyph clipping.
+    // text` clips to the union of the border area and the glyphs and needs
+    // the same glyph clipping.
     if matches!(clip, VisualBox::Text | VisualBox::BorderAreaText) {
         if effective.a != 0 || background_url.is_some() || has_gradient {
             warnings.push(RenderWarning {
