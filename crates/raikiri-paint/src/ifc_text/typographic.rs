@@ -6,7 +6,7 @@ use kurbo::{Affine, Rect};
 use peniko::Mix;
 use raikiri_dom::{Document, InlineBoxPiece, Node, NodeKind};
 use raikiri_style::PseudoElem;
-use raikiri_style::property::DisplayValue;
+use raikiri_style::property::{DisplayValue, PositionValue, ZIndexValue};
 use std::collections::HashMap;
 
 #[derive(Clone, Copy)]
@@ -75,9 +75,9 @@ struct Group {
     children: Vec<Child>,
     /// The element or typographic box whose paint the group composites.
     owner: usize,
-    /// How many of the first commands of `scene` paint the owner's own box,
-    /// below the groups with negative stack levels nested in it.
-    floor: usize,
+    /// The owner's own boxes on every line, painted below the rest of the
+    /// group and the groups with negative stack levels nested in it.
+    boxes: Scene,
 }
 
 /// A composited group placed in its parent's paint: the parent command it
@@ -209,7 +209,7 @@ impl TypographicPaint {
                                 parent: group,
                                 children: Vec::new(),
                                 owner: key.node,
-                                floor: 0,
+                                boxes: Scene::new(),
                             });
                             index
                         });
@@ -264,11 +264,11 @@ impl TypographicPaint {
                 self.groups.push(Group {
                     scene: Scene::new(),
                     opacity,
-                    level: raikiri_dom::paint_rules::pseudo_stack_level(paragraph.cascade, id),
+                    level: element_stack_level(paragraph.cascade, id),
                     parent: group,
                     children: Vec::new(),
                     owner: id,
-                    floor: 0,
+                    boxes: Scene::new(),
                 });
                 group = Some(index);
             }
@@ -308,15 +308,16 @@ impl TypographicPaint {
             .flatten()
     }
 
-    /// Record that the box of `piece`, painted into `group` from command
-    /// `start` on, is the group's own box when nothing but that box was
-    /// painted into it before.
-    pub(super) fn note_box(&mut self, group: Option<usize>, piece: &InlineBoxPiece, start: usize) {
-        if let Some(group) = group.and_then(|index| self.groups.get_mut(index))
-            && group.owner == piece.node
-            && group.floor == start
-        {
-            group.floor = group.scene.commands.len();
+    /// The scene the box of `piece` paints into: its own group's boxes when
+    /// it is that group's owner, else the rest of `group`.
+    pub(super) fn box_target(
+        &mut self,
+        group: Option<usize>,
+        piece: &InlineBoxPiece,
+    ) -> &mut Scene {
+        match group {
+            Some(index) if self.groups[index].owner == piece.node => &mut self.groups[index].boxes,
+            _ => self.target(group),
         }
     }
 
@@ -356,9 +357,13 @@ impl TypographicPaint {
         let mut roots = Vec::new();
         while let Some(index) = order.pop() {
             let group = &mut self.groups[index];
-            let content = merge_children(
-                std::mem::take(&mut group.scene),
-                std::mem::take(&mut group.children),
+            let mut content = std::mem::take(&mut group.boxes);
+            content.append_scene(
+                merge_children(
+                    std::mem::take(&mut group.scene),
+                    std::mem::take(&mut group.children),
+                ),
+                Affine::IDENTITY,
             );
             // A group whose pieces are on lines painted elsewhere draws
             // nothing here.
@@ -379,13 +384,13 @@ impl TypographicPaint {
             // the other stacking contexts with `z-index: auto` of the
             // paragraph (CSS Color 4 §3.3; CSS 2.1 Appendix E step 8). One
             // with a negative stack level goes below that paint, above only
-            // the parent's own box (Appendix E step 3).
+            // the parent's own boxes (Appendix E step 3).
             let parent = group.parent;
             let level = group.level;
-            let insertion = match (level < 0, parent) {
-                (true, Some(parent)) => self.groups[parent].floor,
-                (true, None) => 0,
-                (false, _) => self.target(parent).commands.len(),
+            let insertion = if level < 0 {
+                0
+            } else {
+                self.target(parent).commands.len()
             };
             // Groups at the same place paint by stack level, then in tree
             // order.
@@ -403,6 +408,20 @@ impl TypographicPaint {
         }
         scene.append_scene(merge_children(self.normal, roots), Affine::IDENTITY);
     }
+}
+
+/// The stack level an inline element's group composites at among the other
+/// groups of its paragraph: the `z-index` of a positioned element, and 0
+/// otherwise (CSS 2.1 §9.9.1).
+fn element_stack_level(cascade: &raikiri_style::CascadeResult, id: usize) -> i32 {
+    cascade
+        .computed
+        .get(id)
+        .map_or(0, |cv| match (&cv.position, cv.z_index) {
+            (PositionValue::Static, _) => 0,
+            (_, ZIndexValue::Integer(level)) => level,
+            _ => 0,
+        })
 }
 
 /// `start` and the inline elements of `paragraph` around it, innermost

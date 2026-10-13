@@ -185,10 +185,9 @@ pub(crate) fn draw_ifc_lines_with_resources(
             // `position` holds too.
             let line_shift = shifts.get(line_index).copied().unwrap_or(0.0);
             let group = paint.piece_group(piece);
-            let start = paint.target(group).commands.len();
             crate::walk::paint_inline_box(
                 image_cache,
-                paint.target(group),
+                paint.box_target(group, piece),
                 cv,
                 piece,
                 (!vertical)
@@ -199,7 +198,6 @@ pub(crate) fn draw_ifc_lines_with_resources(
                 pixel_source,
                 warnings,
             );
-            paint.note_box(group, piece, start);
         }
         // Images of `::before` and `::after` content are replaced content
         // inside their pseudo-element's inline box: above its background,

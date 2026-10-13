@@ -2403,8 +2403,8 @@ fn translucent_before_over_several_lines_is_one_group() {
     assert_eq!(
         command_kinds(&scene),
         [
-            "fill", "glyphs 1", "push 0.5", "clip", "pop", "glyphs 5", "clip", "pop", "glyphs 5",
-            "clip", "pop", "glyphs 4", "pop"
+            "fill", "glyphs 1", "push 0.5", "clip", "pop", "clip", "pop", "clip", "pop",
+            "glyphs 5", "glyphs 5", "glyphs 4", "pop"
         ]
     );
 }
@@ -2587,5 +2587,50 @@ fn first_letter_in_a_translucent_inline_element_paints_in_its_group() {
             "pop",
             "pop"
         ]
+    );
+}
+
+/// A nested group with a negative stack level paints above every line's
+/// box of the group it is in.
+#[test]
+fn negative_inline_group_paints_above_its_split_parent_box() {
+    let scene = painted_html(
+        br#"<html><body><p style="width:40px">A<span style="opacity:.5;background:blue">BBBB CCCC <b style="opacity:.25;position:relative;z-index:-1;background:red">D</b></span></p></body></html>"#,
+    );
+    assert_eq!(
+        command_kinds(&scene),
+        [
+            "fill",
+            "glyphs 1",
+            "push 0.5",
+            "fill",
+            "clip",
+            "pop",
+            "fill",
+            "clip",
+            "pop",
+            "fill",
+            "clip",
+            "pop",
+            "push 0.25",
+            "fill",
+            "glyphs 1",
+            "pop",
+            "glyphs 5",
+            "glyphs 5",
+            "pop"
+        ]
+    );
+}
+
+/// A sticky inline element keeps its negative stack level.
+#[test]
+fn negative_sticky_inline_group_paints_below_the_text() {
+    let scene = painted_html(
+        br#"<html><body><p>A<span style="opacity:.5;position:sticky;z-index:-1">B</span></p></body></html>"#,
+    );
+    assert_eq!(
+        command_kinds(&scene),
+        ["fill", "push 0.5", "glyphs 1", "pop", "glyphs 1"]
     );
 }
