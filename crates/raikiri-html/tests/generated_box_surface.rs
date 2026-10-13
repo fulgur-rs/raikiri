@@ -853,3 +853,32 @@ fn first_letter_split_by_an_inline_group_composites_in_both() {
         ]
     );
 }
+
+/// Fragments of one first letter in the same group compose once, even when
+/// a fragment of another group lies between them.
+#[test]
+fn first_letter_fragments_of_one_group_compose_once() {
+    let document = lay_out(
+        "<p>'<span>A</span>'B</p>",
+        "p{margin:0;opacity:.9}span{display:contents;opacity:.5}\
+         p::first-letter{background:red;opacity:inherit}",
+    );
+    let page = document.page(0).unwrap();
+    assert_eq!(
+        composited(&page),
+        [
+            "push 0.9",
+            "text B",
+            "push 0.9",
+            "box FirstLetter",
+            "box FirstLetter",
+            "text ''",
+            "pop",
+            "push 0.5",
+            "box FirstLetter",
+            "text A",
+            "pop",
+            "pop"
+        ]
+    );
+}

@@ -848,3 +848,61 @@ fn translucent_first_line_splits_the_boxes_of_inline_elements_by_line() {
         );
     }
 }
+
+/// The line pieces of a split inline element are clipped like its box, and
+/// an element without prepared pieces keeps its box.
+#[test]
+fn split_inline_line_pieces_keep_their_clips() {
+    let result = lay_out_with_font(
+        "<div style='overflow:hidden;height:15px'><p id=p>A<span id=s>B<br>C</span></p></div>",
+        "p {margin:0} #p::first-line {opacity:.5} #s {background:red}",
+    );
+    let page = result.page(0).unwrap();
+    let runs = page.text_runs();
+    let events = page.paint_order_for_text_runs(&runs);
+    let pieces: Vec<usize> = events
+        .iter()
+        .enumerate()
+        .filter_map(|(index, event)| matches!(event, PaintEvent::LineBox(_)).then_some(index))
+        .collect();
+    assert_eq!(pieces.len(), 2, "{events:?}");
+    let open_clips = |end: usize| {
+        events[..end].iter().fold(0i32, |open, event| match event {
+            PaintEvent::PushClip(_, ClipKind::Overflow) => open + 1,
+            PaintEvent::PopClip => open - 1,
+            _ => open,
+        })
+    };
+    for index in pieces {
+        assert_eq!(open_clips(index), 1, "{events:?}");
+    }
+    // Inside columns, a piece is where its line's text is.
+    let result = lay_out_with_font(
+        "<div style='columns:2;column-gap:0;width:100px;height:10px'>\
+         <p id=p>A<span id=s>B<br>C</span></p></div>",
+        "p {margin:0} #p::first-line {opacity:.5} #s {background:red}",
+    );
+    let page = result.page(0).unwrap();
+    let runs = page.text_runs();
+    let text = runs.iter().find(|run| run.text == "C").unwrap();
+    let piece = page
+        .paint_order_for_text_runs(&runs)
+        .into_iter()
+        .find_map(|event| match event {
+            PaintEvent::LineBox(piece) if piece.line == text.line => Some(piece),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(piece.rect.x, text.origin.0);
+    assert!(piece.rect.y < text.origin.1 && text.origin.1 <= piece.rect.y + piece.rect.height);
+    assert_eq!(
+        line_order(
+            "<p id=p style='writing-mode:vertical-rl'>A<span id=s>B<br>C</span></p>",
+            "#p::first-line {opacity:.5} #s {background:red}",
+        )
+        .iter()
+        .filter(|event| event.starts_with("box s"))
+        .collect::<Vec<_>>(),
+        ["box s"]
+    );
+}

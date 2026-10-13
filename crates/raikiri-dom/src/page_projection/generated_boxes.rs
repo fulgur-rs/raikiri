@@ -92,7 +92,8 @@ pub(super) fn prepare(
     let mut eligible = HashMap::new();
     for root in roots {
         work.check()?;
-        // Only paragraphs that laid out a generated box are visited.
+        // Only paragraphs that laid out a generated box, or an inline
+        // element split by a translucent `::first-line`, are visited.
         let pieces = paragraphs
             .get(&root.node)
             .map_or(&[][..], |paragraph| paragraph.generated(root.fragmentainer));

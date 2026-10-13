@@ -273,7 +273,7 @@ impl Document {
         let mut seen = HashSet::new();
         let mut letter_groups = HashMap::new();
         for run in runs {
-            let group = self.text_run_opacity_group(cascade, run);
+            let group = self.run_opacity_group(cascade, run, &mut letter_groups);
             // The letters of a `::first-letter` group, its own or that of an
             // ancestor block's first letter around them.
             if let (Some(_), Some(Ok(group)), Ok(root)) = (
@@ -322,18 +322,34 @@ impl Document {
     /// A `::before`, `::after` or `::first-letter` laid out in the paragraph
     /// is such a group too, named by the id of
     /// [`crate::generated_content::generated_node_id`]: its letters and
-    /// generated text belong to it before any element around them.
+    /// generated text belong to it before any element around them. The
+    /// fragments of a `::first-letter` that keep different opacities, or lie
+    /// in different groups, form one group each, the others named by ids of
+    /// [`crate::generated_content::first_letter_group_id`].
     #[doc(hidden)]
     pub fn text_run_opacity_group(
         &self,
         cascade: &CascadeResult,
         run: &PositionedGlyphRun<'_>,
     ) -> Option<NodeId> {
+        self.run_opacity_group(cascade, run, &mut HashMap::new())
+    }
+
+    /// [`Self::text_run_opacity_group`], with the `::first-letter` groups of
+    /// the paragraphs built so far, by root.
+    fn run_opacity_group(
+        &self,
+        cascade: &CascadeResult,
+        run: &PositionedGlyphRun<'_>,
+        letter_groups: &mut HashMap<usize, LetterGroups>,
+    ) -> Option<NodeId> {
         if let Some((letter, owner)) = run.letter_box {
-            if let Some(group) = usize::try_from(run.line.root.0)
-                .ok()
-                .and_then(|root| self.letter_groups(cascade, root).nearest(letter, owner))
-            {
+            if let Some(group) = usize::try_from(run.line.root.0).ok().and_then(|root| {
+                letter_groups
+                    .entry(root)
+                    .or_insert_with(|| self.letter_groups(cascade, root))
+                    .nearest(letter, owner)
+            }) {
                 return group.map(|group| NodeId::new(group as u64));
             }
             // cov:ignore: the paragraph retains the fragment of every run
@@ -858,13 +874,14 @@ impl Document {
         }
         let mut line_clips = HashMap::new();
         let mut line_overflow_chains = HashMap::new();
-        // Only the paragraphs with lines or generated boxes in the events
-        // need their line clips.
+        // Only the paragraphs with lines, generated boxes or line pieces in
+        // the events need their line clips.
         let listed_roots: HashSet<usize> = events
             .iter()
             .filter_map(|event| match event {
                 PaintEvent::TextLine(line) | PaintEvent::GroupTextLine(line, _) => Some(line.root),
                 PaintEvent::GeneratedBox(fragment) => Some(fragment.line.root),
+                PaintEvent::LineBox(piece) => Some(piece.line.root),
                 PaintEvent::GeneratedImage(image) => {
                     let placement = items.generated_images?.get(&image.key()?)?;
                     Some(NodeId::new(placement.root as u64))
@@ -946,6 +963,7 @@ impl Document {
                 PaintEvent::GeneratedBox(fragment) => {
                     line_overflow_chains.get(&fragment.line).copied()
                 }
+                PaintEvent::LineBox(piece) => line_overflow_chains.get(&piece.line).copied(),
                 PaintEvent::GeneratedImage(image) => generated_image_line(&items, image)
                     .and_then(|line| line_overflow_chains.get(&line).copied()),
                 PaintEvent::ColumnRule(rule) => rule.overflow_chain,
@@ -980,6 +998,7 @@ impl Document {
                     line_clips.get(&line).copied()
                 }
                 PaintEvent::GeneratedBox(fragment) => line_clips.get(&fragment.line).copied(),
+                PaintEvent::LineBox(piece) => line_clips.get(&piece.line).copied(),
                 PaintEvent::GeneratedImage(image) => generated_image_line(&items, image)
                     .and_then(|line| line_clips.get(&line).copied()),
                 PaintEvent::ColumnRule(rule) => rule.fragmentainer_clip,
@@ -1418,39 +1437,45 @@ fn push_paragraph<'a>(
         LinePart::Rest => later.contains(&element),
     };
     // An element on the first line and on later ones is split by line: its
-    // pieces on the lines of `part` stand for its box.
-    let split = |element: usize| {
-        part != LinePart::All && later.contains(&element) && lines_of_boxes.first.contains(&element)
+    // pieces on the lines of `part` stand for its box. Without prepared
+    // pieces on the page, its box goes with the other lines.
+    let line_pieces = |element: usize| {
+        (part != LinePart::All
+            && later.contains(&element)
+            && lines_of_boxes.first.contains(&element))
+        .then(|| items.inline_boxes?.get(&(root, element)))
+        .flatten()
     };
-    let push_line_boxes = |events: &mut Vec<PaintEvent<'a>>, element: usize| {
-        let Some(&item) = items
+    let push_line_boxes = |events: &mut Vec<PaintEvent<'a>>,
+                           element: usize,
+                           pieces: &[super::generated_boxes::BoxPiece]| {
+        let boxes: Vec<Fragment<'a>> = items
             .of(element)
             .iter()
-            .find(|item| item.kind == PageFragmentKind::Box)
-        else {
-            return;
-        };
-        let fragment = items.fragment(item);
-        events.extend(
-            items
-                .inline_boxes
-                .and_then(|boxes| boxes.get(&(root, element)))
-                .into_iter()
-                .flatten()
-                .filter(|piece| part.admits(piece.line))
-                .map(|piece| {
-                    PaintEvent::LineBox(LineBox {
-                        fragment,
-                        line: TextLineId {
-                            root: NodeId::new(root as u64),
-                            index: piece.line,
-                        },
-                        rect: piece.rect,
-                        has_start_edge: piece.has_start_edge,
-                        has_end_edge: piece.has_end_edge,
-                    })
-                }),
-        );
+            .filter(|item| item.kind == PageFragmentKind::Box)
+            .map(|&item| items.fragment(item))
+            .collect();
+        for piece in pieces.iter().filter(|piece| part.admits(piece.line)) {
+            // The element's box on the page that holds the piece, such as
+            // its box in the piece's column.
+            let Some(&fragment) = boxes
+                .iter()
+                .find(|fragment| contains(fragment.paint_rect(), piece.rect))
+                .or(boxes.first())
+            else {
+                return; // cov:ignore: an element with line pieces on the page has a box there
+            };
+            events.push(PaintEvent::LineBox(LineBox {
+                fragment,
+                line: TextLineId {
+                    root: NodeId::new(root as u64),
+                    index: piece.line,
+                },
+                rect: piece.rect,
+                has_start_edge: piece.has_start_edge,
+                has_end_edge: piece.has_end_edge,
+            }));
+        }
     };
     let push_kind = |events: &mut Vec<PaintEvent<'a>>, node_id: usize, kind| {
         for &item in items.of(node_id) {
@@ -1614,8 +1639,8 @@ fn push_paragraph<'a>(
                 .get(node_id)
                 .is_some_and(paint_rules::generates_box) =>
             {
-                if split(node_id) {
-                    push_line_boxes(events, node_id);
+                if let Some(pieces) = line_pieces(node_id) {
+                    push_line_boxes(events, node_id, pieces);
                 } else if admits_box(node_id) {
                     push_kind(events, node_id, PageFragmentKind::Box);
                 }
@@ -1956,7 +1981,8 @@ fn letter_groups(
         .collect();
     from_runs.sort_unstable();
     found.extend(from_runs);
-    found.dedup();
+    let mut seen = HashSet::new();
+    found.retain(|&group| seen.insert(group));
     found
 }
 
@@ -2018,6 +2044,12 @@ fn generated_image_line(items: &PageItems<'_>, image: GeneratedImageId) -> Optio
         root: NodeId::new(placement.root as u64),
         index: placement.line,
     })
+}
+
+/// Whether rectangle `outer` contains the centre of `inner`.
+fn contains(outer: PaintRect, inner: PaintRect) -> bool {
+    let (x, y) = (inner.x + inner.width * 0.5, inner.y + inner.height * 0.5);
+    x >= outer.x && x <= outer.x + outer.width && y >= outer.y && y <= outer.y + outer.height
 }
 
 /// The frames listed around a paragraph's own inline content.

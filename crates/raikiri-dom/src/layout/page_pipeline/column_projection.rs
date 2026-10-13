@@ -238,10 +238,24 @@ impl ParagraphProjection {
         };
         // A translucent `::first-line` composites the first line apart from
         // the others, so the paint order lists the line pieces of the inline
-        // elements that it splits.
-        let split_first_line =
-            crate::paint_rules::first_line_opacity_layer(document, root).is_some();
-        for piece in node.ifc_inline_boxes().unwrap_or_default() {
+        // elements on the first line and on later ones.
+        let pieces = node.ifc_inline_boxes().unwrap_or_default();
+        let split: HashSet<usize> =
+            if crate::paint_rules::first_line_opacity_layer(document, root).is_some() {
+                let first: HashSet<usize> = pieces
+                    .iter()
+                    .filter(|piece| piece.line == 0)
+                    .map(|piece| piece.node)
+                    .collect();
+                pieces
+                    .iter()
+                    .filter(|piece| piece.line != 0 && first.contains(&piece.node))
+                    .map(|piece| piece.node)
+                    .collect()
+            } else {
+                HashSet::new()
+            };
+        for piece in pieces {
             work.check()?;
             if multicol {
                 work.charge(1)?;
@@ -273,7 +287,10 @@ impl ParagraphProjection {
                         }),
                     ))
                 })
-                .or_else(|| (split_first_line && generated.is_none()).then_some((piece.node, None)))
+                .or_else(|| {
+                    (generated.is_none() && split.contains(&piece.node))
+                        .then_some((piece.node, None))
+                })
                 && piece.border_box.width > 0.0
                 && piece.border_box.height > 0.0
                 && generated_piece_style(
